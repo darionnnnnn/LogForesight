@@ -117,6 +117,9 @@ public class RunListItemDto
     /// 同一套語意（不含 backfilled／none——那是「沒有這筆 BatchRun」的狀態，這裡每筆都存在）</summary>
     public string Status { get; set; } = string.Empty;
 
+    /// <summary>作業類型顯示文字（批次D）：「取數分析」（含舊紀錄）｜「AI 分析」</summary>
+    public string JobTypeText { get; set; } = string.Empty;
+
     public string TriggerText { get; set; } = string.Empty;
     public string Args { get; set; } = string.Empty;
     public int DaysAnalyzed { get; set; }
@@ -149,7 +152,7 @@ public class RunDaySummaryPageDto
     public int PageSize { get; set; }
 
     /// <summary>
-    /// 可用最大天數（RunLogRetentionDays 設定值）：「全部」按鈕的天數來源——
+    /// 可用最大天數（max(90, RunLogRetentionDays)）：「全部」按鈕的天數來源——
     /// 前端不得寫死，必須讀此欄位。
     /// </summary>
     public int MaxDays { get; set; }

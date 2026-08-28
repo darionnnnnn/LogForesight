@@ -386,7 +386,7 @@ public class IssueHandlingCommandService
                 {
                     HostId = o.Host.HostId,
                     HostName = o.Host.HostName,
-                    ExistingHandlerName = existing?.DisplayName,
+                    ExistingHandlerName = existing == null ? null : _displayNameService.Of(existing.DisplayName),
                     ExistingHandlerAccount = existing?.Account,
                     ExistingHandlerId = existing?.UserId
                 };
@@ -565,7 +565,7 @@ public class IssueHandlingCommandService
             .Select(u => new HandlerCandidateDto
             {
                 UserId = u.UserId,
-                DisplayName = u.DisplayName,
+                DisplayName = _displayNameService.Of(u.DisplayName),
                 Account = u.Account,
                 OpenCaseCount = _cases.GetOpenByHandler(u.UserId).Count
             })

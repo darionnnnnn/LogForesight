@@ -55,8 +55,12 @@ public class DashboardService
         // 鍵含可見主機集合——不同授權範圍各自一份，不得串味。
         // 可見主機取一次就傳下去，不為了組鍵多走訪一次整份主機表（同 ReportService 的效能契約）。
         var visibleHosts = _visibility.GetVisibleHosts();
+        // 鍵含 ViewAudit 能力（體檢輪）：RecentLoginFailures 只有稽核權限者會填，
+        // 兩個可見主機集合相同、稽核權限不同的帳號共用同一筆快取就是把登入失敗數
+        // 端給無權者（或讓有權者看到 0）。BuildSummary 內其餘內容不依個人能力分歧。
+        var canViewAudit = _currentUser.Has(Auth.Capability.ViewAudit);
         return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("dashboard", days.ToString(), visibleHosts.Select(h => h.HostId).ToList()),
+            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}", visibleHosts.Select(h => h.HostId).ToList()),
             () => BuildSummary(days, visibleHosts));
     }
 

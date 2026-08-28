@@ -83,15 +83,6 @@ public class AiAnalysisRunState
         }
     }
 
-    public void SetLatestMessage(string message)
-    {
-        lock (_lock)
-        {
-            if (!IsRunning) return;
-            LatestMessage = message;
-        }
-    }
-
     public void EndRun(bool success, string? message = null)
     {
         TaskCompletionSource<bool>? tcsToComplete;

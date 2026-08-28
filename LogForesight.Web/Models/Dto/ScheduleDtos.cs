@@ -77,11 +77,6 @@ public class ScheduleStatusDto
     public int ProgressDone { get; set; }
     public int ProgressTotal { get; set; }
 
-    /// <summary>子進度（回饋十四輪 UI-6）：netiq-ai，AI 在背景消化，
-    /// 與上面的主進度同時在跑——null＝這次執行沒有（或還沒進到）子進度可畫，前端不畫子進度條。</summary>
-    public string? SubProgressPhase { get; set; }
-    public int SubProgressDone { get; set; }
-    public int SubProgressTotal { get; set; }
 
     /// <summary>本機分析進度（回饋十七輪批次E）：與上面的 NetIQ 主／子進度完全獨立的第三條軌，
     /// 本機與 NetIQ 現在並行執行，可能同時都在回報——null＝這次執行本機階段還沒開始或已跳過

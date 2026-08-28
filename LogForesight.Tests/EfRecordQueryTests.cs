@@ -363,8 +363,9 @@ public class EfRecordQueryTests : IDisposable
         Assert.Single(recent);
         Assert.True(recent[0].AiPending);
 
-        // NeedsBackfill 亦以此判定為需補跑
-        Assert.True(LogForesight.Core.Service.HostDayPostProcessor.NeedsBackfill(recent[0], useAi: false));
+        // NeedsBackfill（取數側判定，體檢輪語意變更）：AiPending=true 的紀錄**不再**由取數補跑
+        // ——待補由獨立的 AI 分析排程消化，取數重抓只會與它打架。這裡斷言取數側判定為不補。
+        Assert.False(LogForesight.Core.Service.HostDayPostProcessor.NeedsBackfill(recent[0], useAi: false));
     }
 
     [Fact]

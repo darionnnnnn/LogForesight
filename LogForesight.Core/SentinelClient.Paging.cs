@@ -33,7 +33,7 @@ public sealed partial class SentinelClient
         {
             await ThrottleAsync(ct);
             var href = SetPageQueryParam(status.ResultsHref, page);
-            var pageEvents = await FetchPageAsync(href, ct);
+            var pageEvents = await FetchPageAsync(href, request.RawFields, ct);
             if (pageEvents.Count == 0) break; // 沒有更多資料，即使數字對不上也停止，避免無窮迴圈
 
             retrieved += pageEvents.Count;
@@ -58,7 +58,7 @@ public sealed partial class SentinelClient
         return $"{href}{separator}page={page}";
     }
 
-    private async Task<List<SentinelEvent>> FetchPageAsync(string href, CancellationToken ct)
+    private async Task<List<SentinelEvent>> FetchPageAsync(string href, bool rawFields, CancellationToken ct)
     {
         var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Get, href), ct);
         using (resp)
@@ -72,8 +72,9 @@ public sealed partial class SentinelClient
 
             var json = await resp.Content.ReadAsStringAsync(ct);
             // 只留分析與顯示會用到的欄位（批次E1）：回應可能帶回投影以外的屬性，
-            // 全部入袋會讓單筆事件大小不受控。診斷路徑要看原始全欄位時傳 null。
-            return ParseEventsPage(json, SentinelFieldMap.ParseKeepFields);
+            // 全部入袋會讓單筆事件大小不受控。probe 診斷路徑（RawFields）不過濾，
+            // 它要靠全欄位聯集發現未知欄位。
+            return ParseEventsPage(json, rawFields ? null : SentinelFieldMap.ParseKeepFields);
         }
     }
 

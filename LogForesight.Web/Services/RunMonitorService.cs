@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -80,7 +81,10 @@ public class RunMonitorService
 
         // 只取回本頁涵蓋的 BatchRun（+1 天的記錄視窗）
         var windowDays = skipFromEnd + pageCount;
-        var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
+        // AI 排程的執行（JobType=ai）不進主機×日視角：它不是「哪台主機哪天跑了沒」的語意，
+        // 混入會讓 AllHosts 把執行主機當成一台幽靈主機列進總表（體檢輪）
+        var runs = _runs.GetRecentRuns(windowDays, hostNames: null)
+            .Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
 
         // 分析紀錄窗口：本頁日期 D 對應 D-1 的分析紀錄，多帶一天
         var recordFrom = pageFrom.AddDays(-1);
@@ -130,7 +134,8 @@ public class RunMonitorService
         // GetRecentRuns 的窗口是 [Today-days+1, Today]；用「到這天為止經過的天數」當窗口大小，
         // 剛好含括目標日期，再於 RunsForHostOnDate 篩到那一天。日期在未來時窗口最小取 1。
         var windowDays = Math.Max(1, (DateTime.Today - date.Date).Days + 1);
-        var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
+        var runs = _runs.GetRecentRuns(windowDays, hostNames: null)
+            .Where(r => r.JobType != BatchRun.JobTypeAi).ToList();   // 同 GetDaySummaries：AI 執行不進主機×日視角
         var dateStr = date.ToString("yyyy-MM-dd");
         var hosts = AllHosts(runs);
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
@@ -325,6 +330,7 @@ public class RunMonitorService
                     ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                     : null,
                 Status = ComputeStatus(run),
+                JobTypeText = run.JobType == BatchRun.JobTypeAi ? "AI 分析" : "取數分析",
                 TriggerText = TriggerText(run.Trigger),
                 Args = run.Args,
                 DaysAnalyzed = run.DaysAnalyzed,

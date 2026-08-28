@@ -28,6 +28,8 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly IAnalysisRecordQuery _recordQuery;
     private readonly StorageBackend _storageBackend;
     private readonly ISystemSettingsStore _systemSettingsStore;
+    private readonly BatchRunStore _batchRuns;
+    private readonly DailyRecordBackfiller _backfiller;
     private readonly ISuppressionStore? _suppressionStore;
     private readonly IAiService? _injectedAiService;
     private readonly IHostApplicationLifetime? _lifetime;
@@ -40,6 +42,8 @@ public class AiAnalysisHostedService : BackgroundService
         StorageBackend storageBackend,
         ISystemSettingsStore systemSettingsStore,
         DataVersionStamp dataVersion,
+        BatchRunStore batchRuns,
+        DailyRecordBackfiller backfiller,
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null)
@@ -51,6 +55,8 @@ public class AiAnalysisHostedService : BackgroundService
         _recordQuery = recordQuery;
         _storageBackend = storageBackend;
         _systemSettingsStore = systemSettingsStore;
+        _batchRuns = batchRuns;
+        _backfiller = backfiller;
         _suppressionStore = suppressionStore;
         _injectedAiService = aiService;
         _lifetime = lifetime;
@@ -113,6 +119,11 @@ public class AiAnalysisHostedService : BackgroundService
 
         if (!options.AiEnabled) return;
 
+        // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
+        // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
+        // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
+        if (!_backfiller.Progress.Completed) return;
+
         // 必須在執行窗口內
         if (!ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)) return;
 
@@ -129,18 +140,15 @@ public class AiAnalysisHostedService : BackgroundService
     /// </summary>
     public async Task<bool> TriggerRunAsync(bool forceRerun = false, string trigger = "schedule", CancellationToken externalCt = default)
     {
-        if (forceRerun)
+        if (forceRerun && _runState.IsRunning)
         {
-            // 執行順序固定：優雅停止當前 AI 執行 → 整批重標 → 重新開始。
-            // 這個順序是用來消滅競態的（正在分析的那筆若在重標後完成，
-            // AttachAiResult 會把重標洗掉，變成「用舊規則的結果卻標成已完成」）。
-            if (_runState.IsRunning)
-            {
-                _runState.TryCancel();
-                await _runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
-            }
-
-            BatchResetAiPending();
+            // 執行順序固定：優雅停止當前 AI 執行 → 取得 gate → 整批重標 → 重新開始。
+            // 停止在前是消滅競態（正在分析的那筆若在重標後完成，AttachAiResult 會把重標
+            // 洗掉，變成「用舊規則的結果卻標成已完成」）；gate 在重標**之前**是避免副作用
+            // 先落地（體檢輪）：若先重標再搶 gate 而被別的觸發搶走，API 回「已有執行進行中」，
+            // 但整庫已被重標、幾十萬列的重跑已成定局。
+            _runState.TryCancel();
+            await _runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
         }
 
         var totalPending = _recordQuery.CountPendingAi();
@@ -149,22 +157,45 @@ public class AiAnalysisHostedService : BackgroundService
             return false;
         }
 
+        if (forceRerun)
+        {
+            // gate 已在手上才重標；重標後的實際待補總數由處理迴圈每批的 CountPendingAi 更新進度
+            BatchResetAiPending();
+        }
+
         var startSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _ = Task.Run(async () =>
         {
             startSignal.TrySetResult(true);
             bool success = true;
+            bool stopped = false;
             string? failureMessage = null;
+            var counters = new LoopCounters();
+
+            // AI 執行也進執行紀錄（批次D 定案）：逐筆視角可辨識「AI 分析」作業與其件數；
+            // 主機×日總表以 JobType 排除它（RunMonitorService）。
+            var batchRun = new BatchRun
+            {
+                HostName = Environment.MachineName,
+                StartedAt = DateTime.Now,
+                AppVersion = typeof(AiAnalysisHostedService).Assembly.GetName().Version?.ToString() ?? "",
+                Args = forceRerun ? "ai --force-rerun" : "ai",
+                Trigger = trigger,
+                JobType = BatchRun.JobTypeAi
+            };
+            try { batchRun.RunId = _batchRuns.StartRun(batchRun); }
+            catch (Exception ex) { Log.Warn(ex, "AI 執行紀錄建立失敗（不影響執行）"); }
 
             try
             {
-                await ExecuteProcessingLoopAsync(runCts.Token);
+                await ExecuteProcessingLoopAsync(runCts.Token, counters);
             }
             catch (OperationCanceledException)
             {
                 failureMessage = "執行已停止（優雅停止）。";
                 success = false;
+                stopped = true;
             }
             catch (Exception ex)
             {
@@ -178,6 +209,18 @@ public class AiAnalysisHostedService : BackgroundService
                 // AI 補寫改變了紀錄內容，儀表板／報表快取要失效（批次F）——背景執行不走
                 // HTTP 管線，不會被那條中介軟體涵蓋。
                 _dataVersion.Bump();
+
+                if (batchRun.RunId != 0)
+                {
+                    batchRun.FinishedAt = DateTime.Now;
+                    batchRun.ExitCode = success ? 0 : 1;
+                    batchRun.Stopped = stopped;
+                    batchRun.DaysAnalyzed = counters.Done;
+                    batchRun.AiCalls = counters.Done;
+                    batchRun.AiFailures = counters.Failed;
+                    try { _batchRuns.FinishRun(batchRun); }
+                    catch (Exception ex) { Log.Warn(ex, "AI 執行紀錄收尾失敗（不影響結果）"); }
+                }
             }
         });
 
@@ -192,10 +235,25 @@ public class AiAnalysisHostedService : BackgroundService
     /// 4. 依 AiConcurrency 平行處理，同主機序列（按主機分片、片內序列、片間平行）
     /// 5. 失敗維持 ai_pending = true，不中斷整批
     /// </summary>
-    internal async Task ExecuteProcessingLoopAsync(CancellationToken ct)
+    /// <summary>處理迴圈的成果計數（執行紀錄用：完成件數／失敗件數）</summary>
+    internal sealed class LoopCounters
+    {
+        public int Done;
+        public int Failed;
+    }
+
+    internal Task ExecuteProcessingLoopAsync(CancellationToken ct) => ExecuteProcessingLoopAsync(ct, new LoopCounters());
+
+    internal async Task ExecuteProcessingLoopAsync(CancellationToken ct, LoopCounters counters)
     {
         int currentQueryBatchSize = BatchSize;
         int totalDone = 0;
+
+        // 本輪已嘗試過的主機日（體檢輪）：QueryPendingAi 固定日期新→舊，失敗紀錄保持
+        // pending 且永遠排最前——不記住的話，每撈一批都會把同一批失敗者原樣重試，
+        // 積壓有 N 筆時永久失敗的 k 筆會被打 O(N/50 × k) 次。跨輪的重試由下次輪詢
+        // 重開一輪自然發生，這裡只擋「同一輪內的空轉」。
+        var attempted = new HashSet<(long HostId, string Host, DateTime Date)>();
 
         while (!ct.IsCancellationRequested)
         {
@@ -217,9 +275,11 @@ public class AiAnalysisHostedService : BackgroundService
             bool isSchedulerRunning = _schedulerRunState.IsRunning;
             var cutoff = DateTime.Today.AddDays(-1); // 昨天
 
-            var eligible = isSchedulerRunning
-                ? rawPending.Where(r => r.Date.Date < cutoff).ToList()
-                : rawPending;
+            var eligible = (isSchedulerRunning
+                    ? rawPending.Where(r => r.Date.Date < cutoff)
+                    : rawPending.AsEnumerable())
+                .Where(r => !attempted.Contains((r.HostId, r.Host, r.Date.Date)))
+                .ToList();
 
             if (eligible.Count == 0)
             {
@@ -230,8 +290,9 @@ public class AiAnalysisHostedService : BackgroundService
                     continue;
                 }
 
-                // 全庫剩餘待補皆在取數窗口內，本輪暫停等待取數完成落地
-                Log.Info("目前待補紀錄皆在取數排程當前處理範圍內（今天/昨天），本輪 AI 分析暫停等待資料落地。");
+                // 剩餘待補要嘛在取數當前處理範圍內、要嘛本輪已嘗試過（失敗保持待補）——
+                // 本輪到此為止，下次輪詢再重試
+                Log.Info("剩餘待補（{Count} 筆）皆為取數處理範圍內或本輪已嘗試失敗者，本輪 AI 分析結束。", rawPending.Count);
                 break;
             }
 
@@ -268,22 +329,39 @@ public class AiAnalysisHostedService : BackgroundService
                     foreach (var record in group.OrderByDescending(r => r.Date))
                     {
                         if (token.IsCancellationRequested) break;
+                        lock (attempted) { attempted.Add((record.HostId, record.Host, record.Date.Date)); }
 
                         try
                         {
-                            var outcome = await analysisService.RetryAiAsync(record, TrendWindowDays, token);
+                            // 補跑輸入必須是**完整紀錄**（體檢輪）：QueryPendingAi 是不讀 ContentJson
+                            // 的輕量投影——TrendAlerts／AuditEventCount 沒填、CorrelationAlerts 是
+                            // "(lightweight)" 佔位字串，直接餵 RetryAiAsync 會把佔位字串當成
+                            // 高嚴重度關聯訊號組進 prompt、趨勢警示整批消失。輕量投影只做
+                            // 佇列與排序，進到要花一次 AI 呼叫的這裡，多讀一列完整資料不算成本。
+                            var full = _recordQuery.GetOne(new[] { hostKey }, record.Date);
+                            if (full == null || full.DetailPruned)
+                            {
+                                // 紀錄已消失（保留期清理）或詳情已清（AI 輸入無法重建）：跳過，
+                                // 查詢端已排除 detail_pruned，這裡是取到殘根時的防禦
+                                Log.Warn("主機 {Host} {Date:yyyy-MM-dd} 的完整紀錄不可得（已清理），跳過 AI 補跑", record.Host, record.Date);
+                                continue;
+                            }
+
+                            var outcome = await analysisService.RetryAiAsync(full, TrendWindowDays, token);
 
                             // AI 呼叫成功：寫回結果並清 ai_pending
                             if (outcome.AiAnalyzed)
                             {
                                 hostStore.AttachAiResult(record.Date, outcome);
                                 Interlocked.Increment(ref totalDone);
+                                Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);
                                 _runState.ReportProgress(totalDone, _runState.ProgressTotal, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
                             }
                             else
                             {
                                 // AI 未成功：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批
+                                Interlocked.Increment(ref counters.Failed);
                                 Log.Warn("主機 {Host} {Date:yyyy-MM-dd} AI 呼叫未成功（{Headline}），維持待補",
                                     record.Host, record.Date, outcome.Headline);
                             }
@@ -295,6 +373,7 @@ public class AiAnalysisHostedService : BackgroundService
                         catch (Exception ex)
                         {
                             // AI 呼叫失敗：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批。
+                            Interlocked.Increment(ref counters.Failed);
                             Log.Warn(ex, "主機 {Host} {Date:yyyy-MM-dd} AI 分析失敗，維持待補：{Msg}",
                                 record.Host, record.Date, ex.Message);
                         }
@@ -308,7 +387,8 @@ public class AiAnalysisHostedService : BackgroundService
 
             if (ct.IsCancellationRequested) break;
 
-            // 失敗防線：若本批候選處理後成功數為 0，且待補總數未變化，避免無限死循環，暫停本輪等待下次輪詢
+            // 失敗防線（與 attempted 集合互補）：本批全滅且總數未動時直接結束本輪，
+            // 不必等 attempted 把候選濾乾才停
             var remainingPending = _recordQuery.CountPendingAi();
             if (remainingPending == pendingTotal && batchSuccessCount == 0)
             {

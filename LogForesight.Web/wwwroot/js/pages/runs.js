@@ -298,6 +298,8 @@ let runListSort = { key: 'startedAt', dir: 'desc' };
 
 const RUN_LIST_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, render: r => r.hostName },
+    // 作業類型（批次D）：取數分析與 AI 分析的執行同列在這張表，一眼分得出來
+    { title: '作業', sortKey: 'jobTypeText', sortValue: r => r.jobTypeText, render: r => r.jobTypeText },
     { title: '狀態', sortKey: 'status', sortValue: r => r.status, render: r => statusBadgeCell(r.status) },
     { title: '開始時間', sortKey: 'startedAt', sortDefaultDir: 'desc', sortValue: r => r.startedAt, render: r => formatDateTime(r.startedAt) },
     {
@@ -873,13 +875,11 @@ function applyAiScheduleStatus(status) {
     wasAiScheduleRunning = status.isRunning;
 }
 
-// netiq-ai（docs/archive/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 還在背景消化白話摘要的
-// 第二階段——統計與紀錄早就寫入了，這裡純粹是白話摘要/風險再判定的補寫進度，用詞刻意
-// 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
+// 取數執行只剩本機與 NetIQ 兩條軌（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
 const PROGRESS_PHASE_LABEL = {
-    local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中'
+    local: '本機分析', netiq: 'NetIQ 機房分析'
 };
-const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件' };
+const PROGRESS_PHASE_UNIT = {};
 
 /**
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
@@ -917,10 +917,8 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
  * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
  * （docs/archive/FEEDBACK-8-PLAN.md #2）
  *
- * 子進度（回饋十四輪 UI-6）：netiq-ai 這條 AI 背景消化軌與主進度
- * （netiq，搜尋仍在往下一台主機推進）可能同時在跑——兩者原本共用一組欄位，後回報的會
- * 直接蓋掉先回報的，畫面症狀是「進度卡住不動」。SchedulerRunState 已把兩者分成獨立欄位，
- * 這裡只需各自畫一條：主進度在上（沿用既有邏輯不變），子進度在下、只在有值時才顯示。
+ * （原「子進度」netiq-ai 軌已隨 AI 拆離移除：取數執行不再含 AI 段，
+ * AI 補寫進度改在 AI 分析狀態卡自己那條進度條。）
  *
  * 本機進度（回饋十七輪批次E）：本機與 NetIQ 改並行執行後，本機也是獨立一條軌，畫在主進度
  * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「準備中」，
@@ -933,9 +931,6 @@ function renderScheduleProgress(status) {
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
     const text = document.getElementById('schedule-progress-text');
-    const subWrap = document.getElementById('schedule-subprogress-wrap');
-    const subBar = document.getElementById('schedule-subprogress-bar');
-    const subText = document.getElementById('schedule-subprogress-text');
 
     updateProgressBar(
         { wrapEl: localWrap, barEl: localBar, textEl: localText },
@@ -953,15 +948,6 @@ function renderScheduleProgress(status) {
         status.progressTotal,
         PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase,
         PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日'
-    );
-
-    updateProgressBar(
-        { wrapEl: subWrap, barEl: subBar, textEl: subText },
-        status.isRunning && !!status.subProgressPhase,
-        status.subProgressDone,
-        status.subProgressTotal,
-        PROGRESS_PHASE_LABEL[status.subProgressPhase] ?? status.subProgressPhase,
-        PROGRESS_PHASE_UNIT[status.subProgressPhase] ?? '主機日'
     );
 }
 

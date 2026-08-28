@@ -791,10 +791,13 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var sw = Stopwatch.StartNew();
         using var ctx = _contextFactory();
 
-        // 低風險且從未跑過 AI 的日子不標——那是「本來就不需要 AI」，
-        // 標了會讓補跑把整庫撿回來跑一遍（同 LogAnalysisService 決定 AiPending 的判準）
+        // 低風險且從未跑過 AI 的日子不標——那是「本來就不需要 AI」，標了會讓補跑把整庫
+        // 撿回來跑一遍。與 LogAnalysisService.ApplyOutcome 的後置判準
+        // （AiPending = !AiAnalyzed && 非低風險）同源；「要不要呼叫 AI」的前置判準另含
+        // 低風險尾巴篩選，但那種日子跑過 AI 就 AiAnalyzed=true、已被本條涵蓋。
+        // detail_pruned 的列同樣不標：詳情已清、AI 輸入無法重建（同 WhereAiPending）。
         var affected = ctx.DailyRecords
-            .Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low)
+            .Where(r => (r.AiAnalyzed || r.RiskLevel != RiskLevels.Low) && !r.DetailPruned)
             .ExecuteUpdate(s => s.SetProperty(r => r.AiPending, true));
 
         Log.Info("[SQL] 強制重新分析：整批重標 ai_pending = true，共 {Count} 列、{Ms}ms",
@@ -813,9 +816,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return count;
     }
 
-    /// <summary>待補條件單點化（批次C）：全域 ai_pending = true 條件僅定義於此處</summary>
+    /// <summary>待補條件單點化（批次C）：全域 ai_pending = true 條件僅定義於此處。
+    /// **排除 detail_pruned（體檢輪）**：詳情已清的列 ContentJson 是空字串，AI 輸入無法重建，
+    /// 掛在待補集合裡只會被反覆撿起又失敗（或以殘根做出垃圾分析）。</summary>
     private static IQueryable<DailyRecordRow> WhereAiPending(IQueryable<DailyRecordRow> query) =>
-        query.Where(r => r.AiPending);
+        query.Where(r => r.AiPending && !r.DetailPruned);
 
     private static Dictionary<long, List<LogIssueSignature>> LoadLightweightIssues(LfDbContext ctx, HashSet<long> recordIds)
     {

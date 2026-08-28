@@ -437,7 +437,7 @@ public class DayHandlingCommandService
             TotalIssues = progress?.Total ?? 0,
             ClosedIssues = progress?.Closed ?? 0,
             HandlerId = handlerId,
-            HandlerName = handler?.DisplayName,
+            HandlerName = handler == null ? null : _displayNameService.Of(handler.DisplayName),
             HandlerAccount = handler?.Account,
             DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
             IsOverdue = handling?.DueDate.HasValue == true &&

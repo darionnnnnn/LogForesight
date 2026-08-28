@@ -9,12 +9,14 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class DailyRecordBackfillHostedService : BackgroundService
 {
+    private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly DailyRecordBackfiller _backfiller;
 
-    public DailyRecordBackfillHostedService(DailyRecordBackfiller backfiller)
+    public DailyRecordBackfillHostedService(DailyRecordBackfiller backfiller, DataVersionStamp dataVersion)
     {
+        _dataVersion = dataVersion;
         _backfiller = backfiller;
     }
 
@@ -35,6 +37,8 @@ public class DailyRecordBackfillHostedService : BackgroundService
             try
             {
                 _backfiller.Run(stoppingToken);
+                // 回填改寫了儀表板聚合的抽出欄，快取要失效（體檢輪）：背景服務不走 HTTP 管線
+                _dataVersion.Bump();
             }
             catch (Exception ex)
             {

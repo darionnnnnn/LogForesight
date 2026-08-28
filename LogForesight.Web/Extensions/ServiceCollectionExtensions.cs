@@ -370,6 +370,8 @@ public static class ServiceCollectionExtensions
                 storageBackend,
                 systemSettingsStore,
                 sp.GetRequiredService<DataVersionStamp>(),
+                sp.GetRequiredService<BatchRunStore>(),
+                sp.GetRequiredService<DailyRecordBackfiller>(),
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime);

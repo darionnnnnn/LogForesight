@@ -591,42 +591,51 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
     把 prompt 對半切的做法則不採用：跨訊號關聯（如新服務安裝＋服務崩潰＋帳號建立）
     會被切斷，還要合併兩份可能矛盾的結論。
 
-### NetIQ 搜尋與 AI 判讀脫鉤（兩階段模型）
+### NetIQ 取數與 AI 判讀脫鉤（兩個獨立排程）
 
-多台 Sentinel 併行搜尋時，若每個主機日都要等 AI 判讀完才進下一個，AI 呼叫的延遲會直接拖慢
-整條搜尋主線。`NetiqPipelineService` 因此把每個主機日拆成兩段：
+取數與 AI 判讀是兩個完全獨立的排程，各有自己的啟用開關與執行窗口，互不互斥、可同時執行：
 
-1. **統計段**（`LogAnalysisService.BuildStatisticalRecordAsync`）：聚合、規則分類、趨勢／慢速
-   趨勢／關聯比對全部是確定性計算，算完立刻寫入紀錄，不等 AI。需要 AI 的日子先寫入暫代內容
-   （Headline/Summary 顯示「統計已完成，AI 分析排隊中」），並標記 `AiPending = true`。
-2. **AI 段**（`LogAnalysisService.CompleteAiAsync`）：前置掃描＋主分析＋深入分析報告，交給
-   `AiFollowupQueue`（bounded channel）背景消費——搜尋主線把工作丟進佇列就繼續處理下一個
-   主機日，不等待。單一背景消費者依序處理，`AttachAiResult` 完成後覆寫暫代欄位（含抽出欄
-   `RiskLevel` 同步）並把 `AiPending` 改回 `false`。
+1. **取數排程**（`SchedulerHostedService` → `NetiqPipelineService`）：聚合、規則分類、趨勢／
+   慢速趨勢／關聯比對全部是確定性計算（`LogAnalysisService.BuildStatisticalRecordAsync`），
+   算完立刻寫入紀錄。需要 AI 的日子先寫入暫代內容（Headline/Summary 顯示「統計已完成，
+   AI 分析排隊中」），並標記 `ai_pending = true`（`lf_daily_records` 的真實欄位，
+   全域待補查詢與強制重跑都以欄位為唯一事實來源）。取數排程**不執行任何 AI 呼叫**，
+   也不會因 AI 慢而被拖住。
+2. **AI 分析排程**（`AiAnalysisHostedService`）：常駐輪詢（60 秒），啟用且在自己的執行窗口內、
+   存量校正回填已完成、且有待補資料時自動開跑。以 `QueryPendingAi` 全庫掃描
+   `ai_pending = true` 的主機日——**不設回望天數上限**、依日期新→舊處理；
+   完整性閘門：取數排程執行中時跳過今天與昨天的待補（取數正在寫入的必然是最近日期）。
+   併發依設定 `AiConcurrency`（1~8）——按主機分片、片內序列、片間平行
+   （同主機的隔日分析引用前一天摘要；前一天尚未分析時 best-effort 略過）。
+   處理單筆時先以 `GetOne` 載入**完整紀錄**再呼叫 `RetryAiAsync`
+   （待補查詢是不讀 ContentJson 的輕量投影，不能直接當 AI 輸入），
+   `AttachAiResult` 完成後覆寫暫代欄位（含抽出欄 `RiskLevel` 同步）並把 `ai_pending` 清回 `false`。
 
-**`AiPending` 三態**（`DailyAnalysisRecord`）：
+**`AiPending` 三態**（`DailyAnalysisRecord`／`lf_daily_records.ai_pending`）：
 - `AiAnalyzed=false` 且 `AiPending=false`：AI 判定不需要（低風險日）或已嘗試但失敗——既有的
   「統計模式紀錄」語意，行為不變。
-- `AiPending=true`：統計段已寫入，AI 段還在排隊或執行中——新增的第三態，畫面顯示「AI 分析中」
-  徽章，與「統計模式（AI 未分析）」區分。
-- `AiAnalyzed=true`：AI 段已完成並覆寫定案內容。
+- `AiPending=true`：統計已寫入，等待 AI 分析排程撿取——畫面顯示「AI 分析中」徽章，
+  與「統計模式（AI 未分析）」區分。
+- `AiAnalyzed=true`：AI 已完成並覆寫定案內容。
+
+**強制重新分析**（排程作業頁）：把全庫「該有 AI」的紀錄（`ai_analyzed=true` 或風險非低，
+排除 `detail_pruned`）整批重標 `ai_pending=true`——SQL 端整批 UPDATE，**不清空既有 AI 文字**，
+舊結論保留顯示、補寫時逐筆覆蓋。執行順序固定「停止當前 AI 執行 → 取得執行 gate → 整批重標
+→ 重新開始」，避免競態與「搶不到 gate 但整庫已重標」的半套副作用。
 
 **深析報告時機**：不需要 AI 的日子（低風險或 AI 全域關閉）統計段當下就直接產出報告；需要
-AI 的日子要等 AI 段完成才產出（暫代紀錄的 `ReportFile` 為 `null`），深析報告的內容因此只會
-在 `CompleteAiAsync` 完成後出現，不會有「報告先出但沒有 AI 內容」的中間態。
+AI 的日子要等 AI 補寫完成才產出（暫代紀錄的 `ReportFile` 為 `null`）。
 
-**取消與補跑語意**：執行中途取消時，`AiFollowupQueue` 裡尚未處理的工作記為
-`AiAbandoned`（`NetiqPipelineResult` 的統計數字之一），已經寫入的統計紀錄維持
-`AiPending=true`，成為下次執行前的「孤兒」。下次執行時，`NetiqPipelineService` 除了掃描
-「缺漏日」，也會獨立掃描 lookback 窗口內既有的 `AiPending=true` 紀錄（與主機當天是否缺漏
-無關），包成補跑型工作（`LogAnalysisService.RetryAiAsync`）排進同一個佇列的尾端，優先序
-低於當日主線。補跑由既有紀錄（`TopIssues`/`TrendAlerts`/`CorrelationAlerts` 皆已持久化）
-重建主分析輸入，但前置掃描與深入分析報告刻意不補——兩者需要原始 log，取消當下已經回不去了。
+**取消與續跑語意**：AI 執行被停止（手動、窗口 End、站台關閉）時不需要任何補救——進度
+持久化在每列的 `ai_pending` 上（完成一筆清一筆），殘餘的待補就是下次的續點，已完成的
+不會重跑。AI 呼叫失敗的單筆維持 `ai_pending=true` 由之後的輪次重試（單輪內不重複嘗試
+同一筆）。補跑由既有紀錄重建主分析輸入，但前置掃描與深入分析報告刻意不補——兩者需要
+原始 log，事後已經回不去了；`detail_pruned`（詳情已清）的列同樣不在待補範圍。
 
-**適用範圍**：兩階段脫鉤只在 NetIQ pipeline 生效。本機分析路徑（`AnalyzeDayAsync`）評估後
-決定暫不比照拆分——單機序列執行、多個主機日之間本來就沒有並行搜尋主線可保護，脫鉤的收益
-低、佇列歸屬權（誰在程式結束前把佇列排空）的侵入性風險偏高，詳細評估見
+**適用範圍**：本機分析路徑（`AnalyzeDayAsync`）仍是統計＋AI 一體的組合呼叫——單機序列
+執行、多個主機日之間沒有並行搜尋主線可保護，拆分收益低，詳細評估見
 [docs/archive/FEEDBACK-12-PLAN.md](docs/archive/FEEDBACK-12-PLAN.md) §3.9。
+本機的 AI 呼叫與 AI 分析排程共用 `AIService` 內部的序列化出口。
 
 ---
 

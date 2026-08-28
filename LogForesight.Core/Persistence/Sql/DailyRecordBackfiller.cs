@@ -94,7 +94,11 @@ public sealed class DailyRecordBackfiller
             if (record == null)
             {
                 // 解析失敗：標成已回填避免卡住整個回填流程，欄位維持預設值——同
-                // TopIssueBackfiller.ParseIssues 的既有取捨（誠實接受這一列補不齊）
+                // TopIssueBackfiller.ParseIssues 的既有取捨（誠實接受這一列補不齊）。
+                // 詳情已清（detail_pruned）的列 ContentJson 本來就是空字串、必然走到這裡：
+                // 順手把漂移的 ai_pending 清掉（體檢輪）——AI 輸入無法重建，掛著只會
+                // 讓待補計數虛高（查詢端已排除 detail_pruned，這裡清欄位讓數字誠實）。
+                if (row.DetailPruned) row.AiPending = false;
                 row.ExtractVersion = CurrentVersion;
                 continue;
             }

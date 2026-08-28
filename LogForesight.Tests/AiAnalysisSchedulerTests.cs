@@ -25,6 +25,18 @@ public class AiAnalysisSchedulerTests : IDisposable
     private readonly FakeAiService _ai = new();
     private readonly FakeSuppressionStore _suppressions = new();
 
+    /// <summary>回填器（體檢輪）：AI 排程的自動觸發要等存量校正回填完成，測試先跑一次
+    /// （空庫零候選、立即 Completed）讓閘門放行</summary>
+    private DailyRecordBackfiller CompletedBackfiller()
+    {
+        var backfiller = new DailyRecordBackfiller(_contextFactory);
+        backfiller.Run(CancellationToken.None);
+        return backfiller;
+    }
+
+    private BatchRunStore BatchRuns() =>
+        new(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"));
+
     public AiAnalysisSchedulerTests()
     {
         _dir = Path.Combine(Path.GetTempPath(), "lf-ai-sched-test-" + Guid.NewGuid());
@@ -73,6 +85,8 @@ public class AiAnalysisSchedulerTests : IDisposable
             _backend,
             _settingsStore,
             new DataVersionStamp(),
+            BatchRuns(),
+            CompletedBackfiller(),
             _suppressions,
             _ai);
 
@@ -343,6 +357,45 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(hasOverlap, "AiConcurrency=2 時不同主機之間應有重疊的執行區間");
     }
 
+    /// <summary>
+    /// 補跑輸入必須是完整紀錄（體檢輪回歸）：QueryPendingAi 是輕量投影——CorrelationAlerts
+    /// 是 "(lightweight)" 佔位字串、TrendAlerts 沒填。若迴圈直接拿投影餵 RetryAiAsync，
+    /// prompt 會出現一條假的高嚴重度「(lightweight)」關聯、真實關聯訊號整批消失。
+    /// 這條測試釘住「處理前先 GetOne 完整載入」的契約。
+    /// </summary>
+    [Fact]
+    public async Task 補跑輸入為完整紀錄_prompt含真實關聯訊號且不含輕量佔位字串()
+    {
+        var (service, _, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = true });
+        var store = _backend.RecordStore();
+
+        var record = CreateRecord(1, "HOST-CORR", DateTime.Today.AddDays(-3), pending: true);
+        record.CorrelationAlerts = new List<string> { "同時段異常登入與服務安裝的關聯訊號" };
+        store.Append(record);
+
+        var prompts = new List<string>();
+        var defaultBehavior = _ai.Behavior;
+        _ai.Behavior = (prompt, ct) =>
+        {
+            lock (prompts) { prompts.Add(prompt); }
+            return Task.FromResult(new AiResponse { Success = true, Content = _ai.NextContent });
+        };
+
+        try
+        {
+            await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            _ai.Behavior = defaultBehavior;
+        }
+
+        Assert.NotEmpty(prompts);
+        var all = string.Join(Environment.NewLine, prompts);
+        Assert.Contains("同時段異常登入與服務安裝的關聯訊號", all);
+        Assert.DoesNotContain("(lightweight)", all);
+    }
+
     [Fact]
     public async Task 情境6_失敗不中斷_單筆AI失敗維持待補其餘紀錄仍完成()
     {
@@ -453,7 +506,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         // 8c. 手動觸發不受窗口限制
         var manualRunState = new AiAnalysisRunState();
         var manualService = new AiAnalysisHostedService(
-            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), _suppressions, _ai);
+            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), _suppressions, _ai);
 
         manualRunState.TryBeginRun("manual:admin", 10, out _);
         await manualService.TickAsync();

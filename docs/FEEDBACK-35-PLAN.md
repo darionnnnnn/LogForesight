@@ -1,6 +1,6 @@
 # LogForesight 回饋第三十五輪規劃
 
-> 狀態：實作完成，待體檢（**體檢須換模型**）
+> 狀態：全案完成（體檢輪已過，見文末）
 > 基準：dev@0c7b89e（3034 綠）
 > 來源：使用者回饋 5 項＋討論新增 2 項（儀表板/報表快取、執行總表全部＋分頁）
 > 實作方式：委派 agy 逐段實作，Claude 寫規格與獨立驗收。
@@ -487,3 +487,57 @@ ContentJson、沒有同步抽出欄（`EfAnalysisRecordStore` 該處只同步了
 
 - 記憶體實際改善數字（E1/E3/E4）需正式環境跑一晚才有結論。
 - AI 獨立排程的實跑吞吐（含併發>1）僅有單元測試與本機 UI 驗證，未接真實地端 LLM 跑量。
+
+## 體檢輪修正（體檢方：Claude Fable 5）
+
+體檢方式：兩個獨立 Explore 各審一次全 diff（程式碼獵 bug／文件與規劃比對）＋體檢方親讀
+最後手改段（D2 迴圈、F 快取）＋自跑全量測試。共確認 10 個真 bug、3 處 B2 漏網出口、
+1 組死碼鏈與整批文件缺漏，全部修畢。逐項：
+
+1. **AI 補跑吃輕量投影（高）**：D2 迴圈直接把 `QueryPendingAi` 的投影餵 `RetryAiAsync`——
+   `CorrelationAlerts` 是 `"(lightweight)"` 佔位字串（會被當成高嚴重度關聯組進 prompt）、
+   `TrendAlerts`／`AuditEventCount` 全空。跨段產出鏈斷點：批次C 的佔位設計是佇列用，D2 誤當
+   完整輸入。修：處理前 `GetOne` 完整載入；補回歸測試並以突變驗證（退回投影即紅）。
+2. **測試替身回完整紀錄遮蔽上一條**：兩個 fake 的 `QueryPendingAi` 改為與正式同形狀的輕量投影。
+3. **儀表板快取鍵漏 ViewAudit 維度（越權，高）**：`RecentLoginFailures` 只有稽核權限者會填，
+   可見主機相同、權限不同的帳號會共用快取。修：鍵加 `audit:{bool}` 維度。
+4. **E1 欄位過濾關掉 probe 診斷（高）**：`keepFields:null` 逃生口零呼叫端，probe 的
+   「全欄位聯集」功能靜默失效。修：`SentinelSearchRequest.RawFields` 旗標，probe 26 個呼叫點全帶。
+5. **取數把 AI 積壓當缺漏日重抓（高）**：`NeedsBackfill` 規則 2（AiPending→補）在拆分後
+   讓「只補跑失敗或未執行」對整個積壓重打 Sentinel、重寫紀錄再標回待補，與 AI 排程互相打架。
+   修：移除該規則（待補歸 AI 排程；「AI 已定案失敗」的存量仍由規則 3 涵蓋），
+   六個既有契約測試依新語意改寫。
+6. **DetailPruned 舊列永久空轉**：詳情已清的列 ContentJson 為空，回填器解析失敗只推版本、
+   pending 漂移保留；無回望上限的掃描會反覆撿起。修：`WhereAiPending`／`MarkAllForAiRerun`
+   排除 `detail_pruned`；回填器解析失敗且已清詳情時順手清 pending。
+7. **失敗紀錄單輪內反覆重試**：新→舊排序讓失敗者永遠排最前，O(N/50×k) 次 AI 呼叫。
+   修：單輪 attempted 集合，同輪不重試同一筆（跨輪重試由下次輪詢自然發生）。
+8. **強制重跑先重標後搶 gate**：被搶走時整庫已重標、API 卻回「已有執行」。修：順序改為
+   停止→取得 gate→重標→開始。
+9. **版本戳漏五個背景服務**：回填器／遷移器／種子服務改寫儀表板聚合欄位但不 bump。修：五處補。
+10. **AI 執行不寫執行紀錄（PLAN 定案未做）**：補 `BatchRun.JobType`（"ai"）＋AI 排程
+    StartRun/FinishRun（含完成／失敗件數）；主機×日總表排除 JobType=ai（避免幽靈主機），
+    逐筆視角加「作業」欄。
+11. **B2 三處漏網出口**：`DayHandlingCommandService.HandlerName`、
+    `IssueHandlingCommandService.ExistingHandlerName`／`GetHandlerCandidates` 補套顯示規則。
+12. **errors/list 天數上限仍寫死 90**：選「全部」時三頁籤口徑靜默不一致。修：與 summary 共用
+    `max(90, RunLogRetentionDays)`。
+13. **子進度鏈成孤兒死碼**：D1 拆除後 `netiq-ai`／`SubProgress*` 整條鏈（state／DTO／前端子進度條）
+    無任何生產端。修：整組移除；全站告示 `/api/run-activity` 改為取數閒置時輪到 AI 排程
+    （優先序 取數 > AI，同時補上 PLAN「LatestActivity 併 AI」的定案）。
+14. **AI 自動開跑加回填閘門**：存量校正完成前不自動開跑（未校正的 pending 大量是已完成舊列）。
+15. 次要：`SetLatestMessage` 死方法移除、`CancelAi` 錯誤訊息中性化、`MaxDays` 註解與行為對齊、
+    強制重跑 UI 為獨立按鈕（實作變體，行為等價，此處回填說明）。
+
+**未修、維持遞延**（誠實記錄）：`IssueRankingCache` 兩缺口（外層 SummaryCache 已縮小影響，
+BACKLOG 註記）；取數 run 詳情的 AiCalls 對機房路徑恆 0（AI 件數改看 JobType=ai 的執行列，
+屬新分工的真實狀態）；執行總表分頁後 `TotalHosts` 隨頁視窗略有語意差（實務被主機表聯集蓋過）。
+
+**文件輪**：DETECTION-SPEC 兩階段節整段改寫為「兩個獨立排程」；WEB-SPEC 六處
+（子進度／套用點／NeedsBackfill／執行紀錄 JobType／API 清單／徽章）；DB-SPEC 的 `ai_pending`
+自「僅存於 ContentJson」修正為真實欄位＋事實來源單點化；BACKLOG 移除「儀表板刻意不快取」、
+改寫背壓敘述、註記內層快取缺口；CLAUDE.md 測試基線更新；HelpContent 六檔
+（兩份 scheduler 整節重寫＋AI 排程操作說明新增、記錄詳情三態、權限敘述、設定頁補
+「使用者名稱顯示規則」一節）；Settings popover 補全站套用範圍說明。
+
+測試：3068 → 體檢輪後全量綠（最終數字見合併 commit）。

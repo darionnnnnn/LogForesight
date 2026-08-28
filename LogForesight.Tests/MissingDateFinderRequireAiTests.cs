@@ -42,28 +42,33 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         }).ToList();
 
     [Fact]
-    public void 新模式下_已有紀錄但AI未成功分析的主機日會被判定為待跑()
+    public void 新模式下_AI待補的主機日不再由取數補跑_AI已定案失敗的仍會()
     {
         var store = new EfAnalysisRecordStore(_fx.NewContext, "test-host");
-        var targetDate = DateTime.Today.AddDays(-1);
+        var pendingDate = DateTime.Today.AddDays(-1);
+        var failedDate = DateTime.Today.AddDays(-2);
 
-        // 寫入一筆已有紀錄但 AI 未成功（AiAnalyzed=false, AiPending=true）的主機日
-        var record = new DailyAnalysisRecord
+        // AiPending=true：待補由獨立 AI 排程消化（QueryPendingAi 看得到），取數側不重抓
+        // ——體檢輪語意變更：取數重抓待補會與 AI 排程互相打架、重打 Sentinel 白做工
+        store.Append(new DailyAnalysisRecord
         {
-            Date = targetDate,
-            HostId = 1,
-            Host = "test-host",
-            RiskLevel = "高",
-            AiAnalyzed = false,
-            AiPending = true,
+            Date = pendingDate, HostId = 1, Host = "test-host", RiskLevel = "高",
+            AiAnalyzed = false, AiPending = true,
+            Headline = "統計已完成，AI 分析排隊中"
+        });
+        // AiPending=false 且 AiAnalyzed=false 且非低風險：AI 已定案失敗的存量，取數仍撿
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = failedDate, HostId = 1, Host = "test-host", RiskLevel = "高",
+            AiAnalyzed = false, AiPending = false,
             Headline = "今日分析摘要暫缺（AI 服務未回應）"
-        };
-        store.Append(record);
+        });
 
-        // 驗證新模式（requireAi: true）下判定為待跑
         var missing = MissingDateFinder.Find(store, lookbackDays: 3, requireAi: true);
 
-        Assert.Contains(targetDate, missing);
+        Assert.DoesNotContain(pendingDate, missing);   // 待補歸 AI 排程
+        Assert.Contains(failedDate, missing);           // 終局失敗歸取數重跑
+        Assert.Equal(1, store.CountPendingAi());        // AI 排程看得到那筆待補
     }
 
     [Fact]
@@ -156,9 +161,11 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         Assert.True(record.AiPending);
         Assert.Contains("今日分析摘要暫缺", record.Headline);
 
-        // 3. 驗證後續執行在新模式下能辨識該主機日為待跑
+        // 3. 待補的辨識者是 AI 分析排程（QueryPendingAi），不是取數的 MissingDateFinder
+        //    ——取數重抓待補會與 AI 排程打架（體檢輪語意變更）
         var missingDates = MissingDateFinder.Find(store, lookbackDays: 3, requireAi: true);
-        Assert.Contains(yesterday, missingDates);
+        Assert.DoesNotContain(yesterday, missingDates);
+        Assert.Equal(1, store.CountPendingAi());
 
         // 4. 模擬 AI 服務恢復上線，以 RetryAiAsync 補跑
         ai.Behavior = null;
@@ -201,7 +208,8 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
             AiPending = false
         });
 
-        // Host 2: 已有紀錄但 AI 失敗
+        // Host 2: 已有紀錄且 AI 已定案失敗（AiPending=false）——取數側仍要補跑的形狀；
+        // AiPending=true 的待補歸 AI 排程，不再計入取數預覽（體檢輪語意變更）
         store.Append(new DailyAnalysisRecord
         {
             Date = yesterday,
@@ -209,7 +217,7 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
             Host = "host-failed-ai",
             RiskLevel = "高",
             AiAnalyzed = false,
-            AiPending = true
+            AiPending = false
         });
 
         // Host 3: 無任何紀錄

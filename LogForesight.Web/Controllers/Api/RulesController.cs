@@ -155,7 +155,7 @@ public class RunsController : ControllerBase
     public ApiResponse<RunDaySummaryPageDto> Summary(
         [FromQuery] int? days, [FromQuery] int? page, [FromQuery] int? pageSize)
     {
-        var maxDays = Math.Max(90, _settingsStore.Get().RunLogRetentionDays);
+        var maxDays = MaxRunDays();
         var clampedDays = Math.Clamp(days ?? DefaultRunSummaryDays, 1, maxDays);
         var clampedPage = Math.Clamp(page ?? 1, 1, int.MaxValue);
         var clampedPageSize = Math.Clamp(pageSize ?? DefaultRunSummaryPageSize, 1, 90);
@@ -189,12 +189,16 @@ public class RunsController : ControllerBase
     public ApiResponse<RunDetailDto> Detail(long runId) =>
         ApiResponse<RunDetailDto>.Ok(_service.GetDetail(runId));
 
+    /// <summary>errors/list 與 summary 用同一個天數上限（體檢輪）：原本仍夾 90，
+    /// 選「全部」（RunLogRetentionDays）時執行總表算 120 天、這兩頁籤靜默只給 90 天，口徑不一致</summary>
+    private int MaxRunDays() => Math.Max(90, _settingsStore.Get().RunLogRetentionDays);
+
     [HttpGet("errors")]
     public ApiResponse<List<RunErrorGroupDto>> Errors([FromQuery] int days = 14) =>
-        ApiResponse<List<RunErrorGroupDto>>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, 90)));
+        ApiResponse<List<RunErrorGroupDto>>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, MaxRunDays())));
 
     /// <summary>執行紀錄分頁（回饋十七輪批次F-3）：每一筆 BatchRun 的扁平清單</summary>
     [HttpGet("list")]
     public ApiResponse<List<RunListItemDto>> List([FromQuery] int days = 14) =>
-        ApiResponse<List<RunListItemDto>>.Ok(_service.GetRunList(Math.Clamp(days, 1, 90)));
+        ApiResponse<List<RunListItemDto>>.Ok(_service.GetRunList(Math.Clamp(days, 1, MaxRunDays())));
 }

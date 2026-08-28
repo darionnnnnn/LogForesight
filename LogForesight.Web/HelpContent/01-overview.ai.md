@@ -49,7 +49,7 @@ LogForesight 是一套專注於主機安全性與穩定性前兆偵測的分析�
 3. `Assign`：可指派與改派問題案件的處理人（僅 admin 具備）。
 4. `ConfirmPermission`：可確認權限異動檢核（授權操作或標記可疑）。
 5. `Maintain`：可維護規則、告警抑制、主機、使用者、群組、Sentinel 與系統設定。
-6. `DevMonitor`：可檢視排程作業、背景佇列、執行監控與除錯日誌。
+6. `DevMonitor`：可檢視排程作業、AI 分析狀態、執行監控與除錯日誌。
 7. `ViewAudit`：可檢視系統操作紀錄與安全性稽核日誌。
 
 ### 2. 四大角色能力映射（`RoleCapabilityMap`）

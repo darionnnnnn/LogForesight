@@ -108,19 +108,24 @@ public static class HostDayPostProcessor
     ///
     /// 規則依序：
     /// 1. record 為 null（該日完全沒有紀錄＝缺日）→ 需要
-    /// 2. AiPending == true → 需要
-    /// 3. useAi == true &amp;&amp; !AiAnalyzed &amp;&amp; RiskLevel != Low → 需要
-    /// 4. 其餘 → 不需要
+    /// 2. useAi == true &amp;&amp; !AiPending &amp;&amp; !AiAnalyzed &amp;&amp; RiskLevel != Low → 需要
+    /// 3. 其餘 → 不需要
+    ///
+    /// **AiPending == true 不再視為取數要補的（回饋三十五輪體檢輪）**：AI 補寫已由獨立的
+    /// AI 分析排程負責（AiAnalysisHostedService 常駐掃 ai_pending=1），取數側若仍把待補
+    /// 當成缺漏日，「只補跑失敗或未執行」會對整個 AI 積壓重打 Sentinel、重跑統計、
+    /// 重寫紀錄再標回待補——與 AI 排程互相打架，補跑歷史因此永不收斂。
+    /// 規則 2 保的是「AI 已定案失敗」的存量（pending 已被清成 false 的舊資料）；
+    /// 排程拆分後 AI 失敗會維持 pending=true 由 AI 排程重試，這條幾乎只對舊資料生效。
     ///
     /// useAi == false（統計模式，AI 未設定）時，AiAnalyzed 恆為 false 屬正常狀態，
-    /// 規則 3 不觸發——只有「缺日」與「AiPending」兩種情況才需要補跑。
+    /// 規則 2 不觸發——只有「缺日」需要補跑。
     /// 低風險日「刻意不呼叫 AI」是合法終局狀態，不視為失敗。
     /// </summary>
     public static bool NeedsBackfill(DailyAnalysisRecord? record, bool useAi)
     {
         if (record == null) return true;
-        if (record.AiPending) return true;
-        if (useAi && !record.AiAnalyzed && record.RiskLevel != RiskLevels.Low) return true;
+        if (useAi && !record.AiPending && !record.AiAnalyzed && record.RiskLevel != RiskLevels.Low) return true;
         return false;
     }
 

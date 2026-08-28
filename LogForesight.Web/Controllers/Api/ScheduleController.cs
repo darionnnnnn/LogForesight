@@ -129,9 +129,6 @@ public class ScheduleController : ControllerBase
             ProgressPhase = _runState.ProgressPhase,
             ProgressDone = _runState.ProgressDone,
             ProgressTotal = _runState.ProgressTotal,
-            SubProgressPhase = _runState.SubProgressPhase,
-            SubProgressDone = _runState.SubProgressDone,
-            SubProgressTotal = _runState.SubProgressTotal,
             LocalProgressPhase = _runState.LocalProgressPhase,
             LocalProgressDone = _runState.LocalProgressDone,
             LocalProgressTotal = _runState.LocalProgressTotal,
@@ -456,7 +453,7 @@ public class ScheduleController : ControllerBase
     public ApiResponse CancelAi()
     {
         if (!_aiRunState.TryCancel())
-            throw DomainException.Validation("目前沒有正在執行的 AI 分析。");
+            throw DomainException.Validation("目前沒有可停止的 AI 分析執行（可能已結束或已在停止中）。");
 
         _audit.Record(
             action: AuditActions.ScheduleManualCancel,
