@@ -86,7 +86,8 @@ public class RerunModeWiringTests
             new FakeCurrentUser(),
             new FakeUserStore(),
             records: new FakeRecordRepository(hosts),
-            settingsStore: settingsStore);
+            settingsStore: settingsStore,
+            userDisplayNames: new UserDisplayNameService(settingsStore));
     }
 
     [Fact]

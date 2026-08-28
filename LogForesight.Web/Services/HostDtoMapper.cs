@@ -12,7 +12,8 @@ internal static class HostDtoMapper
     public static HostDto ToDto(
         WebHost host,
         IReadOnlyDictionary<long, HostGroup> groupsById,
-        IReadOnlyDictionary<long, WebUser> usersById) => new()
+        IReadOnlyDictionary<long, WebUser> usersById,
+        IUserDisplayNameService userDisplayNames) => new()
     {
         HostId = host.HostId,
         HostName = host.HostName,
@@ -33,7 +34,7 @@ internal static class HostDtoMapper
         OwnerUserIds = host.OwnerUserIds,
         // §9：負責人欄顯示「顯示名稱(帳號)」。此清單為顯示用途（主機頁 badges），
         // 與 HandlingDto.OwnerNames（另兼作指派下拉的置頂比對鍵）刻意不同源，故可在此組帳號
-        OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, usersById, u => NameFormat.WithAccount(u.DisplayName, u.Account))
+        OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, usersById, u => userDisplayNames.WithAccount(u.DisplayName, u.Account))
     };
 
     /// <summary>主機分級的中文顯示（回饋十九輪批次G）。集中在這裡供 DTO 映射與稽核摘要共用，

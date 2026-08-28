@@ -19,7 +19,7 @@ public class LinuxIssueOwnerAdminTests
     private readonly RecordingAuditService _audit = new();
 
     private IssueOwnerAdminService Create(string account = "DOMAIN\\admin") =>
-        new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account));
+        new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account), new UserDisplayNameService(new FakeSystemSettingsStore()));
 
     private WebUser AddUser(string account, string displayName) =>
         _users.Upsert(new WebUser { Account = account, DisplayName = displayName, Active = true });

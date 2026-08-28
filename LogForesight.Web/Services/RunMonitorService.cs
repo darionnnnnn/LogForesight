@@ -16,6 +16,7 @@ public class RunMonitorService
     private readonly IAnalysisRecordQuery _records;
     private readonly IUserStore _users;
     private readonly ScheduleOptionsStore _scheduleOptions;
+    private readonly IUserDisplayNameService _displayNameService;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -24,13 +25,14 @@ public class RunMonitorService
     private const int MaxFailedHostNames = 10;
 
     public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users,
-        ScheduleOptionsStore scheduleOptions)
+        ScheduleOptionsStore scheduleOptions, IUserDisplayNameService displayNameService)
     {
         _runs = runs;
         _hosts = hosts;
         _records = records;
         _users = users;
         _scheduleOptions = scheduleOptions;
+        _displayNameService = displayNameService;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
@@ -279,7 +281,7 @@ public class RunMonitorService
         null or "" or "console" => "工作排程器",
         "schedule" => "排程",
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
-            $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
+            $"手動（{_displayNameService.OfAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
     };
 

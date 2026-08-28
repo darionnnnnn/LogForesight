@@ -20,7 +20,8 @@ public class RunMonitorServiceTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private RunMonitorService Create() => new(Runs(), _hosts, Records(), new FakeUserStore(), Options());
+    private readonly UserDisplayNameService _displayNames = new(new FakeSystemSettingsStore());
+    private RunMonitorService Create() => new(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames);
 
     private static DailyAnalysisRecord Rec(long hostId, string host, DateTime date) =>
         new() { HostId = hostId, Host = host, Date = date, RiskLevel = "低" };
@@ -62,7 +63,7 @@ public class RunMonitorServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.7", Source = "netiq" });
         Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
 
-        var summaries = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDaySummaries(3);
+        var summaries = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDaySummaries(3);
         var today = summaries.Single(s => s.Date == DateTime.Today.ToString("yyyy-MM-dd"));
 
         // DEV-BATCH-HOST（跑批次的機器本身）與 10.0.0.7（NetIQ 主機）都算成功——
@@ -113,7 +114,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
         Assert.Equal(runId, row.RunId);
@@ -127,7 +128,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today);
+        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today);
 
         var row = Assert.Single(detail, d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
@@ -148,7 +149,7 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options());
+        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames);
 
         var row = Assert.Single(service.GetDayDetail(DateTime.Today), d => d.HostName == "SRV-LOCAL");
         Assert.Equal("stopped", row.Status);
@@ -172,7 +173,7 @@ public class RunMonitorServiceTests : IDisposable
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
     }
@@ -229,7 +230,7 @@ public class RunMonitorServiceTests : IDisposable
         var records = Records();
         records.Append(Rec(netiqOk.HostId, netiqOk.HostName, DateTime.Today.AddDays(-1)));
 
-        var summaries = new RunMonitorService(runs, _hosts, records, new FakeUserStore(), Options()).GetDaySummaries(1);
+        var summaries = new RunMonitorService(runs, _hosts, records, new FakeUserStore(), Options(), _displayNames).GetDaySummaries(1);
         var today = Assert.Single(summaries);
 
         Assert.Equal(3, today.TotalHosts);
@@ -254,7 +255,7 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records(), users, Options());
+        var service = new RunMonitorService(runs, _hosts, Records(), users, Options(), _displayNames);
 
         Assert.Equal("手動（系統維護(DOMAIN\\svc-lfadmin)）", service.GetDetail(runId).TriggerText);
     }
@@ -272,7 +273,7 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options());
+        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames);
 
         Assert.Equal("手動（DOMAIN\\deleted-user）", service.GetDetail(runId).TriggerText);
     }
@@ -307,7 +308,7 @@ public class RunMonitorServiceTests : IDisposable
         Options().Update(o => o.LocalAnalysisEnabled = false);
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
     }

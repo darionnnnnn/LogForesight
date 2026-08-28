@@ -30,14 +30,15 @@ public class ScheduleController : ControllerBase
     private readonly IUserStore _users;
     private readonly IAnalysisRecordQuery _records;
     private readonly ISystemSettingsStore _settingsStore;
+    private readonly IUserDisplayNameService _userDisplayNames;
     private readonly IWebAiService? _webAi;
     private readonly NetiqOptionsStore? _netiqStore;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
-        IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IWebAiService? webAi = null,
-        NetiqOptionsStore? netiqStore = null)
+        IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IUserDisplayNameService userDisplayNames,
+        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -49,6 +50,7 @@ public class ScheduleController : ControllerBase
         _users = users;
         _records = records;
         _settingsStore = settingsStore;
+        _userDisplayNames = userDisplayNames;
         _webAi = webAi;
         _netiqStore = netiqStore;
     }
@@ -358,7 +360,7 @@ public class ScheduleController : ControllerBase
         null => "閒置",
         "schedule" => "排程",
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
-            $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
+            $"手動（{_userDisplayNames.OfAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
     };
 
@@ -380,7 +382,7 @@ public class ScheduleController : ControllerBase
         UpdatedByAccount = options.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)
             ? null
-            : _users.FindByAccount(options.UpdatedByAccount)?.DisplayName,
+            : (_users.FindByAccount(options.UpdatedByAccount) is { } user ? _userDisplayNames.Of(user.DisplayName) : null),
         NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
         MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays)
     };

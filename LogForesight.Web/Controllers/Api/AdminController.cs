@@ -29,6 +29,7 @@ public class AdminController : ControllerBase
     private readonly IUserStore _userStore;
     private readonly IWebHostEnvironment _env;
     private readonly ISystemSettingsStore _settingsStore;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
     public AdminController(
         UserAdminService users,
@@ -42,7 +43,8 @@ public class AdminController : ControllerBase
         IAuditService audit,
         IUserStore userStore,
         IWebHostEnvironment env,
-        ISystemSettingsStore settingsStore)
+        ISystemSettingsStore settingsStore,
+        IUserDisplayNameService userDisplayNames)
     {
         _users = users;
         _hosts = hosts;
@@ -56,6 +58,7 @@ public class AdminController : ControllerBase
         _userStore = userStore;
         _env = env;
         _settingsStore = settingsStore;
+        _userDisplayNames = userDisplayNames;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -351,7 +354,7 @@ public class AdminController : ControllerBase
         UpdatedByAccount = o.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(o.UpdatedByAccount)
             ? null
-            : _userStore.FindByAccount(o.UpdatedByAccount)?.DisplayName,
+            : (_userStore.FindByAccount(o.UpdatedByAccount) is { } u ? _userDisplayNames.Of(u.DisplayName) : null),
         MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays)
     };
 

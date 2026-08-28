@@ -41,6 +41,7 @@ public class IssueHandlingCommandService
     private readonly MailNotificationService? _mail;
 
     private readonly IssueOwnerAdminService _issueOwnerAdmin;
+    private readonly IUserDisplayNameService _displayNameService;
 
     public IssueHandlingCommandService(
         IRecordHandlingStore store,
@@ -57,6 +58,7 @@ public class IssueHandlingCommandService
         HandlingProgressCalculator progress,
         UserCapabilityResolver capabilities,
         IssueOwnerAdminService issueOwnerAdmin,
+        IUserDisplayNameService displayNameService,
         MailNotificationService? mail = null)
     {
         _capabilities = capabilities;
@@ -73,6 +75,7 @@ public class IssueHandlingCommandService
         _audit = audit;
         _progress = progress;
         _issueOwnerAdmin = issueOwnerAdmin;
+        _displayNameService = displayNameService;
         _mail = mail;
     }
 
@@ -251,7 +254,7 @@ public class IssueHandlingCommandService
         if (openCase?.HandlerId is not { } handlerId || handlerId == _currentUser.UserId) return;
 
         var handler = _users.Get(handlerId);
-        var name = handler == null ? "其他人" : NameFormat.WithAccount(handler.DisplayName, handler.Account);
+        var name = handler == null ? "其他人" : _displayNameService.WithAccount(handler.DisplayName, handler.Account);
         throw DomainException.Validation(
             $"此問題由 {name} 的案件處理中，無法直接變更狀態。如需接手，請由管理者改派處理人。");
     }
@@ -429,7 +432,7 @@ public class IssueHandlingCommandService
             var user = _users.Get(handlerId)
                        ?? throw DomainException.NotFound("找不到指定的處理人。");
             if (!user.Active)
-                throw DomainException.Validation($"{NameFormat.WithAccount(user.DisplayName, user.Account)} 的帳號已停用，無法指派。");
+                throw DomainException.Validation($"{_displayNameService.WithAccount(user.DisplayName, user.Account)} 的帳號已停用，無法指派。");
 
             handlerCache[handlerId] = user;
             return user;
@@ -493,7 +496,7 @@ public class IssueHandlingCommandService
                 noAccess.Add(new AssigneeNoAccessDto
                 {
                     HostName = o.Host.HostName,
-                    HandlerName = NameFormat.WithAccount(handler.DisplayName, handler.Account)
+                    HandlerName = _displayNameService.WithAccount(handler.DisplayName, handler.Account)
                 });
             }
         }
@@ -514,13 +517,13 @@ public class IssueHandlingCommandService
             .Where(h => !_capabilities.Resolve(h).Contains(Capability.Handle))
             .Select(h => new AssigneeCannotHandleDto
             {
-                HandlerName = NameFormat.WithAccount(h.DisplayName, h.Account),
+                HandlerName = _displayNameService.WithAccount(h.DisplayName, h.Account),
                 HostCount = plan.Count(p => p.Handler.UserId == h.UserId)
             })
             .ToList();
 
         var handlerNames = plan.Select(p => p.Handler).DistinctBy(h => h.UserId)
-            .Select(h => NameFormat.WithAccount(h.DisplayName, h.Account)).ToList();
+            .Select(h => _displayNameService.WithAccount(h.DisplayName, h.Account)).ToList();
 
         _audit.Record(
             action: AuditActions.HandlingAssign,
@@ -917,7 +920,7 @@ public class IssueHandlingCommandService
     private string ResolveDisplayName(long userId)
     {
         var user = _users.Get(userId);
-        return user == null ? "（已刪除）" : NameFormat.WithAccount(user.DisplayName, user.Account);
+        return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
     }
 
     /// <summary>

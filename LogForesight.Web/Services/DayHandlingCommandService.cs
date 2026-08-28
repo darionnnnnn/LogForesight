@@ -34,6 +34,7 @@ public class DayHandlingCommandService
     private readonly ISystemSettingsStore _settings;
     private readonly HandlingProgressCalculator _progress;
     private readonly UserCapabilityResolver _capabilities;
+    private readonly IUserDisplayNameService _displayNameService;
 
     /// <summary>問題上報通知（回饋十八輪批次G）：日層級狀態轉為「無法處理」時同樣通知 admin。
     /// **可為 null**（同 IssueHandlingCommandService 的說明）：測試組裝不注入，通知靜默跳過。</summary>
@@ -56,6 +57,7 @@ public class DayHandlingCommandService
         ISystemSettingsStore settings,
         HandlingProgressCalculator progress,
         UserCapabilityResolver capabilities,
+        IUserDisplayNameService displayNameService,
         MailNotificationService? mail = null,
         IIssueOwnerStore? issueOwners = null)
     {
@@ -73,6 +75,7 @@ public class DayHandlingCommandService
         _settings = settings;
         _progress = progress;
         _capabilities = capabilities;
+        _displayNameService = displayNameService;
     }
 
     public HandlingDto Get(long hostId, DateTime date)
@@ -285,7 +288,7 @@ public class DayHandlingCommandService
             .Select(id =>
             {
                 var user = _users.Get(id);
-                return user == null ? "（已刪除）" : NameFormat.WithAccount(user.DisplayName, user.Account);
+                return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
             })
             .ToList();
 
@@ -448,9 +451,14 @@ public class DayHandlingCommandService
             // （docs/archive/FEEDBACK-10-PLAN.md §6 體檢確認）：這份清單同時是指派下拉的
             // 「置頂＋標（負責人）」比對鍵，而比對是拿 user.displayName 逐字比對
             // （ui.js searchableUserSelect），加上帳號會讓比對永遠不成立、置頂靜默失效。
-            // 帶帳號的版本在主機清單另有一份（HostDtoMapper.OwnerNames）。
+            // 兩端（/api/admin/users 與 OwnerNames）必須同時經 IUserDisplayNameService 套用規則，
+            // 比對鍵才能保持一致。帶帳號的版本在主機清單另有一份（HostDtoMapper.OwnerNames）。
             OwnerNames = host.OwnerUserIds
-                .Select(id => _users.Get(id)?.DisplayName ?? "（已刪除）")
+                .Select(id =>
+                {
+                    var user = _users.Get(id);
+                    return user == null ? "（已刪除）" : _displayNameService.Of(user.DisplayName);
+                })
                 .ToList(),
 
             CanAssign = _currentUser.Has(Capability.Assign),
@@ -461,7 +469,11 @@ public class DayHandlingCommandService
     private string OwnerNames(WebHost host)
     {
         var names = host.OwnerUserIds
-            .Select(id => _users.Get(id)?.DisplayName ?? "（已刪除）")
+            .Select(id =>
+            {
+                var user = _users.Get(id);
+                return user == null ? "（已刪除）" : _displayNameService.Of(user.DisplayName);
+            })
             .ToList();
 
         return names.Count == 0 ? "未指定" : string.Join("、", names);

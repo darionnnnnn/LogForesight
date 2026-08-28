@@ -20,7 +20,8 @@ public class HostAdminServiceTests
         new FakeUserStore(),
         new FakeNetiqServerCatalog("SENTINEL-A"),
         new FakeNetiqHostServiceForAdmin(),
-        _audit);
+        _audit,
+        new UserDisplayNameService(new FakeSystemSettingsStore()));
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //

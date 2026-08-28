@@ -18,6 +18,12 @@ public interface IUserDisplayNameService
     /// </summary>
     string WithAccount(string? displayName, string account);
 
+    /// <summary>
+    /// 依帳號查使用者並回傳「顯示名稱(帳號)」；查無使用者或顯示名稱為空時只回傳帳號。
+    /// 顯示名稱會先套用管理員設定的規則。
+    /// </summary>
+    string OfAccount(IUserStore users, string account);
+
     /// <summary>回傳本次解析出的規則集，供呼叫端一次解析、迴圈內重複使用。</summary>
     AccountDisplayRuleSet CurrentRules();
 }
@@ -67,5 +73,11 @@ public class UserDisplayNameService : IUserDisplayNameService
     {
         var formatted = Of(displayName);
         return string.IsNullOrEmpty(formatted) ? account : $"{formatted}({account})";
+    }
+
+    public string OfAccount(IUserStore users, string account)
+    {
+        var user = users.FindByAccount(account);
+        return WithAccount(user?.DisplayName, account);
     }
 }

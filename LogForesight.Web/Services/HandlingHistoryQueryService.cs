@@ -29,6 +29,7 @@ public class HandlingHistoryQueryService
     private readonly IRecordRepository _repository;
     private readonly HandlingProgressCalculator _progress;
     private readonly IIssueAggregateQuery _aggregateQuery;
+    private readonly IUserDisplayNameService _displayNameService;
 
     public HandlingHistoryQueryService(
         IRecordHandlingStore store,
@@ -40,7 +41,8 @@ public class HandlingHistoryQueryService
         ISystemSettingsStore settings,
         IRecordRepository repository,
         HandlingProgressCalculator progress,
-        IIssueAggregateQuery aggregateQuery)
+        IIssueAggregateQuery aggregateQuery,
+        IUserDisplayNameService displayNameService)
     {
         _store = store;
         _issueStore = issueStore;
@@ -52,6 +54,7 @@ public class HandlingHistoryQueryService
         _repository = repository;
         _progress = progress;
         _aggregateQuery = aggregateQuery;
+        _displayNameService = displayNameService;
     }
 
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date)
@@ -78,7 +81,7 @@ public class HandlingHistoryQueryService
                 Note = log.Note,
                 IssueLabel = log.IssueLabel,
                 ActorAccount = log.ActorAccount,
-                ActorDisplayName = _users.FindByAccount(log.ActorAccount)?.DisplayName,
+                ActorDisplayName = _users.FindByAccount(log.ActorAccount) is { } actor ? _displayNameService.Of(actor.DisplayName) : null,
                 CreatedAt = log.CreatedAt
             })
             .ToList();
@@ -87,7 +90,7 @@ public class HandlingHistoryQueryService
     private string ResolveHandlerName(long userId)
     {
         var user = _users.Get(userId);
-        return user == null ? "（已刪除）" : NameFormat.WithAccount(user.DisplayName, user.Account);
+        return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
     }
 
     /// <summary>報表顯示範圍（§5）：單選過濾——一個母體對應一組明確語意。</summary>
@@ -343,7 +346,7 @@ public class HandlingHistoryQueryService
         return new HandlerWorkloadDto
         {
             UserId = user.UserId,
-            DisplayName = user.DisplayName,
+            DisplayName = _displayNameService.Of(user.DisplayName),
             Account = user.Account,
             Active = user.Active,
             OpenCaseCount = caseItems.Count,

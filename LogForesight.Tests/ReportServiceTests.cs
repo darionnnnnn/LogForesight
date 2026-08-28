@@ -40,7 +40,8 @@ public class ReportServiceTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
 
         _handling = new HandlingHistoryQueryService(
-            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates);
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore));
 
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
 

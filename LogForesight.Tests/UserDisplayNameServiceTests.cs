@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
@@ -196,5 +197,325 @@ public class UserDisplayNameServiceTests
         }
 
         public bool Has(Capability capability) => Capabilities.Contains(capability);
+    }
+
+    // ── 置頂契約測試 ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 置頂契約測試（FEEDBACK-10 §1.1）：
+    /// 此測試守護前端以 OwnerNames 為鍵對照使用者清單的置頂契約。
+    /// 前端日處理面板指派下拉選單（searchableUserSelect）依賴 HandlingDto.OwnerNames
+    /// 與 /api/admin/users 回傳的 DisplayName 精確逐字比對來將負責人置頂。
+    /// 若兩端套用的顯示名稱清洗規則不一致，置頂比對將會靜默失效。
+    /// </summary>
+    [Fact]
+    public void 置頂契約_DayHandlingCommandService與UserAdminService之DisplayName完全相等()
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var displayNameService = new UserDisplayNameService(_settingsStore);
+
+        var users = new FakeUserStore();
+        var user = users.Upsert(new WebUser
+        {
+            Account = "181035",
+            DisplayName = "鄭孟瑋 Wayne2021 (Yuanta)",
+            Active = true
+        });
+
+        var hosts = new FakeHostStore();
+        var host = hosts.Upsert(new WebHost
+        {
+            HostId = 1,
+            HostName = "HOST-01",
+            Active = true,
+            OwnerUserIds = new() { user.UserId }
+        });
+
+        // 1. 呼叫 /api/admin/users 底層 UserAdminService.GetUsers() 取得清單中該使用者的 DisplayName
+        var adminService = new UserAdminService(
+            users,
+            new FakeUserGroupStore(),
+            hosts,
+            new FakeHostGroupStore(),
+            new FakeIssueCaseStore(),
+            new AlwaysVisibleService(hosts),
+            new RecordingAuditService(),
+            new UserCapabilityResolver(new FakeUserGroupStore(), hosts),
+            displayNameService);
+        var adminUser = adminService.GetUsers().Single(u => u.Account == "181035");
+
+        // 2. 呼叫 DayHandlingCommandService.Get(...) 取得 HandlingDto.OwnerNames
+        var dayService = CreateDayHandlingCommandService(hosts, users, _settingsStore, displayNameService);
+        var handlingDto = dayService.Get(host.HostId, DateTime.Today);
+
+        // 3. 斷言兩者完全相等且皆為清洗後的「鄭孟瑋」
+        var ownerName = Assert.Single(handlingDto.OwnerNames);
+        Assert.Equal("鄭孟瑋", adminUser.DisplayName);
+        Assert.Equal("鄭孟瑋", ownerName);
+        Assert.Equal(adminUser.DisplayName, ownerName);
+    }
+
+    // ── OfAccount 測試 ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void OfAccount_有規則且使用者存在_回傳清洗後顯示名稱與半形括號帳號()
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var service = new UserDisplayNameService(_settingsStore);
+        var users = new FakeUserStore();
+        users.Upsert(new WebUser
+        {
+            Account = "181035",
+            DisplayName = "鄭孟瑋 Wayne2021 (Yuanta)",
+            Active = true
+        });
+
+        var result = service.OfAccount(users, "181035");
+        Assert.Equal("鄭孟瑋(181035)", result);
+    }
+
+    [Theory]
+    [InlineData("DOMAIN\\unknown")]
+    [InlineData("")]
+    public void OfAccount_使用者不存在或帳號為空_回傳帳號本身(string account)
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var service = new UserDisplayNameService(_settingsStore);
+        var users = new FakeUserStore();
+
+        var result = service.OfAccount(users, account);
+        Assert.Equal(account, result);
+    }
+
+    // ── 呼叫端修改測試 ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void 呼叫端修改測試_IssueHandlingCommandService_他人案件衝突提示套用名稱清洗規則()
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var displayNameService = new UserDisplayNameService(_settingsStore);
+
+        var users = new FakeUserStore();
+        var handler = users.Upsert(new WebUser
+        {
+            Account = "181035",
+            DisplayName = "鄭孟瑋 Wayne2021 (Yuanta)",
+            Active = true
+        });
+
+        var hosts = new FakeHostStore();
+        var host = hosts.Upsert(new WebHost { HostId = 1, HostName = "HOST-01", Active = true });
+
+        var issue = new LogIssueSignature
+        {
+            Source = "disk",
+            EventId = 153,
+            LogName = "System",
+            EntryType = System.Diagnostics.EventLogEntryType.Error
+        };
+        var issueKey = IssueSignatureKey.For(issue);
+
+        var caseStore = new FakeIssueCaseStore();
+        caseStore.Save(new IssueCase
+        {
+            CaseId = "case-01",
+            HostName = host.HostName,
+            IssueKey = issueKey,
+            HandlerId = handler.UserId,
+            Status = "open"
+        });
+
+        var repository = new FakeRecordRepository(hosts);
+        repository.AddRecord(host.HostName, DateTime.Today, issue);
+
+        var currentUser = FakeCurrentUser.WithCapabilities(Capability.Handle); // UserId != handler.UserId
+        var service = CreateIssueHandlingCommandService(hosts, users, caseStore, repository, _settingsStore, displayNameService, currentUser);
+
+        var ex = Assert.Throws<DomainException>(() =>
+            service.SetIssueStatus(host.HostId, DateTime.Today, new SetIssueStatusRequest
+            {
+                Status = IssueHandlingStatuses.InProgress,
+                IssueKey = issueKey
+            }));
+
+        // 驗證他人案件衝突提示套用了規則（鄭孟瑋(181035) 而非 原始未清洗字串）
+        Assert.Contains("此問題由 鄭孟瑋(181035) 的案件處理中", ex.Message);
+        Assert.DoesNotContain("Wayne2021", ex.Message);
+    }
+
+    [Fact]
+    public void 呼叫端修改測試_RunMonitorService_手動觸發之TriggerText套用名稱清洗規則()
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var displayNameService = new UserDisplayNameService(_settingsStore);
+
+        using var fx = new EfSqliteFixture();
+        var runs = new BatchRunStore(fx.LogStore("runs"), fx.LogStore("run_logs"));
+        var records = new EfAnalysisRecordStore(fx.NewContext, "test");
+        var options = new ScheduleOptionsStore(fx.Blob("schedule_options"));
+
+        var users = new FakeUserStore();
+        users.Upsert(new WebUser
+        {
+            Account = "181035",
+            DisplayName = "鄭孟瑋 Wayne2021 (Yuanta)",
+            Active = true
+        });
+
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+
+        var runId = runs.StartRun(new BatchRun
+        {
+            HostName = "SRV-LOCAL",
+            StartedAt = DateTime.Now,
+            Trigger = "manual:181035"
+        });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = runId,
+            HostName = "SRV-LOCAL",
+            StartedAt = DateTime.Now,
+            FinishedAt = DateTime.Now,
+            ExitCode = 0,
+            Trigger = "manual:181035"
+        });
+
+        var service = new RunMonitorService(runs, hosts, records, users, options, displayNameService);
+        var detail = service.GetDetail(runId);
+
+        // 驗證 TriggerText 套用規則為「手動（鄭孟瑋(181035)）」
+        Assert.Equal("手動（鄭孟瑋(181035)）", detail.TriggerText);
+    }
+
+    [Fact]
+    public void 呼叫端修改測試_HandlingHistoryQueryService_Workload之DisplayName套用名稱清洗規則()
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var displayNameService = new UserDisplayNameService(_settingsStore);
+
+        var users = new FakeUserStore();
+        var user = users.Upsert(new WebUser
+        {
+            Account = "181035",
+            DisplayName = "鄭孟瑋 Wayne2021 (Yuanta)",
+            Active = true
+        });
+
+        var hosts = new FakeHostStore();
+        var service = new HandlingHistoryQueryService(
+            new FakeHandlingStore(),
+            new FakeIssueHandlingStore(),
+            new FakeIssueCaseStore(),
+            hosts,
+            users,
+            new AlwaysVisibleService(hosts),
+            _settingsStore,
+            new FakeRecordRepository(hosts),
+            new HandlingProgressCalculator(new FakeIssueHandlingStore(), new FakeHandlingStore(), new FakeIssueCaseStore(), _settingsStore),
+            new FakeIssueAggregateQuery(),
+            displayNameService);
+
+        var workload = service.GetHandlerWorkload(user.UserId, false);
+
+        // 驗證 HandlerWorkloadDto 的 DisplayName 套用規則
+        Assert.Equal("鄭孟瑋", workload.DisplayName);
+    }
+
+    // ── OwnerNames 刪除保留測試 ──────────────────────────────────────────────
+
+    [Fact]
+    public void OwnerNames_主機負責人有已刪除使用者_保留已刪除文字未套用規則且不拋例外()
+    {
+        _settingsStore.Update(s => s.AccountDisplayRules = "(?i)\\s*[a-z0-9]+\\s*\\(yuanta\\) =>");
+        var displayNameService = new UserDisplayNameService(_settingsStore);
+
+        var users = new FakeUserStore();
+        var validUser = users.Upsert(new WebUser
+        {
+            Account = "181035",
+            DisplayName = "鄭孟瑋 Wayne2021 (Yuanta)",
+            Active = true
+        });
+
+        var hosts = new FakeHostStore();
+        var host = hosts.Upsert(new WebHost
+        {
+            HostId = 1,
+            HostName = "HOST-01",
+            Active = true,
+            OwnerUserIds = new() { validUser.UserId, 999999L } // 999999L 為不存在/已刪除使用者
+        });
+
+        var dayService = CreateDayHandlingCommandService(hosts, users, _settingsStore, displayNameService);
+        var handlingDto = dayService.Get(host.HostId, DateTime.Today);
+
+        // 驗證存在使用者套用規則，不存在使用者輸出「（已刪除）」，不拋出例外，且「（已刪除）」字樣未被正則破壞
+        Assert.Equal(2, handlingDto.OwnerNames.Count);
+        Assert.Equal("鄭孟瑋", handlingDto.OwnerNames[0]);
+        Assert.Equal("（已刪除）", handlingDto.OwnerNames[1]);
+    }
+
+    private static DayHandlingCommandService CreateDayHandlingCommandService(
+        FakeHostStore hosts,
+        FakeUserStore users,
+        ISystemSettingsStore settingsStore,
+        IUserDisplayNameService displayNameService)
+    {
+        var issueStore = new FakeIssueHandlingStore();
+        var recordStore = new FakeHandlingStore();
+        var caseStore = new FakeIssueCaseStore();
+        var repository = new FakeRecordRepository(hosts);
+        var coordinator = new IssueCaseCoordinator(caseStore, issueStore, recordStore, repository, hosts, new FakeIssueOwnerStore());
+        var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore);
+        var capabilities = new UserCapabilityResolver(new FakeUserGroupStore(), hosts);
+        return new DayHandlingCommandService(
+            recordStore,
+            issueStore,
+            coordinator,
+            repository,
+            hosts,
+            users,
+            new AlwaysVisibleService(hosts),
+            FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
+            new RecordingAuditService(),
+            settingsStore,
+            progress,
+            capabilities,
+            displayNameService);
+    }
+
+    private static IssueHandlingCommandService CreateIssueHandlingCommandService(
+        FakeHostStore hosts,
+        FakeUserStore users,
+        FakeIssueCaseStore caseStore,
+        FakeRecordRepository repository,
+        ISystemSettingsStore settingsStore,
+        IUserDisplayNameService displayNameService,
+        ICurrentUser currentUser)
+    {
+        var issueStore = new FakeIssueHandlingStore();
+        var recordStore = new FakeHandlingStore();
+        var coordinator = new IssueCaseCoordinator(caseStore, issueStore, recordStore, repository, hosts, new FakeIssueOwnerStore());
+        var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore);
+        var capabilities = new UserCapabilityResolver(new FakeUserGroupStore(), hosts);
+        var issueOwnerAdmin = new IssueOwnerAdminService(
+            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), users, new RecordingAuditService(), currentUser, displayNameService);
+        return new IssueHandlingCommandService(
+            recordStore,
+            issueStore,
+            caseStore,
+            coordinator,
+            new FakeNoiseMarkStore(),
+            repository,
+            hosts,
+            users,
+            new AlwaysVisibleService(hosts),
+            currentUser,
+            new RecordingAuditService(),
+            progress,
+            capabilities,
+            issueOwnerAdmin,
+            displayNameService);
     }
 }
