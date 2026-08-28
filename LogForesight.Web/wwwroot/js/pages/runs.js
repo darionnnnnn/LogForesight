@@ -555,10 +555,9 @@ function renderScheduleWindows() {
 
         const start = document.createElement('input');
         start.type = 'time';
-        start.className = 'form-control form-control-sm';
-        // 固定寬度而非上限：瀏覽器原生 time picker（HH:MM + 時鐘圖示）實測約需 140~150px，
-        // 130px 的上限會把數字擠掉（使用者回報時間被遮擋）。
-        start.style.width = '150px';
+        // 寬度交給 .lf-time-input 的 min-width：原生 time picker 在 12 小時制地區
+        // （「上午 01:00」＋時鐘圖示）比固定值寬，寫死 px 會把數字裁掉。
+        start.className = 'form-control form-control-sm lf-time-input';
         start.value = window_.start;
         start.disabled = !canMaintainSchedule;
         start.addEventListener('change', () => { window_.start = start.value; });
@@ -569,8 +568,7 @@ function renderScheduleWindows() {
 
         const end = document.createElement('input');
         end.type = 'time';
-        end.className = 'form-control form-control-sm';
-        end.style.width = '150px';
+        end.className = 'form-control form-control-sm lf-time-input';
         end.value = window_.end;
         end.disabled = !canMaintainSchedule;
         end.addEventListener('change', () => { window_.end = end.value; });

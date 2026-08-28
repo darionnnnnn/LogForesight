@@ -2257,3 +2257,11 @@ a.lf-calendar__cell:focus-visible {
     color: var(--lf-text);
     padding: var(--lf-space-1) var(--lf-space-2);
 }
+
+/* 時間輸入欄：不鎖死寬度，改以下限容納各地區設定的原生 time picker。
+   12 小時制（「上午 01:00」＋時鐘圖示）比 24 小時制寬，固定寬度會把數字裁掉。 */
+.lf-time-input {
+    width: auto;
+    min-width: 12rem;
+    max-width: 100%;
+}
