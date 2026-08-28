@@ -88,8 +88,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 ContentJson = JsonSerializer.Serialize(shaped),
                 CreatedAt = DateTime.Now,
                 // 讀取面 SQL 化的抽出欄（回饋十九輪批次B）：寫入時一併填好，語意同 lf_top_issues
-                // 既有聚合維度的分工。ExtractVersion=1 標記「這是本輪寫入的新列」，
-                // 舊列（回填前）維持 0，DailyRecordBackfiller 依此判定候選。
+                // 既有聚合維度的分工。ExtractVersion 標記「這是目前版本寫入的新列」，
+                // 版本較舊的列由 DailyRecordBackfiller 重新同步（常數定義見該類別）。
                 Headline = shaped.Headline,
                 DataIncomplete = shaped.DataIncomplete,
                 SecurityLogAvailable = shaped.SecurityLogAvailable,
@@ -97,7 +97,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 WarningCount = shaped.WarningCount,
                 AiAnalyzed = shaped.AiAnalyzed,
                 AiPending = shaped.AiPending,
-                ExtractVersion = 1
+                ExtractVersion = DailyRecordBackfiller.CurrentVersion
             };
             ctx.DailyRecords.Add(row);
             ctx.SaveChanges();   // 先存主列拿到 RecordId

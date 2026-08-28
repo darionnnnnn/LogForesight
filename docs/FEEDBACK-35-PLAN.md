@@ -102,7 +102,8 @@
   `RecordStorageShaper.cs:44`；讀取端可投影：`:584`、`:630`。
   原核對之所以判斷錯，是引用了 `docs/DB-SPEC.md:159-164` 的**過時敘述**而非程式碼。
   （教訓：資料層事實斷言必須 grep 程式碼，文件不算證據。）
-- 因此**加欄與存量回填都不需要做**。實際缺的只有兩項：
+- 因此**加欄不需要做**。但「存量回填不需要」這句話在實作驗收時被推翻一半——
+  見下方「實作中發現的既有 bug」。實際缺的原本只有兩項：
   1. `ai_pending` **沒有索引**（`LfDbContext.cs:135` 只有 ExtractVersion 有索引）。
   2. **沒有全域待補查詢**：現存唯一的 pending 掃描是
      `NetiqPipelineService.cs:342-348`，逐主機 `ReadRecent` 再記憶體過濾，
@@ -128,6 +129,24 @@
    ContentJson 內的值僅於補寫覆蓋時自然同步，兩者短暫分岔是設計內行為，
    讀取端若有第二來源就會判錯。`NeedsBackfill` 外顯語意不變。
 5. 文件：DB-SPEC 欄位表與 §159-164 改寫。
+
+### 實作中發現的既有 bug（驗收時查出，本批次一併修）
+
+`ai_pending` **欄位在 AI 完成後從未被清為 0**：欄位只有 `Append`（新增列）與
+`DailyRecordBackfiller` 會寫，而 `AttachAiResult` 只把 `AiPending=false` 寫進
+ContentJson、沒有同步抽出欄（`EfAnalysisRecordStore` 該處只同步了 `RiskLevel`）。
+因為在此之前沒有任何查詢端讀這個欄位（孤兒掃描走 ContentJson），漂移完全無聲。
+
+影響：批次D 的 AI 排程以欄位為事實來源，不處理的話會把**整庫已完成的紀錄**
+全部當成待補，「補跑歷史」變成「整庫重跑」。
+
+處置（兩段）：
+1. 新資料：`AttachAiResult` 補上 `row.AiPending = false` 與 `row.AiAnalyzed` 同步（委派段已含）。
+2. 存量：**不新建校正器**——沿用既有 `DailyRecordBackfiller` 的 `ExtractVersion`
+   版本機制（本來就是為「舊列欄位需重新同步」設計的，已具備分批／可中斷續跑／
+   背景服務／進度），把版本推進到 2 即重新同步全部舊列的抽出欄。
+   同時把 `CurrentVersion` 改為公開常數並讓 `Append` 引用它——原本 Append 寫死 1，
+   版本一推進會讓新列永遠落在待回填集合裡被反覆處理。
 
 ### 測試 / 驗收
 - 關鍵表欄位與索引寫成 PRAGMA 斷言（`table_info` ＋ `index_list`，規格即測試）。
@@ -394,7 +413,7 @@
 | B1 單點服務＋兩出口 | agy（gemini-3.7-flash-high） | 完成 | 3036 綠；白名單乾淨；/me 測試確實走 DI 容器 | 無落差 |
 | B2 全站出口＋置頂修復 | agy（gemini-3.7-flash-high） | 完成 | 3044 綠；NameFormat 舊方法全 repo 零命中 | 見下方兩項 |
 | G 執行總表 | 未開始 | | | |
-| C 索引與全域查詢 | 未開始 | | | |
+| C 索引與全域查詢 | agy（gemini-3.7-flash-high） | 完成 | 3057 綠；反向驗收（不得誤加欄位）通過 | 驗收查出 ai_pending 欄位漂移既有 bug，存量校正由 Claude 補做 |
 | D 排程拆分 | 未開始 | | | |
 | E 記憶體 | 未開始 | | | |
 | F 快取 | 未開始 | | | |
