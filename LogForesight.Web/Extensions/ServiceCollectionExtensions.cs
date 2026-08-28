@@ -286,6 +286,10 @@ public static class ServiceCollectionExtensions
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
         // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
         services.AddSingleton<IssueRankingCache>(_ => new IssueRankingCache());
+        // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
+        // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
+        services.AddSingleton<DataVersionStamp>();
+        services.AddSingleton<SummaryCache>();
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
@@ -365,6 +369,7 @@ public static class ServiceCollectionExtensions
                 recordQuery,
                 storageBackend,
                 systemSettingsStore,
+                sp.GetRequiredService<DataVersionStamp>(),
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime);

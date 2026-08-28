@@ -24,6 +24,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly ScheduleOptionsStore _optionsStore;
     private readonly SchedulerRunState _schedulerRunState;
     private readonly AiAnalysisRunState _runState;
+    private readonly DataVersionStamp _dataVersion;
     private readonly IAnalysisRecordQuery _recordQuery;
     private readonly StorageBackend _storageBackend;
     private readonly ISystemSettingsStore _systemSettingsStore;
@@ -38,6 +39,7 @@ public class AiAnalysisHostedService : BackgroundService
         IAnalysisRecordQuery recordQuery,
         StorageBackend storageBackend,
         ISystemSettingsStore systemSettingsStore,
+        DataVersionStamp dataVersion,
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null)
@@ -45,6 +47,7 @@ public class AiAnalysisHostedService : BackgroundService
         _optionsStore = optionsStore;
         _schedulerRunState = schedulerRunState;
         _runState = runState;
+        _dataVersion = dataVersion;
         _recordQuery = recordQuery;
         _storageBackend = storageBackend;
         _systemSettingsStore = systemSettingsStore;
@@ -172,6 +175,9 @@ public class AiAnalysisHostedService : BackgroundService
             finally
             {
                 _runState.EndRun(success, failureMessage);
+                // AI 補寫改變了紀錄內容，儀表板／報表快取要失效（批次F）——背景執行不走
+                // HTTP 管線，不會被那條中介軟體涵蓋。
+                _dataVersion.Bump();
             }
         });
 

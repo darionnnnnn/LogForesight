@@ -57,9 +57,9 @@ public class DashboardServiceTests : IDisposable
 
         _service = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
-            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility);
+            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()));
         // 兩頁一致的對照組：報表走同一組 store 與聚合
-        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
+        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()));
     }
 
     public void Dispose() => _fixture.Dispose();

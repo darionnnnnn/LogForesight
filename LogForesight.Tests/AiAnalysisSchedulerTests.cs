@@ -72,6 +72,7 @@ public class AiAnalysisSchedulerTests : IDisposable
             recordStore,
             _backend,
             _settingsStore,
+            new DataVersionStamp(),
             _suppressions,
             _ai);
 
@@ -452,7 +453,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         // 8c. 手動觸發不受窗口限制
         var manualRunState = new AiAnalysisRunState();
         var manualService = new AiAnalysisHostedService(
-            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, _suppressions, _ai);
+            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), _suppressions, _ai);
 
         manualRunState.TryBeginRun("manual:admin", 10, out _);
         await manualService.TickAsync();

@@ -67,9 +67,9 @@ internal sealed class ScaleServices
 
         Dashboard = new DashboardService(
             Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
-            settingsStore, aggregates, issueTodo, settingsService);
+            settingsStore, aggregates, issueTodo, settingsService, new SummaryCache(new DataVersionStamp()));
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService);
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()));
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,

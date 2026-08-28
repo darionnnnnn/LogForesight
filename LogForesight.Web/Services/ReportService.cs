@@ -15,10 +15,13 @@ public class ReportService
     private readonly IIssueAggregateQuery _aggregates;
     private readonly ISystemSettingsService _systemSettings;
 
+    private readonly SummaryCache _summaryCache;
+
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
-        IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings)
+        IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings,
+        SummaryCache summaryCache)
     {
         _repository = repository;
         _hosts = hosts;
@@ -28,11 +31,26 @@ public class ReportService
         _settings = settings;
         _aggregates = aggregates;
         _systemSettings = systemSettings;
+        _summaryCache = summaryCache;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
     {
         if (to < from) (from, to) = (to, from);
+
+        // 整包回應快取（批次F）：鍵含可見主機集合，不同授權範圍各自一份。
+        // 可見主機在這裡取一次就傳給 BuildSummary——為了組鍵而多走訪一次整份主機表
+        // 會撞破 GetAllCallCount 的效能契約（ReportServiceTests 有測試釘住）。
+        var visibleHosts = _visibility.GetVisibleHosts();
+        return _summaryCache.GetOrAdd(
+            SummaryCache.KeyOf("report", $"{from:yyyyMMdd}|{to:yyyyMMdd}|{handlingScope}|{compare}",
+                visibleHosts.Select(h => h.HostId).ToList()),
+            () => BuildSummary(from, to, handlingScope, compare, visibleHosts));
+    }
+
+    private ReportSummaryDto BuildSummary(
+        DateTime from, DateTime to, string? handlingScope, string? compare, List<WebHost> visibleHosts)
+    {
 
         var (previousFrom, previousTo, actualComparisonMode) = CalculateComparisonPeriod(from, to, compare);
         var retentionDays = _settings.Get().RetentionDays;
@@ -45,7 +63,6 @@ public class ReportService
         var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
 
         List<DailyAnalysisRecord>? recordsForTodo = null;
-        var visibleHosts = _visibility.GetVisibleHosts();
         var hostIds = visibleHosts.Select(h => h.HostId).ToList();
 
         ReportKpiDto kpi;

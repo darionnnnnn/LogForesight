@@ -45,7 +45,7 @@ public class ReportServiceTests : IDisposable
 
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
 
-        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
+        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()));
     }
 
     public void Dispose() => _fixture.Dispose();
