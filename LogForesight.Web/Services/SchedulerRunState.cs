@@ -52,13 +52,13 @@ public class SchedulerRunState
     public int ProgressTotal { get; private set; }
 
     /// <summary>
-    /// 子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure 是 AI 佇列在背景消化的同一條軌，
+    /// 子進度（回饋十四輪 UI-6）：netiq-ai 是 AI 在背景消化的軌，
     /// 與上面的主進度（netiq，搜尋＋統計仍在往下一台主機推進）在同一次執行內是**同時**在跑的
     /// 兩件事——原本共用一組 ProgressPhase/Done/Total 欄位，後回報的會直接覆蓋先回報的，
     /// 使用者看到的症狀是「進度卡住不動」，其實是另一條軌把畫面接管走了。分成獨立欄位後
     /// 兩條軌各自持有最後回報值，狀態 API 兩者都給，前端就能同時畫出主／子兩條進度條。
     /// </summary>
-    private static readonly HashSet<string> SubProgressPhases = new() { "netiq-ai", "netiq-backpressure" };
+    private static readonly HashSet<string> SubProgressPhases = new() { "netiq-ai" };
 
     public string? SubProgressPhase { get; private set; }
     public int SubProgressDone { get; private set; }

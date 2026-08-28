@@ -75,7 +75,7 @@ public static class RiskyEventSelector
     /// <see cref="Service.LogAnalysisService.BuildStatisticalRecordAsync"/> 本身，型別內建構時
     /// 就窄化，不再由呼叫端事後補）：AI 深析報告最終只從這裡挑 20 筆
     /// （<see cref="Service.RiskReportService.MaxRawLogsPerReport"/>），沒有理由讓
-    /// <see cref="Service.AiFollowupQueue{T}"/> 帶著全量事件（含未命中規則、非趨勢異常的雜訊，
+    /// AI 工作項帶著全量事件（含未命中規則、非趨勢異常的雜訊，
     /// 單一 Sentinel job 上限可達 <c>NetiqOptions.MaxResultsPerJob</c>＝10 萬筆）在記憶體裡排隊等消化——
     /// 佇列容量 200 件原本只界件數，真正吃記憶體的是這裡。選取點（哪些事件入選、依嚴重度排序、
     /// 每簽章頭尾各半、每主機日合計 500 筆上限）與 <see cref="Select"/> 寫進

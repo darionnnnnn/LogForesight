@@ -63,15 +63,14 @@ public class RunActivityController : ControllerBase
             Done = done,
             Total = total,
             // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台）——「主機日」這個單位
-            // 一般使用者沒有概念。netiq-ai／netiq-backpressure 這條 AI 背景消化軌的分母是
-            // **排入 AI 佇列的件數**（回饋二十七輪作業 B3：背壓期間改報 AI 消化進度，
-            // 不再沿用主機日數字），用「件」而非「台」，避免使用者以為又要重新查一次
+            // 一般使用者沒有概念。netiq-ai 這條 AI 背景消化軌的分母是
+            // **AI 分析件數**，用「件」而非「台」，避免使用者以為又要重新查一次
             // （docs/archive/FEEDBACK-12-PLAN.md §3.7）。
             UnitText = phase switch
             {
                 "local" => "天",
                 "netiq" => "台",
-                "netiq-ai" or "netiq-backpressure" => "件",
+                "netiq-ai" => "件",
                 _ => null
             }
         });

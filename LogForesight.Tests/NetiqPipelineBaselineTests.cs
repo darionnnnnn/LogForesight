@@ -122,9 +122,9 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.False(record.AiAnalyzed);
     }
 
-    /// <summary>基準 2：命中重大規則的主機在 useAi=true 時會實際呼叫 AI 主分析一次。</summary>
+    /// <summary>基準 2：命中重大規則的主機在 useAi=true 時，取數端仍零 AI 呼叫，紀錄標記 AiPending=true。</summary>
     [Fact]
-    public async Task 命中重大規則且useAi為true時會呼叫AI()
+    public async Task 命中重大規則且useAi為true時取數端零AI呼叫且紀錄標記AiPending()
     {
         var sentinel = AddSentinel();
         AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
@@ -132,19 +132,19 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         {
             Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
         };
-        _ai.NextContent = """{"risk_level":"高","headline":"稽核記錄檔遭清除","story":"偵測到 1102 事件。","trend_story":"","action":"立即調查"}""";
 
         var pipeline = MakePipeline(useAi: true);
         var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
 
         Assert.Equal(1, result.HostDaysAnalyzed);
-        Assert.True(_ai.Calls >= 1);
+        Assert.Equal(0, _ai.Calls);
 
         var yesterday = DateTime.Today.AddDays(-1);
         var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
         var record = Assert.Single(store.ReadRecent(yesterday, 1));
         Assert.Equal("高", record.RiskLevel);
-        Assert.True(record.AiAnalyzed);
+        Assert.True(record.AiPending);
+        Assert.False(record.AiAnalyzed);
     }
 
     /// <summary>

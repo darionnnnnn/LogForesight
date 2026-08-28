@@ -972,9 +972,6 @@ public class AnalysisOrchestrator
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
-                    : "") +
-                (netiqResult.AiQueued > 0
-                    ? $"、AI 分析 {netiqResult.AiCompleted} 件完成（放棄 {netiqResult.AiAbandoned}）"
                     : ""));
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的

@@ -8,7 +8,7 @@ namespace LogForesight.Core.Service;
 /// 只能隨件攜帶）。
 ///
 /// **歷史（history）刻意不放進來**：AI 段執行時才向 <see cref="IAnalysisRecordStore"/> 重讀，
-/// 讓 <see cref="AiFollowupQueue{T}"/> 的 FIFO 保序保證的「前一天已定案」語意在讀取當下自然成立，
+/// 讓依序消費的 FIFO 保序保證的「前一天已定案」語意在讀取當下自然成立，
 /// 不因兩階段化而讓隔日 prompt 引用前一天 AI 摘要的既有語意降級。
 ///
 /// **<see cref="Logs"/> 已窄化**（回饋十四輪 A2）：建構時（<c>BuildStatisticalRecordAsync</c>

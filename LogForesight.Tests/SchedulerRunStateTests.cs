@@ -129,21 +129,6 @@ public class SchedulerRunStateTests
         Assert.Equal(4, state.SubProgressTotal);
     }
 
-    /// <summary>netiq-backpressure 與 netiq-ai 是同一條「AI 背景消化」軌的兩種狀態（暫停中／消化中），
-    /// 共用同一組子進度欄位，切換時互相覆蓋是正確行為（不是兩條各自獨立的子軌）。</summary>
-    [Fact]
-    public void netiq背壓與netiqAi共用同一組子進度欄位()
-    {
-        var state = new SchedulerRunState();
-        Assert.True(state.TryBeginRun("schedule", out _));
-
-        state.ReportProgress("netiq-ai", 2, 5);
-        state.ReportProgress("netiq-backpressure", 2, 5);
-
-        Assert.Equal("netiq-backpressure", state.SubProgressPhase);
-        Assert.Null(state.ProgressPhase); // 主進度欄位完全不受子進度回報影響
-    }
-
     // ── 本機／NetIQ 並行進度（回饋十七輪批次E）─────────────────────────────
     // 本機與 NetIQ 機房分析改成並行執行（AnalysisOrchestrator 的 Task.WhenAll），local／netiq
     // 兩個 phase 現在會同時回報進度，不能再共用一組主進度欄位——否則會重演 netiq／netiq-ai

@@ -747,25 +747,19 @@ function applyScheduleStatus(status) {
     wasScheduleRunning = status.isRunning;
 }
 
-// netiq-ai（docs/archive/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在背景消化白話摘要的
+// netiq-ai（docs/archive/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 還在背景消化白話摘要的
 // 第二階段——統計與紀錄早就寫入了，這裡純粹是白話摘要/風險再判定的補寫進度，用詞刻意
 // 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
-// netiq-backpressure（回饋十三輪 A7）：AI 待處理佇列滿載（AiFollowupQueue.Capacity=200）時，
-// 搜尋主線在 NetiqPipelineService 背壓等待——外觀上與「卡住」無法區分，必須獨立標示原因，
-// 否則使用者回報的症狀就是「進度條不動了」。
-// 回饋二十七輪：done/total 改為 AI 消化件數（與 netiq-ai 同一組數字），不再沿用主機日——
-// 背壓期間搜尋已停，主機日數字到等待結束都不會變，顯示它等於畫一條凍住的進度條。
 const PROGRESS_PHASE_LABEL = {
-    local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中',
-    'netiq-backpressure': '搜尋暫停：AI 佇列消化中'
+    local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中'
 };
-const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件', 'netiq-backpressure': '件' };
+const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件' };
 
 /** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，
  * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
  * （docs/archive/FEEDBACK-8-PLAN.md #2）
  *
- * 子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure 這條 AI 背景消化軌與主進度
+ * 子進度（回饋十四輪 UI-6）：netiq-ai 這條 AI 背景消化軌與主進度
  * （netiq，搜尋仍在往下一台主機推進）可能同時在跑——兩者原本共用一組欄位，後回報的會
  * 直接蓋掉先回報的，畫面症狀是「進度卡住不動」。SchedulerRunState 已把兩者分成獨立欄位，
  * 這裡只需各自畫一條：主進度在上（沿用既有邏輯不變），子進度在下、只在有值時才顯示。
