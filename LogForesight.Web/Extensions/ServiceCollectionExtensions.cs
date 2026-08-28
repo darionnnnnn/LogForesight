@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIssueOwnerStore>(sp => new IssueOwnerStore(sp.GetRequiredService<StorageBackend>().Blob("issue_owners")));
         services.AddSingleton<SetupWizardStateStore>(sp => new SetupWizardStateStore(sp.GetRequiredService<StorageBackend>().Blob("setup_wizard_state")));
         services.AddSingleton<ISystemSettingsStore>(sp => new SystemSettingsStore(sp.GetRequiredService<StorageBackend>().Blob("system_settings")));
+        services.AddSingleton<IUserDisplayNameService, UserDisplayNameService>();
         services.AddSingleton<NetiqOptionsStore>(sp => new NetiqOptionsStore(sp.GetRequiredService<StorageBackend>().Blob("netiq_options")));
 
         // 分析紀錄與報告全文：批次寫、Web 讀
