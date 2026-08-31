@@ -17,12 +17,14 @@ public class SettingsController : ControllerBase
     private readonly ISystemSettingsService _settings;
     private readonly AiUsageStore _aiUsage;
     private readonly IAuditService _audit;
+    private readonly PrtgProbeService? _prtgProbe;
 
-    public SettingsController(ISystemSettingsService settings, AiUsageStore aiUsage, IAuditService audit)
+    public SettingsController(ISystemSettingsService settings, AiUsageStore aiUsage, IAuditService audit, PrtgProbeService? prtgProbe = null)
     {
         _settings = settings;
         _aiUsage = aiUsage;
         _audit = audit;
+        _prtgProbe = prtgProbe;
     }
 
     [HttpGet]
@@ -86,5 +88,30 @@ public class SettingsController : ControllerBase
             });
 
         return ApiResponse<AiUsageDto>.Ok(AiUsageDto.From(_aiUsage, AiUsageDto.TableDays));
+    }
+
+    // ── PRTG API 探測（probe，PRTG 第 1 輪批次B-3）──────────────────────────────────
+
+    [HttpGet("prtg-probe/status")]
+    public ApiResponse<PrtgProbeStatusDto> GetPrtgProbeStatus() =>
+        ApiResponse<PrtgProbeStatusDto>.Ok(_prtgProbe?.GetStatus() ?? new PrtgProbeStatusDto());
+
+    [HttpPost("prtg-probe/start")]
+    public ApiResponse<StartPrtgProbeResultDto> StartPrtgProbe()
+    {
+        if (_prtgProbe == null)
+            throw DomainException.Validation("PRTG 探測服務未啟用。");
+
+        if (!_prtgProbe.TryStart(out var error))
+            throw DomainException.Validation(error ?? "無法啟動 PRTG 探測。");
+
+        _audit.Record(
+            action: AuditActions.PrtgProbeRun,
+            summary: "執行 PRTG API 環境探測",
+            targetKind: "system_settings",
+            targetId: "prtg_probe",
+            detail: new { });
+
+        return ApiResponse<StartPrtgProbeResultDto>.Ok(new StartPrtgProbeResultDto { Started = true });
     }
 }
