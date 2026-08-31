@@ -31,6 +31,7 @@ public sealed class PrtgClient : IDisposable
     private readonly HttpClient _http;
     private readonly SemaphoreSlim _passhashLock = new(1, 1);
     private string? _cachedPasshash;
+    private string? _credentialFailure;
     private bool _disposed;
 
     internal TimeSpan Timeout => _http.Timeout;
@@ -140,12 +141,18 @@ public sealed class PrtgClient : IDisposable
 
         if (_cachedPasshash != null) return _cachedPasshash;
 
+        // 憑證錯誤要黏住：每個 sensor 的數值擷取各自呼叫一次 GetJsonAsync，密碼打錯時
+        // 若讓每次都重打 getpasshash，三千個 sensor 就是三千次登入失敗——足以觸發
+        // PRTG 端的帳號鎖定。傳輸類失敗（連不上、逾時）不黏，那種重試是有意義的。
+        if (_credentialFailure != null) throw new PrtgClientException(_credentialFailure);
+
         // 併發保護：FetchValuesAsync 會併發呼叫 GetJsonAsync，
         // 用 SemaphoreSlim(1,1) 確保多個併發請求同時到達時只向 PRTG 請求一次 passhash
         await _passhashLock.WaitAsync(ct);
         try
         {
             if (_cachedPasshash != null) return _cachedPasshash;
+            if (_credentialFailure != null) throw new PrtgClientException(_credentialFailure);
 
             // 這是唯一會帶 password 的請求
             var query = $"username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}";
@@ -171,7 +178,7 @@ public sealed class PrtgClient : IDisposable
             {
                 if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
-                    throw new PrtgClientException("PRTG 帳號或密碼錯誤。");
+                    throw FailCredentials("PRTG 帳號或密碼錯誤。");
                 }
 
                 if (!resp.IsSuccessStatusCode)
@@ -184,12 +191,12 @@ public sealed class PrtgClient : IDisposable
 
                 if (trimmed.StartsWith('<'))
                 {
-                    throw new PrtgClientException("PRTG 帳號或密碼錯誤。");
+                    throw FailCredentials("PRTG 帳號或密碼錯誤。");
                 }
 
                 if (string.IsNullOrWhiteSpace(trimmed))
                 {
-                    throw new PrtgClientException("PRTG 未回傳有效的 passhash。");
+                    throw FailCredentials("PRTG 未回傳有效的 passhash。");
                 }
 
                 _cachedPasshash = trimmed;
@@ -200,6 +207,16 @@ public sealed class PrtgClient : IDisposable
         {
             _passhashLock.Release();
         }
+    }
+
+    /// <summary>
+    /// 記下憑證層級的失敗並回傳要擲出的例外——同一個 client 實例之後不再重打 getpasshash。
+    /// 只用於「帳密本身不對」這類重試也不會成功的失敗；傳輸類失敗不記，那種重試有意義。
+    /// </summary>
+    private PrtgClientException FailCredentials(string message)
+    {
+        _credentialFailure = message;
+        return new PrtgClientException(message);
     }
 
     /// <summary>

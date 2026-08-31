@@ -121,4 +121,50 @@ public class PrtgClientFactoryTests
         using var clientPassPlain = PrtgClientFactory.Create(settingsPassPlain);
         Assert.NotNull(clientPassPlain);
     }
+
+    [Fact]
+    public void Create_認證方式有真的傳進client()
+    {
+        // `Assert.NotNull(client)` 對不可為 null 的回傳型別是恆真斷言，證明不了任何事。
+        // 這裡改用一個真的會因 authMode 而異的行為：帳密模式缺帳號時建構期就擲例外，
+        // token 模式則不會——若工廠把 authMode 傳錯或漏傳，這條就會紅。
+        var passwordModeNoUser = new SystemSettings
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = PrtgAuthModes.Password,
+            PrtgUsername = "",
+            PrtgPasswordEnc = CryptoHelper.Encrypt("pw")
+        };
+        Assert.Throws<PrtgClientException>(() => PrtgClientFactory.Create(passwordModeNoUser));
+
+        var tokenModeNoUser = new SystemSettings
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgUsername = "",
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("tk")
+        };
+        using var client = PrtgClientFactory.Create(tokenModeNoUser);
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public void Create_逾時與SSL選項取自設定()
+    {
+        // 證明設定值真的有流進 client，而不是用了預設值
+        var settings = new SystemSettings
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("tk"),
+            PrtgTimeoutSeconds = 123,
+            PrtgIgnoreSslErrors = true
+        };
+
+        using var client = PrtgClientFactory.Create(settings);
+
+        Assert.Equal(TimeSpan.FromSeconds(123), client.Timeout);
+        var handler = Assert.IsType<SocketsHttpHandler>(client.Handler);
+        Assert.NotNull(handler.SslOptions.RemoteCertificateValidationCallback);
+    }
 }

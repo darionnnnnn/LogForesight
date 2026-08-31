@@ -311,6 +311,44 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task 帳密模式_帳密錯誤後不再重打getpasshash避免帳號鎖定()
+    {
+        // 每個 sensor 的數值擷取各自呼叫一次 GetJsonAsync。密碼打錯時若每次都重打
+        // getpasshash，三千個 sensor 就是三千次登入失敗，足以觸發 PRTG 的帳號鎖定。
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "wrongpass");
+
+        for (var i = 0; i < 5; i++)
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+                client.GetJsonAsync("/api/table.json?content=sensors"));
+            Assert.Contains("帳號或密碼", ex.Message);
+        }
+
+        var passhashAttempts = stub.Requests.Count(r => r.Url.Contains("getpasshash.htm"));
+        Assert.Equal(1, passhashAttempts);
+    }
+
+    [Fact]
     public async Task 帳密模式_passhash回HTML錯誤頁時擲例外()
     {
         var stub = new StubHandler

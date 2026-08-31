@@ -1498,6 +1498,72 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void PRTG切換認證方式時不污染另一組憑證()
+    {
+        var service = Create();
+        const string Token = LogForesight.Core.Models.PrtgAuthModes.Token;
+        const string Password = LogForesight.Core.Models.PrtgAuthModes.Password;
+
+        // 先在 token 模式存好 token，再在帳密模式存好密碼
+        var setToken = ValidRequest();
+        setToken.PrtgAuthMode = Token;
+        setToken.PrtgApiToken = "the-token";
+        service.Update(setToken);
+
+        var setPassword = ValidRequest();
+        setPassword.PrtgAuthMode = Password;
+        setPassword.PrtgUsername = "admin";
+        setPassword.PrtgPassword = "the-password";
+        service.Update(setPassword);
+
+        var tokenCipher = _store.Get().PrtgApiTokenEnc;
+        var passwordCipher = _store.Get().PrtgPasswordEnc;
+        Assert.NotEqual("", tokenCipher);
+        Assert.NotEqual("", passwordCipher);
+
+        // 情境一：在 token 模式勾了「清除 token」後改用帳密儲存。
+        // 那個勾選在畫面上已經隨著切換而隱藏，不該生效——否則 token 被靜默清空。
+        var switchToPassword = ValidRequest();
+        switchToPassword.PrtgAuthMode = Password;
+        switchToPassword.PrtgUsername = "admin";
+        switchToPassword.ClearPrtgApiToken = true;
+        switchToPassword.PrtgApiToken = "leftover";
+        service.Update(switchToPassword);
+
+        Assert.Equal(tokenCipher, _store.Get().PrtgApiTokenEnc);
+
+        // 情境二：反方向——帳密欄殘留的密碼不該在 token 模式下被寫入
+        var switchToToken = ValidRequest();
+        switchToToken.PrtgAuthMode = Token;
+        switchToToken.PrtgPassword = "leftover-password";
+        switchToToken.ClearPrtgPassword = true;
+        service.Update(switchToToken);
+
+        Assert.Equal(passwordCipher, _store.Get().PrtgPasswordEnc);
+    }
+
+    [Fact]
+    public void PRTG憑證欄位輸入純空白時不覆蓋既有值()
+    {
+        var service = Create();
+
+        var setToken = ValidRequest();
+        setToken.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        setToken.PrtgApiToken = "good-token";
+        service.Update(setToken);
+        var cipher = _store.Get().PrtgApiTokenEnc;
+
+        // 純空白＝沒填。若當成有值寫進去，好的 token 會被覆蓋成加密後的空白，
+        // 而 HasUsableCredentials 因為欄位非空仍判定「有設定」，要到實際連線才 401
+        var blank = ValidRequest();
+        blank.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        blank.PrtgApiToken = "   ";
+        service.Update(blank);
+
+        Assert.Equal(cipher, _store.Get().PrtgApiTokenEnc);
+    }
+
+    [Fact]
     public void PRTG預設認證方式為token()
     {
         var settings = new SystemSettings();

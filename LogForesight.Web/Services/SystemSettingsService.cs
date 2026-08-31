@@ -397,14 +397,25 @@ public class SystemSettingsService : ISystemSettingsService
             s.PrtgUrl = request.PrtgUrl?.Trim() ?? "";
             s.PrtgAuthMode = request.PrtgAuthMode;
             s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
-            if (request.ClearPrtgApiToken)
-                s.PrtgApiTokenEnc = "";
-            else if (!string.IsNullOrEmpty(request.PrtgApiToken))
-                s.PrtgApiTokenEnc = CryptoHelper.Encrypt(request.PrtgApiToken);
-            if (request.ClearPrtgPassword)
-                s.PrtgPasswordEnc = "";
-            else if (!string.IsNullOrEmpty(request.PrtgPassword))
-                s.PrtgPasswordEnc = CryptoHelper.Encrypt(request.PrtgPassword);
+            // 只處理「當前認證方式」那一組憑證：另一組的欄位在畫面上是隱藏的，
+            // 送上來的是切換前殘留的輸入與勾選。不隔開的話，token 模式勾了「清除 token」
+            // 後改用帳號密碼儲存，會把 token 靜默清空（使用者已經看不到那個勾選了）。
+            // 空白字元一律當成「沒填」——與驗證段的 HasEffectiveSecret 同一判定，
+            // 否則不小心輸入空白會把好的憑證覆蓋成加密後的空白，前置檢查還會誤判成「有設定」。
+            if (request.PrtgAuthMode == PrtgAuthModes.Password)
+            {
+                if (request.ClearPrtgPassword)
+                    s.PrtgPasswordEnc = "";
+                else if (!string.IsNullOrWhiteSpace(request.PrtgPassword))
+                    s.PrtgPasswordEnc = CryptoHelper.Encrypt(request.PrtgPassword);
+            }
+            else
+            {
+                if (request.ClearPrtgApiToken)
+                    s.PrtgApiTokenEnc = "";
+                else if (!string.IsNullOrWhiteSpace(request.PrtgApiToken))
+                    s.PrtgApiTokenEnc = CryptoHelper.Encrypt(request.PrtgApiToken);
+            }
             s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors;
             s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds;
             s.PrtgFetchConcurrency = request.PrtgFetchConcurrency;
@@ -630,6 +641,11 @@ public class SystemSettingsService : ISystemSettingsService
         var url = (request.Url ?? "").Trim();
         if (url.Length == 0)
             throw DomainException.Validation("請輸入 PRTG 連線位址。");
+
+        // 非法的認證方式要擋下而不是靜默落回 token：`"Password"`（大寫）之類的值
+        // 會走進 token 分支，錯誤訊息變成「尚未設定 API token」，完全誤導。
+        if (!string.IsNullOrEmpty(request.AuthMode) && !PrtgAuthModes.IsValid(request.AuthMode))
+            throw DomainException.Validation("PRTG 認證方式不合法。");
 
         var isPasswordMode = string.Equals(request.AuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
         string token = string.Empty;

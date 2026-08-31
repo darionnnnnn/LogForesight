@@ -716,6 +716,17 @@ function syncPrtgAuthFields() {
     if (passwordFields) {
         passwordFields.classList.toggle('d-none', authMode !== 'password');
     }
+
+    // 被隱藏那一側的輸入與勾選一律清掉：使用者已經看不到它們，留著只會在儲存時
+    // 送出殘值（後端也會依模式忽略，這裡是讓畫面與實際送出的內容一致）
+    const clearHidden = (inputId, checkboxId) => {
+        const input = document.getElementById(inputId);
+        if (input) input.value = '';
+        const checkbox = document.getElementById(checkboxId);
+        if (checkbox) checkbox.checked = false;
+    };
+    if (authMode === 'password') clearHidden('prtg-api-token', 'prtg-clear-token');
+    else clearHidden('prtg-password', 'prtg-clear-password');
 }
 
 /** PRTG 監控系統設定（批次B-4）：填入表單欄位，token 與 password 永遠留空（write-only） */
@@ -865,6 +876,17 @@ function bindForm() {
                 if (!password && !hasExistingPassword) {
                     activateTabForElement(document.getElementById('prtg-password'));
                     toast('啟用 PRTG 並使用帳號密碼時，必須設定密碼。', 'warning');
+                    return;
+                }
+            } else {
+                // token 模式的對稱檢查：後端一樣會擋，但走的是通用錯誤 toast，
+                // 不會把焦點帶到出錯的欄位
+                const token = document.getElementById('prtg-api-token')?.value ?? '';
+                const clearToken = document.getElementById('prtg-clear-token')?.checked ?? false;
+                const hasExistingToken = Boolean(current?.prtgHasApiToken) && !clearToken;
+                if (!token && !hasExistingToken) {
+                    activateTabForElement(document.getElementById('prtg-api-token'));
+                    toast('啟用 PRTG 並使用 API token 時，必須設定 API token。', 'warning');
                     return;
                 }
             }
@@ -1581,7 +1603,10 @@ unsaved = trackUnsaved(document.getElementById('settings-form'), {
         '#prtg-test-btn, #prtg-test-result, ' +
         '#prtg-mirror-refresh, ' +
         '#prtg-backfill-start, #prtg-backfill-status, #prtg-backfill-output, #prtg-backfill-copy, ' +
-        '#prtg-probe-start, #prtg-probe-status, #prtg-probe-output, #prtg-probe-copy'
+        '#prtg-probe-start, #prtg-probe-status, #prtg-probe-output, #prtg-probe-copy, ' +
+        // 折疊區的 summary 也要排除：探測區在 form 內，點標題展開會被 trackUnsaved
+        // 當成改了設定，什麼都沒動卻在離開頁面時跳出「確定要離開？」
+        '#prtg-probe > summary'
 });
 load();
 refreshPrtgMirror();
