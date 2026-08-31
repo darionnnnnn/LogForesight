@@ -137,6 +137,8 @@ public class SystemSettingsService : ISystemSettingsService
 
     public SystemSettingsDto Update(UpdateSystemSettingsRequest request)
     {
+        var before = _store.Get();
+
         var severities = NormalizeSeverities(request.UnhandledSeverities);
         if (severities.Count == 0)
             throw DomainException.Validation("請至少勾選一個未處理等級。");
@@ -162,6 +164,9 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.PrtgRetentionDays > request.RetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
 
+        if (!PrtgAuthModes.IsValid(request.PrtgAuthMode))
+            throw DomainException.Validation("PRTG 認證方式不合法。");
+
         if (request.PrtgEnabled)
         {
             if (string.IsNullOrWhiteSpace(request.PrtgUrl))
@@ -169,6 +174,22 @@ public class SystemSettingsService : ISystemSettingsService
 
             if (!IsValidHttpUrl(request.PrtgUrl))
                 throw DomainException.Validation("PRTG 位址格式不合法，必須以 http:// 或 https:// 開頭。");
+
+            if (request.PrtgAuthMode == PrtgAuthModes.Token)
+            {
+                // 新存或既有皆算有：密碼／token 欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
+                if (!HasEffectiveSecret(request.PrtgApiToken, before.PrtgApiTokenEnc, request.ClearPrtgApiToken))
+                    throw DomainException.Validation("啟用 PRTG 並使用 API token 時，必須設定 API token。");
+            }
+            else if (request.PrtgAuthMode == PrtgAuthModes.Password)
+            {
+                if (string.IsNullOrWhiteSpace(request.PrtgUsername))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定帳號。");
+
+                // 新存或既有皆算有：密碼欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
+                if (!HasEffectiveSecret(request.PrtgPassword, before.PrtgPasswordEnc, request.ClearPrtgPassword))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定密碼。");
+            }
         }
 
         var adServers = NormalizeAdServers(request.AdServers);
@@ -255,10 +276,7 @@ public class SystemSettingsService : ISystemSettingsService
             throw DomainException.Validation("AI 服務提供者不合法。");
         aiProvider = matchedProvider;
 
-        var before = _store.Get();
-
-        var hasApiKey = !string.IsNullOrWhiteSpace(request.AiApiKey) ||
-                        (!string.IsNullOrEmpty(before.AiApiKeyEnc) && !request.ClearAiApiKey);
+        var hasApiKey = HasEffectiveSecret(request.AiApiKey, before.AiApiKeyEnc, request.ClearAiApiKey);
 
         if (aiProvider == AiProviders.OpenAi)
         {
@@ -377,10 +395,16 @@ public class SystemSettingsService : ISystemSettingsService
             // PRTG 監控系統設定（PRTG 第 1 輪批次B）
             s.PrtgEnabled = request.PrtgEnabled;
             s.PrtgUrl = request.PrtgUrl?.Trim() ?? "";
+            s.PrtgAuthMode = request.PrtgAuthMode;
+            s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
             if (request.ClearPrtgApiToken)
                 s.PrtgApiTokenEnc = "";
             else if (!string.IsNullOrEmpty(request.PrtgApiToken))
                 s.PrtgApiTokenEnc = CryptoHelper.Encrypt(request.PrtgApiToken);
+            if (request.ClearPrtgPassword)
+                s.PrtgPasswordEnc = "";
+            else if (!string.IsNullOrEmpty(request.PrtgPassword))
+                s.PrtgPasswordEnc = CryptoHelper.Encrypt(request.PrtgPassword);
             s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors;
             s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds;
             s.PrtgFetchConcurrency = request.PrtgFetchConcurrency;
@@ -429,9 +453,11 @@ public class SystemSettingsService : ISystemSettingsService
                     before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
                     before.MailOnRunCompleted, before.MailDailyEnabled, before.MailDailyTime,
                     before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled,
-                    before.PrtgEnabled, before.PrtgUrl, before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
+                    before.PrtgEnabled, before.PrtgUrl, before.PrtgAuthMode, before.PrtgUsername,
+                    before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
-                    PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc)
+                    PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
+                    PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc)
                 },
                 After = new
                 {
@@ -446,13 +472,16 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
                     saved.MailOnRunCompleted, saved.MailDailyEnabled, saved.MailDailyTime,
                     saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled,
-                    saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
+                    saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgAuthMode, saved.PrtgUsername,
+                    saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
-                    PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc)
+                    PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
+                    PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc)
                 },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey),
                 SmtpPasswordChanged = request.ClearSmtpPassword || !string.IsNullOrEmpty(request.SmtpPassword),
-                PrtgApiTokenChanged = request.ClearPrtgApiToken || !string.IsNullOrEmpty(request.PrtgApiToken)
+                PrtgApiTokenChanged = request.ClearPrtgApiToken || !string.IsNullOrEmpty(request.PrtgApiToken),
+                PrtgPasswordChanged = request.ClearPrtgPassword || !string.IsNullOrEmpty(request.PrtgPassword)
             });
 
         return ToDto(saved);
@@ -647,6 +676,21 @@ public class SystemSettingsService : ISystemSettingsService
         return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
     }
 
+    private string? DecryptSavedPrtgPassword()
+    {
+        var enc = _store.Get().PrtgPasswordEnc;
+        if (string.IsNullOrEmpty(enc)) return null;
+        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
+        // 匯入或手動編輯 blob 的路徑上有可能是明文
+        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+    }
+
+    /// <summary>
+    /// 憑證「新存或既有皆算有」的判定：新值非空，或既有密文非空且本次未要求清除。
+    /// </summary>
+    private static bool HasEffectiveSecret(string? newSecret, string existingEnc, bool isClearing) =>
+        !string.IsNullOrWhiteSpace(newSecret) || (!string.IsNullOrEmpty(existingEnc) && !isClearing);
+
     private string? DecryptSavedSmtpPassword()
     {
         var enc = _store.Get().SmtpPasswordEnc;
@@ -809,6 +853,9 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgEnabled = s.PrtgEnabled,
         PrtgUrl = s.PrtgUrl,
         PrtgHasApiToken = !string.IsNullOrEmpty(s.PrtgApiTokenEnc),
+        PrtgAuthMode = s.PrtgAuthMode,
+        PrtgUsername = s.PrtgUsername,
+        PrtgHasPassword = !string.IsNullOrEmpty(s.PrtgPasswordEnc),
         PrtgIgnoreSslErrors = s.PrtgIgnoreSslErrors,
         PrtgTimeoutSeconds = s.PrtgTimeoutSeconds,
         PrtgFetchConcurrency = s.PrtgFetchConcurrency,

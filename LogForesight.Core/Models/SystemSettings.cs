@@ -364,6 +364,15 @@ public class SystemSettings
     /// <summary>PRTG API token 密文（<see cref="CryptoHelper.Encrypt"/> 產生）。write-only，語意與 <see cref="AiApiKeyEnc"/> 完全對稱</summary>
     public string PrtgApiTokenEnc { get; set; } = "";
 
+    /// <summary>PRTG 認證方式。預設 token：既有部署零行為變化。舊版 PRTG 沒有 API token 功能時改用帳號密碼</summary>
+    public string PrtgAuthMode { get; set; } = PrtgAuthModes.Token;
+
+    /// <summary>PRTG 帳號（僅 password 模式使用）。明文，語意同 Sentinel.Username</summary>
+    public string PrtgUsername { get; set; } = "";
+
+    /// <summary>PRTG 密碼密文（<see cref="CryptoHelper.Encrypt"/> 產生）。write-only，語意與 <see cref="PrtgApiTokenEnc"/> 完全對稱</summary>
+    public string PrtgPasswordEnc { get; set; } = "";
+
     /// <summary>忽略 PRTG 憑證錯誤。內網自簽憑證用的顯式逃生門，啟用時會記 WARN</summary>
     public bool PrtgIgnoreSslErrors { get; set; }
 
