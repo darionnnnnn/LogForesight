@@ -153,7 +153,7 @@
 | A-2：passhash＋工廠收斂 | agy | 通過 | 3173 綠（+12） | 三份解密三元式已清乾淨，`new PrtgClient(` 正式碼只剩工廠與測試連線兩處。建構子把新參數做成有預設值的選用參數——正式碼零漏傳（已 grep 證實），但這個形狀本身有「日後新增呼叫點會靜默走 token 模式」的風險，記在下方 |
 | A-3：前端認證方式切換 | agy | 通過 | 3173 綠（前端不增測試） | BOM 維持、零 `innerHTML`、API 全走 `api.js` |
 | B：探測預設收合 | Claude | 通過 | 3173 綠 | 另加「執行中自動展開」（推翻 §2 原定案，理由見該節） |
-| 終檢（獨立 Explore 審全 diff） | Claude | 完成 | 3176 綠 | 見下方 |
+| 終檢（獨立 Explore 審全 diff） | Claude | 完成 | 3178 綠 | 見下方 |
 
 ### 終檢處置
 
@@ -165,7 +165,7 @@
 | 高 | **切換認證模式時隱藏欄位的殘值會寫入**：token 模式勾了「清除 token」後改用帳密儲存，`PrtgApiTokenEnc` 被靜默清空（那個勾選已隨切換隱藏，使用者毫無感知）；反方向則會寫入使用者以為不會存的密碼 | 後端寫入依 `PrtgAuthMode` 只處理當前模式那一組憑證；前端切換時清空另一側的輸入與勾選。加迴歸測試，並以突變測試確認它抓得到 |
 | 中 | 空白字元會覆蓋既有憑證：驗證端用 `IsNullOrWhiteSpace`、寫入端用 `IsNullOrEmpty`，不小心輸入純空白會把好的 token 覆蓋成加密後的空白，而 `HasUsableCredentials` 仍判定「有設定」，要到實際連線才 401 | 寫入端一併改用 `IsNullOrWhiteSpace`；加迴歸測試 |
 | 中 | 前端 token 模式缺對稱驗證：啟用 PRTG＋token 留空時前端放行、後端擋下，走通用錯誤 toast 而不會把焦點帶到欄位 | 補上對稱分支 |
-| 中 | `PrtgClientFactoryTests` 四條恆真斷言（`Assert.NotNull` 對不可為 null 的回傳值）——工廠把 token/password 分支寫反也照樣綠 | 換成能真正驗證的行為：帳密模式缺帳號會在建構期擲例外（證明 authMode 有傳到）、逾時與 SSL 選項取自設定 |
+| 中 | `PrtgClientFactoryTests` 四條恆真斷言（`Assert.NotNull` 對不可為 null 的回傳值）——工廠把 token/password 分支寫反也照樣綠 | **補上**兩條行為測試（authMode 有傳到、逾時與 SSL 取自設定）；恆真斷言留著。體檢輪再補解密路徑的直接斷言（見下方體檢節） |
 | 低 | 測試連線不驗認證方式合法性：`"Password"`（大寫）會靜默落回 token 模式，錯誤訊息變成「尚未設定 API token」完全誤導 | 開頭補 `PrtgAuthModes.IsValid` 檢查 |
 | 低 | 展開探測區會被 `trackUnsaved` 當成改了設定（`<details>` 在 form 內），什麼都沒動卻在離開頁面時跳「確定要離開？」 | `excludeSelector` 補 `#prtg-probe > summary` |
 
@@ -178,3 +178,31 @@
   零漏傳（只有工廠與測試連線兩個呼叫點，都顯式傳），但日後新增呼叫點若漏傳會**靜默走 token
   模式**而不是編譯失敗。移除預設值需要改動十餘處測試呼叫，本輪不動。
 - 「併發下 passhash 只換一次」的測試只斷言請求計數，沒斷言多個併發請求拿到的是同一組 passhash。
+
+## 換模型體檢（收尾輪）
+
+> 實作方：agy 委派＋opus（規劃、驗收、終檢手改）。體檢方：fable。
+> 體檢對象：`origin/dev..dev`，重點是終檢後的手改 commit `b3e6599`。
+
+**上一輪的教訓（手改讓既有測試靜默變空跑）這次沒有重演**——寫入隔離對既有測試前提的影響
+逐條追過，`ValidRequest()` 預設 token 模式讓既有測試全走原路徑。發現集中在測試覆蓋形狀與
+文件精確度，無擋路級：
+
+| 嚴重度 | 問題 | 處置 |
+|---|---|---|
+| 中 | 工廠的「解密」主職責零行為斷言：漏掉 `Decrypt` 或分支接反，全套照綠，正式機以「每次 401」現形且訊息指向 token 無效 | 抽 `internal ResolveCredentials`（工廠內部本來就有這段，抽出來直接可測），斷言 token/password 兩分支的解密輸出與「明文相容」 |
+| 中 | 黏住機制只測了「會黏」的一半：把 5xx 也改成黏住（讓暫時故障滅掉整趟 run）不會有任何測試變紅 | 補兩條：HTML 回應同樣黏住只打一次；5xx 不黏、下次呼叫仍重試 |
+| 低 | 「200＋HTML」一律報「帳號或密碼錯誤」會誤導：反向代理維護頁／WAF 阻擋頁同樣是 200＋HTML，使用者會去改本來對的密碼（真的因此打錯反而觸發鎖定） | 訊息改為「回傳登入頁或 HTML 內容，請確認帳號密碼與連線位址」；黏住行為不變 |
+| 低 | `PrtgUsername` 不在寫入隔離內：token 模式下無條件覆寫，非設定頁的 PUT 沒帶它會把已存帳號靜默清空 | 併入 password 分支（token 模式不動 username） |
+| 低 | 測試連線的「留空＝沿用」仍用 `IsNullOrEmpty`，與 Update 端已統一的 `IsNullOrWhiteSpace` 不一致：留一個空白會拿 `" "` 打 getpasshash，白吃一次登入失敗計數 | 兩處統一 |
+| 低 | 終檢的兩條「已知形狀」只留在歸檔 PLAN（歸檔區預設不讀，下一輪看不見） | 抄進 BACKLOG「已知未修項」 |
+| 低 | SPEC「唯一入口」「寫入隔離」講得比實作大；黏住的分類沒寫 HTML/空白；WEB-SPEC 測試連線 fallback 句過期；BACKLOG「人工對應 UI」與 UI 重構節的「手動對應 UI」撞名（實為兩件事：sensor 分類 vs device 對主機） | 逐處修正 |
+
+**查證後不成立**：`_credentialFailure` 無 volatile 的併發疑慮（CLR 參考型別讀寫原子，最壞多進
+一次鎖、不多打請求）；等在 semaphore 上的併發請求進鎖後會被鎖內的黏住檢查擋下不重打；
+`syncPrtgAuthFields` 不會清掉使用者未儲存的輸入（re-render 只發生在載入與儲存成功後）；
+AI provider 切換無同型風險（三 provider 共用同一把金鑰欄，不存在跨組污染路徑），故
+CLAUDE.md 不為此新增紅線。
+
+體檢後全量測試：**3181 綠（略過 6）**。
+

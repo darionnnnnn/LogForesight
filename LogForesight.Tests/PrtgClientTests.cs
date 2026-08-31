@@ -379,7 +379,76 @@ public class PrtgClientTests
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors"));
 
-        Assert.Contains("帳號或密碼", ex.Message);
+        // HTML 可能是登入頁也可能是代理維護頁，訊息不可一口咬定帳密錯
+        Assert.Contains("HTML", ex.Message);
+        Assert.Contains("帳號密碼", ex.Message);
+    }
+
+    [Fact]
+    public async Task 帳密模式_HTML回應同樣黏住不重打getpasshash()
+    {
+        // 黏住的範圍不只 401：HTML 登入頁也是憑證級失敗，不黏的話一樣是「sensor 數 × 登入失敗」
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(HtmlResponse(HttpStatusCode.OK, "<html>login</html>"));
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "anypass");
+
+        for (var i = 0; i < 3; i++)
+        {
+            await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+        }
+
+        Assert.Equal(1, stub.Requests.Count(r => r.Url.Contains("getpasshash.htm")));
+    }
+
+    [Fact]
+    public async Task 帳密模式_伺服器5xx不黏住_下次呼叫仍會重試getpasshash()
+    {
+        // 傳輸類／伺服器暫時故障要保留重試：PRTG 短暫 500 一次不該讓整趟 run 全滅。
+        // 若日後把 5xx 也改成 FailCredentials，這條會紅。
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "anypass");
+
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(2, stub.Requests.Count(r => r.Url.Contains("getpasshash.htm")));
     }
 
     [Fact]

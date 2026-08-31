@@ -123,6 +123,43 @@ public class PrtgClientFactoryTests
     }
 
     [Fact]
+    public void ResolveCredentials_解密真的發生且分支沒有接反()
+    {
+        // 工廠的主要職責是「依模式解密憑證」——只斷言 Create 不擲例外擋不住
+        // 「漏掉 Decrypt 把密文當明文送出」或「token/password 分支接反」這兩種回歸
+        var tokenSettings = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("plain-token-123"),
+            PrtgPasswordEnc = CryptoHelper.Encrypt("should-not-be-used")
+        };
+        var (token, username, password) = PrtgClientFactory.ResolveCredentials(tokenSettings);
+        Assert.Equal("plain-token-123", token);
+        Assert.Equal("", username);
+        Assert.Equal("", password);
+
+        var passwordSettings = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Password,
+            PrtgUsername = "operator",
+            PrtgPasswordEnc = CryptoHelper.Encrypt("plain-pass-456"),
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("should-not-be-used")
+        };
+        var (token2, username2, password2) = PrtgClientFactory.ResolveCredentials(passwordSettings);
+        Assert.Equal("", token2);
+        Assert.Equal("operator", username2);
+        Assert.Equal("plain-pass-456", password2);
+
+        // 明文相容（IsEncrypted 守衛）：blob 被手動編輯成明文時原樣使用、不擲例外
+        var plainSettings = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgApiTokenEnc = "raw-plain-token"
+        };
+        Assert.Equal("raw-plain-token", PrtgClientFactory.ResolveCredentials(plainSettings).Token);
+    }
+
+    [Fact]
     public void Create_認證方式有真的傳進client()
     {
         // `Assert.NotNull(client)` 對不可為 null 的回傳型別是恆真斷言，證明不了任何事。

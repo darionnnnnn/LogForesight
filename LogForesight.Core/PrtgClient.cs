@@ -191,7 +191,9 @@ public sealed class PrtgClient : IDisposable
 
                 if (trimmed.StartsWith('<'))
                 {
-                    throw FailCredentials("PRTG 帳號或密碼錯誤。");
+                    // 帳密錯時 PRTG 回登入頁，但反向代理維護頁／WAF 阻擋頁同樣是 200+HTML——
+                    // 訊息不能一口咬定帳密錯，否則使用者會去改本來對的密碼（真的因此打錯反而觸發鎖定）
+                    throw FailCredentials("PRTG 回傳登入頁或 HTML 內容，請確認帳號密碼與連線位址。");
                 }
 
                 if (string.IsNullOrWhiteSpace(trimmed))

@@ -16,23 +16,7 @@ public static class PrtgClientFactory
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var isPasswordMode = string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
-
-        string token = string.Empty;
-        string username = string.Empty;
-        string password = string.Empty;
-
-        if (isPasswordMode)
-        {
-            username = settings.PrtgUsername ?? string.Empty;
-            var enc = settings.PrtgPasswordEnc ?? string.Empty;
-            password = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
-        }
-        else
-        {
-            var enc = settings.PrtgApiTokenEnc ?? string.Empty;
-            token = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
-        }
+        var (token, username, password) = ResolveCredentials(settings);
 
         return new PrtgClient(
             baseUrl: settings.PrtgUrl ?? string.Empty,
@@ -43,6 +27,26 @@ public static class PrtgClientFactory
             authMode: settings.PrtgAuthMode,
             usernameOrEmpty: username,
             passwordOrEmpty: password);
+    }
+
+    /// <summary>
+    /// 依認證方式取出（解密後的）憑證。internal 供測試直接斷言「解密真的發生、分支沒有接反」——
+    /// 工廠的主要職責就是這一段，只斷言 Create 不擲例外是恆真測試，擋不住把 Decrypt 漏掉的回歸。
+    /// </summary>
+    internal static (string Token, string Username, string Password) ResolveCredentials(SystemSettings settings)
+    {
+        var isPasswordMode = string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
+
+        if (isPasswordMode)
+        {
+            var enc = settings.PrtgPasswordEnc ?? string.Empty;
+            var password = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+            return (string.Empty, settings.PrtgUsername ?? string.Empty, password);
+        }
+
+        var tokenEnc = settings.PrtgApiTokenEnc ?? string.Empty;
+        var token = CryptoHelper.IsEncrypted(tokenEnc) ? CryptoHelper.Decrypt(tokenEnc) : tokenEnc;
+        return (token, string.Empty, string.Empty);
     }
 
     /// <summary>

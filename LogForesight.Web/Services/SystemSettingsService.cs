@@ -396,7 +396,6 @@ public class SystemSettingsService : ISystemSettingsService
             s.PrtgEnabled = request.PrtgEnabled;
             s.PrtgUrl = request.PrtgUrl?.Trim() ?? "";
             s.PrtgAuthMode = request.PrtgAuthMode;
-            s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
             // 只處理「當前認證方式」那一組憑證：另一組的欄位在畫面上是隱藏的，
             // 送上來的是切換前殘留的輸入與勾選。不隔開的話，token 模式勾了「清除 token」
             // 後改用帳號密碼儲存，會把 token 靜默清空（使用者已經看不到那個勾選了）。
@@ -404,6 +403,9 @@ public class SystemSettingsService : ISystemSettingsService
             // 否則不小心輸入空白會把好的憑證覆蓋成加密後的空白，前置檢查還會誤判成「有設定」。
             if (request.PrtgAuthMode == PrtgAuthModes.Password)
             {
+                // username 也只在帳密模式寫入：token 模式下它在畫面上是隱藏的，
+                // 非設定頁的呼叫端（腳本、匯入）沒帶它時不該把已存帳號靜默清空
+                s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
                 if (request.ClearPrtgPassword)
                     s.PrtgPasswordEnc = "";
                 else if (!string.IsNullOrWhiteSpace(request.PrtgPassword))
@@ -658,7 +660,9 @@ public class SystemSettingsService : ISystemSettingsService
             if (username.Length == 0)
                 throw DomainException.Validation("請輸入 PRTG 帳號。");
 
-            var effectivePassword = string.IsNullOrEmpty(request.Password)
+            // 純空白＝沒填、沿用已存（與 HasEffectiveSecret 同一判定）：
+            // 否則不小心留一個空白會拿 " " 去打 getpasshash，白吃一次登入失敗計數
+            var effectivePassword = string.IsNullOrWhiteSpace(request.Password)
                 ? DecryptSavedPrtgPassword()
                 : request.Password;
 
@@ -669,7 +673,7 @@ public class SystemSettingsService : ISystemSettingsService
         }
         else
         {
-            var effectiveToken = string.IsNullOrEmpty(request.ApiToken)
+            var effectiveToken = string.IsNullOrWhiteSpace(request.ApiToken)
                 ? DecryptSavedPrtgApiToken()
                 : request.ApiToken;
 

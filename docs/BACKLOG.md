@@ -429,7 +429,7 @@
 - **分析層 L2~L5 全部**（特徵計算／弱訊號偵測／訊號合成／LLM 敘述化）：這是 PRTG 整合的價值
   所在，但每一層都依賴探測要回答的問題（sensor type 分布、實際量體、主機對應覆蓋率）。
   觸發條件：第一次實機探測完成、且回填累積 4~8 週資料（基線需要）。
-- **sensor 語意分類引擎與人工對應 UI**：`lf_prtg_sensors.category` / `category_source` 欄位
+- **sensor 語意分類引擎與人工分類 UI**（分類的是 sensor 的語意類別，與「device 對主機」的對應是兩件事）：`lf_prtg_sensors.category` / `category_source` 欄位
   已備好，且每日結構同步保證不覆蓋（人工指定的值不會被洗掉），可直接接手。
   觸發條件：探測顯示 PRTG `type` 對照表（L0）覆蓋率不足 85%，且分析層啟動。
 - **finding 掛接**：方向已定調為映射成 `LogIssueSignature`（`EventId=0`＋`EventKey`，同 Linux
@@ -481,6 +481,11 @@
   兩者都是「同一判定寫兩處」，之後改規則時容易只改一邊。
 - **`PrtgProbeStatusDto.StartedAt` / `PrtgBackfillStatusDto.StartedAt` 前端沒有消費點**：
   可以拿來顯示已執行時長，或移除。
+
+- **`PrtgClient` 建構子的認證參數是有預設值的選用參數**（`authMode` 預設 token）：目前正式碼
+  只有工廠與測試連線兩個呼叫點、都顯式傳，但日後新增呼叫點若漏傳會**靜默走 token 模式**而不是
+  編譯失敗。移除預設值需改動十餘處測試呼叫，暫不動。
+- **「併發下 passhash 只換一次」的測試只斷言請求計數**，沒斷言多個併發請求拿到同一組 passhash。
 
 ### PRTG UI 重構（下一輪候選）
 
