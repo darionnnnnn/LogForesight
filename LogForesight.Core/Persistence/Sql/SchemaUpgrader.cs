@@ -177,6 +177,37 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_reports",
             "IX_lf_reports_host_date_kind", "host_id, host_name, report_date, kind", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_reports", "IX_lf_reports_created_at", "created_at");
+
+        // PRTG 鏡像層五張資料表：既有部署的 DB 已經存在，EnsureCreated 對它什麼都不做
+        // （只在資料庫整個不存在時建表），因此需要透過自製冪等 DDL「檢查缺什麼→缺才補」來建立資料表與索引；
+        // 新建的 DB 則由 EnsureCreated 直接建好最新 schema，這裡每一步都會是安靜的 no-op。
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_devices",
+            isSqlite ? SqliteCreatePrtgDevices : SqlServerCreatePrtgDevices);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_devices", "IX_lf_prtg_devices_ip", "ip");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_sensors",
+            isSqlite ? SqliteCreatePrtgSensors : SqlServerCreatePrtgSensors);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_sensors", "IX_lf_prtg_sensors_device", "device_objid");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_sensors", "IX_lf_prtg_sensors_type", "sensor_type");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
+            isSqlite ? SqliteCreatePrtgStateChanges : SqlServerCreatePrtgStateChanges);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
+            "IX_lf_prtg_state_ch_sensor", "sensor_objid, changed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
+            "IX_lf_prtg_state_ch_created", "created_at");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
+            isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
+            "IX_lf_prtg_values_uniq", "sensor_objid, period_start", unique: true);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
+            "IX_lf_prtg_values_created", "created_at");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_host_map",
+            isSqlite ? SqliteCreatePrtgHostMap : SqlServerCreatePrtgHostMap);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_host_map",
+            "IX_lf_prtg_host_map_created", "created_at");
     }
 
 
@@ -562,6 +593,156 @@ internal static class SchemaUpgrader
             file_name nvarchar(255) NOT NULL,
             content nvarchar(max) NOT NULL,
             created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgDevices = """
+        CREATE TABLE lf_prtg_devices (
+            objid INTEGER NOT NULL CONSTRAINT PK_lf_prtg_devices PRIMARY KEY,
+            name TEXT NOT NULL,
+            group_path TEXT NOT NULL,
+            ip TEXT NULL,
+            tags TEXT NULL,
+            status TEXT NULL,
+            dependency_objid INTEGER NULL,
+            paused INTEGER NOT NULL,
+            synced_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePrtgDevices = """
+        CREATE TABLE lf_prtg_devices (
+            objid bigint NOT NULL CONSTRAINT PK_lf_prtg_devices PRIMARY KEY,
+            name nvarchar(255) NOT NULL,
+            group_path nvarchar(512) NOT NULL,
+            ip nvarchar(64) NULL,
+            tags nvarchar(max) NULL,
+            status nvarchar(64) NULL,
+            dependency_objid bigint NULL,
+            paused bit NOT NULL,
+            synced_at datetime2 NOT NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgSensors = """
+        CREATE TABLE lf_prtg_sensors (
+            objid INTEGER NOT NULL CONSTRAINT PK_lf_prtg_sensors PRIMARY KEY,
+            device_objid INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            sensor_type TEXT NOT NULL,
+            tags TEXT NULL,
+            unit TEXT NULL,
+            status TEXT NULL,
+            thresholds_json TEXT NULL,
+            dependency_objid INTEGER NULL,
+            paused INTEGER NOT NULL,
+            category TEXT NULL,
+            category_source TEXT NULL,
+            synced_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePrtgSensors = """
+        CREATE TABLE lf_prtg_sensors (
+            objid bigint NOT NULL CONSTRAINT PK_lf_prtg_sensors PRIMARY KEY,
+            device_objid bigint NOT NULL,
+            name nvarchar(255) NOT NULL,
+            sensor_type nvarchar(128) NOT NULL,
+            tags nvarchar(max) NULL,
+            unit nvarchar(64) NULL,
+            status nvarchar(64) NULL,
+            thresholds_json nvarchar(max) NULL,
+            dependency_objid bigint NULL,
+            paused bit NOT NULL,
+            category nvarchar(64) NULL,
+            category_source nvarchar(16) NULL,
+            synced_at datetime2 NOT NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgStateChanges = """
+        CREATE TABLE lf_prtg_state_changes (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_prtg_state_changes PRIMARY KEY AUTOINCREMENT,
+            sensor_objid INTEGER NOT NULL,
+            changed_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            prev_status TEXT NULL,
+            message TEXT NULL,
+            quality TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePrtgStateChanges = """
+        CREATE TABLE lf_prtg_state_changes (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_prtg_state_changes PRIMARY KEY,
+            sensor_objid bigint NOT NULL,
+            changed_at datetime2 NOT NULL,
+            status nvarchar(64) NOT NULL,
+            prev_status nvarchar(64) NULL,
+            message nvarchar(max) NULL,
+            quality nvarchar(16) NOT NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgValues = """
+        CREATE TABLE lf_prtg_values (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_prtg_values PRIMARY KEY AUTOINCREMENT,
+            sensor_objid INTEGER NOT NULL,
+            period_start TEXT NOT NULL,
+            avg_value REAL NULL,
+            min_value REAL NULL,
+            max_value REAL NULL,
+            coverage REAL NULL,
+            quality TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePrtgValues = """
+        CREATE TABLE lf_prtg_values (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_prtg_values PRIMARY KEY,
+            sensor_objid bigint NOT NULL,
+            period_start datetime2 NOT NULL,
+            avg_value float NULL,
+            min_value float NULL,
+            max_value float NULL,
+            coverage float NULL,
+            quality nvarchar(16) NOT NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgHostMap = """
+        CREATE TABLE lf_prtg_host_map (
+            map_date TEXT NOT NULL,
+            device_objid INTEGER NOT NULL,
+            ip TEXT NULL,
+            host_id INTEGER NULL,
+            host_name TEXT NULL,
+            map_status TEXT NOT NULL,
+            note TEXT NULL,
+            created_at TEXT NOT NULL,
+            CONSTRAINT PK_lf_prtg_host_map PRIMARY KEY (map_date, device_objid)
+        )
+        """;
+
+    private const string SqlServerCreatePrtgHostMap = """
+        CREATE TABLE lf_prtg_host_map (
+            map_date datetime2 NOT NULL,
+            device_objid bigint NOT NULL,
+            ip nvarchar(64) NULL,
+            host_id bigint NULL,
+            host_name nvarchar(255) NULL,
+            map_status nvarchar(16) NOT NULL,
+            note nvarchar(512) NULL,
+            created_at datetime2 NOT NULL,
+            CONSTRAINT PK_lf_prtg_host_map PRIMARY KEY (map_date, device_objid)
         )
         """;
 

@@ -546,6 +546,17 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "報告全文清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
+            try
+            {
+                var prtgPruned = backend.PrtgStore().Prune(retention.PrtgRetentionDays);
+                if (prtgPruned > 0)
+                    console.WriteLine($"已清除 {prtgPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 鏡像資料。");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "PRTG 鏡像資料清理失敗（不影響本次分析）：{0}", ex.Message);
+            }
+
             var yesterday = DateTime.Today.AddDays(-1);
 
             // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
@@ -597,13 +608,15 @@ public class AnalysisOrchestrator
                 ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService)
                 : Task.CompletedTask;
 
+            var prtgTask = RunPrtgFetchAsync(runCtx, backend, hostStore, yesterday);
+
             // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
             // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
-            // 下次執行的缺漏日回補機制會自動補上失敗的那一路。NetIQ 路徑本來就有自己的內部
-            // try/catch（RunNetiqAnalysisAsync 尾端）吞掉非取消例外，只有取消會穿透；本機路徑
+            // 下次執行的缺漏日回補機制會自動補上失敗的那一路。NetIQ 與 PRTG 路徑本來就有自己的內部
+            // try/catch 吞掉非取消例外，只有取消會穿透；本機路徑
             // 沒有這層保護，維持「本機出問題就是整趟失敗」的既有嚴格度（本機通常只有一台，
-            // 出問題多半是環境性的，值得當硬失敗訊號，不像 NetIQ 是「一台壞不該拖累其他台」）。
-            await Task.WhenAll(localTask, netiqTask);
+            // 出問題多半是環境性的，值得當硬失敗訊號，不像 NetIQ/PRTG 是外部系統失聯不該拖累其他主機）。
+            await Task.WhenAll(localTask, netiqTask, prtgTask);
 
             // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
             if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
@@ -1034,6 +1047,75 @@ public class AnalysisOrchestrator
         }
     }
 
+    private async Task RunPrtgFetchAsync(AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, DateTime day)
+    {
+        var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
+            runRecorder, result, useAi, progress) = ctx;
+
+        var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
+
+        try
+        {
+            var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            if (!systemSettings.PrtgEnabled ||
+                string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) ||
+                string.IsNullOrWhiteSpace(systemSettings.PrtgApiTokenEnc))
+            {
+                prtgConsole.WriteLine("PRTG 未啟用，略過。");
+                return;
+            }
+
+            var token = CryptoHelper.IsEncrypted(systemSettings.PrtgApiTokenEnc)
+                ? CryptoHelper.Decrypt(systemSettings.PrtgApiTokenEnc)
+                : systemSettings.PrtgApiTokenEnc;
+
+            using var client = new PrtgClient(
+                systemSettings.PrtgUrl,
+                token,
+                systemSettings.PrtgTimeoutSeconds,
+                systemSettings.PrtgIgnoreSslErrors);
+
+            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole);
+            var fetchResult = await fetchService.FetchDayAsync(day, systemSettings.PrtgFetchConcurrency, ct);
+
+            var summary = $"PRTG 每日擷取完成（{day:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
+                          $"狀態變更 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
+                          (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
+
+            prtgConsole.WriteLine(summary);
+            runRecorder.Milestone(summary);
+        }
+        catch (OperationCanceledException)
+        {
+            // 取消訊號必須穿透，讓上層統一處理中斷
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // 與 NetIQ 機房分析的失敗邊界一致：PRTG 擷取出問題不該讓整趟分析失敗，
+            // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
+            Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
+            prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
+        }
+
+        // PRTG 主機對應：獨立的 try/catch，對應失敗不拖垮前面的擷取結果
+        try
+        {
+            var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
+            var mapResult = hostMapper.MapForDate(day);
+            runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
+            prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
+        }
+    }
+
     private static string FormatElapsed(TimeSpan span) =>
         span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小時 {span.Minutes} 分 {span.Seconds} 秒"
         : span.TotalMinutes >= 1 ? $"{span.Minutes} 分 {span.Seconds} 秒"
@@ -1158,4 +1240,5 @@ public record RetentionOptions
     public int AuditRetentionDays { get; init; } = SystemSettings.DefaultAuditRetentionDays;
     public int RawEventRetentionDays { get; init; } = SystemSettings.DefaultRawEventRetentionDays;
     public int ReportRetentionDays { get; init; } = SystemSettings.DefaultReportRetentionDays;
+    public int PrtgRetentionDays { get; init; } = SystemSettings.DefaultPrtgRetentionDays;
 }

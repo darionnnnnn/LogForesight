@@ -25,8 +25,12 @@ public class WebHost
     public string? DisplayName { get; set; }
 
     /// <summary>
-    /// 最近已知 IP。**純顯示用線索**，人在辨認新舊主機時最實用——
-    /// 程式不拿它做任何比對（2026-07-21 定案：主機識別採純人工綁定）。
+    /// 最近已知 IP。**主要是顯示用線索**，人在辨認新舊主機時最實用——
+    /// 主機識別本身採純人工綁定，不靠這一欄（2026-07-21 定案）。
+    ///
+    /// 唯一的程式比對消費端是 PRTG device 的主機對應（<c>PrtgHostMapper</c>）：
+    /// 它拿這一欄去對 PRTG 鏡像的 device IP，結果只寫進 PRTG 側的對應表，
+    /// **不參與主機身分判定、也不回寫主機主檔**，所以上面那條定案不受影響。
     /// </summary>
     public string? IpAddress { get; set; }
 

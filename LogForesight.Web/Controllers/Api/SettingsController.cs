@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
@@ -17,12 +19,24 @@ public class SettingsController : ControllerBase
     private readonly ISystemSettingsService _settings;
     private readonly AiUsageStore _aiUsage;
     private readonly IAuditService _audit;
+    private readonly PrtgProbeService? _prtgProbe;
+    private readonly PrtgBackfillService? _prtgBackfill;
+    private readonly StorageBackend? _backend;
 
-    public SettingsController(ISystemSettingsService settings, AiUsageStore aiUsage, IAuditService audit)
+    public SettingsController(
+        ISystemSettingsService settings,
+        AiUsageStore aiUsage,
+        IAuditService audit,
+        PrtgProbeService? prtgProbe = null,
+        PrtgBackfillService? prtgBackfill = null,
+        StorageBackend? backend = null)
     {
         _settings = settings;
         _aiUsage = aiUsage;
         _audit = audit;
+        _prtgProbe = prtgProbe;
+        _prtgBackfill = prtgBackfill;
+        _backend = backend;
     }
 
     [HttpGet]
@@ -51,6 +65,11 @@ public class SettingsController : ControllerBase
     [HttpPost("mail-test")]
     public async Task<ApiResponse<TestMailResultDto>> TestMail([FromBody] TestMailRequest request) =>
         ApiResponse<TestMailResultDto>.Ok(await _settings.TestMail(request));
+
+    /// <summary>PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線，token 留空沿用已儲存的 token</summary>
+    [HttpPost("prtg-test")]
+    public async Task<ApiResponse<TestPrtgConnectionResultDto>> TestPrtg([FromBody] TestPrtgConnectionRequest request, CancellationToken ct)
+        => ApiResponse<TestPrtgConnectionResultDto>.Ok(await _settings.TestPrtgAsync(request, ct));
 
     /// <summary>AI token 用量統計（回饋二十七輪作業 B）：今日／累計＋近 30 天每日明細</summary>
     [HttpGet("ai-usage")]
@@ -82,4 +101,115 @@ public class SettingsController : ControllerBase
 
         return ApiResponse<AiUsageDto>.Ok(AiUsageDto.From(_aiUsage, AiUsageDto.TableDays));
     }
+
+    // ── PRTG API 探測（probe，PRTG 第 1 輪批次B-3）──────────────────────────────────
+
+    [HttpGet("prtg-probe/status")]
+    public ApiResponse<PrtgProbeStatusDto> GetPrtgProbeStatus() =>
+        ApiResponse<PrtgProbeStatusDto>.Ok(_prtgProbe?.GetStatus() ?? new PrtgProbeStatusDto());
+
+    [HttpPost("prtg-probe/start")]
+    public ApiResponse<StartPrtgProbeResultDto> StartPrtgProbe()
+    {
+        if (_prtgProbe == null)
+            throw DomainException.Validation("PRTG 探測服務未啟用。");
+
+        if (!_prtgProbe.TryStart(out var error))
+            throw DomainException.Validation(error ?? "無法啟動 PRTG 探測。");
+
+        _audit.Record(
+            action: AuditActions.PrtgProbeRun,
+            summary: "執行 PRTG API 環境探測",
+            targetKind: "system_settings",
+            targetId: "prtg_probe",
+            detail: new { });
+
+        return ApiResponse<StartPrtgProbeResultDto>.Ok(new StartPrtgProbeResultDto { Started = true });
+    }
+
+    // ── PRTG 歷史回填（PRTG 第 1 輪批次E）────────────────────────────────────────
+
+    [HttpGet("prtg-backfill/status")]
+    public ApiResponse<PrtgBackfillStatusDto> GetPrtgBackfillStatus() =>
+        ApiResponse<PrtgBackfillStatusDto>.Ok(_prtgBackfill?.GetStatus() ?? new PrtgBackfillStatusDto());
+
+    [HttpPost("prtg-backfill/start")]
+    public ApiResponse<StartPrtgBackfillResultDto> StartPrtgBackfill()
+    {
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用。");
+
+        if (!_prtgBackfill.TryStart(out var error))
+            throw DomainException.Validation(error ?? "無法啟動 PRTG 歷史回填。");
+
+        _audit.Record(
+            action: AuditActions.PrtgBackfillRun,
+            summary: "執行 PRTG 歷史資料回填",
+            targetKind: "system_settings",
+            targetId: "prtg_backfill",
+            detail: new { });
+
+        return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
+    }
+
+    // ── PRTG 鏡像狀態（PRTG 第 1 輪批次F）────────────────────────────────────────
+
+    [HttpGet("prtg-mirror")]
+    public ApiResponse<PrtgMirrorStatusDto> GetPrtgMirrorStatus()
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto());
+        }
+
+        var store = _backend.PrtgStore();
+        var summary = store.GetMirrorSummary();
+
+        // 搜尋最近有對應資料的日期（至多往前找 30 天）
+        DateTime? mapDate = null;
+        List<PrtgHostMapRow> hostMaps = new();
+        for (var d = DateTime.Today; d >= DateTime.Today.AddDays(-30); d = d.AddDays(-1))
+        {
+            var rows = store.GetHostMapForDate(d);
+            if (rows.Count > 0)
+            {
+                mapDate = d;
+                hostMaps = rows;
+                break;
+            }
+        }
+
+        var mapOk = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Ok);
+        var mapConflict = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Conflict);
+        var mapUnmatched = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Unmatched);
+
+        var conflicts = hostMaps
+            .Where(m => m.MapStatus == PrtgMapStatus.Conflict)
+            .Take(20)
+            .Select(m => new PrtgHostMapItemDto(m.DeviceObjid, m.Ip, m.HostName, m.Note))
+            .ToList();
+
+        var unmatched = hostMaps
+            .Where(m => m.MapStatus == PrtgMapStatus.Unmatched)
+            .Take(20)
+            .Select(m => new PrtgHostMapItemDto(m.DeviceObjid, m.Ip, m.HostName, m.Note))
+            .ToList();
+
+        return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
+        {
+            DeviceCount = summary.DeviceCount,
+            SensorCount = summary.SensorCount,
+            LastDeviceSync = summary.LastDeviceSync,
+            LastSensorSync = summary.LastSensorSync,
+            LastValueAt = summary.LastValueAt,
+            LastStateChangeAt = summary.LastStateChangeAt,
+            MapDate = mapDate,
+            MapOk = mapOk,
+            MapConflict = mapConflict,
+            MapUnmatched = mapUnmatched,
+            Conflicts = conflicts,
+            Unmatched = unmatched
+        });
+    }
 }
+

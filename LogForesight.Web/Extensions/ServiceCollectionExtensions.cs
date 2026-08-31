@@ -403,6 +403,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<NetiqProbeRunState>();
         services.AddSingleton<NetiqProbeService>();
 
+        // PRTG API 探測（probe，PRTG 第 1 輪批次B-3）：狀態單例與背景執行入口
+        services.AddSingleton<PrtgProbeRunState>();
+        services.AddSingleton<PrtgProbeService>();
+
+        // PRTG 歷史回填（PRTG 第 1 輪批次E）：狀態單例與背景執行入口
+        services.AddSingleton<PrtgBackfillRunState>();
+        services.AddSingleton<PrtgBackfillService>();
+
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
         // **§2a（回饋第十一輪）起只剩負責人一種**——使用者／主機／群組授權三種已退役
         // （主機主要來源是 NetIQ 掃描匯入，其餘動線見 docs/archive/FEEDBACK-11-PLAN.md §2a 對照表）。

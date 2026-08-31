@@ -449,6 +449,12 @@ lf_reports:        (host_id, report_date)
 lf_permission_changes: 見上方定義區塊（不在此重列，避免兩份索引清單各自演化）
 lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
+
+lf_prtg_devices:      (ip)
+lf_prtg_sensors:      (device_objid)；(sensor_type)
+lf_prtg_state_changes: (sensor_objid, changed_at)；(created_at)
+lf_prtg_values:       UNIQUE(sensor_objid, period_start)；(created_at)
+lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 ```
 
 ### 刪除指定主機日（舊日重新分析用）
@@ -477,7 +483,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 
 ### 保留策略
 
-保留期**不是單一年限**，而是依資料性質分成五個（另有 `InitialHistoryDays` 決定首次回補幾天，
+保留期**不是單一年限**，而是依資料性質分成六個（另有 `InitialHistoryDays` 決定首次回補幾天，
 與保留期同受 90 天下限約束，但它不刪資料）：
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
@@ -487,8 +493,9 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 | `ReportRetentionDays` | 180 | 報告全文：`lf_reports`（風險報告／體檢報告／權限異動報告），依 `created_at` 判定。**不可大於 `RetentionDays`**（前後端皆驗證，讀取端另取小）：報告全文存在資料庫，而超過 `RetentionDays` 之後對應的分析紀錄已被清除，那些報告在 Web 上不再有任何入口可點開，留著只是佔空間 |
+| `PrtgRetentionDays` | 180 | PRTG 鏡像資料：`lf_prtg_values`／`lf_prtg_state_changes`／`lf_prtg_host_map`，依 `created_at` 判定。**不可大於 `RetentionDays`**（寫入時驗證，讀取端 `RuntimeSettingsResolver` 另取小）。`lf_prtg_devices`／`lf_prtg_sensors` 是結構鏡像、永遠保持現況全量，**不清** |
 
-六個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
+七個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
 讀取端不 clamp，既有部署存過的較短天數照舊生效。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。

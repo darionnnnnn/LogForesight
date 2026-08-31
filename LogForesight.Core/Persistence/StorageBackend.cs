@@ -203,6 +203,9 @@ public class StorageBackend
     /// <see cref="IReportReader"/> 的實作</summary>
     public EfReportStore ReportStore() => new(_dbFactory);
 
+    /// <summary>PRTG 鏡像資料 store（↔ lf_prtg_* 五張表）</summary>
+    public EfPrtgStore PrtgStore() => new(_dbFactory);
+
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
     /// 呼叫端另外持有——本類別不擁有主機清單的生命週期。</summary>

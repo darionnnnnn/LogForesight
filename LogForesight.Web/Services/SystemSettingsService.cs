@@ -45,6 +45,13 @@ public interface ISystemSettingsService
     /// 與 <see cref="Update"/> 的 ClearSmtpPassword／SmtpPassword 寫入慣例對稱）。
     /// </summary>
     Task<TestMailResultDto> TestMail(TestMailRequest request);
+
+    /// <summary>
+    /// PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線。token 留空＝沿用已儲存的 token。
+    /// 成功回傳耗時，失敗回傳錯誤訊息，不擲例外。
+    /// </summary>
+    Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("測試未使用此方法");
 }
 
 public class SystemSettingsService : ISystemSettingsService
@@ -151,6 +158,18 @@ public class SystemSettingsService : ISystemSettingsService
         // 那些報告在站上不再有任何入口可以點開，留著只是佔資料庫空間
         if (request.ReportRetentionDays > request.RetentionDays)
             throw DomainException.Validation("報告保留天數不可大於歷史資料保留天數。");
+
+        if (request.PrtgRetentionDays > request.RetentionDays)
+            throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
+
+        if (request.PrtgEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(request.PrtgUrl))
+                throw DomainException.Validation("啟用 PRTG 時，PRTG 位址不可為空。");
+
+            if (!IsValidHttpUrl(request.PrtgUrl))
+                throw DomainException.Validation("PRTG 位址格式不合法，必須以 http:// 或 https:// 開頭。");
+        }
 
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
@@ -355,6 +374,19 @@ public class SystemSettingsService : ISystemSettingsService
             s.MailBodyIntro = request.MailBodyIntro?.Trim() ?? "";
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
 
+            // PRTG 監控系統設定（PRTG 第 1 輪批次B）
+            s.PrtgEnabled = request.PrtgEnabled;
+            s.PrtgUrl = request.PrtgUrl?.Trim() ?? "";
+            if (request.ClearPrtgApiToken)
+                s.PrtgApiTokenEnc = "";
+            else if (!string.IsNullOrEmpty(request.PrtgApiToken))
+                s.PrtgApiTokenEnc = CryptoHelper.Encrypt(request.PrtgApiToken);
+            s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors;
+            s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds;
+            s.PrtgFetchConcurrency = request.PrtgFetchConcurrency;
+            s.PrtgBackfillDays = request.PrtgBackfillDays;
+            s.PrtgRetentionDays = request.PrtgRetentionDays;
+
             s.UpdatedByAccount = _currentUser.Account;
         });
 
@@ -396,7 +428,10 @@ public class SystemSettingsService : ISystemSettingsService
                     before.MailEnabled, before.SmtpServer, before.SmtpPort, before.SmtpUseTls, before.SmtpAccount,
                     before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
                     before.MailOnRunCompleted, before.MailDailyEnabled, before.MailDailyTime,
-                    before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled
+                    before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled,
+                    before.PrtgEnabled, before.PrtgUrl, before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
+                    before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
+                    PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc)
                 },
                 After = new
                 {
@@ -410,10 +445,14 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.MailEnabled, saved.SmtpServer, saved.SmtpPort, saved.SmtpUseTls, saved.SmtpAccount,
                     saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
                     saved.MailOnRunCompleted, saved.MailDailyEnabled, saved.MailDailyTime,
-                    saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled
+                    saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled,
+                    saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
+                    saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
+                    PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc)
                 },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey),
-                SmtpPasswordChanged = request.ClearSmtpPassword || !string.IsNullOrEmpty(request.SmtpPassword)
+                SmtpPasswordChanged = request.ClearSmtpPassword || !string.IsNullOrEmpty(request.SmtpPassword),
+                PrtgApiTokenChanged = request.ClearPrtgApiToken || !string.IsNullOrEmpty(request.PrtgApiToken)
             });
 
         return ToDto(saved);
@@ -557,10 +596,64 @@ public class SystemSettingsService : ISystemSettingsService
         }
     }
 
+    public async Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct)
+    {
+        var url = (request.Url ?? "").Trim();
+        if (url.Length == 0)
+            throw DomainException.Validation("請輸入 PRTG 連線位址。");
+
+        var token = string.IsNullOrEmpty(request.ApiToken)
+            ? DecryptSavedPrtgApiToken()
+            : request.ApiToken;
+
+        if (string.IsNullOrWhiteSpace(token))
+            throw DomainException.Validation("尚未設定 PRTG API token，無法測試。");
+
+        // 稽核只記「執行過測試」與對象 URL，token 不落盤、不進稽核 detail
+        _audit.Record(
+            action: AuditActions.PrtgConnectionTest,
+            summary: "執行 PRTG 測試連線",
+            targetKind: "system_settings",
+            targetId: "prtg_test",
+            detail: new { Url = url, request.IgnoreSslErrors, request.TimeoutSeconds });
+
+        try
+        {
+            using var client = new PrtgClient(url, token, request.TimeoutSeconds, request.IgnoreSslErrors);
+            var elapsed = await client.TestConnectionAsync(ct);
+            return new TestPrtgConnectionResultDto
+            {
+                Success = true,
+                Message = "連線成功。",
+                ElapsedMs = (long)elapsed.TotalMilliseconds
+            };
+        }
+        catch (Exception ex)
+        {
+            return new TestPrtgConnectionResultDto
+            {
+                Success = false,
+                Message = $"測試連線失敗：{ex.Message}"
+            };
+        }
+    }
+
+    private string? DecryptSavedPrtgApiToken()
+    {
+        var enc = _store.Get().PrtgApiTokenEnc;
+        if (string.IsNullOrEmpty(enc)) return null;
+        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
+        // 匯入或手動編輯 blob 的路徑上有可能是明文（同 SentinelConnectionFactory 的相容寫法）
+        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+    }
+
     private string? DecryptSavedSmtpPassword()
     {
         var enc = _store.Get().SmtpPasswordEnc;
-        return string.IsNullOrEmpty(enc) ? null : CryptoHelper.Decrypt(enc);
+        if (string.IsNullOrEmpty(enc)) return null;
+        // 守衛同 DecryptSavedPrtgApiToken：Decrypt 對非本格式的值會擲例外，
+        // 匯入或手動編輯 blob 的路徑上這欄有可能是明文
+        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
     }
 
     /// <summary>
@@ -589,6 +682,10 @@ public class SystemSettingsService : ISystemSettingsService
             .Select(v => v!)
             .Distinct()
             .ToList();
+
+    private static bool IsValidHttpUrl(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>
     /// AI 進階參數的出廠值（docs/archive/FEEDBACK-10-PLAN.md §3）：直接讀 <see cref="SystemSettings"/> 的
@@ -708,6 +805,15 @@ public class SystemSettingsService : ISystemSettingsService
         MailBodyIntro = s.MailBodyIntro,
         MailDigestSkipEmpty = s.MailDigestSkipEmpty,
         SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
+        // PRTG 監控系統設定
+        PrtgEnabled = s.PrtgEnabled,
+        PrtgUrl = s.PrtgUrl,
+        PrtgHasApiToken = !string.IsNullOrEmpty(s.PrtgApiTokenEnc),
+        PrtgIgnoreSslErrors = s.PrtgIgnoreSslErrors,
+        PrtgTimeoutSeconds = s.PrtgTimeoutSeconds,
+        PrtgFetchConcurrency = s.PrtgFetchConcurrency,
+        PrtgBackfillDays = s.PrtgBackfillDays,
+        PrtgRetentionDays = s.PrtgRetentionDays,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)

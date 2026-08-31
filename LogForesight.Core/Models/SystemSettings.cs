@@ -352,4 +352,42 @@ public class SystemSettings
             .Where(s => s.HasValue)
             .Select(s => s!.Value)
             .ToHashSet();
+
+    // ── PRTG 監控系統設定（PRTG 第 1 輪批次B）─────────────────────────────────────────
+
+    /// <summary>PRTG 模組總開關。預設關閉：未設定時整條 PRTG 路徑短路，不影響既有任何行為</summary>
+    public bool PrtgEnabled { get; set; }
+
+    /// <summary>PRTG core server 位址（含 scheme，例 https://prtg.example.local）。留空等同未設定</summary>
+    public string PrtgUrl { get; set; } = "";
+
+    /// <summary>PRTG API token 密文（<see cref="CryptoHelper.Encrypt"/> 產生）。write-only，語意與 <see cref="AiApiKeyEnc"/> 完全對稱</summary>
+    public string PrtgApiTokenEnc { get; set; } = "";
+
+    /// <summary>忽略 PRTG 憑證錯誤。內網自簽憑證用的顯式逃生門，啟用時會記 WARN</summary>
+    public bool PrtgIgnoreSslErrors { get; set; }
+
+    /// <summary>PrtgTimeoutSeconds 的出廠預設</summary>
+    public const int DefaultPrtgTimeoutSeconds = 60;
+
+    /// <summary>單次 PRTG API 請求逾時秒數</summary>
+    public int PrtgTimeoutSeconds { get; set; } = DefaultPrtgTimeoutSeconds;
+
+    /// <summary>PrtgFetchConcurrency 的出廠預設</summary>
+    public const int DefaultPrtgFetchConcurrency = 2;
+
+    /// <summary>對 PRTG 的併發請求數上限。PRTG core 在大量 sensor 下對併發敏感，刻意壓低</summary>
+    public int PrtgFetchConcurrency { get; set; } = DefaultPrtgFetchConcurrency;
+
+    /// <summary>PrtgBackfillDays 的出廠預設</summary>
+    public const int DefaultPrtgBackfillDays = 30;
+
+    /// <summary>歷史回填天數</summary>
+    public int PrtgBackfillDays { get; set; } = DefaultPrtgBackfillDays;
+
+    /// <summary>PrtgRetentionDays 的出廠預設</summary>
+    public const int DefaultPrtgRetentionDays = 180;
+
+    /// <summary>PRTG 鏡像資料保留天數</summary>
+    public int PrtgRetentionDays { get; set; } = DefaultPrtgRetentionDays;
 }
