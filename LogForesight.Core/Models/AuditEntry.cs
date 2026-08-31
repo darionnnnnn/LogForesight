@@ -145,6 +145,9 @@ public static class AuditActions
     // PRTG API 探測（PRTG 第 1 輪批次B-3）：對 PRTG 的主動查詢操作
     public const string PrtgProbeRun = "prtg_probe_run";
 
+    // PRTG 歷史回填（PRTG 第 1 輪批次E）
+    public const string PrtgBackfillRun = "prtg_backfill_run";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

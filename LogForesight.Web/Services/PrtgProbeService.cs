@@ -89,11 +89,15 @@ public class PrtgProbeService
 {
     private readonly ISystemSettingsStore _settings;
     private readonly PrtgProbeRunState _state;
+    // 必要相依，不設預設值：探測與回填會打同一台 PRTG，這道互斥是保護。
+    // 做成可選參數的話，哪天有人漏注入，保護會靜默消失而不是編譯失敗。
+    private readonly PrtgBackfillRunState _backfillState;
 
-    public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state)
+    public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState)
     {
         _settings = settings;
         _state = state;
+        _backfillState = backfillState;
     }
 
     public PrtgProbeStatusDto GetStatus()
@@ -132,6 +136,12 @@ public class PrtgProbeService
         if (string.IsNullOrWhiteSpace(token))
         {
             error = "尚未設定 PRTG API Token，無法執行探測。";
+            return false;
+        }
+
+        if (_backfillState.Snapshot().IsRunning)
+        {
+            error = "回填執行中，請稍後再試。";
             return false;
         }
 

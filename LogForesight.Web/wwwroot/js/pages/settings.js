@@ -1213,6 +1213,194 @@ async function refreshPrtgProbeStatus() {
     }
 }
 
+// ── PRTG 鏡像狀態（批次F）──────────────────────────────────────────────
+
+function renderPrtgMirror(data) {
+    if (!data) return;
+
+    const setTxt = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+
+    setTxt('prtg-mirror-device-count', formatNumber(data.deviceCount));
+    setTxt('prtg-mirror-sensor-count', formatNumber(data.sensorCount));
+    setTxt('prtg-mirror-last-device-sync', `最後同步：${data.lastDeviceSync ? formatDateTime(data.lastDeviceSync) : '-'}`);
+    setTxt('prtg-mirror-last-sensor-sync', `最後同步：${data.lastSensorSync ? formatDateTime(data.lastSensorSync) : '-'}`);
+    setTxt('prtg-mirror-last-value-at', `數值：${data.lastValueAt ? formatDateTime(data.lastValueAt) : '-'}`);
+    setTxt('prtg-mirror-last-state-change-at', `狀態變更：${data.lastStateChangeAt ? formatDateTime(data.lastStateChangeAt) : '-'}`);
+
+    setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
+    setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));
+    setTxt('prtg-mirror-map-conflict', formatNumber(data.mapConflict));
+    setTxt('prtg-mirror-map-unmatched', formatNumber(data.mapUnmatched));
+
+    const renderList = (bodyId, items, emptyText) => {
+        const tbody = document.getElementById(bodyId);
+        if (!tbody) return;
+        tbody.replaceChildren();
+
+        if (!items || items.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 4;
+            td.className = 'text-muted text-center py-2';
+            td.textContent = emptyText;
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+            return;
+        }
+
+        for (const item of items) {
+            const tr = document.createElement('tr');
+
+            const tdObjid = document.createElement('td');
+            tdObjid.className = 'font-monospace';
+            tdObjid.textContent = String(item.deviceObjid);
+
+            const tdIp = document.createElement('td');
+            tdIp.className = 'font-monospace';
+            tdIp.textContent = item.ip || '-';
+
+            const tdHost = document.createElement('td');
+            tdHost.textContent = item.hostName || '-';
+
+            const tdNote = document.createElement('td');
+            tdNote.className = 'text-muted';
+            tdNote.textContent = item.note || '-';
+
+            tr.append(tdObjid, tdIp, tdHost, tdNote);
+            tbody.appendChild(tr);
+        }
+    };
+
+    renderList('prtg-mirror-conflicts-body', data.conflicts, '無衝突項目');
+    renderList('prtg-mirror-unmatched-body', data.unmatched, '無未對應項目');
+}
+
+async function refreshPrtgMirror() {
+    try {
+        const data = await api.get('/api/admin/settings/prtg-mirror', { silent: true });
+        renderPrtgMirror(data);
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindPrtgMirror() {
+    const refreshBtn = document.getElementById('prtg-mirror-refresh');
+    refreshBtn?.addEventListener('click', async () => {
+        const restore = withBusy(refreshBtn, '載入中');
+        try {
+            await refreshPrtgMirror();
+            toast('已重新整理 PRTG 鏡像狀態', 'success');
+        } finally {
+            restore();
+        }
+    });
+}
+
+// ── PRTG 歷史回填（批次E）──────────────────────────────────────────────
+
+let prtgBackfillPollTimer = null;
+
+function setPrtgBackfillSpinnerText(container, text) {
+    if (!container.querySelector('.spinner-border')) {
+        renderSpinner(container, text);
+        return;
+    }
+    const label = container.querySelector('span:last-child');
+    if (label) label.textContent = text;
+}
+
+function renderPrtgBackfillStatus(status) {
+    const outputEl = document.getElementById('prtg-backfill-output');
+    const copyButton = document.getElementById('prtg-backfill-copy');
+    const startButton = document.getElementById('prtg-backfill-start');
+    const statusEl = document.getElementById('prtg-backfill-status');
+
+    if (!outputEl || !copyButton || !startButton || !statusEl) return;
+
+    const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
+    outputEl.value = outputText;
+    if (outputText) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    copyButton.disabled = !outputText;
+
+    if (status.isRunning) {
+        startButton.disabled = true;
+        setPrtgBackfillSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        return;
+    }
+
+    startButton.disabled = false;
+    if (!status.completedAt) {
+        statusEl.textContent = '';
+        return;
+    }
+    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
+        (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+}
+
+async function refreshPrtgBackfillStatus() {
+    let status;
+    try {
+        status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+    } catch {
+        return;
+    }
+    renderPrtgBackfillStatus(status);
+
+    if (status.isRunning && !prtgBackfillPollTimer) {
+        prtgBackfillPollTimer = setInterval(async () => {
+            const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true }).catch(() => null);
+            if (!latest) return;
+            renderPrtgBackfillStatus(latest);
+            if (!latest.isRunning) {
+                clearInterval(prtgBackfillPollTimer);
+                prtgBackfillPollTimer = null;
+                // 回填結束後連帶重新整理鏡像摘要數據
+                refreshPrtgMirror();
+            }
+        }, 2000);
+    }
+}
+
+function bindPrtgBackfill() {
+    const startButton = document.getElementById('prtg-backfill-start');
+    const copyButton = document.getElementById('prtg-backfill-copy');
+    const outputEl = document.getElementById('prtg-backfill-output');
+
+    startButton?.addEventListener('click', async () => {
+        const ok = await confirmAction({
+            title: '確認執行 PRTG 歷史資料回填',
+            message: '回填會逐日擷取歷史監控數據與狀態變更，請確認目前為離峰時間。是否確定開始？',
+            confirmText: '開始回填',
+            confirmVariant: 'primary'
+        });
+        if (!ok) return;
+
+        startButton.disabled = true;
+        try {
+            await api.post('/api/admin/settings/prtg-backfill/start', {}, { silent: true });
+            toast('已開始執行 PRTG 歷史回填', 'success');
+            await refreshPrtgBackfillStatus();
+        } catch {
+            startButton.disabled = false;
+        }
+    });
+
+    copyButton?.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(outputEl.value);
+            toast('已複製回填輸出', 'success');
+        } catch {
+            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+        }
+    });
+}
+
 function bindPrtgProbe() {
     const startButton = document.getElementById('prtg-probe-start');
     const copyButton = document.getElementById('prtg-probe-copy');
@@ -1287,6 +1475,8 @@ bindAiProvider();
 bindAdTest();
 bindMailTest();
 bindPrtgTest();
+bindPrtgMirror();
+bindPrtgBackfill();
 bindPrtgProbe();
 bindAiAdvancedReset();
 bindAiUsageReset();
@@ -1303,7 +1493,13 @@ bindTabs(document.getElementById('settings-tabs'));
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
         '#mail-test-btn, #mail-test-result, ' +
-        '#prtg-test-btn, #prtg-test-result, #prtg-probe-start, #prtg-probe-status, #prtg-probe-output, #prtg-probe-copy'
+        '#prtg-test-btn, #prtg-test-result, ' +
+        '#prtg-mirror-refresh, ' +
+        '#prtg-backfill-start, #prtg-backfill-status, #prtg-backfill-output, #prtg-backfill-copy, ' +
+        '#prtg-probe-start, #prtg-probe-status, #prtg-probe-output, #prtg-probe-copy'
 });
 load();
+refreshPrtgMirror();
+refreshPrtgBackfillStatus();
 refreshPrtgProbeStatus();
+

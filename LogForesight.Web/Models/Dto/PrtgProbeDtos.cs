@@ -17,3 +17,42 @@ public class StartPrtgProbeResultDto
     public bool Started { get; set; }
     public string? Error { get; set; }
 }
+
+/// <summary>PRTG 歷史回填狀態，供前端輪詢用</summary>
+public class PrtgBackfillStatusDto
+{
+    public bool IsRunning { get; set; }
+    public DateTime? StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public bool? Success { get; set; }
+    public string? LatestMessage { get; set; }
+    public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
+}
+
+/// <summary>啟動 PRTG 歷史回填回應</summary>
+public class StartPrtgBackfillResultDto
+{
+    public bool Started { get; set; }
+    public string? Error { get; set; }
+}
+
+/// <summary>PRTG 主機對應項目簡要資訊</summary>
+public record PrtgHostMapItemDto(long DeviceObjid, string? Ip, string? HostName, string? Note);
+
+/// <summary>PRTG 鏡像與主機對應狀態資訊</summary>
+public class PrtgMirrorStatusDto
+{
+    public int DeviceCount { get; set; }
+    public int SensorCount { get; set; }
+    public DateTime? LastDeviceSync { get; set; }
+    public DateTime? LastSensorSync { get; set; }
+    public DateTime? LastValueAt { get; set; }
+    public DateTime? LastStateChangeAt { get; set; }
+    public DateTime? MapDate { get; set; }
+    public int MapOk { get; set; }
+    public int MapConflict { get; set; }
+    public int MapUnmatched { get; set; }
+    public IReadOnlyList<PrtgHostMapItemDto> Conflicts { get; set; } = Array.Empty<PrtgHostMapItemDto>();
+    public IReadOnlyList<PrtgHostMapItemDto> Unmatched { get; set; } = Array.Empty<PrtgHostMapItemDto>();
+}
+
