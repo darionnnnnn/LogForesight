@@ -125,17 +125,9 @@ public class PrtgProbeService
             return false;
         }
 
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文（同 SentinelConnectionFactory 的相容寫法）
-        var token = string.IsNullOrEmpty(s.PrtgApiTokenEnc)
-            ? null
-            : CryptoHelper.IsEncrypted(s.PrtgApiTokenEnc)
-                ? CryptoHelper.Decrypt(s.PrtgApiTokenEnc)
-                : s.PrtgApiTokenEnc;
-
-        if (string.IsNullOrWhiteSpace(token))
+        if (!PrtgClientFactory.HasUsableCredentials(s))
         {
-            error = "尚未設定 PRTG API Token，無法執行探測。";
+            error = "尚未設定 PRTG 認證資訊（API token 或帳號密碼），無法執行探測。";
             return false;
         }
 
@@ -155,7 +147,7 @@ public class PrtgProbeService
         PrtgClient? client = null;
         try
         {
-            client = new PrtgClient(s.PrtgUrl, token, s.PrtgTimeoutSeconds, s.PrtgIgnoreSslErrors);
+            client = PrtgClientFactory.Create(s);
         }
         catch (Exception ex)
         {

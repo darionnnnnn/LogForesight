@@ -631,24 +631,59 @@ public class SystemSettingsService : ISystemSettingsService
         if (url.Length == 0)
             throw DomainException.Validation("請輸入 PRTG 連線位址。");
 
-        var token = string.IsNullOrEmpty(request.ApiToken)
-            ? DecryptSavedPrtgApiToken()
-            : request.ApiToken;
+        var isPasswordMode = string.Equals(request.AuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
+        string token = string.Empty;
+        string username = string.Empty;
+        string password = string.Empty;
 
-        if (string.IsNullOrWhiteSpace(token))
-            throw DomainException.Validation("尚未設定 PRTG API token，無法測試。");
+        if (isPasswordMode)
+        {
+            username = (request.Username ?? "").Trim();
+            if (username.Length == 0)
+                throw DomainException.Validation("請輸入 PRTG 帳號。");
 
-        // 稽核只記「執行過測試」與對象 URL，token 不落盤、不進稽核 detail
+            var effectivePassword = string.IsNullOrEmpty(request.Password)
+                ? DecryptSavedPrtgPassword()
+                : request.Password;
+
+            if (string.IsNullOrWhiteSpace(effectivePassword))
+                throw DomainException.Validation("尚未設定 PRTG 密碼，無法測試。");
+
+            password = effectivePassword;
+        }
+        else
+        {
+            var effectiveToken = string.IsNullOrEmpty(request.ApiToken)
+                ? DecryptSavedPrtgApiToken()
+                : request.ApiToken;
+
+            if (string.IsNullOrWhiteSpace(effectiveToken))
+                throw DomainException.Validation("尚未設定 PRTG API token，無法測試。");
+
+            token = effectiveToken;
+        }
+
+        // 稽核只記「執行過測試」與對象 URL，token、密碼不落盤、不進稽核 detail
         _audit.Record(
             action: AuditActions.PrtgConnectionTest,
             summary: "執行 PRTG 測試連線",
             targetKind: "system_settings",
             targetId: "prtg_test",
-            detail: new { Url = url, request.IgnoreSslErrors, request.TimeoutSeconds });
+            detail: new { Url = url, AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
 
         try
         {
-            using var client = new PrtgClient(url, token, request.TimeoutSeconds, request.IgnoreSslErrors);
+            // 此處不走 PrtgClientFactory，因為測試連線使用的是表單當下的值（尚未存檔的設定），而非已儲存的 SystemSettings
+            using var client = new PrtgClient(
+                baseUrl: url,
+                tokenOrEmpty: token,
+                timeoutSeconds: request.TimeoutSeconds,
+                ignoreSslErrors: request.IgnoreSslErrors,
+                handler: null,
+                authMode: request.AuthMode ?? PrtgAuthModes.Token,
+                usernameOrEmpty: username,
+                passwordOrEmpty: password);
+
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestPrtgConnectionResultDto
             {

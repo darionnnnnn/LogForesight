@@ -78,15 +78,9 @@ public class PrtgBackfillService
             return false;
         }
 
-        var token = string.IsNullOrEmpty(s.PrtgApiTokenEnc)
-            ? null
-            : CryptoHelper.IsEncrypted(s.PrtgApiTokenEnc)
-                ? CryptoHelper.Decrypt(s.PrtgApiTokenEnc)
-                : s.PrtgApiTokenEnc;
-
-        if (string.IsNullOrWhiteSpace(token))
+        if (!PrtgClientFactory.HasUsableCredentials(s))
         {
-            error = "尚未設定 PRTG API Token，無法執行回填。";
+            error = "尚未設定 PRTG 認證資訊（API token 或帳號密碼），無法執行回填。";
             return false;
         }
 
@@ -114,7 +108,7 @@ public class PrtgBackfillService
         PrtgClient? client = null;
         try
         {
-            client = new PrtgClient(s.PrtgUrl, token, s.PrtgTimeoutSeconds, s.PrtgIgnoreSslErrors);
+            client = PrtgClientFactory.Create(s);
         }
         catch (Exception ex)
         {

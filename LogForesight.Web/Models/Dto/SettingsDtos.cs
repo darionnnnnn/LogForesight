@@ -492,6 +492,15 @@ public class TestPrtgConnectionRequest
     /// <summary>留空＝沿用已儲存的 token</summary>
     public string? ApiToken { get; set; }
 
+    /// <summary>認證方式：token 或 password（留空視為 token）</summary>
+    public string? AuthMode { get; set; }
+
+    /// <summary>PRTG 帳號（password 模式用）</summary>
+    public string? Username { get; set; }
+
+    /// <summary>PRTG 密碼（password 模式用，留空＝沿用已儲存的密碼）</summary>
+    public string? Password { get; set; }
+
     public bool IgnoreSslErrors { get; set; }
 
     [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]

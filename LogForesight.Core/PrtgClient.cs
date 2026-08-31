@@ -1,12 +1,13 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using LogForesight.Core.Models;
 using NLog;
 
 namespace LogForesight.Core;
 
 /// <summary>
-/// PRTG 連線／存取例外。訊息保證不含敏感的 token 資訊，可直接顯示給操作者或寫入 log。
+/// PRTG 連線／存取例外。訊息保證不含敏感的 token、密碼或 passhash 資訊，可直接顯示給操作者或寫入 log。
 /// </summary>
 public class PrtgClientException : Exception
 {
@@ -14,8 +15,8 @@ public class PrtgClientException : Exception
 }
 
 /// <summary>
-/// PRTG 監控系統 HTTP 存取客戶端（PRTG 第 1 輪批次B）。
-/// 負責與 PRTG API 進行 HTTP 通訊，自動在 Query String 附加 API Token。
+/// PRTG 監控系統 HTTP 存取客戶端（PRTG 第 1 輪批次B、第 2 輪批次A）。
+/// 負責與 PRTG API 進行 HTTP 通訊，自動在 Query String 附加 API Token 或帳號與 passhash。
 /// 不抽介面、不加重試、不加節流、不加分頁。
 /// </summary>
 public sealed class PrtgClient : IDisposable
@@ -23,14 +24,27 @@ public sealed class PrtgClient : IDisposable
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly string _baseUrl;
+    private readonly bool _isPasswordMode;
     private readonly string _token;
+    private readonly string _username;
+    private readonly string _password;
     private readonly HttpClient _http;
+    private readonly SemaphoreSlim _passhashLock = new(1, 1);
+    private string? _cachedPasshash;
     private bool _disposed;
 
     internal TimeSpan Timeout => _http.Timeout;
     internal HttpMessageHandler Handler { get; }
 
-    public PrtgClient(string baseUrl, string token, int timeoutSeconds, bool ignoreSslErrors, HttpMessageHandler? handler = null)
+    public PrtgClient(
+        string baseUrl,
+        string tokenOrEmpty,
+        int timeoutSeconds,
+        bool ignoreSslErrors,
+        HttpMessageHandler? handler = null,
+        string authMode = PrtgAuthModes.Token,
+        string usernameOrEmpty = "",
+        string passwordOrEmpty = "")
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new PrtgClientException("PRTG 未設定連線位址。");
@@ -44,8 +58,16 @@ public sealed class PrtgClient : IDisposable
                 "請填寫完整網址，含 https:// 或 http://（例如 https://prtg.corp.local）。");
         }
 
+        _isPasswordMode = string.Equals(authMode, PrtgAuthModes.Password, StringComparison.Ordinal);
+        if (_isPasswordMode && string.IsNullOrWhiteSpace(usernameOrEmpty))
+        {
+            throw new PrtgClientException("PRTG 帳號不可為空。");
+        }
+
         _baseUrl = baseUrl.TrimEnd('/');
-        _token = token ?? string.Empty;
+        _token = tokenOrEmpty ?? string.Empty;
+        _username = usernameOrEmpty ?? string.Empty;
+        _password = passwordOrEmpty ?? string.Empty;
 
         var ownsHandler = handler == null;
         var actualHandler = handler ?? CreateDefaultHandler(ignoreSslErrors);
@@ -76,7 +98,7 @@ public sealed class PrtgClient : IDisposable
     }
 
     /// <summary>
-    /// 測試 PRTG 連線：呼叫 sensors 端點取得最少資料以驗證連線位址與 token 有效性。
+    /// 測試 PRTG 連線：呼叫 sensors 端點取得最少資料以驗證連線位址與認證資訊有效性。
     /// 判定成功條件：HTTP 狀態成功、回應不以 &lt; 開頭（非 HTML 登入頁）、能解析為 JSON 物件。
     /// 成功回傳耗時，失敗擲 <see cref="PrtgClientException"/>。
     /// </summary>
@@ -88,7 +110,7 @@ public sealed class PrtgClient : IDisposable
         var trimmed = json.TrimStart();
         if (trimmed.StartsWith('<'))
         {
-            throw new PrtgClientException("PRTG 回傳 HTML 內容而非 JSON，請確認連線位址是否正確或 API token 是否有效。");
+            throw new PrtgClientException("PRTG 回傳 HTML 內容而非 JSON，請確認連線位址是否正確或認證資訊是否有效。");
         }
 
         try
@@ -109,11 +131,84 @@ public sealed class PrtgClient : IDisposable
     }
 
     /// <summary>
+    /// 帳密模式下確保已取得 passhash（同實例只換取一次）。
+    /// token 模式不會被呼叫到，若被呼叫直接回傳空字串。
+    /// </summary>
+    private async Task<string> EnsurePasshashAsync(CancellationToken ct)
+    {
+        if (!_isPasswordMode) return string.Empty;
+
+        if (_cachedPasshash != null) return _cachedPasshash;
+
+        // 併發保護：FetchValuesAsync 會併發呼叫 GetJsonAsync，
+        // 用 SemaphoreSlim(1,1) 確保多個併發請求同時到達時只向 PRTG 請求一次 passhash
+        await _passhashLock.WaitAsync(ct);
+        try
+        {
+            if (_cachedPasshash != null) return _cachedPasshash;
+
+            // 這是唯一會帶 password 的請求
+            var query = $"username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}";
+            var uri = new Uri($"{_baseUrl}/api/getpasshash.htm?{query}", UriKind.Absolute);
+
+            HttpResponseMessage resp;
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                resp = await _http.SendAsync(request, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var sanitized = StripSecrets(ex.Message);
+                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}");
+            }
+
+            using (resp)
+            {
+                if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                {
+                    throw new PrtgClientException("PRTG 帳號或密碼錯誤。");
+                }
+
+                if (!resp.IsSuccessStatusCode)
+                {
+                    throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
+                }
+
+                var text = await resp.Content.ReadAsStringAsync(ct);
+                var trimmed = text.Trim();
+
+                if (trimmed.StartsWith('<'))
+                {
+                    throw new PrtgClientException("PRTG 帳號或密碼錯誤。");
+                }
+
+                if (string.IsNullOrWhiteSpace(trimmed))
+                {
+                    throw new PrtgClientException("PRTG 未回傳有效的 passhash。");
+                }
+
+                _cachedPasshash = trimmed;
+                return _cachedPasshash;
+            }
+        }
+        finally
+        {
+            _passhashLock.Release();
+        }
+    }
+
+    /// <summary>
     /// 呼叫 PRTG API GET 端點並取得原始 JSON 字串。
     /// </summary>
     public async Task<string> GetJsonAsync(string relativePathAndQuery, CancellationToken ct = default)
     {
-        var uri = BuildUri(relativePathAndQuery);
+        var passhash = await EnsurePasshashAsync(ct);
+        var uri = BuildUri(relativePathAndQuery, passhash);
         HttpResponseMessage resp;
         try
         {
@@ -126,7 +221,7 @@ public sealed class PrtgClient : IDisposable
         }
         catch (Exception ex)
         {
-            var sanitized = StripToken(ex.Message);
+            var sanitized = StripSecrets(ex.Message);
             throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}");
         }
 
@@ -134,7 +229,9 @@ public sealed class PrtgClient : IDisposable
         {
             if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                throw new PrtgClientException("PRTG API token 無效或權限不足。");
+                throw new PrtgClientException(_isPasswordMode
+                    ? "PRTG 帳號憑證無效或權限不足。"
+                    : "PRTG API token 無效或權限不足。");
             }
 
             if (!resp.IsSuccessStatusCode)
@@ -146,25 +243,44 @@ public sealed class PrtgClient : IDisposable
         }
     }
 
-    private Uri BuildUri(string relativePathAndQuery)
+    private Uri BuildUri(string relativePathAndQuery, string? passhash = null)
     {
         var path = relativePathAndQuery.TrimStart('/');
         var separator = path.Contains('?') ? '&' : '?';
-        var url = $"{_baseUrl}/{path}{separator}apitoken={Uri.EscapeDataString(_token)}";
+        string authQuery;
+        if (_isPasswordMode)
+        {
+            authQuery = $"username={Uri.EscapeDataString(_username)}&passhash={Uri.EscapeDataString(passhash ?? string.Empty)}";
+        }
+        else
+        {
+            authQuery = $"apitoken={Uri.EscapeDataString(_token)}";
+        }
+        var url = $"{_baseUrl}/{path}{separator}{authQuery}";
         return new Uri(url, UriKind.Absolute);
     }
 
     /// <summary>
-    /// 把 token 從對外訊息中遮蔽。原文與 URL 編碼後的形式都要遮——底層例外訊息帶的是請求 URL，
-    /// token 在那裡是編碼過的，只比對原文會讓含特殊字元的 token 原樣外流。
+    /// 把 token、password、passhash 從對外訊息中遮蔽。原文與 URL 編碼後的形式都要遮——底層例外訊息帶的是請求 URL，
+    /// 參數在那裡是編碼過的，只比對原文會讓含特殊字元的憑證原樣外流。
     /// </summary>
-    private string StripToken(string text)
+    private string StripSecrets(string text)
     {
-        if (string.IsNullOrEmpty(_token) || string.IsNullOrEmpty(text)) return text;
+        if (string.IsNullOrEmpty(text)) return text;
 
-        var result = text.Replace(_token, "***");
-        var escaped = Uri.EscapeDataString(_token);
-        if (!string.Equals(escaped, _token, StringComparison.Ordinal))
+        text = MaskSecret(text, _token);
+        text = MaskSecret(text, _password);
+        text = MaskSecret(text, _cachedPasshash);
+        return text;
+    }
+
+    private static string MaskSecret(string text, string? secret)
+    {
+        if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(text)) return text;
+
+        var result = text.Replace(secret, "***");
+        var escaped = Uri.EscapeDataString(secret);
+        if (!string.Equals(escaped, secret, StringComparison.Ordinal))
         {
             result = result.Replace(escaped, "***");
         }
@@ -175,6 +291,7 @@ public sealed class PrtgClient : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _passhashLock.Dispose();
         _http.Dispose();
     }
 }
