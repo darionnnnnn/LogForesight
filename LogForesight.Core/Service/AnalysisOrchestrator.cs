@@ -1158,4 +1158,5 @@ public record RetentionOptions
     public int AuditRetentionDays { get; init; } = SystemSettings.DefaultAuditRetentionDays;
     public int RawEventRetentionDays { get; init; } = SystemSettings.DefaultRawEventRetentionDays;
     public int ReportRetentionDays { get; init; } = SystemSettings.DefaultReportRetentionDays;
+    public int PrtgRetentionDays { get; init; } = SystemSettings.DefaultPrtgRetentionDays;
 }

@@ -99,6 +99,23 @@ public static class RuntimeSettingsResolver
                 Log.Warn("系統設定的報告保留天數（{ReportRetentionDays}）低於下限（{MinRetentionDays}），改用內建預設值。",
                     systemSettings.ReportRetentionDays, SystemSettings.MinRetentionDays);
             }
+
+            if (systemSettings.PrtgRetentionDays >= SystemSettings.MinRetentionDays)
+            {
+                var effective = Math.Min(systemSettings.PrtgRetentionDays, retention.RetentionDays);
+                if (effective != systemSettings.PrtgRetentionDays)
+                {
+                    Log.Info("系統設定的 PRTG 保留天數（{PrtgRetentionDays}）大於歷史資料保留天數（{RetentionDays}），" +
+                             "本次以 {Effective} 天計算——不可大於分析紀錄保留期。",
+                        systemSettings.PrtgRetentionDays, retention.RetentionDays, effective);
+                }
+                retention = retention with { PrtgRetentionDays = effective };
+            }
+            else
+            {
+                Log.Warn("系統設定的 PRTG 保留天數（{PrtgRetentionDays}）低於下限（{MinRetentionDays}），改用內建預設值。",
+                    systemSettings.PrtgRetentionDays, SystemSettings.MinRetentionDays);
+            }
         }
         catch (Exception ex)
         {
