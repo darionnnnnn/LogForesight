@@ -20,6 +20,7 @@ public static class PrtgBackfillRunner
     /// </summary>
     /// <param name="fetchService">單日擷取服務</param>
     /// <param name="days">回填天數（由昨天往前計）</param>
+    /// <param name="concurrency">hourly 數值抓取併發上限（取自 PrtgFetchConcurrency，與每日擷取共用）</param>
     /// <param name="console">執行歷程輸出</param>
     /// <param name="ct">取消語彙基元</param>
     /// <returns>有任何一天成功回傳 true，全部失敗回傳 false</returns>

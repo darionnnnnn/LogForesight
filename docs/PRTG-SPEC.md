@@ -63,7 +63,7 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 失敗語意比照 NetIQ：內部吞掉例外只記 log 與執行輸出，**PRTG 失敗不會讓整趟分析失敗**；
 只有取消訊號會穿透。
 
-四個階段各自獨立 try/catch，任一階段失敗其餘照跑：
+每日擷取四個階段各自獨立 try/catch，任一階段失敗其餘照跑（歷史回填只跑階段 3、4，見 §5）：
 
 | 階段 | 端點 | 寫入 |
 |---|---|---|
@@ -144,7 +144,7 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
 | `PrtgTimeoutSeconds` | 60 | 單次請求逾時（5~600） |
 | `PrtgFetchConcurrency` | 2 | 對 PRTG 的併發上限（1~3） |
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
-| `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限 90，且不得大於歷史資料保留天數） |
+| `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 
 token 的處理與 SMTP 密碼、AI 金鑰完全對稱：留空＝沿用既有、要清除需另外勾選清除。
 解密一律先 `IsEncrypted` 判斷再 `Decrypt`（對非密文直接解密會擲例外）。

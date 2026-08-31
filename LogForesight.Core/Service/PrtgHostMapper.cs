@@ -132,7 +132,7 @@ public sealed class PrtgHostMapper
                     DeviceObjid = singleDev.Objid,
                     Ip = singleDev.Ip,
                     HostId = h.HostId,
-                    HostName = h.HostName,
+                    HostName = TrimHostName(h.HostName),
                     MapStatus = PrtgMapStatus.Ok,
                     Note = null,
                     CreatedAt = now
@@ -155,7 +155,7 @@ public sealed class PrtgHostMapper
                     DeviceObjid = singleDev.Objid,
                     Ip = singleDev.Ip,
                     HostId = minHost.HostId,
-                    HostName = minHost.HostName,
+                    HostName = TrimHostName(minHost.HostName),
                     MapStatus = PrtgMapStatus.Conflict,
                     Note = TrimNote($"IP 由 {matchedHosts.Count} 台主機共用，已對應到 HostId 最小者：{minHost.HostName}（{candidateNames}）"),
                     CreatedAt = now
@@ -204,6 +204,12 @@ public sealed class PrtgHostMapper
 
     private static string TrimNote(string note) =>
         note.Length <= MaxNoteLength ? note : note[..(MaxNoteLength - 1)] + "…";
+
+    /// <summary>
+    /// host_name 欄是 nvarchar(255)，主機名來自可人工編輯的 JSON 主檔，無長度保證——同 Note 的截斷理由。
+    /// </summary>
+    private static string? TrimHostName(string? name) =>
+        name != null && name.Length > 255 ? name[..255] : name;
 }
 
 /// <summary>

@@ -75,8 +75,12 @@ public static class RuntimeSettingsResolver
             }
             else
             {
-                Log.Warn("系統設定的原始事件內容保留天數（{RawEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
-                    systemSettings.RawEventRetentionDays, retention.RetentionDays);
+                // 回退值同樣不可大於 RetentionDays（同 PrtgRetentionDays 的修正理由）：
+                // 內建預設 120 在 RetentionDays 調成 90 時會違反「原始事件內容 ≤ 歷史資料」的不變式
+                var fallback = Math.Min(SystemSettings.DefaultRawEventRetentionDays, retention.RetentionDays);
+                Log.Warn("系統設定的原始事件內容保留天數（{RawEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用 {Fallback} 天。",
+                    systemSettings.RawEventRetentionDays, retention.RetentionDays, fallback);
+                retention = retention with { RawEventRetentionDays = fallback };
             }
 
             // 上限收斂為歷史資料保留天數：報告全文改存資料庫後，超過 RetentionDays 的報告
@@ -96,8 +100,13 @@ public static class RuntimeSettingsResolver
             }
             else
             {
-                Log.Warn("系統設定的報告保留天數（{ReportRetentionDays}）低於下限（{MinRetentionDays}），改用內建預設值。",
-                    systemSettings.ReportRetentionDays, SystemSettings.MinRetentionDays);
+                // 回退值同樣要與 RetentionDays 取小（同 PrtgRetentionDays 的修正理由）：
+                // 只記 log 不改值會讓它停在內建預設 180，在 RetentionDays 較小時
+                // 反而變成「報告留得比分析紀錄久」，違反上面那條上限收斂的不變式
+                var fallback = Math.Min(SystemSettings.DefaultReportRetentionDays, retention.RetentionDays);
+                Log.Warn("系統設定的報告保留天數（{ReportRetentionDays}）低於下限（{MinRetentionDays}），改用 {Fallback} 天。",
+                    systemSettings.ReportRetentionDays, SystemSettings.MinRetentionDays, fallback);
+                retention = retention with { ReportRetentionDays = fallback };
             }
 
             if (systemSettings.PrtgRetentionDays >= SystemSettings.MinRetentionDays)

@@ -421,29 +421,28 @@
 - **既有檔名碰撞的舊資料不修復**：升級前多台主機同日同風險同類別的報告在檔案系統上互相覆蓋過，
   遷移忠實保留使用者當時看到的內容（幾筆紀錄指向同一個檔就是同一份）。升級後不再碰撞。
 
-## PRTG 整合遞延（PRTG 第 1 輪明確不做）
+## PRTG 整合遞延
 
-第 1 輪只做鏡像層：資料表、擷取、主機對應、回填、探測與設定介面（見 docs/PRTG-SPEC.md）。
-以下是本輪定案不做的部分，多數要等第一次實機探測拿到真實數據才有辦法設計。
+現況只有鏡像層：資料表、擷取、主機對應、回填、探測與設定介面（見 docs/PRTG-SPEC.md）。
+以下是明確不做／待條件成熟的項目，多數要等首次實機探測拿到真實數據才有辦法設計。
 
 - **分析層 L2~L5 全部**（特徵計算／弱訊號偵測／訊號合成／LLM 敘述化）：這是 PRTG 整合的價值
-  所在，但每一層都依賴本輪探測要回答的問題（sensor type 分布、實際量體、主機對應覆蓋率）。
+  所在，但每一層都依賴探測要回答的問題（sensor type 分布、實際量體、主機對應覆蓋率）。
   觸發條件：第一次實機探測完成、且回填累積 4~8 週資料（基線需要）。
 - **sensor 語意分類引擎與人工對應 UI**：`lf_prtg_sensors.category` / `category_source` 欄位
   已備好，且每日結構同步保證不覆蓋（人工指定的值不會被洗掉），可直接接手。
   觸發條件：探測顯示 PRTG `type` 對照表（L0）覆蓋率不足 85%，且分析層啟動。
 - **finding 掛接**：方向已定調為映射成 `LogIssueSignature`（`EventId=0`＋`EventKey`，同 Linux
   規則模式），沿用 `lf_top_issues` 與處理狀態／郵件／排行全鏈，不另建獨立 finding 表與 UI。
-  本輪 schema 已確保不與此方向衝突。觸發條件：分析層啟動。
+  現行 schema 已確保不與此方向衝突。觸發條件：分析層啟動。
 - **規則維護頁的「prtg」平台**：PRTG 訊號規則（趨勢、基線偏移、flapping、沉默）要等分析層
   有規則可維護才有意義。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層（有 PRTG 對應
   就兩來源訊號一起進合成層），規則各自歸屬自己的來源。
-- **`untrusted` 品質旗標未產生**：`PrtgDataQuality.Untrusted` 常數已定義，但目前沒有任何
-  判定邏輯會寫入它（需要先有 PRTG probe 斷線區間的資料來源）。
-- **`lf_prtg_state_changes.quality` 目前恆為 `ok`**：狀態變更沒有可用的品質判定依據，欄位先備。
-- **四個先備欄位目前恆為 null**：`lf_prtg_sensors.thresholds_json`（擷取時未向 PRTG 索取閾值
-  欄位）、`lf_prtg_values.min_value` / `max_value`（`historicdata` 的 hourly 聚合只取平均）、
-  `lf_prtg_state_changes.prev_status`（PRTG messages 不提供前一狀態）。這些不是資料遺失。
+- **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
+  `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
+  （恆 `ok`，無品質判定依據）、`lf_prtg_sensors.thresholds_json`（未向 PRTG 索取閾值欄）、
+  `lf_prtg_values.min_value`/`max_value`（hourly 聚合只取平均）、`lf_prtg_state_changes.prev_status`
+  （PRTG messages 不提供前一狀態）。
 - **PRTG 自身健康概要與獨立的 freshness 記錄**：目前的「最新資料時間」是從鏡像資料推導
   （`max(period_start)` 等），不是「最後一次成功同步的時間」——連續數晚擷取到 0 筆時，畫面上
   的時間不會變動，看起來像正常。要分辨這兩者需要獨立的每資料類別同步紀錄。
@@ -455,10 +454,10 @@
 - **多台 PRTG core server**：本期假設單一 server（設定是 `SystemSettings` 單例）。要支援多台
   需比照 Sentinel 改成 store 化。觸發條件：環境真的出現第二台 PRTG。
 
-### 第 1 輪終檢提出、本輪判斷不修的項目
+### PRTG 已知未修項（不影響正確性）
 
-以下是併回前終檢（兩個獨立審查）指出、經查證屬實但本輪未處理的，留在這裡免得日後當成新發現
-重查一次。判斷標準是「不會靜默造成錯誤結論」——會靜默出錯的都已在本輪修掉。
+以下項目經查證屬實，判定不會靜默造成錯誤結論，故暫不處理；留在這裡免得日後當成新發現重查。
+（過程記錄見 docs/archive/PRTG-1-PLAN.md 終檢處置一節。）
 
 - **`ReplaceHostMapForDate` 的刪與寫不在同一交易**（`EfPrtgStore`）：先用一個 context
   `ExecuteDelete` 該日全部列，再用分批寫入補回。刪完之後、寫入之前進程被回收的話，該日對應
@@ -480,9 +479,5 @@
 - **前端 probe 與 backfill 兩塊的渲染與輪詢邏輯幾乎逐字重複**（`settings.js`），
   `PrtgFetchService` 與 `PrtgProbeRunner` 之間的 `GetStringProperty` 與相依性判定也各有一份。
   兩者都是「同一判定寫兩處」，之後改規則時容易只改一邊。
-- **兩個測試的斷言強度不足**（不影響現況正確性，但擋不住未來的回歸）：併發上限測試只驗
-  `concurrency=1`（證明「不超過 1」，但若有人把 semaphore 寫死成 1、讓設定失效，測試照樣綠），
-  應補一個 `concurrency=3` 斷言峰值**等於** 3；回填的「逐日推進」測試只斷言 console 文字，
-  沒有斷言實際請求的 `sdate` 逐日不同。
 - **`PrtgProbeStatusDto.StartedAt` / `PrtgBackfillStatusDto.StartedAt` 前端沒有消費點**：
   可以拿來顯示已執行時長，或移除。

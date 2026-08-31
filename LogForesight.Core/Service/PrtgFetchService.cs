@@ -51,6 +51,15 @@ public sealed class PrtgFetchService
         if (!syncStructure)
         {
             sensorTargets = _store.GetSensorTargets();
+            if (sensorTargets.Count == 0)
+            {
+                // 鏡像還沒有任何 sensor（例如剛設定完就按回填、每日擷取一次都沒跑過）。
+                // 不計失敗的話，接下來每一天都是「0 個 sensor 可抓 → 0 筆 → 無失敗」，
+                // 整趟回填會被報成成功——一筆資料都沒抓的成功，正是最難察覺的那種。
+                failures++;
+                _console.WriteLine("  ✗ 鏡像尚無任何感測器結構，無法回填。請先執行一次每日擷取（或等夜間排程跑過）再回填。");
+                return new PrtgFetchResult(0, 0, 0, 0, failures);
+            }
             _console.WriteLine($"[結構] 沿用既有鏡像的 {sensorTargets.Count} 個感測器（回填不重跑結構同步）。");
         }
 
@@ -156,14 +165,14 @@ public sealed class PrtgFetchService
                 return new PrtgDeviceRow
                 {
                     Objid = objid.Value,
-                    Name = GetStringProperty(el, "device") ?? string.Empty,
-                    GroupPath = GetStringProperty(el, "group") ?? string.Empty,
-                    // PRTG 的 host 欄可以是 IP 也可以是 DNS 名稱，欄位是 nvarchar(64)——
-                    // 長 FQDN 不截斷會讓 SQL Server 端整批 500 筆一起寫入失敗。
-                    // 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
+                    // 有長度上限的字串欄一律先截斷（上限與 LfDbContext 的 HasMaxLength 對齊）：
+                    // PRTG 沒有長度保證，SQL Server 端超長會讓整批 500 筆一起寫入失敗、SQLite 靜默通過。
+                    // Ip 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
+                    Name = Truncate(GetStringProperty(el, "device"), 255) ?? string.Empty,
+                    GroupPath = Truncate(GetStringProperty(el, "group"), 512) ?? string.Empty,
                     Ip = Truncate(GetStringProperty(el, "host"), 64),
                     Tags = GetStringProperty(el, "tags"),
-                    Status = GetStringProperty(el, "status"),
+                    Status = Truncate(GetStringProperty(el, "status"), 64),
                     DependencyObjid = ParseDependency(el),
                     Paused = ParsePaused(el),
                     SyncedAt = syncedAt,
@@ -203,11 +212,12 @@ public sealed class PrtgFetchService
                 {
                     Objid = objid.Value,
                     DeviceObjid = parentid,
-                    Name = GetStringProperty(el, "sensor") ?? string.Empty,
-                    SensorType = GetStringProperty(el, "type") ?? string.Empty,
+                    // 截斷理由同 device mapper（上限對齊 LfDbContext）
+                    Name = Truncate(GetStringProperty(el, "sensor"), 255) ?? string.Empty,
+                    SensorType = Truncate(GetStringProperty(el, "type"), 128) ?? string.Empty,
                     Tags = GetStringProperty(el, "tags"),
-                    Unit = GetStringProperty(el, "unit"),
-                    Status = GetStringProperty(el, "status"),
+                    Unit = Truncate(GetStringProperty(el, "unit"), 64),
+                    Status = Truncate(GetStringProperty(el, "status"), 64),
                     ThresholdsJson = null,
                     DependencyObjid = ParseDependency(el),
                     Paused = paused,
@@ -260,7 +270,7 @@ public sealed class PrtgFetchService
                 {
                     SensorObjid = objid.Value,
                     ChangedAt = changedAt,
-                    Status = GetStringProperty(el, "status") ?? string.Empty,
+                    Status = Truncate(GetStringProperty(el, "status"), 64) ?? string.Empty,
                     PrevStatus = null,
                     Message = GetStringProperty(el, "message"),
                     Quality = PrtgDataQuality.Ok,

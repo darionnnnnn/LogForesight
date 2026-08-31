@@ -1816,7 +1816,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
-  八個頁籤（層級與顯示／AI 服務／分析參數／AD 驗證／資料保留／郵件通知／外觀／PRTG）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  八個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／郵件通知／PRTG／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**

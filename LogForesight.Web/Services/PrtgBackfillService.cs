@@ -96,6 +96,14 @@ public class PrtgBackfillService
             return false;
         }
 
+        // 回填不重跑結構同步、sensor 清單來自鏡像——鏡像空的就沒有東西可回填，
+        // 放行只會空跑 N 天然後報成功（一筆資料都沒抓的成功最難察覺），在入口就擋下
+        if (_backend.PrtgStore().GetSensorTargets().Count == 0)
+        {
+            error = "鏡像尚無任何感測器結構。請先執行一次每日擷取（或等夜間排程跑過）再回填。";
+            return false;
+        }
+
         if (!_state.TryBegin())
         {
             error = "回填已在執行中。";

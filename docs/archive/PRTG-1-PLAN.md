@@ -248,3 +248,31 @@
   historicdata 用貼合實作的簡化格式）。解析／轉換類的驗收要用真實資料樣本，這條在 skill 裡
   已有，但本輪規格只寫了「必須是真實 PRTG 的形狀」而沒有附真實樣本——沒有樣本可附時，
   要在計畫裡把「首次實機必須驗證什麼」寫成明確的檢查項（本輪已補在上一節）。
+
+## 換模型體檢（收尾輪）
+
+> 實作方：agy（`gemini-3.7-flash-high`）委派＋opus（規劃、驗收、終檢手改）。
+> 體檢方：fable（`claude-fable-5`）。體檢對象：`origin/dev..dev` 全 diff，
+> 重點放在**終檢後的手改 commit `45709dc`**（它沒被任何獨立視角看過）。
+
+兩個獨立審查（程式碼＋文件）共提出十餘項；高嚴重度每項先自己讀程式碼驗證再改。修正：
+
+| 嚴重度 | 問題 | 修法 |
+|---|---|---|
+| 高 | **空鏡像回填被報成成功**：`syncStructure:false` 讓 sensor 清單改讀鏡像，鏡像空的時候每一天都是「0 個 sensor → 0 筆 → 無失敗」，剛設定完就按回填會空跑 30 天然後顯示全部成功——一筆資料都沒抓的成功最難察覺 | `FetchDayAsync` 空鏡像即計失敗並回明確訊息；`PrtgBackfillService.TryStart` 入口另擋一道 |
+| 高 | **回填測試在替這個 bug 背書**：終檢手改讓回填不跑結構同步後，只有一個測試補了鏡像預置，「逐日推進」「不寫主機對應」「全部失敗」「取消」四個測試全變成空跑——精心準備的假回應永遠不會被命中，斷言照綠 | 四個測試補預置鏡像；「逐日推進」加 `sdate` 逐日相異＋確有寫入數值的斷言；「不寫對應」加「有數值才算有跑」前提 |
+| 中 | **`Truncate` 同型漏套**：手改只截了 `device.Ip`，同批還有 8 個有 `HasMaxLength` 的欄位沒截（`group_path` 512 最危險——深層群組樹路徑），SQL Server 端超長讓整批 500 筆一起失敗、SQLite 靜默通過 | device／sensor／state change 的全部受限字串欄套 `Truncate`；`host_map.host_name` 一併（來源是可人工編輯的 JSON 主檔） |
+| 中 | **`RuntimeSettingsResolver` 同型漏修**：手改修了 PRTG 的「低於下限只記 log 不改值」，同檔上方 `ReportRetentionDays` 與 `RawEventRetentionDays` 的 else 分支是一模一樣的形狀——log 說「改用內建預設值」，但預設值可能大於調短後的 `RetentionDays`，違反自家「不可大於」不變式 | 兩處改成「預設值與 `RetentionDays` 取小」並真的賦回 |
+| 低 | 併發上限測試只驗 `concurrency=1`（semaphore 寫死成 1 也照綠） | 補 `concurrency=3` 斷言峰值**等於** 3 |
+| 低 | PRTG 頁籤加在「外觀」之後，違反外觀「放最後」的既有定案（cshtml 註解明載） | PRTG 移到外觀之前 |
+| 低 | `PrtgBackfillRunner.RunAsync` 新參數缺 `<param>` 文件 | 補上 |
+
+行為缺測試的三個面向補齊：單 sensor 失敗隔離（其餘照樣落地、不計階段失敗）、全 sensor 失敗計為階段失敗、`syncStructure:false` 不打結構端點且不汙染 `synced_at`。
+
+文件：DB-SPEC 的「讀取端不 clamp」改寫為三個上限例外的實際收斂規則；PRTG-SPEC「四個階段」
+措辭修正（回填只跑階段 3、4）並收斂三處與 DB-SPEC／BACKLOG 的重複；WEB-SPEC 頁籤順序修正；
+BACKLOG 去輪次敘事、三條先備欄位條目合一、移除已修的弱測試條目；CLAUDE.md「不要做」新增
+「外部字串寫入前依欄位上限截斷」（本輪同一地雷兩次，雙 provider 下每接一個外部來源都會再遇到）。
+
+體檢後全量測試：**3148 綠（略過 6）**。
+

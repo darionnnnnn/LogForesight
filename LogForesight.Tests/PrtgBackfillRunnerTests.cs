@@ -73,7 +73,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var msgJson = "{\"treesize\":0,\"messages\":[]}";
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
 
-        var (client, _) = CreateClient(req =>
+        var (client, handler) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("content=devices"))
@@ -91,6 +91,13 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
+        // 回填不跑結構同步、sensor 清單來自鏡像——沒預置的話整趟是「0 個 sensor 的空跑」，
+        // 這個測試就變成在替「空跑報成功」背書（換模型體檢抓到的假通過形狀）
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None);
 
         Assert.True(ok);
@@ -99,6 +106,25 @@ public class PrtgBackfillRunnerTests : IDisposable
         Assert.Contains(console.Lines, l => l.Contains("第 2/3 天"));
         Assert.Contains(console.Lines, l => l.Contains("第 3/3 天"));
         Assert.Contains(console.Lines, l => l.Contains("共成功 3 天，失敗 0 天"));
+
+        // 「逐日推進」要驗實際請求，不能只驗 console 文字：三天的 historicdata 必須帶三個相異的 sdate，
+        // 且正是昨天、前天、大前天（若日期計算寫死成固定一天，console 照樣印三行，只有這裡抓得到）
+        var sdates = handler.RequestedUrls
+            .Where(u => u.Contains("historicdata.json"))
+            .Select(u => u.Split("sdate=")[1].Split('&')[0])
+            .Distinct()
+            .OrderBy(s => s)
+            .ToList();
+        var expected = Enumerable.Range(1, 3)
+            .Select(i => DateTime.Today.AddDays(-i).ToString("yyyy-MM-dd-00-00-00"))
+            .OrderBy(s => s)
+            .ToList();
+        Assert.Equal(expected, sdates);
+
+        // 回填不得寫入主機對應（歷史對應無法重建）；有真的抓到數值才證明這不是空跑
+        using var ctx = _fx.NewContext();
+        Assert.True(ctx.PrtgValues.Any(), "回填應寫入數值——零筆代表整趟是空跑，測試前提失效");
+        Assert.False(ctx.PrtgHostMaps.Any(), "回填不得寫入主機對應");
     }
 
     [Fact]
@@ -113,7 +139,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var day2 = DateTime.Today.AddDays(-2);
         var day2Str = day2.ToString("yyyy-MM-dd");
 
-        var (client, _) = CreateClient(req =>
+        var (client, handler) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains($"sdate={day2Str}"))
@@ -158,6 +184,12 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
+        // 預置鏡像，讓失敗真的來自 PRTG 回 503，而不是「鏡像為空」的入口防線
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None);
 
         Assert.False(ok);
@@ -190,7 +222,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         using var cts = new CancellationTokenSource();
 
-        var (client, _) = CreateClient(req =>
+        var (client, handler) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
             // 第一天執行完後觸發取消
@@ -214,6 +246,12 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
+        // 預置鏡像：鏡像為空時 FetchDayAsync 在入口就短路，走不到觸發取消的 messages 請求
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
             await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token);
@@ -230,7 +268,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var msgJson = "{\"treesize\":0,\"messages\":[]}";
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
 
-        var (client, _) = CreateClient(req =>
+        var (client, handler) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("content=devices"))
@@ -247,6 +285,12 @@ public class PrtgBackfillRunnerTests : IDisposable
         var store = CreateStore();
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
+
+        // 預置鏡像 sensor（回填不跑結構同步）；沒預置的話整趟空跑，「不寫對應」會變成恆真斷言
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
 
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None);
         Assert.True(ok);

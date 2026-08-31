@@ -501,6 +501,42 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchDayAsync_併發設定值真的被採用而非寫死()
+    {
+        // 只驗 concurrency=1 證明不了「設定有被吃進去」——把 semaphore 寫死成 1 也照樣綠。
+        // 這裡驗 concurrency=3 時峰值**等於** 3：夠多 sensor＋固定延遲下，semaphore 若真的用
+        // 傳入值，峰值必然衝到上限；寫死成 1 或 2 都會在這裡現形。
+        var senJson = "{\"treesize\":6,\"sensors\":[" +
+                      string.Join(",", Enumerable.Range(301, 6).Select(id => $"{{\"objid\":{id},\"paused\":false}}")) +
+                      "]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10,\"coverage\":100}]}";
+
+        var handler = new StubHandler();
+        handler.OnSend = async (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":6,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata.json"))
+            {
+                await Task.Delay(150);
+                return JsonResponse(histJson);
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        };
+
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(3, handler.MaxConcurrentRequests);
+    }
+
+    [Fact]
     public async Task FetchDayAsync_分頁能抓完多頁()
     {
         // 第一頁 500 筆
@@ -605,5 +641,121 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(0, result.Values);
         Assert.Contains(console.Lines, l => l.Contains("無法解析") && l.Contains("2"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_單一sensor失敗時其餘sensor數值照樣落地且不計階段失敗()
+    {
+        // 三個 sensor、其中一個 historicdata 回 500：隔離語意是「只影響它自己」——
+        // 其餘兩個的數值照樣寫入、Failures 為 0、console 有損耗回報。
+        // 沒有這個測試的話，把隔離邏輯改回「例外往外拋」全綠照樣通過（換模型體檢補）。
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":3,\"sensors\":[" +
+                    "{\"objid\":901,\"parentid\":1,\"sensor\":\"A\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":902,\"parentid\":1,\"sensor\":\"B\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":903,\"parentid\":1,\"sensor\":\"C\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+            {
+                if (url.Contains("id=902")) return JsonResponse("boom", HttpStatusCode.InternalServerError);
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":5,\"coverage\":100}]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(2, result.Values);
+        Assert.Contains(console.Lines, l => l.Contains("1 個感測器的數值擷取失敗"));
+
+        using var ctx = _fx.NewContext();
+        Assert.Equal(2, ctx.PrtgValues.Count());
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_全部sensor數值擷取皆失敗時計為階段失敗()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":901,\"parentid\":1,\"sensor\":\"A\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata")) return JsonResponse("boom", HttpStatusCode.InternalServerError);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+
+        // 有 sensor 要抓卻一筆都沒抓到＝這個階段實質沒成功，必須反映在 Failures
+        Assert.True(result.Failures > 0);
+        Assert.Equal(0, result.Values);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_不同步結構時不打結構端點且沿用鏡像sensor清單()
+    {
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":7,\"coverage\":100}]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var syncedAt = new DateTime(2026, 8, 29, 1, 0, 0);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 901, DeviceObjid = 1, Name = "A", SensorType = "ping", Paused = false },
+            new() { Objid = 902, DeviceObjid = 1, Name = "B", SensorType = "ping", Paused = true }
+        }, syncedAt);
+
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, syncStructure: false);
+
+        // 結構端點零請求；paused 的 902 不抓；synced_at 未被改寫（回填不得汙染「最後結構同步時間」）
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=devices"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=sensors"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("id=902"));
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(1, result.Values);
+
+        using var ctx = _fx.NewContext();
+        Assert.Equal(syncedAt, ctx.PrtgSensors.Single(s => s.Objid == 901).SyncedAt);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_不同步結構且鏡像為空時計為失敗不空跑()
+    {
+        // 剛設定完就按回填（每日擷取一次都沒跑過）：不擋下的話每一天都是
+        // 「0 個 sensor → 0 筆 → 無失敗」的空跑，整趟回填被報成成功
+        var (client, handler) = CreateClient(_ => JsonResponse("{}"));
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, syncStructure: false);
+
+        Assert.True(result.Failures > 0);
+        Assert.Empty(handler.RequestedUrls);
+        Assert.Contains(console.Lines, l => l.Contains("鏡像尚無任何感測器結構"));
     }
 }

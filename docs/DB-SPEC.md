@@ -495,8 +495,12 @@ lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 | `ReportRetentionDays` | 180 | 報告全文：`lf_reports`（風險報告／體檢報告／權限異動報告），依 `created_at` 判定。**不可大於 `RetentionDays`**（前後端皆驗證，讀取端另取小）：報告全文存在資料庫，而超過 `RetentionDays` 之後對應的分析紀錄已被清除，那些報告在 Web 上不再有任何入口可點開，留著只是佔空間 |
 | `PrtgRetentionDays` | 180 | PRTG 鏡像資料：`lf_prtg_values`／`lf_prtg_state_changes`／`lf_prtg_host_map`，依 `created_at` 判定。**不可大於 `RetentionDays`**（寫入時驗證，讀取端 `RuntimeSettingsResolver` 另取小）。`lf_prtg_devices`／`lf_prtg_sensors` 是結構鏡像、永遠保持現況全量，**不清** |
 
-七個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
-讀取端不 clamp，既有部署存過的較短天數照舊生效。
+七個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），寫入時驗證；
+`RetentionDays`／`RunLogRetentionDays`／`AuditRetentionDays` 讀取端不 clamp，既有部署存過的
+較短天數照舊生效。三個帶「不可大於 `RetentionDays`」上限的例外（`RawEventRetentionDays`／
+`ReportRetentionDays`／`PrtgRetentionDays`）在讀取端（`RuntimeSettingsResolver`）另行收斂：
+合法值與 `RetentionDays` 取小；超出範圍的值回退為「內建預設與 `RetentionDays` 取小」——
+只回退不收斂的話，預設值本身就可能大於調短後的 `RetentionDays`，反而違反上限。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。
 NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只對跑分析的那台機器生效
