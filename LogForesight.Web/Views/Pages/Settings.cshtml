@@ -745,16 +745,53 @@
                     <input type="text" class="form-control" id="prtg-url" placeholder="https://prtg.example.local" />
                 </div>
                 <div class="col-md-6">
-                    <label for="prtg-api-token" class="form-label">API token</label>
-                    <input type="password" class="form-control" id="prtg-api-token" autocomplete="new-password" placeholder="留空＝沿用既有 API token" />
-                    <div class="form-text" id="prtg-api-token-hint"></div>
+                    <label for="prtg-auth-mode" class="form-label">認證方式</label>
+                    <select class="form-select" id="prtg-auth-mode">
+                        <option value="token">API token（推薦，PRTG 21+）</option>
+                        <option value="password">帳號密碼（PRTG 傳統 API / passhash）</option>
+                    </select>
+                    <div class="form-text">PRTG 21.x 之後版本建議使用 API token；舊版 PRTG 或特定環境可切換為帳號密碼。</div>
                 </div>
-                <div class="col-12">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="prtg-clear-token" />
-                        <label class="form-check-label" for="prtg-clear-token">清除目前的 API token</label>
+            </div>
+
+            <div id="prtg-auth-token-fields">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label for="prtg-api-token" class="form-label">API token</label>
+                        <input type="password" class="form-control" id="prtg-api-token" autocomplete="new-password" placeholder="留空＝沿用既有 API token" />
+                        <div class="form-text" id="prtg-api-token-hint"></div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="prtg-clear-token" />
+                            <label class="form-check-label" for="prtg-clear-token">清除目前的 API token</label>
+                        </div>
                     </div>
                 </div>
+            </div>
+
+            <div id="prtg-auth-password-fields" class="d-none">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label for="prtg-username" class="form-label">使用者帳號</label>
+                        <input type="text" class="form-control" id="prtg-username" placeholder="prtgadmin" />
+                        <div class="form-text">具備讀取權限的 PRTG 登入帳號。</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="prtg-password" class="form-label">密碼</label>
+                        <input type="password" class="form-control" id="prtg-password" autocomplete="new-password" placeholder="留空＝沿用既有密碼" />
+                        <div class="form-text" id="prtg-password-hint"></div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="prtg-clear-password" />
+                            <label class="form-check-label" for="prtg-clear-password">清除目前的密碼</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
                 <div class="col-md-6">
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="prtg-ignore-ssl" />
@@ -771,7 +808,7 @@
             <div class="mb-3">
                 <h3 class="h6">測試連線</h3>
                 <p class="text-muted small">
-                    用上方表單目前填的值試連線（尚未儲存也可以測）；token 欄留空時沿用已儲存的 token。
+                    用上方表單目前填的值試連線（尚未儲存也可以測）；token 或密碼欄留空時沿用已儲存的值。
                 </p>
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>

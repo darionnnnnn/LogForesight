@@ -704,17 +704,61 @@ function bindBrandIcon() {
     });
 }
 
-/** PRTG 監控系統設定（批次B-4）：填入表單欄位，token 永遠留空（write-only） */
+/** PRTG 認證方式切換：依選取模式切換 token / password 區塊顯示（只動 classList 不設 style.display） */
+function syncPrtgAuthFields() {
+    const authMode = document.getElementById('prtg-auth-mode')?.value ?? 'token';
+    const tokenFields = document.getElementById('prtg-auth-token-fields');
+    const passwordFields = document.getElementById('prtg-auth-password-fields');
+
+    if (tokenFields) {
+        tokenFields.classList.toggle('d-none', authMode !== 'token');
+    }
+    if (passwordFields) {
+        passwordFields.classList.toggle('d-none', authMode !== 'password');
+    }
+}
+
+/** PRTG 監控系統設定（批次B-4）：填入表單欄位，token 與 password 永遠留空（write-only） */
 function renderPrtgFields(settings) {
     document.getElementById('prtg-enabled').checked = Boolean(settings.prtgEnabled);
     document.getElementById('prtg-url').value = settings.prtgUrl ?? '';
+
+    const authModeSelect = document.getElementById('prtg-auth-mode');
+    if (authModeSelect) {
+        authModeSelect.value = settings.prtgAuthMode || 'token';
+    }
+
     document.getElementById('prtg-api-token').value = '';
     document.getElementById('prtg-clear-token').checked = false;
 
-    const hint = document.getElementById('prtg-api-token-hint');
-    hint.textContent = settings.prtgHasApiToken
+    const tokenHint = document.getElementById('prtg-api-token-hint');
+    tokenHint.textContent = settings.prtgHasApiToken
         ? '已設定 API token；留空儲存＝沿用既有 API token，輸入新值才會覆蓋。'
         : '尚未設定 API token。';
+
+    const usernameInput = document.getElementById('prtg-username');
+    if (usernameInput) {
+        usernameInput.value = settings.prtgUsername ?? '';
+    }
+
+    const passwordInput = document.getElementById('prtg-password');
+    if (passwordInput) {
+        passwordInput.value = '';
+    }
+
+    const clearPasswordCheck = document.getElementById('prtg-clear-password');
+    if (clearPasswordCheck) {
+        clearPasswordCheck.checked = false;
+    }
+
+    const passwordHint = document.getElementById('prtg-password-hint');
+    if (passwordHint) {
+        passwordHint.textContent = settings.prtgHasPassword
+            ? '已設定密碼；留空儲存＝沿用既有密碼，輸入新值才會覆蓋。'
+            : '尚未設定密碼。';
+    }
+
+    syncPrtgAuthFields();
 
     document.getElementById('prtg-ignore-ssl').checked = Boolean(settings.prtgIgnoreSslErrors);
     setNumber('prtg-timeout-seconds', settings.prtgTimeoutSeconds);
@@ -798,10 +842,32 @@ function bindForm() {
 
         const prtgEnabled = document.getElementById('prtg-enabled').checked;
         const prtgUrl = document.getElementById('prtg-url').value.trim();
-        if (prtgEnabled && !prtgUrl) {
-            activateTabForElement(document.getElementById('prtg-url'));
-            toast('啟用 PRTG 時必須填寫 PRTG 位址。', 'warning');
-            return;
+        if (prtgEnabled) {
+            if (!prtgUrl) {
+                activateTabForElement(document.getElementById('prtg-url'));
+                toast('啟用 PRTG 時必須填寫 PRTG 位址。', 'warning');
+                return;
+            }
+
+            const authMode = document.getElementById('prtg-auth-mode')?.value ?? 'token';
+            if (authMode === 'password') {
+                const username = document.getElementById('prtg-username')?.value.trim();
+                if (!username) {
+                    activateTabForElement(document.getElementById('prtg-username'));
+                    toast('啟用 PRTG 並使用帳號密碼時，必須設定帳號。', 'warning');
+                    return;
+                }
+
+                const password = document.getElementById('prtg-password')?.value ?? '';
+                const clearPassword = document.getElementById('prtg-clear-password')?.checked ?? false;
+                // 密碼空白＝沿用既有；但若原本未設定密碼（或勾選了清除密碼），則必須輸入密碼
+                const hasExistingPassword = Boolean(current?.prtgHasPassword) && !clearPassword;
+                if (!password && !hasExistingPassword) {
+                    activateTabForElement(document.getElementById('prtg-password'));
+                    toast('啟用 PRTG 並使用帳號密碼時，必須設定密碼。', 'warning');
+                    return;
+                }
+            }
         }
 
         // **只列真的會造成刪除的設定。** 首次執行回補天數刻意不列——它決定的是
@@ -998,9 +1064,13 @@ function bindForm() {
                 brandName: document.getElementById('brand-name').value.trim(),
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
                 brandIconDataUri: brandIconDataUri,
-                // PRTG 監控系統（批次B-4）
+                // PRTG 監控系統
                 prtgEnabled,
                 prtgUrl,
+                prtgAuthMode: document.getElementById('prtg-auth-mode')?.value ?? 'token',
+                prtgUsername: document.getElementById('prtg-username')?.value.trim() ?? '',
+                prtgPassword: document.getElementById('prtg-password')?.value || null,
+                clearPrtgPassword: document.getElementById('prtg-clear-password')?.checked ?? false,
                 prtgIgnoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
                 prtgApiToken: document.getElementById('prtg-api-token').value || null,
                 clearPrtgApiToken: document.getElementById('prtg-clear-token').checked,
@@ -1131,6 +1201,9 @@ function bindPrtgTest() {
         try {
             const result = await api.post('/api/admin/settings/prtg-test', {
                 url,
+                authMode: document.getElementById('prtg-auth-mode')?.value ?? 'token',
+                username: document.getElementById('prtg-username')?.value.trim() ?? '',
+                password: document.getElementById('prtg-password')?.value || null,
                 apiToken: document.getElementById('prtg-api-token').value || null,
                 ignoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
                 timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value)
@@ -1489,6 +1562,8 @@ document.getElementById('ai-output-price')?.addEventListener('input', calcAndRen
 // AD 生效狀態同樣即時反映目前欄位內容，不必先儲存
 document.getElementById('ad-auth-enabled')?.addEventListener('change', renderAdStatus);
 document.getElementById('ad-servers')?.addEventListener('input', renderAdStatus);
+// PRTG 認證方式切換即時連動欄位顯示（PRTG 第 2 輪批次A）
+document.getElementById('prtg-auth-mode')?.addEventListener('change', syncPrtgAuthFields);
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
