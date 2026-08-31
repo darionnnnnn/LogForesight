@@ -61,6 +61,21 @@ public class LfDbContext : DbContext
     /// <summary>報告全文（↔ lf_reports，風險／週檢／權限異動三種）</summary>
     public DbSet<ReportRow> Reports => Set<ReportRow>();
 
+    /// <summary>PRTG 裝置鏡像（↔ lf_prtg_devices）</summary>
+    public DbSet<PrtgDeviceRow> PrtgDevices => Set<PrtgDeviceRow>();
+
+    /// <summary>PRTG 感測器鏡像（↔ lf_prtg_sensors）</summary>
+    public DbSet<PrtgSensorRow> PrtgSensors => Set<PrtgSensorRow>();
+
+    /// <summary>PRTG 狀態變更與訊息（↔ lf_prtg_state_changes）</summary>
+    public DbSet<PrtgStateChangeRow> PrtgStateChanges => Set<PrtgStateChangeRow>();
+
+    /// <summary>PRTG 每小時聚合數值（↔ lf_prtg_values）</summary>
+    public DbSet<PrtgValueRow> PrtgValues => Set<PrtgValueRow>();
+
+    /// <summary>PRTG 主機按日映射（↔ lf_prtg_host_map）</summary>
+    public DbSet<PrtgHostMapRow> PrtgHostMaps => Set<PrtgHostMapRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -380,6 +395,104 @@ public class LfDbContext : DbContext
             // 依 report_date 清理會讓剛補出來的報告立刻消失。理由同 lf_permission_changes。
             e.HasIndex(x => x.CreatedAt);
         });
+
+        // ── PRTG 鏡像層資料表 ──────────────────────────────────────────
+        //
+        // 鏡像 PRTG 設備、感測器、狀態變更、每小時聚合值與主機映射。
+        // 比照既有資料表：單參數 ToTable（零 schema 前綴）、欄名全小寫 snake_case、
+        // 時間欄位一律 DateTime（本地時間）。
+        b.Entity<PrtgDeviceRow>(e =>
+        {
+            e.ToTable("lf_prtg_devices");
+            e.HasKey(x => x.Objid);
+            e.Property(x => x.Objid).HasColumnName("objid").ValueGeneratedNever();
+            e.Property(x => x.Name).HasColumnName("name").HasMaxLength(255);
+            e.Property(x => x.GroupPath).HasColumnName("group_path").HasMaxLength(512);
+            e.Property(x => x.Ip).HasColumnName("ip").HasMaxLength(64);
+            e.Property(x => x.Tags).HasColumnName("tags");
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(64);
+            e.Property(x => x.DependencyObjid).HasColumnName("dependency_objid");
+            e.Property(x => x.Paused).HasColumnName("paused");
+            e.Property(x => x.SyncedAt).HasColumnName("synced_at");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => x.Ip).HasDatabaseName("IX_lf_prtg_devices_ip");
+        });
+
+        b.Entity<PrtgSensorRow>(e =>
+        {
+            e.ToTable("lf_prtg_sensors");
+            e.HasKey(x => x.Objid);
+            e.Property(x => x.Objid).HasColumnName("objid").ValueGeneratedNever();
+            e.Property(x => x.DeviceObjid).HasColumnName("device_objid");
+            e.Property(x => x.Name).HasColumnName("name").HasMaxLength(255);
+            e.Property(x => x.SensorType).HasColumnName("sensor_type").HasMaxLength(128);
+            e.Property(x => x.Tags).HasColumnName("tags");
+            e.Property(x => x.Unit).HasColumnName("unit").HasMaxLength(64);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(64);
+            e.Property(x => x.ThresholdsJson).HasColumnName("thresholds_json");
+            e.Property(x => x.DependencyObjid).HasColumnName("dependency_objid");
+            e.Property(x => x.Paused).HasColumnName("paused");
+            // Category / CategorySource 是 sensor 語意分類欄位，本輪一律為 null（分類引擎屬後續階段），欄位先備好避免日後再改 schema。
+            e.Property(x => x.Category).HasColumnName("category").HasMaxLength(64);
+            e.Property(x => x.CategorySource).HasColumnName("category_source").HasMaxLength(16);
+            e.Property(x => x.SyncedAt).HasColumnName("synced_at");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => x.DeviceObjid).HasDatabaseName("IX_lf_prtg_sensors_device");
+            e.HasIndex(x => x.SensorType).HasDatabaseName("IX_lf_prtg_sensors_type");
+        });
+
+        b.Entity<PrtgStateChangeRow>(e =>
+        {
+            e.ToTable("lf_prtg_state_changes");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.SensorObjid).HasColumnName("sensor_objid");
+            e.Property(x => x.ChangedAt).HasColumnName("changed_at");
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(64);
+            e.Property(x => x.PrevStatus).HasColumnName("prev_status").HasMaxLength(64);
+            e.Property(x => x.Message).HasColumnName("message");
+            e.Property(x => x.Quality).HasColumnName("quality").HasMaxLength(16);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => new { x.SensorObjid, x.ChangedAt }).HasDatabaseName("IX_lf_prtg_state_ch_sensor");
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_state_ch_created");
+        });
+
+        b.Entity<PrtgValueRow>(e =>
+        {
+            e.ToTable("lf_prtg_values");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.SensorObjid).HasColumnName("sensor_objid");
+            e.Property(x => x.PeriodStart).HasColumnName("period_start");
+            e.Property(x => x.AvgValue).HasColumnName("avg_value");
+            e.Property(x => x.MinValue).HasColumnName("min_value");
+            e.Property(x => x.MaxValue).HasColumnName("max_value");
+            e.Property(x => x.Coverage).HasColumnName("coverage");
+            e.Property(x => x.Quality).HasColumnName("quality").HasMaxLength(16);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => new { x.SensorObjid, x.PeriodStart }).IsUnique().HasDatabaseName("IX_lf_prtg_values_uniq");
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_values_created");
+        });
+
+        b.Entity<PrtgHostMapRow>(e =>
+        {
+            e.ToTable("lf_prtg_host_map");
+            e.HasKey(x => new { x.MapDate, x.DeviceObjid });
+            e.Property(x => x.MapDate).HasColumnName("map_date");
+            e.Property(x => x.DeviceObjid).HasColumnName("device_objid");
+            e.Property(x => x.Ip).HasColumnName("ip").HasMaxLength(64);
+            e.Property(x => x.HostId).HasColumnName("host_id");
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.MapStatus).HasColumnName("map_status").HasMaxLength(16);
+            e.Property(x => x.Note).HasColumnName("note").HasMaxLength(512);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_host_map_created");
+        });
     }
 }
 
@@ -662,5 +775,83 @@ public class ReportRow
     public string Content { get; set; } = string.Empty;
 
     /// <summary>產生時間。**保留期清理依這一欄**，不是 <see cref="ReportDate"/></summary>
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG device 結構鏡像。↔ lf_prtg_devices</summary>
+public class PrtgDeviceRow
+{
+    public long Objid { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string GroupPath { get; set; } = string.Empty;
+    public string? Ip { get; set; }
+    public string? Tags { get; set; }
+    public string? Status { get; set; }
+    public long? DependencyObjid { get; set; }
+    public bool Paused { get; set; }
+    public DateTime SyncedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG sensor 結構鏡像。↔ lf_prtg_sensors</summary>
+public class PrtgSensorRow
+{
+    public long Objid { get; set; }
+    public long DeviceObjid { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string SensorType { get; set; } = string.Empty;
+    public string? Tags { get; set; }
+    public string? Unit { get; set; }
+    public string? Status { get; set; }
+    public string? ThresholdsJson { get; set; }
+    public long? DependencyObjid { get; set; }
+    public bool Paused { get; set; }
+    /// <summary>sensor 語意分類欄位，本輪一律為 null（分類引擎屬後續階段），欄位先備好避免日後再改 schema。</summary>
+    public string? Category { get; set; }
+    /// <summary>sensor 語意分類來源，本輪一律為 null（分類引擎屬後續階段），欄位先備好避免日後再改 schema。</summary>
+    public string? CategorySource { get; set; }
+    public DateTime SyncedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG sensor 狀態變更與訊息。↔ lf_prtg_state_changes</summary>
+public class PrtgStateChangeRow
+{
+    public long Id { get; set; }
+    public long SensorObjid { get; set; }
+    /// <summary>狀態變更時間（本地時間）</summary>
+    public DateTime ChangedAt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string? PrevStatus { get; set; }
+    public string? Message { get; set; }
+    public string Quality { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG hourly 聚合數值。↔ lf_prtg_values</summary>
+public class PrtgValueRow
+{
+    public long Id { get; set; }
+    public long SensorObjid { get; set; }
+    /// <summary>小時起點（本地時間）</summary>
+    public DateTime PeriodStart { get; set; }
+    public double? AvgValue { get; set; }
+    public double? MinValue { get; set; }
+    public double? MaxValue { get; set; }
+    public double? Coverage { get; set; }
+    public string Quality { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG 主機對應按日。↔ lf_prtg_host_map</summary>
+public class PrtgHostMapRow
+{
+    public DateTime MapDate { get; set; }
+    public long DeviceObjid { get; set; }
+    public string? Ip { get; set; }
+    public long? HostId { get; set; }
+    public string? HostName { get; set; }
+    public string MapStatus { get; set; } = string.Empty;
+    public string? Note { get; set; }
     public DateTime CreatedAt { get; set; }
 }
