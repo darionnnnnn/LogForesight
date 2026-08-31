@@ -1059,21 +1059,13 @@ public class AnalysisOrchestrator
             var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
             if (!systemSettings.PrtgEnabled ||
                 string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) ||
-                string.IsNullOrWhiteSpace(systemSettings.PrtgApiTokenEnc))
+                !PrtgClientFactory.HasUsableCredentials(systemSettings))
             {
-                prtgConsole.WriteLine("PRTG 未啟用，略過。");
+                prtgConsole.WriteLine("PRTG 未啟用或尚未設定認證資訊，略過。");
                 return;
             }
 
-            var token = CryptoHelper.IsEncrypted(systemSettings.PrtgApiTokenEnc)
-                ? CryptoHelper.Decrypt(systemSettings.PrtgApiTokenEnc)
-                : systemSettings.PrtgApiTokenEnc;
-
-            using var client = new PrtgClient(
-                systemSettings.PrtgUrl,
-                token,
-                systemSettings.PrtgTimeoutSeconds,
-                systemSettings.PrtgIgnoreSslErrors);
+            using var client = PrtgClientFactory.Create(systemSettings);
 
             var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole);
             var fetchResult = await fetchService.FetchDayAsync(day, systemSettings.PrtgFetchConcurrency, ct);

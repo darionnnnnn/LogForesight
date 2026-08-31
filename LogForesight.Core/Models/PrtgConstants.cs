@@ -24,3 +24,22 @@ public static class PrtgMapStatus
     public const string Conflict = "conflict";
     public const string Unmatched = "unmatched";
 }
+
+/// <summary>
+/// PRTG 認證方式常數。
+/// <see cref="Token"/>（token）走 apitoken 參數；
+/// <see cref="Password"/>（password）走 PRTG 的 username＋passhash 流程
+/// （密碼只在換取 passhash 時使用一次，不會出現在後續請求的 URL）。
+/// </summary>
+public static class PrtgAuthModes
+{
+    public const string Token = "token";
+    public const string Password = "password";
+
+    /// <summary>
+    /// 判斷是否為合法的 PRTG 認證方式（Token 或 Password）。
+    /// 全站唯一的合法值判定。
+    /// </summary>
+    public static bool IsValid(string? mode) =>
+        mode is Token or Password;
+}

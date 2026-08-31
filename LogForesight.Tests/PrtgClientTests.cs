@@ -149,6 +149,319 @@ public class PrtgClientTests
         Assert.Null(noSslHandler.SslOptions.RemoteCertificateValidationCallback);
     }
 
+    [Fact]
+    public async Task 帳密模式_首次請求前先換passhash且只換一次()
+    {
+        var passhashCount = 0;
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    Interlocked.Increment(ref passhashCount);
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("1234567890\r\n", Encoding.UTF8, "text/plain")
+                    });
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "admin",
+            passwordOrEmpty: "secret");
+
+        await client.GetJsonAsync("/api/table.json?content=sensors");
+        await client.GetJsonAsync("/api/table.json?content=devices");
+        await client.GetJsonAsync("/api/table.json?content=messages");
+
+        Assert.Equal(1, passhashCount);
+        Assert.Equal(4, stub.Requests.Count);
+
+        // 第一個請求換 passhash
+        Assert.Contains("getpasshash.htm", stub.Requests[0].Url);
+        Assert.Contains("username=admin", stub.Requests[0].Url);
+        Assert.Contains("password=secret", stub.Requests[0].Url);
+
+        // 後續三個資料請求均帶 username 與 passhash
+        for (int i = 1; i <= 3; i++)
+        {
+            Assert.Contains("username=admin", stub.Requests[i].Url);
+            Assert.Contains("passhash=1234567890", stub.Requests[i].Url);
+            Assert.DoesNotContain("password=", stub.Requests[i].Url);
+        }
+    }
+
+    [Fact]
+    public async Task 帳密模式_併發請求下passhash仍只換一次()
+    {
+        var passhashCount = 0;
+        var stub = new StubHandler
+        {
+            OnSend = async (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    Interlocked.Increment(ref passhashCount);
+                    await Task.Delay(20);
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("9988776655\n", Encoding.UTF8, "text/plain")
+                    };
+                }
+                return JsonResponse(HttpStatusCode.OK, "{}");
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "testuser",
+            passwordOrEmpty: "testpass");
+
+        var tasks = Enumerable.Range(0, 10)
+            .Select(i => client.GetJsonAsync($"/api/table.json?content=sensors&i={i}"))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+
+        Assert.Equal(1, passhashCount);
+        Assert.Equal(11, stub.Requests.Count);
+    }
+
+    [Fact]
+    public async Task 帳密模式_後續請求不得帶password參數()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("passhash123", Encoding.UTF8, "text/plain")
+                    });
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "secretpass");
+
+        await client.GetJsonAsync("/api/table.json?content=sensors");
+        await client.GetJsonAsync("/api/table.json?content=devices");
+
+        Assert.Equal(3, stub.Requests.Count);
+        // 除了第 0 個 getpasshash.htm 以外，其他都不含 password=
+        Assert.Contains("password=", stub.Requests[0].Url);
+        Assert.DoesNotContain("password=", stub.Requests[1].Url);
+        Assert.DoesNotContain("password=", stub.Requests[2].Url);
+    }
+
+    [Fact]
+    public async Task 帳密模式_帳密錯誤時擲例外且訊息含帳號或密碼()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "wrongpass");
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+            client.GetJsonAsync("/api/table.json?content=sensors"));
+
+        Assert.Contains("帳號或密碼", ex.Message);
+    }
+
+    [Fact]
+    public async Task 帳密模式_帳密錯誤後不再重打getpasshash避免帳號鎖定()
+    {
+        // 每個 sensor 的數值擷取各自呼叫一次 GetJsonAsync。密碼打錯時若每次都重打
+        // getpasshash，三千個 sensor 就是三千次登入失敗，足以觸發 PRTG 的帳號鎖定。
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "wrongpass");
+
+        for (var i = 0; i < 5; i++)
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+                client.GetJsonAsync("/api/table.json?content=sensors"));
+            Assert.Contains("帳號或密碼", ex.Message);
+        }
+
+        var passhashAttempts = stub.Requests.Count(r => r.Url.Contains("getpasshash.htm"));
+        Assert.Equal(1, passhashAttempts);
+    }
+
+    [Fact]
+    public async Task 帳密模式_passhash回HTML錯誤頁時擲例外()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("<!DOCTYPE html><html><body>Error login</body></html>", Encoding.UTF8, "text/html")
+                    });
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "anypass");
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+            client.GetJsonAsync("/api/table.json?content=sensors"));
+
+        Assert.Contains("帳號或密碼", ex.Message);
+    }
+
+    [Fact]
+    public async Task 帳密模式_例外訊息不含密碼與passhash()
+    {
+        const string specialPassword = "p@ss word+/=";
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    throw new HttpRequestException($"Failed connecting to {req.RequestUri}");
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "testuser",
+            passwordOrEmpty: specialPassword);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+            client.GetJsonAsync("/api/table.json?content=sensors"));
+
+        var escapedPassword = Uri.EscapeDataString(specialPassword);
+        Assert.DoesNotContain(specialPassword, ex.Message);
+        Assert.DoesNotContain(escapedPassword, ex.Message);
+        Assert.DoesNotContain(specialPassword, ex.ToString());
+        Assert.DoesNotContain(escapedPassword, ex.ToString());
+    }
+
+    [Fact]
+    public void 帳密模式_username為空時建構期擲例外()
+    {
+        var ex = Assert.Throws<PrtgClientException>(() =>
+            new PrtgClient(
+                baseUrl: ValidUrl,
+                tokenOrEmpty: "",
+                timeoutSeconds: 30,
+                ignoreSslErrors: false,
+                handler: null,
+                authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+                usernameOrEmpty: "   ",
+                passwordOrEmpty: "mypassword"));
+
+        Assert.Contains("帳號", ex.Message);
+    }
+
+    [Fact]
+    public async Task token模式行為不變()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"))
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: SampleToken,
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Token);
+
+        await client.GetJsonAsync("/api/table.json?content=sensors");
+
+        Assert.Single(stub.Requests);
+        var req = stub.Requests[0];
+        Assert.Contains($"apitoken={SampleToken}", req.Url);
+        Assert.DoesNotContain("username=", req.Url);
+        Assert.DoesNotContain("passhash=", req.Url);
+        Assert.DoesNotContain("password=", req.Url);
+        Assert.DoesNotContain("getpasshash.htm", req.Url);
+    }
+
     /// <summary>
     /// 把每次 SendAsync 的請求方法／URL／內容記錄下來，回應由測試以 <see cref="OnSend"/> 提供。
     /// 取代真實 <see cref="HttpClient"/> 連線，讓 PrtgClient 的協定邏輯可離線測試。

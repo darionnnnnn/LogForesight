@@ -65,6 +65,10 @@ public class SystemSettingsServiceTests : IDisposable
         // PRTG 監控系統設定（PRTG 第 1 輪批次B）
         PrtgEnabled = false,
         PrtgUrl = "",
+        PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token,
+        PrtgUsername = "",
+        PrtgPassword = null,
+        ClearPrtgPassword = false,
         PrtgIgnoreSslErrors = false,
         PrtgTimeoutSeconds = 60,
         PrtgFetchConcurrency = 2,
@@ -1323,5 +1327,249 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(30, settings.PrtgBackfillDays);
         Assert.Equal(SystemSettings.DefaultPrtgRetentionDays, settings.PrtgRetentionDays);
         Assert.Equal(180, settings.PrtgRetentionDays);
+    }
+
+    [Fact]
+    public void Update後_PRTG帳密設定持久化()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = "https://prtg.example.local";
+        request.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        request.PrtgUsername = "prtgadmin";
+        request.PrtgPassword = "SecretPassword123";
+
+        var savedDto = service.Update(request);
+
+        var stored = _store.Get();
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Password, stored.PrtgAuthMode);
+        Assert.Equal("prtgadmin", stored.PrtgUsername);
+        Assert.True(LogForesight.Core.CryptoHelper.IsEncrypted(stored.PrtgPasswordEnc));
+
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Password, savedDto.PrtgAuthMode);
+        Assert.Equal("prtgadmin", savedDto.PrtgUsername);
+        Assert.True(savedDto.PrtgHasPassword);
+
+        var retrievedDto = service.Get();
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Password, retrievedDto.PrtgAuthMode);
+        Assert.Equal("prtgadmin", retrievedDto.PrtgUsername);
+        Assert.True(retrievedDto.PrtgHasPassword);
+    }
+
+    [Theory]
+    [InlineData("ntlm")]
+    [InlineData("")]
+    [InlineData("oauth")]
+    [InlineData("basic")]
+    public void PRTG認證方式非法值時拒絕(string invalidAuthMode)
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgAuthMode = invalidAuthMode;
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("PRTG 認證方式不合法", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void PRTG帳密模式啟用但帳號空白時拒絕(string? emptyUsername)
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = "https://prtg.example.local";
+        request.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        request.PrtgUsername = emptyUsername;
+        request.PrtgPassword = "SecretPassword123";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("啟用 PRTG 並使用帳號密碼時，必須設定帳號", ex.Message);
+    }
+
+    [Fact]
+    public void PRTG帳密模式啟用但從未設定密碼時拒絕()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = "https://prtg.example.local";
+        request.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        request.PrtgUsername = "prtgadmin";
+        request.PrtgPassword = "";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("啟用 PRTG 並使用帳號密碼時，必須設定密碼", ex.Message);
+    }
+
+    [Fact]
+    public void PRTG帳密模式_密碼留空但既有密碼存在時通過()
+    {
+        var service = Create();
+
+        // 1. 先存一次密碼與帳號
+        var initialRequest = ValidRequest();
+        initialRequest.PrtgEnabled = true;
+        initialRequest.PrtgUrl = "https://prtg.example.local";
+        initialRequest.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        initialRequest.PrtgUsername = "prtgadmin";
+        initialRequest.PrtgPassword = "InitialPassword123";
+        service.Update(initialRequest);
+
+        var initialStored = _store.Get();
+        var initialCipher = initialStored.PrtgPasswordEnc;
+        Assert.True(LogForesight.Core.CryptoHelper.IsEncrypted(initialCipher));
+
+        // 2. 再送一次 PrtgPassword = "" 的請求（其他欄位有改動），斷言不擲例外且密文未變
+        var followUpRequest = ValidRequest();
+        followUpRequest.PrtgEnabled = true;
+        followUpRequest.PrtgUrl = "https://prtg.example.local";
+        followUpRequest.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        followUpRequest.PrtgUsername = "prtgadmin";
+        followUpRequest.PrtgPassword = "";
+        followUpRequest.ClearPrtgPassword = false;
+        followUpRequest.ServerDescription = "說明更新";
+
+        var updatedDto = service.Update(followUpRequest);
+
+        var afterKeep = _store.Get();
+        Assert.Equal(initialCipher, afterKeep.PrtgPasswordEnc);
+        Assert.Equal("prtgadmin", afterKeep.PrtgUsername);
+        Assert.Equal("說明更新", afterKeep.ServerDescription);
+        Assert.True(updatedDto.PrtgHasPassword);
+    }
+
+    [Fact]
+    public void PRTG_token模式啟用但從未設定token時拒絕()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = "https://prtg.example.local";
+        request.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        request.PrtgApiToken = "";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("啟用 PRTG 並使用 API token 時，必須設定 API token", ex.Message);
+    }
+
+    [Fact]
+    public void PRTG密碼留空時沿用既有值_清除旗標可清空()
+    {
+        var service = Create();
+
+        // 1. 存入密碼
+        var initialRequest = ValidRequest();
+        initialRequest.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        initialRequest.PrtgUsername = "admin";
+        initialRequest.PrtgPassword = "first-secret";
+        service.Update(initialRequest);
+
+        var initialStored = _store.Get();
+        var initialCipher = initialStored.PrtgPasswordEnc;
+        Assert.True(LogForesight.Core.CryptoHelper.IsEncrypted(initialCipher));
+        Assert.True(service.Get().PrtgHasPassword);
+
+        // 2. 留空沿用
+        var keepRequest = ValidRequest();
+        keepRequest.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        keepRequest.PrtgUsername = "admin";
+        keepRequest.PrtgPassword = "";
+        keepRequest.ClearPrtgPassword = false;
+        service.Update(keepRequest);
+
+        var keepStored = _store.Get();
+        Assert.Equal(initialCipher, keepStored.PrtgPasswordEnc);
+        Assert.True(service.Get().PrtgHasPassword);
+
+        // 3. ClearPrtgPassword 清空
+        var clearRequest = ValidRequest();
+        clearRequest.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        clearRequest.PrtgUsername = "admin";
+        clearRequest.ClearPrtgPassword = true;
+        service.Update(clearRequest);
+
+        var clearStored = _store.Get();
+        Assert.Equal("", clearStored.PrtgPasswordEnc);
+        Assert.False(service.Get().PrtgHasPassword);
+    }
+
+    [Fact]
+    public void PRTG切換認證方式時不污染另一組憑證()
+    {
+        var service = Create();
+        const string Token = LogForesight.Core.Models.PrtgAuthModes.Token;
+        const string Password = LogForesight.Core.Models.PrtgAuthModes.Password;
+
+        // 先在 token 模式存好 token，再在帳密模式存好密碼
+        var setToken = ValidRequest();
+        setToken.PrtgAuthMode = Token;
+        setToken.PrtgApiToken = "the-token";
+        service.Update(setToken);
+
+        var setPassword = ValidRequest();
+        setPassword.PrtgAuthMode = Password;
+        setPassword.PrtgUsername = "admin";
+        setPassword.PrtgPassword = "the-password";
+        service.Update(setPassword);
+
+        var tokenCipher = _store.Get().PrtgApiTokenEnc;
+        var passwordCipher = _store.Get().PrtgPasswordEnc;
+        Assert.NotEqual("", tokenCipher);
+        Assert.NotEqual("", passwordCipher);
+
+        // 情境一：在 token 模式勾了「清除 token」後改用帳密儲存。
+        // 那個勾選在畫面上已經隨著切換而隱藏，不該生效——否則 token 被靜默清空。
+        var switchToPassword = ValidRequest();
+        switchToPassword.PrtgAuthMode = Password;
+        switchToPassword.PrtgUsername = "admin";
+        switchToPassword.ClearPrtgApiToken = true;
+        switchToPassword.PrtgApiToken = "leftover";
+        service.Update(switchToPassword);
+
+        Assert.Equal(tokenCipher, _store.Get().PrtgApiTokenEnc);
+
+        // 情境二：反方向——帳密欄殘留的密碼不該在 token 模式下被寫入
+        var switchToToken = ValidRequest();
+        switchToToken.PrtgAuthMode = Token;
+        switchToToken.PrtgPassword = "leftover-password";
+        switchToToken.ClearPrtgPassword = true;
+        service.Update(switchToToken);
+
+        Assert.Equal(passwordCipher, _store.Get().PrtgPasswordEnc);
+    }
+
+    [Fact]
+    public void PRTG憑證欄位輸入純空白時不覆蓋既有值()
+    {
+        var service = Create();
+
+        var setToken = ValidRequest();
+        setToken.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        setToken.PrtgApiToken = "good-token";
+        service.Update(setToken);
+        var cipher = _store.Get().PrtgApiTokenEnc;
+
+        // 純空白＝沒填。若當成有值寫進去，好的 token 會被覆蓋成加密後的空白，
+        // 而 HasUsableCredentials 因為欄位非空仍判定「有設定」，要到實際連線才 401
+        var blank = ValidRequest();
+        blank.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        blank.PrtgApiToken = "   ";
+        service.Update(blank);
+
+        Assert.Equal(cipher, _store.Get().PrtgApiTokenEnc);
+    }
+
+    [Fact]
+    public void PRTG預設認證方式為token()
+    {
+        var settings = new SystemSettings();
+
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Token, settings.PrtgAuthMode);
+        Assert.Equal("", settings.PrtgUsername);
+        Assert.Equal("", settings.PrtgPasswordEnc);
     }
 }

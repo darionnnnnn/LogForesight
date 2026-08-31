@@ -146,6 +146,10 @@ public class SystemSettingsDto
     public string PrtgUrl { get; set; } = "";
     /// <summary>PRTG API token 是否已設定；token 本身 write-only，絕不回傳明碼或密文（同 AiHasApiKey 慣例）</summary>
     public bool PrtgHasApiToken { get; set; }
+    public string PrtgAuthMode { get; set; } = PrtgAuthModes.Token;
+    public string PrtgUsername { get; set; } = "";
+    /// <summary>PRTG 密碼是否已設定；密碼本身 write-only，絕不回傳明碼或密文（比照 PrtgHasApiToken）</summary>
+    public bool PrtgHasPassword { get; set; }
     public bool PrtgIgnoreSslErrors { get; set; }
     public int PrtgTimeoutSeconds { get; set; }
     public int PrtgFetchConcurrency { get; set; }
@@ -388,6 +392,17 @@ public class UpdateSystemSettingsRequest
 
     public bool ClearPrtgApiToken { get; set; }
 
+    [StringLength(20)]
+    public string PrtgAuthMode { get; set; } = PrtgAuthModes.Token;
+
+    [StringLength(255)]
+    public string? PrtgUsername { get; set; }
+
+    /// <summary>write-only；留空＝沿用既有密碼，要清除請另外傳 ClearPrtgPassword=true</summary>
+    public string? PrtgPassword { get; set; }
+
+    public bool ClearPrtgPassword { get; set; }
+
     [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
     public int PrtgTimeoutSeconds { get; set; } = SystemSettings.DefaultPrtgTimeoutSeconds;
 
@@ -476,6 +491,15 @@ public class TestPrtgConnectionRequest
 
     /// <summary>留空＝沿用已儲存的 token</summary>
     public string? ApiToken { get; set; }
+
+    /// <summary>認證方式：token 或 password（留空視為 token）</summary>
+    public string? AuthMode { get; set; }
+
+    /// <summary>PRTG 帳號（password 模式用）</summary>
+    public string? Username { get; set; }
+
+    /// <summary>PRTG 密碼（password 模式用，留空＝沿用已儲存的密碼）</summary>
+    public string? Password { get; set; }
 
     public bool IgnoreSslErrors { get; set; }
 
