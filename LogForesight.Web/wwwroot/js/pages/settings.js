@@ -4,7 +4,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable } from '../core/ui.js';
+import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, renderSpinner } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 
@@ -60,6 +60,7 @@ async function load() {
     renderRetentionFields(current);
     renderMailFields(current);
     renderBrandFields(current);
+    renderPrtgFields(current);
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
     loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
@@ -703,6 +704,26 @@ function bindBrandIcon() {
     });
 }
 
+/** PRTG 監控系統設定（批次B-4）：填入表單欄位，token 永遠留空（write-only） */
+function renderPrtgFields(settings) {
+    document.getElementById('prtg-enabled').checked = Boolean(settings.prtgEnabled);
+    document.getElementById('prtg-url').value = settings.prtgUrl ?? '';
+    document.getElementById('prtg-api-token').value = '';
+    document.getElementById('prtg-clear-token').checked = false;
+
+    const hint = document.getElementById('prtg-api-token-hint');
+    hint.textContent = settings.prtgHasApiToken
+        ? '已設定 API token；留空儲存＝沿用既有 API token，輸入新值才會覆蓋。'
+        : '尚未設定 API token。';
+
+    document.getElementById('prtg-ignore-ssl').checked = Boolean(settings.prtgIgnoreSslErrors);
+    setNumber('prtg-timeout-seconds', settings.prtgTimeoutSeconds);
+    setNumber('prtg-fetch-concurrency', settings.prtgFetchConcurrency);
+    setNumber('prtg-backfill-days', settings.prtgBackfillDays);
+    setNumber('prtg-retention-days', settings.prtgRetentionDays);
+    document.getElementById('prtg-test-result').replaceChildren();
+}
+
 function renderUpdatedAt(settings) {
     const el = document.getElementById('settings-updated');
     if (!settings.updatedAt) {
@@ -765,6 +786,21 @@ function bindForm() {
         if (reportRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('report-retention-days'));
             toast('報告保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
+
+        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days').value);
+        if (prtgRetentionDays > retentionDays) {
+            activateTabForElement(document.getElementById('prtg-retention-days'));
+            toast('PRTG 資料保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
+
+        const prtgEnabled = document.getElementById('prtg-enabled').checked;
+        const prtgUrl = document.getElementById('prtg-url').value.trim();
+        if (prtgEnabled && !prtgUrl) {
+            activateTabForElement(document.getElementById('prtg-url'));
+            toast('啟用 PRTG 時必須填寫 PRTG 位址。', 'warning');
             return;
         }
 
@@ -961,7 +997,17 @@ function bindForm() {
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
-                brandIconDataUri: brandIconDataUri
+                brandIconDataUri: brandIconDataUri,
+                // PRTG 監控系統（批次B-4）
+                prtgEnabled,
+                prtgUrl,
+                prtgIgnoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
+                prtgApiToken: document.getElementById('prtg-api-token').value || null,
+                clearPrtgApiToken: document.getElementById('prtg-clear-token').checked,
+                prtgTimeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value),
+                prtgFetchConcurrency: Number(document.getElementById('prtg-fetch-concurrency').value),
+                prtgBackfillDays: Number(document.getElementById('prtg-backfill-days').value),
+                prtgRetentionDays
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);
@@ -969,6 +1015,7 @@ function bindForm() {
             renderAnalysisFields(current);
             renderMailFields(current);
             renderBrandFields(current);
+            renderPrtgFields(current);
             applyBrandToSidebar(current);
             renderUpdatedAt(current);
             unsaved?.clear();
@@ -1068,6 +1115,131 @@ function bindMailTest() {
     });
 }
 
+/** PRTG 連線測試（批次B-4）：使用表單當前填寫值測試連線（不需先儲存） */
+function bindPrtgTest() {
+    const button = document.getElementById('prtg-test-btn');
+
+    button.addEventListener('click', async () => {
+        const url = document.getElementById('prtg-url').value.trim();
+        if (!url) {
+            toast('請先輸入 PRTG 位址。', 'warning');
+            return;
+        }
+
+        const resultEl = document.getElementById('prtg-test-result');
+        const restore = withBusy(button, '測試中');
+        try {
+            const result = await api.post('/api/admin/settings/prtg-test', {
+                url,
+                apiToken: document.getElementById('prtg-api-token').value || null,
+                ignoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
+                timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value)
+            }, { silent: true });
+
+            resultEl.className = result.success ? 'text-success small' : 'text-danger small';
+            resultEl.textContent = result.elapsedMs != null
+                ? `✓ ${result.message}（耗時 ${result.elapsedMs}ms）`
+                : `✓ ${result.message}`;
+        } catch (error) {
+            resultEl.className = 'text-danger small';
+            resultEl.textContent = `✗ ${error?.message || '測試連線失敗。'}`;
+        } finally {
+            restore();
+        }
+    });
+}
+
+// ── PRTG API 探測（批次B-4，比照 NetIQ 診斷實作）─────────────────────────
+
+let prtgProbePollTimer = null;
+
+/** 輪詢更新時只換文字節點、不重建 spinner（避免每次輪詢動畫重置閃爍） */
+function setPrtgProbeSpinnerText(container, text) {
+    if (!container.querySelector('.spinner-border')) {
+        renderSpinner(container, text);
+        return;
+    }
+    const label = container.querySelector('span:last-child');
+    if (label) label.textContent = text;
+}
+
+function renderPrtgProbeStatus(status) {
+    const outputEl = document.getElementById('prtg-probe-output');
+    const copyButton = document.getElementById('prtg-probe-copy');
+    const startButton = document.getElementById('prtg-probe-start');
+    const statusEl = document.getElementById('prtg-probe-status');
+
+    const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
+    outputEl.value = outputText;
+    if (outputText) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    copyButton.disabled = !outputText;
+
+    if (status.isRunning) {
+        startButton.disabled = true;
+        setPrtgProbeSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        return;
+    }
+
+    startButton.disabled = false;
+    if (!status.completedAt) {
+        statusEl.textContent = '';
+        return;
+    }
+    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
+        (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+}
+
+async function refreshPrtgProbeStatus() {
+    let status;
+    try {
+        status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
+    } catch {
+        return;
+    }
+    renderPrtgProbeStatus(status);
+
+    if (status.isRunning && !prtgProbePollTimer) {
+        prtgProbePollTimer = setInterval(async () => {
+            const latest = await api.get('/api/admin/settings/prtg-probe/status', { silent: true }).catch(() => null);
+            if (!latest) return;
+            renderPrtgProbeStatus(latest);
+            if (!latest.isRunning) {
+                clearInterval(prtgProbePollTimer);
+                prtgProbePollTimer = null;
+            }
+        }, 2000);
+    }
+}
+
+function bindPrtgProbe() {
+    const startButton = document.getElementById('prtg-probe-start');
+    const copyButton = document.getElementById('prtg-probe-copy');
+    const outputEl = document.getElementById('prtg-probe-output');
+
+    startButton.addEventListener('click', async () => {
+        // 不用 withBusy：啟動成功後按鈕的 disabled 狀態交給輪詢狀態接管
+        startButton.disabled = true;
+        try {
+            await api.post('/api/admin/settings/prtg-probe/start', {}, { silent: true });
+            toast('已開始探測 PRTG 環境', 'success');
+            await refreshPrtgProbeStatus();
+        } catch {
+            startButton.disabled = false;
+        }
+    });
+
+    copyButton.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(outputEl.value);
+            toast('已複製探測輸出', 'success');
+        } catch {
+            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+        }
+    });
+}
+
 /**
  * AI 進階參數「還原預設值」（docs/archive/FEEDBACK-10-PLAN.md §3）：出廠值由後端隨設定一起送來
  * （`aiAdvancedDefaults`，源頭是 Core 的 SystemSettings 屬性初始器），前端不硬編第二份數字。
@@ -1114,6 +1286,8 @@ bindForm();
 bindAiProvider();
 bindAdTest();
 bindMailTest();
+bindPrtgTest();
+bindPrtgProbe();
 bindAiAdvancedReset();
 bindAiUsageReset();
 // 單價欄位改動時即時更新估算金額（不必按儲存、不必打 API）
@@ -1128,6 +1302,8 @@ bindBrandIcon();
 bindTabs(document.getElementById('settings-tabs'));
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
-        '#mail-test-btn, #mail-test-result'
+        '#mail-test-btn, #mail-test-result, ' +
+        '#prtg-test-btn, #prtg-test-result, #prtg-probe-start, #prtg-probe-status, #prtg-probe-output, #prtg-probe-copy'
 });
 load();
+refreshPrtgProbeStatus();
