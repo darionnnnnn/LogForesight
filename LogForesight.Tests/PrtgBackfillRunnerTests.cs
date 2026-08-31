@@ -91,7 +91,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None);
 
         Assert.True(ok);
         Assert.Contains(console.Lines, l => l.Contains("開始執行 PRTG 歷史回填（共 3 天"));
@@ -135,7 +135,13 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, console, CancellationToken.None);
+        // 回填不跑結構同步，sensor 清單改從鏡像讀——先把結構準備好，才是真實的回填前提
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None);
 
         Assert.True(ok); // 有成功的天數即回傳 true
         Assert.Contains(console.Lines, l => l.Contains($"回填 {day2Str}（第 2/3 天）失敗"));
@@ -152,7 +158,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None);
 
         Assert.False(ok);
         Assert.Contains(console.Lines, l => l.Contains("共成功 0 天，失敗 2 天"));
@@ -166,8 +172,8 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
-        var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, console, CancellationToken.None);
-        var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, console, CancellationToken.None);
+        var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, 2, console, CancellationToken.None);
+        var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, 2, console, CancellationToken.None);
 
         Assert.False(okZero);
         Assert.False(okNegative);
@@ -210,7 +216,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
-            await PrtgBackfillRunner.RunAsync(fetchService, 5, console, cts.Token);
+            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token);
         });
 
         Assert.Contains(console.Lines, l => l.Contains("回填已中斷"));
@@ -242,7 +248,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None);
         Assert.True(ok);
 
         using var ctx = _fx.NewContext();

@@ -650,7 +650,10 @@ public class SystemSettingsService : ISystemSettingsService
     private string? DecryptSavedSmtpPassword()
     {
         var enc = _store.Get().SmtpPasswordEnc;
-        return string.IsNullOrEmpty(enc) ? null : CryptoHelper.Decrypt(enc);
+        if (string.IsNullOrEmpty(enc)) return null;
+        // 守衛同 DecryptSavedPrtgApiToken：Decrypt 對非本格式的值會擲例外，
+        // 匯入或手動編輯 blob 的路徑上這欄有可能是明文
+        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
     }
 
     /// <summary>

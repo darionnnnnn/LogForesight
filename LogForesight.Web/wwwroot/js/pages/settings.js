@@ -5,7 +5,7 @@
 
 import { api } from '../core/api.js';
 import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, renderSpinner } from '../core/ui.js';
-import { formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
@@ -1136,10 +1136,13 @@ function bindPrtgTest() {
                 timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value)
             }, { silent: true });
 
+            // 連線失敗是 HTTP 200 + success=false（走不到 catch），符號必須跟著 success 走，
+            // 否則畫面會顯示「✓ 測試連線失敗：…」
+            const mark = result.success ? '✓' : '✗';
             resultEl.className = result.success ? 'text-success small' : 'text-danger small';
             resultEl.textContent = result.elapsedMs != null
-                ? `✓ ${result.message}（耗時 ${result.elapsedMs}ms）`
-                : `✓ ${result.message}`;
+                ? `${mark} ${result.message}（耗時 ${result.elapsedMs}ms）`
+                : `${mark} ${result.message}`;
         } catch (error) {
             resultEl.className = 'text-danger small';
             resultEl.textContent = `✗ ${error?.message || '測試連線失敗。'}`;

@@ -172,6 +172,71 @@
 
 ## 11. 執行紀錄
 
+委派模型：`gemini-3.7-flash-high`（整輪未切換）。基準 dev@e75be3e（3073 綠）→ 本輪 3143 綠。
+
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （待實作開始填寫） | | | | |
+| A：五張表＋冪等 DDL | agy | 通過 | 3078 綠 | Claude 補強：欄位清單斷言原本只驗 EF 模型建出的表，改成兩條路徑都驗（EnsureCreated 與 SchemaUpgrader DDL），否則兩者漂移完全靜默；表名測試由硬編字串比硬編字串改成查 `sqlite_master` |
+| B-1：設定欄位 | agy | 通過 | 3087 綠 | Claude 誤用 `utf-8-sig` 寫入，替三個原本無 BOM 的檔案加了 BOM，已還原（歷輪已知陷阱，本輪再犯） |
+| B-2：PrtgClient＋測試連線 | agy | 通過 | 3097 綠 | Claude 修真問題：例外訊息的 token 遮蔽只比對原文，URL 編碼形式會外流；原測試的 token 剛好無特殊字元而掩蓋了漏洞，已換成含 `+/= ` 的 token |
+| B-3：環境探測 probe | agy | 通過 | 3103 綠 | Claude 修真問題：`CryptoHelper.Decrypt` 對非密文會擲例外，探測與測試連線兩處都漏了 `IsEncrypted` 守衛 |
+| B-4：設定頁 PRTG 頁籤 | agy | 通過 | 3103 綠（前端不增測試） | agy 剝掉 `Settings.cshtml` 與 `settings.js` 的 BOM，已還原。輸出走 `<textarea>.value`，零 innerHTML，API 全走 `api.js` |
+| C-1：EfPrtgStore | agy | 通過 | 3114 綠 | 無落差。「同步不覆蓋人工分類欄」的測試有效（先寫入→手動設分類→再同步） |
+| C-2：每日擷取器＋批次掛接 | agy | 通過 | 3126 綠 | Claude 修**兩個真問題**：①分頁只在「回傳 0 筆」時停止，遇到會忽略 `start` 的 PRTG 代理會**無限迴圈卡死整趟夜間批次**且無任何錯誤訊息——改為「未滿一頁即停」並加測試鎖住；②數值時間解析失敗是靜默 `continue`，違反本輪「不得靜默留洞」，改為計數並回報 |
+| D：主機對應 | agy | 通過 | 3137 綠 | 無落差。一 IP 多 device 時確實不猜 HostId；走參數傳 `hostStore`，未動 `AnalysisRunContext`（它有位置解構）；零寫回主機主檔 |
+| E＋F：回填＋鏡像狀態 UI | agy | 通過 | 3143 綠 | agy 又剝掉前端兩檔的 BOM，已還原。互斥檢查原本做成可選參數（預設 null），改為必要相依——保護做成可選，漏注入時會靜默消失 |
+| 終檢（兩個獨立 Explore：程式碼＋文件） | Claude | 完成 | 3143 綠 | 見下方 |
+
+### 終檢處置
+
+程式碼終檢 18 項、文件終檢三區塊。**高嚴重度每一項都先自己讀程式碼驗證再改**——其中
+「`RuntimeSettingsResolver` 的 AI 金鑰解密缺守衛」查證後**不成立**（該處本來就有 `IsEncrypted`
+守衛），未採納。實際修正：
+
+| 嚴重度 | 問題 | 處置 |
+|---|---|---|
+| 擋路 | `settings.js` 用了 `formatDate` 卻沒 import：只要當日有主機對應資料，鏡像面板就整段 ReferenceError，還被空 catch 吞掉——畫面永遠顯示「-／0」而無任何錯誤 | 補 import |
+| 高 | 階段 4 任一 sensor 失敗就炸掉整個階段，已寫入的數千筆被回報成 0，回填再據此把整天判為失敗 | 改為單 sensor 隔離＋計數回報；但保留「有 sensor 要抓卻一筆都沒抓到＝階段失敗」（這是測試逼出來的：只做隔離會讓全失敗被當成功） |
+| 高 | 回填逐日重跑 device／sensor 全量結構同步：對 PRTG 打 N 次無謂查詢，並把 `synced_at` 汙染成回填時間 | `FetchDayAsync` 加 `syncStructure` 參數，回填傳 false，sensor 清單改從鏡像讀 |
+| 高 | 一 IP 多台主機時 `Note` 可破 1500 字元，SQL Server 端整份對應寫入失敗——而該日舊列在寫入前已刪除，等於淨損失一天 | 截斷至 500 字元 |
+| 中 | `PrtgFetchConcurrency` 在回填路徑被寫死的 2 蓋掉（等於這個設定在回填沒有消費端） | 傳入設定值 |
+| 中 | `lf_prtg_devices.ip` 是 `nvarchar(64)`，存的卻是 PRTG 的 `host` 欄（可能是長 FQDN），SQL Server 端會整批寫入失敗 | 寫入前截斷（截掉的必定不是 IPv4，不影響對應） |
+| 中 | 保留期低於下限時只記 log 不改值，反而讓 PRTG 留得比分析紀錄久 | 真的改成預設值並與 `RetentionDays` 取小 |
+| 中 | 測試連線失敗（HTTP 200＋`success=false`）畫面仍顯示「✓」 | 符號跟著 `success` 走 |
+| 中 | 同型：`DecryptSavedSmtpPassword` 與 `MailNotificationService` 兩處解密缺守衛（既有問題，同型一併掃） | 補守衛 |
+| — | §10 複檢自己列為批次D交付的 `WebHost.IpAddress` 註解更新**漏做** | 補上，寫明 PRTG 對應是唯一比對消費端且不影響主機身分判定 |
+
+文件：新增 `docs/PRTG-SPEC.md`；`CLAUDE.md`（文件地圖＋基線 3073→3143）、`DB-SPEC`（保留期
+五個→六個、新增 `PrtgRetentionDays`、五張表索引）、`WEB-SPEC`（八個頁籤、PRTG 頁籤說明、
+五個新端點）、`BACKLOG`（PRTG 遞延十一項含觸發條件）皆已補。PRTG-SPEC 依終檢修正五處不實敘述。
+
+### 規劃與實作的偏離
+
+- **批次C定案3「每資料類別×日期記錄完成水位」未實作**，改採「靠寫入冪等」。冪等足以保證重跑
+  不產生重複，但**不會跳過已完成的日期**——回填 30 天中斷在第 29 天，重跑仍是 30 天全打一次。
+  以目前規模可接受，已登記 BACKLOG。§7 定案2 說回填「沿用批次C水位機制」，該機制不存在。
+- **批次C定案1 第四類「PRTG 自身健康概要」與批次F定案1「每資料類別 freshness」未實作**：
+  現況的「最新資料時間」是從資料本身推導，不等於同步時間（連續數晚擷取到 0 筆時不會變動）。
+  已登記 BACKLOG 並在 SPEC 標註。
+- **批次C定案4「probe 斷線期間標不可信」未實作**：`untrusted` 常數已定義但無判定來源。
+
+### 已知風險（首次實機必須驗證）
+
+- **`historicdata.json` 的實際回應形狀尚未對真機驗證**。目前解析假設 `datetime` 可被
+  `DateTime.TryParse`（本機文化）解析、數值欄位鍵名為 `value_` 或 `value`。若 PRTG 依伺服器
+  地區設定輸出、或數值改用逐通道鍵名（`value_0`、`value_1`），會解析不到——**但不會靜默**：
+  時間解析失敗有計數並在執行輸出回報。**首次實機回填後務必檢查有無該行警告，以及
+  `lf_prtg_values` 是否真的寫進數值**。
+- `messages` 與 `historicdata` 的欄位名以規劃時的 PRTG API 文件為準。環境探測（批次B）正是
+  為此準備——先跑探測拿真實形狀，再據以校正。
+
+### 事後回顧
+
+- **委派期間 Claude 動了同一個 repo**：在 E＋F 委派執行中編輯了 `docs/PRTG-1-PLAN.md`，被 agy
+  還原且不會出現在 `git status`（skill 早有明載，本輪仍踩到）。下次要寫的東西一律先放 scratchpad。
+- **BOM 三度出事**：agy 剝掉前端檔案的 BOM 兩次、Claude 自己用 `utf-8-sig` 加 BOM 一次。
+  每段驗收都查 BOM（與**輪次基準分支**比，不是與上一個 commit 比）是有效的防線。
+- **測試假通過的形狀**：本輪有兩例是「測試資料剛好避開了實作的漏洞」（token 無特殊字元、
+  historicdata 用貼合實作的簡化格式）。解析／轉換類的驗收要用真實資料樣本，這條在 skill 裡
+  已有，但本輪規格只寫了「必須是真實 PRTG 的形狀」而沒有附真實樣本——沒有樣本可附時，
+  要在計畫裡把「首次實機必須驗證什麼」寫成明確的檢查項（本輪已補在上一節）。

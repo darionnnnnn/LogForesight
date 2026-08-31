@@ -373,6 +373,20 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 取得 sensor 的 objid 與暫停狀態（唯讀，只取這兩欄）。
+    /// 供歷史回填使用：回填不重跑結構同步，sensor 清單改從鏡像讀。
+    /// </summary>
+    public List<(long Objid, bool Paused)> GetSensorTargets()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.AsNoTracking()
+            .Select(s => new { s.Objid, s.Paused })
+            .ToList()
+            .Select(s => (s.Objid, s.Paused))
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得指定日期的 PRTG 主機對應清單（唯讀查詢）。
     /// </summary>
     public List<PrtgHostMapRow> GetHostMapForDate(DateTime mapDate)

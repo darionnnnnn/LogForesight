@@ -157,13 +157,14 @@ public sealed class PrtgHostMapper
                     HostId = minHost.HostId,
                     HostName = minHost.HostName,
                     MapStatus = PrtgMapStatus.Conflict,
-                    Note = $"IP 由 {matchedHosts.Count} 台主機共用，已對應到 HostId 最小者：{minHost.HostName}（{candidateNames}）",
+                    Note = TrimNote($"IP 由 {matchedHosts.Count} 台主機共用，已對應到 HostId 最小者：{minHost.HostName}（{candidateNames}）"),
                     CreatedAt = now
                 });
             }
         }
 
         // 依 DeviceObjid 排序以求寫入決定性
+        // （TrimNote 定義見本類別下方）
         rows.Sort((a, b) => a.DeviceObjid.CompareTo(b.DeviceObjid));
 
         // 4. 整份就地取代該日對應
@@ -193,6 +194,16 @@ public sealed class PrtgHostMapper
         if (string.IsNullOrWhiteSpace(ip)) return null;
         return ip.Trim().ToLowerInvariant();
     }
+
+    /// <summary>
+    /// 說明文字的長度上限（欄位是 nvarchar(512)）。一個 IP 底下掛五台主機、名稱又長時，
+    /// 組出來的說明可破 1500 字元；SQL Server 會擲截斷例外讓整份對應寫不進去，
+    /// 而該日舊資料在寫入前已被刪除，等於淨損失一天的對應。SQLite 不報錯，兩邊語意還會分岔。
+    /// </summary>
+    private const int MaxNoteLength = 500;
+
+    private static string TrimNote(string note) =>
+        note.Length <= MaxNoteLength ? note : note[..(MaxNoteLength - 1)] + "…";
 }
 
 /// <summary>

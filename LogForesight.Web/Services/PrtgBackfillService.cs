@@ -119,6 +119,7 @@ public class PrtgBackfillService
         var prtgStore = _backend.PrtgStore();
         var fetchService = new PrtgFetchService(client, prtgStore, console);
         var days = s.PrtgBackfillDays;
+        var concurrency = s.PrtgFetchConcurrency;
 
         _ = Task.Run(async () =>
         {
@@ -127,7 +128,7 @@ public class PrtgBackfillService
             {
                 using (client)
                 {
-                    success = await PrtgBackfillRunner.RunAsync(fetchService, days, console, CancellationToken.None);
+                    success = await PrtgBackfillRunner.RunAsync(fetchService, days, concurrency, console, CancellationToken.None);
                 }
             }
             catch (Exception ex)

@@ -32,7 +32,14 @@ public sealed class PrtgFetchService
     /// <param name="day">目標日期（本地時間）</param>
     /// <param name="concurrency">hourly 數值抓取併發上限（1~3）</param>
     /// <param name="ct">取消語彙基元</param>
-    public async Task<PrtgFetchResult> FetchDayAsync(DateTime day, int concurrency, CancellationToken ct)
+    /// <param name="syncStructure">
+    /// 是否同步 device／sensor 結構（階段 1、2）。每日擷取為 true。
+    /// 歷史回填傳 false：結構鏡像永遠是「現況」，逐日回填時重跑它既是對 PRTG 做 N 次無謂的全量查詢，
+    /// 也會把 <c>synced_at</c>（最後結構同步時間）改寫成回填當下，讓鏡像狀態顯示失真。
+    /// 為 false 時 sensor 清單改從鏡像讀取。
+    /// </param>
+    public async Task<PrtgFetchResult> FetchDayAsync(
+        DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true)
     {
         var devicesCount = 0;
         var sensorsCount = 0;
@@ -41,38 +48,47 @@ public sealed class PrtgFetchService
         var failures = 0;
         var sensorTargets = new List<(long Objid, bool Paused)>();
 
-        // 階段 1：device 結構全量同步
-        try
+        if (!syncStructure)
         {
-            _console.WriteLine("[階段 1/4] 開始同步 PRTG 裝置結構鏡像...");
-            devicesCount = await FetchDevicesAsync(ct);
-            _console.WriteLine($"[階段 1/4] 裝置結構同步完成，共寫入/更新 {devicesCount} 台裝置。");
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            failures++;
-            _console.WriteLine($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
+            sensorTargets = _store.GetSensorTargets();
+            _console.WriteLine($"[結構] 沿用既有鏡像的 {sensorTargets.Count} 個感測器（回填不重跑結構同步）。");
         }
 
-        // 階段 2：sensor 結構全量同步
-        try
+        if (syncStructure)
         {
-            _console.WriteLine("[階段 2/4] 開始同步 PRTG 感測器結構鏡像...");
-            (sensorsCount, sensorTargets) = await FetchSensorsAsync(ct);
-            _console.WriteLine($"[階段 2/4] 感測器結構同步完成，共寫入/更新 {sensorsCount} 個感測器。");
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            failures++;
-            _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
+            // 階段 1：device 結構全量同步
+            try
+            {
+                _console.WriteLine("[階段 1/4] 開始同步 PRTG 裝置結構鏡像...");
+                devicesCount = await FetchDevicesAsync(ct);
+                _console.WriteLine($"[階段 1/4] 裝置結構同步完成，共寫入/更新 {devicesCount} 台裝置。");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                _console.WriteLine($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
+            }
+
+            // 階段 2：sensor 結構全量同步
+            try
+            {
+                _console.WriteLine("[階段 2/4] 開始同步 PRTG 感測器結構鏡像...");
+                (sensorsCount, sensorTargets) = await FetchSensorsAsync(ct);
+                _console.WriteLine($"[階段 2/4] 感測器結構同步完成，共寫入/更新 {sensorsCount} 個感測器。");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
+            }
         }
 
         // 階段 3：狀態變更（前一日增量）
@@ -97,8 +113,17 @@ public sealed class PrtgFetchService
         {
             var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
             _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
-            valuesCount = await FetchValuesAsync(day, activeSensors, concurrency, ct);
+            var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct);
+            valuesCount = written;
             _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
+
+            // 部分 sensor 失敗屬正常損耗（其餘資料照樣落地）；但「有 sensor 要抓、卻一筆都沒抓到」
+            // 代表這個階段實質上沒成功，必須計入 failures，否則回填會把整天報成成功。
+            if (failedSensorCount > 0 && written == 0)
+            {
+                failures++;
+                _console.WriteLine("[階段 4/4] 所有感測器的數值擷取皆失敗，本階段視為失敗。");
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -133,7 +158,10 @@ public sealed class PrtgFetchService
                     Objid = objid.Value,
                     Name = GetStringProperty(el, "device") ?? string.Empty,
                     GroupPath = GetStringProperty(el, "group") ?? string.Empty,
-                    Ip = GetStringProperty(el, "host"),
+                    // PRTG 的 host 欄可以是 IP 也可以是 DNS 名稱，欄位是 nvarchar(64)——
+                    // 長 FQDN 不截斷會讓 SQL Server 端整批 500 筆一起寫入失敗。
+                    // 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
+                    Ip = Truncate(GetStringProperty(el, "host"), 64),
                     Tags = GetStringProperty(el, "tags"),
                     Status = GetStringProperty(el, "status"),
                     DependencyObjid = ParseDependency(el),
@@ -254,7 +282,7 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表</summary>
-    private async Task<int> FetchValuesAsync(
+    private async Task<(int Written, int FailedSensors)> FetchValuesAsync(
         DateTime day,
         IReadOnlyList<(long Objid, bool Paused)> activeSensors,
         int concurrency,
@@ -262,7 +290,7 @@ public sealed class PrtgFetchService
     {
         if (activeSensors.Count == 0)
         {
-            return 0;
+            return (0, 0);
         }
 
         var sdate = day.Date.ToString("yyyy-MM-dd-00-00-00");
@@ -271,6 +299,8 @@ public sealed class PrtgFetchService
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var totalValues = 0;
         var totalUnparsed = 0;
+        var failedSensors = 0;
+        string? firstFailureMessage = null;
 
         var tasks = activeSensors.Select(async target =>
         {
@@ -289,6 +319,18 @@ public sealed class PrtgFetchService
                     Interlocked.Add(ref totalValues, written);
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // 單一 sensor 的失敗（逾時、404、PRTG 暫時 5xx）只影響它自己。
+                // 讓例外往外逃會被階段層的 catch 接住，於是「三千個 sensor 已寫進去、
+                // 第七個逾時」會被回報成「數值 0 筆、階段失敗」——已落地的資料反而看不見。
+                Interlocked.Increment(ref failedSensors);
+                Interlocked.CompareExchange(ref firstFailureMessage, ex.Message, null);
+            }
             finally
             {
                 semaphore.Release();
@@ -297,13 +339,19 @@ public sealed class PrtgFetchService
 
         await Task.WhenAll(tasks);
 
+        if (failedSensors > 0)
+        {
+            _console.WriteLine($"  ⚠ 有 {failedSensors} 個感測器的數值擷取失敗（其餘感測器不受影響，明日排程會自動再試）。"
+                + $"首則錯誤：{firstFailureMessage}");
+        }
+
         if (totalUnparsed > 0)
         {
             _console.WriteLine($"  ⚠ 有 {totalUnparsed} 筆數值的時間欄位無法解析而略過"
                 + "（多半是 PRTG 伺服器的地區日期格式與本機不符，請比對 PRTG 的時間顯示設定）。");
         }
 
-        return totalValues;
+        return (totalValues, failedSensors);
     }
 
     /// <summary>
@@ -589,6 +637,13 @@ public sealed class PrtgFetchService
         }
         return null;
     }
+
+    /// <summary>
+    /// 依欄位長度上限截斷。PRTG 的字串欄位沒有長度保證，SQL Server 端超長會擲截斷例外，
+    /// 讓整批（一次 500 筆）寫入一起失敗；SQLite 端不報錯，兩個後端行為還會分岔。
+    /// </summary>
+    private static string? Truncate(string? value, int maxLength) =>
+        value != null && value.Length > maxLength ? value[..maxLength] : value;
 
     private static string? GetStringProperty(JsonElement el, string propName)
     {

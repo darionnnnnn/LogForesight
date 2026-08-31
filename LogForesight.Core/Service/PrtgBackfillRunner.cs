@@ -24,7 +24,7 @@ public static class PrtgBackfillRunner
     /// <param name="ct">取消語彙基元</param>
     /// <returns>有任何一天成功回傳 true，全部失敗回傳 false</returns>
     public static async Task<bool> RunAsync(
-        PrtgFetchService fetchService, int days, IRunConsole console, CancellationToken ct)
+        PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct)
     {
         if (days <= 0)
         {
@@ -34,7 +34,6 @@ public static class PrtgBackfillRunner
 
         var successDays = 0;
         var failedDays = 0;
-        const int concurrency = 2;
 
         console.WriteLine($"開始執行 PRTG 歷史回填（共 {days} 天，由近往遠逐日擷取）...");
 
@@ -47,7 +46,9 @@ public static class PrtgBackfillRunner
                 var day = DateTime.Today.AddDays(-i);
                 try
                 {
-                    var result = await fetchService.FetchDayAsync(day, concurrency, ct);
+                    // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
+                    // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
+                    var result = await fetchService.FetchDayAsync(day, concurrency, ct, syncStructure: false);
                     if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
                     {
                         failedDays++;
