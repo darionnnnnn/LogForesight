@@ -608,7 +608,7 @@ public class AnalysisOrchestrator
                 ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService)
                 : Task.CompletedTask;
 
-            var prtgTask = RunPrtgFetchAsync(runCtx, backend, yesterday);
+            var prtgTask = RunPrtgFetchAsync(runCtx, backend, hostStore, yesterday);
 
             // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
             // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
@@ -1047,7 +1047,7 @@ public class AnalysisOrchestrator
         }
     }
 
-    private async Task RunPrtgFetchAsync(AnalysisRunContext ctx, StorageBackend backend, DateTime day)
+    private async Task RunPrtgFetchAsync(AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, DateTime day)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
@@ -1096,6 +1096,23 @@ public class AnalysisOrchestrator
             // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
             Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
             prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
+        }
+
+        // PRTG 主機對應：獨立的 try/catch，對應失敗不拖垮前面的擷取結果
+        try
+        {
+            var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
+            var mapResult = hostMapper.MapForDate(day);
+            runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
+            prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
         }
     }
 

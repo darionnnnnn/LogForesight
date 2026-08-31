@@ -362,4 +362,62 @@ public sealed class EfPrtgStore
 
         return total;
     }
+
+    /// <summary>
+    /// 取得所有 PRTG 裝置鏡像清單（唯讀查詢）。
+    /// </summary>
+    public List<PrtgDeviceRow> GetAllDevices()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgDevices.AsNoTracking().ToList();
+    }
+
+    /// <summary>
+    /// 取得指定日期的 PRTG 主機對應清單（唯讀查詢）。
+    /// </summary>
+    public List<PrtgHostMapRow> GetHostMapForDate(DateTime mapDate)
+    {
+        using var ctx = _contextFactory();
+        var targetDate = mapDate.Date;
+        return ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == targetDate)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得 PRTG 鏡像五表的概要統計（計數與最近時間點）。
+    /// 透過 SQL 聚合查詢，不將整張表載入記憶體。
+    /// </summary>
+    public PrtgMirrorSummary GetMirrorSummary()
+    {
+        using var ctx = _contextFactory();
+
+        var deviceCount = ctx.PrtgDevices.Count();
+        var sensorCount = ctx.PrtgSensors.Count();
+
+        var lastDeviceSync = ctx.PrtgDevices.Max(d => (DateTime?)d.SyncedAt);
+        var lastSensorSync = ctx.PrtgSensors.Max(s => (DateTime?)s.SyncedAt);
+        var lastValueAt = ctx.PrtgValues.Max(v => (DateTime?)v.PeriodStart);
+        var lastStateChangeAt = ctx.PrtgStateChanges.Max(c => (DateTime?)c.ChangedAt);
+
+        return new PrtgMirrorSummary(
+            deviceCount,
+            sensorCount,
+            lastDeviceSync,
+            lastSensorSync,
+            lastValueAt,
+            lastStateChangeAt);
+    }
 }
+
+/// <summary>
+/// PRTG 鏡像表統計摘要
+/// </summary>
+public sealed record PrtgMirrorSummary(
+    int DeviceCount,
+    int SensorCount,
+    DateTime? LastDeviceSync,
+    DateTime? LastSensorSync,
+    DateTime? LastValueAt,
+    DateTime? LastStateChangeAt);
