@@ -454,3 +454,35 @@
   兩個管理員同一秒各按一個按鈕可以同時起跑。實務上是手動觸發的低頻操作，暫不處理。
 - **多台 PRTG core server**：本期假設單一 server（設定是 `SystemSettings` 單例）。要支援多台
   需比照 Sentinel 改成 store 化。觸發條件：環境真的出現第二台 PRTG。
+
+### 第 1 輪終檢提出、本輪判斷不修的項目
+
+以下是併回前終檢（兩個獨立審查）指出、經查證屬實但本輪未處理的，留在這裡免得日後當成新發現
+重查一次。判斷標準是「不會靜默造成錯誤結論」——會靜默出錯的都已在本輪修掉。
+
+- **`ReplaceHostMapForDate` 的刪與寫不在同一交易**（`EfPrtgStore`）：先用一個 context
+  `ExecuteDelete` 該日全部列，再用分批寫入補回。刪完之後、寫入之前進程被回收的話，該日對應
+  資料會消失，要等下一次每日分析才重建。修法是包一個交易。發生機率低、且下一輪重跑會自癒，
+  但「該日舊資料先刪掉」這個順序本身值得改。
+- **SQLite 後端下多執行緒同時寫 `lf_prtg_values` 可能踩寫鎖**：階段 4 的併發 task 各自開
+  DbContext 寫入，`PrtgFetchConcurrency` 設 2~3 時在 SQLite 上可能出現 `database is locked`。
+  正式環境是 SQL Server，SQLite 是測試與小型部署用；真的遇到時把數值寫入收斂成單一寫入者。
+- **`PrtgProbeRunner.StepAsync` 的 catch 連 `OperationCanceledException` 一起吞**：取消時
+  探測不會立即停，會把剩下的步驟跑完才結束。探測是短時間的唯讀操作，影響有限。
+- **`GET prtg-mirror` 找「最近一次有對應的日期」是往回逐日查，最多 31 次獨立查詢**，而前端
+  進設定頁時無條件呼叫它（PRTG 沒啟用也會打）。改成一句 `Max(MapDate)` 聚合查詢即可。
+- **`PrtgProbeRunner` 只有 sensor type 分布那一步有「取樣數 < 總數」的截斷警告**，
+  dependency／groups／IP 覆蓋三步沒有。sensor 超過 5 萬或 group 超過 1000 時會靜默少算，
+  探測結論失真。
+- **`ISystemSettingsService` 上有為了測試替身而加的預設實作**（擲 `NotSupportedException`）：
+  代價是編譯期保護消失——日後若有第二個正式實作忘了覆寫，會變成執行期 500 而不是編譯失敗。
+  修法是拿掉預設實作、改在測試替身裡實作。
+- **前端 probe 與 backfill 兩塊的渲染與輪詢邏輯幾乎逐字重複**（`settings.js`），
+  `PrtgFetchService` 與 `PrtgProbeRunner` 之間的 `GetStringProperty` 與相依性判定也各有一份。
+  兩者都是「同一判定寫兩處」，之後改規則時容易只改一邊。
+- **兩個測試的斷言強度不足**（不影響現況正確性，但擋不住未來的回歸）：併發上限測試只驗
+  `concurrency=1`（證明「不超過 1」，但若有人把 semaphore 寫死成 1、讓設定失效，測試照樣綠），
+  應補一個 `concurrency=3` 斷言峰值**等於** 3；回填的「逐日推進」測試只斷言 console 文字，
+  沒有斷言實際請求的 `sdate` 逐日不同。
+- **`PrtgProbeStatusDto.StartedAt` / `PrtgBackfillStatusDto.StartedAt` 前端沒有消費點**：
+  可以拿來顯示已執行時長，或移除。
