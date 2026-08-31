@@ -466,6 +466,31 @@ public class TestAdConnectionResultDto
 }
 
 /// <summary>
+/// PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的網址與 token 試連線。
+/// token 留空時沿用已儲存的密文（與正式設定同一份 write-only 語意）。
+/// </summary>
+public class TestPrtgConnectionRequest
+{
+    [Required(ErrorMessage = "請輸入 PRTG 連線位址")]
+    public string Url { get; set; } = "";
+
+    /// <summary>留空＝沿用已儲存的 token</summary>
+    public string? ApiToken { get; set; }
+
+    public bool IgnoreSslErrors { get; set; }
+
+    [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
+    public int TimeoutSeconds { get; set; } = SystemSettings.DefaultPrtgTimeoutSeconds;
+}
+
+public class TestPrtgConnectionResultDto
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = "";
+    public long? ElapsedMs { get; set; }
+}
+
+/// <summary>
 /// 顯示層設定的公開子集（docs/archive/FEEDBACK-3-PLAN.md #8）：完整設定 API 需要 Maintain 能力，
 /// 但「哪些日風險等級目前顯示」是任何已登入者的前端都要知道的資訊（用來決定 KPI 卡、
 /// 趨勢線、篩選 chips 要不要出現），比照 HostsController 無 [Permission] 標註的先例——

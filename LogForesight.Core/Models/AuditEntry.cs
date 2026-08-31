@@ -139,6 +139,9 @@ public static class AuditActions
     // NetIQ API 診斷（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：對 Sentinel 的主動查詢操作
     public const string NetiqProbeRun = "netiq_probe_run";
 
+    // PRTG 測試連線（PRTG 第 1 輪批次B）
+    public const string PrtgConnectionTest = "prtg_connection_test";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

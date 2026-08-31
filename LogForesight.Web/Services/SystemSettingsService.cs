@@ -45,6 +45,13 @@ public interface ISystemSettingsService
     /// 與 <see cref="Update"/> 的 ClearSmtpPassword／SmtpPassword 寫入慣例對稱）。
     /// </summary>
     Task<TestMailResultDto> TestMail(TestMailRequest request);
+
+    /// <summary>
+    /// PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線。token 留空＝沿用已儲存的 token。
+    /// 成功回傳耗時，失敗回傳錯誤訊息，不擲例外。
+    /// </summary>
+    Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("測試未使用此方法");
 }
 
 public class SystemSettingsService : ISystemSettingsService
@@ -587,6 +594,54 @@ public class SystemSettingsService : ISystemSettingsService
         {
             return new TestMailResultDto { Success = false, Message = $"測試寄信失敗：{ex.Message}" };
         }
+    }
+
+    public async Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct)
+    {
+        var url = (request.Url ?? "").Trim();
+        if (url.Length == 0)
+            throw DomainException.Validation("請輸入 PRTG 連線位址。");
+
+        var token = string.IsNullOrEmpty(request.ApiToken)
+            ? DecryptSavedPrtgApiToken()
+            : request.ApiToken;
+
+        if (string.IsNullOrWhiteSpace(token))
+            throw DomainException.Validation("尚未設定 PRTG API token，無法測試。");
+
+        // 稽核只記「執行過測試」與對象 URL，token 不落盤、不進稽核 detail
+        _audit.Record(
+            action: AuditActions.PrtgConnectionTest,
+            summary: "執行 PRTG 測試連線",
+            targetKind: "system_settings",
+            targetId: "prtg_test",
+            detail: new { Url = url, request.IgnoreSslErrors, request.TimeoutSeconds });
+
+        try
+        {
+            using var client = new PrtgClient(url, token, request.TimeoutSeconds, request.IgnoreSslErrors);
+            var elapsed = await client.TestConnectionAsync(ct);
+            return new TestPrtgConnectionResultDto
+            {
+                Success = true,
+                Message = "連線成功。",
+                ElapsedMs = (long)elapsed.TotalMilliseconds
+            };
+        }
+        catch (Exception ex)
+        {
+            return new TestPrtgConnectionResultDto
+            {
+                Success = false,
+                Message = $"測試連線失敗：{ex.Message}"
+            };
+        }
+    }
+
+    private string? DecryptSavedPrtgApiToken()
+    {
+        var enc = _store.Get().PrtgApiTokenEnc;
+        return string.IsNullOrEmpty(enc) ? null : CryptoHelper.Decrypt(enc);
     }
 
     private string? DecryptSavedSmtpPassword()

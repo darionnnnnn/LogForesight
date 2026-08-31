@@ -52,6 +52,11 @@ public class SettingsController : ControllerBase
     public async Task<ApiResponse<TestMailResultDto>> TestMail([FromBody] TestMailRequest request) =>
         ApiResponse<TestMailResultDto>.Ok(await _settings.TestMail(request));
 
+    /// <summary>PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線，token 留空沿用已儲存的 token</summary>
+    [HttpPost("prtg-test")]
+    public async Task<ApiResponse<TestPrtgConnectionResultDto>> TestPrtg([FromBody] TestPrtgConnectionRequest request, CancellationToken ct)
+        => ApiResponse<TestPrtgConnectionResultDto>.Ok(await _settings.TestPrtgAsync(request, ct));
+
     /// <summary>AI token 用量統計（回饋二十七輪作業 B）：今日／累計＋近 30 天每日明細</summary>
     [HttpGet("ai-usage")]
     public ApiResponse<AiUsageDto> GetAiUsage() =>
