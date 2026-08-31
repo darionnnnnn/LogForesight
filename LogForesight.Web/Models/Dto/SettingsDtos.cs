@@ -140,6 +140,17 @@ public class SystemSettingsDto
     /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）；
     /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
     public string? UpdatedByDisplayName { get; set; }
+
+    // ── PRTG 監控系統設定（批次B-1）─────────────────────────────────────────
+    public bool PrtgEnabled { get; set; }
+    public string PrtgUrl { get; set; } = "";
+    /// <summary>PRTG API token 是否已設定；token 本身 write-only，絕不回傳明碼或密文（同 AiHasApiKey 慣例）</summary>
+    public bool PrtgHasApiToken { get; set; }
+    public bool PrtgIgnoreSslErrors { get; set; }
+    public int PrtgTimeoutSeconds { get; set; }
+    public int PrtgFetchConcurrency { get; set; }
+    public int PrtgBackfillDays { get; set; }
+    public int PrtgRetentionDays { get; set; }
 }
 
 /// <summary>
@@ -362,6 +373,32 @@ public class UpdateSystemSettingsRequest
     public string MailBodyIntro { get; set; } = "";
 
     public bool MailDigestSkipEmpty { get; set; }
+
+    // ── PRTG 監控系統設定（批次B-1）─────────────────────────────────────────
+    public bool PrtgEnabled { get; set; }
+
+    [StringLength(500)]
+    public string PrtgUrl { get; set; } = "";
+
+    public bool PrtgIgnoreSslErrors { get; set; }
+
+    /// <summary>write-only；留空＝沿用既有 token，要清除請另外傳 ClearPrtgApiToken=true（同 AI 金鑰慣例）</summary>
+    [StringLength(500)]
+    public string? PrtgApiToken { get; set; }
+
+    public bool ClearPrtgApiToken { get; set; }
+
+    [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
+    public int PrtgTimeoutSeconds { get; set; } = SystemSettings.DefaultPrtgTimeoutSeconds;
+
+    [Range(1, 3, ErrorMessage = "PRTG 併發請求數上限必須介於 1~3")]
+    public int PrtgFetchConcurrency { get; set; } = SystemSettings.DefaultPrtgFetchConcurrency;
+
+    [Range(1, 365, ErrorMessage = "PRTG 歷史回填天數必須介於 1~365 天")]
+    public int PrtgBackfillDays { get; set; } = SystemSettings.DefaultPrtgBackfillDays;
+
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "PRTG 資料保留天數必須介於 90~3650 天")]
+    public int PrtgRetentionDays { get; set; } = SystemSettings.DefaultPrtgRetentionDays;
 }
 
 /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存）試寄一封，

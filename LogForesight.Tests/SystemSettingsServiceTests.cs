@@ -61,7 +61,15 @@ public class SystemSettingsServiceTests : IDisposable
         AiExtraRequestFieldsJson = """{"rep_pen":1.3}""",
         CheckupIntervalDays = 7,
         ImportMaxFileSizeKb = 2048,
-        ImportMaxRows = 5000
+        ImportMaxRows = 5000,
+        // PRTG 監控系統設定（PRTG 第 1 輪批次B）
+        PrtgEnabled = false,
+        PrtgUrl = "",
+        PrtgIgnoreSslErrors = false,
+        PrtgTimeoutSeconds = 60,
+        PrtgFetchConcurrency = 2,
+        PrtgBackfillDays = 30,
+        PrtgRetentionDays = 180
     };
 
     // ── §12：自 appsettings 遷入設定頁的參數 ────────────────────────────────
@@ -1176,5 +1184,144 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal("gpt-4o", reread.AiModel);
         Assert.Equal("gpt-4o-deployment", reread.AiAzureDeployment);
         Assert.Equal("2024-10-21", reread.AiAzureApiVersion);
+    }
+
+    // ── PRTG 監控系統設定（批次B-1）─────────────────────────────────────────
+
+    [Fact]
+    public void Update後_PRTG設定持久化()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = "https://prtg.example.local";
+        request.PrtgApiToken = "secret-prtg-token-123";
+        request.PrtgIgnoreSslErrors = true;
+        request.PrtgTimeoutSeconds = 45;
+        request.PrtgFetchConcurrency = 3;
+        request.PrtgBackfillDays = 60;
+        request.PrtgRetentionDays = 150;
+
+        var saved = service.Update(request);
+
+        Assert.True(saved.PrtgEnabled);
+        Assert.Equal("https://prtg.example.local", saved.PrtgUrl);
+        Assert.True(saved.PrtgHasApiToken);
+        Assert.True(saved.PrtgIgnoreSslErrors);
+        Assert.Equal(45, saved.PrtgTimeoutSeconds);
+        Assert.Equal(3, saved.PrtgFetchConcurrency);
+        Assert.Equal(60, saved.PrtgBackfillDays);
+        Assert.Equal(150, saved.PrtgRetentionDays);
+
+        // 驗證 DTO 不含任何 token 字串屬性
+        var dtoProps = typeof(SystemSettingsDto).GetProperties().Select(p => p.Name).ToList();
+        Assert.DoesNotContain("PrtgApiTokenEnc", dtoProps);
+        Assert.DoesNotContain("PrtgApiToken", dtoProps);
+
+        // 重讀確認 DB 落地與密文儲存
+        var reread = service.Get();
+        Assert.True(reread.PrtgEnabled);
+        Assert.Equal("https://prtg.example.local", reread.PrtgUrl);
+        Assert.True(reread.PrtgHasApiToken);
+        Assert.True(reread.PrtgIgnoreSslErrors);
+        Assert.Equal(45, reread.PrtgTimeoutSeconds);
+        Assert.Equal(3, reread.PrtgFetchConcurrency);
+        Assert.Equal(60, reread.PrtgBackfillDays);
+        Assert.Equal(150, reread.PrtgRetentionDays);
+
+        var stored = _store.Get();
+        Assert.True(LogForesight.Core.CryptoHelper.IsEncrypted(stored.PrtgApiTokenEnc));
+        Assert.Equal("secret-prtg-token-123", LogForesight.Core.CryptoHelper.Decrypt(stored.PrtgApiTokenEnc));
+    }
+
+    [Fact]
+    public void PRTG啟用但位址空白時拒絕()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = "   ";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("PRTG 位址不可為空", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("ftp://prtg.example.local")]
+    [InlineData("not-a-url")]
+    [InlineData("relative/path")]
+    public void PRTG位址scheme不合法時拒絕(string invalidUrl)
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgEnabled = true;
+        request.PrtgUrl = invalidUrl;
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("PRTG 位址格式不合法", ex.Message);
+    }
+
+    [Fact]
+    public void PRTG保留天數大於分析紀錄保留天數時拒絕()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.RetentionDays = 180;
+        request.PrtgRetentionDays = 200;
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("PRTG 資料保留天數不可大於歷史資料保留天數", ex.Message);
+    }
+
+    [Fact]
+    public void PRTG_API_token留空時沿用既有值()
+    {
+        var service = Create();
+
+        // 1. 先存一次 token
+        var initialRequest = ValidRequest();
+        initialRequest.PrtgApiToken = "initial-token-xyz";
+        service.Update(initialRequest);
+
+        var initialStored = _store.Get();
+        var initialCipher = initialStored.PrtgApiTokenEnc;
+        Assert.True(LogForesight.Core.CryptoHelper.IsEncrypted(initialCipher));
+
+        // 2. 再送一次 PrtgApiToken = "" 的請求，密文未變
+        var followUpRequest = ValidRequest();
+        followUpRequest.PrtgApiToken = "";
+        followUpRequest.ClearPrtgApiToken = false;
+        service.Update(followUpRequest);
+
+        var afterKeep = _store.Get();
+        Assert.Equal(initialCipher, afterKeep.PrtgApiTokenEnc);
+
+        // 3. 送 ClearPrtgApiToken = true，被清空
+        var clearRequest = ValidRequest();
+        clearRequest.ClearPrtgApiToken = true;
+        service.Update(clearRequest);
+
+        var afterClear = _store.Get();
+        Assert.Equal("", afterClear.PrtgApiTokenEnc);
+        Assert.False(service.Get().PrtgHasApiToken);
+    }
+
+    [Fact]
+    public void PRTG預設值符合SystemSettings的內建預設()
+    {
+        var settings = new SystemSettings();
+
+        Assert.False(settings.PrtgEnabled);
+        Assert.Equal("", settings.PrtgUrl);
+        Assert.Equal("", settings.PrtgApiTokenEnc);
+        Assert.False(settings.PrtgIgnoreSslErrors);
+        Assert.Equal(SystemSettings.DefaultPrtgTimeoutSeconds, settings.PrtgTimeoutSeconds);
+        Assert.Equal(60, settings.PrtgTimeoutSeconds);
+        Assert.Equal(SystemSettings.DefaultPrtgFetchConcurrency, settings.PrtgFetchConcurrency);
+        Assert.Equal(2, settings.PrtgFetchConcurrency);
+        Assert.Equal(SystemSettings.DefaultPrtgBackfillDays, settings.PrtgBackfillDays);
+        Assert.Equal(30, settings.PrtgBackfillDays);
+        Assert.Equal(SystemSettings.DefaultPrtgRetentionDays, settings.PrtgRetentionDays);
+        Assert.Equal(180, settings.PrtgRetentionDays);
     }
 }
