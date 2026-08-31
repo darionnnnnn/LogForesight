@@ -131,6 +131,26 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
 探測結果只存在記憶體（不落地），供人工檢視與複製。它的用途是回答「後續分析層該怎麼設計」，
 特別是 sensor 語意分類要不要做、以及主機對應的實際覆蓋率。
 
+## 6a. 認證方式
+
+PRTG API 支援兩種認證，由 `PrtgAuthMode` 決定，**建立 client 的唯一入口是
+`PrtgClientFactory.Create(settings)`**（憑證解密與「憑證齊不齊」的判定都只在這裡）：
+
+| 模式 | 請求帶的參數 | 適用 |
+|---|---|---|
+| `token`（預設） | `apitoken=<token>` | 較新版本的 PRTG。可限定唯讀、可單獨撤銷，優先選它 |
+| `password` | `username=<u>&passhash=<h>` | 舊版 PRTG 沒有 API token 功能時 |
+
+`password` 模式的流程：client 在第一次實際請求之前，先呼叫
+`GET /api/getpasshash.htm?username=&password=` 換取 passhash，**同一個 client 實例只換一次**
+（併發請求以 semaphore 收斂），之後所有請求帶的是 passhash。
+**密碼只出現在換取 passhash 那一次請求**，不會進入後續任何 URL。
+
+不採用 PRTG 也支援的 `password=` 直掛：密碼會出現在每一個請求的 URL，
+進 PRTG 的存取 log 與中間設備。
+
+例外訊息保證不含 token、密碼、passhash（原文與 URL 編碼形式都會遮蔽），可直接顯示給操作者。
+
 ## 7. 設定（系統管理 > 設定 > PRTG）
 
 全部存於 `SystemSettings`（DB），`appsettings.json` 不涉入。
@@ -139,20 +159,25 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
 |---|---|---|
 | `PrtgEnabled` | false | 模組總開關。關閉時整條路徑短路 |
 | `PrtgUrl` | — | PRTG core server 位址（含 scheme）。啟用時必填且須為 http/https |
-| `PrtgApiTokenEnc` | — | API token 密文（`CryptoHelper`，AES-256-CBC）。write-only，DTO 只回布林 |
+| `PrtgAuthMode` | `token` | 認證方式：`token`（API token）或 `password`（帳號密碼）。見 §6a |
+| `PrtgApiTokenEnc` | — | API token 密文（`CryptoHelper`，AES-256-CBC）。write-only，DTO 只回布林。`token` 模式使用 |
+| `PrtgUsername` | — | PRTG 帳號。`password` 模式使用 |
+| `PrtgPasswordEnc` | — | PRTG 密碼密文。write-only，DTO 只回布林。`password` 模式使用 |
 | `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤。自簽憑證環境的顯式逃生門，啟用時每次建立連線都記 WARN |
 | `PrtgTimeoutSeconds` | 60 | 單次請求逾時（5~600） |
 | `PrtgFetchConcurrency` | 2 | 對 PRTG 的併發上限（1~3） |
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 
-token 的處理與 SMTP 密碼、AI 金鑰完全對稱：留空＝沿用既有、要清除需另外勾選清除。
+token 與密碼的處理都與 SMTP 密碼、AI 金鑰完全對稱：留空＝沿用既有、要清除需另外勾選清除。
+啟用 PRTG 時依模式驗證憑證是否齊備——**「新存或既有」皆算有**，否則密碼欄留空（＝沿用）
+會被誤判成沒設定，使用者改任何其他設定都會被擋下。
 解密一律先 `IsEncrypted` 判斷再 `Decrypt`（對非密文直接解密會擲例外）。
 
 ### 操作介面
 
-設定頁 PRTG 頁籤提供：連線設定與**測試連線**、**鏡像狀態**（device／sensor 計數、各類資料的
-最新時間點、主機對應摘要與衝突／未對應清單）、**歷史回填**、**環境探測**。
+設定頁 PRTG 頁籤提供：連線設定（含認證方式切換）與**測試連線**、**鏡像狀態**（device／sensor 計數、各類資料的
+最新時間點、主機對應摘要與衝突／未對應清單）、**歷史回填**、**環境探測**（預設收合——接上 PRTG 那次會用、之後幾乎不再碰；執行中會自動展開）。
 
 > 「最新資料時間」是從鏡像資料推導的，不等於「最後一次成功同步的時間」：連續數晚擷取到
 > 0 筆時這個時間不會變動。要分辨兩者需要獨立的同步紀錄，見 `docs/BACKLOG.md`。

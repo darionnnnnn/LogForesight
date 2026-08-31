@@ -1245,6 +1245,13 @@ function renderPrtgProbeStatus(status) {
     const startButton = document.getElementById('prtg-probe-start');
     const statusEl = document.getElementById('prtg-probe-status');
 
+    // 探測區預設收合。執行中時自動展開——否則按下探測後重新整理頁面，
+    // 進度與輸出會被收在摺疊區裡，看起來像什麼都沒發生
+    if (status.isRunning) {
+        const details = document.getElementById('prtg-probe');
+        if (details) details.open = true;
+    }
+
     const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
     outputEl.value = outputText;
     if (outputText) {

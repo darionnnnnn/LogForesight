@@ -724,7 +724,7 @@
         </div>
     </div>
 
-    @* PRTG 監控系統（批次B-4）：PRTG 連線＋擷取參數＋環境探測。
+    @* PRTG 監控系統：PRTG 連線＋擷取參數＋鏡像狀態＋歷史回填＋環境探測。
        結構與樣式比照 mail 面板，探測區比照 NetIQ 頁的 probe 面板 *@
     <div class="lf-card mb-3 d-none" data-panel="prtg">
         <div class="lf-card__header">
@@ -941,19 +941,23 @@
 
             <hr />
 
-            <h3 class="h6">環境探測</h3>
-            <p class="text-muted small mb-3">
-                探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
-            </p>
-            <div class="d-flex align-items-center gap-3 mb-3">
-                <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
-                <div class="text-muted small" id="prtg-probe-status"></div>
-            </div>
-            <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
-                探測輸出
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
-            </label>
-            <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
+            @* 折疊區（不帶 open）：探測是接上 PRTG 那次會用、之後幾乎不再碰的一次性工具，
+               預設展開只會把每天都要看的鏡像狀態擠到畫面下方。比照上方 ai-advanced 的折疊慣例 *@
+            <details id="prtg-probe">
+                <summary class="h6 mb-0">環境探測</summary>
+                <p class="text-muted small mt-2 mb-3">
+                    探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
+                </p>
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                    <div class="text-muted small" id="prtg-probe-status"></div>
+                </div>
+                <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+                    探測輸出
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
+                </label>
+                <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
+            </details>
         </div>
     </div>
 
