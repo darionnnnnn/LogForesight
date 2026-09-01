@@ -666,4 +666,109 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Equal("磁碟壞軌", finding.Problem);
         Assert.Equal("更換硬碟", finding.NextSteps.Single());
     }
+
+    // ── AttachPrtgFindings：PRTG finding 附掛 ─────────────────────────────────
+
+    [Fact]
+    public void AttachPrtgFindings_對已有紀錄的主機成功追加且子列寫入真表()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today;
+        var hostId = 101L;
+
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = hostId,
+            Host = "SRV-TEST",
+            Date = date,
+            RiskLevel = "低",
+            TopIssues = new List<LogIssueSignature>()
+        });
+
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var sig = PrtgFindingMapper.ToSignature(finding, date);
+
+        var result = store.AttachPrtgFindings(hostId, date, new[] { sig });
+        Assert.True(result);
+
+        // 斷言 ContentJson 內部的 TopIssues 有追加
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        var appendedIssue = Assert.Single(read.TopIssues);
+        Assert.Equal("prtg:down:2001", appendedIssue.EventKey);
+        Assert.Equal("PRTG", appendedIssue.LogName);
+        Assert.Equal(IssueCategory.Service, appendedIssue.Category);
+        Assert.Equal(IssueSeverity.High, appendedIssue.Severity);
+        Assert.True(appendedIssue.ElevatesDayRisk);
+
+        // 斷言 lf_top_issues 子列真的有寫入真表
+        using var ctx = _fx.NewContext();
+        var topIssueRow = Assert.Single(ctx.TopIssues.Where(t => t.HostId == hostId));
+        Assert.Equal("PRTG", topIssueRow.SourceName);
+        Assert.Equal("PRTG", topIssueRow.LogName);
+        Assert.Equal(0, topIssueRow.EventId);
+        Assert.Equal("Service", topIssueRow.Category);
+        Assert.Equal((int)IssueSeverity.High, topIssueRow.SeverityRank);
+        Assert.True(topIssueRow.ElevatesDayRisk);
+        Assert.Equal("prtg:down:2001", topIssueRow.EventKey);
+        Assert.Equal("監控 sensor 持續無回應，可能是服務或主機失聯", topIssueRow.KnownIssue);
+        Assert.Equal(date.Date, topIssueRow.RecordDate);
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_對當天無紀錄的主機回false且不建立紀錄()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today;
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var sig = PrtgFindingMapper.ToSignature(finding, date);
+
+        var result = store.AttachPrtgFindings(999, date, new[] { sig });
+        Assert.False(result);
+
+        using var ctx = _fx.NewContext();
+        Assert.Empty(ctx.DailyRecords);
+        Assert.Empty(ctx.TopIssues);
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_同一天重複追加依EventKey去重不重複寫入()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today;
+        var hostId = 101L;
+
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = hostId,
+            Host = "SRV-TEST",
+            Date = date,
+            RiskLevel = "低",
+            TopIssues = new List<LogIssueSignature>()
+        });
+
+        var finding1 = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding2 = new PrtgFinding(1001, 2002, "warning", "Sensor warning", 250);
+        var sig1 = PrtgFindingMapper.ToSignature(finding1, date);
+        var sig2 = PrtgFindingMapper.ToSignature(finding2, date);
+
+        var firstResult = store.AttachPrtgFindings(hostId, date, new[] { sig1, sig2 });
+        Assert.True(firstResult);
+
+        using (var ctx = _fx.NewContext())
+        {
+            Assert.Equal(2, ctx.TopIssues.Count(t => t.HostId == hostId));
+        }
+
+        // 第二次追加相同的 findings：回傳 false 且子列數維持 2
+        var secondResult = store.AttachPrtgFindings(hostId, date, new[] { sig1, sig2 });
+        Assert.False(secondResult);
+
+        using (var ctx = _fx.NewContext())
+        {
+            Assert.Equal(2, ctx.TopIssues.Count(t => t.HostId == hostId));
+        }
+
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(2, read.TopIssues.Count);
+    }
 }
