@@ -575,6 +575,81 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task passhash模式_資料請求401後不再送出請求避免帳號鎖定()
+    {
+        // passhash 走的是帳號認證，401 會累加 PRTG 端的帳號鎖定計數。
+        // 每個 sensor 的數值擷取各自呼叫一次 GetJsonAsync，不黏的話就是「sensor 數 × 認證失敗」。
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized))
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Passhash,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "",
+            passhashOrEmpty: "1234567890");
+
+        for (var i = 0; i < 5; i++)
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Contains("帳號憑證", ex.Message);
+        }
+
+        // 只有第一次真的送出請求，之後直接以快取的失敗回應
+        Assert.Single(stub.Requests);
+    }
+
+    [Fact]
+    public async Task 帳號認證_資料請求403不黏住_其餘請求仍會送出()
+    {
+        // 403 可能是單一物件的授權不足（其他 sensor 仍讀得到），黏住會讓一個沒權限的
+        // sensor 拖垮整趟擷取。只有 401（憑證不被接受）才黏。
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden))
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Passhash,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "",
+            passhashOrEmpty: "1234567890");
+
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/y"));
+
+        Assert.Equal(2, stub.Requests.Count);
+    }
+
+    [Fact]
+    public async Task token模式_資料請求401不黏住()
+    {
+        // token 失效不會鎖任何帳號，沒有黏住的必要；黏住反而讓暫時性的權限問題擴大影響
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized))
+        };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/y"));
+
+        Assert.Equal(2, stub.Requests.Count);
+    }
+
+    [Fact]
     public async Task passhash模式_例外訊息不含passhash()
     {
         const string specialPasshash = "ph@sh+/= 1";

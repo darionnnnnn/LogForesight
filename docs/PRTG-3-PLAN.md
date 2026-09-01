@@ -1,6 +1,6 @@
 # PRTG 第 3 輪規劃（新增 username＋passhash 直接登入）
 
-> 狀態：規劃中
+> 狀態：全案完成已併 dev
 > 基準：dev@d6300f8（3181 綠，略過 6）
 > 來源：使用者需求（2026-08-31）——認證方式新增第三種：直接提供 username＋passhash
 > 註：原「第 3 輪候選」的 UI 重構順延為下一輪，觸發條件不變（實機五關驗證通過）
@@ -41,8 +41,12 @@ DTO 只回布林。
 3. **`PrtgClient`**：建構子加 `passhashOrEmpty` 參數（維持單一建構子）。passhash 模式＝
    建構時直接把提供的 passhash 填入 `_cachedPasshash`——`EnsurePasshashAsync` 天然短路、
    `BuildUri` 的 `username=&passhash=` 分支照走、遮蔽自動涵蓋，**不新增任何分支邏輯**。
-   passhash 模式下 username 為空同樣建構期擲例外；憑證錯誤黏住機制不適用（本來就沒有
-   getpasshash 呼叫，401 由資料請求層依既有訊息回報）。
+   passhash 模式下 username 為空同樣建構期擲例外。
+   **（終檢修正原定案）憑證錯誤黏住機制要延伸到資料請求層**：原本判斷「passhash 模式不需要
+   黏住」是錯的——passhash 是帳號類認證，資料請求的 401 一樣會累加 PRTG 端的帳號鎖定計數，
+   三千個 sensor 就是三千次認證失敗。改為：帳號類認證（`password`／`passhash`）的資料請求
+   401 一律黏住；403 不黏（可能是單一物件授權不足）；`token` 模式不黏（token 失效不鎖帳號）。
+   這使 `password` 模式的資料請求 401 行為也一併改變（原本每次都重試），屬於刻意的擴張。
 4. **`PrtgClientFactory`**：`ResolveCredentials` 回傳擴為四元組（加 Passhash）；
    `HasUsableCredentials`：passhash 模式＝`PrtgUsername` 與 `PrtgPasshashEnc` 皆非空。
 5. **`SystemSettingsService`**：
@@ -82,7 +86,8 @@ DTO 只回布林。
 
 - 不做「輸入密碼→系統換出 passhash 並顯示給使用者」的輔助功能（教學文件教手動取得即可）。
 - 不動 UI 重構三項（順延下一輪）。
-- 不改 `password` 模式的既有行為（黏住機制等全部不動）。
+- 不改 `password` 模式的 `getpasshash.htm` 換取流程與其黏住判定。
+  （**例外**：資料請求層的 401 黏住是本輪新增的共通保護，`password` 模式一併適用，理由見定案 3。）
 
 ## 5. 複檢（規劃完成後）
 
@@ -94,6 +99,23 @@ DTO 只回布林。
 
 ## 6. 執行紀錄
 
+委派模型：`gemini-3.7-flash-high`（整輪未切換）。基準 dev@d6300f8（3181 綠）。
+
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （待實作開始填寫） | | | | |
+| A：後端（常數／設定欄／client／工廠／驗證與寫入隔離／測試連線） | agy | 通過 | 3193 綠（+12） | 無落差。`_usesUsernameAuth`／`_needsPasshashExchange` 的語意拆分完全照規格；passhash 靠預填 `_cachedPasshash` 達成，`BuildUri` 與 `StripSecrets` 零新增分支。規格外的良性加固一項：`EnsurePasshashAsync` 加了「passhash 模式走到換取邏輯＝程式錯誤」的防禦性例外 |
+| B：前端（三選項／username 抽出共用／passhash 容器／驗證） | agy | 通過 | 3193 綠（前端不增測試） | 無落差。BOM 維持、零 `innerHTML`、零寫死路徑；清空規則與後端寫入隔離一致 |
+| 終檢（獨立 Explore 審全 diff） | Claude | 完成 | 3196 綠 | 見下方 |
+
+### 終檢處置
+
+| 嚴重度 | 問題 | 處置 |
+|---|---|---|
+| 高 | **passhash 模式的資料請求 401 沒有任何黏住保護**（Claude 自審 401 路徑時抓到，終檢獨立確認）：passhash 是帳號類認證，貼錯一碼或 PRTG 端改密碼使舊 passhash 失效時，三千個 sensor 就是三千次帶帳號的認證失敗——與上一輪修掉的 getpasshash 連打是同一種帳號鎖定風險，而規劃階段誤判為「不適用」 | 資料請求層加黏住：帳號類認證的 401 黏、403 不黏（可能是單一物件授權不足）、token 模式不黏。三條測試分別鎖住這三種情況 |
+| 中 | 實作與規劃定案 3／§4 相反（黏住延伸到資料請求層，且 `password` 模式一併適用） | 回寫定案 3 與 §4，標明是終檢修正原定案並寫出理由 |
+| 中 | `docs/PRTG-SPEC.md` 的黏住段只描述 getpasshash 路徑，且「401/403 都黏」對資料請求路徑是錯的——日後有人依此把 403 不黏的刻意設計改掉 | 改寫成兩條路徑各自的黏／不黏對照表 |
+| 低 | `PRTG_username在password與passhash模式間切換時不被清空` 兩段帶同一個 username，分不出「有寫入」與「沒動到」——刪掉 passhash 分支的 username 寫入（真實後果：passhash 模式下改不了帳號）測試仍全綠 | 改帶不同值並補「切回 password 也要能改」一段；以突變測試確認原版漏得掉、強化後會紅 |
+
+**查證後不成立**：終檢把「工作區未 commit 的 401 黏住改動」列為擋路級——那是它讀 HEAD 時
+我正在修的東西；另指教學文件未更新，實際上該文件在 repo 外的歸檔區（`桌面/Claude/logforesight/`），
+本輪已同步第三種認證的取得方式與測試步驟。

@@ -233,8 +233,9 @@ public sealed class PrtgClient : IDisposable
     }
 
     /// <summary>
-    /// 記下憑證層級的失敗並回傳要擲出的例外——同一個 client 實例之後不再重打 getpasshash。
-    /// 只用於「帳密本身不對」這類重試也不會成功的失敗；傳輸類失敗不記，那種重試有意義。
+    /// 記下憑證層級的失敗並回傳要擲出的例外——同一個 client 實例之後不再送出任何需要認證的請求
+    /// （換 passhash 與資料請求都算）。只用於「憑證本身不被接受」這類重試也不會成功的失敗；
+    /// 傳輸類失敗與 403 不記，那些重試有意義或屬於單一物件的權限問題。
     /// </summary>
     private PrtgClientException FailCredentials(string message)
     {
@@ -247,6 +248,14 @@ public sealed class PrtgClient : IDisposable
     /// </summary>
     public async Task<string> GetJsonAsync(string relativePathAndQuery, CancellationToken ct = default)
     {
+        // 帳號類認證（password／passhash）的憑證失敗要黏住：每個 sensor 的數值擷取各自
+        // 呼叫一次這個方法，帳號或 passhash 不對時不擋的話就是「sensor 數 × 認證失敗」，
+        // 足以觸發 PRTG 端的帳號鎖定。token 模式不黏——token 失效不會鎖任何帳號。
+        if (_usesUsernameAuth && _credentialFailure != null)
+        {
+            throw new PrtgClientException(_credentialFailure);
+        }
+
         var passhash = await EnsurePasshashAsync(ct);
         var uri = BuildUri(relativePathAndQuery, passhash);
         HttpResponseMessage resp;
@@ -269,9 +278,19 @@ public sealed class PrtgClient : IDisposable
         {
             if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                throw new PrtgClientException(_usesUsernameAuth
+                var message = _usesUsernameAuth
                     ? "PRTG 帳號憑證無效或權限不足。"
-                    : "PRTG API token 無效或權限不足。");
+                    : "PRTG API token 無效或權限不足。";
+
+                // 只有 401 才黏：它代表「這組憑證不被接受」，重試不會成功且會累加帳號鎖定計數。
+                // 403 不黏——那可能是單一物件的授權不足（其他 sensor 仍讀得到），
+                // 黏住會讓一個沒權限的 sensor 拖垮整趟擷取。
+                if (_usesUsernameAuth && resp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    throw FailCredentials(message);
+                }
+
+                throw new PrtgClientException(message);
             }
 
             if (!resp.IsSuccessStatusCode)

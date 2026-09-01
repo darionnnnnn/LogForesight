@@ -1733,12 +1733,22 @@ public class SystemSettingsServiceTests : IDisposable
 
         Assert.Equal("shared-admin", _store.Get().PrtgUsername);
 
-        // 2. 切到 passhash 模式（帶 username 同值）儲存後 username 仍在
+        // 2. 切到 passhash 模式並「改」帳號：刻意帶不同值，才分得出
+        //    「passhash 分支確實有寫入 username」與「它根本沒寫、值只是沒被動到」——
+        //    後者的真實後果是 passhash 模式下改不了帳號（存檔後畫面又跳回舊值）
         var setPasshash = ValidRequest();
         setPasshash.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Passhash;
-        setPasshash.PrtgUsername = "shared-admin";
+        setPasshash.PrtgUsername = "passhash-admin";
         setPasshash.PrtgPasshash = "passhash123";
         service.Update(setPasshash);
+
+        Assert.Equal("passhash-admin", _store.Get().PrtgUsername);
+
+        // 2b. 切回 password 模式也要能改帳號（共用同一欄位，兩個分支都要真的寫）
+        var backToPassword = ValidRequest();
+        backToPassword.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        backToPassword.PrtgUsername = "shared-admin";
+        service.Update(backToPassword);
 
         Assert.Equal("shared-admin", _store.Get().PrtgUsername);
 
