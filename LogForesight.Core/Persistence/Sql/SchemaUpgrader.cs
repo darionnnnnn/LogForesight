@@ -66,6 +66,8 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_top_issues",
             "IX_lf_top_issues_date_signature", "record_date, source_name, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_top_issues", "IX_lf_top_issues_host_date", "host_id, record_date");
+        // 慢查詢修正（回饋三十六輪批次B）：問題彙總的「event_id IN + 日期範圍」需要等值前導索引
+        AddIndexIfMissing(ctx, isSqlite, "lf_top_issues", "IX_lf_top_issues_event_date", "event_id, record_date");
 
         // 處理狀態三表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：與 lf_risky_events 完全同一套
         // 「檢查缺什麼→缺才補」的冪等 DDL——既有部署的 DB 已經存在，EnsureCreated 對它
@@ -116,6 +118,8 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_extract_version", "extract_version");
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records",
             "IX_lf_daily_records_ai_pending_record_date", "ai_pending, record_date");
+        // 慢查詢修正（回饋三十六輪批次B）：可行動快照的「risk_level IN + 日期範圍」篩選
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_risk_date", "risk_level, record_date");
 
         // 詳情兩層保留期的標記
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "detail_pruned",

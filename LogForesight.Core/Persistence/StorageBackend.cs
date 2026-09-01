@@ -85,7 +85,12 @@ public class StorageBackend
                 cs = settings.ConnectionString;
             }
             cs = DisableSqlitePoolingIfUnset(cs);
-            options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(cs).Options;
+            // 連線層 PRAGMA 調校（回饋三十六輪批次B）：關池後 page cache 逐連線歸零，
+            // 只能在每次連線開啟時重設——理由與各 PRAGMA 取值見 SqlitePragmaInterceptor
+            options = new DbContextOptionsBuilder<LfDbContext>()
+                .UseSqlite(cs)
+                .AddInterceptors(new SqlitePragmaInterceptor())
+                .Options;
             _dbDesc = $"Sqlite（{cs}）";
         }
         else

@@ -21,11 +21,14 @@ public class IssueTodoQuery
 
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
+    private readonly ActionableSnapshotCache? _cache;
 
-    public IssueTodoQuery(IIssueAggregateQuery aggregates, OccurrenceStatusResolver statusResolver)
+    public IssueTodoQuery(IIssueAggregateQuery aggregates, OccurrenceStatusResolver statusResolver,
+        ActionableSnapshotCache? cache = null)
     {
         _aggregates = aggregates;
         _statusResolver = statusResolver;
+        _cache = cache;
     }
 
     public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, IReadOnlySet<string>? riskLevels = null) =>
@@ -44,11 +47,27 @@ public class IssueTodoQuery
         IReadOnlySet<string>? riskLevels = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
+        // 跨請求快取（回饋三十六輪批次B）：這支是問題彙總家族唯一沒有查詢層快取的，
+        // 啟動期版本戳推進打掉 SummaryCache 後會在幾秒內被整套重算——理由詳見 ActionableSnapshotCache
+        var cacheKey = _cache == null
+            ? null
+            : ActionableSnapshotCache.KeyOf(from, to, visibleHostIds, riskLevels,
+                visibleSeverities?.Select(s => s.ToString()).ToList());
+        if (cacheKey != null)
+        {
+            var hit = _cache!.TryGet(cacheKey);
+            if (hit != null) return hit;
+        }
+
         var occurrences = _aggregates.ActionableOccurrences(
             from, to, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
-        if (occurrences.Count == 0) return new List<ResolvedOccurrence>();
+        var resolved = occurrences.Count == 0
+            ? new List<ResolvedOccurrence>()
+            : _statusResolver.Resolve(occurrences, from, to);
 
-        return _statusResolver.Resolve(occurrences, from, to);
+        // 空結果也要快取——「這段期間沒有可行動項目」同樣是花了整趟查詢換來的答案
+        if (cacheKey != null) _cache!.Set(cacheKey, resolved);
+        return resolved;
     }
 
     /// <summary>純彙總（無 I/O）：問題計數以 (Source, EventId) 去重——同一個問題在多台主機

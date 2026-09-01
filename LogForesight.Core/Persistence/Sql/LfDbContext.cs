@@ -149,6 +149,9 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostId, x.RecordDate });
             e.HasIndex(x => x.ExtractVersion);   // DailyRecordBackfiller 的候選查詢
             e.HasIndex(x => new { x.AiPending, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_ai_pending_record_date"); // 全域待補查詢（批次C）
+            // 可行動快照（ActionableOccurrences）的日層級篩選：risk_level IN (高/中) + 日期範圍。
+            // 等值前導欄在前，範圍欄在後——只有 record_date 索引時整段期間都得逐列過濾 risk_level
+            e.HasIndex(x => new { x.RiskLevel, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_risk_date");
         });
 
         b.Entity<TopIssueRow>(e =>
@@ -189,6 +192,10 @@ public class LfDbContext : DbContext
             // 問題聚合的查詢形狀：期間 → 依簽章 GROUP BY
             e.HasIndex(x => new { x.RecordDate, x.SourceName, x.EventId });
             e.HasIndex(x => new { x.HostId, x.RecordDate });
+            // 問題彙總查詢（HostIdsByIssue/LatestOccurrences/DailyHostCounts）的形狀是
+            // event_id IN (…) + record_date 範圍：(record_date, …) 的前導欄是範圍等於掃整段期間，
+            // 這裡補「等值前導」版本讓最佳化器能先縮到指定問題再吃日期範圍
+            e.HasIndex(x => new { x.EventId, x.RecordDate }).HasDatabaseName("IX_lf_top_issues_event_date");
 
             e.HasOne<DailyRecordRow>().WithMany().HasForeignKey(x => x.RecordId).OnDelete(DeleteBehavior.Cascade);
         });
