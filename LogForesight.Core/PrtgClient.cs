@@ -24,7 +24,8 @@ public sealed class PrtgClient : IDisposable
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly string _baseUrl;
-    private readonly bool _isPasswordMode;
+    private readonly bool _usesUsernameAuth;
+    private readonly bool _needsPasshashExchange;
     private readonly string _token;
     private readonly string _username;
     private readonly string _password;
@@ -45,7 +46,8 @@ public sealed class PrtgClient : IDisposable
         HttpMessageHandler? handler = null,
         string authMode = PrtgAuthModes.Token,
         string usernameOrEmpty = "",
-        string passwordOrEmpty = "")
+        string passwordOrEmpty = "",
+        string passhashOrEmpty = "")
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new PrtgClientException("PRTG 未設定連線位址。");
@@ -59,10 +61,22 @@ public sealed class PrtgClient : IDisposable
                 "請填寫完整網址，含 https:// 或 http://（例如 https://prtg.corp.local）。");
         }
 
-        _isPasswordMode = string.Equals(authMode, PrtgAuthModes.Password, StringComparison.Ordinal);
-        if (_isPasswordMode && string.IsNullOrWhiteSpace(usernameOrEmpty))
+        _usesUsernameAuth = string.Equals(authMode, PrtgAuthModes.Password, StringComparison.Ordinal) ||
+                            string.Equals(authMode, PrtgAuthModes.Passhash, StringComparison.Ordinal);
+        _needsPasshashExchange = string.Equals(authMode, PrtgAuthModes.Password, StringComparison.Ordinal);
+
+        if (_usesUsernameAuth && string.IsNullOrWhiteSpace(usernameOrEmpty))
         {
             throw new PrtgClientException("PRTG 帳號不可為空。");
+        }
+
+        if (string.Equals(authMode, PrtgAuthModes.Passhash, StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(passhashOrEmpty))
+            {
+                throw new PrtgClientException("PRTG passhash 不可為空。");
+            }
+            _cachedPasshash = passhashOrEmpty.Trim();
         }
 
         _baseUrl = baseUrl.TrimEnd('/');
@@ -134,12 +148,19 @@ public sealed class PrtgClient : IDisposable
     /// <summary>
     /// 帳密模式下確保已取得 passhash（同實例只換取一次）。
     /// token 模式不會被呼叫到，若被呼叫直接回傳空字串。
+    /// passhash 模式在建構期已預填快取，直接回傳快取值。
     /// </summary>
     private async Task<string> EnsurePasshashAsync(CancellationToken ct)
     {
-        if (!_isPasswordMode) return string.Empty;
+        if (!_usesUsernameAuth) return string.Empty;
 
         if (_cachedPasshash != null) return _cachedPasshash;
+
+        // passhash 模式絕不呼叫 getpasshash.htm，走到這裡代表快取沒被正確預填，是程式錯誤而不是使用者輸入問題
+        if (!_needsPasshashExchange)
+        {
+            throw new PrtgClientException("passhash 模式絕不呼叫 getpasshash.htm，走到這裡代表快取未被正確預填。");
+        }
 
         // 憑證錯誤要黏住：每個 sensor 的數值擷取各自呼叫一次 GetJsonAsync，密碼打錯時
         // 若讓每次都重打 getpasshash，三千個 sensor 就是三千次登入失敗——足以觸發
@@ -248,7 +269,7 @@ public sealed class PrtgClient : IDisposable
         {
             if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                throw new PrtgClientException(_isPasswordMode
+                throw new PrtgClientException(_usesUsernameAuth
                     ? "PRTG 帳號憑證無效或權限不足。"
                     : "PRTG API token 無效或權限不足。");
             }
@@ -267,7 +288,7 @@ public sealed class PrtgClient : IDisposable
         var path = relativePathAndQuery.TrimStart('/');
         var separator = path.Contains('?') ? '&' : '?';
         string authQuery;
-        if (_isPasswordMode)
+        if (_usesUsernameAuth)
         {
             authQuery = $"username={Uri.EscapeDataString(_username)}&passhash={Uri.EscapeDataString(passhash ?? string.Empty)}";
         }

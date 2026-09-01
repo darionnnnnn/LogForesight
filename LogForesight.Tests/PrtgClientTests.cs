@@ -505,6 +505,164 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task passhash模式_請求帶username與passhash且完全不呼叫getpasshash()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"))
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Passhash,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "",
+            passhashOrEmpty: "my-passhash-999");
+
+        await client.GetJsonAsync("/api/table.json?content=sensors");
+        await client.GetJsonAsync("/api/table.json?content=devices");
+        await client.GetJsonAsync("/api/table.json?content=messages");
+
+        Assert.Equal(3, stub.Requests.Count);
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Contains("username=operator", stub.Requests[i].Url);
+            Assert.Contains("passhash=my-passhash-999", stub.Requests[i].Url);
+            Assert.DoesNotContain("password=", stub.Requests[i].Url);
+            Assert.DoesNotContain("getpasshash.htm", stub.Requests[i].Url);
+        }
+        Assert.DoesNotContain(stub.Requests, r => r.Url.Contains("getpasshash.htm"));
+    }
+
+    [Fact]
+    public void passhash模式_username為空時建構期擲例外()
+    {
+        var ex = Assert.Throws<PrtgClientException>(() =>
+            new PrtgClient(
+                baseUrl: ValidUrl,
+                tokenOrEmpty: "",
+                timeoutSeconds: 30,
+                ignoreSslErrors: false,
+                handler: null,
+                authMode: LogForesight.Core.Models.PrtgAuthModes.Passhash,
+                usernameOrEmpty: "   ",
+                passwordOrEmpty: "",
+                passhashOrEmpty: "my-passhash-999"));
+
+        Assert.Contains("帳號", ex.Message);
+    }
+
+    [Fact]
+    public void passhash模式_passhash為空時建構期擲例外()
+    {
+        var ex = Assert.Throws<PrtgClientException>(() =>
+            new PrtgClient(
+                baseUrl: ValidUrl,
+                tokenOrEmpty: "",
+                timeoutSeconds: 30,
+                ignoreSslErrors: false,
+                handler: null,
+                authMode: LogForesight.Core.Models.PrtgAuthModes.Passhash,
+                usernameOrEmpty: "operator",
+                passwordOrEmpty: "",
+                passhashOrEmpty: "   "));
+
+        Assert.Contains("passhash", ex.Message);
+    }
+
+    [Fact]
+    public async Task passhash模式_例外訊息不含passhash()
+    {
+        const string specialPasshash = "ph@sh+/= 1";
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) => throw new HttpRequestException($"Failed connecting to {req.RequestUri}")
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Passhash,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "",
+            passhashOrEmpty: specialPasshash);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+            client.GetJsonAsync("/api/table.json?content=sensors"));
+
+        var escapedPasshash = Uri.EscapeDataString(specialPasshash);
+        Assert.DoesNotContain(specialPasshash, ex.Message);
+        Assert.DoesNotContain(escapedPasshash, ex.Message);
+        Assert.DoesNotContain(specialPasshash, ex.ToString());
+        Assert.DoesNotContain(escapedPasshash, ex.ToString());
+    }
+
+    [Fact]
+    public async Task token模式與password模式在新增passhash模式後行為不變()
+    {
+        var passhashCount = 0;
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    Interlocked.Increment(ref passhashCount);
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("pw-passhash\r\n", Encoding.UTF8, "text/plain")
+                    });
+                }
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        // 1. token 模式
+        using var tokenClient = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: SampleToken,
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Token);
+
+        await tokenClient.GetJsonAsync("/api/table.json?content=sensors");
+
+        Assert.Single(stub.Requests);
+        Assert.Contains($"apitoken={SampleToken}", stub.Requests[0].Url);
+        Assert.DoesNotContain("username=", stub.Requests[0].Url);
+        Assert.DoesNotContain("passhash=", stub.Requests[0].Url);
+
+        stub.Requests.Clear();
+
+        // 2. password 模式
+        using var passwordClient = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "admin",
+            passwordOrEmpty: "secret");
+
+        await passwordClient.GetJsonAsync("/api/table.json?content=sensors");
+
+        Assert.Equal(1, passhashCount);
+        Assert.Equal(2, stub.Requests.Count);
+        Assert.Contains("getpasshash.htm", stub.Requests[0].Url);
+        Assert.Contains("username=admin", stub.Requests[0].Url);
+        Assert.Contains("passhash=pw-passhash", stub.Requests[1].Url);
+    }
+
+    [Fact]
     public async Task token模式行為不變()
     {
         var stub = new StubHandler

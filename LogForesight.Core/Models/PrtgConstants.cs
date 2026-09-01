@@ -29,17 +29,19 @@ public static class PrtgMapStatus
 /// PRTG 認證方式常數。
 /// <see cref="Token"/>（token）走 apitoken 參數；
 /// <see cref="Password"/>（password）走 PRTG 的 username＋passhash 流程
-/// （密碼只在換取 passhash 時使用一次，不會出現在後續請求的 URL）。
+/// （密碼只在換取 passhash 時使用一次，不會出現在後續請求的 URL）；
+/// <see cref="Passhash"/>（passhash）模式由使用者自行提供 passhash，系統不呼叫 getpasshash.htm。
 /// </summary>
 public static class PrtgAuthModes
 {
     public const string Token = "token";
     public const string Password = "password";
+    public const string Passhash = "passhash";
 
     /// <summary>
-    /// 判斷是否為合法的 PRTG 認證方式（Token 或 Password）。
+    /// 判斷是否為合法的 PRTG 認證方式（Token、Password 或 Passhash）。
     /// 全站唯一的合法值判定。
     /// </summary>
     public static bool IsValid(string? mode) =>
-        mode is Token or Password;
+        mode is Token or Password or Passhash;
 }

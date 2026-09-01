@@ -150,6 +150,8 @@ public class SystemSettingsDto
     public string PrtgUsername { get; set; } = "";
     /// <summary>PRTG 密碼是否已設定；密碼本身 write-only，絕不回傳明碼或密文（比照 PrtgHasApiToken）</summary>
     public bool PrtgHasPassword { get; set; }
+    /// <summary>PRTG passhash 是否已設定；passhash 本身 write-only，絕不回傳明碼或密文（比照 PrtgHasPassword）</summary>
+    public bool PrtgHasPasshash { get; set; }
     public bool PrtgIgnoreSslErrors { get; set; }
     public int PrtgTimeoutSeconds { get; set; }
     public int PrtgFetchConcurrency { get; set; }
@@ -403,6 +405,11 @@ public class UpdateSystemSettingsRequest
 
     public bool ClearPrtgPassword { get; set; }
 
+    /// <summary>write-only；留空＝沿用既有 passhash，要清除請另外傳 ClearPrtgPasshash=true</summary>
+    public string? PrtgPasshash { get; set; }
+
+    public bool ClearPrtgPasshash { get; set; }
+
     [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
     public int PrtgTimeoutSeconds { get; set; } = SystemSettings.DefaultPrtgTimeoutSeconds;
 
@@ -492,14 +499,17 @@ public class TestPrtgConnectionRequest
     /// <summary>留空＝沿用已儲存的 token</summary>
     public string? ApiToken { get; set; }
 
-    /// <summary>認證方式：token 或 password（留空視為 token）</summary>
+    /// <summary>認證方式：token 或 password 或 passhash（留空視為 token）</summary>
     public string? AuthMode { get; set; }
 
-    /// <summary>PRTG 帳號（password 模式用）</summary>
+    /// <summary>PRTG 帳號（password 或 passhash 模式用）</summary>
     public string? Username { get; set; }
 
     /// <summary>PRTG 密碼（password 模式用，留空＝沿用已儲存的密碼）</summary>
     public string? Password { get; set; }
+
+    /// <summary>PRTG passhash（passhash 模式用，留空＝沿用已儲存的 passhash）</summary>
+    public string? Passhash { get; set; }
 
     public bool IgnoreSslErrors { get; set; }
 

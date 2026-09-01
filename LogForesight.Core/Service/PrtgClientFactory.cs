@@ -16,7 +16,7 @@ public static class PrtgClientFactory
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var (token, username, password) = ResolveCredentials(settings);
+        var (token, username, password, passhash) = ResolveCredentials(settings);
 
         return new PrtgClient(
             baseUrl: settings.PrtgUrl ?? string.Empty,
@@ -26,37 +26,50 @@ public static class PrtgClientFactory
             handler: null,
             authMode: settings.PrtgAuthMode,
             usernameOrEmpty: username,
-            passwordOrEmpty: password);
+            passwordOrEmpty: password,
+            passhashOrEmpty: passhash);
     }
 
     /// <summary>
     /// 依認證方式取出（解密後的）憑證。internal 供測試直接斷言「解密真的發生、分支沒有接反」——
     /// 工廠的主要職責就是這一段，只斷言 Create 不擲例外是恆真測試，擋不住把 Decrypt 漏掉的回歸。
     /// </summary>
-    internal static (string Token, string Username, string Password) ResolveCredentials(SystemSettings settings)
+    internal static (string Token, string Username, string Password, string Passhash) ResolveCredentials(SystemSettings settings)
     {
-        var isPasswordMode = string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
+        if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal))
+        {
+            var enc = settings.PrtgPasshashEnc ?? string.Empty;
+            var passhash = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+            return (string.Empty, settings.PrtgUsername ?? string.Empty, string.Empty, passhash);
+        }
 
-        if (isPasswordMode)
+        if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal))
         {
             var enc = settings.PrtgPasswordEnc ?? string.Empty;
             var password = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
-            return (string.Empty, settings.PrtgUsername ?? string.Empty, password);
+            return (string.Empty, settings.PrtgUsername ?? string.Empty, password, string.Empty);
         }
 
         var tokenEnc = settings.PrtgApiTokenEnc ?? string.Empty;
         var token = CryptoHelper.IsEncrypted(tokenEnc) ? CryptoHelper.Decrypt(tokenEnc) : tokenEnc;
-        return (token, string.Empty, string.Empty);
+        return (token, string.Empty, string.Empty, string.Empty);
     }
 
     /// <summary>
     /// 檢查 SystemSettings 是否已具備可發動請求的有效認證資訊。
     /// token 模式：PrtgApiTokenEnc 非空。
     /// password 模式：PrtgUsername 與 PrtgPasswordEnc 皆非空。
+    /// passhash 模式：PrtgUsername 與 PrtgPasshashEnc 皆非空。
     /// </summary>
     public static bool HasUsableCredentials(SystemSettings settings)
     {
         if (settings == null) return false;
+
+        if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal))
+        {
+            return !string.IsNullOrWhiteSpace(settings.PrtgUsername) &&
+                   !string.IsNullOrWhiteSpace(settings.PrtgPasshashEnc);
+        }
 
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal))
         {
