@@ -1903,4 +1903,99 @@ public class SystemSettingsServiceTests : IDisposable
         var dto = service.Get();
         Assert.False(dto.PrtgEnabled);
     }
+
+    [Fact]
+    public void Update_未提供PRTG連線欄位時沿用既有值不清空()
+    {
+        var service = Create();
+
+        // 1. 先存好 PRTG 連線設定
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        initial.PrtgApiToken = "abc";
+        service.Update(initial);
+
+        // 2. 送出未提供 PRTG 連線欄位（null）的請求
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = null;
+        request.PrtgAuthMode = null;
+        var saved = service.Update(request);
+
+        // 斷言回傳 DTO 與重讀 DB 均保留原值
+        Assert.True(saved.PrtgEnabled);
+        Assert.Equal("https://prtg.example.com", saved.PrtgUrl);
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Token, saved.PrtgAuthMode);
+
+        var reread = service.Get();
+        Assert.True(reread.PrtgEnabled);
+        Assert.Equal("https://prtg.example.com", reread.PrtgUrl);
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Token, reread.PrtgAuthMode);
+    }
+
+    [Fact]
+    public void Update_提供PRTG連線欄位時確實更新()
+    {
+        var service = Create();
+
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        initial.PrtgApiToken = "abc";
+        service.Update(initial);
+
+        var updateReq = ValidRequest();
+        updateReq.PrtgEnabled = true;
+        updateReq.PrtgUrl = "https://new.example.com";
+        var saved = service.Update(updateReq);
+
+        Assert.Equal("https://new.example.com", saved.PrtgUrl);
+
+        var reread = service.Get();
+        Assert.Equal("https://new.example.com", reread.PrtgUrl);
+    }
+
+    [Fact]
+    public void Update_PRTG沿用既有啟用狀態時位址驗證仍生效()
+    {
+        var service = Create();
+
+        // 1. 既有設定為啟用且有合法位址
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        initial.PrtgApiToken = "abc";
+        service.Update(initial);
+
+        // 2. 本次請求 PrtgEnabled = null（沿用既有 true），但 PrtgUrl = ""（明確送空字串清空）
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = "";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("PRTG 位址不可為空", ex.Message);
+    }
+
+    [Fact]
+    public void Update_關閉PRTG時不需要位址且成功寫入()
+    {
+        var service = Create();
+
+        var request = ValidRequest();
+        request.PrtgEnabled = false;
+        request.PrtgUrl = "";
+
+        var saved = service.Update(request);
+
+        Assert.False(saved.PrtgEnabled);
+        Assert.Equal("", saved.PrtgUrl);
+
+        var reread = service.Get();
+        Assert.False(reread.PrtgEnabled);
+        Assert.Equal("", reread.PrtgUrl);
+    }
 }

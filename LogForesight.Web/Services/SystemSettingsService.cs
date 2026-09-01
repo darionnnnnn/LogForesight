@@ -171,24 +171,28 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.PrtgRetentionDays > request.RetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
 
-        if (!PrtgAuthModes.IsValid(request.PrtgAuthMode))
+        var effectivePrtgEnabled = request.PrtgEnabled ?? before.PrtgEnabled;
+        var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
+        var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
+
+        if (!PrtgAuthModes.IsValid(effectivePrtgAuthMode))
             throw DomainException.Validation("PRTG 認證方式不合法。");
 
-        if (request.PrtgEnabled)
+        if (effectivePrtgEnabled)
         {
-            if (string.IsNullOrWhiteSpace(request.PrtgUrl))
+            if (string.IsNullOrWhiteSpace(effectivePrtgUrl))
                 throw DomainException.Validation("啟用 PRTG 時，PRTG 位址不可為空。");
 
-            if (!IsValidHttpUrl(request.PrtgUrl))
+            if (!IsValidHttpUrl(effectivePrtgUrl))
                 throw DomainException.Validation("PRTG 位址格式不合法，必須以 http:// 或 https:// 開頭。");
 
-            if (request.PrtgAuthMode == PrtgAuthModes.Token)
+            if (effectivePrtgAuthMode == PrtgAuthModes.Token)
             {
                 // 新存或既有皆算有：密碼／token 欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
                 if (!HasEffectiveSecret(request.PrtgApiToken, before.PrtgApiTokenEnc, request.ClearPrtgApiToken))
                     throw DomainException.Validation("啟用 PRTG 並使用 API token 時，必須設定 API token。");
             }
-            else if (request.PrtgAuthMode == PrtgAuthModes.Password)
+            else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
             {
                 if (string.IsNullOrWhiteSpace(request.PrtgUsername))
                     throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定帳號。");
@@ -197,7 +201,7 @@ public class SystemSettingsService : ISystemSettingsService
                 if (!HasEffectiveSecret(request.PrtgPassword, before.PrtgPasswordEnc, request.ClearPrtgPassword))
                     throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定密碼。");
             }
-            else if (request.PrtgAuthMode == PrtgAuthModes.Passhash)
+            else if (effectivePrtgAuthMode == PrtgAuthModes.Passhash)
             {
                 if (string.IsNullOrWhiteSpace(request.PrtgUsername))
                     throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定帳號。");
@@ -409,15 +413,15 @@ public class SystemSettingsService : ISystemSettingsService
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
 
             // PRTG 監控系統設定（PRTG 第 1 輪批次B）
-            s.PrtgEnabled = request.PrtgEnabled;
-            s.PrtgUrl = request.PrtgUrl?.Trim() ?? "";
-            s.PrtgAuthMode = request.PrtgAuthMode;
+            if (request.PrtgEnabled.HasValue) s.PrtgEnabled = request.PrtgEnabled.Value;
+            if (request.PrtgUrl != null) s.PrtgUrl = request.PrtgUrl.Trim();
+            if (request.PrtgAuthMode != null) s.PrtgAuthMode = request.PrtgAuthMode;
             // 只處理「當前認證方式」那一組憑證：另一組的欄位在畫面上是隱藏的，
             // 送上來的是切換前殘留的輸入與勾選。不隔開的話，token 模式勾了「清除 token」
             // 後改用帳號密碼儲存，會把 token 靜默清空（使用者已經看不到那個勾選了）。
             // 空白字元一律當成「沒填」——與驗證段的 HasEffectiveSecret 同一判定，
             // 否則不小心輸入空白會把好的憑證覆蓋成加密後的空白，前置檢查還會誤判成「有設定」。
-            if (request.PrtgAuthMode == PrtgAuthModes.Passhash)
+            if (effectivePrtgAuthMode == PrtgAuthModes.Passhash)
             {
                 // username 也只在帳密與 passhash 模式寫入：token 模式下它在畫面上是隱藏的，
                 // 非設定頁的呼叫端（腳本、匯入）沒帶它時不該把已存帳號靜默清空
@@ -427,7 +431,7 @@ public class SystemSettingsService : ISystemSettingsService
                 else if (!string.IsNullOrWhiteSpace(request.PrtgPasshash))
                     s.PrtgPasshashEnc = CryptoHelper.Encrypt(request.PrtgPasshash);
             }
-            else if (request.PrtgAuthMode == PrtgAuthModes.Password)
+            else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
             {
                 s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
                 if (request.ClearPrtgPassword)

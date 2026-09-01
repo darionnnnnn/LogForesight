@@ -382,10 +382,13 @@ public class UpdateSystemSettingsRequest
     public bool MailDigestSkipEmpty { get; set; }
 
     // ── PRTG 監控系統設定（批次B-1）─────────────────────────────────────────
-    public bool PrtgEnabled { get; set; }
+    /// <summary>PRTG 總開關。null＝本次請求未提供（沿用既有值）——設定頁搬家後不再送這個欄位，
+    /// 無條件寫入會把使用者的設定靜默關閉。</summary>
+    public bool? PrtgEnabled { get; set; }
 
+    /// <summary>PRTG 位址。null＝本次請求未提供（沿用既有值）。</summary>
     [StringLength(500)]
-    public string PrtgUrl { get; set; } = "";
+    public string? PrtgUrl { get; set; }
 
     public bool PrtgIgnoreSslErrors { get; set; }
 
@@ -395,8 +398,9 @@ public class UpdateSystemSettingsRequest
 
     public bool ClearPrtgApiToken { get; set; }
 
+    /// <summary>PRTG 認證方式。null＝本次請求未提供（沿用既有值）。</summary>
     [StringLength(20)]
-    public string PrtgAuthMode { get; set; } = PrtgAuthModes.Token;
+    public string? PrtgAuthMode { get; set; }
 
     [StringLength(255)]
     public string? PrtgUsername { get; set; }
