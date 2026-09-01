@@ -38,8 +38,12 @@ public sealed class PrtgFetchService
     /// 也會把 <c>synced_at</c>（最後結構同步時間）改寫成回填當下，讓鏡像狀態顯示失真。
     /// 為 false 時 sensor 清單改從鏡像讀取。
     /// </param>
+    /// <param name="fetchValues">
+    /// 是否擷取 hourly 數值（階段 4）。每日擷取與歷史回填預設為 true。
+    /// 觸發式流程傳 false（略過階段 4，改由觸發式取數獨立呼叫 <see cref="FetchValuesForSensorsAsync"/>）。
+    /// </param>
     public async Task<PrtgFetchResult> FetchDayAsync(
-        DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true)
+        DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true, bool fetchValues = true)
     {
         var devicesCount = 0;
         var sensorsCount = 0;
@@ -98,6 +102,20 @@ public sealed class PrtgFetchService
                 failures++;
                 _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
             }
+
+            // 語意分類自動填入：只填未分類者，人工指定的分類不會被洗掉
+            try
+            {
+                var categorized = _store.ApplyAutoCategories();
+                if (categorized > 0)
+                    _console.WriteLine($"[階段 2/4] 已自動填入 {categorized} 個感測器的語意分類。");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                failures++;
+                _console.WriteLine($"[階段 2/4] 語意分類自動填入失敗：{ex.Message}");
+            }
         }
 
         // 階段 3：狀態變更（前一日增量）
@@ -118,33 +136,56 @@ public sealed class PrtgFetchService
         }
 
         // 階段 4：hourly 數值（前一日）
-        try
+        if (fetchValues)
         {
-            var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
-            _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
-            var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct);
-            valuesCount = written;
-            _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
+            try
+            {
+                var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
+                _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
+                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct);
+                valuesCount = written;
+                _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
 
-            // 部分 sensor 失敗屬正常損耗（其餘資料照樣落地）；但「有 sensor 要抓、卻一筆都沒抓到」
-            // 代表這個階段實質上沒成功，必須計入 failures，否則回填會把整天報成成功。
-            if (failedSensorCount > 0 && written == 0)
+                // 部分 sensor 失敗屬正常損耗（其餘資料照樣落地）；但「有 sensor 要抓、卻一筆都沒抓到」
+                // 代表這個階段實質上沒成功，必須計入 failures，否則回填會把整天報成成功。
+                if (failedSensorCount > 0 && written == 0)
+                {
+                    failures++;
+                    _console.WriteLine("[階段 4/4] 所有感測器的數值擷取皆失敗，本階段視為失敗。");
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
             {
                 failures++;
-                _console.WriteLine("[階段 4/4] 所有感測器的數值擷取皆失敗，本階段視為失敗。");
+                _console.WriteLine($"[階段 4/4] 每小時數值擷取失敗：{ex.Message}");
             }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        else
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            failures++;
-            _console.WriteLine($"[階段 4/4] 每小時數值擷取失敗：{ex.Message}");
+            _console.WriteLine("[階段 4/4] 數值擷取改由觸發式流程執行，本階段略過。");
         }
 
         return new PrtgFetchResult(devicesCount, sensorsCount, stateChangesCount, valuesCount, failures);
+    }
+
+    /// <summary>
+    /// 只擷取指定 sensor 的當日 hourly 數值（觸發式取數用）。
+    /// 回傳實際寫入筆數與失敗的 sensor 數；併發與單 sensor 失敗隔離沿用階段 4 的既有機制。
+    /// </summary>
+    public async Task<(int Written, int FailedSensors)> FetchValuesForSensorsAsync(
+        DateTime day, IReadOnlyList<long> sensorObjids, int concurrency, CancellationToken ct)
+    {
+        if (sensorObjids == null || sensorObjids.Count == 0)
+        {
+            return (0, 0);
+        }
+
+        var targets = sensorObjids.Select(id => (Objid: id, Paused: false)).ToList();
+        return await FetchValuesAsync(day, targets, concurrency, ct);
     }
 
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>

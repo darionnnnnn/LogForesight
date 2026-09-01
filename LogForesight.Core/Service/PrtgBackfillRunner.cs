@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Core.Service;
@@ -23,9 +25,13 @@ public static class PrtgBackfillRunner
     /// <param name="concurrency">hourly 數值抓取併發上限（取自 PrtgFetchConcurrency，與每日擷取共用）</param>
     /// <param name="console">執行歷程輸出</param>
     /// <param name="ct">取消語彙基元</param>
+    /// <param name="store">PRTG 鏡像 store（傳入時啟用觸發式過濾）</param>
+    /// <param name="records">分析紀錄查詢介面（傳入時啟用觸發式過濾）</param>
+    /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>
     /// <returns>有任何一天成功回傳 true，全部失敗回傳 false</returns>
     public static async Task<bool> RunAsync(
-        PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct)
+        PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct,
+        EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null)
     {
         if (days <= 0)
         {
@@ -47,18 +53,96 @@ public static class PrtgBackfillRunner
                 var day = DateTime.Today.AddDays(-i);
                 try
                 {
-                    // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
-                    // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
-                    var result = await fetchService.FetchDayAsync(day, concurrency, ct, syncStructure: false);
-                    if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
+                    if (store == null || records == null)
                     {
-                        failedDays++;
-                        console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：所有擷取階段皆未成功。");
+                        // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
+                        // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
+                        var result = await fetchService.FetchDayAsync(day, concurrency, ct, syncStructure: false);
+                        if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
+                        {
+                            failedDays++;
+                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：所有擷取階段皆未成功。");
+                        }
+                        else
+                        {
+                            successDays++;
+                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：數值 {result.Values} 筆、狀態變更 {result.StateChanges} 筆");
+                        }
                     }
                     else
                     {
-                        successDays++;
-                        console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：數值 {result.Values} 筆、狀態變更 {result.StateChanges} 筆");
+                        // 觸發式回填：只回填問題主機命中白名單的 sensor
+                        var result = await fetchService.FetchDayAsync(day, concurrency, ct, syncStructure: false, fetchValues: false);
+                        var failures = result.Failures;
+                        var valuesWritten = 0;
+                        var targetSensorsCount = 0;
+
+                        var filter = new RecordQueryFilter
+                        {
+                            From = day,
+                            To = day,
+                            RiskLevels = new[] { "高", "中" },
+                            Hosts = null
+                        };
+                        var riskyRecords = records.QueryLightweight(filter);
+                        var riskyHostIds = riskyRecords
+                            .Select(r => r.HostId)
+                            .Distinct()
+                            .ToHashSet();
+
+                        var problemHostsCount = riskyHostIds.Count;
+
+                        if (problemHostsCount > 0)
+                        {
+                            var hostMapRows = store.GetHostMapForDate(day);
+                            if (hostMapRows.Count == 0)
+                            {
+                                for (var offset = 1; offset <= 30; offset++)
+                                {
+                                    var prevMap = store.GetHostMapForDate(day.AddDays(-offset));
+                                    if (prevMap.Count > 0)
+                                    {
+                                        hostMapRows = prevMap;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (hostMapRows.Count > 0)
+                            {
+                                var deviceObjids = hostMapRows
+                                    .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && riskyHostIds.Contains(m.HostId.Value))
+                                    .Select(m => m.DeviceObjid)
+                                    .Distinct()
+                                    .ToList();
+
+                                if (deviceObjids.Count > 0)
+                                {
+                                    var targets = store.GetValueFetchTargets(whitelist, deviceObjids);
+                                    targetSensorsCount = targets.Count;
+                                    if (targets.Count > 0)
+                                    {
+                                        var (written, failedSensors) = await fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct);
+                                        valuesWritten = written;
+                                        if (failedSensors > 0 && written == 0)
+                                        {
+                                            failures++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (failures > 0 && valuesWritten == 0 && result.StateChanges == 0)
+                        {
+                            failedDays++;
+                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：所有擷取階段皆未成功。");
+                        }
+                        else
+                        {
+                            successDays++;
+                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：問題主機 {problemHostsCount} 台、sensor {targetSensorsCount} 個、數值 {valuesWritten} 筆、狀態變更 {result.StateChanges} 筆");
+                        }
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -229,6 +229,7 @@ public class SystemSettingsService : ISystemSettingsService
         var permMemberFields = NormalizeLines(request.PermissionMemberFields);
         var permGroupFields = NormalizeLines(request.PermissionGroupFields);
         var permObjectFields = NormalizeLines(request.PermissionObjectFields);
+        var prtgSensorTypes = NormalizeLines(request.PrtgSensorTypeWhitelist);
 
         // §1（回饋第十輪）：品牌三欄。名稱空白＝回退出廠名，副標允許空（刻意只留產品名）
         var brandName = string.IsNullOrWhiteSpace(request.BrandName) ? DefaultBrandName : request.BrandName.Trim();
@@ -439,6 +440,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.PrtgFetchConcurrency = request.PrtgFetchConcurrency;
             s.PrtgBackfillDays = request.PrtgBackfillDays;
             s.PrtgRetentionDays = request.PrtgRetentionDays;
+            s.PrtgSensorTypeWhitelist = prtgSensorTypes;
 
             s.UpdatedByAccount = _currentUser.Account;
         });
@@ -485,6 +487,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgEnabled, before.PrtgUrl, before.PrtgAuthMode, before.PrtgUsername,
                     before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
+                    PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
                     PrtgHasPasshash = !string.IsNullOrEmpty(before.PrtgPasshashEnc)
@@ -505,6 +508,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgAuthMode, saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
+                    PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
                     PrtgHasPasshash = !string.IsNullOrEmpty(saved.PrtgPasshashEnc)
@@ -963,6 +967,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgFetchConcurrency = s.PrtgFetchConcurrency,
         PrtgBackfillDays = s.PrtgBackfillDays,
         PrtgRetentionDays = s.PrtgRetentionDays,
+        PrtgSensorTypeWhitelist = s.PrtgSensorTypeWhitelist,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)

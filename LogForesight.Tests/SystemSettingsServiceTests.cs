@@ -1793,4 +1793,71 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal("", settings.PrtgPasswordEnc);
         Assert.Equal("", settings.PrtgPasshashEnc);
     }
+
+    [Fact]
+    public void PRTG白名單出廠預設含8個type且不含Ping()
+    {
+        var settings = new SystemSettings();
+
+        Assert.Equal(8, settings.PrtgSensorTypeWhitelist.Count);
+        Assert.Contains("SNMP Disk Free", settings.PrtgSensorTypeWhitelist);
+        Assert.DoesNotContain(settings.PrtgSensorTypeWhitelist, s => string.Equals(s, "Ping", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Update後_PRTG白名單去除空白空行與重複項並持久化()
+    {
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_whitelist"));
+        var service = new SystemSettingsService(store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore(),
+            new MailNotificationService(store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
+                _mailRecords, new FakeHandlingStore(),
+                new MailNotifyStateStore(_fx.Blob("mail_state_whitelist"))), new FakeReportUsageQuery());
+
+        var request = ValidRequest();
+        request.PrtgSensorTypeWhitelist = new List<string>
+        {
+            "  SNMP Disk Free  ",
+            "",
+            "snmp disk free",
+            "SNMP CPU LOAD",
+            "   ",
+            "snmp cpu load",
+            "Windows Network Card"
+        };
+
+        var saved = service.Update(request);
+
+        Assert.Equal(3, saved.PrtgSensorTypeWhitelist.Count);
+        Assert.Equal(new[] { "SNMP Disk Free", "SNMP CPU LOAD", "Windows Network Card" }, saved.PrtgSensorTypeWhitelist);
+
+        // 重讀確認落地
+        var reread = service.Get();
+        Assert.Equal(3, reread.PrtgSensorTypeWhitelist.Count);
+        Assert.Equal(new[] { "SNMP Disk Free", "SNMP CPU LOAD", "Windows Network Card" }, reread.PrtgSensorTypeWhitelist);
+
+        var stored = store.Get();
+        Assert.Equal(3, stored.PrtgSensorTypeWhitelist.Count);
+        Assert.Equal(new[] { "SNMP Disk Free", "SNMP CPU LOAD", "Windows Network Card" }, stored.PrtgSensorTypeWhitelist);
+    }
+
+    [Fact]
+    public void PRTG白名單_ToDto回傳與儲存值一致()
+    {
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_dto"));
+        var service = new SystemSettingsService(store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore(),
+            new MailNotificationService(store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
+                _mailRecords, new FakeHandlingStore(),
+                new MailNotifyStateStore(_fx.Blob("mail_state_dto"))), new FakeReportUsageQuery());
+
+        var request = ValidRequest();
+        request.PrtgSensorTypeWhitelist = new List<string> { "SNMP Memory", "SNMP Linux Meminfo" };
+        var savedDto = service.Update(request);
+
+        var getDto = service.Get();
+
+        Assert.Equal(savedDto.PrtgSensorTypeWhitelist, getDto.PrtgSensorTypeWhitelist);
+        Assert.Equal(new[] { "SNMP Memory", "SNMP Linux Meminfo" }, getDto.PrtgSensorTypeWhitelist);
+    }
 }

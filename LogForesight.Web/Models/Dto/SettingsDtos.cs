@@ -157,6 +157,7 @@ public class SystemSettingsDto
     public int PrtgFetchConcurrency { get; set; }
     public int PrtgBackfillDays { get; set; }
     public int PrtgRetentionDays { get; set; }
+    public List<string> PrtgSensorTypeWhitelist { get; set; } = new();
 }
 
 /// <summary>
@@ -421,6 +422,8 @@ public class UpdateSystemSettingsRequest
 
     [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "PRTG 資料保留天數必須介於 90~3650 天")]
     public int PrtgRetentionDays { get; set; } = SystemSettings.DefaultPrtgRetentionDays;
+
+    public List<string> PrtgSensorTypeWhitelist { get; set; } = new();
 }
 
 /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存）試寄一封，

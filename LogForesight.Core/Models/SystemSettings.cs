@@ -402,4 +402,22 @@ public class SystemSettings
 
     /// <summary>PRTG 鏡像資料保留天數</summary>
     public int PrtgRetentionDays { get; set; } = DefaultPrtgRetentionDays;
+
+    /// <summary>要擷取數值的 sensor type 白名單（一行一個 type，不分大小寫）。
+    /// 空白代表不限制。</summary>
+    public List<string> PrtgSensorTypeWhitelist { get; set; } = new(DefaultPrtgSensorTypeWhitelist);
+
+    /// <summary>白名單出廠預設：實機探測確認的分析型 type（涵蓋約 79% 的 sensor）。
+    /// 刻意不含 Ping（雜訊高且量大），需要時由使用者自行加入。</summary>
+    public static readonly string[] DefaultPrtgSensorTypeWhitelist =
+    {
+        "SNMP Traffic 64bit",
+        "SNMP Traffic 32bit",
+        "SNMP Disk Free",
+        "SNMP CPU Load",
+        "SNMP Memory",
+        "SNMP Linux Meminfo",
+        "Windows Network Card",
+        "WMI Free Disk Space (Multi Disk)"
+    };
 }

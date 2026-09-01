@@ -52,6 +52,8 @@ public class PrtgMirrorStatusDto
     public int MapOk { get; set; }
     public int MapConflict { get; set; }
     public int MapUnmatched { get; set; }
+    public int WhitelistSensorCount { get; set; }
+    public int OnMappedDeviceCount { get; set; }
     public IReadOnlyList<PrtgHostMapItemDto> Conflicts { get; set; } = Array.Empty<PrtgHostMapItemDto>();
     public IReadOnlyList<PrtgHostMapItemDto> Unmatched { get; set; } = Array.Empty<PrtgHostMapItemDto>();
 }

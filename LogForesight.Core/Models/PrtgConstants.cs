@@ -25,6 +25,40 @@ public static class PrtgMapStatus
     public const string Unmatched = "unmatched";
 }
 
+/// <summary>sensor 語意分類值（lf_prtg_sensors.category）。</summary>
+public static class PrtgSensorCategories
+{
+    public const string Traffic = "traffic";
+    public const string Disk = "disk";
+    public const string Cpu = "cpu";
+    public const string Memory = "memory";
+}
+
+/// <summary>分類來源（lf_prtg_sensors.category_source），欄長上限 16。</summary>
+public static class PrtgCategorySources
+{
+    /// <summary>由 type 對照表自動判定</summary>
+    public const string Auto = "auto";
+}
+
+/// <summary>PRTG sensor type 對語意分類的對照表（不分大小寫）。
+/// 內容依實機探測的 type 分布挑選，未列出的 type 不自動分類（留 null）。</summary>
+public static class PrtgSensorTypeCategoryMap
+{
+    public static readonly IReadOnlyDictionary<string, string> Map =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SNMP Traffic 64bit"] = PrtgSensorCategories.Traffic,
+            ["SNMP Traffic 32bit"] = PrtgSensorCategories.Traffic,
+            ["Windows Network Card"] = PrtgSensorCategories.Traffic,
+            ["SNMP Disk Free"] = PrtgSensorCategories.Disk,
+            ["WMI Free Disk Space (Multi Disk)"] = PrtgSensorCategories.Disk,
+            ["SNMP CPU Load"] = PrtgSensorCategories.Cpu,
+            ["SNMP Memory"] = PrtgSensorCategories.Memory,
+            ["SNMP Linux Meminfo"] = PrtgSensorCategories.Memory,
+        };
+}
+
 /// <summary>
 /// PRTG 認證方式常數。
 /// <see cref="Token"/>（token）走 apitoken 參數；

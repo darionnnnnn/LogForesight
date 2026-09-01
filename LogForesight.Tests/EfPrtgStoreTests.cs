@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Persistence.Sql;
 using Xunit;
@@ -555,5 +556,289 @@ public class EfPrtgStoreTests : IDisposable
         {
             Assert.Equal(0, ctx.PrtgValues.Count());
         }
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_未分類且命中對照表_填入正確分類與auto來源()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 101, DeviceObjid = 1, Name = "Traffic 64", SensorType = "SNMP Traffic 64bit", Paused = false },
+            new() { Objid = 102, DeviceObjid = 1, Name = "Disk Space", SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 103, DeviceObjid = 1, Name = "CPU Load", SensorType = "SNMP CPU Load", Paused = false },
+            new() { Objid = 104, DeviceObjid = 1, Name = "Mem", SensorType = "SNMP Memory", Paused = false },
+            new() { Objid = 105, DeviceObjid = 1, Name = "Linux Mem", SensorType = "snmp linux meminfo", Paused = false } // 測試不分大小寫
+        }, now);
+
+        var count = store.ApplyAutoCategories();
+        Assert.Equal(5, count);
+
+        using var ctx = _fx.NewContext();
+        var s101 = ctx.PrtgSensors.Single(s => s.Objid == 101);
+        Assert.Equal(PrtgSensorCategories.Traffic, s101.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s101.CategorySource);
+
+        var s102 = ctx.PrtgSensors.Single(s => s.Objid == 102);
+        Assert.Equal(PrtgSensorCategories.Disk, s102.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s102.CategorySource);
+
+        var s103 = ctx.PrtgSensors.Single(s => s.Objid == 103);
+        Assert.Equal(PrtgSensorCategories.Cpu, s103.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s103.CategorySource);
+
+        var s104 = ctx.PrtgSensors.Single(s => s.Objid == 104);
+        Assert.Equal(PrtgSensorCategories.Memory, s104.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s104.CategorySource);
+
+        var s105 = ctx.PrtgSensors.Single(s => s.Objid == 105);
+        Assert.Equal(PrtgSensorCategories.Memory, s105.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s105.CategorySource);
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_不覆蓋既有分類_人工指定值完全不變()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = 201,
+                DeviceObjid = 1,
+                Name = "Manual Sensor",
+                SensorType = "SNMP Traffic 64bit", // 在對照表中對應 traffic
+                Category = "人工分類",
+                CategorySource = "manual",
+                Paused = false,
+                SyncedAt = now,
+                CreatedAt = now
+            });
+            ctx.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = 202,
+                DeviceObjid = 1,
+                Name = "Unclassified Sensor",
+                SensorType = "SNMP Traffic 64bit",
+                Category = null,
+                CategorySource = null,
+                Paused = false,
+                SyncedAt = now,
+                CreatedAt = now
+            });
+            ctx.SaveChanges();
+        }
+
+        var count = store.ApplyAutoCategories();
+        Assert.Equal(1, count); // 只更新 202
+
+        using (var ctx = _fx.NewContext())
+        {
+            var s201 = ctx.PrtgSensors.Single(s => s.Objid == 201);
+            Assert.Equal("人工分類", s201.Category);
+            Assert.Equal("manual", s201.CategorySource);
+
+            var s202 = ctx.PrtgSensors.Single(s => s.Objid == 202);
+            Assert.Equal(PrtgSensorCategories.Traffic, s202.Category);
+            Assert.Equal(PrtgCategorySources.Auto, s202.CategorySource);
+        }
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_type不在對照表者不填維持null_回傳筆數正確()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 301, DeviceObjid = 1, Name = "Ping Sensor", SensorType = "ping", Paused = false },
+            new() { Objid = 302, DeviceObjid = 1, Name = "HTTP Sensor", SensorType = "http", Paused = false },
+            new() { Objid = 303, DeviceObjid = 1, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+
+        var count = store.ApplyAutoCategories();
+        Assert.Equal(1, count); // 只有 303 命中
+
+        using var ctx = _fx.NewContext();
+        var s301 = ctx.PrtgSensors.Single(s => s.Objid == 301);
+        Assert.Null(s301.Category);
+        Assert.Null(s301.CategorySource);
+
+        var s302 = ctx.PrtgSensors.Single(s => s.Objid == 302);
+        Assert.Null(s302.Category);
+        Assert.Null(s302.CategorySource);
+
+        var s303 = ctx.PrtgSensors.Single(s => s.Objid == 303);
+        Assert.Equal(PrtgSensorCategories.Disk, s303.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s303.CategorySource);
+    }
+
+    [Fact]
+    public void GetWhitelistCoverage_混合資料與空白名單_計算正確()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // 建立主機對應資料：Device 1 (Ok), Device 2 (Conflict), Device 3 (Unmatched)
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgHostMaps.AddRange(
+                new PrtgHostMapRow { MapDate = mapDate.Date, DeviceObjid = 1, MapStatus = PrtgMapStatus.Ok, CreatedAt = now },
+                new PrtgHostMapRow { MapDate = mapDate.Date, DeviceObjid = 2, MapStatus = PrtgMapStatus.Conflict, CreatedAt = now },
+                new PrtgHostMapRow { MapDate = mapDate.Date, DeviceObjid = 3, MapStatus = PrtgMapStatus.Unmatched, CreatedAt = now }
+            );
+            ctx.SaveChanges();
+        }
+
+        // 建立 sensor 資料：
+        // 401: Dev 1 (Ok), Type "SNMP Disk Free" (命中白名單), Paused false -> 命中白名單且在 Ok device 上
+        // 402: Dev 2 (Conflict), Type "snmp disk free" (命中白名單，小寫), Paused false -> 命中白名單，但不在 Ok device 上
+        // 403: Dev 1 (Ok), Type "SNMP Disk Free", Paused true -> 暫停，不算
+        // 404: Dev 1 (Ok), Type "ping" (未命中白名單), Paused false -> 未命中白名單
+        // 405: Dev 4 (無對應), Type "SNMP CPU Load" (命中白名單), Paused false -> 命中白名單，但不在 Ok device 上
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 401, DeviceObjid = 1, Name = "Disk1", SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 402, DeviceObjid = 2, Name = "Disk2", SensorType = "snmp disk free", Paused = false },
+            new() { Objid = 403, DeviceObjid = 1, Name = "Disk3", SensorType = "SNMP Disk Free", Paused = true },
+            new() { Objid = 404, DeviceObjid = 1, Name = "Ping", SensorType = "ping", Paused = false },
+            new() { Objid = 405, DeviceObjid = 4, Name = "CPU", SensorType = "SNMP CPU Load", Paused = false }
+        }, now);
+
+        var whitelist = new[] { "SNMP Disk Free", "SNMP CPU Load" };
+
+        // 正常情境（有 mapDate）
+        var coverage = store.GetWhitelistCoverage(whitelist, mapDate);
+        // 命中白名單未暫停的 sensor：401, 402, 405 -> 共 3 個
+        // 其中位於 Ok device (Dev 1) 上的 sensor：401 -> 共 1 個
+        Assert.Equal(3, coverage.WhitelistSensorCount);
+        Assert.Equal(1, coverage.OnMappedDeviceCount);
+
+        // mapDate 為 null 情境
+        var coverageNoMap = store.GetWhitelistCoverage(whitelist, null);
+        Assert.Equal(3, coverageNoMap.WhitelistSensorCount);
+        Assert.Equal(0, coverageNoMap.OnMappedDeviceCount);
+
+        // 白名單為空清單情境
+        var coverageEmpty = store.GetWhitelistCoverage(Array.Empty<string>(), mapDate);
+        Assert.Equal(0, coverageEmpty.WhitelistSensorCount);
+        Assert.Equal(0, coverageEmpty.OnMappedDeviceCount);
+
+        // 白名單為 null 情境
+        var coverageNull = store.GetWhitelistCoverage(null, mapDate);
+        Assert.Equal(0, coverageNull.WhitelistSensorCount);
+        Assert.Equal(0, coverageNull.OnMappedDeviceCount);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_只回傳指定device上的sensor()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, Name = "Sensor-Dev10", SensorType = "ping", Paused = false },
+            new() { Objid = 1002, DeviceObjid = 20, Name = "Sensor-Dev20", SensorType = "ping", Paused = false }
+        }, now);
+
+        var targets = store.GetValueFetchTargets(whitelist: null, deviceObjids: new[] { 10L });
+
+        Assert.Single(targets);
+        Assert.Contains(1001L, targets);
+        Assert.DoesNotContain(1002L, targets);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_排除已暫停的sensor()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 10, Name = "Active-Sensor", SensorType = "ping", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 10, Name = "Paused-Sensor", SensorType = "ping", Paused = true }
+        }, now);
+
+        var targets = store.GetValueFetchTargets(whitelist: null, deviceObjids: new[] { 10L });
+
+        Assert.Single(targets);
+        Assert.Contains(2001L, targets);
+        Assert.DoesNotContain(2002L, targets);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_白名單比對不分大小寫且白名單為空時不限制type()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 3001, DeviceObjid = 10, Name = "Disk Sensor 1", SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 3002, DeviceObjid = 10, Name = "Disk Sensor 2", SensorType = "snmp disk free", Paused = false },
+            new() { Objid = 3003, DeviceObjid = 10, Name = "Ping Sensor", SensorType = "ping", Paused = false },
+            new() { Objid = 3004, DeviceObjid = 10, Name = "HTTP Sensor", SensorType = "http", Paused = false }
+        }, now);
+
+        // 1. 白名單比對不分大小寫：給予不同大小寫的白名單 "snmp disk free"
+        var targetsWithWhitelist = store.GetValueFetchTargets(
+            whitelist: new[] { "snmp disk free" },
+            deviceObjids: new[] { 10L });
+
+        Assert.Equal(2, targetsWithWhitelist.Count);
+        Assert.Contains(3001L, targetsWithWhitelist);
+        Assert.Contains(3002L, targetsWithWhitelist);
+        Assert.DoesNotContain(3003L, targetsWithWhitelist);
+        Assert.DoesNotContain(3004L, targetsWithWhitelist);
+
+        // 2. 白名單為空清單時不限制 type
+        var targetsEmptyWhitelist = store.GetValueFetchTargets(
+            whitelist: Array.Empty<string>(),
+            deviceObjids: new[] { 10L });
+
+        Assert.Equal(4, targetsEmptyWhitelist.Count);
+        Assert.Contains(3001L, targetsEmptyWhitelist);
+        Assert.Contains(3002L, targetsEmptyWhitelist);
+        Assert.Contains(3003L, targetsEmptyWhitelist);
+        Assert.Contains(3004L, targetsEmptyWhitelist);
+
+        // 3. 白名單為 null 時不限制 type
+        var targetsNullWhitelist = store.GetValueFetchTargets(
+            whitelist: null,
+            deviceObjids: new[] { 10L });
+
+        Assert.Equal(4, targetsNullWhitelist.Count);
+        Assert.Contains(3001L, targetsNullWhitelist);
+        Assert.Contains(3002L, targetsNullWhitelist);
+        Assert.Contains(3003L, targetsNullWhitelist);
+        Assert.Contains(3004L, targetsNullWhitelist);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_device集合為空時回空清單()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 4001, DeviceObjid = 10, Name = "Sensor", SensorType = "ping", Paused = false }
+        }, now);
+
+        // deviceObjids 為空清單
+        var targetsEmpty = store.GetValueFetchTargets(whitelist: null, deviceObjids: Array.Empty<long>());
+        Assert.Empty(targetsEmpty);
+
+        // deviceObjids 為 null
+        var targetsNull = store.GetValueFetchTargets(whitelist: null, deviceObjids: null!);
+        Assert.Empty(targetsNull);
     }
 }

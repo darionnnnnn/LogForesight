@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -147,6 +148,53 @@ public sealed class EfPrtgStore
 
             ctx.SaveChanges();
             return batch.Count;
+        });
+    }
+
+    /// <summary>
+    /// 依 type 對照表自動填入尚未分類的 sensor（category 為 null 者）。
+    /// 回傳實際填入的筆數。人工指定的分類（category 非 null）一律不動。
+    /// </summary>
+    public int ApplyAutoCategories()
+    {
+        List<(long Objid, string Category)> toUpdate;
+        using (var ctx = _contextFactory())
+        {
+            var candidates = ctx.PrtgSensors
+                .AsNoTracking()
+                .Where(s => s.Category == null)
+                .Select(s => new { s.Objid, s.SensorType })
+                .ToList();
+
+            toUpdate = new List<(long Objid, string Category)>();
+            foreach (var item in candidates)
+            {
+                if (PrtgSensorTypeCategoryMap.Map.TryGetValue(item.SensorType, out var cat))
+                {
+                    toUpdate.Add((item.Objid, cat));
+                }
+            }
+        }
+
+        if (toUpdate.Count == 0) return 0;
+
+        return BatchWrite(toUpdate, (ctx, batch) =>
+        {
+            var map = batch.ToDictionary(x => x.Objid, x => x.Category);
+            var ids = batch.Select(x => x.Objid).ToList();
+            var rows = ctx.PrtgSensors.Where(s => ids.Contains(s.Objid) && s.Category == null).ToList();
+
+            foreach (var row in rows)
+            {
+                if (map.TryGetValue(row.Objid, out var category))
+                {
+                    row.Category = category;
+                    row.CategorySource = PrtgCategorySources.Auto;
+                }
+            }
+
+            ctx.SaveChanges();
+            return rows.Count;
         });
     }
 
@@ -423,6 +471,81 @@ public sealed class EfPrtgStore
             lastValueAt,
             lastStateChangeAt);
     }
+
+    /// <summary>
+    /// 白名單覆蓋量級：命中白名單的未暫停 sensor 數，以及其中位於
+    /// 當日已成功對應（ok）device 上的數量。白名單為空時兩個數字都回 0。
+    /// </summary>
+    public PrtgWhitelistCoverage GetWhitelistCoverage(IReadOnlyCollection<string>? whitelist, DateTime? mapDate)
+    {
+        if (whitelist == null || whitelist.Count == 0)
+        {
+            return new PrtgWhitelistCoverage(0, 0);
+        }
+
+        var whitelistSet = new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);
+
+        using var ctx = _contextFactory();
+
+        var activeSensors = ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => !s.Paused)
+            .Select(s => new { s.Objid, s.DeviceObjid, s.SensorType })
+            .ToList();
+
+        var matchedSensors = activeSensors
+            .Where(s => whitelistSet.Contains(s.SensorType))
+            .ToList();
+
+        var whitelistSensorCount = matchedSensors.Count;
+        if (whitelistSensorCount == 0 || !mapDate.HasValue)
+        {
+            return new PrtgWhitelistCoverage(whitelistSensorCount, 0);
+        }
+
+        var targetDate = mapDate.Value.Date;
+        var okDeviceIds = ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == targetDate && m.MapStatus == PrtgMapStatus.Ok)
+            .Select(m => m.DeviceObjid)
+            .ToHashSet();
+
+        var onMappedDeviceCount = matchedSensors.Count(s => okDeviceIds.Contains(s.DeviceObjid));
+
+        return new PrtgWhitelistCoverage(whitelistSensorCount, onMappedDeviceCount);
+    }
+
+    /// <summary>
+    /// 選出要擷取數值的 sensor：位於指定 device 上、未暫停、且 type 命中白名單者。
+    /// 白名單為 null 或空代表不限制 type（沿用設定語意）。device 集合為空時回空清單。
+    /// </summary>
+    public List<long> GetValueFetchTargets(IReadOnlyCollection<string>? whitelist, IReadOnlyCollection<long> deviceObjids)
+    {
+        if (deviceObjids == null || deviceObjids.Count == 0)
+        {
+            return new List<long>();
+        }
+
+        using var ctx = _contextFactory();
+
+        var query = ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => !s.Paused && deviceObjids.Contains(s.DeviceObjid))
+            .Select(s => new { s.Objid, s.SensorType })
+            .ToList();
+
+        if (whitelist == null || whitelist.Count == 0)
+        {
+            return query.Select(s => s.Objid).ToList();
+        }
+
+        var whitelistSet = new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);
+
+        return query
+            .Where(s => whitelistSet.Contains(s.SensorType))
+            .Select(s => s.Objid)
+            .ToList();
+    }
 }
 
 /// <summary>
@@ -435,3 +558,8 @@ public sealed record PrtgMirrorSummary(
     DateTime? LastSensorSync,
     DateTime? LastValueAt,
     DateTime? LastStateChangeAt);
+
+/// <summary>
+/// PRTG 白名單覆蓋量級統計
+/// </summary>
+public sealed record PrtgWhitelistCoverage(int WhitelistSensorCount, int OnMappedDeviceCount);

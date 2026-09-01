@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using LogForesight.Core;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using Xunit;
@@ -22,6 +23,18 @@ public class PrtgBackfillRunnerTests : IDisposable
     }
 
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
+    private EfAnalysisRecordStore CreateRecordStore() => new(_fx.NewContext, "test");
+
+    private static DailyAnalysisRecord CreateRecord(long hostId, string host, DateTime date, string riskLevel)
+    {
+        return new DailyAnalysisRecord
+        {
+            HostId = hostId,
+            Host = host,
+            Date = date,
+            RiskLevel = riskLevel
+        };
+    }
 
     private static HttpResponseMessage JsonResponse(string json, HttpStatusCode code = HttpStatusCode.OK)
     {
@@ -299,5 +312,205 @@ public class PrtgBackfillRunnerTests : IDisposable
         // 斷言回填只抓 values/messages/devices/sensors，完全不寫入 lf_prtg_host_map
         var mapCount = ctx.PrtgHostMaps.Count();
         Assert.Equal(0, mapCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_未傳入store與records時維持全量回填()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
+        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata.json"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var fetchService = new PrtgFetchService(client, store, console);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
+        // 不傳 store、records、whitelist（預設 null），應走全量回填路徑
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None);
+
+        Assert.True(ok);
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=201"));
+    }
+
+    [Fact]
+    public async Task RunAsync_觸發式回填_只回填高與中風險主機的sensor()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        // 建立主機分析紀錄：A 為高風險，B 為低風險
+        recordStore.Append(CreateRecord(101, "SRV-HIGH", day, "高"));
+        recordStore.Append(CreateRecord(102, "SRV-LOW", day, "低"));
+
+        // PRTG 裝置與感測器
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-A", Ip = "10.0.0.1" },
+            new() { Objid = 1002, Name = "Dev-B", Ip = "10.0.0.2" }
+        }, day);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-A", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1002, Name = "Sensor-B", SensorType = "wmicpu", Paused = false }
+        }, day);
+
+        // 主機對應表
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = 102, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata.json"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var fetchService = new PrtgFetchService(client, store, console);
+
+        var ok = await PrtgBackfillRunner.RunAsync(
+            fetchService, 1, 2, console, CancellationToken.None,
+            store, recordStore);
+
+        Assert.True(ok);
+        // 雙面斷言：高風險主機 A 的 sensor 2001 有被請求，低風險主機 B 的 sensor 2002 沒有被請求
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=2001"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=2002"));
+        Assert.Contains(console.Lines, l => l.Contains("問題主機 1 台") && l.Contains("sensor 1 個"));
+    }
+
+    [Fact]
+    public async Task RunAsync_觸發式回填_白名單過濾生效()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        // 建立高風險主機
+        recordStore.Append(CreateRecord(101, "SRV-HIGH", day, "高"));
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-A", Ip = "10.0.0.1" }
+        }, day);
+
+        // 同一裝置上有兩個 sensor，一個 type 命中白名單，另一個未命中
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-Match", SensorType = "SNMP CPU Load", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1001, Name = "Sensor-Mismatch", SensorType = "Ping", Paused = false }
+        }, day);
+
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var whitelist = new[] { "SNMP CPU Load" };
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata.json"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var fetchService = new PrtgFetchService(client, store, console);
+
+        var ok = await PrtgBackfillRunner.RunAsync(
+            fetchService, 1, 2, console, CancellationToken.None,
+            store, recordStore, whitelist);
+
+        Assert.True(ok);
+        // 雙面斷言：白名單內的 sensor 2001 有被請求，白名單外的 sensor 2002 沒有被請求
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=2001"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=2002"));
+        Assert.Contains(console.Lines, l => l.Contains("問題主機 1 台") && l.Contains("sensor 1 個"));
+    }
+
+    [Fact]
+    public async Task RunAsync_觸發式回填_無問題主機時不抓數值且不算失敗()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        // 該日僅有低風險主機（非高/中）
+        recordStore.Append(CreateRecord(102, "SRV-LOW", day, "低"));
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1002, Name = "Dev-B", Ip = "10.0.0.2" }
+        }, day);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2002, DeviceObjid = 1002, Name = "Sensor-B", SensorType = "wmicpu", Paused = false }
+        }, day);
+
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1002, HostId = 102, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var fetchService = new PrtgFetchService(client, store, console);
+
+        var ok = await PrtgBackfillRunner.RunAsync(
+            fetchService, 1, 2, console, CancellationToken.None,
+            store, recordStore);
+
+        // 該日無問題主機：不抓數值（無 historicdata 請求）且不算失敗（回傳 true）
+        Assert.True(ok);
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata.json"));
+        Assert.Contains(console.Lines, l => l.Contains("問題主機 0 台") && l.Contains("sensor 0 個") && l.Contains("數值 0 筆"));
+        Assert.Contains(console.Lines, l => l.Contains("共成功 1 天，失敗 0 天"));
     }
 }
