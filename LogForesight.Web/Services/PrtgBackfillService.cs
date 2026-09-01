@@ -130,7 +130,9 @@ public class PrtgBackfillService
             {
                 using (client)
                 {
-                    success = await PrtgBackfillRunner.RunAsync(fetchService, days, concurrency, console, CancellationToken.None);
+                    success = await PrtgBackfillRunner.RunAsync(
+                        fetchService, days, concurrency, console, CancellationToken.None,
+                        prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist);
                 }
             }
             catch (Exception ex)
