@@ -1,6 +1,36 @@
 namespace LogForesight.Core.Models;
 
 /// <summary>
+/// PRTG sensor 狀態字串（原樣取自 PRTG，未正規化）。實務上會出現帶括號的變體
+/// （如 "Down (Acknowledged)"／"Down (Partial)"），因此比對一律用前綴且不分大小寫。
+/// </summary>
+public static class PrtgSensorStatuses
+{
+    public const string Up = "Up";
+    public const string Down = "Down";
+    public const string Warning = "Warning";
+    public const string Unknown = "Unknown";
+    public const string Paused = "Paused";
+
+    /// <summary>是否為 Down 系列狀態（含 "Down (Acknowledged)" 等變體）</summary>
+    public static bool IsDown(string? status) =>
+        status != null && status.StartsWith(Down, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是否為 Up 狀態</summary>
+    public static bool IsUp(string? status) =>
+        status != null && status.StartsWith(Up, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是否為 Warning 狀態</summary>
+    public static bool IsWarning(string? status) =>
+        status != null && status.StartsWith(Warning, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是否為 Unknown 或空值（判定沉默 device 用）</summary>
+    public static bool IsUnknownOrEmpty(string? status) =>
+        string.IsNullOrWhiteSpace(status) ||
+        status.StartsWith(Unknown, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
 /// PRTG 資料品質常數。
 /// 這五個值必須互相可分辨——<see cref="Paused"/>（PRTG 上被暫停）、<see cref="Unknown"/>（PRTG 回報 unknown 狀態）、
 /// <see cref="NoData"/>（該時段根本沒有資料）是三種不同狀態，任何統計與基線計算都不得把它們混為一談；

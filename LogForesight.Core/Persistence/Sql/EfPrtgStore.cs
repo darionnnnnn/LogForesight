@@ -435,6 +435,34 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 取得指定期間的狀態變更（依 sensor 與時間排序）。判定「跨午夜持續 Down」時，
+    /// 呼叫端可把起點往前一天以取得前導狀態。
+    /// </summary>
+    public List<PrtgStateChangeRow> GetStateChanges(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgStateChanges
+            .AsNoTracking()
+            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive)
+            .OrderBy(r => r.SensorObjid)
+            .ThenBy(r => r.ChangedAt)
+            .ToList();
+    }
+
+    /// <summary>取得未暫停 sensor 的現況狀態（判定沉默 device 用）：objid、device、status。</summary>
+    public List<(long Objid, long DeviceObjid, string? Status)> GetSensorStatuses()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => !s.Paused)
+            .Select(s => new { s.Objid, s.DeviceObjid, s.Status })
+            .ToList()
+            .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得指定日期的 PRTG 主機對應清單（唯讀查詢）。
     /// </summary>
     public List<PrtgHostMapRow> GetHostMapForDate(DateTime mapDate)

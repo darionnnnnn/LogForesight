@@ -188,6 +188,31 @@ D~G 完成再併第二次。
 - 評估掛在夜間批次 PRTG 並行路徑內「狀態變更同步完成後」立即執行（**不依賴 NetIQ 分析**），
   命中主機直接入批次B 的取數佇列——與 NetIQ 分析同步進行。
 
+#### 實作時的定義修正與拆段（2026-09-01）
+
+**「沉默 device」的定義改了**：原本寫「全部 sensor 整日無訊息」，但 `lf_prtg_state_changes`
+只記錄**狀態變更**——健康的 sensor 本來就整天零筆紀錄，照原定義全機房健康的 device
+每天都會被誤判為沉默。改為：**該 device 底下全部未暫停 sensor 在結構同步當下的
+`PrtgSensorRow.Status` 皆為 Unknown 或空**（結構同步每天全量跑，此欄為可靠現況值）；
+device 底下沒有未暫停 sensor 時不算沉默。
+
+**批次F 拆成三段**，因為事實核對揭露三個原規劃未預期的阻擋點：
+- F-1 判定引擎（純函式）＋狀態變更查詢：狀態字串是 PRTG 原值未正規化
+  （會出現 `Down (Acknowledged)` 等變體，一律前綴比對）；`PrevStatus` 恆為 null 不可依賴；
+  每日擷取只保留當天的變更，跨午夜持續 Down 必須回查前一日。
+- F-2 finding 寫入與接線：**`AttachAiResult`／`AttachWeeklyCheckup` 都不寫 `lf_top_issues`**，
+  因此對「當天已有分析紀錄」的主機追加 finding 需要新的寫入路徑（不能沿用 Attach* 樣板）。
+  另需把規則命中主機灌進 `PrtgTriggeredValueFetcher` 的觸發集合。
+- F-3 規則維護頁 prtg 平台：`RuleValidator` 目前硬性只接受 `windows`／`linux`，
+  加第三個平台會牽動 validator、`RuleAdminService` 的逐平台欄位清空、`RuleDtos`、
+  `rules.js`／`Rules.cshtml`、`CloneForSeedOverwrite` 五處；且四個門檻是**分鐘與次數**，
+  既有的 `CountThreshold`（次數，未達只降級不排除）承載不了，需要 PRTG 專用門檻欄位。
+
+**EventKey 的硬性限制**（查證所得）：處理狀態鍵 `IssueSignatureKey` 以 `|` 分段解析，
+因此 PRTG finding 的 `EventKey` **不得含 `|`**（用冒號分隔，如 `prtg:down:12345`），
+且長度 ≤255。另外 `ClassifyLinux` 只查 `Platform == "linux"`，PRTG 路徑必須有自己的分類函式，
+否則 EventKey 會被清空、finding 降成 Other 並脫離處理狀態鏈。
+
 ### 測試／驗收
 四型規則判定（含邊界：跨午夜、單次 Down 未達門檻）、EventKey 簽章穩定性、
 全鏈掛接（top_issues 寫入、處理狀態可標記）、門檻設定消費端、觸發集合聯集。
