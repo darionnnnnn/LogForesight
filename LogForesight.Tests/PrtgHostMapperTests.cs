@@ -404,4 +404,205 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(periodTime, summary.LastValueAt);
         Assert.Equal(changeTime, summary.LastStateChangeAt);
     }
+
+    [Fact]
+    public void MapForDate_人工對應優先_即使IP命中其他主機仍以人工指定為主_雙面斷言()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "192.168.1.10", Active = true });
+            hosts.Add(new WebHost { HostId = 20, HostName = "srv-manual-target", IpAddress = "10.0.0.20", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1001, Name = "PRTG-Dev1", Ip = "192.168.1.10" });
+
+        var store = CreateStore();
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 20,
+            Note = "特別指定",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(1, result.Ok);
+        Assert.Equal(1, result.Manual);
+        Assert.Equal(0, result.Conflict);
+        Assert.Equal(0, result.Unmatched);
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Single(rows);
+        var row = rows[0];
+        Assert.Equal(1001, row.DeviceObjid);
+
+        // 雙面斷言：斷言 HostId 是人工指定的那台 (20)，不是 IP 命中的那台 (10)
+        Assert.Equal(20, row.HostId);
+        Assert.NotEqual(10, row.HostId);
+
+        // 雙面斷言：斷言 HostName 是人工指定的主機名，不是 IP 命中的主機名
+        Assert.Equal("srv-manual-target", row.HostName);
+        Assert.NotEqual("srv-app01", row.HostName);
+
+        Assert.Equal(PrtgMapStatus.Ok, row.MapStatus);
+        Assert.Equal("人工指定對應：特別指定", row.Note);
+    }
+
+    [Fact]
+    public void MapForDate_人工對應不影響同IP其他device_不會誤判成Conflict_雙面斷言()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-auto", IpAddress = "192.168.1.50", Active = true });
+            hosts.Add(new WebHost { HostId = 20, HostName = "srv-manual", IpAddress = "10.0.0.20", Active = true });
+        });
+
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1001, Name = "PRTG-Manual", Ip = "192.168.1.50" },
+            new PrtgDeviceRow { Objid = 1002, Name = "PRTG-Auto", Ip = "192.168.1.50" });
+
+        var store = CreateStore();
+        // 1001 設定人工對應到 20，1002 無人工對應
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 20,
+            Note = "人工指派",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(2, result.Ok);
+        Assert.Equal(1, result.Manual);
+        Assert.Equal(0, result.Conflict); // 關鍵：同 IP 的 1002 不會因為 1001 而被判成 conflict
+        Assert.Equal(0, result.Unmatched);
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Equal(2, rows.Count);
+
+        var row1001 = rows.Single(r => r.DeviceObjid == 1001);
+        Assert.Equal(20, row1001.HostId);
+        Assert.NotEqual(10, row1001.HostId);
+        Assert.Equal(PrtgMapStatus.Ok, row1001.MapStatus);
+
+        var row1002 = rows.Single(r => r.DeviceObjid == 1002);
+        // 雙面斷言：1002 正常命中自動判定 (Host 10)，且狀態為 Ok 而不是 Conflict
+        Assert.Equal(10, row1002.HostId);
+        Assert.NotEqual(20, row1002.HostId);
+        Assert.Equal(PrtgMapStatus.Ok, row1002.MapStatus);
+        Assert.NotEqual(PrtgMapStatus.Conflict, row1002.MapStatus);
+        Assert.Null(row1002.Note); // 不是「此 IP 同時有 N 個 PRTG device」
+    }
+
+    [Fact]
+    public void MapForDate_人工對應主機不存在或已停用_回退自動判定且輸出警告()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-active", IpAddress = "192.168.1.10", Active = true });
+            hosts.Add(new WebHost { HostId = 30, HostName = "srv-disabled", IpAddress = "192.168.1.30", Active = false });
+        });
+
+        // 裝置 IP 查無主機
+        SeedDevices(new PrtgDeviceRow { Objid = 1001, Name = "PRTG-Dev1", Ip = "10.99.99.99" });
+
+        var store = CreateStore();
+        // 人工對應到已停用的主機 30
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 30,
+            Note = "指派給停用主機",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(0, result.Ok); // 不是 Ok
+        Assert.Equal(0, result.Manual);
+        Assert.Equal(1, result.Unmatched); // 回退到自動判定（查無 IP -> Unmatched）
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Single(rows);
+        Assert.Equal(1001, rows[0].DeviceObjid);
+        Assert.Equal(PrtgMapStatus.Unmatched, rows[0].MapStatus);
+        Assert.Null(rows[0].HostId);
+
+        // 警告行斷言
+        Assert.Contains(console.Lines, l => l.Contains("警告") && l.Contains("1001"));
+    }
+
+    [Fact]
+    public void MapForDate_刪除人工對應後重跑_恢復自動判定()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "192.168.1.10", Active = true });
+            hosts.Add(new WebHost { HostId = 20, HostName = "srv-manual", IpAddress = "10.0.0.20", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1001, Name = "PRTG-Dev1", Ip = "192.168.1.10" });
+
+        var store = CreateStore();
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 20,
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // 第一次執行：人工對應生效
+        var result1 = mapper.MapForDate(mapDate);
+        Assert.Equal(1, result1.Ok);
+        Assert.Equal(1, result1.Manual);
+        var rows1 = store.GetHostMapForDate(mapDate);
+        Assert.Equal(20, rows1[0].HostId);
+
+        // 刪除人工對應
+        store.DeleteManualMap(1001);
+
+        // 第二次執行：恢復自動判定（IP 192.168.1.10 對應到 Host 10）
+        var result2 = mapper.MapForDate(mapDate);
+        Assert.Equal(1, result2.Ok);
+        Assert.Equal(0, result2.Manual);
+        var rows2 = store.GetHostMapForDate(mapDate);
+        Assert.Equal(10, rows2[0].HostId);
+        Assert.Equal("srv-app01", rows2[0].HostName);
+    }
 }

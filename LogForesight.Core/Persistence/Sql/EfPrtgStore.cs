@@ -447,6 +447,48 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
+    /// <summary>讀取全部人工對應（device_objid → 列）</summary>
+    public List<PrtgManualMapRow> GetManualMaps()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgManualMaps.AsNoTracking().ToList();
+    }
+
+    /// <summary>新增或更新一筆人工對應。CreatedAt 首次建立時寫入，後續更新不覆蓋。</summary>
+    public void UpsertManualMap(PrtgManualMapRow row)
+    {
+        if (row == null) return;
+        using var ctx = _contextFactory();
+        var existing = ctx.PrtgManualMaps.FirstOrDefault(m => m.DeviceObjid == row.DeviceObjid);
+        if (existing != null)
+        {
+            existing.HostId = row.HostId;
+            existing.CreatedBy = row.CreatedBy;
+            existing.Note = row.Note;
+            // CreatedAt 保持原值
+        }
+        else
+        {
+            var newRow = new PrtgManualMapRow
+            {
+                DeviceObjid = row.DeviceObjid,
+                HostId = row.HostId,
+                CreatedBy = row.CreatedBy,
+                Note = row.Note,
+                CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
+            };
+            ctx.PrtgManualMaps.Add(newRow);
+        }
+        ctx.SaveChanges();
+    }
+
+    /// <summary>刪除一筆人工對應，回傳刪除筆數。</summary>
+    public int DeleteManualMap(long deviceObjid)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete();
+    }
+
     /// <summary>
     /// 取得 PRTG 鏡像五表的概要統計（計數與最近時間點）。
     /// 透過 SQL 聚合查詢，不將整張表載入記憶體。

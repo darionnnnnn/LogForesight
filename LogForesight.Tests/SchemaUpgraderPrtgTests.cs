@@ -218,6 +218,77 @@ public class SchemaUpgraderPrtgTests : IDisposable
             "map_date", "device_objid", "ip", "host_id", "host_name", "map_status", "note", "created_at"
         };
         Assert.True(expectedMap.SetEquals(mapColumns), $"lf_prtg_host_map 欄位不符。實際: {string.Join(", ", mapColumns)}");
+
+        // 表六：lf_prtg_manual_map
+        var manualColumns = GetColumnNames(ctx, "lf_prtg_manual_map");
+        var expectedManual = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "device_objid", "host_id", "created_by", "note", "created_at"
+        };
+        Assert.True(expectedManual.SetEquals(manualColumns), $"lf_prtg_manual_map 欄位不符。實際: {string.Join(", ", manualColumns)}");
+    }
+
+    [Fact]
+    public void 建表_人工對應表在EF與SchemaUpgrader兩軌下皆可讀寫()
+    {
+        var now = new DateTime(2026, 8, 31, 10, 0, 0);
+
+        // 軌道一：EF EnsureCreated 直接建表
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgManualMaps.Add(new PrtgManualMapRow
+            {
+                DeviceObjid = 1001,
+                HostId = 10,
+                CreatedBy = "admin",
+                Note = "EF 建立",
+                CreatedAt = now
+            });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = _fx.NewContext())
+        {
+            var row = ctx.PrtgManualMaps.Find(1001L);
+            Assert.NotNull(row);
+            Assert.Equal(10, row.HostId);
+            Assert.Equal("admin", row.CreatedBy);
+            Assert.Equal("EF 建立", row.Note);
+            Assert.Equal(now, row.CreatedAt);
+        }
+
+        // 軌道二：模擬既有部署砍表後以 SchemaUpgrader 重建
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS lf_prtg_manual_map");
+        }
+
+        using (var ctx = _fx.NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgManualMaps.Add(new PrtgManualMapRow
+            {
+                DeviceObjid = 2002,
+                HostId = 20,
+                CreatedBy = "user1",
+                Note = "SchemaUpgrader 建立",
+                CreatedAt = now
+            });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = _fx.NewContext())
+        {
+            var row = ctx.PrtgManualMaps.Find(2002L);
+            Assert.NotNull(row);
+            Assert.Equal(20, row.HostId);
+            Assert.Equal("user1", row.CreatedBy);
+            Assert.Equal("SchemaUpgrader 建立", row.Note);
+        }
     }
 
     [Fact]
@@ -302,7 +373,8 @@ public class SchemaUpgraderPrtgTests : IDisposable
         "lf_prtg_sensors",
         "lf_prtg_state_changes",
         "lf_prtg_values",
-        "lf_prtg_host_map"
+        "lf_prtg_host_map",
+        "lf_prtg_manual_map"
     };
 
     private static HashSet<string> GetColumnNames(LfDbContext ctx, string table)

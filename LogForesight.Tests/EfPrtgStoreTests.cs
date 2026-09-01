@@ -841,4 +841,105 @@ public class EfPrtgStoreTests : IDisposable
         var targetsNull = store.GetValueFetchTargets(whitelist: null, deviceObjids: null!);
         Assert.Empty(targetsNull);
     }
+
+    [Fact]
+    public void GetManualMaps_無資料時回傳空清單_有資料時回傳全部()
+    {
+        var store = CreateStore();
+        Assert.Empty(store.GetManualMaps());
+
+        var now = DateTime.Now;
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 10,
+            CreatedBy = "admin",
+            Note = "對應1",
+            CreatedAt = now
+        });
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1002,
+            HostId = 20,
+            CreatedBy = "admin",
+            Note = "對應2",
+            CreatedAt = now
+        });
+
+        var maps = store.GetManualMaps();
+        Assert.Equal(2, maps.Count);
+        Assert.Contains(maps, m => m.DeviceObjid == 1001 && m.HostId == 10);
+        Assert.Contains(maps, m => m.DeviceObjid == 1002 && m.HostId == 20);
+    }
+
+    [Fact]
+    public void UpsertManualMap_新增後可讀回且再次更新時CreatedAt不變()
+    {
+        var store = CreateStore();
+        var t1 = new DateTime(2026, 8, 31, 10, 0, 0);
+        var t2 = new DateTime(2026, 8, 31, 11, 0, 0);
+
+        // 首次新增
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 10,
+            CreatedBy = "admin",
+            Note = "首次建立",
+            CreatedAt = t1
+        });
+
+        var maps = store.GetManualMaps();
+        Assert.Single(maps);
+        Assert.Equal(1001, maps[0].DeviceObjid);
+        Assert.Equal(10, maps[0].HostId);
+        Assert.Equal("admin", maps[0].CreatedBy);
+        Assert.Equal("首次建立", maps[0].Note);
+        Assert.Equal(t1, maps[0].CreatedAt);
+
+        // 再次 upsert 同一 device：更新 HostId, Note, CreatedBy，但傳入不同 CreatedAt
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 20,
+            CreatedBy = "operator1",
+            Note = "修改備註",
+            CreatedAt = t2
+        });
+
+        var updatedMaps = store.GetManualMaps();
+        Assert.Single(updatedMaps);
+        Assert.Equal(1001, updatedMaps[0].DeviceObjid);
+        Assert.Equal(20, updatedMaps[0].HostId);
+        Assert.Equal("operator1", updatedMaps[0].CreatedBy);
+        Assert.Equal("修改備註", updatedMaps[0].Note);
+        Assert.Equal(t1, updatedMaps[0].CreatedAt); // CreatedAt 保持 t1，不被覆蓋
+    }
+
+    [Fact]
+    public void DeleteManualMap_刪除後讀不到且回傳筆數為1_刪不存在的回0()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 10,
+            CreatedBy = "admin",
+            Note = "測試",
+            CreatedAt = now
+        });
+
+        Assert.Single(store.GetManualMaps());
+
+        // 刪除存在的 device
+        var deletedCount = store.DeleteManualMap(1001);
+        Assert.Equal(1, deletedCount);
+        Assert.Empty(store.GetManualMaps());
+
+        // 刪除不存在的 device
+        var deletedNonExistent = store.DeleteManualMap(9999);
+        Assert.Equal(0, deletedNonExistent);
+    }
 }

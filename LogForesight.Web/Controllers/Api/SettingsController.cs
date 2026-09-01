@@ -221,5 +221,106 @@ public class SettingsController : ControllerBase
             Unmatched = unmatched
         });
     }
+
+    // ── PRTG 人工主機對應（PRTG 第 2 輪任務E-1）──────────────────────────────────
+
+    /// <summary>取得全部 PRTG 人工主機對應清單（含主機名稱，供畫面顯示）</summary>
+    [HttpGet("prtg-manual-map")]
+    public ApiResponse<List<PrtgManualMapDto>> GetPrtgManualMaps()
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<List<PrtgManualMapDto>>.Ok(new List<PrtgManualMapDto>());
+        }
+
+        var store = _backend.PrtgStore();
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var hostMap = hostStore.GetAll().ToDictionary(h => h.HostId);
+        var manualMaps = store.GetManualMaps();
+
+        var dtos = manualMaps.Select(m => new PrtgManualMapDto
+        {
+            DeviceObjid = m.DeviceObjid,
+            HostId = m.HostId,
+            HostName = hostMap.TryGetValue(m.HostId, out var host) ? host.HostName : null,
+            Note = m.Note,
+            CreatedBy = m.CreatedBy,
+            CreatedAt = m.CreatedAt
+        }).OrderBy(m => m.DeviceObjid).ToList();
+
+        return ApiResponse<List<PrtgManualMapDto>>.Ok(dtos);
+    }
+
+    /// <summary>新增或更新一筆 PRTG 人工主機對應</summary>
+    [HttpPut("prtg-manual-map")]
+    public ApiResponse<PrtgManualMapDto> SetPrtgManualMap([FromBody] SetPrtgManualMapRequest request)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Get(request.HostId);
+        if (host == null || !host.Active || host.MergedInto != null)
+            throw DomainException.Validation("指定的主機不存在或已停用。");
+
+        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
+
+        var store = _backend.PrtgStore();
+        var row = new PrtgManualMapRow
+        {
+            DeviceObjid = request.DeviceObjid,
+            HostId = request.HostId,
+            Note = request.Note,
+            CreatedBy = createdBy,
+            CreatedAt = DateTime.Now
+        };
+        store.UpsertManualMap(row);
+
+        _audit.Record(
+            action: AuditActions.PrtgManualMapSet,
+            summary: $"設定 PRTG device {request.DeviceObjid} 人工對應到主機 {host.HostName}",
+            targetKind: "prtg_manual_map",
+            targetId: request.DeviceObjid.ToString(),
+            detail: new
+            {
+                request.DeviceObjid,
+                request.HostId,
+                host.HostName,
+                request.Note
+            });
+
+        var saved = store.GetManualMaps().FirstOrDefault(m => m.DeviceObjid == request.DeviceObjid);
+
+        return ApiResponse<PrtgManualMapDto>.Ok(new PrtgManualMapDto
+        {
+            DeviceObjid = request.DeviceObjid,
+            HostId = request.HostId,
+            HostName = host.HostName,
+            Note = request.Note,
+            CreatedBy = saved?.CreatedBy ?? createdBy,
+            CreatedAt = saved?.CreatedAt ?? row.CreatedAt
+        });
+    }
+
+    /// <summary>刪除一筆 PRTG 人工主機對應</summary>
+    [HttpDelete("prtg-manual-map/{deviceObjid:long}")]
+    public ApiResponse<bool> DeletePrtgManualMap(long deviceObjid)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        var store = _backend.PrtgStore();
+        var deleted = store.DeleteManualMap(deviceObjid);
+
+        _audit.Record(
+            action: AuditActions.PrtgManualMapDelete,
+            summary: $"刪除 PRTG device {deviceObjid} 的人工主機對應",
+            targetKind: "prtg_manual_map",
+            targetId: deviceObjid.ToString(),
+            detail: new { DeviceObjid = deviceObjid, Deleted = deleted });
+
+        return ApiResponse<bool>.Ok(deleted > 0);
+    }
 }
 

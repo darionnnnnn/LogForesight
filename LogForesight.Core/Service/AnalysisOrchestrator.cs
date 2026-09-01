@@ -1102,7 +1102,7 @@ public class AnalysisOrchestrator
             {
                 var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
                 var mapResult = hostMapper.MapForDate(day);
-                runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}");
+                runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}");
             }
             catch (OperationCanceledException)
             {

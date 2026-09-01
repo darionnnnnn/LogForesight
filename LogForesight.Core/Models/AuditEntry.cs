@@ -148,6 +148,10 @@ public static class AuditActions
     // PRTG 歷史回填（PRTG 第 1 輪批次E）
     public const string PrtgBackfillRun = "prtg_backfill_run";
 
+    // PRTG 人工主機對應（PRTG 第 2 輪任務E-1）
+    public const string PrtgManualMapSet = "prtg_manual_map_set";
+    public const string PrtgManualMapDelete = "prtg_manual_map_delete";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

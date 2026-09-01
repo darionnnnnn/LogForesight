@@ -58,3 +58,22 @@ public class PrtgMirrorStatusDto
     public IReadOnlyList<PrtgHostMapItemDto> Unmatched { get; set; } = Array.Empty<PrtgHostMapItemDto>();
 }
 
+/// <summary>設定 PRTG 人工主機對應請求</summary>
+public class SetPrtgManualMapRequest
+{
+    public long DeviceObjid { get; set; }
+    public long HostId { get; set; }
+    public string? Note { get; set; }
+}
+
+/// <summary>PRTG 人工主機對應項目</summary>
+public class PrtgManualMapDto
+{
+    public long DeviceObjid { get; set; }
+    public long HostId { get; set; }
+    public string? HostName { get; set; }
+    public string? Note { get; set; }
+    public string? CreatedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
