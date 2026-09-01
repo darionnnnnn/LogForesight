@@ -514,6 +514,38 @@ public sealed class EfPrtgStore
 
         return new PrtgWhitelistCoverage(whitelistSensorCount, onMappedDeviceCount);
     }
+
+    /// <summary>
+    /// 選出要擷取數值的 sensor：位於指定 device 上、未暫停、且 type 命中白名單者。
+    /// 白名單為 null 或空代表不限制 type（沿用設定語意）。device 集合為空時回空清單。
+    /// </summary>
+    public List<long> GetValueFetchTargets(IReadOnlyCollection<string>? whitelist, IReadOnlyCollection<long> deviceObjids)
+    {
+        if (deviceObjids == null || deviceObjids.Count == 0)
+        {
+            return new List<long>();
+        }
+
+        using var ctx = _contextFactory();
+
+        var query = ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => !s.Paused && deviceObjids.Contains(s.DeviceObjid))
+            .Select(s => new { s.Objid, s.SensorType })
+            .ToList();
+
+        if (whitelist == null || whitelist.Count == 0)
+        {
+            return query.Select(s => s.Objid).ToList();
+        }
+
+        var whitelistSet = new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);
+
+        return query
+            .Where(s => whitelistSet.Contains(s.SensorType))
+            .Select(s => s.Objid)
+            .ToList();
+    }
 }
 
 /// <summary>

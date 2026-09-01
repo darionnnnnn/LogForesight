@@ -735,4 +735,110 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(0, coverageNull.WhitelistSensorCount);
         Assert.Equal(0, coverageNull.OnMappedDeviceCount);
     }
+
+    [Fact]
+    public void GetValueFetchTargets_只回傳指定device上的sensor()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, Name = "Sensor-Dev10", SensorType = "ping", Paused = false },
+            new() { Objid = 1002, DeviceObjid = 20, Name = "Sensor-Dev20", SensorType = "ping", Paused = false }
+        }, now);
+
+        var targets = store.GetValueFetchTargets(whitelist: null, deviceObjids: new[] { 10L });
+
+        Assert.Single(targets);
+        Assert.Contains(1001L, targets);
+        Assert.DoesNotContain(1002L, targets);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_排除已暫停的sensor()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 10, Name = "Active-Sensor", SensorType = "ping", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 10, Name = "Paused-Sensor", SensorType = "ping", Paused = true }
+        }, now);
+
+        var targets = store.GetValueFetchTargets(whitelist: null, deviceObjids: new[] { 10L });
+
+        Assert.Single(targets);
+        Assert.Contains(2001L, targets);
+        Assert.DoesNotContain(2002L, targets);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_白名單比對不分大小寫且白名單為空時不限制type()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 3001, DeviceObjid = 10, Name = "Disk Sensor 1", SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 3002, DeviceObjid = 10, Name = "Disk Sensor 2", SensorType = "snmp disk free", Paused = false },
+            new() { Objid = 3003, DeviceObjid = 10, Name = "Ping Sensor", SensorType = "ping", Paused = false },
+            new() { Objid = 3004, DeviceObjid = 10, Name = "HTTP Sensor", SensorType = "http", Paused = false }
+        }, now);
+
+        // 1. 白名單比對不分大小寫：給予不同大小寫的白名單 "snmp disk free"
+        var targetsWithWhitelist = store.GetValueFetchTargets(
+            whitelist: new[] { "snmp disk free" },
+            deviceObjids: new[] { 10L });
+
+        Assert.Equal(2, targetsWithWhitelist.Count);
+        Assert.Contains(3001L, targetsWithWhitelist);
+        Assert.Contains(3002L, targetsWithWhitelist);
+        Assert.DoesNotContain(3003L, targetsWithWhitelist);
+        Assert.DoesNotContain(3004L, targetsWithWhitelist);
+
+        // 2. 白名單為空清單時不限制 type
+        var targetsEmptyWhitelist = store.GetValueFetchTargets(
+            whitelist: Array.Empty<string>(),
+            deviceObjids: new[] { 10L });
+
+        Assert.Equal(4, targetsEmptyWhitelist.Count);
+        Assert.Contains(3001L, targetsEmptyWhitelist);
+        Assert.Contains(3002L, targetsEmptyWhitelist);
+        Assert.Contains(3003L, targetsEmptyWhitelist);
+        Assert.Contains(3004L, targetsEmptyWhitelist);
+
+        // 3. 白名單為 null 時不限制 type
+        var targetsNullWhitelist = store.GetValueFetchTargets(
+            whitelist: null,
+            deviceObjids: new[] { 10L });
+
+        Assert.Equal(4, targetsNullWhitelist.Count);
+        Assert.Contains(3001L, targetsNullWhitelist);
+        Assert.Contains(3002L, targetsNullWhitelist);
+        Assert.Contains(3003L, targetsNullWhitelist);
+        Assert.Contains(3004L, targetsNullWhitelist);
+    }
+
+    [Fact]
+    public void GetValueFetchTargets_device集合為空時回空清單()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 4001, DeviceObjid = 10, Name = "Sensor", SensorType = "ping", Paused = false }
+        }, now);
+
+        // deviceObjids 為空清單
+        var targetsEmpty = store.GetValueFetchTargets(whitelist: null, deviceObjids: Array.Empty<long>());
+        Assert.Empty(targetsEmpty);
+
+        // deviceObjids 為 null
+        var targetsNull = store.GetValueFetchTargets(whitelist: null, deviceObjids: null!);
+        Assert.Empty(targetsNull);
+    }
 }

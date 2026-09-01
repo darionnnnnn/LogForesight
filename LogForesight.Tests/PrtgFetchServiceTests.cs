@@ -805,4 +805,92 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 已自動填入 1 個感測器的語意分類。"));
     }
+
+    [Fact]
+    public async Task FetchDayAsync_fetchValues為false時略過階段4且不發出historicdata請求()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
+        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"Ping\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}]}";
+        var msgJson = "{\"treesize\":1,\"messages\":[{\"objid\":201,\"datetime\":\"2026-08-30 10:00:00\",\"parent\":\"Server-01\",\"type\":\"Ping\",\"status\":\"Up\",\"message\":\"OK\"}]}";
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return url.Contains("start=0") ? JsonResponse(msgJson) : JsonResponse("{\"treesize\":1,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+        var day = new DateTime(2026, 8, 30);
+
+        var result = await service.FetchDayAsync(day, 1, CancellationToken.None, syncStructure: true, fetchValues: false);
+
+        // 階段 1~3 照常完成（device／sensor／狀態變更有寫入）
+        Assert.Equal(1, result.Devices);
+        Assert.Equal(1, result.Sensors);
+        Assert.Equal(1, result.StateChanges);
+        // 階段 4 略過：Values 為 0、Failures 不因此增加
+        Assert.Equal(0, result.Values);
+        Assert.Equal(0, result.Failures);
+
+        // handler.RequestedUrls 中沒有任何 historicdata 請求
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata"));
+        Assert.Contains(console.Lines, l => l.Contains("[階段 4/4] 數值擷取改由觸發式流程執行，本階段略過。"));
+
+        // 資料庫斷言：device／sensor／狀態變更有寫入，數值為 0
+        using var ctx = _fx.NewContext();
+        Assert.Equal(1, ctx.PrtgDevices.Count(d => d.Objid == 101));
+        Assert.Equal(1, ctx.PrtgSensors.Count(s => s.Objid == 201));
+        Assert.Equal(1, ctx.PrtgStateChanges.Count());
+        Assert.Equal(0, ctx.PrtgValues.Count());
+    }
+
+    [Fact]
+    public async Task FetchValuesForSensorsAsync_只對指定sensor發出historicdata請求並寫入數值()
+    {
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("id=501"))
+            {
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":12.5,\"coverage\":100},{\"datetime\":\"2026-08-30 02:00:00\",\"value_\":14.0,\"coverage\":100}]}");
+            }
+            if (url.Contains("id=502"))
+            {
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":55.0,\"coverage\":100}]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+        var day = new DateTime(2026, 8, 30);
+
+        // 指定 501，未指定 502 與 503
+        var (written, failed) = await service.FetchValuesForSensorsAsync(
+            day, new[] { 501L }, concurrency: 1, CancellationToken.None);
+
+        Assert.Equal(2, written);
+        Assert.Equal(0, failed);
+
+        // 雙面斷言：指定的有發出，未指定的沒有發出
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=501"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("id=502"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("id=503"));
+
+        // 資料庫斷言：501 的 2 筆數值確實落地
+        using var ctx = _fx.NewContext();
+        Assert.Equal(2, ctx.PrtgValues.Count(v => v.SensorObjid == 501));
+        Assert.Equal(0, ctx.PrtgValues.Count(v => v.SensorObjid == 502));
+    }
 }
