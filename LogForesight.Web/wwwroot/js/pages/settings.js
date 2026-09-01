@@ -803,6 +803,8 @@ function renderPrtgFields(settings) {
     setNumber('prtg-fetch-concurrency', settings.prtgFetchConcurrency);
     setNumber('prtg-backfill-days', settings.prtgBackfillDays);
     setNumber('prtg-retention-days', settings.prtgRetentionDays);
+    document.getElementById('prtg-sensor-type-whitelist').value =
+        (settings.prtgSensorTypeWhitelist ?? []).join('\n');
     document.getElementById('prtg-test-result').replaceChildren();
 }
 
@@ -1145,7 +1147,8 @@ function bindForm() {
                 prtgTimeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value),
                 prtgFetchConcurrency: Number(document.getElementById('prtg-fetch-concurrency').value),
                 prtgBackfillDays: Number(document.getElementById('prtg-backfill-days').value),
-                prtgRetentionDays
+                prtgRetentionDays,
+                prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist')
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);

@@ -861,6 +861,16 @@
                 </div>
             </div>
 
+            <div class="mb-3">
+                <label for="prtg-sensor-type-whitelist" class="form-label">擷取數值的 sensor type 白名單</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+                <textarea class="form-control lf-mono" id="prtg-sensor-type-whitelist" rows="6"
+                          placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
+            </div>
+
             <hr />
 
             <div class="mb-4" id="prtg-mirror-section">
