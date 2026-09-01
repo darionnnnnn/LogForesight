@@ -111,6 +111,7 @@ public class AdminController : ControllerBase
         [FromQuery] string? sentinel = null,
         [FromQuery] string? groupIds = null,
         [FromQuery] string? os = null,
+        [FromQuery] string? prtgMap = null,
         [FromQuery] string sort = "name",
         [FromQuery] string dir = "asc",
         [FromQuery] int page = 1,
@@ -123,6 +124,7 @@ public class AdminController : ControllerBase
             Sentinel = sentinel,
             GroupIds = QueryStringParsing.ParseLongs(groupIds),
             Os = os,
+            PrtgMap = prtgMap,
             Sort = sort,
             Dir = dir,
             Page = page,
@@ -144,6 +146,7 @@ public class AdminController : ControllerBase
         [FromQuery] string? sentinel = null,
         [FromQuery] string? groupIds = null,
         [FromQuery] string? os = null,
+        [FromQuery] string? prtgMap = null,
         [FromQuery] string sort = "name",
         [FromQuery] string dir = "asc")
     {
@@ -154,6 +157,7 @@ public class AdminController : ControllerBase
             Sentinel = sentinel,
             GroupIds = QueryStringParsing.ParseLongs(groupIds),
             Os = os,
+            PrtgMap = prtgMap,
             Sort = sort,
             Dir = dir
         };

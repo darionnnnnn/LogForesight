@@ -3,7 +3,7 @@
  */
 
 import { api } from '../core/api.js';
-import { bindTabs, toast, withBusy, renderSpinner } from '../core/ui.js';
+import { bindTabs, toast, withBusy, renderSpinner, confirmAction } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('prtg-tabs'));
@@ -240,7 +240,7 @@ function renderPrtgMirror(data) {
         if (!items || items.length === 0) {
             const tr = document.createElement('tr');
             const td = document.createElement('td');
-            td.colSpan = 4;
+            td.colSpan = 5;
             td.className = 'text-muted text-center py-2';
             td.textContent = emptyText;
             tr.appendChild(td);
@@ -266,7 +266,15 @@ function renderPrtgMirror(data) {
             tdNote.className = 'text-muted';
             tdNote.textContent = item.note || '-';
 
-            tr.append(tdObjid, tdIp, tdHost, tdNote);
+            const tdAction = document.createElement('td');
+            const assignBtn = document.createElement('button');
+            assignBtn.type = 'button';
+            assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
+            assignBtn.textContent = '指派給主機';
+            assignBtn.addEventListener('click', () => openAssignModal(item.deviceObjid));
+            tdAction.appendChild(assignBtn);
+
+            tr.append(tdObjid, tdIp, tdHost, tdNote, tdAction);
             tbody.appendChild(tr);
         }
     };
@@ -275,10 +283,139 @@ function renderPrtgMirror(data) {
     renderList('prtg-mirror-unmatched-body', data.unmatched, '無未對應項目');
 }
 
+function renderManualMaps(items) {
+    const tbody = document.getElementById('prtg-mirror-manual-maps-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+
+    if (!items || items.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'text-muted text-center py-2';
+        td.textContent = '無人工對應項目';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    for (const item of items) {
+        const tr = document.createElement('tr');
+
+        const tdObjid = document.createElement('td');
+        tdObjid.className = 'font-monospace';
+        tdObjid.textContent = String(item.deviceObjid);
+
+        const tdHost = document.createElement('td');
+        tdHost.textContent = item.hostName || `Host ID: ${item.hostId}`;
+
+        const tdNote = document.createElement('td');
+        tdNote.className = 'text-muted';
+        tdNote.textContent = item.note || '-';
+
+        const tdCreatedBy = document.createElement('td');
+        tdCreatedBy.textContent = item.createdBy || '-';
+
+        const tdAction = document.createElement('td');
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
+        removeBtn.textContent = '移除';
+        removeBtn.addEventListener('click', () => {
+            confirmAction(`確定要移除 PRTG device ${item.deviceObjid} 的人工主機對應嗎？`, async () => {
+                try {
+                    await api.delete(`/api/admin/settings/prtg-manual-map/${item.deviceObjid}`);
+                    toast('已移除人工對應', 'success');
+                    await refreshPrtgMirror();
+                } catch (error) {
+                    toast(error?.message || '移除失敗', 'danger');
+                }
+            });
+        });
+        tdAction.appendChild(removeBtn);
+
+        tr.append(tdObjid, tdHost, tdNote, tdCreatedBy, tdAction);
+        tbody.appendChild(tr);
+    }
+}
+
+let assignModal = null;
+let cachedHosts = null;
+
+async function openAssignModal(deviceObjid) {
+    const modalEl = document.getElementById('prtg-assign-modal');
+    if (!modalEl) return;
+    if (!assignModal) {
+        assignModal = new bootstrap.Modal(modalEl);
+    }
+
+    document.getElementById('prtg-assign-device-objid').value = String(deviceObjid);
+    document.getElementById('prtg-assign-note').value = '';
+
+    const hostSelect = document.getElementById('prtg-assign-host');
+    hostSelect.innerHTML = '<option value="">載入中…</option>';
+    assignModal.show();
+
+    try {
+        if (!cachedHosts) {
+            const res = await api.get('/api/admin/hosts?pageSize=2000', { silent: true });
+            cachedHosts = (res?.items || res || []).filter(h => h.active);
+        }
+        hostSelect.innerHTML = '<option value="">請選擇主機…</option>';
+        for (const host of cachedHosts) {
+            const option = document.createElement('option');
+            option.value = String(host.hostId);
+            option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
+            hostSelect.appendChild(option);
+        }
+    } catch (error) {
+        hostSelect.innerHTML = '<option value="">無法載入主機清單</option>';
+        toast('載入主機清單失敗', 'danger');
+    }
+}
+
+function bindAssignForm() {
+    const form = document.getElementById('prtg-assign-form');
+    const submitBtn = document.getElementById('prtg-assign-submit');
+    if (!form || !submitBtn) return;
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const hostId = document.getElementById('prtg-assign-host').value;
+        if (!hostId) {
+            toast('請選擇目標主機', 'warning');
+            return;
+        }
+
+        const deviceObjid = Number(document.getElementById('prtg-assign-device-objid').value);
+        const note = document.getElementById('prtg-assign-note').value.trim() || null;
+
+        const restore = withBusy(submitBtn, '指派中');
+        try {
+            await api.put('/api/admin/settings/prtg-manual-map', {
+                deviceObjid,
+                hostId: Number(hostId),
+                note
+            });
+            toast('已指派', 'success');
+            if (assignModal) assignModal.hide();
+            await refreshPrtgMirror();
+        } catch (error) {
+            toast(error?.message || '指派失敗', 'danger');
+        } finally {
+            restore();
+        }
+    });
+}
+
 async function refreshPrtgMirror() {
     try {
-        const data = await api.get('/api/admin/settings/prtg-mirror', { silent: true });
-        renderPrtgMirror(data);
+        const [mirrorData, manualMaps] = await Promise.all([
+            api.get('/api/admin/settings/prtg-mirror', { silent: true }),
+            api.get('/api/admin/settings/prtg-manual-map', { silent: true })
+        ]);
+        renderPrtgMirror(mirrorData);
+        renderManualMaps(manualMaps);
     } catch {
         // 失敗時不干擾整體頁面
     }
@@ -412,6 +549,7 @@ function init() {
     bindPrtgTest();
     bindPrtgMirror();
     bindPrtgProbe();
+    bindAssignForm();
     bindForm();
     loadSettings();
     refreshPrtgMirror();

@@ -942,4 +942,30 @@ public class EfPrtgStoreTests : IDisposable
         var deletedNonExistent = store.DeleteManualMap(9999);
         Assert.Equal(0, deletedNonExistent);
     }
+
+    [Fact]
+    public void GetSensorsByDevice_只回指定Device的Sensors_雙面斷言()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "CPU Load", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1001, Name = "Memory", SensorType = "snmpmem", Paused = false },
+            new() { Objid = 2003, DeviceObjid = 1002, Name = "Disk Space", SensorType = "wmidisk", Paused = false }
+        }, now);
+
+        var sensors1001 = store.GetSensorsByDevice(1001);
+        Assert.Equal(2, sensors1001.Count);
+        Assert.All(sensors1001, s => Assert.Equal(1001, s.DeviceObjid));
+        Assert.Contains(sensors1001, s => s.Objid == 2001);
+        Assert.Contains(sensors1001, s => s.Objid == 2002);
+        Assert.DoesNotContain(sensors1001, s => s.Objid == 2003);
+
+        var sensors1002 = store.GetSensorsByDevice(1002);
+        Assert.Single(sensors1002);
+        Assert.Equal(2003, sensors1002[0].Objid);
+        Assert.Equal(1002, sensors1002[0].DeviceObjid);
+    }
 }

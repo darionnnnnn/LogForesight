@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -22,6 +24,16 @@ public class HostAdminServiceTests
         new FakeNetiqHostServiceForAdmin(),
         _audit,
         new UserDisplayNameService(new FakeSystemSettingsStore()));
+
+    private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
+        _hosts,
+        _groups,
+        new FakeUserStore(),
+        new FakeNetiqServerCatalog("SENTINEL-A"),
+        new FakeNetiqHostServiceForAdmin(),
+        _audit,
+        new UserDisplayNameService(new FakeSystemSettingsStore()),
+        prtgStore: prtgStore);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -384,6 +396,86 @@ public class HostAdminServiceTests
         var entry = Assert.Single(_audit.Entries);
         Assert.Contains("核心", entry.Summary);
         Assert.Contains("2 台", entry.Summary);
+    }
+
+    // ── PRTG 對應篩選 ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void GetHosts_PRTG篩選mapped_只回有ok對應的主機_雙面斷言()
+    {
+        using var fx = new EfSqliteFixture();
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var now = DateTime.Now;
+
+        var a = _hosts.Upsert(new WebHost { HostName = "SRV-OK", Active = true });
+        var b = _hosts.Upsert(new WebHost { HostName = "SRV-CONFLICT", Active = true });
+        var c = _hosts.Upsert(new WebHost { HostName = "SRV-NOMAP", Active = true });
+
+        prtgStore.ReplaceHostMapForDate(now, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = a.HostId, HostName = a.HostName, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = b.HostId, HostName = b.HostName, MapStatus = PrtgMapStatus.Conflict },
+            new() { DeviceObjid = 1003, HostId = null, HostName = null, MapStatus = PrtgMapStatus.Unmatched }
+        });
+
+        var service = CreateWithPrtg(prtgStore);
+        var result = service.GetHosts(new HostSearchRequest { PrtgMap = "mapped" });
+        var ids = result.Items.Select(h => h.HostId).ToList();
+
+        Assert.Contains(a.HostId, ids);
+        Assert.DoesNotContain(b.HostId, ids);
+        Assert.DoesNotContain(c.HostId, ids);
+    }
+
+    [Fact]
+    public void GetHosts_PRTG篩選unmatched_只回無ok對應的主機_雙面斷言()
+    {
+        using var fx = new EfSqliteFixture();
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var now = DateTime.Now;
+
+        var a = _hosts.Upsert(new WebHost { HostName = "SRV-OK", Active = true });
+        var b = _hosts.Upsert(new WebHost { HostName = "SRV-CONFLICT", Active = true });
+        var c = _hosts.Upsert(new WebHost { HostName = "SRV-NOMAP", Active = true });
+
+        prtgStore.ReplaceHostMapForDate(now, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = a.HostId, HostName = a.HostName, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = b.HostId, HostName = b.HostName, MapStatus = PrtgMapStatus.Conflict },
+            new() { DeviceObjid = 1003, HostId = null, HostName = null, MapStatus = PrtgMapStatus.Unmatched }
+        });
+
+        var service = CreateWithPrtg(prtgStore);
+        var result = service.GetHosts(new HostSearchRequest { PrtgMap = "unmatched" });
+        var ids = result.Items.Select(h => h.HostId).ToList();
+
+        Assert.DoesNotContain(a.HostId, ids);
+        Assert.Contains(b.HostId, ids);
+        Assert.Contains(c.HostId, ids);
+    }
+
+    [Fact]
+    public void GetHosts_PRTG篩選傳無效值_當作沒篩回全部主機()
+    {
+        using var fx = new EfSqliteFixture();
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var now = DateTime.Now;
+
+        var a = _hosts.Upsert(new WebHost { HostName = "SRV-OK", Active = true });
+        var b = _hosts.Upsert(new WebHost { HostName = "SRV-CONFLICT", Active = true });
+
+        prtgStore.ReplaceHostMapForDate(now, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = a.HostId, HostName = a.HostName, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var service = CreateWithPrtg(prtgStore);
+        var result = service.GetHosts(new HostSearchRequest { PrtgMap = "invalid_filter_value" });
+
+        Assert.Equal(2, result.Total);
+        var ids = result.Items.Select(h => h.HostId).ToList();
+        Assert.Contains(a.HostId, ids);
+        Assert.Contains(b.HostId, ids);
     }
 }
 

@@ -129,4 +129,39 @@ public class PrtgAdminPageUiTests
         Assert.Contains("/api/admin/settings/prtg-enabled", jsContent);
         Assert.DoesNotContain("prtgEnabled:", jsContent);
     }
+
+    [Fact]
+    public void Hosts主機清單頁包含Prtg篩選Chip與邏輯()
+    {
+        var root = FindRepoRoot();
+        var hostsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Hosts.cshtml");
+        Assert.True(File.Exists(hostsCshtmlPath), $"找不到檔案: {hostsCshtmlPath}");
+        var cshtmlContent = File.ReadAllText(hostsCshtmlPath);
+        Assert.Contains("host-prtg-chips", cshtmlContent);
+
+        var hostsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "hosts.js");
+        Assert.True(File.Exists(hostsJsPath), $"找不到檔案: {hostsJsPath}");
+        var jsContent = File.ReadAllText(hostsJsPath);
+        Assert.Contains("prtgMap", jsContent);
+    }
+
+    [Fact]
+    public void HostDetail與PrtgAdmin頁包含Prtg區塊與人工對應端點呼叫()
+    {
+        var root = FindRepoRoot();
+        var hostDetailCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "HostDetail.cshtml");
+        Assert.True(File.Exists(hostDetailCshtmlPath), $"找不到檔案: {hostDetailCshtmlPath}");
+        var hostDetailCshtmlContent = File.ReadAllText(hostDetailCshtmlPath);
+        Assert.Contains("host-prtg", hostDetailCshtmlContent);
+
+        var hostDetailJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "host-detail.js");
+        Assert.True(File.Exists(hostDetailJsPath), $"找不到檔案: {hostDetailJsPath}");
+        var hostDetailJsContent = File.ReadAllText(hostDetailJsPath);
+        Assert.Contains("/prtg", hostDetailJsContent);
+
+        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
+        var prtgAdminJsContent = File.ReadAllText(prtgAdminJsPath);
+        Assert.Contains("prtg-manual-map", prtgAdminJsContent);
+    }
 }

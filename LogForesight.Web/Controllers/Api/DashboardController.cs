@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -96,10 +97,12 @@ public class RunActivityController : ControllerBase
 public class HostDetailController : ControllerBase
 {
     private readonly RecordDetailQueryService _service;
+    private readonly StorageBackend? _backend;
 
-    public HostDetailController(RecordDetailQueryService service)
+    public HostDetailController(RecordDetailQueryService service, StorageBackend? backend = null)
     {
         _service = service;
+        _backend = backend;
     }
 
     [HttpGet("{hostId:long}")]
@@ -112,6 +115,55 @@ public class HostDetailController : ControllerBase
     public ApiResponse<HostIssueOccurrenceDto> Issues(
         long hostId, [FromQuery] string source, [FromQuery] int eventId, [FromQuery] int days = 30) =>
         ApiResponse<HostIssueOccurrenceDto>.Ok(_service.GetHostIssueOccurrences(hostId, source, eventId, Math.Clamp(days, 7, 90)));
+
+    /// <summary>取得指定主機目前對應的 PRTG device 與 sensor 清單</summary>
+    [HttpGet("{hostId:long}/prtg")]
+    public ApiResponse<HostPrtgMappingDto> Prtg(long hostId)
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto());
+        }
+
+        var store = _backend.PrtgStore();
+        var mapRows = store.GetLatestHostMap();
+        if (mapRows.Count == 0)
+        {
+            return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto());
+        }
+
+        var targetRows = mapRows.Where(r => r.HostId == hostId).ToList();
+        var mapDate = mapRows.FirstOrDefault()?.MapDate;
+
+        var devices = new List<HostPrtgDeviceDto>();
+        foreach (var r in targetRows)
+        {
+            var sensors = store.GetSensorsByDevice(r.DeviceObjid)
+                .Select(s => new HostPrtgSensorDto
+                {
+                    Objid = s.Objid,
+                    Name = s.Name,
+                    SensorType = s.SensorType,
+                    Category = s.Category,
+                    Paused = s.Paused
+                }).ToList();
+
+            devices.Add(new HostPrtgDeviceDto
+            {
+                DeviceObjid = r.DeviceObjid,
+                Ip = r.Ip,
+                MapStatus = r.MapStatus,
+                Note = r.Note,
+                Sensors = sensors
+            });
+        }
+
+        return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto
+        {
+            MapDate = mapDate,
+            Devices = devices
+        });
+    }
 }
 
 /// <summary>報表（§9.6）</summary>

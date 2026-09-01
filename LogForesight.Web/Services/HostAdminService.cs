@@ -1,3 +1,6 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -16,6 +19,9 @@ public class HostSearchRequest
 
     /// <summary>空白＝全部；'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string? Os { get; set; }
+
+    /// <summary>空白＝全部；'mapped' | 'conflict' | 'unmatched'</summary>
+    public string? PrtgMap { get; set; }
 
     /// <summary>name | source | ip | os | roleDesc | lastReport</summary>
     public string Sort { get; set; } = "name";
@@ -37,6 +43,7 @@ public class HostAdminService
     private readonly INetiqHostService _netiqHosts;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly EfPrtgStore? _prtgStore;
 
     /// <summary>未回報定義與儀表板「未回報主機」計數卡同一套規則（§5.4 D-4），兩邊數字才不會對不上</summary>
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
@@ -56,7 +63,9 @@ public class HostAdminService
         INetiqServerCatalog servers,
         INetiqHostService netiqHosts,
         IAuditService audit,
-        IUserDisplayNameService userDisplayNames)
+        IUserDisplayNameService userDisplayNames,
+        StorageBackend? backend = null,
+        EfPrtgStore? prtgStore = null)
     {
         _hosts = hosts;
         _hostGroups = hostGroups;
@@ -65,6 +74,7 @@ public class HostAdminService
         _netiqHosts = netiqHosts;
         _audit = audit;
         _userDisplayNames = userDisplayNames;
+        _prtgStore = prtgStore ?? backend?.PrtgStore();
     }
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
@@ -175,6 +185,42 @@ public class HostAdminService
                 "inactive" => filtered.Where(h => !h.Active),
                 _ => filtered
             };
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.PrtgMap))
+        {
+            var prtgFilter = request.PrtgMap.Trim().ToLowerInvariant();
+            var mapRows = _prtgStore?.GetLatestHostMap() ?? new List<PrtgHostMapRow>();
+            if (mapRows.Count > 0)
+            {
+                if (prtgFilter == "mapped")
+                {
+                    var mappedIds = mapRows
+                        .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+                        .Select(m => m.HostId!.Value)
+                        .ToHashSet();
+                    filtered = filtered.Where(h => mappedIds.Contains(h.HostId));
+                }
+                else if (prtgFilter == "conflict")
+                {
+                    var conflictIds = mapRows
+                        .Where(m => m.MapStatus == PrtgMapStatus.Conflict && m.HostId.HasValue)
+                        .Select(m => m.HostId!.Value)
+                        .ToHashSet();
+                    filtered = filtered.Where(h => conflictIds.Contains(h.HostId));
+                }
+                else if (prtgFilter == "unmatched")
+                {
+                    // unmatched 在主機映射表中是「PRTG 有 device 但無對應主機」（HostId 為 null）。
+                    // 對主機清單而言，unmatched 語意為「這台主機目前沒有任何成功（ok）的 PRTG 對應」，即排除 mapped 主機。
+                    var mappedIds = mapRows
+                        .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+                        .Select(m => m.HostId!.Value)
+                        .ToHashSet();
+                    filtered = filtered.Where(h => !mappedIds.Contains(h.HostId));
+                }
+                // 無效篩選值依既有慣例當作沒篩，不回空清單
+            }
         }
 
         return filtered;

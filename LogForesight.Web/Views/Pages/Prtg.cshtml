@@ -187,10 +187,11 @@
                                         <th style="width: 140px;">IP</th>
                                         <th style="width: 180px;">主機</th>
                                         <th>說明</th>
+                                        <th style="width: 100px;">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-mirror-conflicts-body">
-                                    <tr><td colspan="4" class="text-muted text-center py-2">無衝突項目</td></tr>
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無衝突項目</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -206,10 +207,31 @@
                                         <th style="width: 140px;">IP</th>
                                         <th style="width: 180px;">主機</th>
                                         <th>說明</th>
+                                        <th style="width: 100px;">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-mirror-unmatched-body">
-                                    <tr><td colspan="4" class="text-muted text-center py-2">無未對應項目</td></tr>
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無未對應項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="small fw-semibold text-primary mb-1">人工對應清單</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-manual-maps-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 180px;">主機</th>
+                                        <th>備註</th>
+                                        <th style="width: 140px;">建立者</th>
+                                        <th style="width: 100px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-mirror-manual-maps-body">
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無人工對應項目</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -241,6 +263,39 @@
                 </label>
                 <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
             </details>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="prtg-assign-modal" tabindex="-1" aria-labelledby="prtg-assign-modal-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="prtg-assign-modal-title">指派 PRTG 裝置給主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="prtg-assign-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">PRTG Device Objid</label>
+                        <input type="text" class="form-control form-control-sm font-monospace" id="prtg-assign-device-objid" readonly />
+                    </div>
+                    <div class="mb-3">
+                        <label for="prtg-assign-host" class="form-label">目標主機</label>
+                        <select class="form-select form-select-sm" id="prtg-assign-host" required>
+                            <option value="">請選擇主機…</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="prtg-assign-note" class="form-label">備註（選填）</label>
+                        <input type="text" class="form-control form-control-sm" id="prtg-assign-note" placeholder="例如：手動指定對應原因" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary btn-sm" id="prtg-assign-submit">確認指派</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>

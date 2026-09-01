@@ -447,6 +447,36 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
+    /// <summary>取得指定 device 上的全部 sensor（主機明細顯示用）。</summary>
+    public List<PrtgSensorRow> GetSensorsByDevice(long deviceObjid)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => s.DeviceObjid == deviceObjid)
+            .OrderBy(s => s.Name)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
+    /// 從今天往前逐日檢查 GetHostMapForDate，第一個有資料的日期即回傳；若 30 天內皆無資料則回傳空清單。
+    /// </summary>
+    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30)
+    {
+        var today = DateTime.Today;
+        for (var i = 0; i < maxLookbackDays; i++)
+        {
+            var date = today.AddDays(-i);
+            var rows = GetHostMapForDate(date);
+            if (rows.Count > 0)
+            {
+                return rows;
+            }
+        }
+        return new List<PrtgHostMapRow>();
+    }
+
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
     public List<PrtgManualMapRow> GetManualMaps()
     {
