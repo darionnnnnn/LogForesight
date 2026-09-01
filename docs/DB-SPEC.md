@@ -433,10 +433,11 @@ lf_qa_messages
 ### 索引
 
 ```
-lf_daily_records:  UNIQUE(host_id, record_date)；(record_date, risk_level) —「今天全機房哪些主機有風險」；(extract_version) — 回填掃描
+lf_daily_records:  UNIQUE(host_id, record_date)；(record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢
 lf_issue_first_seen: PK(source_key, event_id)
 lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
                    (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
+                   (event_id, record_date) — 問題彙總「event_id IN + 日期範圍」的等值前導索引
 lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
                    -- 另有 created_at 欄：僅新增列時落、更新不覆寫，舊列為 NULL；
                    -- 目前無消費端，是 MTTA 成效指標（docs/BACKLOG.md）的資料基礎

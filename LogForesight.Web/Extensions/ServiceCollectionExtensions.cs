@@ -301,6 +301,8 @@ public static class ServiceCollectionExtensions
         // 不受影響。
         services.AddSingleton<OccurrenceStatusResolver>();
         services.AddScoped<IssueHandlingRollupQuery>();
+        // 可行動快照的短 TTL 跨請求快取（回饋三十六輪批次B）：機制比照 IssueRankingCache
+        services.AddSingleton<ActionableSnapshotCache>(_ => new ActionableSnapshotCache());
         services.AddScoped<IssueTodoQuery>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
