@@ -3,8 +3,8 @@
  */
 
 import { api } from '../core/api.js';
-import { bindTabs, toast, withBusy } from '../core/ui.js';
-import { formatDateTime, formatUserName } from '../core/format.js';
+import { bindTabs, toast, withBusy, renderSpinner } from '../core/ui.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('prtg-tabs'));
 
@@ -208,12 +208,214 @@ function bindForm() {
     });
 }
 
+// ── PRTG 鏡像狀態（批次F）──────────────────────────────────────────────
+
+function renderPrtgMirror(data) {
+    if (!data) return;
+
+    const setTxt = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+
+    setTxt('prtg-mirror-device-count', formatNumber(data.deviceCount));
+    setTxt('prtg-mirror-sensor-count', formatNumber(data.sensorCount));
+    setTxt('prtg-mirror-last-device-sync', `最後同步：${data.lastDeviceSync ? formatDateTime(data.lastDeviceSync) : '-'}`);
+    setTxt('prtg-mirror-last-sensor-sync', `最後同步：${data.lastSensorSync ? formatDateTime(data.lastSensorSync) : '-'}`);
+    setTxt('prtg-mirror-last-value-at', `數值：${data.lastValueAt ? formatDateTime(data.lastValueAt) : '-'}`);
+    setTxt('prtg-mirror-last-state-change-at', `狀態變更：${data.lastStateChangeAt ? formatDateTime(data.lastStateChangeAt) : '-'}`);
+
+    setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
+    setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));
+    setTxt('prtg-mirror-map-conflict', formatNumber(data.mapConflict));
+    setTxt('prtg-mirror-map-unmatched', formatNumber(data.mapUnmatched));
+    setTxt('prtg-mirror-whitelist-count', formatNumber(data.whitelistSensorCount));
+    setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
+
+    const renderList = (bodyId, items, emptyText) => {
+        const tbody = document.getElementById(bodyId);
+        if (!tbody) return;
+        tbody.replaceChildren();
+
+        if (!items || items.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 4;
+            td.className = 'text-muted text-center py-2';
+            td.textContent = emptyText;
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+            return;
+        }
+
+        for (const item of items) {
+            const tr = document.createElement('tr');
+
+            const tdObjid = document.createElement('td');
+            tdObjid.className = 'font-monospace';
+            tdObjid.textContent = String(item.deviceObjid);
+
+            const tdIp = document.createElement('td');
+            tdIp.className = 'font-monospace';
+            tdIp.textContent = item.ip || '-';
+
+            const tdHost = document.createElement('td');
+            tdHost.textContent = item.hostName || '-';
+
+            const tdNote = document.createElement('td');
+            tdNote.className = 'text-muted';
+            tdNote.textContent = item.note || '-';
+
+            tr.append(tdObjid, tdIp, tdHost, tdNote);
+            tbody.appendChild(tr);
+        }
+    };
+
+    renderList('prtg-mirror-conflicts-body', data.conflicts, '無衝突項目');
+    renderList('prtg-mirror-unmatched-body', data.unmatched, '無未對應項目');
+}
+
+async function refreshPrtgMirror() {
+    try {
+        const data = await api.get('/api/admin/settings/prtg-mirror', { silent: true });
+        renderPrtgMirror(data);
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindPrtgMirror() {
+    const refreshBtn = document.getElementById('prtg-mirror-refresh');
+    refreshBtn?.addEventListener('click', async () => {
+        const restore = withBusy(refreshBtn, '載入中');
+        try {
+            await refreshPrtgMirror();
+            toast('已重新整理 PRTG 鏡像狀態', 'success');
+        } finally {
+            restore();
+        }
+    });
+}
+
+// ── PRTG API 探測（批次B-4，比照 NetIQ 診斷實作）─────────────────────────
+
+let prtgProbePollTimer = null;
+
+/** 輪詢更新時只換文字節點、不重建 spinner（避免每次輪詢動畫重置閃爍） */
+function setPrtgProbeSpinnerText(container, text) {
+    if (!container.querySelector('.spinner-border')) {
+        renderSpinner(container, text);
+        return;
+    }
+    const label = container.querySelector('span:last-child');
+    if (label) label.textContent = text;
+}
+
+function renderPrtgProbeStatus(status) {
+    const outputEl = document.getElementById('prtg-probe-output');
+    const copyButton = document.getElementById('prtg-probe-copy');
+    const startButton = document.getElementById('prtg-probe-start');
+    const statusEl = document.getElementById('prtg-probe-status');
+
+    if (!outputEl || !copyButton || !startButton || !statusEl) return;
+
+    // 探測區預設收合。執行中時自動展開——否則按下探測後重新整理頁面，
+    // 進度與輸出會被收在摺疊區裡，看起來像什麼都沒發生
+    if (status.isRunning) {
+        const details = document.getElementById('prtg-probe');
+        if (details) details.open = true;
+    }
+
+    const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
+    outputEl.value = outputText;
+    if (outputText) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    copyButton.disabled = !outputText;
+
+    if (status.isRunning) {
+        startButton.disabled = true;
+        setPrtgProbeSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        return;
+    }
+
+    startButton.disabled = false;
+    if (!status.completedAt) {
+        statusEl.textContent = '';
+        return;
+    }
+    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
+        (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+}
+
+async function refreshPrtgProbeStatus() {
+    let status;
+    try {
+        status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
+    } catch {
+        return;
+    }
+    renderPrtgProbeStatus(status);
+
+    if (status.isRunning && !prtgProbePollTimer) {
+        prtgProbePollTimer = setInterval(async () => {
+            const latest = await api.get('/api/admin/settings/prtg-probe/status', { silent: true }).catch(() => null);
+            if (!latest) return;
+            renderPrtgProbeStatus(latest);
+            if (!latest.isRunning) {
+                clearInterval(prtgProbePollTimer);
+                prtgProbePollTimer = null;
+            }
+        }, 2000);
+    }
+}
+
+function bindPrtgProbe() {
+    const startButton = document.getElementById('prtg-probe-start');
+    const copyButton = document.getElementById('prtg-probe-copy');
+    const outputEl = document.getElementById('prtg-probe-output');
+    if (!startButton || !copyButton || !outputEl) return;
+
+    startButton.addEventListener('click', async () => {
+        // 探測用的是「已儲存」的連線設定；表單連填都沒填時直接前置提示，不必打 API
+        if (!document.getElementById('prtg-url')?.value.trim()) {
+            toast('請先設定並儲存 PRTG 位址與認證資訊，再執行探測。', 'warning');
+            return;
+        }
+
+        // 不用 withBusy：啟動成功後按鈕的 disabled 狀態交給輪詢狀態接管
+        startButton.disabled = true;
+        try {
+            await api.post('/api/admin/settings/prtg-probe/start', {}, { silent: true });
+            toast('已開始探測 PRTG 環境', 'success');
+            await refreshPrtgProbeStatus();
+        } catch (error) {
+            // 啟動失敗（如尚未設定連線位址、與回填互斥）：訊息要讓使用者看得到，不能靜默
+            startButton.disabled = false;
+            toast(error?.message || '無法啟動 PRTG 探測。', 'danger');
+        }
+    });
+
+    copyButton.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(outputEl.value);
+            toast('已複製探測輸出', 'success');
+        } catch {
+            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+        }
+    });
+}
+
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 
 function init() {
     bindPrtgTest();
+    bindPrtgMirror();
+    bindPrtgProbe();
     bindForm();
     loadSettings();
+    refreshPrtgMirror();
+    refreshPrtgProbeStatus();
 }
 
 init();

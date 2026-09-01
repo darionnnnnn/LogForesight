@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, renderSpinner
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -541,14 +541,19 @@ async function loadSchedule() {
         for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
     }
 
-    const [options, aiStatus] = await Promise.all([
+    const [options, aiStatus, settings] = await Promise.all([
         api.get('/api/admin/schedule/options'),
-        api.get('/api/ai/status', { silent: true }).catch(() => null)
+        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        api.get('/api/admin/settings', { silent: true }).catch(() => null)
     ]);
     aiAvailable = !!aiStatus?.available;
     document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
 
     applyScheduleOptions(options);
+    if (settings) {
+        const prtgEnabledEl = document.getElementById('prtg-enabled');
+        if (prtgEnabledEl) prtgEnabledEl.checked = Boolean(settings.prtgEnabled);
+    }
     await refreshScheduleStatus();
 }
 
@@ -1238,11 +1243,131 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
     }
 });
 
+// ── PRTG 擷取開關與歷史回填 ─────────────────────────────────────────────────
+
+function bindPrtgEnabledSwitch() {
+    const checkbox = document.getElementById('prtg-enabled');
+    if (!checkbox) return;
+
+    checkbox.addEventListener('change', async () => {
+        const nextVal = checkbox.checked;
+        try {
+            await api.put('/api/admin/settings/prtg-enabled', { enabled: nextVal });
+            toast('已更新 PRTG 擷取開關', 'success');
+        } catch (error) {
+            checkbox.checked = !nextVal;
+            toast(error?.message || '更新 PRTG 擷取開關失敗。', 'danger');
+        }
+    });
+}
+
+let prtgBackfillPollTimer = null;
+
+function setPrtgBackfillSpinnerText(container, text) {
+    if (!container.querySelector('.spinner-border')) {
+        renderSpinner(container, text);
+        return;
+    }
+    const label = container.querySelector('span:last-child');
+    if (label) label.textContent = text;
+}
+
+function renderPrtgBackfillStatus(status) {
+    const outputEl = document.getElementById('prtg-backfill-output');
+    const copyButton = document.getElementById('prtg-backfill-copy');
+    const startButton = document.getElementById('prtg-backfill-start');
+    const statusEl = document.getElementById('prtg-backfill-status');
+
+    if (!outputEl || !copyButton || !startButton || !statusEl) return;
+
+    const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
+    outputEl.value = outputText;
+    if (outputText) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    copyButton.disabled = !outputText;
+
+    if (status.isRunning) {
+        startButton.disabled = true;
+        setPrtgBackfillSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        return;
+    }
+
+    startButton.disabled = false;
+    if (!status.completedAt) {
+        statusEl.textContent = '';
+        return;
+    }
+    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
+        (status.success ? '✓ 完成（可至 PRTG 維護頁查看鏡像狀態）' : '✗ 執行中發生錯誤');
+}
+
+async function refreshPrtgBackfillStatus() {
+    let status;
+    try {
+        status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+    } catch {
+        return;
+    }
+    renderPrtgBackfillStatus(status);
+
+    if (status.isRunning && !prtgBackfillPollTimer) {
+        prtgBackfillPollTimer = setInterval(async () => {
+            const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true }).catch(() => null);
+            if (!latest) return;
+            renderPrtgBackfillStatus(latest);
+            if (!latest.isRunning) {
+                clearInterval(prtgBackfillPollTimer);
+                prtgBackfillPollTimer = null;
+            }
+        }, 2000);
+    }
+}
+
+function bindPrtgBackfill() {
+    const startButton = document.getElementById('prtg-backfill-start');
+    const copyButton = document.getElementById('prtg-backfill-copy');
+    const outputEl = document.getElementById('prtg-backfill-output');
+
+    startButton?.addEventListener('click', async () => {
+        const ok = await confirmAction({
+            title: '確認執行 PRTG 歷史資料回填',
+            message: '回填會逐日擷取歷史監控數據與狀態變更，請確認目前為離峰時間。是否確定開始？',
+            confirmText: '開始回填',
+            confirmVariant: 'primary'
+        });
+        if (!ok) return;
+
+        startButton.disabled = true;
+        try {
+            await api.post('/api/admin/settings/prtg-backfill/start', {}, { silent: true });
+            toast('已開始執行 PRTG 歷史回填', 'success');
+            await refreshPrtgBackfillStatus();
+        } catch (error) {
+            // 啟動失敗（如尚未設定連線位址、與探測互斥）：訊息要讓使用者看得到，不能靜默
+            startButton.disabled = false;
+            toast(error?.message || '無法啟動 PRTG 歷史回填。', 'danger');
+        }
+    });
+
+    copyButton?.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(outputEl.value);
+            toast('已複製回填輸出', 'success');
+        } catch {
+            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+        }
+    });
+}
+
 // 三頁籤（回饋十七輪批次F-1）共用同一份天數篩選、同一次 load() 取回的資料——頁籤切換
 // 只是顯示/隱藏面板，不重新打 API（三個面板的資料本來就一起抓，見 load()）
 bindTabs(document.getElementById('runs-tabs'));
 
 loadSchedule();
+bindPrtgEnabledSwitch();
+bindPrtgBackfill();
+refreshPrtgBackfillStatus();
 guardLoad([
     document.getElementById('run-summary'),
     document.getElementById('run-errors'),

@@ -132,7 +132,90 @@
             <h2 class="lf-card__title">鏡像狀態</h2>
         </div>
         <div class="lf-card__body">
-            <div></div>
+            <div id="prtg-mirror-section">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <p class="text-muted small mb-0">
+                        顯示目前 PRTG 鏡像資料庫五表的同步統計與最近一次主機對應分析結果。
+                    </p>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-mirror-refresh">重新整理</button>
+                </div>
+                <div class="row g-3 mb-3" id="prtg-mirror-stats">
+                    <div class="col-md-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">鏡像裝置數</div>
+                            <div class="fs-5 fw-semibold" id="prtg-mirror-device-count">-</div>
+                            <div class="text-muted small" id="prtg-mirror-last-device-sync">最後同步：-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">鏡像感測器數</div>
+                            <div class="fs-5 fw-semibold" id="prtg-mirror-sensor-count">-</div>
+                            <div class="text-muted small" id="prtg-mirror-last-sensor-sync">最後同步：-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">最新歷史數據時間</div>
+                            <div class="small fw-semibold" id="prtg-mirror-last-value-at">數值：-</div>
+                            <div class="small fw-semibold" id="prtg-mirror-last-state-change-at">狀態變更：-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border rounded p-3 mb-3">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <span class="fw-semibold small">主機對應摘要</span>
+                        <span class="text-muted small" id="prtg-mirror-map-date">對應基準日：-</span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-4 small mb-2">
+                        <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
+                        <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
+                        <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
+                        <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
+                    </div>
+                    <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
+
+                    <div class="mb-3">
+                        <div class="small fw-semibold text-warning mb-1">對應衝突清單（最多顯示 20 筆）</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 140px;">IP</th>
+                                        <th style="width: 180px;">主機</th>
+                                        <th>說明</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-mirror-conflicts-body">
+                                    <tr><td colspan="4" class="text-muted text-center py-2">無衝突項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="small fw-semibold text-muted mb-1">未對應清單（PRTG 有 NetIQ 無，最多顯示 20 筆）</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-unmatched-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 140px;">IP</th>
+                                        <th style="width: 180px;">主機</th>
+                                        <th>說明</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-mirror-unmatched-body">
+                                    <tr><td colspan="4" class="text-muted text-center py-2">無未對應項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -143,7 +226,21 @@
             <h2 class="lf-card__title">環境探測</h2>
         </div>
         <div class="lf-card__body">
-            <div></div>
+            <details id="prtg-probe">
+                <summary class="h6 mb-0">環境探測</summary>
+                <p class="text-muted small mt-2 mb-3">
+                    探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
+                </p>
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                    <div class="text-muted small" id="prtg-probe-status"></div>
+                </div>
+                <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+                    探測輸出
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
+                </label>
+                <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
+            </details>
         </div>
     </div>
 </div>

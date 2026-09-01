@@ -45,4 +45,88 @@ public class PrtgAdminPageUiTests
         // 4. Prtg.cshtml 含 id="prtg-tabs"
         Assert.Contains("id=\"prtg-tabs\"", prtgCshtmlContent);
     }
+
+    [Fact]
+    public void SettingsCshtml不再包含已搬走元素Id()
+    {
+        var root = FindRepoRoot();
+        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
+        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
+        var content = File.ReadAllText(settingsCshtmlPath);
+
+        Assert.DoesNotContain("prtg-url", content);
+        Assert.DoesNotContain("prtg-auth-mode", content);
+        Assert.DoesNotContain("prtg-test-btn", content);
+        Assert.DoesNotContain("prtg-mirror-section", content);
+        Assert.DoesNotContain("prtg-backfill-section", content);
+        Assert.DoesNotContain("prtg-probe", content);
+    }
+
+    [Fact]
+    public void SettingsCshtml仍包含保留元素Id()
+    {
+        var root = FindRepoRoot();
+        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
+        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
+        var content = File.ReadAllText(settingsCshtmlPath);
+
+        Assert.Contains("prtg-sensor-type-whitelist", content);
+        Assert.Contains("prtg-fetch-concurrency", content);
+        Assert.Contains("prtg-backfill-days", content);
+        Assert.Contains("prtg-retention-days", content);
+        Assert.Contains("prtg-timeout-seconds", content);
+        Assert.Contains("prtg-ignore-ssl", content);
+    }
+
+    [Fact]
+    public void SettingsJs不再包含已搬走欄位Payload鍵名()
+    {
+        var root = FindRepoRoot();
+        var settingsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "settings.js");
+        Assert.True(File.Exists(settingsJsPath), $"找不到檔案: {settingsJsPath}");
+        var content = File.ReadAllText(settingsJsPath);
+
+        Assert.DoesNotContain("prtgEnabled", content);
+        Assert.DoesNotContain("prtgUrl", content);
+        Assert.DoesNotContain("prtgApiToken", content);
+        Assert.DoesNotContain("prtgClearToken", content);
+    }
+
+    [Fact]
+    public void Prtg維護頁包含鏡像狀態與環境探測()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var cshtmlContent = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("prtg-mirror-section", cshtmlContent);
+        Assert.Contains("prtg-probe", cshtmlContent);
+
+        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
+        var jsContent = File.ReadAllText(prtgAdminJsPath);
+
+        Assert.Contains("prtg-mirror", jsContent);
+        Assert.Contains("prtg-probe/status", jsContent);
+    }
+
+    [Fact]
+    public void Runs排程頁包含Prtg開關與歷史回填()
+    {
+        var root = FindRepoRoot();
+        var runsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+        Assert.True(File.Exists(runsCshtmlPath), $"找不到檔案: {runsCshtmlPath}");
+        var cshtmlContent = File.ReadAllText(runsCshtmlPath);
+
+        Assert.Contains("id=\"prtg-enabled\"", cshtmlContent);
+        Assert.Contains("prtg-backfill-section", cshtmlContent);
+
+        var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
+        Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
+        var jsContent = File.ReadAllText(runsJsPath);
+
+        Assert.Contains("/api/admin/settings/prtg-enabled", jsContent);
+        Assert.DoesNotContain("prtgEnabled:", jsContent);
+    }
 }
