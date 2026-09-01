@@ -575,6 +575,43 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task 帳密模式_併發首波帳密錯誤時getpasshash仍只打一次()
+    {
+        // GetJsonAsync 開頭的前置守衛擋的是「已知失敗之後」的請求；併發首波同時通過
+        // 前置守衛時，真正扛住「只打一次 getpasshash」的是 EnsurePasshashAsync 鎖內的
+        // 黏住檢查——把那段刪掉，單執行緒測試照綠，只有這條會紅。
+        var stub = new StubHandler
+        {
+            OnSend = async (req, _) =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("getpasshash.htm"))
+                {
+                    await Task.Delay(30); // 讓其他併發請求有時間排進 semaphore
+                    return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+                }
+                return JsonResponse(HttpStatusCode.OK, "{}");
+            }
+        };
+
+        using var client = new PrtgClient(
+            baseUrl: ValidUrl,
+            tokenOrEmpty: "",
+            timeoutSeconds: 30,
+            ignoreSslErrors: false,
+            handler: stub,
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
+            usernameOrEmpty: "operator",
+            passwordOrEmpty: "wrongpass");
+
+        var tasks = Enumerable.Range(0, 5)
+            .Select(_ => Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x")))
+            .ToArray();
+        await Task.WhenAll(tasks);
+
+        Assert.Equal(1, stub.Requests.Count(r => r.Url.Contains("getpasshash.htm")));
+    }
+
+    [Fact]
     public async Task passhash模式_資料請求401後不再送出請求避免帳號鎖定()
     {
         // passhash 走的是帳號認證，401 會累加 PRTG 端的帳號鎖定計數。

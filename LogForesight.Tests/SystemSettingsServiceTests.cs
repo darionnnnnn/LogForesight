@@ -1720,7 +1720,7 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
-    public void PRTG_username在password與passhash模式間切換時不被清空()
+    public void PRTG_username在password與passhash兩模式都能寫入且token模式不動它()
     {
         var service = Create();
 

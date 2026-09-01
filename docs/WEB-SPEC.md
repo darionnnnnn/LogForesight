@@ -2017,15 +2017,13 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      **N+1 修正**：一次通知批次改用主機／使用者字典
      （`MailContext`），不再逐筆紀錄各自呼叫 `Store.Get()`（每次呼叫整份 blob 反序列化）。
 
-     **體檢輪修正**：合併回 dev 前的體檢輪抓到兩處真實缺陷，皆已修復並補測試。
-     (1) 高風險即時通知的統計行原本用該收件人自己過濾後的明細現算——收件人只有部分可見範圍
-     時，看不到的主機日連統計數字都沒被提到，卻因為那封信寄送成功而被 `MarkSent` 的
-     zero-coverage fallback 標記為已通知，是真正意義上「沒人被告知過」的靜默漏寄。改為統計行
-     用未經過濾的 pending 總數，對齊 `SendRunSummaryAsync` 既有做法，讓「coverage 為空的紀錄
-     仍由統計行如實反映其存在」這個前提在兩條路徑下都成立。
-     (2) `ResolvePerRecipient` 的 `GetVisibleHostIds` 原本寫在 `Where` 的 predicate 本體內，
-     每筆 record 都重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），對每位收件人重跑
-     一次完整的 store 全表掃描——是 B-2 想修掉的同一種 N+1，改為在迴圈內對每位收件人只算一次。
+     **統計行的涵蓋範圍**：高風險即時通知的統計行用**未經收件人過濾**的 pending 總數
+     （與 `SendRunSummaryAsync` 同一做法）——若改用收件人自己可見範圍現算，部分可見的收件人
+     看不到的主機日連數字都不會被提到，卻會因寄送成功而被 `MarkSent` 的 zero-coverage
+     fallback 標記為已通知，形成「沒人被告知過」的靜默漏寄。
+     `ResolvePerRecipient` 的 `GetVisibleHostIds` 在迴圈內對每位收件人只算一次，
+     不放進 `Where` 的 predicate（LINQ 對每個來源元素各求值一次＝每筆 record 重跑一次
+     store 全表掃描的 N+1）。
 
      **其餘通知邏輯改進**：
      (A) **RiskLevels 下推查詢層**：三路通知的達門檻過濾原本先全量撈近 14 天再記憶體過濾，
