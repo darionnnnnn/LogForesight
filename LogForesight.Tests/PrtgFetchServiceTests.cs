@@ -758,4 +758,51 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Empty(handler.RequestedUrls);
         Assert.Contains(console.Lines, l => l.Contains("鏡像尚無任何感測器結構"));
     }
+
+    [Fact]
+    public async Task FetchDayAsync_每日擷取後自動填入感測器語意分類()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
+        var senJson = "{\"treesize\":2,\"sensors\":[" +
+            "{\"objid\":201,\"parentid\":101,\"sensor\":\"Free Space C:\",\"type\":\"SNMP Disk Free\",\"status\":\"Up\",\"paused\":false}," +
+            "{\"objid\":202,\"parentid\":101,\"sensor\":\"Ping\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}" +
+            "]}";
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":2,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata.json"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+        var day = new DateTime(2026, 8, 30);
+
+        var result = await service.FetchDayAsync(day, 1, CancellationToken.None);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(2, result.Sensors);
+
+        using var ctx = _fx.NewContext();
+        var s201 = await ctx.PrtgSensors.SingleAsync(s => s.Objid == 201);
+        Assert.Equal(PrtgSensorCategories.Disk, s201.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s201.CategorySource);
+
+        var s202 = await ctx.PrtgSensors.SingleAsync(s => s.Objid == 202);
+        Assert.Null(s202.Category);
+        Assert.Null(s202.CategorySource);
+
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 已自動填入 1 個感測器的語意分類。"));
+    }
 }

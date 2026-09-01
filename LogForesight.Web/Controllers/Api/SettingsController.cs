@@ -179,6 +179,9 @@ public class SettingsController : ControllerBase
             }
         }
 
+        var whitelist = _settings.Get().PrtgSensorTypeWhitelist;
+        var coverage = store.GetWhitelistCoverage(whitelist, mapDate);
+
         var mapOk = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Ok);
         var mapConflict = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Conflict);
         var mapUnmatched = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Unmatched);
@@ -207,6 +210,8 @@ public class SettingsController : ControllerBase
             MapOk = mapOk,
             MapConflict = mapConflict,
             MapUnmatched = mapUnmatched,
+            WhitelistSensorCount = coverage.WhitelistSensorCount,
+            OnMappedDeviceCount = coverage.OnMappedDeviceCount,
             Conflicts = conflicts,
             Unmatched = unmatched
         });

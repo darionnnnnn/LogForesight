@@ -910,11 +910,14 @@
                         <span class="fw-semibold small">主機對應摘要</span>
                         <span class="text-muted small" id="prtg-mirror-map-date">對應基準日：-</span>
                     </div>
-                    <div class="d-flex gap-4 small mb-3">
+                    <div class="d-flex flex-wrap gap-4 small mb-2">
                         <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
                         <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
                         <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
+                        <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
                     </div>
+                    <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
 
                     <div class="mb-3">
                         <div class="small fw-semibold text-warning mb-1">對應衝突清單（最多顯示 20 筆）</div>

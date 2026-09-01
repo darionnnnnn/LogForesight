@@ -98,6 +98,20 @@ public sealed class PrtgFetchService
                 failures++;
                 _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
             }
+
+            // 語意分類自動填入：只填未分類者，人工指定的分類不會被洗掉
+            try
+            {
+                var categorized = _store.ApplyAutoCategories();
+                if (categorized > 0)
+                    _console.WriteLine($"[階段 2/4] 已自動填入 {categorized} 個感測器的語意分類。");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                failures++;
+                _console.WriteLine($"[階段 2/4] 語意分類自動填入失敗：{ex.Message}");
+            }
         }
 
         // 階段 3：狀態變更（前一日增量）

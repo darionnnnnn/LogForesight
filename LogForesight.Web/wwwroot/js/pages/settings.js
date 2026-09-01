@@ -1389,6 +1389,8 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));
     setTxt('prtg-mirror-map-conflict', formatNumber(data.mapConflict));
     setTxt('prtg-mirror-map-unmatched', formatNumber(data.mapUnmatched));
+    setTxt('prtg-mirror-whitelist-count', formatNumber(data.whitelistSensorCount));
+    setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
 
     const renderList = (bodyId, items, emptyText) => {
         const tbody = document.getElementById(bodyId);
