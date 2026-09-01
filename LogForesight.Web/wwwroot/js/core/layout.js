@@ -44,6 +44,7 @@ const NAV_SECTIONS = [
             { href: '/admin/issue-owners', label: '問題檔案', icon: 'people', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
             { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
+            { href: '/admin/prtg', label: 'PRTG 維護', icon: 'diagram-3', requires: 'Maintain' },
             { href: '/admin/settings', label: '設定', icon: 'gear', requires: 'Maintain' }
         ]
     },

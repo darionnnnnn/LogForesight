@@ -115,6 +115,10 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Netiq() => View();
 
+    [HttpGet("/admin/prtg")]
+    [Permission(Capability.Maintain)]
+    public IActionResult Prtg() => View();
+
     [HttpGet("/admin/settings")]
     [Permission(Capability.Maintain)]
     public IActionResult Settings() => View();

@@ -1,5 +1,6 @@
-using LogForesight.Core.Configuration;
+﻿using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Models;
@@ -17,6 +18,12 @@ public interface ISystemSettingsService
     SystemSettingsDto Get();
 
     SystemSettingsDto Update(UpdateSystemSettingsRequest request);
+
+    /// <summary>
+    /// 只切換 PRTG 總開關（排程作業頁用）。刻意不走整包設定更新：
+    /// 整包更新會在「讀取到送出之間」覆蓋他人的改動，也會被與 PRTG 無關的跨欄位驗證擋下。
+    /// </summary>
+    bool SetPrtgEnabled(bool enabled);
 
     /// <summary>
     /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合（RecordRepository 據此過濾問題聚合，
@@ -521,6 +528,33 @@ public class SystemSettingsService : ISystemSettingsService
             });
 
         return ToDto(saved);
+    }
+
+    public bool SetPrtgEnabled(bool enabled)
+    {
+        if (enabled)
+        {
+            var settings = _store.Get();
+            if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
+            {
+                throw DomainException.Validation("請先於 PRTG 維護頁完成連線設定。");
+            }
+        }
+
+        var saved = _store.Update(s =>
+        {
+            s.PrtgEnabled = enabled;
+            s.UpdatedByAccount = _currentUser.Account;
+        });
+
+        _audit.Record(
+            action: AuditActions.SettingsUpdate,
+            summary: enabled ? "開啟 PRTG 整合" : "關閉 PRTG 整合",
+            targetKind: "system_settings",
+            targetId: "system_settings",
+            detail: new { PrtgEnabled = enabled });
+
+        return saved.PrtgEnabled;
     }
 
     // ── 品牌自訂的驗證常數與規則（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────

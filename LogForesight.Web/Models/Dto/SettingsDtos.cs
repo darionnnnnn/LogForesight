@@ -527,6 +527,12 @@ public class TestPrtgConnectionResultDto
     public long? ElapsedMs { get; set; }
 }
 
+/// <summary>PRTG 總開關設定請求（排程作業頁）</summary>
+public class SetPrtgEnabledRequest
+{
+    public bool Enabled { get; set; }
+}
+
 /// <summary>
 /// 顯示層設定的公開子集（docs/archive/FEEDBACK-3-PLAN.md #8）：完整設定 API 需要 Maintain 能力，
 /// 但「哪些日風險等級目前顯示」是任何已登入者的前端都要知道的資訊（用來決定 KPI 卡、

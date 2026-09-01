@@ -1860,4 +1860,47 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(savedDto.PrtgSensorTypeWhitelist, getDto.PrtgSensorTypeWhitelist);
         Assert.Equal(new[] { "SNMP Memory", "SNMP Linux Meminfo" }, getDto.PrtgSensorTypeWhitelist);
     }
+
+    [Fact]
+    public void SetPrtgEnabled_開啟時若URL為空擲DomainException()
+    {
+        var service = Create();
+        var ex = Assert.Throws<DomainException>(() => service.SetPrtgEnabled(true));
+        Assert.Contains("請先於 PRTG 維護頁完成連線設定", ex.Message);
+    }
+
+    [Fact]
+    public void SetPrtgEnabled_開啟時URL與憑證齊備成功寫入且Get讀回為true()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "https://prtg.example.local";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("my-token");
+        });
+
+        var result = service.SetPrtgEnabled(true);
+        Assert.True(result);
+
+        var dto = service.Get();
+        Assert.True(dto.PrtgEnabled);
+    }
+
+    [Fact]
+    public void SetPrtgEnabled_關閉時即使URL為空也成功()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "";
+            s.PrtgEnabled = true;
+        });
+
+        var result = service.SetPrtgEnabled(false);
+        Assert.False(result);
+
+        var dto = service.Get();
+        Assert.False(dto.PrtgEnabled);
+    }
 }
