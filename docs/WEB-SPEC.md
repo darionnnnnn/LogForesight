@@ -2046,8 +2046,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      問題改備註重存不重寄。fire-and-forget，內部 try/catch 到底，寄送成敗不影響狀態變更。
 
   8. **PRTG**：外部監控系統整合的連線與操作介面（模組規格見 docs/PRTG-SPEC.md）。四個區塊：
-     (a) **連線設定**（含認證方式切換：API token／帳號密碼）＋「測試連線」（`POST
-     api/admin/settings/prtg-test`，用表單目前值試連，token／密碼留空皆 fallback 已儲存密文；
+     (a) **連線設定**（含認證方式切換：API token／帳號密碼／帳號＋passhash）＋「測試連線」（`POST
+     api/admin/settings/prtg-test`，用表單目前值試連，token／密碼／passhash 留空皆 fallback 已儲存密文；
      連線失敗回 `success=false` 就地顯示，不當系統錯誤）。
      (b) **鏡像狀態**（`GET api/admin/settings/prtg-mirror`）：device／sensor 計數、各類資料的
      最新時間點、當日主機對應摘要與衝突／未對應清單（各前 20 筆）。

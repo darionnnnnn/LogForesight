@@ -190,6 +190,14 @@ public class SystemSettingsService : ISystemSettingsService
                 if (!HasEffectiveSecret(request.PrtgPassword, before.PrtgPasswordEnc, request.ClearPrtgPassword))
                     throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定密碼。");
             }
+            else if (request.PrtgAuthMode == PrtgAuthModes.Passhash)
+            {
+                if (string.IsNullOrWhiteSpace(request.PrtgUsername))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定帳號。");
+
+                if (!HasEffectiveSecret(request.PrtgPasshash, before.PrtgPasshashEnc, request.ClearPrtgPasshash))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定 passhash。");
+            }
         }
 
         var adServers = NormalizeAdServers(request.AdServers);
@@ -401,10 +409,18 @@ public class SystemSettingsService : ISystemSettingsService
             // 後改用帳號密碼儲存，會把 token 靜默清空（使用者已經看不到那個勾選了）。
             // 空白字元一律當成「沒填」——與驗證段的 HasEffectiveSecret 同一判定，
             // 否則不小心輸入空白會把好的憑證覆蓋成加密後的空白，前置檢查還會誤判成「有設定」。
-            if (request.PrtgAuthMode == PrtgAuthModes.Password)
+            if (request.PrtgAuthMode == PrtgAuthModes.Passhash)
             {
-                // username 也只在帳密模式寫入：token 模式下它在畫面上是隱藏的，
+                // username 也只在帳密與 passhash 模式寫入：token 模式下它在畫面上是隱藏的，
                 // 非設定頁的呼叫端（腳本、匯入）沒帶它時不該把已存帳號靜默清空
+                s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
+                if (request.ClearPrtgPasshash)
+                    s.PrtgPasshashEnc = "";
+                else if (!string.IsNullOrWhiteSpace(request.PrtgPasshash))
+                    s.PrtgPasshashEnc = CryptoHelper.Encrypt(request.PrtgPasshash);
+            }
+            else if (request.PrtgAuthMode == PrtgAuthModes.Password)
+            {
                 s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
                 if (request.ClearPrtgPassword)
                     s.PrtgPasswordEnc = "";
@@ -470,7 +486,8 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
-                    PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc)
+                    PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
+                    PrtgHasPasshash = !string.IsNullOrEmpty(before.PrtgPasshashEnc)
                 },
                 After = new
                 {
@@ -489,12 +506,14 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
-                    PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc)
+                    PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
+                    PrtgHasPasshash = !string.IsNullOrEmpty(saved.PrtgPasshashEnc)
                 },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey),
                 SmtpPasswordChanged = request.ClearSmtpPassword || !string.IsNullOrEmpty(request.SmtpPassword),
                 PrtgApiTokenChanged = request.ClearPrtgApiToken || !string.IsNullOrEmpty(request.PrtgApiToken),
-                PrtgPasswordChanged = request.ClearPrtgPassword || !string.IsNullOrEmpty(request.PrtgPassword)
+                PrtgPasswordChanged = request.ClearPrtgPassword || !string.IsNullOrEmpty(request.PrtgPassword),
+                PrtgPasshashChanged = request.ClearPrtgPasshash || !string.IsNullOrEmpty(request.PrtgPasshash)
             });
 
         return ToDto(saved);
@@ -650,11 +669,28 @@ public class SystemSettingsService : ISystemSettingsService
             throw DomainException.Validation("PRTG 認證方式不合法。");
 
         var isPasswordMode = string.Equals(request.AuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
+        var isPasshashMode = string.Equals(request.AuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal);
         string token = string.Empty;
         string username = string.Empty;
         string password = string.Empty;
+        string passhash = string.Empty;
 
-        if (isPasswordMode)
+        if (isPasshashMode)
+        {
+            username = (request.Username ?? "").Trim();
+            if (username.Length == 0)
+                throw DomainException.Validation("請輸入 PRTG 帳號。");
+
+            var effectivePasshash = string.IsNullOrWhiteSpace(request.Passhash)
+                ? DecryptSavedPrtgPasshash()
+                : request.Passhash;
+
+            if (string.IsNullOrWhiteSpace(effectivePasshash))
+                throw DomainException.Validation("尚未設定 PRTG passhash，無法測試。");
+
+            passhash = effectivePasshash;
+        }
+        else if (isPasswordMode)
         {
             username = (request.Username ?? "").Trim();
             if (username.Length == 0)
@@ -683,7 +719,7 @@ public class SystemSettingsService : ISystemSettingsService
             token = effectiveToken;
         }
 
-        // 稽核只記「執行過測試」與對象 URL，token、密碼不落盤、不進稽核 detail
+        // 稽核只記「執行過測試」與對象 URL，token、密碼、passhash 不落盤、不進稽核 detail
         _audit.Record(
             action: AuditActions.PrtgConnectionTest,
             summary: "執行 PRTG 測試連線",
@@ -702,7 +738,8 @@ public class SystemSettingsService : ISystemSettingsService
                 handler: null,
                 authMode: request.AuthMode ?? PrtgAuthModes.Token,
                 usernameOrEmpty: username,
-                passwordOrEmpty: password);
+                passwordOrEmpty: password,
+                passhashOrEmpty: passhash);
 
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestPrtgConnectionResultDto
@@ -734,6 +771,15 @@ public class SystemSettingsService : ISystemSettingsService
     private string? DecryptSavedPrtgPassword()
     {
         var enc = _store.Get().PrtgPasswordEnc;
+        if (string.IsNullOrEmpty(enc)) return null;
+        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
+        // 匯入或手動編輯 blob 的路徑上有可能是明文
+        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+    }
+
+    private string? DecryptSavedPrtgPasshash()
+    {
+        var enc = _store.Get().PrtgPasshashEnc;
         if (string.IsNullOrEmpty(enc)) return null;
         // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
         // 匯入或手動編輯 blob 的路徑上有可能是明文
@@ -911,6 +957,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgAuthMode = s.PrtgAuthMode,
         PrtgUsername = s.PrtgUsername,
         PrtgHasPassword = !string.IsNullOrEmpty(s.PrtgPasswordEnc),
+        PrtgHasPasshash = !string.IsNullOrEmpty(s.PrtgPasshashEnc),
         PrtgIgnoreSslErrors = s.PrtgIgnoreSslErrors,
         PrtgTimeoutSeconds = s.PrtgTimeoutSeconds,
         PrtgFetchConcurrency = s.PrtgFetchConcurrency,

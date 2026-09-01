@@ -133,10 +133,11 @@ public class PrtgClientFactoryTests
             PrtgApiTokenEnc = CryptoHelper.Encrypt("plain-token-123"),
             PrtgPasswordEnc = CryptoHelper.Encrypt("should-not-be-used")
         };
-        var (token, username, password) = PrtgClientFactory.ResolveCredentials(tokenSettings);
+        var (token, username, password, passhash) = PrtgClientFactory.ResolveCredentials(tokenSettings);
         Assert.Equal("plain-token-123", token);
         Assert.Equal("", username);
         Assert.Equal("", password);
+        Assert.Equal("", passhash);
 
         var passwordSettings = new SystemSettings
         {
@@ -145,10 +146,11 @@ public class PrtgClientFactoryTests
             PrtgPasswordEnc = CryptoHelper.Encrypt("plain-pass-456"),
             PrtgApiTokenEnc = CryptoHelper.Encrypt("should-not-be-used")
         };
-        var (token2, username2, password2) = PrtgClientFactory.ResolveCredentials(passwordSettings);
+        var (token2, username2, password2, passhash2) = PrtgClientFactory.ResolveCredentials(passwordSettings);
         Assert.Equal("", token2);
         Assert.Equal("operator", username2);
         Assert.Equal("plain-pass-456", password2);
+        Assert.Equal("", passhash2);
 
         // 明文相容（IsEncrypted 守衛）：blob 被手動編輯成明文時原樣使用、不擲例外
         var plainSettings = new SystemSettings
@@ -157,6 +159,89 @@ public class PrtgClientFactoryTests
             PrtgApiTokenEnc = "raw-plain-token"
         };
         Assert.Equal("raw-plain-token", PrtgClientFactory.ResolveCredentials(plainSettings).Token);
+    }
+
+    [Fact]
+    public void ResolveCredentials_三種模式互不污染()
+    {
+        // 1. Token 模式：填上 PasswordEnc 與 PasshashEnc
+        var tokenSettings = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgUsername = "operator",
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("token-value"),
+            PrtgPasswordEnc = CryptoHelper.Encrypt("pass-value"),
+            PrtgPasshashEnc = CryptoHelper.Encrypt("passhash-value")
+        };
+        var resToken = PrtgClientFactory.ResolveCredentials(tokenSettings);
+        Assert.Equal("token-value", resToken.Token);
+        Assert.Equal("", resToken.Username);
+        Assert.Equal("", resToken.Password);
+        Assert.Equal("", resToken.Passhash);
+
+        // 2. Password 模式：填上 ApiTokenEnc 與 PasshashEnc
+        var passSettings = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Password,
+            PrtgUsername = "operator",
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("token-value"),
+            PrtgPasswordEnc = CryptoHelper.Encrypt("pass-value"),
+            PrtgPasshashEnc = CryptoHelper.Encrypt("passhash-value")
+        };
+        var resPass = PrtgClientFactory.ResolveCredentials(passSettings);
+        Assert.Equal("", resPass.Token);
+        Assert.Equal("operator", resPass.Username);
+        Assert.Equal("pass-value", resPass.Password);
+        Assert.Equal("", resPass.Passhash);
+
+        // 3. Passhash 模式：填上 ApiTokenEnc 與 PasswordEnc
+        var passhashSettings = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Passhash,
+            PrtgUsername = "operator",
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("token-value"),
+            PrtgPasswordEnc = CryptoHelper.Encrypt("pass-value"),
+            PrtgPasshashEnc = CryptoHelper.Encrypt("passhash-value")
+        };
+        var resPasshash = PrtgClientFactory.ResolveCredentials(passhashSettings);
+        Assert.Equal("", resPasshash.Token);
+        Assert.Equal("operator", resPasshash.Username);
+        Assert.Equal("", resPasshash.Password);
+        Assert.Equal("passhash-value", resPasshash.Passhash);
+    }
+
+    [Fact]
+    public void HasUsableCredentials_passhash模式缺帳號或缺passhash時為false()
+    {
+        var noUsername = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Passhash,
+            PrtgUsername = "",
+            PrtgPasshashEnc = CryptoHelper.Encrypt("hash")
+        };
+        var noPasshash = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Passhash,
+            PrtgUsername = "admin",
+            PrtgPasshashEnc = ""
+        };
+        var bothEmpty = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Passhash,
+            PrtgUsername = "  ",
+            PrtgPasshashEnc = null!
+        };
+        var bothPresent = new SystemSettings
+        {
+            PrtgAuthMode = PrtgAuthModes.Passhash,
+            PrtgUsername = "admin",
+            PrtgPasshashEnc = CryptoHelper.Encrypt("hash")
+        };
+
+        Assert.False(PrtgClientFactory.HasUsableCredentials(noUsername));
+        Assert.False(PrtgClientFactory.HasUsableCredentials(noPasshash));
+        Assert.False(PrtgClientFactory.HasUsableCredentials(bothEmpty));
+        Assert.True(PrtgClientFactory.HasUsableCredentials(bothPresent));
     }
 
     [Fact]
