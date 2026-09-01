@@ -1525,6 +1525,12 @@ function bindPrtgBackfill() {
     const outputEl = document.getElementById('prtg-backfill-output');
 
     startButton?.addEventListener('click', async () => {
+        // 回填用的是「已儲存」的連線設定；表單連填都沒填時直接前置提示，不必打 API
+        if (!document.getElementById('prtg-url').value.trim()) {
+            toast('請先設定並儲存 PRTG 位址與認證資訊，再執行回填。', 'warning');
+            return;
+        }
+
         const ok = await confirmAction({
             title: '確認執行 PRTG 歷史資料回填',
             message: '回填會逐日擷取歷史監控數據與狀態變更，請確認目前為離峰時間。是否確定開始？',
@@ -1538,8 +1544,10 @@ function bindPrtgBackfill() {
             await api.post('/api/admin/settings/prtg-backfill/start', {}, { silent: true });
             toast('已開始執行 PRTG 歷史回填', 'success');
             await refreshPrtgBackfillStatus();
-        } catch {
+        } catch (error) {
+            // 啟動失敗（如尚未設定連線位址、與探測互斥）：訊息要讓使用者看得到，不能靜默
             startButton.disabled = false;
+            toast(error?.message || '無法啟動 PRTG 歷史回填。', 'danger');
         }
     });
 
@@ -1559,14 +1567,22 @@ function bindPrtgProbe() {
     const outputEl = document.getElementById('prtg-probe-output');
 
     startButton.addEventListener('click', async () => {
+        // 探測用的是「已儲存」的連線設定；表單連填都沒填時直接前置提示，不必打 API
+        if (!document.getElementById('prtg-url').value.trim()) {
+            toast('請先設定並儲存 PRTG 位址與認證資訊，再執行探測。', 'warning');
+            return;
+        }
+
         // 不用 withBusy：啟動成功後按鈕的 disabled 狀態交給輪詢狀態接管
         startButton.disabled = true;
         try {
             await api.post('/api/admin/settings/prtg-probe/start', {}, { silent: true });
             toast('已開始探測 PRTG 環境', 'success');
             await refreshPrtgProbeStatus();
-        } catch {
+        } catch (error) {
+            // 啟動失敗（如尚未設定連線位址、與回填互斥）：訊息要讓使用者看得到，不能靜默
             startButton.disabled = false;
+            toast(error?.message || '無法啟動 PRTG 探測。', 'danger');
         }
     });
 

@@ -64,15 +64,28 @@ public static class PrtgProbeRunner
         }
 
         // 步驟 3：sensor type 分布（最重要）
+        // 樣本留在外層，供步驟 7 與 device host 資料交叉統計（不再多打一次 API）
+        List<SensorTypeSample> sensorSamples = new();
         allOk &= await StepAsync(console, 3, "Sensor Type 分布", async () =>
         {
-            var senTableJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,device,sensor,type,tags,unit&count=50000", ct);
+            // 註：PRTG sensors 表沒有 unit 欄位（未知欄位會被靜默忽略），單位資訊實際在
+            // lastvalue 的格式化字串（如「92 %」「12 kbit/s」）；unit 欄保留作 fallback。
+            var senTableJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,device,sensor,type,tags,unit,lastvalue,parentid&count=50000", ct);
             var parsedSensors = ParseTable(senTableJson, "sensors", el =>
             {
                 var type = GetStringProperty(el, "type");
                 if (string.IsNullOrWhiteSpace(type)) return null;
                 var unit = GetStringProperty(el, "unit");
-                return new SensorTypeSample(type, unit);
+                if (string.IsNullOrWhiteSpace(unit))
+                {
+                    unit = ExtractUnitFromLastValue(GetStringProperty(el, "lastvalue"));
+                }
+                int? parentId = null;
+                if (int.TryParse(GetStringProperty(el, "parentid"), out var pid))
+                {
+                    parentId = pid;
+                }
+                return new SensorTypeSample(type, unit, parentId);
             });
 
             if (parsedSensors.CorruptedCount > 0)
@@ -81,6 +94,7 @@ public static class PrtgProbeRunner
             }
 
             var validSamples = parsedSensors.Rows;
+            sensorSamples = validSamples;
             if (sensorCount > 0 && validSamples.Count < sensorCount)
             {
                 console.WriteLine($"     ⚠ 警告：Sensor 總數為 {sensorCount} 筆，本次查詢僅取樣到 {validSamples.Count} 筆");
@@ -175,6 +189,7 @@ public static class PrtgProbeRunner
             var total = parsedDeps.Rows.Count;
             var pct = total > 0 ? (withDep * 100.0 / total) : 0.0;
             console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）");
+            console.WriteLine("     （註：PRTG 預設每個 sensor 相依於父物件，此比例含預設值，不代表人工維護的相依拓撲）");
         });
 
         if (!allOk)
@@ -213,13 +228,19 @@ public static class PrtgProbeRunner
         }
 
         // 步驟 6：IP 覆蓋概要（供主機對應評估）
+        var ipv4DeviceIds = new HashSet<int>();
         allOk &= await StepAsync(console, 6, "IP 覆蓋概要（供主機對應評估）", async () =>
         {
             var devHostJson = await client.GetJsonAsync("/api/table.json?content=devices&columns=objid,device,host,group&count=50000", ct);
             var parsedDevHosts = ParseTable(devHostJson, "devices", el =>
             {
                 var host = GetStringProperty(el, "host");
-                return host;
+                int? objid = null;
+                if (int.TryParse(GetStringProperty(el, "objid"), out var oid))
+                {
+                    objid = oid;
+                }
+                return new DeviceHostSample(objid, host);
             });
 
             if (parsedDevHosts.CorruptedCount > 0)
@@ -232,13 +253,17 @@ public static class PrtgProbeRunner
             int ipv4Count = 0;
             int dnsCount = 0;
 
-            foreach (var h in parsedDevHosts.Rows)
+            foreach (var d in parsedDevHosts.Rows)
             {
-                if (string.IsNullOrWhiteSpace(h)) continue;
+                if (string.IsNullOrWhiteSpace(d.Host)) continue;
                 withHost++;
-                if (IPAddress.TryParse(h, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
+                if (IPAddress.TryParse(d.Host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
                 {
                     ipv4Count++;
+                    if (d.Objid.HasValue)
+                    {
+                        ipv4DeviceIds.Add(d.Objid.Value);
+                    }
                 }
                 else
                 {
@@ -250,6 +275,45 @@ public static class PrtgProbeRunner
             console.WriteLine($"     有設定 host 值的 Device 數：{withHost}");
             console.WriteLine($"     其中為 IPv4 位址者：{ipv4Count} 台");
             console.WriteLine($"     其中非 IPv4（DNS 名稱或其它）者：{dnsCount} 台");
+        });
+
+        if (!allOk)
+        {
+            console.WriteLine();
+            console.WriteLine("══════════ PRTG 環境探測中斷（部分步驟失敗） ══════════");
+            return false;
+        }
+
+        // 步驟 7：type × IPv4 覆蓋交叉統計（重用步驟 3 與 6 的資料，不另打 API）——
+        // 回答「各 type 有多少 sensor 落在可做主機對應（IPv4）的 device 上」，供擷取縮圈規劃使用
+        allOk &= await StepAsync(console, 7, "Type × IPv4 覆蓋（sensor 位於 IPv4 device 上的比例）", () =>
+        {
+            var withParent = sensorSamples.Where(s => s.ParentId.HasValue).ToList();
+            if (withParent.Count == 0 || ipv4DeviceIds.Count == 0)
+            {
+                console.WriteLine("     無 parentid 或 IPv4 device 資料，略過此統計（舊版 PRTG 可能不支援 parentid 欄位）");
+                return Task.CompletedTask;
+            }
+
+            var crossGroups = withParent
+                .GroupBy(s => s.Type, StringComparer.OrdinalIgnoreCase)
+                .Select(g => new
+                {
+                    Type = g.Key,
+                    Total = g.Count(),
+                    OnIpv4 = g.Count(s => ipv4DeviceIds.Contains(s.ParentId!.Value))
+                })
+                .OrderByDescending(g => g.Total)
+                .ThenBy(g => g.Type, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var g in crossGroups)
+            {
+                var pct = g.Total > 0 ? (g.OnIpv4 * 100.0 / g.Total) : 0.0;
+                console.WriteLine($"       {g.Type} | {g.OnIpv4}/{g.Total} | {pct:F1}%");
+            }
+
+            return Task.CompletedTask;
         });
 
         console.WriteLine();
@@ -280,7 +344,33 @@ public static class PrtgProbeRunner
         }
     }
 
-    private sealed record SensorTypeSample(string Type, string? Unit);
+    private sealed record SensorTypeSample(string Type, string? Unit, int? ParentId);
+
+    private sealed record DeviceHostSample(int? Objid, string? Host);
+
+    /// <summary>
+    /// 從 lastvalue 的格式化字串（如「92 %」「12 kbit/s」「&lt;1 ms」「1,234 msec」）萃取單位。
+    /// 只在字串以數值（或比較符號）開頭時視為「數值＋單位」；純文字狀態（如「OK」）與「-」回 null。
+    /// </summary>
+    private static string? ExtractUnitFromLastValue(string? lastValue)
+    {
+        if (string.IsNullOrWhiteSpace(lastValue)) return null;
+        var s = lastValue.Trim();
+
+        var first = s[0];
+        if (!char.IsDigit(first) && first != '<' && first != '>' && first != '~' && first != '-' && first != '+')
+            return null;
+        if (s == "-") return null;
+
+        int i = 0;
+        while (i < s.Length && (char.IsDigit(s[i]) || s[i] is '<' or '>' or '=' or '~' or ',' or '.' or ' ' or '-' or '+'))
+        {
+            i++;
+        }
+
+        var unit = s[i..].Trim();
+        return unit.Length == 0 ? null : unit;
+    }
 
     private sealed record TableParseResult<T>(List<T> Rows, int CorruptedCount, int? TotalTreesize);
 

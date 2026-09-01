@@ -333,6 +333,114 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_unit樣本可自lastvalue推導且輸出TypeIPv4交叉統計()
+    {
+        // PRTG sensors 表沒有 unit 欄位：樣本只給 lastvalue，unit 應由 lastvalue 萃取。
+        // 純文字狀態（OK）與「-」不得被當成單位。
+        // parentid：101/102 → device 1（IPv4），103 → device 2（DNS）。
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                var url = req.RequestUri!.ToString();
+                if (url.Contains("/api/status.json"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.1""}"));
+                if (url.Contains("content=devices") && url.Contains("count=1"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 2, ""devices"": []}"));
+                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 4, ""sensors"": []}"));
+                if (url.Contains("columns=objid,device,sensor,type,tags,unit,lastvalue,parentid"))
+                {
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
+                        ""treesize"": 4,
+                        ""sensors"": [
+                            {""objid"": 101, ""type"": ""ping"", ""lastvalue"": ""12 msec"", ""parentid"": 1},
+                            {""objid"": 102, ""type"": ""ping"", ""lastvalue"": ""<1 ms"", ""parentid"": 1},
+                            {""objid"": 103, ""type"": ""ping"", ""lastvalue"": ""-"", ""parentid"": 2},
+                            {""objid"": 104, ""type"": ""http"", ""lastvalue"": ""OK"", ""parentid"": 1}
+                        ]
+                    }"));
+                }
+                if (url.Contains("columns=objid,dependency"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101, ""dependency"": ""200""}]}"));
+                if (url.Contains("content=groups"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""groups"": []}"));
+                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
+                {
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
+                        ""treesize"": 2,
+                        ""devices"": [
+                            {""objid"": 1, ""device"": ""Router"", ""host"": ""192.168.1.1""},
+                            {""objid"": 2, ""device"": ""WebServer"", ""host"": ""web.corp.local""}
+                        ]
+                    }"));
+                }
+
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        foreach (var line in console.Lines)
+        {
+            _output.WriteLine(line);
+        }
+
+        Assert.True(result);
+
+        // unit 樣本自 lastvalue 推導：ping 應含 msec 與 ms；http 的 OK 不是單位 → 無
+        var pingLine = console.Lines.First(l => l.Contains("ping | 3 |"));
+        Assert.Contains("msec", pingLine);
+        Assert.Contains("ms", pingLine);
+        var httpLine = console.Lines.First(l => l.Contains("http | 1 |"));
+        Assert.Contains("unit 樣本：無", httpLine);
+
+        // dependency 預設值註記
+        Assert.Contains(console.Lines, l => l.Contains("此比例含預設值"));
+
+        // 步驟 7：type × IPv4 交叉統計（ping：2/3 在 IPv4 device 上；http：1/1）
+        Assert.Contains(console.Lines, l => l.Contains("Type × IPv4 覆蓋"));
+        Assert.Contains(console.Lines, l => l.Contains("ping | 2/3 | 66.7%"));
+        Assert.Contains(console.Lines, l => l.Contains("http | 1/1 | 100.0%"));
+    }
+
+    [Fact]
+    public async Task RunAsync_無parentid資料時步驟7略過但不算失敗()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                var url = req.RequestUri!.ToString();
+                if (url.Contains("/api/status.json"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""20.1""}"));
+                if (url.Contains("count=1"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
+                if (url.Contains("columns=objid,device,sensor,type,tags,unit,lastvalue,parentid"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""type"": ""ping""}]}"));
+                if (url.Contains("columns=objid,dependency"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": []}"));
+                if (url.Contains("content=groups"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""groups"": []}"));
+                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""devices"": []}"));
+
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("略過此統計"));
+    }
+
+    [Fact]
     public async Task RunAsync_連線失敗時輸出錯誤行並回false()
     {
         var stub = new StubHandler
