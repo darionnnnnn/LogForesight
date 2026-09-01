@@ -133,19 +133,27 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
 
 ## 6a. 認證方式
 
-PRTG API 支援兩種認證，由 `PrtgAuthMode` 決定。**由已儲存設定建立 client 的唯一入口是
+PRTG API 支援三種認證，由 `PrtgAuthMode` 決定。**由已儲存設定建立 client 的唯一入口是
 `PrtgClientFactory.Create(settings)`**（憑證解密與「憑證齊不齊」的判定都收斂在這裡）；
 唯一例外是設定頁的「測試連線」——它用表單當下尚未存檔的值直接建構：
 
 | 模式 | 請求帶的參數 | 適用 |
 |---|---|---|
 | `token`（預設） | `apitoken=<token>` | 較新版本的 PRTG。可限定唯讀、可單獨撤銷，優先選它 |
-| `password` | `username=<u>&passhash=<h>` | 舊版 PRTG 沒有 API token 功能時 |
+| `password` | `username=<u>&passhash=<h>` | 舊版 PRTG 沒有 API token 功能時。系統保存密碼並自動換取 passhash |
+| `passhash` | `username=<u>&passhash=<h>` | 同上，但**由使用者自行提供 passhash**；系統不保存密碼、也不呼叫 `getpasshash.htm` |
 
 `password` 模式的流程：client 在第一次實際請求之前，先呼叫
 `GET /api/getpasshash.htm?username=&password=` 換取 passhash，**同一個 client 實例只換一次**
 （併發請求以 semaphore 收斂），之後所有請求帶的是 passhash。
 **密碼只出現在換取 passhash 那一次請求**，不會進入後續任何 URL。
+
+`passhash` 模式則連那一次都沒有：使用者從 PRTG 取得 passhash（帳號設定頁的 Show passhash，
+或自行呼叫 `getpasshash.htm`）後直接填入，client 建構時把它填進同一個快取欄位——
+組 URL 與遮蔽都走與 `password` 模式完全相同的路徑，**系統端不存在任何帶密碼的請求**。
+適用於「安全政策不允許第三方系統保存人員密碼」的環境。
+
+passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼**：加密、write-only、DTO 只回布林。
 
 **憑證錯誤會黏住**：帳號或密碼不對時（HTTP 401/403、回應為 HTML 登入頁、passhash 為空白
 都視為憑證級失敗），同一個 client 實例之後不再重打 `getpasshash.htm`，
@@ -153,8 +161,10 @@ PRTG API 支援兩種認證，由 `PrtgAuthMode` 決定。**由已儲存設定�
 「sensor 數 × 登入失敗」，足以觸發 PRTG 端的帳號鎖定。傳輸類失敗（連不上、逾時）不黏，
 那種重試是有意義的。
 
-**憑證的寫入依當前認證方式隔離**：切換模式時另一種認證的欄位（token／帳號／密碼）在畫面上
-是隱藏的，送上來的是切換前的殘值；後端只寫入當前模式那一組，否則會把另一組憑證靜默清空或覆寫。
+**憑證的寫入依當前認證方式隔離**：切換模式時其他認證方式的欄位在畫面上是隱藏的，
+送上來的是切換前的殘值；後端只寫入當前模式那一組，否則會把別組憑證靜默清空或覆寫。
+`PrtgUsername` 由 `password` 與 `passhash` 共用，兩者切換時不清空；`token` 模式不寫入它
+（避免非設定頁的呼叫端沒帶它時把已存帳號清掉）。
 
 不採用 PRTG 也支援的 `password=` 直掛：密碼會出現在每一個請求的 URL，
 進 PRTG 的存取 log 與中間設備。
@@ -169,24 +179,25 @@ PRTG API 支援兩種認證，由 `PrtgAuthMode` 決定。**由已儲存設定�
 |---|---|---|
 | `PrtgEnabled` | false | 模組總開關。關閉時整條路徑短路 |
 | `PrtgUrl` | — | PRTG core server 位址（含 scheme）。啟用時必填且須為 http/https |
-| `PrtgAuthMode` | `token` | 認證方式：`token`（API token）或 `password`（帳號密碼）。見 §6a |
+| `PrtgAuthMode` | `token` | 認證方式：`token`／`password`／`passhash`。見 §6a |
 | `PrtgApiTokenEnc` | — | API token 密文（`CryptoHelper`，AES-256-CBC）。write-only，DTO 只回布林。`token` 模式使用 |
-| `PrtgUsername` | — | PRTG 帳號。`password` 模式使用 |
+| `PrtgUsername` | — | PRTG 帳號。`password` 與 `passhash` 兩模式共用 |
 | `PrtgPasswordEnc` | — | PRTG 密碼密文。write-only，DTO 只回布林。`password` 模式使用 |
+| `PrtgPasshashEnc` | — | PRTG passhash 密文。write-only，DTO 只回布林。`passhash` 模式使用 |
 | `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤。自簽憑證環境的顯式逃生門，啟用時每次建立連線都記 WARN |
 | `PrtgTimeoutSeconds` | 60 | 單次請求逾時（5~600） |
 | `PrtgFetchConcurrency` | 2 | 對 PRTG 的併發上限（1~3） |
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 
-token 與密碼的處理都與 SMTP 密碼、AI 金鑰完全對稱：留空＝沿用既有、要清除需另外勾選清除。
+token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱：留空＝沿用既有、要清除需另外勾選清除。
 啟用 PRTG 時依模式驗證憑證是否齊備——**「新存或既有」皆算有**，否則密碼欄留空（＝沿用）
 會被誤判成沒設定，使用者改任何其他設定都會被擋下。
 解密一律先 `IsEncrypted` 判斷再 `Decrypt`（對非密文直接解密會擲例外）。
 
 ### 操作介面
 
-設定頁 PRTG 頁籤提供：連線設定（含認證方式切換）與**測試連線**、**鏡像狀態**（device／sensor 計數、各類資料的
+設定頁 PRTG 頁籤提供：連線設定（含三選一的認證方式切換）與**測試連線**、**鏡像狀態**（device／sensor 計數、各類資料的
 最新時間點、主機對應摘要與衝突／未對應清單）、**歷史回填**、**環境探測**（預設收合——接上 PRTG 那次會用、之後幾乎不再碰；執行中會自動展開）。
 
 > 「最新資料時間」是從鏡像資料推導的，不等於「最後一次成功同步的時間」：連續數晚擷取到
@@ -198,7 +209,7 @@ token 與密碼的處理都與 SMTP 密碼、AI 金鑰完全對稱：留空＝�
 
 | 端點 | 用途 |
 |---|---|
-| `POST prtg-test` | 測試連線（用表單當下的值，token／密碼留空沿用已存） |
+| `POST prtg-test` | 測試連線（用表單當下的值，token／密碼／passhash 留空沿用已存） |
 | `GET prtg-mirror` | 鏡像狀態與主機對應摘要 |
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-backfill/start`、`GET prtg-backfill/status` | 歷史回填 |
