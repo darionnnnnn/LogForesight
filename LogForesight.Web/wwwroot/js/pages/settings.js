@@ -704,32 +704,42 @@ function bindBrandIcon() {
     });
 }
 
-/** PRTG 認證方式切換：依選取模式切換 token / password 區塊顯示（只動 classList 不設 style.display） */
+/** PRTG 認證方式切換：依選取模式切換 token / password / passhash 區塊顯示（只動 classList 不設 style.display） */
 function syncPrtgAuthFields() {
     const authMode = document.getElementById('prtg-auth-mode')?.value ?? 'token';
+    const usernameField = document.getElementById('prtg-auth-username-field');
     const tokenFields = document.getElementById('prtg-auth-token-fields');
     const passwordFields = document.getElementById('prtg-auth-password-fields');
+    const passhashFields = document.getElementById('prtg-auth-passhash-fields');
 
+    if (usernameField) {
+        usernameField.classList.toggle('d-none', authMode === 'token');
+    }
     if (tokenFields) {
         tokenFields.classList.toggle('d-none', authMode !== 'token');
     }
     if (passwordFields) {
         passwordFields.classList.toggle('d-none', authMode !== 'password');
     }
+    if (passhashFields) {
+        passhashFields.classList.toggle('d-none', authMode !== 'passhash');
+    }
 
-    // 被隱藏那一側的輸入與勾選一律清掉：使用者已經看不到它們，留著只會在儲存時
-    // 送出殘值（後端也會依模式忽略，這裡是讓畫面與實際送出的內容一致）
+    // 只清空被隱藏的憑證欄位與其清除勾選（token／password／passhash 三者中未被選用的那兩組）。
+    // prtg-username 在 password 與 passhash 之間切換時不可清空（兩模式共用帳號欄位，清掉會造成困擾）；
+    // 切到 token 時 username 欄被隱藏，值也不清空（後端 token 模式不寫 username，畫面上清掉會造成「切回來帳號不見了」的錯覺）。
     const clearHidden = (inputId, checkboxId) => {
         const input = document.getElementById(inputId);
         if (input) input.value = '';
         const checkbox = document.getElementById(checkboxId);
         if (checkbox) checkbox.checked = false;
     };
-    if (authMode === 'password') clearHidden('prtg-api-token', 'prtg-clear-token');
-    else clearHidden('prtg-password', 'prtg-clear-password');
+    if (authMode !== 'token') clearHidden('prtg-api-token', 'prtg-clear-token');
+    if (authMode !== 'password') clearHidden('prtg-password', 'prtg-clear-password');
+    if (authMode !== 'passhash') clearHidden('prtg-passhash', 'prtg-clear-passhash');
 }
 
-/** PRTG 監控系統設定（批次B-4）：填入表單欄位，token 與 password 永遠留空（write-only） */
+/** PRTG 監控系統設定（批次B-4）：填入表單欄位，token、password 與 passhash 永遠留空（write-only） */
 function renderPrtgFields(settings) {
     document.getElementById('prtg-enabled').checked = Boolean(settings.prtgEnabled);
     document.getElementById('prtg-url').value = settings.prtgUrl ?? '';
@@ -767,6 +777,23 @@ function renderPrtgFields(settings) {
         passwordHint.textContent = settings.prtgHasPassword
             ? '已設定密碼；留空儲存＝沿用既有密碼，輸入新值才會覆蓋。'
             : '尚未設定密碼。';
+    }
+
+    const passhashInput = document.getElementById('prtg-passhash');
+    if (passhashInput) {
+        passhashInput.value = '';
+    }
+
+    const clearPasshashCheck = document.getElementById('prtg-clear-passhash');
+    if (clearPasshashCheck) {
+        clearPasshashCheck.checked = false;
+    }
+
+    const passhashHint = document.getElementById('prtg-passhash-hint');
+    if (passhashHint) {
+        passhashHint.textContent = settings.prtgHasPasshash
+            ? '已設定 passhash；留空儲存＝沿用既有 passhash，輸入新值才會覆蓋。'
+            : '尚未設定 passhash。';
     }
 
     syncPrtgAuthFields();
@@ -876,6 +903,23 @@ function bindForm() {
                 if (!password && !hasExistingPassword) {
                     activateTabForElement(document.getElementById('prtg-password'));
                     toast('啟用 PRTG 並使用帳號密碼時，必須設定密碼。', 'warning');
+                    return;
+                }
+            } else if (authMode === 'passhash') {
+                const username = document.getElementById('prtg-username')?.value.trim();
+                if (!username) {
+                    activateTabForElement(document.getElementById('prtg-username'));
+                    toast('啟用 PRTG 並使用帳號＋passhash 時，必須設定帳號。', 'warning');
+                    return;
+                }
+
+                const passhash = document.getElementById('prtg-passhash')?.value ?? '';
+                const clearPasshash = document.getElementById('prtg-clear-passhash')?.checked ?? false;
+                // passhash 空白＝沿用既有；但若原本未設定 passhash（或勾選了清除 passhash），則必須輸入 passhash
+                const hasExistingPasshash = Boolean(current?.prtgHasPasshash) && !clearPasshash;
+                if (!passhash && !hasExistingPasshash) {
+                    activateTabForElement(document.getElementById('prtg-passhash'));
+                    toast('啟用 PRTG 並使用帳號＋passhash 時，必須設定 passhash。', 'warning');
                     return;
                 }
             } else {
@@ -1093,6 +1137,8 @@ function bindForm() {
                 prtgUsername: document.getElementById('prtg-username')?.value.trim() ?? '',
                 prtgPassword: document.getElementById('prtg-password')?.value || null,
                 clearPrtgPassword: document.getElementById('prtg-clear-password')?.checked ?? false,
+                prtgPasshash: document.getElementById('prtg-passhash')?.value || null,
+                clearPrtgPasshash: document.getElementById('prtg-clear-passhash')?.checked ?? false,
                 prtgIgnoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
                 prtgApiToken: document.getElementById('prtg-api-token').value || null,
                 clearPrtgApiToken: document.getElementById('prtg-clear-token').checked,
@@ -1226,6 +1272,7 @@ function bindPrtgTest() {
                 authMode: document.getElementById('prtg-auth-mode')?.value ?? 'token',
                 username: document.getElementById('prtg-username')?.value.trim() ?? '',
                 password: document.getElementById('prtg-password')?.value || null,
+                passhash: document.getElementById('prtg-passhash')?.value || null,
                 apiToken: document.getElementById('prtg-api-token').value || null,
                 ignoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
                 timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value)

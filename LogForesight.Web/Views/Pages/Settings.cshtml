@@ -749,8 +749,19 @@
                     <select class="form-select" id="prtg-auth-mode">
                         <option value="token">API token（推薦，PRTG 21+）</option>
                         <option value="password">帳號密碼（PRTG 傳統 API / passhash）</option>
+                        <option value="passhash">帳號＋passhash</option>
                     </select>
                     <div class="form-text">PRTG 21.x 之後版本建議使用 API token；舊版 PRTG 或特定環境可切換為帳號密碼。</div>
+                </div>
+            </div>
+
+            <div id="prtg-auth-username-field" class="d-none">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label for="prtg-username" class="form-label">使用者帳號</label>
+                        <input type="text" class="form-control" id="prtg-username" placeholder="prtgadmin" />
+                        <div class="form-text">具備讀取權限的 PRTG 登入帳號。</div>
+                    </div>
                 </div>
             </div>
 
@@ -773,11 +784,6 @@
             <div id="prtg-auth-password-fields" class="d-none">
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
-                        <label for="prtg-username" class="form-label">使用者帳號</label>
-                        <input type="text" class="form-control" id="prtg-username" placeholder="prtgadmin" />
-                        <div class="form-text">具備讀取權限的 PRTG 登入帳號。</div>
-                    </div>
-                    <div class="col-md-6">
                         <label for="prtg-password" class="form-label">密碼</label>
                         <input type="password" class="form-control" id="prtg-password" autocomplete="new-password" placeholder="留空＝沿用既有密碼" />
                         <div class="form-text" id="prtg-password-hint"></div>
@@ -786,6 +792,25 @@
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="prtg-clear-password" />
                             <label class="form-check-label" for="prtg-clear-password">清除目前的密碼</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="prtg-auth-passhash-fields" class="d-none">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label for="prtg-passhash" class="form-label">PRTG passhash</label>
+                        <input type="password" class="form-control" id="prtg-passhash" autocomplete="new-password" placeholder="留空＝沿用既有 passhash" />
+                        <div class="form-text" id="prtg-passhash-hint"></div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="prtg-clear-passhash" />
+                            <label class="form-check-label" for="prtg-clear-passhash">清除目前的 passhash</label>
+                        </div>
+                        <div class="form-text">
+                            passhash 可在 PRTG 的使用者帳號設定頁取得（Show passhash），或自行呼叫 /api/getpasshash.htm 換取。LogForesight 不會保存密碼、也不會替你換取 passhash。
                         </div>
                     </div>
                 </div>
