@@ -73,6 +73,11 @@ public class SettingsController : ControllerBase
     public async Task<ApiResponse<TestPrtgConnectionResultDto>> TestPrtg([FromBody] TestPrtgConnectionRequest request, CancellationToken ct)
         => ApiResponse<TestPrtgConnectionResultDto>.Ok(await _settings.TestPrtgAsync(request, ct));
 
+    /// <summary>PRTG 設定專屬更新（PRTG 維護頁，任務 F1）：只更新 PRTG 欄位，不動其他設定</summary>
+    [HttpPut("prtg")]
+    public ApiResponse<SystemSettingsDto> UpdatePrtg([FromBody] UpdatePrtgSettingsRequest request) =>
+        ApiResponse<SystemSettingsDto>.Ok(_settings.UpdatePrtg(request));
+
     /// <summary>PRTG 總開關（排程作業頁）：只更新這一個欄位，不動其他設定</summary>
     [HttpPut("prtg-enabled")]
     public ApiResponse<bool> SetPrtgEnabled([FromBody] SetPrtgEnabledRequest request) =>

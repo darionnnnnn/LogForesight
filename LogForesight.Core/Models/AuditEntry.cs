@@ -156,6 +156,9 @@ public static class AuditActions
     public const string PrtgDataExport = "prtg_data_export";
     public const string PrtgDataImport = "prtg_data_import";
 
+    // PRTG 設定維護（任務 F1）
+    public const string PrtgSettingsUpdate = "prtg_settings_update";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

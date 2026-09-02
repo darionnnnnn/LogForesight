@@ -390,6 +390,56 @@ public class UpdateSystemSettingsRequest
     [StringLength(500)]
     public string? PrtgUrl { get; set; }
 
+    public bool? PrtgIgnoreSslErrors { get; set; }
+
+    /// <summary>write-only；留空＝沿用既有 token，要清除請另外傳 ClearPrtgApiToken=true（同 AI 金鑰慣例）</summary>
+    [StringLength(500)]
+    public string? PrtgApiToken { get; set; }
+
+    public bool ClearPrtgApiToken { get; set; }
+
+    /// <summary>PRTG 認證方式。null＝本次請求未提供（沿用既有值）。</summary>
+    [StringLength(20)]
+    public string? PrtgAuthMode { get; set; }
+
+    [StringLength(255)]
+    public string? PrtgUsername { get; set; }
+
+    /// <summary>write-only；留空＝沿用既有密碼，要清除請另外傳 ClearPrtgPassword=true</summary>
+    public string? PrtgPassword { get; set; }
+
+    public bool ClearPrtgPassword { get; set; }
+
+    /// <summary>write-only；留空＝沿用既有 passhash，要清除請另外傳 ClearPrtgPasshash=true</summary>
+    public string? PrtgPasshash { get; set; }
+
+    public bool ClearPrtgPasshash { get; set; }
+
+    [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
+    public int? PrtgTimeoutSeconds { get; set; }
+
+    [Range(1, 3, ErrorMessage = "PRTG 併發請求數上限必須介於 1~3")]
+    public int? PrtgFetchConcurrency { get; set; }
+
+    [Range(1, 365, ErrorMessage = "PRTG 歷史回填天數必須介於 1~365 天")]
+    public int? PrtgBackfillDays { get; set; }
+
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "PRTG 資料保留天數必須介於 90~3650 天")]
+    public int? PrtgRetentionDays { get; set; }
+
+    public List<string>? PrtgSensorTypeWhitelist { get; set; }
+}
+
+/// <summary>
+/// PRTG 設定專屬更新請求（「系統管理 > PRTG 維護」頁，任務 F1）。
+/// 涵蓋 PRTG 全部可編欄位（連線設定與擷取參數），不含總開關 PrtgEnabled。
+/// </summary>
+public class UpdatePrtgSettingsRequest
+{
+    /// <summary>PRTG 位址。null＝本次請求未提供（沿用既有值）。</summary>
+    [StringLength(500)]
+    public string? PrtgUrl { get; set; }
+
     public bool PrtgIgnoreSslErrors { get; set; }
 
     /// <summary>write-only；留空＝沿用既有 token，要清除請另外傳 ClearPrtgApiToken=true（同 AI 金鑰慣例）</summary>
