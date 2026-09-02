@@ -32,11 +32,25 @@ public class IssueAggregateQueryTests : IDisposable
     private static LogIssueSignature Issue(
         string source, int eventId, int count = 1,
         IssueSeverity severity = IssueSeverity.Low, bool elevates = false,
-        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning) => new()
+        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning,
+        string eventKey = "") => new()
         {
             LogName = logName, Source = source, EventId = eventId, EntryType = entryType,
-            Category = IssueCategory.Other, Severity = severity, ElevatesDayRisk = elevates, Count = count
+            Category = IssueCategory.Other, Severity = severity, ElevatesDayRisk = elevates, Count = count,
+            EventKey = eventKey
         };
+
+    private static LogIssueSignature PrtgIssue(string eventKey, int count = 1) => new()
+    {
+        LogName = "PRTG",
+        Source = "PRTG",
+        EventId = 0,
+        EntryType = EventLogEntryType.Warning,
+        EventKey = eventKey,
+        Category = IssueCategory.Other,
+        Severity = IssueSeverity.Medium,
+        Count = count
+    };
 
     private void Add(long hostId, string host, DateTime date, params LogIssueSignature[] issues) =>
         Add(hostId, host, date, RiskLevels.Low, issues);
@@ -613,5 +627,84 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(d0.AddDays(4), agg.LastSeen);
         Assert.Equal(1, agg.HostCount);
         Assert.Equal(2, agg.ActiveDays);
+    }
+
+    // ── AggregatePrtgRuleHits（A2，校準頁 PRTG 規則命中分佈）─────────────────────
+
+    [Fact]
+    public void AggregatePrtgRuleHits_依規則代碼分組統計命中筆數()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0,
+            PrtgIssue("prtg:down:1"),
+            PrtgIssue("prtg:down:2"),
+            PrtgIssue("prtg:flapping:1"));
+
+        var result = Query().AggregatePrtgRuleHits(d0, d0);
+
+        Assert.Equal(2, result.Count);
+        var down = result.Single(r => r.RuleCode == "down");
+        var flapping = result.Single(r => r.RuleCode == "flapping");
+
+        Assert.Equal(2, down.HitCount);
+        Assert.Equal(1, flapping.HitCount);
+        Assert.Equal(d0, down.Date);
+        Assert.Equal(d0, flapping.Date);
+    }
+
+    [Fact]
+    public void AggregatePrtgRuleHits_非PRTG來源不得計入()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        // Source 不是 PRTG，但 EventKey 長得像 prtg:down:9
+        Add(1, "A", d0,
+            Issue("System", 100, eventKey: "prtg:down:9"),
+            PrtgIssue("prtg:down:1"));
+
+        var result = Query().AggregatePrtgRuleHits(d0, d0);
+
+        var down = Assert.Single(result);
+        Assert.Equal("down", down.RuleCode);
+        Assert.Equal(1, down.HitCount);
+    }
+
+    [Fact]
+    public void AggregatePrtgRuleHits_EventKey格式不符歸入其他桶且不擲例外()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, PrtgIssue("prtg"));
+
+        var result = Query().AggregatePrtgRuleHits(d0, d0);
+
+        var other = Assert.Single(result);
+        Assert.Equal("其他", other.RuleCode);
+        Assert.Equal(1, other.HitCount);
+        Assert.Equal(1, other.HostCount);
+    }
+
+    [Fact]
+    public void AggregatePrtgRuleHits_相異主機數統計正確()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+
+        // 同一規則同一天由兩台不同主機命中 → 筆數 2、主機數 2
+        Add(1, "A", d0, PrtgIssue("prtg:down:1"));
+        Add(2, "B", d0, PrtgIssue("prtg:down:2"));
+
+        var resultMultiHost = Query().AggregatePrtgRuleHits(d0, d0);
+        var downMulti = Assert.Single(resultMultiHost);
+        Assert.Equal(2, downMulti.HitCount);
+        Assert.Equal(2, downMulti.HostCount);
+
+        // 同一台主機兩筆 → 筆數 2、主機數 1
+        var d1 = new DateTime(2026, 8, 2);
+        Add(3, "C", d1,
+            PrtgIssue("prtg:down:1"),
+            PrtgIssue("prtg:down:2"));
+
+        var resultSingleHost = Query().AggregatePrtgRuleHits(d1, d1);
+        var downSingle = Assert.Single(resultSingleHost);
+        Assert.Equal(2, downSingle.HitCount);
+        Assert.Equal(1, downSingle.HostCount);
     }
 }

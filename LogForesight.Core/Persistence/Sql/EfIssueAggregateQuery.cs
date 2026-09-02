@@ -1019,6 +1019,58 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return trend;
     }
 
+    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to)
+    {
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = AliasIndex();
+
+        using var ctx = _contextFactory();
+
+        // SQL 端過濾來源與日期範圍（不得先撈全表）
+        var rows = ctx.TopIssues.AsNoTracking()
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.SourceName.ToUpper() == "PRTG")
+            .Select(x => new
+            {
+                x.RecordDate,
+                x.HostId,
+                x.EventKey
+            })
+            .ToList();
+
+        var result = rows
+            .GroupBy(x => new
+            {
+                RuleCode = ExtractPrtgRuleCode(x.EventKey),
+                Date = x.RecordDate
+            })
+            .Select(g => new PrtgRuleHitAggregate(
+                g.Key.RuleCode,
+                g.Key.Date,
+                g.Count(),
+                g.Select(x => Surviving(aliasIndex, x.HostId)).Distinct().Count()
+            ))
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregatePrtgRuleHits（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregatePrtgRuleHits", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    private static string ExtractPrtgRuleCode(string? eventKey)
+    {
+        if (string.IsNullOrEmpty(eventKey)) return "其他";
+        var parts = eventKey.Split(':');
+        if (parts.Length >= 3 && string.Equals(parts[0], "prtg", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(parts[1]))
+        {
+            return parts[1];
+        }
+        return "其他";
+    }
+
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
         IReadOnlySet<string>? riskLevels = null)

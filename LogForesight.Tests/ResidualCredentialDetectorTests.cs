@@ -1050,4 +1050,100 @@ public class ResidualCredentialDetectorTests
         Assert.DoesNotContain("user6", sig.KeyDetails);
         Assert.DoesNotContain("user7", sig.KeyDetails);
     }
+
+    // ── EvaluateMetrics（A2，殘留判定中間指標抽出）─────────────────────────
+
+    [Fact]
+    public void EvaluateMetrics_典型4625命中案例_回傳正確數值且命中為true()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 50, IssueSeverity.High, IssueCategory.Security);
+        todaySig.LoginFailureTotalCount = 50;
+        todaySig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 },
+            new() { Account = "admin", Source = "10.0.0.1", LogonType = 3, ReasonCode = "bad_password", Count = 5 }
+        };
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        var metrics = ResidualCredentialDetector.EvaluateMetrics(todaySig, history, targetDate);
+
+        Assert.NotNull(metrics);
+        Assert.Equal(4625, metrics.EventId);
+        Assert.Equal(50, metrics.TotalDetailCount);
+        Assert.Equal(45, metrics.TopTwoCountSum);
+        Assert.Equal(0.9, metrics.ConcentrationRatio);
+        Assert.Equal(1.0, metrics.MechanicalLogonTypeRatio);
+        Assert.Equal(0.8, metrics.SingleGroupRatio);
+        Assert.False(metrics.IsTruncated);
+        Assert.True(metrics.IsMatch);
+    }
+
+    [Fact]
+    public void EvaluateMetrics_集中度不足案例_數值正確且命中為false()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 100, IssueSeverity.High, IssueCategory.Security);
+        todaySig.LoginFailureTotalCount = 100;
+        todaySig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 35 },
+            new() { Account = "admin", Source = "10.0.0.1", LogonType = 3, ReasonCode = "bad_password", Count = 25 },
+            new() { Account = "user3", Source = "10.0.0.2", LogonType = 3, ReasonCode = "bad_password", Count = 20 },
+            new() { Account = "user4", Source = "10.0.0.3", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+        };
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        var metrics = ResidualCredentialDetector.EvaluateMetrics(todaySig, history, targetDate);
+
+        Assert.NotNull(metrics);
+        Assert.Equal(100, metrics.TotalDetailCount);
+        Assert.Equal(60, metrics.TopTwoCountSum);
+        Assert.Equal(0.6, metrics.ConcentrationRatio);
+        Assert.Equal(0.35, metrics.SingleGroupRatio);
+        Assert.False(metrics.IsTruncated);
+        Assert.False(metrics.IsMatch);
+    }
+
+    [Fact]
+    public void EvaluateMetrics_截斷案例_IsTruncated為true且命中為false()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 100, IssueSeverity.High, IssueCategory.Security);
+        todaySig.LoginFailureTotalCount = 100;
+        todaySig.LoginFailureDetailsTruncated = true;
+        todaySig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 80 },
+            new() { Account = "admin", Source = "10.0.0.1", LogonType = 3, ReasonCode = "bad_password", Count = 10 }
+        };
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        var metrics = ResidualCredentialDetector.EvaluateMetrics(todaySig, history, targetDate);
+
+        Assert.NotNull(metrics);
+        Assert.True(metrics.IsTruncated);
+        Assert.False(metrics.IsMatch);
+    }
 }

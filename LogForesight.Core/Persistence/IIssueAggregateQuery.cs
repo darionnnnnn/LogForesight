@@ -215,6 +215,13 @@ public interface IIssueAggregateQuery
     List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
 
     /// <summary>
+    /// PRTG 規則命中分組查詢（A2，校準數值匯出用）。
+    /// 依 (規則代碼, 日期) 分組，回傳期間內的命中筆數與相異存活主機數。
+    /// 僅納入 Source == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
+    /// </summary>
+    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to);
+
+    /// <summary>
     /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次
     /// <see cref="AggregateReportKpi"/> 逐欄位相同；預設實作就是那樣呼叫兩次
     /// （測試替身自動取得等值行為），EF 實作覆寫成合併查詢收斂資料庫往返。
@@ -225,6 +232,11 @@ public interface IIssueAggregateQuery
         (AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities),
          AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities));
 }
+
+/// <summary>
+/// PRTG 規則命中的分組聚合結果（A2）
+/// </summary>
+public sealed record PrtgRuleHitAggregate(string RuleCode, DateTime Date, int HitCount, int HostCount);
 
 public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);
 public sealed record TrendAggregate(DateTime Date, int HighRisk, int MediumRisk, int ErrorCount);
