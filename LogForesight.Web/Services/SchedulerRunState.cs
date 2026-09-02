@@ -63,6 +63,14 @@ public class SchedulerRunState
     public int LocalProgressDone { get; private set; }
     public int LocalProgressTotal { get; private set; }
 
+    /// <summary>
+    /// PRTG 擷取進度（任務 G1）：與 NetIQ／本機互不覆蓋的第三條進度軌，phase 包含
+    /// prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）。
+    /// </summary>
+    public string? PrtgProgressPhase { get; private set; }
+    public int PrtgProgressDone { get; private set; }
+    public int PrtgProgressTotal { get; private set; }
+
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
@@ -88,6 +96,9 @@ public class SchedulerRunState
             LocalProgressPhase = null;
             LocalProgressDone = 0;
             LocalProgressTotal = 0;
+            PrtgProgressPhase = null;
+            PrtgProgressDone = 0;
+            PrtgProgressTotal = 0;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -113,28 +124,27 @@ public class SchedulerRunState
     /// 能同時畫兩條進度條的讀取端（排程作業頁的狀態 API）直接讀兩組欄位，不走這裡。
     /// </summary>
     /// <summary>
-    /// 優先序：主進度（netiq） &gt; 本機（回饋十七輪批次E 新增第二順位；原第一順位的
-    /// 子進度軌已隨 AI 拆離移除——AI 補寫的告示由 RunActivityController 讀
-    /// AiAnalysisRunState 另行提供）。本機排最後——Full 範圍下 NetIQ 通常是規模較大、
-    /// 較慢的一路，單一告示優先顯示它更有代表性。LocalOnly 範圍或 NetIQ 尚未開始回報時，
-    /// 自然落回本機進度，不會顯示空白。
+    /// 優先序：主進度（netiq） &gt; 本機 &gt; PRTG。原第一順位的子進度軌已隨 AI 拆離移除
+    /// （AI 補寫的告示由 RunActivityController 讀 AiAnalysisRunState 另行提供）。
+    /// 本機排在 NetIQ 之後——Full 範圍下 NetIQ 通常是規模較大、較慢的一路，單一告示優先顯示它更有
+    /// 代表性；LocalOnly 範圍或 NetIQ 尚未開始回報時，自然落回本機進度，不會顯示空白。
+    /// PRTG 排最後：它是附屬流程，不該蓋掉主要分析的活動訊息。
     /// </summary>
     public (string? Phase, int Done, int Total) LatestActivity()
     {
         lock (_lock)
         {
             if (ProgressPhase != null) return (ProgressPhase, ProgressDone, ProgressTotal);
-            return LocalProgressPhase != null
-                ? (LocalProgressPhase, LocalProgressDone, LocalProgressTotal)
+            if (LocalProgressPhase != null) return (LocalProgressPhase, LocalProgressDone, LocalProgressTotal);
+            return PrtgProgressPhase != null
+                ? (PrtgProgressPhase, PrtgProgressDone, PrtgProgressTotal)
                 : (null, 0, 0);
         }
     }
 
-    /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ 兩階段各自的
-    /// 主機日進度，供狀態 API 畫進度條。phase=="local" 寫入本機專屬欄位（回饋十七輪批次E：本機與
-    /// NetIQ 改並行執行後不能再共用主進度欄位，見 LocalProgressPhase 的說明）；其餘（netiq）寫入主進度欄位——兩組欄位互不覆蓋。
-    /// （子進度軌 netiq-ai／netiq-backpressure 已隨 AI 拆離移除：取數執行不再含 AI 段，
-    /// 沒有任何生產端會回報那兩個 phase。）</summary>
+    /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ／PRTG 三階段各自的
+    /// 進度，供狀態 API 畫進度條。phase=="local" 寫入本機專屬欄位；phase 以 "prtg-" 開頭寫入 PRTG 專屬欄位；
+    /// 其餘（netiq）寫入主進度欄位——三組欄位互不覆蓋。</summary>
     public void ReportProgress(string phase, int done, int total)
     {
         lock (_lock)
@@ -158,6 +168,18 @@ public class SchedulerRunState
                 ProgressDone = 0;
                 ProgressTotal = 0;
             }
+            else if (phase == PrtgDonePhase)
+            {
+                PrtgProgressPhase = null;
+                PrtgProgressDone = 0;
+                PrtgProgressTotal = 0;
+            }
+            else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
+            {
+                PrtgProgressPhase = phase;
+                PrtgProgressDone = done;
+                PrtgProgressTotal = total;
+            }
             else
             {
                 ProgressPhase = phase;
@@ -170,6 +192,10 @@ public class SchedulerRunState
     /// <summary>NetIQ 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/>
     /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
     public const string NetiqDonePhase = "netiq-done";
+
+    /// <summary>PRTG 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunPrtgFetchAsync"/>
+    /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
+    public const string PrtgDonePhase = "prtg-done";
 
     /// <param name="outcome">這次執行的結局；null＝沒有真的開始過（例如跨行程 Mutex 逾時），
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>
@@ -186,6 +212,9 @@ public class SchedulerRunState
             LocalProgressPhase = null;
             LocalProgressDone = 0;
             LocalProgressTotal = 0;
+            PrtgProgressPhase = null;
+            PrtgProgressDone = 0;
+            PrtgProgressTotal = 0;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

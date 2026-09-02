@@ -38,7 +38,8 @@ public sealed class PrtgTriggeredValueFetcher
         Func<bool> analysisCompleted,
         CancellationToken ct,
         int pollSeconds = 30,
-        IReadOnlyCollection<long>? extraTriggerHosts = null)
+        IReadOnlyCollection<long>? extraTriggerHosts = null,
+        Action<string, int, int>? progress = null)
     {
         var hostMapRows = _store.GetHostMapForDate(day);
         var hostToDevices = new Dictionary<long, List<long>>();
@@ -99,7 +100,7 @@ public sealed class PrtgTriggeredValueFetcher
             var targets = _store.GetValueFetchTargets(whitelist, deviceObjids);
             if (targets.Count == 0) return;
 
-            var (written, failedSensors) = await _fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct);
+            var (written, failedSensors) = await _fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct, progress);
             totalTargetSensors += targets.Count;
             totalValuesWritten += written;
             totalFailedSensors += failedSensors;

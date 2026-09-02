@@ -885,11 +885,19 @@ function applyAiScheduleStatus(status) {
     wasAiScheduleRunning = status.isRunning;
 }
 
-// 取數執行只剩本機與 NetIQ 兩條軌（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
+// 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
 const PROGRESS_PHASE_LABEL = {
-    local: '本機分析', netiq: 'NetIQ 機房分析'
+    local: '本機分析',
+    netiq: 'NetIQ 機房分析',
+    'prtg-sync': 'PRTG 結構同步',
+    'prtg-values': 'PRTG 數值取數',
+    'prtg-triggered': 'PRTG 觸發式取數'
 };
-const PROGRESS_PHASE_UNIT = {};
+const PROGRESS_PHASE_UNIT = {
+    'prtg-sync': 'sensor',
+    'prtg-values': 'sensor',
+    'prtg-triggered': 'sensor'
+};
 
 /**
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
@@ -941,6 +949,9 @@ function renderScheduleProgress(status) {
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
     const text = document.getElementById('schedule-progress-text');
+    const prtgWrap = document.getElementById('schedule-prtg-progress-wrap');
+    const prtgBar = document.getElementById('schedule-prtg-progress-bar');
+    const prtgText = document.getElementById('schedule-prtg-progress-text');
 
     updateProgressBar(
         { wrapEl: localWrap, barEl: localBar, textEl: localText },
@@ -958,6 +969,15 @@ function renderScheduleProgress(status) {
         status.progressTotal,
         PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase,
         PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日'
+    );
+
+    updateProgressBar(
+        { wrapEl: prtgWrap, barEl: prtgBar, textEl: prtgText },
+        status.isRunning && !!status.prtgProgressPhase,
+        status.prtgProgressDone,
+        status.prtgProgressTotal,
+        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? status.prtgProgressPhase,
+        PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor'
     );
 }
 
