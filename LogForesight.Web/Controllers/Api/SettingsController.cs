@@ -173,18 +173,7 @@ public class SettingsController : ControllerBase
         var summary = store.GetMirrorSummary();
 
         // 搜尋最近有對應資料的日期（至多往前找 30 天）
-        DateTime? mapDate = null;
-        List<PrtgHostMapRow> hostMaps = new();
-        for (var d = DateTime.Today; d >= DateTime.Today.AddDays(-30); d = d.AddDays(-1))
-        {
-            var rows = store.GetHostMapForDate(d);
-            if (rows.Count > 0)
-            {
-                mapDate = d;
-                hostMaps = rows;
-                break;
-            }
-        }
+        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
 
         var whitelist = _settings.Get().PrtgSensorTypeWhitelist;
         var coverage = store.GetWhitelistCoverage(whitelist, mapDate);

@@ -989,4 +989,87 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Contains(statuses, s => s.Objid == 102 && s.DeviceObjid == 1 && s.Status == "Down" && s.SensorType == "ping");
         Assert.DoesNotContain(statuses, s => s.Objid == 103);
     }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_資料稀疏仍取得最近一日()
+    {
+        var store = CreateStore();
+        var targetDate = DateTime.Today.AddDays(-20);
+
+        store.ReplaceHostMapForDate(targetDate, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = targetDate, DeviceObjid = 101, HostName = "SRV-101", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+
+        Assert.Equal(targetDate, mapDate);
+        Assert.Single(rows);
+        Assert.Equal(101, rows[0].DeviceObjid);
+
+        var latestRows = store.GetLatestHostMap(30);
+        Assert.Single(latestRows);
+        Assert.Equal(101, latestRows[0].DeviceObjid);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_多日資料取最新那一日且只包含該日列()
+    {
+        var store = CreateStore();
+        var day20Ago = DateTime.Today.AddDays(-20);
+        var day10Ago = DateTime.Today.AddDays(-10);
+        var day3Ago = DateTime.Today.AddDays(-3);
+
+        store.ReplaceHostMapForDate(day20Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day20Ago, DeviceObjid = 201, HostName = "SRV-201", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        store.ReplaceHostMapForDate(day10Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day10Ago, DeviceObjid = 301, HostName = "SRV-301", MapStatus = PrtgMapStatus.Conflict },
+            new() { MapDate = day10Ago, DeviceObjid = 302, HostName = "SRV-302", MapStatus = PrtgMapStatus.Unmatched }
+        });
+
+        store.ReplaceHostMapForDate(day3Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day3Ago, DeviceObjid = 401, HostName = "SRV-401", MapStatus = PrtgMapStatus.Ok },
+            new() { MapDate = day3Ago, DeviceObjid = 402, HostName = "SRV-402", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+
+        Assert.Equal(day3Ago, mapDate);
+        Assert.Equal(2, rows.Count);
+        Assert.Contains(rows, r => r.DeviceObjid == 401);
+        Assert.Contains(rows, r => r.DeviceObjid == 402);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 201);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 301);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 302);
+
+        var latestRows = store.GetLatestHostMap(30);
+        Assert.Equal(2, latestRows.Count);
+        Assert.Contains(latestRows, r => r.DeviceObjid == 401);
+        Assert.Contains(latestRows, r => r.DeviceObjid == 402);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_窗內無資料回傳Null與空清單()
+    {
+        var store = CreateStore();
+        var day60Ago = DateTime.Today.AddDays(-60);
+
+        store.ReplaceHostMapForDate(day60Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day60Ago, DeviceObjid = 501, HostName = "SRV-501", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+
+        Assert.Null(mapDate);
+        Assert.Empty(rows);
+
+        var latestRows = store.GetLatestHostMap(30);
+        Assert.Empty(latestRows);
+    }
 }

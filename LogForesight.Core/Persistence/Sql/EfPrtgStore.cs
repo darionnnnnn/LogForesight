@@ -508,23 +508,42 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
-    /// 從今天往前逐日檢查 GetHostMapForDate，第一個有資料的日期即回傳；若 30 天內皆無資料則回傳空清單。
+    /// 取得回看窗內最近一個有對應資料的日期，以及該日的全部對應列（唯讀查詢）。
+    /// 最多兩次資料庫往返（聚合 Max 日期 + 取該日列），窗內無資料時回傳 (null, 空清單)。
     /// </summary>
-    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30)
+    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapWithDate(int maxLookbackDays = 30)
     {
-        var today = DateTime.Today;
-        for (var i = 0; i < maxLookbackDays; i++)
+        if (maxLookbackDays <= 0)
         {
-            var date = today.AddDays(-i);
-            var rows = GetHostMapForDate(date);
-            if (rows.Count > 0)
-            {
-                return rows;
-            }
+            return (null, new List<PrtgHostMapRow>());
         }
-        return new List<PrtgHostMapRow>();
+
+        var today = DateTime.Today;
+        var cutoff = today.AddDays(-(maxLookbackDays - 1));
+
+        using var ctx = _contextFactory();
+        var latestDate = ctx.PrtgHostMaps
+            .Where(m => m.MapDate >= cutoff && m.MapDate <= today)
+            .Max(m => (DateTime?)m.MapDate);
+
+        if (latestDate == null)
+        {
+            return (null, new List<PrtgHostMapRow>());
+        }
+
+        var rows = ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == latestDate.Value)
+            .ToList();
+
+        return (latestDate.Value, rows);
     }
+
+    /// <summary>
+    /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
+    /// </summary>
+    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30) =>
+        GetLatestHostMapWithDate(maxLookbackDays).Rows;
 
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
     public List<PrtgManualMapRow> GetManualMaps()
