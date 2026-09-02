@@ -10,11 +10,14 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 主機維護的輸入驗證與合併守則（docs/WEB-SPEC.md §9.8）。
 /// </summary>
-public class HostAdminServiceTests
+public class HostAdminServiceTests : IDisposable
 {
     private readonly FakeHostStore _hosts = new();
     private readonly FakeHostGroupStore _groups = new();
     private readonly RecordingAuditService _audit = new();
+    private readonly EfSqliteFixture _fx = new();
+
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private HostAdminService Create() => new(
         _hosts,
@@ -23,7 +26,8 @@ public class HostAdminServiceTests
         new FakeNetiqServerCatalog("SENTINEL-A"),
         new FakeNetiqHostServiceForAdmin(),
         _audit,
-        new UserDisplayNameService(new FakeSystemSettingsStore()));
+        new UserDisplayNameService(new FakeSystemSettingsStore()),
+        new EfPrtgStore(_fx.NewContext));
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -33,7 +37,7 @@ public class HostAdminServiceTests
         new FakeNetiqHostServiceForAdmin(),
         _audit,
         new UserDisplayNameService(new FakeSystemSettingsStore()),
-        prtgStore: prtgStore);
+        prtgStore);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //

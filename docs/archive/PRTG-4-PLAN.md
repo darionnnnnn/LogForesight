@@ -277,3 +277,38 @@ device 底下沒有未暫停 sensor 時不算沉默。
 2. PRTG 規則第一階的命中狀況與誤報率——四個門檻是未經實測的保守起步值，
    依實際結果在規則頁調整。
 3. 值型規則的資料累積：用 §10 的匯出／匯入把正式機資料搬到開發機後另輪規劃。
+
+## 體檢交接
+
+- 實作：Claude Opus 5（規劃、規格、驗收）＋ Antigravity CLI `agy`（gemini-3.7-flash-high，產出）。
+- 體檢：Claude Fable 5.1（使用者 `/model` 切換後下收尾指令）。
+- 實作方收官：dev@56f48bb，3294 綠（略過 6）。實作方自報最沒把握處：F-2 的追加時序、D 系列搬家後設定頁的欄位覆蓋。
+
+## 體檢輪修正（換模型獨立體檢）
+
+以 `320c082..56f48bb` 整條 diff 重看（不沿用實作方的假設），抓到三項實質問題與三項小修：
+
+1. **【高／安全】主機明細 PRTG 端點無授權檢查**——`GET /api/host-detail/{id}/prtg` 直接以 hostId 查
+   PRTG device 與 sensor，任何登入者可列出別人主機的監控結構。同 controller 另外兩支端點是在
+   `RecordDetailQueryService` 內做 `EnsureVisible`，這支不走 service 所以漏了。
+   修：controller 注入 `IVisibilityService` 並在最前面 `EnsureVisible(hostId)`；不可見回 404（全站慣例）。
+   迴歸測試：`HostDetailPrtgAuthorizationTests`（不可見擲 NotFound／可見無資料回空物件）。
+2. **【高／升級路徑】seed `Version` 未遞增，PRTG 規則在既有部署永遠不會出現**——F-3 新增四條內建規則
+   但 `KnownIssueSeed.Version` 仍是 5，既有部署的規則庫比對版本相同、升級橫幅不出現、規則永遠不進規則庫；
+   orchestrator 因此拿到**空的** `enabledRuleCodes`，四條規則全部不啟用，且沒有任何輸出——
+   「規則零 finding」與「環境真的沒事」在畫面上完全一樣。
+   修：`Version` 5→6（橫幅會出現）；orchestrator 在規則庫無啟用中 PRTG 規則時輸出明確說明並跳過評估
+   （用私有控制流例外跳出該段，不記 error log）。測試 `種子版本為5` 同步改為 6。
+3. **【中／反模式】可選相依 fallback 再犯**——`HostAdminService(... StorageBackend? backend = null,
+   EfPrtgStore? prtgStore = null)` 與 `HostDetailController(..., StorageBackend? backend = null)`
+   都是 agy 為了讓測試可傳 null 而在正式碼留的 null 分支（memory 已記「agy 三犯可選相依 fallback」，
+   這是第四、五次）。`EfPrtgStore` 早已註冊為 Singleton，直接必填即可。
+   修：兩處改為必填，`_prtgStore?.` 的 null 分支移除；測試 helper 改傳真實 `EfPrtgStore`。
+4. 小修：`prtg-admin.js` 逾時空值預設 30→60（與 `SystemSettings.DefaultPrtgTimeoutSeconds` 一致）；
+   `AttachPrtgFindings` 的 log 筆數改用實際追加數而非傳入數。
+5. 記入 BACKLOG：抑制影響面預覽對 `prtg` 規則落到 Windows 分支、命中恆 0（提示用，不影響抑制生效）。
+
+未動的部分：觸發式取數輪詢、finding 追加時序（H-1 已修且結構正確）、人工對應優先序、
+`AttachPrtgFindings` 交易與去重——逐一讀過，無新發現。
+
+測試：3294 → **3296**（新增 2 個授權測試；`種子版本` 測試為改名非新增）。

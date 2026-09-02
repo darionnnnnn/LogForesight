@@ -250,6 +250,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var strategy = probe.Database.CreateExecutionStrategy();
 
         var appended = false;
+        var appendedCount = 0;
         strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
@@ -306,12 +307,13 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             ctx.SaveChanges();
             tx.Commit();
             appended = true;
+            appendedCount = toAdd.Count;
         });
 
         if (appended)
         {
             Log.Info("[SQL] AttachPrtgFindings 主機 id={HostId} {Date:yyyy-MM-dd} 追加 {Count} 項 PRTG finding",
-                hostId, date, findings.Count);
+                hostId, date, appendedCount);
         }
 
         return appended;

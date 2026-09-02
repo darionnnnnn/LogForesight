@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
@@ -97,12 +98,14 @@ public class RunActivityController : ControllerBase
 public class HostDetailController : ControllerBase
 {
     private readonly RecordDetailQueryService _service;
-    private readonly StorageBackend? _backend;
+    private readonly EfPrtgStore _prtgStore;
+    private readonly IVisibilityService _visibility;
 
-    public HostDetailController(RecordDetailQueryService service, StorageBackend? backend = null)
+    public HostDetailController(RecordDetailQueryService service, EfPrtgStore prtgStore, IVisibilityService visibility)
     {
         _service = service;
-        _backend = backend;
+        _prtgStore = prtgStore;
+        _visibility = visibility;
     }
 
     [HttpGet("{hostId:long}")]
@@ -120,12 +123,12 @@ public class HostDetailController : ControllerBase
     [HttpGet("{hostId:long}/prtg")]
     public ApiResponse<HostPrtgMappingDto> Prtg(long hostId)
     {
-        if (_backend == null)
-        {
-            return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto());
-        }
+        // 授權過濾在查詢層強制（docs/DB-SPEC.md）：同 controller 的另外兩個端點都經
+        // RecordDetailQueryService 內的 EnsureVisible，這支不走 service，必須自己檢查——
+        // 否則任何登入者都能用任意 hostId 列出別人主機的 PRTG device 與 sensor
+        _visibility.EnsureVisible(hostId);
 
-        var store = _backend.PrtgStore();
+        var store = _prtgStore;
         var mapRows = store.GetLatestHostMap();
         if (mapRows.Count == 0)
         {

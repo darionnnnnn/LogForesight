@@ -474,6 +474,9 @@
 - **PRTG 維護頁的連線設定存檔是「整包回寫」**：因為後端只有整包設定更新端點，
   維護頁先 GET 整包再 PUT 回去——這正是 `PrtgEnabled` 改走單一用途端點所要避免的形態，
   會覆蓋他人在設定頁的併發改動。根治方式是為 PRTG 連線設定開一個專屬更新端點。
+- **抑制影響面預覽把平台二分為 linux／非 linux**：`RuleAdminService.PreviewSuppression` 以 `isLinux` 分路，
+  `prtg` 規則落到 Windows 分支用 EventIds 比對，命中數恆為 0。預覽只是提示用，不影響抑制本身生效；
+  規則頁補 prtg 抑制入口時一併改成三向分路。
 - **`PrtgDataPackage.FromDate`／`ToDate` 只寫不讀**：匯入端不校驗區間，屬輕度冗餘。
 - **匯出不能選資料類別**：規劃原本允許只匯出某幾張表，實作是固定全類別。
   實際檔案過大時再加。

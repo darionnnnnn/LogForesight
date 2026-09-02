@@ -201,9 +201,9 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為5()
+    public void 種子版本為6()
     {
-        Assert.Equal(5, KnownIssueSeed.Version);
+        Assert.Equal(6, KnownIssueSeed.Version);
     }
 
     [Fact]

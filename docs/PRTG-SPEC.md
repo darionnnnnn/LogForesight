@@ -289,7 +289,9 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
 | `GET prtg-export`、`POST prtg-import` | 鏡像資料匯出／匯入（§10） |
 
-主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor）。
+主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor）；
+它不經 `RecordDetailQueryService`，**可見性檢查在 controller 自己做**（同表其他端點是在 service 內做），
+不可見的主機回 404（與全站慣例一致：不洩漏主機存在與否）。
 
 連線失敗（含 401、逾時、憑證問題）**不是例外**，回 `Success = false` 讓畫面就地顯示；
 只有輸入本身不合法才擲驗證例外。錯誤訊息保證不含 token、密碼與 passhash（原文與 URL 編碼形式都會遮蔽）。
@@ -318,6 +320,9 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
   健康的 sensor 本來就整天零筆變更，用變更表判定會讓全機房每天都被判為沉默。
   device 底下沒有未暫停 sensor 時不算沉默。
 - 規則只看**白名單內**的 sensor（§7），與數值取數同一個母體。
+- **既有部署升級後規則庫裡還沒有這四條規則**——它們是內建種子（seed v6），要到規則維護頁的升級橫幅
+  套用內建規則更新才會出現。在那之前夜間批次會輸出「規則庫尚無啟用中的 PRTG 規則」並跳過評估，
+  **不會靜默產生零 finding**。新增內建規則時必須遞增 `KnownIssueSeed.Version`，否則橫幅不會出現。
 
 ### finding 如何進入既有全鏈
 

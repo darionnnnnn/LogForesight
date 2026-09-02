@@ -181,7 +181,7 @@ function bindForm() {
             const apiToken = document.getElementById('prtg-api-token')?.value || null;
             const clearApiToken = document.getElementById('prtg-clear-token')?.checked ?? false;
             const ignoreSsl = document.getElementById('prtg-ignore-ssl').checked;
-            const timeoutSeconds = Number(document.getElementById('prtg-timeout-seconds').value) || 30;
+            const timeoutSeconds = Number(document.getElementById('prtg-timeout-seconds').value) || 60;
 
             const payload = {
                 ...current,

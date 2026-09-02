@@ -25,7 +25,7 @@ public static class KnownIssueSeed
     /// DSRM 密碼嘗試 4794、NTFS 延遲寫入 137、BSOD 1001、MSSQL I/O 錯誤 823-825、ESENT 損毀 467/474、
     /// App Hang 1002）與 7 條 Linux 規則（磁碟耗盡、唯讀重掛、mdadm 降級、網卡中斷、crontab 編輯、
     /// fail2ban 封鎖、rsyslog 掉訊息），總計 92 條（Windows 64、Linux 28）。</summary>
-    public const int Version = 5;
+    public const int Version = 6;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {

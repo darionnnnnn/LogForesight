@@ -43,7 +43,7 @@ public class HostAdminService
     private readonly INetiqHostService _netiqHosts;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _userDisplayNames;
-    private readonly EfPrtgStore? _prtgStore;
+    private readonly EfPrtgStore _prtgStore;
 
     /// <summary>未回報定義與儀表板「未回報主機」計數卡同一套規則（§5.4 D-4），兩邊數字才不會對不上</summary>
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
@@ -64,8 +64,7 @@ public class HostAdminService
         INetiqHostService netiqHosts,
         IAuditService audit,
         IUserDisplayNameService userDisplayNames,
-        StorageBackend? backend = null,
-        EfPrtgStore? prtgStore = null)
+        EfPrtgStore prtgStore)
     {
         _hosts = hosts;
         _hostGroups = hostGroups;
@@ -74,7 +73,7 @@ public class HostAdminService
         _netiqHosts = netiqHosts;
         _audit = audit;
         _userDisplayNames = userDisplayNames;
-        _prtgStore = prtgStore ?? backend?.PrtgStore();
+        _prtgStore = prtgStore;
     }
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
@@ -190,7 +189,7 @@ public class HostAdminService
         if (!string.IsNullOrWhiteSpace(request.PrtgMap))
         {
             var prtgFilter = request.PrtgMap.Trim().ToLowerInvariant();
-            var mapRows = _prtgStore?.GetLatestHostMap() ?? new List<PrtgHostMapRow>();
+            var mapRows = _prtgStore.GetLatestHostMap();
             if (prtgFilter == "mapped")
             {
                 var mappedIds = mapRows

@@ -1148,6 +1148,15 @@ public class AnalysisOrchestrator
                     .Select(r => r.PrtgRuleCode!)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+                // 既有部署升級後規則庫裡還沒有 PRTG 規則（要到規則維護頁套用內建規則更新才會出現）。
+                // 這時 enabledRuleCodes 是空集合、四條規則全部不啟用——必須說出來，
+                // 否則「PRTG 規則零 finding」與「環境真的沒事」在畫面上長得一模一樣。
+                if (enabledRuleCodes.Count == 0)
+                {
+                    prtgConsole.WriteLine("規則庫尚無啟用中的 PRTG 規則（升級後請至「規則維護」頁套用內建規則更新），本次略過規則評估。");
+                    throw new PrtgRulesUnavailableException();
+                }
+
                 var downMinutes = 60;
                 var flapCount = 5;
                 var warningMinutes = 240;
@@ -1202,6 +1211,10 @@ public class AnalysisOrchestrator
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (PrtgRulesUnavailableException)
+            {
+                // 已在上面輸出說明；不是錯誤，不記 error log
             }
             catch (Exception ex)
             {
@@ -1413,4 +1426,9 @@ public record RetentionOptions
     public int RawEventRetentionDays { get; init; } = SystemSettings.DefaultRawEventRetentionDays;
     public int ReportRetentionDays { get; init; } = SystemSettings.DefaultReportRetentionDays;
     public int PrtgRetentionDays { get; init; } = SystemSettings.DefaultPrtgRetentionDays;
+
 }
+
+/// <summary>規則庫尚無 PRTG 規則時，用來跳出 <see cref="AnalysisOrchestrator"/> 規則評估段的控制流例外
+/// （不是錯誤，呼叫端靜默吞掉、不記 error log）。</summary>
+internal sealed class PrtgRulesUnavailableException : Exception { }
