@@ -1316,9 +1316,11 @@ function renderPrtgBackfillStatus(status) {
     copyButton.disabled = !outputText;
 
     const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
+    // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
+    const currentDayNo = Math.min(status.daysDone + 1, status.daysTotal || 0);
     const label = dateStr
-        ? `第 ${status.daysDone} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
-        : `第 ${status.daysDone} / ${status.daysTotal} 天：sensor ${status.sensorsDone} / ${status.sensorsTotal}`;
+        ? `第 ${currentDayNo} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
+        : `已完成 ${status.daysDone} / ${status.daysTotal} 天`;
 
     updateProgressBar(
         { wrapEl, barEl, textEl },

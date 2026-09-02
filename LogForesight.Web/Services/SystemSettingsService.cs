@@ -526,7 +526,7 @@ public class SystemSettingsService : ISystemSettingsService
         var before = _store.Get();
 
         var effectiveRetentionDays = before.RetentionDays;
-        var effectivePrtgRetentionDays = request.PrtgRetentionDays;
+        var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
         var effectivePrtgEnabled = before.PrtgEnabled;
         var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
         var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
@@ -558,12 +558,13 @@ public class SystemSettingsService : ISystemSettingsService
                 apiToken: request.PrtgApiToken, clearApiToken: request.ClearPrtgApiToken,
                 password: request.PrtgPassword, clearPassword: request.ClearPrtgPassword,
                 passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
-            s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors;
-            s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds;
-            s.PrtgFetchConcurrency = request.PrtgFetchConcurrency;
-            s.PrtgBackfillDays = request.PrtgBackfillDays;
-            s.PrtgRetentionDays = request.PrtgRetentionDays;
-            s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
+            if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
+            if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
+            if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
+            if (request.PrtgSensorTypeWhitelist != null)
+                s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
 
             s.UpdatedByAccount = _currentUser.Account;
         });

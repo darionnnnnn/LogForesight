@@ -28,6 +28,7 @@ public class PrtgBackfillStatusDto
     public string? LatestMessage { get; set; }
     public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
 
+    /// <summary>已完成的天數（不含正在處理中的那一天）；正在處理哪一天看 <see cref="CurrentDate"/></summary>
     public int DaysDone { get; set; }
     public int DaysTotal { get; set; }
     public DateTime? CurrentDate { get; set; }

@@ -55,7 +55,9 @@ public static class PrtgBackfillRunner
                 ct.ThrowIfCancellationRequested();
 
                 var day = DateTime.Today.AddDays(-i);
-                dayProgress?.Invoke(i, days, day);
+                // 已完成 i-1 天、正在處理第 i 天：回報 i 會讓剛開始第 1 天就顯示 1/N，
+                // 最後一天處理中顯示 N/N（看起來已經跑完但其實還在跑）
+                dayProgress?.Invoke(i - 1, days, day);
                 sensorProgress?.Invoke(0, 0);
 
                 try

@@ -145,7 +145,37 @@ public sealed class CalibrationRuleThresholdDataset
 {
     public List<PrtgRuleHitAggregate> DailyRuleHits { get; init; } = new();
     public List<CalibrationPrtgRuleThresholdInfo> CurrentRules { get; init; } = new();
+
+    /// <summary>
+    /// 以**最低門檻**（Down 1 分鐘／flap 1 次／Warning 1 分鐘）逐日評估得到的每 sensor-日 finding。
+    /// 現行門檻下的命中數只能回答「照目前設定會報幾次」，無法回答「門檻該設多少」——
+    /// 要校準門檻必須看底層 magnitude 的分佈（有多少 sensor-日的 Down 持續 X 分鐘）。
+    /// </summary>
+    public List<CalibrationRuleMagnitudeRow> MagnitudeSamples { get; init; } = new();
+
+    /// <summary>各規則的 magnitude 分位數摘要（挑門檻時最先看的東西）</summary>
+    public List<CalibrationRuleMagnitudeSummary> MagnitudeSummaries { get; init; } = new();
 }
+
+/// <summary>最低門檻評估得到的一筆 finding（magnitude 即持續分鐘數／往返次數）</summary>
+public sealed record CalibrationRuleMagnitudeRow(
+    string RuleCode,
+    DateTime Date,
+    long DeviceObjid,
+    long? SensorObjid,
+    int Magnitude);
+
+/// <summary>單一規則的 magnitude 分佈摘要</summary>
+public sealed record CalibrationRuleMagnitudeSummary(
+    string RuleCode,
+    int SampleCount,
+    int Min,
+    int P50,
+    int P90,
+    int P99,
+    int Max,
+    int HitsAtCurrentThreshold,
+    int CurrentThreshold);
 
 /// <summary>
 /// PRTG 規則門檻現值資訊
@@ -313,20 +343,13 @@ public sealed class CalibrationService
             ))
             .ToList();
 
-        if (prtgRules.Count == 0)
-        {
-            prtgRules = new List<CalibrationPrtgRuleThresholdInfo>
-            {
-                new(PrtgRuleEvaluator.RuleDown, PrtgRuleCatalog.DefaultDownMinutes, "Service", "High", true, "監控 sensor 持續無回應，可能是服務或主機失聯"),
-                new(PrtgRuleEvaluator.RuleFlapping, PrtgRuleCatalog.DefaultFlapCount, "Service", "Medium", false, "監控 sensor 狀態頻繁震盪，可能是網路不穩或服務反覆重啟"),
-                new(PrtgRuleEvaluator.RuleWarning, PrtgRuleCatalog.DefaultWarningMinutes, "Resource", "Medium", false, "監控 sensor 長時間處於警告狀態，資源可能接近上限"),
-                new(PrtgRuleEvaluator.RuleSilent, PrtgRuleCatalog.DefaultSilentThreshold, "Service", "Medium", false, "該 device 的全部 sensor 皆無狀態，監控本身可能已失效")
-            };
-        }
+        var (magnitudeSamples, magnitudeSummaries) = BuildRuleMagnitudeDistribution(ruleFrom, anchorDate, settings, prtgRules);
 
         var ruleDataset = new CalibrationRuleThresholdDataset
         {
             DailyRuleHits = ruleHits,
+            MagnitudeSamples = magnitudeSamples,
+            MagnitudeSummaries = magnitudeSummaries,
             CurrentRules = prtgRules
         };
 
@@ -702,44 +725,20 @@ public sealed class CalibrationService
             ["SufficientCoverageDays"] = CalibrationConstants.ResidualSufficientDays
         };
 
-        var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
         using var ctx = _contextFactory();
 
         var cutoff = anchor.Date.AddDays(-settings.RawEventRetentionDays);
 
-        var candidateRecordIds = ctx.TopIssues.AsNoTracking()
-            .Where(t => (t.EventId == 4625 || t.EventId == 4771) ||
-                        (t.LogName == "Linux" && candidateRuleIds.Contains(t.EventKey)))
-            .Select(t => t.RecordId)
-            .Distinct()
-            .ToHashSet();
-
-        if (candidateRecordIds.Count == 0)
-        {
-            return new CalibrationItemAssessment
-            {
-                ItemName = "殘留判定門檻",
-                Status = CalibrationStatus.Unavailable,
-                KeyMetrics = new Dictionary<string, object>
-                {
-                    ["CandidateHostDays"] = 0,
-                    ["DistinctCoverageDays"] = 0
-                },
-                CurrentThresholds = thresholds,
-                Explanations = new List<string>
-                {
-                    "請確認 4625／4771 與 Linux 登入失敗規則為啟用狀態、分析排程正常執行"
-                }
-            };
-        }
-
-        var candidateRows = ctx.DailyRecords.AsNoTracking()
-            .Where(r => candidateRecordIds.Contains(r.RecordId) && !r.DetailPruned && r.RecordDate >= cutoff && r.RecordDate <= anchor.Date)
+        var candidateRows = CandidateRecordsQuery(ctx, cutoff, anchor.Date)
             .Select(r => new { r.HostId, r.RecordDate })
             .ToList()
             .Select(r => (r.HostId, Date: r.RecordDate.Date))
             .Distinct()
             .ToList();
+
+        // 註：這裡的候選是「有登入失敗簽章且未精簡」的主機日，與匯出端同一個查詢。
+        // 匯出端還會逐筆反序列化後再要求 LoginFailureDetails 非空（明細真的存在），
+        // 因此匯出筆數可能少於這裡的計數——差額即「有簽章但明細已不在」的舊資料。
 
         var candidateHostDays = candidateRows.Count;
         var distinctDays = candidateRows.Select(r => r.Date).Distinct().Count();
@@ -829,25 +828,13 @@ public sealed class CalibrationService
     private List<CalibrationResidualCandidateRow> BuildResidualCandidateRows(
         DateTime anchor, int rawEventRetentionDays)
     {
-        var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
         using var ctx = _contextFactory();
 
         var cutoff = anchor.Date.AddDays(-rawEventRetentionDays);
 
-        var candidateRecordIds = ctx.TopIssues.AsNoTracking()
-            .Where(t => (t.EventId == 4625 || t.EventId == 4771) ||
-                        (t.LogName == "Linux" && candidateRuleIds.Contains(t.EventKey)))
-            .Select(t => t.RecordId)
-            .Distinct()
-            .ToHashSet();
+        var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
 
-        if (candidateRecordIds.Count == 0)
-        {
-            return new List<CalibrationResidualCandidateRow>();
-        }
-
-        var candidateDailyRows = ctx.DailyRecords.AsNoTracking()
-            .Where(r => candidateRecordIds.Contains(r.RecordId) && !r.DetailPruned && r.RecordDate >= cutoff && r.RecordDate <= anchor.Date)
+        var candidateDailyRows = CandidateRecordsQuery(ctx, cutoff, anchor.Date)
             .OrderByDescending(r => r.RecordDate)
             .ThenByDescending(r => r.RecordId)
             .Take(CalibrationConstants.ResidualCandidateMaxCount)
@@ -882,7 +869,11 @@ public sealed class CalibrationService
                     continue;
                 }
 
-                var metrics = ResidualCredentialDetector.EvaluateMetrics(issue, null, record.Date);
+                // history 必須傳真的：條件 4（跨日重現）在 history 為 null 時直接判否，
+                // 傳 null 會讓匯出檔的「是否命中」整欄恆為 false——而校準要看的正是
+                // 「現行門檻下實際命中多少」，恆 false 等於這份資料集廢掉
+                var history = HistoryForCandidate(ctx, row.HostId, record.Date);
+                var metrics = ResidualCredentialDetector.EvaluateMetrics(issue, history, record.Date);
                 if (metrics == null) continue;
 
                 // 嚴格排除任何使用者帳號與來源明細文字，僅輸出結構統計指標
@@ -908,5 +899,159 @@ public sealed class CalibrationService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 取得某主機日往前的歷史紀錄，供殘留判定的條件 4（跨日重現）比對。
+    /// 窗長與判定端一致（<c>ResidualCredentialDetector</c> 的回看天數），
+    /// 只取同一台主機——判定本來就是逐主機看「同一組帳號來源是否跨日重現」。
+    /// </summary>
+    private static List<DailyAnalysisRecord> HistoryForCandidate(LfDbContext ctx, long hostId, DateTime targetDate)
+    {
+        var from = targetDate.Date.AddDays(-ResidualCredentialDetector.HistoryWindowDaysForCalibration);
+
+        var rows = ctx.DailyRecords.AsNoTracking()
+            .Where(r => r.HostId == hostId && !r.DetailPruned &&
+                        r.RecordDate >= from && r.RecordDate < targetDate.Date)
+            .Select(r => r.ContentJson)
+            .ToList();
+
+        var history = new List<DailyAnalysisRecord>();
+        foreach (var json in rows)
+        {
+            if (string.IsNullOrWhiteSpace(json)) continue;
+            try
+            {
+                var rec = JsonSerializer.Deserialize<DailyAnalysisRecord>(json);
+                if (rec != null) history.Add(rec);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "[校準] 歷史紀錄反序列化失敗，略過此筆");
+            }
+        }
+
+        return history;
+    }
+
+    /// <summary>
+    /// 殘留判定的候選紀錄查詢（判定與匯出共用同一份，兩邊口徑必須一致）。
+    ///
+    /// 候選＝**含登入失敗明細**且未精簡、且落在詳情保留期內的主機日：
+    /// Windows 為 EventId 4625／4771，Linux 為 LogName=Linux 且 EventKey 屬於登入失敗規則
+    /// （見 <c>LogAggregator.ExtractLoginFailureDetailsForGroup</c>——只有這些簽章會產生明細）。
+    ///
+    /// 以 EXISTS 子查詢表達而不是「先撈一份 RecordId 集合再 Contains」：
+    /// 後者在正式機會把數十萬個 id 載進記憶體並展開成巨大的 IN 清單，
+    /// SQLite 逼近變數上限、SQL Server 撞參數上限，而測試資料量小永遠看不到。
+    /// 日期過濾也必須下推到這一層，否則等於全表掃描。
+    /// </summary>
+    private static IQueryable<DailyRecordRow> CandidateRecordsQuery(LfDbContext ctx, DateTime cutoff, DateTime anchorDate)
+    {
+        var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
+
+        return ctx.DailyRecords.AsNoTracking()
+            .Where(r => !r.DetailPruned && r.RecordDate >= cutoff && r.RecordDate <= anchorDate)
+            .Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId &&
+                ((t.EventId == 4625 || t.EventId == 4771) ||
+                 (t.LogName == "Linux" && candidateRuleIds.Contains(t.EventKey)))));
+    }
+
+    /// <summary>
+    /// 以最低門檻逐日評估，取得每 sensor-日 finding 的 magnitude 分佈。
+    ///
+    /// 為什麼要最低門檻：現行門檻下的命中數只回答「照目前設定會報幾次」。
+    /// 要決定門檻該設多少，必須看底層分佈——有多少 sensor-日的 Down 持續 30 分鐘、
+    /// 多少持續 120 分鐘。門檻設 1（不是 0）：flap 與 warning 的判定是 `>=`，
+    /// 設 0 會讓「當日零事件」的 sensor 也被算成命中，分母整個爛掉。
+    ///
+    /// sensor 母體與夜間批次一致（白名單過濾），且比照 PRTG-SPEC §9 回查前一日的變更
+    /// ——`down` 與 `warning` 要靠前一日最後一筆推導當日零時的起始狀態。
+    /// </summary>
+    private (List<CalibrationRuleMagnitudeRow> Samples, List<CalibrationRuleMagnitudeSummary> Summaries)
+        BuildRuleMagnitudeDistribution(
+            DateTime from,
+            DateTime toInclusive,
+            SystemSettings settings,
+            List<CalibrationPrtgRuleThresholdInfo> currentRules)
+    {
+        var samples = new List<CalibrationRuleMagnitudeRow>();
+
+        var whitelist = new HashSet<string>(
+            settings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+        var allSensors = _prtgStore.GetSensorStatuses();
+        var filteredSensors = whitelist.Count == 0
+            ? allSensors
+            : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
+
+        if (filteredSensors.Count == 0)
+        {
+            return (samples, new List<CalibrationRuleMagnitudeSummary>());
+        }
+
+        var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
+        var sensorToDevice = filteredSensors
+            .GroupBy(s => s.Objid)
+            .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
+        var sensorStatuses = filteredSensors
+            .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+            .ToList();
+
+        // 最低門檻：任何有事件的 sensor-日都納入，得到的是全量分佈
+        var minimumThresholds = new PrtgRuleThresholds(DownMinutes: 1, FlapCount: 1, WarningMinutes: 1);
+        var allRuleCodes = new HashSet<string>(
+            new[] { PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping, PrtgRuleEvaluator.RuleWarning },
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var day = from.Date; day <= toInclusive.Date; day = day.AddDays(1))
+        {
+            var allChanges = _prtgStore.GetStateChanges(day.AddDays(-1), day.AddDays(1));
+            var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
+            if (changes.Count == 0) continue;
+
+            // silent 不納入：它的判定來源是 sensor 現況（非變更表），逐日重放會讓
+            // 每一天都拿到「今天的現況」而全部相同，那不是分佈、是同一個數字複製 N 份
+            var findings = PrtgRuleEvaluator.Evaluate(
+                day, changes, sensorToDevice, sensorStatuses, minimumThresholds, allRuleCodes);
+
+            foreach (var f in findings)
+            {
+                samples.Add(new CalibrationRuleMagnitudeRow(f.RuleCode, day, f.DeviceObjid, f.SensorObjid, f.Magnitude));
+            }
+        }
+
+        var thresholdByRule = currentRules.ToDictionary(
+            r => r.RuleCode, r => r.Threshold, StringComparer.OrdinalIgnoreCase);
+
+        var summaries = samples
+            .GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var sorted = g.Select(r => r.Magnitude).OrderBy(v => v).ToList();
+                var current = thresholdByRule.TryGetValue(g.Key, out var t) ? t : 0;
+                return new CalibrationRuleMagnitudeSummary(
+                    g.Key,
+                    sorted.Count,
+                    sorted[0],
+                    Percentile(sorted, 0.50),
+                    Percentile(sorted, 0.90),
+                    Percentile(sorted, 0.99),
+                    sorted[^1],
+                    sorted.Count(v => v >= current),
+                    current);
+            })
+            .OrderBy(r => r.RuleCode, StringComparer.Ordinal)
+            .ToList();
+
+        return (samples, summaries);
+    }
+
+    /// <summary>最近秩位法（nearest-rank）：第 ceil(p × N) 個值。樣本為空時由呼叫端保證不會進來。</summary>
+    private static int Percentile(List<int> sortedValues, double p)
+    {
+        var rank = (int)Math.Ceiling(p * sortedValues.Count);
+        if (rank < 1) rank = 1;
+        if (rank > sortedValues.Count) rank = sortedValues.Count;
+        return sortedValues[rank - 1];
     }
 }

@@ -871,6 +871,111 @@ public class CalibrationServiceTests : IDisposable
 
     // ── 9. 殘留資料集不含帳號名稱 ────────────────────────────────────
 
+    /// <summary>
+    /// 規則門檻資料集的核心：以最低門檻逐日評估取得 magnitude 分佈。
+    /// 只有「現行門檻下命中幾次」無法回答「門檻該設多少」——那正是這一頁存在的理由。
+    /// </summary>
+    [Fact]
+    public void BuildExportPackage_規則門檻資料集含最低門檻評估的magnitude分佈與分位數()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+        var store = new EfPrtgStore(_fx.NewContext);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 1002, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+
+        store.AppendStateChanges(new List<PrtgStateChangeRow>
+        {
+            // 08:00 進入 Down 且日終未恢復 → magnitude 960 分鐘（現行門檻 60 也命中）
+            new() { SensorObjid = 1001, ChangedAt = anchor.AddHours(8), Status = "Down", Quality = "Good" },
+            // 23:30 才進入 Down → magnitude 30 分鐘，**低於現行門檻 60**。
+            // 校準要看的正是這種「目前不會報、但門檻調低就會報」的樣本；
+            // 若評估時用現行門檻而非最低門檻，這筆會整個消失。
+            new() { SensorObjid = 1002, ChangedAt = anchor.AddHours(23).AddMinutes(30), Status = "Down", Quality = "Good" }
+        });
+
+        var package = CreateService().BuildExportPackage(anchor);
+        var dataset = package.RuleThresholds;
+
+        var downSamples = dataset.MagnitudeSamples
+            .Where(r => r.RuleCode == PrtgRuleEvaluator.RuleDown)
+            .OrderBy(r => r.Magnitude)
+            .ToList();
+        Assert.Equal(2, downSamples.Count);
+        Assert.Equal(30, downSamples[0].Magnitude);
+        Assert.Equal(1002, downSamples[0].SensorObjid);
+        Assert.Equal(960, downSamples[1].Magnitude);
+        Assert.Equal(anchor.Date, downSamples[1].Date);
+
+        var summary = dataset.MagnitudeSummaries.Single(x => x.RuleCode == PrtgRuleEvaluator.RuleDown);
+        Assert.Equal(2, summary.SampleCount);
+        Assert.Equal(30, summary.Min);
+        Assert.Equal(960, summary.Max);
+        Assert.Equal(PrtgRuleCatalog.DefaultDownMinutes, summary.CurrentThreshold);
+        // 兩筆樣本中只有一筆達現行門檻——這個對比就是校準的依據
+        Assert.Equal(1, summary.HitsAtCurrentThreshold);
+    }
+
+    /// <summary>
+    /// IsMatch 要能為 true：條件 4（跨日重現）需要 history，若匯出端不撈歷史紀錄，
+    /// 這一欄會整欄恆為 false，下一輪拿它校準會得到「現行門檻命中率 0%」的錯誤結論。
+    /// </summary>
+    [Fact]
+    public void BuildExportPackage_跨日重現的候選_IsMatch為true()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+
+        LogIssueSignature Sig() => new()
+        {
+            LogName = "Security",
+            Source = "Microsoft-Windows-Security-Auditing",
+            EventId = 4625,
+            Count = 50,
+            LoginFailureDetails = new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS-01", LogonType = 3, ReasonCode = "bad_password", Count = 50 }
+            },
+            LoginFailureTotalCount = 50
+        };
+
+        using (var ctx = _fx.NewContext())
+        {
+            // 前一日同一組 (帳號, 來源) 也有登入失敗 → 條件 4 成立
+            foreach (var date in new[] { anchor.AddDays(-1), anchor })
+            {
+                var record = new DailyAnalysisRecord
+                {
+                    HostId = 101, Host = "SEC-SRV-01", Date = date, RiskLevel = "高",
+                    TopIssues = new List<LogIssueSignature> { Sig() }
+                };
+                var dr = new DailyRecordRow
+                {
+                    HostId = 101, HostName = "SEC-SRV-01", RecordDate = date, RiskLevel = "高",
+                    DetailPruned = false, ContentJson = JsonSerializer.Serialize(record)
+                };
+                ctx.DailyRecords.Add(dr);
+                ctx.SaveChanges();
+
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = dr.RecordId, HostId = 101, RecordDate = date,
+                    SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+                });
+                ctx.SaveChanges();
+            }
+        }
+
+        var package = CreateService().BuildExportPackage(anchor);
+
+        var todays = package.ResidualCandidates.Single(c => c.Date.Date == anchor.Date);
+        Assert.True(todays.IsMatch, "跨日重現成立時 IsMatch 應為 true；恆 false 代表 history 沒有被傳入");
+        Assert.Equal(1.0, todays.ConcentrationRatio);
+    }
+
     [Fact]
     public void BuildExportPackage_殘留資料集不含任何帳號名稱()
     {

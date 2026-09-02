@@ -32,6 +32,9 @@ internal static class ResidualCredentialDetector
     private const double MechanicalLogonTypeThreshold = 0.8;
     private const double SingleGroupConcentrationThreshold = 0.8;
     private const int HistoryWindowDays = 7;
+
+    /// <summary>回看窗長（校準匯出組 history 時要用同一個值，否則兩邊判定窗不一致）</summary>
+    internal const int HistoryWindowDaysForCalibration = HistoryWindowDays;
     private const int MinDistinctDays = 2;
 
     /// <summary>

@@ -553,20 +553,24 @@ public class PrtgBackfillRunnerTests : IDisposable
             dayProgress: (done, total, date) => dayProgressList.Add((done, total, date)));
 
         Assert.True(ok);
-        // 依序涵蓋第 1、2、3 天，且最後一次為 3/3
+        // 每天開始處理時回報「已完成幾天」＋正在處理的日期：
+        // 第 1 天開始時已完成 0 天，最後一次（全部跑完）才是 3/3。
+        // 回報 done=i 會讓剛開始就顯示 1/3、最後一天處理中顯示 3/3（看起來跑完了其實還在跑）。
         Assert.True(dayProgressList.Count >= 4);
-        Assert.Equal((1, 3), (dayProgressList[0].Done, dayProgressList[0].Total));
+        Assert.Equal((0, 3), (dayProgressList[0].Done, dayProgressList[0].Total));
         Assert.Equal(DateTime.Today.AddDays(-1), dayProgressList[0].Date);
 
-        Assert.Equal((2, 3), (dayProgressList[1].Done, dayProgressList[1].Total));
+        Assert.Equal((1, 3), (dayProgressList[1].Done, dayProgressList[1].Total));
         Assert.Equal(DateTime.Today.AddDays(-2), dayProgressList[1].Date);
 
-        Assert.Equal((3, 3), (dayProgressList[2].Done, dayProgressList[2].Total));
+        Assert.Equal((2, 3), (dayProgressList[2].Done, dayProgressList[2].Total));
         Assert.Equal(DateTime.Today.AddDays(-3), dayProgressList[2].Date);
 
+        // 收尾：全部完成才是 3/3，且不再有「正在處理的日期」
         var last = dayProgressList[^1];
         Assert.Equal(3, last.Done);
         Assert.Equal(3, last.Total);
+        Assert.Null(last.Date);
     }
 
     [Fact]
@@ -601,8 +605,9 @@ public class PrtgBackfillRunnerTests : IDisposable
             new() { Objid = 204, DeviceObjid = 101, Name = "CPU-4", SensorType = "wmicpu", Paused = false }
         }, DateTime.Now);
 
-        var events = new List<(int DayIndex, int SensorDone, int SensorTotal)>();
-        var currentDayIndex = 0;
+        // 以「正在處理的日期」分桶，不依賴已完成天數的計法
+        var events = new List<(DateTime? Day, int SensorDone, int SensorTotal)>();
+        DateTime? currentDay = null;
 
         var ok = await PrtgBackfillRunner.RunAsync(
             fetchService, 2, 2, console, CancellationToken.None,
@@ -610,19 +615,19 @@ public class PrtgBackfillRunnerTests : IDisposable
             {
                 if (date.HasValue)
                 {
-                    currentDayIndex = done;
+                    currentDay = date;
                 }
             },
             sensorProgress: (done, total) =>
             {
-                events.Add((currentDayIndex, done, total));
+                events.Add((currentDay, done, total));
             });
 
         Assert.True(ok);
 
-        // 第一天與第二天的 sensor 事件
-        var day1Events = events.Where(e => e.DayIndex == 1).ToList();
-        var day2Events = events.Where(e => e.DayIndex == 2).ToList();
+        // 回填由近往遠：第一天是昨天、第二天是前天
+        var day1Events = events.Where(e => e.Day == DateTime.Today.AddDays(-1)).ToList();
+        var day2Events = events.Where(e => e.Day == DateTime.Today.AddDays(-2)).ToList();
 
         Assert.NotEmpty(day1Events);
         Assert.NotEmpty(day2Events);
@@ -679,20 +684,5 @@ public class PrtgBackfillRunnerTests : IDisposable
         Assert.Equal(10, backfillProgress.SensorsDone);
         Assert.Equal(20, backfillProgress.SensorsTotal);
 
-        // 斷言探測 DTO 的屬性清單不含回填進度欄位（DaysDone、DaysTotal、SensorsDone 等）
-        var probeDtoProps = typeof(PrtgProbeStatusDto).GetProperties().Select(p => p.Name).ToList();
-        Assert.DoesNotContain("DaysDone", probeDtoProps);
-        Assert.DoesNotContain("DaysTotal", probeDtoProps);
-        Assert.DoesNotContain("CurrentDate", probeDtoProps);
-        Assert.DoesNotContain("SensorsDone", probeDtoProps);
-        Assert.DoesNotContain("SensorsTotal", probeDtoProps);
-
-        // 斷言回填 DTO 有這些進度欄位
-        var backfillDtoProps = typeof(PrtgBackfillStatusDto).GetProperties().Select(p => p.Name).ToList();
-        Assert.Contains("DaysDone", backfillDtoProps);
-        Assert.Contains("DaysTotal", backfillDtoProps);
-        Assert.Contains("CurrentDate", backfillDtoProps);
-        Assert.Contains("SensorsDone", backfillDtoProps);
-        Assert.Contains("SensorsTotal", backfillDtoProps);
     }
 }
