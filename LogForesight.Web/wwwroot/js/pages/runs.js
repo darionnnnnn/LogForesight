@@ -553,6 +553,11 @@ async function loadSchedule() {
     if (settings) {
         const prtgEnabledEl = document.getElementById('prtg-enabled');
         if (prtgEnabledEl) prtgEnabledEl.checked = Boolean(settings.prtgEnabled);
+        // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
+        const daysHintEl = document.getElementById('prtg-backfill-days-hint');
+        if (daysHintEl && settings.prtgBackfillDays) {
+            daysHintEl.textContent = `將回填 ${settings.prtgBackfillDays} 天`;
+        }
     }
     await refreshScheduleStatus();
 }
