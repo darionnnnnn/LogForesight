@@ -557,6 +557,17 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "PRTG 鏡像資料清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
+            try
+            {
+                var diagPruned = FilePromptDumper.Prune(retention.RunLogRetentionDays);
+                if (diagPruned > 0)
+                    console.WriteLine($"已清除 {diagPruned} 個超過 {retention.RunLogRetentionDays} 天的 AI 診斷傾印檔。");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "AI 診斷傾印檔清理失敗（不影響本次分析）：{0}", ex.Message);
+            }
+
             var yesterday = DateTime.Today.AddDays(-1);
 
             // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
