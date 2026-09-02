@@ -1,3 +1,5 @@
+using LogForesight.Core.Service;
+
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
@@ -1075,5 +1077,39 @@ public static class KnownIssueSeed
                     "系統資源不足導致腳本執行逾時" },
                 NextSteps = new[] { "檢查 /var/log/cron 或對應日誌找出是哪個排程任務失敗",
                     "手動執行該腳本確認錯誤原因", "確認該排程任務的重要性，評估是否需要立即補跑" } },
+
+        // ── PRTG 監控狀態變更規則（Platform=prtg）────────────────────────
+        new() { Id = "builtin-prtg-down", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+                Category = IssueCategory.Service, Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Description = "PRTG 監控 sensor 持續 Down 達門檻（預設 60 分鐘），服務或主機可能失聯",
+                PlainExplanation = "PRTG 監控系統偵測到該 sensor 持續處於 Down 狀態且時間超過設定門檻，代表受監控的服務或主機可能已經停止運作或網路中斷。",
+                Impact = "受監控的關鍵服務無法提供正常功能，影響業務運作，若為核心系統可能導致服務中斷。",
+                LikelyCauses = new[] { "受監控的應用程式或服務程序已終止或崩潰", "主機網路斷線或防火牆封鎖監控探針連線", "伺服器作業系統當機或未預期關機" },
+                NextSteps = new[] { "登入目標主機確認相關服務程序是否正常執行", "檢查網路連線與防火牆狀態確認監控探針是否可連達", "檢視目標主機系統日誌與事件記錄以釐清中斷原因" } },
+        new() { Id = "builtin-prtg-flapping", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleFlapping, PrtgThreshold = 5,
+                Category = IssueCategory.Service, Severity = IssueSeverity.Medium, ElevatesDayRisk = false,
+                Description = "PRTG 監控 sensor 狀態頻繁震盪（預設當日往返 ≥5 次），網路不穩或服務反覆重啟",
+                PlainExplanation = "PRTG 監控系統偵測到該 sensor 當日在 Down 與 Up 狀態間反覆切換達門檻次數，代表系統處於極不穩定的邊緣狀態。",
+                Impact = "服務品質低落、連線間歇性中斷，可能演變成完全無法連線，並引發告警疲勞。",
+                LikelyCauses = new[] { "網路線路品質不良、封包遺失率高或有間歇性路由震盪", "服務程序因記憶體洩漏或逾時反覆崩潰並被守護程序重啟", "伺服器負載過高導致監控探針回應逾時" },
+                NextSteps = new[] { "檢查網路交換器與路由設備的介面錯誤與封包遺失率", "檢視服務日誌確認是否有頻繁重啟或崩潰紀錄", "評估監控探針的逾時與重試設定是否過於敏感" } },
+        new() { Id = "builtin-prtg-warning", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleWarning, PrtgThreshold = 240,
+                Category = IssueCategory.Resource, Severity = IssueSeverity.Medium, ElevatesDayRisk = false,
+                Description = "PRTG 監控 sensor 長時間 Warning（預設累計 ≥240 分鐘），資源可能即將耗盡",
+                PlainExplanation = "PRTG 監控系統偵測到該 sensor 累計處於 Warning 狀態時間超過門檻，代表系統資源或效能指標長期處於危險邊緣。",
+                Impact = "系統效能下降、回應變慢，若資源持續耗盡將轉為 Down 狀態導致服務中斷。",
+                LikelyCauses = new[] { "磁碟空間、CPU 使用率或記憶體使用量接近警戒上限", "應用程式回應時間變長或處理佇列堆積", "監控 threshold 設定過緊或基準值需校正" },
+                NextSteps = new[] { "確認 Warning sensor 所監控的具體指標（如磁碟、CPU、記憶體）", "清理過期檔案或擴充相關系統資源", "檢查應用程式效能瓶頸並評估是否需調整警戒門檻" } },
+        new() { Id = "builtin-prtg-silent", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleSilent, PrtgThreshold = 0,
+                Category = IssueCategory.Service, Severity = IssueSeverity.Medium, ElevatesDayRisk = false,
+                Description = "PRTG 監控 device 底下全部 sensor 皆無狀態（Unknown），監控本身可能失效",
+                PlainExplanation = "PRTG 監控系統中該裝置底下的所有 sensor 皆呈現 Unknown 或無狀態，代表監控探針無法收集到任何數據，形成監控盲區。",
+                Impact = "維運團隊無法得知該主機與服務的實際運作狀態，發生故障時將無法及時發出告警。",
+                LikelyCauses = new[] { "PRTG 探針（Probe）與目標裝置間的連線中斷或憑證過期", "SNMP / WMI / SSH 存取授權失效或通訊協定設定錯誤", "目標主機關機或 IP 變更導致探針無法探測" },
+                NextSteps = new[] { "檢查 PRTG Probe 伺服器狀態與探針連線日誌", "確認目標裝置的 SNMP/WMI 連線帳密與存取權限是否有效", "確認目標裝置是否在線且 IP 位址正確" } },
     };
 }

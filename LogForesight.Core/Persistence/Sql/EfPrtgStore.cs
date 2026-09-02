@@ -421,6 +421,27 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 取得所有 PRTG 感測器鏡像清單（唯讀查詢）。
+    /// </summary>
+    public List<PrtgSensorRow> GetAllSensors()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.AsNoTracking().ToList();
+    }
+
+    /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>
+    public List<PrtgValueRow> GetValues(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .OrderBy(v => v.SensorObjid)
+            .ThenBy(v => v.PeriodStart)
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得 sensor 的 objid 與暫停狀態（唯讀，只取這兩欄）。
     /// 供歷史回填使用：回填不重跑結構同步，sensor 清單改從鏡像讀。
     /// </summary>
@@ -435,6 +456,34 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 取得指定期間的狀態變更（依 sensor 與時間排序）。判定「跨午夜持續 Down」時，
+    /// 呼叫端可把起點往前一天以取得前導狀態。
+    /// </summary>
+    public List<PrtgStateChangeRow> GetStateChanges(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgStateChanges
+            .AsNoTracking()
+            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive)
+            .OrderBy(r => r.SensorObjid)
+            .ThenBy(r => r.ChangedAt)
+            .ToList();
+    }
+
+    /// <summary>取得未暫停 sensor 的現況狀態（判定沉默 device 用）：objid、device、status、type。</summary>
+    public List<(long Objid, long DeviceObjid, string? Status, string SensorType)> GetSensorStatuses()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => !s.Paused)
+            .Select(s => new { s.Objid, s.DeviceObjid, s.Status, s.SensorType })
+            .ToList()
+            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType))
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得指定日期的 PRTG 主機對應清單（唯讀查詢）。
     /// </summary>
     public List<PrtgHostMapRow> GetHostMapForDate(DateTime mapDate)
@@ -445,6 +494,78 @@ public sealed class EfPrtgStore
             .AsNoTracking()
             .Where(m => m.MapDate == targetDate)
             .ToList();
+    }
+
+    /// <summary>取得指定 device 上的全部 sensor（主機明細顯示用）。</summary>
+    public List<PrtgSensorRow> GetSensorsByDevice(long deviceObjid)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors
+            .AsNoTracking()
+            .Where(s => s.DeviceObjid == deviceObjid)
+            .OrderBy(s => s.Name)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
+    /// 從今天往前逐日檢查 GetHostMapForDate，第一個有資料的日期即回傳；若 30 天內皆無資料則回傳空清單。
+    /// </summary>
+    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30)
+    {
+        var today = DateTime.Today;
+        for (var i = 0; i < maxLookbackDays; i++)
+        {
+            var date = today.AddDays(-i);
+            var rows = GetHostMapForDate(date);
+            if (rows.Count > 0)
+            {
+                return rows;
+            }
+        }
+        return new List<PrtgHostMapRow>();
+    }
+
+    /// <summary>讀取全部人工對應（device_objid → 列）</summary>
+    public List<PrtgManualMapRow> GetManualMaps()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgManualMaps.AsNoTracking().ToList();
+    }
+
+    /// <summary>新增或更新一筆人工對應。CreatedAt 首次建立時寫入，後續更新不覆蓋。</summary>
+    public void UpsertManualMap(PrtgManualMapRow row)
+    {
+        if (row == null) return;
+        using var ctx = _contextFactory();
+        var existing = ctx.PrtgManualMaps.FirstOrDefault(m => m.DeviceObjid == row.DeviceObjid);
+        if (existing != null)
+        {
+            existing.HostId = row.HostId;
+            existing.CreatedBy = row.CreatedBy;
+            existing.Note = row.Note;
+            // CreatedAt 保持原值
+        }
+        else
+        {
+            var newRow = new PrtgManualMapRow
+            {
+                DeviceObjid = row.DeviceObjid,
+                HostId = row.HostId,
+                CreatedBy = row.CreatedBy,
+                Note = row.Note,
+                CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
+            };
+            ctx.PrtgManualMaps.Add(newRow);
+        }
+        ctx.SaveChanges();
+    }
+
+    /// <summary>刪除一筆人工對應，回傳刪除筆數。</summary>
+    public int DeleteManualMap(long deviceObjid)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete();
     }
 
     /// <summary>

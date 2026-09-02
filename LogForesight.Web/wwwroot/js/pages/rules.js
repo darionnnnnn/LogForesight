@@ -171,7 +171,8 @@ function setupToolbar() {
         items: [
             { value: '', label: '全部' },
             { value: 'windows', label: 'Windows' },
-            { value: 'linux', label: 'Linux' }
+            { value: 'linux', label: 'Linux' },
+            { value: 'prtg', label: 'PRTG' }
         ],
         attr: 'suppressionPlatform',
         activeValues: [suppressionPlatform],
@@ -196,11 +197,15 @@ function setupToolbar() {
     });
 }
 
-/** 搜尋框 placeholder 依平台調整（docs/LINUX-RULES.md §5.1）：Windows 找來源/Event ID，Linux 找 program/訊息 */
+/** 搜尋框 placeholder 依平台調整（docs/LINUX-RULES.md §5.1）：Windows 找來源/Event ID，Linux 找 program/訊息，PRTG 找代碼/說明 */
 function updateSearchPlaceholder() {
-    document.getElementById('rule-search').placeholder = currentPlatform === 'linux'
-        ? '搜尋 program、訊息關鍵字、說明'
-        : '搜尋來源、Event ID、說明';
+    if (currentPlatform === 'linux') {
+        document.getElementById('rule-search').placeholder = '搜尋 program、訊息關鍵字、說明';
+    } else if (currentPlatform === 'prtg') {
+        document.getElementById('rule-search').placeholder = '搜尋規則代碼、說明';
+    } else {
+        document.getElementById('rule-search').placeholder = '搜尋來源、Event ID、說明';
+    }
 }
 
 const RULE_COLUMNS = [
@@ -220,7 +225,10 @@ const RULE_COLUMNS = [
     },
     {
         title: '門檻', className: 'text-end', sortKey: 'threshold', sortDefaultDir: 'desc',
-        sortValue: r => r.countThreshold, render: r => String(r.countThreshold)
+        sortValue: r => r.platform === 'prtg' ? r.prtgThreshold : r.countThreshold,
+        render: r => r.platform === 'prtg'
+            ? (r.prtgRuleCode === 'silent' ? '-' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}`)
+            : String(r.countThreshold)
     },
     { title: '狀態', render: r => statusCell(r) },
     { title: '', className: 'text-end', render: r => actionsCell(r) }
@@ -238,8 +246,10 @@ function renderRules() {
                 ? r.programPattern.toLowerCase().includes(keyword) ||
                   r.eventNamePattern.toLowerCase().includes(keyword) ||
                   r.messagePatterns.some(p => p.toLowerCase().includes(keyword))
-                : r.sourcePattern.toLowerCase().includes(keyword) ||
-                  r.eventIds.some(id => String(id).includes(keyword))));
+                : r.platform === 'prtg'
+                    ? (r.prtgRuleCode && r.prtgRuleCode.toLowerCase().includes(keyword))
+                    : r.sourcePattern.toLowerCase().includes(keyword) ||
+                      r.eventIds.some(id => String(id).includes(keyword))));
     }
 
     if (chipFilters.status === 'enabled') filtered = filtered.filter(r => r.enabled);
@@ -319,6 +329,25 @@ function ruleCell(rule) {
 
 function matchCell(rule) {
     const wrap = document.createElement('div');
+
+    if (rule.platform === 'prtg') {
+        const code = document.createElement('div');
+        code.className = 'font-monospace small';
+        code.textContent = rule.prtgRuleCode ?? '';
+        wrap.appendChild(code);
+
+        const threshold = document.createElement('div');
+        threshold.className = 'small text-muted';
+        if (rule.prtgRuleCode === 'silent') {
+            threshold.textContent = '不使用門檻';
+        } else if (rule.prtgRuleCode === 'flapping') {
+            threshold.textContent = `門檻：${rule.prtgThreshold} 次`;
+        } else {
+            threshold.textContent = `門檻：${rule.prtgThreshold} 分鐘`;
+        }
+        wrap.appendChild(threshold);
+        return wrap;
+    }
 
     if (rule.platform === 'linux') {
         if (rule.programPattern) {
@@ -475,11 +504,12 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
 
     const isNew = !editingRule;
 
+    const platformLabel = platform === 'linux' ? ' Linux' : (platform === 'prtg' ? ' PRTG' : ' Windows');
     document.getElementById('rule-modal-title').textContent = asTemplate
         ? `以「${rule.id}」為範本建立自訂規則`
         : rule
             ? `編輯規則 ${rule.id}`
-            : `新增${platform === 'linux' ? ' Linux' : ' Windows'}規則`;
+            : `新增${platformLabel}規則`;
     document.getElementById('rule-id').value = asTemplate ? suggestCustomId(rule.id) : (rule?.id ?? 'custom-');
     document.getElementById('rule-id').disabled = !isNew;   // Id 是穩定識別鍵，建立後不可改
     document.getElementById('rule-id-hint').textContent = isNew
@@ -492,6 +522,8 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
     document.getElementById('rule-program').value = rule?.programPattern ?? '';
     document.getElementById('rule-event-name').value = rule?.eventNamePattern ?? '';
     document.getElementById('rule-message-patterns').value = rule?.messagePatterns.join('\n') ?? '';
+    document.getElementById('rule-prtg-code').value = rule?.prtgRuleCode ?? 'down';
+    document.getElementById('rule-prtg-threshold').value = rule?.prtgThreshold ?? (platform === 'prtg' ? 60 : 0);
     document.getElementById('rule-category').value = rule?.category ?? 'Other';
     document.getElementById('rule-severity').value = rule?.severity ?? 'Medium';
     document.getElementById('rule-elevates-day-risk').checked = rule?.elevatesDayRisk ?? false;
@@ -547,6 +579,8 @@ function collectRule() {
         programPattern: document.getElementById('rule-program').value.trim(),
         eventNamePattern: document.getElementById('rule-event-name').value.trim(),
         messagePatterns: splitLines(document.getElementById('rule-message-patterns').value),
+        prtgRuleCode: platform === 'prtg' ? document.getElementById('rule-prtg-code').value : null,
+        prtgThreshold: platform === 'prtg' ? (Number(document.getElementById('rule-prtg-threshold').value) || 0) : 0,
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
         elevatesDayRisk: document.getElementById('rule-elevates-day-risk').checked,

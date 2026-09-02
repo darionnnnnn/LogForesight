@@ -1860,4 +1860,201 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(savedDto.PrtgSensorTypeWhitelist, getDto.PrtgSensorTypeWhitelist);
         Assert.Equal(new[] { "SNMP Memory", "SNMP Linux Meminfo" }, getDto.PrtgSensorTypeWhitelist);
     }
+
+    [Fact]
+    public void SetPrtgEnabled_開啟時若URL為空擲DomainException()
+    {
+        var service = Create();
+        var ex = Assert.Throws<DomainException>(() => service.SetPrtgEnabled(true));
+        Assert.Contains("請先於 PRTG 維護頁完成連線設定", ex.Message);
+    }
+
+    [Fact]
+    public void SetPrtgEnabled_開啟時URL與憑證齊備成功寫入且Get讀回為true()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "https://prtg.example.local";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("my-token");
+        });
+
+        var result = service.SetPrtgEnabled(true);
+        Assert.True(result);
+
+        var dto = service.Get();
+        Assert.True(dto.PrtgEnabled);
+    }
+
+    [Fact]
+    public void SetPrtgEnabled_關閉時即使URL為空也成功()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "";
+            s.PrtgEnabled = true;
+        });
+
+        var result = service.SetPrtgEnabled(false);
+        Assert.False(result);
+
+        var dto = service.Get();
+        Assert.False(dto.PrtgEnabled);
+    }
+
+    [Fact]
+    public void Update_未提供PRTG連線欄位時沿用既有值不清空()
+    {
+        var service = Create();
+
+        // 1. 先存好 PRTG 連線設定
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        initial.PrtgApiToken = "abc";
+        service.Update(initial);
+
+        // 2. 送出未提供 PRTG 連線欄位（null）的請求
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = null;
+        request.PrtgAuthMode = null;
+        var saved = service.Update(request);
+
+        // 斷言回傳 DTO 與重讀 DB 均保留原值
+        Assert.True(saved.PrtgEnabled);
+        Assert.Equal("https://prtg.example.com", saved.PrtgUrl);
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Token, saved.PrtgAuthMode);
+
+        var reread = service.Get();
+        Assert.True(reread.PrtgEnabled);
+        Assert.Equal("https://prtg.example.com", reread.PrtgUrl);
+        Assert.Equal(LogForesight.Core.Models.PrtgAuthModes.Token, reread.PrtgAuthMode);
+    }
+
+    [Fact]
+    public void Update_提供PRTG連線欄位時確實更新()
+    {
+        var service = Create();
+
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        initial.PrtgApiToken = "abc";
+        service.Update(initial);
+
+        var updateReq = ValidRequest();
+        updateReq.PrtgEnabled = true;
+        updateReq.PrtgUrl = "https://new.example.com";
+        var saved = service.Update(updateReq);
+
+        Assert.Equal("https://new.example.com", saved.PrtgUrl);
+
+        var reread = service.Get();
+        Assert.Equal("https://new.example.com", reread.PrtgUrl);
+    }
+
+    [Fact]
+    public void Update_PRTG沿用既有啟用狀態時位址驗證仍生效()
+    {
+        var service = Create();
+
+        // 1. 既有設定為啟用且有合法位址
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+        initial.PrtgApiToken = "abc";
+        service.Update(initial);
+
+        // 2. 本次請求 PrtgEnabled = null（沿用既有 true），但 PrtgUrl = ""（明確送空字串清空）
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = "";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("PRTG 位址不可為空", ex.Message);
+    }
+
+    [Fact]
+    public void Update_關閉PRTG時不需要位址且成功寫入()
+    {
+        var service = Create();
+
+        var request = ValidRequest();
+        request.PrtgEnabled = false;
+        request.PrtgUrl = "";
+
+        var saved = service.Update(request);
+
+        Assert.False(saved.PrtgEnabled);
+        Assert.Equal("", saved.PrtgUrl);
+
+        var reread = service.Get();
+        Assert.False(reread.PrtgEnabled);
+        Assert.Equal("", reread.PrtgUrl);
+    }
+
+    [Fact]
+    public void Update_未提供PrtgUsername時沿用既有帳號不清空()
+    {
+        var service = Create();
+
+        // 1. 先存好 PRTG 連線設定（含帳號）
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        initial.PrtgUsername = "prtg_admin";
+        initial.PrtgPassword = "secret_password";
+        service.Update(initial);
+
+        // 2. 送出未提供 PrtgUsername（null）的請求
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = null;
+        request.PrtgAuthMode = null;
+        request.PrtgUsername = null;
+        var saved = service.Update(request);
+
+        // 斷言回傳 DTO 與重讀 DB 均保留原帳號
+        Assert.Equal("prtg_admin", saved.PrtgUsername);
+
+        var reread = service.Get();
+        Assert.Equal("prtg_admin", reread.PrtgUsername);
+    }
+
+    [Fact]
+    public void Update_PRTG為Password模式且啟用時_未帶帳號沿用既有值不被驗證擋下()
+    {
+        var service = Create();
+
+        // 1. 先存好 PRTG 連線設定（Password 模式已啟用、有帳密）
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        initial.PrtgUsername = "prtg_admin";
+        initial.PrtgPassword = "secret_password";
+        service.Update(initial);
+
+        // 2. 模擬一般設定頁存檔（不送 PRTG 欄位，PrtgUsername 為 null）
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = null;
+        request.PrtgAuthMode = null;
+        request.PrtgUsername = null;
+        request.BrandName = "新自訂系統名稱";
+
+        // 應該成功儲存，不擲出「必須設定帳號」的 DomainException
+        var saved = service.Update(request);
+
+        Assert.Equal("新自訂系統名稱", saved.BrandName);
+        Assert.True(saved.PrtgEnabled);
+        Assert.Equal("prtg_admin", saved.PrtgUsername);
+    }
 }

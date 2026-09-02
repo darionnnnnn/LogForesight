@@ -48,6 +48,7 @@ async function load() {
     renderTimeline(detail);
     renderIssues(detail);
     renderCheckup(detail);
+    loadPrtgMapping();
 }
 
 function renderHeader(detail) {
@@ -547,7 +548,87 @@ document.getElementById('host-update-form').addEventListener('submit', async eve
     }
 });
 
+// ── PRTG 監控對應 ─────────────────────────────────────────────────────────
+
+async function loadPrtgMapping() {
+    const container = document.getElementById('host-prtg');
+    if (!container) return;
+    renderLoading(container, 2);
+
+    try {
+        const data = await api.get(`/api/host-detail/${hostId}/prtg`, { silent: true });
+        if (!data || !data.devices || data.devices.length === 0) {
+            container.replaceChildren();
+            const empty = document.createElement('div');
+            empty.className = 'text-muted small';
+            empty.textContent = '這台主機目前沒有對應到 PRTG device';
+            container.appendChild(empty);
+            return;
+        }
+
+        renderPrtgDevices(container, data);
+    } catch {
+        container.replaceChildren();
+        const empty = document.createElement('div');
+        empty.className = 'text-muted small';
+        empty.textContent = '這台主機目前沒有對應到 PRTG device';
+        container.appendChild(empty);
+    }
+}
+
+function renderPrtgDevices(container, data) {
+    container.replaceChildren();
+
+    for (const device of data.devices) {
+        const devCard = document.createElement('div');
+        devCard.className = 'mb-3 pb-3 border-bottom';
+
+        const devHeader = document.createElement('div');
+        devHeader.className = 'd-flex justify-content-between align-items-center mb-2 flex-wrap gap-2';
+
+        const devTitle = document.createElement('div');
+        devTitle.className = 'fw-semibold';
+        devTitle.textContent = `PRTG Device: ${device.deviceObjid}${device.ip ? ` (${device.ip})` : ''}`;
+
+        const devMeta = document.createElement('div');
+        devMeta.className = 'small text-muted';
+        const parts = [];
+        if (device.mapStatus) parts.push(`對應狀態：${device.mapStatus}`);
+        if (data.mapDate) parts.push(`基準日：${data.mapDate.split('T')[0]}`);
+        if (device.note) parts.push(`備註：${device.note}`);
+        devMeta.textContent = parts.join(' ｜ ');
+
+        devHeader.append(devTitle, devMeta);
+        devCard.appendChild(devHeader);
+
+        if (!device.sensors || device.sensors.length === 0) {
+            const noSensors = document.createElement('div');
+            noSensors.className = 'text-muted small';
+            noSensors.textContent = '此裝置上無 sensor 資料。';
+            devCard.appendChild(noSensors);
+        } else {
+            const table = document.createElement('table');
+            table.className = 'table table-sm table-hover mb-0 small';
+            table.innerHTML = '<thead><tr><th>Sensor ID</th><th>名稱</th><th>類型</th><th>分類</th><th>狀態</th></tr></thead>';
+            const tbody = document.createElement('tbody');
+            for (const s of device.sensors) {
+                const tr = document.createElement('tr');
+                const badgeHtml = s.paused
+                    ? '<span class="badge text-bg-secondary">已暫停</span>'
+                    : '<span class="badge text-bg-success">正常</span>';
+                tr.innerHTML = `<td class="font-monospace">${s.objid}</td><td>${s.name}</td><td>${s.sensorType || '-'}</td><td>${s.category || '-'}</td><td>${badgeHtml}</td>`;
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            devCard.appendChild(table);
+        }
+
+        container.appendChild(devCard);
+    }
+}
+
 guardLoad([
     document.getElementById('host-timeline'),
-    document.getElementById('host-issues')
+    document.getElementById('host-issues'),
+    document.getElementById('host-prtg')
 ], load);

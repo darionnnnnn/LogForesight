@@ -335,4 +335,56 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         Assert.Equal(0, result.ValuesWritten);
         Assert.Equal(0, result.FailedSensors);
     }
+
+    [Fact]
+    public async Task RunAsync_extraTriggerHosts傳入的主機即使非高中風險也會取數()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        // 兩台皆為低風險主機（一般情況下不會被觸發取數）
+        recordStore.Append(CreateRecord(101, "SRV-EXTRA", day, "低"));
+        recordStore.Append(CreateRecord(102, "SRV-LOW", day, "低"));
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" },
+            new() { Objid = 1002, Name = "Dev-2", Ip = "10.0.0.2" }
+        }, day);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-1", SensorType = "SNMP CPU Load", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1002, Name = "Sensor-2", SensorType = "SNMP CPU Load", Paused = false }
+        }, day);
+
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = 102, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+        var (client, handler) = CreateClient(req => JsonResponse(histJson));
+
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        // 將 host 101 作為 extraTriggerHosts 傳入
+        var result = await fetcher.RunAsync(
+            day, whitelist: null, concurrency: 2,
+            analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1,
+            extraTriggerHosts: new[] { 101L });
+
+        // 雙面斷言：額外觸發的主機 (101 -> sensor 2001) 有被請求，未被觸發的低風險主機 (102 -> sensor 2002) 沒有被請求
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=2001") && u.Contains("historicdata"));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("id=2002"));
+
+        Assert.Equal(1, result.TriggerHosts);
+        Assert.Equal(1, result.TargetSensors);
+        Assert.Equal(1, result.ValuesWritten);
+        Assert.Equal(0, result.FailedSensors);
+    }
 }

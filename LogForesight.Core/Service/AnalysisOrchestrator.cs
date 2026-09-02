@@ -1102,7 +1102,7 @@ public class AnalysisOrchestrator
             {
                 var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
                 var mapResult = hostMapper.MapForDate(day);
-                runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}");
+                runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}");
             }
             catch (OperationCanceledException)
             {
@@ -1114,14 +1114,109 @@ public class AnalysisOrchestrator
                 prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
             }
 
-            // 3. PRTG 觸發式數值取數：獨立的 try/catch，與分析並行輪詢
+            // 3. PRTG 規則評估：獨立的 try/catch
+            var ruleTriggerHosts = new HashSet<long>();
+            var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
+            var totalFindings = 0;
+            try
+            {
+                var prtgStore = backend.PrtgStore();
+                var whitelist = new HashSet<string>(systemSettings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                var allSensors = prtgStore.GetSensorStatuses();
+                var filteredSensors = whitelist.Count == 0
+                    ? allSensors
+                    : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
+
+                var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
+                var allChanges = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
+                var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
+
+                var sensorToDevice = filteredSensors
+                    .GroupBy(s => s.Objid)
+                    .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
+
+                var sensorStatuses = filteredSensors
+                    .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+                    .ToList();
+
+                var prtgRules = KnownIssueCatalog.Rules
+                    .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && r.Enabled)
+                    .ToList();
+
+                var enabledRuleCodes = prtgRules
+                    .Where(r => !string.IsNullOrEmpty(r.PrtgRuleCode))
+                    .Select(r => r.PrtgRuleCode!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var downMinutes = 60;
+                var flapCount = 5;
+                var warningMinutes = 240;
+
+                foreach (var rule in prtgRules)
+                {
+                    if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase))
+                    {
+                        downMinutes = rule.PrtgThreshold;
+                    }
+                    else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase))
+                    {
+                        flapCount = rule.PrtgThreshold;
+                    }
+                    else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase))
+                    {
+                        warningMinutes = rule.PrtgThreshold;
+                    }
+                }
+
+                var thresholds = new PrtgRuleThresholds(downMinutes, flapCount, warningMinutes);
+
+                var findings = PrtgRuleEvaluator.Evaluate(
+                    day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes);
+
+                totalFindings = findings.Count;
+
+                var hostMapRows = prtgStore.GetHostMapForDate(day);
+                var deviceToHost = new Dictionary<long, long>();
+                foreach (var row in hostMapRows)
+                {
+                    if (row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue)
+                    {
+                        deviceToHost[row.DeviceObjid] = row.HostId.Value;
+                    }
+                }
+
+                foreach (var finding in findings)
+                {
+                    if (deviceToHost.TryGetValue(finding.DeviceObjid, out var hostId))
+                    {
+                        if (!findingsByHost.TryGetValue(hostId, out var hostFindings))
+                        {
+                            hostFindings = new List<LogIssueSignature>();
+                            findingsByHost[hostId] = hostFindings;
+                        }
+                        hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
+                        ruleTriggerHosts.Add(hostId);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG 規則評估失敗，不影響分析成果");
+                prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
+            }
+
+            // 4. PRTG 觸發式數值取數：獨立的 try/catch，與分析並行輪詢
             try
             {
                 var triggeredFetcher = new PrtgTriggeredValueFetcher(
                     fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
                 var triggeredResult = await triggeredFetcher.RunAsync(
                     day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
-                    () => analysisTask.IsCompleted, ct);
+                    () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts);
 
                 var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}）：問題主機 {triggeredResult.TriggerHosts} 台、" +
                               $"sensor {triggeredResult.TargetSensors} 個、數值 {triggeredResult.ValuesWritten} 筆" +
@@ -1138,6 +1233,47 @@ public class AnalysisOrchestrator
             {
                 Log.Error(ex, "PRTG 觸發式取數失敗，不影響分析成果");
                 prtgConsole.WriteLine($"\n  ✗ PRTG 觸發式取數失敗：{ex.Message}");
+            }
+
+            // 5. PRTG finding 追加：獨立的 try/catch，在觸發式取數（分析完成）後追加至當日紀錄
+            try
+            {
+                var involvedHosts = findingsByHost.Count;
+                var appendedHosts = 0;
+                var skippedHosts = 0;
+
+                var allHosts = hostStore.GetAll();
+                var hostsById = allHosts.ToDictionary(h => h.HostId);
+
+                foreach (var (hostId, hostFindings) in findingsByHost)
+                {
+                    var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
+                    var hostKey = new HostKey { HostId = hostId, HostName = hostName };
+                    var hostRecordStore = backend.RecordStore(hostKey);
+
+                    var attached = hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings);
+                    if (attached)
+                    {
+                        appendedHosts++;
+                    }
+                    else
+                    {
+                        skippedHosts++;
+                    }
+                }
+
+                var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、已追加 {appendedHosts} 台（無當日紀錄 {skippedHosts} 台）";
+                prtgConsole.WriteLine(summary);
+                runRecorder.Milestone(summary);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG finding 追加失敗，不影響分析成果");
+                prtgConsole.WriteLine($"\n  ✗ PRTG finding 追加失敗：{ex.Message}");
             }
         }
         catch (OperationCanceledException)

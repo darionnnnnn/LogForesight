@@ -182,7 +182,7 @@ internal static class SchemaUpgrader
             "IX_lf_reports_host_date_kind", "host_id, host_name, report_date, kind", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_reports", "IX_lf_reports_created_at", "created_at");
 
-        // PRTG 鏡像層五張資料表：既有部署的 DB 已經存在，EnsureCreated 對它什麼都不做
+        // PRTG 鏡像層六張資料表：既有部署的 DB 已經存在，EnsureCreated 對它什麼都不做
         // （只在資料庫整個不存在時建表），因此需要透過自製冪等 DDL「檢查缺什麼→缺才補」來建立資料表與索引；
         // 新建的 DB 則由 EnsureCreated 直接建好最新 schema，這裡每一步都會是安靜的 no-op。
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_devices",
@@ -212,6 +212,11 @@ internal static class SchemaUpgrader
             isSqlite ? SqliteCreatePrtgHostMap : SqlServerCreatePrtgHostMap);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_host_map",
             "IX_lf_prtg_host_map_created", "created_at");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_manual_map",
+            isSqlite ? SqliteCreatePrtgManualMap : SqlServerCreatePrtgManualMap);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_manual_map",
+            "IX_lf_prtg_manual_map_host", "host_id");
     }
 
 
@@ -747,6 +752,28 @@ internal static class SchemaUpgrader
             note nvarchar(512) NULL,
             created_at datetime2 NOT NULL,
             CONSTRAINT PK_lf_prtg_host_map PRIMARY KEY (map_date, device_objid)
+        )
+        """;
+
+    private const string SqliteCreatePrtgManualMap = """
+        CREATE TABLE lf_prtg_manual_map (
+            device_objid INTEGER NOT NULL,
+            host_id INTEGER NOT NULL,
+            created_by TEXT NULL,
+            note TEXT NULL,
+            created_at TEXT NOT NULL,
+            CONSTRAINT PK_lf_prtg_manual_map PRIMARY KEY (device_objid)
+        )
+        """;
+
+    private const string SqlServerCreatePrtgManualMap = """
+        CREATE TABLE lf_prtg_manual_map (
+            device_objid bigint NOT NULL,
+            host_id bigint NOT NULL,
+            created_by nvarchar(64) NULL,
+            note nvarchar(512) NULL,
+            created_at datetime2 NOT NULL,
+            CONSTRAINT PK_lf_prtg_manual_map PRIMARY KEY (device_objid)
         )
         """;
 

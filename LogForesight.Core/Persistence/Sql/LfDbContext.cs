@@ -76,6 +76,9 @@ public class LfDbContext : DbContext
     /// <summary>PRTG 主機按日映射（↔ lf_prtg_host_map）</summary>
     public DbSet<PrtgHostMapRow> PrtgHostMaps => Set<PrtgHostMapRow>();
 
+    /// <summary>PRTG 人工主機對應（↔ lf_prtg_manual_map）</summary>
+    public DbSet<PrtgManualMapRow> PrtgManualMaps => Set<PrtgManualMapRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -500,6 +503,19 @@ public class LfDbContext : DbContext
 
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_host_map_created");
         });
+
+        b.Entity<PrtgManualMapRow>(e =>
+        {
+            e.ToTable("lf_prtg_manual_map");
+            e.HasKey(x => x.DeviceObjid);
+            e.Property(x => x.DeviceObjid).HasColumnName("device_objid");
+            e.Property(x => x.HostId).HasColumnName("host_id");
+            e.Property(x => x.CreatedBy).HasColumnName("created_by").HasMaxLength(64);
+            e.Property(x => x.Note).HasColumnName("note").HasMaxLength(512);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => x.HostId).HasDatabaseName("IX_lf_prtg_manual_map_host");
+        });
     }
 }
 
@@ -859,6 +875,16 @@ public class PrtgHostMapRow
     public long? HostId { get; set; }
     public string? HostName { get; set; }
     public string MapStatus { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG 人工主機對應（長期有效，不按日）。↔ lf_prtg_manual_map</summary>
+public class PrtgManualMapRow
+{
+    public long DeviceObjid { get; set; }
+    public long HostId { get; set; }
+    public string? CreatedBy { get; set; }
     public string? Note { get; set; }
     public DateTime CreatedAt { get; set; }
 }

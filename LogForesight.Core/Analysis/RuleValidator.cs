@@ -1,3 +1,5 @@
+using LogForesight.Core.Service;
+
 namespace LogForesight.Core.Analysis;
 
 /// <summary>驗證後的結果：合格規則、逐條不合格原因、遮蔽警告（見 docs/RULES-SPEC.md）</summary>
@@ -67,12 +69,18 @@ public static class RuleValidator
         {
             return "MatchFilter 此版本尚未支援，必須為 null";
         }
-        if (rule.Platform != "windows" && rule.Platform != "linux")
+        if (rule.Platform != "windows" && rule.Platform != "linux" && rule.Platform != "prtg")
         {
-            return $"Platform 必須是 windows 或 linux，實際為「{rule.Platform}」";
+            return $"Platform 必須是 windows、linux 或 prtg，實際為「{rule.Platform}」";
         }
 
-        var platformReason = rule.Platform == "windows" ? CheckWindowsFields(rule) : CheckLinuxFields(rule);
+        var platformReason = rule.Platform switch
+        {
+            "windows" => CheckWindowsFields(rule),
+            "linux" => CheckLinuxFields(rule),
+            "prtg" => CheckPrtgFields(rule),
+            _ => null
+        };
         if (platformReason != null)
         {
             return platformReason;
@@ -207,6 +215,44 @@ public static class RuleValidator
         return null;
     }
 
+    /// <summary>PRTG 規則欄位：Windows／Linux 專用欄位必空，PrtgRuleCode 必須為合法代碼，
+    /// PrtgThreshold 依代碼而定（down/warning >= 1 分鐘，flapping >= 2 次，silent == 0）。</summary>
+    private static string? CheckPrtgFields(KnownIssueRule rule)
+    {
+        if (!string.IsNullOrEmpty(rule.SourcePattern) || rule.EventIds.Length > 0 || rule.MatchAllEventIds ||
+            !string.IsNullOrEmpty(rule.ProgramPattern) || !string.IsNullOrEmpty(rule.EventNamePattern) || rule.MessagePatterns.Length > 0)
+        {
+            return "prtg 規則不可填 SourcePattern/EventIds/MatchAllEventIds/ProgramPattern/EventNamePattern/MessagePatterns（Windows/Linux 專用欄位）";
+        }
+
+        if (rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDown &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleFlapping &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleWarning &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleSilent)
+        {
+            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning} 或 {PrtgRuleEvaluator.RuleSilent}，實際為「{rule.PrtgRuleCode}」";
+        }
+
+        if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && rule.PrtgThreshold < 1)
+        {
+            return $"PrtgThreshold 必須 >= 1（{PrtgRuleEvaluator.RuleDown} 規則門檻為分鐘數）";
+        }
+        if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleWarning && rule.PrtgThreshold < 1)
+        {
+            return $"PrtgThreshold 必須 >= 1（{PrtgRuleEvaluator.RuleWarning} 規則門檻為分鐘數）";
+        }
+        if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && rule.PrtgThreshold < 2)
+        {
+            return $"PrtgThreshold 必須 >= 2（{PrtgRuleEvaluator.RuleFlapping} 規則門檻為往返次數，至少需 2 次）";
+        }
+        if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent && rule.PrtgThreshold != 0)
+        {
+            return $"PrtgThreshold 必須為 0（{PrtgRuleEvaluator.RuleSilent} 規則不使用門檻）";
+        }
+
+        return null;
+    }
+
     /// <summary>Lucene 裸 term 安全字元（見 <see cref="CheckLinuxFields"/> 的 ProgramPattern 檢查）：
     /// 英數字與 <c>_</c>／<c>.</c>／<c>-</c>，與 SentinelEventMapper 的 msg 前綴 program
     /// 字元類別一致。</summary>
@@ -225,6 +271,7 @@ public static class RuleValidator
         var warnings = new List<string>();
         warnings.AddRange(DetectWindowsShadowing(validRules.Where(r => r.Platform == "windows").ToList()));
         warnings.AddRange(DetectLinuxShadowing(validRules.Where(r => r.Platform == "linux").ToList()));
+        // PRTG 平台規則按 RuleCode 獨立判定，非 pattern 比對命中，無相互遮蔽概念，故不做遮蔽偵測。
         return warnings;
     }
 

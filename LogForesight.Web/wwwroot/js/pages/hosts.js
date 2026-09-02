@@ -22,6 +22,7 @@ const sentinelFilter = document.getElementById('sentinel-filter');
 let statusMode = new URLSearchParams(location.search).get('status') ?? '';
 const groupFilter = new Set();
 let osFilter = '';   // 空白＝全部；'windows' | 'linux'（docs/LINUX-RULES.md §3）
+let prtgMapFilter = ''; // 空白＝全部；'mapped' | 'conflict' | 'unmatched'
 
 // 未回報定義（§5.4 D-4）：只用來顯示 chip 標籤文字，實際篩選在伺服器端（HostAdminService 同一套規則）
 const SILENT_CUTOFF_DAYS = 2;
@@ -78,6 +79,7 @@ async function load() {
     fillSentinelOptions();
     setupGroupChips();
     setupOsChips();
+    setupPrtgMapChips();
     renderQueues();
     await search();
 }
@@ -215,6 +217,21 @@ function setupOsChips() {
     });
 }
 
+function setupPrtgMapChips() {
+    renderChips(document.getElementById('host-prtg-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'mapped', label: '有對應' },
+            { value: 'conflict', label: '衝突' },
+            { value: 'unmatched', label: '未對應' }
+        ],
+        attr: 'prtg',
+        activeValues: [prtgMapFilter],
+        multi: false,
+        onToggle: value => { prtgMapFilter = value; currentPage = 1; search(); }
+    });
+}
+
 function setupGroupChips() {
     renderChips(document.getElementById('host-group-chips'), {
         items: hostGroups.map(g => ({ value: String(g.groupId), label: g.groupName })),
@@ -241,6 +258,7 @@ function currentFilterParams() {
     if (sentinelFilter.value) params.set('sentinel', sentinelFilter.value);
     if (groupFilter.size > 0) params.set('groupIds', [...groupFilter].join(','));
     if (osFilter) params.set('os', osFilter);
+    if (prtgMapFilter) params.set('prtgMap', prtgMapFilter);
     params.set('sort', sort.key);
     params.set('dir', sort.dir);
     return params;

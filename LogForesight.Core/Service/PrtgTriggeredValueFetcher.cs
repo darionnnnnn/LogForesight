@@ -37,7 +37,8 @@ public sealed class PrtgTriggeredValueFetcher
         int concurrency,
         Func<bool> analysisCompleted,
         CancellationToken ct,
-        int pollSeconds = 30)
+        int pollSeconds = 30,
+        IReadOnlyCollection<long>? extraTriggerHosts = null)
     {
         var hostMapRows = _store.GetHostMapForDate(day);
         var hostToDevices = new Dictionary<long, List<long>>();
@@ -59,6 +60,7 @@ public sealed class PrtgTriggeredValueFetcher
         var totalTargetSensors = 0;
         var totalValuesWritten = 0;
         var totalFailedSensors = 0;
+        var isFirstScan = true;
 
         async Task ScanAndFetchAsync()
         {
@@ -70,8 +72,14 @@ public sealed class PrtgTriggeredValueFetcher
                 Hosts = null
             };
             var records = _records.QueryLightweight(filter);
-            var newHosts = records
-                .Select(r => r.HostId)
+            var candidateHosts = records.Select(r => r.HostId);
+            if (isFirstScan && extraTriggerHosts is { Count: > 0 })
+            {
+                candidateHosts = candidateHosts.Concat(extraTriggerHosts);
+            }
+            isFirstScan = false;
+
+            var newHosts = candidateHosts
                 .Distinct()
                 .Where(id => !fetchedHosts.Contains(id))
                 .ToList();

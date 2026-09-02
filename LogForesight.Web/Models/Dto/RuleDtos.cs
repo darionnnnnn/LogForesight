@@ -27,6 +27,10 @@ public class RuleDto
     public string EventNamePattern { get; set; } = string.Empty;
     public List<string> MessagePatterns { get; set; } = new();
 
+    // ── PRTG 專用比對欄位 ─────────────────────────────────────────────
+    public string? PrtgRuleCode { get; set; }
+    public int PrtgThreshold { get; set; }
+
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
@@ -77,7 +81,7 @@ public class SaveRuleRequest
 
     public bool Enabled { get; set; } = true;
 
-    /// <summary>'windows'（預設）| 'linux'。是否合法、與其他欄位是否互相對應
+    /// <summary>'windows'（預設）| 'linux' | 'prtg'。是否合法、與其他欄位是否互相對應
     /// 由 RuleValidator 在儲存前把關（§1.3），這裡不重複驗證。</summary>
     public string Platform { get; set; } = "windows";
 
@@ -94,6 +98,9 @@ public class SaveRuleRequest
     public string EventNamePattern { get; set; } = string.Empty;
 
     public List<string> MessagePatterns { get; set; } = new();
+
+    public string? PrtgRuleCode { get; set; }
+    public int PrtgThreshold { get; set; }
 
     [Required]
     public string Category { get; set; } = string.Empty;

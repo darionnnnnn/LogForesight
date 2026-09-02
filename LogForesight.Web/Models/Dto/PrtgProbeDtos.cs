@@ -58,3 +58,50 @@ public class PrtgMirrorStatusDto
     public IReadOnlyList<PrtgHostMapItemDto> Unmatched { get; set; } = Array.Empty<PrtgHostMapItemDto>();
 }
 
+/// <summary>設定 PRTG 人工主機對應請求</summary>
+public class SetPrtgManualMapRequest
+{
+    public long DeviceObjid { get; set; }
+    public long HostId { get; set; }
+    public string? Note { get; set; }
+}
+
+/// <summary>PRTG 人工主機對應項目</summary>
+public class PrtgManualMapDto
+{
+    public long DeviceObjid { get; set; }
+    public long HostId { get; set; }
+    public string? HostName { get; set; }
+    public string? Note { get; set; }
+    public string? CreatedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>主機 PRTG 監控對應資訊</summary>
+public class HostPrtgMappingDto
+{
+    public DateTime? MapDate { get; set; }
+    public List<HostPrtgDeviceDto> Devices { get; set; } = new();
+}
+
+/// <summary>主機對應的 PRTG 裝置資訊</summary>
+public class HostPrtgDeviceDto
+{
+    public long DeviceObjid { get; set; }
+    public string? Ip { get; set; }
+    public string? MapStatus { get; set; }
+    public string? Note { get; set; }
+    public List<HostPrtgSensorDto> Sensors { get; set; } = new();
+}
+
+/// <summary>主機對應 PRTG 裝置的感測器資訊</summary>
+public class HostPrtgSensorDto
+{
+    public long Objid { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string SensorType { get; set; } = string.Empty;
+    public string? Category { get; set; }
+    public bool Paused { get; set; }
+}
+
+

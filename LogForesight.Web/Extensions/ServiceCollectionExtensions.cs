@@ -1,4 +1,5 @@
 using System.Text;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
@@ -47,6 +48,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EfReportStore>(sp => sp.GetRequiredService<StorageBackend>().ReportStore());
         services.AddSingleton<IReportReader>(sp => sp.GetRequiredService<EfReportStore>());
         services.AddSingleton<IReportUsageQuery>(sp => sp.GetRequiredService<EfReportStore>());
+        services.AddSingleton<EfPrtgStore>(sp => sp.GetRequiredService<StorageBackend>().PrtgStore());
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         //

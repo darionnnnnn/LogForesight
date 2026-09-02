@@ -21,6 +21,7 @@
 <ul class="nav nav-tabs mb-3" id="rule-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="rules" data-platform="windows" type="button">Windows規則</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="rules" data-platform="linux" type="button">Linux規則</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="rules" data-platform="prtg" type="button">PRTG規則</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="suppressions" type="button">告警抑制</button></li>
 </ul>
 
@@ -182,6 +183,24 @@
                             <label for="rule-message-patterns" class="form-label">訊息子字串（一行一項，任一命中即算，最多 8 條）</label>
                             <textarea class="form-control" id="rule-message-patterns" rows="3" placeholder="Failed password&#10;authentication failure"></textarea>
                             <div class="form-text">留空＝不看訊息內容，Program 命中就算（如帳號異動類事件）。</div>
+                        </div>
+
+                        <div class="col-md-6" id="rule-match-prtg-code" data-platform-block="prtg">
+                            <label for="rule-prtg-code" class="form-label">規則代碼 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="rule-prtg-code">
+                                <option value="down">持續 Down (down)</option>
+                                <option value="flapping">頻繁震盪 (flapping)</option>
+                                <option value="warning">持續 Warning (warning)</option>
+                                <option value="silent">沉默裝置 (silent)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6" id="rule-match-prtg-threshold" data-platform-block="prtg">
+                            <label for="rule-prtg-threshold" class="form-label">門檻值</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="門檻語意依規則代碼而定：down / warning 為分鐘數（>=1），flapping 為往返次數（>=2），silent 不使用（填 0）。未達門檻不成立。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                            </button>
+                            <input type="number" class="form-control" id="rule-prtg-threshold" min="0" value="0" />
                         </div>
 
                         <div class="col-md-3">

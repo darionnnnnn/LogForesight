@@ -681,7 +681,12 @@ public class RuleAdminService
 
         // Platform 一經建立不可變更（哪個分頁新增就是哪個平台）：既有規則沿用原值，
         // 新規則採前端所在分頁送來的值，二者都不看使用者能否事後改動。
-        var platform = existing?.Platform ?? (request.Platform == "linux" ? "linux" : "windows");
+        var platform = existing?.Platform ?? (request.Platform switch
+        {
+            "linux" => "linux",
+            "prtg" => "prtg",
+            _ => "windows"
+        });
 
         return new KnownIssueRule
         {
@@ -701,6 +706,8 @@ public class RuleAdminService
             MessagePatterns = platform == "linux"
                 ? request.MessagePatterns.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()).ToArray()
                 : Array.Empty<string>(),
+            PrtgRuleCode = platform == "prtg" ? request.PrtgRuleCode?.Trim() : null,
+            PrtgThreshold = platform == "prtg" ? request.PrtgThreshold : 0,
             Category = category,
             Severity = severity,
             ElevatesDayRisk = request.ElevatesDayRisk,
@@ -732,6 +739,8 @@ public class RuleAdminService
             ProgramPattern = source.ProgramPattern,
             EventNamePattern = source.EventNamePattern,
             MessagePatterns = source.MessagePatterns,
+            PrtgRuleCode = source.PrtgRuleCode,
+            PrtgThreshold = source.PrtgThreshold,
             Category = source.Category,
             Severity = source.Severity,
             ElevatesDayRisk = source.ElevatesDayRisk,
@@ -761,6 +770,8 @@ public class RuleAdminService
         Compare("Program 比對", current.ProgramPattern, seed.ProgramPattern);
         Compare("事件名比對", current.EventNamePattern, seed.EventNamePattern);
         Compare("訊息子字串", string.Join(" / ", current.MessagePatterns), string.Join(" / ", seed.MessagePatterns));
+        Compare("PRTG 規則代碼", current.PrtgRuleCode ?? "", seed.PrtgRuleCode ?? "");
+        Compare("PRTG 門檻", current.PrtgThreshold.ToString(), seed.PrtgThreshold.ToString());
         Compare("類別", current.Category.ToString(), seed.Category.ToString());
         Compare("嚴重度", current.Severity.ToString(), seed.Severity.ToString());
         Compare("命中即列為高風險日", current.ElevatesDayRisk.ToString(), seed.ElevatesDayRisk.ToString());
@@ -810,6 +821,8 @@ public class RuleAdminService
             ProgramPattern = rule.ProgramPattern,
             EventNamePattern = rule.EventNamePattern,
             MessagePatterns = rule.MessagePatterns.ToList(),
+            PrtgRuleCode = rule.PrtgRuleCode,
+            PrtgThreshold = rule.PrtgThreshold,
             Category = rule.Category.ToString(),
             Severity = rule.Severity.ToString(),
             ElevatesDayRisk = rule.ElevatesDayRisk,

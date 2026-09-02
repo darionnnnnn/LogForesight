@@ -40,6 +40,9 @@ public sealed class PrtgHostMapper
             .OrderBy(h => h.HostId)
             .ToList();
 
+        var manualMaps = _store.GetManualMaps().ToDictionary(m => m.DeviceObjid);
+        var hostById = activeHosts.ToDictionary(h => h.HostId);
+
         var hostLookup = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
         foreach (var host in activeHosts)
         {
@@ -56,14 +59,41 @@ public sealed class PrtgHostMapper
 
         var rows = new List<PrtgHostMapRow>();
         var okCount = 0;
+        var manualCount = 0;
         var conflictCount = 0;
         var unmatchedCount = 0;
         var skippedNoIp = 0;
 
-        // 3. 裝置分流：無 IP 者跳過；有 IP 者按正規化 IP 分組
+        // 3. 裝置分流：人工對應優先；無 IP 者跳過；有 IP 者按正規化 IP 分組
         var devicesWithIp = new List<PrtgDeviceRow>();
         foreach (var device in devices)
         {
+            if (manualMaps.TryGetValue(device.Objid, out var manual))
+            {
+                if (hostById.TryGetValue(manual.HostId, out var targetHost))
+                {
+                    var noteText = "人工指定對應" + (!string.IsNullOrWhiteSpace(manual.Note) ? "：" + manual.Note : "");
+                    okCount++;
+                    manualCount++;
+                    rows.Add(new PrtgHostMapRow
+                    {
+                        MapDate = targetDate,
+                        DeviceObjid = device.Objid,
+                        Ip = device.Ip,
+                        HostId = targetHost.HostId,
+                        HostName = TrimHostName(targetHost.HostName),
+                        MapStatus = PrtgMapStatus.Ok,
+                        Note = TrimNote(noteText),
+                        CreatedAt = now
+                    });
+                    continue;
+                }
+                else
+                {
+                    _console.WriteLine($"[主機對應] 警告：Device {device.Objid} 的人工對應主機 (HostId={manual.HostId}) 已不存在或已停用，改採自動判定。");
+                }
+            }
+
             var normIp = NormalizeIp(device.Ip);
             if (normIp == null)
             {
@@ -171,7 +201,7 @@ public sealed class PrtgHostMapper
         _store.ReplaceHostMapForDate(targetDate, rows);
 
         // 5. Console 摘要與異常明細（前 20 筆）
-        _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：ok={okCount}, conflict={conflictCount}, unmatched={unmatchedCount}, skipped_no_ip={skippedNoIp}");
+        _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：ok={okCount}, manual={manualCount}, conflict={conflictCount}, unmatched={unmatchedCount}, skipped_no_ip={skippedNoIp}");
 
         var auditRows = rows.Where(r => r.MapStatus != PrtgMapStatus.Ok).Take(20).ToList();
         if (auditRows.Count > 0)
@@ -183,7 +213,7 @@ public sealed class PrtgHostMapper
             }
         }
 
-        return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp);
+        return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount);
     }
 
     /// <summary>
@@ -219,4 +249,5 @@ public sealed record PrtgHostMapResult(
     int Ok,
     int Conflict,
     int Unmatched,
-    int SkippedNoIp);
+    int SkippedNoIp,
+    int Manual = 0);

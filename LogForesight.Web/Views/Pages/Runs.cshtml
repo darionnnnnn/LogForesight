@@ -84,6 +84,18 @@
                         <input type="number" class="form-control form-control-sm" id="schedule-ai-concurrency" min="1" max="8" value="1" style="max-width: 120px;" data-maintain-only />
                         <div class="form-text small text-muted">同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。</div>
                     </div>
+
+                    <hr class="my-3" />
+                    <h3 class="h6 mb-3">PRTG 擷取</h3>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="prtg-enabled" data-maintain-only />
+                        <label class="form-check-label" for="prtg-enabled">啟用 PRTG 擷取</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="夜間批次是否包含 PRTG 擷取。數值只對當日判定為高／中風險的主機擷取（觸發式取數）。連線設定請至 PRTG 維護頁。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="col-md-5">
@@ -134,6 +146,23 @@
                             <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-ai-run-now">立即補跑 AI</button>
                             <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-ai-stop">停止</button>
                             <button type="button" class="btn btn-sm btn-outline-warning" id="schedule-ai-force-rerun">強制重新分析</button>
+                        </div>
+
+                        <hr class="my-3" />
+                        <div id="prtg-backfill-section">
+                            <h3 class="h6">PRTG 歷史回填</h3>
+                            <p class="text-muted small mb-3">
+                                回填會從昨天往前補 N 天的數值與狀態變更（N 取自設定頁「歷史回填天數」設定），只在離峰手動執行。
+                            </p>
+                            <div class="d-flex align-items-center gap-3 mb-3">
+                                <button type="button" class="btn btn-primary btn-sm" id="prtg-backfill-start" data-maintain-only>開始回填</button>
+                                <div class="text-muted small" id="prtg-backfill-status"></div>
+                            </div>
+                            <label for="prtg-backfill-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+                                回填輸出
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-copy" disabled>複製</button>
+                            </label>
+                            <textarea class="form-control font-monospace small" id="prtg-backfill-output" rows="12" readonly placeholder="尚未執行過回填。"></textarea>
                         </div>
                     </div>
                 </div>

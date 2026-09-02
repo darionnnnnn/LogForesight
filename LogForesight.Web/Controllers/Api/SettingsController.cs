@@ -1,3 +1,5 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -70,6 +72,11 @@ public class SettingsController : ControllerBase
     [HttpPost("prtg-test")]
     public async Task<ApiResponse<TestPrtgConnectionResultDto>> TestPrtg([FromBody] TestPrtgConnectionRequest request, CancellationToken ct)
         => ApiResponse<TestPrtgConnectionResultDto>.Ok(await _settings.TestPrtgAsync(request, ct));
+
+    /// <summary>PRTG 總開關（排程作業頁）：只更新這一個欄位，不動其他設定</summary>
+    [HttpPut("prtg-enabled")]
+    public ApiResponse<bool> SetPrtgEnabled([FromBody] SetPrtgEnabledRequest request) =>
+        ApiResponse<bool>.Ok(_settings.SetPrtgEnabled(request.Enabled));
 
     /// <summary>AI token 用量統計（回饋二十七輪作業 B）：今日／累計＋近 30 天每日明細</summary>
     [HttpGet("ai-usage")]
@@ -215,6 +222,212 @@ public class SettingsController : ControllerBase
             Conflicts = conflicts,
             Unmatched = unmatched
         });
+    }
+
+    // ── PRTG 人工主機對應（PRTG 第 2 輪任務E-1）──────────────────────────────────
+
+    /// <summary>取得全部 PRTG 人工主機對應清單（含主機名稱，供畫面顯示）</summary>
+    [HttpGet("prtg-manual-map")]
+    public ApiResponse<List<PrtgManualMapDto>> GetPrtgManualMaps()
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<List<PrtgManualMapDto>>.Ok(new List<PrtgManualMapDto>());
+        }
+
+        var store = _backend.PrtgStore();
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var hostMap = hostStore.GetAll().ToDictionary(h => h.HostId);
+        var manualMaps = store.GetManualMaps();
+
+        var dtos = manualMaps.Select(m => new PrtgManualMapDto
+        {
+            DeviceObjid = m.DeviceObjid,
+            HostId = m.HostId,
+            HostName = hostMap.TryGetValue(m.HostId, out var host) ? host.HostName : null,
+            Note = m.Note,
+            CreatedBy = m.CreatedBy,
+            CreatedAt = m.CreatedAt
+        }).OrderBy(m => m.DeviceObjid).ToList();
+
+        return ApiResponse<List<PrtgManualMapDto>>.Ok(dtos);
+    }
+
+    /// <summary>新增或更新一筆 PRTG 人工主機對應</summary>
+    [HttpPut("prtg-manual-map")]
+    public ApiResponse<PrtgManualMapDto> SetPrtgManualMap([FromBody] SetPrtgManualMapRequest request)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Get(request.HostId);
+        if (host == null || !host.Active || host.MergedInto != null)
+            throw DomainException.Validation("指定的主機不存在或已停用。");
+
+        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
+
+        var store = _backend.PrtgStore();
+        var row = new PrtgManualMapRow
+        {
+            DeviceObjid = request.DeviceObjid,
+            HostId = request.HostId,
+            Note = request.Note,
+            CreatedBy = createdBy,
+            CreatedAt = DateTime.Now
+        };
+        store.UpsertManualMap(row);
+
+        _audit.Record(
+            action: AuditActions.PrtgManualMapSet,
+            summary: $"設定 PRTG device {request.DeviceObjid} 人工對應到主機 {host.HostName}",
+            targetKind: "prtg_manual_map",
+            targetId: request.DeviceObjid.ToString(),
+            detail: new
+            {
+                request.DeviceObjid,
+                request.HostId,
+                host.HostName,
+                request.Note
+            });
+
+        var saved = store.GetManualMaps().FirstOrDefault(m => m.DeviceObjid == request.DeviceObjid);
+
+        return ApiResponse<PrtgManualMapDto>.Ok(new PrtgManualMapDto
+        {
+            DeviceObjid = request.DeviceObjid,
+            HostId = request.HostId,
+            HostName = host.HostName,
+            Note = request.Note,
+            CreatedBy = saved?.CreatedBy ?? createdBy,
+            CreatedAt = saved?.CreatedAt ?? row.CreatedAt
+        });
+    }
+
+    /// <summary>刪除一筆 PRTG 人工主機對應</summary>
+    [HttpDelete("prtg-manual-map/{deviceObjid:long}")]
+    public ApiResponse<bool> DeletePrtgManualMap(long deviceObjid)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        var store = _backend.PrtgStore();
+        var deleted = store.DeleteManualMap(deviceObjid);
+
+        _audit.Record(
+            action: AuditActions.PrtgManualMapDelete,
+            summary: $"刪除 PRTG device {deviceObjid} 的人工主機對應",
+            targetKind: "prtg_manual_map",
+            targetId: deviceObjid.ToString(),
+            detail: new { DeviceObjid = deviceObjid, Deleted = deleted });
+
+        return ApiResponse<bool>.Ok(deleted > 0);
+    }
+
+    // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
+
+    private static readonly JsonSerializerOptions PrtgDataJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = false
+    };
+
+    /// <summary>匯出指定期間的 PRTG 鏡像資料為 JSON 檔案</summary>
+    [HttpGet("prtg-export")]
+    public IActionResult ExportPrtgData([FromQuery] string? from, [FromQuery] string? to)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
+            throw DomainException.Validation("請指定起始與結束日期。");
+
+        var fromDate = QueryStringParsing.ParseRequiredDate(from);
+        var toDate = QueryStringParsing.ParseRequiredDate(to);
+
+        if (fromDate > toDate)
+            throw DomainException.Validation("起始日期不得大於結束日期。");
+
+        var days = (toDate.Date - fromDate.Date).Days + 1;
+        if (days > 366)
+            throw DomainException.Validation($"匯出期間不可超過 366 天（目前 {days} 天）。");
+
+        var store = _backend.PrtgStore();
+        var package = PrtgDataTransfer.Export(store, fromDate, toDate);
+
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(package, PrtgDataJsonOptions);
+        var fileName = $"prtg-export-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.json";
+
+        _audit.Record(
+            action: AuditActions.PrtgDataExport,
+            summary: $"匯出 PRTG 鏡像資料（期間：{fromDate:yyyy-MM-dd} ~ {toDate:yyyy-MM-dd}，裝置 {package.Devices.Count} 筆、感測器 {package.Sensors.Count} 筆、狀態變更 {package.StateChanges.Count} 筆、數值 {package.Values.Count} 筆、主機對應 {package.HostMaps.Count} 筆、人工對應 {package.ManualMaps.Count} 筆）",
+            targetKind: "prtg_data",
+            targetId: $"{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}",
+            detail: new
+            {
+                From = fromDate.ToString("yyyy-MM-dd"),
+                To = toDate.ToString("yyyy-MM-dd"),
+                Devices = package.Devices.Count,
+                Sensors = package.Sensors.Count,
+                StateChanges = package.StateChanges.Count,
+                Values = package.Values.Count,
+                HostMaps = package.HostMaps.Count,
+                ManualMaps = package.ManualMaps.Count
+            });
+
+        return File(bytes, "application/json", fileName);
+    }
+
+    /// <summary>匯入 PRTG 鏡像資料 JSON 檔案</summary>
+    [HttpPost("prtg-import")]
+    public ApiResponse<PrtgImportResult> ImportPrtgData([FromForm] IFormFile? file)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        if (file == null || file.Length == 0)
+            throw DomainException.Validation("請選擇要匯入的 JSON 檔案。");
+
+        PrtgDataPackage? package;
+        try
+        {
+            using var stream = file.OpenReadStream();
+            package = JsonSerializer.Deserialize<PrtgDataPackage>(stream, PrtgDataJsonOptions);
+        }
+        catch (Exception ex)
+        {
+            throw DomainException.Validation($"檔案解析失敗：{ex.Message}");
+        }
+
+        if (package == null)
+            throw DomainException.Validation("匯入檔案內容為空或格式不符。");
+
+        if (package.FormatVersion != PrtgDataTransfer.CurrentFormatVersion)
+            throw DomainException.Validation($"不支援的格式版本 {package.FormatVersion}（目前支援版本為 {PrtgDataTransfer.CurrentFormatVersion}）。");
+
+        var store = _backend.PrtgStore();
+        var result = PrtgDataTransfer.Import(store, package);
+
+        _audit.Record(
+            action: AuditActions.PrtgDataImport,
+            summary: $"匯入 PRTG 鏡像資料（期間：{package.FromDate:yyyy-MM-dd} ~ {package.ToDate:yyyy-MM-dd}，裝置 {result.Devices} 筆、感測器 {result.Sensors} 筆、狀態變更 {result.StateChanges} 筆、數值 {result.Values} 筆、主機對應 {result.HostMaps} 筆、人工對應 {result.ManualMaps} 筆）",
+            targetKind: "prtg_data",
+            targetId: $"{package.FromDate:yyyyMMdd}-{package.ToDate:yyyyMMdd}",
+            detail: new
+            {
+                From = package.FromDate.ToString("yyyy-MM-dd"),
+                To = package.ToDate.ToString("yyyy-MM-dd"),
+                result.Devices,
+                result.Sensors,
+                result.StateChanges,
+                result.Values,
+                result.HostMaps,
+                result.ManualMaps
+            });
+
+        return ApiResponse<PrtgImportResult>.Ok(result);
     }
 }
 

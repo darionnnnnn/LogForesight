@@ -104,25 +104,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
             foreach (var issue in shaped.TopIssues)
             {
-                ctx.TopIssues.Add(new TopIssueRow
-                {
-                    RecordId = row.RecordId,
-                    SourceName = issue.Source,
-                    EventId = issue.EventId,
-                    Category = issue.Category.ToString(),
-                    SeverityRank = (int)issue.Severity,
-                    // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
-                    // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
-                    // 分析層看不到這張表，批次的分析邏輯零修改
-                    HostId = shaped.HostId,
-                    RecordDate = shaped.Date.Date,
-                    EventCount = issue.Count,
-                    ElevatesDayRisk = issue.ElevatesDayRisk,
-                    LogName = issue.LogName,
-                    EntryType = (int)issue.EntryType,
-                    KnownIssue = issue.KnownIssue,
-                    EventKey = issue.EventKey
-                });
+                ctx.TopIssues.Add(MapToTopIssueRow(row.RecordId, shaped.HostId, shaped.Date, issue));
             }
             ctx.SaveChanges();
             tx.Commit();
@@ -253,6 +235,108 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         Log.Info("[SQL] AttachAiResult {Date:yyyy-MM-dd}（風險={Risk}, aiAnalyzed={AiAnalyzed}）",
             date, outcome.RiskLevel, outcome.AiAnalyzed);
     }
+
+    /// <summary>
+    /// 對已存在的當日紀錄追加 PRTG finding：同時更新 ContentJson 的 TopIssues 與
+    /// lf_top_issues 子列。刻意不沿用 AttachAiResult／AttachWeeklyCheckup 的樣板——
+    /// 那兩者只改主列，不會寫子列，追加的問題會查不到、也接不上處理狀態。
+    /// 找不到該主機當日紀錄時回傳 false，不建立新紀錄。
+    /// </summary>
+    public bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings)
+    {
+        if (findings == null || findings.Count == 0) return false;
+
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
+
+        var appended = false;
+        strategy.Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+
+            var row = ctx.DailyRecords.FirstOrDefault(r => r.HostId == hostId && r.RecordDate == date.Date);
+            if (row == null)
+            {
+                return;
+            }
+
+            // 詳情已精簡的紀錄（DetailPruned 為 true）不追加 finding，避免將反序列化所得的 stub 寫回覆蓋原本殘存的欄位
+            if (row.DetailPruned)
+            {
+                return;
+            }
+
+            var record = Deserialize(row);
+            var existingKeys = record.TopIssues
+                .Select(i => i.EventKey)
+                .Where(k => !string.IsNullOrEmpty(k))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var toAdd = new List<LogIssueSignature>();
+            foreach (var finding in findings)
+            {
+                if (!string.IsNullOrEmpty(finding.EventKey) && existingKeys.Add(finding.EventKey))
+                {
+                    toAdd.Add(finding);
+                }
+            }
+
+            if (toAdd.Count == 0)
+            {
+                return;
+            }
+
+            record.TopIssues.AddRange(toAdd);
+            row.ContentJson = JsonSerializer.Serialize(record);
+
+            var existingDbKeys = ctx.TopIssues
+                .Where(t => t.RecordId == row.RecordId && t.EventKey != "")
+                .Select(t => t.EventKey)
+                .ToHashSet(StringComparer.Ordinal);
+
+            foreach (var issue in toAdd)
+            {
+                if (!existingDbKeys.Contains(issue.EventKey))
+                {
+                    ctx.TopIssues.Add(MapToTopIssueRow(row.RecordId, row.HostId, row.RecordDate, issue));
+                }
+            }
+
+            ctx.SaveChanges();
+            tx.Commit();
+            appended = true;
+        });
+
+        if (appended)
+        {
+            Log.Info("[SQL] AttachPrtgFindings 主機 id={HostId} {Date:yyyy-MM-dd} 追加 {Count} 項 PRTG finding",
+                hostId, date, findings.Count);
+        }
+
+        return appended;
+    }
+
+    private static TopIssueRow MapToTopIssueRow(long recordId, long hostId, DateTime recordDate, LogIssueSignature issue) =>
+        new()
+        {
+            RecordId = recordId,
+            SourceName = issue.Source,
+            EventId = issue.EventId,
+            Category = issue.Category.ToString(),
+            SeverityRank = (int)issue.Severity,
+            // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
+            // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
+            // 分析層看不到這張表，批次的分析邏輯零修改
+            HostId = hostId,
+            RecordDate = recordDate.Date,
+            EventCount = issue.Count,
+            ElevatesDayRisk = issue.ElevatesDayRisk,
+            LogName = issue.LogName,
+            EntryType = (int)issue.EntryType,
+            KnownIssue = issue.KnownIssue,
+            EventKey = issue.EventKey
+        };
 
     /// <summary>
     /// 單次清理的列數上限（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。

@@ -1,0 +1,337 @@
+﻿@{
+    ViewData["Title"] = "PRTG 維護";
+}
+
+<ul class="nav nav-tabs mb-3" id="prtg-tabs">
+    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">連線設定</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
+</ul>
+
+<div data-panel="config">
+    <form id="prtg-config-form">
+        <div class="lf-card">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">連線設定</h2>
+            </div>
+            <div class="lf-card__body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label for="prtg-url" class="form-label">PRTG 位址</label>
+                        <input type="text" class="form-control" id="prtg-url" placeholder="https://prtg.example.local" />
+                    </div>
+                    <div class="col-md-6">
+                        <label for="prtg-auth-mode" class="form-label">認證方式</label>
+                        <select class="form-select" id="prtg-auth-mode">
+                            <option value="token">API token（推薦，PRTG 21+）</option>
+                            <option value="password">帳號密碼（PRTG 傳統 API / passhash）</option>
+                            <option value="passhash">帳號＋passhash</option>
+                        </select>
+                        <div class="form-text">PRTG 21.x 之後版本建議使用 API token；舊版 PRTG 或特定環境可切換為帳號密碼。</div>
+                    </div>
+                </div>
+
+                <div id="prtg-auth-username-field" class="d-none">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="prtg-username" class="form-label">使用者帳號</label>
+                            <input type="text" class="form-control" id="prtg-username" placeholder="prtgadmin" />
+                            <div class="form-text">具備讀取權限的 PRTG 登入帳號。</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="prtg-auth-token-fields">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="prtg-api-token" class="form-label">API token</label>
+                            <input type="password" class="form-control" id="prtg-api-token" autocomplete="new-password" placeholder="留空＝沿用既有 API token" />
+                            <div class="form-text" id="prtg-api-token-hint"></div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="prtg-clear-token" />
+                                <label class="form-check-label" for="prtg-clear-token">清除目前的 API token</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="prtg-auth-password-fields" class="d-none">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="prtg-password" class="form-label">密碼</label>
+                            <input type="password" class="form-control" id="prtg-password" autocomplete="new-password" placeholder="留空＝沿用既有密碼" />
+                            <div class="form-text" id="prtg-password-hint"></div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="prtg-clear-password" />
+                                <label class="form-check-label" for="prtg-clear-password">清除目前的密碼</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="prtg-auth-passhash-fields" class="d-none">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="prtg-passhash" class="form-label">PRTG passhash</label>
+                            <input type="password" class="form-control" id="prtg-passhash" autocomplete="new-password" placeholder="留空＝沿用既有 passhash" />
+                            <div class="form-text" id="prtg-passhash-hint"></div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="prtg-clear-passhash" />
+                                <label class="form-check-label" for="prtg-clear-passhash">清除目前的 passhash</label>
+                            </div>
+                            <div class="form-text">
+                                passhash 可在 PRTG 的使用者帳號設定頁取得（Show passhash），或自行呼叫 /api/getpasshash.htm 換取。LogForesight 不會保存密碼、也不會替你換取 passhash。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="prtg-ignore-ssl" />
+                            <label class="form-check-label" for="prtg-ignore-ssl">忽略憑證錯誤</label>
+                            <div class="form-text">僅在 PRTG 使用自簽憑證的內網環境啟用。</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="prtg-timeout-seconds" class="form-label">請求逾時（秒）</label>
+                        <input type="number" class="form-control" id="prtg-timeout-seconds" min="5" max="600" />
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <h3 class="h6">測試連線</h3>
+                    <p class="text-muted small">
+                        用上方表單目前填的值試連線（尚未儲存也可以測）；token 或密碼欄留空時沿用已儲存的值。
+                    </p>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>
+                    </div>
+                    <div id="prtg-test-result"></div>
+                </div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <button type="submit" class="btn btn-primary" id="prtg-config-save">儲存</button>
+                    <span class="text-muted small" id="prtg-config-updated"></span>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div data-panel="mirror" class="d-none">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">鏡像狀態</h2>
+        </div>
+        <div class="lf-card__body">
+            <div id="prtg-mirror-section">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <p class="text-muted small mb-0">
+                        顯示目前 PRTG 鏡像資料庫五表的同步統計與最近一次主機對應分析結果。
+                    </p>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-mirror-refresh">重新整理</button>
+                </div>
+                <div class="row g-3 mb-3" id="prtg-mirror-stats">
+                    <div class="col-md-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">鏡像裝置數</div>
+                            <div class="fs-5 fw-semibold" id="prtg-mirror-device-count">-</div>
+                            <div class="text-muted small" id="prtg-mirror-last-device-sync">最後同步：-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">鏡像感測器數</div>
+                            <div class="fs-5 fw-semibold" id="prtg-mirror-sensor-count">-</div>
+                            <div class="text-muted small" id="prtg-mirror-last-sensor-sync">最後同步：-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">最新歷史數據時間</div>
+                            <div class="small fw-semibold" id="prtg-mirror-last-value-at">數值：-</div>
+                            <div class="small fw-semibold" id="prtg-mirror-last-state-change-at">狀態變更：-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border rounded p-3 mb-3">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <span class="fw-semibold small">主機對應摘要</span>
+                        <span class="text-muted small" id="prtg-mirror-map-date">對應基準日：-</span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-4 small mb-2">
+                        <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
+                        <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
+                        <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
+                        <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
+                    </div>
+                    <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
+
+                    <div class="mb-3">
+                        <div class="small fw-semibold text-warning mb-1">對應衝突清單（最多顯示 20 筆）</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 140px;">IP</th>
+                                        <th style="width: 180px;">主機</th>
+                                        <th>說明</th>
+                                        <th style="width: 100px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-mirror-conflicts-body">
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無衝突項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="small fw-semibold text-muted mb-1">未對應清單（PRTG 有 NetIQ 無，最多顯示 20 筆）</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-unmatched-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 140px;">IP</th>
+                                        <th style="width: 180px;">主機</th>
+                                        <th>說明</th>
+                                        <th style="width: 100px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-mirror-unmatched-body">
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無未對應項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="small fw-semibold text-primary mb-1">人工對應清單</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-manual-maps-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 180px;">主機</th>
+                                        <th>備註</th>
+                                        <th style="width: 140px;">建立者</th>
+                                        <th style="width: 100px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-mirror-manual-maps-body">
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無人工對應項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">資料搬運（開發用）</h2>
+        </div>
+        <div class="lf-card__body">
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label for="prtg-export-from" class="form-label small">匯出起始日期</label>
+                    <input type="date" class="form-control form-control-sm" id="prtg-export-from" />
+                </div>
+                <div class="col-md-4">
+                    <label for="prtg-export-to" class="form-label small">匯出結束日期</label>
+                    <input type="date" class="form-control form-control-sm" id="prtg-export-to" />
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-export-btn">匯出資料</button>
+                </div>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-8">
+                    <label for="prtg-import-file" class="form-label small">匯入 JSON 檔</label>
+                    <input type="file" class="form-control form-control-sm" id="prtg-import-file" accept=".json" />
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-import-btn">匯入資料</button>
+                </div>
+            </div>
+            <div id="prtg-import-result" class="small mb-2"></div>
+            <div class="form-text">把正式機的 PRTG 鏡像資料搬到開發機供分析規則設計使用。匯入採自然鍵冪等寫入，重複匯入不會產生重複資料。</div>
+        </div>
+    </div>
+</div>
+
+<div data-panel="probe" class="d-none">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">環境探測</h2>
+        </div>
+        <div class="lf-card__body">
+            <details id="prtg-probe">
+                <summary class="h6 mb-0">環境探測</summary>
+                <p class="text-muted small mt-2 mb-3">
+                    探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
+                </p>
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                    <div class="text-muted small" id="prtg-probe-status"></div>
+                </div>
+                <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+                    探測輸出
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
+                </label>
+                <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
+            </details>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="prtg-assign-modal" tabindex="-1" aria-labelledby="prtg-assign-modal-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="prtg-assign-modal-title">指派 PRTG 裝置給主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="prtg-assign-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">PRTG Device Objid</label>
+                        <input type="text" class="form-control form-control-sm font-monospace" id="prtg-assign-device-objid" readonly />
+                    </div>
+                    <div class="mb-3">
+                        <label for="prtg-assign-host" class="form-label">目標主機</label>
+                        <select class="form-select form-select-sm" id="prtg-assign-host" required>
+                            <option value="">請選擇主機…</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="prtg-assign-note" class="form-label">備註（選填）</label>
+                        <input type="text" class="form-control form-control-sm" id="prtg-assign-note" placeholder="例如：手動指定對應原因" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary btn-sm" id="prtg-assign-submit">確認指派</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/prtg-admin.js" asp-append-version="true"></script>
+}
