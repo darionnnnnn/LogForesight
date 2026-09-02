@@ -57,8 +57,7 @@ public interface ISystemSettingsService
     /// PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線。token 留空＝沿用已儲存的 token。
     /// 成功回傳耗時，失敗回傳錯誤訊息，不擲例外。
     /// </summary>
-    Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) =>
-        throw new NotSupportedException("測試未使用此方法");
+    Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct);
 }
 
 public class SystemSettingsService : ISystemSettingsService

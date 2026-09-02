@@ -61,4 +61,7 @@ internal class FakeSystemSettingsService : ISystemSettingsService
 
     public Task<TestMailResultDto> TestMail(TestMailRequest request) =>
         throw new NotSupportedException("測試未使用此方法");
+
+    public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("測試未使用此方法");
 }

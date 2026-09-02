@@ -504,12 +504,16 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task FetchDayAsync_併發設定值真的被採用而非寫死()
     {
         // 只驗 concurrency=1 證明不了「設定有被吃進去」——把 semaphore 寫死成 1 也照樣綠。
-        // 這裡驗 concurrency=3 時峰值**等於** 3：夠多 sensor＋固定延遲下，semaphore 若真的用
-        // 傳入值，峰值必然衝到上限；寫死成 1 或 2 都會在這裡現形。
+        // 這裡驗 concurrency=3 時峰值**等於** 3。放行閘門取代固定延遲：前 3 個請求到齊才一起放行，
+        // 峰值不再取決於機器負載下的排程時機（固定延遲版在全套並行時偶發達不到峰值）。
+        // semaphore 若被寫死成 1 或 2，第 3 個請求永遠不會到達，閘門逾時 → 失敗數不為 0，一樣現形。
         var senJson = "{\"treesize\":6,\"sensors\":[" +
                       string.Join(",", Enumerable.Range(301, 6).Select(id => $"{{\"objid\":{id},\"paused\":false}}")) +
                       "]}";
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10,\"coverage\":100}]}";
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentArrivals = 0;
 
         var handler = new StubHandler();
         handler.OnSend = async (req, _) =>
@@ -521,7 +525,9 @@ public class PrtgFetchServiceTests : IDisposable
             if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
             if (url.Contains("historicdata.json"))
             {
-                await Task.Delay(150);
+                // 前 3 個併發請求到齊才一起放行，確保峰值必然衝到 semaphore 上限
+                if (Interlocked.Increment(ref concurrentArrivals) >= 3) gate.TrySetResult();
+                await gate.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 return JsonResponse(histJson);
             }
             return JsonResponse("{}", HttpStatusCode.NotFound);

@@ -438,22 +438,6 @@ public class PermissionChangeStore
         }).ToList();
     }
 
-    /// <summary>去重鍵快照（只投影 dedupe_key 欄位）</summary>
-    public virtual HashSet<string> GetDedupeKeys(DateTime? appendedSince = null)
-    {
-        using var ctx = _contextFactory();
-        IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking();
-
-        if (appendedSince.HasValue)
-        {
-            query = query.Where(r => r.CreatedAt >= appendedSince.Value);
-        }
-
-        return query
-            .Select(r => r.DedupeKey)
-            .ToHashSet(StringComparer.Ordinal);
-    }
-
     /// <summary>
     /// 單一主機、單一時間區間內既有列的去重鍵（回饋三十四輪 A2）。
     /// 取代「開跑時把整個查詢窗的去重鍵全部載進記憶體」的做法——正式環境權限異動每日近十萬筆，
