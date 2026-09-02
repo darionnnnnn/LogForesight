@@ -1054,6 +1054,30 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     [Fact]
+    public void GetLatestHostMapWithDate_以指定基準日回看時不取到基準日之後的對應()
+    {
+        var store = CreateStore();
+        var day10Ago = DateTime.Today.AddDays(-10);
+        var day3Ago = DateTime.Today.AddDays(-3);
+
+        store.ReplaceHostMapForDate(day10Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day10Ago, DeviceObjid = 601, HostName = "SRV-601", MapStatus = PrtgMapStatus.Ok }
+        });
+        store.ReplaceHostMapForDate(day3Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day3Ago, DeviceObjid = 602, HostName = "SRV-602", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        // 基準日為 7 天前：只能看到 10 天前那筆，不得取到基準日之後的 3 天前那筆
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(31, DateTime.Today.AddDays(-7));
+
+        Assert.Equal(day10Ago, mapDate);
+        Assert.Single(rows);
+        Assert.Equal(601, rows[0].DeviceObjid);
+    }
+
+    [Fact]
     public void GetLatestHostMapWithDate_窗內無資料回傳Null與空清單()
     {
         var store = CreateStore();

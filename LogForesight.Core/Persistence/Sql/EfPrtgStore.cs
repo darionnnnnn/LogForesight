@@ -511,19 +511,24 @@ public sealed class EfPrtgStore
     /// 取得回看窗內最近一個有對應資料的日期，以及該日的全部對應列（唯讀查詢）。
     /// 最多兩次資料庫往返（聚合 Max 日期 + 取該日列），窗內無資料時回傳 (null, 空清單)。
     /// </summary>
-    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapWithDate(int maxLookbackDays = 30)
+    /// <param name="maxLookbackDays">回看幾天（含基準日當天）</param>
+    /// <param name="anchor">回看的基準日（含），null＝今天。歷史回填逐日往回補時，
+    /// 基準日是「正在回填的那一天」而不是今天——拿今天當基準會取到回填當下的對應，
+    /// 與該日的實際對應不符。</param>
+    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapWithDate(
+        int maxLookbackDays = 30, DateTime? anchor = null)
     {
         if (maxLookbackDays <= 0)
         {
             return (null, new List<PrtgHostMapRow>());
         }
 
-        var today = DateTime.Today;
-        var cutoff = today.AddDays(-(maxLookbackDays - 1));
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
 
         using var ctx = _contextFactory();
         var latestDate = ctx.PrtgHostMaps
-            .Where(m => m.MapDate >= cutoff && m.MapDate <= today)
+            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
             .Max(m => (DateTime?)m.MapDate);
 
         if (latestDate == null)

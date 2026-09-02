@@ -94,19 +94,9 @@ public static class PrtgBackfillRunner
 
                         if (problemHostsCount > 0)
                         {
-                            var hostMapRows = store.GetHostMapForDate(day);
-                            if (hostMapRows.Count == 0)
-                            {
-                                for (var offset = 1; offset <= 30; offset++)
-                                {
-                                    var prevMap = store.GetHostMapForDate(day.AddDays(-offset));
-                                    if (prevMap.Count > 0)
-                                    {
-                                        hostMapRows = prevMap;
-                                        break;
-                                    }
-                                }
-                            }
+                            // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
+                            // 單一聚合查詢取代逐日往回的最多 30 次獨立查詢（回填 N 天會放大 N 倍）
+                            var hostMapRows = store.GetLatestHostMapWithDate(31, day).Rows;
 
                             if (hostMapRows.Count > 0)
                             {
