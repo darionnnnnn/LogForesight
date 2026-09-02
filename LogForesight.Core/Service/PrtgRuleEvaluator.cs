@@ -5,11 +5,16 @@ namespace LogForesight.Core.Service;
 
 /// <summary>PRTG 狀態變更規則的判定門檻</summary>
 public sealed record PrtgRuleThresholds(
-    int DownMinutes = 60,
-    int FlapCount = 5,
-    int WarningMinutes = 240);
+    int DownMinutes = PrtgRuleCatalog.DefaultDownMinutes,
+    int FlapCount = PrtgRuleCatalog.DefaultFlapCount,
+    int WarningMinutes = PrtgRuleCatalog.DefaultWarningMinutes);
 
 /// <summary>一筆 PRTG finding（尚未映射成問題簽章，那是下一段的工作）</summary>
+/// <remarks>
+/// <c>Magnitude</c>（Down 持續分鐘數／flap 往返次數／Warning 累計分鐘數）刻意**不**寫進
+/// 問題簽章的 <c>Count</c>：整日 Down 會是 1440，會讓 PRTG finding 在問題排行的「次數」
+/// 維度壓過所有真實事件計數。它的用途是規則測試、Detail 文案，以及校準數值匯出時的門檻分佈統計。
+/// </remarks>
 public sealed record PrtgFinding(
     long DeviceObjid,
     long? SensorObjid,

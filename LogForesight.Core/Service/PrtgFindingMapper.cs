@@ -15,34 +15,9 @@ public static class PrtgFindingMapper
 
     public static LogIssueSignature ToSignature(PrtgFinding finding, DateTime day)
     {
-        var (category, severity, elevatesDayRisk, knownIssue) = finding.RuleCode switch
-        {
-            PrtgRuleEvaluator.RuleDown => (
-                IssueCategory.Service,
-                IssueSeverity.High,
-                true,
-                "監控 sensor 持續無回應，可能是服務或主機失聯"),
-            PrtgRuleEvaluator.RuleFlapping => (
-                IssueCategory.Service,
-                IssueSeverity.Medium,
-                false,
-                "監控 sensor 狀態頻繁震盪，可能是網路不穩或服務反覆重啟"),
-            PrtgRuleEvaluator.RuleWarning => (
-                IssueCategory.Resource,
-                IssueSeverity.Medium,
-                false,
-                "監控 sensor 長時間處於警告狀態，資源可能接近上限"),
-            PrtgRuleEvaluator.RuleSilent => (
-                IssueCategory.Service,
-                IssueSeverity.Medium,
-                false,
-                "該 device 的全部 sensor 皆無狀態，監控本身可能已失效"),
-            _ => (
-                IssueCategory.Other,
-                IssueSeverity.Medium,
-                false,
-                (string?)null)
-        };
+        var (category, severity, elevatesDayRisk, knownIssue) = PrtgRuleCatalog.TryGetRule(finding.RuleCode, out var rule)
+            ? (rule.Category, rule.Severity, rule.ElevatesDayRisk, (string?)rule.KnownIssue)
+            : (IssueCategory.Other, IssueSeverity.Medium, false, (string?)null);
 
         var targetObjid = finding.SensorObjid ?? finding.DeviceObjid;
 
