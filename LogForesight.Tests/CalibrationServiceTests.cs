@@ -3,6 +3,16 @@ using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Auth;
+using LogForesight.Web.Controllers.Api;
+using LogForesight.Web.Filters;
+using LogForesight.Web.Models;
+using LogForesight.Web.Models.Dto;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -1030,3 +1040,178 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(anchor.Date, package.TriggeredMagnitudes[0].Date);
     }
 }
+
+public class CalibrationControllerTests : IDisposable
+{
+    private readonly EfSqliteFixture _fx = new();
+    private readonly FakeHostStore _hostStore = new();
+    private readonly FakeSystemSettingsStore _settingsStore = new();
+    private readonly FakeRuleStore _ruleStore = new();
+    private readonly RecordingAuditService _audit = new();
+
+    public CalibrationControllerTests()
+    {
+        _settingsStore.Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgRetentionDays = 180;
+            s.RawEventRetentionDays = 120;
+            s.PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free" };
+        });
+    }
+
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private CalibrationController CreateController()
+    {
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        var issueQuery = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
+        var service = new CalibrationService(_fx.NewContext, prtgStore, issueQuery, _settingsStore, _ruleStore);
+        return new CalibrationController(service, _audit);
+    }
+
+    // ── 1. 授權：非 Maintain 角色打兩個端點皆被拒 ───────────────────────
+
+    [Fact]
+    public void CalibrationController_標註Maintain能力()
+    {
+        var attr = typeof(CalibrationController).GetCustomAttributes(typeof(PermissionAttribute), true)
+            .Cast<PermissionAttribute>()
+            .FirstOrDefault();
+        Assert.NotNull(attr);
+        Assert.NotNull(attr.Arguments);
+        Assert.Equal(new[] { Capability.Maintain }, attr.Arguments[0]);
+    }
+
+    [Theory]
+    [InlineData(Capability.Handle)]
+    [InlineData(Capability.Assign)]
+    [InlineData(Capability.ViewAll)]
+    [InlineData(Capability.DevMonitor)]
+    [InlineData(Capability.ConfirmPermission)]
+    [InlineData(Capability.ViewAudit)]
+    public void 非Maintain角色_存取Controller端點被PermissionFilter拒絕(Capability cap)
+    {
+        var user = FakeCurrentUser.WithCapabilities(cap);
+        var filter = new PermissionFilter(new[] { Capability.Maintain }, user, _audit);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Path = "/api/admin/calibration/status";
+        httpContext.Request.Method = "GET";
+
+        var actionContext = new ActionContext(httpContext, new RouteData(), new ActionDescriptor());
+        var filterContext = new AuthorizationFilterContext(actionContext, new List<IFilterMetadata>());
+
+        filter.OnAuthorization(filterContext);
+
+        var result = Assert.IsType<ObjectResult>(filterContext.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
+        var apiRes = Assert.IsType<ApiResponse<object>>(result.Value);
+        Assert.False(apiRes.Success);
+        Assert.Equal(ApiErrorCodes.Forbidden, apiRes.Error?.Code);
+    }
+
+    [Fact]
+    public void Maintain角色_通過PermissionFilter()
+    {
+        var user = FakeCurrentUser.WithCapabilities(Capability.Maintain);
+        var filter = new PermissionFilter(new[] { Capability.Maintain }, user, _audit);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Path = "/api/admin/calibration/status";
+        httpContext.Request.Method = "GET";
+
+        var actionContext = new ActionContext(httpContext, new RouteData(), new ActionDescriptor());
+        var filterContext = new AuthorizationFilterContext(actionContext, new List<IFilterMetadata>());
+
+        filter.OnAuthorization(filterContext);
+
+        Assert.Null(filterContext.Result);
+    }
+
+    // ── 2. 匯出閘門：四項未全部達標且未帶 override → 擲驗證例外；帶 override=true → 放行 ─
+
+    [Fact]
+    public void 匯出閘門_四項未達標且未覆寫_擲驗證例外()
+    {
+        var controller = CreateController();
+
+        // 預設無資料時四項皆不足/無法取得
+        var ex = Assert.Throws<DomainException>(() => controller.Export(isOverride: false));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("校準資料累積量未達標", ex.Message);
+        Assert.Contains("仍要匯出", ex.Message);
+    }
+
+    [Fact]
+    public void 匯出閘門_四項未達標但帶override_放行並回傳檔案()
+    {
+        var controller = CreateController();
+
+        var result = controller.Export(isOverride: true);
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("application/json", fileResult.ContentType);
+        Assert.StartsWith("calibration-", fileResult.FileDownloadName);
+        Assert.EndsWith(".json", fileResult.FileDownloadName);
+        Assert.NotEmpty(fileResult.FileContents);
+    }
+
+    // ── 3. 稽核：匯出成功寫稽核，覆寫匯出標記 Override = true ──────────────
+
+    [Fact]
+    public void 匯出稽核_覆寫匯出成功記錄稽核包含四項狀態與Override旗標()
+    {
+        var controller = CreateController();
+
+        controller.Export(isOverride: true);
+
+        var auditEntry = Assert.Single(_audit.Entries);
+        Assert.Equal(AuditActions.CalibrationExport, auditEntry.Action);
+        Assert.Equal("calibration_data", auditEntry.TargetKind);
+        Assert.Contains("PRTG值型基線", auditEntry.Summary);
+        Assert.Contains("PRTG規則門檻", auditEntry.Summary);
+        Assert.Contains("觸發式取數量級", auditEntry.Summary);
+        Assert.Contains("殘留判定門檻", auditEntry.Summary);
+        Assert.Contains("覆寫匯出", auditEntry.Summary);
+
+        Assert.NotNull(auditEntry.DetailJson);
+        using var doc = JsonDocument.Parse(auditEntry.DetailJson!);
+        Assert.True(doc.RootElement.GetProperty("Override").GetBoolean());
+        Assert.True(doc.RootElement.TryGetProperty("PrtgValueBaseline", out _));
+        Assert.True(doc.RootElement.TryGetProperty("PrtgRuleThresholds", out _));
+        Assert.True(doc.RootElement.TryGetProperty("TriggeredFetchMagnitude", out _));
+        Assert.True(doc.RootElement.TryGetProperty("ResidualCredentialThresholds", out _));
+    }
+
+    [Fact]
+    public void 匯出稽核_閘門阻擋失敗時不寫入匯出稽核()
+    {
+        var controller = CreateController();
+
+        Assert.Throws<DomainException>(() => controller.Export(isOverride: false));
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void GetStatus_正常回傳四項判定狀態與CanExport()
+    {
+        var controller = CreateController();
+
+        var response = controller.GetStatus();
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.NotNull(response.Data);
+
+        var data = response.Data!;
+        Assert.NotNull(data.PrtgValueBaseline);
+        Assert.NotNull(data.PrtgRuleThresholds);
+        Assert.NotNull(data.TriggeredFetchMagnitude);
+        Assert.NotNull(data.ResidualCredentialThresholds);
+        Assert.False(data.CanExport);
+    }
+}
+

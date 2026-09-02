@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using NLog;
 
 namespace LogForesight.Core.Persistence;
@@ -210,6 +211,14 @@ public class StorageBackend
 
     /// <summary>PRTG 鏡像資料 store（↔ lf_prtg_* 五張表）</summary>
     public EfPrtgStore PrtgStore() => new(_dbFactory);
+
+    /// <summary>校準狀態判定與數值匯出（回饋第 37 輪批次A）。
+    /// 相依的三個 store／查詢由呼叫端持有——本類別只提供資料庫連線工廠。</summary>
+    public CalibrationService CalibrationService(
+        IIssueAggregateQuery issueQuery,
+        ISystemSettingsStore settingsStore,
+        IKnownIssueRuleStore ruleStore) =>
+        new(_dbFactory, PrtgStore(), issueQuery, settingsStore, ruleStore);
 
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），

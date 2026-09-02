@@ -176,4 +176,41 @@ public class PrtgAdminPageUiTests
         var prtgAdminJsContent = File.ReadAllText(prtgAdminJsPath);
         Assert.Contains("prtg-manual-map", prtgAdminJsContent);
     }
+
+    [Fact]
+    public void Calibration校準頁骨架與路由選單配置正確()
+    {
+        var root = FindRepoRoot();
+
+        // 1. PagesController.cs 含 "/admin/calibration" 與 Calibration()
+        var pagesControllerPath = Path.Combine(root, "LogForesight.Web", "Controllers", "PagesController.cs");
+        Assert.True(File.Exists(pagesControllerPath), $"找不到檔案: {pagesControllerPath}");
+        var pagesControllerContent = File.ReadAllText(pagesControllerPath);
+        Assert.Contains("\"/admin/calibration\"", pagesControllerContent);
+        Assert.Contains("Calibration()", pagesControllerContent);
+
+        // 2. Views/Pages/Calibration.cshtml 檔案存在且含 calibration.js
+        var calibrationCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Calibration.cshtml");
+        Assert.True(File.Exists(calibrationCshtmlPath), $"找不到檔案: {calibrationCshtmlPath}");
+        var calibrationCshtmlContent = File.ReadAllText(calibrationCshtmlPath);
+        Assert.Contains("calibration.js", calibrationCshtmlContent);
+
+        // 3. layout.js 含 /admin/calibration 且該行含 requires: 'Maintain'
+        var layoutJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "layout.js");
+        Assert.True(File.Exists(layoutJsPath), $"找不到檔案: {layoutJsPath}");
+        var layoutLines = File.ReadAllLines(layoutJsPath);
+        var calibrationNavLine = Array.Find(layoutLines, l => l.Contains("/admin/calibration"));
+        Assert.NotNull(calibrationNavLine);
+        Assert.Contains("requires: 'Maintain'", calibrationNavLine);
+        Assert.Contains("校準數值匯出", calibrationNavLine);
+
+        // 4. Calibration.cshtml 含四張卡的容器 id 與兩顆按鈕的 id 與 override 勾選框
+        Assert.Contains("id=\"calibration-card-prtg-value-baseline\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-card-prtg-rule-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-card-triggered-fetch-magnitude\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-card-residual-credential-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-calc-btn\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-export-btn\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-override-check\"", calibrationCshtmlContent);
+    }
 }
