@@ -3,7 +3,7 @@
 }
 
 <ul class="nav nav-tabs mb-3" id="prtg-tabs">
-    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">連線設定</button></li>
+    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">連線與參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
 </ul>
@@ -12,7 +12,7 @@
     <form id="prtg-config-form">
         <div class="lf-card">
             <div class="lf-card__header">
-                <h2 class="lf-card__title">連線設定</h2>
+                <h2 class="lf-card__title">連線與參數</h2>
             </div>
             <div class="lf-card__body">
                 <div class="row g-3 mb-3">
@@ -105,6 +105,36 @@
                         <input type="number" class="form-control" id="prtg-timeout-seconds" min="5" max="600" />
                     </div>
                 </div>
+
+                <h3 class="h6 mb-3">擷取參數</h3>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label for="prtg-fetch-concurrency" class="form-label">併發請求數</label>
+                        <input type="number" class="form-control" id="prtg-fetch-concurrency" min="1" max="3" />
+                        <div class="form-text">PRTG core 在大量 sensor 下對併發敏感，建議維持 2。</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="prtg-backfill-days" class="form-label">歷史回填天數</label>
+                        <input type="number" class="form-control" id="prtg-backfill-days" min="1" max="365" />
+                    </div>
+                    <div class="col-md-4">
+                        <label for="prtg-retention-days" class="form-label">PRTG 資料保留天數</label>
+                        <input type="number" class="form-control" id="prtg-retention-days" min="90" max="3650" />
+                        <div class="form-text">不得大於歷史資料保留天數。</div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="prtg-sensor-type-whitelist" class="form-label">擷取數值的 sensor type 白名單</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                    <textarea class="form-control lf-mono" id="prtg-sensor-type-whitelist" rows="6"
+                              placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
+                </div>
+
+                <hr />
 
                 <div class="mb-3">
                     <h3 class="h6">測試連線</h3>

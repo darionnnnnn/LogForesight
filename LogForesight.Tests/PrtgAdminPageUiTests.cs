@@ -60,15 +60,21 @@ public class PrtgAdminPageUiTests
         Assert.DoesNotContain("prtg-mirror-section", content);
         Assert.DoesNotContain("prtg-backfill-section", content);
         Assert.DoesNotContain("prtg-probe", content);
+        Assert.DoesNotContain("prtg-sensor-type-whitelist", content);
+        Assert.DoesNotContain("prtg-fetch-concurrency", content);
+        Assert.DoesNotContain("prtg-backfill-days", content);
+        Assert.DoesNotContain("prtg-retention-days", content);
+        Assert.DoesNotContain("prtg-timeout-seconds", content);
+        Assert.DoesNotContain("prtg-ignore-ssl", content);
     }
 
     [Fact]
-    public void SettingsCshtml仍包含保留元素Id()
+    public void PrtgCshtml包含擷取參數與連線元素Id()
     {
         var root = FindRepoRoot();
-        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
-        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
-        var content = File.ReadAllText(settingsCshtmlPath);
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
 
         Assert.Contains("prtg-sensor-type-whitelist", content);
         Assert.Contains("prtg-fetch-concurrency", content);
@@ -90,6 +96,12 @@ public class PrtgAdminPageUiTests
         Assert.DoesNotContain("prtgUrl", content);
         Assert.DoesNotContain("prtgApiToken", content);
         Assert.DoesNotContain("prtgClearToken", content);
+        Assert.DoesNotContain("prtgRetentionDays", content);
+        Assert.DoesNotContain("prtgFetchConcurrency", content);
+        Assert.DoesNotContain("prtgBackfillDays", content);
+        Assert.DoesNotContain("prtgTimeoutSeconds", content);
+        Assert.DoesNotContain("prtgIgnoreSslErrors", content);
+        Assert.DoesNotContain("prtgSensorTypeWhitelist", content);
     }
 
     [Fact]
