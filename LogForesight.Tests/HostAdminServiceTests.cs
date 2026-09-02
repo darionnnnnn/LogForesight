@@ -477,6 +477,23 @@ public class HostAdminServiceTests
         Assert.Contains(a.HostId, ids);
         Assert.Contains(b.HostId, ids);
     }
+
+    [Fact]
+    public void GetHosts_無任何PRTG對應資料時_PRTG篩選mapped回空清單()
+    {
+        using var fx = new EfSqliteFixture();
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+
+        var a = _hosts.Upsert(new WebHost { HostName = "SRV-A", Active = true });
+        var b = _hosts.Upsert(new WebHost { HostName = "SRV-B", Active = true });
+
+        // prtgStore 完全沒有任何對應資料
+        var service = CreateWithPrtg(prtgStore);
+        var result = service.GetHosts(new HostSearchRequest { PrtgMap = "mapped" });
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, result.Total);
+    }
 }
 
 // FakeNetiqHostServiceForAdmin／FakeNetiqServerCatalog 已搬到 TestDoubles\NetiqFakes.cs。

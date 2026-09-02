@@ -174,6 +174,7 @@ public class SystemSettingsService : ISystemSettingsService
         var effectivePrtgEnabled = request.PrtgEnabled ?? before.PrtgEnabled;
         var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
         var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
+        var effectivePrtgUsername = request.PrtgUsername ?? before.PrtgUsername;
 
         if (!PrtgAuthModes.IsValid(effectivePrtgAuthMode))
             throw DomainException.Validation("PRTG 認證方式不合法。");
@@ -194,7 +195,7 @@ public class SystemSettingsService : ISystemSettingsService
             }
             else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
             {
-                if (string.IsNullOrWhiteSpace(request.PrtgUsername))
+                if (string.IsNullOrWhiteSpace(effectivePrtgUsername))
                     throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定帳號。");
 
                 // 新存或既有皆算有：密碼欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
@@ -203,7 +204,7 @@ public class SystemSettingsService : ISystemSettingsService
             }
             else if (effectivePrtgAuthMode == PrtgAuthModes.Passhash)
             {
-                if (string.IsNullOrWhiteSpace(request.PrtgUsername))
+                if (string.IsNullOrWhiteSpace(effectivePrtgUsername))
                     throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定帳號。");
 
                 if (!HasEffectiveSecret(request.PrtgPasshash, before.PrtgPasshashEnc, request.ClearPrtgPasshash))
@@ -425,7 +426,7 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 // username 也只在帳密與 passhash 模式寫入：token 模式下它在畫面上是隱藏的，
                 // 非設定頁的呼叫端（腳本、匯入）沒帶它時不該把已存帳號靜默清空
-                s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
+                if (request.PrtgUsername != null) s.PrtgUsername = effectivePrtgUsername.Trim();
                 if (request.ClearPrtgPasshash)
                     s.PrtgPasshashEnc = "";
                 else if (!string.IsNullOrWhiteSpace(request.PrtgPasshash))
@@ -433,7 +434,7 @@ public class SystemSettingsService : ISystemSettingsService
             }
             else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
             {
-                s.PrtgUsername = request.PrtgUsername?.Trim() ?? "";
+                if (request.PrtgUsername != null) s.PrtgUsername = effectivePrtgUsername.Trim();
                 if (request.ClearPrtgPassword)
                     s.PrtgPasswordEnc = "";
                 else if (!string.IsNullOrWhiteSpace(request.PrtgPassword))

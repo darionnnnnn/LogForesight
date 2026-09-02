@@ -968,4 +968,25 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(2003, sensors1002[0].Objid);
         Assert.Equal(1002, sensors1002[0].DeviceObjid);
     }
+
+    [Fact]
+    public void GetSensorStatuses_回傳含SensorType且只回未暫停sensor()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 101, DeviceObjid = 1, Name = "Active Disk", SensorType = "SNMP Disk Free", Status = "Up", Paused = false },
+            new() { Objid = 102, DeviceObjid = 1, Name = "Active Ping", SensorType = "ping", Status = "Down", Paused = false },
+            new() { Objid = 103, DeviceObjid = 2, Name = "Paused Sensor", SensorType = "wmicpu", Status = "Paused", Paused = true }
+        }, now);
+
+        var statuses = store.GetSensorStatuses();
+
+        Assert.Equal(2, statuses.Count);
+        Assert.Contains(statuses, s => s.Objid == 101 && s.DeviceObjid == 1 && s.Status == "Up" && s.SensorType == "SNMP Disk Free");
+        Assert.Contains(statuses, s => s.Objid == 102 && s.DeviceObjid == 1 && s.Status == "Down" && s.SensorType == "ping");
+        Assert.DoesNotContain(statuses, s => s.Objid == 103);
+    }
 }

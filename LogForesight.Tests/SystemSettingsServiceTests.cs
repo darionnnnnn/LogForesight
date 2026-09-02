@@ -1998,4 +1998,63 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.False(reread.PrtgEnabled);
         Assert.Equal("", reread.PrtgUrl);
     }
+
+    [Fact]
+    public void Update_未提供PrtgUsername時沿用既有帳號不清空()
+    {
+        var service = Create();
+
+        // 1. 先存好 PRTG 連線設定（含帳號）
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        initial.PrtgUsername = "prtg_admin";
+        initial.PrtgPassword = "secret_password";
+        service.Update(initial);
+
+        // 2. 送出未提供 PrtgUsername（null）的請求
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = null;
+        request.PrtgAuthMode = null;
+        request.PrtgUsername = null;
+        var saved = service.Update(request);
+
+        // 斷言回傳 DTO 與重讀 DB 均保留原帳號
+        Assert.Equal("prtg_admin", saved.PrtgUsername);
+
+        var reread = service.Get();
+        Assert.Equal("prtg_admin", reread.PrtgUsername);
+    }
+
+    [Fact]
+    public void Update_PRTG為Password模式且啟用時_未帶帳號沿用既有值不被驗證擋下()
+    {
+        var service = Create();
+
+        // 1. 先存好 PRTG 連線設定（Password 模式已啟用、有帳密）
+        var initial = ValidRequest();
+        initial.PrtgEnabled = true;
+        initial.PrtgUrl = "https://prtg.example.com";
+        initial.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password;
+        initial.PrtgUsername = "prtg_admin";
+        initial.PrtgPassword = "secret_password";
+        service.Update(initial);
+
+        // 2. 模擬一般設定頁存檔（不送 PRTG 欄位，PrtgUsername 為 null）
+        var request = ValidRequest();
+        request.PrtgEnabled = null;
+        request.PrtgUrl = null;
+        request.PrtgAuthMode = null;
+        request.PrtgUsername = null;
+        request.BrandName = "新自訂系統名稱";
+
+        // 應該成功儲存，不擲出「必須設定帳號」的 DomainException
+        var saved = service.Update(request);
+
+        Assert.Equal("新自訂系統名稱", saved.BrandName);
+        Assert.True(saved.PrtgEnabled);
+        Assert.Equal("prtg_admin", saved.PrtgUsername);
+    }
 }

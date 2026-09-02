@@ -1114,16 +1114,30 @@ public class AnalysisOrchestrator
                 prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
             }
 
-            // 3. PRTG 規則評估與 finding 追加：獨立的 try/catch
+            // 3. PRTG 規則評估：獨立的 try/catch
             var ruleTriggerHosts = new HashSet<long>();
+            var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
+            var totalFindings = 0;
             try
             {
                 var prtgStore = backend.PrtgStore();
-                var changes = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
-                var sensorStatuses = prtgStore.GetSensorStatuses();
-                var sensorToDevice = sensorStatuses
+                var whitelist = new HashSet<string>(systemSettings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                var allSensors = prtgStore.GetSensorStatuses();
+                var filteredSensors = whitelist.Count == 0
+                    ? allSensors
+                    : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
+
+                var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
+                var allChanges = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
+                var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
+
+                var sensorToDevice = filteredSensors
                     .GroupBy(s => s.Objid)
                     .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
+
+                var sensorStatuses = filteredSensors
+                    .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+                    .ToList();
 
                 var prtgRules = KnownIssueCatalog.Rules
                     .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && r.Enabled)
@@ -1159,6 +1173,8 @@ public class AnalysisOrchestrator
                 var findings = PrtgRuleEvaluator.Evaluate(
                     day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes);
 
+                totalFindings = findings.Count;
+
                 var hostMapRows = prtgStore.GetHostMapForDate(day);
                 var deviceToHost = new Dictionary<long, long>();
                 foreach (var row in hostMapRows)
@@ -1169,7 +1185,6 @@ public class AnalysisOrchestrator
                     }
                 }
 
-                var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
                 foreach (var finding in findings)
                 {
                     if (deviceToHost.TryGetValue(finding.DeviceObjid, out var hostId))
@@ -1180,39 +1195,9 @@ public class AnalysisOrchestrator
                             findingsByHost[hostId] = hostFindings;
                         }
                         hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
+                        ruleTriggerHosts.Add(hostId);
                     }
                 }
-
-                var totalFindings = findings.Count;
-                var involvedHosts = findingsByHost.Count;
-                var appendedHosts = 0;
-                var skippedHosts = 0;
-
-                var allHosts = hostStore.GetAll();
-                var hostsById = allHosts.ToDictionary(h => h.HostId);
-
-                foreach (var (hostId, hostFindings) in findingsByHost)
-                {
-                    ruleTriggerHosts.Add(hostId);
-
-                    var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
-                    var hostKey = new HostKey { HostId = hostId, HostName = hostName };
-                    var hostRecordStore = backend.RecordStore(hostKey);
-
-                    var attached = hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings);
-                    if (attached)
-                    {
-                        appendedHosts++;
-                    }
-                    else
-                    {
-                        skippedHosts++;
-                    }
-                }
-
-                var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、已追加 {appendedHosts} 台（無當日紀錄 {skippedHosts} 台）";
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
             }
             catch (OperationCanceledException)
             {
@@ -1248,6 +1233,47 @@ public class AnalysisOrchestrator
             {
                 Log.Error(ex, "PRTG 觸發式取數失敗，不影響分析成果");
                 prtgConsole.WriteLine($"\n  ✗ PRTG 觸發式取數失敗：{ex.Message}");
+            }
+
+            // 5. PRTG finding 追加：獨立的 try/catch，在觸發式取數（分析完成）後追加至當日紀錄
+            try
+            {
+                var involvedHosts = findingsByHost.Count;
+                var appendedHosts = 0;
+                var skippedHosts = 0;
+
+                var allHosts = hostStore.GetAll();
+                var hostsById = allHosts.ToDictionary(h => h.HostId);
+
+                foreach (var (hostId, hostFindings) in findingsByHost)
+                {
+                    var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
+                    var hostKey = new HostKey { HostId = hostId, HostName = hostName };
+                    var hostRecordStore = backend.RecordStore(hostKey);
+
+                    var attached = hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings);
+                    if (attached)
+                    {
+                        appendedHosts++;
+                    }
+                    else
+                    {
+                        skippedHosts++;
+                    }
+                }
+
+                var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、已追加 {appendedHosts} 台（無當日紀錄 {skippedHosts} 台）";
+                prtgConsole.WriteLine(summary);
+                runRecorder.Milestone(summary);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG finding 追加失敗，不影響分析成果");
+                prtgConsole.WriteLine($"\n  ✗ PRTG finding 追加失敗：{ex.Message}");
             }
         }
         catch (OperationCanceledException)

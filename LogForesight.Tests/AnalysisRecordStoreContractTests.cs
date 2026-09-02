@@ -771,4 +771,44 @@ public class AnalysisRecordStoreContractTests : IDisposable
         var read = Assert.Single(store.ReadRecent(date, 1));
         Assert.Equal(2, read.TopIssues.Count);
     }
+
+    [Fact]
+    public void AttachPrtgFindings_DetailPruned為true時回false且ContentJson未被改動()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today;
+        var hostId = 101L;
+
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = hostId,
+            Host = "SRV-TEST",
+            Date = date,
+            RiskLevel = "低",
+            TopIssues = new List<LogIssueSignature>()
+        });
+
+        // 手動將 DetailPruned 設為 true 並記錄當前的 ContentJson
+        string originalContentJson;
+        using (var ctx = _fx.NewContext())
+        {
+            var row = ctx.DailyRecords.Single(r => r.HostId == hostId && r.RecordDate == date.Date);
+            row.DetailPruned = true;
+            originalContentJson = row.ContentJson;
+            ctx.SaveChanges();
+        }
+
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var sig = PrtgFindingMapper.ToSignature(finding, date);
+
+        var result = store.AttachPrtgFindings(hostId, date, new[] { sig });
+        Assert.False(result);
+
+        using (var ctx = _fx.NewContext())
+        {
+            var row = ctx.DailyRecords.Single(r => r.HostId == hostId && r.RecordDate == date.Date);
+            Assert.True(row.DetailPruned);
+            Assert.Equal(originalContentJson, row.ContentJson);
+        }
+    }
 }

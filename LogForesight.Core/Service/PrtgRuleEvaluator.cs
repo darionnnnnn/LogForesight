@@ -124,6 +124,24 @@ public static class PrtgRuleEvaluator
 
             // 3. 持續 Warning（RuleWarning）
             var warningMinutes = 0;
+            var priorChanges = allSensorChanges.Where(c => c.ChangedAt < dayStart).ToList();
+            if (priorChanges.Count > 0)
+            {
+                var lastPrior = priorChanges[priorChanges.Count - 1];
+                if (PrtgSensorStatuses.IsWarning(lastPrior.Status))
+                {
+                    var firstChangeTime = dayChanges.Count > 0 ? dayChanges[0].ChangedAt : dayEnd;
+                    if (firstChangeTime > dayEnd)
+                    {
+                        firstChangeTime = dayEnd;
+                    }
+                    if (firstChangeTime > dayStart)
+                    {
+                        warningMinutes += (int)(firstChangeTime - dayStart).TotalMinutes;
+                    }
+                }
+            }
+
             for (var i = 0; i < dayChanges.Count; i++)
             {
                 if (PrtgSensorStatuses.IsWarning(dayChanges[i].Status))

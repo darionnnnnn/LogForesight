@@ -191,36 +191,33 @@ public class HostAdminService
         {
             var prtgFilter = request.PrtgMap.Trim().ToLowerInvariant();
             var mapRows = _prtgStore?.GetLatestHostMap() ?? new List<PrtgHostMapRow>();
-            if (mapRows.Count > 0)
+            if (prtgFilter == "mapped")
             {
-                if (prtgFilter == "mapped")
-                {
-                    var mappedIds = mapRows
-                        .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
-                        .Select(m => m.HostId!.Value)
-                        .ToHashSet();
-                    filtered = filtered.Where(h => mappedIds.Contains(h.HostId));
-                }
-                else if (prtgFilter == "conflict")
-                {
-                    var conflictIds = mapRows
-                        .Where(m => m.MapStatus == PrtgMapStatus.Conflict && m.HostId.HasValue)
-                        .Select(m => m.HostId!.Value)
-                        .ToHashSet();
-                    filtered = filtered.Where(h => conflictIds.Contains(h.HostId));
-                }
-                else if (prtgFilter == "unmatched")
-                {
-                    // unmatched 在主機映射表中是「PRTG 有 device 但無對應主機」（HostId 為 null）。
-                    // 對主機清單而言，unmatched 語意為「這台主機目前沒有任何成功（ok）的 PRTG 對應」，即排除 mapped 主機。
-                    var mappedIds = mapRows
-                        .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
-                        .Select(m => m.HostId!.Value)
-                        .ToHashSet();
-                    filtered = filtered.Where(h => !mappedIds.Contains(h.HostId));
-                }
-                // 無效篩選值依既有慣例當作沒篩，不回空清單
+                var mappedIds = mapRows
+                    .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+                    .Select(m => m.HostId!.Value)
+                    .ToHashSet();
+                filtered = filtered.Where(h => mappedIds.Contains(h.HostId));
             }
+            else if (prtgFilter == "conflict")
+            {
+                var conflictIds = mapRows
+                    .Where(m => m.MapStatus == PrtgMapStatus.Conflict && m.HostId.HasValue)
+                    .Select(m => m.HostId!.Value)
+                    .ToHashSet();
+                filtered = filtered.Where(h => conflictIds.Contains(h.HostId));
+            }
+            else if (prtgFilter == "unmatched")
+            {
+                // unmatched 在主機映射表中是「PRTG 有 device 但無對應主機」（HostId 為 null）。
+                // 對主機清單而言，unmatched 語意為「這台主機目前沒有任何成功（ok）的 PRTG 對應」，即排除 mapped 主機。
+                var mappedIds = mapRows
+                    .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+                    .Select(m => m.HostId!.Value)
+                    .ToHashSet();
+                filtered = filtered.Where(h => !mappedIds.Contains(h.HostId));
+            }
+            // 無效篩選值依既有慣例當作沒篩，不回空清單
         }
 
         return filtered;

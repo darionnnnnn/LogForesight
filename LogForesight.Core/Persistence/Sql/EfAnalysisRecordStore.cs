@@ -261,6 +261,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 return;
             }
 
+            // 詳情已精簡的紀錄（DetailPruned 為 true）不追加 finding，避免將反序列化所得的 stub 寫回覆蓋原本殘存的欄位
+            if (row.DetailPruned)
+            {
+                return;
+            }
+
             var record = Deserialize(row);
             var existingKeys = record.TopIssues
                 .Select(i => i.EventKey)
