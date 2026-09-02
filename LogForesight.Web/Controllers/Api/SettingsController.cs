@@ -1,3 +1,5 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -321,6 +323,111 @@ public class SettingsController : ControllerBase
             detail: new { DeviceObjid = deviceObjid, Deleted = deleted });
 
         return ApiResponse<bool>.Ok(deleted > 0);
+    }
+
+    // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
+
+    private static readonly JsonSerializerOptions PrtgDataJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = false
+    };
+
+    /// <summary>匯出指定期間的 PRTG 鏡像資料為 JSON 檔案</summary>
+    [HttpGet("prtg-export")]
+    public IActionResult ExportPrtgData([FromQuery] string? from, [FromQuery] string? to)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
+            throw DomainException.Validation("請指定起始與結束日期。");
+
+        var fromDate = QueryStringParsing.ParseRequiredDate(from);
+        var toDate = QueryStringParsing.ParseRequiredDate(to);
+
+        if (fromDate > toDate)
+            throw DomainException.Validation("起始日期不得大於結束日期。");
+
+        var days = (toDate.Date - fromDate.Date).Days + 1;
+        if (days > 366)
+            throw DomainException.Validation($"匯出期間不可超過 366 天（目前 {days} 天）。");
+
+        var store = _backend.PrtgStore();
+        var package = PrtgDataTransfer.Export(store, fromDate, toDate);
+
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(package, PrtgDataJsonOptions);
+        var fileName = $"prtg-export-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.json";
+
+        _audit.Record(
+            action: AuditActions.PrtgDataExport,
+            summary: $"匯出 PRTG 鏡像資料（期間：{fromDate:yyyy-MM-dd} ~ {toDate:yyyy-MM-dd}，裝置 {package.Devices.Count} 筆、感測器 {package.Sensors.Count} 筆、狀態變更 {package.StateChanges.Count} 筆、數值 {package.Values.Count} 筆、主機對應 {package.HostMaps.Count} 筆、人工對應 {package.ManualMaps.Count} 筆）",
+            targetKind: "prtg_data",
+            targetId: $"{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}",
+            detail: new
+            {
+                From = fromDate.ToString("yyyy-MM-dd"),
+                To = toDate.ToString("yyyy-MM-dd"),
+                Devices = package.Devices.Count,
+                Sensors = package.Sensors.Count,
+                StateChanges = package.StateChanges.Count,
+                Values = package.Values.Count,
+                HostMaps = package.HostMaps.Count,
+                ManualMaps = package.ManualMaps.Count
+            });
+
+        return File(bytes, "application/json", fileName);
+    }
+
+    /// <summary>匯入 PRTG 鏡像資料 JSON 檔案</summary>
+    [HttpPost("prtg-import")]
+    public ApiResponse<PrtgImportResult> ImportPrtgData([FromForm] IFormFile? file)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        if (file == null || file.Length == 0)
+            throw DomainException.Validation("請選擇要匯入的 JSON 檔案。");
+
+        PrtgDataPackage? package;
+        try
+        {
+            using var stream = file.OpenReadStream();
+            package = JsonSerializer.Deserialize<PrtgDataPackage>(stream, PrtgDataJsonOptions);
+        }
+        catch (Exception ex)
+        {
+            throw DomainException.Validation($"檔案解析失敗：{ex.Message}");
+        }
+
+        if (package == null)
+            throw DomainException.Validation("匯入檔案內容為空或格式不符。");
+
+        if (package.FormatVersion != PrtgDataTransfer.CurrentFormatVersion)
+            throw DomainException.Validation($"不支援的格式版本 {package.FormatVersion}（目前支援版本為 {PrtgDataTransfer.CurrentFormatVersion}）。");
+
+        var store = _backend.PrtgStore();
+        var result = PrtgDataTransfer.Import(store, package);
+
+        _audit.Record(
+            action: AuditActions.PrtgDataImport,
+            summary: $"匯入 PRTG 鏡像資料（期間：{package.FromDate:yyyy-MM-dd} ~ {package.ToDate:yyyy-MM-dd}，裝置 {result.Devices} 筆、感測器 {result.Sensors} 筆、狀態變更 {result.StateChanges} 筆、數值 {result.Values} 筆、主機對應 {result.HostMaps} 筆、人工對應 {result.ManualMaps} 筆）",
+            targetKind: "prtg_data",
+            targetId: $"{package.FromDate:yyyyMMdd}-{package.ToDate:yyyyMMdd}",
+            detail: new
+            {
+                From = package.FromDate.ToString("yyyy-MM-dd"),
+                To = package.ToDate.ToString("yyyy-MM-dd"),
+                result.Devices,
+                result.Sensors,
+                result.StateChanges,
+                result.Values,
+                result.HostMaps,
+                result.ManualMaps
+            });
+
+        return ApiResponse<PrtgImportResult>.Ok(result);
     }
 }
 

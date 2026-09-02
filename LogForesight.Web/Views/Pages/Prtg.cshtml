@@ -240,6 +240,38 @@
             </div>
         </div>
     </div>
+
+    <div class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">資料搬運（開發用）</h2>
+        </div>
+        <div class="lf-card__body">
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label for="prtg-export-from" class="form-label small">匯出起始日期</label>
+                    <input type="date" class="form-control form-control-sm" id="prtg-export-from" />
+                </div>
+                <div class="col-md-4">
+                    <label for="prtg-export-to" class="form-label small">匯出結束日期</label>
+                    <input type="date" class="form-control form-control-sm" id="prtg-export-to" />
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-export-btn">匯出資料</button>
+                </div>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-8">
+                    <label for="prtg-import-file" class="form-label small">匯入 JSON 檔</label>
+                    <input type="file" class="form-control form-control-sm" id="prtg-import-file" accept=".json" />
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-import-btn">匯入資料</button>
+                </div>
+            </div>
+            <div id="prtg-import-result" class="small mb-2"></div>
+            <div class="form-text">把正式機的 PRTG 鏡像資料搬到開發機供分析規則設計使用。匯入採自然鍵冪等寫入，重複匯入不會產生重複資料。</div>
+        </div>
+    </div>
 </div>
 
 <div data-panel="probe" class="d-none">

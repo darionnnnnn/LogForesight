@@ -3,6 +3,7 @@
  */
 
 import { api } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { bindTabs, toast, withBusy, renderSpinner, confirmAction } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -543,6 +544,93 @@ function bindPrtgProbe() {
     });
 }
 
+// ── PRTG 資料搬運（任務G）──────────────────────────────────────────────
+
+function bindPrtgDataTransfer() {
+    const exportBtn = document.getElementById('prtg-export-btn');
+    const importBtn = document.getElementById('prtg-import-btn');
+    const importFile = document.getElementById('prtg-import-file');
+    const importResult = document.getElementById('prtg-import-result');
+
+    exportBtn?.addEventListener('click', () => {
+        const from = document.getElementById('prtg-export-from')?.value?.trim();
+        const to = document.getElementById('prtg-export-to')?.value?.trim();
+
+        if (!from || !to) {
+            toast('請選擇匯出起始與結束日期。', 'warning');
+            return;
+        }
+
+        if (from > to) {
+            toast('匯出起始日期不得大於結束日期。', 'warning');
+            return;
+        }
+
+        const url = appUrl(`/api/admin/settings/prtg-export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+        window.location.assign(url);
+    });
+
+    importBtn?.addEventListener('click', async () => {
+        const file = importFile?.files?.[0];
+        if (!file) {
+            toast('請先選擇要匯入的 JSON 檔案。', 'warning');
+            return;
+        }
+
+        const restore = withBusy(importBtn, '匯入中');
+        if (importResult) {
+            importResult.className = 'small mb-2 text-muted';
+            importResult.textContent = '匯入處理中…';
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch(appUrl('/api/admin/settings/prtg-import'), {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-By': 'LogForesight'
+                },
+                credentials: 'same-origin'
+            });
+
+            let payload;
+            try {
+                payload = await response.json();
+            } catch {
+                throw new Error('伺服器回應格式不符。');
+            }
+
+            if (!response.ok || !payload.success) {
+                const errMsg = payload?.error?.message || payload?.message || `匯入失敗（HTTP ${response.status}）`;
+                throw new Error(errMsg);
+            }
+
+            const data = payload.data;
+            const msg = `匯入成功：裝置 ${formatNumber(data.devices)} 筆、感測器 ${formatNumber(data.sensors)} 筆、狀態變更 ${formatNumber(data.stateChanges)} 筆、數值 ${formatNumber(data.values)} 筆、主機對應 ${formatNumber(data.hostMaps)} 筆、人工對應 ${formatNumber(data.manualMaps)} 筆。`;
+            if (importResult) {
+                importResult.className = 'small mb-2 text-success';
+                importResult.textContent = msg;
+            }
+            toast('PRTG 鏡像資料匯入完成', 'success');
+            if (importFile) importFile.value = '';
+            await refreshPrtgMirror();
+        } catch (error) {
+            const errMsg = error?.message || '匯入時發生未知錯誤。';
+            if (importResult) {
+                importResult.className = 'small mb-2 text-danger';
+                importResult.textContent = `匯入失敗：${errMsg}`;
+            }
+            toast(errMsg, 'danger');
+        } finally {
+            restore();
+        }
+    });
+}
+
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 
 function init() {
@@ -550,6 +638,7 @@ function init() {
     bindPrtgMirror();
     bindPrtgProbe();
     bindAssignForm();
+    bindPrtgDataTransfer();
     bindForm();
     loadSettings();
     refreshPrtgMirror();

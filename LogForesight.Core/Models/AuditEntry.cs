@@ -152,6 +152,10 @@ public static class AuditActions
     public const string PrtgManualMapSet = "prtg_manual_map_set";
     public const string PrtgManualMapDelete = "prtg_manual_map_delete";
 
+    // PRTG 鏡像資料匯出／匯入（PRTG 任務G）
+    public const string PrtgDataExport = "prtg_data_export";
+    public const string PrtgDataImport = "prtg_data_import";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

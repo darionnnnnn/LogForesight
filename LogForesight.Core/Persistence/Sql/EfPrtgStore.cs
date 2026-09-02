@@ -421,6 +421,27 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 取得所有 PRTG 感測器鏡像清單（唯讀查詢）。
+    /// </summary>
+    public List<PrtgSensorRow> GetAllSensors()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.AsNoTracking().ToList();
+    }
+
+    /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>
+    public List<PrtgValueRow> GetValues(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .OrderBy(v => v.SensorObjid)
+            .ThenBy(v => v.PeriodStart)
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得 sensor 的 objid 與暫停狀態（唯讀，只取這兩欄）。
     /// 供歷史回填使用：回填不重跑結構同步，sensor 清單改從鏡像讀。
     /// </summary>
