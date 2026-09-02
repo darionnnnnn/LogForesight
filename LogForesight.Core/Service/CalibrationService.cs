@@ -1,0 +1,912 @@
+using System.Text.Json;
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
+using Microsoft.EntityFrameworkCore;
+using NLog;
+
+namespace LogForesight.Core.Service;
+
+/// <summary>
+/// 校準狀態（四選一列舉）
+/// </summary>
+public enum CalibrationStatus
+{
+    /// <summary>不足：累積量未達可用門檻，或關鍵指標為零</summary>
+    Insufficient,
+
+    /// <summary>可用：已達最低校準需求門檻</summary>
+    Available,
+
+    /// <summary>充足：已達最佳校準需求門檻</summary>
+    Sufficient,
+
+    /// <summary>無法取得：模組未啟用或保留期內完全無任何候選資料</summary>
+    Unavailable
+}
+
+/// <summary>
+/// 各項校準門檻與常數定義（集中管理，方便日後校準調整）
+/// </summary>
+public static class CalibrationConstants
+{
+    /// <summary>匯出檔案格式版本</summary>
+    public const int CurrentFormatVersion = 1;
+
+    // ── 1. PRTG 值型基線門檻 ──────────────────────────────────────────
+    /// <summary>值型基線所需最少主機數</summary>
+    public const int ValueBaselineRequiredHosts = 10;
+    /// <summary>值型基線「可用」所需最少涵蓋天數</summary>
+    public const int ValueBaselineAvailableDays = 28;
+    /// <summary>值型基線「充足」所需最少涵蓋天數</summary>
+    public const int ValueBaselineSufficientDays = 56;
+    /// <summary>單日視為有效涵蓋的 ok 時數下限</summary>
+    public const int ValueBaselineMinDailyOkHours = 12;
+    /// <summary>值型基線回看評估窗口天數</summary>
+    public const int ValueBaselineWindowDays = 56;
+
+    // ── 2. PRTG 規則門檻 ────────────────────────────────────────────
+    /// <summary>規則門檻「可用」所需狀態變更涵蓋天數</summary>
+    public const int RuleThresholdAvailableDays = 28;
+    /// <summary>規則門檻「可用」所需期間命中筆數</summary>
+    public const int RuleThresholdAvailableHits = 30;
+    /// <summary>規則門檻「充足」所需狀態變更涵蓋天數</summary>
+    public const int RuleThresholdSufficientDays = 56;
+    /// <summary>規則門檻「充足」所需期間命中筆數</summary>
+    public const int RuleThresholdSufficientHits = 100;
+    /// <summary>規則門檻回看評估窗口天數</summary>
+    public const int RuleThresholdWindowDays = 56;
+
+    // ── 3. 觸發式取數量級門檻 ────────────────────────────────────────
+    /// <summary>觸發式取數「可用」所需有數值天數</summary>
+    public const int TriggeredMagnitudeAvailableDays = 14;
+    /// <summary>觸發式取數「充足」所需有數值天數</summary>
+    public const int TriggeredMagnitudeSufficientDays = 28;
+    /// <summary>觸發式取數回看評估窗口天數</summary>
+    public const int TriggeredMagnitudeWindowDays = 30;
+
+    // ── 4. 殘留判定門檻 ────────────────────────────────────────────
+    /// <summary>殘留判定「可用」所需候選主機日數</summary>
+    public const int ResidualAvailableHostDays = 200;
+    /// <summary>殘留判定「可用」所需涵蓋相異天數</summary>
+    public const int ResidualAvailableDays = 14;
+    /// <summary>殘留判定「充足」所需候選主機日數</summary>
+    public const int ResidualSufficientHostDays = 1000;
+    /// <summary>殘留判定「充足」所需涵蓋相異天數</summary>
+    public const int ResidualSufficientDays = 28;
+    /// <summary>殘留候選主機日匯出筆數上限</summary>
+    public const int ResidualCandidateMaxCount = 5000;
+}
+
+/// <summary>
+/// 單一校準項的判定結果
+/// </summary>
+public sealed class CalibrationItemAssessment
+{
+    /// <summary>校準項目名稱</summary>
+    public string ItemName { get; init; } = string.Empty;
+
+    /// <summary>狀態列舉</summary>
+    public CalibrationStatus Status { get; init; }
+
+    /// <summary>狀態中文描述（不足／可用／充足／無法取得）</summary>
+    public string StatusText => Status switch
+    {
+        CalibrationStatus.Insufficient => "不足",
+        CalibrationStatus.Available => "可用",
+        CalibrationStatus.Sufficient => "充足",
+        CalibrationStatus.Unavailable => "無法取得",
+        _ => "無法取得"
+    };
+
+    /// <summary>目前累積量的關鍵數字</summary>
+    public Dictionary<string, object> KeyMetrics { get; init; } = new();
+
+    /// <summary>門檻現值</summary>
+    public Dictionary<string, object> CurrentThresholds { get; init; } = new();
+
+    /// <summary>補充說明（條列字串）</summary>
+    public List<string> Explanations { get; init; } = new();
+}
+
+/// <summary>
+/// 四個校準項的總體判定摘要
+/// </summary>
+public sealed class CalibrationAssessmentSummary
+{
+    public CalibrationItemAssessment PrtgValueBaseline { get; init; } = new();
+    public CalibrationItemAssessment PrtgRuleThresholds { get; init; } = new();
+    public CalibrationItemAssessment TriggeredFetchMagnitude { get; init; } = new();
+    public CalibrationItemAssessment ResidualCredentialThresholds { get; init; } = new();
+}
+
+/// <summary>
+/// 值型基線每日聚合資料列（匯出用）
+/// </summary>
+public sealed record CalibrationValueBaselineRow(
+    long SensorObjid,
+    long DeviceObjid,
+    long? HostId,
+    string? HostName,
+    string SensorType,
+    DateTime Date,
+    double? AvgValue,
+    double? MinValue,
+    double? MaxValue,
+    int OkHours,
+    int UnknownCount,
+    int NodataCount);
+
+/// <summary>
+/// PRTG 規則門檻與現況命中資料集（匯出用）
+/// </summary>
+public sealed class CalibrationRuleThresholdDataset
+{
+    public List<PrtgRuleHitAggregate> DailyRuleHits { get; init; } = new();
+    public List<CalibrationPrtgRuleThresholdInfo> CurrentRules { get; init; } = new();
+}
+
+/// <summary>
+/// PRTG 規則門檻現值資訊
+/// </summary>
+public sealed record CalibrationPrtgRuleThresholdInfo(
+    string RuleCode,
+    int Threshold,
+    string Category,
+    string Severity,
+    bool ElevatesDayRisk,
+    string Description);
+
+/// <summary>
+/// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）
+/// </summary>
+public sealed record CalibrationResidualCandidateRow(
+    long HostId,
+    string HostName,
+    DateTime Date,
+    int EventId,
+    int CandidateGroupCount,
+    int TotalDetailCount,
+    double ConcentrationRatio,
+    double? MechanicalLogonTypeRatio,
+    double SingleGroupRatio,
+    bool IsTruncated,
+    bool IsMatch);
+
+/// <summary>
+/// 校準數值匯出包（自描述 JSON 物件）
+/// </summary>
+public sealed class CalibrationExportPackage
+{
+    public int FormatVersion { get; init; } = CalibrationConstants.CurrentFormatVersion;
+    public DateTime ExportedAt { get; init; }
+    public CalibrationAssessmentSummary Summary { get; init; } = new();
+    public List<CalibrationValueBaselineRow> ValueBaselines { get; init; } = new();
+    public CalibrationRuleThresholdDataset RuleThresholds { get; init; } = new();
+    public List<PrtgDailyValueMagnitude> TriggeredMagnitudes { get; init; } = new();
+    public List<CalibrationResidualCandidateRow> ResidualCandidates { get; init; } = new();
+}
+
+/// <summary>
+/// 校準狀態判定與匯出檔組裝服務（A3 服務層）
+/// </summary>
+public sealed class CalibrationService
+{
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    private readonly Func<LfDbContext> _contextFactory;
+    private readonly EfPrtgStore _prtgStore;
+    private readonly IIssueAggregateQuery _issueQuery;
+    private readonly ISystemSettingsStore _settingsStore;
+    private readonly IKnownIssueRuleStore _ruleStore;
+
+    public CalibrationService(
+        Func<LfDbContext> contextFactory,
+        EfPrtgStore prtgStore,
+        IIssueAggregateQuery issueQuery,
+        ISystemSettingsStore settingsStore,
+        IKnownIssueRuleStore ruleStore)
+    {
+        _contextFactory = contextFactory ?? throw new ArgumentNullException(nameof(contextFactory));
+        _prtgStore = prtgStore ?? throw new ArgumentNullException(nameof(prtgStore));
+        _issueQuery = issueQuery ?? throw new ArgumentNullException(nameof(issueQuery));
+        _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
+        _ruleStore = ruleStore ?? throw new ArgumentNullException(nameof(ruleStore));
+    }
+
+    /// <summary>
+    /// 評估四項校準指標的累積量、狀態與補充說明。
+    /// </summary>
+    public CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null)
+    {
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var settings = _settingsStore.Get();
+        var allSensors = _prtgStore.GetAllSensors();
+
+        var item1 = AssessPrtgValueBaseline(anchorDate, settings, allSensors);
+        var item2 = AssessPrtgRuleThresholds(anchorDate, settings, allSensors);
+        var item3 = AssessTriggeredFetchMagnitude(anchorDate, settings, allSensors);
+        var item4 = AssessResidualCredentialThresholds(anchorDate, settings);
+
+        return new CalibrationAssessmentSummary
+        {
+            PrtgValueBaseline = item1,
+            PrtgRuleThresholds = item2,
+            TriggeredFetchMagnitude = item3,
+            ResidualCredentialThresholds = item4
+        };
+    }
+
+    /// <summary>
+    /// 組裝校準數值匯出物件（包含檔案摘要與四大資料集）。
+    /// </summary>
+    public CalibrationExportPackage BuildExportPackage(DateTime? anchor = null)
+    {
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var now = DateTime.Now;
+        var settings = _settingsStore.Get();
+        var allSensors = _prtgStore.GetAllSensors();
+
+        var summary = AssessStatus(anchorDate);
+
+        // 1. 值型基線資料集：最近 56 天 per-sensor 每日聚合
+        var valueBaselineFrom = anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
+        var valueBaselineToExclusive = anchorDate.AddDays(1);
+        var dailyAggs = _prtgStore.GetDailyValueAggregations(valueBaselineFrom, valueBaselineToExclusive);
+
+        var sensorsByObjid = allSensors.ToDictionary(s => s.Objid);
+        var (_, hostMapRows) = _prtgStore.GetLatestHostMapWithDate(30, anchorDate);
+        var hostByDevice = hostMapRows
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+            .ToDictionary(m => m.DeviceObjid, m => (HostId: m.HostId!.Value, HostName: m.HostName ?? string.Empty));
+
+        var whitelist = settings.PrtgSensorTypeWhitelist;
+        var whitelistSet = (whitelist != null && whitelist.Count > 0)
+            ? new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var valueBaselineRows = new List<CalibrationValueBaselineRow>();
+        foreach (var agg in dailyAggs)
+        {
+            if (!sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)) continue;
+            if (whitelistSet != null && !whitelistSet.Contains(sensor.SensorType)) continue;
+
+            long? hostId = null;
+            string? hostName = null;
+            if (hostByDevice.TryGetValue(sensor.DeviceObjid, out var hostInfo))
+            {
+                hostId = hostInfo.HostId;
+                hostName = hostInfo.HostName;
+            }
+
+            valueBaselineRows.Add(new CalibrationValueBaselineRow(
+                agg.SensorObjid,
+                sensor.DeviceObjid,
+                hostId,
+                hostName,
+                sensor.SensorType,
+                agg.Date,
+                agg.AvgValue,
+                agg.MinValue,
+                agg.MaxValue,
+                agg.OkCount,
+                agg.UnknownCount,
+                agg.NodataCount
+            ));
+        }
+
+        // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 目前四條規則門檻現值
+        var ruleFrom = anchorDate.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
+        var ruleHits = _issueQuery.AggregatePrtgRuleHits(ruleFrom, anchorDate);
+
+        var allRules = KnownIssueCatalog.ResolveRules(_ruleStore);
+        var prtgRules = allRules
+            .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(r.PrtgRuleCode))
+            .Select(r => new CalibrationPrtgRuleThresholdInfo(
+                r.PrtgRuleCode!,
+                r.PrtgThreshold,
+                r.Category.ToString(),
+                r.Severity.ToString(),
+                r.ElevatesDayRisk,
+                r.Description
+            ))
+            .ToList();
+
+        if (prtgRules.Count == 0)
+        {
+            prtgRules = new List<CalibrationPrtgRuleThresholdInfo>
+            {
+                new(PrtgRuleEvaluator.RuleDown, PrtgRuleCatalog.DefaultDownMinutes, "Service", "High", true, "監控 sensor 持續無回應，可能是服務或主機失聯"),
+                new(PrtgRuleEvaluator.RuleFlapping, PrtgRuleCatalog.DefaultFlapCount, "Service", "Medium", false, "監控 sensor 狀態頻繁震盪，可能是網路不穩或服務反覆重啟"),
+                new(PrtgRuleEvaluator.RuleWarning, PrtgRuleCatalog.DefaultWarningMinutes, "Resource", "Medium", false, "監控 sensor 長時間處於警告狀態，資源可能接近上限"),
+                new(PrtgRuleEvaluator.RuleSilent, PrtgRuleCatalog.DefaultSilentThreshold, "Service", "Medium", false, "該 device 的全部 sensor 皆無狀態，監控本身可能已失效")
+            };
+        }
+
+        var ruleDataset = new CalibrationRuleThresholdDataset
+        {
+            DailyRuleHits = ruleHits,
+            CurrentRules = prtgRules
+        };
+
+        // 3. 觸發式量級資料集：近 30 天每日相異 sensor 數與品質列數
+        var triggeredFrom = anchorDate.AddDays(-(CalibrationConstants.TriggeredMagnitudeWindowDays - 1));
+        var triggeredToExclusive = anchorDate.AddDays(1);
+        var triggeredMagnitudes = _prtgStore.GetDailyValueMagnitudes(triggeredFrom, triggeredToExclusive);
+
+        // 4. 殘留判定資料集：候選主機日指標（最多 5000 筆，排除任何帳號文字）
+        var residualCandidates = BuildResidualCandidateRows(anchorDate, settings.RawEventRetentionDays);
+
+        return new CalibrationExportPackage
+        {
+            FormatVersion = CalibrationConstants.CurrentFormatVersion,
+            ExportedAt = now,
+            Summary = summary,
+            ValueBaselines = valueBaselineRows,
+            RuleThresholds = ruleDataset,
+            TriggeredMagnitudes = triggeredMagnitudes,
+            ResidualCandidates = residualCandidates
+        };
+    }
+
+    private CalibrationItemAssessment AssessPrtgValueBaseline(
+        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors)
+    {
+        var thresholds = new Dictionary<string, object>
+        {
+            ["RequiredHosts"] = CalibrationConstants.ValueBaselineRequiredHosts,
+            ["AvailableCoverageDays"] = CalibrationConstants.ValueBaselineAvailableDays,
+            ["SufficientCoverageDays"] = CalibrationConstants.ValueBaselineSufficientDays,
+            ["MinDailyOkHours"] = CalibrationConstants.ValueBaselineMinDailyOkHours
+        };
+
+        if (!settings.PrtgEnabled || allSensors.Count == 0)
+        {
+            return new CalibrationItemAssessment
+            {
+                ItemName = "PRTG 值型基線",
+                Status = CalibrationStatus.Unavailable,
+                KeyMetrics = new Dictionary<string, object>
+                {
+                    ["WhitelistedSensors"] = 0,
+                    ["MappedHosts"] = 0,
+                    ["MaxCoverageDays"] = 0,
+                    ["HostsReachingAvailable"] = 0,
+                    ["HostsReachingSufficient"] = 0
+                },
+                CurrentThresholds = thresholds,
+                Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
+            };
+        }
+
+        var whitelist = settings.PrtgSensorTypeWhitelist;
+        var whitelistSet = (whitelist != null && whitelist.Count > 0)
+            ? new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var whitelistedSensors = whitelistSet != null
+            ? allSensors.Where(s => !s.Paused && whitelistSet.Contains(s.SensorType)).ToList()
+            : allSensors.Where(s => !s.Paused).ToList();
+
+        if (whitelistedSensors.Count == 0)
+        {
+            return new CalibrationItemAssessment
+            {
+                ItemName = "PRTG 值型基線",
+                Status = CalibrationStatus.Insufficient,
+                KeyMetrics = new Dictionary<string, object>
+                {
+                    ["WhitelistedSensors"] = 0,
+                    ["MappedHosts"] = 0,
+                    ["MaxCoverageDays"] = 0,
+                    ["HostsReachingAvailable"] = 0,
+                    ["HostsReachingSufficient"] = 0
+                },
+                CurrentThresholds = thresholds,
+                Explanations = new List<string> { "sensor type 白名單沒有命中任何 sensor，請到 PRTG 維護頁檢查" }
+            };
+        }
+
+        var (_, hostMapRows) = _prtgStore.GetLatestHostMapWithDate(30, anchor);
+        var okDeviceMap = hostMapRows
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+            .ToDictionary(m => m.DeviceObjid, m => (HostId: m.HostId!.Value, HostName: m.HostName ?? string.Empty));
+
+        var from = anchor.Date.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
+        var toExclusive = anchor.Date.AddDays(1);
+        var dailyAggs = _prtgStore.GetDailyValueAggregations(from, toExclusive);
+
+        var sensorCoverageDays = dailyAggs
+            .Where(a => a.OkCount >= CalibrationConstants.ValueBaselineMinDailyOkHours)
+            .GroupBy(a => a.SensorObjid)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Date.Date).Distinct().Count());
+
+        var hostCoverageDays = new Dictionary<long, int>();
+        foreach (var sensor in whitelistedSensors)
+        {
+            if (!okDeviceMap.TryGetValue(sensor.DeviceObjid, out var hostInfo)) continue;
+            var hostId = hostInfo.HostId;
+            var sDays = sensorCoverageDays.GetValueOrDefault(sensor.Objid, 0);
+            if (!hostCoverageDays.TryGetValue(hostId, out var currentMax) || sDays > currentMax)
+            {
+                hostCoverageDays[hostId] = sDays;
+            }
+        }
+
+        var mappedHostsCount = hostCoverageDays.Count;
+        var maxCoverageDays = hostCoverageDays.Values.DefaultIfEmpty(0).Max();
+        var hostsAvailable = hostCoverageDays.Values.Count(d => d >= CalibrationConstants.ValueBaselineAvailableDays);
+        var hostsSufficient = hostCoverageDays.Values.Count(d => d >= CalibrationConstants.ValueBaselineSufficientDays);
+
+        // 分母為零一律判不足：若無任何主機或涵蓋天數為 0，不得判為可用
+        CalibrationStatus status;
+        if (mappedHostsCount == 0 || maxCoverageDays == 0)
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+        else if (hostsSufficient >= CalibrationConstants.ValueBaselineRequiredHosts)
+        {
+            status = CalibrationStatus.Sufficient;
+        }
+        else if (hostsAvailable >= CalibrationConstants.ValueBaselineRequiredHosts)
+        {
+            status = CalibrationStatus.Available;
+        }
+        else
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+
+        var explanations = new List<string>();
+        if (settings.PrtgRetentionDays < CalibrationConstants.ValueBaselineSufficientDays)
+        {
+            explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.ValueBaselineSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
+        }
+
+        if (status == CalibrationStatus.Insufficient)
+        {
+            if (mappedHostsCount < CalibrationConstants.ValueBaselineRequiredHosts)
+            {
+                explanations.Add($"目前只有 {mappedHostsCount} 台主機有基線資料，需要 {CalibrationConstants.ValueBaselineRequiredHosts} 台；可對特定主機執行歷史回填");
+            }
+            if (maxCoverageDays < CalibrationConstants.ValueBaselineAvailableDays)
+            {
+                var needed = CalibrationConstants.ValueBaselineAvailableDays - maxCoverageDays;
+                explanations.Add($"目前最長涵蓋 {maxCoverageDays} 天，還需要約 {needed} 天");
+            }
+        }
+        else if (status == CalibrationStatus.Available)
+        {
+            if (hostsSufficient < CalibrationConstants.ValueBaselineRequiredHosts)
+            {
+                if (maxCoverageDays < CalibrationConstants.ValueBaselineSufficientDays)
+                {
+                    var needed = CalibrationConstants.ValueBaselineSufficientDays - maxCoverageDays;
+                    explanations.Add($"目前最長涵蓋 {maxCoverageDays} 天，還需要約 {needed} 天");
+                }
+                else
+                {
+                    explanations.Add($"目前只有 {hostsSufficient} 台主機達到充足標準（56 天），需要 {CalibrationConstants.ValueBaselineRequiredHosts} 台；可對特定主機執行歷史回填");
+                }
+            }
+        }
+
+        return new CalibrationItemAssessment
+        {
+            ItemName = "PRTG 值型基線",
+            Status = status,
+            KeyMetrics = new Dictionary<string, object>
+            {
+                ["WhitelistedSensors"] = whitelistedSensors.Count,
+                ["MappedHosts"] = mappedHostsCount,
+                ["MaxCoverageDays"] = maxCoverageDays,
+                ["HostsReachingAvailable"] = hostsAvailable,
+                ["HostsReachingSufficient"] = hostsSufficient
+            },
+            CurrentThresholds = thresholds,
+            Explanations = explanations
+        };
+    }
+
+    private CalibrationItemAssessment AssessPrtgRuleThresholds(
+        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors)
+    {
+        var thresholds = new Dictionary<string, object>
+        {
+            ["AvailableCoverageDays"] = CalibrationConstants.RuleThresholdAvailableDays,
+            ["AvailableHits"] = CalibrationConstants.RuleThresholdAvailableHits,
+            ["SufficientCoverageDays"] = CalibrationConstants.RuleThresholdSufficientDays,
+            ["SufficientHits"] = CalibrationConstants.RuleThresholdSufficientHits
+        };
+
+        if (!settings.PrtgEnabled || allSensors.Count == 0)
+        {
+            return new CalibrationItemAssessment
+            {
+                ItemName = "PRTG 規則門檻",
+                Status = CalibrationStatus.Unavailable,
+                KeyMetrics = new Dictionary<string, object>
+                {
+                    ["DistinctCoverageDays"] = 0,
+                    ["TotalRuleHits"] = 0
+                },
+                CurrentThresholds = thresholds,
+                Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
+            };
+        }
+
+        var from = anchor.Date.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
+        var toExclusive = anchor.Date.AddDays(1);
+        var stateSummary = _prtgStore.GetStateChangeCoverageSummary(from, toExclusive);
+        var distinctDates = stateSummary.DistinctDates;
+
+        var ruleHits = _issueQuery.AggregatePrtgRuleHits(from, anchor.Date);
+        var totalHits = ruleHits.Sum(h => h.HitCount);
+
+        // 分母為零一律判不足：若期間內變更涵蓋天數或命中筆數為 0，不得判為可用
+        CalibrationStatus status;
+        if (distinctDates == 0 || totalHits == 0)
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+        else if (distinctDates >= CalibrationConstants.RuleThresholdSufficientDays &&
+                 totalHits >= CalibrationConstants.RuleThresholdSufficientHits)
+        {
+            status = CalibrationStatus.Sufficient;
+        }
+        else if (distinctDates >= CalibrationConstants.RuleThresholdAvailableDays &&
+                 totalHits >= CalibrationConstants.RuleThresholdAvailableHits)
+        {
+            status = CalibrationStatus.Available;
+        }
+        else
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+
+        var explanations = new List<string>();
+        if (settings.PrtgRetentionDays < CalibrationConstants.RuleThresholdSufficientDays)
+        {
+            explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.RuleThresholdSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
+        }
+
+        if (status == CalibrationStatus.Insufficient)
+        {
+            if (distinctDates < CalibrationConstants.RuleThresholdAvailableDays)
+            {
+                var needed = CalibrationConstants.RuleThresholdAvailableDays - distinctDates;
+                explanations.Add($"目前最長涵蓋 {distinctDates} 天，還需要約 {needed} 天");
+            }
+            if (totalHits < CalibrationConstants.RuleThresholdAvailableHits)
+            {
+                explanations.Add($"目前規則命中 {totalHits} 筆，需要 {CalibrationConstants.RuleThresholdAvailableHits} 筆");
+            }
+        }
+        else if (status == CalibrationStatus.Available)
+        {
+            if (distinctDates < CalibrationConstants.RuleThresholdSufficientDays)
+            {
+                var needed = CalibrationConstants.RuleThresholdSufficientDays - distinctDates;
+                explanations.Add($"目前最長涵蓋 {distinctDates} 天，還需要約 {needed} 天");
+            }
+            if (totalHits < CalibrationConstants.RuleThresholdSufficientHits)
+            {
+                explanations.Add($"目前規則命中 {totalHits} 筆，充足需要 {CalibrationConstants.RuleThresholdSufficientHits} 筆");
+            }
+        }
+
+        return new CalibrationItemAssessment
+        {
+            ItemName = "PRTG 規則門檻",
+            Status = status,
+            KeyMetrics = new Dictionary<string, object>
+            {
+                ["DistinctCoverageDays"] = distinctDates,
+                ["TotalRuleHits"] = totalHits
+            },
+            CurrentThresholds = thresholds,
+            Explanations = explanations
+        };
+    }
+
+    private CalibrationItemAssessment AssessTriggeredFetchMagnitude(
+        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors)
+    {
+        var thresholds = new Dictionary<string, object>
+        {
+            ["AvailableDays"] = CalibrationConstants.TriggeredMagnitudeAvailableDays,
+            ["SufficientDays"] = CalibrationConstants.TriggeredMagnitudeSufficientDays,
+            ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays
+        };
+
+        if (!settings.PrtgEnabled || allSensors.Count == 0)
+        {
+            return new CalibrationItemAssessment
+            {
+                ItemName = "觸發式取數量級",
+                Status = CalibrationStatus.Unavailable,
+                KeyMetrics = new Dictionary<string, object>
+                {
+                    ["DaysWithValues"] = 0,
+                    ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays
+                },
+                CurrentThresholds = thresholds,
+                Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
+            };
+        }
+
+        var from = anchor.Date.AddDays(-(CalibrationConstants.TriggeredMagnitudeWindowDays - 1));
+        var toExclusive = anchor.Date.AddDays(1);
+        var magnitudes = _prtgStore.GetDailyValueMagnitudes(from, toExclusive);
+        var daysWithValues = magnitudes.Count(m => m.TotalCount > 0);
+
+        // 分母為零一律判不足：若有數值天數為 0，不得判為可用
+        CalibrationStatus status;
+        if (daysWithValues == 0)
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+        else if (daysWithValues >= CalibrationConstants.TriggeredMagnitudeSufficientDays)
+        {
+            status = CalibrationStatus.Sufficient;
+        }
+        else if (daysWithValues >= CalibrationConstants.TriggeredMagnitudeAvailableDays)
+        {
+            status = CalibrationStatus.Available;
+        }
+        else
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+
+        var explanations = new List<string>();
+        if (settings.PrtgRetentionDays < CalibrationConstants.TriggeredMagnitudeSufficientDays)
+        {
+            explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.TriggeredMagnitudeSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
+        }
+
+        if (status == CalibrationStatus.Insufficient)
+        {
+            var needed = CalibrationConstants.TriggeredMagnitudeAvailableDays - daysWithValues;
+            explanations.Add($"目前最長涵蓋 {daysWithValues} 天，還需要約 {needed} 天");
+        }
+        else if (status == CalibrationStatus.Available)
+        {
+            var needed = CalibrationConstants.TriggeredMagnitudeSufficientDays - daysWithValues;
+            explanations.Add($"目前最長涵蓋 {daysWithValues} 天，還需要約 {needed} 天");
+        }
+
+        return new CalibrationItemAssessment
+        {
+            ItemName = "觸發式取數量級",
+            Status = status,
+            KeyMetrics = new Dictionary<string, object>
+            {
+                ["DaysWithValues"] = daysWithValues,
+                ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays
+            },
+            CurrentThresholds = thresholds,
+            Explanations = explanations
+        };
+    }
+
+    private CalibrationItemAssessment AssessResidualCredentialThresholds(
+        DateTime anchor, SystemSettings settings)
+    {
+        var thresholds = new Dictionary<string, object>
+        {
+            ["AvailableHostDays"] = CalibrationConstants.ResidualAvailableHostDays,
+            ["AvailableCoverageDays"] = CalibrationConstants.ResidualAvailableDays,
+            ["SufficientHostDays"] = CalibrationConstants.ResidualSufficientHostDays,
+            ["SufficientCoverageDays"] = CalibrationConstants.ResidualSufficientDays
+        };
+
+        var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
+        using var ctx = _contextFactory();
+
+        var cutoff = anchor.Date.AddDays(-settings.RawEventRetentionDays);
+
+        var candidateRecordIds = ctx.TopIssues.AsNoTracking()
+            .Where(t => (t.EventId == 4625 || t.EventId == 4771) ||
+                        (t.LogName == "Linux" && candidateRuleIds.Contains(t.EventKey)))
+            .Select(t => t.RecordId)
+            .Distinct()
+            .ToHashSet();
+
+        if (candidateRecordIds.Count == 0)
+        {
+            return new CalibrationItemAssessment
+            {
+                ItemName = "殘留判定門檻",
+                Status = CalibrationStatus.Unavailable,
+                KeyMetrics = new Dictionary<string, object>
+                {
+                    ["CandidateHostDays"] = 0,
+                    ["DistinctCoverageDays"] = 0
+                },
+                CurrentThresholds = thresholds,
+                Explanations = new List<string>
+                {
+                    "請確認 4625／4771 與 Linux 登入失敗規則為啟用狀態、分析排程正常執行"
+                }
+            };
+        }
+
+        var candidateRows = ctx.DailyRecords.AsNoTracking()
+            .Where(r => candidateRecordIds.Contains(r.RecordId) && !r.DetailPruned && r.RecordDate >= cutoff && r.RecordDate <= anchor.Date)
+            .Select(r => new { r.HostId, r.RecordDate })
+            .ToList()
+            .Select(r => (r.HostId, Date: r.RecordDate.Date))
+            .Distinct()
+            .ToList();
+
+        var candidateHostDays = candidateRows.Count;
+        var distinctDays = candidateRows.Select(r => r.Date).Distinct().Count();
+
+        if (candidateHostDays == 0)
+        {
+            return new CalibrationItemAssessment
+            {
+                ItemName = "殘留判定門檻",
+                Status = CalibrationStatus.Unavailable,
+                KeyMetrics = new Dictionary<string, object>
+                {
+                    ["CandidateHostDays"] = 0,
+                    ["DistinctCoverageDays"] = 0
+                },
+                CurrentThresholds = thresholds,
+                Explanations = new List<string>
+                {
+                    "請確認 4625／4771 與 Linux 登入失敗規則為啟用狀態、分析排程正常執行"
+                }
+            };
+        }
+
+        // 分母為零一律判不足：若候選主機日數或相異天數為 0，不得判為可用
+        CalibrationStatus status;
+        if (candidateHostDays >= CalibrationConstants.ResidualSufficientHostDays &&
+            distinctDays >= CalibrationConstants.ResidualSufficientDays)
+        {
+            status = CalibrationStatus.Sufficient;
+        }
+        else if (candidateHostDays >= CalibrationConstants.ResidualAvailableHostDays &&
+                 distinctDays >= CalibrationConstants.ResidualAvailableDays)
+        {
+            status = CalibrationStatus.Available;
+        }
+        else
+        {
+            status = CalibrationStatus.Insufficient;
+        }
+
+        var explanations = new List<string>();
+        if (settings.RawEventRetentionDays < CalibrationConstants.ResidualSufficientDays)
+        {
+            explanations.Add($"原始事件內容保留天數目前為 {settings.RawEventRetentionDays} 天，小於充足所需的 {CalibrationConstants.ResidualSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
+        }
+
+        if (status == CalibrationStatus.Insufficient)
+        {
+            if (candidateHostDays < CalibrationConstants.ResidualAvailableHostDays)
+            {
+                explanations.Add("請確認 4625／4771 與 Linux 登入失敗規則為啟用狀態、分析排程正常執行");
+                explanations.Add($"目前只有 {candidateHostDays} 個候選主機日，需要 {CalibrationConstants.ResidualAvailableHostDays} 個；可擴大分析天數或等待資料累積");
+            }
+            if (distinctDays < CalibrationConstants.ResidualAvailableDays)
+            {
+                var needed = CalibrationConstants.ResidualAvailableDays - distinctDays;
+                explanations.Add($"目前最長涵蓋 {distinctDays} 天，還需要約 {needed} 天");
+            }
+        }
+        else if (status == CalibrationStatus.Available)
+        {
+            if (candidateHostDays < CalibrationConstants.ResidualSufficientHostDays)
+            {
+                explanations.Add($"目前有 {candidateHostDays} 個候選主機日，充足需要 {CalibrationConstants.ResidualSufficientHostDays} 個");
+            }
+            if (distinctDays < CalibrationConstants.ResidualSufficientDays)
+            {
+                var needed = CalibrationConstants.ResidualSufficientDays - distinctDays;
+                explanations.Add($"目前最長涵蓋 {distinctDays} 天，還需要約 {needed} 天");
+            }
+        }
+
+        return new CalibrationItemAssessment
+        {
+            ItemName = "殘留判定門檻",
+            Status = status,
+            KeyMetrics = new Dictionary<string, object>
+            {
+                ["CandidateHostDays"] = candidateHostDays,
+                ["DistinctCoverageDays"] = distinctDays
+            },
+            CurrentThresholds = thresholds,
+            Explanations = explanations
+        };
+    }
+
+    private List<CalibrationResidualCandidateRow> BuildResidualCandidateRows(
+        DateTime anchor, int rawEventRetentionDays)
+    {
+        var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
+        using var ctx = _contextFactory();
+
+        var cutoff = anchor.Date.AddDays(-rawEventRetentionDays);
+
+        var candidateRecordIds = ctx.TopIssues.AsNoTracking()
+            .Where(t => (t.EventId == 4625 || t.EventId == 4771) ||
+                        (t.LogName == "Linux" && candidateRuleIds.Contains(t.EventKey)))
+            .Select(t => t.RecordId)
+            .Distinct()
+            .ToHashSet();
+
+        if (candidateRecordIds.Count == 0)
+        {
+            return new List<CalibrationResidualCandidateRow>();
+        }
+
+        var candidateDailyRows = ctx.DailyRecords.AsNoTracking()
+            .Where(r => candidateRecordIds.Contains(r.RecordId) && !r.DetailPruned && r.RecordDate >= cutoff && r.RecordDate <= anchor.Date)
+            .OrderByDescending(r => r.RecordDate)
+            .ThenByDescending(r => r.RecordId)
+            .Take(CalibrationConstants.ResidualCandidateMaxCount)
+            .Select(r => new { r.HostId, r.HostName, r.RecordDate, r.ContentJson })
+            .ToList();
+
+        var result = new List<CalibrationResidualCandidateRow>();
+        foreach (var row in candidateDailyRows)
+        {
+            if (string.IsNullOrWhiteSpace(row.ContentJson)) continue;
+
+            DailyAnalysisRecord? record;
+            try
+            {
+                record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "[校準] 反序列化主機 {Host} 日期 {Date:yyyy-MM-dd} 失敗，略過此筆", row.HostName, row.RecordDate);
+                continue;
+            }
+
+            if (record?.TopIssues == null || record.TopIssues.Count == 0) continue;
+
+            foreach (var issue in record.TopIssues)
+            {
+                bool isCandidate = (issue.EventId == 4625 || issue.EventId == 4771) ||
+                                   (string.Equals(issue.LogName, "Linux", StringComparison.OrdinalIgnoreCase) && candidateRuleIds.Contains(issue.EventKey));
+
+                if (!isCandidate || issue.LoginFailureDetails == null || issue.LoginFailureDetails.Count == 0)
+                {
+                    continue;
+                }
+
+                var metrics = ResidualCredentialDetector.EvaluateMetrics(issue, null, record.Date);
+                if (metrics == null) continue;
+
+                // 嚴格排除任何使用者帳號與來源明細文字，僅輸出結構統計指標
+                result.Add(new CalibrationResidualCandidateRow(
+                    record.HostId,
+                    record.Host,
+                    record.Date,
+                    metrics.EventId,
+                    issue.LoginFailureDetails.Count,
+                    metrics.TotalDetailCount,
+                    metrics.ConcentrationRatio,
+                    metrics.MechanicalLogonTypeRatio,
+                    metrics.SingleGroupRatio,
+                    metrics.IsTruncated,
+                    metrics.IsMatch
+                ));
+
+                if (result.Count >= CalibrationConstants.ResidualCandidateMaxCount)
+                {
+                    return result;
+                }
+            }
+        }
+
+        return result;
+    }
+}
