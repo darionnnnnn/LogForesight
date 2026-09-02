@@ -76,6 +76,8 @@ internal static class RecordStorageShaper
                 // 所以精簡掉不影響判定，而 200 個帳號是體積大戶。
                 KeyAccounts = null,
                 KeyAccountsTruncated = false,
+                KeyIps = null,
+                KeyIpsTruncated = false,
                 // 登入失敗明細（A1）：跨日比對依賴此欄位，已分組封頂 50 組體積受控，完整保留不精簡
                 LoginFailureDetails = i.LoginFailureDetails,
                 LoginFailureTotalCount = i.LoginFailureTotalCount,
