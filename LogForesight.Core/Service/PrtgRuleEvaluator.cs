@@ -32,10 +32,13 @@ public static class PrtgRuleEvaluator
         IReadOnlyList<PrtgStateChangeRow> changes,
         IReadOnlyDictionary<long, long> sensorToDevice,
         IReadOnlyList<(long Objid, long DeviceObjid, string? Status)> sensorStatuses,
-        PrtgRuleThresholds? thresholds = null)
+        PrtgRuleThresholds? thresholds = null,
+        IReadOnlySet<string>? enabledRuleCodes = null)
     {
         thresholds ??= new PrtgRuleThresholds();
         var findings = new List<PrtgFinding>();
+
+        bool IsEnabled(string ruleCode) => enabledRuleCodes == null || enabledRuleCodes.Contains(ruleCode);
 
         var dayStart = day.Date;
         var dayEnd = dayStart.AddDays(1);
@@ -69,7 +72,7 @@ public static class PrtgRuleEvaluator
                     var effectiveStart = enteredDownAt < dayStart ? dayStart : enteredDownAt;
                     var durationMinutes = (int)(dayEnd - effectiveStart).TotalMinutes;
 
-                    if (durationMinutes >= thresholds.DownMinutes)
+                    if (durationMinutes >= thresholds.DownMinutes && IsEnabled(RuleDown))
                     {
                         findings.Add(new PrtgFinding(
                             deviceObjid,
@@ -109,7 +112,7 @@ public static class PrtgRuleEvaluator
                 }
             }
 
-            if (flapCount >= thresholds.FlapCount)
+            if (flapCount >= thresholds.FlapCount && IsEnabled(RuleFlapping))
             {
                 findings.Add(new PrtgFinding(
                     deviceObjid,
@@ -138,7 +141,7 @@ public static class PrtgRuleEvaluator
                 }
             }
 
-            if (warningMinutes >= thresholds.WarningMinutes)
+            if (warningMinutes >= thresholds.WarningMinutes && IsEnabled(RuleWarning))
             {
                 findings.Add(new PrtgFinding(
                     deviceObjid,
@@ -160,7 +163,7 @@ public static class PrtgRuleEvaluator
                 continue;
             }
 
-            if (sensors.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)))
+            if (sensors.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)) && IsEnabled(RuleSilent))
             {
                 findings.Add(new PrtgFinding(
                     deviceObjid,

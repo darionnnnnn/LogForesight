@@ -113,6 +113,15 @@ public class KnownIssueRule
     /// 刻意用子字串而非 regex——人工在 Web 頁維護時所見即所得，見 docs/LINUX-RULES.md §1.2。</summary>
     public string[] MessagePatterns { get; init; } = Array.Empty<string>();
 
+    // ── PRTG 專用比對欄位 ───────────────────────────────────────────
+    /// <summary>PRTG 規則代碼（down／flapping／warning／silent）。僅 platform=prtg 使用。</summary>
+    public string? PrtgRuleCode { get; init; }
+
+    /// <summary>PRTG 規則門檻。語意依規則代碼而定：down／warning 為分鐘數，flapping 為往返次數，
+    /// silent 不使用（填 0）。刻意不重用 CountThreshold——它的語意是「當日發生次數，未達只降級不排除」，
+    /// 承載不了分鐘數，也沒有「未達即不成立」的語意。</summary>
+    public int PrtgThreshold { get; init; }
+
     public IssueCategory Category { get; init; }
 
     /// <summary>
@@ -188,6 +197,8 @@ public class KnownIssueRule
         ProgramPattern = ProgramPattern,
         EventNamePattern = EventNamePattern,
         MessagePatterns = MessagePatterns,
+        PrtgRuleCode = PrtgRuleCode,
+        PrtgThreshold = PrtgThreshold,
         Category = Category,
         Severity = Severity,
         ElevatesDayRisk = ElevatesDayRisk,

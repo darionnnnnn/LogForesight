@@ -1,3 +1,4 @@
+using LogForesight.Core.Service;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -452,5 +453,148 @@ public class RuleValidatorTests
         var outcome = RuleValidator.Validate(new List<KnownIssueRule> { withMessages, other });
 
         Assert.Empty(outcome.ShadowWarnings);
+    }
+
+    private static KnownIssueRule PrtgRule(
+        string id = "custom-test-prtg-rule",
+        string origin = "custom",
+        bool enabled = true,
+        string scope = "all",
+        string prtgRuleCode = PrtgRuleEvaluator.RuleDown,
+        int prtgThreshold = 60,
+        IssueCategory category = IssueCategory.Service,
+        IssueSeverity severity = IssueSeverity.High,
+        string description = "desc",
+        string plainExplanation = "explanation",
+        string impact = "impact",
+        string[]? likelyCauses = null,
+        string[]? nextSteps = null) => new()
+        {
+            Id = id,
+            Origin = origin,
+            Enabled = enabled,
+            Scope = scope,
+            Platform = "prtg",
+            PrtgRuleCode = prtgRuleCode,
+            PrtgThreshold = prtgThreshold,
+            Category = category,
+            Severity = severity,
+            Description = description,
+            CountThreshold = 1,
+            PlainExplanation = plainExplanation,
+            Impact = impact,
+            LikelyCauses = likelyCauses ?? new[] { "cause" },
+            NextSteps = nextSteps ?? new[] { "step" }
+        };
+
+    [Fact]
+    public void PRTG規則_欄位齊備時通過驗證()
+    {
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { PrtgRule() });
+
+        Assert.Single(outcome.ValidRules);
+        Assert.Empty(outcome.SkippedRules);
+        Assert.Empty(outcome.ShadowWarnings);
+    }
+
+    [Fact]
+    public void PRTG規則_PrtgRuleCode不合法時不合格()
+    {
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { PrtgRule(prtgRuleCode: "invalid-code") });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Single(outcome.SkippedRules);
+        Assert.Contains("PrtgRuleCode", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void PRTG規則_Flapping門檻為1不合格_為2合格()
+    {
+        var invalid = PrtgRule(id: "invalid-flap", prtgRuleCode: PrtgRuleEvaluator.RuleFlapping, prtgThreshold: 1);
+        var valid = PrtgRule(id: "valid-flap", prtgRuleCode: PrtgRuleEvaluator.RuleFlapping, prtgThreshold: 2);
+
+        var outcomeInvalid = RuleValidator.Validate(new List<KnownIssueRule> { invalid });
+        var outcomeValid = RuleValidator.Validate(new List<KnownIssueRule> { valid });
+
+        Assert.Empty(outcomeInvalid.ValidRules);
+        Assert.Single(outcomeInvalid.SkippedRules);
+        Assert.Contains("PrtgThreshold", outcomeInvalid.SkippedRules[0].Reason);
+
+        Assert.Single(outcomeValid.ValidRules);
+        Assert.Empty(outcomeValid.SkippedRules);
+    }
+
+    [Fact]
+    public void PRTG規則_填寫Windows或Linux專用欄位時不合格()
+    {
+        var badWindowsSource = new KnownIssueRule
+        {
+            Id = "bad-1", Origin = "custom", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+            SourcePattern = "disk",
+            Category = IssueCategory.Service, Severity = IssueSeverity.High,
+            Description = "desc", PlainExplanation = "exp", Impact = "imp",
+            LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+        };
+
+        var badWindowsEventIds = new KnownIssueRule
+        {
+            Id = "bad-2", Origin = "custom", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+            EventIds = new[] { 100 },
+            Category = IssueCategory.Service, Severity = IssueSeverity.High,
+            Description = "desc", PlainExplanation = "exp", Impact = "imp",
+            LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+        };
+
+        var badWindowsMatchAll = new KnownIssueRule
+        {
+            Id = "bad-3", Origin = "custom", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+            MatchAllEventIds = true,
+            Category = IssueCategory.Service, Severity = IssueSeverity.High,
+            Description = "desc", PlainExplanation = "exp", Impact = "imp",
+            LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+        };
+
+        var badLinuxProgram = new KnownIssueRule
+        {
+            Id = "bad-4", Origin = "custom", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+            ProgramPattern = "sshd",
+            Category = IssueCategory.Service, Severity = IssueSeverity.High,
+            Description = "desc", PlainExplanation = "exp", Impact = "imp",
+            LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+        };
+
+        var badLinuxEventName = new KnownIssueRule
+        {
+            Id = "bad-5", Origin = "custom", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+            EventNamePattern = "SSHD_LOGIN",
+            Category = IssueCategory.Service, Severity = IssueSeverity.High,
+            Description = "desc", PlainExplanation = "exp", Impact = "imp",
+            LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+        };
+
+        var badLinuxMessages = new KnownIssueRule
+        {
+            Id = "bad-6", Origin = "custom", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60,
+            MessagePatterns = new[] { "failed password" },
+            Category = IssueCategory.Service, Severity = IssueSeverity.High,
+            Description = "desc", PlainExplanation = "exp", Impact = "imp",
+            LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+        };
+
+        var badRules = new[] { badWindowsSource, badWindowsEventIds, badWindowsMatchAll, badLinuxProgram, badLinuxEventName, badLinuxMessages };
+
+        foreach (var bad in badRules)
+        {
+            var outcome = RuleValidator.Validate(new List<KnownIssueRule> { bad });
+            Assert.Empty(outcome.ValidRules);
+            Assert.Single(outcome.SkippedRules);
+            Assert.Contains("專用欄位", outcome.SkippedRules[0].Reason);
+        }
     }
 }

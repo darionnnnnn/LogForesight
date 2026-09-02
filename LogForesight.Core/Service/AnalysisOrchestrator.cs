@@ -1125,8 +1125,39 @@ public class AnalysisOrchestrator
                     .GroupBy(s => s.Objid)
                     .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
 
+                var prtgRules = KnownIssueCatalog.Rules
+                    .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && r.Enabled)
+                    .ToList();
+
+                var enabledRuleCodes = prtgRules
+                    .Where(r => !string.IsNullOrEmpty(r.PrtgRuleCode))
+                    .Select(r => r.PrtgRuleCode!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var downMinutes = 60;
+                var flapCount = 5;
+                var warningMinutes = 240;
+
+                foreach (var rule in prtgRules)
+                {
+                    if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase))
+                    {
+                        downMinutes = rule.PrtgThreshold;
+                    }
+                    else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase))
+                    {
+                        flapCount = rule.PrtgThreshold;
+                    }
+                    else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase))
+                    {
+                        warningMinutes = rule.PrtgThreshold;
+                    }
+                }
+
+                var thresholds = new PrtgRuleThresholds(downMinutes, flapCount, warningMinutes);
+
                 var findings = PrtgRuleEvaluator.Evaluate(
-                    day, changes, sensorToDevice, sensorStatuses, new PrtgRuleThresholds());
+                    day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes);
 
                 var hostMapRows = prtgStore.GetHostMapForDate(day);
                 var deviceToHost = new Dictionary<long, long>();

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LogForesight.Core.Service;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -206,15 +207,17 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共28條_總計92條()
+    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共4條_總計96條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
         var linux = rules.Where(r => r.Platform == "linux").ToList();
+        var prtg = rules.Where(r => r.Platform == "prtg").ToList();
 
         Assert.Equal(64, windows.Count);
         Assert.Equal(28, linux.Count);
-        Assert.Equal(92, rules.Count);
+        Assert.Equal(4, prtg.Count);
+        Assert.Equal(96, rules.Count);
     }
 
     [Fact]
@@ -470,4 +473,54 @@ public class KnownIssueCatalogTests : IDisposable
                 InstanceId = eventId
             })
             .ToList();
+
+    [Fact]
+    public void 種子含四條PRTG規則且全部通過RuleValidator()
+    {
+        var rules = KnownIssueSeed.CreateRules();
+        var prtgRules = rules.Where(r => r.Platform == "prtg").ToList();
+
+        Assert.Equal(4, prtgRules.Count);
+        Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-down" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && r.PrtgThreshold == 60);
+        Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-flapping" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && r.PrtgThreshold == 5);
+        Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-warning" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleWarning && r.PrtgThreshold == 240);
+        Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-silent" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent && r.PrtgThreshold == 0);
+
+        var outcome = RuleValidator.Validate(prtgRules);
+        Assert.Equal(4, outcome.ValidRules.Count);
+        Assert.Empty(outcome.SkippedRules);
+        Assert.Empty(outcome.ShadowWarnings);
+    }
+
+    [Fact]
+    public void CloneForSeedOverwrite_保留PRTG欄位_突變防護()
+    {
+        var original = new KnownIssueRule
+        {
+            Id = "builtin-prtg-down",
+            Origin = "builtin",
+            Enabled = true,
+            Scope = "all",
+            Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown,
+            PrtgThreshold = 120,
+            Category = IssueCategory.Service,
+            Severity = IssueSeverity.High,
+            ElevatesDayRisk = true,
+            Description = "持續 Down",
+            CountThreshold = 1,
+            PlainExplanation = "白話說明",
+            Impact = "影響",
+            LikelyCauses = new[] { "原因" },
+            NextSteps = new[] { "步驟" }
+        };
+
+        var cloned = original.CloneForSeedOverwrite(enabled: false);
+
+        Assert.Equal(original.Id, cloned.Id);
+        Assert.False(cloned.Enabled);
+        Assert.Equal("prtg", cloned.Platform);
+        Assert.Equal(PrtgRuleEvaluator.RuleDown, cloned.PrtgRuleCode);
+        Assert.Equal(120, cloned.PrtgThreshold);
+    }
 }

@@ -227,4 +227,77 @@ public class PrtgRuleEvaluatorTests
         Assert.DoesNotContain(findings, f => f.SensorObjid == 999);
         Assert.DoesNotContain(findings, f => f.DeviceObjid == 3);
     }
+
+    [Fact]
+    public void EnabledRuleCodes篩選生效_只啟用Down時其餘三種不產生()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            // 觸發 Down (sensor 101: 22:00 進入 Down -> 120 分鐘 >= 60)
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 22, 0, 0), Status = "Down" },
+            // 觸發 Flapping (sensor 102: 5 次往返)
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 1, 0, 0), Status = "Down" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 2, 0, 0), Status = "Up" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 3, 0, 0), Status = "Down" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 4, 0, 0), Status = "Up" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 5, 0, 0), Status = "Down" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 6, 0, 0), Status = "Up" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 7, 0, 0), Status = "Down" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 8, 0, 0), Status = "Up" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 9, 0, 0), Status = "Down" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 10, 0, 0), Status = "Up" },
+            // 觸發 Warning (sensor 103: 00:00~06:00 = 360 分鐘 >= 240)
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 0, 0, 0), Status = "Warning" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 6, 0, 0), Status = "Up" }
+        };
+
+        var sensorToDevice = new Dictionary<long, long>
+        {
+            [101] = 1,
+            [102] = 1,
+            [103] = 1
+        };
+
+        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status)>
+        {
+            (201, 2, "Unknown") // 觸發 Silent (device 2)
+        };
+
+        var enabledOnlyDown = new HashSet<string> { PrtgRuleEvaluator.RuleDown };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, sensorStatuses, new PrtgRuleThresholds(60, 5, 240), enabledOnlyDown);
+
+        Assert.Single(findings);
+        Assert.Equal(PrtgRuleEvaluator.RuleDown, findings[0].RuleCode);
+        Assert.DoesNotContain(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleFlapping);
+        Assert.DoesNotContain(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleWarning);
+        Assert.DoesNotContain(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleSilent);
+    }
+
+    [Fact]
+    public void 自訂門檻生效_DownMinutes設為30時未達60分鐘之案例成立()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            // sensor 101: 23:20 進入 Down，持續至當日結束（40 分鐘 < 60 分鐘，但 >= 30 分鐘）
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 23, 20, 0), Status = "Down" }
+        };
+
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1 };
+
+        // 預設門檻 (60 分鐘) -> 不成立
+        var defaultFindings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, Array.Empty<(long, long, string?)>(), new PrtgRuleThresholds(60, 5, 240));
+        Assert.Empty(defaultFindings);
+
+        // 自訂門檻 (30 分鐘) -> 成立
+        var customThresholds = new PrtgRuleThresholds(30, 5, 240);
+        var customFindings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, Array.Empty<(long, long, string?)>(), customThresholds);
+        Assert.Single(customFindings);
+        Assert.Equal(101, customFindings[0].SensorObjid);
+        Assert.Equal(PrtgRuleEvaluator.RuleDown, customFindings[0].RuleCode);
+        Assert.Equal(40, customFindings[0].Magnitude);
+    }
 }
