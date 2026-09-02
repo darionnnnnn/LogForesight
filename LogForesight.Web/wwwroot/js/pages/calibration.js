@@ -61,6 +61,44 @@ function renderExplanations(containerId, list) {
     }
 }
 
+/** 門檻鍵的中文標籤（後端 CurrentThresholds 的鍵；沒對應到的鍵原樣顯示） */
+const THRESHOLD_LABELS = {
+    RequiredHosts: '需要主機數',
+    AvailableCoverageDays: '可用所需涵蓋天數',
+    SufficientCoverageDays: '充足所需涵蓋天數',
+    MinDailyOkHours: '單日有效小時數下限',
+    WindowDays: '評估視窗天數',
+    AvailableDays: '可用所需天數',
+    SufficientDays: '充足所需天數',
+    AvailableHits: '可用所需命中筆數',
+    SufficientHits: '充足所需命中筆數',
+    AvailableHostDays: '可用所需主機日數',
+    SufficientHostDays: '充足所需主機日數'
+};
+
+/** 門檻現值：後端已算好並隨判定回傳，沒有這一段的話使用者只看得到「目前多少」、
+ *  看不到「需要多少」，而這頁存在的理由正是回答「還差多少」 */
+function renderThresholds(cardKey, thresholds) {
+    const container = document.getElementById(`thresholds-${cardKey}`);
+    if (!container) return;
+    container.replaceChildren();
+
+    const entries = Object.entries(thresholds ?? {});
+    if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'text-muted small';
+        empty.textContent = '-';
+        container.appendChild(empty);
+        return;
+    }
+
+    for (const [key, value] of entries) {
+        const label = THRESHOLD_LABELS[key] ?? key;
+        const displayVal = typeof value === 'number' ? formatNumber(value) : String(value);
+        container.appendChild(createMetricRow(label, displayVal));
+    }
+}
+
 function renderCard(cardKey, itemData, metricLabels) {
     if (!itemData) return;
 
@@ -84,6 +122,7 @@ function renderCard(cardKey, itemData, metricLabels) {
         }
     }
 
+    renderThresholds(cardKey, itemData.currentThresholds);
     renderExplanations(`explanations-${cardKey}`, itemData.explanations);
 }
 
@@ -142,8 +181,18 @@ function renderAssessment(data) {
             hint.className = 'text-success small fw-semibold';
             hint.textContent = `計算完成（${timeStr}）：四項指標皆達標，可直接匯出`;
         } else {
+            // 直接點名是哪幾項卡住匯出——只說「部分指標未達標」會讓使用者得自己四張卡逐一比對
+            const blocking = [
+                data.prtgValueBaseline,
+                data.prtgRuleThresholds,
+                data.triggeredFetchMagnitude,
+                data.residualCredentialThresholds
+            ].filter(item => item && !item.isEligible).map(item => item.itemName);
+
             hint.className = 'text-warning small fw-semibold';
-            hint.textContent = `計算完成（${timeStr}）：部分指標未達標，需勾選覆寫才可匯出`;
+            hint.textContent = blocking.length > 0
+                ? `計算完成（${timeStr}）：${blocking.join('、')} 未達標，需勾選覆寫才可匯出`
+                : `計算完成（${timeStr}）：部分指標未達標，需勾選覆寫才可匯出`;
         }
     }
 

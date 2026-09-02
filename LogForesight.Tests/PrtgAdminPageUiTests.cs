@@ -212,5 +212,19 @@ public class PrtgAdminPageUiTests
         Assert.Contains("id=\"calibration-calc-btn\"", calibrationCshtmlContent);
         Assert.Contains("id=\"calibration-export-btn\"", calibrationCshtmlContent);
         Assert.Contains("id=\"calibration-override-check\"", calibrationCshtmlContent);
+
+        // 5. 四張卡都要有「門檻現值」容器：後端 CurrentThresholds 有填、DTO 有傳，
+        //    少了這些容器前端就只顯示「目前多少」而看不到「需要多少」——
+        //    斷鏈不會有任何編譯或測試訊號，所以在這裡釘住
+        Assert.Contains("id=\"thresholds-prtg-value-baseline\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-prtg-rule-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-triggered-fetch-magnitude\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-residual-credential-thresholds\"", calibrationCshtmlContent);
+
+        // 6. 前端確實消費 currentThresholds／isEligible（後端算好卻沒人讀＝白算）
+        var calibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "calibration.js");
+        var calibrationJs = File.ReadAllText(calibrationJsPath);
+        Assert.Contains("currentThresholds", calibrationJs);
+        Assert.Contains("isEligible", calibrationJs);
     }
 }
