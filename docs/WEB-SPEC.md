@@ -1816,7 +1816,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
-  八個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／郵件通知／PRTG／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  七個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
@@ -2043,26 +2043,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      前狀態、批次／跨主機取「新轉入」子集，信件的問題數／主機數也只算該子集）——已上報過的
      問題改備註重存不重寄。fire-and-forget，內部 try/catch 到底，寄送成敗不影響狀態變更。
 
-  8. **PRTG**：外部監控系統整合的連線與操作介面（模組規格見 docs/PRTG-SPEC.md）。四個區塊：
-     (a) **連線設定**（含認證方式切換：API token／帳號密碼／帳號＋passhash）＋「測試連線」（`POST
-     api/admin/settings/prtg-test`，用表單目前值試連，token／密碼／passhash 留空皆 fallback 已儲存密文；
-     連線失敗回 `success=false` 就地顯示，不當系統錯誤）。
-     (b) **鏡像狀態**（`GET api/admin/settings/prtg-mirror`）：device／sensor 計數、各類資料的
-     最新時間點、當日主機對應摘要與衝突／未對應清單（各前 20 筆）。
-     (c) **歷史回填**與 (d) **環境探測**：兩者都是背景執行＋前端每 2 秒輪詢狀態，輸出以
-     `<textarea readonly>` 呈現（不走 innerHTML）。**兩者互斥**——都會打同一台 PRTG，
-     任一執行中時另一個拒絕啟動。
-     `PrtgRetentionDays` 放在本頁籤而不是「資料保留」頁籤（與連線設定同一模組），
-     下限與上限規則同其他保留天數，另受「不可大於歷史資料保留天數」約束。
+  **PRTG 不在本頁**：連線設定與全部擷取參數都在 `/admin/prtg`（§9.9e），
+  總開關與歷史回填在排程作業頁（§9.10）。「資料保留」頁籤底部有一行指路。
+  設定頁不再送出任何 PRTG 欄位，故 `UpdateSystemSettingsRequest` 中的 PRTG 欄位
+  **一律可空、有送才更新**（見 docs/PRTG-SPEC.md §7 的警語）。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `POST api/admin/settings/mail-test`、
-  `POST api/admin/settings/prtg-test`（PRTG 測試連線，用表單目前值）、
-  `GET api/admin/settings/prtg-mirror`（PRTG 鏡像狀態與主機對應摘要）、
-  `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
-  `POST api/admin/settings/prtg-backfill/start`、`GET api/admin/settings/prtg-backfill/status`、
   `GET api/admin/settings/ai-usage`（token 用量統計）、
   `POST api/admin/settings/ai-usage/reset`（清空重新計算，不可復原、留稽核）、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
+  （PRTG 相關端點見 §9.9e）
 
 ### 9.9c `/help/manual` 操作說明書＋AI 提問（`Maintain`，實驗性）
 
@@ -2165,6 +2155,56 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - API：`GET api/admin/setup/status`、`POST api/admin/setup/skip/{stepId}`（未知／不可跳過的
   stepId 後端直接忽略，前端不顯示按鈕只是第一道）、`POST api/admin/setup/hidden`（走稽核）。
 
+### 9.9e `/admin/prtg` PRTG 維護（`Maintain`）
+
+PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
+動態工作（總開關、歷史回填）在排程作業頁——功能依性質分置，不散落各頁。
+
+三個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）：
+
+- **連線與參數**：連線設定（認證方式三選一：API token／帳號密碼／帳號＋passhash）
+  ＋擷取參數（忽略 SSL、逾時、併發、回填天數、保留天數、sensor type 白名單），
+  同一顆儲存鈕。「測試連線」用表單目前值試連（秘密欄留空皆 fallback 已儲存密文；
+  連線失敗回 `success=false` 就地顯示，不當系統錯誤）。
+  存檔走 **`PUT api/admin/settings/prtg` 專屬端點**，只寫 PRTG 欄位——
+  刻意不走整包設定更新，那會在「讀取到送出之間」覆蓋他人的改動
+  （整包更新中的 PRTG 欄位因此一律可空、有送才更新）。
+  `PrtgRetentionDays` 受「不可大於歷史資料保留天數」約束，前端先提示、後端仍驗一次，
+  且該檢查以 **effective 值**（未送就取已儲存值）比較，否則只調小歷史保留天數時上限會失效。
+- **鏡像狀態**：device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、
+  主機對應摘要與衝突／未對應清單（各前 20 筆）、人工對應清單與指派入口、
+  跨後端資料搬運（匯出／匯入，見 docs/PRTG-SPEC.md §10）。
+- **環境探測**：預設收合，背景執行＋前端每 2 秒輪詢，輸出以 `<textarea readonly>` 呈現。
+  **與歷史回填互斥**——都會打同一台 PRTG，任一執行中時另一個拒絕啟動。
+
+API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
+`POST api/admin/settings/prtg-test`、`GET api/admin/settings/prtg-mirror`、
+`GET/PUT api/admin/settings/prtg-manual-map`、
+`POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
+`GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
+
+### 9.9f `/admin/calibration` 校準數值匯出（`Maintain`）
+
+回答一個問題：**下一輪要設計 PRTG 值型規則與校準幾個保守門檻，資料量夠了嗎？**
+夠了就一次匯出成文字檔交給開發端分析。**本頁沒有任何可儲存的設定欄位**——
+校準門檻是程式常數，尚未校準的門檻再開設定是套娃。
+
+- 四張卡對應四個校準項：PRTG 值型基線、PRTG 規則門檻、觸發式取數量級、殘留判定門檻。
+  每張顯示**目前累積量**、**狀態徽章**（不足／可用／充足／無法取得）、
+  **門檻現值**、**補充說明**。說明一律帶實際數字（目前值與所需值，例如「還需要約 N 天」），
+  不寫空泛的「資料不足」。
+- 判定是重查詢，**按「重新計算」才跑**，頁面載入不自動執行。
+- 分母為零一律判「不足」——「什麼都沒量到」不得被當成「量到而且全部達標」。
+- 匯出閘門：四項全部達「可用」以上才解鎖；未達標需勾「仍要匯出」覆寫，
+  覆寫照樣寫稽核且 detail 標記。下載走 **fetch + blob**，
+  不用 `location.assign`（後端擲驗證例外時使用者會看到整頁 JSON，錯誤訊息就消失了）。
+- 匯出檔為自描述 JSON（UTF-8 無 BOM），含四項判定摘要與四個資料集。
+  **殘留判定資料集只輸出統計形狀，不含任何帳號名稱。**
+  值型基線是 per-sensor **每日聚合**，需要原始 hourly 時走 PRTG 維護頁的資料搬運。
+
+API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
+（`override=true` 為覆寫匯出）。門檻定義與資料集內容見 docs/PRTG-SPEC.md §11。
+
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
 - **改名與權限放寬**：側欄由「執行監控」改名
   「排程作業」；權限由單一 `DevMonitor` 放寬為 **DevMonitor 或 Maintain 任一**（OR 語意，
@@ -2200,8 +2240,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   存在，只是前端從未顯示——原本只看得到「執行中」，看不出何時開始、跑了多久。前端每秒
   本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
   `setInterval` 累積誤差）。
-- **執行進度條**：狀態卡在執行中顯示進度條＋
-  「本機分析／NetIQ 機房分析　x / y 主機日」文字；粒度為主機日，經 Core 的 `IRunProgress`
+- **執行進度條**：狀態卡在執行中顯示**三條**進度軌——
+  「本機分析／NetIQ 機房分析　x / y 主機日」與「PRTG　x / y sensor」；前兩條粒度為主機日，
+  經 Core 的 `IRunProgress`
   介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
   ——分母隨掃描逐步變大、只增不減），Web 端 `WebRunProgress` 落地 `SchedulerRunState`，
   status API 帶 `progressPhase/progressDone/progressTotal`。total=0（清理／掃描階段）顯示
@@ -2209,13 +2250,23 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
+  **PRTG 進度軌**：PRTG 擷取與本機／NetIQ 並行，因此在 NetIQ、本機之外自成一組**互不覆蓋**的欄位
+  （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-sync`（結構同步，total=0 顯示不定進度）／
+  `prtg-values`（每日數值）／`prtg-triggered`（觸發式取數）／`prtg-done`（收尾清空，
+  放在 finally，成功失敗都送，比照 `netiq-done`）。分子逐 sensor 累加。
+  **`ReportProgress` 的最後一個分支是 catch-all（寫進 NetIQ 主組）**——PRTG 的 phase
+  必須顯式分支，否則會蓋掉 NetIQ 的進度條（已有反例測試釘住）。
+  **PRTG 歷史回填**另有自己的進度（獨立狀態物件與端點，不走 `SchedulerRunState`）：
+  「第 X / N 天（日期）：sensor a / b」，天數層與 sensor 層兩級，換日時 sensor 進度重設。
+  進度欄位加在 `PrtgBackfillRunState` 自己身上，**不動它繼承的 `PrtgProbeRunState`**
+  ——環境探測沒有自然分母，刻意不加進度。
   **AI 補寫進度**：AI 判讀已拆成獨立的 AI 分析排程（見 docs/DETECTION-SPEC.md「兩個獨立排程」），
   取數執行不再含 AI 段——原 `netiq-ai`／`netiq-backpressure` 子進度軌與 AI 統計欄位
   （`AiQueued`/`AiCompleted`/`AiAbandoned`）已隨之移除。AI 補寫的進度改在排程作業頁的
   「AI 分析狀態」卡（`/api/admin/schedule/ai-status`：執行狀態、已處理／目標件數、
   **待補積壓總數**、最後訊息），執行歷程以 `JobType=ai` 的 BatchRun 進執行紀錄逐筆視角。
   只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）：
-  取數側由 `SchedulerRunState.LatestActivity()` 單點決定（netiq 主進度優先、本機次之）；
+  取數側由 `SchedulerRunState.LatestActivity()` 單點決定（netiq 主進度優先、本機次之、PRTG 最後）；
   `/api/run-activity` 在取數閒置時輪到 AI 排程（單位「件」）——優先序 取數 > AI。
   **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
   「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
