@@ -145,7 +145,9 @@ internal static class ResidualCredentialDetector
                 continue;
             }
 
-            var accounts = ExtractAccountsFromKeyDetails(issue.KeyDetails);
+            // 優先讀取未截斷的結構化帳號欄位 KeyAccounts；若為 null 則 fallback 回 KeyDetails 顯示字串剖析。
+            // Fallback 理由：舊 ContentJson 沒有 KeyAccounts 欄位，在系統過渡期需相容舊紀錄（會隨保留期自然淘汰）。
+            var accounts = issue.KeyAccounts ?? ExtractAccountsFromKeyDetails(issue.KeyDetails);
             if (accounts.Count == 0)
             {
                 continue;

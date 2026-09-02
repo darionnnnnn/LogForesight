@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using Xunit;
@@ -933,5 +934,120 @@ public class ResidualCredentialDetectorTests
 
         Assert.Equal(IssueSeverity.Medium, lockoutSig.Severity);
         Assert.Equal("可能由殘留憑證重試觸發：帳號 svc_backup、svc_sync 當日有疑似殘留的重複登入失敗", lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// 修 bug 的證據測試：4740 簽章有 7 個帳號，殘留帳號是第 6 個
+    /// （舊實作用 KeyDetails 字串永遠看不到的位置，因 KeyDetails 只列前 5 個）。
+    /// 判定走結構化 KeyAccounts 欄位時能正確命中交叉比對、降級為 Medium、ElevatesDayRisk 為 false、
+    /// ResidualCredentialBasis 非空且包含第 6 個帳號。
+    /// </summary>
+    [Fact]
+    public void 事件4740_第6個帳號命中殘留憑證時走結構化欄位降級()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var loginFailSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        loginFailSig.ElevatesDayRisk = true;
+        loginFailSig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "user6", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        // 同時設定 KeyAccounts（7 個）與 KeyDetails 字串（照真實格式只含前 5 個加省略號）
+        lockoutSig.KeyAccounts = new List<string> { "user1", "user2", "user3", "user4", "user5", "user6", "user7" };
+        lockoutSig.KeyDetails = "相關帳號(7個): user1, user2, user3, user4, user5…；來源IP(1個): 10.0.0.5";
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "user6", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { loginFailSig, lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.Medium, lockoutSig.Severity);
+        Assert.False(lockoutSig.ElevatesDayRisk);
+        Assert.False(lockoutSig.ResidualCredentialRetry);
+        Assert.NotNull(lockoutSig.ResidualCredentialBasis);
+        Assert.Contains("user6", lockoutSig.ResidualCredentialBasis);
+        Assert.Equal("可能由殘留憑證重試觸發：帳號 user6 當日有疑似殘留的重複登入失敗", lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// Fallback 測試：舊資料的 4740 簽章無 KeyAccounts（為 null），
+    /// 但 KeyDetails 字串中包含殘留帳號（在前 5 個之內），退回字串解析仍可正確命中降級。
+    /// </summary>
+    [Fact]
+    public void 事件4740_無KeyAccounts時退回KeyDetails字串解析仍有效()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var loginFailSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        loginFailSig.ElevatesDayRisk = true;
+        loginFailSig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "user3", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyAccounts = null;
+        lockoutSig.KeyDetails = "相關帳號(5個): user1, user2, user3, user4, user5；來源IP(1個): 10.0.0.5";
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "user3", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { loginFailSig, lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.Medium, lockoutSig.Severity);
+        Assert.False(lockoutSig.ElevatesDayRisk);
+        Assert.False(lockoutSig.ResidualCredentialRetry);
+        Assert.NotNull(lockoutSig.ResidualCredentialBasis);
+        Assert.Contains("user3", lockoutSig.ResidualCredentialBasis);
+        Assert.Equal("可能由殘留憑證重試觸發：帳號 user3 當日有疑似殘留的重複登入失敗", lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// LogAggregator 端測試：一批含 7 個不同帳號的 Security 事件聚合後，
+    /// 簽章的結構化 KeyAccounts 欄位包含全部 7 個帳號（未截斷），
+    /// 而 KeyDetails 顯示字串仍依規範只列出前 5 個加省略號。
+    /// </summary>
+    [Fact]
+    public void LogAggregator_Security事件抽取結構化KeyAccounts與摘要KeyDetails()
+    {
+        var logs = new List<EventLogEntryData>();
+        for (int i = 1; i <= 7; i++)
+        {
+            logs.Add(new EventLogEntryData
+            {
+                LogName = "Security",
+                Source = "Microsoft-Windows-Security-Auditing",
+                EventId = 4740,
+                EntryType = EventLogEntryType.SuccessAudit,
+                Message = $"A user account was locked out.\nAccount Name: user{i}\nCaller Computer Name: WKS01",
+                TimeGenerated = DateTime.Today
+            });
+        }
+
+        var sigs = LogAggregator.Aggregate(logs);
+        var sig = Assert.Single(sigs);
+
+        Assert.NotNull(sig.KeyAccounts);
+        Assert.Equal(7, sig.KeyAccounts.Count);
+        Assert.Equal(new[] { "user1", "user2", "user3", "user4", "user5", "user6", "user7" }, sig.KeyAccounts);
+        Assert.False(sig.KeyAccountsTruncated);
+
+        Assert.NotNull(sig.KeyDetails);
+        Assert.Equal("相關帳號(7個): user1, user2, user3, user4, user5…", sig.KeyDetails);
+        Assert.DoesNotContain("user6", sig.KeyDetails);
+        Assert.DoesNotContain("user7", sig.KeyDetails);
     }
 }
