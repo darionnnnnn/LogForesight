@@ -28,10 +28,14 @@ public static class PrtgBackfillRunner
     /// <param name="store">PRTG 鏡像 store（傳入時啟用觸發式過濾）</param>
     /// <param name="records">分析紀錄查詢介面（傳入時啟用觸發式過濾）</param>
     /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>
+    /// <param name="dayProgress">天數層進度回呼（已完成天數, 總天數, 當前日期），null＝不回報</param>
+    /// <param name="sensorProgress">當日 sensor 進度回呼（已完成數, 總數），null＝不回報</param>
     /// <returns>有任何一天成功回傳 true，全部失敗回傳 false</returns>
     public static async Task<bool> RunAsync(
         PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct,
-        EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null)
+        EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null,
+        Action<int, int, DateTime?>? dayProgress = null,
+        Action<int, int>? sensorProgress = null)
     {
         if (days <= 0)
         {
@@ -51,13 +55,18 @@ public static class PrtgBackfillRunner
                 ct.ThrowIfCancellationRequested();
 
                 var day = DateTime.Today.AddDays(-i);
+                dayProgress?.Invoke(i, days, day);
+                sensorProgress?.Invoke(0, 0);
+
                 try
                 {
                     if (store == null || records == null)
                     {
                         // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
                         // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
-                        var result = await fetchService.FetchDayAsync(day, concurrency, ct, syncStructure: false);
+                        var result = await fetchService.FetchDayAsync(
+                            day, concurrency, ct, syncStructure: false,
+                            progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
                         if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
                         {
                             failedDays++;
@@ -112,7 +121,9 @@ public static class PrtgBackfillRunner
                                     targetSensorsCount = targets.Count;
                                     if (targets.Count > 0)
                                     {
-                                        var (written, failedSensors) = await fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct);
+                                        var (written, failedSensors) = await fetchService.FetchValuesForSensorsAsync(
+                                            day, targets, concurrency, ct,
+                                            progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
                                         valuesWritten = written;
                                         if (failedSensors > 0 && written == 0)
                                         {
@@ -145,6 +156,8 @@ public static class PrtgBackfillRunner
                     console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：{ex.Message}");
                 }
             }
+
+            dayProgress?.Invoke(days, days, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

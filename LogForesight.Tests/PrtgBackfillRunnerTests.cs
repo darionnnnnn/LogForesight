@@ -4,6 +4,8 @@ using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -512,5 +514,185 @@ public class PrtgBackfillRunnerTests : IDisposable
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata.json"));
         Assert.Contains(console.Lines, l => l.Contains("問題主機 0 台") && l.Contains("sensor 0 個") && l.Contains("數值 0 筆"));
         Assert.Contains(console.Lines, l => l.Contains("共成功 1 天，失敗 0 天"));
+    }
+
+    [Fact]
+    public async Task RunAsync_回報天數進度_依序涵蓋第1至N天且最後為總天數()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
+        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata.json"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var fetchService = new PrtgFetchService(client, store, console);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
+        var dayProgressList = new List<(int Done, int Total, DateTime? Date)>();
+        var ok = await PrtgBackfillRunner.RunAsync(
+            fetchService, 3, 2, console, CancellationToken.None,
+            dayProgress: (done, total, date) => dayProgressList.Add((done, total, date)));
+
+        Assert.True(ok);
+        // 依序涵蓋第 1、2、3 天，且最後一次為 3/3
+        Assert.True(dayProgressList.Count >= 4);
+        Assert.Equal((1, 3), (dayProgressList[0].Done, dayProgressList[0].Total));
+        Assert.Equal(DateTime.Today.AddDays(-1), dayProgressList[0].Date);
+
+        Assert.Equal((2, 3), (dayProgressList[1].Done, dayProgressList[1].Total));
+        Assert.Equal(DateTime.Today.AddDays(-2), dayProgressList[1].Date);
+
+        Assert.Equal((3, 3), (dayProgressList[2].Done, dayProgressList[2].Total));
+        Assert.Equal(DateTime.Today.AddDays(-3), dayProgressList[2].Date);
+
+        var last = dayProgressList[^1];
+        Assert.Equal(3, last.Done);
+        Assert.Equal(3, last.Total);
+    }
+
+    [Fact]
+    public async Task RunAsync_跨日回填時sensor進度換日重設不累加()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata.json"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var fetchService = new PrtgFetchService(client, store, console);
+
+        // 預置 4 個 sensor
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 201, DeviceObjid = 101, Name = "CPU-1", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 202, DeviceObjid = 101, Name = "CPU-2", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 203, DeviceObjid = 101, Name = "CPU-3", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 204, DeviceObjid = 101, Name = "CPU-4", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Now);
+
+        var events = new List<(int DayIndex, int SensorDone, int SensorTotal)>();
+        var currentDayIndex = 0;
+
+        var ok = await PrtgBackfillRunner.RunAsync(
+            fetchService, 2, 2, console, CancellationToken.None,
+            dayProgress: (done, total, date) =>
+            {
+                if (date.HasValue)
+                {
+                    currentDayIndex = done;
+                }
+            },
+            sensorProgress: (done, total) =>
+            {
+                events.Add((currentDayIndex, done, total));
+            });
+
+        Assert.True(ok);
+
+        // 第一天與第二天的 sensor 事件
+        var day1Events = events.Where(e => e.DayIndex == 1).ToList();
+        var day2Events = events.Where(e => e.DayIndex == 2).ToList();
+
+        Assert.NotEmpty(day1Events);
+        Assert.NotEmpty(day2Events);
+
+        // 第一天結束時 sensor 數為 4/4
+        var day1Last = day1Events.Last();
+        Assert.Equal((4, 4), (day1Last.SensorDone, day1Last.SensorTotal));
+
+        // 第二天開頭必須立即重設為 (0, 0)
+        var day2First = day2Events.First();
+        Assert.Equal((0, 0), (day2First.SensorDone, day2First.SensorTotal));
+
+        // 第二天所有的 sensor done 都不應大於 total（不得出現 5/4 等累積值）
+        Assert.All(day2Events, e =>
+        {
+            if (e.SensorTotal > 0)
+            {
+                Assert.True(e.SensorDone <= e.SensorTotal, $"第二天 sensorDone ({e.SensorDone}) 不得大於 sensorTotal ({e.SensorTotal})");
+            }
+        });
+
+        // 第二天最終完成時為 4/4
+        var day2Last = day2Events.Last();
+        Assert.Equal((4, 4), (day2Last.SensorDone, day2Last.SensorTotal));
+    }
+
+    [Fact]
+    public void PrtgBackfillRunState_進度更新隔離_不影響PrtgProbeRunState快照且探測DTO無進度欄位()
+    {
+        var backfillState = new PrtgBackfillRunState();
+        var probeState = new PrtgProbeRunState();
+
+        // 啟動探測狀態
+        Assert.True(probeState.TryBegin());
+        probeState.AppendLine("探測中...");
+
+        // 更新回填狀態進度
+        Assert.True(backfillState.TryBegin());
+        backfillState.UpdateDay(2, 5, DateTime.Today.AddDays(-2));
+        backfillState.UpdateSensors(10, 20);
+
+        // 斷言探測的快照完全未受回填進度影響
+        var probeSnapshot = probeState.Snapshot();
+        Assert.True(probeSnapshot.IsRunning);
+        Assert.Equal("探測中...", probeSnapshot.LatestMessage);
+        Assert.Single(probeSnapshot.Output);
+        Assert.Equal("探測中...", probeSnapshot.Output[0]);
+
+        // 斷言回填的進度快照正確更新
+        var backfillProgress = backfillState.GetProgress();
+        Assert.Equal(2, backfillProgress.DaysDone);
+        Assert.Equal(5, backfillProgress.DaysTotal);
+        Assert.Equal(DateTime.Today.AddDays(-2), backfillProgress.CurrentDate);
+        Assert.Equal(10, backfillProgress.SensorsDone);
+        Assert.Equal(20, backfillProgress.SensorsTotal);
+
+        // 斷言探測 DTO 的屬性清單不含回填進度欄位（DaysDone、DaysTotal、SensorsDone 等）
+        var probeDtoProps = typeof(PrtgProbeStatusDto).GetProperties().Select(p => p.Name).ToList();
+        Assert.DoesNotContain("DaysDone", probeDtoProps);
+        Assert.DoesNotContain("DaysTotal", probeDtoProps);
+        Assert.DoesNotContain("CurrentDate", probeDtoProps);
+        Assert.DoesNotContain("SensorsDone", probeDtoProps);
+        Assert.DoesNotContain("SensorsTotal", probeDtoProps);
+
+        // 斷言回填 DTO 有這些進度欄位
+        var backfillDtoProps = typeof(PrtgBackfillStatusDto).GetProperties().Select(p => p.Name).ToList();
+        Assert.Contains("DaysDone", backfillDtoProps);
+        Assert.Contains("DaysTotal", backfillDtoProps);
+        Assert.Contains("CurrentDate", backfillDtoProps);
+        Assert.Contains("SensorsDone", backfillDtoProps);
+        Assert.Contains("SensorsTotal", backfillDtoProps);
     }
 }

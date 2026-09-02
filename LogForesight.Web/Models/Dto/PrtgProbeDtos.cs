@@ -27,6 +27,12 @@ public class PrtgBackfillStatusDto
     public bool? Success { get; set; }
     public string? LatestMessage { get; set; }
     public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
+
+    public int DaysDone { get; set; }
+    public int DaysTotal { get; set; }
+    public DateTime? CurrentDate { get; set; }
+    public int SensorsDone { get; set; }
+    public int SensorsTotal { get; set; }
 }
 
 /// <summary>啟動 PRTG 歷史回填回應</summary>

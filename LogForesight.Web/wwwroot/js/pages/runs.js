@@ -903,7 +903,7 @@ const PROGRESS_PHASE_UNIT = {
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
  * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（準備中…）；非執行中整組隱藏。
  */
-function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日') {
+function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日', customLabel = null) {
     if (!isVisible) {
         wrapEl?.classList.add('d-none');
         textEl?.classList.add('d-none');
@@ -914,7 +914,7 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
 
     if (total > 0) {
         const pct = Math.min(100, Math.round((done / total) * 100));
-        const label = labelPrefix ? `${labelPrefix}　${done} / ${total} ${unit}` : `${done} / ${total} ${unit}`;
+        const label = customLabel || (labelPrefix ? `${labelPrefix}　${done} / ${total} ${unit}` : `${done} / ${total} ${unit}`);
         barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
             barEl.style.width = `${pct}%`;
@@ -1302,6 +1302,9 @@ function renderPrtgBackfillStatus(status) {
     const copyButton = document.getElementById('prtg-backfill-copy');
     const startButton = document.getElementById('prtg-backfill-start');
     const statusEl = document.getElementById('prtg-backfill-status');
+    const wrapEl = document.getElementById('prtg-backfill-progress-wrap');
+    const barEl = document.getElementById('prtg-backfill-progress-bar');
+    const textEl = document.getElementById('prtg-backfill-progress-text');
 
     if (!outputEl || !copyButton || !startButton || !statusEl) return;
 
@@ -1311,6 +1314,21 @@ function renderPrtgBackfillStatus(status) {
         outputEl.scrollTop = outputEl.scrollHeight;
     }
     copyButton.disabled = !outputText;
+
+    const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
+    const label = dateStr
+        ? `第 ${status.daysDone} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
+        : `第 ${status.daysDone} / ${status.daysTotal} 天：sensor ${status.sensorsDone} / ${status.sensorsTotal}`;
+
+    updateProgressBar(
+        { wrapEl, barEl, textEl },
+        status.isRunning,
+        status.daysDone,
+        status.daysTotal,
+        null,
+        '天',
+        status.daysTotal > 0 ? label : null
+    );
 
     if (status.isRunning) {
         startButton.disabled = true;
