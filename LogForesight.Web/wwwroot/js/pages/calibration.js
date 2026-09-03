@@ -155,25 +155,40 @@ function renderAssessment(data) {
         ['HostsReachingSufficient', '達充足標準主機數'],
         ['EarliestOkDate', '最早有效資料日'],
         ['LatestOkDate', '最晚有效資料日'],
-        ['SensorsWithoutValues', '白名單內無數值的 sensor 數']
+        ['SensorsWithoutValues', '白名單內無數值的 sensor 數'],
+        ['UnmappedSensors', '未對應主機的 sensor 數']
     ]);
 
     // 2. PRTG 規則門檻
     renderCard('prtg-rule-thresholds', data.prtgRuleThresholds, [
         ['DistinctCoverageDays', '變更涵蓋天數'],
-        ['TotalRuleHits', '規則命中總筆數']
+        ['DownSensorDays', 'down sensor-日數'],
+        ['FlappingSensorDays', 'flapping sensor-日數'],
+        ['WarningSensorDays', 'warning sensor-日數'],
+        ['SilentDeviceDays', 'silent device-日數'],
+        ['TotalRuleHits', '四條合計命中筆數']
     ]);
 
     // 3. 觸發式取數量級
     renderCard('triggered-fetch-magnitude', data.triggeredFetchMagnitude, [
         ['DaysWithValues', '有數值天數'],
-        ['WindowDays', '評估視窗天數']
+        ['WindowDays', '評估視窗天數'],
+        ['SensorsPerNightMin', '每晚 sensor 數（最少）'],
+        ['SensorsPerNightMedian', '每晚 sensor 數（中位）'],
+        ['SensorsPerNightMax', '每晚 sensor 數（最多）'],
+        ['RowsPerNightMin', '每晚列數（最少）'],
+        ['RowsPerNightMedian', '每晚列數（中位）'],
+        ['RowsPerNightMax', '每晚列數（最多）'],
+        ['OkRatio', '有效資料佔比']
     ]);
 
     // 4. 殘留判定門檻
     renderCard('residual-credential-thresholds', data.residualCredentialThresholds, [
         ['CandidateHostDays', '候選主機日數'],
-        ['DistinctCoverageDays', '相異涵蓋天數']
+        ['DistinctCoverageDays', '相異涵蓋天數'],
+        ['SampledCandidates', '已取樣候選數'],
+        ['TruncatedRatio', '明細截斷比例'],
+        ['MatchedCount', '現行門檻命中數']
     ]);
 
     const hint = document.getElementById('calibration-status-hint');

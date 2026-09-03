@@ -36,12 +36,14 @@ public class CalibrationController : ControllerBase
     }
 
     /// <summary>
-    /// 取得四項校準指標的判定摘要（重查詢，由前端按鈕觸發）
+    /// 取得四項校準指標的判定摘要。這是重查詢，由前端「重新計算」按鈕觸發，
+    /// 因此一律強制重算——使用者按下按鈕就是要看當下的數字，回快取等於按鈕沒作用。
+    /// 匯出端則沿用快取（同一次匯出不必把整組查詢再跑一遍）。
     /// </summary>
     [HttpGet("status")]
     public ApiResponse<CalibrationStatusDto> GetStatus()
     {
-        var summary = _calibrationService.AssessStatus();
+        var summary = _calibrationService.AssessStatus(anchor: null, forceRefresh: true);
         return ApiResponse<CalibrationStatusDto>.Ok(CalibrationStatusDto.From(summary));
     }
 

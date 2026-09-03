@@ -44,6 +44,8 @@ public class CalibrationServiceTests : IDisposable
 
     private CalibrationService CreateService()
     {
+        // 判定快取是靜態的，測試之間必須清乾淨（否則前一個測試的結論會漏到下一個）
+        CalibrationService.ClearAssessmentCache();
         var prtgStore = new EfPrtgStore(_fx.NewContext);
         var issueQuery = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
         return new CalibrationService(_fx.NewContext, prtgStore, issueQuery, _settingsStore, _ruleStore);
@@ -254,7 +256,7 @@ public class CalibrationServiceTests : IDisposable
                     RecordDate = anchor,
                     SourceName = "PRTG",
                     EventId = 0,
-                    EventKey = "prtg-down-60m",
+                    EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
                     SeverityRank = 2
                 });
@@ -310,7 +312,7 @@ public class CalibrationServiceTests : IDisposable
                     RecordDate = anchor.AddDays(-i % 30),
                     SourceName = "PRTG",
                     EventId = 0,
-                    EventKey = "prtg-down-60m",
+                    EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
                     SeverityRank = 2
                 });
@@ -323,6 +325,97 @@ public class CalibrationServiceTests : IDisposable
 
         Assert.Equal(CalibrationStatus.Available, summary.PrtgRuleThresholds.Status);
         Assert.Equal("可用", summary.PrtgRuleThresholds.StatusText);
+    }
+
+    /// <summary>
+    /// 判定快取：同一 anchor 在 TTL 內重複呼叫回同一份結果（四項判定是重查詢，
+    /// 含逐筆反序列化，而累積量以「天」為單位變動）；forceRefresh 會略過快取。
+    /// </summary>
+    [Fact]
+    public void AssessStatus_同一錨定日在TTL內回快取_forceRefresh則重算()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+        var service = CreateService();
+
+        var first = service.AssessStatus(anchor);
+        var second = service.AssessStatus(anchor);
+        Assert.Same(first, second);
+
+        var forced = service.AssessStatus(anchor, forceRefresh: true);
+        Assert.NotSame(first, forced);
+        Assert.Equal(first.PrtgValueBaseline.Status, forced.PrtgValueBaseline.Status);
+
+        // 換一個錨定日不得回上一個的快取
+        var other = service.AssessStatus(anchor.AddDays(-1));
+        Assert.NotSame(forced, other);
+    }
+
+    /// <summary>
+    /// 門檻校準是逐規則進行的：四條加總會讓「down 只有 3 筆但 flapping 有 100 筆」
+    /// 被誤判成資料充足，而 down 的門檻其實仍然無從校準。
+    /// </summary>
+    [Fact]
+    public void AssessStatus_規則門檻_命中集中在單一規則時不得以四條加總判定達標()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+
+        // 狀態變更涵蓋 30 天（滿足可用的 28 天）
+        var changes = new List<PrtgStateChangeRow>();
+        for (int i = 0; i < 30; i++)
+        {
+            changes.Add(new PrtgStateChangeRow
+            {
+                SensorObjid = 1001,
+                ChangedAt = anchor.AddDays(-i).AddHours(8),
+                Status = "Down",
+                Quality = "Good"
+            });
+        }
+        store.AppendStateChanges(changes);
+
+        using (var ctx = _fx.NewContext())
+        {
+            var dr = new DailyRecordRow { HostId = 1, HostName = "HOST-1", RecordDate = anchor, RiskLevel = "中", ContentJson = "{}" };
+            ctx.DailyRecords.Add(dr);
+            ctx.SaveChanges();
+
+            // down 只有 3 筆（遠低於 30），flapping 有 40 筆——四條加總 43 筆會超過門檻
+            for (int i = 0; i < 3; i++)
+            {
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = dr.RecordId, HostId = 1, RecordDate = anchor.AddDays(-i),
+                    SourceName = "PRTG", EventId = 0,
+                    EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{2000 + i}",
+                    Category = "Service", SeverityRank = 2
+                });
+            }
+            for (int i = 0; i < 40; i++)
+            {
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = dr.RecordId, HostId = 1, RecordDate = anchor.AddDays(-i % 30),
+                    SourceName = "PRTG", EventId = 0,
+                    EventKey = $"prtg:{PrtgRuleEvaluator.RuleFlapping}:{3000 + i}",
+                    Category = "Service", SeverityRank = 3
+                });
+            }
+            ctx.SaveChanges();
+        }
+
+        var summary = CreateService().AssessStatus(anchor);
+
+        Assert.Equal(CalibrationStatus.Insufficient, summary.PrtgRuleThresholds.Status);
+        Assert.Equal(3, summary.PrtgRuleThresholds.KeyMetrics["DownSensorDays"]);
+        Assert.Equal(40, summary.PrtgRuleThresholds.KeyMetrics["FlappingSensorDays"]);
+        Assert.Equal(43, summary.PrtgRuleThresholds.KeyMetrics["TotalRuleHits"]);
     }
 
     [Fact]
@@ -365,7 +458,7 @@ public class CalibrationServiceTests : IDisposable
                     RecordDate = anchor.AddDays(-i % 56),
                     SourceName = "PRTG",
                     EventId = 0,
-                    EventKey = "prtg-down-60m",
+                    EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
                     SeverityRank = 2
                 });

@@ -16,6 +16,10 @@ internal sealed record ResidualCandidateMetrics
     public double SingleGroupRatio { get; init; }
     public bool IsTruncated { get; init; }
     public bool IsMatch { get; init; }
+
+    /// <summary>跨日重現的相異日期數（含當日）。判定門檻是 MinDistinctDays，
+    /// 記錄實際值供校準——「差一天才成立」與「完全沒有」是不同的資訊。</summary>
+    public int CrossDayDistinctDays { get; init; }
     internal LoginFailureDetail? LargestDetail { get; init; }
 }
 
@@ -229,6 +233,30 @@ internal static class ResidualCredentialDetector
         }
     }
 
+    /// <summary>跨日重現的相異日期數（含 targetDate 當天）。判定用 <see cref="HasCrossDayRecurrence"/>，
+    /// 這個回傳實際天數供校準匯出記錄——「差一天才成立」與「完全沒有」在校準時是不同的資訊。</summary>
+    private static int CrossDayDistinctCount(
+        List<DailyAnalysisRecord>? history,
+        DateTime targetDate,
+        string account,
+        string source)
+    {
+        if (history == null || history.Count == 0) return 1;
+
+        var startDate = targetDate.Date.AddDays(-(HistoryWindowDays - 1));
+        var endDate = targetDate.Date;
+        var matchingDates = new HashSet<DateTime>();
+
+        foreach (var record in history)
+        {
+            var recordDate = record.Date.Date;
+            if (recordDate < startDate || recordDate >= endDate) continue;
+            if (RecordHasPair(record, account, source)) matchingDates.Add(recordDate);
+        }
+
+        return matchingDates.Count + 1;
+    }
+
     private static bool HasCrossDayRecurrence(
         List<DailyAnalysisRecord>? history,
         DateTime targetDate,
@@ -256,42 +284,35 @@ internal static class ResidualCredentialDetector
                 continue;
             }
 
-            if (record.TopIssues == null || record.TopIssues.Count == 0)
-            {
-                continue;
-            }
-
-            bool matchedInRecord = false;
-            foreach (var histIssue in record.TopIssues)
-            {
-                if (histIssue.LoginFailureDetails == null || histIssue.LoginFailureDetails.Count == 0)
-                {
-                    continue;
-                }
-
-                foreach (var detail in histIssue.LoginFailureDetails)
-                {
-                    if (string.Equals(detail.Account, account, StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(detail.Source, source, StringComparison.OrdinalIgnoreCase))
-                    {
-                        matchedInRecord = true;
-                        break;
-                    }
-                }
-
-                if (matchedInRecord)
-                {
-                    break;
-                }
-            }
-
-            if (matchedInRecord)
+            if (RecordHasPair(record, account, source))
             {
                 matchingDates.Add(recordDate);
             }
         }
 
         return (matchingDates.Count + 1) >= MinDistinctDays;
+    }
+
+    /// <summary>某日紀錄中是否出現過同一組 (帳號, 來源) 的登入失敗明細</summary>
+    private static bool RecordHasPair(DailyAnalysisRecord record, string account, string source)
+    {
+        if (record.TopIssues == null || record.TopIssues.Count == 0) return false;
+
+        foreach (var histIssue in record.TopIssues)
+        {
+            if (histIssue.LoginFailureDetails == null || histIssue.LoginFailureDetails.Count == 0) continue;
+
+            foreach (var detail in histIssue.LoginFailureDetails)
+            {
+                if (string.Equals(detail.Account, account, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(detail.Source, source, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static string BuildBasis(LogIssueSignature issue, LoginFailureDetail largest)

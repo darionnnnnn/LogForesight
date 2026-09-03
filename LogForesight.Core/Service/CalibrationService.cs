@@ -201,6 +201,7 @@ public sealed record CalibrationResidualCandidateRow(
     double ConcentrationRatio,
     double? MechanicalLogonTypeRatio,
     double SingleGroupRatio,
+    int CrossDayDistinctDays,
     bool IsTruncated,
     bool IsMatch);
 
@@ -245,12 +246,35 @@ public sealed class CalibrationService
         _ruleStore = ruleStore ?? throw new ArgumentNullException(nameof(ruleStore));
     }
 
+    /// <summary>判定結果的行程內快取（見 <see cref="AssessStatus"/>）</summary>
+    private static readonly object CacheLock = new();
+    private static DateTime _cachedAnchor;
+    private static DateTime _cachedAt;
+    private static CalibrationAssessmentSummary? _cached;
+
+    /// <summary>判定快取存活時間：四項判定是重查詢（含逐筆反序列化），
+    /// 而累積量以「天」為單位變動，十分鐘內重複計算不會得到不同結論。
+    /// 匯出時會再取一次判定摘要，這個快取讓同一次匯出不必重跑整組查詢。</summary>
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+
     /// <summary>
     /// 評估四項校準指標的累積量、狀態與補充說明。
+    /// 結果在行程內快取 <see cref="CacheTtl"/>；`forceRefresh` 為 true 時略過快取重算。
     /// </summary>
-    public CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null)
+    public CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null, bool forceRefresh = false)
     {
         var anchorDate = (anchor ?? DateTime.Today).Date;
+
+        if (!forceRefresh)
+        {
+            lock (CacheLock)
+            {
+                if (_cached != null && _cachedAnchor == anchorDate && DateTime.Now - _cachedAt < CacheTtl)
+                {
+                    return _cached;
+                }
+            }
+        }
         var settings = _settingsStore.Get();
         var allSensors = _prtgStore.GetAllSensors();
 
@@ -259,13 +283,33 @@ public sealed class CalibrationService
         var item3 = AssessTriggeredFetchMagnitude(anchorDate, settings, allSensors);
         var item4 = AssessResidualCredentialThresholds(anchorDate, settings);
 
-        return new CalibrationAssessmentSummary
+        var summary = new CalibrationAssessmentSummary
         {
             PrtgValueBaseline = item1,
             PrtgRuleThresholds = item2,
             TriggeredFetchMagnitude = item3,
             ResidualCredentialThresholds = item4
         };
+
+        lock (CacheLock)
+        {
+            _cached = summary;
+            _cachedAnchor = anchorDate;
+            _cachedAt = DateTime.Now;
+        }
+
+        return summary;
+    }
+
+    /// <summary>清空判定快取（測試用；正式路徑靠 TTL 自然過期）</summary>
+    internal static void ClearAssessmentCache()
+    {
+        lock (CacheLock)
+        {
+            _cached = null;
+            _cachedAnchor = default;
+            _cachedAt = default;
+        }
     }
 
     /// <summary>
@@ -457,6 +501,9 @@ public sealed class CalibrationService
             .DefaultIfEmpty()
             .Max();
         var sensorsWithoutValues = whitelistedObjids.Count - coverageInScope.Count(c => c.OkCount > 0);
+        // 未對應 sensor：白名單內但所屬 device 沒有成功對應到主機——這些 sensor 就算有數值
+        // 也進不了主機層的基線，與「有對應但還沒累積夠」是不同的問題，補充說明的方向也不同
+        var unmappedSensors = whitelistedSensors.Count(x => !okDeviceMap.ContainsKey(x.DeviceObjid));
 
         var sensorCoverageDays = dailyAggs
             .Where(a => a.OkCount >= CalibrationConstants.ValueBaselineMinDailyOkHours)
@@ -482,7 +529,8 @@ public sealed class CalibrationService
 
         // 分母為零一律判不足：若無任何主機或涵蓋天數為 0，不得判為可用
         CalibrationStatus status;
-        if (mappedHostsCount == 0 || maxCoverageDays == 0)
+        var valueBaselineNoData = mappedHostsCount == 0 || maxCoverageDays == 0;
+        if (valueBaselineNoData)
         {
             status = CalibrationStatus.Insufficient;
         }
@@ -500,6 +548,10 @@ public sealed class CalibrationService
         }
 
         var explanations = new List<string>();
+        if (valueBaselineNoData)
+        {
+            explanations.Add("期間無事件，門檻無從校準，維持預設值");
+        }
         if (settings.PrtgRetentionDays < CalibrationConstants.ValueBaselineSufficientDays)
         {
             explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.ValueBaselineSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
@@ -546,7 +598,8 @@ public sealed class CalibrationService
                 ["HostsReachingSufficient"] = hostsSufficient,
                 ["EarliestOkDate"] = earliestOk == default ? "—" : earliestOk.ToString("yyyy-MM-dd"),
                 ["LatestOkDate"] = latestOk == default ? "—" : latestOk.ToString("yyyy-MM-dd"),
-                ["SensorsWithoutValues"] = sensorsWithoutValues
+                ["SensorsWithoutValues"] = sensorsWithoutValues,
+                ["UnmappedSensors"] = unmappedSensors
             },
             CurrentThresholds = thresholds,
             Explanations = explanations
@@ -573,7 +626,11 @@ public sealed class CalibrationService
                 KeyMetrics = new Dictionary<string, object>
                 {
                     ["DistinctCoverageDays"] = 0,
-                    ["TotalRuleHits"] = 0
+                    ["TotalRuleHits"] = 0,
+                    ["DownSensorDays"] = 0,
+                    ["FlappingSensorDays"] = 0,
+                    ["WarningSensorDays"] = 0,
+                    ["SilentDeviceDays"] = 0
                 },
                 CurrentThresholds = thresholds,
                 Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
@@ -588,19 +645,31 @@ public sealed class CalibrationService
         var ruleHits = _issueQuery.AggregatePrtgRuleHits(from, anchor.Date);
         var totalHits = ruleHits.Sum(h => h.HitCount);
 
+        // 逐規則的 sensor-日數：門檻校準是逐規則進行的，四條加總會讓「down 只有 3 筆但
+        // flapping 有 100 筆」被誤判成資料充足，而 down 的門檻仍然無從校準。
+        int HitsOf(string ruleCode) => ruleHits
+            .Where(h => string.Equals(h.RuleCode, ruleCode, StringComparison.OrdinalIgnoreCase))
+            .Sum(h => h.HitCount);
+
+        var downHits = HitsOf(PrtgRuleEvaluator.RuleDown);
+        var flappingHits = HitsOf(PrtgRuleEvaluator.RuleFlapping);
+        var warningHits = HitsOf(PrtgRuleEvaluator.RuleWarning);
+        var silentHits = HitsOf(PrtgRuleEvaluator.RuleSilent);
+
         // 分母為零一律判不足：若期間內變更涵蓋天數或命中筆數為 0，不得判為可用
         CalibrationStatus status;
-        if (distinctDates == 0 || totalHits == 0)
+        var ruleNoData = distinctDates == 0 || totalHits == 0;
+        if (ruleNoData)
         {
             status = CalibrationStatus.Insufficient;
         }
         else if (distinctDates >= CalibrationConstants.RuleThresholdSufficientDays &&
-                 totalHits >= CalibrationConstants.RuleThresholdSufficientHits)
+                 downHits >= CalibrationConstants.RuleThresholdSufficientHits)
         {
             status = CalibrationStatus.Sufficient;
         }
         else if (distinctDates >= CalibrationConstants.RuleThresholdAvailableDays &&
-                 totalHits >= CalibrationConstants.RuleThresholdAvailableHits)
+                 downHits >= CalibrationConstants.RuleThresholdAvailableHits)
         {
             status = CalibrationStatus.Available;
         }
@@ -610,6 +679,10 @@ public sealed class CalibrationService
         }
 
         var explanations = new List<string>();
+        if (ruleNoData)
+        {
+            explanations.Add("期間無事件，門檻無從校準，維持預設值");
+        }
         if (settings.PrtgRetentionDays < CalibrationConstants.RuleThresholdSufficientDays)
         {
             explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.RuleThresholdSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
@@ -622,9 +695,9 @@ public sealed class CalibrationService
                 var needed = CalibrationConstants.RuleThresholdAvailableDays - distinctDates;
                 explanations.Add($"目前最長涵蓋 {distinctDates} 天，還需要約 {needed} 天");
             }
-            if (totalHits < CalibrationConstants.RuleThresholdAvailableHits)
+            if (downHits < CalibrationConstants.RuleThresholdAvailableHits)
             {
-                explanations.Add($"目前規則命中 {totalHits} 筆，需要 {CalibrationConstants.RuleThresholdAvailableHits} 筆");
+                explanations.Add($"目前 down 規則命中 {downHits} 筆（四條規則合計 {totalHits} 筆），需要 {CalibrationConstants.RuleThresholdAvailableHits} 筆");
             }
         }
         else if (status == CalibrationStatus.Available)
@@ -634,9 +707,9 @@ public sealed class CalibrationService
                 var needed = CalibrationConstants.RuleThresholdSufficientDays - distinctDates;
                 explanations.Add($"目前最長涵蓋 {distinctDates} 天，還需要約 {needed} 天");
             }
-            if (totalHits < CalibrationConstants.RuleThresholdSufficientHits)
+            if (downHits < CalibrationConstants.RuleThresholdSufficientHits)
             {
-                explanations.Add($"目前規則命中 {totalHits} 筆，充足需要 {CalibrationConstants.RuleThresholdSufficientHits} 筆");
+                explanations.Add($"目前 down 規則命中 {downHits} 筆（四條規則合計 {totalHits} 筆），充足需要 {CalibrationConstants.RuleThresholdSufficientHits} 筆");
             }
         }
 
@@ -647,7 +720,11 @@ public sealed class CalibrationService
             KeyMetrics = new Dictionary<string, object>
             {
                 ["DistinctCoverageDays"] = distinctDates,
-                ["TotalRuleHits"] = totalHits
+                ["TotalRuleHits"] = totalHits,
+                ["DownSensorDays"] = downHits,
+                ["FlappingSensorDays"] = flappingHits,
+                ["WarningSensorDays"] = warningHits,
+                ["SilentDeviceDays"] = silentHits
             },
             CurrentThresholds = thresholds,
             Explanations = explanations
@@ -683,11 +760,28 @@ public sealed class CalibrationService
         var from = anchor.Date.AddDays(-(CalibrationConstants.TriggeredMagnitudeWindowDays - 1));
         var toExclusive = anchor.Date.AddDays(1);
         var magnitudes = _prtgStore.GetDailyValueMagnitudes(from, toExclusive);
-        var daysWithValues = magnitudes.Count(m => m.TotalCount > 0);
+        var withValues = magnitudes.Where(m => m.TotalCount > 0).ToList();
+        var daysWithValues = withValues.Count;
+
+        // 每晚量級的散布：只看「有幾晚」無法判斷取數規模是否穩定
+        // （14 晚每晚 3 個 sensor 與 14 晚每晚 800 個，對校準的意義完全不同）
+        static int Median(List<int> values)
+        {
+            if (values.Count == 0) return 0;
+            var sorted = values.OrderBy(v => v).ToList();
+            return sorted[sorted.Count / 2];
+        }
+
+        var sensorCounts = withValues.Select(m => m.SensorCount).ToList();
+        var rowCounts = withValues.Select(m => m.TotalCount).ToList();
+        var okTotal = withValues.Sum(m => m.OkCount);
+        var rowsTotal = rowCounts.Sum();
+        var okRatio = rowsTotal > 0 ? (double)okTotal / rowsTotal : 0.0;
 
         // 分母為零一律判不足：若有數值天數為 0，不得判為可用
         CalibrationStatus status;
-        if (daysWithValues == 0)
+        var triggeredNoData = daysWithValues == 0;
+        if (triggeredNoData)
         {
             status = CalibrationStatus.Insufficient;
         }
@@ -705,6 +799,10 @@ public sealed class CalibrationService
         }
 
         var explanations = new List<string>();
+        if (triggeredNoData)
+        {
+            explanations.Add("期間無事件，門檻無從校準，維持預設值");
+        }
         if (settings.PrtgRetentionDays < CalibrationConstants.TriggeredMagnitudeSufficientDays)
         {
             explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.TriggeredMagnitudeSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
@@ -728,7 +826,14 @@ public sealed class CalibrationService
             KeyMetrics = new Dictionary<string, object>
             {
                 ["DaysWithValues"] = daysWithValues,
-                ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays
+                ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays,
+                ["SensorsPerNightMin"] = sensorCounts.DefaultIfEmpty(0).Min(),
+                ["SensorsPerNightMedian"] = Median(sensorCounts),
+                ["SensorsPerNightMax"] = sensorCounts.DefaultIfEmpty(0).Max(),
+                ["RowsPerNightMin"] = rowCounts.DefaultIfEmpty(0).Min(),
+                ["RowsPerNightMedian"] = Median(rowCounts),
+                ["RowsPerNightMax"] = rowCounts.DefaultIfEmpty(0).Max(),
+                ["OkRatio"] = Math.Round(okRatio, 3)
             },
             CurrentThresholds = thresholds,
             Explanations = explanations
@@ -832,6 +937,15 @@ public sealed class CalibrationService
             }
         }
 
+        // 截斷比例與命中數要逐筆算指標才知道，與匯出資料集同一份來源（受同一個上限保護）。
+        // 這兩個數字是校準的重點之一：截斷比例高代表明細封頂在拖累判定，
+        // 命中數則回答「現行門檻下實際命中多少」。
+        var sampledRows = BuildResidualCandidateRows(anchor, settings.RawEventRetentionDays);
+        var truncatedRatio = sampledRows.Count > 0
+            ? Math.Round((double)sampledRows.Count(r => r.IsTruncated) / sampledRows.Count, 3)
+            : 0.0;
+        var matchedCount = sampledRows.Count(r => r.IsMatch);
+
         return new CalibrationItemAssessment
         {
             ItemName = "殘留判定門檻",
@@ -839,7 +953,10 @@ public sealed class CalibrationService
             KeyMetrics = new Dictionary<string, object>
             {
                 ["CandidateHostDays"] = candidateHostDays,
-                ["DistinctCoverageDays"] = distinctDays
+                ["DistinctCoverageDays"] = distinctDays,
+                ["SampledCandidates"] = sampledRows.Count,
+                ["TruncatedRatio"] = truncatedRatio,
+                ["MatchedCount"] = matchedCount
             },
             CurrentThresholds = thresholds,
             Explanations = explanations
@@ -908,6 +1025,7 @@ public sealed class CalibrationService
                     metrics.ConcentrationRatio,
                     metrics.MechanicalLogonTypeRatio,
                     metrics.SingleGroupRatio,
+                    metrics.CrossDayDistinctDays,
                     metrics.IsTruncated,
                     metrics.IsMatch
                 ));
