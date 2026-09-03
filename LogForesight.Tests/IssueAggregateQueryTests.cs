@@ -629,7 +629,7 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(2, agg.ActiveDays);
     }
 
-    // ── AggregatePrtgRuleHits（A2，校準頁 PRTG 規則命中分佈）─────────────────────
+    // ── AggregatePrtgRuleHits（回饋第 37 輪批次A，校準頁 PRTG 規則命中分佈）─────────────────────
 
     [Fact]
     public void AggregatePrtgRuleHits_依規則代碼分組統計命中筆數()

@@ -431,7 +431,7 @@ public class UpdateSystemSettingsRequest
 }
 
 /// <summary>
-/// PRTG 設定專屬更新請求（「系統管理 > PRTG 維護」頁，任務 F1）。
+/// PRTG 設定專屬更新請求（「系統管理 > PRTG 維護」頁，回饋第 37 輪批次F1）。
 /// 涵蓋 PRTG 全部可編欄位（連線設定與擷取參數），不含總開關 PrtgEnabled。
 /// </summary>
 public class UpdatePrtgSettingsRequest

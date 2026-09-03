@@ -1,5 +1,5 @@
 /**
- * 校準數值匯出頁面模組（任務 A4）
+ * 校準數值匯出頁面模組（回饋第 37 輪批次A4）
  */
 
 import { api } from '../core/api.js';
@@ -152,7 +152,10 @@ function renderAssessment(data) {
         ['MappedHosts', '已對應主機數'],
         ['MaxCoverageDays', '最長涵蓋天數'],
         ['HostsReachingAvailable', '達可用標準主機數'],
-        ['HostsReachingSufficient', '達充足標準主機數']
+        ['HostsReachingSufficient', '達充足標準主機數'],
+        ['EarliestOkDate', '最早有效資料日'],
+        ['LatestOkDate', '最晚有效資料日'],
+        ['SensorsWithoutValues', '白名單內無數值的 sensor 數']
     ]);
 
     // 2. PRTG 規則門檻

@@ -3,7 +3,7 @@ using LogForesight.Core.Models;
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// 殘留憑證重試判定候選簽章的中間指標（A2，校準數值匯出用）
+/// 殘留憑證重試判定候選簽章的中間指標（回饋第 37 輪批次A，校準數值匯出用）
 /// </summary>
 internal sealed record ResidualCandidateMetrics
 {
@@ -38,7 +38,7 @@ internal static class ResidualCredentialDetector
     private const int MinDistinctDays = 2;
 
     /// <summary>
-    /// 評估單一簽章的殘留憑證判定指標（A2，抽出的中間指標計算）。
+    /// 評估單一簽章的殘留憑證判定指標（回饋第 37 輪批次A，判定與校準匯出共用同一份）。
     /// 非登入失敗簽章（無 LoginFailureDetails 或為空）回傳 null。
     /// </summary>
     internal static ResidualCandidateMetrics? EvaluateMetrics(

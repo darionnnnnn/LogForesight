@@ -1051,7 +1051,7 @@ public class ResidualCredentialDetectorTests
         Assert.DoesNotContain("user7", sig.KeyDetails);
     }
 
-    // ── EvaluateMetrics（A2，殘留判定中間指標抽出）─────────────────────────
+    // ── EvaluateMetrics（回饋第 37 輪批次A，殘留判定中間指標抽出）─────────────────────────
 
     [Fact]
     public void EvaluateMetrics_典型4625命中案例_回傳正確數值且命中為true()

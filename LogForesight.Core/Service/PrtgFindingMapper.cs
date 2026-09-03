@@ -5,8 +5,9 @@ namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 把 PRTG finding 映射成問題簽章（EventId=0 + EventKey，同 Linux 規則模式）。
-/// 分類與嚴重度由本檔的對照表直接給定，刻意不走通用規則分類表——
-/// 避免 EventKey 被清空或 finding 脫離處理狀態鏈。
+/// 分類與嚴重度由 <see cref="PrtgRuleCatalog"/> 給定，刻意不走通用規則分類表
+/// （<c>KnownIssueCatalog.Classify</c> 只認 windows／linux 平台，PRTG 走它會讓 EventKey
+/// 被清空、finding 脫離處理狀態鏈）。
 /// </summary>
 public static class PrtgFindingMapper
 {

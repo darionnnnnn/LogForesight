@@ -156,10 +156,10 @@ public static class AuditActions
     public const string PrtgDataExport = "prtg_data_export";
     public const string PrtgDataImport = "prtg_data_import";
 
-    // PRTG 設定維護（任務 F1）
+    // PRTG 設定維護（回饋第 37 輪批次F1）
     public const string PrtgSettingsUpdate = "prtg_settings_update";
 
-    // 校準數值匯出（任務 A4）
+    // 校準數值匯出（回饋第 37 輪批次A4）
     public const string CalibrationExport = "calibration_export";
 
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>

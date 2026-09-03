@@ -2045,7 +2045,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
   **PRTG 不在本頁**：連線設定與全部擷取參數都在 `/admin/prtg`（§9.9e），
   總開關與歷史回填在排程作業頁（§9.10）。「資料保留」頁籤底部有一行指路。
-  設定頁不再送出任何 PRTG 欄位，故 `UpdateSystemSettingsRequest` 中的 PRTG 欄位
+  設定頁不送出任何 PRTG 欄位，故 `UpdateSystemSettingsRequest` 中的 PRTG 欄位
   **一律可空、有送才更新**（見 docs/PRTG-SPEC.md §7 的警語）。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `POST api/admin/settings/mail-test`、
@@ -2179,9 +2179,11 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
 
 API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `POST api/admin/settings/prtg-test`、`GET api/admin/settings/prtg-mirror`、
-`GET/PUT api/admin/settings/prtg-manual-map`、
+`GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
+排程作業頁的那兩組另見 §9.10：`PUT api/admin/settings/prtg-enabled`（總開關）、
+`POST/GET api/admin/settings/prtg-backfill/start|status`（歷史回填）。
 
 ### 9.9f `/admin/calibration` 校準數值匯出（`Maintain`）
 
@@ -2241,7 +2243,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
   `setInterval` 累積誤差）。
 - **執行進度條**：狀態卡在執行中顯示**三條**進度軌——
-  「本機分析／NetIQ 機房分析　x / y 主機日」與「PRTG　x / y sensor」；前兩條粒度為主機日，
+  「本機分析／NetIQ 機房分析　x / y 主機日」與「PRTG 結構同步／數值取數／觸發式取數　x / y sensor」
+  （PRTG 那條的標籤依當下 phase 變動）；前兩條粒度為主機日，
   經 Core 的 `IRunProgress`
   介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
   ——分母隨掃描逐步變大、只增不減），Web 端 `WebRunProgress` 落地 `SchedulerRunState`，

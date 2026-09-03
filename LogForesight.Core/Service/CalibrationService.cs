@@ -440,6 +440,24 @@ public sealed class CalibrationService
         var toExclusive = anchor.Date.AddDays(1);
         var dailyAggs = _prtgStore.GetDailyValueAggregations(from, toExclusive);
 
+        // 有效資料的起訖日：回答「這批基線涵蓋哪一段期間」，與涵蓋天數是兩件事
+        // （中間可能有斷檔）。白名單內完全沒有數值的 sensor 數同理——
+        // 它區分「還沒累積夠」與「這些 sensor 根本沒在取數」。
+        var coverage = _prtgStore.GetValueCoverageSummary(from, toExclusive);
+        var whitelistedObjids = whitelistedSensors.Select(x => x.Objid).ToHashSet();
+        var coverageInScope = coverage.Where(c => whitelistedObjids.Contains(c.SensorObjid)).ToList();
+        var earliestOk = coverageInScope
+            .Where(c => c.EarliestOkPeriod.HasValue)
+            .Select(c => c.EarliestOkPeriod!.Value)
+            .DefaultIfEmpty()
+            .Min();
+        var latestOk = coverageInScope
+            .Where(c => c.LatestOkPeriod.HasValue)
+            .Select(c => c.LatestOkPeriod!.Value)
+            .DefaultIfEmpty()
+            .Max();
+        var sensorsWithoutValues = whitelistedObjids.Count - coverageInScope.Count(c => c.OkCount > 0);
+
         var sensorCoverageDays = dailyAggs
             .Where(a => a.OkCount >= CalibrationConstants.ValueBaselineMinDailyOkHours)
             .GroupBy(a => a.SensorObjid)
@@ -525,7 +543,10 @@ public sealed class CalibrationService
                 ["MappedHosts"] = mappedHostsCount,
                 ["MaxCoverageDays"] = maxCoverageDays,
                 ["HostsReachingAvailable"] = hostsAvailable,
-                ["HostsReachingSufficient"] = hostsSufficient
+                ["HostsReachingSufficient"] = hostsSufficient,
+                ["EarliestOkDate"] = earliestOk == default ? "—" : earliestOk.ToString("yyyy-MM-dd"),
+                ["LatestOkDate"] = latestOk == default ? "—" : latestOk.ToString("yyyy-MM-dd"),
+                ["SensorsWithoutValues"] = sensorsWithoutValues
             },
             CurrentThresholds = thresholds,
             Explanations = explanations

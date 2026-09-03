@@ -277,7 +277,7 @@ public class SchedulerRunStateTests
         Assert.True(new RunOutcome(true, null, "schedule", DateTime.Now, AnyRecordsWritten: false).ShouldNotify);
     }
 
-    // ── PRTG 進度軌（任務 G1）───────────────────────────────────────────────
+    // ── PRTG 進度軌（回饋第 37 輪批次G1）───────────────────────────────────────────────
 
     /// <summary>
     /// 反例測試（最重要）：先收到 netiq 進度回報，再收到 prtg-values 回報 →

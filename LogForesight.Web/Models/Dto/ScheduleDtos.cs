@@ -85,7 +85,7 @@ public class ScheduleStatusDto
     public int LocalProgressDone { get; set; }
     public int LocalProgressTotal { get; set; }
 
-    /// <summary>PRTG 擷取進度（任務 G1）：與 NetIQ／本機完全獨立的第三條軌。</summary>
+    /// <summary>PRTG 擷取進度（回饋第 37 輪批次G1）：與 NetIQ／本機完全獨立的第三條軌。</summary>
     public string? PrtgProgressPhase { get; set; }
     public int PrtgProgressDone { get; set; }
     public int PrtgProgressTotal { get; set; }

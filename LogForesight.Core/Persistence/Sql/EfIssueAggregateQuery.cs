@@ -1030,7 +1030,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // SQL 端過濾來源與日期範圍（不得先撈全表）
         var rows = ctx.TopIssues.AsNoTracking()
-            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.SourceName.ToUpper() == "PRTG")
+            // 不用 ToUpper：寫入端固定是 PrtgFindingMapper.PrtgSource，而 UPPER(source_name)
+            // 會讓 SQL Server 端的索引無法 seek
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.SourceName == PrtgFindingMapper.PrtgSource)
             .Select(x => new
             {
                 x.RecordDate,
