@@ -276,6 +276,33 @@ public class CorrelationAnalyzerTests
     }
 
     [Fact]
+    public void 暴力破解RDP得手_第6個以後的來源IP也能比對到()
+    {
+        // KeyDetails 顯示字串只列前 5 個 IP，交集落在第 6 個時單靠字串永遠比對不到。
+        // 判定改讀未截斷的結構化 KeyIps 後才會命中。
+        var manyIps = new List<string>
+        {
+            "198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4", "198.51.100.5",
+            "203.0.113.7", "198.51.100.6"
+        };
+
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security,
+            keyDetails: "來源IP(7個): 198.51.100.1, 198.51.100.2, 198.51.100.3, 198.51.100.4, 198.51.100.5…");
+        yesterdayBrute.TopIssues[0].KeyIps = manyIps;
+
+        var rdp = Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+            IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7");
+        rdp.KeyIps = new List<string> { "203.0.113.7" };
+
+        var findings = CorrelationAnalyzer.Detect(
+            new List<LogIssueSignature> { rdp }, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
+
+        Assert.Contains(findings, f => f.Description.Contains("【暴力破解→RDP 得手】") &&
+            f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+    }
+
+    [Fact]
     public void 暴力破解RDP得手_IP不重疊時不觸發()
     {
         var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,

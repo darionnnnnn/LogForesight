@@ -119,6 +119,10 @@
                             <div class="progress-bar" id="schedule-progress-bar" role="progressbar"></div>
                         </div>
                         <div class="small text-muted mb-2 d-none" id="schedule-progress-text"></div>
+                        <div class="progress mb-1 d-none" id="schedule-prtg-progress-wrap" style="height: 6px;">
+                            <div class="progress-bar" id="schedule-prtg-progress-bar" role="progressbar"></div>
+                        </div>
+                        <div class="small text-muted mb-2 d-none" id="schedule-prtg-progress-text"></div>
                         @* 子進度（回饋十四輪 UI-6）：AI 佇列在背景消化，可能與上面的主進度同時在跑
                            （見 runs.js 的 renderScheduleProgress）——比主進度條窄一階（高度減半、
                            往內縮排、色調較淡），一眼看出這是附屬於主進度的第二條軌，不是又一個獨立
@@ -152,12 +156,18 @@
                         <div id="prtg-backfill-section">
                             <h3 class="h6">PRTG 歷史回填</h3>
                             <p class="text-muted small mb-3">
-                                回填會從昨天往前補 N 天的數值與狀態變更（N 取自設定頁「歷史回填天數」設定），只在離峰手動執行。
+                                回填會從昨天往前補數值與狀態變更，只在離峰手動執行。
+                                回填天數在 <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a> 頁設定。
                             </p>
                             <div class="d-flex align-items-center gap-3 mb-3">
                                 <button type="button" class="btn btn-primary btn-sm" id="prtg-backfill-start" data-maintain-only>開始回填</button>
+                                <span class="text-muted small" id="prtg-backfill-days-hint"></span>
                                 <div class="text-muted small" id="prtg-backfill-status"></div>
                             </div>
+                            <div class="progress mb-1 d-none" id="prtg-backfill-progress-wrap" style="height: 6px;">
+                                <div class="progress-bar" id="prtg-backfill-progress-bar" role="progressbar"></div>
+                            </div>
+                            <div class="small text-muted mb-2 d-none" id="prtg-backfill-progress-text"></div>
                             <label for="prtg-backfill-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
                                 回填輸出
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-copy" disabled>複製</button>

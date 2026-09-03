@@ -60,7 +60,6 @@ async function load() {
     renderRetentionFields(current);
     renderMailFields(current);
     renderBrandFields(current);
-    renderPrtgFields(current);
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
     loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
@@ -704,17 +703,6 @@ function bindBrandIcon() {
     });
 }
 
-/** PRTG 監控系統設定：填入保留在設定頁的參數欄位 */
-function renderPrtgFields(settings) {
-    document.getElementById('prtg-ignore-ssl').checked = Boolean(settings.prtgIgnoreSslErrors);
-    setNumber('prtg-timeout-seconds', settings.prtgTimeoutSeconds);
-    setNumber('prtg-fetch-concurrency', settings.prtgFetchConcurrency);
-    setNumber('prtg-backfill-days', settings.prtgBackfillDays);
-    setNumber('prtg-retention-days', settings.prtgRetentionDays);
-    document.getElementById('prtg-sensor-type-whitelist').value =
-        (settings.prtgSensorTypeWhitelist ?? []).join('\n');
-}
-
 function renderUpdatedAt(settings) {
     const el = document.getElementById('settings-updated');
     if (!settings.updatedAt) {
@@ -777,13 +765,6 @@ function bindForm() {
         if (reportRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('report-retention-days'));
             toast('報告保留天數不可大於歷史資料保留天數。', 'warning');
-            return;
-        }
-
-        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days').value);
-        if (prtgRetentionDays > retentionDays) {
-            activateTabForElement(document.getElementById('prtg-retention-days'));
-            toast('PRTG 資料保留天數不可大於歷史資料保留天數。', 'warning');
             return;
         }
 
@@ -980,14 +961,7 @@ function bindForm() {
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
-                brandIconDataUri: brandIconDataUri,
-                // PRTG 監控系統
-                prtgIgnoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
-                prtgTimeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value),
-                prtgFetchConcurrency: Number(document.getElementById('prtg-fetch-concurrency').value),
-                prtgBackfillDays: Number(document.getElementById('prtg-backfill-days').value),
-                prtgRetentionDays,
-                prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist')
+                brandIconDataUri: brandIconDataUri
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);
@@ -995,7 +969,6 @@ function bindForm() {
             renderAnalysisFields(current);
             renderMailFields(current);
             renderBrandFields(current);
-            renderPrtgFields(current);
             applyBrandToSidebar(current);
             renderUpdatedAt(current);
             unsaved?.clear();

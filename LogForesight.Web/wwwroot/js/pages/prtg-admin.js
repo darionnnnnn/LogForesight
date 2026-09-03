@@ -41,6 +41,8 @@ function syncPrtgAuthFields() {
     if (authMode !== 'passhash') clearHidden('prtg-passhash', 'prtg-clear-passhash');
 }
 
+let historyRetentionDays = null;
+
 function renderPrtgFields(settings) {
     document.getElementById('prtg-url').value = settings.prtgUrl ?? '';
 
@@ -99,7 +101,12 @@ function renderPrtgFields(settings) {
     syncPrtgAuthFields();
 
     document.getElementById('prtg-ignore-ssl').checked = Boolean(settings.prtgIgnoreSslErrors);
-    document.getElementById('prtg-timeout-seconds').value = settings.prtgTimeoutSeconds ?? 30;
+    document.getElementById('prtg-timeout-seconds').value = settings.prtgTimeoutSeconds ?? 60;
+    document.getElementById('prtg-fetch-concurrency').value = settings.prtgFetchConcurrency ?? 2;
+    document.getElementById('prtg-backfill-days').value = settings.prtgBackfillDays ?? 30;
+    document.getElementById('prtg-retention-days').value = settings.prtgRetentionDays ?? 180;
+    document.getElementById('prtg-sensor-type-whitelist').value =
+        (settings.prtgSensorTypeWhitelist ?? []).join('\n');
     document.getElementById('prtg-test-result').replaceChildren();
     renderUpdatedAt(settings);
 }
@@ -117,7 +124,15 @@ function renderUpdatedAt(settings) {
 
 async function loadSettings() {
     const settings = await api.get('/api/admin/settings');
+    historyRetentionDays = settings.retentionDays;
     renderPrtgFields(settings);
+}
+
+function collectLines(id) {
+    const value = document.getElementById(id)?.value ?? '';
+    return value.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
 }
 
 function bindPrtgTest() {
@@ -168,9 +183,15 @@ function bindForm() {
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
+
+        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days')?.value) || 180;
+        if (historyRetentionDays != null && prtgRetentionDays > historyRetentionDays) {
+            toast('PRTG 資料保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
+
         const restore = withBusy(saveButton, '儲存中');
         try {
-            const current = await api.get('/api/admin/settings');
             const url = document.getElementById('prtg-url').value.trim();
             const authMode = document.getElementById('prtg-auth-mode')?.value ?? 'token';
             const username = document.getElementById('prtg-username')?.value.trim() ?? '';
@@ -182,9 +203,10 @@ function bindForm() {
             const clearApiToken = document.getElementById('prtg-clear-token')?.checked ?? false;
             const ignoreSsl = document.getElementById('prtg-ignore-ssl').checked;
             const timeoutSeconds = Number(document.getElementById('prtg-timeout-seconds').value) || 60;
+            const fetchConcurrency = Number(document.getElementById('prtg-fetch-concurrency').value) || 2;
+            const backfillDays = Number(document.getElementById('prtg-backfill-days').value) || 30;
 
             const payload = {
-                ...current,
                 prtgUrl: url,
                 prtgAuthMode: authMode,
                 prtgUsername: username,
@@ -195,10 +217,14 @@ function bindForm() {
                 prtgApiToken: apiToken,
                 clearPrtgApiToken: clearApiToken,
                 prtgIgnoreSslErrors: ignoreSsl,
-                prtgTimeoutSeconds: timeoutSeconds
+                prtgTimeoutSeconds: timeoutSeconds,
+                prtgFetchConcurrency: fetchConcurrency,
+                prtgBackfillDays: backfillDays,
+                prtgRetentionDays: prtgRetentionDays,
+                prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist')
             };
 
-            await api.put('/api/admin/settings', payload);
+            await api.put('/api/admin/settings/prtg', payload);
             toast('已儲存', 'success');
             await loadSettings();
         } catch {

@@ -20,6 +20,11 @@ public interface ISystemSettingsService
     SystemSettingsDto Update(UpdateSystemSettingsRequest request);
 
     /// <summary>
+    /// 更新 PRTG 專屬設定（PRTG 維護頁用，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。只更新 PRTG 相關欄位，不動其他設定。
+    /// </summary>
+    SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request);
+
+    /// <summary>
     /// 只切換 PRTG 總開關（排程作業頁用）。刻意不走整包設定更新：
     /// 整包更新會在「讀取到送出之間」覆蓋他人的改動，也會被與 PRTG 無關的跨欄位驗證擋下。
     /// </summary>
@@ -57,8 +62,7 @@ public interface ISystemSettingsService
     /// PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線。token 留空＝沿用已儲存的 token。
     /// 成功回傳耗時，失敗回傳錯誤訊息，不擲例外。
     /// </summary>
-    Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) =>
-        throw new NotSupportedException("測試未使用此方法");
+    Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct);
 }
 
 public class SystemSettingsService : ISystemSettingsService
@@ -168,49 +172,29 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.ReportRetentionDays > request.RetentionDays)
             throw DomainException.Validation("報告保留天數不可大於歷史資料保留天數。");
 
-        if (request.PrtgRetentionDays > request.RetentionDays)
-            throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
-
+        var effectiveRetentionDays = request.RetentionDays;
+        var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
         var effectivePrtgEnabled = request.PrtgEnabled ?? before.PrtgEnabled;
         var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
         var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
         var effectivePrtgUsername = request.PrtgUsername ?? before.PrtgUsername;
 
-        if (!PrtgAuthModes.IsValid(effectivePrtgAuthMode))
-            throw DomainException.Validation("PRTG 認證方式不合法。");
-
-        if (effectivePrtgEnabled)
-        {
-            if (string.IsNullOrWhiteSpace(effectivePrtgUrl))
-                throw DomainException.Validation("啟用 PRTG 時，PRTG 位址不可為空。");
-
-            if (!IsValidHttpUrl(effectivePrtgUrl))
-                throw DomainException.Validation("PRTG 位址格式不合法，必須以 http:// 或 https:// 開頭。");
-
-            if (effectivePrtgAuthMode == PrtgAuthModes.Token)
-            {
-                // 新存或既有皆算有：密碼／token 欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
-                if (!HasEffectiveSecret(request.PrtgApiToken, before.PrtgApiTokenEnc, request.ClearPrtgApiToken))
-                    throw DomainException.Validation("啟用 PRTG 並使用 API token 時，必須設定 API token。");
-            }
-            else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
-            {
-                if (string.IsNullOrWhiteSpace(effectivePrtgUsername))
-                    throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定帳號。");
-
-                // 新存或既有皆算有：密碼欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
-                if (!HasEffectiveSecret(request.PrtgPassword, before.PrtgPasswordEnc, request.ClearPrtgPassword))
-                    throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定密碼。");
-            }
-            else if (effectivePrtgAuthMode == PrtgAuthModes.Passhash)
-            {
-                if (string.IsNullOrWhiteSpace(effectivePrtgUsername))
-                    throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定帳號。");
-
-                if (!HasEffectiveSecret(request.PrtgPasshash, before.PrtgPasshashEnc, request.ClearPrtgPasshash))
-                    throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定 passhash。");
-            }
-        }
+        ValidatePrtgSettings(
+            effectiveRetentionDays: effectiveRetentionDays,
+            effectivePrtgRetentionDays: effectivePrtgRetentionDays,
+            effectivePrtgEnabled: effectivePrtgEnabled,
+            effectivePrtgUrl: effectivePrtgUrl,
+            effectivePrtgAuthMode: effectivePrtgAuthMode,
+            effectivePrtgUsername: effectivePrtgUsername,
+            apiToken: request.PrtgApiToken,
+            existingApiTokenEnc: before.PrtgApiTokenEnc,
+            clearApiToken: request.ClearPrtgApiToken,
+            password: request.PrtgPassword,
+            existingPasswordEnc: before.PrtgPasswordEnc,
+            clearPassword: request.ClearPrtgPassword,
+            passhash: request.PrtgPasshash,
+            existingPasshashEnc: before.PrtgPasshashEnc,
+            clearPasshash: request.ClearPrtgPasshash);
 
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
@@ -241,7 +225,6 @@ public class SystemSettingsService : ISystemSettingsService
         var permMemberFields = NormalizeLines(request.PermissionMemberFields);
         var permGroupFields = NormalizeLines(request.PermissionGroupFields);
         var permObjectFields = NormalizeLines(request.PermissionObjectFields);
-        var prtgSensorTypes = NormalizeLines(request.PrtgSensorTypeWhitelist);
 
         // §1（回饋第十輪）：品牌三欄。名稱空白＝回退出廠名，副標允許空（刻意只留產品名）
         var brandName = string.IsNullOrWhiteSpace(request.BrandName) ? DefaultBrandName : request.BrandName.Trim();
@@ -417,42 +400,18 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgEnabled.HasValue) s.PrtgEnabled = request.PrtgEnabled.Value;
             if (request.PrtgUrl != null) s.PrtgUrl = request.PrtgUrl.Trim();
             if (request.PrtgAuthMode != null) s.PrtgAuthMode = request.PrtgAuthMode;
-            // 只處理「當前認證方式」那一組憑證：另一組的欄位在畫面上是隱藏的，
-            // 送上來的是切換前殘留的輸入與勾選。不隔開的話，token 模式勾了「清除 token」
-            // 後改用帳號密碼儲存，會把 token 靜默清空（使用者已經看不到那個勾選了）。
-            // 空白字元一律當成「沒填」——與驗證段的 HasEffectiveSecret 同一判定，
-            // 否則不小心輸入空白會把好的憑證覆蓋成加密後的空白，前置檢查還會誤判成「有設定」。
-            if (effectivePrtgAuthMode == PrtgAuthModes.Passhash)
-            {
-                // username 也只在帳密與 passhash 模式寫入：token 模式下它在畫面上是隱藏的，
-                // 非設定頁的呼叫端（腳本、匯入）沒帶它時不該把已存帳號靜默清空
-                if (request.PrtgUsername != null) s.PrtgUsername = effectivePrtgUsername.Trim();
-                if (request.ClearPrtgPasshash)
-                    s.PrtgPasshashEnc = "";
-                else if (!string.IsNullOrWhiteSpace(request.PrtgPasshash))
-                    s.PrtgPasshashEnc = CryptoHelper.Encrypt(request.PrtgPasshash);
-            }
-            else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
-            {
-                if (request.PrtgUsername != null) s.PrtgUsername = effectivePrtgUsername.Trim();
-                if (request.ClearPrtgPassword)
-                    s.PrtgPasswordEnc = "";
-                else if (!string.IsNullOrWhiteSpace(request.PrtgPassword))
-                    s.PrtgPasswordEnc = CryptoHelper.Encrypt(request.PrtgPassword);
-            }
-            else
-            {
-                if (request.ClearPrtgApiToken)
-                    s.PrtgApiTokenEnc = "";
-                else if (!string.IsNullOrWhiteSpace(request.PrtgApiToken))
-                    s.PrtgApiTokenEnc = CryptoHelper.Encrypt(request.PrtgApiToken);
-            }
-            s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors;
-            s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds;
-            s.PrtgFetchConcurrency = request.PrtgFetchConcurrency;
-            s.PrtgBackfillDays = request.PrtgBackfillDays;
-            s.PrtgRetentionDays = request.PrtgRetentionDays;
-            s.PrtgSensorTypeWhitelist = prtgSensorTypes;
+            // 憑證寫入的隔離規則見 WritePrtgCredentials 的註解
+            WritePrtgCredentials(s, effectivePrtgAuthMode, effectivePrtgUsername,
+                usernameSent: request.PrtgUsername != null,
+                apiToken: request.PrtgApiToken, clearApiToken: request.ClearPrtgApiToken,
+                password: request.PrtgPassword, clearPassword: request.ClearPrtgPassword,
+                passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
+            if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
+            if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
+            if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
+            if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
+            if (request.PrtgSensorTypeWhitelist != null) s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
 
             s.UpdatedByAccount = _currentUser.Account;
         });
@@ -560,6 +519,99 @@ public class SystemSettingsService : ISystemSettingsService
             detail: new { PrtgEnabled = enabled });
 
         return saved.PrtgEnabled;
+    }
+
+    public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request)
+    {
+        var before = _store.Get();
+
+        var effectiveRetentionDays = before.RetentionDays;
+        var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
+        var effectivePrtgEnabled = before.PrtgEnabled;
+        var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
+        var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
+        var effectivePrtgUsername = request.PrtgUsername ?? before.PrtgUsername;
+
+        ValidatePrtgSettings(
+            effectiveRetentionDays: effectiveRetentionDays,
+            effectivePrtgRetentionDays: effectivePrtgRetentionDays,
+            effectivePrtgEnabled: effectivePrtgEnabled,
+            effectivePrtgUrl: effectivePrtgUrl,
+            effectivePrtgAuthMode: effectivePrtgAuthMode,
+            effectivePrtgUsername: effectivePrtgUsername,
+            apiToken: request.PrtgApiToken,
+            existingApiTokenEnc: before.PrtgApiTokenEnc,
+            clearApiToken: request.ClearPrtgApiToken,
+            password: request.PrtgPassword,
+            existingPasswordEnc: before.PrtgPasswordEnc,
+            clearPassword: request.ClearPrtgPassword,
+            passhash: request.PrtgPasshash,
+            existingPasshashEnc: before.PrtgPasshashEnc,
+            clearPasshash: request.ClearPrtgPasshash);
+
+        var saved = _store.Update(s =>
+        {
+            if (request.PrtgUrl != null) s.PrtgUrl = request.PrtgUrl.Trim();
+            if (request.PrtgAuthMode != null) s.PrtgAuthMode = request.PrtgAuthMode;
+            WritePrtgCredentials(s, effectivePrtgAuthMode, effectivePrtgUsername,
+                usernameSent: request.PrtgUsername != null,
+                apiToken: request.PrtgApiToken, clearApiToken: request.ClearPrtgApiToken,
+                password: request.PrtgPassword, clearPassword: request.ClearPrtgPassword,
+                passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
+            if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
+            if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
+            if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
+            if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
+            if (request.PrtgSensorTypeWhitelist != null)
+                s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+
+            s.UpdatedByAccount = _currentUser.Account;
+        });
+
+        _audit.Record(
+            action: AuditActions.PrtgSettingsUpdate,
+            summary: "更新 PRTG 設定",
+            targetKind: "system_settings",
+            targetId: "prtg_settings",
+            detail: new
+            {
+                Before = new
+                {
+                    before.PrtgUrl,
+                    before.PrtgAuthMode,
+                    before.PrtgUsername,
+                    before.PrtgIgnoreSslErrors,
+                    before.PrtgTimeoutSeconds,
+                    before.PrtgFetchConcurrency,
+                    before.PrtgBackfillDays,
+                    before.PrtgRetentionDays,
+                    PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
+                    PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
+                    PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
+                    PrtgHasPasshash = !string.IsNullOrEmpty(before.PrtgPasshashEnc)
+                },
+                After = new
+                {
+                    saved.PrtgUrl,
+                    saved.PrtgAuthMode,
+                    saved.PrtgUsername,
+                    saved.PrtgIgnoreSslErrors,
+                    saved.PrtgTimeoutSeconds,
+                    saved.PrtgFetchConcurrency,
+                    saved.PrtgBackfillDays,
+                    saved.PrtgRetentionDays,
+                    PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
+                    PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
+                    PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
+                    PrtgHasPasshash = !string.IsNullOrEmpty(saved.PrtgPasshashEnc)
+                },
+                PrtgApiTokenChanged = request.ClearPrtgApiToken || !string.IsNullOrEmpty(request.PrtgApiToken),
+                PrtgPasswordChanged = request.ClearPrtgPassword || !string.IsNullOrEmpty(request.PrtgPassword),
+                PrtgPasshashChanged = request.ClearPrtgPasshash || !string.IsNullOrEmpty(request.PrtgPasshash)
+            });
+
+        return ToDto(saved);
     }
 
     // ── 品牌自訂的驗證常數與規則（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────
@@ -708,8 +760,8 @@ public class SystemSettingsService : ISystemSettingsService
 
         // 非法的認證方式要擋下而不是靜默落回 token：`"Password"`（大寫）之類的值
         // 會走進 token 分支，錯誤訊息變成「尚未設定 API token」，完全誤導。
-        if (!string.IsNullOrEmpty(request.AuthMode) && !PrtgAuthModes.IsValid(request.AuthMode))
-            throw DomainException.Validation("PRTG 認證方式不合法。");
+        if (!string.IsNullOrEmpty(request.AuthMode))
+            ValidatePrtgAuthMode(request.AuthMode);
 
         var isPasswordMode = string.Equals(request.AuthMode, PrtgAuthModes.Password, StringComparison.Ordinal);
         var isPasshashMode = string.Equals(request.AuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal);
@@ -874,6 +926,121 @@ public class SystemSettingsService : ISystemSettingsService
     private static bool IsValidHttpUrl(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static void ValidatePrtgAuthMode(string? authMode)
+    {
+        if (!PrtgAuthModes.IsValid(authMode))
+            throw DomainException.Validation("PRTG 認證方式不合法。");
+    }
+
+    /// <summary>
+    /// PRTG 憑證寫入（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
+    ///
+    /// 只處理「當前認證方式」那一組憑證：另一組的欄位在畫面上是隱藏的，
+    /// 送上來的是切換前殘留的輸入與勾選。不隔開的話，token 模式勾了「清除 token」
+    /// 後改用帳號密碼儲存，會把 token 靜默清空（使用者已經看不到那個勾選了）。
+    /// 空白字元一律當成「沒填」——與 <see cref="ValidatePrtgSettings"/> 的 HasEffectiveSecret
+    /// 同一判定，否則不小心輸入空白會把好的憑證覆蓋成加密後的空白，前置檢查還會誤判成「有設定」。
+    ///
+    /// username 也只在帳密與 passhash 模式寫入：token 模式下它在畫面上是隱藏的，
+    /// 非設定頁的呼叫端（腳本、匯入）沒帶它時不該把已存帳號靜默清空。
+    /// </summary>
+    private static void WritePrtgCredentials(
+        SystemSettings s,
+        string? effectiveAuthMode,
+        string effectiveUsername,
+        bool usernameSent,
+        string? apiToken,
+        bool clearApiToken,
+        string? password,
+        bool clearPassword,
+        string? passhash,
+        bool clearPasshash)
+    {
+        if (effectiveAuthMode == PrtgAuthModes.Passhash)
+        {
+            if (usernameSent) s.PrtgUsername = effectiveUsername.Trim();
+            if (clearPasshash)
+                s.PrtgPasshashEnc = "";
+            else if (!string.IsNullOrWhiteSpace(passhash))
+                s.PrtgPasshashEnc = CryptoHelper.Encrypt(passhash);
+        }
+        else if (effectiveAuthMode == PrtgAuthModes.Password)
+        {
+            if (usernameSent) s.PrtgUsername = effectiveUsername.Trim();
+            if (clearPassword)
+                s.PrtgPasswordEnc = "";
+            else if (!string.IsNullOrWhiteSpace(password))
+                s.PrtgPasswordEnc = CryptoHelper.Encrypt(password);
+        }
+        else
+        {
+            if (clearApiToken)
+                s.PrtgApiTokenEnc = "";
+            else if (!string.IsNullOrWhiteSpace(apiToken))
+                s.PrtgApiTokenEnc = CryptoHelper.Encrypt(apiToken);
+        }
+    }
+
+    /// <summary>
+    /// PRTG 共同驗證（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
+    /// 涵蓋保留天數上限、認證方式合法性、啟用狀態下的 URL 與對應憑證存在性檢查。
+    /// </summary>
+    private static void ValidatePrtgSettings(
+        int effectiveRetentionDays,
+        int effectivePrtgRetentionDays,
+        bool effectivePrtgEnabled,
+        string? effectivePrtgUrl,
+        string? effectivePrtgAuthMode,
+        string? effectivePrtgUsername,
+        string? apiToken,
+        string existingApiTokenEnc,
+        bool clearApiToken,
+        string? password,
+        string existingPasswordEnc,
+        bool clearPassword,
+        string? passhash,
+        string existingPasshashEnc,
+        bool clearPasshash)
+    {
+        if (effectivePrtgRetentionDays > effectiveRetentionDays)
+            throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
+
+        ValidatePrtgAuthMode(effectivePrtgAuthMode);
+
+        if (effectivePrtgEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(effectivePrtgUrl))
+                throw DomainException.Validation("啟用 PRTG 時，PRTG 位址不可為空。");
+
+            if (!IsValidHttpUrl(effectivePrtgUrl))
+                throw DomainException.Validation("PRTG 位址格式不合法，必須以 http:// 或 https:// 開頭。");
+
+            if (effectivePrtgAuthMode == PrtgAuthModes.Token)
+            {
+                // 新存或既有皆算有：密碼／token 欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
+                if (!HasEffectiveSecret(apiToken, existingApiTokenEnc, clearApiToken))
+                    throw DomainException.Validation("啟用 PRTG 並使用 API token 時，必須設定 API token。");
+            }
+            else if (effectivePrtgAuthMode == PrtgAuthModes.Password)
+            {
+                if (string.IsNullOrWhiteSpace(effectivePrtgUsername))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定帳號。");
+
+                // 新存或既有皆算有：密碼欄留空代表沿用既有，只看 request 會把「沿用」誤判成「沒設定」
+                if (!HasEffectiveSecret(password, existingPasswordEnc, clearPassword))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號密碼時，必須設定密碼。");
+            }
+            else if (effectivePrtgAuthMode == PrtgAuthModes.Passhash)
+            {
+                if (string.IsNullOrWhiteSpace(effectivePrtgUsername))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定帳號。");
+
+                if (!HasEffectiveSecret(passhash, existingPasshashEnc, clearPasshash))
+                    throw DomainException.Validation("啟用 PRTG 並使用帳號＋passhash 時，必須設定 passhash。");
+            }
+        }
+    }
 
     /// <summary>
     /// AI 進階參數的出廠值（docs/archive/FEEDBACK-10-PLAN.md §3）：直接讀 <see cref="SystemSettings"/> 的

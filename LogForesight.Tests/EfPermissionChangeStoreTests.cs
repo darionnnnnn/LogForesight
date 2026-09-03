@@ -279,7 +279,7 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
     }
 
     [Fact]
-    public void GetDedupeKeys_回傳鍵與寫入紀錄的DedupeKey完全一致()
+    public void GetDedupeKeysForHost_回傳鍵與寫入紀錄的DedupeKey完全一致()
     {
         var time1 = new DateTime(2026, 8, 19, 10, 0, 0);
         var time2 = new DateTime(2026, 8, 19, 11, 0, 0);
@@ -303,17 +303,17 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
 
         _store.AppendChanges(new[] { r1, r2 });
 
-        var dedupeKeys = _store.GetDedupeKeys();
-        Assert.Equal(2, dedupeKeys.Count);
-        Assert.Contains(r1.DedupeKey(), dedupeKeys);
-        Assert.Contains(r2.DedupeKey(), dedupeKeys);
+        // 逐主機查詢：各主機只拿得到自己的鍵（生產路徑就是逐主機日現查）
+        var dc01Keys = _store.GetDedupeKeysForHost("SRV-DC01", time1.AddHours(-1), time2.AddHours(1));
+        Assert.Single(dc01Keys);
+        Assert.Contains(r1.DedupeKey(), dc01Keys);
 
-        // 依 appendedSince 篩選
-        var futureKeys = _store.GetDedupeKeys(DateTime.Now.AddHours(1));
-        Assert.Empty(futureKeys);
+        var dc02Keys = _store.GetDedupeKeysForHost("SRV-DC02", time1.AddHours(-1), time2.AddHours(1));
+        Assert.Single(dc02Keys);
+        Assert.Contains(r2.DedupeKey(), dc02Keys);
 
-        var pastKeys = _store.GetDedupeKeys(DateTime.Now.AddHours(-1));
-        Assert.Equal(2, pastKeys.Count);
+        // 區間外查不到
+        Assert.Empty(_store.GetDedupeKeysForHost("SRV-DC01", time2, time2.AddHours(1)));
     }
 
     [Fact]

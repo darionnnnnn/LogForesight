@@ -1,5 +1,6 @@
 using System.Text;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
@@ -421,6 +422,15 @@ public static class ServiceCollectionExtensions
         // 未註冊的 Kind 由 ImportService.Resolve 回「不支援的匯入類型」，舊網址打進來不會 500。
         services.AddScoped<ICsvImporter, OwnerCsvImporter>();
         services.AddScoped<ImportService>();
+
+        // 校準狀態判定與數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A）：走 StorageBackend 的工廠方法，
+        // 與其他 store 同一慣例——不要以反射取它的私有連線工廠（欄位改名不會編譯失敗，
+        // 只會在執行時炸）
+        services.AddScoped<CalibrationService>(sp =>
+            sp.GetRequiredService<StorageBackend>().CalibrationService(
+                sp.GetRequiredService<IIssueAggregateQuery>(),
+                sp.GetRequiredService<ISystemSettingsStore>(),
+                sp.GetRequiredService<IKnownIssueRuleStore>()));
 
         return services;
     }

@@ -178,8 +178,15 @@ docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
   登入失敗（4625／4771／Linux ssh・sudo・su 認證失敗）的結構化明細，依
   (帳號, 來源, 登入類型, 失敗原因) 分組計數、依次數降冪封頂 50 組。
   **低風險日的精簡策略刻意保留此欄不清空**（`RecordStorageShaper.ForStorage` 會把
-  `SampleMessages` 清空、`KeyDetails` 設為 null，但**不動這一欄**）——殘留憑證的跨日確認
-  要讀歷史紀錄的這個欄位，一併精簡掉就會靜默廢掉跨日確認制。**要動精簡策略前先看這一條。**
+  `SampleMessages` 清空、`KeyDetails`／`KeyAccounts`／`KeyIps` 設為 null，但**不動這一欄**）
+  ——殘留憑證的跨日確認要讀歷史紀錄的這個欄位，一併精簡掉就會靜默廢掉跨日確認制。
+  **要動精簡策略前先看這一條。**
+- `LogIssueSignature.KeyAccounts`／`KeyIps`（`List<string>?`，非 Security／RDP 頻道為 null）：
+  與 `KeyDetails` 同一批訊息抽出的**完整**帳號集合與來源 IP 集合（去重保序、各封頂 200）。
+  `KeyDetails` 是給人看的摘要（只列前 5 個加省略號），這兩欄才是資料契約——4740 帳號交叉
+  比對讀 `KeyAccounts`、【暴力破解→RDP 得手】的 IP 交集讀 `KeyIps`；欄位為 null（舊 ContentJson）
+  時才退回剖析 `KeyDetails`。**只用當日簽章比對，不讀歷史的這兩欄**，故低風險日精簡時
+  與 `KeyDetails` 一併設 null（見上）。
 - `LogIssueSignature.ResidualCredentialRetry`（bool）／`ResidualCredentialBasis`（string?）：
   疑似殘留憑證重試的判定結果與白話依據（見 docs/DETECTION-SPEC.md）。
   **只在 ContentJson，未抽出成 `lf_top_issues` 欄位**——因此無法用 SQL 篩「哪些日子有殘留判定」，

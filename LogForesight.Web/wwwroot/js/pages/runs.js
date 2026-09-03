@@ -553,6 +553,11 @@ async function loadSchedule() {
     if (settings) {
         const prtgEnabledEl = document.getElementById('prtg-enabled');
         if (prtgEnabledEl) prtgEnabledEl.checked = Boolean(settings.prtgEnabled);
+        // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
+        const daysHintEl = document.getElementById('prtg-backfill-days-hint');
+        if (daysHintEl && settings.prtgBackfillDays) {
+            daysHintEl.textContent = `將回填 ${settings.prtgBackfillDays} 天`;
+        }
     }
     await refreshScheduleStatus();
 }
@@ -880,17 +885,25 @@ function applyAiScheduleStatus(status) {
     wasAiScheduleRunning = status.isRunning;
 }
 
-// 取數執行只剩本機與 NetIQ 兩條軌（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
+// 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
 const PROGRESS_PHASE_LABEL = {
-    local: '本機分析', netiq: 'NetIQ 機房分析'
+    local: '本機分析',
+    netiq: 'NetIQ 機房分析',
+    'prtg-sync': 'PRTG 結構同步',
+    'prtg-values': 'PRTG 數值取數',
+    'prtg-triggered': 'PRTG 觸發式取數'
 };
-const PROGRESS_PHASE_UNIT = {};
+const PROGRESS_PHASE_UNIT = {
+    'prtg-sync': 'sensor',
+    'prtg-values': 'sensor',
+    'prtg-triggered': 'sensor'
+};
 
 /**
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
  * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（準備中…）；非執行中整組隱藏。
  */
-function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日') {
+function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日', customLabel = null) {
     if (!isVisible) {
         wrapEl?.classList.add('d-none');
         textEl?.classList.add('d-none');
@@ -901,7 +914,7 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
 
     if (total > 0) {
         const pct = Math.min(100, Math.round((done / total) * 100));
-        const label = labelPrefix ? `${labelPrefix}　${done} / ${total} ${unit}` : `${done} / ${total} ${unit}`;
+        const label = customLabel || (labelPrefix ? `${labelPrefix}　${done} / ${total} ${unit}` : `${done} / ${total} ${unit}`);
         barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
             barEl.style.width = `${pct}%`;
@@ -936,6 +949,9 @@ function renderScheduleProgress(status) {
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
     const text = document.getElementById('schedule-progress-text');
+    const prtgWrap = document.getElementById('schedule-prtg-progress-wrap');
+    const prtgBar = document.getElementById('schedule-prtg-progress-bar');
+    const prtgText = document.getElementById('schedule-prtg-progress-text');
 
     updateProgressBar(
         { wrapEl: localWrap, barEl: localBar, textEl: localText },
@@ -953,6 +969,15 @@ function renderScheduleProgress(status) {
         status.progressTotal,
         PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase,
         PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日'
+    );
+
+    updateProgressBar(
+        { wrapEl: prtgWrap, barEl: prtgBar, textEl: prtgText },
+        status.isRunning && !!status.prtgProgressPhase,
+        status.prtgProgressDone,
+        status.prtgProgressTotal,
+        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? status.prtgProgressPhase,
+        PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor'
     );
 }
 
@@ -1277,6 +1302,9 @@ function renderPrtgBackfillStatus(status) {
     const copyButton = document.getElementById('prtg-backfill-copy');
     const startButton = document.getElementById('prtg-backfill-start');
     const statusEl = document.getElementById('prtg-backfill-status');
+    const wrapEl = document.getElementById('prtg-backfill-progress-wrap');
+    const barEl = document.getElementById('prtg-backfill-progress-bar');
+    const textEl = document.getElementById('prtg-backfill-progress-text');
 
     if (!outputEl || !copyButton || !startButton || !statusEl) return;
 
@@ -1286,6 +1314,23 @@ function renderPrtgBackfillStatus(status) {
         outputEl.scrollTop = outputEl.scrollHeight;
     }
     copyButton.disabled = !outputText;
+
+    const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
+    // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
+    const currentDayNo = Math.min(status.daysDone + 1, status.daysTotal || 0);
+    const label = dateStr
+        ? `第 ${currentDayNo} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
+        : `已完成 ${status.daysDone} / ${status.daysTotal} 天`;
+
+    updateProgressBar(
+        { wrapEl, barEl, textEl },
+        status.isRunning,
+        status.daysDone,
+        status.daysTotal,
+        null,
+        '天',
+        status.daysTotal > 0 ? label : null
+    );
 
     if (status.isRunning) {
         startButton.disabled = true;

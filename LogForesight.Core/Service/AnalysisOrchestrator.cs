@@ -557,6 +557,17 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "PRTG 鏡像資料清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
+            try
+            {
+                var diagPruned = FilePromptDumper.Prune(retention.RunLogRetentionDays);
+                if (diagPruned > 0)
+                    console.WriteLine($"已清除 {diagPruned} 個超過 {retention.RunLogRetentionDays} 天的 AI 診斷傾印檔。");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "AI 診斷傾印檔清理失敗（不影響本次分析）：{0}", ex.Message);
+            }
+
             var yesterday = DateTime.Today.AddDays(-1);
 
             // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
@@ -1072,10 +1083,13 @@ public class AnalysisOrchestrator
             var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole);
 
             // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）
+            // PRTG 進度 phase：prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）、prtg-done（完工）
             try
             {
+                progress?.Report("prtg-sync", 0, 0);
                 var fetchResult = await fetchService.FetchDayAsync(
-                    day, systemSettings.PrtgFetchConcurrency, ct, syncStructure: true, fetchValues: false);
+                    day, systemSettings.PrtgFetchConcurrency, ct, syncStructure: true, fetchValues: false,
+                    (stage, done, total) => progress?.Report(stage, done, total));
 
                 var summary = $"PRTG 每日擷取完成（{day:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
                               $"狀態變更 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
@@ -1157,9 +1171,9 @@ public class AnalysisOrchestrator
                     throw new PrtgRulesUnavailableException();
                 }
 
-                var downMinutes = 60;
-                var flapCount = 5;
-                var warningMinutes = 240;
+                var downMinutes = PrtgRuleCatalog.DefaultDownMinutes;
+                var flapCount = PrtgRuleCatalog.DefaultFlapCount;
+                var warningMinutes = PrtgRuleCatalog.DefaultWarningMinutes;
 
                 foreach (var rule in prtgRules)
                 {
@@ -1225,11 +1239,13 @@ public class AnalysisOrchestrator
             // 4. PRTG 觸發式數值取數：獨立的 try/catch，與分析並行輪詢
             try
             {
+                progress?.Report("prtg-triggered", 0, 0);
                 var triggeredFetcher = new PrtgTriggeredValueFetcher(
                     fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
                 var triggeredResult = await triggeredFetcher.RunAsync(
                     day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
-                    () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts);
+                    () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts,
+                    progress: (stage, done, total) => progress?.Report(stage, done, total));
 
                 var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}）：問題主機 {triggeredResult.TriggerHosts} 台、" +
                               $"sensor {triggeredResult.TargetSensors} 個、數值 {triggeredResult.ValuesWritten} 筆" +
@@ -1298,6 +1314,10 @@ public class AnalysisOrchestrator
         {
             Log.Error(ex, "PRTG 每日擷取初始化失敗，本機與 NetIQ 分析結果不受影響");
             prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取初始化失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
+        }
+        finally
+        {
+            progress?.Report("prtg-done", 0, 0);
         }
     }
 

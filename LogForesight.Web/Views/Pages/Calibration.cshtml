@@ -1,0 +1,144 @@
+﻿@{
+    ViewData["Title"] = "校準數值匯出";
+}
+
+<div class="lf-card mb-4">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">校準數值匯出</h2>
+    </div>
+    <div class="lf-card__body">
+        <p class="text-muted mb-3">
+            本頁面用於評估下一輪設計 PRTG 值型規則與校準門檻所需的資料累積量是否足夠。當四項校準指標皆達標時，即可匯出校準數值封裝檔供開發端進行分析與規則調校。
+        </p>
+
+        <div class="d-flex align-items-center gap-3 mb-4">
+            <button type="button" class="btn btn-primary" id="calibration-calc-btn">
+                <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
+                重新計算
+            </button>
+            <span class="text-muted small" id="calibration-status-hint">尚未計算</span>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <!-- 1. PRTG 值型基線 -->
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-light" id="calibration-card-prtg-value-baseline">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h3 class="h6 fw-bold mb-0">PRTG 值型基線</h3>
+                        <span class="badge bg-secondary" id="badge-prtg-value-baseline">尚未計算</span>
+                    </div>
+                    <div class="mb-3" id="metrics-prtg-value-baseline">
+                        <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                        <div id="thresholds-prtg-value-baseline">
+                            <div class="text-muted small">-</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                        <ul class="list-unstyled mb-0 small text-muted" id="explanations-prtg-value-baseline">
+                            <li>-</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. PRTG 規則門檻 -->
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-light" id="calibration-card-prtg-rule-thresholds">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h3 class="h6 fw-bold mb-0">PRTG 規則門檻</h3>
+                        <span class="badge bg-secondary" id="badge-prtg-rule-thresholds">尚未計算</span>
+                    </div>
+                    <div class="mb-3" id="metrics-prtg-rule-thresholds">
+                        <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                        <div id="thresholds-prtg-rule-thresholds">
+                            <div class="text-muted small">-</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                        <ul class="list-unstyled mb-0 small text-muted" id="explanations-prtg-rule-thresholds">
+                            <li>-</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. 觸發式取數量級 -->
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-light" id="calibration-card-triggered-fetch-magnitude">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h3 class="h6 fw-bold mb-0">觸發式取數量級</h3>
+                        <span class="badge bg-secondary" id="badge-triggered-fetch-magnitude">尚未計算</span>
+                    </div>
+                    <div class="mb-3" id="metrics-triggered-fetch-magnitude">
+                        <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                        <div id="thresholds-triggered-fetch-magnitude">
+                            <div class="text-muted small">-</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                        <ul class="list-unstyled mb-0 small text-muted" id="explanations-triggered-fetch-magnitude">
+                            <li>-</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. 殘留判定門檻 -->
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-light" id="calibration-card-residual-credential-thresholds">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h3 class="h6 fw-bold mb-0">殘留判定門檻</h3>
+                        <span class="badge bg-secondary" id="badge-residual-credential-thresholds">尚未計算</span>
+                    </div>
+                    <div class="mb-3" id="metrics-residual-credential-thresholds">
+                        <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                        <div id="thresholds-residual-credential-thresholds">
+                            <div class="text-muted small">-</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                        <ul class="list-unstyled mb-0 small text-muted" id="explanations-residual-credential-thresholds">
+                            <li>-</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <hr class="my-4" />
+
+        <!-- 匯出操作區 -->
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="calibration-override-check" />
+                <label class="form-check-label small" for="calibration-override-check">
+                    仍要匯出（若指標未全數達標，強制覆寫閘門限制進行匯出）
+                </label>
+            </div>
+            <button type="button" class="btn btn-success" id="calibration-export-btn" disabled>
+                <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#file-earmark-text"></use></svg>
+                匯出校準數值
+            </button>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/calibration.js" asp-append-version="true"></script>
+}

@@ -989,4 +989,371 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Contains(statuses, s => s.Objid == 102 && s.DeviceObjid == 1 && s.Status == "Down" && s.SensorType == "ping");
         Assert.DoesNotContain(statuses, s => s.Objid == 103);
     }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_資料稀疏仍取得最近一日()
+    {
+        var store = CreateStore();
+        var targetDate = DateTime.Today.AddDays(-20);
+
+        store.ReplaceHostMapForDate(targetDate, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = targetDate, DeviceObjid = 101, HostName = "SRV-101", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+
+        Assert.Equal(targetDate, mapDate);
+        Assert.Single(rows);
+        Assert.Equal(101, rows[0].DeviceObjid);
+
+        var latestRows = store.GetLatestHostMap(30);
+        Assert.Single(latestRows);
+        Assert.Equal(101, latestRows[0].DeviceObjid);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_多日資料取最新那一日且只包含該日列()
+    {
+        var store = CreateStore();
+        var day20Ago = DateTime.Today.AddDays(-20);
+        var day10Ago = DateTime.Today.AddDays(-10);
+        var day3Ago = DateTime.Today.AddDays(-3);
+
+        store.ReplaceHostMapForDate(day20Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day20Ago, DeviceObjid = 201, HostName = "SRV-201", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        store.ReplaceHostMapForDate(day10Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day10Ago, DeviceObjid = 301, HostName = "SRV-301", MapStatus = PrtgMapStatus.Conflict },
+            new() { MapDate = day10Ago, DeviceObjid = 302, HostName = "SRV-302", MapStatus = PrtgMapStatus.Unmatched }
+        });
+
+        store.ReplaceHostMapForDate(day3Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day3Ago, DeviceObjid = 401, HostName = "SRV-401", MapStatus = PrtgMapStatus.Ok },
+            new() { MapDate = day3Ago, DeviceObjid = 402, HostName = "SRV-402", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+
+        Assert.Equal(day3Ago, mapDate);
+        Assert.Equal(2, rows.Count);
+        Assert.Contains(rows, r => r.DeviceObjid == 401);
+        Assert.Contains(rows, r => r.DeviceObjid == 402);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 201);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 301);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 302);
+
+        var latestRows = store.GetLatestHostMap(30);
+        Assert.Equal(2, latestRows.Count);
+        Assert.Contains(latestRows, r => r.DeviceObjid == 401);
+        Assert.Contains(latestRows, r => r.DeviceObjid == 402);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_以指定基準日回看時不取到基準日之後的對應()
+    {
+        var store = CreateStore();
+        var day10Ago = DateTime.Today.AddDays(-10);
+        var day3Ago = DateTime.Today.AddDays(-3);
+
+        store.ReplaceHostMapForDate(day10Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day10Ago, DeviceObjid = 601, HostName = "SRV-601", MapStatus = PrtgMapStatus.Ok }
+        });
+        store.ReplaceHostMapForDate(day3Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day3Ago, DeviceObjid = 602, HostName = "SRV-602", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        // 基準日為 7 天前：只能看到 10 天前那筆，不得取到基準日之後的 3 天前那筆
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(31, DateTime.Today.AddDays(-7));
+
+        Assert.Equal(day10Ago, mapDate);
+        Assert.Single(rows);
+        Assert.Equal(601, rows[0].DeviceObjid);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_窗內無資料回傳Null與空清單()
+    {
+        var store = CreateStore();
+        var day60Ago = DateTime.Today.AddDays(-60);
+
+        store.ReplaceHostMapForDate(day60Ago, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day60Ago, DeviceObjid = 501, HostName = "SRV-501", MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+
+        Assert.Null(mapDate);
+        Assert.Empty(rows);
+
+        var latestRows = store.GetLatestHostMap(30);
+        Assert.Empty(latestRows);
+    }
+
+    [Fact]
+    public void GetDailyValueAggregations_品質過濾_平均最小最大只採計ok且null不拉低平均()
+    {
+        var store = CreateStore();
+        var date = new DateTime(2026, 8, 31);
+        var from = date;
+        var to = date.AddDays(1);
+
+        // 同一個 sensor 同一天寫入 3 列 ok（值 10/20/30）、1 列 unknown（null）、1 列 nodata（null）
+        var values = new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = date.AddHours(10), AvgValue = 10.0, MinValue = 10.0, MaxValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = date.AddHours(11), AvgValue = 20.0, MinValue = 20.0, MaxValue = 20.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = date.AddHours(12), AvgValue = 30.0, MinValue = 30.0, MaxValue = 30.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = date.AddHours(13), AvgValue = null, MinValue = null, MaxValue = null, Quality = PrtgDataQuality.Unknown },
+            new() { SensorObjid = 1001, PeriodStart = date.AddHours(14), AvgValue = null, MinValue = null, MaxValue = null, Quality = PrtgDataQuality.NoData },
+            // 有值但品質不是 ok（暫停期間仍可能帶回數值）：必須被品質過濾擋掉。
+            // 少了這一列，「只靠 AvgValue != null 判斷」與「同時判斷 Quality == ok」結果相同，
+            // 品質過濾等於沒被驗到（突變測試會存活）。
+            new() { SensorObjid = 1001, PeriodStart = date.AddHours(15), AvgValue = 999.0, MinValue = 999.0, MaxValue = 999.0, Quality = PrtgDataQuality.Paused },
+        };
+        store.UpsertValues(values);
+
+        var result = store.GetDailyValueAggregations(from, to);
+
+        Assert.Single(result);
+        var row = result[0];
+        Assert.Equal(1001, row.SensorObjid);
+        Assert.Equal(date, row.Date);
+        Assert.Equal(20.0, row.AvgValue);
+        Assert.Equal(10.0, row.MinValue);
+        Assert.Equal(30.0, row.MaxValue);
+        Assert.Equal(3, row.OkCount);
+        Assert.Equal(1, row.UnknownCount);
+        Assert.Equal(1, row.NodataCount);
+        Assert.Equal(1, row.OtherCount);
+        Assert.Equal(6, row.TotalCount);
+    }
+
+    [Fact]
+    public void GetDailyValueAggregations_完全沒有ok列的日子仍回傳一列且統計值為null()
+    {
+        var store = CreateStore();
+        var date = new DateTime(2026, 8, 31);
+        var from = date;
+        var to = date.AddDays(1);
+
+        // 某 sensor 某日只有 unknown 與 nodata
+        var values = new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 2001, PeriodStart = date.AddHours(10), AvgValue = null, Quality = PrtgDataQuality.Unknown },
+            new() { SensorObjid = 2001, PeriodStart = date.AddHours(11), AvgValue = null, Quality = PrtgDataQuality.NoData },
+        };
+        store.UpsertValues(values);
+
+        var result = store.GetDailyValueAggregations(from, to);
+
+        Assert.Single(result);
+        var row = result[0];
+        Assert.Equal(2001, row.SensorObjid);
+        Assert.Equal(date, row.Date);
+        Assert.Null(row.AvgValue);
+        Assert.Null(row.MinValue);
+        Assert.Null(row.MaxValue);
+        Assert.Equal(0, row.OkCount);
+        Assert.Equal(1, row.UnknownCount);
+        Assert.Equal(1, row.NodataCount);
+        Assert.Equal(2, row.TotalCount);
+    }
+
+    [Fact]
+    public void GetValueCoverageSummary_涵蓋摘要_只看ok品質之涵蓋天數與起訖時間()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 8, 20);
+        var to = new DateTime(2026, 8, 25);
+
+        // sensor 3001 在三個不同日期各有 ok 列（其中一天有兩列 ok）
+        // sensor 3002 在三個不同日期只有 unknown/nodata 列
+        var values = new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 3001, PeriodStart = new DateTime(2026, 8, 20, 10, 0, 0), AvgValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 3001, PeriodStart = new DateTime(2026, 8, 21, 11, 0, 0), AvgValue = 15.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 3001, PeriodStart = new DateTime(2026, 8, 21, 15, 0, 0), AvgValue = 20.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 3001, PeriodStart = new DateTime(2026, 8, 22, 9, 0, 0), AvgValue = 25.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 3001, PeriodStart = new DateTime(2026, 8, 22, 18, 0, 0), AvgValue = null, Quality = PrtgDataQuality.Unknown },
+
+            new() { SensorObjid = 3002, PeriodStart = new DateTime(2026, 8, 20, 10, 0, 0), AvgValue = null, Quality = PrtgDataQuality.Unknown },
+            new() { SensorObjid = 3002, PeriodStart = new DateTime(2026, 8, 21, 11, 0, 0), AvgValue = null, Quality = PrtgDataQuality.NoData },
+            new() { SensorObjid = 3002, PeriodStart = new DateTime(2026, 8, 22, 12, 0, 0), AvgValue = null, Quality = PrtgDataQuality.Unknown },
+        };
+        store.UpsertValues(values);
+
+        var result = store.GetValueCoverageSummary(from, to);
+
+        Assert.Equal(2, result.Count);
+
+        var s3001 = result.Single(r => r.SensorObjid == 3001);
+        Assert.Equal(4, s3001.OkCount);
+        Assert.Equal(3, s3001.OkDays);
+        Assert.Equal(new DateTime(2026, 8, 20, 10, 0, 0), s3001.EarliestOkPeriod);
+        Assert.Equal(new DateTime(2026, 8, 22, 9, 0, 0), s3001.LatestOkPeriod);
+        Assert.Equal(1, s3001.UnknownCount);
+        Assert.Equal(0, s3001.NodataCount);
+        Assert.Equal(5, s3001.TotalCount);
+
+        var s3002 = result.Single(r => r.SensorObjid == 3002);
+        Assert.Equal(0, s3002.OkCount);
+        Assert.Equal(0, s3002.OkDays); // 涵蓋天數為 0（不是 3）
+        Assert.Null(s3002.EarliestOkPeriod);
+        Assert.Null(s3002.LatestOkPeriod);
+        Assert.Equal(2, s3002.UnknownCount);
+        Assert.Equal(1, s3002.NodataCount);
+        Assert.Equal(3, s3002.TotalCount);
+    }
+
+    [Fact]
+    public void GetDailyValueMagnitudes_每日量級_逐日相異sensor數與各品質筆數正確()
+    {
+        var store = CreateStore();
+        var d1 = new DateTime(2026, 8, 30);
+        var d2 = new DateTime(2026, 8, 31);
+        var from = d1;
+        var to = d2.AddDays(1);
+
+        // Day 1: 2 sensors, 4 rows (2 ok, 1 unknown, 1 nodata)
+        // Day 2: 3 sensors, 6 rows (5 ok, 1 unknown, 0 nodata)
+        var values = new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 4001, PeriodStart = d1.AddHours(1), AvgValue = 1.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4001, PeriodStart = d1.AddHours(2), AvgValue = 2.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4001, PeriodStart = d1.AddHours(3), AvgValue = null, Quality = PrtgDataQuality.Unknown },
+            new() { SensorObjid = 4002, PeriodStart = d1.AddHours(1), AvgValue = null, Quality = PrtgDataQuality.NoData },
+
+            new() { SensorObjid = 4001, PeriodStart = d2.AddHours(1), AvgValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4001, PeriodStart = d2.AddHours(2), AvgValue = 20.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4001, PeriodStart = d2.AddHours(3), AvgValue = 30.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4002, PeriodStart = d2.AddHours(1), AvgValue = 40.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4002, PeriodStart = d2.AddHours(2), AvgValue = 50.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 4003, PeriodStart = d2.AddHours(1), AvgValue = null, Quality = PrtgDataQuality.Unknown },
+        };
+        store.UpsertValues(values);
+
+        var result = store.GetDailyValueMagnitudes(from, to);
+
+        Assert.Equal(2, result.Count);
+
+        var r1 = result[0];
+        Assert.Equal(d1, r1.Date);
+        Assert.Equal(2, r1.SensorCount);
+        Assert.Equal(4, r1.TotalCount);
+        Assert.Equal(2, r1.OkCount);
+        Assert.Equal(1, r1.UnknownCount);
+        Assert.Equal(1, r1.NodataCount);
+
+        var r2 = result[1];
+        Assert.Equal(d2, r2.Date);
+        Assert.Equal(3, r2.SensorCount);
+        Assert.Equal(6, r2.TotalCount);
+        Assert.Equal(5, r2.OkCount);
+        Assert.Equal(1, r2.UnknownCount);
+        Assert.Equal(0, r2.NodataCount);
+    }
+
+    [Fact]
+    public void GetStateChangeCoverageSummary_狀態變更涵蓋_跨三日變更之相異日期數sensor數與起訖時間正確()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 8, 25);
+        var to = new DateTime(2026, 8, 28);
+
+        var changes = new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 5001, ChangedAt = new DateTime(2026, 8, 25, 8, 30, 0), Status = "Down", Quality = "Good" },
+            new() { SensorObjid = 5001, ChangedAt = new DateTime(2026, 8, 25, 9, 15, 0), Status = "Up", Quality = "Good" },
+            new() { SensorObjid = 5002, ChangedAt = new DateTime(2026, 8, 26, 14, 0, 0), Status = "Down", Quality = "Good" },
+            new() { SensorObjid = 5003, ChangedAt = new DateTime(2026, 8, 27, 18, 45, 0), Status = "Warning", Quality = "Good" },
+        };
+        store.AppendStateChanges(changes);
+
+        var summary = store.GetStateChangeCoverageSummary(from, to);
+
+        Assert.Equal(3, summary.DistinctDates);
+        Assert.Equal(3, summary.DistinctSensors);
+        Assert.Equal(4, summary.TotalCount);
+        Assert.Equal(new DateTime(2026, 8, 25, 8, 30, 0), summary.EarliestChangedAt);
+        Assert.Equal(new DateTime(2026, 8, 27, 18, 45, 0), summary.LatestChangedAt);
+
+        // 查無資料之區間
+        var emptySummary = store.GetStateChangeCoverageSummary(new DateTime(2026, 9, 1), new DateTime(2026, 9, 2));
+        Assert.Equal(0, emptySummary.DistinctDates);
+        Assert.Equal(0, emptySummary.DistinctSensors);
+        Assert.Equal(0, emptySummary.TotalCount);
+        Assert.Null(emptySummary.EarliestChangedAt);
+        Assert.Null(emptySummary.LatestChangedAt);
+    }
+
+    [Fact]
+    public void PRTG聚合查詢_區間邊界_界外資料不計入()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 8, 31, 0, 0, 0);
+        var to = new DateTime(2026, 9, 1, 0, 0, 0);
+
+        var values = new List<PrtgValueRow>
+        {
+            // 區間前（界外）
+            new() { SensorObjid = 6001, PeriodStart = new DateTime(2026, 8, 30, 23, 0, 0), AvgValue = 99.0, Quality = PrtgDataQuality.Ok },
+            // 區間內
+            new() { SensorObjid = 6001, PeriodStart = new DateTime(2026, 8, 31, 0, 0, 0), AvgValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 6001, PeriodStart = new DateTime(2026, 8, 31, 12, 0, 0), AvgValue = 20.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 6001, PeriodStart = new DateTime(2026, 8, 31, 23, 0, 0), AvgValue = 30.0, Quality = PrtgDataQuality.Ok },
+            // 區間後（界外，剛好等於 toExclusive）
+            new() { SensorObjid = 6001, PeriodStart = new DateTime(2026, 9, 1, 0, 0, 0), AvgValue = 99.0, Quality = PrtgDataQuality.Ok },
+        };
+        store.UpsertValues(values);
+
+        var changes = new List<PrtgStateChangeRow>
+        {
+            // 區間前（界外）
+            new() { SensorObjid = 6001, ChangedAt = new DateTime(2026, 8, 30, 23, 59, 59), Status = "Down", Quality = "Good" },
+            // 區間內
+            new() { SensorObjid = 6001, ChangedAt = new DateTime(2026, 8, 31, 12, 0, 0), Status = "Up", Quality = "Good" },
+            // 區間後（界外）
+            new() { SensorObjid = 6001, ChangedAt = new DateTime(2026, 9, 1, 0, 0, 0), Status = "Down", Quality = "Good" },
+        };
+        store.AppendStateChanges(changes);
+
+        // 1. GetValueCoverageSummary
+        var cov = store.GetValueCoverageSummary(from, to);
+        Assert.Single(cov);
+        Assert.Equal(3, cov[0].OkCount);
+        Assert.Equal(3, cov[0].TotalCount);
+        Assert.Equal(new DateTime(2026, 8, 31, 0, 0, 0), cov[0].EarliestOkPeriod);
+        Assert.Equal(new DateTime(2026, 8, 31, 23, 0, 0), cov[0].LatestOkPeriod);
+
+        // 2. GetDailyValueAggregations
+        var aggs = store.GetDailyValueAggregations(from, to);
+        Assert.Single(aggs);
+        Assert.Equal(20.0, aggs[0].AvgValue);
+        Assert.Equal(10.0, aggs[0].MinValue);
+        Assert.Equal(30.0, aggs[0].MaxValue);
+        Assert.Equal(3, aggs[0].OkCount);
+
+        // 3. GetDailyValueMagnitudes
+        var mags = store.GetDailyValueMagnitudes(from, to);
+        Assert.Single(mags);
+        Assert.Equal(new DateTime(2026, 8, 31), mags[0].Date);
+        Assert.Equal(3, mags[0].TotalCount);
+
+        // 4. GetStateChangeCoverageSummary
+        var stateSummary = store.GetStateChangeCoverageSummary(from, to);
+        Assert.Equal(1, stateSummary.TotalCount);
+        Assert.Equal(1, stateSummary.DistinctDates);
+        Assert.Equal(1, stateSummary.DistinctSensors);
+        Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.EarliestChangedAt);
+        Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.LatestChangedAt);
+    }
 }
+

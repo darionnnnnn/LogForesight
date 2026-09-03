@@ -368,8 +368,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.ConfirmedAt).HasColumnName("confirmed_at");
             e.Property(x => x.ConfirmNote).HasColumnName("confirm_note");
 
-            // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeys 是依 created_at 篩選後
-            // 投影這一欄），而它又長到不適合當索引鍵。
+            // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeysForHost 走
+            // (host_name_key, detected_at) 複合索引後才投影這一欄），而它又長到不適合當索引鍵。
             e.HasIndex(x => x.ChangeId).IsUnique();
             e.HasIndex(x => new { x.Status, x.DetectedAt });
             e.HasIndex(x => x.DetectedAt);

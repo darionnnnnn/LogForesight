@@ -508,23 +508,47 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
-    /// 從今天往前逐日檢查 GetHostMapForDate，第一個有資料的日期即回傳；若 30 天內皆無資料則回傳空清單。
+    /// 取得回看窗內最近一個有對應資料的日期，以及該日的全部對應列（唯讀查詢）。
+    /// 最多兩次資料庫往返（聚合 Max 日期 + 取該日列），窗內無資料時回傳 (null, 空清單)。
     /// </summary>
-    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30)
+    /// <param name="maxLookbackDays">回看幾天（含基準日當天）</param>
+    /// <param name="anchor">回看的基準日（含），null＝今天。歷史回填逐日往回補時，
+    /// 基準日是「正在回填的那一天」而不是今天——拿今天當基準會取到回填當下的對應，
+    /// 與該日的實際對應不符。</param>
+    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapWithDate(
+        int maxLookbackDays = 30, DateTime? anchor = null)
     {
-        var today = DateTime.Today;
-        for (var i = 0; i < maxLookbackDays; i++)
+        if (maxLookbackDays <= 0)
         {
-            var date = today.AddDays(-i);
-            var rows = GetHostMapForDate(date);
-            if (rows.Count > 0)
-            {
-                return rows;
-            }
+            return (null, new List<PrtgHostMapRow>());
         }
-        return new List<PrtgHostMapRow>();
+
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
+
+        using var ctx = _contextFactory();
+        var latestDate = ctx.PrtgHostMaps
+            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
+            .Max(m => (DateTime?)m.MapDate);
+
+        if (latestDate == null)
+        {
+            return (null, new List<PrtgHostMapRow>());
+        }
+
+        var rows = ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == latestDate.Value)
+            .ToList();
+
+        return (latestDate.Value, rows);
     }
+
+    /// <summary>
+    /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
+    /// </summary>
+    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30) =>
+        GetLatestHostMapWithDate(maxLookbackDays).Rows;
 
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
     public List<PrtgManualMapRow> GetManualMaps()
@@ -667,6 +691,190 @@ public sealed class EfPrtgStore
             .Select(s => s.Objid)
             .ToList();
     }
+
+    /// <summary>
+    /// 取得指定期間內每個 sensor 的數值涵蓋摘要（依 sensor_objid 排序）。
+    /// 全程在 SQL 端以 GroupBy 聚合，統計有效小時數（ok）、涵蓋天數（ok 相異日）、
+    /// 最早／最晚有效起點，以及各品質筆數。
+    /// </summary>
+    /// <param name="fromInclusive">起始時間（含）</param>
+    /// <param name="toExclusive">結束時間（不含）</param>
+    public List<PrtgSensorValueCoverage> GetValueCoverageSummary(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .Select(v => new
+            {
+                v.SensorObjid,
+                OkPeriod = v.Quality == PrtgDataQuality.Ok ? (DateTime?)v.PeriodStart : null,
+                OkDate = v.Quality == PrtgDataQuality.Ok ? (DateTime?)v.PeriodStart.Date : null,
+                OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
+                NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
+                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+            })
+            .GroupBy(x => x.SensorObjid)
+            .Select(g => new
+            {
+                SensorObjid = g.Key,
+                OkCount = g.Sum(x => x.OkCount),
+                OkDays = g.Select(x => x.OkDate).Distinct().Count(),
+                EarliestOkPeriod = g.Min(x => x.OkPeriod),
+                LatestOkPeriod = g.Max(x => x.OkPeriod),
+                UnknownCount = g.Sum(x => x.UnknownCount),
+                NodataCount = g.Sum(x => x.NodataCount),
+                OtherCount = g.Sum(x => x.OtherCount),
+                TotalCount = g.Count()
+            })
+            .OrderBy(r => r.SensorObjid)
+            .AsEnumerable()
+            .Select(r => new PrtgSensorValueCoverage(
+                r.SensorObjid,
+                r.OkCount,
+                r.OkDays,
+                r.EarliestOkPeriod,
+                r.LatestOkPeriod,
+                r.UnknownCount,
+                r.NodataCount,
+                r.OtherCount,
+                r.TotalCount))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得指定期間內每個 (sensor_objid, 日期) 的每日數值聚合（匯出用，依 sensor_objid 與日期排序）。
+    /// 數值統計（平均、最小、最大）僅納入 Quality == ok 且 AvgValue != null 的列，null 絕對不當成 0 計算；
+    /// 當日完全無 ok 列時仍回傳該 (sensor, 日) 一列（數值統計為 null，ok 列數為 0）。
+    /// </summary>
+    /// <param name="fromInclusive">起始時間（含）</param>
+    /// <param name="toExclusive">結束時間（不含）</param>
+    public List<PrtgDailyValueAggregation> GetDailyValueAggregations(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .Select(v => new
+            {
+                v.SensorObjid,
+                Date = v.PeriodStart.Date,
+                OkAvgValue = (v.Quality == PrtgDataQuality.Ok && v.AvgValue != null) ? v.AvgValue : null,
+                OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
+                NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
+                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+            })
+            .GroupBy(x => new { x.SensorObjid, x.Date })
+            .Select(g => new
+            {
+                g.Key.SensorObjid,
+                g.Key.Date,
+                AvgValue = g.Average(x => x.OkAvgValue),
+                MinValue = g.Min(x => x.OkAvgValue),
+                MaxValue = g.Max(x => x.OkAvgValue),
+                OkCount = g.Sum(x => x.OkCount),
+                UnknownCount = g.Sum(x => x.UnknownCount),
+                NodataCount = g.Sum(x => x.NodataCount),
+                OtherCount = g.Sum(x => x.OtherCount),
+                TotalCount = g.Count()
+            })
+            .OrderBy(r => r.SensorObjid)
+            .ThenBy(r => r.Date)
+            .AsEnumerable()
+            .Select(r => new PrtgDailyValueAggregation(
+                r.SensorObjid,
+                r.Date,
+                r.AvgValue,
+                r.MinValue,
+                r.MaxValue,
+                r.OkCount,
+                r.UnknownCount,
+                r.NodataCount,
+                r.OtherCount,
+                r.TotalCount))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得指定期間內每日數值量級統計（依日期排序）。
+    /// 全程在 SQL 端以 GroupBy 聚合，統計每日相異 sensor 數、總列數與各品質列數。
+    /// </summary>
+    /// <param name="fromInclusive">起始時間（含）</param>
+    /// <param name="toExclusive">結束時間（不含）</param>
+    public List<PrtgDailyValueMagnitude> GetDailyValueMagnitudes(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .Select(v => new
+            {
+                Date = v.PeriodStart.Date,
+                v.SensorObjid,
+                OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
+                NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
+                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+            })
+            .GroupBy(x => x.Date)
+            .Select(g => new
+            {
+                Date = g.Key,
+                SensorCount = g.Select(x => x.SensorObjid).Distinct().Count(),
+                TotalCount = g.Count(),
+                OkCount = g.Sum(x => x.OkCount),
+                UnknownCount = g.Sum(x => x.UnknownCount),
+                NodataCount = g.Sum(x => x.NodataCount),
+                OtherCount = g.Sum(x => x.OtherCount)
+            })
+            .OrderBy(r => r.Date)
+            .AsEnumerable()
+            .Select(r => new PrtgDailyValueMagnitude(
+                r.Date,
+                r.SensorCount,
+                r.TotalCount,
+                r.OkCount,
+                r.UnknownCount,
+                r.NodataCount,
+                r.OtherCount))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得指定期間內狀態變更的涵蓋摘要。
+    /// 全程在 SQL 端聚合，統計相異日期數、相異 sensor 數、總筆數與最早／最晚變更時間。
+    /// 無資料時回傳計數皆為 0、時間為 null 的摘要物件。
+    /// </summary>
+    /// <param name="fromInclusive">起始時間（含）</param>
+    /// <param name="toExclusive">結束時間（不含）</param>
+    public PrtgStateChangeCoverageSummary GetStateChangeCoverageSummary(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        var summary = ctx.PrtgStateChanges
+            .AsNoTracking()
+            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                DistinctDates = g.Select(r => r.ChangedAt.Date).Distinct().Count(),
+                DistinctSensors = g.Select(r => r.SensorObjid).Distinct().Count(),
+                TotalCount = g.Count(),
+                EarliestChangedAt = g.Min(r => (DateTime?)r.ChangedAt),
+                LatestChangedAt = g.Max(r => (DateTime?)r.ChangedAt)
+            })
+            .FirstOrDefault();
+
+        return summary != null
+            ? new PrtgStateChangeCoverageSummary(
+                summary.DistinctDates,
+                summary.DistinctSensors,
+                summary.TotalCount,
+                summary.EarliestChangedAt,
+                summary.LatestChangedAt)
+            : new PrtgStateChangeCoverageSummary(0, 0, 0, null, null);
+    }
 }
 
 /// <summary>
@@ -684,3 +892,55 @@ public sealed record PrtgMirrorSummary(
 /// PRTG 白名單覆蓋量級統計
 /// </summary>
 public sealed record PrtgWhitelistCoverage(int WhitelistSensorCount, int OnMappedDeviceCount);
+
+/// <summary>
+/// PRTG sensor 數值涵蓋摘要
+/// </summary>
+public sealed record PrtgSensorValueCoverage(
+    long SensorObjid,
+    int OkCount,
+    int OkDays,
+    DateTime? EarliestOkPeriod,
+    DateTime? LatestOkPeriod,
+    int UnknownCount,
+    int NodataCount,
+    int OtherCount,
+    int TotalCount);
+
+/// <summary>
+/// PRTG sensor 每日數值聚合統計（匯出用）
+/// </summary>
+public sealed record PrtgDailyValueAggregation(
+    long SensorObjid,
+    DateTime Date,
+    double? AvgValue,
+    double? MinValue,
+    double? MaxValue,
+    int OkCount,
+    int UnknownCount,
+    int NodataCount,
+    int OtherCount,
+    int TotalCount);
+
+/// <summary>
+/// PRTG 每日數值量級統計
+/// </summary>
+public sealed record PrtgDailyValueMagnitude(
+    DateTime Date,
+    int SensorCount,
+    int TotalCount,
+    int OkCount,
+    int UnknownCount,
+    int NodataCount,
+    int OtherCount);
+
+/// <summary>
+/// PRTG 狀態變更涵蓋摘要
+/// </summary>
+public sealed record PrtgStateChangeCoverageSummary(
+    int DistinctDates,
+    int DistinctSensors,
+    int TotalCount,
+    DateTime? EarliestChangedAt,
+    DateTime? LatestChangedAt);
+

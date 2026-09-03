@@ -50,6 +50,8 @@ internal class FakeSystemSettingsService : ISystemSettingsService
 
     public SystemSettingsDto Update(UpdateSystemSettingsRequest request) => throw new NotSupportedException("測試未使用此方法");
 
+    public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request) => throw new NotSupportedException("測試未使用此方法");
+
     public bool SetPrtgEnabled(bool enabled) => throw new NotSupportedException("測試未使用此方法");
 
     public HashSet<string>? GetVisibleSeverities() => VisibleSeverities;
@@ -60,5 +62,8 @@ internal class FakeSystemSettingsService : ISystemSettingsService
         throw new NotSupportedException("測試未使用此方法");
 
     public Task<TestMailResultDto> TestMail(TestMailRequest request) =>
+        throw new NotSupportedException("測試未使用此方法");
+
+    public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) =>
         throw new NotSupportedException("測試未使用此方法");
 }

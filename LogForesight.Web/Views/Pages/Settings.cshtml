@@ -9,7 +9,6 @@
     <li class="nav-item"><button class="nav-link" data-tab="analysis" type="button">分析參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mail" type="button">郵件通知</button></li>
-    <li class="nav-item"><button class="nav-link" data-tab="prtg" type="button">PRTG</button></li>
     @* 外觀（docs/archive/FEEDBACK-10-PLAN.md §1）：放最後一個頁籤——找 logo／名稱的人會直覺點「外觀」，
        塞進「層級與顯示」反而找不到；擺最後則不動預設落地頁籤（層級與顯示仍是主要入口） *@
     <li class="nav-item"><button class="nav-link" data-tab="brand" type="button">外觀</button></li>
@@ -500,6 +499,9 @@
                 </div>
                 <input type="number" class="form-control" id="initial-history-days" min="90" max="3650" required style="max-width: 12rem;" />
             </div>
+            <p class="text-muted small mb-0">
+                PRTG 資料保留天數在 <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a> 頁設定。
+            </p>
         </div>
     </div>
 
@@ -720,64 +722,6 @@
                         還原預設外觀
                     </button>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    @* PRTG 監控系統：擷取參數（白名單、併發、回填天數、保留天數、逾時、忽略 SSL）。
-       連線設定、鏡像狀態與環境探測已移至 PRTG 維護頁；總開關與歷史回填已移至排程作業頁。 *@
-    <div class="lf-card mb-3 d-none" data-panel="prtg">
-        <div class="lf-card__header">
-            <h2 class="lf-card__title">PRTG 監控系統</h2>
-        </div>
-        <div class="lf-card__body">
-            <p class="text-muted small mb-3">
-                連線設定、鏡像狀態與環境探測已移至
-                <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a>；
-                PRTG 擷取開關與歷史回填已移至
-                <a href="@Url.Content("~/runs")">排程作業</a>。
-            </p>
-
-            <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="prtg-ignore-ssl" />
-                        <label class="form-check-label" for="prtg-ignore-ssl">忽略憑證錯誤</label>
-                        <div class="form-text">僅在 PRTG 使用自簽憑證的內網環境啟用。</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <label for="prtg-timeout-seconds" class="form-label">請求逾時（秒）</label>
-                    <input type="number" class="form-control" id="prtg-timeout-seconds" min="5" max="600" />
-                </div>
-            </div>
-
-            <h3 class="h6 mb-3">擷取參數</h3>
-            <div class="row g-3 mb-3">
-                <div class="col-md-4">
-                    <label for="prtg-fetch-concurrency" class="form-label">併發請求數</label>
-                    <input type="number" class="form-control" id="prtg-fetch-concurrency" min="1" max="3" />
-                    <div class="form-text">PRTG core 在大量 sensor 下對併發敏感，建議維持 2。</div>
-                </div>
-                <div class="col-md-4">
-                    <label for="prtg-backfill-days" class="form-label">歷史回填天數</label>
-                    <input type="number" class="form-control" id="prtg-backfill-days" min="1" max="365" />
-                </div>
-                <div class="col-md-4">
-                    <label for="prtg-retention-days" class="form-label">PRTG 資料保留天數</label>
-                    <input type="number" class="form-control" id="prtg-retention-days" min="90" max="3650" />
-                    <div class="form-text">不得大於歷史資料保留天數。</div>
-                </div>
-            </div>
-
-            <div class="mb-3">
-                <label for="prtg-sensor-type-whitelist" class="form-label">擷取數值的 sensor type 白名單</label>
-                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                </button>
-                <textarea class="form-control lf-mono" id="prtg-sensor-type-whitelist" rows="6"
-                          placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
             </div>
         </div>
     </div>

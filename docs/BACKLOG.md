@@ -174,11 +174,10 @@
 - **掃描工作的多行程情境未處理**：工作為行程內狀態（機制見 docs/WEB-SPEC.md §9.9a），
   多行程部署／IIS 應用集區回收下「全站僅一工作」的保證不成立、回收即失去進度——
   掃描可重跑，刻意不引入持久化；真的部署成多行程時再議。
-- **4740 的帳號比對靠剖析 `KeyDetails` 顯示字串**：`ResidualCredentialDetector` 用字串反剖析
-  取出 4740 的相關帳號（沿用 `CorrelationAnalyzer.ExtractIps` 的既有作法）。`KeyDetails` 是
-  `LogAggregator.ExtractSecurityDetails` 產的**顯示**字串（含「(3個)」與 `…` 截斷），
-  等於把顯示格式當成資料契約——格式一改，4740 的殘留關聯會靜默失效。要根治得讓 4740 也走
-  結構化欄位（或另存帳號集合），是登入失敗明細機制的延伸，本輪未做。
+- **`KeyDetails` 字串剖析仍留作舊資料 fallback**：4740 帳號比對讀結構化的 `KeyAccounts`、
+  跨日關聯的來源 IP 讀 `KeyIps`（皆未截斷、封頂 200）；`ExtractAccountsFromKeyDetails` 與
+  `CorrelationAnalyzer.ExtractIps` 只在對應欄位為 null（舊 ContentJson）時走。舊資料隨
+  `RawEventRetentionDays`（預設 120 天）自然淘汰後，兩條 fallback 可一併移除。
 - **殘留判定的門檻無設定入口**：集中度 0.8、機械型態佔比 0.8、回看 7 天、跨日門檻 2 天
   皆為 `private const`。刻意不開設定（本專案紅線是「新增設定必須有消費端」，且門檻尚未經實測校準）；
   試點觀察後若需要調，先改常數再考慮要不要開設定。
@@ -403,8 +402,6 @@
 
 ## 回饋三十四輪遞延
 
-- **AI 診斷傾印（`diag/`）沒有任何上界**：`FilePromptDumper` 每次 AI 呼叫寫一個 `.txt` 到 `AppContext.BaseDirectory/diag/`，無保留期、無數量或總大小上限、也沒有任何清理呼叫端。排程設定的「AI 診斷傾印」開著跑一晚 3682 台就是數萬個檔，忘了關會慢慢塞爆磁碟。處理方向是比照其他保留期做定期清理，或改存資料庫；本輪聚焦排程記憶體，未動診斷路徑。
-- **`PermissionChangeStore.GetDedupeKeys`（整窗去重鍵快照）已成死碼**：生產路徑改走 `GetDedupeKeysForHost` 後零呼叫端，只剩測試在用。整窗快照正是被消滅的記憶體形狀，留著有被誤用的風險；待下輪連同其測試一併移除。
 - **報告檔遷移器（`ReportFileMigrator` / `ReportFileMigrationHostedService`）尚未退場**：報告已全數存在資料庫，遷移器只在升級時讀舊 `export\` 檔。第三十三輪的報告機制尚未在正式機實測，升級路徑還需要它——待正式機驗證後的輪次再移除（連同 `export` 這個已死的目錄概念）。
 
 - **NetIQ 取數仍以「整個 job 的事件桶」為單位**（回饋三十五輪批次E1 遞延）：`NetiqPipelineService`
@@ -430,15 +427,15 @@
 
 - **分析層的值型部分（L2~L5：特徵計算／弱訊號偵測／訊號合成／LLM 敘述化）**：狀態變更型規則
   （第一階）已完成並接上 `lf_top_issues` 全鏈；值型規則要看數值趨勢與基線偏移，
-  依賴實際累積的 hourly 數值。觸發條件：觸發式取數（或針對特定主機的回填）累積 4~8 週資料，
-  再經 PRTG-SPEC §10 的匯出／匯入搬到開發機設計。
+  依賴實際累積的 hourly 數值。觸發條件：`/admin/calibration` 校準頁四項判定達「可用」
+  （PRTG-SPEC §11，含累積量判斷與匯出檔），必要時再以 §10 搬運原始 hourly。
 - **sensor 的人工分類 UI**（分類的是 sensor 的語意類別，與「device 對主機」的對應是兩件事）：
   **依 type 對照表的自動分類已完成**（`category_source = auto`，只填 null 絕不覆蓋）。
   仍未做的是**人工指定分類的畫面**；欄位與「不被同步洗掉」的契約都已就緒，可直接接手。
   觸發條件：自動對照表覆蓋率不足、且有人工調整的實際需求。
 - **規則維護頁的「prtg」平台**：**狀態變更型（第一階）已完成**（四條規則、門檻可調、可停用，
   見 docs/PRTG-SPEC.md §9）。仍遞延的是**值型規則**（趨勢、基線偏移）——需要數值基線，
-  資料通道見 PRTG-SPEC §10。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
+  累積量判斷與匯出見 PRTG-SPEC §11（原始 hourly 另走 §10）。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
   規則各自歸屬自己的來源。
 - **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
   `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
@@ -460,20 +457,15 @@
 
 以下經第 4 輪收尾體檢查證屬實，判定不會靜默造成錯誤結論，故未修；留在這裡免得日後當成新發現重查。
 
-- **`PrtgFinding.Magnitude` 無正式碼消費端**：判定引擎算出持續分鐘數／往返次數／sensor 數
-  並帶在 finding 上，但 `PrtgFindingMapper` 只用 `Detail` 字串，`LogIssueSignature.Count`
-  硬寫 1。要嘛拿掉這個欄位，要嘛用它填 `Count`（後者較有價值——問題排行的「次數」
-  目前對 PRTG finding 恆為 1）。
-- **PRTG 種子規則的說明文案沒有被讀**：`KnownIssueSeed` 的四條 PRTG 規則填了
+- **`PrtgFinding.Magnitude` 刻意不落 `Count`**（已定位，非缺陷）：整日 Down 會是 1440，
+  用它填 `Count` 會讓 PRTG finding 在問題排行的「次數」維度壓過所有真實事件計數。
+  它的用途是規則測試、`Detail` 文案與校準數值匯出的門檻分佈統計（PRTG-SPEC §11）。
+- **PRTG 種子規則的長文說明沒有被讀**：`KnownIssueSeed` 的四條 PRTG 規則填了
   `PlainExplanation`／`Impact`／`LikelyCauses`／`NextSteps`（驗證器強制非空），
-  但 `PrtgFindingMapper` 用自己 hard-coded 的 `KnownIssue` 字串，兩邊各一份、
-  改一邊就會分岔。應改為 mapper 讀種子規則。同理，分類與嚴重度也寫了兩份
-  （`KnownIssueSeed` 與 `PrtgFindingMapper`），目前湊巧一致。
-- **PRTG 逾時與忽略 SSL 兩頁都可編**：設定頁（純參數）與 PRTG 維護頁（測試連線需要）
-  各有一份 DOM 與存檔路徑寫同兩個欄位。維護頁那份應改成唯讀顯示。
-- **PRTG 維護頁的連線設定存檔是「整包回寫」**：因為後端只有整包設定更新端點，
-  維護頁先 GET 整包再 PUT 回去——這正是 `PrtgEnabled` 改走單一用途端點所要避免的形態，
-  會覆蓋他人在設定頁的併發改動。根治方式是為 PRTG 連線設定開一個專屬更新端點。
+  但 `PrtgFindingMapper` 用的是 `PrtgRuleCatalog` 裡的一句話 `KnownIssue`。
+  兩者並非重複（一句話用於問題簽章、長文用於規則維護頁），但長文目前沒有顯示入口。
+  （分類／嚴重度／`ElevatesDayRisk`／預設門檻的三份手抄已收斂到 `PrtgRuleCatalog`，
+  並有守門測試斷言 mapper 與種子一致。）
 - **抑制影響面預覽把平台二分為 linux／非 linux**：`RuleAdminService.PreviewSuppression` 以 `isLinux` 分路，
   `prtg` 規則落到 Windows 分支用 EventIds 比對，命中數恆為 0。預覽只是提示用，不影響抑制本身生效；
   規則頁補 prtg 抑制入口時一併改成三向分路。
@@ -490,12 +482,11 @@
 
 ### 測試穩定性
 
-- **兩個時間敏感的偶發失敗測試**（第 4 輪期間各出現一次，與當輪改動無關）：
-  `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外` 與
-  `PrtgFetchServiceTests.FetchDayAsync_併發設定值真的被採用而非寫死`。
-  後者斷言併發峰值**恰好等於 3**，全套並行負載下排程可能達不到峰值。
-  單獨執行皆穩定通過，只在全套並行時偶發。這會讓「全綠」不可靠——
-  建議把峰值斷言改成區間（`>= 2 && <= 3`）或加重試。
+- **一個時間敏感的偶發失敗測試**：
+  `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`。
+  單獨執行穩定通過，只在全套並行時偶發，會讓「全綠」不可靠。
+  可比照 `PrtgFetchServiceTests` 併發峰值測試的放行閘門作法：前 N 個請求到齊才一起放行，
+  斷言強度不變而時間相依消失。
 
 ### PRTG 已知未修項（不影響正確性）
 
@@ -511,16 +502,9 @@
   正式環境是 SQL Server，SQLite 是測試與小型部署用；真的遇到時把數值寫入收斂成單一寫入者。
 - **`PrtgProbeRunner.StepAsync` 的 catch 連 `OperationCanceledException` 一起吞**：取消時
   探測不會立即停，會把剩下的步驟跑完才結束。探測是短時間的唯讀操作，影響有限。
-- **「最近一次有對應的日期」是往回逐日查，最多 30~31 次獨立查詢**，且第 4 輪之後
-  **呼叫點從 1 個增為 3 個**（`GET prtg-mirror` 一份、`EfPrtgStore.GetLatestHostMap` 一份
-  供主機清單篩選與主機明細共用）。改成一句 `Max(map_date)` 聚合查詢即可，
-  兩份實作也應收斂成一份。嚴重度隨呼叫點增加而提升。
 - **`PrtgProbeRunner` 只有 sensor type 分布那一步有「取樣數 < 總數」的截斷警告**，
   dependency／groups／IP 覆蓋三步沒有。sensor 超過 5 萬或 group 超過 1000 時會靜默少算，
   探測結論失真。
-- **`ISystemSettingsService` 上有為了測試替身而加的預設實作**（擲 `NotSupportedException`）：
-  代價是編譯期保護消失——日後若有第二個正式實作忘了覆寫，會變成執行期 500 而不是編譯失敗。
-  修法是拿掉預設實作、改在測試替身裡實作。
 - **前端 probe 與 backfill 兩塊的渲染與輪詢邏輯幾乎逐字重複**（`settings.js`），
   `PrtgFetchService` 與 `PrtgProbeRunner` 之間的 `GetStringProperty` 與相依性判定也各有一份。
   兩者都是「同一判定寫兩處」，之後改規則時容易只改一邊。

@@ -504,12 +504,16 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task FetchDayAsync_併發設定值真的被採用而非寫死()
     {
         // 只驗 concurrency=1 證明不了「設定有被吃進去」——把 semaphore 寫死成 1 也照樣綠。
-        // 這裡驗 concurrency=3 時峰值**等於** 3：夠多 sensor＋固定延遲下，semaphore 若真的用
-        // 傳入值，峰值必然衝到上限；寫死成 1 或 2 都會在這裡現形。
+        // 這裡驗 concurrency=3 時峰值**等於** 3。放行閘門取代固定延遲：前 3 個請求到齊才一起放行，
+        // 峰值不再取決於機器負載下的排程時機（固定延遲版在全套並行時偶發達不到峰值）。
+        // semaphore 若被寫死成 1 或 2，第 3 個請求永遠不會到達，閘門逾時 → 失敗數不為 0，一樣現形。
         var senJson = "{\"treesize\":6,\"sensors\":[" +
                       string.Join(",", Enumerable.Range(301, 6).Select(id => $"{{\"objid\":{id},\"paused\":false}}")) +
                       "]}";
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10,\"coverage\":100}]}";
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentArrivals = 0;
 
         var handler = new StubHandler();
         handler.OnSend = async (req, _) =>
@@ -521,7 +525,9 @@ public class PrtgFetchServiceTests : IDisposable
             if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
             if (url.Contains("historicdata.json"))
             {
-                await Task.Delay(150);
+                // 前 3 個併發請求到齊才一起放行，確保峰值必然衝到 semaphore 上限
+                if (Interlocked.Increment(ref concurrentArrivals) >= 3) gate.TrySetResult();
+                await gate.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 return JsonResponse(histJson);
             }
             return JsonResponse("{}", HttpStatusCode.NotFound);
@@ -892,5 +898,99 @@ public class PrtgFetchServiceTests : IDisposable
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.PrtgValues.Count(v => v.SensorObjid == 501));
         Assert.Equal(0, ctx.PrtgValues.Count(v => v.SensorObjid == 502));
+    }
+
+    [Fact]
+    public async Task FetchValuesForSensorsAsync_進度回呼回報6個sensor完成且單調遞增()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}");
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+        var day = new DateTime(2026, 8, 30);
+        var sensors = new long[] { 101, 102, 103, 104, 105, 106 };
+
+        var reports = new List<(string Stage, int Done, int Total)>();
+        var lockObj = new object();
+
+        var (written, failed) = await service.FetchValuesForSensorsAsync(
+            day, sensors, concurrency: 2, CancellationToken.None,
+            progress: (stage, done, total) =>
+            {
+                lock (lockObj)
+                {
+                    reports.Add((stage, done, total));
+                }
+            });
+
+        Assert.Equal(6, written);
+        Assert.Equal(0, failed);
+
+        // 包含初始 (0, 6) 與 6 次遞增回報，共 7 次回報
+        Assert.Equal(7, reports.Count);
+        Assert.Equal(("prtg-triggered", 0, 6), reports[0]);
+        Assert.Equal(("prtg-triggered", 6, 6), reports[^1]);
+        Assert.All(reports, r =>
+        {
+            Assert.Equal("prtg-triggered", r.Stage);
+            Assert.Equal(6, r.Total);
+        });
+
+        // 斷言 done 值單調遞增 (0, 1, 2, 3, 4, 5, 6)
+        for (var i = 1; i < reports.Count; i++)
+        {
+            Assert.True(reports[i].Done > reports[i - 1].Done, $"done 應單調遞增: {reports[i - 1].Done} -> {reports[i].Done}");
+        }
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_帶進度回呼時回報prtgSync與prtgValues()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"paused\":false}]}";
+        var senJson = "{\"treesize\":2,\"sensors\":[" +
+                      "{\"objid\":201,\"parentid\":101,\"sensor\":\"S1\",\"paused\":false}," +
+                      "{\"objid\":202,\"parentid\":101,\"sensor\":\"S2\",\"paused\":false}" +
+                      "]}";
+        var msgJson = "{\"treesize\":0,\"messages\":[]}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":2,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse(msgJson);
+            if (url.Contains("historicdata"))
+                return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+        var day = new DateTime(2026, 8, 30);
+
+        var reports = new List<(string Stage, int Done, int Total)>();
+        var lockObj = new object();
+
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, syncStructure: true, fetchValues: true,
+            progress: (stage, done, total) =>
+            {
+                lock (lockObj)
+                {
+                    reports.Add((stage, done, total));
+                }
+            });
+
+        Assert.Equal(0, result.Failures);
+        Assert.Contains(reports, r => r.Stage == "prtg-sync" && r.Total == 0);
+        Assert.Contains(reports, r => r.Stage == "prtg-values" && r.Done == 2 && r.Total == 2);
     }
 }

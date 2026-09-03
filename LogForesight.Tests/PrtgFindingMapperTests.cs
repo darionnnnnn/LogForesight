@@ -106,4 +106,32 @@ public class PrtgFindingMapperTests
         Assert.Equal("prtg-custom_rule", sig.RuleId);
         Assert.Equal("prtg:custom_rule:2001", sig.EventKey);
     }
+
+    [Theory]
+    [InlineData(PrtgRuleEvaluator.RuleDown, "builtin-prtg-down")]
+    [InlineData(PrtgRuleEvaluator.RuleFlapping, "builtin-prtg-flapping")]
+    [InlineData(PrtgRuleEvaluator.RuleWarning, "builtin-prtg-warning")]
+    [InlineData(PrtgRuleEvaluator.RuleSilent, "builtin-prtg-silent")]
+    public void ToSignature_分類嚴重度與風險升級旗標與KnownIssueSeed一致(string ruleCode, string seedRuleId)
+    {
+        var finding = new PrtgFinding(1001, 2001, ruleCode, "Detail", 1);
+        var sig = PrtgFindingMapper.ToSignature(finding, TestDay);
+
+        var seedRule = KnownIssueSeed.CreateRules().Single(r => r.Id == seedRuleId);
+
+        Assert.Equal(seedRule.Category, sig.Category);
+        Assert.Equal(seedRule.Severity, sig.Severity);
+        Assert.Equal(seedRule.ElevatesDayRisk, sig.ElevatesDayRisk);
+    }
+
+    [Fact]
+    public void PrtgRuleThresholds_預設值與KnownIssueSeed門檻一致()
+    {
+        var defaultThresholds = new PrtgRuleThresholds();
+        var seedRules = KnownIssueSeed.CreateRules().ToDictionary(r => r.Id);
+
+        Assert.Equal(seedRules["builtin-prtg-down"].PrtgThreshold, defaultThresholds.DownMinutes);
+        Assert.Equal(seedRules["builtin-prtg-flapping"].PrtgThreshold, defaultThresholds.FlapCount);
+        Assert.Equal(seedRules["builtin-prtg-warning"].PrtgThreshold, defaultThresholds.WarningMinutes);
+    }
 }

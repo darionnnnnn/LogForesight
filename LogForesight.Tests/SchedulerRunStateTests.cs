@@ -276,4 +276,91 @@ public class SchedulerRunStateTests
     {
         Assert.True(new RunOutcome(true, null, "schedule", DateTime.Now, AnyRecordsWritten: false).ShouldNotify);
     }
+
+    // ── PRTG 進度軌（docs/archive/FEEDBACK-37-PLAN.md 批次G1）───────────────────────────────────────────────
+
+    /// <summary>
+    /// 反例測試（最重要）：先收到 netiq 進度回報，再收到 prtg-values 回報 →
+    /// 斷言 NetIQ 那組欄位完全不變，且 PRTG 那組是新值。
+    /// （防止 prtg-* phase 落入 catch-all else 分支蓋掉 NetIQ 主組）。
+    /// </summary>
+    [Fact]
+    public void ReportProgress_收到prtg回報不覆蓋NetIQ欄位()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("netiq", 10, 50);
+        state.ReportProgress("prtg-values", 2, 6);
+
+        // 斷言 NetIQ 那組欄位完全不變
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(50, state.ProgressTotal);
+
+        // 斷言 PRTG 那組是新值
+        Assert.Equal("prtg-values", state.PrtgProgressPhase);
+        Assert.Equal(2, state.PrtgProgressDone);
+        Assert.Equal(6, state.PrtgProgressTotal);
+    }
+
+    /// <summary>prtg-done 清空 PRTG 那組，且不影響 NetIQ 與本機兩組。</summary>
+    [Fact]
+    public void ReportProgress_prtgDone清空PRTG組且不影響NetIQ與本機組()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 1, 3);
+        state.ReportProgress("netiq", 10, 50);
+        state.ReportProgress("prtg-values", 5, 5);
+
+        state.ReportProgress("prtg-done", 0, 0);
+
+        // PRTG 那組清空
+        Assert.Null(state.PrtgProgressPhase);
+        Assert.Equal(0, state.PrtgProgressDone);
+        Assert.Equal(0, state.PrtgProgressTotal);
+
+        // 不影響 NetIQ 與本機兩組
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(1, state.LocalProgressDone);
+        Assert.Equal(3, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(50, state.ProgressTotal);
+    }
+
+    /// <summary>LatestActivity 優先序：NetIQ ＞ 本機 ＞ PRTG</summary>
+    [Fact]
+    public void LatestActivity_優先序為NetIQ大於本機大於PRTG()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("prtg-values", 1, 6);
+        Assert.Equal(("prtg-values", 1, 6), state.LatestActivity());
+
+        state.ReportProgress("local", 2, 5);
+        Assert.Equal(("local", 2, 5), state.LatestActivity());
+
+        state.ReportProgress("netiq", 10, 100);
+        Assert.Equal(("netiq", 10, 100), state.LatestActivity());
+    }
+
+    /// <summary>EndRun 清空 PRTG 進度欄位</summary>
+    [Fact]
+    public void EndRun後PRTG進度欄位也歸零()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress("prtg-values", 3, 5);
+        Assert.Equal(5, state.PrtgProgressTotal);
+
+        state.EndRun();
+
+        Assert.Null(state.PrtgProgressPhase);
+        Assert.Equal(0, state.PrtgProgressDone);
+        Assert.Equal(0, state.PrtgProgressTotal);
+    }
 }

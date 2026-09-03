@@ -85,6 +85,11 @@ public class ScheduleStatusDto
     public int LocalProgressDone { get; set; }
     public int LocalProgressTotal { get; set; }
 
+    /// <summary>PRTG 擷取進度（docs/archive/FEEDBACK-37-PLAN.md 批次G1）：與 NetIQ／本機完全獨立的第三條軌。</summary>
+    public string? PrtgProgressPhase { get; set; }
+    public int PrtgProgressDone { get; set; }
+    public int PrtgProgressTotal { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }

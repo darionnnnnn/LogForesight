@@ -42,8 +42,10 @@ public sealed class PrtgFetchService
     /// 是否擷取 hourly 數值（階段 4）。每日擷取與歷史回填預設為 true。
     /// 觸發式流程傳 false（略過階段 4，改由觸發式取數獨立呼叫 <see cref="FetchValuesForSensorsAsync"/>）。
     /// </param>
+    /// <param name="progress">進度回呼（stage, done, total），null＝不回報</param>
     public async Task<PrtgFetchResult> FetchDayAsync(
-        DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true, bool fetchValues = true)
+        DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true, bool fetchValues = true,
+        Action<string, int, int>? progress = null)
     {
         var devicesCount = 0;
         var sensorsCount = 0;
@@ -69,6 +71,8 @@ public sealed class PrtgFetchService
 
         if (syncStructure)
         {
+            progress?.Invoke("prtg-sync", 0, 0);
+
             // 階段 1：device 結構全量同步
             try
             {
@@ -142,7 +146,7 @@ public sealed class PrtgFetchService
             {
                 var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
                 _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
-                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct);
+                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, "prtg-values");
                 valuesCount = written;
                 _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
 
@@ -177,7 +181,8 @@ public sealed class PrtgFetchService
     /// 回傳實際寫入筆數與失敗的 sensor 數；併發與單 sensor 失敗隔離沿用階段 4 的既有機制。
     /// </summary>
     public async Task<(int Written, int FailedSensors)> FetchValuesForSensorsAsync(
-        DateTime day, IReadOnlyList<long> sensorObjids, int concurrency, CancellationToken ct)
+        DateTime day, IReadOnlyList<long> sensorObjids, int concurrency, CancellationToken ct,
+        Action<string, int, int>? progress = null)
     {
         if (sensorObjids == null || sensorObjids.Count == 0)
         {
@@ -185,7 +190,7 @@ public sealed class PrtgFetchService
         }
 
         var targets = sensorObjids.Select(id => (Objid: id, Paused: false)).ToList();
-        return await FetchValuesAsync(day, targets, concurrency, ct);
+        return await FetchValuesAsync(day, targets, concurrency, ct, progress, "prtg-triggered");
     }
 
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>
@@ -337,12 +342,17 @@ public sealed class PrtgFetchService
         DateTime day,
         IReadOnlyList<(long Objid, bool Paused)> activeSensors,
         int concurrency,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<string, int, int>? progress = null,
+        string stage = "prtg-values")
     {
         if (activeSensors.Count == 0)
         {
             return (0, 0);
         }
+
+        var totalSensors = activeSensors.Count;
+        progress?.Invoke(stage, 0, totalSensors);
 
         var sdate = day.Date.ToString("yyyy-MM-dd-00-00-00");
         var edate = day.Date.AddDays(1).ToString("yyyy-MM-dd-00-00-00");
@@ -351,6 +361,7 @@ public sealed class PrtgFetchService
         var totalValues = 0;
         var totalUnparsed = 0;
         var failedSensors = 0;
+        var completedSensors = 0;
         string? firstFailureMessage = null;
 
         var tasks = activeSensors.Select(async target =>
@@ -385,6 +396,8 @@ public sealed class PrtgFetchService
             finally
             {
                 semaphore.Release();
+                var done = Interlocked.Increment(ref completedSensors);
+                progress?.Invoke(stage, done, totalSensors);
             }
         });
 

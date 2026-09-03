@@ -27,7 +27,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 | 改規則機制（語意邊界/seed/匯入/DB 映射） | `docs/RULES-SPEC.md`；Linux 規則面 `docs/LINUX-RULES.md` |
 | 改資料庫欄位/索引/保留/Schema 升級 | `docs/DB-SPEC.md` |
 | 改 NetIQ/Sentinel 取數 | `docs/NETIQ-API-REFERENCE.md` |
-| 改 PRTG 整合（鏡像表/觸發式取數/主機對應/規則/探測/回填/資料搬運） | `docs/PRTG-SPEC.md` |
+| 改 PRTG 整合（鏡像表/觸發式取數/主機對應/規則/探測/回填/資料搬運/校準匯出） | `docs/PRTG-SPEC.md` |
 | 設計系統色票/字型/token | `docs/DESIGN-SYSTEM.md` |
 | 查「已知但刻意未做」 | `docs/BACKLOG.md` |
 | 追某個現況決策的來龍去脈 | `docs/archive/README.md` 索引 → 按需開**單一**檔案，**非必要不要讀、勿全掃** |
@@ -36,7 +36,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **3296** 個測試（略過 6；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **3378** 個測試（略過 6；
   略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑）。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。

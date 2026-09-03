@@ -2057,4 +2057,200 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.True(saved.PrtgEnabled);
         Assert.Equal("prtg_admin", saved.PrtgUsername);
     }
+
+    // ── docs/archive/FEEDBACK-37-PLAN.md 批次F1：PRTG 設定專屬更新端點與可空擷取參數 ─────────────────────────────
+
+    [Fact]
+    public void UpdatePrtg_只改PRTG欄位且非PRTG欄位完全維持原樣()
+    {
+        var service = Create();
+
+        // 1. 先存一組完整設定
+        var initial = ValidRequest();
+        initial.BrandName = "自訂系統名稱";
+        initial.BrandSubtitle = "自訂副標";
+        initial.AiProvider = "Local";
+        initial.AiModel = "my-custom-model";
+        initial.RetentionDays = 200;
+        initial.MailEnabled = true;
+        initial.SmtpServer = "smtp.example.com";
+        initial.MailFrom = "alert@example.com";
+        initial.MailRecipients = new List<string> { "admin@example.com" };
+        initial.AdAuthEnabled = true;
+        initial.AdServers = new List<string> { "dc1.example.com" };
+        var beforeDto = service.Update(initial);
+
+        // 2. 呼叫 UpdatePrtg 專屬更新端點
+        var prtgReq = new UpdatePrtgSettingsRequest
+        {
+            PrtgUrl = "https://new-prtg.example.com",
+            PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token,
+            PrtgApiToken = "new-token-123",
+            PrtgIgnoreSslErrors = true,
+            PrtgTimeoutSeconds = 120,
+            PrtgFetchConcurrency = 3,
+            PrtgBackfillDays = 45,
+            PrtgRetentionDays = 150,
+            PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free", "SNMP Traffic" }
+        };
+        var updatedDto = service.UpdatePrtg(prtgReq);
+
+        // 3. 斷言 PRTG 欄位已更新
+        Assert.Equal("https://new-prtg.example.com", updatedDto.PrtgUrl);
+        Assert.True(updatedDto.PrtgHasApiToken);
+        Assert.True(updatedDto.PrtgIgnoreSslErrors);
+        Assert.Equal(120, updatedDto.PrtgTimeoutSeconds);
+        Assert.Equal(3, updatedDto.PrtgFetchConcurrency);
+        Assert.Equal(45, updatedDto.PrtgBackfillDays);
+        Assert.Equal(150, updatedDto.PrtgRetentionDays);
+        Assert.Equal(new[] { "SNMP Disk Free", "SNMP Traffic" }, updatedDto.PrtgSensorTypeWhitelist);
+
+        // 4. 逐一斷言至少五個非 PRTG 欄位改動前後完全相等
+        Assert.Equal(beforeDto.BrandName, updatedDto.BrandName);
+        Assert.Equal(beforeDto.BrandSubtitle, updatedDto.BrandSubtitle);
+        Assert.Equal(beforeDto.AiProvider, updatedDto.AiProvider);
+        Assert.Equal(beforeDto.AiModel, updatedDto.AiModel);
+        Assert.Equal(beforeDto.RetentionDays, updatedDto.RetentionDays);
+        Assert.Equal(beforeDto.MailEnabled, updatedDto.MailEnabled);
+        Assert.Equal(beforeDto.SmtpServer, updatedDto.SmtpServer);
+        Assert.Equal(beforeDto.AdAuthEnabled, updatedDto.AdAuthEnabled);
+        Assert.Equal(beforeDto.AdServers, updatedDto.AdServers);
+
+        // 重讀確認 DB 落地
+        var reread = service.Get();
+        Assert.Equal(beforeDto.BrandName, reread.BrandName);
+        Assert.Equal(beforeDto.AiProvider, reread.AiProvider);
+        Assert.Equal(beforeDto.RetentionDays, reread.RetentionDays);
+        Assert.Equal(beforeDto.MailEnabled, reread.MailEnabled);
+        Assert.Equal(beforeDto.AdAuthEnabled, reread.AdAuthEnabled);
+    }
+
+    [Fact]
+    public void UpdatePrtg_認證驗證生效_非法認證方式與password模式缺帳號被拒()
+    {
+        var service = Create();
+
+        // 先啟用 PRTG
+        _store.Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.example.com";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("token");
+        });
+
+        // 1. 非法認證方式被拒
+        var invalidAuthReq = new UpdatePrtgSettingsRequest
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = "InvalidMode"
+        };
+        var exAuth = Assert.Throws<DomainException>(() => service.UpdatePrtg(invalidAuthReq));
+        Assert.Contains("PRTG 認證方式不合法", exAuth.Message);
+
+        // 2. Password 模式缺帳號被拒
+        var noUsernameReq = new UpdatePrtgSettingsRequest
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password,
+            PrtgUsername = "",
+            PrtgPassword = "some-password"
+        };
+        var exUser = Assert.Throws<DomainException>(() => service.UpdatePrtg(noUsernameReq));
+        Assert.Contains("必須設定帳號", exUser.Message);
+    }
+
+    [Fact]
+    public void UpdatePrtg_保留天數大於目前已儲存RetentionDays時被拒()
+    {
+        var service = Create();
+
+        // 歷史資料保留天數為 180 天
+        _store.Update(s =>
+        {
+            s.RetentionDays = 180;
+        });
+
+        var req = new UpdatePrtgSettingsRequest
+        {
+            PrtgRetentionDays = 200 // > 180
+        };
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(req));
+        Assert.Contains("PRTG 資料保留天數不可大於歷史資料保留天數", ex.Message);
+    }
+
+    [Fact]
+    public void Update_不送PRTG參數時六個值全部維持原樣()
+    {
+        var service = Create();
+
+        // 1. 先設定一組非預設的 PRTG 參數
+        var initial = ValidRequest();
+        initial.PrtgIgnoreSslErrors = true;
+        initial.PrtgTimeoutSeconds = 100;
+        initial.PrtgFetchConcurrency = 3;
+        initial.PrtgBackfillDays = 50;
+        initial.PrtgRetentionDays = 150;
+        initial.PrtgSensorTypeWhitelist = new List<string> { "SNMP Custom Sensor" };
+        service.Update(initial);
+
+        // 2. 呼叫 Update 且六個 PRTG 參數皆為 null
+        var updateReq = ValidRequest();
+        updateReq.BrandName = "新品牌名稱";
+        updateReq.PrtgIgnoreSslErrors = null;
+        updateReq.PrtgTimeoutSeconds = null;
+        updateReq.PrtgFetchConcurrency = null;
+        updateReq.PrtgBackfillDays = null;
+        updateReq.PrtgRetentionDays = null;
+        updateReq.PrtgSensorTypeWhitelist = null;
+
+        var saved = service.Update(updateReq);
+
+        // 3. 斷言六個值維持原樣
+        Assert.True(saved.PrtgIgnoreSslErrors);
+        Assert.Equal(100, saved.PrtgTimeoutSeconds);
+        Assert.Equal(3, saved.PrtgFetchConcurrency);
+        Assert.Equal(50, saved.PrtgBackfillDays);
+        Assert.Equal(150, saved.PrtgRetentionDays);
+        Assert.Equal(new[] { "SNMP Custom Sensor" }, saved.PrtgSensorTypeWhitelist);
+
+        // 重讀確認 DB 落地
+        var reread = service.Get();
+        Assert.True(reread.PrtgIgnoreSslErrors);
+        Assert.Equal(100, reread.PrtgTimeoutSeconds);
+        Assert.Equal(3, reread.PrtgFetchConcurrency);
+        Assert.Equal(50, reread.PrtgBackfillDays);
+        Assert.Equal(150, reread.PrtgRetentionDays);
+        Assert.Equal(new[] { "SNMP Custom Sensor" }, reread.PrtgSensorTypeWhitelist);
+    }
+
+    [Fact]
+    public void Update_只送RetentionDays調小且未送PrtgRetentionDays時_依effective值必須被拒()
+    {
+        var service = Create();
+
+        // 1. 先設定 RetentionDays = 180, PrtgRetentionDays = 150
+        var initial = ValidRequest();
+        initial.InitialHistoryDays = 90;
+        initial.RetentionDays = 180;
+        initial.RunLogRetentionDays = 90;
+        initial.RawEventRetentionDays = 90;
+        initial.ReportRetentionDays = 90;
+        initial.PrtgRetentionDays = 150;
+        service.Update(initial);
+
+        // 2. 只送 RetentionDays = 100（調小到低於目前的 PrtgRetentionDays = 150），
+        //    PrtgRetentionDays 為 null
+        var shrinkReq = ValidRequest();
+        shrinkReq.InitialHistoryDays = 90;
+        shrinkReq.RetentionDays = 100;
+        shrinkReq.RunLogRetentionDays = 90;
+        shrinkReq.RawEventRetentionDays = 90;
+        shrinkReq.ReportRetentionDays = 90;
+        shrinkReq.PrtgRetentionDays = null;
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(shrinkReq));
+        Assert.Contains("PRTG 資料保留天數不可大於歷史資料保留天數", ex.Message);
+    }
 }

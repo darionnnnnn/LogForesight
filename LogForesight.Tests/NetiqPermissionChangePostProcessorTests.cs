@@ -14,9 +14,10 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
 {
     private static ConcurrentDictionary<string, byte> Keys() => new(StringComparer.Ordinal);
 
-    /// <summary>比照 pipeline：每輪執行開頭從 store 載入一次去重鍵快照</summary>
-    private static ConcurrentDictionary<string, byte> KeysFrom(PermissionChangeStore store) =>
-        new(store.GetDedupeKeys().Select(k => new KeyValuePair<string, byte>(k, 0)), StringComparer.Ordinal);
+    /// <summary>比照 pipeline：逐主機向 store 現查該主機的去重鍵（生產路徑走 GetDedupeKeysForHost）</summary>
+    private static ConcurrentDictionary<string, byte> KeysFrom(PermissionChangeStore store, string hostName) =>
+        new(store.GetDedupeKeysForHost(hostName, DateTime.MinValue, DateTime.MaxValue)
+            .Select(k => new KeyValuePair<string, byte>(k, 0)), StringComparer.Ordinal);
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-perm-postproc-" + Guid.NewGuid().ToString("N"));
     private readonly StorageBackend _backend;
@@ -215,12 +216,12 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Single(firstRunRecords);
 
         // 第二次執行（重跑/回補）：比照 pipeline 由 store 重新載入快照
-        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), hostName, WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store, hostName), hostName, WebHost.OsWindows, events, date);
         var secondRunRecords = store.Query(null, null, 1000).Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();
         Assert.Single(secondRunRecords);
 
         // 同一輪內同一主機日被處理兩次（共用同一份快照）也不重複
-        var sameRunKeys = KeysFrom(store);
+        var sameRunKeys = KeysFrom(store, hostName);
         HostDayPostProcessor.RecordPermissionChanges(store, sameRunKeys, hostName, WebHost.OsWindows, events, date);
         HostDayPostProcessor.RecordPermissionChanges(store, sameRunKeys, hostName, WebHost.OsWindows, events, date);
         Assert.Single(store.Query(null, null, 1000).Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList());
@@ -439,7 +440,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         }).ToList();
 
         HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-DC01", WebHost.OsWindows, events, date);
-        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-DC01", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store, "SRV-DC01"), "SRV-DC01", WebHost.OsWindows, events, date);
 
         Assert.Equal(60, store.Query(null, null, 1000).Count);
     }
@@ -1475,7 +1476,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
 
         HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
-        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store, "SRV-SYNC"), "SRV-SYNC", WebHost.OsWindows, events, date);
 
         Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
     }
@@ -1494,7 +1495,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
 
         // 回補後同一天多了幾對
         HostDayPostProcessor.RecordPermissionChanges(
-            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold + 5), date);
+            store, KeysFrom(store, "SRV-SYNC"), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold + 5), date);
 
         var summary = Assert.Single(
             store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
@@ -1572,7 +1573,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
 
         HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
-        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store, "SRV-SYNC"), "SRV-SYNC", WebHost.OsWindows, events, date);
 
         var summary = Assert.Single(
             store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
@@ -1595,7 +1596,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
             store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
 
         HostDayPostProcessor.RecordPermissionChanges(
-            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
+            store, KeysFrom(store, "SRV-SYNC"), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
 
         var records = store.Query(null, null, 1000);
         var summaryAfter = Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
@@ -1616,7 +1617,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
             SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold), date);
 
         HostDayPostProcessor.RecordPermissionChanges(
-            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, new List<EventLogEntryData>(), date);
+            store, KeysFrom(store, "SRV-SYNC"), "SRV-SYNC", WebHost.OsWindows, new List<EventLogEntryData>(), date);
 
         Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
     }
@@ -1641,7 +1642,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
 
         // 重跑：來源回傳完整當日事件（達門檻）→ 產生彙總列
         HostDayPostProcessor.RecordPermissionChanges(
-            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+            store, KeysFrom(store, "SRV-SYNC"), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
 
         var records = store.Query(null, null, 1000);
         Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);

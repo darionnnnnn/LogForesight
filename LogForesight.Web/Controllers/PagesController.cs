@@ -119,6 +119,10 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Prtg() => View();
 
+    [HttpGet("/admin/calibration")]
+    [Permission(Capability.Maintain)]
+    public IActionResult Calibration() => View();
+
     [HttpGet("/admin/settings")]
     [Permission(Capability.Maintain)]
     public IActionResult Settings() => View();

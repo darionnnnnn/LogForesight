@@ -319,12 +319,11 @@ internal static class CorrelationAnalyzer
             if (rdpSuccess.Count > 0)
             {
                 var yesterdayBruteIps = previousDay.TopIssues
-                    .Where(i => IsBruteForceAnchor(i) && i.KeyDetails != null)
-                    .SelectMany(i => ExtractIps(i.KeyDetails!))
+                    .Where(IsBruteForceAnchor)
+                    .SelectMany(SourceIps)
                     .ToHashSet();
                 var todayRdpIps = rdpSuccess
-                    .Where(i => i.KeyDetails != null)
-                    .SelectMany(i => ExtractIps(i.KeyDetails!))
+                    .SelectMany(SourceIps)
                     .ToHashSet();
                 var overlapIps = yesterdayBruteIps.Intersect(todayRdpIps).ToList();
 
@@ -347,7 +346,20 @@ internal static class CorrelationAnalyzer
     private static readonly System.Text.RegularExpressions.Regex Ipv4Regex =
         new(@"\b\d{1,3}(\.\d{1,3}){3}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出 IPv4 位址，供跨日 IP 交集比對。</summary>
+    /// <summary>
+    /// 簽章的來源 IP 集合：優先讀未截斷的結構化欄位 <c>KeyIps</c>；
+    /// 為 null（舊 ContentJson）時才退回剖析 <c>KeyDetails</c> 顯示字串。
+    ///
+    /// 顯示字串只列前 5 個 IP，第 6 個以後在那裡永遠看不到——單靠它比對，
+    /// 來源 IP 較多的暴力破解會靜默漏掉交集，【暴力破解→RDP 得手】因此不觸發。
+    /// fallback 隨舊資料依 RawEventRetentionDays 自然淘汰後即可移除。
+    /// </summary>
+    private static IEnumerable<string> SourceIps(LogIssueSignature issue) =>
+        issue.KeyIps ?? (issue.KeyDetails != null
+            ? ExtractIps(issue.KeyDetails)
+            : Enumerable.Empty<string>());
+
+    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出 IPv4 位址（舊資料 fallback）。</summary>
     private static IEnumerable<string> ExtractIps(string keyDetails) =>
         Ipv4Regex.Matches(keyDetails).Select(m => m.Value);
 

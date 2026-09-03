@@ -70,6 +70,12 @@ internal static class RecordStorageShaper
                 SampleMessages = new List<string>(),       // 精簡：體積大戶，無風險日的基準用不到
                 DistinctMessageCount = i.DistinctMessageCount,
                 KeyDetails = null,                          // 精簡：同上
+                // 結構化帳號欄位（docs/archive/FEEDBACK-37-PLAN.md 批次E）：比照 KeyDetails 設為 null／false 不保留。
+                // 4740 交叉比對只用「當日記憶體中的簽章」，不讀歷史紀錄的這個欄位（歷史紀錄只被用來查跨日重現，
+                // 那條路徑用的是登入失敗明細 LoginFailureDetails，不是 KeyAccounts），
+                // 所以精簡掉不影響判定，而 200 個帳號是體積大戶。
+                KeyAccounts = null,
+                KeyIps = null,
                 // 登入失敗明細（A1）：跨日比對依賴此欄位，已分組封頂 50 組體積受控，完整保留不精簡
                 LoginFailureDetails = i.LoginFailureDetails,
                 LoginFailureTotalCount = i.LoginFailureTotalCount,

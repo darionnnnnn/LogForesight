@@ -60,15 +60,21 @@ public class PrtgAdminPageUiTests
         Assert.DoesNotContain("prtg-mirror-section", content);
         Assert.DoesNotContain("prtg-backfill-section", content);
         Assert.DoesNotContain("prtg-probe", content);
+        Assert.DoesNotContain("prtg-sensor-type-whitelist", content);
+        Assert.DoesNotContain("prtg-fetch-concurrency", content);
+        Assert.DoesNotContain("prtg-backfill-days", content);
+        Assert.DoesNotContain("prtg-retention-days", content);
+        Assert.DoesNotContain("prtg-timeout-seconds", content);
+        Assert.DoesNotContain("prtg-ignore-ssl", content);
     }
 
     [Fact]
-    public void SettingsCshtml仍包含保留元素Id()
+    public void PrtgCshtml包含擷取參數與連線元素Id()
     {
         var root = FindRepoRoot();
-        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
-        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
-        var content = File.ReadAllText(settingsCshtmlPath);
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
 
         Assert.Contains("prtg-sensor-type-whitelist", content);
         Assert.Contains("prtg-fetch-concurrency", content);
@@ -90,6 +96,12 @@ public class PrtgAdminPageUiTests
         Assert.DoesNotContain("prtgUrl", content);
         Assert.DoesNotContain("prtgApiToken", content);
         Assert.DoesNotContain("prtgClearToken", content);
+        Assert.DoesNotContain("prtgRetentionDays", content);
+        Assert.DoesNotContain("prtgFetchConcurrency", content);
+        Assert.DoesNotContain("prtgBackfillDays", content);
+        Assert.DoesNotContain("prtgTimeoutSeconds", content);
+        Assert.DoesNotContain("prtgIgnoreSslErrors", content);
+        Assert.DoesNotContain("prtgSensorTypeWhitelist", content);
     }
 
     [Fact]
@@ -163,5 +175,56 @@ public class PrtgAdminPageUiTests
         Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
         var prtgAdminJsContent = File.ReadAllText(prtgAdminJsPath);
         Assert.Contains("prtg-manual-map", prtgAdminJsContent);
+    }
+
+    [Fact]
+    public void Calibration校準頁骨架與路由選單配置正確()
+    {
+        var root = FindRepoRoot();
+
+        // 1. PagesController.cs 含 "/admin/calibration" 與 Calibration()
+        var pagesControllerPath = Path.Combine(root, "LogForesight.Web", "Controllers", "PagesController.cs");
+        Assert.True(File.Exists(pagesControllerPath), $"找不到檔案: {pagesControllerPath}");
+        var pagesControllerContent = File.ReadAllText(pagesControllerPath);
+        Assert.Contains("\"/admin/calibration\"", pagesControllerContent);
+        Assert.Contains("Calibration()", pagesControllerContent);
+
+        // 2. Views/Pages/Calibration.cshtml 檔案存在且含 calibration.js
+        var calibrationCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Calibration.cshtml");
+        Assert.True(File.Exists(calibrationCshtmlPath), $"找不到檔案: {calibrationCshtmlPath}");
+        var calibrationCshtmlContent = File.ReadAllText(calibrationCshtmlPath);
+        Assert.Contains("calibration.js", calibrationCshtmlContent);
+
+        // 3. layout.js 含 /admin/calibration 且該行含 requires: 'Maintain'
+        var layoutJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "layout.js");
+        Assert.True(File.Exists(layoutJsPath), $"找不到檔案: {layoutJsPath}");
+        var layoutLines = File.ReadAllLines(layoutJsPath);
+        var calibrationNavLine = Array.Find(layoutLines, l => l.Contains("/admin/calibration"));
+        Assert.NotNull(calibrationNavLine);
+        Assert.Contains("requires: 'Maintain'", calibrationNavLine);
+        Assert.Contains("校準數值匯出", calibrationNavLine);
+
+        // 4. Calibration.cshtml 含四張卡的容器 id 與兩顆按鈕的 id 與 override 勾選框
+        Assert.Contains("id=\"calibration-card-prtg-value-baseline\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-card-prtg-rule-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-card-triggered-fetch-magnitude\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-card-residual-credential-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-calc-btn\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-export-btn\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"calibration-override-check\"", calibrationCshtmlContent);
+
+        // 5. 四張卡都要有「門檻現值」容器：後端 CurrentThresholds 有填、DTO 有傳，
+        //    少了這些容器前端就只顯示「目前多少」而看不到「需要多少」——
+        //    斷鏈不會有任何編譯或測試訊號，所以在這裡釘住
+        Assert.Contains("id=\"thresholds-prtg-value-baseline\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-prtg-rule-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-triggered-fetch-magnitude\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-residual-credential-thresholds\"", calibrationCshtmlContent);
+
+        // 6. 前端確實消費 currentThresholds／isEligible（後端算好卻沒人讀＝白算）
+        var calibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "calibration.js");
+        var calibrationJs = File.ReadAllText(calibrationJsPath);
+        Assert.Contains("itemData.currentThresholds", calibrationJs);
+        Assert.Contains("item.isEligible", calibrationJs);
     }
 }
