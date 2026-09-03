@@ -36,9 +36,11 @@ public sealed class CalibrationItemStatusDto
             ItemName = item.ItemName,
             Status = item.Status.ToString(),
             StatusText = item.StatusText,
-            KeyMetrics = item.KeyMetrics,
-            CurrentThresholds = item.CurrentThresholds,
-            Explanations = item.Explanations,
+            // 來源是行程層級的快取物件，這裡複製一份——DTO 若拿原參考，任何呼叫端對集合的
+            // 修改都會污染整個行程的快取
+            KeyMetrics = new Dictionary<string, object>(item.KeyMetrics),
+            CurrentThresholds = new Dictionary<string, object>(item.CurrentThresholds),
+            Explanations = new List<string>(item.Explanations),
             IsEligible = isEligible
         };
     }

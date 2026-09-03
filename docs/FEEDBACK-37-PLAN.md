@@ -1,6 +1,6 @@
 # 回饋第 37 輪規劃：校準數值匯出、PRTG 設定收斂與進度顯示、技術債清理
 
-> 狀態：實作完成，待換模型體檢
+> 狀態：全案完成已併 dev
 > 基準：dev@0afbc7e（3296 綠、略過 6）
 > 來源：BACKLOG 盤點（第四類「可排一輪清掉」）＋新需求（校準數值匯出頁、PRTG 進度顯示、PRTG 設定集中）
 > 委派模型：agy `gemini-3.7-flash-high`，整輪不換；幾行內小修標「Claude」。
@@ -50,7 +50,7 @@
 
 ### 定案
 - **不新增設定**。天數沿用既有 `RunLogRetentionDays`（同屬診斷類資料）；清理段掛在 PRTG 鏡像清理（`:551`）之後，形狀比照既有段。
-- 另加**單次執行硬上限**：同一個 `FilePromptDumper` 實例寫滿 N 檔（暫定 2000）後停止寫入並寫一行警告到 console（只警告一次），避免忘關時單晚就塞爆。上限為常數，不開設定。
+- 另加**單次執行硬上限**：同一個 `FilePromptDumper` 實例寫滿 N 檔（暫定 2000）後停止寫入並寫一行警告（走 NLog `Log.Warn`，只警告一次），避免忘關時單晚就塞爆。上限為常數，不開設定。
 - 清理邏輯放在 `FilePromptDumper` 的靜態方法（依檔案最後寫入時間刪除超過天數者），只刪 `diag/` 內的 `.txt`，目錄不存在時零成本返回。
 
 ### 驗收
@@ -73,7 +73,7 @@
 
 ### 驗收
 - C1：`GetHostMapForDate` 在 `SettingsController` 零命中；新增測試「資料稀疏（只有 20 天前一筆）仍取到該日」與「無資料回 null」。
-- C2：`IssueCategory.`／`IssueSeverity.` 字面值在 `PrtgFindingMapper.cs` 零命中（全部改讀對照表）；守門測試存在且對四條規則逐一斷言；`dotnet test` 全綠。
+- C2：`IssueCategory.`／`IssueSeverity.` 字面值在 `PrtgFindingMapper.cs` 只剩未知規則代碼的 fallback 一處（Other／Medium），四條規則全部改讀對照表；守門測試存在且對四條規則逐一斷言；`dotnet test` 全綠。
 
 ---
 
@@ -113,7 +113,7 @@
 - 文件：WEB-SPEC §9.9b 第 8 節刪除（頁籤變 7 個、編號連續化，含批次D 的編號修正）、API 清單搬到 PRTG 頁章節；PRTG-SPEC §7 操作介面表改為兩列（維護頁／排程頁）；§8 端點表加新端點。
 
 ### 驗收
-- 前端 `prtg-admin.js` 中 `api.get('/api/admin/settings')` 零命中；`Settings.cshtml` 中 `data-panel="prtg"` 零命中；`settings.js` 中 `prtg` 字串零命中。
+- 前端 `prtg-admin.js` 的**存檔**不再 GET 整包（`bindForm` 內零命中；`loadSettings` 讀整包填欄位仍保留——讀不會覆蓋他人改動，讀改寫才會）；`Settings.cshtml` 中 `data-panel="prtg"` 零命中；`settings.js` 中 `prtg` 字串零命中。
 - 新增測試：新端點只改 PRTG 欄位（改前後其他欄位逐一相等）、認證模式驗證錯誤被拒、`PrtgRetentionDays > RetentionDays` 被拒；整包 `Update` 不送 PRTG 參數時六個值不變。
 - 頁面雙閘不變：新頁籤內容仍在 `Maintain` 下。
 
@@ -136,7 +136,7 @@
 ### 驗收
 - 測試：`SchedulerRunState` 收到 `prtg-*` phase 時 NetIQ 欄位不變（反例測試）；`PrtgFetchService` 以 6 個 sensor 跑數值取數，回呼最後一次為 (6, 6) 且遞增單調；回填 runner 3 天跑完回呼收到 (3, 3)。
 - 前端：三條進度條 DOM id 各自獨立；`PROGRESS_PHASE_LABEL` 含新 phase。
-- 文件：WEB-SPEC `/runs` 章節補第三條進度軌；PRTG-SPEC §3a、§5 補進度語意。
+- 文件：WEB-SPEC `/runs` 章節補第三條進度軌（進度語意只留這一份，PRTG-SPEC §7／§8 表格順帶提及、不重抄以免分岔）。
 
 ---
 
@@ -218,7 +218,7 @@
 
 ## 體檢交接
 
-**全量測試**：通過 **3377**、略過 6、總計 3383（基準 dev：3296 通過／略過 6，淨增 81）。
+**全量測試（實作方收官）**：通過 3377、略過 6、總計 3383（基準 dev：3296 通過／略過 6）。
 建置零錯誤零警告。分支 `feature/feedback-37`，21 個 commit。
 
 **兩個獨立終檢已跑完並處理**（程式碼審查、文件契約對照），發現與處置：
@@ -252,6 +252,34 @@
 
 過程中另修正一處不實際的測試資料：規則命中測試用 `prtg-down-60m` 當 EventKey，
 實際格式是 `prtg:{規則}:{objid}`，改為逐規則判定後才暴露出來。
+
+## 體檢輪修正（換模型：實作 Opus 5、體檢 Fable 5.1）
+
+體檢對象：`dev..feature/feedback-37` 全 diff，重點細讀實作方最後六個未經獨立審查的手改 commit。
+兩個獨立審查（程式碼／文件契約）＋體檢方自查，發現與處置：
+
+| 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|
+| `ResidualCredentialDetector.EvaluateMetrics` | 匯出列的「跨日數」**整欄恆 0**：上一輪加欄位時用不匹配行尾的字串替換靜默失敗，`CrossDayDistinctCount` 成了零呼叫端的死碼——與前一輪修掉的 `IsMatch` 恆 false 同型 | 在指標物件初始化真的呼叫它 | `EvaluateMetrics_跨日數含當日_歷史無重現為1_有一日重現為2` |
+| `CalibrationService.BuildResidualCandidateRows` | 逐候選各查一次歷史（N+1）：5000 筆候選＝5000 次查詢，同一台主機的 30 個候選日把同批 blob 反序列化 30 次；判定與匯出又各跑一遍 | 一次撈回看窗內全部候選主機的紀錄、按主機分組、每份只反序列化一次；候選列納入同一個 TTL 快取，判定與匯出共用 | 既有校準測試全綠（行為不變、只改成本） |
+| `CalibrationService.HistoryForCandidate` | 回看窗 `-7` 比判定端的 `-(7-1)` 多一天，註解卻說一致 | 統一為 `HistoryWindowDaysForCalibration - 1` | — |
+| `AnalysisOrchestrator.RunPrtgFetchAsync` | 門檻預設值 60／5／240 仍硬寫——`PrtgRuleCatalog` 收斂後的**第五份**手抄；規則庫缺某條 PRTG 規則時夜間分析與校準頁會分岔 | 改讀 `PrtgRuleCatalog.Default*` | — |
+| `CalibrationController.Export`／`CalibrationItemStatusDto.From` | 匯出用的判定走以日期為鍵的快取，設定剛改過時摘要與即時算的資料集口徑不一致、稽核記到舊狀態；DTO 直接拿快取物件的集合原參考 | 匯出端強制重算（後續封裝內判定命中這次更新的快取，不跑第二遍）；DTO 複製集合 | — |
+| `LogAggregator.KeyAccountsTruncated`／`KeyIpsTruncated` | 兩個截斷旗標零讀取端（不像登入失敗明細的截斷旗標會擋判定），每個 Security 簽章多寫兩個 bool 進 ContentJson 卻不影響任何行為 | 移除；封頂 200 只是防撐爆，第 201 個被切掉不改變任何判定 | 既有 4740／IP 測試全綠 |
+| `CorrelationAnalyzer` | `SourceIps` 上疊了兩個 `<summary>`（原 `ExtractIps` 的沒跟著搬） | 歸位 | — |
+| `prtg-admin.js` 存檔 | 保留天數欄清空時 `Number('')＝0` 直接送出，被後端 Range 擋成 400 只看到「儲存失敗」；同批其他欄位都有 fallback | 補 `|| 180` | — |
+| 測試 | `CalibrationService` 的靜態快取只靠「目前只有一個測試類別用它」維持隔離 | 新增 `CalibrationCacheState` Collection 並標記，比照既有 `KnownIssueCatalogState` 慣例 | — |
+| 測試 | 前端斷鏈守門只 grep `currentThresholds` 字串，宣告後不用也會綠 | 改斷言帶消費形狀的 `itemData.currentThresholds`／`item.isEligible` | — |
+| 文件 | `KeyAccounts`／`KeyIps` 是新的跨模組資料契約，DB-SPEC 的 ContentJson 清單與 DETECTION-SPEC 的 4740／RDP 節都沒登記；DB-SPEC 精簡策略描述漏列新欄 | 補齊 | — |
+| 文件 | PRTG-SPEC §5「取最近一日的對應」沒說基準是回填日而非今天；BACKLOG 兩條仍指向 §10 而非新的 §11；WEB-SPEC §9.9e 沒說明維護頁仍整包 GET；兩處「已改」過程語氣 | 逐一修正 | — |
+| 註解 | 20 處「回饋第 37 輪批次X」無文件路徑，PLAN 歸檔後成懸空引用 | 改為既有慣例 `docs/archive/FEEDBACK-37-PLAN.md 批次X` | — |
+| PLAN | 四條驗收條目與實作事實不符（C2 的 fallback 字面值、F2 的載入用整包 GET、G 的 PRTG-SPEC 進度語意、B 的 console 措辭）——實作選擇都比原文合理 | 改驗收文字，不改程式 | — |
+
+體檢方確認沒問題的面向：EXISTS 子查詢與 `HashSet.Contains` 可翻譯成 SQL、`[Range]` 對 null 放行、
+可空參數與新介面成員的所有實作／替身無遺漏、`i-1` 天數進度三端一致、`GetLatestHostMapWithDate`
+的 anchor 語意、舊 ContentJson 相容、前端紅線（無寫死路徑、無 `innerHTML`）、「明確不做」六條全未違反。
+
+體檢後全量測試：通過 **3378**、略過 6、總計 3384。
 
 ## 執行紀錄
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |

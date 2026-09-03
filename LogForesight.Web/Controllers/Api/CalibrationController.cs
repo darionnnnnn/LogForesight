@@ -53,7 +53,10 @@ public class CalibrationController : ControllerBase
     [HttpGet("export")]
     public IActionResult Export([FromQuery(Name = "override")] bool isOverride = false)
     {
-        var summary = _calibrationService.AssessStatus();
+        // 強制重算：判定快取只以日期為鍵，設定（白名單、保留天數）剛改過時舊摘要會與
+        // 即時算出的資料集口徑不一致、稽核也會記到舊狀態。匯出是低頻操作，重算一次可接受；
+        // 隨後 BuildExportPackage 內的判定直接命中這次更新的快取，不會跑第二遍。
+        var summary = _calibrationService.AssessStatus(anchor: null, forceRefresh: true);
         var ineligible = new List<string>();
 
         if (summary.PrtgValueBaseline.Status is not (CalibrationStatus.Available or CalibrationStatus.Sufficient))

@@ -174,10 +174,10 @@
 - **掃描工作的多行程情境未處理**：工作為行程內狀態（機制見 docs/WEB-SPEC.md §9.9a），
   多行程部署／IIS 應用集區回收下「全站僅一工作」的保證不成立、回收即失去進度——
   掃描可重跑，刻意不引入持久化；真的部署成多行程時再議。
-- **4740 的 `KeyDetails` 字串剖析仍留作舊資料 fallback**：判定已改讀結構化的
-  `KeyAccounts`（未截斷、封頂 200），`ExtractAccountsFromKeyDetails` 只在該欄位為 null
-  （舊 ContentJson）時走。舊資料隨 `RawEventRetentionDays`（預設 120 天）自然淘汰後，
-  這條 fallback 與它的剖析函式可一併移除。
+- **`KeyDetails` 字串剖析仍留作舊資料 fallback**：4740 帳號比對讀結構化的 `KeyAccounts`、
+  跨日關聯的來源 IP 讀 `KeyIps`（皆未截斷、封頂 200）；`ExtractAccountsFromKeyDetails` 與
+  `CorrelationAnalyzer.ExtractIps` 只在對應欄位為 null（舊 ContentJson）時走。舊資料隨
+  `RawEventRetentionDays`（預設 120 天）自然淘汰後，兩條 fallback 可一併移除。
 - **殘留判定的門檻無設定入口**：集中度 0.8、機械型態佔比 0.8、回看 7 天、跨日門檻 2 天
   皆為 `private const`。刻意不開設定（本專案紅線是「新增設定必須有消費端」，且門檻尚未經實測校準）；
   試點觀察後若需要調，先改常數再考慮要不要開設定。
@@ -427,15 +427,15 @@
 
 - **分析層的值型部分（L2~L5：特徵計算／弱訊號偵測／訊號合成／LLM 敘述化）**：狀態變更型規則
   （第一階）已完成並接上 `lf_top_issues` 全鏈；值型規則要看數值趨勢與基線偏移，
-  依賴實際累積的 hourly 數值。觸發條件：觸發式取數（或針對特定主機的回填）累積 4~8 週資料，
-  再經 PRTG-SPEC §10 的匯出／匯入搬到開發機設計。
+  依賴實際累積的 hourly 數值。觸發條件：`/admin/calibration` 校準頁四項判定達「可用」
+  （PRTG-SPEC §11，含累積量判斷與匯出檔），必要時再以 §10 搬運原始 hourly。
 - **sensor 的人工分類 UI**（分類的是 sensor 的語意類別，與「device 對主機」的對應是兩件事）：
   **依 type 對照表的自動分類已完成**（`category_source = auto`，只填 null 絕不覆蓋）。
   仍未做的是**人工指定分類的畫面**；欄位與「不被同步洗掉」的契約都已就緒，可直接接手。
   觸發條件：自動對照表覆蓋率不足、且有人工調整的實際需求。
 - **規則維護頁的「prtg」平台**：**狀態變更型（第一階）已完成**（四條規則、門檻可調、可停用，
   見 docs/PRTG-SPEC.md §9）。仍遞延的是**值型規則**（趨勢、基線偏移）——需要數值基線，
-  資料通道見 PRTG-SPEC §10。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
+  累積量判斷與匯出見 PRTG-SPEC §11（原始 hourly 另走 §10）。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
   規則各自歸屬自己的來源。
 - **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
   `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
@@ -485,8 +485,8 @@
 - **一個時間敏感的偶發失敗測試**：
   `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`。
   單獨執行穩定通過，只在全套並行時偶發，會讓「全綠」不可靠。
-  （`PrtgFetchServiceTests` 併發峰值那條已改用放行閘門取代固定延遲：
-  前 N 個請求到齊才一起放行，斷言強度不變而時間相依消失——同一手法可套用於此。）
+  可比照 `PrtgFetchServiceTests` 併發峰值測試的放行閘門作法：前 N 個請求到齊才一起放行，
+  斷言強度不變而時間相依消失。
 
 ### PRTG 已知未修項（不影響正確性）
 

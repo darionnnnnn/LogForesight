@@ -17,6 +17,9 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
+/// <remarks>CalibrationService 的判定快取是行程層級的靜態欄位；標進專屬 Collection 讓日後
+/// 任何第二個碰它的測試類別都被迫序列化，而不是靠「目前只有一個類別用它」這種默契。</remarks>
+[Collection("CalibrationCacheState")]
 public class CalibrationServiceTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();

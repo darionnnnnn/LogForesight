@@ -346,7 +346,6 @@ internal static class CorrelationAnalyzer
     private static readonly System.Text.RegularExpressions.Regex Ipv4Regex =
         new(@"\b\d{1,3}(\.\d{1,3}){3}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出 IPv4 位址，供跨日 IP 交集比對。</summary>
     /// <summary>
     /// 簽章的來源 IP 集合：優先讀未截斷的結構化欄位 <c>KeyIps</c>；
     /// 為 null（舊 ContentJson）時才退回剖析 <c>KeyDetails</c> 顯示字串。
@@ -360,6 +359,7 @@ internal static class CorrelationAnalyzer
             ? ExtractIps(issue.KeyDetails)
             : Enumerable.Empty<string>());
 
+    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出 IPv4 位址（舊資料 fallback）。</summary>
     private static IEnumerable<string> ExtractIps(string keyDetails) =>
         Ipv4Regex.Matches(keyDetails).Select(m => m.Value);
 

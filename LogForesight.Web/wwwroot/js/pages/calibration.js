@@ -1,5 +1,5 @@
 /**
- * 校準數值匯出頁面模組（回饋第 37 輪批次A4）
+ * 校準數值匯出頁面模組（docs/archive/FEEDBACK-37-PLAN.md 批次A4）
  */
 
 import { api } from '../core/api.js';

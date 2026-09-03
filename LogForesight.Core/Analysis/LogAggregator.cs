@@ -69,12 +69,6 @@ public class LogIssueSignature
     public List<string>? KeyAccounts { get; set; }
 
     /// <summary>
-    /// <see cref="KeyAccounts"/> 是否因達到封頂上限（200 個）而截斷。
-    /// 這是資料契約，KeyDetails 是顯示字串，兩者不可互相取代。
-    /// </summary>
-    public bool KeyAccountsTruncated { get; set; }
-
-    /// <summary>
     /// Security 與 RDP 事件從全部訊息抽出的完整來源 IP 集合（去重且保持出現順序，封頂 200 個）。
     /// 非 Security／RDP 頻道為 null。
     /// 這是資料契約（供跨日關聯比對來源 IP 使用），KeyDetails 是顯示字串，兩者不可互相取代
@@ -82,8 +76,6 @@ public class LogIssueSignature
     /// </summary>
     public List<string>? KeyIps { get; set; }
 
-    /// <summary><see cref="KeyIps"/> 是否因達到封頂上限（200 個）而截斷。</summary>
-    public bool KeyIpsTruncated { get; set; }
 
     /// <summary>登入失敗事件（4625／4771／Linux ssh 認證失敗）的結構化明細，
     /// 依 (帳號, 來源, 登入類型, 失敗原因) 分組計數。非登入失敗簽章為 null。
@@ -205,9 +197,7 @@ internal static class LogAggregator
                     DistinctMessageCount = distinctMessages.Count,
                     KeyDetails = securityDetails.KeyDetails,
                     KeyAccounts = securityDetails.KeyAccounts,
-                    KeyAccountsTruncated = securityDetails.KeyAccountsTruncated,
                     KeyIps = securityDetails.KeyIps,
-                    KeyIpsTruncated = securityDetails.KeyIpsTruncated,
                     LoginFailureDetails = loginFailures.Details,
                     LoginFailureTotalCount = loginFailures.TotalCount,
                     LoginFailureDetailsTruncated = loginFailures.Truncated
@@ -326,7 +316,7 @@ internal static class LogAggregator
     /// <summary>結構化帳號集合封頂上限（200 個）</summary>
     internal const int KeyAccountsCap = 200;
 
-    private static (string? KeyDetails, List<string>? KeyAccounts, bool KeyAccountsTruncated, List<string>? KeyIps, bool KeyIpsTruncated) ExtractSecurityDetails(IEnumerable<string> rawMessages)
+    private static (string? KeyDetails, List<string>? KeyAccounts, List<string>? KeyIps) ExtractSecurityDetails(IEnumerable<string> rawMessages)
     {
         var (accounts, ips) = ExtractAccountsAndIps(rawMessages);
 
@@ -341,12 +331,12 @@ internal static class LogAggregator
         }
 
         var keyDetails = parts.Count > 0 ? string.Join("；", parts) : null;
-        var truncated = accounts.Count > KeyAccountsCap;
+        // 封頂 200 只是防極端訊息把 ContentJson 撐爆；不帶截斷旗標——沒有任何判定會因
+        // 「第 201 個帳號被切掉」而改變行為（不像登入失敗明細，封頂 50 會直接影響集中度分母）
         var keyAccounts = accounts.Take(KeyAccountsCap).ToList();
-        var ipsTruncated = ips.Count > KeyAccountsCap;
         var keyIps = ips.Take(KeyAccountsCap).ToList();
 
-        return (keyDetails, keyAccounts, truncated, keyIps, ipsTruncated);
+        return (keyDetails, keyAccounts, keyIps);
     }
 
     private static string CleanMessage(string s) =>

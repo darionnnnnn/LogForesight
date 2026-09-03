@@ -251,6 +251,8 @@ public sealed class CalibrationService
     private static DateTime _cachedAnchor;
     private static DateTime _cachedAt;
     private static CalibrationAssessmentSummary? _cached;
+    private static List<CalibrationResidualCandidateRow>? _cachedResidualRows;
+    private static (DateTime Anchor, int RetentionDays) _cachedResidualKey;
 
     /// <summary>判定快取存活時間：四項判定是重查詢（含逐筆反序列化），
     /// 而累積量以「天」為單位變動，十分鐘內重複計算不會得到不同結論。
@@ -309,6 +311,8 @@ public sealed class CalibrationService
             _cached = null;
             _cachedAnchor = default;
             _cachedAt = default;
+            _cachedResidualRows = null;
+            _cachedResidualKey = default;
         }
     }
 
@@ -963,7 +967,35 @@ public sealed class CalibrationService
         };
     }
 
+    /// <summary>
+    /// 殘留候選列（判定的截斷比例／命中數與匯出資料集共用同一份）。
+    /// 建構成本高（逐筆反序列化），故與判定摘要同一個 TTL 快取：匯出時判定已算過，
+    /// 這裡直接回同一份，不把整批 blob 再反序列化一次。
+    /// </summary>
     private List<CalibrationResidualCandidateRow> BuildResidualCandidateRows(
+        DateTime anchor, int rawEventRetentionDays)
+    {
+        var key = (anchor.Date, rawEventRetentionDays);
+        lock (CacheLock)
+        {
+            if (_cachedResidualRows != null && _cachedResidualKey == key && DateTime.Now - _cachedAt < CacheTtl)
+            {
+                return _cachedResidualRows;
+            }
+        }
+
+        var rows = BuildResidualCandidateRowsCore(anchor, rawEventRetentionDays);
+
+        lock (CacheLock)
+        {
+            _cachedResidualRows = rows;
+            _cachedResidualKey = key;
+        }
+
+        return rows;
+    }
+
+    private List<CalibrationResidualCandidateRow> BuildResidualCandidateRowsCore(
         DateTime anchor, int rawEventRetentionDays)
     {
         using var ctx = _contextFactory();
@@ -978,6 +1010,16 @@ public sealed class CalibrationService
             .Take(CalibrationConstants.ResidualCandidateMaxCount)
             .Select(r => new { r.HostId, r.HostName, r.RecordDate, r.ContentJson })
             .ToList();
+
+        // 條件 4（跨日重現）要看同主機回看窗內的歷史。逐候選各查一次是 N+1
+        // （5000 筆候選＝5000 次查詢＋每次最多 7 份 blob 反序列化，同一台主機的 30 個候選日
+        // 會把同一批歷史重複反序列化 30 次）。改為一次撈回看窗內全部候選主機的紀錄，
+        // 在記憶體按主機分組、逐份只反序列化一次。
+        var historyByHost = LoadHistoryForHosts(
+            ctx,
+            candidateDailyRows.Select(r => r.HostId).Distinct().ToList(),
+            candidateDailyRows.Count > 0 ? candidateDailyRows.Min(r => r.RecordDate) : anchor.Date,
+            candidateDailyRows.Count > 0 ? candidateDailyRows.Max(r => r.RecordDate) : anchor.Date);
 
         var result = new List<CalibrationResidualCandidateRow>();
         foreach (var row in candidateDailyRows)
@@ -1010,7 +1052,7 @@ public sealed class CalibrationService
                 // history 必須傳真的：條件 4（跨日重現）在 history 為 null 時直接判否，
                 // 傳 null 會讓匯出檔的「是否命中」整欄恆為 false——而校準要看的正是
                 // 「現行門檻下實際命中多少」，恆 false 等於這份資料集廢掉
-                var history = HistoryForCandidate(ctx, row.HostId, record.Date);
+                var history = HistoryForCandidate(historyByHost, row.HostId, record.Date);
                 var metrics = ResidualCredentialDetector.EvaluateMetrics(issue, history, record.Date);
                 if (metrics == null) continue;
 
@@ -1041,28 +1083,37 @@ public sealed class CalibrationService
     }
 
     /// <summary>
-    /// 取得某主機日往前的歷史紀錄，供殘留判定的條件 4（跨日重現）比對。
-    /// 窗長與判定端一致（<c>ResidualCredentialDetector</c> 的回看天數），
-    /// 只取同一台主機——判定本來就是逐主機看「同一組帳號來源是否跨日重現」。
+    /// 一次載入候選主機在整個回看範圍內的紀錄（不含精簡者），按主機分組、每份只反序列化一次。
+    /// 範圍＝最早候選日往前一個回看窗，到最晚候選日（不含）；窗長與判定端同一常數。
     /// </summary>
-    private static List<DailyAnalysisRecord> HistoryForCandidate(LfDbContext ctx, long hostId, DateTime targetDate)
+    private static Dictionary<long, List<DailyAnalysisRecord>> LoadHistoryForHosts(
+        LfDbContext ctx, IReadOnlyCollection<long> hostIds, DateTime earliestCandidate, DateTime latestCandidate)
     {
-        var from = targetDate.Date.AddDays(-ResidualCredentialDetector.HistoryWindowDaysForCalibration);
+        var byHost = new Dictionary<long, List<DailyAnalysisRecord>>();
+        if (hostIds.Count == 0) return byHost;
+
+        var from = earliestCandidate.Date.AddDays(-(ResidualCredentialDetector.HistoryWindowDaysForCalibration - 1));
+        var toExclusive = latestCandidate.Date;
 
         var rows = ctx.DailyRecords.AsNoTracking()
-            .Where(r => r.HostId == hostId && !r.DetailPruned &&
-                        r.RecordDate >= from && r.RecordDate < targetDate.Date)
-            .Select(r => r.ContentJson)
+            .Where(r => hostIds.Contains(r.HostId) && !r.DetailPruned &&
+                        r.RecordDate >= from && r.RecordDate < toExclusive)
+            .Select(r => new { r.HostId, r.ContentJson })
             .ToList();
 
-        var history = new List<DailyAnalysisRecord>();
-        foreach (var json in rows)
+        foreach (var row in rows)
         {
-            if (string.IsNullOrWhiteSpace(json)) continue;
+            if (string.IsNullOrWhiteSpace(row.ContentJson)) continue;
             try
             {
-                var rec = JsonSerializer.Deserialize<DailyAnalysisRecord>(json);
-                if (rec != null) history.Add(rec);
+                var rec = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson);
+                if (rec == null) continue;
+                if (!byHost.TryGetValue(row.HostId, out var list))
+                {
+                    list = new List<DailyAnalysisRecord>();
+                    byHost[row.HostId] = list;
+                }
+                list.Add(rec);
             }
             catch (Exception ex)
             {
@@ -1070,7 +1121,20 @@ public sealed class CalibrationService
             }
         }
 
-        return history;
+        return byHost;
+    }
+
+    /// <summary>
+    /// 某主機日的歷史：從已載入的分組中切出該日往前一個回看窗（不含當日）。
+    /// 判定端 <c>HasCrossDayRecurrence</c> 自己也會依窗過濾，這裡先切是為了少傳無關的日子。
+    /// </summary>
+    private static List<DailyAnalysisRecord> HistoryForCandidate(
+        Dictionary<long, List<DailyAnalysisRecord>> historyByHost, long hostId, DateTime targetDate)
+    {
+        if (!historyByHost.TryGetValue(hostId, out var all)) return new List<DailyAnalysisRecord>();
+
+        var from = targetDate.Date.AddDays(-(ResidualCredentialDetector.HistoryWindowDaysForCalibration - 1));
+        return all.Where(r => r.Date.Date >= from && r.Date.Date < targetDate.Date).ToList();
     }
 
     /// <summary>

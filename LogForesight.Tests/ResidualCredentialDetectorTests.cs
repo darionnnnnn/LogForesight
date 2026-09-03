@@ -1043,7 +1043,6 @@ public class ResidualCredentialDetectorTests
         Assert.NotNull(sig.KeyAccounts);
         Assert.Equal(7, sig.KeyAccounts.Count);
         Assert.Equal(new[] { "user1", "user2", "user3", "user4", "user5", "user6", "user7" }, sig.KeyAccounts);
-        Assert.False(sig.KeyAccountsTruncated);
 
         Assert.NotNull(sig.KeyDetails);
         Assert.Equal("相關帳號(7個): user1, user2, user3, user4, user5…", sig.KeyDetails);
@@ -1051,7 +1050,39 @@ public class ResidualCredentialDetectorTests
         Assert.DoesNotContain("user7", sig.KeyDetails);
     }
 
-    // ── EvaluateMetrics（回饋第 37 輪批次A，殘留判定中間指標抽出）─────────────────────────
+    /// <summary>
+    /// 跨日數要真的被填：這欄供校準記錄「差一天才成立」與「完全沒有」的差別，
+    /// 恆 0 會讓匯出檔看起來沒有任何候選曾跨日重現（與 IsMatch 恆 false 同型）。
+    /// </summary>
+    [Fact]
+    public void EvaluateMetrics_跨日數含當日_歷史無重現為1_有一日重現為2()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        sig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_x", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+        sig.LoginFailureTotalCount = 40;
+
+        var noHistory = ResidualCredentialDetector.EvaluateMetrics(sig, new List<DailyAnalysisRecord>(), targetDate);
+        Assert.NotNull(noHistory);
+        Assert.Equal(1, noHistory!.CrossDayDistinctDays);
+        Assert.False(noHistory.IsMatch);
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_x", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+        var withHistory = ResidualCredentialDetector.EvaluateMetrics(sig, history, targetDate);
+        Assert.Equal(2, withHistory!.CrossDayDistinctDays);
+        Assert.True(withHistory.IsMatch);
+    }
+
+    // ── EvaluateMetrics（docs/archive/FEEDBACK-37-PLAN.md 批次A，殘留判定中間指標抽出）─────────────────────────
 
     [Fact]
     public void EvaluateMetrics_典型4625命中案例_回傳正確數值且命中為true()

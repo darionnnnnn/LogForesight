@@ -1171,9 +1171,9 @@ public class AnalysisOrchestrator
                     throw new PrtgRulesUnavailableException();
                 }
 
-                var downMinutes = 60;
-                var flapCount = 5;
-                var warningMinutes = 240;
+                var downMinutes = PrtgRuleCatalog.DefaultDownMinutes;
+                var flapCount = PrtgRuleCatalog.DefaultFlapCount;
+                var warningMinutes = PrtgRuleCatalog.DefaultWarningMinutes;
 
                 foreach (var rule in prtgRules)
                 {

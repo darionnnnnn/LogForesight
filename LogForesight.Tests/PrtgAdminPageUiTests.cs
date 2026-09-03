@@ -224,7 +224,7 @@ public class PrtgAdminPageUiTests
         // 6. 前端確實消費 currentThresholds／isEligible（後端算好卻沒人讀＝白算）
         var calibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "calibration.js");
         var calibrationJs = File.ReadAllText(calibrationJsPath);
-        Assert.Contains("currentThresholds", calibrationJs);
-        Assert.Contains("isEligible", calibrationJs);
+        Assert.Contains("itemData.currentThresholds", calibrationJs);
+        Assert.Contains("item.isEligible", calibrationJs);
     }
 }

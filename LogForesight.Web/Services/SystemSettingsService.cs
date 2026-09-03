@@ -20,7 +20,7 @@ public interface ISystemSettingsService
     SystemSettingsDto Update(UpdateSystemSettingsRequest request);
 
     /// <summary>
-    /// 更新 PRTG 專屬設定（PRTG 維護頁用，回饋第 37 輪批次F1）。只更新 PRTG 相關欄位，不動其他設定。
+    /// 更新 PRTG 專屬設定（PRTG 維護頁用，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。只更新 PRTG 相關欄位，不動其他設定。
     /// </summary>
     SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request);
 
@@ -934,7 +934,7 @@ public class SystemSettingsService : ISystemSettingsService
     }
 
     /// <summary>
-    /// PRTG 憑證寫入（Update 與 UpdatePrtg 共用同一份，回饋第 37 輪批次F1）。
+    /// PRTG 憑證寫入（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
     ///
     /// 只處理「當前認證方式」那一組憑證：另一組的欄位在畫面上是隱藏的，
     /// 送上來的是切換前殘留的輸入與勾選。不隔開的話，token 模式勾了「清除 token」
@@ -983,7 +983,7 @@ public class SystemSettingsService : ISystemSettingsService
     }
 
     /// <summary>
-    /// PRTG 共同驗證（Update 與 UpdatePrtg 共用同一份，回饋第 37 輪批次F1）。
+    /// PRTG 共同驗證（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
     /// 涵蓋保留天數上限、認證方式合法性、啟用狀態下的 URL 與對應憑證存在性檢查。
     /// </summary>
     private static void ValidatePrtgSettings(

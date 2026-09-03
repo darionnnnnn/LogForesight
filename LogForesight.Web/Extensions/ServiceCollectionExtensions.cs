@@ -423,7 +423,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICsvImporter, OwnerCsvImporter>();
         services.AddScoped<ImportService>();
 
-        // 校準狀態判定與數值匯出（回饋第 37 輪批次A）：走 StorageBackend 的工廠方法，
+        // 校準狀態判定與數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A）：走 StorageBackend 的工廠方法，
         // 與其他 store 同一慣例——不要以反射取它的私有連線工廠（欄位改名不會編譯失敗，
         // 只會在執行時炸）
         services.AddScoped<CalibrationService>(sp =>

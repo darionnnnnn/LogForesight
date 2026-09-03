@@ -64,7 +64,7 @@ public class SchedulerRunState
     public int LocalProgressTotal { get; private set; }
 
     /// <summary>
-    /// PRTG 擷取進度（回饋第 37 輪批次G1）：與 NetIQ／本機互不覆蓋的第三條進度軌，phase 包含
+    /// PRTG 擷取進度（docs/archive/FEEDBACK-37-PLAN.md 批次G1）：與 NetIQ／本機互不覆蓋的第三條進度軌，phase 包含
     /// prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）。
     /// </summary>
     public string? PrtgProgressPhase { get; private set; }

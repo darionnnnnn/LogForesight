@@ -184,7 +184,7 @@ function bindForm() {
     form.addEventListener('submit', async event => {
         event.preventDefault();
 
-        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days')?.value);
+        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days')?.value) || 180;
         if (historyRetentionDays != null && prtgRetentionDays > historyRetentionDays) {
             toast('PRTG 資料保留天數不可大於歷史資料保留天數。', 'warning');
             return;

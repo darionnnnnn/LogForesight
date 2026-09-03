@@ -212,7 +212,7 @@ public class StorageBackend
     /// <summary>PRTG 鏡像資料 store（↔ lf_prtg_* 五張表）</summary>
     public EfPrtgStore PrtgStore() => new(_dbFactory);
 
-    /// <summary>校準狀態判定與數值匯出（回饋第 37 輪批次A）。
+    /// <summary>校準狀態判定與數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A）。
     /// 相依的三個 store／查詢由呼叫端持有——本類別只提供資料庫連線工廠。</summary>
     public CalibrationService CalibrationService(
         IIssueAggregateQuery issueQuery,

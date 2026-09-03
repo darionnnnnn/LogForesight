@@ -215,7 +215,7 @@ public interface IIssueAggregateQuery
     List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
 
     /// <summary>
-    /// PRTG 規則命中分組查詢（回饋第 37 輪批次A，校準數值匯出用）。
+    /// PRTG 規則命中分組查詢（docs/archive/FEEDBACK-37-PLAN.md 批次A，校準數值匯出用）。
     /// 依 (規則代碼, 日期) 分組，回傳期間內的命中筆數與相異存活主機數。
     /// 僅納入 Source == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
     /// </summary>

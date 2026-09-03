@@ -2184,6 +2184,8 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
 排程作業頁的那兩組另見 §9.10：`PUT api/admin/settings/prtg-enabled`（總開關）、
 `POST/GET api/admin/settings/prtg-backfill/start|status`（歷史回填）。
+本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
+「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。
 
 ### 9.9f `/admin/calibration` 校準數值匯出（`Maintain`）
 
