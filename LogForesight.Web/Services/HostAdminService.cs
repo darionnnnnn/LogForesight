@@ -94,6 +94,21 @@ public class HostAdminService
         };
     }
 
+    /// <summary>取得全部活躍主機的簡易選項清單（指派下拉用，不分頁）</summary>
+    public List<HostOptionDto> GetAllActiveHostOptions()
+    {
+        return _hosts.GetAll()
+            .Where(h => h.Active && h.MergedInto == null)
+            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => new HostOptionDto
+            {
+                HostId = h.HostId,
+                HostName = h.HostName,
+                IpAddress = h.IpAddress
+            })
+            .ToList();
+    }
+
     /// <summary>
     /// 「全選符合目前篩選的主機」（體檢 X3）。
     ///

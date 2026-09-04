@@ -134,6 +134,11 @@ public class AdminController : ControllerBase
         return ApiResponse<PagedResult<HostDto>>.Ok(_hosts.GetHosts(request));
     }
 
+    /// <summary>取得全部活躍主機的簡易選項清單（供指派下拉等用途，不分頁）</summary>
+    [HttpGet("hosts/all")]
+    public ApiResponse<List<HostOptionDto>> GetAllActiveHosts() =>
+        ApiResponse<List<HostOptionDto>>.Ok(_hosts.GetAllActiveHostOptions());
+
     /// <summary>
     /// 「全選符合目前篩選的主機」（體檢 X3）：與清單頁共用同一組篩選參數與同一份篩選實作，
     /// 因此畫面說「符合 N 台」與實際選到的必然是同一批。回 id 清單讓寫入仍走既有的
