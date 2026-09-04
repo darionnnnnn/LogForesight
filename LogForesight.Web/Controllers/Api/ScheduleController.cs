@@ -419,7 +419,7 @@ public class ScheduleController : ControllerBase
             ProgressPhase = "netiq-ai",
             ProgressDone = snapshot.ProgressDone,
             ProgressTotal = snapshot.ProgressTotal,
-            PendingTotal = _records.CountPendingAi(),
+            PendingTotal = _aiRunState.GetPendingAiCount(() => _records.CountPendingAi()),
             UnitText = "件",
             CanStop = snapshot.IsRunning,
             AiEnabled = options.AiEnabled,

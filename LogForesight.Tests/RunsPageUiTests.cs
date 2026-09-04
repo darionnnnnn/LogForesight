@@ -63,4 +63,24 @@ public class RunsPageUiTests
         var updateProgressBarBody = jsContent.Substring(startIndex, endIndex - startIndex);
         Assert.DoesNotContain("prtg-triggered", updateProgressBarBody);
     }
+
+    [Fact]
+    public void RunsJs包含三路成果欄位與四種徽章文字()
+    {
+        var root = FindRepoRoot();
+        var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
+        Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
+        var jsContent = File.ReadAllText(runsJsPath);
+
+        // 欄位名稱
+        Assert.Contains("localDaysAnalyzed", jsContent);
+        Assert.Contains("netiqDaysAnalyzed", jsContent);
+        Assert.Contains("prtgOutcome", jsContent);
+
+        // 四種徽章文字
+        Assert.Contains("未啟用", jsContent);
+        Assert.Contains("成功", jsContent);
+        Assert.Contains("部分失敗", jsContent);
+        Assert.Contains("失敗", jsContent);
+    }
 }

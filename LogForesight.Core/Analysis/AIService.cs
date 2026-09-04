@@ -396,7 +396,7 @@ public class AIService : IAiService
 
                 if (parsed == null)
                 {
-                    lastError = "AI 回覆不是合法 JSON 或格式不符契約";
+                    lastError = JsonContractError;
                     // 印出回覆預覽方便診斷（截斷、前言文字、格式跑掉等），不然完全是黑盒子；
                     // 只取頭尾各一截、控制在數百字元內，不是把整段回覆存進去
                     var preview = PreviewForLog(response.Content);
@@ -415,9 +415,49 @@ public class AIService : IAiService
 
         }
 
+        string? finalError = lastError;
+        if (lastError == JsonContractError || lastError == EmptyAiResponseException.DefaultMessage)
+        {
+            finalError = $"{JsonContractError}：{FormatErrorResponseSnippet(rawContent)}";
+        }
+
         Log.Error("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",
-            totalAttempts, typeof(T).Name, lastError);
-        return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = lastError, Attempts = totalAttempts };
+            totalAttempts, typeof(T).Name, finalError);
+        return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = finalError, Attempts = totalAttempts };
+    }
+
+    /// <summary>
+    /// JSON 契約不符的錯誤訊息。收斂成常數：產生處、判定處與最終訊息組裝處各有一份字面值時，
+    /// 改文案會讓「要不要附上回覆片段」的判定靜默失效（訊息照樣顯示，片段卻消失）。
+    /// </summary>
+    internal const string JsonContractError = "AI 回覆不是合法 JSON 或格式不符契約";
+
+    /// <summary>
+    /// AI 契約失敗時附加於錯誤訊息的回覆片段長度上限（300 字元）。
+    /// 理由：錯誤訊息會寫入 lf_batch_run_logs 與 batch_runs 的摘要，
+    /// 必須能單行顯示並控制日誌資料庫空間，不能無上限傾印整段 AI 原始輸出。
+    /// </summary>
+    public const int MaxErrorResponseSnippetLength = 300;
+
+    internal static string FormatErrorResponseSnippet(string? rawContent)
+    {
+        if (string.IsNullOrWhiteSpace(rawContent))
+        {
+            return "（空回覆）";
+        }
+
+        var folded = System.Text.RegularExpressions.Regex.Replace(rawContent, @"\s+", " ").Trim();
+        if (folded.Length == 0)
+        {
+            return "（空回覆）";
+        }
+
+        if (folded.Length > MaxErrorResponseSnippetLength)
+        {
+            return folded[..MaxErrorResponseSnippetLength] + "…";
+        }
+
+        return folded;
     }
 
     /// <summary>
@@ -457,7 +497,10 @@ public class AIService : IAiService
 
     private class EmptyAiResponseException : Exception
     {
-        public EmptyAiResponseException() : base("模型回傳空內容") { }
+        /// <summary>預設訊息：<see cref="AIService.ChatJsonAsync"/> 以此判定是否附上回覆片段，因此收斂成常數。</summary>
+        public const string DefaultMessage = "模型回傳空內容";
+
+        public EmptyAiResponseException() : base(DefaultMessage) { }
     }
 
     /// <summary>HTTP 狀態碼是成功，但回應本體不是合法 JSON（常見於中間 proxy/gateway 用 200

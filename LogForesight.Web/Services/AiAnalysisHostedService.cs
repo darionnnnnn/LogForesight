@@ -203,6 +203,7 @@ public class AiAnalysisHostedService : BackgroundService
                 recorder.Finish(success ? 0 : 1);
 
                 _runState.EndRun(success, failureMessage);
+                _runState.InvalidatePendingAiCache();
                 // AI 補寫改變了紀錄內容，儀表板／報表快取要失效（批次F）——背景執行不走
                 // HTTP 管線，不會被那條中介軟體涵蓋。
                 _dataVersion.Bump();
@@ -392,7 +393,12 @@ public class AiAnalysisHostedService : BackgroundService
     /// <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>——持久層的事交給持久層，
     /// 這裡不直接碰 DbContext（StorageBackend 是本專案唯一的持久層路由點）。
     /// </summary>
-    public int BatchResetAiPending() => _recordQuery.MarkAllForAiRerun();
+    public int BatchResetAiPending()
+    {
+        var count = _recordQuery.MarkAllForAiRerun();
+        _runState.InvalidatePendingAiCache();
+        return count;
+    }
 
     private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore)
     {

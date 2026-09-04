@@ -31,6 +31,53 @@ const STATUS_META = {
     local_disabled: { label: '本機分析已停用', color: '#94a3b8' }
 };
 
+const PRTG_OUTCOME_META = {
+    disabled: { text: '未啟用', bg: 'bg-secondary' },
+    success: { text: '成功', bg: 'bg-success' },
+    partial: { text: '部分失敗', bg: 'bg-warning text-dark' },
+    failed: { text: '失敗', bg: 'bg-danger' }
+};
+
+function renderPrtgBadge(outcome) {
+    const meta = PRTG_OUTCOME_META[outcome];
+    if (!meta) return null;
+    const badge = document.createElement('span');
+    badge.className = `badge ${meta.bg}`;
+    badge.textContent = meta.text;
+    return badge;
+}
+
+function formatLocalBranch(analyzed, failed) {
+    if (analyzed == null) return '—';
+    return `${analyzed}${failed > 0 ? `（失敗 ${failed}）` : ''}`;
+}
+
+function formatNetiqBranch(analyzed, failed, skipped) {
+    if (analyzed == null) return '—';
+    let text = `${analyzed}`;
+    if (failed > 0) text += `（失敗 ${failed}）`;
+    if (skipped > 0) text += `（跳過 ${skipped}）`;
+    return text;
+}
+
+function renderPrtgCell(outcome, fetched, failed) {
+    if (outcome == null) return document.createTextNode('—');
+    const badge = renderPrtgBadge(outcome);
+    if (!badge) return document.createTextNode('—');
+    if (outcome === 'disabled') return badge;
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(badge);
+    let text = `sensor ${fetched ?? 0}`;
+    if ((failed ?? 0) > 0) {
+        text += `／失敗 ${failed}`;
+    }
+    const sensorSpan = document.createElement('span');
+    sensorSpan.textContent = text;
+    wrap.appendChild(sensorSpan);
+    return wrap;
+}
+
 let currentDays = 14;
 // 「全部」按鈕的天數由後端 MaxDays（RunLogRetentionDays）決定，不寫死
 let summaryMaxDays = null;
@@ -122,6 +169,7 @@ function renderSummary(summaryPage) {
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
+            { title: 'PRTG', render: s => s.prtgOutcome != null ? (renderPrtgBadge(s.prtgOutcome) ?? document.createTextNode('—')) : document.createTextNode('—') },
             { title: '失敗主機', render: s => failedHostsCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
@@ -310,6 +358,21 @@ const RUN_LIST_COLUMNS = [
     { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.triggerText },
     { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
     {
+        title: '本機', className: 'text-end', sortKey: 'localDaysAnalyzed', sortDefaultDir: 'desc',
+        sortValue: r => r.localDaysAnalyzed ?? -1,
+        render: r => formatLocalBranch(r.localDaysAnalyzed, r.localDaysFailed)
+    },
+    {
+        title: 'NetIQ', className: 'text-end', sortKey: 'netiqDaysAnalyzed', sortDefaultDir: 'desc',
+        sortValue: r => r.netiqDaysAnalyzed ?? -1,
+        render: r => formatNetiqBranch(r.netiqDaysAnalyzed, r.netiqDaysFailed, r.netiqHostsSkipped)
+    },
+    {
+        title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
+        sortValue: r => r.prtgOutcome ?? '',
+        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed)
+    },
+    {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
         sortValue: r => r.errorCount, render: r => `${r.warnCount} / ${r.errorCount}`
     },
@@ -439,13 +502,26 @@ function renderStats(container, detail) {
             ? [{ label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` }]
             : []),
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
-        { label: '版本', value: detail.appVersion }
+        { label: '版本', value: detail.appVersion },
+        { label: '本機', value: formatLocalBranch(detail.localDaysAnalyzed, detail.localDaysFailed) },
+        { label: 'NetIQ', value: formatNetiqBranch(detail.netiqDaysAnalyzed, detail.netiqDaysFailed, detail.netiqHostsSkipped) },
+        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed) }
     ];
 
     for (const stat of stats) {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-2';
-        col.append(...labelValue(stat.label, stat.value, { labelClass: 'lf-stat__label' }));
+        if (stat.node) {
+            const labelEl = document.createElement('div');
+            labelEl.className = 'lf-stat__label';
+            labelEl.textContent = stat.label;
+            const valueEl = document.createElement('div');
+            valueEl.className = 'fw-semibold';
+            valueEl.appendChild(stat.node);
+            col.append(labelEl, valueEl);
+        } else {
+            col.append(...labelValue(stat.label, stat.value, { labelClass: 'lf-stat__label' }));
+        }
         container.appendChild(col);
     }
 }
