@@ -115,6 +115,7 @@ public sealed class PrtgTriggeredValueFetcher
             {
                 break;
             }
+            progress?.Invoke("prtg-triggered", totalTargetSensors, 0);
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(pollSeconds, 1)), ct);
         }
 

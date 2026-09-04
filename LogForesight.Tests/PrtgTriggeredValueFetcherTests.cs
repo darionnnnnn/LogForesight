@@ -387,4 +387,60 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         Assert.Equal(1, result.ValuesWritten);
         Assert.Equal(0, result.FailedSensors);
     }
+
+    [Fact]
+    public async Task RunAsync_等待期會回報累計值()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        recordStore.Append(CreateRecord(101, "SRV-HIGH", day, "高"));
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" }
+        }, day);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-1", SensorType = "SNMP CPU Load", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1001, Name = "Sensor-2", SensorType = "SNMP CPU Load", Paused = false }
+        }, day);
+
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+        var (client, handler) = CreateClient(req => JsonResponse(histJson));
+
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        var pollCount = 0;
+        bool AnalysisCompleted()
+        {
+            pollCount++;
+            return pollCount >= 2;
+        }
+
+        var reports = new List<(string Stage, int Done, int Total)>();
+        void ProgressCallback(string stage, int done, int total)
+        {
+            reports.Add((stage, done, total));
+        }
+
+        var result = await fetcher.RunAsync(
+            day, whitelist: null, concurrency: 2,
+            analysisCompleted: AnalysisCompleted, ct: CancellationToken.None, pollSeconds: 1,
+            progress: ProgressCallback);
+
+        // 該輪累計目標 sensor 數為 2
+        Assert.Equal(2, result.TargetSensors);
+        // 斷言其中存在一筆 stage == "prtg-triggered" && total == 0 && done == 該輪累計目標 sensor 數 (2)
+        Assert.Contains(reports, r => r.Stage == "prtg-triggered" && r.Total == 0 && r.Done == 2);
+    }
 }

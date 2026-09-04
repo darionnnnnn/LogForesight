@@ -541,6 +541,7 @@ async function loadSchedule() {
         for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
     }
 
+    const statusPromise = refreshScheduleStatus();
     const [options, aiStatus, settings] = await Promise.all([
         api.get('/api/admin/schedule/options'),
         api.get('/api/ai/status', { silent: true }).catch(() => null),
@@ -559,7 +560,7 @@ async function loadSchedule() {
             daysHintEl.textContent = `將回填 ${settings.prtgBackfillDays} 天`;
         }
     }
-    await refreshScheduleStatus();
+    await statusPromise;
 }
 
 function applyScheduleOptions(options) {
@@ -885,7 +886,8 @@ function applyAiScheduleStatus(status) {
     wasAiScheduleRunning = status.isRunning;
 }
 
-// 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
+// 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）。
+// 放模組層而非函式內：狀態卡執行中每 3 秒重繪一次，對照表是常數，不必每次重建。
 const PROGRESS_PHASE_LABEL = {
     local: '本機分析',
     netiq: 'NetIQ 機房分析',
@@ -901,9 +903,10 @@ const PROGRESS_PHASE_UNIT = {
 
 /**
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
- * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（準備中…）；非執行中整組隱藏。
+ * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（有 labelPrefix 則「${labelPrefix}　準備中…」）；非執行中整組隱藏。
+ * 若 completed 為 true，畫滿格（100%）、移除條紋動畫，並顯示「已完成」文字。
  */
-function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日', customLabel = null) {
+function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日', customLabel = null, completed = false) {
     if (!isVisible) {
         wrapEl?.classList.add('d-none');
         textEl?.classList.add('d-none');
@@ -911,6 +914,20 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
     }
     wrapEl?.classList.remove('d-none');
     textEl?.classList.remove('d-none');
+
+    if (completed) {
+        const defaultLabel = total > 0
+            ? (labelPrefix ? `${labelPrefix}　已完成 ${done} / ${total} ${unit}` : `已完成 ${done} / ${total} ${unit}`)
+            : (labelPrefix ? `${labelPrefix}　已完成` : '已完成');
+        const label = customLabel || defaultLabel;
+        barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
+        if (barEl) {
+            barEl.style.width = '100%';
+            barEl.title = label;
+        }
+        if (textEl) textEl.textContent = label;
+        return;
+    }
 
     if (total > 0) {
         const pct = Math.min(100, Math.round((done / total) * 100));
@@ -922,12 +939,13 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
         }
         if (textEl) textEl.textContent = label;
     } else {
+        const label = customLabel || (labelPrefix ? `${labelPrefix}　準備中…` : '準備中…');
         barEl?.classList.add('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
             barEl.style.width = '100%';
-            barEl.title = '準備中…';
+            barEl.title = label;
         }
-        if (textEl) textEl.textContent = '準備中…';
+        if (textEl) textEl.textContent = label;
     }
 }
 
@@ -939,9 +957,9 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
  * AI 補寫進度改在 AI 分析狀態卡自己那條進度條。）
  *
  * 本機進度（回饋十七輪批次E）：本機與 NetIQ 改並行執行後，本機也是獨立一條軌，畫在主進度
- * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「準備中」，
+ * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「NetIQ 機房分析　準備中…」，
  * 因為 NetiqHosts 範圍（僅指定 NetIQ 主機）時本機根本不會執行，不該一直顯示一條空的
- * 「本機分析 準備中」軌。 */
+ * 「本機分析　準備中…」軌。 */
 function renderScheduleProgress(status) {
     const localWrap = document.getElementById('schedule-local-progress-wrap');
     const localBar = document.getElementById('schedule-local-progress-bar');
@@ -955,29 +973,41 @@ function renderScheduleProgress(status) {
 
     updateProgressBar(
         { wrapEl: localWrap, barEl: localBar, textEl: localText },
-        status.isRunning && !!status.localProgressPhase,
+        status.isRunning && (!!status.localProgressPhase || !!status.localCompleted),
         status.localProgressDone,
         status.localProgressTotal,
-        PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? status.localProgressPhase,
-        PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日'
+        PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? (status.localProgressPhase || '本機分析'),
+        PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日',
+        null,
+        status.localCompleted
     );
 
     updateProgressBar(
         { wrapEl: wrap, barEl: bar, textEl: text },
-        status.isRunning && !!status.progressPhase,
+        status.isRunning && (!!status.progressPhase || !!status.netiqCompleted),
         status.progressDone,
         status.progressTotal,
-        PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase,
-        PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日'
+        PROGRESS_PHASE_LABEL[status.progressPhase] ?? (status.progressPhase || 'NetIQ 機房分析'),
+        PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日',
+        null,
+        status.netiqCompleted
     );
+
+    let prtgCustomLabel = null;
+    if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
+        const prefix = PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 觸發式取數');
+        prtgCustomLabel = `${prefix}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
+    }
 
     updateProgressBar(
         { wrapEl: prtgWrap, barEl: prtgBar, textEl: prtgText },
-        status.isRunning && !!status.prtgProgressPhase,
+        status.isRunning && (!!status.prtgProgressPhase || !!status.prtgCompleted),
         status.prtgProgressDone,
         status.prtgProgressTotal,
-        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? status.prtgProgressPhase,
-        PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor'
+        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 擷取'),
+        PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor',
+        prtgCustomLabel,
+        status.prtgCompleted
     );
 }
 
