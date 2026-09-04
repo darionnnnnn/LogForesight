@@ -189,40 +189,38 @@ public class PrtgAdminPageUiTests
         Assert.Contains("\"/admin/calibration\"", pagesControllerContent);
         Assert.Contains("Calibration()", pagesControllerContent);
 
-        // 2. Views/Pages/Calibration.cshtml 檔案存在且含 calibration.js
-        var calibrationCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Calibration.cshtml");
-        Assert.True(File.Exists(calibrationCshtmlPath), $"找不到檔案: {calibrationCshtmlPath}");
-        var calibrationCshtmlContent = File.ReadAllText(calibrationCshtmlPath);
-        Assert.Contains("calibration.js", calibrationCshtmlContent);
+        // 2. Views/Pages/Prtg.cshtml 檔案存在且含 prtg-admin.js
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var prtgCshtmlContent = File.ReadAllText(prtgCshtmlPath);
+        Assert.Contains("prtg-admin.js", prtgCshtmlContent);
 
-        // 3. layout.js 含 /admin/calibration 且該行含 requires: 'Maintain'
+        // 3. layout.js 不含 /admin/calibration
         var layoutJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "layout.js");
         Assert.True(File.Exists(layoutJsPath), $"找不到檔案: {layoutJsPath}");
-        var layoutLines = File.ReadAllLines(layoutJsPath);
-        var calibrationNavLine = Array.Find(layoutLines, l => l.Contains("/admin/calibration"));
-        Assert.NotNull(calibrationNavLine);
-        Assert.Contains("requires: 'Maintain'", calibrationNavLine);
-        Assert.Contains("校準數值匯出", calibrationNavLine);
+        var layoutJsContent = File.ReadAllText(layoutJsPath);
+        Assert.DoesNotContain("/admin/calibration", layoutJsContent);
 
-        // 4. Calibration.cshtml 含四張卡的容器 id 與兩顆按鈕的 id 與 override 勾選框
-        Assert.Contains("id=\"calibration-card-prtg-value-baseline\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"calibration-card-prtg-rule-thresholds\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"calibration-card-triggered-fetch-magnitude\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"calibration-card-residual-credential-thresholds\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"calibration-calc-btn\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"calibration-export-btn\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"calibration-override-check\"", calibrationCshtmlContent);
+        // 4. Prtg.cshtml 含四張卡的容器 id 與兩顆按鈕的 id 與 override 勾選框
+        Assert.Contains("id=\"calibration-card-prtg-value-baseline\"", prtgCshtmlContent);
+        Assert.Contains("id=\"calibration-card-prtg-rule-thresholds\"", prtgCshtmlContent);
+        Assert.Contains("id=\"calibration-card-triggered-fetch-magnitude\"", prtgCshtmlContent);
+        Assert.Contains("id=\"calibration-card-residual-credential-thresholds\"", prtgCshtmlContent);
+        Assert.Contains("id=\"calibration-calc-btn\"", prtgCshtmlContent);
+        Assert.Contains("id=\"calibration-export-btn\"", prtgCshtmlContent);
+        Assert.Contains("id=\"calibration-override-check\"", prtgCshtmlContent);
 
         // 5. 四張卡都要有「門檻現值」容器：後端 CurrentThresholds 有填、DTO 有傳，
         //    少了這些容器前端就只顯示「目前多少」而看不到「需要多少」——
         //    斷鏈不會有任何編譯或測試訊號，所以在這裡釘住
-        Assert.Contains("id=\"thresholds-prtg-value-baseline\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"thresholds-prtg-rule-thresholds\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"thresholds-triggered-fetch-magnitude\"", calibrationCshtmlContent);
-        Assert.Contains("id=\"thresholds-residual-credential-thresholds\"", calibrationCshtmlContent);
+        Assert.Contains("id=\"thresholds-prtg-value-baseline\"", prtgCshtmlContent);
+        Assert.Contains("id=\"thresholds-prtg-rule-thresholds\"", prtgCshtmlContent);
+        Assert.Contains("id=\"thresholds-triggered-fetch-magnitude\"", prtgCshtmlContent);
+        Assert.Contains("id=\"thresholds-residual-credential-thresholds\"", prtgCshtmlContent);
 
         // 6. 前端確實消費 currentThresholds／isEligible（後端算好卻沒人讀＝白算）
-        var calibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "calibration.js");
+        var calibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-calibration.js");
+        Assert.True(File.Exists(calibrationJsPath), $"找不到檔案: {calibrationJsPath}");
         var calibrationJs = File.ReadAllText(calibrationJsPath);
         Assert.Contains("itemData.currentThresholds", calibrationJs);
         Assert.Contains("item.isEligible", calibrationJs);
@@ -277,5 +275,69 @@ public class PrtgAdminPageUiTests
 
         Assert.DoesNotContain(" Unmatched { get", content);
         Assert.Contains("MapUnmatched", content);
+    }
+
+    [Fact]
+    public void Calibration獨立頁已刪除且轉址與選單移除()
+    {
+        var root = FindRepoRoot();
+
+        // 斷言 Calibration.cshtml 檔案不存在
+        var calibrationCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Calibration.cshtml");
+        Assert.False(File.Exists(calibrationCshtmlPath), $"Calibration.cshtml 應該已被刪除: {calibrationCshtmlPath}");
+
+        // layout.js 不含 /admin/calibration
+        var layoutJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "layout.js");
+        Assert.True(File.Exists(layoutJsPath), $"找不到檔案: {layoutJsPath}");
+        var layoutContent = File.ReadAllText(layoutJsPath);
+        Assert.DoesNotContain("/admin/calibration", layoutContent);
+
+        // PagesController.cs 仍含 "/admin/calibration"（轉址仍在）且含 RedirectPermanent
+        var pagesControllerPath = Path.Combine(root, "LogForesight.Web", "Controllers", "PagesController.cs");
+        Assert.True(File.Exists(pagesControllerPath), $"找不到檔案: {pagesControllerPath}");
+        var pagesControllerContent = File.ReadAllText(pagesControllerPath);
+        Assert.Contains("\"/admin/calibration\"", pagesControllerContent);
+        Assert.Contains("RedirectPermanent", pagesControllerContent);
+    }
+
+    [Fact]
+    public void Prtg環境探測頁籤包含校準與資料搬運卡片()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        // 斷言 Prtg.cshtml 含 calibration-calc-btn、calibration-export-btn、prtg-export-btn、prtg-import-btn 四個 id
+        Assert.Contains("calibration-calc-btn", content);
+        Assert.Contains("calibration-export-btn", content);
+        Assert.Contains("prtg-export-btn", content);
+        Assert.Contains("prtg-import-btn", content);
+
+        // 且檔案中「資料搬運（開發用）」這個字串出現在 data-panel="probe" 之後（用 IndexOf 比較位置即可）
+        var probePanelIndex = content.IndexOf("data-panel=\"probe\"", StringComparison.Ordinal);
+        var dataTransferIndex = content.IndexOf("資料搬運（開發用）", StringComparison.Ordinal);
+        Assert.True(probePanelIndex >= 0, "Prtg.cshtml 應包含 data-panel=\"probe\"");
+        Assert.True(dataTransferIndex >= 0, "Prtg.cshtml 應包含「資料搬運（開發用）」");
+        Assert.True(dataTransferIndex > probePanelIndex, "「資料搬運（開發用）」字串必須出現在 data-panel=\"probe\" 之後");
+    }
+
+    [Fact]
+    public void PrtgCalibration腳本命名與PrtgAdmin引用及無XRequestedBy()
+    {
+        var root = FindRepoRoot();
+
+        // 斷言 wwwroot/js/pages/prtg-calibration.js 存在、calibration.js 不存在
+        var prtgCalibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-calibration.js");
+        var oldCalibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "calibration.js");
+        Assert.True(File.Exists(prtgCalibrationJsPath), $"prtg-calibration.js 應該存在: {prtgCalibrationJsPath}");
+        Assert.False(File.Exists(oldCalibrationJsPath), $"舊 calibration.js 不應該存在: {oldCalibrationJsPath}");
+
+        // prtg-admin.js 含 prtg-calibration.js；prtg-admin.js 不含 X-Requested-By
+        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
+        var prtgAdminJsContent = File.ReadAllText(prtgAdminJsPath);
+        Assert.Contains("prtg-calibration.js", prtgAdminJsContent);
+        Assert.DoesNotContain("X-Requested-By", prtgAdminJsContent);
     }
 }

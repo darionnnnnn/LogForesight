@@ -121,7 +121,7 @@ public class PagesController : Controller
 
     [HttpGet("/admin/calibration")]
     [Permission(Capability.Maintain)]
-    public IActionResult Calibration() => View();
+    public IActionResult Calibration() => RedirectPermanent(Url.Content("~/admin/prtg") + "#probe");
 
     [HttpGet("/admin/settings")]
     [Permission(Capability.Maintain)]

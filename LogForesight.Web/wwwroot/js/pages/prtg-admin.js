@@ -6,6 +6,7 @@ import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { bindTabs, toast, withBusy, renderSpinner, confirmAction } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { initCalibration } from './prtg-calibration.js';
 
 bindTabs(document.getElementById('prtg-tabs'));
 
@@ -507,13 +508,6 @@ function renderPrtgProbeStatus(status) {
 
     if (!outputEl || !copyButton || !startButton || !statusEl) return;
 
-    // 探測區預設收合。執行中時自動展開——否則按下探測後重新整理頁面，
-    // 進度與輸出會被收在摺疊區裡，看起來像什麼都沒發生
-    if (status.isRunning) {
-        const details = document.getElementById('prtg-probe');
-        if (details) details.open = true;
-    }
-
     const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
     outputEl.value = outputText;
     if (outputText) {
@@ -637,29 +631,8 @@ function bindPrtgDataTransfer() {
             const formData = new FormData();
             formData.append('file', file);
 
-            const response = await fetch(appUrl('/api/admin/settings/prtg-import'), {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'Accept': 'application/json',
-                    'X-Requested-By': 'LogForesight'
-                },
-                credentials: 'same-origin'
-            });
+            const data = await api.post('/api/admin/settings/prtg-import', formData);
 
-            let payload;
-            try {
-                payload = await response.json();
-            } catch {
-                throw new Error('伺服器回應格式不符。');
-            }
-
-            if (!response.ok || !payload.success) {
-                const errMsg = payload?.error?.message || payload?.message || `匯入失敗（HTTP ${response.status}）`;
-                throw new Error(errMsg);
-            }
-
-            const data = payload.data;
             const msg = `匯入成功：裝置 ${formatNumber(data.devices)} 筆、感測器 ${formatNumber(data.sensors)} 筆、狀態變更 ${formatNumber(data.stateChanges)} 筆、數值 ${formatNumber(data.values)} 筆、主機對應 ${formatNumber(data.hostMaps)} 筆、人工對應 ${formatNumber(data.manualMaps)} 筆。`;
             if (importResult) {
                 importResult.className = 'small mb-2 text-success';
@@ -674,7 +647,6 @@ function bindPrtgDataTransfer() {
                 importResult.className = 'small mb-2 text-danger';
                 importResult.textContent = `匯入失敗：${errMsg}`;
             }
-            toast(errMsg, 'danger');
         } finally {
             restore();
         }
@@ -691,6 +663,7 @@ function init() {
     bindPrtgDataTransfer();
     bindConnectionForm();
     bindParamsForm();
+    initCalibration();
     loadSettings();
     refreshPrtgMirror();
     refreshPrtgProbeStatus();
