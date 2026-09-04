@@ -235,4 +235,80 @@ public class BatchRunRecorderScopeTests
         var logs = store.GetLogs(runId);
         Assert.Empty(logs);
     }
+
+    [Fact]
+    public void 慢SQL的Warn寫入log但不計入WarnCount()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        var logger = LogManager.GetLogger("LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor");
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            logger.Warn("[SQL][慢] 耗時 2500ms > 門檻 1000ms: SELECT * FROM lf_records");
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId);
+        Assert.NotNull(run);
+        Assert.Equal(0, run!.WarnCount);
+
+        var logs = store.GetLogs(runId);
+        Assert.Single(logs);
+        Assert.Equal("SqlPerformanceMonitor", logs[0].Logger);
+        Assert.Equal("Warn", logs[0].Level);
+        Assert.Contains("[SQL][慢]", logs[0].Message);
+    }
+
+    [Fact]
+    public void 其他來源的Warn照常計數()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        var logger = LogManager.GetLogger("LogForesight.Core.Service.SomeOtherService");
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            logger.Warn("其他來源的警告訊息");
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId);
+        Assert.NotNull(run);
+        Assert.Equal(1, run!.WarnCount);
+
+        var logs = store.GetLogs(runId);
+        Assert.Single(logs);
+        Assert.Equal("Warn", logs[0].Level);
+    }
+
+    [Fact]
+    public void SqlPerformanceMonitor的Error照常計數()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        var logger = LogManager.GetLogger("LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor");
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            logger.Error("資料庫連線失敗未預期例外");
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId);
+        Assert.NotNull(run);
+        Assert.Equal(0, run!.WarnCount);
+        Assert.Equal(1, run!.ErrorCount);
+
+        var logs = store.GetLogs(runId);
+        Assert.Single(logs);
+        Assert.Equal("SqlPerformanceMonitor", logs[0].Logger);
+        Assert.Equal("Error", logs[0].Level);
+    }
 }

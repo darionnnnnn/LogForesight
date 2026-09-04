@@ -16,6 +16,12 @@ public class BatchRunRecorder : IDisposable
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>
+    /// 慢 SQL 效能監控器名稱：資料層效能告警 ≠ 這趟分析有問題。
+    /// 慢查詢 Warn 仍照常寫入執行詳情供排查，但不計入 WarnCount，避免整趟成功執行被判成 warning。
+    /// </summary>
+    private const string ExemptWarnLogger = "SqlPerformanceMonitor";
+
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
     private readonly BatchRunNLogTarget? _target;
@@ -33,6 +39,7 @@ public class BatchRunRecorder : IDisposable
     /// 使用者只能翻 log 檔才查得到。呼叫端（Web）可傳入把這句話送進 <c>IRunConsole</c>，
     /// 讓狀態卡與執行明細看得到「這趟執行本次不會出現在執行監控」；null＝維持原本只寫 log。
     /// </param>
+    /// <param name="jobType">作業類型（選填）：<see cref="BatchRun.JobTypeAi"/>＝AI 分析排程；null＝一般批次/取數執行。</param>
     /// <remarks>
     /// 【AsyncLocal 作用域限制】<see cref="ScopeContext"/> 底層是 <see cref="AsyncLocal{T}"/>：
     /// 它沿著非同步呼叫鏈**向下**傳遞，但不會向外（向上）傳播。因此 recorder 必須在
@@ -42,7 +49,7 @@ public class BatchRunRecorder : IDisposable
     /// 整趟執行的 Warn 全部靜默丟失且沒有任何訊號。
     /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
-        CancellationToken ct = default, Action<string>? onRegistrationFailed = null)
+        CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null)
     {
         _store = store;
         _ct = ct;
@@ -52,7 +59,8 @@ public class BatchRunRecorder : IDisposable
             StartedAt = DateTime.Now,
             AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
             Args = string.Join(" ", args),
-            Trigger = trigger
+            Trigger = trigger,
+            JobType = jobType
         };
 
         if (_store == null) return;
@@ -82,6 +90,30 @@ public class BatchRunRecorder : IDisposable
     private readonly object _countLock = new();
 
     public long RunId => _run.RunId;
+
+    public int DaysAnalyzed
+    {
+        get { lock (_countLock) return _run.DaysAnalyzed; }
+        set { lock (_countLock) _run.DaysAnalyzed = value; }
+    }
+
+    public int AiCalls
+    {
+        get { lock (_countLock) return _run.AiCalls; }
+        set { lock (_countLock) _run.AiCalls = value; }
+    }
+
+    public int AiFailures
+    {
+        get { lock (_countLock) return _run.AiFailures; }
+        set { lock (_countLock) _run.AiFailures = value; }
+    }
+
+    public bool Stopped
+    {
+        get { lock (_countLock) return _run.Stopped; }
+        set { lock (_countLock) _run.Stopped = value; }
+    }
 
     /// <summary>里程碑：固定的 Info 級紀錄（開始/掃描完成/逐日分析完成/結束）</summary>
     public void Milestone(string message) => Append("Info", "Milestone", message, null);
@@ -120,12 +152,19 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    private void OnLogRecorded(string level)
+    private void OnLogRecorded(string level, string loggerName)
     {
         lock (_countLock)
         {
-            if (level is "Error" or "Fatal") _run.ErrorCount++;
-            else if (level == "Warn") _run.WarnCount++;
+            if (level is "Error" or "Fatal")
+            {
+                _run.ErrorCount++;
+            }
+            else if (level == "Warn")
+            {
+                if (!string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal))
+                    _run.WarnCount++;
+            }
         }
     }
 
@@ -179,9 +218,9 @@ public class BatchRunRecorder : IDisposable
     {
         private readonly BatchRunStore _store;
         private readonly long _runId;
-        private readonly Action<string> _onRecorded;
+        private readonly Action<string, string> _onRecorded;
 
-        public BatchRunNLogTarget(BatchRunStore store, long runId, Action<string> onRecorded)
+        public BatchRunNLogTarget(BatchRunStore store, long runId, Action<string, string> onRecorded)
         {
             _store = store;
             _runId = runId;
@@ -221,14 +260,15 @@ public class BatchRunRecorder : IDisposable
             try
             {
                 var level = logEvent.Level.Name;
-                _onRecorded(level);
+                var shortLogger = ShortLoggerName(logEvent.LoggerName);
+                _onRecorded(level, shortLogger);
 
                 _store.AppendLog(new BatchRunLog
                 {
                     RunId = _runId,
                     LoggedAt = logEvent.TimeStamp,
                     Level = level,
-                    Logger = ShortLoggerName(logEvent.LoggerName),
+                    Logger = shortLogger,
                     Message = logEvent.FormattedMessage,
                     ExceptionText = logEvent.Exception?.ToString()
                 });

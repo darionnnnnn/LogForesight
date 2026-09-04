@@ -588,4 +588,57 @@ public class AiAnalysisSchedulerTests : IDisposable
         var cancelResp = controller.CancelAi();
         Assert.True(cancelResp.Success);
     }
+
+    [Fact]
+    public async Task Ai排程執行_產生的Warn會進入自己的BatchRun執行紀錄_且JobType為ai()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        store.Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        // 模擬 AI 呼叫未成功（回傳 Success = false），促使 ExecuteProcessingLoopAsync 記錄 Log.Warn
+        _ai.Behavior = (_, _) => Task.FromResult(new AiResponse { Success = false, Error = "AI 模擬逾時" });
+
+        var started = await service.TriggerRunAsync(forceRerun: false, trigger: "schedule");
+        Assert.True(started);
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        var batchRuns = BatchRuns();
+        var runs = batchRuns.GetRecentRuns(7, null);
+        var aiRun = runs.FirstOrDefault(r => r.JobType == BatchRun.JobTypeAi);
+
+        Assert.NotNull(aiRun);
+        Assert.Equal(BatchRun.JobTypeAi, aiRun!.JobType);
+        Assert.False(string.IsNullOrEmpty(aiRun.AppVersion));
+        Assert.True(aiRun.WarnCount >= 1);
+
+        var logs = batchRuns.GetLogs(aiRun.RunId);
+        Assert.NotEmpty(logs);
+        Assert.Contains(logs, l => l.Level == "Warn");
+    }
+
+    [Fact]
+    public async Task Ai排程執行_改用Recorder後JobType仍為ai_且正常計數()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        store.Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        // 預設 _ai 成功完成
+        var started = await service.TriggerRunAsync(forceRerun: false, trigger: "schedule");
+        Assert.True(started);
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        var batchRuns = BatchRuns();
+        var runs = batchRuns.GetRecentRuns(7, null);
+        var aiRun = runs.FirstOrDefault(r => r.JobType == BatchRun.JobTypeAi);
+
+        Assert.NotNull(aiRun);
+        Assert.Equal(BatchRun.JobTypeAi, aiRun!.JobType);
+        Assert.Equal(0, aiRun.ExitCode);
+        Assert.Equal(1, aiRun.DaysAnalyzed);
+        Assert.Equal(1, aiRun.AiCalls);
+        Assert.Equal(0, aiRun.AiFailures);
+        Assert.False(string.IsNullOrEmpty(aiRun.AppVersion));
+    }
 }
