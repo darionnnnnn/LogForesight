@@ -4,7 +4,10 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { bindTabs, toast, withBusy, renderSpinner, confirmAction } from '../core/ui.js';
+import {
+    bindTabs, toast, withBusy, renderSpinner, confirmAction,
+    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS
+} from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 
@@ -261,7 +264,16 @@ function bindParamsForm() {
     });
 }
 
-// ── PRTG 鏡像狀態（批次F）──────────────────────────────────────────────
+// ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
+
+let conflictPage = 1;
+let conflictPageSize = loadPageSize('prtg-conflicts');
+
+function notifyRemapWarning(res) {
+    if (res && res.remapWarning) {
+        toast(res.remapWarning, 'warning');
+    }
+}
 
 function renderPrtgMirror(data) {
     if (!data) return;
@@ -282,57 +294,206 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));
     setTxt('prtg-mirror-map-conflict', formatNumber(data.mapConflict));
     setTxt('prtg-mirror-map-unmatched', formatNumber(data.mapUnmatched));
+    setTxt('prtg-mirror-ip-exclude-count', formatNumber(data.ipExcludeCount || 0));
     setTxt('prtg-mirror-whitelist-count', formatNumber(data.whitelistSensorCount));
     setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
+}
 
-    const renderList = (bodyId, items, emptyText) => {
-        const tbody = document.getElementById(bodyId);
-        if (!tbody) return;
-        tbody.replaceChildren();
+async function refreshConflicts(page = conflictPage) {
+    conflictPage = page;
+    try {
+        const res = await api.get(`/api/admin/settings/prtg-host-map?status=conflict&page=${conflictPage}&pageSize=${conflictPageSize}`, { silent: true });
+        const total = (res && res.total) ? res.total : 0;
+        const totalPages = Math.ceil(total / conflictPageSize);
 
-        if (!items || items.length === 0) {
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.colSpan = 5;
-            td.className = 'text-muted text-center py-2';
-            td.textContent = emptyText;
-            tr.appendChild(td);
-            tbody.appendChild(tr);
-            return;
+        if (conflictPage > totalPages && totalPages > 0) {
+            return refreshConflicts(totalPages);
         }
 
-        for (const item of items) {
-            const tr = document.createElement('tr');
+        renderConflicts((res && res.items) ? res.items : []);
+        renderConflictPagination(totalPages);
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
 
-            const tdObjid = document.createElement('td');
-            tdObjid.className = 'font-monospace';
-            tdObjid.textContent = String(item.deviceObjid);
+function renderConflicts(items) {
+    const tbody = document.getElementById('prtg-mirror-conflicts-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
 
-            const tdIp = document.createElement('td');
-            tdIp.className = 'font-monospace';
-            tdIp.textContent = item.ip || '-';
+    if (!items || items.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'text-muted text-center py-2';
+        td.textContent = '無衝突項目';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
 
-            const tdHost = document.createElement('td');
-            tdHost.textContent = item.hostName || '-';
+    for (const item of items) {
+        const tr = document.createElement('tr');
 
-            const tdNote = document.createElement('td');
-            tdNote.className = 'text-muted';
-            tdNote.textContent = item.note || '-';
+        const tdDevice = document.createElement('td');
+        tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
 
-            const tdAction = document.createElement('td');
-            const assignBtn = document.createElement('button');
-            assignBtn.type = 'button';
-            assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
-            assignBtn.textContent = '指派給主機';
-            assignBtn.addEventListener('click', () => openAssignModal(item.deviceObjid));
-            tdAction.appendChild(assignBtn);
+        const tdIp = document.createElement('td');
+        tdIp.className = 'font-monospace';
+        tdIp.textContent = item.ip || '-';
 
-            tr.append(tdObjid, tdIp, tdHost, tdNote, tdAction);
-            tbody.appendChild(tr);
+        const tdKind = document.createElement('td');
+        const kindBadge = document.createElement('span');
+        if (item.conflictKind === 'multi-device') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '同 IP 多裝置';
+        } else if (item.conflictKind === 'multi-host') {
+            kindBadge.className = 'badge bg-info text-dark';
+            kindBadge.textContent = 'IP 對多主機';
+        } else {
+            kindBadge.className = 'badge bg-secondary';
+            kindBadge.textContent = item.conflictKind || '-';
         }
-    };
+        tdKind.appendChild(kindBadge);
 
-    renderList('prtg-mirror-conflicts-body', data.conflicts, '無衝突項目');
+        const tdNote = document.createElement('td');
+        tdNote.className = 'text-muted';
+        tdNote.textContent = item.note || '-';
+
+        const tdAction = document.createElement('td');
+        const assignBtn = document.createElement('button');
+        assignBtn.type = 'button';
+        assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
+        assignBtn.textContent = '指派';
+        assignBtn.addEventListener('click', () => openAssignModal(item));
+        tdAction.appendChild(assignBtn);
+
+        const excludeBtn = document.createElement('button');
+        excludeBtn.type = 'button';
+        excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
+        excludeBtn.textContent = '排除此 IP';
+        if (!item.ip) {
+            excludeBtn.disabled = true;
+            excludeBtn.title = '此 device 沒有 IP';
+        } else {
+            excludeBtn.addEventListener('click', async () => {
+                const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
+                const confirmed = await confirmAction({
+                    message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
+                });
+                if (!confirmed) return;
+                try {
+                    const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null });
+                    toast('已排除此 IP', 'success');
+                    notifyRemapWarning(res);
+                    await Promise.all([
+                        refreshPrtgMirror(),
+                        refreshConflicts(conflictPage),
+                        refreshIpExcludes()
+                    ]);
+                } catch (error) {
+                    toast(error && error.message ? error.message : '排除失敗', 'danger');
+                }
+            });
+        }
+        tdAction.appendChild(excludeBtn);
+
+        tr.append(tdDevice, tdIp, tdKind, tdNote, tdAction);
+        tbody.appendChild(tr);
+    }
+}
+
+function renderConflictPagination(totalPages) {
+    const container = document.getElementById('prtg-conflicts-pagination');
+    if (!container) return;
+
+    renderPagination(container, {
+        page: conflictPage,
+        totalPages,
+        onPage: page => {
+            refreshConflicts(page);
+        },
+        pageSize: conflictPageSize,
+        onPageSize: size => {
+            conflictPageSize = size;
+            savePageSize('prtg-conflicts', size);
+            refreshConflicts(1);
+        },
+        pageSizeOptions: PAGE_SIZE_OPTIONS
+    });
+}
+
+async function refreshIpExcludes() {
+    try {
+        const items = await api.get('/api/admin/settings/prtg-ip-excludes', { silent: true });
+        renderIpExcludes(items || []);
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function renderIpExcludes(items) {
+    const tbody = document.getElementById('prtg-ip-excludes-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+
+    if (!items || items.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'text-muted text-center py-2';
+        td.textContent = '無排除 IP';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    for (const item of items) {
+        const tr = document.createElement('tr');
+
+        const tdIp = document.createElement('td');
+        tdIp.className = 'font-monospace';
+        tdIp.textContent = item.ip || '-';
+
+        const tdNote = document.createElement('td');
+        tdNote.className = 'text-muted';
+        tdNote.textContent = item.note || '-';
+
+        const tdCreatedBy = document.createElement('td');
+        tdCreatedBy.textContent = item.createdBy || '-';
+
+        const tdCreatedAt = document.createElement('td');
+        tdCreatedAt.textContent = item.createdAt ? formatDateTime(item.createdAt) : '-';
+
+        const tdAction = document.createElement('td');
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
+        removeBtn.textContent = '移除';
+        removeBtn.addEventListener('click', async () => {
+            const confirmed = await confirmAction({
+                message: `確定要移除 IP ${item.ip} 的排除設定嗎？移除後此 IP 會恢復自動對應。`
+            });
+            if (!confirmed) return;
+            try {
+                const res = await api.delete(`/api/admin/settings/prtg-ip-excludes/${encodeURIComponent(item.ip)}`);
+                toast('已移除 IP 排除設定', 'success');
+                notifyRemapWarning(res);
+                await Promise.all([
+                    refreshPrtgMirror(),
+                    refreshConflicts(conflictPage),
+                    refreshIpExcludes()
+                ]);
+            } catch (error) {
+                toast(error && error.message ? error.message : '移除失敗', 'danger');
+            }
+        });
+        tdAction.appendChild(removeBtn);
+
+        tr.append(tdIp, tdNote, tdCreatedBy, tdCreatedAt, tdAction);
+        tbody.appendChild(tr);
+    }
 }
 
 function renderManualMaps(items) {
@@ -373,16 +534,23 @@ function renderManualMaps(items) {
         removeBtn.type = 'button';
         removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
         removeBtn.textContent = '移除';
-        removeBtn.addEventListener('click', () => {
-            confirmAction(`確定要移除 PRTG device ${item.deviceObjid} 的人工主機對應嗎？`, async () => {
-                try {
-                    await api.delete(`/api/admin/settings/prtg-manual-map/${item.deviceObjid}`);
-                    toast('已移除人工對應', 'success');
-                    await refreshPrtgMirror();
-                } catch (error) {
-                    toast(error?.message || '移除失敗', 'danger');
-                }
+        removeBtn.addEventListener('click', async () => {
+            const confirmed = await confirmAction({
+                message: `確定要移除 PRTG device ${item.deviceObjid} 的人工主機對應嗎？移除後此 device 會回到自動 IP 對應判定。`
             });
+            if (!confirmed) return;
+            try {
+                const res = await api.delete(`/api/admin/settings/prtg-manual-map/${item.deviceObjid}`);
+                toast('已移除人工對應', 'success');
+                notifyRemapWarning(res);
+                await Promise.all([
+                    refreshPrtgMirror(),
+                    refreshConflicts(conflictPage),
+                    refreshIpExcludes()
+                ]);
+            } catch (error) {
+                toast(error && error.message ? error.message : '移除失敗', 'danger');
+            }
         });
         tdAction.appendChild(removeBtn);
 
@@ -393,36 +561,143 @@ function renderManualMaps(items) {
 
 let assignModal = null;
 let cachedHosts = null;
+let currentAssignItem = null;
+let currentFixedHostId = null;
 
-async function openAssignModal(deviceObjid) {
+async function openAssignModal(item) {
     const modalEl = document.getElementById('prtg-assign-modal');
     if (!modalEl) return;
     if (!assignModal) {
         assignModal = new bootstrap.Modal(modalEl);
     }
 
-    document.getElementById('prtg-assign-device-objid').value = String(deviceObjid);
+    currentAssignItem = item;
+    currentFixedHostId = null;
+
+    const titleEl = document.getElementById('prtg-assign-modal-title');
+    const ipText = item.ip || '無 IP';
+    if (titleEl) {
+        titleEl.textContent = `指派 device ${item.deviceObjid}（${ipText}）`;
+    }
+
     document.getElementById('prtg-assign-note').value = '';
 
+    const deviceChoiceEl = document.getElementById('prtg-assign-device-choice');
+    const hostFixedEl = document.getElementById('prtg-assign-host-fixed');
     const hostSelect = document.getElementById('prtg-assign-host');
-    hostSelect.innerHTML = '<option value="">載入中…</option>';
-    assignModal.show();
+    const hostSelectGroup = document.getElementById('prtg-assign-host-select-group');
 
-    try {
-        if (!cachedHosts) {
-            const res = await api.get('/api/admin/hosts?pageSize=2000', { silent: true });
-            cachedHosts = (res?.items || res || []).filter(h => h.active);
+    // 依 conflictKind 設定裝置選擇
+    if (item.conflictKind === 'multi-device') {
+        deviceChoiceEl.replaceChildren();
+        deviceChoiceEl.classList.remove('d-none');
+
+        const choiceLabel = document.createElement('label');
+        choiceLabel.className = 'form-label fw-semibold small mb-2';
+        choiceLabel.textContent = '選擇 PRTG 裝置';
+        deviceChoiceEl.appendChild(choiceLabel);
+
+        const devices = (item.sameIpDevices && item.sameIpDevices.length > 0)
+            ? item.sameIpDevices
+            : [{ objid: item.deviceObjid, name: item.deviceName, groupPath: item.groupPath }];
+
+        for (const dev of devices) {
+            const formCheck = document.createElement('div');
+            formCheck.className = 'form-check mb-1';
+
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.className = 'form-check-input';
+            radio.name = 'prtg-assign-device-radio';
+            radio.id = `prtg-assign-dev-${dev.objid}`;
+            radio.value = String(dev.objid);
+            if (Number(dev.objid) === Number(item.deviceObjid)) {
+                radio.checked = true;
+            }
+            radio.addEventListener('change', () => {
+                if (radio.checked && titleEl) {
+                    titleEl.textContent = `指派 device ${dev.objid}（${ipText}）`;
+                }
+            });
+
+            const label = document.createElement('label');
+            label.className = 'form-check-label font-monospace small';
+            label.htmlFor = `prtg-assign-dev-${dev.objid}`;
+            let text = `${dev.objid}　${dev.name || ''}`;
+            if (dev.groupPath) {
+                text += ` (${dev.groupPath})`;
+            }
+            label.textContent = text;
+
+            formCheck.append(radio, label);
+            deviceChoiceEl.appendChild(formCheck);
         }
+
+        if (!deviceChoiceEl.querySelector('input[name="prtg-assign-device-radio"]:checked') && devices.length > 0) {
+            const firstRadio = deviceChoiceEl.querySelector('input[name="prtg-assign-device-radio"]');
+            if (firstRadio) firstRadio.checked = true;
+        }
+    } else {
+        deviceChoiceEl.replaceChildren();
+        deviceChoiceEl.classList.add('d-none');
+    }
+
+    const candidates = item.candidateHosts || [];
+
+    // 依候選主機數量決定目標主機顯示
+    if (item.conflictKind === 'multi-device' && candidates.length === 1) {
+        currentFixedHostId = candidates[0].hostId;
+        hostFixedEl.replaceChildren();
+        hostFixedEl.classList.remove('d-none');
+
+        const fixedTitle = document.createElement('label');
+        fixedTitle.className = 'form-label text-muted small mb-1';
+        fixedTitle.textContent = '目標主機';
+        const fixedVal = document.createElement('div');
+        fixedVal.className = 'fw-semibold';
+        const ch = candidates[0];
+        fixedVal.textContent = `${ch.hostName}${ch.ipAddress ? ` (${ch.ipAddress})` : ''}`;
+        hostFixedEl.append(fixedTitle, fixedVal);
+
+        if (hostSelectGroup) hostSelectGroup.classList.add('d-none');
+        assignModal.show();
+    } else if (candidates.length === 0) {
+        hostFixedEl.replaceChildren();
+        hostFixedEl.classList.add('d-none');
+        if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
+
+        hostSelect.innerHTML = '<option value="">載入中…</option>';
+        assignModal.show();
+
+        try {
+            cachedHosts = await api.get('/api/admin/hosts/all', { silent: true });
+            hostSelect.innerHTML = '<option value="">請選擇主機…</option>';
+            for (const host of (cachedHosts || [])) {
+                const option = document.createElement('option');
+                option.value = String(host.hostId);
+                option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
+                hostSelect.appendChild(option);
+            }
+        } catch {
+            hostSelect.innerHTML = '<option value="">無法載入主機清單</option>';
+            toast('載入主機清單失敗', 'danger');
+        }
+    } else {
+        hostFixedEl.replaceChildren();
+        hostFixedEl.classList.add('d-none');
+        if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
+
         hostSelect.innerHTML = '<option value="">請選擇主機…</option>';
-        for (const host of cachedHosts) {
+        for (const host of candidates) {
             const option = document.createElement('option');
             option.value = String(host.hostId);
             option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
+            if (item.hostName && host.hostName === item.hostName) {
+                option.selected = true;
+            }
             hostSelect.appendChild(option);
         }
-    } catch (error) {
-        hostSelect.innerHTML = '<option value="">無法載入主機清單</option>';
-        toast('載入主機清單失敗', 'danger');
+        assignModal.show();
     }
 }
 
@@ -433,27 +708,46 @@ function bindAssignForm() {
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
-        const hostId = document.getElementById('prtg-assign-host').value;
-        if (!hostId) {
-            toast('請選擇目標主機', 'warning');
-            return;
+
+        if (!currentAssignItem) return;
+
+        let targetDeviceObjid = currentAssignItem.deviceObjid;
+        if (currentAssignItem.conflictKind === 'multi-device') {
+            const checkedRadio = document.querySelector('input[name="prtg-assign-device-radio"]:checked');
+            if (checkedRadio) {
+                targetDeviceObjid = Number(checkedRadio.value);
+            }
         }
 
-        const deviceObjid = Number(document.getElementById('prtg-assign-device-objid').value);
+        let targetHostId = currentFixedHostId;
+        if (!targetHostId) {
+            const hostSelectVal = document.getElementById('prtg-assign-host').value;
+            if (!hostSelectVal) {
+                toast('請選擇目標主機', 'warning');
+                return;
+            }
+            targetHostId = Number(hostSelectVal);
+        }
+
         const note = document.getElementById('prtg-assign-note').value.trim() || null;
 
         const restore = withBusy(submitBtn, '指派中');
         try {
-            await api.put('/api/admin/settings/prtg-manual-map', {
-                deviceObjid,
-                hostId: Number(hostId),
+            const res = await api.put('/api/admin/settings/prtg-manual-map', {
+                deviceObjid: targetDeviceObjid,
+                hostId: targetHostId,
                 note
             });
             toast('已指派', 'success');
+            notifyRemapWarning(res);
             if (assignModal) assignModal.hide();
-            await refreshPrtgMirror();
+            await Promise.all([
+                refreshPrtgMirror(),
+                refreshConflicts(conflictPage),
+                refreshIpExcludes()
+            ]);
         } catch (error) {
-            toast(error?.message || '指派失敗', 'danger');
+            toast(error && error.message ? error.message : '指派失敗', 'danger');
         } finally {
             restore();
         }
@@ -478,7 +772,11 @@ function bindPrtgMirror() {
     refreshBtn?.addEventListener('click', async () => {
         const restore = withBusy(refreshBtn, '載入中');
         try {
-            await refreshPrtgMirror();
+            await Promise.all([
+                refreshPrtgMirror(),
+                refreshConflicts(conflictPage),
+                refreshIpExcludes()
+            ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
         } finally {
             restore();

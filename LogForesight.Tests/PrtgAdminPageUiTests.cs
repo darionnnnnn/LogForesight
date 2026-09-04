@@ -400,4 +400,73 @@ public class PrtgAdminPageUiTests
         Assert.Single(filesWithHashTrue);
         Assert.Equal("prtg-admin.js", filesWithHashTrue[0]);
     }
+
+    [Fact]
+    public void Prtg頁面含衝突分頁與排除清單元素且移除舊的Objid欄位()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("prtg-conflicts-pagination", content);
+        Assert.Contains("prtg-ip-excludes-body", content);
+        Assert.Contains("prtg-assign-device-choice", content);
+        Assert.Contains("prtg-assign-host-fixed", content);
+        Assert.Contains("prtg-mirror-ip-exclude-count", content);
+
+        // Objid 改在 modal 標題顯示，原本的唯讀輸入欄已移除
+        Assert.DoesNotContain("prtg-assign-device-" + "objid", content);
+    }
+
+    [Fact]
+    public void PrtgAdmin腳本接上衝突分頁與不分頁主機清單端點()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("renderPagination", js);
+        Assert.Contains("prtg-host-map?status=conflict", js);
+        Assert.Contains("/api/admin/hosts/all", js);
+        Assert.Contains("multi-device", js);
+        Assert.Contains("multi-host", js);
+
+        // 重算警告必須被顯示出來，不能靜默丟掉
+        Assert.Contains("remapWarning", js);
+
+        // 舊的取全部主機寫法會被後端分頁夾成 200 台，不得殘留
+        Assert.DoesNotContain("pageSize=" + "2000", js);
+    }
+
+    [Fact]
+    public void PrtgAdmin的confirmAction一律以物件參數呼叫()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        // core/ui.js 的 confirmAction 簽章是物件參數且回傳 Promise。誤用成「字串 + callback」時
+        // 會跳出空白確認框，而且 callback 內的刪除請求永遠不會送出，沒有任何編譯或執行期錯誤。
+        const string token = "confirmAction(";
+        var index = js.IndexOf(token, StringComparison.Ordinal);
+        var occurrences = 0;
+
+        while (index >= 0)
+        {
+            var cursor = index + token.Length;
+            while (cursor < js.Length && char.IsWhiteSpace(js[cursor])) cursor++;
+
+            Assert.True(cursor < js.Length, $"confirmAction( 出現在位置 {index} 之後沒有任何內容");
+            Assert.True(js[cursor] == '{',
+                $"位置 {index} 的 confirmAction 呼叫第一個參數是 '{js[cursor]}' 而非物件");
+
+            occurrences++;
+            index = js.IndexOf(token, cursor, StringComparison.Ordinal);
+        }
+
+        Assert.True(occurrences >= 3, $"預期至少 3 處 confirmAction 呼叫，實際 {occurrences} 處");
+    }
 }

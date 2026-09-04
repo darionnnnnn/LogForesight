@@ -217,22 +217,23 @@
                         <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
                         <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
                         <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
                     </div>
                     <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
 
                     <div class="mb-3">
-                        <div class="small fw-semibold text-warning mb-1">對應衝突清單（最多顯示 20 筆）</div>
+                        <div class="small fw-semibold text-warning mb-1">對應衝突清單</div>
                         <div class="table-responsive">
                             <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
                                 <thead class="table-light">
                                     <tr>
-                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 200px;">Device</th>
                                         <th style="width: 140px;">IP</th>
-                                        <th style="width: 180px;">主機</th>
+                                        <th style="width: 130px;">衝突型別</th>
                                         <th>說明</th>
-                                        <th style="width: 100px;">操作</th>
+                                        <th style="width: 160px;">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-mirror-conflicts-body">
@@ -240,6 +241,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div id="prtg-conflicts-pagination" class="mt-2"></div>
                     </div>
 
                     <div class="mt-4">
@@ -257,6 +259,27 @@
                                 </thead>
                                 <tbody id="prtg-mirror-manual-maps-body">
                                     <tr><td colspan="5" class="text-muted text-center py-2">無人工對應項目</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="small fw-semibold text-danger mb-1">IP 排除清單</div>
+                        <div class="form-text text-muted mb-2">排除的 IP 不會進行 PRTG 主機對應，其底下的 device 也不會取數。</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-ip-excludes-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 140px;">IP</th>
+                                        <th>備註</th>
+                                        <th style="width: 140px;">建立者</th>
+                                        <th style="width: 160px;">建立時間</th>
+                                        <th style="width: 100px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-ip-excludes-body">
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無排除 IP</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -468,13 +491,11 @@
             </div>
             <form id="prtg-assign-form" novalidate>
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label text-muted small">PRTG Device Objid</label>
-                        <input type="text" class="form-control form-control-sm font-monospace" id="prtg-assign-device-objid" readonly />
-                    </div>
-                    <div class="mb-3">
+                    <div id="prtg-assign-device-choice" class="mb-3 d-none"></div>
+                    <div id="prtg-assign-host-fixed" class="mb-3 d-none"></div>
+                    <div class="mb-3" id="prtg-assign-host-select-group">
                         <label for="prtg-assign-host" class="form-label">目標主機</label>
-                        <select class="form-select form-select-sm" id="prtg-assign-host" required>
+                        <select class="form-select form-select-sm" id="prtg-assign-host">
                             <option value="">請選擇主機…</option>
                         </select>
                     </div>
