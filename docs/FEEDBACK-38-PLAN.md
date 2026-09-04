@@ -250,4 +250,6 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| | | | | |
+| A-1 | agy 3.8-flash-high | 通過 | 全套 3381 綠（基線 3378，+3）；BOM 逐檔比對 dev 一致、無 NUL；白名單外零檔案 | Claude 補修：移除未對應清單刪除後殘留的多餘空行。另清掉上一輪殘留在 `.gemini-tasks/` 的 9 份舊規格（會誤導委派） |
+| A-2 | agy 3.8-flash-high | 通過 | 全套 3384 綠（+3）；BOM／NUL 乾淨 | 派工前補強規格：既有測試直接斷言 `Calibration.cshtml` 存在並逐一驗四張卡 id，明寫「只換來源路徑、斷言一條都不能刪」。Claude 補修：探測區改不收合後 JS 仍留 `details.open` 死碼與矛盾註解，整段移除。agy 自行移除匯入失敗的重複 toast（`api.js` 預設已 toast），經確認正確 |
+| A-3 | agy 3.8-flash-high | 通過 | 全套 3387 綠（+3）；BOM／NUL 乾淨；`hash: true` 全站僅 `prtg-admin.js` 一處 | 規格驗收條件 5「`hashchange` 全 `wwwroot/js` 零命中」寫得過寬（`help-manual.js`／`setup.js` 本來就各有一處），agy 如實回報未硬改；判定以「本次改動的兩檔零命中」為準 |
