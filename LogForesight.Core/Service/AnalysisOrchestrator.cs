@@ -769,196 +769,203 @@ public class AnalysisOrchestrator
             return;
         }
 
-        // 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料。
-        var rangeStart = datesToAnalyze[0];
-
-        var channelNames = settings.Analysis.Channels.Count > 0
-            ? settings.Analysis.Channels.Select(c => ChannelCatalog.Resolve(c).ChannelName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-            : ChannelCatalog.DefaultChannelNames;
-
-        // 啟動誠實申報：Operational 頻道已啟用、但規則表沒有對應規則時，其 Information 等級事件不會被
-        // 收集（掃了卻沒偵測）。
-        foreach (var name in channelNames)
+        try
         {
-            var policy = ChannelCatalog.Resolve(name);
-            if (policy.Kind == ChannelInclusionKind.OperationalWatchlist && !KnownIssueCatalog.HasWatchlist(policy.ProviderProbe))
+            // 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料。
+            var rangeStart = datesToAnalyze[0];
+
+            var channelNames = settings.Analysis.Channels.Count > 0
+                ? settings.Analysis.Channels.Select(c => ChannelCatalog.Resolve(c).ChannelName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                : ChannelCatalog.DefaultChannelNames;
+
+            // 啟動誠實申報：Operational 頻道已啟用、但規則表沒有對應規則時，其 Information 等級事件不會被
+            // 收集（掃了卻沒偵測）。
+            foreach (var name in channelNames)
             {
-                console.WriteLine($"  ⚠ 頻道「{name}」已啟用，但目前規則表沒有對應規則，其 Information 等級事件不會被收集。" +
-                                  "請於「規則維護」頁匯入內建 Defender/RDP 規則。");
-                Log.Warn("頻道 {Channel} 已啟用但無對應規則（watchlist 空），Information 事件未收集", name);
-            }
-        }
-
-        console.WriteLine($"\n平行掃描頻道：{string.Join("、", channelNames)}，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
-
-        // 分塊掃描（回饋三十四輪 A1）：整個回補區間一次全載，一台吵雜主機 120 天可達數十 GB，
-        // 這是排程執行占用 22GB 的主因之一。改成逐塊取數、逐塊分析、逐塊釋放——
-        // 同一時間記憶體裡只有一塊（預設 7 天）的事件。逐日分析的順序不變（由舊到新，
-        // 趨勢比對依賴前面日期寫入的歷史），只是取數的邊界跟著區塊走。
-        var chunks = EventLogService.SplitDateRange(rangeStart, DateTime.Today, EventLogService.DefaultScanChunkDays)
-            .Where(chunk => datesToAnalyze.Any(d => d >= chunk.Start && d < chunk.EndExclusive))
-            .ToList();
-
-        if (datesToAnalyze.Count > 1)
-        {
-            var aiClause = useAi ? "每天皆完整 AI 分析，" : "統計模式（AI 未設定），";
-            console.WriteLine($"偵測到歷史資料有缺漏，回補 {datesToAnalyze.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
-            console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
-        }
-
-        // 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行。
-        var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
-        progress?.Report("local", 0, datesToAnalyze.Count);
-        var localDone = 0;
-        var rerunAnalyzedCount = 0;
-        var rerunRetainedCount = 0;
-        var totalEvents = 0;
-        // 頻道可用性、Security 是否可讀、各來源可回溯到的最早時間都是「整份日誌」的性質，
-        // 每個區塊掃描出來的結論相同，因此逐塊的中繼資料直接用於該塊的日期即可；
-        // 讀取失敗／頻道不存在的申報只在第一個區塊印一次，不逐塊重複刷屏。
-        var warningsPrinted = false;
-
-        foreach (var (chunkStart, chunkEndExclusive) in chunks)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var chunkDates = datesToAnalyze.Where(d => d >= chunkStart && d < chunkEndExclusive).ToList();
-
-            // 掃描結果只在這個區塊裡存活（回饋三十五輪批次E3）：ScanRangeFromAllAsync 回傳的
-            // ScanResult 同時持有合併後的 Entries 與逐頻道的 BySource 兩份清單參照，
-            // 原本整份在該區塊 14 天的分析期間全程不放。這裡先把逐日分組與逐日中繼資料取出來，
-            // 讓 scanResult 在進入逐日迴圈前就離開範圍，只留下真正還要用的東西。
-            Dictionary<DateTime, List<EventLogEntryData>> logsByDate;
-            Dictionary<DateTime, bool> incompleteByDate;
-            ChannelAvailability channelAvailability;
-            bool? securityAvailable;
-            {
-                var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
-                logsByDate = scanResult.Entries
-                    .GroupBy(l => l.TimeGenerated.Date)
-                    .ToDictionary(g => g.Key, g => g.ToList());
-                incompleteByDate = chunkDates.ToDictionary(d => d, scanResult.IsDateIncomplete);
-                securityAvailable = scanResult.SecurityAvailable;
-                totalEvents += scanResult.Entries.Count;
-
-            if (!warningsPrinted)
-            {
-                warningsPrinted = true;
-
-                if (scanResult.SecurityAvailable == false)
+                var policy = ChannelCatalog.Resolve(name);
+                if (policy.Kind == ChannelInclusionKind.OperationalWatchlist && !KnownIssueCatalog.HasWatchlist(policy.ProviderProbe))
                 {
-                    console.WriteLine("  ⚠ Security log 本次無法讀取（需系統管理員權限），入侵跡象相關偵測將標記為未檢查。");
-                }
-
-                var missingChannels = scanResult.ChannelsMissing.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
-                if (missingChannels.Count > 0)
-                {
-                    console.WriteLine($"  · 下列頻道在本機不存在（未安裝對應角色，相關偵測不適用）：{string.Join("、", missingChannels)}");
-                }
-                var deniedChannels = scanResult.ChannelsDenied.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
-                if (deniedChannels.Count > 0)
-                {
-                    console.WriteLine($"  ⚠ 下列頻道存取被拒（需系統管理員權限，屬偵測盲區）：{string.Join("、", deniedChannels)}");
+                    console.WriteLine($"  ⚠ 頻道「{name}」已啟用，但目前規則表沒有對應規則，其 Information 等級事件不會被收集。" +
+                                      "請於「規則維護」頁匯入內建 Defender/RDP 規則。");
+                    Log.Warn("頻道 {Channel} 已啟用但無對應規則（watchlist 空），Information 事件未收集", name);
                 }
             }
 
-                channelAvailability = new ChannelAvailability
-                {
-                    Read = scanResult.ChannelsRead,
-                    Denied = scanResult.ChannelsDenied,
-                    Missing = scanResult.ChannelsMissing
-                };
+            console.WriteLine($"\n平行掃描頻道：{string.Join("、", channelNames)}，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
+
+            // 分塊掃描（回饋三十四輪 A1）：整個回補區間一次全載，一台吵雜主機 120 天可達數十 GB，
+            // 這是排程執行占用 22GB 的主因之一。改成逐塊取數、逐塊分析、逐塊釋放——
+            // 同一時間記憶體裡只有一塊（預設 7 天）的事件。逐日分析的順序不變（由舊到新，
+            // 趨勢比對依賴前面日期寫入的歷史），只是取數的邊界跟著區塊走。
+            var chunks = EventLogService.SplitDateRange(rangeStart, DateTime.Today, EventLogService.DefaultScanChunkDays)
+                .Where(chunk => datesToAnalyze.Any(d => d >= chunk.Start && d < chunk.EndExclusive))
+                .ToList();
+
+            if (datesToAnalyze.Count > 1)
+            {
+                var aiClause = useAi ? "每天皆完整 AI 分析，" : "統計模式（AI 未設定），";
+                console.WriteLine($"偵測到歷史資料有缺漏，回補 {datesToAnalyze.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
+                console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
             }
 
-            foreach (var date in chunkDates)
+            // 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行。
+            var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
+            progress?.Report("local", 0, datesToAnalyze.Count);
+            var localDone = 0;
+            var rerunAnalyzedCount = 0;
+            var rerunRetainedCount = 0;
+            var totalEvents = 0;
+            // 頻道可用性、Security 是否可讀、各來源可回溯到的最早時間都是「整份日誌」的性質，
+            // 每個區塊掃描出來的結論相同，因此逐塊的中繼資料直接用於該塊的日期即可；
+            // 讀取失敗／頻道不存在的申報只在第一個區塊印一次，不逐塊重複刷屏。
+            var warningsPrinted = false;
+
+            foreach (var (chunkStart, chunkEndExclusive) in chunks)
             {
-                // 取消語意＝停在「主機日」邊界：當前這一天分析完才停，不硬掐 AI 呼叫本身
                 ct.ThrowIfCancellationRequested();
 
-                var isRerun = rerunDateSet.Contains(date.Date);
-                var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
-                // 這一天的事件取出後就從分組移除（批次E3）：區塊內的記憶體隨進度遞減，
-                // 而不是整塊 14 天的事件全程壓在記憶體裡等最後一起回收。
-                logsByDate.Remove(date);
+                var chunkDates = datesToAnalyze.Where(d => d >= chunkStart && d < chunkEndExclusive).ToList();
 
-                var dataIncomplete = incompleteByDate[date];
-
-                // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺時，保留原結果整天跳過——
-                // 判定與 NetIQ 路徑共用同一個函式，不各寫一份
-                if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(
-                        logs.Count, dataIncomplete, securityAvailable == false))
+                // 掃描結果只在這個區塊裡存活（回饋三十五輪批次E3）：ScanRangeFromAllAsync 回傳的
+                // ScanResult 同時持有合併後的 Entries 與逐頻道的 BySource 兩份清單參照，
+                // 原本整份在該區塊 14 天的分析期間全程不放。這裡先把逐日分組與逐日中繼資料取出來，
+                // 讓 scanResult 在進入逐日迴圈前就離開範圍，只留下真正還要用的東西。
+                Dictionary<DateTime, List<EventLogEntryData>> logsByDate;
+                Dictionary<DateTime, bool> incompleteByDate;
+                ChannelAvailability channelAvailability;
+                bool? securityAvailable;
                 {
-                    rerunRetainedCount++;
-                    console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
-                    progress?.Report("local", ++localDone, datesToAnalyze.Count);
-                    continue;
+                    var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
+                    logsByDate = scanResult.Entries
+                        .GroupBy(l => l.TimeGenerated.Date)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+                    incompleteByDate = chunkDates.ToDictionary(d => d, scanResult.IsDateIncomplete);
+                    securityAvailable = scanResult.SecurityAvailable;
+                    totalEvents += scanResult.Entries.Count;
+
+                if (!warningsPrinted)
+                {
+                    warningsPrinted = true;
+
+                    if (scanResult.SecurityAvailable == false)
+                    {
+                        console.WriteLine("  ⚠ Security log 本次無法讀取（需系統管理員權限），入侵跡象相關偵測將標記為未檢查。");
+                    }
+
+                    var missingChannels = scanResult.ChannelsMissing.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (missingChannels.Count > 0)
+                    {
+                        console.WriteLine($"  · 下列頻道在本機不存在（未安裝對應角色，相關偵測不適用）：{string.Join("、", missingChannels)}");
+                    }
+                    var deniedChannels = scanResult.ChannelsDenied.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (deniedChannels.Count > 0)
+                    {
+                        console.WriteLine($"  ⚠ 下列頻道存取被拒（需系統管理員權限，屬偵測盲區）：{string.Join("、", deniedChannels)}");
+                    }
                 }
 
-                console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
-                var dayStopwatch = Stopwatch.StartNew();
+                    channelAvailability = new ChannelAvailability
+                    {
+                        Read = scanResult.ChannelsRead,
+                        Denied = scanResult.ChannelsDenied,
+                        Missing = scanResult.ChannelsMissing
+                    };
+                }
 
-                // 重跑日的舊紀錄由 AnalyzeDayAsync 在寫入前才刪（replaceExisting）——不在這裡先刪，
-                // 否則分析途中拋例外會留下「舊的已刪、新的沒寫」的永久空白日
-                if (isRerun) rerunAnalyzedCount++;
+                foreach (var date in chunkDates)
+                {
+                    // 取消語意＝停在「主機日」邊界：當前這一天分析完才停，不硬掐 AI 呼叫本身
+                    ct.ThrowIfCancellationRequested();
 
-                var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
-                    dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
-                    replaceExisting: isRerun);
-                result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
+                    var isRerun = rerunDateSet.Contains(date.Date);
+                    var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+                    // 這一天的事件取出後就從分組移除（批次E3）：區塊內的記憶體隨進度遞減，
+                    // 而不是整塊 14 天的事件全程壓在記憶體裡等最後一起回收。
+                    logsByDate.Remove(date);
 
-                // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
-                // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
-                HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
-                HostDayPostProcessor.ReplaceRiskyEvents(
-                    riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
+                    var dataIncomplete = incompleteByDate[date];
 
-                dayStopwatch.Stop();
-                elapsedByDate[date] = dayStopwatch.Elapsed;
-                runRecorder.RecordDayAnalyzed();
+                    // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺時，保留原結果整天跳過——
+                    // 判定與 NetIQ 路徑共用同一個函式，不各寫一份
+                    if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(
+                            logs.Count, dataIncomplete, securityAvailable == false))
+                    {
+                        rerunRetainedCount++;
+                        console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
+                        progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                        continue;
+                    }
 
-                HostDayPostProcessor.RecordAiCallIfApplicable(runRecorder, useAi, record);
-                PrintResult(console, record, verbose: date == yesterday);
-                console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
-                progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                    console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
+                    var dayStopwatch = Stopwatch.StartNew();
 
-                // 逐日之間讓出執行緒（S-3，與 NetIQ 路徑同一個理由）：統計模式下這個迴圈幾乎
-                // 全程同步，不讓出的話會一路佔住同一條 thread pool 執行緒到回補完所有缺漏日
-                await Task.Yield();
+                    // 重跑日的舊紀錄由 AnalyzeDayAsync 在寫入前才刪（replaceExisting）——不在這裡先刪，
+                    // 否則分析途中拋例外會留下「舊的已刪、新的沒寫」的永久空白日
+                    if (isRerun) rerunAnalyzedCount++;
+
+                    var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
+                        dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
+                        replaceExisting: isRerun);
+                    result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
+
+                    // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
+                    // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
+                    HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
+                    HostDayPostProcessor.ReplaceRiskyEvents(
+                        riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
+
+                    dayStopwatch.Stop();
+                    elapsedByDate[date] = dayStopwatch.Elapsed;
+                    runRecorder.RecordDayAnalyzed();
+
+                    HostDayPostProcessor.RecordAiCallIfApplicable(runRecorder, useAi, record);
+                    PrintResult(console, record, verbose: date == yesterday);
+                    console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
+                    progress?.Report("local", ++localDone, datesToAnalyze.Count);
+
+                    // 逐日之間讓出執行緒（S-3，與 NetIQ 路徑同一個理由）：統計模式下這個迴圈幾乎
+                    // 全程同步，不讓出的話會一路佔住同一條 thread pool 執行緒到回補完所有缺漏日
+                    await Task.Yield();
+                }
             }
+
+            console.WriteLine($"\n共取得 {totalEvents} 筆事件。");
+            runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
+
+            if (request.RerunMode != RerunMode.None)
+            {
+                var rerunSummary = HostDayPostProcessor.RerunSummary(rerunAnalyzedCount, rerunRetainedCount);
+                console.WriteLine($"\n  {rerunSummary}");
+                runRecorder.Milestone(rerunSummary);
+            }
+
+            // 執行結果總表：讓使用者一眼看到「哪幾天有問題、哪幾天有報告可看、花了多久」。
+            // 報告參照（lf_reports 的主鍵）對使用者沒有意義，console 只標示有無，內容到 Web 看。
+            console.WriteLine("\n══════════ 本次執行結果 ══════════");
+            foreach (var r in result.LocalResults)
+            {
+                console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
+                                  (r.HasReport ? "  → 已產生風險報告" : ""));
+            }
+
+            var riskyCount = result.LocalResults.Count(r => r.HasReport);
+            if (riskyCount > 0)
+            {
+                console.WriteLine(
+                    $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已寫入報告，" +
+                    "可於 Web 的分析紀錄詳情檢視。");
+            }
+            else
+            {
+                console.WriteLine("\n  所有日期風險等級為低，無需特別處置。");
+            }
+
+            Log.Info("本次執行結果：{Results}", string.Join(" | ", result.LocalResults.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
         }
-
-        console.WriteLine($"\n共取得 {totalEvents} 筆事件。");
-        runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
-
-        if (request.RerunMode != RerunMode.None)
+        finally
         {
-            var rerunSummary = HostDayPostProcessor.RerunSummary(rerunAnalyzedCount, rerunRetainedCount);
-            console.WriteLine($"\n  {rerunSummary}");
-            runRecorder.Milestone(rerunSummary);
+            progress?.Report("local-done", 0, 0);
         }
-
-        // 執行結果總表：讓使用者一眼看到「哪幾天有問題、哪幾天有報告可看、花了多久」。
-        // 報告參照（lf_reports 的主鍵）對使用者沒有意義，console 只標示有無，內容到 Web 看。
-        console.WriteLine("\n══════════ 本次執行結果 ══════════");
-        foreach (var r in result.LocalResults)
-        {
-            console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
-                              (r.HasReport ? "  → 已產生風險報告" : ""));
-        }
-
-        var riskyCount = result.LocalResults.Count(r => r.HasReport);
-        if (riskyCount > 0)
-        {
-            console.WriteLine(
-                $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已寫入報告，" +
-                "可於 Web 的分析紀錄詳情檢視。");
-        }
-        else
-        {
-            console.WriteLine("\n  所有日期風險等級為低，無需特別處置。");
-        }
-
-        Log.Info("本次執行結果：{Results}", string.Join(" | ", result.LocalResults.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
     }
 
     private async Task RunNetiqAnalysisAsync(

@@ -71,6 +71,10 @@ public class SchedulerRunState
     public int PrtgProgressDone { get; private set; }
     public int PrtgProgressTotal { get; private set; }
 
+    public bool LocalCompleted { get; private set; }
+    public bool NetiqCompleted { get; private set; }
+    public bool PrtgCompleted { get; private set; }
+
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
@@ -93,12 +97,15 @@ public class SchedulerRunState
             ProgressPhase = null;
             ProgressDone = 0;
             ProgressTotal = 0;
+            NetiqCompleted = false;
             LocalProgressPhase = null;
             LocalProgressDone = 0;
             LocalProgressTotal = 0;
+            LocalCompleted = false;
             PrtgProgressPhase = null;
             PrtgProgressDone = 0;
             PrtgProgressTotal = 0;
+            PrtgCompleted = false;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -134,9 +141,9 @@ public class SchedulerRunState
     {
         lock (_lock)
         {
-            if (ProgressPhase != null) return (ProgressPhase, ProgressDone, ProgressTotal);
-            if (LocalProgressPhase != null) return (LocalProgressPhase, LocalProgressDone, LocalProgressTotal);
-            return PrtgProgressPhase != null
+            if (ProgressPhase != null && !NetiqCompleted) return (ProgressPhase, ProgressDone, ProgressTotal);
+            if (LocalProgressPhase != null && !LocalCompleted) return (LocalProgressPhase, LocalProgressDone, LocalProgressTotal);
+            return PrtgProgressPhase != null && !PrtgCompleted
                 ? (PrtgProgressPhase, PrtgProgressDone, PrtgProgressTotal)
                 : (null, 0, 0);
         }
@@ -150,44 +157,44 @@ public class SchedulerRunState
         lock (_lock)
         {
             if (!IsRunning) return;
-            if (phase == "local")
+            if (phase == LocalDonePhase)
             {
+                LocalCompleted = true;
+            }
+            else if (phase == "local")
+            {
+                LocalCompleted = false;
                 LocalProgressPhase = phase;
                 LocalProgressDone = done;
                 LocalProgressTotal = total;
             }
             else if (phase == NetiqDonePhase)
             {
-                // NetIQ 這一路已經跑完（體檢輪修正）：清空主／子進度欄位。不清的話
-                // ProgressPhase 停在最後一次回報值（如 netiq 2/2）不會再變，本機若還在
-                // 回補多天缺漏，LatestActivity() 的優先序（子>主>本機）會一路顯示這個凍結
-                // 的舊值——外觀上與「卡住」無法區分。清空後優先序自然落回還在推進的本機，
-                // 排程作業頁的雙進度條（各自依 progressPhase／subProgressPhase 是否為
-                // truthy 決定顯示）也會正確地讓 NetIQ 那兩條 bar 一併消失，不是副作用。
-                ProgressPhase = null;
-                ProgressDone = 0;
-                ProgressTotal = 0;
+                NetiqCompleted = true;
             }
             else if (phase == PrtgDonePhase)
             {
-                PrtgProgressPhase = null;
-                PrtgProgressDone = 0;
-                PrtgProgressTotal = 0;
+                PrtgCompleted = true;
             }
             else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
             {
+                PrtgCompleted = false;
                 PrtgProgressPhase = phase;
                 PrtgProgressDone = done;
                 PrtgProgressTotal = total;
             }
             else
             {
+                NetiqCompleted = false;
                 ProgressPhase = phase;
                 ProgressDone = done;
                 ProgressTotal = total;
             }
         }
     }
+
+    /// <summary>本機分析路徑收尾時的完工訊號——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
+    public const string LocalDonePhase = "local-done";
 
     /// <summary>NetIQ 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/>
     /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
@@ -209,12 +216,15 @@ public class SchedulerRunState
             ProgressPhase = null;
             ProgressDone = 0;
             ProgressTotal = 0;
+            NetiqCompleted = false;
             LocalProgressPhase = null;
             LocalProgressDone = 0;
             LocalProgressTotal = 0;
+            LocalCompleted = false;
             PrtgProgressPhase = null;
             PrtgProgressDone = 0;
             PrtgProgressTotal = 0;
+            PrtgCompleted = false;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

@@ -90,6 +90,10 @@ public class ScheduleStatusDto
     public int PrtgProgressDone { get; set; }
     public int PrtgProgressTotal { get; set; }
 
+    public bool LocalCompleted { get; set; }
+    public bool NetiqCompleted { get; set; }
+    public bool PrtgCompleted { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }
