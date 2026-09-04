@@ -492,26 +492,22 @@ public class PrtgHostMapperTests : IDisposable
         var result = mapper.MapForDate(mapDate);
 
         // Assert
-        Assert.Equal(2, result.Ok);
+        Assert.Equal(1, result.Ok);
         Assert.Equal(1, result.Manual);
-        Assert.Equal(0, result.Conflict); // 關鍵：同 IP 的 1002 不會因為 1001 而被判成 conflict
+        Assert.Equal(0, result.Conflict);
         Assert.Equal(0, result.Unmatched);
+        Assert.Equal(1, result.SkippedManualSibling);
 
         var rows = store.GetHostMapForDate(mapDate);
-        Assert.Equal(2, rows.Count);
+        Assert.Single(rows);
 
         var row1001 = rows.Single(r => r.DeviceObjid == 1001);
         Assert.Equal(20, row1001.HostId);
         Assert.NotEqual(10, row1001.HostId);
         Assert.Equal(PrtgMapStatus.Ok, row1001.MapStatus);
 
-        var row1002 = rows.Single(r => r.DeviceObjid == 1002);
-        // 雙面斷言：1002 正常命中自動判定 (Host 10)，且狀態為 Ok 而不是 Conflict
-        Assert.Equal(10, row1002.HostId);
-        Assert.NotEqual(20, row1002.HostId);
-        Assert.Equal(PrtgMapStatus.Ok, row1002.MapStatus);
-        Assert.NotEqual(PrtgMapStatus.Conflict, row1002.MapStatus);
-        Assert.Null(row1002.Note); // 不是「此 IP 同時有 N 個 PRTG device」
+        // 規則二：同 IP 的 1002 不進分組，不產生對應列，避免自動變 Ok 繞過人工指定
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 1002);
     }
 
     [Fact]
@@ -604,5 +600,216 @@ public class PrtgHostMapperTests : IDisposable
         var rows2 = store.GetHostMapForDate(mapDate);
         Assert.Equal(10, rows2[0].HostId);
         Assert.Equal("srv-app01", rows2[0].HostName);
+    }
+
+    [Fact]
+    public void MapForDate_排除生效_排除清單內的IP不產生對應列且SkippedExcluded累計()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "192.168.1.10", Active = true });
+            hosts.Add(new WebHost { HostId = 20, HostName = "srv-db01", IpAddress = "192.168.1.20", Active = true });
+        });
+
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1001, Name = "PRTG-App01", Ip = "192.168.1.10" },
+            new PrtgDeviceRow { Objid = 1002, Name = "PRTG-Db01", Ip = "192.168.1.20" }
+        );
+
+        var store = CreateStore();
+        store.UpsertIpExclude(new PrtgIpExcludeRow
+        {
+            Ip = "192.168.1.20",
+            Note = "不納入 PRTG 監控",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(1, result.Ok);
+        Assert.Equal(1, result.SkippedExcluded);
+        Assert.Equal(0, result.SkippedManualSibling);
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Single(rows);
+        Assert.Equal(1001, rows[0].DeviceObjid);
+        Assert.Equal(10, rows[0].HostId);
+        Assert.Equal(PrtgMapStatus.Ok, rows[0].MapStatus);
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 1002);
+    }
+
+    [Fact]
+    public void MapForDate_排除清單比對不分大小寫且忽略前後空白()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "10.0.0.5", Active = true });
+        });
+
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1001, Name = "PRTG-App01", Ip = " 10.0.0.5 " }
+        );
+
+        var store = CreateStore();
+        store.UpsertIpExclude(new PrtgIpExcludeRow
+        {
+            Ip = "10.0.0.5",
+            Note = "測試排除",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(0, result.Ok);
+        Assert.Equal(1, result.SkippedExcluded);
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void MapForDate_人工對應優先於排除清單()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "10.0.0.5", Active = true });
+        });
+
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1001, Name = "PRTG-App01", Ip = "10.0.0.5" }
+        );
+
+        var store = CreateStore();
+        store.UpsertIpExclude(new PrtgIpExcludeRow
+        {
+            Ip = "10.0.0.5",
+            Note = "已排除的 IP",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 10,
+            Note = "強制指定",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(1, result.Ok);
+        Assert.Equal(1, result.Manual);
+        Assert.Equal(0, result.SkippedExcluded);
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Single(rows);
+        Assert.Equal(1001, rows[0].DeviceObjid);
+        Assert.Equal(10, rows[0].HostId);
+        Assert.Equal("srv-app01", rows[0].HostName);
+        Assert.Equal(PrtgMapStatus.Ok, rows[0].MapStatus);
+        Assert.Contains("人工指定對應：強制指定（此 IP 在排除清單中，人工指定優先）", rows[0].Note);
+    }
+
+    [Fact]
+    public void MapForDate_同IP人工指定後其餘Device不再變Ok()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "192.168.1.10", Active = true });
+        });
+
+        // 同一個 IP 有兩台 PRTG device
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1001, Name = "PRTG-App01-Primary", Ip = "192.168.1.10" },
+            new PrtgDeviceRow { Objid = 1002, Name = "PRTG-App01-Secondary", Ip = "192.168.1.10" }
+        );
+
+        var store = CreateStore();
+        // 管理者對 1001 設定人工對應
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1001,
+            HostId = 10,
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(1, result.Ok);
+        Assert.Equal(1, result.Manual);
+        Assert.Equal(0, result.Conflict);
+        Assert.Equal(1, result.SkippedManualSibling);
+
+        var rows = store.GetHostMapForDate(mapDate);
+        Assert.Single(rows);
+        Assert.Equal(1001, rows[0].DeviceObjid);
+        Assert.Equal(10, rows[0].HostId);
+        Assert.Equal(PrtgMapStatus.Ok, rows[0].MapStatus);
+
+        // 特別斷言結果中不存在 MapStatus == Ok 且 device 為另一台（1002）的列，且 1002 根本不產生列
+        Assert.DoesNotContain(rows, r => r.DeviceObjid == 1002);
+        Assert.DoesNotContain(rows, r => r.MapStatus == PrtgMapStatus.Ok && r.DeviceObjid == 1002);
+    }
+
+    [Fact]
+    public void MapForDate_排除清單為空時SkippedExcluded與SkippedManualSibling皆為零()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-app01", IpAddress = "192.168.1.10", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1001, Name = "PRTG-App01", Ip = "192.168.1.10" });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(1, result.Ok);
+        Assert.Equal(0, result.SkippedExcluded);
+        Assert.Equal(0, result.SkippedManualSibling);
     }
 }
