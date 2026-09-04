@@ -379,14 +379,42 @@ public class SettingsController : ControllerBase
         var hostMap = hostStore.GetAll().ToDictionary(h => h.HostId);
         var manualMaps = store.GetManualMaps();
 
-        var dtos = manualMaps.Select(m => new PrtgManualMapDto
+        var allDevices = store.GetAllDevices();
+        var deviceByObjid = new Dictionary<long, PrtgDeviceRow>();
+        var countByNormIp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var d in allDevices)
         {
-            DeviceObjid = m.DeviceObjid,
-            HostId = m.HostId,
-            HostName = hostMap.TryGetValue(m.HostId, out var host) ? host.HostName : null,
-            Note = m.Note,
-            CreatedBy = m.CreatedBy,
-            CreatedAt = m.CreatedAt
+            deviceByObjid[d.Objid] = d;
+            var normIp = PrtgHostMapper.NormalizeIp(d.Ip);
+            if (normIp != null)
+            {
+                countByNormIp[normIp] = countByNormIp.GetValueOrDefault(normIp) + 1;
+            }
+        }
+
+        var dtos = manualMaps.Select(m =>
+        {
+            var skipped = 0;
+            if (deviceByObjid.TryGetValue(m.DeviceObjid, out var dev))
+            {
+                var normIp = PrtgHostMapper.NormalizeIp(dev.Ip);
+                if (normIp != null && countByNormIp.TryGetValue(normIp, out var totalCount))
+                {
+                    skipped = Math.Max(0, totalCount - 1);
+                }
+            }
+
+            return new PrtgManualMapDto
+            {
+                DeviceObjid = m.DeviceObjid,
+                HostId = m.HostId,
+                HostName = hostMap.TryGetValue(m.HostId, out var host) ? host.HostName : null,
+                Note = m.Note,
+                CreatedBy = m.CreatedBy,
+                CreatedAt = m.CreatedAt,
+                SameIpSkippedCount = skipped
+            };
         }).OrderBy(m => m.DeviceObjid).ToList();
 
         return ApiResponse<List<PrtgManualMapDto>>.Ok(dtos);

@@ -329,4 +329,65 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.NotNull(res.Data);
         Assert.Equal(2, res.Data.IpExcludeCount);
     }
+
+    [Fact]
+    public void 人工對應清單_同IP略過台數正確計算()
+    {
+        var store = _backend.PrtgStore();
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+
+        var sharedIp = "192.168.10.1";
+        var dev1 = new PrtgDeviceRow { Objid = 4001, Name = "dev-shared-1", Ip = sharedIp };
+        var dev2 = new PrtgDeviceRow { Objid = 4002, Name = "dev-shared-2", Ip = sharedIp };
+        var dev3 = new PrtgDeviceRow { Objid = 4003, Name = "dev-shared-3", Ip = sharedIp };
+
+        var singleIp = "192.168.10.2";
+        var devSingle = new PrtgDeviceRow { Objid = 4004, Name = "dev-single", Ip = singleIp };
+
+        store.UpsertDevices(new[] { dev1, dev2, dev3, devSingle }, DateTime.Now);
+
+        var host1 = new WebHost { HostId = 301, HostName = "srv-1", IpAddress = sharedIp, Active = true };
+        var host2 = new WebHost { HostId = 302, HostName = "srv-2", IpAddress = singleIp, Active = true };
+        hostStore.Upsert(host1);
+        hostStore.Upsert(host2);
+
+        store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 4001, HostId = 301, CreatedAt = DateTime.Now });
+        store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 4004, HostId = 302, CreatedAt = DateTime.Now });
+
+        var res = _controller.GetPrtgManualMaps();
+        Assert.True(res.Success);
+        Assert.NotNull(res.Data);
+
+        var mapShared = res.Data.FirstOrDefault(m => m.DeviceObjid == 4001);
+        var mapSingle = res.Data.FirstOrDefault(m => m.DeviceObjid == 4004);
+
+        Assert.NotNull(mapShared);
+        Assert.Equal(2, mapShared!.SameIpSkippedCount);
+
+        Assert.NotNull(mapSingle);
+        Assert.Equal(0, mapSingle!.SameIpSkippedCount);
+    }
+
+    [Fact]
+    public void 人工對應清單_device無IP時SameIpSkippedCount為0()
+    {
+        var store = _backend.PrtgStore();
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+
+        var devNoIp = new PrtgDeviceRow { Objid = 4010, Name = "dev-no-ip", Ip = null };
+        store.UpsertDevices(new[] { devNoIp }, DateTime.Now);
+
+        var host = new WebHost { HostId = 310, HostName = "srv-no-ip", Active = true };
+        hostStore.Upsert(host);
+
+        store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 4010, HostId = 310, CreatedAt = DateTime.Now });
+
+        var res = _controller.GetPrtgManualMaps();
+        Assert.True(res.Success);
+        Assert.NotNull(res.Data);
+
+        var mapItem = res.Data.FirstOrDefault(m => m.DeviceObjid == 4010);
+        Assert.NotNull(mapItem);
+        Assert.Equal(0, mapItem!.SameIpSkippedCount);
+    }
 }

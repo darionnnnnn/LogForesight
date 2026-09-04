@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
@@ -22,7 +23,12 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
     private sealed class OnlyVisible : IVisibilityService
     {
         private readonly long _visibleHostId;
-        public OnlyVisible(long visibleHostId) => _visibleHostId = visibleHostId;
+        private readonly string? _ipAddress;
+        public OnlyVisible(long visibleHostId, string? ipAddress = null)
+        {
+            _visibleHostId = visibleHostId;
+            _ipAddress = ipAddress;
+        }
 
         public void EnsureVisible(long hostId)
         {
@@ -33,7 +39,7 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
         public IReadOnlySet<long> GetVisibleHostIds() => new HashSet<long> { _visibleHostId };
         public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => throw new NotSupportedException("測試未使用此方法");
         public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => throw new NotSupportedException("測試未使用此方法");
-        public List<WebHost> GetVisibleHosts() => throw new NotSupportedException("測試未使用此方法");
+        public List<WebHost> GetVisibleHosts() => new() { new WebHost { HostId = _visibleHostId, IpAddress = _ipAddress } };
         public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => throw new NotSupportedException("測試未使用此方法");
         public bool IsCaseGrantOnly(long hostId) => false;
         public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
@@ -42,8 +48,8 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
 
     // RecordDetailQueryService 在 /prtg 這條路徑完全用不到，傳 null 只為了建構 controller；
     // 這不是替身假值進斷言——斷言的是授權例外與回應內容，與 service 無關。
-    private HostDetailController CreateController(long visibleHostId) =>
-        new(null!, new EfPrtgStore(_fx.NewContext), new OnlyVisible(visibleHostId));
+    private HostDetailController CreateController(long visibleHostId, string? ipAddress = null) =>
+        new(null!, new EfPrtgStore(_fx.NewContext), new OnlyVisible(visibleHostId, ipAddress));
 
     [Fact]
     public void 不可見的主機_查詢PRTG對應擲NotFound()
@@ -63,5 +69,22 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
 
         Assert.NotNull(response.Data);
         Assert.Empty(response.Data!.Devices);
+    }
+
+    [Fact]
+    public void 主機IP在排除清單內_鏡像無對應列時仍回報IpExcluded為true()
+    {
+        var excludedIp = "192.168.1.100";
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertIpExclude(new PrtgIpExcludeRow { Ip = excludedIp, CreatedAt = DateTime.Now });
+
+        var controller = CreateController(visibleHostId: 10, ipAddress: excludedIp);
+
+        var response = controller.Prtg(10);
+
+        Assert.NotNull(response.Data);
+        Assert.True(response.Data!.IpExcluded);
+        Assert.Equal(excludedIp, response.Data.ExcludedIp);
+        Assert.Empty(response.Data.Devices);
     }
 }

@@ -525,6 +525,12 @@ function renderManualMaps(items) {
         const tdNote = document.createElement('td');
         tdNote.className = 'text-muted';
         tdNote.textContent = item.note || '-';
+        if (item.sameIpSkippedCount && item.sameIpSkippedCount > 0) {
+            const span = document.createElement('span');
+            span.className = 'text-muted ms-1';
+            span.textContent = `（同 IP 另有 ${item.sameIpSkippedCount} 台 device 已略過）`;
+            tdNote.appendChild(span);
+        }
 
         const tdCreatedBy = document.createElement('td');
         tdCreatedBy.textContent = item.createdBy || '-';

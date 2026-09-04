@@ -469,4 +469,20 @@ public class PrtgAdminPageUiTests
 
         Assert.True(occurrences >= 3, $"預期至少 3 處 confirmAction 呼叫，實際 {occurrences} 處");
     }
+
+    [Fact]
+    public void 前端腳本包含排除與略過台數之屬性()
+    {
+        var root = FindRepoRoot();
+        var hostDetailJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "host-detail.js");
+        Assert.True(File.Exists(hostDetailJsPath), $"找不到檔案: {hostDetailJsPath}");
+        var hostDetailJs = File.ReadAllText(hostDetailJsPath);
+        Assert.Contains("ipExcluded", hostDetailJs);
+        Assert.Contains("excludedIp", hostDetailJs);
+
+        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
+        var prtgAdminJs = File.ReadAllText(prtgAdminJsPath);
+        Assert.Contains("sameIpSkippedCount", prtgAdminJs);
+    }
 }

@@ -82,6 +82,7 @@ public class PrtgManualMapDto
     public string? CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? RemapWarning { get; set; }
+    public int SameIpSkippedCount { get; set; }
 }
 
 /// <summary>刪除類操作的回應：是否真的刪到，以及重算今日對應的警告（null＝重算正常）。
@@ -153,6 +154,8 @@ public class HostPrtgMappingDto
 {
     public DateTime? MapDate { get; set; }
     public List<HostPrtgDeviceDto> Devices { get; set; } = new();
+    public bool IpExcluded { get; set; }
+    public string? ExcludedIp { get; set; }
 }
 
 /// <summary>主機對應的 PRTG 裝置資訊</summary>
