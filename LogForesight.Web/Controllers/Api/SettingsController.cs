@@ -193,12 +193,6 @@ public class SettingsController : ControllerBase
             .Select(m => new PrtgHostMapItemDto(m.DeviceObjid, m.Ip, m.HostName, m.Note))
             .ToList();
 
-        var unmatched = hostMaps
-            .Where(m => m.MapStatus == PrtgMapStatus.Unmatched)
-            .Take(20)
-            .Select(m => new PrtgHostMapItemDto(m.DeviceObjid, m.Ip, m.HostName, m.Note))
-            .ToList();
-
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
         {
             DeviceCount = summary.DeviceCount,
@@ -213,8 +207,7 @@ public class SettingsController : ControllerBase
             MapUnmatched = mapUnmatched,
             WhitelistSensorCount = coverage.WhitelistSensorCount,
             OnMappedDeviceCount = coverage.OnMappedDeviceCount,
-            Conflicts = conflicts,
-            Unmatched = unmatched
+            Conflicts = conflicts
         });
     }
 

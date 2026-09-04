@@ -1,5 +1,5 @@
 /**
- * PRTG 維護（「系統管理 > PRTG 維護」頁）：連線設定、鏡像狀態與環境探測。
+ * PRTG 維護（「系統管理 > PRTG 維護」頁）：連線設定、擷取參數、鏡像狀態與環境探測。
  */
 
 import { api } from '../core/api.js';
@@ -174,21 +174,15 @@ function bindPrtgTest() {
     });
 }
 
-function bindForm() {
-    const form = document.getElementById('prtg-config-form');
-    const saveButton = document.getElementById('prtg-config-save');
+function bindConnectionForm() {
+    const form = document.getElementById('prtg-connection-form');
+    const saveButton = document.getElementById('prtg-connection-save');
     if (!form || !saveButton) return;
 
     document.getElementById('prtg-auth-mode')?.addEventListener('change', syncPrtgAuthFields);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
-
-        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days')?.value) || 180;
-        if (historyRetentionDays != null && prtgRetentionDays > historyRetentionDays) {
-            toast('PRTG 資料保留天數不可大於歷史資料保留天數。', 'warning');
-            return;
-        }
 
         const restore = withBusy(saveButton, '儲存中');
         try {
@@ -201,10 +195,6 @@ function bindForm() {
             const clearPasshash = document.getElementById('prtg-clear-passhash')?.checked ?? false;
             const apiToken = document.getElementById('prtg-api-token')?.value || null;
             const clearApiToken = document.getElementById('prtg-clear-token')?.checked ?? false;
-            const ignoreSsl = document.getElementById('prtg-ignore-ssl').checked;
-            const timeoutSeconds = Number(document.getElementById('prtg-timeout-seconds').value) || 60;
-            const fetchConcurrency = Number(document.getElementById('prtg-fetch-concurrency').value) || 2;
-            const backfillDays = Number(document.getElementById('prtg-backfill-days').value) || 30;
 
             const payload = {
                 prtgUrl: url,
@@ -215,7 +205,42 @@ function bindForm() {
                 prtgPasshash: passhash,
                 clearPrtgPasshash: clearPasshash,
                 prtgApiToken: apiToken,
-                clearPrtgApiToken: clearApiToken,
+                clearPrtgApiToken: clearApiToken
+            };
+
+            await api.put('/api/admin/settings/prtg', payload);
+            toast('已儲存', 'success');
+            await loadSettings();
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
+        } finally {
+            restore();
+        }
+    });
+}
+
+function bindParamsForm() {
+    const form = document.getElementById('prtg-params-form');
+    const saveButton = document.getElementById('prtg-params-save');
+    if (!form || !saveButton) return;
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+
+        const prtgRetentionDays = Number(document.getElementById('prtg-retention-days')?.value) || 180;
+        if (historyRetentionDays != null && prtgRetentionDays > historyRetentionDays) {
+            toast('PRTG 資料保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
+
+        const restore = withBusy(saveButton, '儲存中');
+        try {
+            const ignoreSsl = document.getElementById('prtg-ignore-ssl').checked;
+            const timeoutSeconds = Number(document.getElementById('prtg-timeout-seconds').value) || 60;
+            const fetchConcurrency = Number(document.getElementById('prtg-fetch-concurrency').value) || 2;
+            const backfillDays = Number(document.getElementById('prtg-backfill-days').value) || 30;
+
+            const payload = {
                 prtgIgnoreSslErrors: ignoreSsl,
                 prtgTimeoutSeconds: timeoutSeconds,
                 prtgFetchConcurrency: fetchConcurrency,
@@ -307,7 +332,6 @@ function renderPrtgMirror(data) {
     };
 
     renderList('prtg-mirror-conflicts-body', data.conflicts, '無衝突項目');
-    renderList('prtg-mirror-unmatched-body', data.unmatched, '無未對應項目');
 }
 
 function renderManualMaps(items) {
@@ -665,7 +689,8 @@ function init() {
     bindPrtgProbe();
     bindAssignForm();
     bindPrtgDataTransfer();
-    bindForm();
+    bindConnectionForm();
+    bindParamsForm();
     loadSettings();
     refreshPrtgMirror();
     refreshPrtgProbeStatus();

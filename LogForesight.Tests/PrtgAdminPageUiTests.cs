@@ -227,4 +227,55 @@ public class PrtgAdminPageUiTests
         Assert.Contains("itemData.currentThresholds", calibrationJs);
         Assert.Contains("item.isEligible", calibrationJs);
     }
+
+    [Fact]
+    public void Prtg頁面包含四個頁籤與連線擷取參數面板()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("data-tab=\"connection\"", content);
+        Assert.Contains("data-tab=\"params\"", content);
+        Assert.Contains("data-tab=\"mirror\"", content);
+        Assert.Contains("data-tab=\"probe\"", content);
+        Assert.Contains("data-panel=\"connection\"", content);
+        Assert.Contains("data-panel=\"params\"", content);
+    }
+
+    [Fact]
+    public void Prtg頁面與腳本不含未對應清單與舊版設定表單Id()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var cshtmlContent = File.ReadAllText(prtgCshtmlPath);
+
+        var unmatchedBody = "prtg-mirror-" + "unmatched-body";
+        var legacyForm = "prtg-" + "config-form";
+        var legacySave = "prtg-" + "config-save";
+
+        Assert.DoesNotContain(unmatchedBody, cshtmlContent);
+        Assert.DoesNotContain($"id=\"{legacyForm}\"", cshtmlContent);
+        Assert.DoesNotContain($"id=\"{legacySave}\"", cshtmlContent);
+
+        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
+        var jsContent = File.ReadAllText(prtgAdminJsPath);
+
+        Assert.DoesNotContain(unmatchedBody, jsContent);
+    }
+
+    [Fact]
+    public void PrtgProbeDtos不含Unmatched屬性宣告但仍含MapUnmatched()
+    {
+        var root = FindRepoRoot();
+        var dtoPath = Path.Combine(root, "LogForesight.Web", "Models", "Dto", "PrtgProbeDtos.cs");
+        Assert.True(File.Exists(dtoPath), $"找不到檔案: {dtoPath}");
+        var content = File.ReadAllText(dtoPath);
+
+        Assert.DoesNotContain(" Unmatched { get", content);
+        Assert.Contains("MapUnmatched", content);
+    }
 }

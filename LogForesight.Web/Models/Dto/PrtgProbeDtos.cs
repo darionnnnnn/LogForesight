@@ -62,7 +62,6 @@ public class PrtgMirrorStatusDto
     public int WhitelistSensorCount { get; set; }
     public int OnMappedDeviceCount { get; set; }
     public IReadOnlyList<PrtgHostMapItemDto> Conflicts { get; set; } = Array.Empty<PrtgHostMapItemDto>();
-    public IReadOnlyList<PrtgHostMapItemDto> Unmatched { get; set; } = Array.Empty<PrtgHostMapItemDto>();
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>

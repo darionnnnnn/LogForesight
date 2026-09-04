@@ -3,16 +3,17 @@
 }
 
 <ul class="nav nav-tabs mb-3" id="prtg-tabs">
-    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">連線與參數</button></li>
+    <li class="nav-item"><button class="nav-link active" data-tab="connection" type="button">連線</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="params" type="button">擷取參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
 </ul>
 
-<div data-panel="config">
-    <form id="prtg-config-form">
+<div data-panel="connection">
+    <form id="prtg-connection-form">
         <div class="lf-card">
             <div class="lf-card__header">
-                <h2 class="lf-card__title">連線與參數</h2>
+                <h2 class="lf-card__title">連線</h2>
             </div>
             <div class="lf-card__body">
                 <div class="row g-3 mb-3">
@@ -92,6 +93,35 @@
                     </div>
                 </div>
 
+                <hr />
+
+                <div class="mb-3">
+                    <h3 class="h6">測試連線</h3>
+                    <p class="text-muted small">
+                        用上方表單目前填的值試連線（尚未儲存也可以測）；token 或密碼欄留空時沿用已儲存的值。
+                    </p>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>
+                    </div>
+                    <div id="prtg-test-result"></div>
+                </div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <button type="submit" class="btn btn-primary" id="prtg-connection-save">儲存</button>
+                    <span class="text-muted small" id="prtg-config-updated"></span>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div data-panel="params" class="d-none">
+    <form id="prtg-params-form">
+        <div class="lf-card">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">擷取參數</h2>
+            </div>
+            <div class="lf-card__body">
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <div class="form-check">
@@ -106,7 +136,6 @@
                     </div>
                 </div>
 
-                <h3 class="h6 mb-3">擷取參數</h3>
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label for="prtg-fetch-concurrency" class="form-label">併發請求數</label>
@@ -134,22 +163,8 @@
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
                 </div>
 
-                <hr />
-
-                <div class="mb-3">
-                    <h3 class="h6">測試連線</h3>
-                    <p class="text-muted small">
-                        用上方表單目前填的值試連線（尚未儲存也可以測）；token 或密碼欄留空時沿用已儲存的值。
-                    </p>
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>
-                    </div>
-                    <div id="prtg-test-result"></div>
-                </div>
-
                 <div class="d-flex align-items-center gap-3 mt-3">
-                    <button type="submit" class="btn btn-primary" id="prtg-config-save">儲存</button>
-                    <span class="text-muted small" id="prtg-config-updated"></span>
+                    <button type="submit" class="btn btn-primary" id="prtg-params-save">儲存</button>
                 </div>
             </div>
         </div>
@@ -222,26 +237,6 @@
                                 </thead>
                                 <tbody id="prtg-mirror-conflicts-body">
                                     <tr><td colspan="5" class="text-muted text-center py-2">無衝突項目</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div>
-                        <div class="small fw-semibold text-muted mb-1">未對應清單（PRTG 有 NetIQ 無，最多顯示 20 筆）</div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-unmatched-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th style="width: 120px;">Device Objid</th>
-                                        <th style="width: 140px;">IP</th>
-                                        <th style="width: 180px;">主機</th>
-                                        <th>說明</th>
-                                        <th style="width: 100px;">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="prtg-mirror-unmatched-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無未對應項目</td></tr>
                                 </tbody>
                             </table>
                         </div>
