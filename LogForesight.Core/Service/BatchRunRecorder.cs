@@ -132,6 +132,39 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    public void RecordLocalOutcome(int daysAnalyzed, int daysFailed)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.LocalDaysAnalyzed = daysAnalyzed;
+            _run.LocalDaysFailed = daysFailed;
+        }
+    }
+
+    public void RecordNetiqOutcome(int daysAnalyzed, int daysFailed, int hostsSkipped)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.NetiqDaysAnalyzed = daysAnalyzed;
+            _run.NetiqDaysFailed = daysFailed;
+            _run.NetiqHostsSkipped = hostsSkipped;
+        }
+    }
+
+    public void RecordPrtgOutcome(string outcome, int sensorsFetched, int sensorsFailed, int triggeredHosts)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.PrtgOutcome = outcome;
+            _run.PrtgSensorsFetched = sensorsFetched;
+            _run.PrtgSensorsFailed = sensorsFailed;
+            _run.PrtgTriggeredHosts = triggeredHosts;
+        }
+    }
+
     public void Finish(int exitCode)
     {
         if (_finished || _store == null) return;

@@ -931,6 +931,8 @@ public class AnalysisOrchestrator
 
             console.WriteLine($"\n共取得 {totalEvents} 筆事件。");
             runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
+            // 本機失敗目前是整段例外由外層攔截，不逐日累計，故失敗日數傳 0
+            runRecorder.RecordLocalOutcome(result.LocalResults.Count, 0);
 
             if (request.RerunMode != RerunMode.None)
             {
@@ -1029,6 +1031,7 @@ public class AnalysisOrchestrator
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
                     : ""));
+            runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate);
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的
             // 里程碑列表完全看不到「這次有異常」（docs/archive/FEEDBACK-12-PLAN.md §1.3）。彙整成一條
@@ -1073,6 +1076,8 @@ public class AnalysisOrchestrator
             runRecorder, result, useAi, progress) = ctx;
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
+        string? prtgOutcome = null;
+        PrtgTriggeredFetchResult? triggeredResult = null;
 
         try
         {
@@ -1082,6 +1087,7 @@ public class AnalysisOrchestrator
                 !PrtgClientFactory.HasUsableCredentials(systemSettings))
             {
                 prtgConsole.WriteLine("PRTG 未啟用或尚未設定認證資訊，略過。");
+                prtgOutcome = BatchRun.PrtgOutcomeDisabled;
                 return;
             }
 
@@ -1091,10 +1097,12 @@ public class AnalysisOrchestrator
 
             // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）
             // PRTG 進度 phase：prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）、prtg-done（完工）
+            PrtgFetchResult? fetchResult = null;
+            var syncFailed = false;
             try
             {
                 progress?.Report("prtg-sync", 0, 0);
-                var fetchResult = await fetchService.FetchDayAsync(
+                fetchResult = await fetchService.FetchDayAsync(
                     day, systemSettings.PrtgFetchConcurrency, ct, syncStructure: true, fetchValues: false,
                     (stage, done, total) => progress?.Report(stage, done, total));
 
@@ -1112,6 +1120,7 @@ public class AnalysisOrchestrator
             }
             catch (Exception ex)
             {
+                syncFailed = true;
                 // 與 NetIQ 機房分析的失敗邊界一致：PRTG 擷取出問題不該讓整趟分析失敗，
                 // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
                 Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
@@ -1249,7 +1258,7 @@ public class AnalysisOrchestrator
                 progress?.Report("prtg-triggered", 0, 0);
                 var triggeredFetcher = new PrtgTriggeredValueFetcher(
                     fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
-                var triggeredResult = await triggeredFetcher.RunAsync(
+                triggeredResult = await triggeredFetcher.RunAsync(
                     day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
                     () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts,
                     progress: (stage, done, total) => progress?.Report(stage, done, total));
@@ -1311,6 +1320,19 @@ public class AnalysisOrchestrator
                 Log.Error(ex, "PRTG finding 追加失敗，不影響分析成果");
                 prtgConsole.WriteLine($"\n  ✗ PRTG finding 追加失敗：{ex.Message}");
             }
+
+            if (syncFailed)
+            {
+                prtgOutcome = BatchRun.PrtgOutcomeFailed;
+            }
+            else if ((fetchResult != null && fetchResult.Failures > 0) || (triggeredResult != null && triggeredResult.FailedSensors > 0))
+            {
+                prtgOutcome = BatchRun.PrtgOutcomePartial;
+            }
+            else
+            {
+                prtgOutcome = BatchRun.PrtgOutcomeSuccess;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1319,11 +1341,20 @@ public class AnalysisOrchestrator
         }
         catch (Exception ex)
         {
+            prtgOutcome = BatchRun.PrtgOutcomeFailed;
             Log.Error(ex, "PRTG 每日擷取初始化失敗，本機與 NetIQ 分析結果不受影響");
             prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取初始化失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
         }
         finally
         {
+            if (prtgOutcome != null)
+            {
+                runRecorder.RecordPrtgOutcome(
+                    prtgOutcome,
+                    triggeredResult?.TargetSensors ?? 0,
+                    triggeredResult?.FailedSensors ?? 0,
+                    triggeredResult?.TriggerHosts ?? 0);
+            }
             progress?.Report("prtg-done", 0, 0);
         }
     }
