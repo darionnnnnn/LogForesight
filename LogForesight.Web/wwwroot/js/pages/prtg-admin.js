@@ -8,7 +8,7 @@ import { bindTabs, toast, withBusy, renderSpinner, confirmAction } from '../core
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 
-bindTabs(document.getElementById('prtg-tabs'));
+bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
 /** PRTG 認證方式切換：依選取模式切換 token / password / passhash 區塊顯示（只動 classList 不設 style.display） */
 function syncPrtgAuthFields() {

@@ -340,4 +340,64 @@ public class PrtgAdminPageUiTests
         Assert.Contains("prtg-calibration.js", prtgAdminJsContent);
         Assert.DoesNotContain("X-Requested-By", prtgAdminJsContent);
     }
+
+    [Fact]
+    public void BindTabs簽章支援選用Hash且不監聽HashChange()
+    {
+        var root = FindRepoRoot();
+        var uiJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "ui.js");
+        Assert.True(File.Exists(uiJsPath), $"找不到檔案: {uiJsPath}");
+        var uiJs = File.ReadAllText(uiJsPath);
+
+        // 斷言 core/ui.js 的 bindTabs 簽章含 hash = false（預設關）
+        Assert.Contains("export function bindTabs(tabsEl, { onChange, hash = false } = {})", uiJs);
+        // 且該函式內含 history.replaceState
+        Assert.Contains("history.replaceState", uiJs);
+        // 不含 addEventListener('hashchange'
+        Assert.DoesNotContain("addEventListener('hashchange'", uiJs);
+        Assert.DoesNotContain("addEventListener(\"hashchange\"", uiJs);
+    }
+
+    [Fact]
+    public void PrtgAdmin啟用Hash且跨頁指路連結直達Params頁籤()
+    {
+        var root = FindRepoRoot();
+        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(prtgAdminJsPath), $"找不到檔案: {prtgAdminJsPath}");
+        var prtgAdminJs = File.ReadAllText(prtgAdminJsPath);
+        Assert.Contains("hash: true", prtgAdminJs);
+
+        var runsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+        Assert.True(File.Exists(runsCshtmlPath), $"找不到檔案: {runsCshtmlPath}");
+        var runsCshtml = File.ReadAllText(runsCshtmlPath);
+        Assert.Contains("~/admin/prtg\")#params", runsCshtml);
+
+        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
+        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
+        var settingsCshtml = File.ReadAllText(settingsCshtmlPath);
+        Assert.Contains("~/admin/prtg\")#params", settingsCshtml);
+    }
+
+    [Fact]
+    public void 僅PrtgAdmin啟用Hash其餘頁面維持不變()
+    {
+        var root = FindRepoRoot();
+        var pagesDir = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages");
+        Assert.True(Directory.Exists(pagesDir), $"找不到目錄: {pagesDir}");
+
+        var jsFiles = Directory.GetFiles(pagesDir, "*.js", SearchOption.TopDirectoryOnly);
+        var filesWithHashTrue = new List<string>();
+
+        foreach (var file in jsFiles)
+        {
+            var content = File.ReadAllText(file);
+            if (content.Contains("bindTabs(") && content.Contains("hash: true"))
+            {
+                filesWithHashTrue.Add(Path.GetFileName(file));
+            }
+        }
+
+        Assert.Single(filesWithHashTrue);
+        Assert.Equal("prtg-admin.js", filesWithHashTrue[0]);
+    }
 }
