@@ -29,6 +29,9 @@ public class RunDaySummaryDto
     /// <summary>優雅停止（手動停止或執行窗口 End 到點）——不算失敗，見 <c>BatchRun.Stopped</c></summary>
     public int StoppedCount { get; set; }
 
+    /// <summary>PRTG 擷取成果狀態（取該日取數類最後一筆，null＝舊紀錄或當日未執行 PRTG）</summary>
+    public string? PrtgOutcome { get; set; }
+
     /// <summary>失敗（含異常中斷）的主機名，最多 10 台；其餘用 OtherFailedCount 表示</summary>
     public List<string> FailedHostNames { get; set; } = new();
     public int OtherFailedCount { get; set; }
@@ -77,6 +80,33 @@ public class RunDetailDto
     /// <summary>「誰跑的」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：排程／手動（含帳號）／工作排程器
     /// （console，含舊紀錄沒有 Trigger 欄位的情況——那正是升級前唯一的觸發來源）</summary>
     public string TriggerText { get; set; } = string.Empty;
+
+    /// <summary>本機分析成功天數（null＝舊紀錄或本機未產出）</summary>
+    public int? LocalDaysAnalyzed { get; set; }
+
+    /// <summary>本機分析失敗天數（null＝舊紀錄或本機未產出）</summary>
+    public int? LocalDaysFailed { get; set; }
+
+    /// <summary>NetIQ 機房分析成功主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqDaysAnalyzed { get; set; }
+
+    /// <summary>NetIQ 機房分析失敗主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqDaysFailed { get; set; }
+
+    /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqHostsSkipped { get; set; }
+
+    /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
+    public string? PrtgOutcome { get; set; }
+
+    /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgSensorsFetched { get; set; }
+
+    /// <summary>PRTG 觸發式取數失敗感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgSensorsFailed { get; set; }
+
+    /// <summary>PRTG 觸發式取數問題主機數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgTriggeredHosts { get; set; }
 
     public List<RunLogDto> Logs { get; set; } = new();
 }
@@ -127,6 +157,33 @@ public class RunListItemDto
     public int AiFailures { get; set; }
     public int WarnCount { get; set; }
     public int ErrorCount { get; set; }
+
+    /// <summary>本機分析成功天數（null＝舊紀錄或本機未產出）</summary>
+    public int? LocalDaysAnalyzed { get; set; }
+
+    /// <summary>本機分析失敗天數（null＝舊紀錄或本機未產出）</summary>
+    public int? LocalDaysFailed { get; set; }
+
+    /// <summary>NetIQ 機房分析成功主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqDaysAnalyzed { get; set; }
+
+    /// <summary>NetIQ 機房分析失敗主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqDaysFailed { get; set; }
+
+    /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqHostsSkipped { get; set; }
+
+    /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
+    public string? PrtgOutcome { get; set; }
+
+    /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgSensorsFetched { get; set; }
+
+    /// <summary>PRTG 觸發式取數失敗感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgSensorsFailed { get; set; }
+
+    /// <summary>PRTG 觸發式取數問題主機數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgTriggeredHosts { get; set; }
 }
 
 /// <summary>

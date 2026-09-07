@@ -560,8 +560,13 @@ async function loadPrtgMapping() {
         if (!data || !data.devices || data.devices.length === 0) {
             container.replaceChildren();
             const empty = document.createElement('div');
-            empty.className = 'text-muted small';
-            empty.textContent = '這台主機目前沒有對應到 PRTG device';
+            if (data?.ipExcluded) {
+                empty.className = 'text-warning small';
+                empty.textContent = `此主機 IP（${data.excludedIp || ''}）已排除 PRTG 對應，因此不會建立 device 對應，也不會取數。`;
+            } else {
+                empty.className = 'text-muted small';
+                empty.textContent = '這台主機目前沒有對應到 PRTG device';
+            }
             container.appendChild(empty);
             return;
         }
@@ -578,6 +583,13 @@ async function loadPrtgMapping() {
 
 function renderPrtgDevices(container, data) {
     container.replaceChildren();
+
+    if (data.ipExcluded) {
+        const warn = document.createElement('div');
+        warn.className = 'text-warning small mb-3';
+        warn.textContent = '此主機 IP 在排除清單中，以下對應來自人工指定。';
+        container.appendChild(warn);
+    }
 
     for (const device of data.devices) {
         const devCard = document.createElement('div');

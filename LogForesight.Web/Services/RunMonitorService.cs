@@ -101,6 +101,12 @@ public class RunMonitorService
             var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hosts.Count };
             var failedHosts = new List<string>();
 
+            var latestFetchRun = runs
+                .Where(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt.ToString("yyyy-MM-dd") == dateStr)
+                .OrderByDescending(r => r.StartedAt)
+                .FirstOrDefault();
+            summary.PrtgOutcome = latestFetchRun?.PrtgOutcome;
+
             foreach (var host in hosts)
             {
                 var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
@@ -288,6 +294,15 @@ public class RunMonitorService
                 ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                 : null,
             TriggerText = TriggerText(run.Trigger),
+            LocalDaysAnalyzed = run.LocalDaysAnalyzed,
+            LocalDaysFailed = run.LocalDaysFailed,
+            NetiqDaysAnalyzed = run.NetiqDaysAnalyzed,
+            NetiqDaysFailed = run.NetiqDaysFailed,
+            NetiqHostsSkipped = run.NetiqHostsSkipped,
+            PrtgOutcome = run.PrtgOutcome,
+            PrtgSensorsFetched = run.PrtgSensorsFetched,
+            PrtgSensorsFailed = run.PrtgSensorsFailed,
+            PrtgTriggeredHosts = run.PrtgTriggeredHosts,
             Logs = logs.Select(l => new RunLogDto
             {
                 LoggedAt = l.LoggedAt,
@@ -337,7 +352,16 @@ public class RunMonitorService
                 AiCalls = run.AiCalls,
                 AiFailures = run.AiFailures,
                 WarnCount = run.WarnCount,
-                ErrorCount = run.ErrorCount
+                ErrorCount = run.ErrorCount,
+                LocalDaysAnalyzed = run.LocalDaysAnalyzed,
+                LocalDaysFailed = run.LocalDaysFailed,
+                NetiqDaysAnalyzed = run.NetiqDaysAnalyzed,
+                NetiqDaysFailed = run.NetiqDaysFailed,
+                NetiqHostsSkipped = run.NetiqHostsSkipped,
+                PrtgOutcome = run.PrtgOutcome,
+                PrtgSensorsFetched = run.PrtgSensorsFetched,
+                PrtgSensorsFailed = run.PrtgSensorsFailed,
+                PrtgTriggeredHosts = run.PrtgTriggeredHosts
             })
             .ToList();
 

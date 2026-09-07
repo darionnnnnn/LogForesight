@@ -521,3 +521,19 @@
 三項已於 PRTG 第 4 輪落地：獨立維護頁 `/admin/prtg`、歷史回填與總開關搬到排程作業頁、
 主機頁整合 PRTG 對應（清單篩選／明細區塊／人工對應）。現況見 docs/PRTG-SPEC.md §4a 與 §7。
 
+
+## 慢查詢：`LatestOccurrences` 的來源過濾未下推
+
+`EfIssueAggregateQuery.LatestOccurrences` 先 `ToList()` 再於記憶體比對 `source_name`，
+`event_id` 選擇性不佳時會拉回大量列（實機量到 7 秒以上）。呼叫端是前景頁面
+（記錄列表與處理狀態彙總），不影響夜間批次。**觸發時機**：使用者反映該頁面慢，
+或執行詳情裡這支查詢的慢 SQL 警告變多時。
+
+## 偶發測試：Sentinel 多段預算用盡
+
+`SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外` 以
+`Thread.Sleep(1200)` 對抗 1 秒總預算，在全套高負載執行時偶發轉紅
+（單獨跑該類別穩定全綠）。失敗形態是警告集合為空，代表整趟掃描在預算內就結束，
+觸發條件（共用計數器在第三個 job 建立時睡眠）在平行掃描下不保證成立。
+**修法**：改成閘門式（`TaskCompletionSource` 保證預算確實逾期）而非加長睡眠。
+**觸發時機**：下次動到該測試檔，或它開始穩定失敗時。

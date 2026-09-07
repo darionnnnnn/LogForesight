@@ -175,17 +175,8 @@ public class AiAnalysisHostedService : BackgroundService
 
             // AI 執行也進執行紀錄（批次D 定案）：逐筆視角可辨識「AI 分析」作業與其件數；
             // 主機×日總表以 JobType 排除它（RunMonitorService）。
-            var batchRun = new BatchRun
-            {
-                HostName = Environment.MachineName,
-                StartedAt = DateTime.Now,
-                AppVersion = typeof(AiAnalysisHostedService).Assembly.GetName().Version?.ToString() ?? "",
-                Args = forceRerun ? "ai --force-rerun" : "ai",
-                Trigger = trigger,
-                JobType = BatchRun.JobTypeAi
-            };
-            try { batchRun.RunId = _batchRuns.StartRun(batchRun); }
-            catch (Exception ex) { Log.Warn(ex, "AI 執行紀錄建立失敗（不影響執行）"); }
+            var args = new[] { forceRerun ? "ai --force-rerun" : "ai" };
+            using BatchRunRecorder recorder = new(_batchRuns, Environment.MachineName, args, trigger, runCts.Token, jobType: BatchRun.JobTypeAi);
 
             try
             {
@@ -205,22 +196,17 @@ public class AiAnalysisHostedService : BackgroundService
             }
             finally
             {
+                recorder.DaysAnalyzed = counters.Done;
+                recorder.AiCalls = counters.Done;
+                recorder.AiFailures = counters.Failed;
+                recorder.Stopped = stopped;
+                recorder.Finish(success ? 0 : 1);
+
                 _runState.EndRun(success, failureMessage);
+                _runState.InvalidatePendingAiCache();
                 // AI 補寫改變了紀錄內容，儀表板／報表快取要失效（批次F）——背景執行不走
                 // HTTP 管線，不會被那條中介軟體涵蓋。
                 _dataVersion.Bump();
-
-                if (batchRun.RunId != 0)
-                {
-                    batchRun.FinishedAt = DateTime.Now;
-                    batchRun.ExitCode = success ? 0 : 1;
-                    batchRun.Stopped = stopped;
-                    batchRun.DaysAnalyzed = counters.Done;
-                    batchRun.AiCalls = counters.Done;
-                    batchRun.AiFailures = counters.Failed;
-                    try { _batchRuns.FinishRun(batchRun); }
-                    catch (Exception ex) { Log.Warn(ex, "AI 執行紀錄收尾失敗（不影響結果）"); }
-                }
             }
         });
 
@@ -407,7 +393,12 @@ public class AiAnalysisHostedService : BackgroundService
     /// <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>——持久層的事交給持久層，
     /// 這裡不直接碰 DbContext（StorageBackend 是本專案唯一的持久層路由點）。
     /// </summary>
-    public int BatchResetAiPending() => _recordQuery.MarkAllForAiRerun();
+    public int BatchResetAiPending()
+    {
+        var count = _recordQuery.MarkAllForAiRerun();
+        _runState.InvalidatePendingAiCache();
+        return count;
+    }
 
     private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore)
     {

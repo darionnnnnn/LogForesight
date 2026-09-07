@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
@@ -9,6 +10,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using NLog;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -18,6 +20,8 @@ namespace LogForesight.Web.Controllers.Api;
 [Permission(Capability.Maintain)]
 public class SettingsController : ControllerBase
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly ISystemSettingsService _settings;
     private readonly AiUsageStore _aiUsage;
     private readonly IAuditService _audit;
@@ -164,6 +168,124 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
     }
 
+    // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────
+
+    /// <summary>PRTG 資源守門受監看感測器預覽（批次F 階段4）</summary>
+    [HttpGet("prtg-resource-guard/preview")]
+    public async Task<ApiResponse<PrtgResourceGuardPreviewResultDto>> PreviewPrtgResourceGuard(CancellationToken ct)
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = "資料存放區未啟用，無法預覽。",
+                Source = "auto",
+                Warnings = Array.Empty<string>(),
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+
+        var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
+        var settings = settingsStore.Get();
+
+        var isOverride = settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0;
+        var source = isOverride ? "override" : "auto";
+
+        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = "尚未設定 PRTG 連線位址或認證資訊，無法預覽受監看感測器。",
+                Source = source,
+                Warnings = Array.Empty<string>(),
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+
+        var console = new ResourceGuardWarningConsole();
+        var sentinelStore = new SentinelStore(_backend.Blob("sentinels"));
+        var sentinels = sentinelStore.GetAll();
+        var prtgStore = _backend.PrtgStore();
+
+        PrtgResourceGuardTargetResult targets;
+        try
+        {
+            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console);
+        }
+        catch (Exception ex)
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = $"解析受監看目標失敗：{ex.Message}",
+                Source = source,
+                Warnings = console.Messages,
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+
+        try
+        {
+            using var client = PrtgClientFactory.Create(settings);
+            var probeResult = await PrtgResourceGuardProbe.FetchSensorValuesAsync(client, targets.SensorObjids, ct);
+
+            if (!probeResult.IsSuccess)
+            {
+                return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+                {
+                    Success = false,
+                    ErrorMessage = probeResult.FailureReason ?? "PRTG 取值失敗。",
+                    Source = source,
+                    Warnings = console.Messages,
+                    Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+                });
+            }
+
+            var sensors = new List<PrtgResourceGuardSensorPreviewDto>();
+            foreach (var id in targets.SensorObjids)
+            {
+                probeResult.Values.TryGetValue(id, out var val);
+                targets.SensorCategories.TryGetValue(id, out var cat);
+
+                sensors.Add(new PrtgResourceGuardSensorPreviewDto
+                {
+                    Objid = id,
+                    Device = val?.Device,
+                    Sensor = val?.Sensor,
+                    Category = cat ?? PrtgResourceGuardTargets.CategoryUnknown,
+                    Status = val?.Status,
+                    Percentage = val?.Percentage,
+                    UnmeasurableReason = val?.UnmeasurableReason
+                });
+            }
+
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = true,
+                Source = source,
+                Warnings = console.Messages,
+                Sensors = sensors
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = $"PRTG 預覽失敗：{ex.Message}",
+                Source = source,
+                Warnings = console.Messages,
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+    }
+
     // ── PRTG 鏡像狀態（PRTG 第 1 輪批次F）────────────────────────────────────────
 
     [HttpGet("prtg-mirror")]
@@ -187,18 +309,6 @@ public class SettingsController : ControllerBase
         var mapConflict = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Conflict);
         var mapUnmatched = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Unmatched);
 
-        var conflicts = hostMaps
-            .Where(m => m.MapStatus == PrtgMapStatus.Conflict)
-            .Take(20)
-            .Select(m => new PrtgHostMapItemDto(m.DeviceObjid, m.Ip, m.HostName, m.Note))
-            .ToList();
-
-        var unmatched = hostMaps
-            .Where(m => m.MapStatus == PrtgMapStatus.Unmatched)
-            .Take(20)
-            .Select(m => new PrtgHostMapItemDto(m.DeviceObjid, m.Ip, m.HostName, m.Note))
-            .ToList();
-
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
         {
             DeviceCount = summary.DeviceCount,
@@ -213,8 +323,161 @@ public class SettingsController : ControllerBase
             MapUnmatched = mapUnmatched,
             WhitelistSensorCount = coverage.WhitelistSensorCount,
             OnMappedDeviceCount = coverage.OnMappedDeviceCount,
-            Conflicts = conflicts,
-            Unmatched = unmatched
+            IpExcludeCount = store.GetIpExcludes().Count
+        });
+    }
+
+    /// <summary>PRTG 主機對應衝突清單分頁</summary>
+    [HttpGet("prtg-host-map")]
+    public ApiResponse<PrtgHostMapPageDto> GetPrtgHostMap(
+        [FromQuery] string status,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        if (!string.Equals(status, "conflict", StringComparison.OrdinalIgnoreCase))
+        {
+            throw DomainException.Validation("目前僅支援 status=conflict 查詢。");
+        }
+
+        var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
+
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgHostMapPageDto>.Ok(new PrtgHostMapPageDto
+            {
+                Page = normPage,
+                PageSize = normPageSize
+            });
+        }
+
+        var store = _backend.PrtgStore();
+        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
+
+        // 依 DeviceObjid 排序後才分頁：GetLatestHostMapWithDate 的查詢沒有 ORDER BY，
+        // 未排序就分頁時同一列可能在兩頁重複出現、也可能整列被跳過。
+        var conflictRows = hostMaps
+            .Where(m => m.MapStatus == PrtgMapStatus.Conflict)
+            .OrderBy(m => m.DeviceObjid)
+            .ToList();
+
+        var total = conflictRows.Count;
+        var pagedRows = conflictRows
+            .Skip((normPage - 1) * normPageSize)
+            .Take(normPageSize)
+            .ToList();
+
+        var allDevices = store.GetAllDevices();
+        var devicesByObjid = allDevices.ToDictionary(d => d.Objid);
+
+        var devicesByNormIp = new Dictionary<string, List<PrtgDeviceRow>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in allDevices)
+        {
+            var normIp = PrtgHostMapper.NormalizeIp(d.Ip);
+            if (normIp == null) continue;
+            if (!devicesByNormIp.TryGetValue(normIp, out var list))
+            {
+                list = new List<PrtgDeviceRow>();
+                devicesByNormIp[normIp] = list;
+            }
+            list.Add(d);
+        }
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var activeHosts = hostStore.GetAll()
+            .Where(h => h.Active && h.MergedInto == null)
+            .ToList();
+
+        var hostsByNormIp = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in activeHosts)
+        {
+            var normIp = PrtgHostMapper.NormalizeIp(h.IpAddress);
+            if (normIp == null) continue;
+            if (!hostsByNormIp.TryGetValue(normIp, out var list))
+            {
+                list = new List<WebHost>();
+                hostsByNormIp[normIp] = list;
+            }
+            list.Add(h);
+        }
+
+        var items = new List<PrtgConflictItemDto>(pagedRows.Count);
+        foreach (var row in pagedRows)
+        {
+            devicesByObjid.TryGetValue(row.DeviceObjid, out var device);
+            var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
+
+            List<PrtgDeviceRow>? sameDevices = null;
+            if (normIp != null)
+            {
+                devicesByNormIp.TryGetValue(normIp, out sameDevices);
+            }
+
+            var isMultiDevice = sameDevices != null && sameDevices.Count > 1;
+            var conflictKind = isMultiDevice ? "multi-device" : "multi-host";
+
+            List<PrtgConflictDeviceDto> sameIpDevices;
+            if (isMultiDevice)
+            {
+                sameIpDevices = sameDevices!
+                    .Select(d => new PrtgConflictDeviceDto
+                    {
+                        Objid = d.Objid,
+                        Name = d.Name,
+                        GroupPath = d.GroupPath
+                    })
+                    .ToList();
+            }
+            else
+            {
+                sameIpDevices = new List<PrtgConflictDeviceDto>
+                {
+                    new()
+                    {
+                        Objid = row.DeviceObjid,
+                        Name = device?.Name,
+                        GroupPath = device?.GroupPath
+                    }
+                };
+            }
+
+            List<PrtgCandidateHostDto> candidateHosts;
+            if (normIp != null && hostsByNormIp.TryGetValue(normIp, out var matchedHosts))
+            {
+                candidateHosts = matchedHosts
+                    .Select(h => new PrtgCandidateHostDto
+                    {
+                        HostId = h.HostId,
+                        HostName = h.HostName,
+                        IpAddress = h.IpAddress
+                    })
+                    .ToList();
+            }
+            else
+            {
+                candidateHosts = new List<PrtgCandidateHostDto>();
+            }
+
+            items.Add(new PrtgConflictItemDto
+            {
+                DeviceObjid = row.DeviceObjid,
+                DeviceName = device?.Name,
+                GroupPath = device?.GroupPath,
+                Ip = row.Ip,
+                HostName = isMultiDevice ? null : row.HostName,
+                Note = row.Note,
+                ConflictKind = conflictKind,
+                SameIpDevices = sameIpDevices,
+                CandidateHosts = candidateHosts
+            });
+        }
+
+        return ApiResponse<PrtgHostMapPageDto>.Ok(new PrtgHostMapPageDto
+        {
+            MapDate = mapDate,
+            Total = total,
+            Page = normPage,
+            PageSize = normPageSize,
+            Items = items
         });
     }
 
@@ -234,14 +497,42 @@ public class SettingsController : ControllerBase
         var hostMap = hostStore.GetAll().ToDictionary(h => h.HostId);
         var manualMaps = store.GetManualMaps();
 
-        var dtos = manualMaps.Select(m => new PrtgManualMapDto
+        var allDevices = store.GetAllDevices();
+        var deviceByObjid = new Dictionary<long, PrtgDeviceRow>();
+        var countByNormIp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var d in allDevices)
         {
-            DeviceObjid = m.DeviceObjid,
-            HostId = m.HostId,
-            HostName = hostMap.TryGetValue(m.HostId, out var host) ? host.HostName : null,
-            Note = m.Note,
-            CreatedBy = m.CreatedBy,
-            CreatedAt = m.CreatedAt
+            deviceByObjid[d.Objid] = d;
+            var normIp = PrtgHostMapper.NormalizeIp(d.Ip);
+            if (normIp != null)
+            {
+                countByNormIp[normIp] = countByNormIp.GetValueOrDefault(normIp) + 1;
+            }
+        }
+
+        var dtos = manualMaps.Select(m =>
+        {
+            var skipped = 0;
+            if (deviceByObjid.TryGetValue(m.DeviceObjid, out var dev))
+            {
+                var normIp = PrtgHostMapper.NormalizeIp(dev.Ip);
+                if (normIp != null && countByNormIp.TryGetValue(normIp, out var totalCount))
+                {
+                    skipped = Math.Max(0, totalCount - 1);
+                }
+            }
+
+            return new PrtgManualMapDto
+            {
+                DeviceObjid = m.DeviceObjid,
+                HostId = m.HostId,
+                HostName = hostMap.TryGetValue(m.HostId, out var host) ? host.HostName : null,
+                Note = m.Note,
+                CreatedBy = m.CreatedBy,
+                CreatedAt = m.CreatedAt,
+                SameIpSkippedCount = skipped
+            };
         }).OrderBy(m => m.DeviceObjid).ToList();
 
         return ApiResponse<List<PrtgManualMapDto>>.Ok(dtos);
@@ -286,6 +577,8 @@ public class SettingsController : ControllerBase
                 request.Note
             });
 
+        var remapWarning = TryRemapToday();
+
         var saved = store.GetManualMaps().FirstOrDefault(m => m.DeviceObjid == request.DeviceObjid);
 
         return ApiResponse<PrtgManualMapDto>.Ok(new PrtgManualMapDto
@@ -295,13 +588,14 @@ public class SettingsController : ControllerBase
             HostName = host.HostName,
             Note = request.Note,
             CreatedBy = saved?.CreatedBy ?? createdBy,
-            CreatedAt = saved?.CreatedAt ?? row.CreatedAt
+            CreatedAt = saved?.CreatedAt ?? row.CreatedAt,
+            RemapWarning = remapWarning
         });
     }
 
     /// <summary>刪除一筆 PRTG 人工主機對應</summary>
     [HttpDelete("prtg-manual-map/{deviceObjid:long}")]
-    public ApiResponse<bool> DeletePrtgManualMap(long deviceObjid)
+    public ApiResponse<PrtgDeleteResultDto> DeletePrtgManualMap(long deviceObjid)
     {
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
@@ -316,7 +610,161 @@ public class SettingsController : ControllerBase
             targetId: deviceObjid.ToString(),
             detail: new { DeviceObjid = deviceObjid, Deleted = deleted });
 
-        return ApiResponse<bool>.Ok(deleted > 0);
+        var remapWarning = TryRemapToday();
+
+        return ApiResponse<PrtgDeleteResultDto>.Ok(new PrtgDeleteResultDto
+        {
+            Deleted = deleted > 0,
+            RemapWarning = remapWarning
+        });
+    }
+
+    // ── PRTG IP 排除清單（批次B 階段2）──────────────────────────────────────────
+
+    /// <summary>取得全部 PRTG IP 排除清單，依 IP 排序</summary>
+    [HttpGet("prtg-ip-excludes")]
+    public ApiResponse<List<PrtgIpExcludeDto>> GetPrtgIpExcludes()
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<List<PrtgIpExcludeDto>>.Ok(new List<PrtgIpExcludeDto>());
+        }
+
+        var store = _backend.PrtgStore();
+        var dtos = store.GetIpExcludes()
+            .OrderBy(e => e.Ip, StringComparer.OrdinalIgnoreCase)
+            .Select(e => new PrtgIpExcludeDto
+            {
+                Ip = e.Ip,
+                Note = e.Note,
+                CreatedBy = e.CreatedBy,
+                CreatedAt = e.CreatedAt
+            })
+            .ToList();
+
+        return ApiResponse<List<PrtgIpExcludeDto>>.Ok(dtos);
+    }
+
+    /// <summary>新增或更新一筆 PRTG IP 排除</summary>
+    [HttpPut("prtg-ip-excludes")]
+    public ApiResponse<PrtgIpExcludeDto> SetPrtgIpExclude([FromBody] SetPrtgIpExcludeRequest request)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        var normIp = PrtgHostMapper.NormalizeIp(request?.Ip);
+        if (normIp == null)
+            throw DomainException.Validation("IP 位址不能為空白。");
+
+        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
+
+        var store = _backend.PrtgStore();
+        var row = new PrtgIpExcludeRow
+        {
+            Ip = normIp,
+            Note = request!.Note,
+            CreatedBy = createdBy,
+            CreatedAt = DateTime.Now
+        };
+        store.UpsertIpExclude(row);
+
+        _audit.Record(
+            action: AuditActions.PrtgIpExcludeSet, // prtg_ip_exclude_set
+            summary: $"設定 PRTG 排除 IP {normIp}",
+            targetKind: "prtg_ip_exclude",
+            targetId: normIp,
+            detail: new
+            {
+                Ip = normIp,
+                request.Note
+            });
+
+        var remapWarning = TryRemapToday();
+
+        var saved = store.GetIpExcludes().FirstOrDefault(e => e.Ip == normIp);
+
+        return ApiResponse<PrtgIpExcludeDto>.Ok(new PrtgIpExcludeDto
+        {
+            Ip = normIp,
+            Note = request.Note,
+            CreatedBy = saved?.CreatedBy ?? createdBy,
+            CreatedAt = saved?.CreatedAt ?? row.CreatedAt,
+            RemapWarning = remapWarning
+        });
+    }
+
+    /// <summary>刪除一筆 PRTG IP 排除</summary>
+    [HttpDelete("prtg-ip-excludes/{ip}")]
+    public ApiResponse<PrtgDeleteResultDto> DeletePrtgIpExclude(string ip)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        var normIp = PrtgHostMapper.NormalizeIp(ip);
+        if (normIp == null)
+            throw DomainException.Validation("IP 位址不能為空白。");
+
+        var store = _backend.PrtgStore();
+        var deleted = store.DeleteIpExclude(normIp);
+
+        _audit.Record(
+            action: AuditActions.PrtgIpExcludeDelete, // prtg_ip_exclude_delete
+            summary: $"刪除 PRTG 排除 IP {normIp}",
+            targetKind: "prtg_ip_exclude",
+            targetId: normIp,
+            detail: new { Ip = normIp, Deleted = deleted });
+
+        var remapWarning = TryRemapToday();
+
+        return ApiResponse<PrtgDeleteResultDto>.Ok(new PrtgDeleteResultDto
+        {
+            Deleted = deleted > 0,
+            RemapWarning = remapWarning
+        });
+    }
+
+    /// <summary>同步重算今天的 PRTG 主機對應；失敗時記錄 WARN 並回傳警告文字，不擲例外</summary>
+    private string? TryRemapToday()
+    {
+        if (_backend == null) return null;
+        try
+        {
+            var hostStore = new HostStore(_backend.Blob("hosts"));
+            var mapper = new PrtgHostMapper(_backend.PrtgStore(), hostStore, new RemapConsole());
+            mapper.MapForDate(DateTime.Today);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "重算今日 PRTG 對應失敗");
+            return $"重算今日 PRTG 對應失敗: {ex.Message}";
+        }
+    }
+
+    private sealed class ResourceGuardWarningConsole : IRunConsole
+    {
+        private readonly List<string> _messages = new();
+        public IReadOnlyList<string> Messages => _messages;
+
+        public void WriteLine(string message = "")
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                _messages.Add(message);
+            }
+        }
+    }
+
+    private sealed class RemapConsole : IRunConsole
+    {
+        public void WriteLine(string message = "")
+        {
+            if (!string.IsNullOrEmpty(message))
+            {
+                Log.Debug(message);
+            }
+        }
     }
 
     // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────

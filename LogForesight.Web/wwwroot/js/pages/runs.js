@@ -31,6 +31,58 @@ const STATUS_META = {
     local_disabled: { label: '本機分析已停用', color: '#94a3b8' }
 };
 
+const PRTG_OUTCOME_META = {
+    disabled: { text: '未啟用', bg: 'bg-secondary' },
+    success: { text: '成功', bg: 'bg-success' },
+    partial: { text: '部分失敗', bg: 'bg-warning text-dark' },
+    failed: { text: '失敗', bg: 'bg-danger' }
+};
+
+function renderPrtgBadge(outcome) {
+    const meta = PRTG_OUTCOME_META[outcome];
+    if (!meta) return null;
+    const badge = document.createElement('span');
+    badge.className = `badge ${meta.bg}`;
+    badge.textContent = meta.text;
+    return badge;
+}
+
+function formatLocalBranch(analyzed, failed) {
+    if (analyzed == null) return '—';
+    return `${analyzed}${failed > 0 ? `（失敗 ${failed}）` : ''}`;
+}
+
+function formatNetiqBranch(analyzed, failed, skipped) {
+    if (analyzed == null) return '—';
+    let text = `${analyzed}`;
+    if (failed > 0) text += `（失敗 ${failed}）`;
+    if (skipped > 0) text += `（跳過 ${skipped}）`;
+    return text;
+}
+
+function renderPrtgCell(outcome, fetched, failed, triggeredHosts) {
+    if (outcome == null) return document.createTextNode('—');
+    const badge = renderPrtgBadge(outcome);
+    if (!badge) return document.createTextNode('—');
+    if (outcome === 'disabled') return badge;
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(badge);
+    let text = `sensor ${fetched ?? 0}`;
+    if ((failed ?? 0) > 0) {
+        text += `／失敗 ${failed}`;
+    }
+    // 觸發主機數：sensor 數是「抓了多少」，觸發主機數才答得出「為誰抓的」，
+    // 兩者一起看才知道當晚的觸發式取數規模是否合理。
+    if ((triggeredHosts ?? 0) > 0) {
+        text += `（觸發主機 ${triggeredHosts} 台）`;
+    }
+    const sensorSpan = document.createElement('span');
+    sensorSpan.textContent = text;
+    wrap.appendChild(sensorSpan);
+    return wrap;
+}
+
 let currentDays = 14;
 // 「全部」按鈕的天數由後端 MaxDays（RunLogRetentionDays）決定，不寫死
 let summaryMaxDays = null;
@@ -122,6 +174,7 @@ function renderSummary(summaryPage) {
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
+            { title: 'PRTG', render: s => s.prtgOutcome != null ? (renderPrtgBadge(s.prtgOutcome) ?? document.createTextNode('—')) : document.createTextNode('—') },
             { title: '失敗主機', render: s => failedHostsCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
@@ -268,7 +321,9 @@ const ERROR_COLUMNS = [
     { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => levelBadge(e.level) },
     { title: '訊息', render: e => messageCell(e) },
     { title: '次數', className: 'text-end', sortKey: 'count', sortDefaultDir: 'desc', sortValue: e => e.count, render: e => formatNumber(e.count) },
-    { title: '影響主機', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
+    // 這一欄的資料來源是 BatchRun.HostName＝**跑批次的站台**，不是被分析的主機。
+    // 標成「影響主機」會讓人把站台名誤讀成問題主機（回饋 2.5 的誤判成因之一）。
+    { title: '執行站台', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
     { title: '最近發生', sortKey: 'lastSeen', sortDefaultDir: 'desc', sortValue: e => e.lastSeen, render: e => formatDateTime(e.lastSeen) },
     { title: '', className: 'text-end', render: e => detailButton(e.latestRunId) }
 ];
@@ -309,6 +364,21 @@ const RUN_LIST_COLUMNS = [
     },
     { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.triggerText },
     { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
+    {
+        title: '本機', className: 'text-end', sortKey: 'localDaysAnalyzed', sortDefaultDir: 'desc',
+        sortValue: r => r.localDaysAnalyzed ?? -1,
+        render: r => formatLocalBranch(r.localDaysAnalyzed, r.localDaysFailed)
+    },
+    {
+        title: 'NetIQ', className: 'text-end', sortKey: 'netiqDaysAnalyzed', sortDefaultDir: 'desc',
+        sortValue: r => r.netiqDaysAnalyzed ?? -1,
+        render: r => formatNetiqBranch(r.netiqDaysAnalyzed, r.netiqDaysFailed, r.netiqHostsSkipped)
+    },
+    {
+        title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
+        sortValue: r => r.prtgOutcome ?? '',
+        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts)
+    },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
         sortValue: r => r.errorCount, render: r => `${r.warnCount} / ${r.errorCount}`
@@ -439,13 +509,26 @@ function renderStats(container, detail) {
             ? [{ label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` }]
             : []),
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
-        { label: '版本', value: detail.appVersion }
+        { label: '版本', value: detail.appVersion },
+        { label: '本機', value: formatLocalBranch(detail.localDaysAnalyzed, detail.localDaysFailed) },
+        { label: 'NetIQ', value: formatNetiqBranch(detail.netiqDaysAnalyzed, detail.netiqDaysFailed, detail.netiqHostsSkipped) },
+        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed) }
     ];
 
     for (const stat of stats) {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-2';
-        col.append(...labelValue(stat.label, stat.value, { labelClass: 'lf-stat__label' }));
+        if (stat.node) {
+            const labelEl = document.createElement('div');
+            labelEl.className = 'lf-stat__label';
+            labelEl.textContent = stat.label;
+            const valueEl = document.createElement('div');
+            valueEl.className = 'fw-semibold';
+            valueEl.appendChild(stat.node);
+            col.append(labelEl, valueEl);
+        } else {
+            col.append(...labelValue(stat.label, stat.value, { labelClass: 'lf-stat__label' }));
+        }
         container.appendChild(col);
     }
 }
@@ -528,6 +611,7 @@ let canMaintainSchedule = false;
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
 // 只是不顯示——避免隱藏期間存檔把設定意外歸零。
 let aiAvailable = false;
+let lastAiScheduleStatus = null;
 // 分析本機主機開關（回饋十八輪批次D）：影響「立即執行」modal 的「全部主機」描述文字。
 let localAnalysisEnabled = true;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
@@ -541,6 +625,7 @@ async function loadSchedule() {
         for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
     }
 
+    const statusPromise = refreshScheduleStatus();
     const [options, aiStatus, settings] = await Promise.all([
         api.get('/api/admin/schedule/options'),
         api.get('/api/ai/status', { silent: true }).catch(() => null),
@@ -548,6 +633,7 @@ async function loadSchedule() {
     ]);
     aiAvailable = !!aiStatus?.available;
     document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
+    if (lastAiScheduleStatus) applyAiScheduleStatus(lastAiScheduleStatus);
 
     applyScheduleOptions(options);
     if (settings) {
@@ -559,7 +645,7 @@ async function loadSchedule() {
             daysHintEl.textContent = `將回填 ${settings.prtgBackfillDays} 天`;
         }
     }
-    await refreshScheduleStatus();
+    await statusPromise;
 }
 
 function applyScheduleOptions(options) {
@@ -774,6 +860,17 @@ function stopElapsedTicker(elementId = 'schedule-elapsed') {
 
 function applyScheduleStatus(status) {
     document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
+    const pausedBadge = document.getElementById('schedule-paused-badge');
+    if (pausedBadge) {
+        if (status.pausedReason) {
+            pausedBadge.textContent = status.pausedReason;
+            pausedBadge.classList.remove('d-none');
+        } else {
+            pausedBadge.classList.add('d-none');
+            pausedBadge.textContent = '';
+        }
+    }
+
     document.getElementById('schedule-run-state').textContent = status.isRunning
         ? `執行中（${status.triggerText}）`
         : '閒置';
@@ -817,6 +914,7 @@ function applyScheduleStatus(status) {
 }
 
 function applyAiScheduleStatus(status) {
+    lastAiScheduleStatus = status;
     const runStateEl = document.getElementById('schedule-ai-run-state');
     if (runStateEl) {
         runStateEl.textContent = status.isRunning
@@ -840,6 +938,17 @@ function applyAiScheduleStatus(status) {
             pendingEl.textContent = '0 件（已全部完成）';
             pendingEl.style.color = '';
             pendingEl.classList.add('text-muted');
+        }
+    }
+
+    const hintEl = document.getElementById('ai-schedule-disabled-hint');
+    if (hintEl) {
+        if (aiAvailable && !status.aiEnabled && status.pendingTotal > 0) {
+            hintEl.textContent = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
+            hintEl.classList.remove('d-none');
+        } else {
+            hintEl.textContent = '';
+            hintEl.classList.add('d-none');
         }
     }
 
@@ -885,7 +994,8 @@ function applyAiScheduleStatus(status) {
     wasAiScheduleRunning = status.isRunning;
 }
 
-// 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
+// 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）。
+// 放模組層而非函式內：狀態卡執行中每 3 秒重繪一次，對照表是常數，不必每次重建。
 const PROGRESS_PHASE_LABEL = {
     local: '本機分析',
     netiq: 'NetIQ 機房分析',
@@ -901,9 +1011,10 @@ const PROGRESS_PHASE_UNIT = {
 
 /**
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
- * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（準備中…）；非執行中整組隱藏。
+ * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（有 labelPrefix 則「${labelPrefix}　準備中…」）；非執行中整組隱藏。
+ * 若 completed 為 true，畫滿格（100%）、移除條紋動畫，並顯示「已完成」文字。
  */
-function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日', customLabel = null) {
+function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日', customLabel = null, completed = false) {
     if (!isVisible) {
         wrapEl?.classList.add('d-none');
         textEl?.classList.add('d-none');
@@ -911,6 +1022,20 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
     }
     wrapEl?.classList.remove('d-none');
     textEl?.classList.remove('d-none');
+
+    if (completed) {
+        const defaultLabel = total > 0
+            ? (labelPrefix ? `${labelPrefix}　已完成 ${done} / ${total} ${unit}` : `已完成 ${done} / ${total} ${unit}`)
+            : (labelPrefix ? `${labelPrefix}　已完成` : '已完成');
+        const label = customLabel || defaultLabel;
+        barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
+        if (barEl) {
+            barEl.style.width = '100%';
+            barEl.title = label;
+        }
+        if (textEl) textEl.textContent = label;
+        return;
+    }
 
     if (total > 0) {
         const pct = Math.min(100, Math.round((done / total) * 100));
@@ -922,12 +1047,13 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
         }
         if (textEl) textEl.textContent = label;
     } else {
+        const label = customLabel || (labelPrefix ? `${labelPrefix}　準備中…` : '準備中…');
         barEl?.classList.add('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
             barEl.style.width = '100%';
-            barEl.title = '準備中…';
+            barEl.title = label;
         }
-        if (textEl) textEl.textContent = '準備中…';
+        if (textEl) textEl.textContent = label;
     }
 }
 
@@ -939,9 +1065,9 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
  * AI 補寫進度改在 AI 分析狀態卡自己那條進度條。）
  *
  * 本機進度（回饋十七輪批次E）：本機與 NetIQ 改並行執行後，本機也是獨立一條軌，畫在主進度
- * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「準備中」，
+ * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「NetIQ 機房分析　準備中…」，
  * 因為 NetiqHosts 範圍（僅指定 NetIQ 主機）時本機根本不會執行，不該一直顯示一條空的
- * 「本機分析 準備中」軌。 */
+ * 「本機分析　準備中…」軌。 */
 function renderScheduleProgress(status) {
     const localWrap = document.getElementById('schedule-local-progress-wrap');
     const localBar = document.getElementById('schedule-local-progress-bar');
@@ -955,29 +1081,41 @@ function renderScheduleProgress(status) {
 
     updateProgressBar(
         { wrapEl: localWrap, barEl: localBar, textEl: localText },
-        status.isRunning && !!status.localProgressPhase,
+        status.isRunning && (!!status.localProgressPhase || !!status.localCompleted),
         status.localProgressDone,
         status.localProgressTotal,
-        PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? status.localProgressPhase,
-        PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日'
+        PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? (status.localProgressPhase || '本機分析'),
+        PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日',
+        null,
+        status.localCompleted
     );
 
     updateProgressBar(
         { wrapEl: wrap, barEl: bar, textEl: text },
-        status.isRunning && !!status.progressPhase,
+        status.isRunning && (!!status.progressPhase || !!status.netiqCompleted),
         status.progressDone,
         status.progressTotal,
-        PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase,
-        PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日'
+        PROGRESS_PHASE_LABEL[status.progressPhase] ?? (status.progressPhase || 'NetIQ 機房分析'),
+        PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日',
+        null,
+        status.netiqCompleted
     );
+
+    let prtgCustomLabel = null;
+    if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
+        const prefix = PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 觸發式取數');
+        prtgCustomLabel = `${prefix}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
+    }
 
     updateProgressBar(
         { wrapEl: prtgWrap, barEl: prtgBar, textEl: prtgText },
-        status.isRunning && !!status.prtgProgressPhase,
+        status.isRunning && (!!status.prtgProgressPhase || !!status.prtgCompleted),
         status.prtgProgressDone,
         status.prtgProgressTotal,
-        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? status.prtgProgressPhase,
-        PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor'
+        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 擷取'),
+        PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor',
+        prtgCustomLabel,
+        status.prtgCompleted
     );
 }
 

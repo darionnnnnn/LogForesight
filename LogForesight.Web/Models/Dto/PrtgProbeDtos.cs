@@ -61,8 +61,7 @@ public class PrtgMirrorStatusDto
     public int MapUnmatched { get; set; }
     public int WhitelistSensorCount { get; set; }
     public int OnMappedDeviceCount { get; set; }
-    public IReadOnlyList<PrtgHostMapItemDto> Conflicts { get; set; } = Array.Empty<PrtgHostMapItemDto>();
-    public IReadOnlyList<PrtgHostMapItemDto> Unmatched { get; set; } = Array.Empty<PrtgHostMapItemDto>();
+    public int IpExcludeCount { get; set; }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>
@@ -82,6 +81,72 @@ public class PrtgManualMapDto
     public string? Note { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; }
+    public string? RemapWarning { get; set; }
+    public int SameIpSkippedCount { get; set; }
+}
+
+/// <summary>刪除類操作的回應：是否真的刪到，以及重算今日對應的警告（null＝重算正常）。
+/// 刪除本身已經成功，重算失敗只是「畫面上的衝突清單要等下次夜間批次才會更新」，
+/// 因此不擲例外，改由這個欄位讓畫面說明清楚。</summary>
+public class PrtgDeleteResultDto
+{
+    public bool Deleted { get; set; }
+    public string? RemapWarning { get; set; }
+}
+
+/// <summary>PRTG 主機對應衝突清單分頁回應</summary>
+public class PrtgHostMapPageDto
+{
+    public DateTime? MapDate { get; set; }
+    public int Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<PrtgConflictItemDto> Items { get; set; } = new();
+}
+
+/// <summary>PRTG 主機對應衝突項目</summary>
+public class PrtgConflictItemDto
+{
+    public long DeviceObjid { get; set; }
+    public string? DeviceName { get; set; }
+    public string? GroupPath { get; set; }
+    public string? Ip { get; set; }
+    public string? HostName { get; set; }
+    public string? Note { get; set; }
+    public string ConflictKind { get; set; } = string.Empty;
+    public List<PrtgConflictDeviceDto> SameIpDevices { get; set; } = new();
+    public List<PrtgCandidateHostDto> CandidateHosts { get; set; } = new();
+}
+
+public class PrtgConflictDeviceDto
+{
+    public long Objid { get; set; }
+    public string? Name { get; set; }
+    public string? GroupPath { get; set; }
+}
+
+public class PrtgCandidateHostDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+}
+
+/// <summary>PRTG IP 排除清單項目</summary>
+public class PrtgIpExcludeDto
+{
+    public string Ip { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public string? CreatedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string? RemapWarning { get; set; }
+}
+
+/// <summary>設定 PRTG IP 排除請求</summary>
+public class SetPrtgIpExcludeRequest
+{
+    public string Ip { get; set; } = string.Empty;
+    public string? Note { get; set; }
 }
 
 /// <summary>主機 PRTG 監控對應資訊</summary>
@@ -89,6 +154,8 @@ public class HostPrtgMappingDto
 {
     public DateTime? MapDate { get; set; }
     public List<HostPrtgDeviceDto> Devices { get; set; } = new();
+    public bool IpExcluded { get; set; }
+    public string? ExcludedIp { get; set; }
 }
 
 /// <summary>主機對應的 PRTG 裝置資訊</summary>
@@ -111,4 +178,25 @@ public class HostPrtgSensorDto
     public bool Paused { get; set; }
 }
 
+/// <summary>PRTG 資源守門受監看感測器預覽項目</summary>
+public class PrtgResourceGuardSensorPreviewDto
+{
+    public long Objid { get; set; }
+    public string? Device { get; set; }
+    public string? Sensor { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public string? Status { get; set; }
+    public double? Percentage { get; set; }
+    public string? UnmeasurableReason { get; set; }
+}
 
+/// <summary>PRTG 資源守門受監看感測器預覽結果</summary>
+public class PrtgResourceGuardPreviewResultDto
+{
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    /// <summary>清單來源：override（覆寫清單）或 auto（自動偵測）</summary>
+    public string Source { get; set; } = "auto";
+    public IReadOnlyList<string> Warnings { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<PrtgResourceGuardSensorPreviewDto> Sensors { get; set; } = Array.Empty<PrtgResourceGuardSensorPreviewDto>();
+}

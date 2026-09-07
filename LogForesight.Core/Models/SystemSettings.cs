@@ -420,4 +420,31 @@ public class SystemSettings
         "Windows Network Card",
         "WMI Free Disk Space (Multi Disk)"
     };
+
+    /// <summary>資源守門總開關。預設關閉：未啟用時不監看主機資源，批次正常執行</summary>
+    public bool PrtgResourceGuardEnabled { get; set; }
+
+    /// <summary>指定監看的 PRTG 感測器 objid 清單（一行一個 objid）。空清單＝自動偵測</summary>
+    public List<string> PrtgResourceGuardSensorObjids { get; set; } = new();
+
+    /// <summary>CPU 使用率門檻（百分比，1~100）。CPU 使用率 ≥ 此值算緊張</summary>
+    public int PrtgResourceGuardCpuPercent { get; set; } = 85;
+
+    /// <summary>可用記憶體門檻（百分比，0~99）。可用記憶體百分比 ≤ 此值算緊張</summary>
+    public int PrtgResourceGuardMemoryFreePercent { get; set; } = 10;
+
+    /// <summary>資源檢查間隔秒數（15~600）</summary>
+    public int PrtgResourceGuardCheckSeconds { get; set; } = 60;
+
+    /// <summary>判定緊張後等待多久再檢查（1~60 分鐘）</summary>
+    public int PrtgResourceGuardPauseMinutes { get; set; } = 5;
+
+    /// <summary>連續幾次超標才算緊張（1~10 次）</summary>
+    public int PrtgResourceGuardStrikes { get; set; } = 2;
+
+    /// <summary>
+    /// 單趟累計暫停上限（10~600 分鐘）。
+    /// 存在理由：門檻設錯時整晚只會暫停、什麼都沒分析、而且每晚重演；超過累計上限後放行並警告，這趟不再暫停。
+    /// </summary>
+    public int PrtgResourceGuardMaxPauseMinutes { get; set; } = 120;
 }

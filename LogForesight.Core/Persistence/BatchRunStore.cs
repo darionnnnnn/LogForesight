@@ -52,6 +52,48 @@ public class BatchRun
 
     /// <summary>AI 分析排程執行的 <see cref="JobType"/> 值</summary>
     public const string JobTypeAi = "ai";
+
+    /// <summary>本機分析成功天數（null＝舊紀錄或本機未產出）</summary>
+    public int? LocalDaysAnalyzed { get; set; }
+
+    /// <summary>本機分析失敗天數（null＝舊紀錄或本機未產出）</summary>
+    public int? LocalDaysFailed { get; set; }
+
+    /// <summary>NetIQ 機房分析成功主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqDaysAnalyzed { get; set; }
+
+    /// <summary>NetIQ 機房分析失敗主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqDaysFailed { get; set; }
+
+    /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
+    public int? NetiqHostsSkipped { get; set; }
+
+    /// <summary>
+    /// PRTG 擷取成果狀態：<see cref="PrtgOutcomeDisabled"/> | <see cref="PrtgOutcomeSuccess"/> |
+    /// <see cref="PrtgOutcomePartial"/> | <see cref="PrtgOutcomeFailed"/>。null＝舊紀錄或本次未執行 PRTG。
+    /// </summary>
+    public string? PrtgOutcome { get; set; }
+
+    /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgSensorsFetched { get; set; }
+
+    /// <summary>PRTG 觸發式取數失敗感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgSensorsFailed { get; set; }
+
+    /// <summary>PRTG 觸發式取數問題主機數（null＝舊紀錄或 PRTG 未產出）</summary>
+    public int? PrtgTriggeredHosts { get; set; }
+
+    /// <summary>PRTG 未啟用（<see cref="PrtgOutcome"/>）</summary>
+    public const string PrtgOutcomeDisabled = "disabled";
+
+    /// <summary>PRTG 擷取成功（<see cref="PrtgOutcome"/>）</summary>
+    public const string PrtgOutcomeSuccess = "success";
+
+    /// <summary>PRTG 擷取部分成功（<see cref="PrtgOutcome"/>）</summary>
+    public const string PrtgOutcomePartial = "partial";
+
+    /// <summary>PRTG 擷取失敗（<see cref="PrtgOutcome"/>）</summary>
+    public const string PrtgOutcomeFailed = "failed";
 }
 
 /// <summary>

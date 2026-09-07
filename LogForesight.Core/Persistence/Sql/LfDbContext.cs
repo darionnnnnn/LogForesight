@@ -79,6 +79,9 @@ public class LfDbContext : DbContext
     /// <summary>PRTG 人工主機對應（↔ lf_prtg_manual_map）</summary>
     public DbSet<PrtgManualMapRow> PrtgManualMaps => Set<PrtgManualMapRow>();
 
+    /// <summary>PRTG IP 排除清單（↔ lf_prtg_ip_excludes）</summary>
+    public DbSet<PrtgIpExcludeRow> PrtgIpExcludes => Set<PrtgIpExcludeRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -516,6 +519,16 @@ public class LfDbContext : DbContext
 
             e.HasIndex(x => x.HostId).HasDatabaseName("IX_lf_prtg_manual_map_host");
         });
+
+        b.Entity<PrtgIpExcludeRow>(e =>
+        {
+            e.ToTable("lf_prtg_ip_excludes");
+            e.HasKey(x => x.Ip);
+            e.Property(x => x.Ip).HasColumnName("ip").HasMaxLength(64);
+            e.Property(x => x.Note).HasColumnName("note").HasMaxLength(512);
+            e.Property(x => x.CreatedBy).HasColumnName("created_by").HasMaxLength(64);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+        });
     }
 }
 
@@ -886,5 +899,14 @@ public class PrtgManualMapRow
     public long HostId { get; set; }
     public string? CreatedBy { get; set; }
     public string? Note { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG IP 排除清單（長期有效，不按日）。↔ lf_prtg_ip_excludes</summary>
+public class PrtgIpExcludeRow
+{
+    public string Ip { get; set; } = string.Empty;   // 主鍵
+    public string? Note { get; set; }
+    public string? CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; }
 }

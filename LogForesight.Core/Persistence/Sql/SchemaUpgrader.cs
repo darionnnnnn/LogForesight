@@ -217,6 +217,9 @@ internal static class SchemaUpgrader
             isSqlite ? SqliteCreatePrtgManualMap : SqlServerCreatePrtgManualMap);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_manual_map",
             "IX_lf_prtg_manual_map_host", "host_id");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_ip_excludes",
+            isSqlite ? SqliteCreatePrtgIpExcludes : SqlServerCreatePrtgIpExcludes);
     }
 
 
@@ -774,6 +777,26 @@ internal static class SchemaUpgrader
             note nvarchar(512) NULL,
             created_at datetime2 NOT NULL,
             CONSTRAINT PK_lf_prtg_manual_map PRIMARY KEY (device_objid)
+        )
+        """;
+
+    private const string SqliteCreatePrtgIpExcludes = """
+        CREATE TABLE lf_prtg_ip_excludes (
+            ip TEXT NOT NULL,
+            note TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            CONSTRAINT PK_lf_prtg_ip_excludes PRIMARY KEY (ip)
+        )
+        """;
+
+    private const string SqlServerCreatePrtgIpExcludes = """
+        CREATE TABLE lf_prtg_ip_excludes (
+            ip nvarchar(64) NOT NULL,
+            note nvarchar(512) NULL,
+            created_by nvarchar(64) NULL,
+            created_at datetime2 NOT NULL,
+            CONSTRAINT PK_lf_prtg_ip_excludes PRIMARY KEY (ip)
         )
         """;
 

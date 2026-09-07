@@ -7,7 +7,8 @@
         <h2 class="lf-card__title">排程設定</h2>
         <div class="d-flex align-items-center gap-2">
             <span id="schedule-debug-dump-badge" class="lf-badge lf-badge--warning d-none">AI 診斷傾印開啟中</span>
-            <span id="schedule-status-text" class="text-muted small"></span>
+            <span id="schedule-paused-badge" class="badge bg-warning text-dark d-none"></span>
+            <span id="schedule-status-text" class="text-muted small">載入中…</span>
         </div>
     </div>
     <div class="lf-card__body">
@@ -140,6 +141,7 @@
                         <div class="mb-3">
                             <div class="small text-muted mb-1">待補分析</div>
                             <div class="fw-semibold" id="schedule-ai-pending-total">—</div>
+                            <div id="ai-schedule-disabled-hint" class="text-warning small d-none"></div>
                         </div>
                         <div class="progress mb-1 d-none" id="schedule-ai-progress-wrap" style="height: 6px;">
                             <div class="progress-bar" id="schedule-ai-progress-bar" role="progressbar"></div>
@@ -157,7 +159,7 @@
                             <h3 class="h6">PRTG 歷史回填</h3>
                             <p class="text-muted small mb-3">
                                 回填會從昨天往前補數值與狀態變更，只在離峰手動執行。
-                                回填天數在 <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a> 頁設定。
+                                回填天數在 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護</a> 頁設定。
                             </p>
                             <div class="d-flex align-items-center gap-3 mb-3">
                                 <button type="button" class="btn btn-primary btn-sm" id="prtg-backfill-start" data-maintain-only>開始回填</button>

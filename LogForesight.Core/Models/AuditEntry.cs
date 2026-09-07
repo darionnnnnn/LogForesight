@@ -152,6 +152,10 @@ public static class AuditActions
     public const string PrtgManualMapSet = "prtg_manual_map_set";
     public const string PrtgManualMapDelete = "prtg_manual_map_delete";
 
+    // PRTG IP 排除清單（批次B 階段2）
+    public const string PrtgIpExcludeSet = "prtg_ip_exclude_set";
+    public const string PrtgIpExcludeDelete = "prtg_ip_exclude_delete";
+
     // PRTG 鏡像資料匯出／匯入（PRTG 任務G）
     public const string PrtgDataExport = "prtg_data_export";
     public const string PrtgDataImport = "prtg_data_import";

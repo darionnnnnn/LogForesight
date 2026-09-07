@@ -18,12 +18,14 @@ public sealed class PrtgFetchService
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
     private readonly IRunConsole _console;
+    private readonly PrtgResourceGuard? _guard;
 
-    public PrtgFetchService(PrtgClient client, EfPrtgStore store, IRunConsole console)
+    public PrtgFetchService(PrtgClient client, EfPrtgStore store, IRunConsole console, PrtgResourceGuard? guard = null)
     {
         _client = client;
         _store = store;
         _console = console;
+        _guard = guard;
     }
 
     /// <summary>
@@ -370,6 +372,7 @@ public sealed class PrtgFetchService
             try
             {
                 ct.ThrowIfCancellationRequested();
+                if (_guard != null) await _guard.WaitIfBusyAsync(ct);
                 var query = $"api/historicdata.json?id={target.Objid}&avg=3600&sdate={sdate}&edate={edate}";
                 var json = await _client.GetJsonAsync(query, ct);
                 var rows = ParseHistoricData(json, target.Objid, out var unparsed);

@@ -1,5 +1,6 @@
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -129,10 +130,28 @@ public class HostDetailController : ControllerBase
         _visibility.EnsureVisible(hostId);
 
         var store = _prtgStore;
+        var host = _visibility.GetVisibleHosts().FirstOrDefault(h => h.HostId == hostId);
+        var ipExcluded = false;
+        string? excludedIp = null;
+        if (!string.IsNullOrWhiteSpace(host?.IpAddress))
+        {
+            var normHostIp = PrtgHostMapper.NormalizeIp(host.IpAddress);
+            var match = store.GetIpExcludes().FirstOrDefault(e => PrtgHostMapper.NormalizeIp(e.Ip) == normHostIp);
+            if (match != null)
+            {
+                ipExcluded = true;
+                excludedIp = match.Ip;
+            }
+        }
+
         var mapRows = store.GetLatestHostMap();
         if (mapRows.Count == 0)
         {
-            return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto());
+            return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto
+            {
+                IpExcluded = ipExcluded,
+                ExcludedIp = excludedIp
+            });
         }
 
         var targetRows = mapRows.Where(r => r.HostId == hostId).ToList();
@@ -164,7 +183,9 @@ public class HostDetailController : ControllerBase
         return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto
         {
             MapDate = mapDate,
-            Devices = devices
+            Devices = devices,
+            IpExcluded = ipExcluded,
+            ExcludedIp = excludedIp
         });
     }
 }

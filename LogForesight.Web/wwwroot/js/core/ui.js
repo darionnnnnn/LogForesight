@@ -120,25 +120,50 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
 /**
  * 頁籤切換（§8.5）：抽出 rules/groups/permission-changes 重複的 [data-tab]/[data-panel] 邏輯。
  * tabsEl 內的 [data-tab] 按鈕與同層 [data-panel] 區塊以 data 值配對；點擊切換 active 與 d-none。
+ * hash 為 true 時，進站依網址 hash 切換對應頁籤，切換頁籤時以 replaceState 同步 hash。
  */
-export function bindTabs(tabsEl, { onChange } = {}) {
+export function bindTabs(tabsEl, { onChange, hash = false } = {}) {
     if (!tabsEl) return;
     const panels = tabsEl.parentElement
         ? tabsEl.parentElement.querySelectorAll('[data-panel]')
         : document.querySelectorAll('[data-panel]');
 
-    tabsEl.addEventListener('click', event => {
-        const btn = event.target.closest('[data-tab]');
-        if (!btn) return;
+    const activateTab = (btn, updateHash) => {
         const name = btn.dataset.tab;
-
         for (const link of tabsEl.querySelectorAll('[data-tab]')) {
             link.classList.toggle('active', link === btn);
         }
         for (const panel of panels) {
             panel.classList.toggle('d-none', panel.dataset.panel !== name);
         }
+        if (updateHash && hash) {
+            try {
+                if (window.history && typeof window.history.replaceState === 'function') {
+                    history.replaceState(null, '', '#' + name);
+                }
+            } catch {
+                // history.replaceState 不可用時略過
+            }
+        }
         if (onChange) onChange(name);
+    };
+
+    if (hash) {
+        const initialHash = (location.hash || '').replace(/^#/, '');
+        if (initialHash) {
+            for (const btn of tabsEl.querySelectorAll('[data-tab]')) {
+                if (btn.dataset.tab === initialHash) {
+                    activateTab(btn, false);
+                    break;
+                }
+            }
+        }
+    }
+
+    tabsEl.addEventListener('click', event => {
+        const btn = event.target.closest('[data-tab]');
+        if (!btn) return;
+        activateTab(btn, true);
     });
 }
 

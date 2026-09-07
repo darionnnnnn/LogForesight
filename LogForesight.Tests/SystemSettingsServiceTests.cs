@@ -2253,4 +2253,92 @@ public class SystemSettingsServiceTests : IDisposable
         var ex = Assert.Throws<DomainException>(() => service.Update(shrinkReq));
         Assert.Contains("PRTG 資料保留天數不可大於歷史資料保留天數", ex.Message);
     }
+
+    [Fact]
+    public void UpdatePrtg_資源守門數值超出範圍時拋出驗證例外()
+    {
+        var service = Create();
+
+        // 1. CpuPercent < 1 或 > 100
+        var exCpuLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCpuPercent = 0 }));
+        Assert.Contains("CPU", exCpuLow.Message);
+        var exCpuHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCpuPercent = 101 }));
+        Assert.Contains("CPU", exCpuHigh.Message);
+
+        // 2. MemoryFreePercent < 0 或 > 99
+        var exMemLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMemoryFreePercent = -1 }));
+        Assert.Contains("記憶體", exMemLow.Message);
+        var exMemHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMemoryFreePercent = 100 }));
+        Assert.Contains("記憶體", exMemHigh.Message);
+
+        // 3. CheckSeconds < 15 或 > 600
+        var exSecLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCheckSeconds = 14 }));
+        Assert.Contains("檢查間隔", exSecLow.Message);
+        var exSecHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCheckSeconds = 601 }));
+        Assert.Contains("檢查間隔", exSecHigh.Message);
+
+        // 4. PauseMinutes < 1 或 > 60
+        var exPauseLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardPauseMinutes = 0 }));
+        Assert.Contains("暫停", exPauseLow.Message);
+        var exPauseHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardPauseMinutes = 61 }));
+        Assert.Contains("暫停", exPauseHigh.Message);
+
+        // 5. Strikes < 1 或 > 10
+        var exStrikesLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardStrikes = 0 }));
+        Assert.Contains("連續超標", exStrikesLow.Message);
+        var exStrikesHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardStrikes = 11 }));
+        Assert.Contains("連續超標", exStrikesHigh.Message);
+
+        // 6. MaxPauseMinutes < 10 或 > 600
+        var exMaxPauseLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMaxPauseMinutes = 9 }));
+        Assert.Contains("暫停上限", exMaxPauseLow.Message);
+        var exMaxPauseHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMaxPauseMinutes = 601 }));
+        Assert.Contains("暫停上限", exMaxPauseHigh.Message);
+    }
+
+    [Fact]
+    public void UpdatePrtg_成功更新八個資源守門設定且不送時維持原樣()
+    {
+        var service = Create();
+
+        // 1. 寫入八個資源守門設定
+        var req = new UpdatePrtgSettingsRequest
+        {
+            PrtgResourceGuardEnabled = true,
+            PrtgResourceGuardSensorObjids = new List<string> { "1234", "5678" },
+            PrtgResourceGuardCpuPercent = 90,
+            PrtgResourceGuardMemoryFreePercent = 15,
+            PrtgResourceGuardCheckSeconds = 120,
+            PrtgResourceGuardPauseMinutes = 10,
+            PrtgResourceGuardStrikes = 3,
+            PrtgResourceGuardMaxPauseMinutes = 180
+        };
+        var updated = service.UpdatePrtg(req);
+
+        Assert.True(updated.PrtgResourceGuardEnabled);
+        Assert.Equal(new[] { "1234", "5678" }, updated.PrtgResourceGuardSensorObjids);
+        Assert.Equal(90, updated.PrtgResourceGuardCpuPercent);
+        Assert.Equal(15, updated.PrtgResourceGuardMemoryFreePercent);
+        Assert.Equal(120, updated.PrtgResourceGuardCheckSeconds);
+        Assert.Equal(10, updated.PrtgResourceGuardPauseMinutes);
+        Assert.Equal(3, updated.PrtgResourceGuardStrikes);
+        Assert.Equal(180, updated.PrtgResourceGuardMaxPauseMinutes);
+
+        // 2. 呼叫 UpdatePrtg 且八個參數皆為 null（不送），應維持原樣
+        var noSendReq = new UpdatePrtgSettingsRequest
+        {
+            PrtgTimeoutSeconds = 80
+        };
+        var kept = service.UpdatePrtg(noSendReq);
+
+        Assert.True(kept.PrtgResourceGuardEnabled);
+        Assert.Equal(new[] { "1234", "5678" }, kept.PrtgResourceGuardSensorObjids);
+        Assert.Equal(90, kept.PrtgResourceGuardCpuPercent);
+        Assert.Equal(15, kept.PrtgResourceGuardMemoryFreePercent);
+        Assert.Equal(120, kept.PrtgResourceGuardCheckSeconds);
+        Assert.Equal(10, kept.PrtgResourceGuardPauseMinutes);
+        Assert.Equal(3, kept.PrtgResourceGuardStrikes);
+        Assert.Equal(180, kept.PrtgResourceGuardMaxPauseMinutes);
+        Assert.Equal(80, kept.PrtgTimeoutSeconds);
+    }
 }

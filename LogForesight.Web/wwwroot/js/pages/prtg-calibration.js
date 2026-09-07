@@ -302,8 +302,6 @@ function bindEvents() {
     exportBtn?.addEventListener('click', downloadPackage);
 }
 
-function init() {
+export function initCalibration() {
     bindEvents();
 }
-
-init();

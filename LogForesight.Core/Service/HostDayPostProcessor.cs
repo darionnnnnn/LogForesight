@@ -402,17 +402,4 @@ public static class HostDayPostProcessor
             PairCount = pairCount
         };
     }
-
-    /// <summary>
-    /// AiAnalyzed=false 有兩種意義：低風險日「刻意不呼叫」（正常）與呼叫失敗的降級（異常）。
-    /// useAi=false（AI 未設定）時本來就不會呼叫，不該被記成失敗，只有後者該計入執行監控頁的
-    /// AI 呼叫統計。
-    /// </summary>
-    public static void RecordAiCallIfApplicable(BatchRunRecorder runRecorder, bool useAi, DailyAnalysisRecord record)
-    {
-        if (useAi && (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low))
-        {
-            runRecorder.RecordAiCall(record.AiAnalyzed);
-        }
-    }
 }

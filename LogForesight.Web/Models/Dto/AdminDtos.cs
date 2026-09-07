@@ -305,6 +305,14 @@ public class HostDto
     public List<string> OwnerNames { get; set; } = new();
 }
 
+/// <summary>主機簡易選項（指派下拉用，不分頁）</summary>
+public class HostOptionDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+}
+
 public class SaveHostRequest
 {
     [Required(ErrorMessage = "請輸入主機名稱")]

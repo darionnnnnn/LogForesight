@@ -24,6 +24,9 @@ public class AiAnalysisRunState
     private readonly object _lock = new();
     private CancellationTokenSource? _cts;
     private TaskCompletionSource<bool>? _runCompletionTcs;
+    private int? _cachedPendingCount;
+    private DateTime _pendingCacheExpiresAt;
+    private static readonly TimeSpan PendingCacheDuration = TimeSpan.FromSeconds(30);
 
     public bool IsRunning { get; private set; }
     public string? Trigger { get; private set; }
@@ -95,8 +98,48 @@ public class AiAnalysisRunState
             _cts = null;
             tcsToComplete = _runCompletionTcs;
             _runCompletionTcs = null;
+            _cachedPendingCount = null;
         }
         tcsToComplete?.TrySetResult(success);
+    }
+
+    /// <summary>
+    /// 取得待補件數（行程內快取 30 秒，避免排程頁輪詢頻繁掃庫造成慢 SQL）。
+    /// 快取過期或未初始化時以 fetcher 重新查詢；執行緒安全。
+    /// </summary>
+    public int GetPendingAiCount(Func<int> fetcher)
+    {
+        lock (_lock)
+        {
+            if (_cachedPendingCount.HasValue && DateTime.UtcNow < _pendingCacheExpiresAt)
+            {
+                return _cachedPendingCount.Value;
+            }
+        }
+
+        // 查詢刻意放在鎖外：這支查詢在實機上要 7~15 秒，若在鎖內執行，排程頁的輪詢
+        // 會連帶卡住 AI 排程自己的 TryBeginRun／EndRun（共用同一把鎖）。
+        // 代價是冷快取時可能有兩個併發呼叫各查一次，遠優於阻塞狀態機。
+        var count = fetcher();
+
+        lock (_lock)
+        {
+            _cachedPendingCount = count;
+            _pendingCacheExpiresAt = DateTime.UtcNow.Add(PendingCacheDuration);
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// 使待補件數快取失效（AI 排程每輪收尾或強制重標時呼叫，確保介面即時反映最新件數）。
+    /// </summary>
+    public void InvalidatePendingAiCache()
+    {
+        lock (_lock)
+        {
+            _cachedPendingCount = null;
+        }
     }
 
     /// <summary>等待當前執行完成（用於強制重新分析時的「優雅停止當前執行 → 整批重標」）</summary>

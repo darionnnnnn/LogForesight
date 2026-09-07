@@ -132,10 +132,11 @@ public class SchedulerRunStateTests
     /// 回報值（凍結不動），即使本機明明還在推進，外觀上與「卡住」無法區分。
     /// <see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/> 收尾時會送一個特殊 phase
     /// （"netiq-done"）通知 NetIQ 這一路真的結束了，這裡直接驗證 SchedulerRunState 這一側收到
-    /// 後的行為：清空主／子進度欄位，讓 LatestActivity() 的優先序自然落回還在推進的本機。
+    /// 後的行為：保留最後進度並標記 NetiqCompleted 為 true，讓 LatestActivity() 跳過已完成軌，
+    /// 優先序自然落回還在推進的本機。
     /// </summary>
     [Fact]
-    public void NetIQ完工後清空主進度欄位_LatestActivity落回仍在推進的本機()
+    public void NetIQ完工後保留進度並標記完成_LatestActivity落回仍在推進的本機()
     {
         var state = new SchedulerRunState();
         Assert.True(state.TryBeginRun("schedule", out _));
@@ -146,13 +147,16 @@ public class SchedulerRunStateTests
 
         state.ReportProgress("netiq-done", 0, 0);
 
-        Assert.Null(state.ProgressPhase);
-        Assert.Equal(0, state.ProgressTotal);
+        // 新契約：保留最後一次回報值，只把 NetiqCompleted 設為 true
+        Assert.True(state.NetiqCompleted);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(2, state.ProgressDone);
+        Assert.Equal(2, state.ProgressTotal);
         // 本機的欄位完全不受影響——它還在跑，不該被 NetIQ 收尾的動作波及
         Assert.Equal("local", state.LocalProgressPhase);
         Assert.Equal(2, state.LocalProgressDone);
         Assert.Equal(7, state.LocalProgressTotal);
-        // 單一告示讀取端現在會落回本機，不再顯示 netiq 凍結的 2/2 舊值
+        // 單一告示讀取端現在會落回本機，不再顯示已完工軌的舊值
         Assert.Equal(("local", 2, 7), state.LatestActivity());
     }
 
@@ -304,9 +308,9 @@ public class SchedulerRunStateTests
         Assert.Equal(6, state.PrtgProgressTotal);
     }
 
-    /// <summary>prtg-done 清空 PRTG 那組，且不影響 NetIQ 與本機兩組。</summary>
+    /// <summary>prtg-done 保留 PRTG 數字並標記完成，且不影響 NetIQ 與本機兩組。</summary>
     [Fact]
-    public void ReportProgress_prtgDone清空PRTG組且不影響NetIQ與本機組()
+    public void ReportProgress_prtgDone保留PRTG數字並標記完成_且不影響NetIQ與本機組()
     {
         var state = new SchedulerRunState();
         Assert.True(state.TryBeginRun("schedule", out _));
@@ -317,10 +321,11 @@ public class SchedulerRunStateTests
 
         state.ReportProgress("prtg-done", 0, 0);
 
-        // PRTG 那組清空
-        Assert.Null(state.PrtgProgressPhase);
-        Assert.Equal(0, state.PrtgProgressDone);
-        Assert.Equal(0, state.PrtgProgressTotal);
+        // PRTG 保留數字並標記完成
+        Assert.True(state.PrtgCompleted);
+        Assert.Equal("prtg-values", state.PrtgProgressPhase);
+        Assert.Equal(5, state.PrtgProgressDone);
+        Assert.Equal(5, state.PrtgProgressTotal);
 
         // 不影響 NetIQ 與本機兩組
         Assert.Equal("local", state.LocalProgressPhase);
@@ -362,5 +367,178 @@ public class SchedulerRunStateTests
         Assert.Null(state.PrtgProgressPhase);
         Assert.Equal(0, state.PrtgProgressDone);
         Assert.Equal(0, state.PrtgProgressTotal);
+    }
+
+    // ── 完工訊號與完成標記（批次C 階段1）───────────────────────────────────────────────
+
+    /// <summary>1. local-done 保留數字並標記完成：先回報 ("local", 3, 5)，再送 ("local-done", 0, 0) →
+    /// LocalProgressPhase 仍為 "local"、LocalProgressDone 為 3、LocalProgressTotal 為 5，LocalCompleted 為 true。</summary>
+    [Fact]
+    public void ReportProgress_localDone保留數字並標記完成()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 3, 5);
+        state.ReportProgress(SchedulerRunState.LocalDonePhase, 0, 0);
+
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(3, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.True(state.LocalCompleted);
+    }
+
+    /// <summary>2. 三軌全部完成後 LatestActivity() 回 null：三軌各回報一次進度再各送一次 done →
+    /// LatestActivity().Phase 為 null。</summary>
+    [Fact]
+    public void LatestActivity_三軌全部完成後回null()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 1, 5);
+        state.ReportProgress("netiq", 2, 10);
+        state.ReportProgress("prtg-values", 3, 5);
+
+        state.ReportProgress(SchedulerRunState.LocalDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.NetiqDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.PrtgDonePhase, 0, 0);
+
+        Assert.Null(state.LatestActivity().Phase);
+        Assert.Equal((null, 0, 0), state.LatestActivity());
+    }
+
+    /// <summary>3. 完成後又收到新進度時旗標復位：送完 local-done 之後再回報 ("local", 4, 5) →
+    /// LocalCompleted 為 false 且數字更新為 4。</summary>
+    [Fact]
+    public void ReportProgress_完成後收到新進度時旗標復位()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 3, 5);
+        state.ReportProgress(SchedulerRunState.LocalDonePhase, 0, 0);
+        Assert.True(state.LocalCompleted);
+
+        state.ReportProgress("local", 4, 5);
+        Assert.False(state.LocalCompleted);
+        Assert.Equal(4, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+    }
+
+    /// <summary>4. EndRun 清空三個完成旗標：三軌都完成後呼叫 EndRun →
+    /// 三個 XxxCompleted 皆為 false、三軌 phase 皆為 null。</summary>
+    [Fact]
+    public void EndRun_三軌完成後清空三個完成旗標與phase()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 1, 2);
+        state.ReportProgress("netiq", 3, 4);
+        state.ReportProgress("prtg-values", 5, 6);
+
+        state.ReportProgress(SchedulerRunState.LocalDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.NetiqDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.PrtgDonePhase, 0, 0);
+
+        Assert.True(state.LocalCompleted);
+        Assert.True(state.NetiqCompleted);
+        Assert.True(state.PrtgCompleted);
+
+        state.EndRun();
+
+        Assert.False(state.LocalCompleted);
+        Assert.False(state.NetiqCompleted);
+        Assert.False(state.PrtgCompleted);
+        Assert.Null(state.LocalProgressPhase);
+        Assert.Null(state.ProgressPhase);
+        Assert.Null(state.PrtgProgressPhase);
+    }
+
+    /// <summary>5. 完工訊號不互相污染：只送 netiq-done 時，LocalCompleted 與 PrtgCompleted 必須仍為 false，
+    /// 且 local／prtg 兩軌的數字不受影響（釘住既有的「三軌互不覆蓋」契約）。</summary>
+    [Fact]
+    public void ReportProgress_完工訊號不互相污染()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 2, 5);
+        state.ReportProgress("netiq", 10, 20);
+        state.ReportProgress("prtg-sync", 1, 3);
+
+        // 只送 netiq-done
+        state.ReportProgress(SchedulerRunState.NetiqDonePhase, 0, 0);
+
+        // netiq 完成
+        Assert.True(state.NetiqCompleted);
+
+        // local 與 prtg 仍未完成
+        Assert.False(state.LocalCompleted);
+        Assert.False(state.PrtgCompleted);
+
+        // local 與 prtg 兩軌數字不受影響
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("prtg-sync", state.PrtgProgressPhase);
+        Assert.Equal(1, state.PrtgProgressDone);
+        Assert.Equal(3, state.PrtgProgressTotal);
+    }
+
+    /// <summary>
+    /// 驗證 guard-paused 設 PausedReason、guard-resumed 清空，
+    /// 且兩者都不影響三軌的 phase／done／total（釘住「不落入 catch-all」）。
+    /// </summary>
+    [Fact]
+    public void ReportProgress_GuardPaused與Resumed設定與清空PausedReason且不影響三軌進度()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 2, 5);
+        state.ReportProgress("netiq", 10, 20);
+        state.ReportProgress("prtg-sync", 1, 3);
+
+        // 1. 發送 guard-paused：設定 PausedReason，不影響三軌任何數值與 phase
+        state.ReportProgress("guard-paused", 0, 0);
+
+        Assert.NotNull(state.PausedReason);
+        Assert.Equal("資源緊張，暫停中", state.PausedReason);
+
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(20, state.ProgressTotal);
+        Assert.Equal("prtg-sync", state.PrtgProgressPhase);
+        Assert.Equal(1, state.PrtgProgressDone);
+        Assert.Equal(3, state.PrtgProgressTotal);
+
+        // 2. 發送 guard-resumed：清空 PausedReason，三軌數值仍保持原樣
+        state.ReportProgress("guard-resumed", 0, 0);
+
+        Assert.Null(state.PausedReason);
+
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(20, state.ProgressTotal);
+        Assert.Equal("prtg-sync", state.PrtgProgressPhase);
+        Assert.Equal(1, state.PrtgProgressDone);
+        Assert.Equal(3, state.PrtgProgressTotal);
+
+        // 3. EndRun 與 TryBeginRun 都清為 null
+        state.ReportProgress("guard-paused", 0, 0);
+        Assert.NotNull(state.PausedReason);
+        state.EndRun();
+        Assert.Null(state.PausedReason);
+
+        Assert.True(state.TryBeginRun("manual", out _));
+        Assert.Null(state.PausedReason);
     }
 }

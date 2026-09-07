@@ -41,6 +41,12 @@ public sealed class PrtgHostMapper
             .ToList();
 
         var manualMaps = _store.GetManualMaps().ToDictionary(m => m.DeviceObjid);
+        var excludedIps = _store.GetIpExcludes()
+            .Select(e => NormalizeIp(e.Ip))
+            .Where(ip => ip != null)
+            .Select(ip => ip!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var hostById = activeHosts.ToDictionary(h => h.HostId);
 
         var hostLookup = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
@@ -57,22 +63,45 @@ public sealed class PrtgHostMapper
             list.Add(host);
         }
 
+        // 規則二預備：分組前先算出本次有哪些正規化 IP，其底下至少有一台 device 走了人工對應
+        var manualMappedIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dev in devices)
+        {
+            if (manualMaps.TryGetValue(dev.Objid, out var manual) && hostById.ContainsKey(manual.HostId))
+            {
+                var normIp = NormalizeIp(dev.Ip);
+                if (normIp != null)
+                {
+                    manualMappedIps.Add(normIp);
+                }
+            }
+        }
+
         var rows = new List<PrtgHostMapRow>();
         var okCount = 0;
         var manualCount = 0;
         var conflictCount = 0;
         var unmatchedCount = 0;
         var skippedNoIp = 0;
+        var skippedExcluded = 0;
+        var skippedManualSibling = 0;
 
-        // 3. 裝置分流：人工對應優先；無 IP 者跳過；有 IP 者按正規化 IP 分組
+        // 3. 裝置分流：人工對應優先；無 IP 者跳過；排除清單跳過；同 IP 已有人工指定跳過；有 IP 者按正規化 IP 分組
         var devicesWithIp = new List<PrtgDeviceRow>();
         foreach (var device in devices)
         {
+            var normIp = NormalizeIp(device.Ip);
+
+            // 3.1 人工對應優先
             if (manualMaps.TryGetValue(device.Objid, out var manual))
             {
                 if (hostById.TryGetValue(manual.HostId, out var targetHost))
                 {
                     var noteText = "人工指定對應" + (!string.IsNullOrWhiteSpace(manual.Note) ? "：" + manual.Note : "");
+                    if (normIp != null && excludedIps.Contains(normIp))
+                    {
+                        noteText += "（此 IP 在排除清單中，人工指定優先）";
+                    }
                     okCount++;
                     manualCount++;
                     rows.Add(new PrtgHostMapRow
@@ -94,12 +123,27 @@ public sealed class PrtgHostMapper
                 }
             }
 
-            var normIp = NormalizeIp(device.Ip);
+            // 3.2 無 IP 者跳過
             if (normIp == null)
             {
                 skippedNoIp++;
                 continue;
             }
+
+            // 3.3 規則一：IP 命中排除清單 → 不產生對應列
+            if (excludedIps.Contains(normIp))
+            {
+                skippedExcluded++;
+                continue;
+            }
+
+            // 3.4 規則二：同 IP 已有 device 被人工指定 → 其餘 device 不進 IP 分組
+            if (manualMappedIps.Contains(normIp))
+            {
+                skippedManualSibling++;
+                continue;
+            }
+
             devicesWithIp.Add(device);
         }
 
@@ -201,7 +245,7 @@ public sealed class PrtgHostMapper
         _store.ReplaceHostMapForDate(targetDate, rows);
 
         // 5. Console 摘要與異常明細（前 20 筆）
-        _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：ok={okCount}, manual={manualCount}, conflict={conflictCount}, unmatched={unmatchedCount}, skipped_no_ip={skippedNoIp}");
+        _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：ok={okCount}, manual={manualCount}, conflict={conflictCount}, unmatched={unmatchedCount}, skipped_no_ip={skippedNoIp}, skipped_excluded={skippedExcluded}, skipped_manual_sibling={skippedManualSibling}");
 
         var auditRows = rows.Where(r => r.MapStatus != PrtgMapStatus.Ok).Take(20).ToList();
         if (auditRows.Count > 0)
@@ -213,13 +257,13 @@ public sealed class PrtgHostMapper
             }
         }
 
-        return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount);
+        return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount, skippedExcluded, skippedManualSibling);
     }
 
     /// <summary>
-    /// 唯一的 IP 正規化私有方法：去頭尾空白、轉小寫。若為 null 或全空白則回傳 null。
+    /// 唯一的 IP 正規化公開方法：去頭尾空白、轉小寫。若為 null 或全空白則回傳 null。
     /// </summary>
-    private static string? NormalizeIp(string? ip)
+    public static string? NormalizeIp(string? ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return null;
         return ip.Trim().ToLowerInvariant();
@@ -250,4 +294,6 @@ public sealed record PrtgHostMapResult(
     int Conflict,
     int Unmatched,
     int SkippedNoIp,
-    int Manual = 0);
+    int Manual = 0,
+    int SkippedExcluded = 0,
+    int SkippedManualSibling = 0);

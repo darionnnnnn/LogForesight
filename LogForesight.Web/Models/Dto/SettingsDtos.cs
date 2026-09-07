@@ -158,6 +158,16 @@ public class SystemSettingsDto
     public int PrtgBackfillDays { get; set; }
     public int PrtgRetentionDays { get; set; }
     public List<string> PrtgSensorTypeWhitelist { get; set; } = new();
+
+    // ── PRTG 資源守門設定（批次F-1）─────────────────────────────────────────
+    public bool PrtgResourceGuardEnabled { get; set; }
+    public List<string> PrtgResourceGuardSensorObjids { get; set; } = new();
+    public int PrtgResourceGuardCpuPercent { get; set; }
+    public int PrtgResourceGuardMemoryFreePercent { get; set; }
+    public int PrtgResourceGuardCheckSeconds { get; set; }
+    public int PrtgResourceGuardPauseMinutes { get; set; }
+    public int PrtgResourceGuardStrikes { get; set; }
+    public int PrtgResourceGuardMaxPauseMinutes { get; set; }
 }
 
 /// <summary>
@@ -428,6 +438,28 @@ public class UpdateSystemSettingsRequest
     public int? PrtgRetentionDays { get; set; }
 
     public List<string>? PrtgSensorTypeWhitelist { get; set; }
+
+    // ── PRTG 資源守門設定（批次F-1）─────────────────────────────────────────
+    public bool? PrtgResourceGuardEnabled { get; set; }
+    public List<string>? PrtgResourceGuardSensorObjids { get; set; }
+
+    [Range(1, 100, ErrorMessage = "資源守門 CPU 門檻必須介於 1~100%")]
+    public int? PrtgResourceGuardCpuPercent { get; set; }
+
+    [Range(0, 99, ErrorMessage = "資源守門可用記憶體門檻必須介於 0~99%")]
+    public int? PrtgResourceGuardMemoryFreePercent { get; set; }
+
+    [Range(15, 600, ErrorMessage = "資源守門檢查間隔必須介於 15~600 秒")]
+    public int? PrtgResourceGuardCheckSeconds { get; set; }
+
+    [Range(1, 60, ErrorMessage = "資源守門暫停檢查時間必須介於 1~60 分鐘")]
+    public int? PrtgResourceGuardPauseMinutes { get; set; }
+
+    [Range(1, 10, ErrorMessage = "資源守門連續超標次數必須介於 1~10 次")]
+    public int? PrtgResourceGuardStrikes { get; set; }
+
+    [Range(10, 600, ErrorMessage = "資源守門單趟累計暫停上限必須介於 10~600 分鐘")]
+    public int? PrtgResourceGuardMaxPauseMinutes { get; set; }
 }
 
 /// <summary>
@@ -489,6 +521,37 @@ public class UpdatePrtgSettingsRequest
 
     /// <summary>null＝本次請求未提供（沿用既有值）。空清單＝明確清空（不限制 sensor type）。</summary>
     public List<string>? PrtgSensorTypeWhitelist { get; set; }
+
+    // ── PRTG 資源守門設定（批次F-1）─────────────────────────────────────────
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    public bool? PrtgResourceGuardEnabled { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。空清單＝自動偵測。</summary>
+    public List<string>? PrtgResourceGuardSensorObjids { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    [Range(1, 100, ErrorMessage = "資源守門 CPU 門檻必須介於 1~100%")]
+    public int? PrtgResourceGuardCpuPercent { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    [Range(0, 99, ErrorMessage = "資源守門可用記憶體門檻必須介於 0~99%")]
+    public int? PrtgResourceGuardMemoryFreePercent { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    [Range(15, 600, ErrorMessage = "資源守門檢查間隔必須介於 15~600 秒")]
+    public int? PrtgResourceGuardCheckSeconds { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    [Range(1, 60, ErrorMessage = "資源守門暫停檢查時間必須介於 1~60 分鐘")]
+    public int? PrtgResourceGuardPauseMinutes { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    [Range(1, 10, ErrorMessage = "資源守門連續超標次數必須介於 1~10 次")]
+    public int? PrtgResourceGuardStrikes { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    [Range(10, 600, ErrorMessage = "資源守門單趟累計暫停上限必須介於 10~600 分鐘")]
+    public int? PrtgResourceGuardMaxPauseMinutes { get; set; }
 }
 
 /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存）試寄一封，

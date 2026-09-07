@@ -16,11 +16,18 @@ public class BatchRunRecorder : IDisposable
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>
+    /// 慢 SQL 效能監控器名稱：資料層效能告警 ≠ 這趟分析有問題。
+    /// 慢查詢 Warn 仍照常寫入執行詳情供排查，但不計入 WarnCount，避免整趟成功執行被判成 warning。
+    /// </summary>
+    private const string ExemptWarnLogger = "SqlPerformanceMonitor";
+
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
     private readonly BatchRunNLogTarget? _target;
     private readonly CancellationToken _ct;
     private bool _finished;
+    private IDisposable? _scope;
 
     /// <param name="ct">執行用的取消權杖（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
     /// <see cref="OperationCanceledException"/> 會在 using 範圍結束時經 <see cref="Dispose"/> 回填——
@@ -32,8 +39,17 @@ public class BatchRunRecorder : IDisposable
     /// 使用者只能翻 log 檔才查得到。呼叫端（Web）可傳入把這句話送進 <c>IRunConsole</c>，
     /// 讓狀態卡與執行明細看得到「這趟執行本次不會出現在執行監控」；null＝維持原本只寫 log。
     /// </param>
+    /// <param name="jobType">作業類型（選填）：<see cref="BatchRun.JobTypeAi"/>＝AI 分析排程；null＝一般批次/取數執行。</param>
+    /// <remarks>
+    /// 【AsyncLocal 作用域限制】<see cref="ScopeContext"/> 底層是 <see cref="AsyncLocal{T}"/>：
+    /// 它沿著非同步呼叫鏈**向下**傳遞，但不會向外（向上）傳播。因此 recorder 必須在
+    /// 「涵蓋整趟執行的那個方法本體」內建構（現況是 <c>AnalysisOrchestrator.RunAsync</c> 的本體），
+    /// 之後所有 <c>await</c>、<c>Task.WhenAll</c>、<c>Parallel.ForEachAsync</c> 子任務才繼承得到這個 scope。
+    /// 若日後把建構搬進一個被 <c>await</c> 的輔助 async 方法，scope 會在該方法返回時就消失，
+    /// 整趟執行的 Warn 全部靜默丟失且沒有任何訊號。
+    /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
-        CancellationToken ct = default, Action<string>? onRegistrationFailed = null)
+        CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null)
     {
         _store = store;
         _ct = ct;
@@ -43,7 +59,8 @@ public class BatchRunRecorder : IDisposable
             StartedAt = DateTime.Now,
             AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
             Args = string.Join(" ", args),
-            Trigger = trigger
+            Trigger = trigger,
+            JobType = jobType
         };
 
         if (_store == null) return;
@@ -56,6 +73,7 @@ public class BatchRunRecorder : IDisposable
             // 完整診斷仍在 logs\logforesight.log，這裡只收「一眼確認有沒有問題」需要的部分
             _target = new BatchRunNLogTarget(_store, _run.RunId, OnLogRecorded);
             _target.Attach();
+            _scope = ScopeContext.PushProperty("lf_run_id", _run.RunId);
         }
         catch (Exception ex)
         {
@@ -72,6 +90,30 @@ public class BatchRunRecorder : IDisposable
     private readonly object _countLock = new();
 
     public long RunId => _run.RunId;
+
+    public int DaysAnalyzed
+    {
+        get { lock (_countLock) return _run.DaysAnalyzed; }
+        set { lock (_countLock) _run.DaysAnalyzed = value; }
+    }
+
+    public int AiCalls
+    {
+        get { lock (_countLock) return _run.AiCalls; }
+        set { lock (_countLock) _run.AiCalls = value; }
+    }
+
+    public int AiFailures
+    {
+        get { lock (_countLock) return _run.AiFailures; }
+        set { lock (_countLock) _run.AiFailures = value; }
+    }
+
+    public bool Stopped
+    {
+        get { lock (_countLock) return _run.Stopped; }
+        set { lock (_countLock) _run.Stopped = value; }
+    }
 
     /// <summary>里程碑：固定的 Info 級紀錄（開始/掃描完成/逐日分析完成/結束）</summary>
     public void Milestone(string message) => Append("Info", "Milestone", message, null);
@@ -90,6 +132,39 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    public void RecordLocalOutcome(int daysAnalyzed, int daysFailed)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.LocalDaysAnalyzed = daysAnalyzed;
+            _run.LocalDaysFailed = daysFailed;
+        }
+    }
+
+    public void RecordNetiqOutcome(int daysAnalyzed, int daysFailed, int hostsSkipped)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.NetiqDaysAnalyzed = daysAnalyzed;
+            _run.NetiqDaysFailed = daysFailed;
+            _run.NetiqHostsSkipped = hostsSkipped;
+        }
+    }
+
+    public void RecordPrtgOutcome(string outcome, int sensorsFetched, int sensorsFailed, int triggeredHosts)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.PrtgOutcome = outcome;
+            _run.PrtgSensorsFetched = sensorsFetched;
+            _run.PrtgSensorsFailed = sensorsFailed;
+            _run.PrtgTriggeredHosts = triggeredHosts;
+        }
+    }
+
     public void Finish(int exitCode)
     {
         if (_finished || _store == null) return;
@@ -98,6 +173,8 @@ public class BatchRunRecorder : IDisposable
         try
         {
             _target?.Detach();
+            _scope?.Dispose();
+            _scope = null;
             _run.FinishedAt = DateTime.Now;
             _run.ExitCode = exitCode;
             _store.FinishRun(_run);
@@ -108,12 +185,19 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    private void OnLogRecorded(string level)
+    private void OnLogRecorded(string level, string loggerName)
     {
         lock (_countLock)
         {
-            if (level is "Error" or "Fatal") _run.ErrorCount++;
-            else if (level == "Warn") _run.WarnCount++;
+            if (level is "Error" or "Fatal")
+            {
+                _run.ErrorCount++;
+            }
+            else if (level == "Warn")
+            {
+                if (!string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal))
+                    _run.WarnCount++;
+            }
         }
     }
 
@@ -154,6 +238,8 @@ public class BatchRunRecorder : IDisposable
         }
 
         Finish(_run.ExitCode ?? 1);
+        _scope?.Dispose();
+        _scope = null;
     }
 
     /// <summary>
@@ -165,14 +251,14 @@ public class BatchRunRecorder : IDisposable
     {
         private readonly BatchRunStore _store;
         private readonly long _runId;
-        private readonly Action<string> _onRecorded;
+        private readonly Action<string, string> _onRecorded;
 
-        public BatchRunNLogTarget(BatchRunStore store, long runId, Action<string> onRecorded)
+        public BatchRunNLogTarget(BatchRunStore store, long runId, Action<string, string> onRecorded)
         {
             _store = store;
             _runId = runId;
             _onRecorded = onRecorded;
-            Name = "batchrun";
+            Name = $"batchrun_{runId}";
         }
 
         public void Attach()
@@ -196,17 +282,26 @@ public class BatchRunRecorder : IDisposable
 
         protected override void Write(LogEventInfo logEvent)
         {
+            // 只收這一趟執行自己非同步流程內的事件：target 是全行程 Warn~Fatal 規則，
+            // 不過濾的話夜間批次會把前景頁面的慢 SQL、互動 AI 逾時、AI 排程失敗全記成自己的問題。
+            if (!ScopeContext.TryGetProperty("lf_run_id", out var v))
+                return;
+
+            if (!(v is long runId ? runId == _runId : (long.TryParse(v?.ToString(), out var parsed) && parsed == _runId)))
+                return;
+
             try
             {
                 var level = logEvent.Level.Name;
-                _onRecorded(level);
+                var shortLogger = ShortLoggerName(logEvent.LoggerName);
+                _onRecorded(level, shortLogger);
 
                 _store.AppendLog(new BatchRunLog
                 {
                     RunId = _runId,
                     LoggedAt = logEvent.TimeStamp,
                     Level = level,
-                    Logger = ShortLoggerName(logEvent.LoggerName),
+                    Logger = shortLogger,
                     Message = logEvent.FormattedMessage,
                     ExceptionText = logEvent.Exception?.ToString()
                 });

@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -591,6 +592,57 @@ public sealed class EfPrtgStore
         using var ctx = _contextFactory();
         return ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete();
     }
+
+    /// <summary>讀取全部 IP 排除清單</summary>
+    public List<PrtgIpExcludeRow> GetIpExcludes()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgIpExcludes.AsNoTracking().ToList();
+    }
+
+    /// <summary>新增或更新一筆 IP 排除。CreatedAt 首次建立時寫入，後續更新不覆蓋。</summary>
+    public void UpsertIpExclude(PrtgIpExcludeRow row)
+    {
+        if (row == null) return;
+        var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
+        if (normIp == null) return;
+        normIp = Truncate(normIp, 64)!;
+        var note = Truncate(row.Note, 512);
+        var createdBy = Truncate(row.CreatedBy, 64);
+
+        using var ctx = _contextFactory();
+        var existing = ctx.PrtgIpExcludes.FirstOrDefault(e => e.Ip == normIp);
+        if (existing != null)
+        {
+            existing.CreatedBy = createdBy;
+            existing.Note = note;
+            // CreatedAt 保持原值
+        }
+        else
+        {
+            var newRow = new PrtgIpExcludeRow
+            {
+                Ip = normIp,
+                CreatedBy = createdBy,
+                Note = note,
+                CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
+            };
+            ctx.PrtgIpExcludes.Add(newRow);
+        }
+        ctx.SaveChanges();
+    }
+
+    /// <summary>刪除一筆 IP 排除，回傳刪除筆數。</summary>
+    public int DeleteIpExclude(string ip)
+    {
+        var normIp = PrtgHostMapper.NormalizeIp(ip);
+        if (normIp == null) return 0;
+        using var ctx = _contextFactory();
+        return ctx.PrtgIpExcludes.Where(e => e.Ip == normIp).ExecuteDelete();
+    }
+
+    private static string? Truncate(string? value, int maxLength) =>
+        value != null && value.Length > maxLength ? value[..maxLength] : value;
 
     /// <summary>
     /// 取得 PRTG 鏡像五表的概要統計（計數與最近時間點）。

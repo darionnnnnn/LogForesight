@@ -3,16 +3,17 @@
 }
 
 <ul class="nav nav-tabs mb-3" id="prtg-tabs">
-    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">連線與參數</button></li>
+    <li class="nav-item"><button class="nav-link active" data-tab="connection" type="button">連線</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="params" type="button">擷取參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
 </ul>
 
-<div data-panel="config">
-    <form id="prtg-config-form">
+<div data-panel="connection">
+    <form id="prtg-connection-form">
         <div class="lf-card">
             <div class="lf-card__header">
-                <h2 class="lf-card__title">連線與參數</h2>
+                <h2 class="lf-card__title">連線</h2>
             </div>
             <div class="lf-card__body">
                 <div class="row g-3 mb-3">
@@ -92,6 +93,35 @@
                     </div>
                 </div>
 
+                <hr />
+
+                <div class="mb-3">
+                    <h3 class="h6">測試連線</h3>
+                    <p class="text-muted small">
+                        用上方表單目前填的值試連線（尚未儲存也可以測）；token 或密碼欄留空時沿用已儲存的值。
+                    </p>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>
+                    </div>
+                    <div id="prtg-test-result"></div>
+                </div>
+
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <button type="submit" class="btn btn-primary" id="prtg-connection-save">儲存</button>
+                    <span class="text-muted small" id="prtg-config-updated"></span>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div data-panel="params" class="d-none">
+    <form id="prtg-params-form">
+        <div class="lf-card">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">擷取參數</h2>
+            </div>
+            <div class="lf-card__body">
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <div class="form-check">
@@ -106,7 +136,6 @@
                     </div>
                 </div>
 
-                <h3 class="h6 mb-3">擷取參數</h3>
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label for="prtg-fetch-concurrency" class="form-label">併發請求數</label>
@@ -134,23 +163,77 @@
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
                 </div>
 
-                <hr />
+                <div class="d-flex align-items-center gap-3 mt-3">
+                    <button type="submit" class="btn btn-primary" id="prtg-params-save">儲存</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <form id="prtg-guard-form">
+        <div class="lf-card mt-3">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">資源守門</h2>
+            </div>
+            <div class="lf-card__body">
+                <p class="text-muted small mb-3">執行期間監看 NetIQ 與 PRTG 主機的資源，緊張時暫停取數，等資源回落再繼續。</p>
 
                 <div class="mb-3">
-                    <h3 class="h6">測試連線</h3>
-                    <p class="text-muted small">
-                        用上方表單目前填的值試連線（尚未儲存也可以測）；token 或密碼欄留空時沿用已儲存的值。
-                    </p>
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="prtg-guard-enabled" />
+                        <label class="form-check-label" for="prtg-guard-enabled">啟用資源守門</label>
                     </div>
-                    <div id="prtg-test-result"></div>
                 </div>
 
-                <div class="d-flex align-items-center gap-3 mt-3">
-                    <button type="submit" class="btn btn-primary" id="prtg-config-save">儲存</button>
-                    <span class="text-muted small" id="prtg-config-updated"></span>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label for="prtg-guard-cpu-percent" class="form-label">CPU 門檻（%）</label>
+                        <input type="number" class="form-control" id="prtg-guard-cpu-percent" min="1" max="100" />
+                        <div class="form-text">CPU 使用率達此值算緊張。</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="prtg-guard-memory-free-percent" class="form-label">可用記憶體門檻（%）</label>
+                        <input type="number" class="form-control" id="prtg-guard-memory-free-percent" min="0" max="99" />
+                        <div class="form-text">可用記憶體低於此值算緊張。</div>
+                    </div>
                 </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3">
+                        <label for="prtg-guard-check-seconds" class="form-label">檢查間隔（秒）</label>
+                        <input type="number" class="form-control" id="prtg-guard-check-seconds" min="15" max="600" />
+                        <div class="form-text">檢查間隔（秒）。</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="prtg-guard-pause-minutes" class="form-label">暫停檢查時間（分鐘）</label>
+                        <input type="number" class="form-control" id="prtg-guard-pause-minutes" min="1" max="60" />
+                        <div class="form-text">判定緊張後等待幾分鐘再檢查。</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="prtg-guard-strikes" class="form-label">連續超標次數</label>
+                        <input type="number" class="form-control" id="prtg-guard-strikes" min="1" max="10" />
+                        <div class="form-text">連續幾次超標才算緊張。</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="prtg-guard-max-pause-minutes" class="form-label">累計暫停上限（分鐘）</label>
+                        <input type="number" class="form-control" id="prtg-guard-max-pause-minutes" min="10" max="600" />
+                        <div class="form-text">單趟累計暫停上限（分鐘）；超過後放行並警告，避免門檻設錯造成整晚空轉。</div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="prtg-guard-sensor-objids" class="form-label">受監看感測器覆寫清單（objid）</label>
+                    <textarea class="form-control lf-mono" id="prtg-guard-sensor-objids" rows="4"
+                              placeholder="1001&#10;1002"></textarea>
+                    <div class="form-text">覆寫清單，一行一個 objid；留空＝自動偵測。</div>
+                </div>
+
+                <div class="d-flex align-items-center gap-3 mt-3 mb-3">
+                    <button type="submit" class="btn btn-primary" id="prtg-guard-save">儲存</button>
+                    <button type="button" class="btn btn-outline-secondary" id="prtg-guard-preview-btn">預覽受監看 sensor</button>
+                </div>
+
+                <div id="prtg-guard-preview-result"></div>
             </div>
         </div>
     </form>
@@ -202,22 +285,23 @@
                         <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
                         <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
                         <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
                     </div>
                     <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
 
                     <div class="mb-3">
-                        <div class="small fw-semibold text-warning mb-1">對應衝突清單（最多顯示 20 筆）</div>
+                        <div class="small fw-semibold text-warning mb-1">對應衝突清單</div>
                         <div class="table-responsive">
                             <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
                                 <thead class="table-light">
                                     <tr>
-                                        <th style="width: 120px;">Device Objid</th>
+                                        <th style="width: 200px;">Device</th>
                                         <th style="width: 140px;">IP</th>
-                                        <th style="width: 180px;">主機</th>
+                                        <th style="width: 130px;">衝突型別</th>
                                         <th>說明</th>
-                                        <th style="width: 100px;">操作</th>
+                                        <th style="width: 160px;">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-mirror-conflicts-body">
@@ -225,26 +309,7 @@
                                 </tbody>
                             </table>
                         </div>
-                    </div>
-
-                    <div>
-                        <div class="small fw-semibold text-muted mb-1">未對應清單（PRTG 有 NetIQ 無，最多顯示 20 筆）</div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-unmatched-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th style="width: 120px;">Device Objid</th>
-                                        <th style="width: 140px;">IP</th>
-                                        <th style="width: 180px;">主機</th>
-                                        <th>說明</th>
-                                        <th style="width: 100px;">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="prtg-mirror-unmatched-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無未對應項目</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        <div id="prtg-conflicts-pagination" class="mt-2"></div>
                     </div>
 
                     <div class="mt-4">
@@ -266,12 +331,193 @@
                             </table>
                         </div>
                     </div>
+
+                    <div class="mt-4">
+                        <div class="small fw-semibold text-danger mb-1">IP 排除清單</div>
+                        <div class="form-text text-muted mb-2">排除的 IP 不會進行 PRTG 主機對應，其底下的 device 也不會取數。</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0 small" id="prtg-ip-excludes-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 140px;">IP</th>
+                                        <th>備註</th>
+                                        <th style="width: 140px;">建立者</th>
+                                        <th style="width: 160px;">建立時間</th>
+                                        <th style="width: 100px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prtg-ip-excludes-body">
+                                    <tr><td colspan="5" class="text-muted text-center py-2">無排除 IP</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="lf-card mt-3">
+</div>
+
+<div data-panel="probe" class="d-none">
+    <div class="lf-card mb-4" id="prtg-probe">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">環境探測</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small mb-3">
+                探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
+            </p>
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                <div class="text-muted small" id="prtg-probe-status"></div>
+            </div>
+            <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+                探測輸出
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
+            </label>
+            <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
+        </div>
+    </div>
+
+    <div class="lf-card mb-4">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">校準數值匯出</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted mb-3">
+                本頁面用於評估下一輪設計 PRTG 值型規則與校準門檻所需的資料累積量是否足夠。當四項校準指標皆達標時，即可匯出校準數值封裝檔供開發端進行分析與規則調校。
+            </p>
+
+            <div class="d-flex align-items-center gap-3 mb-4">
+                <button type="button" class="btn btn-primary" id="calibration-calc-btn">
+                    <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
+                    重新計算
+                </button>
+                <span class="text-muted small" id="calibration-status-hint">尚未計算</span>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <!-- 1. PRTG 值型基線 -->
+                <div class="col-lg-6">
+                    <div class="border rounded p-3 h-100 bg-light" id="calibration-card-prtg-value-baseline">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h3 class="h6 fw-bold mb-0">PRTG 值型基線</h3>
+                            <span class="badge bg-secondary" id="badge-prtg-value-baseline">尚未計算</span>
+                        </div>
+                        <div class="mb-3" id="metrics-prtg-value-baseline">
+                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                            <div id="thresholds-prtg-value-baseline">
+                                <div class="text-muted small">-</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                            <ul class="list-unstyled mb-0 small text-muted" id="explanations-prtg-value-baseline">
+                                <li>-</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. PRTG 規則門檻 -->
+                <div class="col-lg-6">
+                    <div class="border rounded p-3 h-100 bg-light" id="calibration-card-prtg-rule-thresholds">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h3 class="h6 fw-bold mb-0">PRTG 規則門檻</h3>
+                            <span class="badge bg-secondary" id="badge-prtg-rule-thresholds">尚未計算</span>
+                        </div>
+                        <div class="mb-3" id="metrics-prtg-rule-thresholds">
+                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                            <div id="thresholds-prtg-rule-thresholds">
+                                <div class="text-muted small">-</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                            <ul class="list-unstyled mb-0 small text-muted" id="explanations-prtg-rule-thresholds">
+                                <li>-</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. 觸發式取數量級 -->
+                <div class="col-lg-6">
+                    <div class="border rounded p-3 h-100 bg-light" id="calibration-card-triggered-fetch-magnitude">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h3 class="h6 fw-bold mb-0">觸發式取數量級</h3>
+                            <span class="badge bg-secondary" id="badge-triggered-fetch-magnitude">尚未計算</span>
+                        </div>
+                        <div class="mb-3" id="metrics-triggered-fetch-magnitude">
+                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                            <div id="thresholds-triggered-fetch-magnitude">
+                                <div class="text-muted small">-</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                            <ul class="list-unstyled mb-0 small text-muted" id="explanations-triggered-fetch-magnitude">
+                                <li>-</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. 殘留判定門檻 -->
+                <div class="col-lg-6">
+                    <div class="border rounded p-3 h-100 bg-light" id="calibration-card-residual-credential-thresholds">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h3 class="h6 fw-bold mb-0">殘留判定門檻</h3>
+                            <span class="badge bg-secondary" id="badge-residual-credential-thresholds">尚未計算</span>
+                        </div>
+                        <div class="mb-3" id="metrics-residual-credential-thresholds">
+                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                            <div id="thresholds-residual-credential-thresholds">
+                                <div class="text-muted small">-</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-muted small fw-semibold mb-1">補充說明</div>
+                            <ul class="list-unstyled mb-0 small text-muted" id="explanations-residual-credential-thresholds">
+                                <li>-</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="my-4" />
+
+            <!-- 匯出操作區 -->
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="calibration-override-check" />
+                    <label class="form-check-label small" for="calibration-override-check">
+                        仍要匯出（若指標未全數達標，強制覆寫閘門限制進行匯出）
+                    </label>
+                </div>
+                <button type="button" class="btn btn-success" id="calibration-export-btn" disabled>
+                    <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#file-earmark-text"></use></svg>
+                    匯出校準數值
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">資料搬運（開發用）</h2>
         </div>
@@ -304,31 +550,6 @@
     </div>
 </div>
 
-<div data-panel="probe" class="d-none">
-    <div class="lf-card">
-        <div class="lf-card__header">
-            <h2 class="lf-card__title">環境探測</h2>
-        </div>
-        <div class="lf-card__body">
-            <details id="prtg-probe">
-                <summary class="h6 mb-0">環境探測</summary>
-                <p class="text-muted small mt-2 mb-3">
-                    探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
-                </p>
-                <div class="d-flex align-items-center gap-3 mb-3">
-                    <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
-                    <div class="text-muted small" id="prtg-probe-status"></div>
-                </div>
-                <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
-                    探測輸出
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
-                </label>
-                <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
-            </details>
-        </div>
-    </div>
-</div>
-
 <div class="modal fade" id="prtg-assign-modal" tabindex="-1" aria-labelledby="prtg-assign-modal-title" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -338,13 +559,11 @@
             </div>
             <form id="prtg-assign-form" novalidate>
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label text-muted small">PRTG Device Objid</label>
-                        <input type="text" class="form-control form-control-sm font-monospace" id="prtg-assign-device-objid" readonly />
-                    </div>
-                    <div class="mb-3">
+                    <div id="prtg-assign-device-choice" class="mb-3 d-none"></div>
+                    <div id="prtg-assign-host-fixed" class="mb-3 d-none"></div>
+                    <div class="mb-3" id="prtg-assign-host-select-group">
                         <label for="prtg-assign-host" class="form-label">目標主機</label>
-                        <select class="form-select form-select-sm" id="prtg-assign-host" required>
+                        <select class="form-select form-select-sm" id="prtg-assign-host">
                             <option value="">請選擇主機…</option>
                         </select>
                     </div>
