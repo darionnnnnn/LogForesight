@@ -3,6 +3,7 @@ using System.Text;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using Xunit;
 
@@ -340,5 +341,97 @@ public sealed class PrtgResourceGuardTests : IDisposable
         await Task.WhenAll(tasks);
 
         Assert.Single(handler.RequestedUrls);
+    }
+
+    private sealed class EmptySentinelStore : ISentinelStore
+    {
+        public List<Sentinel> GetAll() => new();
+        public Sentinel? Get(long sentinelId) => null;
+        public Sentinel? FindByName(string name) => null;
+        public Sentinel Upsert(Sentinel sentinel) => sentinel;
+        public void Delete(long sentinelId) { }
+    }
+
+    private static SystemSettings GuardSettings(bool enabled, string apiTokenEnc)
+    {
+        return new SystemSettings
+        {
+            PrtgResourceGuardEnabled = enabled,
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgApiTokenEnc = apiTokenEnc
+        };
+    }
+
+    /// <summary>
+    /// 守門建構的故障隔離（體檢輪補）：`TryCreate` 是主流程唯一的建構入口，它任何一步擲例外
+    /// 都會讓整趟夜間批次在啟動前就失敗——而守門的原則是「讀不到就放行」。
+    /// 用一個帶密文前綴但內容損毀的 token 讓 `PrtgClientFactory.Create` 的解密擲例外，
+    /// 斷言 TryCreate 回 null、不擲例外、且警告進了 Milestone 與 console。
+    /// </summary>
+    [Fact]
+    public void TryCreate_密文損毀時回null不擲例外且有警告()
+    {
+        var (recorder, store) = CreateRecorder();
+        using var _ = recorder;
+        var console = new TestConsole();
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        var settings = GuardSettings(enabled: true, apiTokenEnc: "enc:v1:!!!not-base64!!!");
+
+        var guard = PrtgResourceGuard.TryCreate(settings, prtgStore, new EmptySentinelStore(), recorder, console, progress: null);
+
+        Assert.Null(guard);
+        Assert.Contains(console.Lines, l => l.Contains("守門建構失敗"));
+        Assert.Contains(store.GetLogs(recorder.RunId), l => l.Message.Contains("守門建構失敗"));
+    }
+
+    [Fact]
+    public void TryCreate_未啟用時回null且零輸出()
+    {
+        var (recorder, _) = CreateRecorder();
+        using var __ = recorder;
+        var console = new TestConsole();
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        var settings = GuardSettings(enabled: false, apiTokenEnc: "enc:v1:!!!not-base64!!!");
+
+        var guard = PrtgResourceGuard.TryCreate(settings, prtgStore, new EmptySentinelStore(), recorder, console, progress: null);
+
+        Assert.Null(guard);
+        Assert.Empty(console.Lines);
+    }
+
+    [Fact]
+    public void TryCreate_認證齊備時回非null_且鏡像為空只警告不擲例外()
+    {
+        var (recorder, _) = CreateRecorder();
+        using var __ = recorder;
+        var console = new TestConsole();
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        // 明文 token：IsEncrypted 為 false 就不解密，Create 不會擲例外
+        var settings = GuardSettings(enabled: true, apiTokenEnc: "plain-token");
+
+        using var guard = PrtgResourceGuard.TryCreate(settings, prtgStore, new EmptySentinelStore(), recorder, console, progress: null);
+
+        Assert.NotNull(guard);
+        // 鏡像表為空、Sentinel 為空 → 自動偵測一個 sensor 都沒找到，只警告
+        Assert.NotEmpty(console.Lines);
+    }
+
+    [Fact]
+    public void TryCreate_啟用但位址未設定時回null且有警告()
+    {
+        var (recorder, store) = CreateRecorder();
+        using var _ = recorder;
+        var console = new TestConsole();
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        var settings = GuardSettings(enabled: true, apiTokenEnc: "plain-token");
+        settings.PrtgUrl = "";
+
+        var guard = PrtgResourceGuard.TryCreate(settings, prtgStore, new EmptySentinelStore(), recorder, console, progress: null);
+
+        Assert.Null(guard);
+        // 使用者明確勾了守門卻沒給位址：不能無聲跳過
+        Assert.Contains(console.Lines, l => l.Contains("位址或認證未設定"));
+        Assert.Contains(store.GetLogs(recorder.RunId), l => l.Message.Contains("位址或認證未設定"));
     }
 }

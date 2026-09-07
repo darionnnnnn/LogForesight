@@ -368,4 +368,29 @@ public class BranchOutcomeAndCacheTests : IDisposable
         Assert.NotNull(result.Error);
         Assert.Contains("空回覆", result.Error);
     }
+
+    /// <summary>
+    /// 查詢刻意在鎖外跑（實機 7~15 秒）。期間 AI 排程結束使快取失效時，這筆查到的是「執行前的舊件數」，
+    /// 寫回會讓畫面最長 30 秒顯示錯誤件數——世代號不符就必須丟棄。
+    /// </summary>
+    [Fact]
+    public void GetPendingAiCount_查詢期間被失效時不寫回快取()
+    {
+        var runState = new AiAnalysisRunState();
+        var calls = 0;
+
+        // 第一次：fetcher 執行途中模擬 AI 排程結束 → 失效
+        var first = runState.GetPendingAiCount(() =>
+        {
+            calls++;
+            runState.InvalidatePendingAiCache();
+            return 99;
+        });
+        Assert.Equal(99, first);
+
+        // 第二次：若舊值被寫回，這裡會直接回 99 且 fetcher 不再被呼叫
+        var second = runState.GetPendingAiCount(() => { calls++; return 3; });
+        Assert.Equal(3, second);
+        Assert.Equal(2, calls);
+    }
 }

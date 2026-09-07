@@ -30,6 +30,7 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 | `lf_prtg_values` | hourly 聚合數值 | 自增 `id`，唯一索引 `(sensor_objid, period_start)` | `PrtgRetentionDays` |
 | `lf_prtg_host_map` | 主機對應（按日，自動重算） | 複合主鍵 `(map_date, device_objid)` | `PrtgRetentionDays` |
 | `lf_prtg_manual_map` | 人工主機對應（長期有效） | `device_objid` | **不清**（人工結果不隨保留期消失） |
+| `lf_prtg_ip_excludes` | IP 排除清單（長期有效，§4b） | `ip` | **不清** |
 
 - **時間一律存本地時間**，與 `lf_daily_records.record_date` 等既有欄位同一語意
   （全站無 UTC 欄位；混存會在 UTC+8 造成靜默的跨日偏移）。
@@ -165,7 +166,11 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
   ——等於管理者的選擇被繞過。
 - 三種「略過」原因在執行摘要與 Milestone **分開列出，什麼都沒略過時各項顯示 0**：
   「一個都沒有」與「這個功能不存在」在排查時必須分得出來。
-- 新增與移除都寫稽核。**寫入後同步重算當日對應**（見 §8 端點說明）。
+- 新增與移除都寫稽核（`prtg_ip_exclude_set`／`prtg_ip_exclude_delete`）。**寫入後同步重算當日對應**（見 §8 端點說明）。
+- 畫面上看得到的三處：主機明細的 PRTG 區塊在主機 IP 被排除時明寫「此主機 IP 已排除 PRTG 對應」
+  （與「沒有對應」分開，否則無從分辨是還沒設定還是刻意排除）；人工對應清單每列附註
+  「同 IP 另有 N 台 device 已略過」（N 只算真的被略過的，同 IP 上也有人工對應的不算）；
+  維護頁的 IP 排除清單本身。
 
 ## 5. 歷史回填
 
@@ -291,7 +296,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 | 頁面 | 內容 |
 |---|---|
-| **PRTG 維護頁 `/admin/prtg`**（權限 Maintain，側欄「系統管理」內緊鄰 NetIQ） | 四個頁籤：**連線**（位址、三選一認證切換、**測試連線**）／**擷取參數**（白名單、併發、回填天數、保留天數、逾時、忽略 SSL，另有**資源守門**設定卡與受監看 sensor 預覽，§12）／**鏡像狀態**（device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、主機對應摘要、**衝突清單（分頁）**、**人工對應清單與指派入口**、**IP 排除清單**）／**環境探測**（環境探測、**校準數值匯出**（§11）、**資料搬運**（§10）三張卡）。連線與擷取參數**各自一顆儲存鈕**，都走 `PUT settings/prtg` 且**只送自己頁籤的欄位**。頁籤同步網址 hash，可用 `/admin/prtg#params` 直達 |
+| **PRTG 維護頁 `/admin/prtg`**（權限 Maintain，側欄「系統管理」內緊鄰 NetIQ） | 四個頁籤：連線／擷取參數（含資源守門卡，§12）／鏡像狀態／環境探測（含校準匯出 §11 與資料搬運 §10）。各頁籤的卡片與儲存行為見 docs/WEB-SPEC.md §9.9e，此處不重複 |
 | **排程作業頁** | `PrtgEnabled` 總開關（**切換即存**，走單一用途端點，不與排程表單同一顆儲存）、**歷史回填**操作與進度（回填天數在維護頁設定，此處顯示「將回填 N 天」） |
 
 連線與參數的存檔走 `PUT settings/prtg` 專屬端點，`PrtgEnabled` 走
@@ -481,7 +486,7 @@ PRTG 維護頁因此提供跨後端的資料通道：
 2. 在 `lf_prtg_devices` 找 `Ip` 與位址**不分大小寫相等**的 device；
    對不到時**再做一次 DNS 解析**（2 秒逾時，失敗視為找不到）拿解析出的 IPv4 再比一次。
    **少了這一步幾乎必然全數落空**：Sentinel 慣以 DNS 名稱設定，PRTG device 慣填 IPv4。
-3. PRTG 主機另有 fallback：位址對不到時，改找底下有 `corehealth` type sensor 的 device
+3. PRTG 主機另有 fallback：位址對不到 device、或 `PrtgUrl` 根本解析不出 host 時，改找底下有 `corehealth` type sensor 的 device
    ——PRTG 的 Core Health sensor 只掛在 core server 自己身上。
 4. 取命中 device 底下**未暫停**且 `category` 為 `cpu`／`memory` 的 sensor；PRTG 主機另加 corehealth。
 
@@ -498,8 +503,8 @@ PRTG 維護頁因此提供跨後端的資料通道：
 CPU 越高越糟、記憶體與健康度越低越糟，**方向相反**。設定頁的欄位標籤因此明寫「可用記憶體」，
 寫成「使用率」會讓管理者把門檻設反。判定方向有專屬測試釘住。
 
-**忽略而非判定超標**：sensor 狀態非 Up（走 `PrtgSensorStatuses`，不自行比對字串）、
-值不是百分比、objid 查無此 sensor。三者可被呼叫端區分。
+**忽略而非判定超標**（四種，呼叫端可區分）：sensor 狀態非 Up（走 `PrtgSensorStatuses`，不自行比對字串）、
+值不是百分比、objid 查無此 sensor、分類不在 cpu／memory／corehealth 之內。
 
 ### 閘門
 
@@ -518,7 +523,8 @@ CPU 越高越糟、記憶體與健康度越低越糟，**方向相反**。設定
 
 ### 可觀測性
 
-進入與離開暫停各寫一則 Milestone（含觸發 sensor、實際值、第幾次檢查），執行詳情看得到。
+進入暫停寫一則 Milestone（含觸發 sensor、實際值、第幾次檢查、預計等待），離開暫停再寫一則（原因與第幾次檢查），執行詳情看得到。
+同一段文字也經 `IRunConsole` 進狀態卡的「最新訊息」列，所以暫停中的畫面同時有短徽章與含 sensor／數值的說明。
 排程作業頁狀態卡另顯示「資源緊張，暫停中」徽章：閘門經 `IRunProgress` 送 `guard-paused`／
 `guard-resumed` 兩個 phase，Web 端據此設 `SchedulerRunState.PausedReason`。
 **這兩個 phase 在 `ReportProgress` 內必須有顯式分支且排在 catch-all 之前**

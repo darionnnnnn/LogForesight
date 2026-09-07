@@ -1,4 +1,7 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
+using NLog;
 
 namespace LogForesight.Core.Service;
 
@@ -7,9 +10,12 @@ namespace LogForesight.Core.Service;
 /// 在 NetIQ 與 PRTG 取數路徑前檢查監看目標主機之資源狀況（CPU／可用記憶體）；
 /// 連續超標達門檻時進入暫停，資源回落後自動恢復，單趟達累計暫停上限時放行不再暫停。
 /// </summary>
-public sealed class PrtgResourceGuard
+public sealed class PrtgResourceGuard : IDisposable
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly PrtgClient _client;
+    private readonly bool _ownsClient;
     private readonly SystemSettings _settings;
     private readonly PrtgResourceGuardTargetResult _targets;
     private readonly BatchRunRecorder _recorder;
@@ -42,13 +48,82 @@ public sealed class PrtgResourceGuard
         BatchRunRecorder recorder,
         IRunConsole console,
         IRunProgress? progress)
+        : this(client, settings, targets, recorder, console, progress, ownsClient: false)
     {
+    }
+
+    private PrtgResourceGuard(
+        PrtgClient client,
+        SystemSettings settings,
+        PrtgResourceGuardTargetResult targets,
+        BatchRunRecorder recorder,
+        IRunConsole console,
+        IRunProgress? progress,
+        bool ownsClient)
+    {
+        _ownsClient = ownsClient;
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
         _console = console ?? throw new ArgumentNullException(nameof(console));
         _progress = progress;
+    }
+
+    /// <summary>
+    /// 由已儲存設定建立守門的**唯一入口**（含 client 建立與受監看目標偵測）。
+    /// 守門是「讀不到就放行」的輔助機制，它自己的建構失敗——密文損毀讓解密擲例外、
+    /// 鏡像表讀取失敗、Sentinel 清單讀取失敗——**都不能反過來讓整趟夜間批次在啟動前就掛掉**：
+    /// 建構任何一步失敗一律回 null（＝本趟不守門），記警告與 Milestone 讓執行詳情看得到。
+    /// 守門未啟用、位址或認證不齊時同樣回 null，且零成本（不建 client、不做偵測）。
+    /// 回傳的守門**擁有**自建的 client，呼叫端以 using 釋放。
+    /// </summary>
+    public static PrtgResourceGuard? TryCreate(
+        SystemSettings settings,
+        EfPrtgStore prtgStore,
+        ISentinelStore sentinelStore,
+        BatchRunRecorder recorder,
+        IRunConsole console,
+        IRunProgress? progress)
+    {
+        if (!settings.PrtgResourceGuardEnabled)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
+        {
+            // 使用者明確勾了守門卻沒給位址或認證：不能無聲跳過，否則執行紀錄一個字都沒有、
+            // 使用者會以為守門在跑。
+            var msg = "[PRTG資源守門] 警告：守門已啟用，但 PRTG 位址或認證未設定，本趟不守門。";
+            recorder.Milestone(msg);
+            console.WriteLine(msg);
+            return null;
+        }
+
+        PrtgClient? client = null;
+        try
+        {
+            client = PrtgClientFactory.Create(settings);
+            var targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinelStore.GetAll(), console);
+            return new PrtgResourceGuard(client, settings, targets, recorder, console, progress, ownsClient: true);
+        }
+        catch (Exception ex)
+        {
+            client?.Dispose();
+            Log.Warn(ex, "PRTG 資源守門建構失敗，本趟不守門");
+            var msg = $"[PRTG資源守門] 警告：守門建構失敗，本趟不守門（{ex.GetType().Name}）。";
+            recorder.Milestone(msg);
+            console.WriteLine(msg);
+            return null;
+        }
+    }
+
+    /// <summary>只釋放自建的 client；外部傳入的 client 由外部負責。</summary>
+    public void Dispose()
+    {
+        if (_ownsClient) _client.Dispose();
+        _gate.Dispose();
     }
 
     /// <summary>

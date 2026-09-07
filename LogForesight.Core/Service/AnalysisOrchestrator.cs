@@ -612,20 +612,12 @@ public class AnalysisOrchestrator
                 localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
             }
 
-            PrtgResourceGuard? resourceGuard = null;
+            // 資源守門（docs/PRTG-SPEC.md §12）：建構走 TryCreate 這個唯一入口——守門自己的建構失敗
+            // （密文損毀、鏡像表或 Sentinel 清單讀取失敗）不能讓整趟批次在啟動前就掛掉，失敗＝本趟不守門。
+            // 未啟用或認證不齊時回 null 且零成本。NetIQ 與 PRTG 兩路共用同一個實例。
             var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
-            using var guardClient = (systemSettings.PrtgResourceGuardEnabled &&
-                !string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) &&
-                PrtgClientFactory.HasUsableCredentials(systemSettings))
-                ? PrtgClientFactory.Create(systemSettings)
-                : null;
-            if (guardClient != null)
-            {
-                var guardTargets = PrtgResourceGuardTargets.Resolve(
-                    backend.PrtgStore(), systemSettings, sentinelStore.GetAll(), console);
-                resourceGuard = new PrtgResourceGuard(
-                    guardClient, systemSettings, guardTargets, runRecorder, console, progress);
-            }
+            using var resourceGuard = PrtgResourceGuard.TryCreate(
+                systemSettings, backend.PrtgStore(), sentinelStore, runRecorder, console, progress);
 
             // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
             //    NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套 LogAnalysisService。LocalOnly
@@ -1374,7 +1366,8 @@ public class AnalysisOrchestrator
             {
                 runRecorder.RecordPrtgOutcome(
                     prtgOutcome,
-                    triggeredResult?.TargetSensors ?? 0,
+                    // 「已取」＝目標數扣掉失敗數；直接填目標數會讓畫面「sensor 100／失敗 40」讀成抓了 100 個
+                    Math.Max(0, (triggeredResult?.TargetSensors ?? 0) - (triggeredResult?.FailedSensors ?? 0)),
                     triggeredResult?.FailedSensors ?? 0,
                     triggeredResult?.TriggerHosts ?? 0);
             }

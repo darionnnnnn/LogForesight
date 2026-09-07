@@ -77,8 +77,11 @@ public static class PrtgResourceGuardTargets
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                // 分類讀不到就全部視為 unknown → Evaluate 一律忽略 → 守門靜默失效。
+                // 這條要讓人看得到，否則排查時只會看到「守門沒作用」而找不到原因。
+                console.WriteLine($"[PRTG資源守門] 警告：讀取 sensor 分類失敗，覆寫清單全部視為無法判定（{ex.GetType().Name}）。");
                 foreach (var id in objids)
                     categories.TryAdd(id, CategoryUnknown);
             }

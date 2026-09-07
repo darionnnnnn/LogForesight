@@ -205,7 +205,6 @@ public class SystemSettingsService : ISystemSettingsService
             passhash: request.PrtgPasshash,
             existingPasshashEnc: before.PrtgPasshashEnc,
             clearPasshash: request.ClearPrtgPasshash,
-            effectivePrtgResourceGuardEnabled: effectivePrtgResourceGuardEnabled,
             effectivePrtgResourceGuardSensorObjids: effectivePrtgResourceGuardSensorObjids,
             effectivePrtgResourceGuardCpuPercent: effectivePrtgResourceGuardCpuPercent,
             effectivePrtgResourceGuardMemoryFreePercent: effectivePrtgResourceGuardMemoryFreePercent,
@@ -600,7 +599,6 @@ public class SystemSettingsService : ISystemSettingsService
             passhash: request.PrtgPasshash,
             existingPasshashEnc: before.PrtgPasshashEnc,
             clearPasshash: request.ClearPrtgPasshash,
-            effectivePrtgResourceGuardEnabled: effectivePrtgResourceGuardEnabled,
             effectivePrtgResourceGuardSensorObjids: effectivePrtgResourceGuardSensorObjids,
             effectivePrtgResourceGuardCpuPercent: effectivePrtgResourceGuardCpuPercent,
             effectivePrtgResourceGuardMemoryFreePercent: effectivePrtgResourceGuardMemoryFreePercent,
@@ -1086,7 +1084,6 @@ public class SystemSettingsService : ISystemSettingsService
         string? passhash,
         string existingPasshashEnc,
         bool clearPasshash,
-        bool effectivePrtgResourceGuardEnabled,
         List<string>? effectivePrtgResourceGuardSensorObjids,
         int effectivePrtgResourceGuardCpuPercent,
         int effectivePrtgResourceGuardMemoryFreePercent,
@@ -1098,7 +1095,28 @@ public class SystemSettingsService : ISystemSettingsService
         if (effectivePrtgRetentionDays > effectiveRetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
 
-        ValidatePrtgAuthMode(effectivePrtgAuthMode);
+        ValidatePrtgAuthMode(effectivePrtgAuthMode);
+
+        // 覆寫清單打錯字若拖到夜間執行才在 console 看到「略過非數字」，全部打錯時等於守門靜默失效——
+
+        // 在存檔時就擋下。
+
+        if (effectivePrtgResourceGuardSensorObjids != null)
+
+        {
+
+            foreach (var line in effectivePrtgResourceGuardSensorObjids)
+
+            {
+
+                if (!long.TryParse(line.Trim(), out var objid) || objid <= 0)
+
+                    throw DomainException.Validation($"資源守門的 sensor objid 清單含非法項目「{line}」，一行一個正整數。");
+
+            }
+
+        }
+
 
         if (effectivePrtgResourceGuardCpuPercent is < 1 or > 100)
             throw DomainException.Validation("資源守門 CPU 門檻必須介於 1~100。");

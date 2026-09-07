@@ -2341,4 +2341,20 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(180, kept.PrtgResourceGuardMaxPauseMinutes);
         Assert.Equal(80, kept.PrtgTimeoutSeconds);
     }
+
+    [Fact]
+    public void UpdatePrtg_資源守門objid清單含非整數時拋出驗證例外()
+    {
+        var service = Create();
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgResourceGuardSensorObjids = new List<string> { "1001", "abc" }
+        }));
+        Assert.Contains("abc", ex.Message);
+
+        // 合法清單照常存入，且逐行去空白
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardSensorObjids = new List<string> { " 1001 ", "1002" } });
+        Assert.Equal(new[] { "1001", "1002" }, service.Get().PrtgResourceGuardSensorObjids);
+    }
 }

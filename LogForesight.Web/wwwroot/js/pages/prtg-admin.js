@@ -180,7 +180,7 @@ function bindPrtgTest() {
                 passhash: document.getElementById('prtg-passhash')?.value || null,
                 apiToken: document.getElementById('prtg-api-token').value || null,
                 ignoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
-                timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value) || 30
+                timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value) || 60
             }, { silent: true });
 
             const mark = result.success ? '✓' : '✗';
@@ -242,180 +242,13 @@ function bindConnectionForm() {
     });
 }
 
-function bindGuardForm() {
-    const form = document.getElementById('prtg-guard-form');
-    const saveButton = document.getElementById('prtg-guard-save');
-    if (!form || !saveButton) return;
-
-    form.addEventListener('submit', async event => {
-        event.preventDefault();
-
-        const restore = withBusy(saveButton, '儲存中');
-        try {
-            const enabled = document.getElementById('prtg-guard-enabled')?.checked ?? false;
-            const cpuPercent = Number(document.getElementById('prtg-guard-cpu-percent')?.value) || 85;
-            const memoryFreePercent = Number(document.getElementById('prtg-guard-memory-free-percent')?.value) ?? 10;
-            const checkSeconds = Number(document.getElementById('prtg-guard-check-seconds')?.value) || 60;
-            const pauseMinutes = Number(document.getElementById('prtg-guard-pause-minutes')?.value) || 5;
-            const strikes = Number(document.getElementById('prtg-guard-strikes')?.value) || 2;
-            const maxPauseMinutes = Number(document.getElementById('prtg-guard-max-pause-minutes')?.value) || 120;
-
-            const payload = {
-                prtgResourceGuardEnabled: enabled,
-                prtgResourceGuardCpuPercent: cpuPercent,
-                prtgResourceGuardMemoryFreePercent: memoryFreePercent,
-                prtgResourceGuardCheckSeconds: checkSeconds,
-                prtgResourceGuardPauseMinutes: pauseMinutes,
-                prtgResourceGuardStrikes: strikes,
-                prtgResourceGuardMaxPauseMinutes: maxPauseMinutes,
-                prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids')
-            };
-
-            await api.put('/api/admin/settings/prtg', payload);
-            toast('已儲存', 'success');
-            await loadSettings();
-        } catch {
-            // 錯誤訊息已由 api.js 以 toast 顯示
-        } finally {
-            restore();
-        }
-    });
+/** 讀數字欄位：空白或非數字才回 fallback，0 是合法值（例如可用記憶體門檻）不可被 `||` 吞掉。 */
+function numberOr(id, fallback) {
+    const raw = document.getElementById(id)?.value ?? '';
+    if (raw.trim() === '') return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
 }
-
-function bindGuardPreview() {
-    const button = document.getElementById('prtg-guard-preview-btn');
-    const container = document.getElementById('prtg-guard-preview-result');
-    if (!button || !container) return;
-
-    button.addEventListener('click', async () => {
-        const restore = withBusy(button, '查詢中');
-        container.replaceChildren();
-
-        try {
-            const res = await api.get('/api/admin/settings/prtg-resource-guard/preview', { silent: true });
-
-            if (!res.success) {
-                const errEl = document.createElement('div');
-                errEl.className = 'text-danger small mt-2';
-                errEl.textContent = res.errorMessage || '預覽失敗。';
-                container.appendChild(errEl);
-                return;
-            }
-
-            // 清單來源
-            const sourceEl = document.createElement('div');
-            sourceEl.className = 'small text-muted mb-2';
-            sourceEl.textContent = res.source === 'override' ? '來源：覆寫清單' : '來源：自動偵測';
-            container.appendChild(sourceEl);
-
-            // 偵測警告逐行顯示
-            if (res.warnings && res.warnings.length > 0) {
-                const warnContainer = document.createElement('div');
-                warnContainer.className = 'mb-2';
-                for (const w of res.warnings) {
-                    const wEl = document.createElement('div');
-                    wEl.className = 'text-warning small';
-                    wEl.textContent = `⚠ ${w}`;
-                    warnContainer.appendChild(wEl);
-                }
-                container.appendChild(warnContainer);
-            }
-
-            // 表格：Device／Sensor／分類／狀態／目前值／說明
-            const tableResp = document.createElement('div');
-            tableResp.className = 'table-responsive mt-2';
-
-            const table = document.createElement('table');
-            table.className = 'table table-sm table-bordered mb-0 small';
-
-            const thead = document.createElement('thead');
-            thead.className = 'table-light';
-            const headRow = document.createElement('tr');
-            const headers = ['Device', 'Sensor', '分類', '狀態', '目前值', '說明'];
-            for (const h of headers) {
-                const th = document.createElement('th');
-                th.textContent = h;
-                headRow.appendChild(th);
-            }
-            thead.appendChild(headRow);
-            table.appendChild(thead);
-
-            const tbody = document.createElement('tbody');
-            const sensors = res.sensors || [];
-            if (sensors.length === 0) {
-                const emptyRow = document.createElement('tr');
-                const emptyTd = document.createElement('td');
-                emptyTd.colSpan = 6;
-                emptyTd.className = 'text-muted text-center py-2';
-                emptyTd.textContent = '無受監看感測器。';
-                emptyRow.appendChild(emptyTd);
-                tbody.appendChild(emptyRow);
-            } else {
-                for (const s of sensors) {
-                    const tr = document.createElement('tr');
-
-                    // Device
-                    const tdDevice = document.createElement('td');
-                    tdDevice.textContent = s.device || '-';
-                    tr.appendChild(tdDevice);
-
-                    // Sensor
-                    const tdSensor = document.createElement('td');
-                    tdSensor.textContent = s.sensor ? `${s.sensor} (#${s.objid})` : `#${s.objid}`;
-                    tr.appendChild(tdSensor);
-
-                    // 分類
-                    const tdCat = document.createElement('td');
-                    tdCat.textContent = s.category || '-';
-                    tr.appendChild(tdCat);
-
-                    // 狀態
-                    const tdStatus = document.createElement('td');
-                    tdStatus.textContent = s.status || '-';
-                    tr.appendChild(tdStatus);
-
-                    // 目前值：有百分比就顯示 xx.x %，沒有就顯示無法判定的原因（text-muted）
-                    const tdValue = document.createElement('td');
-                    if (s.percentage != null) {
-                        tdValue.textContent = `${Number(s.percentage).toFixed(1)} %`;
-                    } else if (s.unmeasurableReason) {
-                        tdValue.className = 'text-muted';
-                        tdValue.textContent = s.unmeasurableReason;
-                    } else {
-                        tdValue.className = 'text-muted';
-                        tdValue.textContent = '-';
-                    }
-                    tr.appendChild(tdValue);
-
-                    // 說明
-                    const tdNote = document.createElement('td');
-                    if (s.unmeasurableReason && s.percentage != null) {
-                        tdNote.textContent = s.unmeasurableReason;
-                    } else if (s.percentage != null) {
-                        tdNote.textContent = '正常量測';
-                    } else {
-                        tdNote.className = 'text-muted';
-                        tdNote.textContent = s.unmeasurableReason || '-';
-                    }
-                    tr.appendChild(tdNote);
-
-                    tbody.appendChild(tr);
-                }
-            }
-            table.appendChild(tbody);
-            tableResp.appendChild(table);
-            container.appendChild(tableResp);
-        } catch (error) {
-            const errEl = document.createElement('div');
-            errEl.className = 'text-danger small mt-2';
-            errEl.textContent = error?.message || '預覽失敗。';
-            container.appendChild(errEl);
-        } finally {
-            restore();
-        }
-    });
-}
-
 
 function bindParamsForm() {
     const form = document.getElementById('prtg-params-form');
@@ -444,46 +277,15 @@ function bindParamsForm() {
                 prtgFetchConcurrency: fetchConcurrency,
                 prtgBackfillDays: backfillDays,
                 prtgRetentionDays: prtgRetentionDays,
-                prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist')
-            };
-
-            await api.put('/api/admin/settings/prtg', payload);
-            toast('已儲存', 'success');
-            await loadSettings();
-        } catch {
-            // 錯誤訊息已由 api.js 以 toast 顯示
-        } finally {
-            restore();
-        }
-    });
-}
-
-function bindGuardForm() {
-    const form = document.getElementById('prtg-guard-form');
-    const saveButton = document.getElementById('prtg-guard-save');
-    if (!form || !saveButton) return;
-
-    form.addEventListener('submit', async event => {
-        event.preventDefault();
-
-        const restore = withBusy(saveButton, '儲存中');
-        try {
-            const enabled = document.getElementById('prtg-guard-enabled')?.checked ?? false;
-            const cpuPercent = Number(document.getElementById('prtg-guard-cpu-percent')?.value) || 85;
-            const memoryFreePercent = Number(document.getElementById('prtg-guard-memory-free-percent')?.value) ?? 10;
-            const checkSeconds = Number(document.getElementById('prtg-guard-check-seconds')?.value) || 60;
-            const pauseMinutes = Number(document.getElementById('prtg-guard-pause-minutes')?.value) || 5;
-            const strikes = Number(document.getElementById('prtg-guard-strikes')?.value) || 2;
-            const maxPauseMinutes = Number(document.getElementById('prtg-guard-max-pause-minutes')?.value) || 120;
-
-            const payload = {
-                prtgResourceGuardEnabled: enabled,
-                prtgResourceGuardCpuPercent: cpuPercent,
-                prtgResourceGuardMemoryFreePercent: memoryFreePercent,
-                prtgResourceGuardCheckSeconds: checkSeconds,
-                prtgResourceGuardPauseMinutes: pauseMinutes,
-                prtgResourceGuardStrikes: strikes,
-                prtgResourceGuardMaxPauseMinutes: maxPauseMinutes,
+                prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist'),
+                // 資源守門與擷取參數同一顆儲存鈕：分兩顆時按其中一顆，另一張卡未存的改動會在重載時被覆蓋回舊值
+                prtgResourceGuardEnabled: document.getElementById('prtg-guard-enabled')?.checked ?? false,
+                prtgResourceGuardCpuPercent: numberOr('prtg-guard-cpu-percent', 85),
+                prtgResourceGuardMemoryFreePercent: numberOr('prtg-guard-memory-free-percent', 10),
+                prtgResourceGuardCheckSeconds: numberOr('prtg-guard-check-seconds', 60),
+                prtgResourceGuardPauseMinutes: numberOr('prtg-guard-pause-minutes', 5),
+                prtgResourceGuardStrikes: numberOr('prtg-guard-strikes', 2),
+                prtgResourceGuardMaxPauseMinutes: numberOr('prtg-guard-max-pause-minutes', 120),
                 prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids')
             };
 
@@ -1336,7 +1138,6 @@ function init() {
     bindPrtgDataTransfer();
     bindConnectionForm();
     bindParamsForm();
-    bindGuardForm();
     bindGuardPreview();
     initCalibration();
     loadSettings();

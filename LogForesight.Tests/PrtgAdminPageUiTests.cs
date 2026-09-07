@@ -529,4 +529,28 @@ public class PrtgAdminPageUiTests
 
         Assert.Contains("prtg-resource-guard/preview", js);
     }
+
+    /// <summary>
+    /// 資源守門與擷取參數必須同一顆儲存鈕：分兩顆時按其中一顆，另一張卡未存的改動會在
+    /// loadSettings() 重載時被覆蓋回舊值且沒有提示。同檔曾出現兩份逐字重複的守門函式
+    /// （後者覆蓋前者、無任何訊號），一併釘住。
+    /// </summary>
+    [Fact]
+    public void 資源守門與擷取參數共用儲存鈕且無重複函式()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+
+        Assert.DoesNotContain("prtg-guard-" + "form", cshtml);
+        Assert.DoesNotContain("prtg-guard-" + "save", cshtml);
+        Assert.DoesNotContain("function bind" + "GuardForm", js);
+        Assert.Contains("prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids')", js);
+
+        // 每個頂層函式只能定義一次（JS 宣告提升會讓後者無聲覆蓋前者）
+        var names = System.Text.RegularExpressions.Regex.Matches(js, @"^(?:async )?function (\w+)\(", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value).ToList();
+        var dup = names.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        Assert.True(dup.Count == 0, "重複定義的頂層函式：" + string.Join(", ", dup));
+    }
 }

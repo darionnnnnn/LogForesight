@@ -390,4 +390,31 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.NotNull(mapItem);
         Assert.Equal(0, mapItem!.SameIpSkippedCount);
     }
+
+    /// <summary>
+    /// 同 IP 上另一台 device 若也有人工對應，它走的是人工分支、不是被略過——
+    /// 直接用「同 IP 台數 − 1」會讓兩列都顯示「另有 1 台已略過」，使用者會去找一台不存在的裝置。
+    /// </summary>
+    [Fact]
+    public void 人工對應清單_同IP兩台皆人工對應時略過台數各為0()
+    {
+        var store = _backend.PrtgStore();
+        const string sharedIp = "10.9.9.9";
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 5001, Name = "dev-a", Ip = sharedIp },
+            new PrtgDeviceRow { Objid = 5002, Name = "dev-b", Ip = sharedIp },
+            new PrtgDeviceRow { Objid = 5003, Name = "dev-c", Ip = sharedIp }
+        }, DateTime.Now);
+        store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 5001, HostId = 401, CreatedAt = DateTime.Now });
+        store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 5002, HostId = 402, CreatedAt = DateTime.Now });
+
+        var res = _controller.GetPrtgManualMaps();
+        Assert.True(res.Success);
+        var a = res.Data!.Single(m => m.DeviceObjid == 5001);
+        var bRow = res.Data!.Single(m => m.DeviceObjid == 5002);
+        // 三台裡兩台人工對應，真正被略過的只有 dev-c 一台
+        Assert.Equal(1, a.SameIpSkippedCount);
+        Assert.Equal(1, bRow.SameIpSkippedCount);
+    }
 }

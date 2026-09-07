@@ -537,3 +537,29 @@
 觸發條件（共用計數器在第三個 job 建立時睡眠）在平行掃描下不保證成立。
 **修法**：改成閘門式（`TaskCompletionSource` 保證預算確實逾期）而非加長睡眠。
 **觸發時機**：下次動到該測試檔，或它開始穩定失敗時。
+
+## PRTG 衝突清單：型別與候選主機改由快照決定
+
+`GET prtg-host-map` 的 `conflictKind` 與 `candidateHosts` 用**當下**的 `lf_prtg_devices`／主機主檔推導，
+衝突列本身卻來自最近一次對應快照。快照產生後 device 被刪或改 IP，型別會從「同 IP 多裝置」翻成「IP 對多主機」，
+指派 modal 就不會列 device radio。同一判定在 `PrtgHostMapper` 與 controller 各一份。
+**修法**：在 `lf_prtg_host_map` 存 `conflict_kind` 欄，一次做對。**觸發時機**：使用者回報指派畫面型別不對；
+寫入後即時重算對應已讓快照隨操作更新，實務影響小。
+
+## PRTG 衝突清單分頁：後端仍全表載入
+
+`GetLatestHostMapWithDate`＋`GetAllDevices`＋主機主檔三個全表讀進記憶體排序後才 `Skip/Take`，
+分頁只省傳輸沒省查詢。**觸發時機**：衝突列破千或翻頁明顯變慢。
+
+## 資源守門 DNS 解析改非同步
+
+`PrtgResourceGuardTargets.ResolveHostAddressesWithTimeout` 用 `Task.Run`＋`Wait(2000)` 阻塞，
+逾時後那個 task 沒人回收。改 `Dns.GetHostAddressesAsync`＋`CancellationTokenSource`，
+但 `Resolve` 整條是同步 API，要一起改成 async。**觸發時機**：偵測到 DNS 逾時堆積或執行緒池飢餓。
+
+## UI 字串測試偵測不到「形狀」問題
+
+`PrtgAdminPageUiTests`／`RunsPageUiTests` 大量 `Assert.Contains(字串, 整檔)`，只要檔案任何角落出現過就通過。
+本輪 `prtg-admin.js` 曾有兩份逐字重複的守門函式（後者覆蓋前者），這類斷言完全無感；
+體檢已補一條「頂層函式不得重複定義」的 regex 守衛。**建議**：新增 UI 測試時優先斷言結構（元素在哪個容器內、函式只定義一次），
+少用全檔子字串。**觸發時機**：下次動這兩個測試檔。

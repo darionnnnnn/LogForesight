@@ -26,6 +26,9 @@ public class AiAnalysisRunState
     private TaskCompletionSource<bool>? _runCompletionTcs;
     private int? _cachedPendingCount;
     private DateTime _pendingCacheExpiresAt;
+    // 世代號：fetcher 在鎖外跑 7~15 秒，期間若 AI 排程結束並使快取失效，
+    // 寫回時必須發現世代已變、丟棄這次結果，否則「執行前的舊件數」會連同全新 30 秒有效期被寫回。
+    private int _pendingCacheGeneration;
     private static readonly TimeSpan PendingCacheDuration = TimeSpan.FromSeconds(30);
 
     public bool IsRunning { get; private set; }
@@ -98,7 +101,7 @@ public class AiAnalysisRunState
             _cts = null;
             tcsToComplete = _runCompletionTcs;
             _runCompletionTcs = null;
-            _cachedPendingCount = null;
+            InvalidatePendingAiCacheLocked();
         }
         tcsToComplete?.TrySetResult(success);
     }
@@ -109,12 +112,14 @@ public class AiAnalysisRunState
     /// </summary>
     public int GetPendingAiCount(Func<int> fetcher)
     {
+        int generation;
         lock (_lock)
         {
             if (_cachedPendingCount.HasValue && DateTime.UtcNow < _pendingCacheExpiresAt)
             {
                 return _cachedPendingCount.Value;
             }
+            generation = _pendingCacheGeneration;
         }
 
         // 查詢刻意放在鎖外：這支查詢在實機上要 7~15 秒，若在鎖內執行，排程頁的輪詢
@@ -124,8 +129,12 @@ public class AiAnalysisRunState
 
         lock (_lock)
         {
-            _cachedPendingCount = count;
-            _pendingCacheExpiresAt = DateTime.UtcNow.Add(PendingCacheDuration);
+            // 查詢期間快取被使失效（AI 排程結束／整批重標）→ 這筆是過期的，不寫回
+            if (generation == _pendingCacheGeneration)
+            {
+                _cachedPendingCount = count;
+                _pendingCacheExpiresAt = DateTime.UtcNow.Add(PendingCacheDuration);
+            }
         }
 
         return count;
@@ -136,10 +145,14 @@ public class AiAnalysisRunState
     /// </summary>
     public void InvalidatePendingAiCache()
     {
-        lock (_lock)
-        {
-            _cachedPendingCount = null;
-        }
+        lock (_lock) InvalidatePendingAiCacheLocked();
+    }
+
+    /// <summary>失效的唯一實作（EndRun 與公開方法共用）；呼叫端須已持有 _lock。</summary>
+    private void InvalidatePendingAiCacheLocked()
+    {
+        _cachedPendingCount = null;
+        _pendingCacheGeneration++;
     }
 
     /// <summary>等待當前執行完成（用於強制重新分析時的「優雅停止當前執行 → 整批重標」）</summary>

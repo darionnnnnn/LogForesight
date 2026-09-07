@@ -203,7 +203,6 @@ public class AiAnalysisHostedService : BackgroundService
                 recorder.Finish(success ? 0 : 1);
 
                 _runState.EndRun(success, failureMessage);
-                _runState.InvalidatePendingAiCache();
                 // AI 補寫改變了紀錄內容，儀表板／報表快取要失效（批次F）——背景執行不走
                 // HTTP 管線，不會被那條中介軟體涵蓋。
                 _dataVersion.Bump();

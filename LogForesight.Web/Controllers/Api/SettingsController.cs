@@ -500,6 +500,10 @@ public class SettingsController : ControllerBase
         var allDevices = store.GetAllDevices();
         var deviceByObjid = new Dictionary<long, PrtgDeviceRow>();
         var countByNormIp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // 同 IP 上「也有人工對應」的 device 走的是人工分支，不是被略過——扣掉它們才是真正被略過的台數，
+        // 否則同 IP 兩台各自人工對應時，兩列都會顯示「另有 1 台已略過」，使用者會去找一台不存在的裝置。
+        var manualCountByNormIp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var manualObjids = manualMaps.Select(m => m.DeviceObjid).ToHashSet();
 
         foreach (var d in allDevices)
         {
@@ -508,6 +512,8 @@ public class SettingsController : ControllerBase
             if (normIp != null)
             {
                 countByNormIp[normIp] = countByNormIp.GetValueOrDefault(normIp) + 1;
+                if (manualObjids.Contains(d.Objid))
+                    manualCountByNormIp[normIp] = manualCountByNormIp.GetValueOrDefault(normIp) + 1;
             }
         }
 
@@ -519,7 +525,7 @@ public class SettingsController : ControllerBase
                 var normIp = PrtgHostMapper.NormalizeIp(dev.Ip);
                 if (normIp != null && countByNormIp.TryGetValue(normIp, out var totalCount))
                 {
-                    skipped = Math.Max(0, totalCount - 1);
+                    skipped = Math.Max(0, totalCount - manualCountByNormIp.GetValueOrDefault(normIp));
                 }
             }
 

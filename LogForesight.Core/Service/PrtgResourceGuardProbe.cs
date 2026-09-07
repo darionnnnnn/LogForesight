@@ -114,7 +114,7 @@ public static class PrtgResourceGuardProbe
                 ct.ThrowIfCancellationRequested();
                 var batch = distinctObjids.Skip(i).Take(MaxBatchSize).ToList();
                 var filterQuery = string.Concat(batch.Select(id => $"&filter_objid={id}"));
-                var relativePathAndQuery = $"/api/table.json?content=sensors&columns=objid,device,sensor,status,lastvalue{filterQuery}";
+                var relativePathAndQuery = $"/api/table.json?content=sensors&columns=objid,device,sensor,status,lastvalue,lastvalue_raw{filterQuery}";
 
                 var json = await client.GetJsonAsync(relativePathAndQuery, ct);
                 ParseSensorsJson(json, batch, results);

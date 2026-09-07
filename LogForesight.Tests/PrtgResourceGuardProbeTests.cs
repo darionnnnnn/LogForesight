@@ -78,7 +78,7 @@ public class PrtgResourceGuardProbeTests
         Assert.Single(handler.RequestedUrls);
         var url = handler.RequestedUrls[0];
         Assert.Contains("content=sensors", url);
-        Assert.Contains("columns=objid,device,sensor,status,lastvalue", url);
+        Assert.Contains("columns=objid,device,sensor,status,lastvalue,lastvalue_raw", url);
         Assert.Contains("filter_objid=2001", url);
         Assert.Contains("filter_objid=2002", url);
         Assert.Contains("filter_objid=2003", url);

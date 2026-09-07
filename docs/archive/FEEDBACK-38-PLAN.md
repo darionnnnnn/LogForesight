@@ -1,6 +1,6 @@
 # 回饋第 38 輪規劃：PRTG 維護頁重組、衝突對應操作、排程狀態卡與執行紀錄結構化、資源守門
 
-> 狀態：全案完成，文件已同步，待併 dev
+> 狀態：全案完成，體檢通過，已併 dev 並 push
 > 基準：dev@233e6c9（3378 綠、略過 6）
 > 來源：使用者實測回饋清單（PRTG 維護頁 1.2~1.8、排程作業頁 2.1~2.5、資源守門 3）
 > 委派模型：agy `gemini-3.8-flash-high`，整輪不換；幾行內小修標「Claude」。
@@ -267,6 +267,8 @@
 
 ## 體檢交接
 
+實作：Claude Opus 5 ＋ agy `gemini-3.8-flash-high`；體檢：Claude Fable 5.1（模型已切換）。
+
 **全量測試**：`dotnet test` 排除 `SentinelRestDirectoryClientTests` 後 **3442 綠**（略過 6），
 該類別單獨執行 **47 綠**，合計 **3489**。開輪基線 3378，本輪淨增 **111** 筆測試。
 
@@ -292,3 +294,39 @@
   數值語意（特別是記憶體 sensor 回的是可用還是使用百分比）。
 - 本機分析改走 AI 分析排程：**AI 排程未啟用時本機也不會有 AI 判讀**（與 NetIQ 主機同一處境），
   排程作業頁已有待補積壓提示。
+
+## 體檢輪修正（Fable 5.1）
+
+體檢對象 `origin/dev..dev`（29 commit、70 檔）。兩個獨立 Explore（程式碼／文件）各審一次，
+高／中嚴重度主張逐條**親自讀程式碼路徑驗證**後才動手；兩條主張驗證後不成立，記在最後。
+
+| 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|
+| `AnalysisOrchestrator.RunAsync` 守門建構 | `PrtgClientFactory.Create`（密文損毀時解密擲例外）與 `Resolve`（鏡像表讀取）裸露在主流程，任何一步擲例外**整趟夜間批次在啟動前就失敗**——違反「守門讀不到就放行」 | 收進 `PrtgResourceGuard.TryCreate` 唯一入口，失敗回 null＋Milestone 警告；守門實作 `IDisposable` 擁有自建 client，主流程淨減 8 行 | `TryCreate_密文損毀時回null不擲例外且有警告`（突變：關掉 catch → 紅）＋未啟用／認證齊備兩條 |
+| `PrtgResourceGuard.TryCreate` | 守門已啟用但位址或認證未設定時無聲跳過，執行紀錄一個字都沒有 | 該路徑寫 Milestone 警告 | `TryCreate_啟用但位址未設定時回null且有警告` |
+| `PrtgResourceGuardProbe` 查詢欄位 | 只請求 `lastvalue`、從未請求 `lastvalue_raw`，判定永遠走字串剖析；PLAN 定案明寫 raw 優先，且歐系 `85,5 %` 會被算成 855 | columns 補 `lastvalue_raw`（解析端本來就 raw 優先） | 既有 URL 斷言改為含 `lastvalue_raw` |
+| `prtg-admin.js` | `bindGuardForm`／`bindGuardPreview` **各有兩份逐字重複**（A／F 兩批次同動此檔疊加），JS 宣告提升讓後者無聲覆蓋前者，約 175 行死碼 | 刪前一份 | UI 測試新增「頂層函式不得重複定義」的 regex 斷言 |
+| `Prtg.cshtml`＋`prtg-admin.js` | 資源守門是**第三顆儲存鈕**（違反 PLAN「同一顆」），改了擷取參數又改守門、按其中一顆後另一張卡的改動在 `loadSettings()` 重載時被覆蓋回舊值且無提示 | 守門欄位併進擷取參數的 payload，移除 `prtg-guard-form`／`prtg-guard-save` | UI 測試斷言兩個 id 不存在、payload 含守門欄位 |
+| `prtg-admin.js` 數值欄位 | `Number(v) ?? 10` 的 `??` 永不觸發（`Number('')` 是 0）；其他欄位用 `\|\| 85` 會把合法的 0（可用記憶體門檻 0~99）吞成預設值 | 抽 `numberOr(id, fallback)`：只有空白或非數字才回預設 | — |
+| `AiAnalysisRunState.GetPendingAiCount` | 查詢在鎖外跑 7~15 秒，期間 AI 排程結束呼叫失效，查詢寫回時把**執行前的舊件數**連同新 30 秒有效期蓋回去——PLAN 定案的「每輪結束失效」被靜默取消 | 世代號：查詢前快照、寫回前比對，不符就丟棄；`EndRun` 與公開失效方法共用同一份 `InvalidatePendingAiCacheLocked`，移除 `AiAnalysisHostedService` 緊接 `EndRun` 的重複呼叫 | `GetPendingAiCount_查詢期間被失效時不寫回快取`（突變：關掉世代比對 → 紅） |
+| `SystemSettingsService.ValidatePrtgSettings` | 收了 `Enabled`／`SensorObjids` 兩個參數卻沒用；覆寫清單完全沒驗證，打錯字要到夜間才在 console 看到「略過非數字」，全錯時＝守門靜默失效 | 逐行 `long.TryParse` 且 > 0，否則存檔即擋；拿掉沒用的 `Enabled` 參數與兩處呼叫端 | `UpdatePrtg_資源守門objid清單含非整數時拋出驗證例外` |
+| `SettingsController.GetPrtgManualMaps` | 「同 IP 另有 N 台已略過」用 `同 IP 台數 − 1`，同 IP 兩台各自人工對應時兩列都顯示「另有 1 台」，使用者去找不存在的裝置 | 扣掉同 IP 上也有人工對應的台數 | `人工對應清單_同IP兩台皆人工對應時略過台數各為0`（突變：改回 −1 → 紅） |
+| `AnalysisOrchestrator.RecordPrtgOutcome` | `sensorsFetched` 填的是**目標數**，畫面「sensor 100／失敗 40」讀成抓了 100 個 | 改為目標數 − 失敗數 | — |
+| `runs.js` 執行詳情 PRTG 格 | 終檢補線 `ba6725a` 只補了列表欄，詳情頁 `renderPrtgCell` 仍少傳 `prtgTriggeredHosts` | 補第 4 個參數 | — |
+| `PrtgResourceGuardTargets` 覆寫分支 | `catch { }` 吞掉鏡像表讀取例外、全部歸 `unknown` → `Evaluate` 一律忽略 → 守門靜默失效，零 log | catch 改寫 console 警告 | — |
+| `PrtgResourceGuard.Dispose` | `SemaphoreSlim _gate` 未釋放 | 補上 | — |
+| `prtg-admin.js` 測試連線 | 逾時預設 `\|\| 30`，與 `SystemSettings` 預設 60、`renderPrtgFields` 的 60 不一致 | 改 60 | — |
+
+**文件稽核修正**（文件 agent 逐條對照，皆已改）：PRTG-SPEC §2 表清單漏 `lf_prtg_ip_excludes`；§4b 補主機明細「IP 已排除」、人工對應「同 IP 略過台數」兩處畫面呈現與兩個稽核碼；§12 忽略原因實為四種（漏 `UnknownCategory`）、corehealth fallback 條件寫得比實作窄、離開暫停的 Milestone 不含 sensor／值（文字改成與實作一致，並補「同段文字經 `IRunConsole` 進狀態卡最新訊息列」）；頁面表四頁籤內容與 WEB-SPEC 重複 → 改指向 §9.9e。WEB-SPEC §9.9e 補 `GET api/admin/hosts/all` 與「守門卡與擷取參數同一顆儲存鈕」；§9.10 補 phase 字面值一覽、`PrtgOutcome` 四值、`PausedReason` 段去重改指向 PRTG-SPEC；§11 補 AI 契約失敗附回覆片段機制。敘事字眼（現在／舊寫法／已移除／不再／過去）七處改為現況陳述。
+
+**驗證後不採納的主張**：(1)「`PausedReason` 只有固定字串、規劃要求的 sensor／數值全丟」——`WebRunConsole.WriteLine` 會把守門的暫停訊息（含 sensor 與值）送進 `SchedulerRunState.ReportMessage`，狀態卡的最新訊息列本來就顯示，規劃意圖已達成，只改文件用語；(2)「`/admin/calibration` 應用 302 而非 301」——該路由確實永久移除且有測試釘住 `RedirectPermanent`，維持。
+
+**記入 BACKLOG 不在此輪動**：衝突型別與候選主機用當下 device／host 表推導而非快照（快照後 device 被刪或改 IP 時型別會翻；寫入後重算對應已讓快照隨操作更新，實務影響小）；衝突清單分頁後端仍全表載入再 `Skip/Take`；DNS 解析用 `Task.Run`＋`Wait` 阻塞、逾時後 task 未回收；UI 字串測試多為全檔 `Contains`，偵測不到重複函式這類形狀問題。
+
+全量測試：排除 Sentinel 偶發類別 **3450 綠**、該類別單獨 **47 綠**，合計 **3497**（體檢淨增 8 筆）。
+
+## 終檢輪
+
+體檢修正 commit 後再掃：`git diff -w` 確認 `AnalysisOrchestrator` 只有守門建構段與 `sensorsFetched` 兩處實質改動、無縮排污染；
+20 個改動檔 BOM 與 HEAD 一致、CRLF、無 NUL（一處 objid 驗證插入造成的孤立 LF 已正規化）；
+三個突變各讓對應測試轉紅後還原。終檢無新發現。
