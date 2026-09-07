@@ -60,7 +60,7 @@ function formatNetiqBranch(analyzed, failed, skipped) {
     return text;
 }
 
-function renderPrtgCell(outcome, fetched, failed) {
+function renderPrtgCell(outcome, fetched, failed, triggeredHosts) {
     if (outcome == null) return document.createTextNode('—');
     const badge = renderPrtgBadge(outcome);
     if (!badge) return document.createTextNode('—');
@@ -71,6 +71,11 @@ function renderPrtgCell(outcome, fetched, failed) {
     let text = `sensor ${fetched ?? 0}`;
     if ((failed ?? 0) > 0) {
         text += `／失敗 ${failed}`;
+    }
+    // 觸發主機數：sensor 數是「抓了多少」，觸發主機數才答得出「為誰抓的」，
+    // 兩者一起看才知道當晚的觸發式取數規模是否合理。
+    if ((triggeredHosts ?? 0) > 0) {
+        text += `（觸發主機 ${triggeredHosts} 台）`;
     }
     const sensorSpan = document.createElement('span');
     sensorSpan.textContent = text;
@@ -372,7 +377,7 @@ const RUN_LIST_COLUMNS = [
     {
         title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
         sortValue: r => r.prtgOutcome ?? '',
-        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed)
+        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts)
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
