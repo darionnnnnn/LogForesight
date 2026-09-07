@@ -486,4 +486,59 @@ public class SchedulerRunStateTests
         Assert.Equal(1, state.PrtgProgressDone);
         Assert.Equal(3, state.PrtgProgressTotal);
     }
+
+    /// <summary>
+    /// 驗證 guard-paused 設 PausedReason、guard-resumed 清空，
+    /// 且兩者都不影響三軌的 phase／done／total（釘住「不落入 catch-all」）。
+    /// </summary>
+    [Fact]
+    public void ReportProgress_GuardPaused與Resumed設定與清空PausedReason且不影響三軌進度()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 2, 5);
+        state.ReportProgress("netiq", 10, 20);
+        state.ReportProgress("prtg-sync", 1, 3);
+
+        // 1. 發送 guard-paused：設定 PausedReason，不影響三軌任何數值與 phase
+        state.ReportProgress("guard-paused", 0, 0);
+
+        Assert.NotNull(state.PausedReason);
+        Assert.Equal("資源緊張，暫停中", state.PausedReason);
+
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(20, state.ProgressTotal);
+        Assert.Equal("prtg-sync", state.PrtgProgressPhase);
+        Assert.Equal(1, state.PrtgProgressDone);
+        Assert.Equal(3, state.PrtgProgressTotal);
+
+        // 2. 發送 guard-resumed：清空 PausedReason，三軌數值仍保持原樣
+        state.ReportProgress("guard-resumed", 0, 0);
+
+        Assert.Null(state.PausedReason);
+
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(20, state.ProgressTotal);
+        Assert.Equal("prtg-sync", state.PrtgProgressPhase);
+        Assert.Equal(1, state.PrtgProgressDone);
+        Assert.Equal(3, state.PrtgProgressTotal);
+
+        // 3. EndRun 與 TryBeginRun 都清為 null
+        state.ReportProgress("guard-paused", 0, 0);
+        Assert.NotNull(state.PausedReason);
+        state.EndRun();
+        Assert.Null(state.PausedReason);
+
+        Assert.True(state.TryBeginRun("manual", out _));
+        Assert.Null(state.PausedReason);
+    }
 }

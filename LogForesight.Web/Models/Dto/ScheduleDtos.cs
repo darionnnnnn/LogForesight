@@ -94,6 +94,9 @@ public class ScheduleStatusDto
     public bool NetiqCompleted { get; set; }
     public bool PrtgCompleted { get; set; }
 
+    /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
+    public string? PausedReason { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }

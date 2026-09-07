@@ -612,15 +612,30 @@ public class AnalysisOrchestrator
                 localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
             }
 
+            PrtgResourceGuard? resourceGuard = null;
+            var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            using var guardClient = (systemSettings.PrtgResourceGuardEnabled &&
+                !string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) &&
+                PrtgClientFactory.HasUsableCredentials(systemSettings))
+                ? PrtgClientFactory.Create(systemSettings)
+                : null;
+            if (guardClient != null)
+            {
+                var guardTargets = PrtgResourceGuardTargets.Resolve(
+                    backend.PrtgStore(), systemSettings, sentinelStore.GetAll(), console);
+                resourceGuard = new PrtgResourceGuard(
+                    guardClient, systemSettings, guardTargets, runRecorder, console, progress);
+            }
+
             // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
             //    NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套 LogAnalysisService。LocalOnly
             //    範圍（Phase 3 手動觸發只跑本機）跳過這段。
             var netiqTask = request.Scope != RunScope.LocalOnly
-                ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService)
+                ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService, resourceGuard)
                 : Task.CompletedTask;
 
             var analysisTask = Task.WhenAll(localTask, netiqTask);
-            var prtgTask = RunPrtgFetchAsync(runCtx, backend, hostStore, yesterday, analysisTask);
+            var prtgTask = RunPrtgFetchAsync(runCtx, backend, hostStore, yesterday, analysisTask, resourceGuard);
 
             // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
             // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
@@ -977,7 +992,8 @@ public class AnalysisOrchestrator
 
     private async Task RunNetiqAnalysisAsync(
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, ISentinelStore sentinelStore,
-        AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService)
+        IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
+        PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
@@ -1027,7 +1043,8 @@ public class AnalysisOrchestrator
                 riskyEventStore, retention.RawEventRetentionDays, useAi, progress,
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings,
-                rerunMode: request.RerunMode);
+                rerunMode: request.RerunMode,
+                guard: guard);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
@@ -1075,7 +1092,8 @@ public class AnalysisOrchestrator
     }
 
     private async Task RunPrtgFetchAsync(
-        AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, DateTime day, Task analysisTask)
+        AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, DateTime day, Task analysisTask,
+        PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
@@ -1098,7 +1116,7 @@ public class AnalysisOrchestrator
 
             using var client = PrtgClientFactory.Create(systemSettings);
 
-            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole);
+            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole, guard);
 
             // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）
             // PRTG 進度 phase：prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）、prtg-done（完工）

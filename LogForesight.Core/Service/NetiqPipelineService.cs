@@ -68,6 +68,7 @@ public class NetiqPipelineService
     private readonly PermissionChangeStore? _permissionChangeStore;
     private readonly PermissionFieldMappings? _permissionMappings;
     private readonly RerunMode _rerunMode;
+    private readonly PrtgResourceGuard? _guard;
     /// <summary>權限異動的主機日佔位（回饋三十四輪 A2）：只放「主機＋日期」，不放事件內容——
     /// 內容去重由 <see cref="PermissionChangeStore.GetDedupeKeysForHost"/> 逐主機日現查承擔。</summary>
     private ConcurrentDictionary<string, byte> _permissionHostDayClaims = new();
@@ -97,6 +98,7 @@ public class NetiqPipelineService
     /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
     /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
     /// <param name="rerunMode">重新分析模式，預設 None</param>
+    /// <param name="guard">PRTG 資源守門閘門；null＝不受守門（測試／離峰手動作業）</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -107,7 +109,8 @@ public class NetiqPipelineService
         bool onlyMissingOrFailed = false,
         PermissionChangeStore? permissionChangeStore = null,
         PermissionFieldMappings? permissionMappings = null,
-        RerunMode rerunMode = RerunMode.None)
+        RerunMode rerunMode = RerunMode.None,
+        PrtgResourceGuard? guard = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -130,6 +133,7 @@ public class NetiqPipelineService
         _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
         _permissionMappings = permissionMappings;
         _rerunMode = rerunMode;
+        _guard = guard;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -371,6 +375,8 @@ public class NetiqPipelineService
                         CancellationToken = ct
                     }, async (batch, batchCt) =>
                     {
+                        if (_guard != null) await _guard.WaitIfBusyAsync(batchCt);
+
                         // 租一個 client：並行度上限已等於池大小，池子裡永遠有東西可租——
                         // TryTake 失敗代表這個不變量被破壞了，是程式錯誤而非可預期的執行期狀況。
                         if (!clientPool.TryTake(out var client))

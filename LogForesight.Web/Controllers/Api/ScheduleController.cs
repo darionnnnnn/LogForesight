@@ -138,6 +138,7 @@ public class ScheduleController : ControllerBase
             LocalCompleted = _runState.LocalCompleted,
             NetiqCompleted = _runState.NetiqCompleted,
             PrtgCompleted = _runState.PrtgCompleted,
+            PausedReason = _runState.PausedReason,
             CanStop = _runState.IsRunning,
             ScheduleEnabled = options.Enabled,
             NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,

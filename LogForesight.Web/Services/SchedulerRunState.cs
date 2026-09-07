@@ -75,6 +75,9 @@ public class SchedulerRunState
     public bool NetiqCompleted { get; private set; }
     public bool PrtgCompleted { get; private set; }
 
+    /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
+    public string? PausedReason { get; private set; }
+
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
@@ -106,6 +109,7 @@ public class SchedulerRunState
             PrtgProgressDone = 0;
             PrtgProgressTotal = 0;
             PrtgCompleted = false;
+            PausedReason = null;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -176,6 +180,14 @@ public class SchedulerRunState
             {
                 PrtgCompleted = true;
             }
+            else if (phase == "guard-paused")
+            {
+                PausedReason = "資源緊張，暫停中";
+            }
+            else if (phase == "guard-resumed")
+            {
+                PausedReason = null;
+            }
             else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
             {
                 PrtgCompleted = false;
@@ -225,6 +237,7 @@ public class SchedulerRunState
             PrtgProgressDone = 0;
             PrtgProgressTotal = 0;
             PrtgCompleted = false;
+            PausedReason = null;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

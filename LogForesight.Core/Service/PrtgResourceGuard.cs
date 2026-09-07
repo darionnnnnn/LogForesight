@@ -1,0 +1,218 @@
+using LogForesight.Core.Models;
+
+namespace LogForesight.Core.Service;
+
+/// <summary>
+/// PRTG 資源守門閘門服務（批次F 階段3）。
+/// 在 NetIQ 與 PRTG 取數路徑前檢查監看目標主機之資源狀況（CPU／可用記憶體）；
+/// 連續超標達門檻時進入暫停，資源回落後自動恢復，單趟達累計暫停上限時放行不再暫停。
+/// </summary>
+public sealed class PrtgResourceGuard
+{
+    private readonly PrtgClient _client;
+    private readonly SystemSettings _settings;
+    private readonly PrtgResourceGuardTargetResult _targets;
+    private readonly BatchRunRecorder _recorder;
+    private readonly IRunConsole _console;
+    private readonly IRunProgress? _progress;
+
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private int _consecutiveStrikes;
+    private int _checkCount;
+    private int _totalPausedMinutes;
+    private bool _maxPauseExceeded;
+    private bool _warnedUnmeasurable;
+    private DateTime? _lastCheckTime;
+    private long _checkVersion;
+
+    /// <summary>
+    /// 內部等待注入點（測試可替換成立即完成之委派，記錄被要求等待的時間）。
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
+
+    /// <summary>
+    /// 內部時間注入點（測試可替換以模擬時間推進）。
+    /// </summary>
+    internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+
+    public PrtgResourceGuard(
+        PrtgClient client,
+        SystemSettings settings,
+        PrtgResourceGuardTargetResult targets,
+        BatchRunRecorder recorder,
+        IRunConsole console,
+        IRunProgress? progress)
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _targets = targets ?? throw new ArgumentNullException(nameof(targets));
+        _recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
+        _console = console ?? throw new ArgumentNullException(nameof(console));
+        _progress = progress;
+    }
+
+    /// <summary>
+    /// 若監控主機資源緊張則等待，直到資源回落或達單趟暫停上限才放行。
+    /// </summary>
+    public async Task WaitIfBusyAsync(CancellationToken ct)
+    {
+        // 1. 守門未啟用：立刻返回（no-op），不得有任何 API 呼叫或延遲
+        if (!_settings.PrtgResourceGuardEnabled)
+        {
+            return;
+        }
+
+        // 2. 單趟累計暫停上限已達：旗標一次性放行，這趟之後不再暫停
+        if (_maxPauseExceeded)
+        {
+            return;
+        }
+
+        var startVersion = Volatile.Read(ref _checkVersion);
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            // 等待鎖的期間，若已有前一個呼叫者完成了一次檢查或暫停，其餘呼叫者跟著一起等後直接放行
+            if (Volatile.Read(ref _checkVersion) != startVersion)
+            {
+                return;
+            }
+
+            if (_maxPauseExceeded)
+            {
+                return;
+            }
+
+            var now = UtcNow();
+            if (_lastCheckTime.HasValue && _settings.PrtgResourceGuardCheckSeconds > 0 &&
+                (now - _lastCheckTime.Value).TotalSeconds < _settings.PrtgResourceGuardCheckSeconds)
+            {
+                return;
+            }
+
+            // 無受監看目標時，視為無法量測，放行並每趟只警告一次
+            if (_targets.SensorObjids == null || _targets.SensorObjids.Count == 0)
+            {
+                WarnUnmeasurableOnce("未設定或未偵測到任何受監看感測器");
+                _lastCheckTime = UtcNow();
+                _checkVersion++;
+                return;
+            }
+
+            // 讀取即時值
+            _checkCount++;
+            var probeResult = await PrtgResourceGuardProbe.FetchSensorValuesAsync(_client, _targets.SensorObjids, ct);
+            _lastCheckTime = UtcNow();
+
+            if (!probeResult.IsSuccess)
+            {
+                WarnUnmeasurableOnce($"讀取 PRTG 感測器即時值失敗（{probeResult.FailureReason}）");
+                _checkVersion++;
+                return;
+            }
+
+            var evalResult = PrtgResourceGuardProbe.Evaluate(_targets.SensorCategories, probeResult, _settings);
+            if (!evalResult.HasMeasurableSensors)
+            {
+                WarnUnmeasurableOnce("受監看感測器目前皆無法量測");
+                _checkVersion++;
+                return;
+            }
+
+            if (!evalResult.IsOverloaded)
+            {
+                _consecutiveStrikes = 0;
+                _checkVersion++;
+                return;
+            }
+
+            _consecutiveStrikes++;
+            if (_consecutiveStrikes < _settings.PrtgResourceGuardStrikes)
+            {
+                // 超標但未達 strikes 門檻，放行
+                _checkVersion++;
+                return;
+            }
+
+            // 達到 strikes 門檻，進入暫停
+            var pauseMsg = $"[PRTG資源守門] 進入暫停：資源緊張（{evalResult.TriggeredSensorDescription}），第 {_checkCount} 次檢查，預計等待 {_settings.PrtgResourceGuardPauseMinutes} 分鐘。";
+            _recorder.Milestone(pauseMsg);
+            _console.WriteLine(pauseMsg);
+            _progress?.Report("guard-paused", 0, 0);
+
+            // 暫停重試迴圈
+            while (true)
+            {
+                await DelayAsync(TimeSpan.FromMinutes(_settings.PrtgResourceGuardPauseMinutes), ct);
+                _totalPausedMinutes += _settings.PrtgResourceGuardPauseMinutes;
+                _lastCheckTime = UtcNow();
+
+                // 理由：門檻設錯時整晚只會暫停、什麼都沒分析，而且每晚重演。超過累計上限後放行並警告，這趟不再暫停。
+                if (_totalPausedMinutes >= _settings.PrtgResourceGuardMaxPauseMinutes)
+                {
+                    _maxPauseExceeded = true;
+                    var limitMsg = $"[PRTG資源守門] 警告：單趟累計暫停時間已達上限（{_totalPausedMinutes} 分鐘），放行並不再暫停。";
+                    _recorder.Milestone(limitMsg);
+                    _console.WriteLine(limitMsg);
+                    _progress?.Report("guard-resumed", 0, 0);
+                    _consecutiveStrikes = 0;
+                    _checkVersion++;
+                    return;
+                }
+
+                _checkCount++;
+                var retryProbe = await PrtgResourceGuardProbe.FetchSensorValuesAsync(_client, _targets.SensorObjids, ct);
+                if (!retryProbe.IsSuccess)
+                {
+                    WarnUnmeasurableOnce($"讀取 PRTG 感測器即時值失敗（{retryProbe.FailureReason}）");
+                    var resumeMsg = $"[PRTG資源守門] 離開暫停：讀取感測器即時值失敗，放行不阻擋，第 {_checkCount} 次檢查。";
+                    _recorder.Milestone(resumeMsg);
+                    _console.WriteLine(resumeMsg);
+                    _progress?.Report("guard-resumed", 0, 0);
+                    _consecutiveStrikes = 0;
+                    _checkVersion++;
+                    return;
+                }
+
+                var retryEval = PrtgResourceGuardProbe.Evaluate(_targets.SensorCategories, retryProbe, _settings);
+                if (!retryEval.HasMeasurableSensors)
+                {
+                    WarnUnmeasurableOnce("受監看感測器目前皆無法量測");
+                    var resumeMsg = $"[PRTG資源守門] 離開暫停：受監看感測器無法量測，放行不阻擋，第 {_checkCount} 次檢查。";
+                    _recorder.Milestone(resumeMsg);
+                    _console.WriteLine(resumeMsg);
+                    _progress?.Report("guard-resumed", 0, 0);
+                    _consecutiveStrikes = 0;
+                    _checkVersion++;
+                    return;
+                }
+
+                if (!retryEval.IsOverloaded)
+                {
+                    // 資源已回落，離開暫停
+                    var resumeMsg = $"[PRTG資源守門] 離開暫停：資源已回落正常，第 {_checkCount} 次檢查，恢復執行。";
+                    _recorder.Milestone(resumeMsg);
+                    _console.WriteLine(resumeMsg);
+                    _progress?.Report("guard-resumed", 0, 0);
+                    _consecutiveStrikes = 0;
+                    _checkVersion++;
+                    return;
+                }
+
+                // 仍超標，繼續暫停迴圈
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private void WarnUnmeasurableOnce(string reason)
+    {
+        if (_warnedUnmeasurable) return;
+        _warnedUnmeasurable = true;
+        _console.WriteLine($"[PRTG資源守門] 警告：{reason}，放行不阻擋。");
+    }
+}
