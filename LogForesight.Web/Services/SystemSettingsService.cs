@@ -178,6 +178,16 @@ public class SystemSettingsService : ISystemSettingsService
         var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
         var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
         var effectivePrtgUsername = request.PrtgUsername ?? before.PrtgUsername;
+        var effectivePrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled ?? before.PrtgResourceGuardEnabled;
+        var effectivePrtgResourceGuardSensorObjids = request.PrtgResourceGuardSensorObjids != null
+            ? NormalizeLines(request.PrtgResourceGuardSensorObjids)
+            : before.PrtgResourceGuardSensorObjids;
+        var effectivePrtgResourceGuardCpuPercent = request.PrtgResourceGuardCpuPercent ?? before.PrtgResourceGuardCpuPercent;
+        var effectivePrtgResourceGuardMemoryFreePercent = request.PrtgResourceGuardMemoryFreePercent ?? before.PrtgResourceGuardMemoryFreePercent;
+        var effectivePrtgResourceGuardCheckSeconds = request.PrtgResourceGuardCheckSeconds ?? before.PrtgResourceGuardCheckSeconds;
+        var effectivePrtgResourceGuardPauseMinutes = request.PrtgResourceGuardPauseMinutes ?? before.PrtgResourceGuardPauseMinutes;
+        var effectivePrtgResourceGuardStrikes = request.PrtgResourceGuardStrikes ?? before.PrtgResourceGuardStrikes;
+        var effectivePrtgResourceGuardMaxPauseMinutes = request.PrtgResourceGuardMaxPauseMinutes ?? before.PrtgResourceGuardMaxPauseMinutes;
 
         ValidatePrtgSettings(
             effectiveRetentionDays: effectiveRetentionDays,
@@ -194,7 +204,15 @@ public class SystemSettingsService : ISystemSettingsService
             clearPassword: request.ClearPrtgPassword,
             passhash: request.PrtgPasshash,
             existingPasshashEnc: before.PrtgPasshashEnc,
-            clearPasshash: request.ClearPrtgPasshash);
+            clearPasshash: request.ClearPrtgPasshash,
+            effectivePrtgResourceGuardEnabled: effectivePrtgResourceGuardEnabled,
+            effectivePrtgResourceGuardSensorObjids: effectivePrtgResourceGuardSensorObjids,
+            effectivePrtgResourceGuardCpuPercent: effectivePrtgResourceGuardCpuPercent,
+            effectivePrtgResourceGuardMemoryFreePercent: effectivePrtgResourceGuardMemoryFreePercent,
+            effectivePrtgResourceGuardCheckSeconds: effectivePrtgResourceGuardCheckSeconds,
+            effectivePrtgResourceGuardPauseMinutes: effectivePrtgResourceGuardPauseMinutes,
+            effectivePrtgResourceGuardStrikes: effectivePrtgResourceGuardStrikes,
+            effectivePrtgResourceGuardMaxPauseMinutes: effectivePrtgResourceGuardMaxPauseMinutes);
 
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
@@ -412,6 +430,14 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
             if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
             if (request.PrtgSensorTypeWhitelist != null) s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgResourceGuardEnabled.HasValue) s.PrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled.Value;
+            if (request.PrtgResourceGuardSensorObjids != null) s.PrtgResourceGuardSensorObjids = NormalizeLines(request.PrtgResourceGuardSensorObjids);
+            if (request.PrtgResourceGuardCpuPercent.HasValue) s.PrtgResourceGuardCpuPercent = request.PrtgResourceGuardCpuPercent.Value;
+            if (request.PrtgResourceGuardMemoryFreePercent.HasValue) s.PrtgResourceGuardMemoryFreePercent = request.PrtgResourceGuardMemoryFreePercent.Value;
+            if (request.PrtgResourceGuardCheckSeconds.HasValue) s.PrtgResourceGuardCheckSeconds = request.PrtgResourceGuardCheckSeconds.Value;
+            if (request.PrtgResourceGuardPauseMinutes.HasValue) s.PrtgResourceGuardPauseMinutes = request.PrtgResourceGuardPauseMinutes.Value;
+            if (request.PrtgResourceGuardStrikes.HasValue) s.PrtgResourceGuardStrikes = request.PrtgResourceGuardStrikes.Value;
+            if (request.PrtgResourceGuardMaxPauseMinutes.HasValue) s.PrtgResourceGuardMaxPauseMinutes = request.PrtgResourceGuardMaxPauseMinutes.Value;
 
             s.UpdatedByAccount = _currentUser.Account;
         });
@@ -458,6 +484,14 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgEnabled, before.PrtgUrl, before.PrtgAuthMode, before.PrtgUsername,
                     before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
+                    before.PrtgResourceGuardEnabled,
+                    PrtgResourceGuardSensorObjids = string.Join(", ", before.PrtgResourceGuardSensorObjids),
+                    before.PrtgResourceGuardCpuPercent,
+                    before.PrtgResourceGuardMemoryFreePercent,
+                    before.PrtgResourceGuardCheckSeconds,
+                    before.PrtgResourceGuardPauseMinutes,
+                    before.PrtgResourceGuardStrikes,
+                    before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
@@ -479,6 +513,14 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgAuthMode, saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
+                    saved.PrtgResourceGuardEnabled,
+                    PrtgResourceGuardSensorObjids = string.Join(", ", saved.PrtgResourceGuardSensorObjids),
+                    saved.PrtgResourceGuardCpuPercent,
+                    saved.PrtgResourceGuardMemoryFreePercent,
+                    saved.PrtgResourceGuardCheckSeconds,
+                    saved.PrtgResourceGuardPauseMinutes,
+                    saved.PrtgResourceGuardStrikes,
+                    saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
@@ -531,6 +573,16 @@ public class SystemSettingsService : ISystemSettingsService
         var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
         var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
         var effectivePrtgUsername = request.PrtgUsername ?? before.PrtgUsername;
+        var effectivePrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled ?? before.PrtgResourceGuardEnabled;
+        var effectivePrtgResourceGuardSensorObjids = request.PrtgResourceGuardSensorObjids != null
+            ? NormalizeLines(request.PrtgResourceGuardSensorObjids)
+            : before.PrtgResourceGuardSensorObjids;
+        var effectivePrtgResourceGuardCpuPercent = request.PrtgResourceGuardCpuPercent ?? before.PrtgResourceGuardCpuPercent;
+        var effectivePrtgResourceGuardMemoryFreePercent = request.PrtgResourceGuardMemoryFreePercent ?? before.PrtgResourceGuardMemoryFreePercent;
+        var effectivePrtgResourceGuardCheckSeconds = request.PrtgResourceGuardCheckSeconds ?? before.PrtgResourceGuardCheckSeconds;
+        var effectivePrtgResourceGuardPauseMinutes = request.PrtgResourceGuardPauseMinutes ?? before.PrtgResourceGuardPauseMinutes;
+        var effectivePrtgResourceGuardStrikes = request.PrtgResourceGuardStrikes ?? before.PrtgResourceGuardStrikes;
+        var effectivePrtgResourceGuardMaxPauseMinutes = request.PrtgResourceGuardMaxPauseMinutes ?? before.PrtgResourceGuardMaxPauseMinutes;
 
         ValidatePrtgSettings(
             effectiveRetentionDays: effectiveRetentionDays,
@@ -547,7 +599,15 @@ public class SystemSettingsService : ISystemSettingsService
             clearPassword: request.ClearPrtgPassword,
             passhash: request.PrtgPasshash,
             existingPasshashEnc: before.PrtgPasshashEnc,
-            clearPasshash: request.ClearPrtgPasshash);
+            clearPasshash: request.ClearPrtgPasshash,
+            effectivePrtgResourceGuardEnabled: effectivePrtgResourceGuardEnabled,
+            effectivePrtgResourceGuardSensorObjids: effectivePrtgResourceGuardSensorObjids,
+            effectivePrtgResourceGuardCpuPercent: effectivePrtgResourceGuardCpuPercent,
+            effectivePrtgResourceGuardMemoryFreePercent: effectivePrtgResourceGuardMemoryFreePercent,
+            effectivePrtgResourceGuardCheckSeconds: effectivePrtgResourceGuardCheckSeconds,
+            effectivePrtgResourceGuardPauseMinutes: effectivePrtgResourceGuardPauseMinutes,
+            effectivePrtgResourceGuardStrikes: effectivePrtgResourceGuardStrikes,
+            effectivePrtgResourceGuardMaxPauseMinutes: effectivePrtgResourceGuardMaxPauseMinutes);
 
         var saved = _store.Update(s =>
         {
@@ -565,6 +625,14 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
             if (request.PrtgSensorTypeWhitelist != null)
                 s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgResourceGuardEnabled.HasValue) s.PrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled.Value;
+            if (request.PrtgResourceGuardSensorObjids != null) s.PrtgResourceGuardSensorObjids = NormalizeLines(request.PrtgResourceGuardSensorObjids);
+            if (request.PrtgResourceGuardCpuPercent.HasValue) s.PrtgResourceGuardCpuPercent = request.PrtgResourceGuardCpuPercent.Value;
+            if (request.PrtgResourceGuardMemoryFreePercent.HasValue) s.PrtgResourceGuardMemoryFreePercent = request.PrtgResourceGuardMemoryFreePercent.Value;
+            if (request.PrtgResourceGuardCheckSeconds.HasValue) s.PrtgResourceGuardCheckSeconds = request.PrtgResourceGuardCheckSeconds.Value;
+            if (request.PrtgResourceGuardPauseMinutes.HasValue) s.PrtgResourceGuardPauseMinutes = request.PrtgResourceGuardPauseMinutes.Value;
+            if (request.PrtgResourceGuardStrikes.HasValue) s.PrtgResourceGuardStrikes = request.PrtgResourceGuardStrikes.Value;
+            if (request.PrtgResourceGuardMaxPauseMinutes.HasValue) s.PrtgResourceGuardMaxPauseMinutes = request.PrtgResourceGuardMaxPauseMinutes.Value;
 
             s.UpdatedByAccount = _currentUser.Account;
         });
@@ -586,6 +654,14 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgFetchConcurrency,
                     before.PrtgBackfillDays,
                     before.PrtgRetentionDays,
+                    before.PrtgResourceGuardEnabled,
+                    PrtgResourceGuardSensorObjids = string.Join(", ", before.PrtgResourceGuardSensorObjids),
+                    before.PrtgResourceGuardCpuPercent,
+                    before.PrtgResourceGuardMemoryFreePercent,
+                    before.PrtgResourceGuardCheckSeconds,
+                    before.PrtgResourceGuardPauseMinutes,
+                    before.PrtgResourceGuardStrikes,
+                    before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
@@ -601,6 +677,14 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgFetchConcurrency,
                     saved.PrtgBackfillDays,
                     saved.PrtgRetentionDays,
+                    saved.PrtgResourceGuardEnabled,
+                    PrtgResourceGuardSensorObjids = string.Join(", ", saved.PrtgResourceGuardSensorObjids),
+                    saved.PrtgResourceGuardCpuPercent,
+                    saved.PrtgResourceGuardMemoryFreePercent,
+                    saved.PrtgResourceGuardCheckSeconds,
+                    saved.PrtgResourceGuardPauseMinutes,
+                    saved.PrtgResourceGuardStrikes,
+                    saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
@@ -1001,12 +1085,38 @@ public class SystemSettingsService : ISystemSettingsService
         bool clearPassword,
         string? passhash,
         string existingPasshashEnc,
-        bool clearPasshash)
+        bool clearPasshash,
+        bool effectivePrtgResourceGuardEnabled,
+        List<string>? effectivePrtgResourceGuardSensorObjids,
+        int effectivePrtgResourceGuardCpuPercent,
+        int effectivePrtgResourceGuardMemoryFreePercent,
+        int effectivePrtgResourceGuardCheckSeconds,
+        int effectivePrtgResourceGuardPauseMinutes,
+        int effectivePrtgResourceGuardStrikes,
+        int effectivePrtgResourceGuardMaxPauseMinutes)
     {
         if (effectivePrtgRetentionDays > effectiveRetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
 
         ValidatePrtgAuthMode(effectivePrtgAuthMode);
+
+        if (effectivePrtgResourceGuardCpuPercent is < 1 or > 100)
+            throw DomainException.Validation("資源守門 CPU 門檻必須介於 1~100。");
+
+        if (effectivePrtgResourceGuardMemoryFreePercent is < 0 or > 99)
+            throw DomainException.Validation("資源守門可用記憶體門檻必須介於 0~99。");
+
+        if (effectivePrtgResourceGuardCheckSeconds is < 15 or > 600)
+            throw DomainException.Validation("資源守門檢查間隔必須介於 15~600 秒。");
+
+        if (effectivePrtgResourceGuardPauseMinutes is < 1 or > 60)
+            throw DomainException.Validation("資源守門暫停檢查時間必須介於 1~60 分鐘。");
+
+        if (effectivePrtgResourceGuardStrikes is < 1 or > 10)
+            throw DomainException.Validation("資源守門連續超標次數必須介於 1~10 次。");
+
+        if (effectivePrtgResourceGuardMaxPauseMinutes is < 10 or > 600)
+            throw DomainException.Validation("資源守門單趟累計暫停上限必須介於 10~600 分鐘。");
 
         if (effectivePrtgEnabled)
         {
@@ -1174,6 +1284,14 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgBackfillDays = s.PrtgBackfillDays,
         PrtgRetentionDays = s.PrtgRetentionDays,
         PrtgSensorTypeWhitelist = s.PrtgSensorTypeWhitelist,
+        PrtgResourceGuardEnabled = s.PrtgResourceGuardEnabled,
+        PrtgResourceGuardSensorObjids = s.PrtgResourceGuardSensorObjids,
+        PrtgResourceGuardCpuPercent = s.PrtgResourceGuardCpuPercent,
+        PrtgResourceGuardMemoryFreePercent = s.PrtgResourceGuardMemoryFreePercent,
+        PrtgResourceGuardCheckSeconds = s.PrtgResourceGuardCheckSeconds,
+        PrtgResourceGuardPauseMinutes = s.PrtgResourceGuardPauseMinutes,
+        PrtgResourceGuardStrikes = s.PrtgResourceGuardStrikes,
+        PrtgResourceGuardMaxPauseMinutes = s.PrtgResourceGuardMaxPauseMinutes,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)
