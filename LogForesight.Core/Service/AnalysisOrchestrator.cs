@@ -769,6 +769,12 @@ public class AnalysisOrchestrator
             return;
         }
 
+        var localUseAi = useAi && currentHostId != 0;
+        if (currentHostId == 0)
+        {
+            runRecorder.Milestone("本機主機未登記（HostId=0），本次不標記 AI 待補，AI 判讀將略過");
+        }
+
         try
         {
             // 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料。
@@ -896,19 +902,19 @@ public class AnalysisOrchestrator
                         continue;
                     }
 
-                    console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
+                    console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(localUseAi ? "統計，AI 判讀由 AI 排程處理" : "統計模式，AI 未設定")}）...");
                     var dayStopwatch = Stopwatch.StartNew();
 
-                    // 重跑日的舊紀錄由 AnalyzeDayAsync 在寫入前才刪（replaceExisting）——不在這裡先刪，
+                    // 重跑日的舊紀錄由 AnalyzeDayStatisticalAsync 在寫入前才刪（replaceExisting）——不在這裡先刪，
                     // 否則分析途中拋例外會留下「舊的已刪、新的沒寫」的永久空白日
                     if (isRerun) rerunAnalyzedCount++;
 
-                    var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
+                    var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                         replaceExisting: isRerun);
                     result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
-                    // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
+                    // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
                     // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
                     HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
                     HostDayPostProcessor.ReplaceRiskyEvents(
@@ -918,7 +924,6 @@ public class AnalysisOrchestrator
                     elapsedByDate[date] = dayStopwatch.Elapsed;
                     runRecorder.RecordDayAnalyzed();
 
-                    HostDayPostProcessor.RecordAiCallIfApplicable(runRecorder, useAi, record);
                     PrintResult(console, record, verbose: date == yesterday);
                     console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
                     progress?.Report("local", ++localDone, datesToAnalyze.Count);

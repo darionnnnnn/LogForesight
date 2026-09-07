@@ -83,4 +83,22 @@ public class RunsPageUiTests
         Assert.Contains("部分失敗", jsContent);
         Assert.Contains("失敗", jsContent);
     }
+
+    [Fact]
+    public void RunsJs包含AI排程未啟用提示與元素Id()
+    {
+        var root = FindRepoRoot();
+        var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
+        Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
+        var jsContent = File.ReadAllText(runsJsPath);
+
+        Assert.Contains("ai-schedule-disabled-hint", jsContent);
+        Assert.Contains("AI 分析排程未啟用", jsContent);
+
+        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+        Assert.True(File.Exists(cshtmlPath), $"找不到檔案: {cshtmlPath}");
+        var cshtmlContent = File.ReadAllText(cshtmlPath);
+
+        Assert.Contains("ai-schedule-disabled-hint", cshtmlContent);
+    }
 }

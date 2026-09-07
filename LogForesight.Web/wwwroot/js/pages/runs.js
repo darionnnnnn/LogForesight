@@ -604,6 +604,7 @@ let canMaintainSchedule = false;
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
 // 只是不顯示——避免隱藏期間存檔把設定意外歸零。
 let aiAvailable = false;
+let lastAiScheduleStatus = null;
 // 分析本機主機開關（回饋十八輪批次D）：影響「立即執行」modal 的「全部主機」描述文字。
 let localAnalysisEnabled = true;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
@@ -625,6 +626,7 @@ async function loadSchedule() {
     ]);
     aiAvailable = !!aiStatus?.available;
     document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
+    if (lastAiScheduleStatus) applyAiScheduleStatus(lastAiScheduleStatus);
 
     applyScheduleOptions(options);
     if (settings) {
@@ -894,6 +896,7 @@ function applyScheduleStatus(status) {
 }
 
 function applyAiScheduleStatus(status) {
+    lastAiScheduleStatus = status;
     const runStateEl = document.getElementById('schedule-ai-run-state');
     if (runStateEl) {
         runStateEl.textContent = status.isRunning
@@ -917,6 +920,17 @@ function applyAiScheduleStatus(status) {
             pendingEl.textContent = '0 件（已全部完成）';
             pendingEl.style.color = '';
             pendingEl.classList.add('text-muted');
+        }
+    }
+
+    const hintEl = document.getElementById('ai-schedule-disabled-hint');
+    if (hintEl) {
+        if (aiAvailable && !status.aiEnabled && status.pendingTotal > 0) {
+            hintEl.textContent = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
+            hintEl.classList.remove('d-none');
+        } else {
+            hintEl.textContent = '';
+            hintEl.classList.add('d-none');
         }
     }
 

@@ -115,6 +115,41 @@ public class LogAnalysisService
             ApplyOutcome(record, outcome);
         }
 
+        CommitRecord(record, targetDate, replaceExisting, sw.ElapsedMilliseconds);
+
+        return record;
+    }
+
+    /// <summary>
+    /// 本機分析統計段並寫入（docs/archive/FEEDBACK-12-PLAN.md §3.3、批次 E）：
+    /// 只做統計段並寫入資料庫（不在此同步呼叫 AI，AI 留給 AI 排程處理）。
+    /// 與 <see cref="AnalyzeDayAsync"/> 共用「刪除舊紀錄＋寫入＋Log.Info」三件事的實作。
+    /// </summary>
+    public async Task<DailyAnalysisRecord> AnalyzeDayStatisticalAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
+        int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
+        CancellationToken ct = default, bool replaceExisting = false)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var sw = Stopwatch.StartNew();
+
+        var (record, _) = await BuildStatisticalRecordAsync(
+            targetDate, logs, useAi, historyDays, dataIncomplete, securityLogAvailable, channels, ct);
+
+        ct.ThrowIfCancellationRequested();
+
+        if (_hostId == 0)
+        {
+            record.AiPending = false;
+        }
+
+        CommitRecord(record, targetDate, replaceExisting, sw.ElapsedMilliseconds);
+
+        return record;
+    }
+
+    private void CommitRecord(DailyAnalysisRecord record, DateTime targetDate, bool replaceExisting, long elapsedMs)
+    {
         if (replaceExisting)
         {
             _historyService.DeleteDays(new[] { targetDate.Date });
@@ -125,9 +160,7 @@ public class LogAnalysisService
         Log.Info("完成分析 {Date:yyyy-MM-dd}：風險={Risk}, 錯誤={Errors}, 警告={Warnings}, 稽核={Audit}, " +
                  "aiAnalyzed={AiAnalyzed}, 耗時={ElapsedMs}ms, 報告參照={ReportFile}",
             targetDate, record.RiskLevel, record.ErrorCount, record.WarningCount, record.AuditEventCount,
-            record.AiAnalyzed, sw.ElapsedMilliseconds, record.ReportFile ?? "(無)");
-
-        return record;
+            record.AiAnalyzed, elapsedMs, record.ReportFile ?? "(無)");
     }
 
     /// <summary>
