@@ -68,19 +68,21 @@ public class RunMonitorService
     public List<RunDaySummaryDto> GetDaySummaries(int days, int page, int pageSize)
     {
         // 分頁邊界計算（新→舊切割）：第 1 頁 = 最近的日期，最後一頁 = 最舊的日期。
-        // days 日期範圍：[Today-days+1, Today]，共 days 天。
+        // 日期範圍：[錨點日-days+1, 錨點日]，共 days 天。錨點日＝DateTime.Today.AddDays(-1)（昨天），
+        // 不含今天，因今天的夜間批次尚未執行，整列必為未執行。
         // 第 page 頁涵蓋：跳過前 (page-1)*pageSize 個「最新」天後，取 pageSize 天。
-        // 以索引換算：索引 0 = Today，索引 days-1 = Today-days+1（舊到新）。
-        var skipFromEnd = (page - 1) * pageSize;           // 從今日往前跳過幾天
+        // 以索引換算：索引 0 = 錨點日（昨天），索引 days-1 = 錨點日-days+1（舊到新）。
+        var anchor = DateTime.Today.AddDays(-1);
+        var skipFromEnd = (page - 1) * pageSize;           // 從錨點日往前跳過幾天
         var pageCount = Math.Min(pageSize, days - skipFromEnd);  // 本頁實際天數
         if (pageCount <= 0) return new List<RunDaySummaryDto>();
 
         // 本頁日期區間（舊→新，對應 for 迴圈方向）
-        var pageEnd = DateTime.Today.AddDays(-skipFromEnd);                  // 本頁最新日（含）
+        var pageEnd = anchor.AddDays(-skipFromEnd);                          // 本頁最新日（含）
         var pageFrom = pageEnd.AddDays(-pageCount + 1);                      // 本頁最舊日（含）
 
-        // 只取回本頁涵蓋的 BatchRun（+1 天的記錄視窗）
-        var windowDays = skipFromEnd + pageCount;
+        // 只取回本頁涵蓋的 BatchRun（錨點往前位移一天，需多取一天涵蓋本頁最舊日 [pageFrom, pageEnd]）
+        var windowDays = skipFromEnd + pageCount + 1;
         // AI 排程的執行（JobType=ai）不進主機×日視角：它不是「哪台主機哪天跑了沒」的語意，
         // 混入會讓 AllHosts 把執行主機當成一台幽靈主機列進總表（體檢輪）
         var runs = _runs.GetRecentRuns(windowDays, hostNames: null)

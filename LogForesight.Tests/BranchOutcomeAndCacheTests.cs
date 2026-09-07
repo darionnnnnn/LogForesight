@@ -128,7 +128,7 @@ public class BranchOutcomeAndCacheTests : IDisposable
     public void GetDaySummaries_每日彙總取最後一筆取數執行的PrtgOutcome_且AI執行不影響結果()
     {
         var runs = Runs();
-        var baseDate = DateTime.Today;
+        var baseDate = DateTime.Today.AddDays(-1);
 
         // 同一天兩筆取數執行（前者 success、後者 partial）
         var run1 = new BatchRun
@@ -167,9 +167,9 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var service = CreateService();
         var summaries = service.GetDaySummaries(1, page: 1, pageSize: 30);
 
-        var todaySummary = Assert.Single(summaries, s => s.Date == baseDate.ToString("yyyy-MM-dd"));
+        var summary = Assert.Single(summaries, s => s.Date == baseDate.ToString("yyyy-MM-dd"));
         // 應取後者取數執行的 partial，AI 執行的 failed 不得影響
-        Assert.Equal(BatchRun.PrtgOutcomePartial, todaySummary.PrtgOutcome);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, summary.PrtgOutcome);
     }
 
     [Fact]
@@ -178,8 +178,8 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var service = CreateService();
         var summaries = service.GetDaySummaries(1, page: 1, pageSize: 30);
 
-        var todaySummary = Assert.Single(summaries, s => s.Date == DateTime.Today.ToString("yyyy-MM-dd"));
-        Assert.Null(todaySummary.PrtgOutcome);
+        var summary = Assert.Single(summaries, s => s.Date == DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"));
+        Assert.Null(summary.PrtgOutcome);
     }
 
     private class CountingAnalysisRecordQuery : FakeAnalysisRecordQuery, IAnalysisRecordQuery
