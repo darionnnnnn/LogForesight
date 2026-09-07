@@ -125,6 +125,8 @@ PRTG 路徑的執行順序是：**結構與狀態變更同步 → 主機對應�
 | 一個 IP 有多個 PRTG device | `conflict`，**不填主機**——無法判斷哪個 device 代表那台主機，猜了會張冠李戴 |
 | device 沒有 IP（用 DNS 名稱或未設） | 不產生對應列，計入「略過」 |
 | **device 有人工對應**（`lf_prtg_manual_map`） | `ok`，填入人工指定的主機，Note 標示為人工指定 |
+| **device 的 IP 在排除清單**（`lf_prtg_ip_excludes`） | **不產生對應列**，計入「略過（已排除）」。人工對應優先序仍高於排除 |
+| 同 IP 已有另一台 device 被人工指定 | **不產生對應列**，計入「略過（同 IP 已有人工指定 device）」 |
 
 已停用（`Active = false`）與已合併（有 `MergedInto` 墓碑）的主機不參與對應。
 IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主檔，絕不寫回。**
@@ -146,6 +148,24 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
 - 刪除人工對應即恢復自動判定。新增與刪除都寫稽核。
 - 不新增第四個 `map_status` 值（欄長 16，且下游多處以三個常數判定），
   人工來源以 Note 標示。
+
+### 4b. IP 排除（`lf_prtg_ip_excludes`）
+
+有些 IP 本來就不該去 PRTG 查（PRTG 側由別的系統負責、或該位址在 PRTG 是共用的）。
+管理者可在 PRTG 維護頁的衝突清單直接把某個 IP 排除，**該 IP 底下所有 device 都不進對應、
+不取數、不評規則**——因為它們根本不產生對應列，下游只認 `ok` 的既有邏輯自然把它們排除，
+不需要在取數端另加判斷。
+
+- **粒度是 IP 不是 device**：管理者的語意是「這個 IP 不要去查 PRTG」。以 device 為單位排除時，
+  同 IP 的其他 device 仍會被對應，達不到目的。
+- **人工對應優先於排除**：同一個 device 既有人工對應又被排除 IP 時採人工對應，Note 標示原因。
+  排除是「預設不查」，人工指定是「明確要查」，後者是更強的意圖表達。
+- **同 IP 有 device 被人工指定時，其餘 device 一律略過**。少了這條，管理者從「同 IP 多 device」
+  的衝突中挑一台指派之後，剩下那台會因為分組只剩它一個而被自動判成 `ok` 對到同一台主機
+  ——等於管理者的選擇被繞過。
+- 三種「略過」原因在執行摘要與 Milestone **分開列出，什麼都沒略過時各項顯示 0**：
+  「一個都沒有」與「這個功能不存在」在排查時必須分得出來。
+- 新增與移除都寫稽核。**寫入後同步重算當日對應**（見 §8 端點說明）。
 
 ## 5. 歷史回填
 
@@ -250,6 +270,14 @@ passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 | `PrtgSensorTypeWhitelist` | 8 種分析型 type | 要擷取數值的 sensor type（一行一個，不分大小寫）。**留空＝不限制**。預設不含 Ping（量大且雜訊高，需要時自行加入） |
+| `PrtgResourceGuardEnabled` | false | 資源守門總開關（§12） |
+| `PrtgResourceGuardSensorObjids` | 空 | 受監看 sensor 的覆寫清單（一行一個 objid）。**留空＝自動偵測** |
+| `PrtgResourceGuardCpuPercent` | 85 | CPU 使用率達此值算緊張（1~100） |
+| `PrtgResourceGuardMemoryFreePercent` | 10 | **可用**記憶體低於此值算緊張（0~99）。方向與 CPU 相反 |
+| `PrtgResourceGuardCheckSeconds` | 60 | 檢查間隔（15~600） |
+| `PrtgResourceGuardPauseMinutes` | 5 | 判定緊張後等待多久再檢查（1~60） |
+| `PrtgResourceGuardStrikes` | 2 | 連續幾次超標才算緊張（1~10） |
+| `PrtgResourceGuardMaxPauseMinutes` | 120 | **單趟累計暫停上限**（10~600）。超過後放行並警告 |
 
 token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱：留空＝沿用既有、要清除需另外勾選清除。
 啟用 PRTG 時依模式驗證憑證是否齊備——**「新存或既有」皆算有**，否則密碼欄留空（＝沿用）
@@ -263,7 +291,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 | 頁面 | 內容 |
 |---|---|
-| **PRTG 維護頁 `/admin/prtg`**（權限 Maintain，側欄「系統管理」內緊鄰 NetIQ） | **連線與參數**（連線設定含三選一認證切換、**測試連線**，以及全部擷取參數：白名單、併發、回填天數、保留天數、逾時、忽略 SSL，同一顆儲存鈕）、**鏡像狀態**（device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、主機對應摘要與衝突／未對應清單、**人工對應清單與指派入口**）、**環境探測**（預設收合）、**資料搬運**（§10） |
+| **PRTG 維護頁 `/admin/prtg`**（權限 Maintain，側欄「系統管理」內緊鄰 NetIQ） | 四個頁籤：**連線**（位址、三選一認證切換、**測試連線**）／**擷取參數**（白名單、併發、回填天數、保留天數、逾時、忽略 SSL，另有**資源守門**設定卡與受監看 sensor 預覽，§12）／**鏡像狀態**（device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、主機對應摘要、**衝突清單（分頁）**、**人工對應清單與指派入口**、**IP 排除清單**）／**環境探測**（環境探測、**校準數值匯出**（§11）、**資料搬運**（§10）三張卡）。連線與擷取參數**各自一顆儲存鈕**，都走 `PUT settings/prtg` 且**只送自己頁籤的欄位**。頁籤同步網址 hash，可用 `/admin/prtg#params` 直達 |
 | **排程作業頁** | `PrtgEnabled` 總開關（**切換即存**，走單一用途端點，不與排程表單同一顆儲存）、**歷史回填**操作與進度（回填天數在維護頁設定，此處顯示「將回填 N 天」） |
 
 連線與參數的存檔走 `PUT settings/prtg` 專屬端點，`PrtgEnabled` 走
@@ -300,6 +328,9 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；不含總開關） |
 | `PUT prtg-enabled` | PRTG 總開關（排程作業頁，只更新這一個欄位） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
+| `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |
+| `GET／PUT／DELETE prtg-ip-excludes` | IP 排除清單的查詢、新增與移除（§4b） |
+| `GET prtg-resource-guard/preview` | 預覽受監看 sensor 與其當下值（§12）。**不要求 `PrtgEnabled` 與守門開關**——用途正是在啟用前確認偵測結果與數值語意 |
 | `GET prtg-export`、`POST prtg-import` | 鏡像資料匯出／匯入（§10） |
 
 主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor）；
@@ -435,3 +466,69 @@ PRTG 維護頁因此提供跨後端的資料通道：
   （`ResidualCredentialDetector.EvaluateMetrics`，Core 內部方法），兩邊分岔會讓匯出的數字與實際判定不一致。
 
 匯出閘門：四項全部達「可用」以上才解鎖，未達標需勾「仍要匯出」覆寫，兩者都寫稽核。
+
+## 12. 資源守門
+
+夜間批次會同時對 NetIQ 與 PRTG 大量查詢。PRTG 本來就在監控這些主機，因此**資源數據從 PRTG 拿**：
+執行期間定期讀受監看 sensor 的即時值，資源緊張就暫停取數，等回落再繼續。
+設定見 §7（八個 `PrtgResourceGuard*` 鍵），預設**關閉**。
+
+### 受監看的 sensor 怎麼決定
+
+`PrtgResourceGuardSensorObjids` 非空時直接用它（覆寫優先，完全不做偵測）；留空時自動偵測：
+
+1. 目標位址＝每台 `Sentinel.BaseUrl` 的 host ＋ `PrtgUrl` 的 host。
+2. 在 `lf_prtg_devices` 找 `Ip` 與位址**不分大小寫相等**的 device；
+   對不到時**再做一次 DNS 解析**（2 秒逾時，失敗視為找不到）拿解析出的 IPv4 再比一次。
+   **少了這一步幾乎必然全數落空**：Sentinel 慣以 DNS 名稱設定，PRTG device 慣填 IPv4。
+3. PRTG 主機另有 fallback：位址對不到時，改找底下有 `corehealth` type sensor 的 device
+   ——PRTG 的 Core Health sensor 只掛在 core server 自己身上。
+4. 取命中 device 底下**未暫停**且 `category` 為 `cpu`／`memory` 的 sensor；PRTG 主機另加 corehealth。
+
+**一個 sensor 都找不到時回空清單並警告，不擲例外。**
+
+### 判定方向（最容易寫反的地方）
+
+| 分類 | 超標條件 |
+|---|---|
+| `cpu` | 值 **≥** `PrtgResourceGuardCpuPercent` |
+| `memory` | 值 **≤** `PrtgResourceGuardMemoryFreePercent`（PRTG 記憶體 sensor 主通道多為**可用**百分比） |
+| `corehealth` | 值 **≤** 同上門檻（健康度越低越糟） |
+
+CPU 越高越糟、記憶體與健康度越低越糟，**方向相反**。設定頁的欄位標籤因此明寫「可用記憶體」，
+寫成「使用率」會讓管理者把門檻設反。判定方向有專屬測試釘住。
+
+**忽略而非判定超標**：sensor 狀態非 Up（走 `PrtgSensorStatuses`，不自行比對字串）、
+值不是百分比、objid 查無此 sensor。三者可被呼叫端區分。
+
+### 閘門
+
+每趟執行一個實例，插在**兩處**：NetIQ 每批查詢之前、PRTG 每個 `historicdata` 請求之前
+（每日取數與觸發式取數共用同一個方法，一處即涵蓋）。
+**本機分析不插**——它只讀本機事件與資料庫，暫停它沒有意義。
+**歷史回填與環境探測不受守門**（離峰手動作業）。
+
+- 距上次檢查未滿 `CheckSeconds` 直接放行；讀值後未超標歸零計數。
+- 連續達 `Strikes` 次才進入暫停，等 `PauseMinutes` 後重檢，直到不超標才放行。
+- **單趟累計暫停超過 `MaxPauseMinutes` 後放行並警告，該趟之後不再暫停**。
+  少了這道上限，門檻設錯會讓整晚只暫停、什麼都沒分析，而且**每晚重演**。
+- 併發呼叫時只有一個呼叫者真的去讀值，其餘跟著等後直接放行，不會每條路各打一次 API。
+- **取消訊號穿透暫停**；**讀值失敗、對不到 sensor、API 掛掉一律放行**，每趟只警告一次
+  ——守門絕不能反過來把排程卡死。
+
+### 可觀測性
+
+進入與離開暫停各寫一則 Milestone（含觸發 sensor、實際值、第幾次檢查），執行詳情看得到。
+排程作業頁狀態卡另顯示「資源緊張，暫停中」徽章：閘門經 `IRunProgress` 送 `guard-paused`／
+`guard-resumed` 兩個 phase，Web 端據此設 `SchedulerRunState.PausedReason`。
+**這兩個 phase 在 `ReportProgress` 內必須有顯式分支且排在 catch-all 之前**
+——最後一個分支是 NetIQ 主組的 catch-all，落進去會蓋掉 NetIQ 的進度條。
+
+徽章只有短文字：`IRunProgress.Report` 只帶得動 `(phase, done, total)`，
+詳細數值走 Milestone，**刻意不為此擴充該介面**。
+
+### 啟用前先預覽
+
+`GET settings/prtg-resource-guard/preview` 回受監看 sensor 清單與**當下的值**，
+並標明來源是覆寫清單還是自動偵測。它**不要求 `PrtgEnabled` 也不要求守門開關**
+——用途正是在啟用之前確認偵測結果與數值語意（尤其記憶體 sensor 到底回可用還是使用百分比）。
