@@ -316,7 +316,9 @@ const ERROR_COLUMNS = [
     { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => levelBadge(e.level) },
     { title: '訊息', render: e => messageCell(e) },
     { title: '次數', className: 'text-end', sortKey: 'count', sortDefaultDir: 'desc', sortValue: e => e.count, render: e => formatNumber(e.count) },
-    { title: '影響主機', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
+    // 這一欄的資料來源是 BatchRun.HostName＝**跑批次的站台**，不是被分析的主機。
+    // 標成「影響主機」會讓人把站台名誤讀成問題主機（回饋 2.5 的誤判成因之一）。
+    { title: '執行站台', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
     { title: '最近發生', sortKey: 'lastSeen', sortDefaultDir: 'desc', sortValue: e => e.lastSeen, render: e => formatDateTime(e.lastSeen) },
     { title: '', className: 'text-end', render: e => detailButton(e.latestRunId) }
 ];
@@ -853,6 +855,17 @@ function stopElapsedTicker(elementId = 'schedule-elapsed') {
 
 function applyScheduleStatus(status) {
     document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
+    const pausedBadge = document.getElementById('schedule-paused-badge');
+    if (pausedBadge) {
+        if (status.pausedReason) {
+            pausedBadge.textContent = status.pausedReason;
+            pausedBadge.classList.remove('d-none');
+        } else {
+            pausedBadge.classList.add('d-none');
+            pausedBadge.textContent = '';
+        }
+    }
+
     document.getElementById('schedule-run-state').textContent = status.isRunning
         ? `執行中（${status.triggerText}）`
         : '閒置';

@@ -168,6 +168,124 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
     }
 
+    // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────
+
+    /// <summary>PRTG 資源守門受監看感測器預覽（批次F 階段4）</summary>
+    [HttpGet("prtg-resource-guard/preview")]
+    public async Task<ApiResponse<PrtgResourceGuardPreviewResultDto>> PreviewPrtgResourceGuard(CancellationToken ct)
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = "資料存放區未啟用，無法預覽。",
+                Source = "auto",
+                Warnings = Array.Empty<string>(),
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+
+        var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
+        var settings = settingsStore.Get();
+
+        var isOverride = settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0;
+        var source = isOverride ? "override" : "auto";
+
+        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = "尚未設定 PRTG 連線位址或認證資訊，無法預覽受監看感測器。",
+                Source = source,
+                Warnings = Array.Empty<string>(),
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+
+        var console = new ResourceGuardWarningConsole();
+        var sentinelStore = new SentinelStore(_backend.Blob("sentinels"));
+        var sentinels = sentinelStore.GetAll();
+        var prtgStore = _backend.PrtgStore();
+
+        PrtgResourceGuardTargetResult targets;
+        try
+        {
+            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console);
+        }
+        catch (Exception ex)
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = $"解析受監看目標失敗：{ex.Message}",
+                Source = source,
+                Warnings = console.Messages,
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+
+        try
+        {
+            using var client = PrtgClientFactory.Create(settings);
+            var probeResult = await PrtgResourceGuardProbe.FetchSensorValuesAsync(client, targets.SensorObjids, ct);
+
+            if (!probeResult.IsSuccess)
+            {
+                return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+                {
+                    Success = false,
+                    ErrorMessage = probeResult.FailureReason ?? "PRTG 取值失敗。",
+                    Source = source,
+                    Warnings = console.Messages,
+                    Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+                });
+            }
+
+            var sensors = new List<PrtgResourceGuardSensorPreviewDto>();
+            foreach (var id in targets.SensorObjids)
+            {
+                probeResult.Values.TryGetValue(id, out var val);
+                targets.SensorCategories.TryGetValue(id, out var cat);
+
+                sensors.Add(new PrtgResourceGuardSensorPreviewDto
+                {
+                    Objid = id,
+                    Device = val?.Device,
+                    Sensor = val?.Sensor,
+                    Category = cat ?? PrtgResourceGuardTargets.CategoryUnknown,
+                    Status = val?.Status,
+                    Percentage = val?.Percentage,
+                    UnmeasurableReason = val?.UnmeasurableReason
+                });
+            }
+
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = true,
+                Source = source,
+                Warnings = console.Messages,
+                Sensors = sensors
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
+            {
+                Success = false,
+                ErrorMessage = $"PRTG 預覽失敗：{ex.Message}",
+                Source = source,
+                Warnings = console.Messages,
+                Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
+            });
+        }
+    }
+
     // ── PRTG 鏡像狀態（PRTG 第 1 輪批次F）────────────────────────────────────────
 
     [HttpGet("prtg-mirror")]
@@ -621,6 +739,20 @@ public class SettingsController : ControllerBase
         {
             Log.Warn(ex, "重算今日 PRTG 對應失敗");
             return $"重算今日 PRTG 對應失敗: {ex.Message}";
+        }
+    }
+
+    private sealed class ResourceGuardWarningConsole : IRunConsole
+    {
+        private readonly List<string> _messages = new();
+        public IReadOnlyList<string> Messages => _messages;
+
+        public void WriteLine(string message = "")
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                _messages.Add(message);
+            }
         }
     }
 

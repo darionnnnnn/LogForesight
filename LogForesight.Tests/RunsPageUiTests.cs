@@ -101,4 +101,38 @@ public class RunsPageUiTests
 
         Assert.Contains("ai-schedule-disabled-hint", cshtmlContent);
     }
+
+    [Fact]
+    public void RunsJs包含pausedReason且RunsCshtml包含暫停徽章容器()
+    {
+        var root = FindRepoRoot();
+        var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
+        Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
+        var jsContent = File.ReadAllText(runsJsPath);
+
+        Assert.Contains("pausedReason", jsContent);
+
+        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+        Assert.True(File.Exists(cshtmlPath), $"找不到檔案: {cshtmlPath}");
+        var cshtmlContent = File.ReadAllText(cshtmlPath);
+
+        Assert.Contains("schedule-paused-badge", cshtmlContent);
+    }
+
+    /// <summary>
+    /// 異常彙總那一欄的資料來源是 BatchRun.HostName＝**跑批次的站台**，不是被分析的主機。
+    /// 標成「影響主機」會讓管理者把站台名誤讀成出問題的主機——本輪回饋 2.5
+    /// 「本機執行一直有錯誤」的誤判成因之一就是這個標題。這條釘住它不被改回去。
+    /// </summary>
+    [Fact]
+    public void 異常彙總欄位標題為執行站台而非影響主機()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("title: '執行站台', sortKey: 'affectedHosts'", js);
+        Assert.DoesNotContain("title: '影響主機'", js);
+    }
 }

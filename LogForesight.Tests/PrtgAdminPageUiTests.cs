@@ -485,4 +485,48 @@ public class PrtgAdminPageUiTests
         var prtgAdminJs = File.ReadAllText(prtgAdminJsPath);
         Assert.Contains("sameIpSkippedCount", prtgAdminJs);
     }
+
+    [Fact]
+    public void PrtgCshtml包含資源守門卡片所有必要元素Id()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("prtg-guard-enabled", content);
+        Assert.Contains("prtg-guard-cpu-percent", content);
+        Assert.Contains("prtg-guard-memory-free-percent", content);
+        Assert.Contains("prtg-guard-check-seconds", content);
+        Assert.Contains("prtg-guard-pause-minutes", content);
+        Assert.Contains("prtg-guard-strikes", content);
+        Assert.Contains("prtg-guard-max-pause-minutes", content);
+        Assert.Contains("prtg-guard-sensor-objids", content);
+        Assert.Contains("prtg-guard-preview-btn", content);
+        Assert.Contains("prtg-guard-preview-result", content);
+    }
+
+    [Fact]
+    public void PrtgCshtml記憶體欄位標籤包含可用二字()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var lines = File.ReadAllLines(prtgCshtmlPath);
+
+        var memoryLabelLine = Array.Find(lines, l => l.Contains("prtg-guard-memory-free-percent") && l.Contains("<label"));
+        Assert.NotNull(memoryLabelLine);
+        Assert.Contains("可用", memoryLabelLine);
+    }
+
+    [Fact]
+    public void PrtgAdminJs包含資源守門預覽端點路徑()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("prtg-resource-guard/preview", js);
+    }
 }

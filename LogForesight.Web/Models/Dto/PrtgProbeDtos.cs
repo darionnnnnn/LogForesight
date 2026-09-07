@@ -178,4 +178,25 @@ public class HostPrtgSensorDto
     public bool Paused { get; set; }
 }
 
+/// <summary>PRTG 資源守門受監看感測器預覽項目</summary>
+public class PrtgResourceGuardSensorPreviewDto
+{
+    public long Objid { get; set; }
+    public string? Device { get; set; }
+    public string? Sensor { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public string? Status { get; set; }
+    public double? Percentage { get; set; }
+    public string? UnmeasurableReason { get; set; }
+}
 
+/// <summary>PRTG 資源守門受監看感測器預覽結果</summary>
+public class PrtgResourceGuardPreviewResultDto
+{
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    /// <summary>清單來源：override（覆寫清單）或 auto（自動偵測）</summary>
+    public string Source { get; set; } = "auto";
+    public IReadOnlyList<string> Warnings { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<PrtgResourceGuardSensorPreviewDto> Sensors { get; set; } = Array.Empty<PrtgResourceGuardSensorPreviewDto>();
+}
