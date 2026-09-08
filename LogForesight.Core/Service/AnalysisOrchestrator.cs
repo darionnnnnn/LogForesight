@@ -80,7 +80,7 @@ internal sealed record AnalysisRunContext(
     RunRequest Request, AppSettings Settings, RetentionOptions Retention, IRunConsole Console,
     CancellationToken Ct, EventLogService EventLogService, IssueCaseCoordinator CaseCoordinator,
     IRiskyEventStore RiskyEventStore, BatchRunRecorder RunRecorder, OrchestratorResult Result,
-    bool UseAi, IRunProgress? Progress);
+    bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings);
 
 /// <summary>
 /// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
@@ -119,6 +119,13 @@ public interface IRunProgress
 public class AnalysisOrchestrator
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 「當日 PRTG finding 已到齊」的訊號 phase（不是進度，done／total 恆為 0）。
+    /// Web 端據此讓 AI 分析排程開始處理當日待補，不必等整趟取數結束。
+    /// 走 <see cref="IRunProgress"/> 而非另開介面，與既有的 <c>*-done</c> 完工訊號同型。
+    /// </summary>
+    public const string PrtgFindingsReadyPhase = "prtg-findings-ready";
 
     // 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）——分析語意常數，不開放設定
     private const int TrendWindowDays = 14;
@@ -583,9 +590,13 @@ public class AnalysisOrchestrator
             // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
             // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
             // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。
+            // PRTG finding 登錄簿：兩路共用同一個實例。PRTG 路徑算完規則後發佈，
+            // 兩條寫入路徑在紀錄剛落地時就地併入該主機的 finding（docs/PRTG-SPEC.md §9）。
+            var prtgFindings = new PrtgFindingsRegistry();
+
             var runCtx = new AnalysisRunContext(
                 request, settings, retention, console, ct, eventLogService, caseCoordinator,
-                riskyEventStore, runRecorder, result, useAi, progress);
+                riskyEventStore, runRecorder, result, useAi, progress, prtgFindings);
 
             // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
             // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
@@ -627,7 +638,7 @@ public class AnalysisOrchestrator
                 : Task.CompletedTask;
 
             var analysisTask = Task.WhenAll(localTask, netiqTask);
-            var prtgTask = RunPrtgFetchAsync(runCtx, backend, hostStore, yesterday, analysisTask, resourceGuard);
+            var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, yesterday, analysisTask, resourceGuard);
 
             // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
             // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
@@ -706,38 +717,13 @@ public class AnalysisOrchestrator
         }
     }
 
-    /// <summary>
-    /// 本機路徑專用的前綴 console（回饋十七輪批次E-2）：本機與 NetIQ 並行執行後，兩路的輸出會
-    /// 交錯，替本機每一行加上統一前綴才分得清哪一行是哪一路——NetIQ 路徑既有的逐 Sentinel
-    /// logContext 前綴（見 HostDayPostProcessor 呼叫點）已經在做同樣的事，這裡是把同一個原則
-    /// 套用到本機這一路。空白／純換行訊息先在這裡濾掉（trim 後為空就不加前綴、原樣轉發），
-    /// 不然會印出一行只有「[本機] 」的空洞前綴——WebRunConsole 自己也會 trim 整段訊息，
-    /// 但如果先加了前綴，訊息就不再是空的，trim 救不回來。
-    /// </summary>
-    private sealed class PrefixedRunConsole : IRunConsole
-    {
-        private readonly IRunConsole _inner;
-        private readonly string _prefix;
-
-        public PrefixedRunConsole(IRunConsole inner, string prefix)
-        {
-            _inner = inner;
-            _prefix = prefix;
-        }
-
-        public void WriteLine(string message = "")
-        {
-            var trimmed = message.Trim();
-            _inner.WriteLine(trimmed.Length == 0 ? trimmed : $"{_prefix}{trimmed}");
-        }
-    }
 
     private async Task RunLocalAnalysisAsync(
         AnalysisRunContext ctx, LogAnalysisService analysisService, IAnalysisRecordStore historyService,
         IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings) = ctx;
 
         // 回望天數（回饋三十四輪 C）：立即執行的「回望天數」是單一欄位，缺漏日與重跑日
         // 共用同一個窗口，且**本機與 NetIQ 都適用**——合併前這個欄位只影響 NetIQ，
@@ -823,7 +809,7 @@ public class AnalysisOrchestrator
 
             // 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行。
             var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
-            progress?.Report("local", 0, datesToAnalyze.Count);
+            progress?.Report(RunPhases.Local, 0, datesToAnalyze.Count);
             var localDone = 0;
             var rerunAnalyzedCount = 0;
             var rerunRetainedCount = 0;
@@ -905,7 +891,7 @@ public class AnalysisOrchestrator
                     {
                         rerunRetainedCount++;
                         console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
-                        progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                        progress?.Report(RunPhases.Local, ++localDone, datesToAnalyze.Count);
                         continue;
                     }
 
@@ -919,6 +905,12 @@ public class AnalysisOrchestrator
                     var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                         replaceExisting: isRerun);
+                    // PRTG finding 追加：**必須排在案件掛接與執行摘要之前**——案件掛接吃的是
+                    // 記憶體裡的 record.TopIssues，摘要吃的是 record.RiskLevel，
+                    // 晚一步併入的 finding 就進不了問題案件，上調後的風險也不會出現在摘要。
+                    HostDayPostProcessor.AttachPrtgFindings(
+                        prtgFindings, historyService, record, currentHostId, aiConfigured: localUseAi);
+
                     result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
                     // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
@@ -933,7 +925,7 @@ public class AnalysisOrchestrator
 
                     PrintResult(console, record, verbose: date == yesterday);
                     console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
-                    progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                    progress?.Report(RunPhases.Local, ++localDone, datesToAnalyze.Count);
 
                     // 逐日之間讓出執行緒（S-3，與 NetIQ 路徑同一個理由）：統計模式下這個迴圈幾乎
                     // 全程同步，不讓出的話會一路佔住同一條 thread pool 執行緒到回補完所有缺漏日
@@ -978,7 +970,7 @@ public class AnalysisOrchestrator
         }
         finally
         {
-            progress?.Report("local-done", 0, 0);
+            progress?.Report(RunPhases.LocalDone, 0, 0);
         }
     }
 
@@ -988,7 +980,7 @@ public class AnalysisOrchestrator
         PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings) = ctx;
 
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
@@ -1036,7 +1028,8 @@ public class AnalysisOrchestrator
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings,
                 rerunMode: request.RerunMode,
-                guard: guard);
+                guard: guard,
+                prtgFindings: prtgFindings);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
@@ -1079,301 +1072,10 @@ public class AnalysisOrchestrator
             // 的特殊 phase 字面值（與 "local" 一樣是兩邊約定的字串慣例，見 WebRunProgress／
             // SchedulerRunState.ReportProgress），收到後會清空 netiq 的主／子進度欄位，讓
             // LatestActivity() 的優先序自然落回還在推進的本機。
-            progress?.Report("netiq-done", 0, 0);
+            progress?.Report(RunPhases.NetiqDone, 0, 0);
         }
     }
 
-    private async Task RunPrtgFetchAsync(
-        AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, DateTime day, Task analysisTask,
-        PrtgResourceGuard? guard = null)
-    {
-        var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress) = ctx;
-
-        var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
-        string? prtgOutcome = null;
-        PrtgTriggeredFetchResult? triggeredResult = null;
-
-        try
-        {
-            var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
-            if (!systemSettings.PrtgEnabled ||
-                string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) ||
-                !PrtgClientFactory.HasUsableCredentials(systemSettings))
-            {
-                prtgConsole.WriteLine("PRTG 未啟用或尚未設定認證資訊，略過。");
-                prtgOutcome = BatchRun.PrtgOutcomeDisabled;
-                return;
-            }
-
-            using var client = PrtgClientFactory.Create(systemSettings);
-
-            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole, guard);
-
-            // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）
-            // PRTG 進度 phase：prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）、prtg-done（完工）
-            PrtgFetchResult? fetchResult = null;
-            var syncFailed = false;
-            try
-            {
-                progress?.Report("prtg-sync", 0, 0);
-                fetchResult = await fetchService.FetchDayAsync(
-                    day, systemSettings.PrtgFetchConcurrency, ct, syncStructure: true, fetchValues: false,
-                    (stage, done, total) => progress?.Report(stage, done, total));
-
-                var summary = $"PRTG 每日擷取完成（{day:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
-                              $"狀態變更 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
-                              (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
-
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
-            }
-            catch (OperationCanceledException)
-            {
-                // 取消訊號必須穿透，讓上層統一處理中斷
-                throw;
-            }
-            catch (Exception ex)
-            {
-                syncFailed = true;
-                // 與 NetIQ 機房分析的失敗邊界一致：PRTG 擷取出問題不該讓整趟分析失敗，
-                // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
-                Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
-            }
-
-            // 2. PRTG 主機對應：獨立的 try/catch，對應失敗不拖垮前面的擷取結果
-            try
-            {
-                var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
-                var mapResult = hostMapper.MapForDate(day);
-                runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
-            }
-
-            // 3. PRTG 規則評估：獨立的 try/catch
-            var ruleTriggerHosts = new HashSet<long>();
-            var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
-            var totalFindings = 0;
-            try
-            {
-                var prtgStore = backend.PrtgStore();
-                var whitelist = new HashSet<string>(systemSettings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
-                var allSensors = prtgStore.GetSensorStatuses();
-                var filteredSensors = whitelist.Count == 0
-                    ? allSensors
-                    : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
-
-                var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
-                var allChanges = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
-                var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
-
-                var sensorToDevice = filteredSensors
-                    .GroupBy(s => s.Objid)
-                    .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
-
-                var sensorStatuses = filteredSensors
-                    .Select(s => (s.Objid, s.DeviceObjid, s.Status))
-                    .ToList();
-
-                var prtgRules = KnownIssueCatalog.Rules
-                    .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && r.Enabled)
-                    .ToList();
-
-                var enabledRuleCodes = prtgRules
-                    .Where(r => !string.IsNullOrEmpty(r.PrtgRuleCode))
-                    .Select(r => r.PrtgRuleCode!)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                // 既有部署升級後規則庫裡還沒有 PRTG 規則（要到規則維護頁套用內建規則更新才會出現）。
-                // 這時 enabledRuleCodes 是空集合、四條規則全部不啟用——必須說出來，
-                // 否則「PRTG 規則零 finding」與「環境真的沒事」在畫面上長得一模一樣。
-                if (enabledRuleCodes.Count == 0)
-                {
-                    prtgConsole.WriteLine("規則庫尚無啟用中的 PRTG 規則（升級後請至「規則維護」頁套用內建規則更新），本次略過規則評估。");
-                    throw new PrtgRulesUnavailableException();
-                }
-
-                var downMinutes = PrtgRuleCatalog.DefaultDownMinutes;
-                var flapCount = PrtgRuleCatalog.DefaultFlapCount;
-                var warningMinutes = PrtgRuleCatalog.DefaultWarningMinutes;
-
-                foreach (var rule in prtgRules)
-                {
-                    if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase))
-                    {
-                        downMinutes = rule.PrtgThreshold;
-                    }
-                    else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase))
-                    {
-                        flapCount = rule.PrtgThreshold;
-                    }
-                    else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase))
-                    {
-                        warningMinutes = rule.PrtgThreshold;
-                    }
-                }
-
-                var thresholds = new PrtgRuleThresholds(downMinutes, flapCount, warningMinutes);
-
-                var findings = PrtgRuleEvaluator.Evaluate(
-                    day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes);
-
-                totalFindings = findings.Count;
-
-                var hostMapRows = prtgStore.GetHostMapForDate(day);
-                var deviceToHost = new Dictionary<long, long>();
-                foreach (var row in hostMapRows)
-                {
-                    if (row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue)
-                    {
-                        deviceToHost[row.DeviceObjid] = row.HostId.Value;
-                    }
-                }
-
-                foreach (var finding in findings)
-                {
-                    if (deviceToHost.TryGetValue(finding.DeviceObjid, out var hostId))
-                    {
-                        if (!findingsByHost.TryGetValue(hostId, out var hostFindings))
-                        {
-                            hostFindings = new List<LogIssueSignature>();
-                            findingsByHost[hostId] = hostFindings;
-                        }
-                        hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
-                        ruleTriggerHosts.Add(hostId);
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (PrtgRulesUnavailableException)
-            {
-                // 已在上面輸出說明；不是錯誤，不記 error log
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG 規則評估失敗，不影響分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
-            }
-
-            // 4. PRTG 觸發式數值取數：獨立的 try/catch，與分析並行輪詢
-            try
-            {
-                progress?.Report("prtg-triggered", 0, 0);
-                var triggeredFetcher = new PrtgTriggeredValueFetcher(
-                    fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
-                triggeredResult = await triggeredFetcher.RunAsync(
-                    day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
-                    () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts,
-                    progress: (stage, done, total) => progress?.Report(stage, done, total));
-
-                var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}）：問題主機 {triggeredResult.TriggerHosts} 台、" +
-                              $"sensor {triggeredResult.TargetSensors} 個、數值 {triggeredResult.ValuesWritten} 筆" +
-                              (triggeredResult.FailedSensors > 0 ? $"、失敗 sensor {triggeredResult.FailedSensors} 個" : "");
-
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG 觸發式取數失敗，不影響分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 觸發式取數失敗：{ex.Message}");
-            }
-
-            // 5. PRTG finding 追加：獨立的 try/catch，在觸發式取數（分析完成）後追加至當日紀錄
-            try
-            {
-                var involvedHosts = findingsByHost.Count;
-                var appendedHosts = 0;
-                var skippedHosts = 0;
-
-                var allHosts = hostStore.GetAll();
-                var hostsById = allHosts.ToDictionary(h => h.HostId);
-
-                foreach (var (hostId, hostFindings) in findingsByHost)
-                {
-                    var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
-                    var hostKey = new HostKey { HostId = hostId, HostName = hostName };
-                    var hostRecordStore = backend.RecordStore(hostKey);
-
-                    var attached = hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings);
-                    if (attached)
-                    {
-                        appendedHosts++;
-                    }
-                    else
-                    {
-                        skippedHosts++;
-                    }
-                }
-
-                var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、已追加 {appendedHosts} 台（無當日紀錄 {skippedHosts} 台）";
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG finding 追加失敗，不影響分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG finding 追加失敗：{ex.Message}");
-            }
-
-            if (syncFailed)
-            {
-                prtgOutcome = BatchRun.PrtgOutcomeFailed;
-            }
-            else if ((fetchResult != null && fetchResult.Failures > 0) || (triggeredResult != null && triggeredResult.FailedSensors > 0))
-            {
-                prtgOutcome = BatchRun.PrtgOutcomePartial;
-            }
-            else
-            {
-                prtgOutcome = BatchRun.PrtgOutcomeSuccess;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // 取消訊號必須穿透，讓上層統一處理中斷
-            throw;
-        }
-        catch (Exception ex)
-        {
-            prtgOutcome = BatchRun.PrtgOutcomeFailed;
-            Log.Error(ex, "PRTG 每日擷取初始化失敗，本機與 NetIQ 分析結果不受影響");
-            prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取初始化失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
-        }
-        finally
-        {
-            if (prtgOutcome != null)
-            {
-                runRecorder.RecordPrtgOutcome(
-                    prtgOutcome,
-                    // 「已取」＝目標數扣掉失敗數；直接填目標數會讓畫面「sensor 100／失敗 40」讀成抓了 100 個
-                    Math.Max(0, (triggeredResult?.TargetSensors ?? 0) - (triggeredResult?.FailedSensors ?? 0)),
-                    triggeredResult?.FailedSensors ?? 0,
-                    triggeredResult?.TriggerHosts ?? 0);
-            }
-            progress?.Report("prtg-done", 0, 0);
-        }
-    }
 
     private static string FormatElapsed(TimeSpan span) =>
         span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小時 {span.Minutes} 分 {span.Seconds} 秒"
@@ -1503,6 +1205,32 @@ public record RetentionOptions
 
 }
 
-/// <summary>規則庫尚無 PRTG 規則時，用來跳出 <see cref="AnalysisOrchestrator"/> 規則評估段的控制流例外
+/// <summary>
+/// 本機路徑專用的前綴 console（回饋十七輪批次E-2）：本機與 NetIQ 並行執行後，兩路的輸出會
+/// 交錯，替本機每一行加上統一前綴才分得清哪一行是哪一路——NetIQ 路徑既有的逐 Sentinel
+/// logContext 前綴（見 HostDayPostProcessor 呼叫點）已經在做同樣的事，這裡是把同一個原則
+/// 套用到本機這一路。空白／純換行訊息先在這裡濾掉（trim 後為空就不加前綴、原樣轉發），
+/// 不然會印出一行只有「[本機] 」的空洞前綴——WebRunConsole 自己也會 trim 整段訊息，
+/// 但如果先加了前綴，訊息就不再是空的，trim 救不回來。
+/// </summary>
+internal sealed class PrefixedRunConsole : IRunConsole
+{
+    private readonly IRunConsole _inner;
+    private readonly string _prefix;
+
+    public PrefixedRunConsole(IRunConsole inner, string prefix)
+    {
+        _inner = inner;
+        _prefix = prefix;
+    }
+
+    public void WriteLine(string message = "")
+    {
+        var trimmed = message.Trim();
+        _inner.WriteLine(trimmed.Length == 0 ? trimmed : $"{_prefix}{trimmed}");
+    }
+}
+
+/// <summary>規則庫尚無 PRTG 規則時，用來跳出 <see cref="PrtgDailyPipeline"/> 規則評估段的控制流例外
 /// （不是錯誤，呼叫端靜默吞掉、不記 error log）。</summary>
 internal sealed class PrtgRulesUnavailableException : Exception { }

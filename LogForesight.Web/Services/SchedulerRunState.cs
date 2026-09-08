@@ -47,9 +47,42 @@ public class SchedulerRunState
     /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡改顯示不定進度。
     /// **回饋十七輪批次E 起這裡專屬 NetIQ**——本機的進度改回報到 <see cref="LocalProgressPhase"/>
     /// （見其說明：本機與 NetIQ 改並行執行後，兩者不能再共用一組欄位）。</summary>
-    public string? ProgressPhase { get; private set; }
-    public int ProgressDone { get; private set; }
-    public int ProgressTotal { get; private set; }
+    /// <summary>
+    /// 一條進度軌（phase／分子／分母／是否完工）。三軌互不覆蓋，各自持有自己最後一次回報的值。
+    /// 收成一個型別是為了**重設只寫一次**：原本 TryBeginRun 與 EndRun 各自逐欄重設 12 個欄位，
+    /// 兩份清單得手動保持同步，漏一個就是「上一趟的進度殘留在畫面上」。
+    /// </summary>
+    private struct ProgressTrack
+    {
+        public ProgressTrack(string? phase, int done, int total)
+        {
+            Phase = phase;
+            Done = done;
+            Total = total;
+            Completed = false;   // 有新進度就代表這一軌又在跑了
+        }
+
+        public string? Phase { get; }
+        public int Done { get; }
+        public int Total { get; }
+        public bool Completed { get; set; }
+    }
+
+    /// <summary>三軌一起歸零（開始與結束共用同一份，不再兩處各寫一份重設清單）。</summary>
+    private void ResetTracks()
+    {
+        _netiq = default;
+        _local = default;
+        _prtg = default;
+    }
+
+    private ProgressTrack _netiq;
+    private ProgressTrack _local;
+    private ProgressTrack _prtg;
+
+    public string? ProgressPhase => _netiq.Phase;
+    public int ProgressDone => _netiq.Done;
+    public int ProgressTotal => _netiq.Total;
 
     /// <summary>
     /// 本機分析進度（回饋十七輪批次E）：本機與 NetIQ 機房分析改成並行執行（AnalysisOrchestrator
@@ -59,21 +92,49 @@ public class SchedulerRunState
     /// 一模一樣（進度卡住不動／跳來跳去）。獨立成第三組欄位，語意上與上面的主／子進度對稱：
     /// 三條軌互不覆蓋，各自持有自己最後一次回報的值。
     /// </summary>
-    public string? LocalProgressPhase { get; private set; }
-    public int LocalProgressDone { get; private set; }
-    public int LocalProgressTotal { get; private set; }
+    public string? LocalProgressPhase => _local.Phase;
+    public int LocalProgressDone => _local.Done;
+    public int LocalProgressTotal => _local.Total;
 
     /// <summary>
     /// PRTG 擷取進度（docs/archive/FEEDBACK-37-PLAN.md 批次G1）：與 NetIQ／本機互不覆蓋的第三條進度軌，phase 包含
     /// prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）。
     /// </summary>
-    public string? PrtgProgressPhase { get; private set; }
-    public int PrtgProgressDone { get; private set; }
-    public int PrtgProgressTotal { get; private set; }
+    public string? PrtgProgressPhase => _prtg.Phase;
+    public int PrtgProgressDone => _prtg.Done;
+    public int PrtgProgressTotal => _prtg.Total;
 
-    public bool LocalCompleted { get; private set; }
-    public bool NetiqCompleted { get; private set; }
-    public bool PrtgCompleted { get; private set; }
+    /// <summary>
+    /// 當日 PRTG finding 是否已全部算完並追加（docs/PRTG-SPEC.md §9）。
+    /// AI 分析排程據此判斷「當日待補現在可不可以判讀」——PRTG finding 會影響風險與敘述，
+    /// 太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。PRTG 停用或評估失敗時也會被設為 true
+    /// （「算不出東西」不等於「還沒算完」），否則 AI 會一路等到整趟取數結束。
+    /// </summary>
+    public bool PrtgFindingsReady { get; private set; }
+
+    public bool LocalCompleted => _local.Completed;
+    public bool NetiqCompleted => _netiq.Completed;
+    public bool PrtgCompleted => _prtg.Completed;
+
+    /// <summary>
+    /// 被進行中的手動執行佔用掉的排程窗口起始時刻（null＝沒有）。
+    /// 手動觸發不受窗口 End 停止，一趟大回填可以吃掉整段窗口，而畫面上原本只會顯示
+    /// 「排程設了卻沒跑」，看不出原因。
+    /// </summary>
+    public DateTime? SkippedScheduleAt { get; private set; }
+
+    /// <summary>
+    /// 記錄一個被佔用的窗口；同一個窗口實例只記一次（回 true 代表這次是新的，呼叫端才寫訊息）。
+    /// </summary>
+    public bool NoteSkippedSchedule(DateTime windowStart)
+    {
+        lock (_lock)
+        {
+            if (SkippedScheduleAt == windowStart) return false;
+            SkippedScheduleAt = windowStart;
+            return true;
+        }
+    }
 
     /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
     public string? PausedReason { get; private set; }
@@ -97,18 +158,9 @@ public class SchedulerRunState
             Trigger = trigger;
             StartedAt = DateTime.Now;
             LatestMessage = null;
-            ProgressPhase = null;
-            ProgressDone = 0;
-            ProgressTotal = 0;
-            NetiqCompleted = false;
-            LocalProgressPhase = null;
-            LocalProgressDone = 0;
-            LocalProgressTotal = 0;
-            LocalCompleted = false;
-            PrtgProgressPhase = null;
-            PrtgProgressDone = 0;
-            PrtgProgressTotal = 0;
-            PrtgCompleted = false;
+            ResetTracks();
+            PrtgFindingsReady = false;
+            SkippedScheduleAt = null;
             PausedReason = null;
             _cts = new CancellationTokenSource();
             cts = _cts;
@@ -163,58 +215,55 @@ public class SchedulerRunState
             if (!IsRunning) return;
             if (phase == LocalDonePhase)
             {
-                LocalCompleted = true;
+                _local.Completed = true;
             }
-            else if (phase == "local")
+            else if (phase == RunPhases.Local)
             {
-                LocalCompleted = false;
-                LocalProgressPhase = phase;
-                LocalProgressDone = done;
-                LocalProgressTotal = total;
+                _local = new ProgressTrack(phase, done, total);
             }
             else if (phase == NetiqDonePhase)
             {
-                NetiqCompleted = true;
+                _netiq.Completed = true;
             }
             else if (phase == PrtgDonePhase)
             {
-                PrtgCompleted = true;
+                _prtg.Completed = true;
             }
-            else if (phase == "guard-paused")
+            else if (phase == RunPhases.GuardPaused)
             {
                 PausedReason = "資源緊張，暫停中";
             }
-            else if (phase == "guard-resumed")
+            else if (phase == RunPhases.GuardResumed)
             {
                 PausedReason = null;
             }
+            else if (phase == RunPhases.PrtgFindingsReady)
+            {
+                // 訊號不是進度：**必須排在下面的 "prtg-" 前綴分支之前**，
+                // 否則它會被當成 PRTG 進度軌的回報，把結構同步／取數的進度數字蓋成 0/0。
+                PrtgFindingsReady = true;
+            }
             else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
             {
-                PrtgCompleted = false;
-                PrtgProgressPhase = phase;
-                PrtgProgressDone = done;
-                PrtgProgressTotal = total;
+                _prtg = new ProgressTrack(phase, done, total);
             }
             else
             {
-                NetiqCompleted = false;
-                ProgressPhase = phase;
-                ProgressDone = done;
-                ProgressTotal = total;
+                _netiq = new ProgressTrack(phase, done, total);
             }
         }
     }
 
     /// <summary>本機分析路徑收尾時的完工訊號——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
-    public const string LocalDonePhase = "local-done";
+    public const string LocalDonePhase = RunPhases.LocalDone;
 
     /// <summary>NetIQ 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/>
     /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
-    public const string NetiqDonePhase = "netiq-done";
+    public const string NetiqDonePhase = RunPhases.NetiqDone;
 
     /// <summary>PRTG 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunPrtgFetchAsync"/>
     /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
-    public const string PrtgDonePhase = "prtg-done";
+    public const string PrtgDonePhase = RunPhases.PrtgDone;
 
     /// <param name="outcome">這次執行的結局；null＝沒有真的開始過（例如跨行程 Mutex 逾時），
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>
@@ -225,18 +274,9 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             StartedAt = null;
-            ProgressPhase = null;
-            ProgressDone = 0;
-            ProgressTotal = 0;
-            NetiqCompleted = false;
-            LocalProgressPhase = null;
-            LocalProgressDone = 0;
-            LocalProgressTotal = 0;
-            LocalCompleted = false;
-            PrtgProgressPhase = null;
-            PrtgProgressDone = 0;
-            PrtgProgressTotal = 0;
-            PrtgCompleted = false;
+            ResetTracks();
+            PrtgFindingsReady = false;
+            SkippedScheduleAt = null;
             PausedReason = null;
             _cts?.Dispose();
             _cts = null;

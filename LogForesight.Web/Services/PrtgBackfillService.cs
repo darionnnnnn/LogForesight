@@ -90,16 +90,20 @@ public class PrtgBackfillService
     private readonly PrtgBackfillRunState _state;
     private readonly PrtgProbeRunState _probeState;
 
+    private readonly IHostStore _hosts;
+
     public PrtgBackfillService(
         ISystemSettingsStore settings,
         StorageBackend backend,
         PrtgBackfillRunState state,
-        PrtgProbeRunState probeState)
+        PrtgProbeRunState probeState,
+        IHostStore hosts)
     {
         _settings = settings;
         _backend = backend;
         _state = state;
         _probeState = probeState;
+        _hosts = hosts;
     }
 
     public PrtgBackfillStatusDto GetStatus()
@@ -193,11 +197,24 @@ public class PrtgBackfillService
             {
                 using (client)
                 {
+                    // 取數範圍與每日擷取共用同一份設定與判定（docs/PRTG-SPEC.md §3a）
+                    var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(
+                        s.PrtgValueFetchExtraHosts,
+                        _hosts.GetAll().Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
+
+                    if (unresolvedHosts.Count > 0)
+                    {
+                        console.WriteLine($"⚠ 取數範圍的指定主機有 {unresolvedHosts.Count} 個對不到主機主檔，已略過：" +
+                                          string.Join("、", unresolvedHosts.Take(10)));
+                    }
+
                     success = await PrtgBackfillRunner.RunAsync(
                         fetchService, days, concurrency, console, CancellationToken.None,
                         prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist,
                         dayProgress: (dDone, dTotal, curDate) => _state.UpdateDay(dDone, dTotal, curDate),
-                        sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal));
+                        sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
+                        scope: s.PrtgValueFetchScope,
+                        extraScopeHosts: scopeHostIds);
                 }
             }
             catch (Exception ex)

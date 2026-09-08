@@ -2166,8 +2166,13 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
 因為校準匯出與資料搬運藏在第四個頁籤裡，跨頁指路需要直達：
 
 - **連線**：連線設定（認證方式三選一：API token／帳號密碼／帳號＋passhash）。
-- **擷取參數**：忽略 SSL、逾時、併發、回填天數、保留天數、sensor type 白名單，
-  另有**資源守門**設定卡與「預覽受監看 sensor」（模組規格見 docs/PRTG-SPEC.md §12）；
+- **擷取參數**：忽略 SSL、逾時、併發、回填天數、保留天數、sensor type 白名單、
+  **數值取數的主機範圍**（三選一；選「觸發主機＋指定清單」才顯示主機名稱輸入框，
+  另有「估算規模」鈕呼叫 `prtg-fetch-scope/estimate` 顯示該模式一晚要抓幾個 sensor，
+  超過門檻顯示提醒但不擋存；模組規格見 docs/PRTG-SPEC.md §3a），
+  另有**資源守門**設定卡與「預覽受監看 sensor」／**「自動偵測並填入」**
+  （後者帶 `forceAuto=true` 忽略覆寫清單重跑偵測並寫回輸入框，偵測為空時不清空既有內容；
+  模組規格見 docs/PRTG-SPEC.md §12）；
   守門卡**與擷取參數共用同一顆儲存鈕**——分兩顆時按其中一顆，另一張卡未存的改動會在重載時被覆蓋回舊值且沒有提示。
   連線與擷取參數**各自一顆儲存鈕**，都走同一個專屬端點但**只送自己頁籤的欄位**
   ——端點是「有送才更新」，多送會把另一個頁籤的值一起覆寫。
@@ -2232,6 +2237,18 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 （`override=true` 為覆寫匯出）。門檻定義與資料集內容見 docs/PRTG-SPEC.md §11。
 
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
+- **版面骨架**：三張等寬狀態卡（取數執行／AI 分析／PRTG 歷史回填，`.lf-run-status-grid`，
+  ≤991px 疊直）在上，四個頁籤（執行總表／異常彙總／執行紀錄／**排程設定**）在下，
+  與 `/admin/prtg`、`/admin/netiq`、設定頁「頁籤置頂 → 平行卡片」同一套骨架。
+  排程設定自成一個頁籤，與即時狀態卡分離。
+  - **`#runs-tabs` 與四個 `[data-panel]` 必須是同層手足**（`bindTabs` 用 `tabsEl.parentElement`
+    找面板）；天數與圖例工具列插在中間不影響，切到「排程設定」時由 `runs.js` 整組隱藏。
+  - 進度軌區塊**預留固定高度**（`.lf-run-tracks`）：狀態卡每 3 秒重繪，進度條出現／消失時版面不得跳動。
+  - PRTG 回填輸出**預設收合**：它是全頁最高的單一元素，展開著會把那張卡撐得比另外兩張長一倍。
+  - 標籤／值成對用 `.lf-kv`；進度條高度與窄輸入框寬度用 `.lf-run-progress`／`.lf-input-narrow`，
+    頁面內**不留 inline style**。
+  - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
+    整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **狀態卡的三條進度軌**：本機／NetIQ／PRTG 三路並行，各自一條互不覆蓋的軌。
   三路收尾各送一個完工訊號（`local-done`／`netiq-done`／`prtg-done`），
   收到後**保留該軌最後的數字並標記完成**（畫成滿格、文字「已完成 x / y」），
@@ -2241,8 +2258,17 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   ——三條軌長得一樣，只印「準備中」使用者無從分辨是哪一路。
   觸發式取數在等待分析結果的空檔回報累計已取 sensor 數，顯示
   「PRTG 觸發式取數　已取 N 個 sensor（等待分析結果）」。
-  phase 字面值一覽（Core 與 Web 兩邊約定的字串）：`local`／`netiq`／`prtg-sync`／`prtg-values`／
-  `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`。
+  phase 字面值**集中在 Core 的 `RunPhases`**（Core 送出、Web 分派、前端標籤三層共用同一份；
+  前端對照表的完整性由 `RunsPageUiTests` 以反射逐條核對——漏補文案時畫面會印裸 phase 給使用者）。
+  一覽：`local`／`netiq`／`prtg-sync`／
+  `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
+  `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`；
+  PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
+  否則會把 PRTG 進度軌的數字蓋成 0/0）。
+  **結構同步三階段各自回報自己的 phase**（常數見 `PrtgFetchService`）：分子是已讀取列數、
+  分母取 PRTG 回應的 `treesize`（缺這個欄位時分母 0，畫不定進度但分子照走）。
+  少了這三個 phase，從進入 PRTG 到觸發式取數之間整段只有一次 `prtg-sync (0,0)`，
+  「剛啟動」「結構同步跑四十分鐘」「卡死」在畫面上完全一樣。分頁每滿 50 頁另寫一行執行輸出。
 - **首次載入不慢半拍**：狀態查詢與 options／ai-status／settings 同時發出，
   不等那三支回來；頁面狀態文字初值為「載入中…」而非空白
   ——否則進站會先看到「沒有執行中」，過一下才跳出執行中。
@@ -2261,6 +2287,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **AI 分析排程未啟用的提示**：AI 已設定、AI 排程未啟用且待補件數大於 0 時，
   AI 分析狀態卡顯示「AI 分析排程未啟用，N 件待補不會被處理」——
   本機路徑改走 AI 排程後，排程沒開就等於本機也沒有 AI 判讀，這個缺口要說出來。
+- **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
+  「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+  `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
+  `disabled`／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
+  由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
+  前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
+  `disabled` 走既有那條帶件數的文案，`no-pending` 不需要說明（待補為 0 本身就講完了）。
 - **待補件數快取 30 秒**：該查詢在實機要 7~15 秒，而狀態卡執行中每 3 秒輪詢一次
   ——不快取等於自己把資料庫打慢。AI 排程每輪收尾與整批重標時使快取失效。
   **查詢刻意在鎖外執行**：那把鎖同時保護 AI 排程的開始與結束，
@@ -2293,6 +2326,23 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   取數分支（依 `Os` 分流查詢與映射），Linux 主機和 Windows 主機走同一條
   `pollableIds.Contains(id)` 判斷，範圍與立即執行皆不再排除 Linux。窗口 End 到點時排程引擎
   對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
+- **手動執行佔用排程窗口時說出來**：手動觸發不受窗口 End 停止（§1.4.4），一趟大回填可以吃掉
+  整段窗口，而排程輪詢遇到 `IsRunning` 就直接略過；少了這個訊號，畫面上只看得到「排程設了卻沒跑」。
+  狀態卡因此顯示一行說明（`status.skippedScheduleAt`），並在該次手動執行的最新訊息留一筆；
+  **同一個窗口實例只記一次**（靠窗口起始時刻去重），否則每 60 秒輪詢就重複寫一則。
+  文案要把補跑時機說準：手動執行結束時若仍在窗口內，`ShouldTriggerNow` 會判定該實例尚未觸發而
+  **立刻補跑**；只有手動執行跨過窗口 End 才等到下一個窗口。
+  **該窗口已經跑過就不算被佔用**（`ScheduleCalculator.WindowAlreadyTriggered`，
+  與 `ShouldTriggerNow` 共用同一個判定）——22:00 觸發、22:40 跑完、23:00 有人按立即執行時，
+  少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
+  訊息進狀態卡與 NLog，**不進里程碑**：里程碑屬於某一次執行的紀錄，而這件事發生在輪詢執行緒、
+  拿不到那次執行的 recorder；事後追查走 NLog。
+- **三軌進度收成單一型別**：`SchedulerRunState` 的三組 `(Phase, Done, Total, Completed)` 是一個
+  值型別 ×3，開始與結束共用同一個 `ResetTracks()`——逐欄重設會讓兩處各有一份 12 欄的清單、
+  必須手動保持同步，漏一個就是上一趟的進度殘留在畫面上。**status API 的欄位名與這個內部結構無關**。
+- **AI 進度只推分子**：AI 排程按主機分片並行，回報寫成「讀分母再寫回」是 read-modify-write，
+  兩條分片會互相蓋；改用只推進分子的方法，且**分子只增不減**（分片完成順序不定，
+  晚到的舊值不得把進度往回拉）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
 - **開始時間／已耗時**：狀態 API 的 `startedAt` 欄位早就
@@ -2331,10 +2381,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
   「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
   再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
-  `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。進度
-  回報第三度拆欄位：`SchedulerRunState` 新增 `LocalProgressPhase/Done/Total`，與既有的
-  NetIQ 主／子進度三組欄位互不覆蓋（並行後 local／netiq 不再像過去「依序不重疊」，若仍共用
-  一組欄位會重演「進度卡住不動」）；status API 對應加三個欄位，狀態卡畫出對應的第三條進度條
+  `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。本機
+  與 NetIQ 各自一條進度軌、互不覆蓋（結構見上方「三軌進度收成單一型別」；並行後兩路同時回報，
+  共用一組欄位會出現「進度卡住不動」）；status API 各帶一組欄位，狀態卡畫出對應的進度條
   （只在有值時顯示，不像 NetIQ 主進度條「執行中就無條件顯示準備中」——`NetiqHosts` 範圍時
   本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都改成
   「有回報過才顯示」）。失敗語意維持嚴格：任一路未攔截的例外仍讓整趟判定失敗，`Task.WhenAll`
@@ -2348,7 +2397,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   跑完後不會主動清掉自己的欄位——單一告示讀取端（`/api/run-activity`、健康診斷）的
   `LatestActivity()` 因此會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
   `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）改送一個特殊 phase
-  （`"netiq-done"`，與 `"local"` 一樣是兩邊約定的字串慣例）通知 `SchedulerRunState` 清空
+  （`RunPhases.NetiqDone`）通知 `SchedulerRunState` 清空
   netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
   NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
   一併消失，不是副作用。
@@ -2364,6 +2413,11 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
     未執行計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面
     最下方的下鑽卡）。
+    **日期錨點是昨天，總表不含今天**：D 日的列＝D 日夜間執行的批次，分析的是 D-1 的資料
+    （NetIQ 主機的狀態判定就是「D-1 有無分析紀錄」），今天的批次白天尚未執行，列進來必然
+    整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數
+    （範圍 `[Today-days, Today-1]`），分頁數學不變。今天的執行看狀態卡與「執行紀錄」頁籤
+    ——**異常彙總與執行紀錄刻意仍含今天**，它們是事件清單、不是主機×日視角。
   - **異常彙總**（Error/Fatal 按訊息聚合）。
   - **執行紀錄**：`GET api/runs/list?days=N`
     （`RunMonitorService.GetRunList`），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—

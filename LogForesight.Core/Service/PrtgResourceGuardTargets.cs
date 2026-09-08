@@ -28,15 +28,21 @@ public static class PrtgResourceGuardTargets
     /// <param name="sentinels">Sentinel 連線設定清單</param>
     /// <param name="console">執行輸出終端機（供輸出警告訊息）</param>
     /// <returns>包含受監看感測器 objid 清單與分類的結果物件</returns>
+    /// <param name="ignoreOverride">
+    /// true＝跳過覆寫清單、強制走自動偵測。給維護頁「自動偵測並填入」按鈕用：
+    /// 管理者最常見的操作是「已經手填了一些 objid，想重抓一次」，不忽略覆寫的話
+    /// 只會把手填值原樣吐回來。守門執行本身一律傳 false（覆寫優先是它的既定契約）。
+    /// </param>
     public static PrtgResourceGuardTargetResult Resolve(
         EfPrtgStore prtgStore,
         SystemSettings settings,
         IReadOnlyList<Sentinel> sentinels,
-        IRunConsole console)
+        IRunConsole console,
+        bool ignoreOverride = false)
     {
         // 1. 覆寫優先：PrtgResourceGuardSensorObjids 非空時，直接用它（逐項 long.TryParse，parse 失敗略過並警告）。
         // 依規格：設定了 objid 清單時，回傳的就是那些 objid，且完全不查 device（即使鏡像表為空也回得出清單）。
-        if (settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0)
+        if (!ignoreOverride && settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0)
         {
             var objids = new List<long>();
             foreach (var item in settings.PrtgResourceGuardSensorObjids)

@@ -9,8 +9,10 @@ public sealed record PrtgTriggeredFetchResult(
     int TriggerHosts, int TargetSensors, int ValuesWritten, int FailedSensors);
 
 /// <summary>
-/// 觸發式 PRTG 數值取數：只對「昨日風險為高或中」的主機所對應的 device 上、
+/// 觸發式 PRTG 數值取數：預設只對「**目標日**風險為高或中」的主機所對應的 device 上、
 /// 且 type 命中白名單的 sensor 擷取 hourly 數值，並與分析流程並行進行。
+/// 目標日就是這趟批次處理的那一天（`day` 參數），不是固定的昨天——歷史回填也走這裡。
+/// 取數範圍可由 `PrtgValueFetchScope` 放寬，見 docs/PRTG-SPEC.md §3a。
 /// </summary>
 public sealed class PrtgTriggeredValueFetcher
 {
@@ -39,8 +41,19 @@ public sealed class PrtgTriggeredValueFetcher
         CancellationToken ct,
         int pollSeconds = 30,
         IReadOnlyCollection<long>? extraTriggerHosts = null,
-        Action<string, int, int>? progress = null)
+        Action<string, int, int>? progress = null,
+        string? scope = null,
+        IReadOnlyCollection<long>? extraScopeHosts = null)
     {
+        // 白名單為空時 all-mapped 會退回 triggered（第二道防線，見 PrtgValueFetchScope）
+        var whitelistEmpty = whitelist == null || whitelist.Count == 0;
+        var effectiveScope = PrtgValueFetchScope.EffectiveScope(scope, whitelistEmpty);
+
+        if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(scope, whitelistEmpty))
+        {
+            _console.WriteLine("  ⚠ 取數範圍設為「全部已對應主機」但 sensor type 白名單為空，" +
+                               "等於對全部 sensor 取數——本次退回「只抓觸發主機」。請先設定白名單。");
+        }
         var hostMapRows = _store.GetHostMapForDate(day);
         var hostToDevices = new Dictionary<long, List<long>>();
         foreach (var row in hostMapRows)
@@ -73,11 +86,19 @@ public sealed class PrtgTriggeredValueFetcher
                 Hosts = null
             };
             var records = _records.QueryLightweight(filter);
-            var candidateHosts = records.Select(r => r.HostId);
+            var triggered = records.Select(r => r.HostId).AsEnumerable();
             if (isFirstScan && extraTriggerHosts is { Count: > 0 })
             {
-                candidateHosts = candidateHosts.Concat(extraTriggerHosts);
+                triggered = triggered.Concat(extraTriggerHosts);
             }
+
+            // 取數範圍（docs/PRTG-SPEC.md §3a）：三種模式共用同一個下游收斂，差別只在候選主機怎麼來。
+            // all-mapped 的候選是「全部有 ok 對應的主機」，與輪詢無關——它在首輪就全部取完，
+            // 之後的輪詢因去重集合自然不再產生新主機。
+            var candidateHosts = PrtgValueFetchScope.SelectHosts(
+                effectiveScope, triggered, hostToDevices.Keys,
+                isFirstScan ? (extraScopeHosts ?? Array.Empty<long>()) : Array.Empty<long>());
+
             isFirstScan = false;
 
             var newHosts = candidateHosts
@@ -115,7 +136,7 @@ public sealed class PrtgTriggeredValueFetcher
             {
                 break;
             }
-            progress?.Invoke("prtg-triggered", totalTargetSensors, 0);
+            progress?.Invoke(RunPhases.PrtgTriggered, totalTargetSensors, 0);
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(pollSeconds, 1)), ct);
         }
 

@@ -130,6 +130,15 @@ function renderPrtgFields(settings) {
     if (guardSensors) guardSensors.value = (settings.prtgResourceGuardSensorObjids ?? []).join('\n');
     document.getElementById('prtg-guard-preview-result')?.replaceChildren();
 
+    const scopeSelect = document.getElementById('prtg-value-fetch-scope');
+    if (scopeSelect) {
+        scopeSelect.value = settings.prtgValueFetchScope || 'triggered';
+        syncScopeFields();
+    }
+    const extraHosts = document.getElementById('prtg-value-fetch-extra-hosts');
+    if (extraHosts) extraHosts.value = (settings.prtgValueFetchExtraHosts ?? []).join('\n');
+    document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
+
     document.getElementById('prtg-test-result').replaceChildren();
     renderUpdatedAt(settings);
 }
@@ -149,6 +158,69 @@ async function loadSettings() {
     const settings = await api.get('/api/admin/settings');
     historyRetentionDays = settings.retentionDays;
     renderPrtgFields(settings);
+}
+
+/**
+ * 取數範圍切換：只有「觸發主機＋指定清單」需要主機名稱輸入框。
+ * 用 classList 切換而非 style.display（同本頁認證方式切換的既有作法）。
+ */
+function syncScopeFields() {
+    const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
+    document.getElementById('prtg-value-fetch-extra-hosts-group')
+        ?.classList.toggle('d-none', scope !== 'triggered-plus-list');
+}
+
+function bindScopeControls() {
+    const select = document.getElementById('prtg-value-fetch-scope');
+    if (select) select.addEventListener('change', syncScopeFields);
+
+    const button = document.getElementById('prtg-scope-estimate-btn');
+    const result = document.getElementById('prtg-scope-estimate-result');
+    if (!button || !result) return;
+
+    button.addEventListener('click', async () => {
+        const restore = withBusy(button, '估算中');
+        result.replaceChildren();
+        result.className = 'small';
+
+        try {
+            // 估算的是「目前選的模式」而非已儲存的模式——管理者是在決定要不要改設定。
+            const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
+            const res = await api.get(
+                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}`,
+                { silent: true });
+
+            if (!res.success) {
+                result.className = 'text-danger small';
+                result.textContent = res.errorMessage || '估算失敗。';
+                return;
+            }
+
+            if (scope === 'triggered') {
+                result.className = 'text-muted small';
+                result.textContent = '只抓觸發主機：數量逐日變動，事前無法估算。';
+                return;
+            }
+
+            // 觸發主機那一半事前算不出來，估的只有指定清單——要說清楚，否則會被讀成整個模式的規模
+            const prefix = scope === 'triggered-plus-list' ? '指定清單部分：' : '';
+            const base = `${prefix}主機 ${formatNumber(res.hosts)} 台、device ${formatNumber(res.devices)} 個、` +
+                         `sensor ${formatNumber(res.sensors)} 個/晚`;
+
+            if (res.warning) {
+                result.className = 'text-warning small';
+                result.textContent = `⚠ ${base}——${res.warning}`;
+            } else {
+                result.className = 'text-success small';
+                result.textContent = base;
+            }
+        } catch (error) {
+            result.className = 'text-danger small';
+            result.textContent = error?.message || '估算失敗。';
+        } finally {
+            restore();
+        }
+    });
 }
 
 function collectLines(id) {
@@ -286,7 +358,9 @@ function bindParamsForm() {
                 prtgResourceGuardPauseMinutes: numberOr('prtg-guard-pause-minutes', 5),
                 prtgResourceGuardStrikes: numberOr('prtg-guard-strikes', 2),
                 prtgResourceGuardMaxPauseMinutes: numberOr('prtg-guard-max-pause-minutes', 120),
-                prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids')
+                prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids'),
+                prtgValueFetchScope: document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered',
+                prtgValueFetchExtraHosts: collectLines('prtg-value-fetch-extra-hosts')
             };
 
             await api.put('/api/admin/settings/prtg', payload);
@@ -301,16 +375,23 @@ function bindParamsForm() {
 }
 
 function bindGuardPreview() {
-    const button = document.getElementById('prtg-guard-preview-btn');
+    const previewBtn = document.getElementById('prtg-guard-preview-btn');
+    const autofillBtn = document.getElementById('prtg-guard-autofill-btn');
     const container = document.getElementById('prtg-guard-preview-result');
-    if (!button || !container) return;
+    if (!container) return;
 
-    button.addEventListener('click', async () => {
-        const restore = withBusy(button, '查詢中');
+    // 兩顆按鈕共用同一段渲染：差別只在「要不要忽略覆寫清單」與「要不要把結果填回輸入框」。
+    // 覆寫清單非空時偵測會被短路，所以「已手填、想重抓」必須帶 forceAuto，
+    // 否則只會把手填值原樣吐回來。
+    const run = async (button, { forceAuto, fillTextarea }) => {
+        const restore = withBusy(button, forceAuto ? '偵測中' : '查詢中');
         container.replaceChildren();
 
         try {
-            const res = await api.get('/api/admin/settings/prtg-resource-guard/preview', { silent: true });
+            const url = forceAuto
+                ? '/api/admin/settings/prtg-resource-guard/preview?forceAuto=true'
+                : '/api/admin/settings/prtg-resource-guard/preview';
+            const res = await api.get(url, { silent: true });
 
             if (!res.success) {
                 const errEl = document.createElement('div');
@@ -423,6 +504,26 @@ function bindGuardPreview() {
             table.appendChild(tbody);
             tableResp.appendChild(table);
             container.appendChild(tableResp);
+
+            if (fillTextarea) {
+                const textarea = document.getElementById('prtg-guard-sensor-objids');
+                const objids = sensors.map(x => x.objid).filter(x => x != null);
+
+                const noteEl = document.createElement('div');
+                noteEl.className = 'small mt-2';
+
+                if (objids.length === 0) {
+                    // 偵測不到時**不清空**輸入框：管理者手填的清單比一次失敗的偵測可信。
+                    noteEl.className = 'text-warning small mt-2';
+                    noteEl.textContent = '⚠ 自動偵測沒有找到任何感測器，已保留原本的覆寫清單。';
+                } else if (textarea) {
+                    textarea.value = objids.join('\n');
+                    noteEl.className = 'text-success small mt-2';
+                    noteEl.textContent = `已填入 ${objids.length} 個 objid，尚未儲存——請按「儲存」才會生效。`;
+                }
+
+                container.appendChild(noteEl);
+            }
         } catch (error) {
             const errEl = document.createElement('div');
             errEl.className = 'text-danger small mt-2';
@@ -431,7 +532,14 @@ function bindGuardPreview() {
         } finally {
             restore();
         }
-    });
+    };
+
+    if (previewBtn) {
+        previewBtn.addEventListener('click', () => run(previewBtn, { forceAuto: false, fillTextarea: false }));
+    }
+    if (autofillBtn) {
+        autofillBtn.addEventListener('click', () => run(autofillBtn, { forceAuto: true, fillTextarea: true }));
+    }
 }
 
 
@@ -1139,6 +1247,7 @@ function init() {
     bindConnectionForm();
     bindParamsForm();
     bindGuardPreview();
+    bindScopeControls();
     initCalibration();
     loadSettings();
     refreshPrtgMirror();

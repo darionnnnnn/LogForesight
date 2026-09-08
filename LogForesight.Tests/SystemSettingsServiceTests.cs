@@ -2357,4 +2357,97 @@ public class SystemSettingsServiceTests : IDisposable
         service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardSensorObjids = new List<string> { " 1001 ", "1002" } });
         Assert.Equal(new[] { "1001", "1002" }, service.Get().PrtgResourceGuardSensorObjids);
     }
+    // ── 批次D：PRTG 取數範圍設定 ──────────────────────────────────────
+
+    /// <summary>出廠預設是最保守的「只抓觸發主機」，與加入這個設定之前的行為相同。</summary>
+    [Fact]
+    public void PrtgValueFetchScope_出廠預設為觸發主機()
+    {
+        var service = Create();
+        Assert.Equal(PrtgValueFetchScope.Triggered, service.Get().PrtgValueFetchScope);
+        Assert.Empty(service.Get().PrtgValueFetchExtraHosts);
+    }
+
+    [Fact]
+    public void PrtgValueFetchScope_存讀往返且清單逐行去空白()
+    {
+        var service = Create();
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgValueFetchScope = PrtgValueFetchScope.TriggeredPlusList,
+            PrtgValueFetchExtraHosts = new List<string> { " SRV-DB01 ", "SRV-APP02" }
+        });
+
+        var saved = service.Get();
+        Assert.Equal(PrtgValueFetchScope.TriggeredPlusList, saved.PrtgValueFetchScope);
+        Assert.Equal(new[] { "SRV-DB01", "SRV-APP02" }, saved.PrtgValueFetchExtraHosts);
+    }
+
+    [Fact]
+    public void PrtgValueFetchScope_未送時沿用既有值()
+    {
+        // 只想改逾時的呼叫端不該把取數範圍重設回預設——「有送才更新」的既有規則。
+        var service = Create();
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgValueFetchScope = PrtgValueFetchScope.TriggeredPlusList });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgTimeoutSeconds = 90 });
+
+        Assert.Equal(PrtgValueFetchScope.TriggeredPlusList, service.Get().PrtgValueFetchScope);
+    }
+
+    /// <summary>
+    /// 「全部已對應主機」搭配空白名單＝對全部 sensor 取數，實機四萬多個 sensor 一晚跑不完
+    /// 且會壓垮 PRTG core。存檔時就要擋下，不能等夜間批次才發現。
+    /// </summary>
+    [Fact]
+    public void PrtgValueFetchScope_全部主機模式搭配空白名單被拒絕()
+    {
+        var service = Create();
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
+            PrtgSensorTypeWhitelist = new List<string>()
+        }));
+        Assert.Contains("白名單", ex.Message);
+
+        // 白名單非空時同一個模式可以存
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
+            PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free" }
+        });
+        Assert.Equal(PrtgValueFetchScope.AllMapped, service.Get().PrtgValueFetchScope);
+    }
+
+    /// <summary>
+    /// 跨欄位檢查要用 effective 值：只把白名單清空、沒送模式時，也必須擋下——
+    /// 直接比對請求中的兩個欄位會拿到 null 而放行，上限形同失效。
+    /// </summary>
+    [Fact]
+    public void PrtgValueFetchScope_已是全部主機模式時不得只清空白名單()
+    {
+        var service = Create();
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
+            PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free" }
+        });
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgSensorTypeWhitelist = new List<string>()
+        }));
+        Assert.Contains("白名單", ex.Message);
+    }
+
+    [Fact]
+    public void PrtgValueFetchScope_不合法字面值被拒絕()
+    {
+        var service = Create();
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgValueFetchScope = "everything"
+        }));
+        Assert.Contains("取數範圍", ex.Message);
+    }
 }

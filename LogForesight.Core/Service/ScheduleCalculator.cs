@@ -167,9 +167,16 @@ public static class ScheduleCalculator
             var instanceStart = CurrentWindowInstanceStart(now, w);
             if (instanceStart == null) continue;
 
-            var alreadyTriggered = triggerTimes.Any(t => t >= instanceStart.Value && t <= now);
-            if (!alreadyTriggered) return true;
+            if (!WindowAlreadyTriggered(now, instanceStart.Value, triggerTimes)) return true;
         }
         return false;
     }
+
+    /// <summary>
+    /// 這個窗口實例是否已經觸發過（唯一判定點，供 <see cref="ShouldTriggerNow"/> 與
+    /// 「手動執行是否真的佔用了自動觸發」共用——同一個判定寫兩份會漂移）。
+    /// </summary>
+    public static bool WindowAlreadyTriggered(
+        DateTime now, DateTime windowInstanceStart, IEnumerable<DateTime> scheduledTriggerTimes) =>
+        scheduledTriggerTimes.Any(t => t >= windowInstanceStart && t <= now);
 }

@@ -200,3 +200,32 @@ public class PrtgResourceGuardPreviewResultDto
     public IReadOnlyList<string> Warnings { get; set; } = Array.Empty<string>();
     public IReadOnlyList<PrtgResourceGuardSensorPreviewDto> Sensors { get; set; } = Array.Empty<PrtgResourceGuardSensorPreviewDto>();
 }
+
+/// <summary>
+/// 取數範圍的規模估算（docs/PRTG-SPEC.md §3a）：讓管理者在把範圍放寬之前
+/// 先看得到「這樣一晚要抓幾個 sensor」。放寬到全部主機在大型環境跑不完，
+/// 而跑不完的症狀是隔天早上資料不全，不是當下報錯。
+/// </summary>
+public class PrtgValueFetchScopeEstimateDto
+{
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>估算的範圍模式（回傳查詢帶的值，方便前端對照）</summary>
+    public string Scope { get; set; } = "";
+
+    /// <summary>該模式涵蓋的主機數（以最新一日的 ok 對應計算）</summary>
+    public int Hosts { get; set; }
+
+    /// <summary>對應到的 device 數</summary>
+    public int Devices { get; set; }
+
+    /// <summary>套用 sensor type 白名單後的 sensor 數＝一晚要抓的量</summary>
+    public int Sensors { get; set; }
+
+    /// <summary>白名單是否為空（空＝不限 type，與 all-mapped 疊加就是全量）</summary>
+    public bool WhitelistEmpty { get; set; }
+
+    /// <summary>估算量超過建議上限時的提醒文字；未超過為 null</summary>
+    public string? Warning { get; set; }
+}

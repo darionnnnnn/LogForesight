@@ -129,6 +129,69 @@ public static class HostDayPostProcessor
         return false;
     }
 
+    /// <summary>
+    /// 把當日的 PRTG finding 併進剛落地的主機日紀錄（docs/PRTG-SPEC.md §9）。
+    /// **必須排在 <see cref="AttachCase"/> 之前**：案件掛接吃的是記憶體裡的
+    /// <c>record.TopIssues</c>，晚一步併入的 finding 就永遠進不了問題案件與處理狀態鏈。
+    ///
+    /// 兩邊都要寫：記憶體（供後續的案件掛接使用）與資料庫（<c>AttachPrtgFindings</c> 自帶
+    /// 依 EventKey 的去重與 detail_pruned 保護，重跑同一天不會產生重複）。
+    /// 登錄簿尚未就緒、或這台主機當天沒有 finding 時整段短路，不碰資料庫。
+    ///
+    /// 失敗只記警告：PRTG 是輔助訊號，它的追加不該讓一個已經算完的主機日作廢
+    /// （同本檔其他後續處理的失敗邊界）。回傳實際併入的筆數，供執行輸出統計。
+    /// </summary>
+    public static int AttachPrtgFindings(
+        PrtgFindingsRegistry registry, IAnalysisRecordStore store,
+        DailyAnalysisRecord record, long hostId, bool aiConfigured = false, string logContext = "")
+    {
+        // 帶日期比對：兩條寫入路徑都在逐日迴圈裡呼叫，而 PRTG 只評估了登錄簿發佈的那一天。
+        // 回補多天缺漏日時，其餘日期在這裡就會拿到空清單。
+        var findings = registry.For(hostId, record.Date);
+        if (findings.Count == 0) return 0;
+
+        try
+        {
+            var existingKeys = record.TopIssues
+                .Select(i => i.EventKey)
+                .Where(k => !string.IsNullOrEmpty(k))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var added = findings.Where(f => existingKeys.Add(f.EventKey)).ToList();
+            if (added.Count == 0) return 0;
+
+            // 與 PRTG 路徑的補追加對同一主機日序列化（見 PrtgFindingsRegistry.AttachExclusive）。
+            var attachedNow = registry.AttachExclusive(hostId, record.Date,
+                () => store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured));
+
+            // **先看資料庫端做了沒**：查無該主機當日列、或詳情已被保留期精簡（detail_pruned）時
+            // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
+            // 會是「高」，資料庫裡卻還是「低」。唯一的例外是「補追加剛好先來過」：資料庫已經有了，
+            // 記憶體這份仍要併入，執行摘要才與資料庫一致。
+            if (!attachedNow && !registry.WasAttached(hostId, record.Date)) return 0;
+
+            record.TopIssues.AddRange(added);
+
+            // 記憶體紀錄跟著上調，與資料庫端同一套判定（docs/PRTG-SPEC.md §9）
+            var elevated = RiskLevels.MoreSevere(record.RiskLevel, PrtgFindingMapper.RiskFromFindings(added));
+            if (elevated != record.RiskLevel)
+            {
+                record.RiskLevel = elevated;
+                record.RiskBasis = PrtgFindingMapper.RiskBasisFrom(added);
+                if (aiConfigured && !record.AiAnalyzed && !record.DetailPruned) record.AiPending = true;
+            }
+
+            Log.Info("{Context}{Date:yyyy-MM-dd} 主機 id={HostId} 併入 {Count} 項 PRTG finding",
+                logContext, record.Date, hostId, added.Count);
+            return added.Count;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} PRTG finding 追加失敗（不影響分析結果）", logContext, record.Date);
+            return 0;
+        }
+    }
+
     public static void AttachCase(
         IssueCaseCoordinator caseCoordinator, string hostName, DateTime date,
         List<LogIssueSignature> topIssues, string logContext = "")

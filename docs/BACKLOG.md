@@ -437,6 +437,43 @@
   見 docs/PRTG-SPEC.md §9）。仍遞延的是**值型規則**（趨勢、基線偏移）——需要數值基線，
   累積量判斷與匯出見 PRTG-SPEC §11（原始 hourly 另走 §10）。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
   規則各自歸屬自己的來源。
+
+- **跨來源關聯規則**（例如 Windows 磁碟錯誤事件 ＋ 同主機 PRTG disk sensor 趨勢下降 →
+  提升嚴重度）：屬於**關聯層**而不是規則表——關聯層的組合模式本來就是程式碼邏輯、不搬進
+  rules.json（見 `CorrelationAnalyzer` 與 docs/RULES-SPEC.md 語意邊界），因此與上一條
+  「不新增合併規則平台」的定案不衝突。前置有兩項：(a) `EfPrtgStore` 需要「按 hostId＋日期
+  取數值／狀態變更」的查詢方法（現行是全域批次撈、事後歸戶，方向相反）；(b) PRTG 規則評估
+  需移到分析之前，或為 `LogAnalysisService` 開一條 PRTG 訊號入口（該類別目前對 PRTG 零認識），
+  且必須「取不到就靜默跳過」才不破壞 PRTG 的失敗隔離。
+  **只用狀態變更型的既有四條 finding 就能做，不需要值型規則的數值基線**——
+  這片區域其餘項目綁在校準頁四項達「可用」，這一條不受該前提限制。
+- **排程作業頁前端拆檔**：`runs.js` 約 1600 行同時承載三個報表頁籤、三張狀態卡與輪詢計時、
+  排程設定表單與兩個 modal；拆成 `runs.js`／`runs-status.js`／`runs-schedule.js`／`runs-prtg-backfill.js`
+  要處理 17 個模組層共享狀態與輪詢生命週期的歸屬，屬獨立一輪的重構。版面骨架已重排，
+  這條只剩維護性收益，有下一輪動到該頁時再做。
+
+- **五個 RunState 抽共通基底（已否決）**：`SchedulerRunState`／`AiAnalysisRunState`／
+  `PrtgProbeRunState`／`PrtgBackfillRunState`／`NetiqProbeRunState` 的共通部分只有一個
+  `IsRunning` 與兩個時間戳，其餘（有無 CTS、有無 Trigger、`EndRun` 參數、`Snapshot` 型別）各不相同，
+  抽出來是個空殼而呼叫端仍要各自處理鎖與重設。真正的風險（多組進度欄位要兩處手動重設）已由
+  `SchedulerRunState` 的三軌值型別解決。除非再多出兩個以上同型的狀態物件，否則不要再提。
+
+- **並行負載下的不穩定測試**：全量 `dotnet test` 偶有一條紅、單獨重跑即綠，已觀察到四條：
+  `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`、
+  `BatchRunRecorderScopeTests.Scope外的Warn不會被記錄`、
+  `AiAnalysisSchedulerTests.ScheduleController_Ai端點_狀態查詢_立即執行與停止`、
+  `NetiqScanConcurrencyChainTests`（整類）。共通點是時間預算或跨測試共享狀態，在測試平行度高、
+  機器同時有其他建置時才出現。處理方向是把時間相關斷言改成可注入時鐘、共享狀態改成每測試獨立實例，
+  不是加長等待。
+
+- **PRTG finding 追加與紀錄重寫之間沒有樂觀併發保護**：`AttachPrtgFindings` 走
+  「讀 row → 反序列化 → 重新序列化 → SaveChanges」，與重跑模式的「刪除當日 → 重新寫入」
+  可能落在同一個 (hostId, date) 上，兩者之間沒有版本權杖。後寫的一方會整段覆蓋 `ContentJson`，
+  而 `lf_top_issues` 子列是各自寫入的——主列 JSON 與子列可能不一致（問題排行查得到、詳情頁看不到）。
+  窗口很窄（補追加只在規則評估後跑一次），且需要「同一台主機同一天同時被重跑與追加」才會撞上。
+  要修的話是給 `lf_daily_records` 一個 rowversion 並讓兩條寫入路徑都帶版本檢查，
+  影響面涵蓋全部紀錄寫入點，不宜順手做。
+
 - **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
   `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
   （恆 `ok`，無品質判定依據）、`lf_prtg_sensors.thresholds_json`（未向 PRTG 索取閾值欄）、

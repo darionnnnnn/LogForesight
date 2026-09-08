@@ -208,8 +208,14 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         record.Summary = outcome.Summary;
         record.TrendAssessment = outcome.TrendAssessment;
         record.Action = outcome.Action;
-        record.RiskLevel = outcome.RiskLevel;
-        record.RiskBasis = outcome.RiskBasis;
+        // 只升不降（docs/DETECTION-SPEC.md：AI 只能把風險往上拉）。outcome.RiskLevel 是 AI 撿到
+        // 這筆時算的，PRTG finding 可能在 AI 判讀期間才追加並上調了列上的等級；無條件覆寫會把
+        // 上調蓋回去。列上的等級較高時保留它與它的依據（那是 PRTG 的 prtg:{code}）。
+        if (RiskLevels.MoreSevere(record.RiskLevel, outcome.RiskLevel) == outcome.RiskLevel)
+        {
+            record.RiskLevel = outcome.RiskLevel;
+            record.RiskBasis = outcome.RiskBasis;
+        }
         record.AiAnalyzed = outcome.AiAnalyzed;
         record.AiPending = false;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
@@ -227,7 +233,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
         // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移；
         // 成功後清為 false（批次C 單點化事實來源），ai_analyzed 同步。
-        row.RiskLevel = outcome.RiskLevel;
+        row.RiskLevel = record.RiskLevel;
         row.AiPending = false;
         row.AiAnalyzed = outcome.AiAnalyzed;
         ctx.SaveChanges();
@@ -242,7 +248,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 那兩者只改主列，不會寫子列，追加的問題會查不到、也接不上處理狀態。
     /// 找不到該主機當日紀錄時回傳 false，不建立新紀錄。
     /// </summary>
-    public bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings)
+    public bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
+        bool aiConfigured = false)
     {
         if (findings == null || findings.Count == 0) return false;
 
@@ -289,6 +296,28 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             }
 
             record.TopIssues.AddRange(toAdd);
+
+            // 風險單向上調（docs/PRTG-SPEC.md §9）：PRTG 規則的 ElevatesDayRisk／High 過去是死值
+            // ——追加發生在風險計算之後，這個旗標從來沒有生效過，PRTG 命中只是附掛的問題列，
+            // 不影響風險等級、郵件、待辦統計、AI 補跑判準。
+            // 一律取 MoreSevere：PRTG 只是輔助訊號，看不到事件層的證據，絕不壓低既有等級。
+            var prtgRisk = PrtgFindingMapper.RiskFromFindings(toAdd);
+            var elevated = RiskLevels.MoreSevere(record.RiskLevel, prtgRisk);
+            if (elevated != record.RiskLevel)
+            {
+                record.RiskLevel = elevated;
+                record.RiskBasis = PrtgFindingMapper.RiskBasisFrom(toAdd);
+                row.RiskLevel = elevated;
+
+                // 風險由低升為非低時這一天就「該有 AI」了（判準同 HostDayPostProcessor.NeedsBackfill）。
+                // 已完成 AI 的紀錄只升風險不重標——重標會讓已定案的內容被無謂重跑。
+                if (aiConfigured && !record.AiAnalyzed && !record.DetailPruned)
+                {
+                    record.AiPending = true;
+                    row.AiPending = true;
+                }
+            }
+
             row.ContentJson = JsonSerializer.Serialize(record);
 
             var existingDbKeys = ctx.TopIssues

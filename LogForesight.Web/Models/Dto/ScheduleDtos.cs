@@ -97,6 +97,13 @@ public class ScheduleStatusDto
     /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
     public string? PausedReason { get; set; }
 
+    /// <summary>
+    /// 被進行中的手動執行佔用掉的排程窗口起始時刻（null＝沒有）。
+    /// 手動觸發不受窗口 End 停止，一趟大回填可以吃掉整段窗口——畫面上原本只看得到
+    /// 「排程設了卻沒跑」，看不出原因。
+    /// </summary>
+    public DateTime? SkippedScheduleAt { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }
@@ -195,6 +202,13 @@ public class AiScheduleStatusDto
     public string UnitText { get; set; } = "件";
 
     public bool CanStop { get; set; }
+
+    /// <summary>
+    /// 閒置原因（非執行中時才有值，見 <see cref="LogForesight.Web.Services.AiIdleReasons"/>）：
+    /// 畫面只顯示「閒置 + N 件待補」時，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+    /// </summary>
+    public string? IdleReason { get; set; }
+
     public bool AiEnabled { get; set; }
     public int AiConcurrency { get; set; } = 1;
     public DateTime? NextTriggerTime { get; set; }

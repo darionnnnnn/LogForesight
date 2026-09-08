@@ -60,6 +60,7 @@ public class NetiqPipelineService
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRunConsole _console;
     private readonly IRiskyEventStore? _riskyEventStore;
+    private readonly PrtgFindingsRegistry _prtgFindings;
     private readonly int _rawEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
@@ -110,7 +111,8 @@ public class NetiqPipelineService
         PermissionChangeStore? permissionChangeStore = null,
         PermissionFieldMappings? permissionMappings = null,
         RerunMode rerunMode = RerunMode.None,
-        PrtgResourceGuard? guard = null)
+        PrtgResourceGuard? guard = null,
+        PrtgFindingsRegistry? prtgFindings = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -124,6 +126,9 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _console = console;
         _riskyEventStore = riskyEventStore;
+        // 未提供時用「已就緒且無 finding」的共用實例（語意等同 PRTG 停用），
+        // 消費端因此不必寫 null 判斷——那種分支在正式路徑永遠不會執行。
+        _prtgFindings = prtgFindings ?? PrtgFindingsRegistry.Empty;
         _rawEventRetentionDays = rawEventRetentionDays ?? SystemSettings.DefaultRawEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
@@ -338,7 +343,7 @@ public class NetiqPipelineService
             // 進度分母（docs/archive/FEEDBACK-8-PLAN.md #2）：各 Sentinel 平行掃描完才知道各自要補幾天，
             // 這裡累加進共享的 HostDaysTotal，分母隨掃描進度自然變大
             result.AddToTotal(plans.Sum(p => p.MissingDates.Count));
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
 
             var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
 
@@ -461,7 +466,7 @@ public class NetiqPipelineService
             _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
             result.AddFailed(batch.Length);
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return;
         }
 
@@ -571,7 +576,7 @@ public class NetiqPipelineService
         {
             result.AddRerunRetained();
             _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return;
         }
 
@@ -616,6 +621,12 @@ public class NetiqPipelineService
             // 只記警告，不讓這台主機這天的分析結果作廢（見 HostDayPostProcessor）。兩者只依賴
             // TopIssues 與 events，AI 不會改動這兩者，所以留在統計段——不必等 AI 完成才能做。
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
+
+            // PRTG finding 追加：**必須排在案件掛接之前**，案件掛接吃的是記憶體裡的
+            // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
+            HostDayPostProcessor.AttachPrtgFindings(
+                _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
+
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
@@ -643,7 +654,7 @@ public class NetiqPipelineService
             }
 
             // 統計完成即算 done（取數端不再處理 AI）：進度條分子分母只反映搜尋+統計的進度
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -651,7 +662,7 @@ public class NetiqPipelineService
             Log.Warn(ex, "[{Server}] [{Ip}] {Date} 分析失敗", sentinelName, target.IpAddress, date);
             _console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +
                               "（未寫入紀錄，下次執行自動重試）");
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
         }

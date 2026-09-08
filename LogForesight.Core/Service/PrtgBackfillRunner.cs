@@ -35,8 +35,19 @@ public static class PrtgBackfillRunner
         PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct,
         EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null,
         Action<int, int, DateTime?>? dayProgress = null,
-        Action<int, int>? sensorProgress = null)
+        Action<int, int>? sensorProgress = null,
+        string? scope = null,
+        IReadOnlyCollection<long>? extraScopeHosts = null)
     {
+        // 白名單為空時 all-mapped 會退回 triggered（第二道防線，見 PrtgValueFetchScope）
+        var whitelistEmpty = whitelist == null || whitelist.Count == 0;
+        var effectiveScope = PrtgValueFetchScope.EffectiveScope(scope, whitelistEmpty);
+
+        if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(scope, whitelistEmpty))
+        {
+            console.WriteLine("⚠ 取數範圍設為「全部已對應主機」但 sensor type 白名單為空，" +
+                              "等於對全部 sensor 取數——本次退回「只抓觸發主機」。請先設定白名單。");
+        }
         if (days <= 0)
         {
             console.WriteLine("回填天數必須大於 0。");
@@ -96,23 +107,33 @@ public static class PrtgBackfillRunner
                             Hosts = null
                         };
                         var riskyRecords = records.QueryLightweight(filter);
-                        var riskyHostIds = riskyRecords
+                        var triggeredHostIds = riskyRecords
                             .Select(r => r.HostId)
                             .Distinct()
+                            .ToList();
+
+                        // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
+                        // 單一聚合查詢取代逐日往回的最多 30 次獨立查詢（回填 N 天會放大 N 倍）
+                        var hostMapRows = store.GetLatestHostMapWithDate(31, day).Rows;
+                        var mappedHostIds = hostMapRows
+                            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+                            .Select(m => m.HostId!.Value)
+                            .Distinct()
+                            .ToList();
+
+                        // 取數範圍與每日擷取共用同一個判定（docs/PRTG-SPEC.md §3a），不各寫一份
+                        var selectedHostIds = PrtgValueFetchScope
+                            .SelectHosts(effectiveScope, triggeredHostIds, mappedHostIds, extraScopeHosts ?? Array.Empty<long>())
                             .ToHashSet();
 
-                        var problemHostsCount = riskyHostIds.Count;
+                        var problemHostsCount = selectedHostIds.Count;
 
                         if (problemHostsCount > 0)
                         {
-                            // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
-                            // 單一聚合查詢取代逐日往回的最多 30 次獨立查詢（回填 N 天會放大 N 倍）
-                            var hostMapRows = store.GetLatestHostMapWithDate(31, day).Rows;
-
                             if (hostMapRows.Count > 0)
                             {
                                 var deviceObjids = hostMapRows
-                                    .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && riskyHostIds.Contains(m.HostId.Value))
+                                    .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && selectedHostIds.Contains(m.HostId.Value))
                                     .Select(m => m.DeviceObjid)
                                     .Distinct()
                                     .ToList();

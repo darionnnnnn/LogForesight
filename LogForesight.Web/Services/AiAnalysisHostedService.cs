@@ -117,19 +117,37 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        if (!options.AiEnabled) return;
+        if (!options.AiEnabled)
+        {
+            _runState.SetIdleReason(AiIdleReasons.Disabled);
+            return;
+        }
 
         // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
         // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
         // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
-        if (!_backfiller.Progress.Completed) return;
+        if (!_backfiller.Progress.Completed)
+        {
+            _runState.SetIdleReason(AiIdleReasons.BackfillPending);
+            return;
+        }
 
         // 必須在執行窗口內
-        if (!ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)) return;
+        if (!ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows))
+        {
+            _runState.SetIdleReason(AiIdleReasons.OutsideWindow);
+            return;
+        }
 
         // 有待補資料才自動開跑
         var pendingCount = _recordQuery.CountPendingAi();
-        if (pendingCount == 0) return;
+        if (pendingCount == 0)
+        {
+            _runState.SetIdleReason(AiIdleReasons.NoPending);
+            return;
+        }
+
+        _runState.SetIdleReason(null);
 
         await TriggerRunAsync(forceRerun: false, trigger: "schedule", externalCt: stoppingToken);
     }
@@ -203,6 +221,14 @@ public class AiAnalysisHostedService : BackgroundService
                 recorder.Finish(success ? 0 : 1);
 
                 _runState.EndRun(success, failureMessage);
+
+                // 本輪結束後若取數仍在跑、當日 PRTG finding 又還沒到齊，剩下的待補是被
+                // 完整性閘門擋住的（見 ExecuteProcessingLoopAsync）。「有待補卻不動」最像壞掉，
+                // 畫面要說得出原因。
+                if (_schedulerRunState.IsRunning && !_schedulerRunState.PrtgFindingsReady)
+                {
+                    _runState.SetIdleReason(AiIdleReasons.WaitingFetch);
+                }
                 // AI 補寫改變了紀錄內容，儀表板／報表快取要失效（批次F）——背景執行不走
                 // HTTP 管線，不會被那條中介軟體涵蓋。
                 _dataVersion.Bump();
@@ -253,14 +279,14 @@ public class AiAnalysisHostedService : BackgroundService
             }
 
             // 1. 完整性閘門：只處理「資料已完整落地」的主機日。
-            // 判定方式：取數排程執行中（SchedulerRunState.IsRunning == true）時，跳過今天與昨天兩天的待補。
-            // 理由：取數正在寫入的必然是最近的日期（今天與昨天）；既有 SchedulerRunState 僅記錄進度數值與執行中旗標，
-            // 無主機日細部範圍，依規格退而求其次在取數執行中時跳過今天與昨天兩天的待補，取數完成後即可正常被撿到。
-            // 不為此新增跨服務共享狀態物件。
-            bool isSchedulerRunning = _schedulerRunState.IsRunning;
+            // 取數執行中時，當日 PRTG finding 尚未算完（PrtgFindingsReady == false）就跳過今天與昨天的
+            // 待補——PRTG finding 會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。
+            // finding 一發佈（PRTG 停用、規則評估失敗也算發佈）就全部合格，AI 因此能與取數並行，
+            // 不必像過去那樣一路等到整趟取數結束。
+            bool waitingForFetch = _schedulerRunState.IsRunning && !_schedulerRunState.PrtgFindingsReady;
             var cutoff = DateTime.Today.AddDays(-1); // 昨天
 
-            var eligible = (isSchedulerRunning
+            var eligible = (waitingForFetch
                     ? rawPending.Where(r => r.Date.Date < cutoff)
                     : rawPending.AsEnumerable())
                 .Where(r => !attempted.Contains((r.HostId, r.Host, r.Date.Date)))
@@ -338,10 +364,12 @@ public class AiAnalysisHostedService : BackgroundService
                             if (outcome.AiAnalyzed)
                             {
                                 hostStore.AttachAiResult(record.Date, outcome);
-                                Interlocked.Increment(ref totalDone);
+                                var doneNow = Interlocked.Increment(ref totalDone);
                                 Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);
-                                _runState.ReportProgress(totalDone, _runState.ProgressTotal, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
+                                // 用 Increment 的回傳值、且不碰分母：分片是並行的，
+                                // 「讀分母再寫回」會讓兩條分片的數字互相蓋（見 ReportProgressDone）
+                                _runState.ReportProgressDone(doneNow, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
                             }
                             else
                             {

@@ -1,3 +1,4 @@
+using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -540,5 +541,190 @@ public class SchedulerRunStateTests
 
         Assert.True(state.TryBeginRun("manual", out _));
         Assert.Null(state.PausedReason);
+    }
+    /// <summary>
+    /// 批次B：prtg-findings-ready 是訊號不是進度——它也以 "prtg-" 開頭，
+    /// 分支若排在前綴分支之後，PRTG 進度軌的數字會被這則訊號蓋成 0/0。
+    /// </summary>
+    [Fact]
+    public void ReportProgress_PrtgFindingsReady設旗標且不影響三軌進度()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 2, 5);
+        state.ReportProgress("netiq", 7, 9);
+        state.ReportProgress("prtg-sync-devices", 40, 120);
+
+        Assert.False(state.PrtgFindingsReady);
+
+        state.ReportProgress(AnalysisOrchestrator.PrtgFindingsReadyPhase, 0, 0);
+
+        Assert.True(state.PrtgFindingsReady);
+
+        // 三軌數字一格都不能動
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(7, state.ProgressDone);
+        Assert.Equal(9, state.ProgressTotal);
+        Assert.Equal("prtg-sync-devices", state.PrtgProgressPhase);
+        Assert.Equal(40, state.PrtgProgressDone);
+        Assert.Equal(120, state.PrtgProgressTotal);
+    }
+
+    /// <summary>批次B：就緒旗標不得跨執行殘留——下一趟開始時 AI 會據此判斷可否處理當日待補。</summary>
+    [Fact]
+    public void PrtgFindingsReady_開始與結束執行時都重設()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress(AnalysisOrchestrator.PrtgFindingsReadyPhase, 0, 0);
+        Assert.True(state.PrtgFindingsReady);
+
+        state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+        Assert.False(state.PrtgFindingsReady);
+
+        Assert.True(state.TryBeginRun("schedule", out _));
+        Assert.False(state.PrtgFindingsReady);
+    }
+    /// <summary>
+    /// 批次G3：三軌重設收成單一 ResetTracks。原本 TryBeginRun 與 EndRun 各自逐欄重設 12 個欄位，
+    /// 兩份清單得手動保持同步，漏一個就是「上一趟的進度殘留在畫面上」。
+    /// </summary>
+    [Fact]
+    public void 三軌進度在開始與結束時都完整歸零()
+    {
+        var state = new SchedulerRunState();
+
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress("local", 3, 9);
+        state.ReportProgress("netiq", 5, 7);
+        state.ReportProgress("prtg-sync-devices", 40, 120);
+        state.ReportProgress(SchedulerRunState.LocalDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.NetiqDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.PrtgDonePhase, 0, 0);
+
+        state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+
+        AssertTracksCleared(state);
+
+        // 下一趟開始時同樣是乾淨的
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+        AssertTracksCleared(state);
+    }
+
+    private static void AssertTracksCleared(SchedulerRunState state)
+    {
+        Assert.Null(state.ProgressPhase);
+        Assert.Equal(0, state.ProgressDone);
+        Assert.Equal(0, state.ProgressTotal);
+        Assert.False(state.NetiqCompleted);
+
+        Assert.Null(state.LocalProgressPhase);
+        Assert.Equal(0, state.LocalProgressDone);
+        Assert.Equal(0, state.LocalProgressTotal);
+        Assert.False(state.LocalCompleted);
+
+        Assert.Null(state.PrtgProgressPhase);
+        Assert.Equal(0, state.PrtgProgressDone);
+        Assert.Equal(0, state.PrtgProgressTotal);
+        Assert.False(state.PrtgCompleted);
+
+        Assert.False(state.PrtgFindingsReady);
+        Assert.Null(state.SkippedScheduleAt);
+    }
+
+    /// <summary>
+    /// 批次G3：一軌收到新進度時，該軌的完工旗標要跟著清掉——
+    /// 否則「跑完又開始跑」的軌會一直畫成滿格。
+    /// </summary>
+    [Fact]
+    public void 完工後再收到進度會清掉該軌的完工旗標()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress(SchedulerRunState.PrtgDonePhase, 0, 0);
+        Assert.True(state.PrtgCompleted);
+
+        state.ReportProgress("prtg-triggered", 1, 10);
+        Assert.False(state.PrtgCompleted);
+        Assert.Equal("prtg-triggered", state.PrtgProgressPhase);
+    }
+
+    /// <summary>
+    /// 批次G4：手動執行佔住 gate 時，該窗口的自動觸發會靜默消失。
+    /// 同一個窗口只記一次，避免每 60 秒輪詢就重複寫一則訊息。
+    /// </summary>
+    [Fact]
+    public void 被佔用的排程窗口同一個實例只記一次()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        var windowStart = DateTime.Today.AddHours(22);
+
+        Assert.True(state.NoteSkippedSchedule(windowStart));
+        Assert.Equal(windowStart, state.SkippedScheduleAt);
+
+        // 同一個窗口再記一次不算新的
+        Assert.False(state.NoteSkippedSchedule(windowStart));
+
+        // 換一個窗口才算新的
+        var nextWindow = windowStart.AddDays(1);
+        Assert.True(state.NoteSkippedSchedule(nextWindow));
+        Assert.Equal(nextWindow, state.SkippedScheduleAt);
+    }
+    /// <summary>
+    /// 批次G3 驗收：三軌進度改成值型別是**內部結構**的重整，
+    /// `ScheduleStatusDto` 的欄位名是對外契約（前端逐一取用），不得跟著變。
+    /// 這條把契約寫成清單釘住——改名或漏欄位時測試紅，而不是等前端某個數字悄悄變成 undefined。
+    /// </summary>
+    [Fact]
+    public void 排程狀態DTO的進度欄位名維持不變()
+    {
+        var names = typeof(ScheduleStatusDto)
+            .GetProperties()
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var expected in new[]
+        {
+            // NetIQ 主軌（歷史名稱，沒有 Netiq 前綴）
+            "ProgressPhase", "ProgressDone", "ProgressTotal",
+            "LocalProgressPhase", "LocalProgressDone", "LocalProgressTotal",
+            "PrtgProgressPhase", "PrtgProgressDone", "PrtgProgressTotal",
+            "LocalCompleted", "NetiqCompleted", "PrtgCompleted",
+            "PausedReason", "SkippedScheduleAt"
+        })
+        {
+            Assert.True(names.Contains(expected), $"ScheduleStatusDto 少了對外欄位「{expected}」");
+        }
+    }
+
+    /// <summary>
+    /// 同上，但釘的是**狀態物件**的公開屬性——DTO 是照抄它的，兩邊任一改名都會讓對應斷掉。
+    /// </summary>
+    [Fact]
+    public void 狀態物件的進度屬性名維持不變()
+    {
+        var names = typeof(SchedulerRunState)
+            .GetProperties()
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var expected in new[]
+        {
+            "ProgressPhase", "ProgressDone", "ProgressTotal",
+            "LocalProgressPhase", "LocalProgressDone", "LocalProgressTotal",
+            "PrtgProgressPhase", "PrtgProgressDone", "PrtgProgressTotal",
+            "LocalCompleted", "NetiqCompleted", "PrtgCompleted",
+            "PrtgFindingsReady", "SkippedScheduleAt", "PausedReason"
+        })
+        {
+            Assert.True(names.Contains(expected), $"SchedulerRunState 少了公開屬性「{expected}」");
+        }
     }
 }

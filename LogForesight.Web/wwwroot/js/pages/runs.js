@@ -622,7 +622,16 @@ async function loadSchedule() {
     const user = await getCurrentUser();
     canMaintainSchedule = hasCapability(user, 'Maintain');
     if (!canMaintainSchedule) {
-        for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
+        // 動作類（按鈕）隱藏；設定類（輸入控制項）改成唯讀——整塊藏起來會連「目前設定是什麼」
+        // 都看不到，而那正是 DevMonitor 需要的資訊。
+        for (const el of document.querySelectorAll('[data-maintain-only]')) {
+            if (el.tagName === 'BUTTON' || el.querySelector('button')) {
+                el.classList.add('d-none');
+            } else {
+                el.disabled = true;
+            }
+        }
+        document.getElementById('schedule-readonly-hint')?.classList.remove('d-none');
     }
 
     const statusPromise = refreshScheduleStatus();
@@ -642,7 +651,7 @@ async function loadSchedule() {
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
-            daysHintEl.textContent = `將回填 ${settings.prtgBackfillDays} 天`;
+            daysHintEl.textContent = `往前 ${settings.prtgBackfillDays} 天`;
         }
     }
     await statusPromise;
@@ -841,12 +850,13 @@ function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
     if (!el) return;
 
     const start = new Date(startedAt).getTime();
-    el.classList.remove('d-none');
+    // 值本身在 lf-kv 列裡，要顯示／隱藏的是整列（標籤＋值），不是值本身
+    (document.getElementById(`${elementId}-row`) ?? el).classList.remove('d-none');
 
     clearInterval(elapsedTimers.get(elementId));
     function tick() {
         const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
-        el.textContent = `開始於 ${formatDateTime(startedAt)}・已耗時 ${formatDuration(seconds)}`;
+        el.textContent = `${formatDuration(seconds)}（開始於 ${formatDateTime(startedAt)}）`;
     }
     tick();
     elapsedTimers.set(elementId, setInterval(tick, 1000));
@@ -855,11 +865,12 @@ function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
 function stopElapsedTicker(elementId = 'schedule-elapsed') {
     clearInterval(elapsedTimers.get(elementId));
     elapsedTimers.delete(elementId);
-    document.getElementById(elementId)?.classList.add('d-none');
+    const el = document.getElementById(elementId);
+    (document.getElementById(`${elementId}-row`) ?? el)?.classList.add('d-none');
 }
 
 function applyScheduleStatus(status) {
-    document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
+
     const pausedBadge = document.getElementById('schedule-paused-badge');
     if (pausedBadge) {
         if (status.pausedReason) {
@@ -897,10 +908,25 @@ function applyScheduleStatus(status) {
     const stopButton = document.getElementById('schedule-stop');
     if (canMaintainSchedule) stopButton.classList.toggle('d-none', !status.canStop);
 
+    const nextTriggerEl = document.getElementById('schedule-next-trigger');
     if (status.scheduleEnabled && status.nextTriggerTime) {
-        document.getElementById('schedule-next-trigger').textContent = formatDateTime(status.nextTriggerTime);
+        nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
     } else if (!status.scheduleEnabled) {
-        document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
+        nextTriggerEl.textContent = '排程未啟用';
+    }
+
+    // 手動執行佔用了排程窗口：手動觸發不受窗口 End 停止，一趟大回填可以吃掉整段窗口，
+    // 而畫面上原本只看得到「排程設了卻沒跑」。
+    const skippedEl = document.getElementById('schedule-skipped-window');
+    if (skippedEl) {
+        if (status.skippedScheduleAt) {
+            skippedEl.textContent =
+                `排程窗口（${formatDateTime(status.skippedScheduleAt)}）已被本次手動執行佔用；結束後若仍在窗口內會立即補跑，否則等下一個窗口。`;
+            skippedEl.classList.remove('d-none');
+        } else {
+            skippedEl.textContent = '';
+            skippedEl.classList.add('d-none');
+        }
     }
 
     // 執行完自動刷新總表（docs/archive/FEEDBACK-8-PLAN.md #2）：isRunning 由 true → false 時，
@@ -912,6 +938,15 @@ function applyScheduleStatus(status) {
     }
     wasScheduleRunning = status.isRunning;
 }
+
+// AI 排程閒置原因的文案（後端 AiIdleReasons 的字面值）。
+// 'disabled' 另有帶件數的既有文案；'no-pending' 不需要說明（待補為 0 本身就講完了）。
+// 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
+const AI_IDLE_REASON_TEXT = {
+    'backfill-pending': '存量校正回填尚未完成，AI 分析要等它跑完才會開始。',
+    'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
+    'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
+};
 
 function applyAiScheduleStatus(status) {
     lastAiScheduleStatus = status;
@@ -943,13 +978,17 @@ function applyAiScheduleStatus(status) {
 
     const hintEl = document.getElementById('ai-schedule-disabled-hint');
     if (hintEl) {
+        // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
+        // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+        let hint = '';
         if (aiAvailable && !status.aiEnabled && status.pendingTotal > 0) {
-            hintEl.textContent = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
-            hintEl.classList.remove('d-none');
-        } else {
-            hintEl.textContent = '';
-            hintEl.classList.add('d-none');
+            hint = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
+        } else if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
+            hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
+
+        hintEl.textContent = hint;
+        hintEl.classList.toggle('d-none', hint === '');
     }
 
     renderAiScheduleProgress(status);
@@ -1000,11 +1039,17 @@ const PROGRESS_PHASE_LABEL = {
     local: '本機分析',
     netiq: 'NetIQ 機房分析',
     'prtg-sync': 'PRTG 結構同步',
+    'prtg-sync-devices': 'PRTG 裝置結構同步',
+    'prtg-sync-sensors': 'PRTG 感測器結構同步',
+    'prtg-sync-messages': 'PRTG 狀態變更同步',
     'prtg-values': 'PRTG 數值取數',
     'prtg-triggered': 'PRTG 觸發式取數'
 };
 const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
+    'prtg-sync-devices': '台',
+    'prtg-sync-sensors': '個',
+    'prtg-sync-messages': '筆',
     'prtg-values': 'sensor',
     'prtg-triggered': 'sensor'
 };
@@ -1545,7 +1590,13 @@ function bindPrtgBackfill() {
 
 // 三頁籤（回饋十七輪批次F-1）共用同一份天數篩選、同一次 load() 取回的資料——頁籤切換
 // 只是顯示/隱藏面板，不重新打 API（三個面板的資料本來就一起抓，見 load()）
-bindTabs(document.getElementById('runs-tabs'));
+// 天數與圖例只對三個報表頁籤有意義；切到「排程設定」時整組隱藏，
+// 留著會讓人以為那個天數也在篩設定。
+bindTabs(document.getElementById('runs-tabs'), {
+    onChange: (tab) => {
+        document.getElementById('runs-toolbar')?.classList.toggle('d-none', tab === 'settings');
+    }
+});
 
 loadSchedule();
 bindPrtgEnabledSwitch();

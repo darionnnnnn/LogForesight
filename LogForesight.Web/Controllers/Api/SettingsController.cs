@@ -28,6 +28,7 @@ public class SettingsController : ControllerBase
     private readonly PrtgProbeService? _prtgProbe;
     private readonly PrtgBackfillService? _prtgBackfill;
     private readonly StorageBackend? _backend;
+    private readonly IHostStore? _hosts;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -35,8 +36,10 @@ public class SettingsController : ControllerBase
         IAuditService audit,
         PrtgProbeService? prtgProbe = null,
         PrtgBackfillService? prtgBackfill = null,
-        StorageBackend? backend = null)
+        StorageBackend? backend = null,
+        IHostStore? hosts = null)
     {
+        _hosts = hosts;
         _settings = settings;
         _aiUsage = aiUsage;
         _audit = audit;
@@ -170,9 +173,97 @@ public class SettingsController : ControllerBase
 
     // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────
 
+    /// <summary>
+    /// 取數範圍的規模估算（docs/PRTG-SPEC.md §3a）：把範圍放寬之前先看得到「一晚要抓幾個 sensor」。
+    /// 跑不完的症狀是隔天資料不全、不是當下報錯，所以要在設定當下就講出來。
+    /// </summary>
+    /// <param name="scope">要估算的模式；未帶時用目前已儲存的設定</param>
+    [HttpGet("prtg-fetch-scope/estimate")]
+    public ApiResponse<PrtgValueFetchScopeEstimateDto> EstimatePrtgFetchScope([FromQuery] string? scope)
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgValueFetchScopeEstimateDto>.Ok(new PrtgValueFetchScopeEstimateDto
+            {
+                Success = false,
+                ErrorMessage = "資料存放區未啟用，無法估算。"
+            });
+        }
+
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        var whitelist = settings.PrtgSensorTypeWhitelist ?? new List<string>();
+        var requestedScope = scope ?? settings.PrtgValueFetchScope;
+
+        // 估算的是**實際會生效**的範圍：白名單為空時 all-mapped 會退回 triggered
+        // （見 PrtgValueFetchScope 的第二道防線），估設定值會給出一個永遠不會發生的數字。
+        var effectiveScope = PrtgValueFetchScope.EffectiveScope(requestedScope, whitelist.Count == 0);
+        var prtgStore = _backend.PrtgStore();
+
+        // 估算一律以「最新一日的 ok 對應」為準：實際取數用的是當日對應，但估算是設定當下的
+        // 規模概念，拿最新一份就夠，不必為此多查一輪歷史。
+        var mapRows = prtgStore.GetLatestHostMap()
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
+            .ToList();
+
+        List<long> selectedHostIds;
+        if (effectiveScope == PrtgValueFetchScope.AllMapped)
+        {
+            selectedHostIds = mapRows.Select(m => m.HostId!.Value).Distinct().ToList();
+        }
+        else
+        {
+            // triggered 與 triggered-plus-list 的觸發主機數逐日變動、事前算不出來，
+            // 這裡只估「指定清單」那部分——把它講成觸發主機的估計值會是假數字。
+            var allHosts = _hosts?.GetAll() ?? new List<WebHost>();
+            var (extraIds, _) = PrtgValueFetchScope.ResolveHostNames(
+                settings.PrtgValueFetchExtraHosts,
+                allHosts.Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
+            selectedHostIds = effectiveScope == PrtgValueFetchScope.TriggeredPlusList ? extraIds : new List<long>();
+        }
+
+        var deviceObjids = mapRows
+            .Where(m => selectedHostIds.Contains(m.HostId!.Value))
+            .Select(m => m.DeviceObjid)
+            .Distinct()
+            .ToList();
+
+        var sensors = prtgStore.GetValueFetchTargets(whitelist, deviceObjids);
+
+        string? warning = null;
+        if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(requestedScope, whitelist.Count == 0))
+        {
+            warning = "sensor type 白名單留空等於對全部 sensor 取數，這個模式不允許——" +
+                      "夜間批次會退回「只抓觸發主機」。請先設定白名單。";
+        }
+        else if (sensors.Count >= PrtgFetchScopeSensorWarnThreshold)
+        {
+            warning = $"估算 {sensors.Count} 個 sensor，一晚可能跑不完。建議縮小 sensor type 白名單，或改用「只抓觸發主機」。";
+        }
+
+        return ApiResponse<PrtgValueFetchScopeEstimateDto>.Ok(new PrtgValueFetchScopeEstimateDto
+        {
+            Success = true,
+            Scope = effectiveScope,
+            Hosts = selectedHostIds.Count,
+            Devices = deviceObjids.Count,
+            Sensors = sensors.Count,
+            WhitelistEmpty = whitelist.Count == 0,
+            Warning = warning
+        });
+    }
+
+    /// <summary>估算量達到這個數就提醒「一晚可能跑不完」。實機併發上限 3、單次 historicdata 往返
+    /// 以秒計，五千個 sensor 已是數小時等級。刻意不開設定——它是提醒不是閘門。</summary>
+    private const int PrtgFetchScopeSensorWarnThreshold = 5000;
+
     /// <summary>PRTG 資源守門受監看感測器預覽（批次F 階段4）</summary>
+    /// <param name="forceAuto">
+    /// true＝忽略覆寫清單、強制走自動偵測。維護頁「自動偵測並填入」按鈕用它重抓一份 objid；
+    /// 不帶這個參數時維持既有行為（覆寫清單非空就原樣回傳）。
+    /// </param>
     [HttpGet("prtg-resource-guard/preview")]
-    public async Task<ApiResponse<PrtgResourceGuardPreviewResultDto>> PreviewPrtgResourceGuard(CancellationToken ct)
+    public async Task<ApiResponse<PrtgResourceGuardPreviewResultDto>> PreviewPrtgResourceGuard(
+        CancellationToken ct, [FromQuery] bool forceAuto = false)
     {
         if (_backend == null)
         {
@@ -189,7 +280,9 @@ public class SettingsController : ControllerBase
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
         var settings = settingsStore.Get();
 
-        var isOverride = settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0;
+        var isOverride = !forceAuto
+            && settings.PrtgResourceGuardSensorObjids != null
+            && settings.PrtgResourceGuardSensorObjids.Count > 0;
         var source = isOverride ? "override" : "auto";
 
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
@@ -212,7 +305,7 @@ public class SettingsController : ControllerBase
         PrtgResourceGuardTargetResult targets;
         try
         {
-            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console);
+            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console, ignoreOverride: forceAuto);
         }
         catch (Exception ex)
         {

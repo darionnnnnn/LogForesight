@@ -641,4 +641,156 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(0, aiRun.AiFailures);
         Assert.False(string.IsNullOrEmpty(aiRun.AppVersion));
     }
+    /// <summary>
+    /// 批次A：AI 排程每輪有多個前置條件，任一不成立就整輪不跑，而畫面只顯示「閒置 + N 件待補」。
+    /// 每個提前返回都要寫下閒置原因，否則使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+    /// </summary>
+    [Fact]
+    public async Task TickAsync_AI未啟用時記錄閒置原因()
+    {
+        var (service, runState, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = false });
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
+    }
+
+    [Fact]
+    public async Task TickAsync_不在執行窗口時記錄閒置原因()
+    {
+        // 設定一個未涵蓋當前時間的窗口（同情境8的既有做法）
+        var now = DateTime.Now;
+        var options = new ScheduleOptions
+        {
+            AiEnabled = true,
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+
+        var (service, runState, _, _) = CreateTestHarness(options);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.OutsideWindow, runState.Snapshot().IdleReason);
+    }
+
+    [Fact]
+    public async Task TickAsync_無待補時記錄閒置原因()
+    {
+        var options = new ScheduleOptions
+        {
+            AiEnabled = true,
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+        };
+
+        var (service, runState, _, _) = CreateTestHarness(options);
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
+    }
+
+    /// <summary>執行中不得殘留閒置原因——畫面會同時顯示「執行中」與一句「為什麼沒在跑」。</summary>
+    [Fact]
+    public async Task TickAsync_開始執行後清空閒置原因()
+    {
+        var (service, runState, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = false });
+        await service.TickAsync();
+        Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
+
+        Assert.True(runState.TryBeginRun("manual:admin", 1, out _));
+        Assert.Null(runState.Snapshot().IdleReason);
+    }
+    /// <summary>
+    /// 批次B：取數執行中，只要當日 PRTG finding 已算完（prtg-findings-ready 已送），
+    /// 今天與昨天的待補就立刻合格——AI 因此能與取數並行，不必等整趟取數結束。
+    /// 這是本輪要解決的「NetIQ 抓了很多但 AI 完全沒動」。
+    /// </summary>
+    [Fact]
+    public async Task 完整性閘門_取數執行中但PRTG_finding已就緒時當日待補即可處理()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var yesterday = today.AddDays(-1);
+        store.Append(CreateRecord(1, "HOST-A", today, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", yesterday, pending: true));
+
+        schedulerState.TryBeginRun("schedule", out _);
+        schedulerState.ReportProgress(AnalysisOrchestrator.PrtgFindingsReadyPhase, 0, 0);
+        Assert.True(schedulerState.IsRunning);
+        Assert.True(schedulerState.PrtgFindingsReady);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recToday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, today);
+        var recYesterday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, yesterday);
+
+        Assert.False(recToday!.AiPending);
+        Assert.False(recYesterday!.AiPending);
+    }
+
+    /// <summary>批次B：有待補卻被閘門擋住時最像壞掉，畫面要說得出原因。</summary>
+    [Fact]
+    public async Task TickAsync_取數執行中且PRTG未就緒時閒置原因為等待取數()
+    {
+        var options = new ScheduleOptions
+        {
+            AiEnabled = true,
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+        };
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(options);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-1), pending: true));
+
+        schedulerState.TryBeginRun("schedule", out _);
+
+        await service.TickAsync();
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AiIdleReasons.WaitingFetch, runState.Snapshot().IdleReason);
+    }
+    /// <summary>
+    /// 批次G4：AI 進度在併發分片下不得互相蓋。
+    /// 原本寫成 `ReportProgress(done, _runState.ProgressTotal, …)`——那是 read-modify-write：
+    /// 兩條分片同時讀到舊分母再寫回，分母會被拉回舊值。
+    /// 這裡不用壓力測試（那種測試只在剛好切在錯的那一刻才紅），直接驗語意：
+    /// 只推進分子的方法不得動到分母，且分子只增不減。
+    /// </summary>
+    [Fact]
+    public void ReportProgressDone_不動分母且分子只增不減()
+    {
+        var state = new AiAnalysisRunState();
+        Assert.True(state.TryBeginRun("manual:tester", total: 100, out _));
+
+        state.ReportProgressDone(10, "第 10 筆");
+        Assert.Equal(10, state.Snapshot().ProgressDone);
+        Assert.Equal(100, state.Snapshot().ProgressTotal);
+
+        // 分片完成順序不定：晚到的舊值不得把進度往回拉
+        state.ReportProgressDone(4, "晚到的舊值");
+        Assert.Equal(10, state.Snapshot().ProgressDone);
+        Assert.Equal(100, state.Snapshot().ProgressTotal);
+
+        state.ReportProgressDone(25);
+        Assert.Equal(25, state.Snapshot().ProgressDone);
+        Assert.Equal(100, state.Snapshot().ProgressTotal);
+    }
+
+    [Fact]
+    public void ReportProgressDone_未執行時不寫入()
+    {
+        var state = new AiAnalysisRunState();
+        state.ReportProgressDone(5, "不該生效");
+
+        Assert.Equal(0, state.Snapshot().ProgressDone);
+    }
 }

@@ -553,4 +553,33 @@ public class PrtgAdminPageUiTests
         var dup = names.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
         Assert.True(dup.Count == 0, "重複定義的頂層函式：" + string.Join(", ", dup));
     }
+    /// <summary>批次D：守門「自動偵測並填入」按鈕與取數範圍欄位的接線。</summary>
+    [Fact]
+    public void 守門自動偵測與取數範圍的元素與接線齊備()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+
+        // 畫面元素
+        Assert.Contains("id=\"prtg-guard-autofill-btn\"", cshtml);
+        Assert.Contains("id=\"prtg-value-fetch-scope\"", cshtml);
+        Assert.Contains("id=\"prtg-value-fetch-extra-hosts\"", cshtml);
+        Assert.Contains("id=\"prtg-scope-estimate-btn\"", cshtml);
+
+        // 三個模式的選項都要在
+        Assert.Contains("value=\"triggered\"", cshtml);
+        Assert.Contains("value=\"all-mapped\"", cshtml);
+        Assert.Contains("value=\"triggered-plus-list\"", cshtml);
+
+        // 自動偵測必須帶 forceAuto，否則覆寫清單非空時只會把手填值原樣吐回來
+        Assert.Contains("forceAuto=true", js);
+
+        // 新設定要真的進儲存 payload（後端有欄位、前端沒送＝設定永遠存不進去）
+        Assert.Contains("prtgValueFetchScope:", js);
+        Assert.Contains("prtgValueFetchExtraHosts:", js);
+
+        // 估算端點的呼叫
+        Assert.Contains("prtg-fetch-scope/estimate", js);
+    }
 }

@@ -305,4 +305,42 @@ public class ScheduleCalculatorTests
 
         Assert.True(should);
     }
+    /// <summary>
+    /// 終檢補強：「這個窗口實例是否已觸發過」是 ShouldTriggerNow 與「手動執行是否真的佔用了
+    /// 自動觸發」的共用判定。少了它，22:00 觸發、22:40 跑完、23:00 有人按立即執行時，
+    /// 畫面會報「22:00 的自動觸發被佔用」——但它明明跑完了。
+    /// </summary>
+    [Fact]
+    public void WindowAlreadyTriggered_窗口內已有排程觸發時為真()
+    {
+        var windowStart = DateTime.Today.AddHours(22);
+        var now = windowStart.AddHours(1);
+
+        Assert.True(ScheduleCalculator.WindowAlreadyTriggered(
+            now, windowStart, new[] { windowStart.AddMinutes(1) }));
+    }
+
+    [Fact]
+    public void WindowAlreadyTriggered_窗口內沒有觸發時為假()
+    {
+        var windowStart = DateTime.Today.AddHours(22);
+        var now = windowStart.AddHours(1);
+
+        // 前一個窗口的觸發不算
+        Assert.False(ScheduleCalculator.WindowAlreadyTriggered(
+            now, windowStart, new[] { windowStart.AddDays(-1) }));
+
+        Assert.False(ScheduleCalculator.WindowAlreadyTriggered(
+            now, windowStart, Array.Empty<DateTime>()));
+    }
+
+    [Fact]
+    public void WindowAlreadyTriggered_未來時刻不算()
+    {
+        var windowStart = DateTime.Today.AddHours(22);
+        var now = windowStart.AddMinutes(10);
+
+        Assert.False(ScheduleCalculator.WindowAlreadyTriggered(
+            now, windowStart, new[] { now.AddMinutes(5) }));
+    }
 }

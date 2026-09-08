@@ -117,6 +117,14 @@ public class SchedulerHostedService : BackgroundService
             {
                 Log.Info("執行窗口已結束，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
             }
+            // 手動執行佔住 gate 時，這個窗口的自動觸發會靜默消失——手動觸發不受窗口 End 停止
+            // （§1.4.4），一趟大回填可以吃掉整段窗口。畫面上看起來就是「排程沒跑，也沒說為什麼」。
+            // 這裡把它說出來：狀態卡顯示、里程碑進那次手動執行的紀錄，每個窗口只記一次。
+            if (_runState.Trigger != null && !_runState.Trigger.StartsWith("schedule", StringComparison.Ordinal))
+            {
+                NoteSkippedScheduleWindow(options);
+            }
+
             return; // 執行中不再觸發新的執行，不排隊
         }
 
@@ -131,6 +139,45 @@ public class SchedulerHostedService : BackgroundService
         if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
 
         await TriggerRunAsync(ComposeScheduledRequest());
+    }
+
+    /// <summary>
+    /// 手動執行佔住排程窗口時記一次（每個窗口實例只記一次，靠窗口起始時刻去重）。
+    /// 少了這個訊號，管理者只會看到「排程設了卻沒跑」，而原因（有人按了立即執行）完全不在畫面上。
+    ///
+    /// 訊息進狀態卡的「最新訊息」與 NLog；**不進里程碑**——里程碑屬於某一次執行的紀錄，
+    /// 而這件事發生在輪詢執行緒、拿不到那次執行的 recorder。事後追查走 NLog。
+    /// </summary>
+    private void NoteSkippedScheduleWindow(ScheduleOptions options)
+    {
+        if (!options.Enabled) return;
+
+        var now = DateTime.Now;
+        var windowStart = options.Windows
+            .Select(w => ScheduleCalculator.CurrentWindowInstanceStart(now, w))
+            .FirstOrDefault(t => t.HasValue);
+
+        // 現在不在任何窗口內就沒有「被佔用的窗口」可講
+        if (windowStart == null) return;
+
+        // **這個窗口已經跑過就不算被佔用**：22:00 觸發、22:40 跑完，23:00 有人按立即執行——
+        // 少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
+        var scheduledTriggerTimes = _batchRunStore
+            .GetRecentRuns(RecentRunsLookbackDays, null)
+            .Where(r => r.Trigger == "schedule")
+            .Select(r => r.StartedAt);
+
+        if (ScheduleCalculator.WindowAlreadyTriggered(now, windowStart.Value, scheduledTriggerTimes)) return;
+
+        if (_runState.NoteSkippedSchedule(windowStart.Value))
+        {
+            // 補跑時機要說準：手動執行結束時若仍在窗口內，ShouldTriggerNow 會判定「這個實例尚未觸發過」
+            // 而立刻補觸發；只有手動執行跨過窗口 End 才會等到下一個窗口。
+            var text = $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用；" +
+                       "手動執行結束後若仍在窗口內會立即補跑，否則等下一個窗口。";
+            Log.Info(text);
+            _runState.ReportMessage(text);
+        }
     }
 
     /// <summary>

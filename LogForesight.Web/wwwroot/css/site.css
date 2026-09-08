@@ -2265,3 +2265,65 @@ a.lf-calendar__cell:focus-visible {
     min-width: 12rem;
     max-width: 100%;
 }
+
+/* ── 排程作業頁（/runs）狀態卡 ─────────────────────────────────────────
+   三張卡（取數執行／AI 分析／PRTG 歷史回填）等寬並排，窄螢幕疊直。
+   舊版把這三件事用 <hr> 疊在同一張卡的右欄裡（還是卡中卡），讀不出它們是三個獨立的東西。 */
+.lf-run-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--lf-space-3);
+    align-items: start;
+}
+
+@media (max-width: 991.98px) {
+    .lf-run-status-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 標籤／值成對顯示：取代舊版手刻的 .small.text-muted + .fw-semibold 兩層 div */
+.lf-kv {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--lf-space-2);
+    padding: 0.15rem 0;
+}
+
+.lf-kv__label {
+    color: var(--lf-text-muted);
+    font-size: 0.8125rem;
+    flex: 0 0 auto;
+}
+
+.lf-kv__value {
+    font-weight: 600;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+/* 進度軌區塊預留高度：狀態卡每 3 秒重繪一次，進度條出現/消失時版面不得跳動 */
+.lf-run-tracks {
+    min-height: 4.5rem;
+    margin-top: var(--lf-space-2);
+}
+
+.lf-run-tracks--single {
+    min-height: 1.75rem;
+}
+
+.lf-run-progress {
+    height: 6px;
+}
+
+/* 最新訊息固定兩行高，訊息長短不影響卡片高度 */
+.lf-run-message {
+    min-height: 2.5em;
+    overflow-wrap: anywhere;
+}
+
+/* 窄數值輸入框（併發數等）：取代散落各處的 style="max-width:120px" */
+.lf-input-narrow {
+    max-width: 7.5rem;
+}
