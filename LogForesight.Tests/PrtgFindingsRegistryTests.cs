@@ -36,7 +36,6 @@ public class PrtgFindingsRegistryTests : IDisposable
 
         Assert.False(registry.IsReady);
         Assert.Empty(registry.For(101, DateTime.Today));
-        Assert.Empty(registry.PublishedHostIds());
     }
 
     [Fact]
@@ -60,7 +59,6 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.True(registry.IsReady);
         Assert.Equal(2, registry.For(101, DateTime.Today).Count);
         Assert.Empty(registry.For(999, DateTime.Today));
-        Assert.Equal(new[] { 101L }, registry.PublishedHostIds());
     }
 
     [Fact]
@@ -410,5 +408,94 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.Empty(registry.For(101, DateTime.Today.AddDays(-1)));
         Assert.Empty(registry.For(101, DateTime.Today));
         Assert.Single(registry.For(102, DateTime.Today));
+    }
+    // ── 體檢輪：並行競態與 AI 回寫 ─────────────────────────────────
+
+    /// <summary>
+    /// AI 判讀期間 PRTG finding 才追加並上調了列上的等級；AI 回寫若無條件覆蓋，
+    /// 上調會被蓋回去。AI 只能往上拉（DETECTION-SPEC），列上較高的等級與它的依據要保留。
+    /// </summary>
+    [Fact]
+    public void AI回寫不得蓋掉PRTG上調的風險()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low);
+
+        var registry = new PrtgFindingsRegistry();
+        PublishToday(registry, ByHost(101, Finding(2001)));
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+        Assert.Equal(RiskLevels.High, Assert.Single(store.ReadRecent(DateTime.Today, 1)).RiskLevel);
+
+        // AI 撿到這筆時算出來的是「低」（它撿的是上調前的快照）
+        store.AttachAiResult(DateTime.Today, new AiOutcome(
+            Headline: "一切正常", Summary: "無異常", TrendAssessment: "平穩", Action: "無",
+            RiskLevel: RiskLevels.Low, RiskBasis: null, AiAnalyzed: true,
+            ScreenedTailCount: 0, ScreeningNotes: new List<string>(), ReportFile: null,
+            DeepDives: new List<CategoryDeepDive>()));
+
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+        Assert.Equal("prtg:down", persisted.RiskBasis);
+        Assert.True(persisted.AiAnalyzed);
+        Assert.False(persisted.AiPending);
+    }
+
+    /// <summary>AI 判定比列上高時照常寫入（只升不降的另一半）。</summary>
+    [Fact]
+    public void AI回寫比列上高時照常上調()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        Seed(store, RiskLevels.Low);
+
+        store.AttachAiResult(DateTime.Today, new AiOutcome(
+            Headline: "x", Summary: "x", TrendAssessment: "x", Action: "x",
+            RiskLevel: RiskLevels.High, RiskBasis: "ai_raise", AiAnalyzed: true,
+            ScreenedTailCount: 0, ScreeningNotes: new List<string>(), ReportFile: null,
+            DeepDives: new List<CategoryDeepDive>()));
+
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+        Assert.Equal("ai_raise", persisted.RiskBasis);
+    }
+
+    /// <summary>
+    /// 補追加與寫入路徑對同一主機日賽跑：補追加先寫進資料庫時，寫入路徑的 store 呼叫會因
+    /// 去重回 false——但記憶體那份仍要併入（登錄簿記得「已追加」），執行摘要才與資料庫一致。
+    /// </summary>
+    [Fact]
+    public void AttachPrtgFindings_補追加先到時寫入路徑仍併入記憶體()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low);
+
+        var registry = new PrtgFindingsRegistry();
+        var findings = ByHost(101, Finding(2001));
+        PublishToday(registry, findings);
+
+        // 模擬補追加路徑先走（同 PrtgDailyPipeline 的呼叫形狀）
+        Assert.True(registry.AttachExclusive(101, DateTime.Today,
+            () => store.AttachPrtgFindings(101, DateTime.Today, findings[101], aiConfigured: true)));
+        Assert.True(registry.WasAttached(101, DateTime.Today));
+
+        // 寫入路徑隨後對「未含 finding 的記憶體紀錄」呼叫
+        var added = HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Equal(1, added);
+        Assert.Single(record.TopIssues);
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.Single(Assert.Single(store.ReadRecent(DateTime.Today, 1)).TopIssues);   // 資料庫仍只有一列
+    }
+
+    [Fact]
+    public void AttachExclusive_只在真的寫入時標記已追加()
+    {
+        var registry = new PrtgFindingsRegistry();
+        Assert.False(registry.AttachExclusive(101, DateTime.Today, () => false));
+        Assert.False(registry.WasAttached(101, DateTime.Today));
+
+        Assert.True(registry.AttachExclusive(101, DateTime.Today, () => true));
+        Assert.True(registry.WasAttached(101, DateTime.Today));
+        Assert.False(registry.WasAttached(101, DateTime.Today.AddDays(-1)));
+        Assert.False(registry.WasAttached(102, DateTime.Today));
     }
 }

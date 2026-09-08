@@ -81,14 +81,30 @@ public sealed class PrtgFindingsRegistry
         }
     }
 
-    /// <summary>已發佈的全部主機 id（補追加階段用）。</summary>
-    public IReadOnlyList<long> PublishedHostIds()
+    /// <summary>
+    /// 對同一個主機日的追加**行程內序列化**，並記住哪些主機日已經追加成功。
+    /// 兩條追加路徑（PRTG 路徑的補追加、分析寫入路徑的就地追加）與本機／NetIQ 分析並行，
+    /// 對同一個主機日可能同時進到「讀列 → 合併 → 寫回」；不序列化的話兩個交易各自讀到相同的
+    /// 既有鍵、各插一列，`lf_top_issues` 長出重複、`ContentJson` 後寫的蓋掉先寫的。
+    /// 同一趟執行只有一個行程，行程內鎖就夠——跨行程沒有第二個寫入者（具名 Mutex 已擋）。
+    /// </summary>
+    /// <returns>attach 的回傳值（true＝這次真的寫進資料庫）。</returns>
+    public bool AttachExclusive(long hostId, DateTime date, Func<bool> attach)
     {
-        lock (_lock)
+        var gate = _attachGates.GetOrAdd((hostId, date.Date), _ => new object());
+        lock (gate)
         {
-            return _ready ? _byHost.Keys.ToList() : Array.Empty<long>();
+            var attached = attach();
+            if (attached) _attached.TryAdd((hostId, date.Date), true);
+            return attached;
         }
     }
+
+    /// <summary>這個主機日是否已由任一條路徑追加成功（供另一條路徑判斷「資料庫已有，是我之前來過」）。</summary>
+    public bool WasAttached(long hostId, DateTime date) => _attached.ContainsKey((hostId, date.Date));
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long, DateTime), object> _attachGates = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long, DateTime), bool> _attached = new();
 
     private static PrtgFindingsRegistry CreateReady()
     {

@@ -103,7 +103,9 @@ public class PrtgDailyPipelineTests : IDisposable
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
             s.PrtgEnabled = true;
-            s.PrtgUrl = "http://127.0.0.1:1";   // 不會有人在聽
+            // 非 http/https 的 scheme 讓 PrtgClient 在建構時就擲例外——這才是「初始化失敗」，
+            // 走的是最外層 catch → finally 的保底；連不上的位址只會讓階段 1 失敗、流程照常往下走。
+            s.PrtgUrl = "ftp://prtg.example";
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
             s.PrtgTimeoutSeconds = 5;

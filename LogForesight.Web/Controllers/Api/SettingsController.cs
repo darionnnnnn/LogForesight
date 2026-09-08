@@ -257,11 +257,11 @@ public class SettingsController : ControllerBase
     private const int PrtgFetchScopeSensorWarnThreshold = 5000;
 
     /// <summary>PRTG 資源守門受監看感測器預覽（批次F 階段4）</summary>
-    [HttpGet("prtg-resource-guard/preview")]
     /// <param name="forceAuto">
     /// true＝忽略覆寫清單、強制走自動偵測。維護頁「自動偵測並填入」按鈕用它重抓一份 objid；
     /// 不帶這個參數時維持既有行為（覆寫清單非空就原樣回傳）。
     /// </param>
+    [HttpGet("prtg-resource-guard/preview")]
     public async Task<ApiResponse<PrtgResourceGuardPreviewResultDto>> PreviewPrtgResourceGuard(
         CancellationToken ct, [FromQuery] bool forceAuto = false)
     {

@@ -1205,8 +1205,6 @@ public record RetentionOptions
 
 }
 
-/// <summary>規則庫尚無 PRTG 規則時，用來跳出 <see cref="AnalysisOrchestrator"/> 規則評估段的控制流例外
-/// （不是錯誤，呼叫端靜默吞掉、不記 error log）。</summary>
 /// <summary>
 /// 本機路徑專用的前綴 console（回饋十七輪批次E-2）：本機與 NetIQ 並行執行後，兩路的輸出會
 /// 交錯，替本機每一行加上統一前綴才分得清哪一行是哪一路——NetIQ 路徑既有的逐 Sentinel
@@ -1233,4 +1231,6 @@ internal sealed class PrefixedRunConsole : IRunConsole
     }
 }
 
+/// <summary>規則庫尚無 PRTG 規則時，用來跳出 <see cref="PrtgDailyPipeline"/> 規則評估段的控制流例外
+/// （不是錯誤，呼叫端靜默吞掉、不記 error log）。</summary>
 internal sealed class PrtgRulesUnavailableException : Exception { }

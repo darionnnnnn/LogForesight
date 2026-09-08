@@ -318,8 +318,9 @@
             </div>
         </section>
 
-        <div class="d-flex align-items-center flex-wrap gap-3 mb-3" data-maintain-only>
-            <button type="submit" class="btn btn-primary btn-sm" id="schedule-save">儲存排程設定</button>
+        @* 「最後更新」不在 data-maintain-only 內：唯讀模式藏的是動作，設定值與它的更新資訊都要看得到 *@
+        <div class="d-flex align-items-center flex-wrap gap-3 mb-3">
+            <button type="submit" class="btn btn-primary btn-sm" id="schedule-save" data-maintain-only>儲存排程設定</button>
             <span class="text-muted small" id="schedule-updated"></span>
         </div>
     </form>

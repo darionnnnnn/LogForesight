@@ -226,8 +226,8 @@ internal static class PrtgDailyPipeline
                     var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
                     var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
 
-                    // 依 EventKey 去重：與寫入路徑對同一天重複呼叫也不會產生重複列
-                    if (hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings, useAi))
+                    // 依 EventKey 去重，並與寫入路徑對同一主機日序列化（PrtgFindingsRegistry.AttachExclusive）
+                    if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings, useAi)))
                     {
                         appendedHosts++;
 

@@ -921,7 +921,7 @@ function applyScheduleStatus(status) {
     if (skippedEl) {
         if (status.skippedScheduleAt) {
             skippedEl.textContent =
-                `排程窗口（${formatDateTime(status.skippedScheduleAt)}）已被本次手動執行佔用，將於下一個窗口補跑。`;
+                `排程窗口（${formatDateTime(status.skippedScheduleAt)}）已被本次手動執行佔用；結束後若仍在窗口內會立即補跑，否則等下一個窗口。`;
             skippedEl.classList.remove('d-none');
         } else {
             skippedEl.textContent = '';

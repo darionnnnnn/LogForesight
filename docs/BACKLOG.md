@@ -447,6 +447,25 @@
   且必須「取不到就靜默跳過」才不破壞 PRTG 的失敗隔離。
   **只用狀態變更型的既有四條 finding 就能做，不需要值型規則的數值基線**——
   這片區域其餘項目綁在校準頁四項達「可用」，這一條不受該前提限制。
+- **排程作業頁前端拆檔**：`runs.js` 約 1600 行同時承載三個報表頁籤、三張狀態卡與輪詢計時、
+  排程設定表單與兩個 modal；拆成 `runs.js`／`runs-status.js`／`runs-schedule.js`／`runs-prtg-backfill.js`
+  要處理 17 個模組層共享狀態與輪詢生命週期的歸屬，屬獨立一輪的重構。版面骨架已重排，
+  這條只剩維護性收益，有下一輪動到該頁時再做。
+
+- **五個 RunState 抽共通基底（已否決）**：`SchedulerRunState`／`AiAnalysisRunState`／
+  `PrtgProbeRunState`／`PrtgBackfillRunState`／`NetiqProbeRunState` 的共通部分只有一個
+  `IsRunning` 與兩個時間戳，其餘（有無 CTS、有無 Trigger、`EndRun` 參數、`Snapshot` 型別）各不相同，
+  抽出來是個空殼而呼叫端仍要各自處理鎖與重設。真正的風險（多組進度欄位要兩處手動重設）已由
+  `SchedulerRunState` 的三軌值型別解決。除非再多出兩個以上同型的狀態物件，否則不要再提。
+
+- **並行負載下的不穩定測試**：全量 `dotnet test` 偶有一條紅、單獨重跑即綠，已觀察到四條：
+  `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`、
+  `BatchRunRecorderScopeTests.Scope外的Warn不會被記錄`、
+  `AiAnalysisSchedulerTests.ScheduleController_Ai端點_狀態查詢_立即執行與停止`、
+  `NetiqScanConcurrencyChainTests`（整類）。共通點是時間預算或跨測試共享狀態，在測試平行度高、
+  機器同時有其他建置時才出現。處理方向是把時間相關斷言改成可注入時鐘、共享狀態改成每測試獨立實例，
+  不是加長等待。
+
 - **PRTG finding 追加與紀錄重寫之間沒有樂觀併發保護**：`AttachPrtgFindings` 走
   「讀 row → 反序列化 → 重新序列化 → SaveChanges」，與重跑模式的「刪除當日 → 重新寫入」
   可能落在同一個 (hostId, date) 上，兩者之間沒有版本權杖。後寫的一方會整段覆蓋 `ContentJson`，

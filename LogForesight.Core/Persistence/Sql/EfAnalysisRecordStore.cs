@@ -208,8 +208,14 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         record.Summary = outcome.Summary;
         record.TrendAssessment = outcome.TrendAssessment;
         record.Action = outcome.Action;
-        record.RiskLevel = outcome.RiskLevel;
-        record.RiskBasis = outcome.RiskBasis;
+        // 只升不降（docs/DETECTION-SPEC.md：AI 只能把風險往上拉）。outcome.RiskLevel 是 AI 撿到
+        // 這筆時算的，PRTG finding 可能在 AI 判讀期間才追加並上調了列上的等級；無條件覆寫會把
+        // 上調蓋回去。列上的等級較高時保留它與它的依據（那是 PRTG 的 prtg:{code}）。
+        if (RiskLevels.MoreSevere(record.RiskLevel, outcome.RiskLevel) == outcome.RiskLevel)
+        {
+            record.RiskLevel = outcome.RiskLevel;
+            record.RiskBasis = outcome.RiskBasis;
+        }
         record.AiAnalyzed = outcome.AiAnalyzed;
         record.AiPending = false;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
@@ -227,7 +233,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
         // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移；
         // 成功後清為 false（批次C 單點化事實來源），ai_analyzed 同步。
-        row.RiskLevel = outcome.RiskLevel;
+        row.RiskLevel = record.RiskLevel;
         row.AiPending = false;
         row.AiAnalyzed = outcome.AiAnalyzed;
         ctx.SaveChanges();

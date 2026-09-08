@@ -171,7 +171,10 @@ public class SchedulerHostedService : BackgroundService
 
         if (_runState.NoteSkippedSchedule(windowStart.Value))
         {
-            var text = $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用，將於下一個窗口補跑。";
+            // 補跑時機要說準：手動執行結束時若仍在窗口內，ShouldTriggerNow 會判定「這個實例尚未觸發過」
+            // 而立刻補觸發；只有手動執行跨過窗口 End 才會等到下一個窗口。
+            var text = $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用；" +
+                       "手動執行結束後若仍在窗口內會立即補跑，否則等下一個窗口。";
             Log.Info(text);
             _runState.ReportMessage(text);
         }

@@ -202,7 +202,9 @@ function bindScopeControls() {
                 return;
             }
 
-            const base = `主機 ${formatNumber(res.hosts)} 台、device ${formatNumber(res.devices)} 個、` +
+            // 觸發主機那一半事前算不出來，估的只有指定清單——要說清楚，否則會被讀成整個模式的規模
+            const prefix = scope === 'triggered-plus-list' ? '指定清單部分：' : '';
+            const base = `${prefix}主機 ${formatNumber(res.hosts)} 台、device ${formatNumber(res.devices)} 個、` +
                          `sensor ${formatNumber(res.sensors)} 個/晚`;
 
             if (res.warning) {

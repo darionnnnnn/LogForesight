@@ -160,10 +160,15 @@ public static class HostDayPostProcessor
             var added = findings.Where(f => existingKeys.Add(f.EventKey)).ToList();
             if (added.Count == 0) return 0;
 
+            // 與 PRTG 路徑的補追加對同一主機日序列化（見 PrtgFindingsRegistry.AttachExclusive）。
+            var attachedNow = registry.AttachExclusive(hostId, record.Date,
+                () => store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured));
+
             // **先看資料庫端做了沒**：查無該主機當日列、或詳情已被保留期精簡（detail_pruned）時
             // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
-            // 會是「高」，資料庫裡卻還是「低」。
-            if (!store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured)) return 0;
+            // 會是「高」，資料庫裡卻還是「低」。唯一的例外是「補追加剛好先來過」：資料庫已經有了，
+            // 記憶體這份仍要併入，執行摘要才與資料庫一致。
+            if (!attachedNow && !registry.WasAttached(hostId, record.Date)) return 0;
 
             record.TopIssues.AddRange(added);
 

@@ -2240,7 +2240,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **版面骨架**：三張等寬狀態卡（取數執行／AI 分析／PRTG 歷史回填，`.lf-run-status-grid`，
   ≤991px 疊直）在上，四個頁籤（執行總表／異常彙總／執行紀錄／**排程設定**）在下，
   與 `/admin/prtg`、`/admin/netiq`、設定頁「頁籤置頂 → 平行卡片」同一套骨架。
-  排程設定移進自己的頁籤，不再與即時狀態擠在同一張卡。
+  排程設定自成一個頁籤，與即時狀態卡分離。
   - **`#runs-tabs` 與四個 `[data-panel]` 必須是同層手足**（`bindTabs` 用 `tabsEl.parentElement`
     找面板）；天數與圖例工具列插在中間不影響，切到「排程設定」時由 `runs.js` 整組隱藏。
   - 進度軌區塊**預留固定高度**（`.lf-run-tracks`）：狀態卡每 3 秒重繪，進度條出現／消失時版面不得跳動。
@@ -2330,6 +2330,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   整段窗口，而排程輪詢遇到 `IsRunning` 就直接略過；少了這個訊號，畫面上只看得到「排程設了卻沒跑」。
   狀態卡因此顯示一行說明（`status.skippedScheduleAt`），並在該次手動執行的最新訊息留一筆；
   **同一個窗口實例只記一次**（靠窗口起始時刻去重），否則每 60 秒輪詢就重複寫一則。
+  文案要把補跑時機說準：手動執行結束時若仍在窗口內，`ShouldTriggerNow` 會判定該實例尚未觸發而
+  **立刻補跑**；只有手動執行跨過窗口 End 才等到下一個窗口。
   **該窗口已經跑過就不算被佔用**（`ScheduleCalculator.WindowAlreadyTriggered`，
   與 `ShouldTriggerNow` 共用同一個判定）——22:00 觸發、22:40 跑完、23:00 有人按立即執行時，
   少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
@@ -2379,10 +2381,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
   「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
   再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
-  `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。進度
-  回報第三度拆欄位：`SchedulerRunState` 新增 `LocalProgressPhase/Done/Total`，與既有的
-  NetIQ 主／子進度三組欄位互不覆蓋（並行後 local／netiq 不再像過去「依序不重疊」，若仍共用
-  一組欄位會重演「進度卡住不動」）；status API 對應加三個欄位，狀態卡畫出對應的第三條進度條
+  `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。本機
+  與 NetIQ 各自一條進度軌、互不覆蓋（結構見上方「三軌進度收成單一型別」；並行後兩路同時回報，
+  共用一組欄位會出現「進度卡住不動」）；status API 各帶一組欄位，狀態卡畫出對應的進度條
   （只在有值時顯示，不像 NetIQ 主進度條「執行中就無條件顯示準備中」——`NetiqHosts` 範圍時
   本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都改成
   「有回報過才顯示」）。失敗語意維持嚴格：任一路未攔截的例外仍讓整趟判定失敗，`Task.WhenAll`
@@ -2396,7 +2397,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   跑完後不會主動清掉自己的欄位——單一告示讀取端（`/api/run-activity`、健康診斷）的
   `LatestActivity()` 因此會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
   `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）改送一個特殊 phase
-  （`"netiq-done"`，與 `"local"` 一樣是兩邊約定的字串慣例）通知 `SchedulerRunState` 清空
+  （`RunPhases.NetiqDone`）通知 `SchedulerRunState` 清空
   netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
   NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
   一併消失，不是副作用。

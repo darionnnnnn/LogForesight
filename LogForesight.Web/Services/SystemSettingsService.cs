@@ -1083,10 +1083,6 @@ public class SystemSettingsService : ISystemSettingsService
     }
 
     /// <summary>
-    /// PRTG 共同驗證（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
-    /// 涵蓋保留天數上限、認證方式合法性、啟用狀態下的 URL 與對應憑證存在性檢查。
-    /// </summary>
-    /// <summary>
     /// 取數範圍的驗證（docs/PRTG-SPEC.md §3a）。
     /// **`all-mapped` 搭配空白名單＝對全部 sensor 取數**——實機四萬多個 sensor，
     /// 一晚跑不完且會壓垮 PRTG core，因此在存檔時就擋下，而不是等夜間批次才發現。
@@ -1104,6 +1100,10 @@ public class SystemSettingsService : ISystemSettingsService
                 "取數範圍設為「全部已對應主機」時，sensor type 白名單不可留空——留空等於對全部 sensor 取數，大型環境會壓垮 PRTG core。");
     }
 
+    /// <summary>
+    /// PRTG 共同驗證（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
+    /// 涵蓋保留天數上限、認證方式合法性、啟用狀態下的 URL 與對應憑證存在性檢查。
+    /// </summary>
     private static void ValidatePrtgSettings(
         int effectiveRetentionDays,
         int effectivePrtgRetentionDays,
