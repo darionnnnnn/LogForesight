@@ -541,4 +541,51 @@ public class SchedulerRunStateTests
         Assert.True(state.TryBeginRun("manual", out _));
         Assert.Null(state.PausedReason);
     }
+    /// <summary>
+    /// 批次B：prtg-findings-ready 是訊號不是進度——它也以 "prtg-" 開頭，
+    /// 分支若排在前綴分支之後，PRTG 進度軌的數字會被這則訊號蓋成 0/0。
+    /// </summary>
+    [Fact]
+    public void ReportProgress_PrtgFindingsReady設旗標且不影響三軌進度()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 2, 5);
+        state.ReportProgress("netiq", 7, 9);
+        state.ReportProgress("prtg-sync-devices", 40, 120);
+
+        Assert.False(state.PrtgFindingsReady);
+
+        state.ReportProgress(AnalysisOrchestrator.PrtgFindingsReadyPhase, 0, 0);
+
+        Assert.True(state.PrtgFindingsReady);
+
+        // 三軌數字一格都不能動
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
+        Assert.Equal("netiq", state.ProgressPhase);
+        Assert.Equal(7, state.ProgressDone);
+        Assert.Equal(9, state.ProgressTotal);
+        Assert.Equal("prtg-sync-devices", state.PrtgProgressPhase);
+        Assert.Equal(40, state.PrtgProgressDone);
+        Assert.Equal(120, state.PrtgProgressTotal);
+    }
+
+    /// <summary>批次B：就緒旗標不得跨執行殘留——下一趟開始時 AI 會據此判斷可否處理當日待補。</summary>
+    [Fact]
+    public void PrtgFindingsReady_開始與結束執行時都重設()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress(AnalysisOrchestrator.PrtgFindingsReadyPhase, 0, 0);
+        Assert.True(state.PrtgFindingsReady);
+
+        state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+        Assert.False(state.PrtgFindingsReady);
+
+        Assert.True(state.TryBeginRun("schedule", out _));
+        Assert.False(state.PrtgFindingsReady);
+    }
 }

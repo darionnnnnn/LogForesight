@@ -79,4 +79,12 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// ／儀表板讀到的風險等級與詳情頁對不上（欄位漂移）。
     /// </summary>
     void AttachAiResult(DateTime date, AiOutcome outcome);
+
+    /// <summary>
+    /// 把 PRTG 規則命中的 finding 追加到指定主機日的既有紀錄（docs/PRTG-SPEC.md §9）。
+    /// 依 <c>EventKey</c> 去重，同一天重跑不產生重複；該主機當天沒有紀錄、或紀錄的詳情
+    /// 已被保留期精簡（<c>detail_pruned</c>）時不追加並回 false——硬造一筆只有 PRTG finding
+    /// 的紀錄會讓「未回報主機」「覆蓋缺口」等既有統計失真。
+    /// </summary>
+    bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings);
 }

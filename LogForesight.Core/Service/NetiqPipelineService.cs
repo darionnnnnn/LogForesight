@@ -60,6 +60,7 @@ public class NetiqPipelineService
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRunConsole _console;
     private readonly IRiskyEventStore? _riskyEventStore;
+    private readonly PrtgFindingsRegistry _prtgFindings;
     private readonly int _rawEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
@@ -110,7 +111,8 @@ public class NetiqPipelineService
         PermissionChangeStore? permissionChangeStore = null,
         PermissionFieldMappings? permissionMappings = null,
         RerunMode rerunMode = RerunMode.None,
-        PrtgResourceGuard? guard = null)
+        PrtgResourceGuard? guard = null,
+        PrtgFindingsRegistry? prtgFindings = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -124,6 +126,9 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _console = console;
         _riskyEventStore = riskyEventStore;
+        // 未提供時用「已就緒且無 finding」的共用實例（語意等同 PRTG 停用），
+        // 消費端因此不必寫 null 判斷——那種分支在正式路徑永遠不會執行。
+        _prtgFindings = prtgFindings ?? PrtgFindingsRegistry.Empty;
         _rawEventRetentionDays = rawEventRetentionDays ?? SystemSettings.DefaultRawEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
@@ -616,6 +621,11 @@ public class NetiqPipelineService
             // 只記警告，不讓這台主機這天的分析結果作廢（見 HostDayPostProcessor）。兩者只依賴
             // TopIssues 與 events，AI 不會改動這兩者，所以留在統計段——不必等 AI 完成才能做。
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
+
+            // PRTG finding 追加：**必須排在案件掛接之前**，案件掛接吃的是記憶體裡的
+            // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
+            HostDayPostProcessor.AttachPrtgFindings(_prtgFindings, plan.Store, record, target.HostId, logContext);
+
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);

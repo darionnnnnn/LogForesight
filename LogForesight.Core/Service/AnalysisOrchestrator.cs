@@ -80,7 +80,7 @@ internal sealed record AnalysisRunContext(
     RunRequest Request, AppSettings Settings, RetentionOptions Retention, IRunConsole Console,
     CancellationToken Ct, EventLogService EventLogService, IssueCaseCoordinator CaseCoordinator,
     IRiskyEventStore RiskyEventStore, BatchRunRecorder RunRecorder, OrchestratorResult Result,
-    bool UseAi, IRunProgress? Progress);
+    bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings);
 
 /// <summary>
 /// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
@@ -119,6 +119,13 @@ public interface IRunProgress
 public class AnalysisOrchestrator
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 「當日 PRTG finding 已到齊」的訊號 phase（不是進度，done／total 恆為 0）。
+    /// Web 端據此讓 AI 分析排程開始處理當日待補，不必等整趟取數結束。
+    /// 走 <see cref="IRunProgress"/> 而非另開介面，與既有的 <c>*-done</c> 完工訊號同型。
+    /// </summary>
+    public const string PrtgFindingsReadyPhase = "prtg-findings-ready";
 
     // 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）——分析語意常數，不開放設定
     private const int TrendWindowDays = 14;
@@ -583,9 +590,13 @@ public class AnalysisOrchestrator
             // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
             // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
             // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。
+            // PRTG finding 登錄簿：兩路共用同一個實例。PRTG 路徑算完規則後發佈，
+            // 兩條寫入路徑在紀錄剛落地時就地併入該主機的 finding（docs/PRTG-SPEC.md §9）。
+            var prtgFindings = new PrtgFindingsRegistry();
+
             var runCtx = new AnalysisRunContext(
                 request, settings, retention, console, ct, eventLogService, caseCoordinator,
-                riskyEventStore, runRecorder, result, useAi, progress);
+                riskyEventStore, runRecorder, result, useAi, progress, prtgFindings);
 
             // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
             // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
@@ -737,7 +748,7 @@ public class AnalysisOrchestrator
         IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings) = ctx;
 
         // 回望天數（回饋三十四輪 C）：立即執行的「回望天數」是單一欄位，缺漏日與重跑日
         // 共用同一個窗口，且**本機與 NetIQ 都適用**——合併前這個欄位只影響 NetIQ，
@@ -921,6 +932,10 @@ public class AnalysisOrchestrator
                         replaceExisting: isRerun);
                     result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
+                    // PRTG finding 追加：**必須排在案件掛接之前**，案件掛接吃的是記憶體裡的
+                    // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
+                    HostDayPostProcessor.AttachPrtgFindings(prtgFindings, historyService, record, currentHostId);
+
                     // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
                     // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
                     HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
@@ -988,7 +1003,7 @@ public class AnalysisOrchestrator
         PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings) = ctx;
 
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
@@ -1036,7 +1051,8 @@ public class AnalysisOrchestrator
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings,
                 rerunMode: request.RerunMode,
-                guard: guard);
+                guard: guard,
+                prtgFindings: prtgFindings);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
@@ -1088,7 +1104,7 @@ public class AnalysisOrchestrator
         PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings) = ctx;
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
@@ -1267,6 +1283,52 @@ public class AnalysisOrchestrator
                 prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
             }
 
+            // 3b. 發佈 finding 登錄簿並宣告就緒（docs/PRTG-SPEC.md §9）。
+            // **規則評估失敗、規則庫尚無 PRTG 規則、零 finding 都要發佈**——「算不出東西」與
+            // 「還沒算完」必須分得出來，不發佈的話 AI 分析排程會一路等到整趟取數結束。
+            prtgFindings.Publish(findingsByHost.ToDictionary(
+                kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value));
+
+            // 補追加「就緒之前就已落地」的主機日：分析與 PRTG 並行，規則評估完成時已經有
+            // 一部分主機日寫進去了，它們錯過了寫入路徑的當場追加。之後才落地的由
+            // HostDayPostProcessor.AttachPrtgFindings 在紀錄剛寫完時就地處理，不必輪詢。
+            try
+            {
+                var involvedHosts = findingsByHost.Count;
+                var appendedHosts = 0;
+                var pendingHosts = 0;
+
+                var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
+
+                foreach (var (hostId, hostFindings) in findingsByHost)
+                {
+                    var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
+                    var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
+
+                    // 依 EventKey 去重：與寫入路徑對同一天重複呼叫也不會產生重複列
+                    if (hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings)) appendedHosts++;
+                    else pendingHosts++;
+                }
+
+                var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、" +
+                              $"已追加 {appendedHosts} 台（{pendingHosts} 台的當日紀錄尚未落地，稍後由分析路徑就地追加）";
+                prtgConsole.WriteLine(summary);
+                runRecorder.Milestone(summary);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG finding 補追加失敗，不影響分析成果");
+                prtgConsole.WriteLine("  ✗ PRTG finding 補追加失敗：" + ex.Message);
+            }
+
+            // 通知 Web 端：當日 PRTG finding 已到齊，AI 分析排程可以開始處理當日待補，
+            // 不必等整趟取數結束（見 docs/DETECTION-SPEC.md 兩個獨立排程）。
+            progress?.Report(PrtgFindingsReadyPhase, 0, 0);
+
             // 4. PRTG 觸發式數值取數：獨立的 try/catch，與分析並行輪詢
             try
             {
@@ -1295,47 +1357,6 @@ public class AnalysisOrchestrator
                 prtgConsole.WriteLine($"\n  ✗ PRTG 觸發式取數失敗：{ex.Message}");
             }
 
-            // 5. PRTG finding 追加：獨立的 try/catch，在觸發式取數（分析完成）後追加至當日紀錄
-            try
-            {
-                var involvedHosts = findingsByHost.Count;
-                var appendedHosts = 0;
-                var skippedHosts = 0;
-
-                var allHosts = hostStore.GetAll();
-                var hostsById = allHosts.ToDictionary(h => h.HostId);
-
-                foreach (var (hostId, hostFindings) in findingsByHost)
-                {
-                    var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
-                    var hostKey = new HostKey { HostId = hostId, HostName = hostName };
-                    var hostRecordStore = backend.RecordStore(hostKey);
-
-                    var attached = hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings);
-                    if (attached)
-                    {
-                        appendedHosts++;
-                    }
-                    else
-                    {
-                        skippedHosts++;
-                    }
-                }
-
-                var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、已追加 {appendedHosts} 台（無當日紀錄 {skippedHosts} 台）";
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG finding 追加失敗，不影響分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG finding 追加失敗：{ex.Message}");
-            }
-
             if (syncFailed)
             {
                 prtgOutcome = BatchRun.PrtgOutcomeFailed;
@@ -1362,6 +1383,14 @@ public class AnalysisOrchestrator
         }
         finally
         {
+            // 任何路徑（PRTG 停用、初始化失敗、取消）結束時若還沒宣告就緒，補一次空發佈。
+            // 少了這道，AI 分析排程會一路等到整趟取數結束——等於這個機制沒做。
+            if (!prtgFindings.IsReady)
+            {
+                prtgFindings.Publish(new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                progress?.Report(PrtgFindingsReadyPhase, 0, 0);
+            }
+
             if (prtgOutcome != null)
             {
                 runRecorder.RecordPrtgOutcome(

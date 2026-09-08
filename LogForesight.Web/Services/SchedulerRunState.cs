@@ -71,6 +71,14 @@ public class SchedulerRunState
     public int PrtgProgressDone { get; private set; }
     public int PrtgProgressTotal { get; private set; }
 
+    /// <summary>
+    /// 當日 PRTG finding 是否已全部算完並追加（docs/PRTG-SPEC.md §9）。
+    /// AI 分析排程據此判斷「當日待補現在可不可以判讀」——PRTG finding 會影響風險與敘述，
+    /// 太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。PRTG 停用或評估失敗時也會被設為 true
+    /// （「算不出東西」不等於「還沒算完」），否則 AI 會一路等到整趟取數結束。
+    /// </summary>
+    public bool PrtgFindingsReady { get; private set; }
+
     public bool LocalCompleted { get; private set; }
     public bool NetiqCompleted { get; private set; }
     public bool PrtgCompleted { get; private set; }
@@ -109,6 +117,7 @@ public class SchedulerRunState
             PrtgProgressDone = 0;
             PrtgProgressTotal = 0;
             PrtgCompleted = false;
+            PrtgFindingsReady = false;
             PausedReason = null;
             _cts = new CancellationTokenSource();
             cts = _cts;
@@ -188,6 +197,12 @@ public class SchedulerRunState
             {
                 PausedReason = null;
             }
+            else if (phase == AnalysisOrchestrator.PrtgFindingsReadyPhase)
+            {
+                // 訊號不是進度：**必須排在下面的 "prtg-" 前綴分支之前**，
+                // 否則它會被當成 PRTG 進度軌的回報，把結構同步／取數的進度數字蓋成 0/0。
+                PrtgFindingsReady = true;
+            }
             else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
             {
                 PrtgCompleted = false;
@@ -237,6 +252,7 @@ public class SchedulerRunState
             PrtgProgressDone = 0;
             PrtgProgressTotal = 0;
             PrtgCompleted = false;
+            PrtgFindingsReady = false;
             PausedReason = null;
             _cts?.Dispose();
             _cts = null;

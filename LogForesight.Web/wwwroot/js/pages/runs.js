@@ -918,7 +918,8 @@ function applyScheduleStatus(status) {
 // 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
 const AI_IDLE_REASON_TEXT = {
     'backfill-pending': '存量校正回填尚未完成，AI 分析要等它跑完才會開始。',
-    'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。'
+    'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
+    'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
 };
 
 function applyAiScheduleStatus(status) {

@@ -708,4 +708,54 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(runState.TryBeginRun("manual:admin", 1, out _));
         Assert.Null(runState.Snapshot().IdleReason);
     }
+    /// <summary>
+    /// 批次B：取數執行中，只要當日 PRTG finding 已算完（prtg-findings-ready 已送），
+    /// 今天與昨天的待補就立刻合格——AI 因此能與取數並行，不必等整趟取數結束。
+    /// 這是本輪要解決的「NetIQ 抓了很多但 AI 完全沒動」。
+    /// </summary>
+    [Fact]
+    public async Task 完整性閘門_取數執行中但PRTG_finding已就緒時當日待補即可處理()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var yesterday = today.AddDays(-1);
+        store.Append(CreateRecord(1, "HOST-A", today, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", yesterday, pending: true));
+
+        schedulerState.TryBeginRun("schedule", out _);
+        schedulerState.ReportProgress(AnalysisOrchestrator.PrtgFindingsReadyPhase, 0, 0);
+        Assert.True(schedulerState.IsRunning);
+        Assert.True(schedulerState.PrtgFindingsReady);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recToday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, today);
+        var recYesterday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, yesterday);
+
+        Assert.False(recToday!.AiPending);
+        Assert.False(recYesterday!.AiPending);
+    }
+
+    /// <summary>批次B：有待補卻被閘門擋住時最像壞掉，畫面要說得出原因。</summary>
+    [Fact]
+    public async Task TickAsync_取數執行中且PRTG未就緒時閒置原因為等待取數()
+    {
+        var options = new ScheduleOptions
+        {
+            AiEnabled = true,
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+        };
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(options);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-1), pending: true));
+
+        schedulerState.TryBeginRun("schedule", out _);
+
+        await service.TickAsync();
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AiIdleReasons.WaitingFetch, runState.Snapshot().IdleReason);
+    }
 }

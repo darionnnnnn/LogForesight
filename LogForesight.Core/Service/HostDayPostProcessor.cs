@@ -129,6 +129,49 @@ public static class HostDayPostProcessor
         return false;
     }
 
+    /// <summary>
+    /// 把當日的 PRTG finding 併進剛落地的主機日紀錄（docs/PRTG-SPEC.md §9）。
+    /// **必須排在 <see cref="AttachCase"/> 之前**：案件掛接吃的是記憶體裡的
+    /// <c>record.TopIssues</c>，晚一步併入的 finding 就永遠進不了問題案件與處理狀態鏈。
+    ///
+    /// 兩邊都要寫：記憶體（供後續的案件掛接使用）與資料庫（<c>AttachPrtgFindings</c> 自帶
+    /// 依 EventKey 的去重與 detail_pruned 保護，重跑同一天不會產生重複）。
+    /// 登錄簿尚未就緒、或這台主機當天沒有 finding 時整段短路，不碰資料庫。
+    ///
+    /// 失敗只記警告：PRTG 是輔助訊號，它的追加不該讓一個已經算完的主機日作廢
+    /// （同本檔其他後續處理的失敗邊界）。回傳實際併入的筆數，供執行輸出統計。
+    /// </summary>
+    public static int AttachPrtgFindings(
+        PrtgFindingsRegistry registry, IAnalysisRecordStore store,
+        DailyAnalysisRecord record, long hostId, string logContext = "")
+    {
+        var findings = registry.For(hostId);
+        if (findings.Count == 0) return 0;
+
+        try
+        {
+            var existingKeys = record.TopIssues
+                .Select(i => i.EventKey)
+                .Where(k => !string.IsNullOrEmpty(k))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var added = findings.Where(f => existingKeys.Add(f.EventKey)).ToList();
+            if (added.Count == 0) return 0;
+
+            record.TopIssues.AddRange(added);
+            store.AttachPrtgFindings(hostId, record.Date, added);
+
+            Log.Info("{Context}{Date:yyyy-MM-dd} 主機 id={HostId} 併入 {Count} 項 PRTG finding",
+                logContext, record.Date, hostId, added.Count);
+            return added.Count;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} PRTG finding 追加失敗（不影響分析結果）", logContext, record.Date);
+            return 0;
+        }
+    }
+
     public static void AttachCase(
         IssueCaseCoordinator caseCoordinator, string hostName, DateTime date,
         List<LogIssueSignature> topIssues, string logContext = "")

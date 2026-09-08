@@ -29,6 +29,8 @@ public static class AiIdleReasons
     public const string OutsideWindow = "outside-window";
     /// <summary>沒有待補的主機日</summary>
     public const string NoPending = "no-pending";
+    /// <summary>取數執行中且當日 PRTG finding 尚未算完，最近兩天的待補要等它到齊才判讀</summary>
+    public const string WaitingFetch = "waiting-fetch";
 }
 
 /// <summary>

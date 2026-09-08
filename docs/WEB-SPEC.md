@@ -2243,7 +2243,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   「PRTG 觸發式取數　已取 N 個 sensor（等待分析結果）」。
   phase 字面值一覽（Core 與 Web 兩邊約定的字串）：`local`／`netiq`／`prtg-sync`／
   `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
-  `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`。
+  `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`；
+  PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
+  否則會把 PRTG 進度軌的數字蓋成 0/0）。
   **結構同步三階段各自回報自己的 phase**（常數見 `PrtgFetchService`）：分子是已讀取列數、
   分母取 PRTG 回應的 `treesize`（缺這個欄位時分母 0，畫不定進度但分子照走）。
   少了這三個 phase，從進入 PRTG 到觸發式取數之間整段只有一次 `prtg-sync (0,0)`，
@@ -2269,7 +2271,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
-  `disabled`／`backfill-pending`／`outside-window`／`no-pending`），
+  `disabled`／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
   由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
   `disabled` 走既有那條帶件數的文案，`no-pending` 不需要說明（待補為 0 本身就講完了）。
