@@ -758,4 +758,39 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         Assert.Equal(AiIdleReasons.WaitingFetch, runState.Snapshot().IdleReason);
     }
+    /// <summary>
+    /// 批次G4：AI 進度在併發分片下不得互相蓋。
+    /// 原本寫成 `ReportProgress(done, _runState.ProgressTotal, …)`——那是 read-modify-write：
+    /// 兩條分片同時讀到舊分母再寫回，分母會被拉回舊值。
+    /// 這裡不用壓力測試（那種測試只在剛好切在錯的那一刻才紅），直接驗語意：
+    /// 只推進分子的方法不得動到分母，且分子只增不減。
+    /// </summary>
+    [Fact]
+    public void ReportProgressDone_不動分母且分子只增不減()
+    {
+        var state = new AiAnalysisRunState();
+        Assert.True(state.TryBeginRun("manual:tester", total: 100, out _));
+
+        state.ReportProgressDone(10, "第 10 筆");
+        Assert.Equal(10, state.Snapshot().ProgressDone);
+        Assert.Equal(100, state.Snapshot().ProgressTotal);
+
+        // 分片完成順序不定：晚到的舊值不得把進度往回拉
+        state.ReportProgressDone(4, "晚到的舊值");
+        Assert.Equal(10, state.Snapshot().ProgressDone);
+        Assert.Equal(100, state.Snapshot().ProgressTotal);
+
+        state.ReportProgressDone(25);
+        Assert.Equal(25, state.Snapshot().ProgressDone);
+        Assert.Equal(100, state.Snapshot().ProgressTotal);
+    }
+
+    [Fact]
+    public void ReportProgressDone_未執行時不寫入()
+    {
+        var state = new AiAnalysisRunState();
+        state.ReportProgressDone(5, "不該生效");
+
+        Assert.Equal(0, state.Snapshot().ProgressDone);
+    }
 }

@@ -135,6 +135,7 @@ public class ScheduleController : ControllerBase
             PrtgProgressPhase = _runState.PrtgProgressPhase,
             PrtgProgressDone = _runState.PrtgProgressDone,
             PrtgProgressTotal = _runState.PrtgProgressTotal,
+            SkippedScheduleAt = _runState.SkippedScheduleAt,
             LocalCompleted = _runState.LocalCompleted,
             NetiqCompleted = _runState.NetiqCompleted,
             PrtgCompleted = _runState.PrtgCompleted,

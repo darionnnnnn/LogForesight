@@ -117,6 +117,14 @@ public class SchedulerHostedService : BackgroundService
             {
                 Log.Info("執行窗口已結束，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
             }
+            // 手動執行佔住 gate 時，這個窗口的自動觸發會靜默消失——手動觸發不受窗口 End 停止
+            // （§1.4.4），一趟大回填可以吃掉整段窗口。畫面上看起來就是「排程沒跑，也沒說為什麼」。
+            // 這裡把它說出來：狀態卡顯示、里程碑進那次手動執行的紀錄，每個窗口只記一次。
+            if (_runState.Trigger != null && !_runState.Trigger.StartsWith("schedule", StringComparison.Ordinal))
+            {
+                NoteSkippedScheduleWindow(options);
+            }
+
             return; // 執行中不再觸發新的執行，不排隊
         }
 
@@ -131,6 +139,30 @@ public class SchedulerHostedService : BackgroundService
         if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
 
         await TriggerRunAsync(ComposeScheduledRequest());
+    }
+
+    /// <summary>
+    /// 手動執行佔住排程窗口時記一次（每個窗口實例只記一次，靠窗口起始時刻去重）。
+    /// 少了這個訊號，管理者只會看到「排程設了卻沒跑」，而原因（有人按了立即執行）完全不在畫面上。
+    /// </summary>
+    private void NoteSkippedScheduleWindow(ScheduleOptions options)
+    {
+        if (!options.Enabled) return;
+
+        var now = DateTime.Now;
+        var windowStart = options.Windows
+            .Select(w => ScheduleCalculator.CurrentWindowInstanceStart(now, w))
+            .FirstOrDefault(t => t.HasValue);
+
+        // 現在不在任何窗口內就沒有「被佔用的窗口」可講
+        if (windowStart == null) return;
+
+        if (_runState.NoteSkippedSchedule(windowStart.Value))
+        {
+            var text = $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用，將於下一個窗口補跑。";
+            Log.Info(text);
+            _runState.ReportMessage(text);
+        }
     }
 
     /// <summary>

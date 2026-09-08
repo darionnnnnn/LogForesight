@@ -588,4 +588,92 @@ public class SchedulerRunStateTests
         Assert.True(state.TryBeginRun("schedule", out _));
         Assert.False(state.PrtgFindingsReady);
     }
+    /// <summary>
+    /// 批次G3：三軌重設收成單一 ResetTracks。原本 TryBeginRun 與 EndRun 各自逐欄重設 12 個欄位，
+    /// 兩份清單得手動保持同步，漏一個就是「上一趟的進度殘留在畫面上」。
+    /// </summary>
+    [Fact]
+    public void 三軌進度在開始與結束時都完整歸零()
+    {
+        var state = new SchedulerRunState();
+
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress("local", 3, 9);
+        state.ReportProgress("netiq", 5, 7);
+        state.ReportProgress("prtg-sync-devices", 40, 120);
+        state.ReportProgress(SchedulerRunState.LocalDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.NetiqDonePhase, 0, 0);
+        state.ReportProgress(SchedulerRunState.PrtgDonePhase, 0, 0);
+
+        state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+
+        AssertTracksCleared(state);
+
+        // 下一趟開始時同樣是乾淨的
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+        AssertTracksCleared(state);
+    }
+
+    private static void AssertTracksCleared(SchedulerRunState state)
+    {
+        Assert.Null(state.ProgressPhase);
+        Assert.Equal(0, state.ProgressDone);
+        Assert.Equal(0, state.ProgressTotal);
+        Assert.False(state.NetiqCompleted);
+
+        Assert.Null(state.LocalProgressPhase);
+        Assert.Equal(0, state.LocalProgressDone);
+        Assert.Equal(0, state.LocalProgressTotal);
+        Assert.False(state.LocalCompleted);
+
+        Assert.Null(state.PrtgProgressPhase);
+        Assert.Equal(0, state.PrtgProgressDone);
+        Assert.Equal(0, state.PrtgProgressTotal);
+        Assert.False(state.PrtgCompleted);
+
+        Assert.False(state.PrtgFindingsReady);
+        Assert.Null(state.SkippedScheduleAt);
+    }
+
+    /// <summary>
+    /// 批次G3：一軌收到新進度時，該軌的完工旗標要跟著清掉——
+    /// 否則「跑完又開始跑」的軌會一直畫成滿格。
+    /// </summary>
+    [Fact]
+    public void 完工後再收到進度會清掉該軌的完工旗標()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress(SchedulerRunState.PrtgDonePhase, 0, 0);
+        Assert.True(state.PrtgCompleted);
+
+        state.ReportProgress("prtg-triggered", 1, 10);
+        Assert.False(state.PrtgCompleted);
+        Assert.Equal("prtg-triggered", state.PrtgProgressPhase);
+    }
+
+    /// <summary>
+    /// 批次G4：手動執行佔住 gate 時，該窗口的自動觸發會靜默消失。
+    /// 同一個窗口只記一次，避免每 60 秒輪詢就重複寫一則訊息。
+    /// </summary>
+    [Fact]
+    public void 被佔用的排程窗口同一個實例只記一次()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        var windowStart = DateTime.Today.AddHours(22);
+
+        Assert.True(state.NoteSkippedSchedule(windowStart));
+        Assert.Equal(windowStart, state.SkippedScheduleAt);
+
+        // 同一個窗口再記一次不算新的
+        Assert.False(state.NoteSkippedSchedule(windowStart));
+
+        // 換一個窗口才算新的
+        var nextWindow = windowStart.AddDays(1);
+        Assert.True(state.NoteSkippedSchedule(nextWindow));
+        Assert.Equal(nextWindow, state.SkippedScheduleAt);
+    }
 }

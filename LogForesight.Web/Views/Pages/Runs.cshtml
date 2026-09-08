@@ -47,6 +47,10 @@
                 <div class="small text-muted mb-2 d-none" id="schedule-prtg-progress-text"></div>
             </div>
 
+            @* 手動執行佔用排程窗口時的說明：手動觸發不受窗口 End 停止，一趟大回填可以吃掉
+               整段窗口，畫面上原本只看得到「排程設了卻沒跑」。 *@
+            <div class="text-warning small d-none" id="schedule-skipped-window"></div>
+
             <div class="small text-muted lf-run-message" id="schedule-latest-message"></div>
 
             <div class="d-flex flex-wrap align-items-center gap-2 mt-3" data-maintain-only>

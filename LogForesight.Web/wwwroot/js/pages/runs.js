@@ -908,10 +908,25 @@ function applyScheduleStatus(status) {
     const stopButton = document.getElementById('schedule-stop');
     if (canMaintainSchedule) stopButton.classList.toggle('d-none', !status.canStop);
 
+    const nextTriggerEl = document.getElementById('schedule-next-trigger');
     if (status.scheduleEnabled && status.nextTriggerTime) {
-        document.getElementById('schedule-next-trigger').textContent = formatDateTime(status.nextTriggerTime);
+        nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
     } else if (!status.scheduleEnabled) {
-        document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
+        nextTriggerEl.textContent = '排程未啟用';
+    }
+
+    // 手動執行佔用了排程窗口：手動觸發不受窗口 End 停止，一趟大回填可以吃掉整段窗口，
+    // 而畫面上原本只看得到「排程設了卻沒跑」。
+    const skippedEl = document.getElementById('schedule-skipped-window');
+    if (skippedEl) {
+        if (status.skippedScheduleAt) {
+            skippedEl.textContent =
+                `排程窗口（${formatDateTime(status.skippedScheduleAt)}）已被本次手動執行佔用，將於下一個窗口補跑。`;
+            skippedEl.classList.remove('d-none');
+        } else {
+            skippedEl.textContent = '';
+            skippedEl.classList.add('d-none');
+        }
     }
 
     // 執行完自動刷新總表（docs/archive/FEEDBACK-8-PLAN.md #2）：isRunning 由 true → false 時，

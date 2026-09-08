@@ -97,6 +97,13 @@ public class ScheduleStatusDto
     /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
     public string? PausedReason { get; set; }
 
+    /// <summary>
+    /// 被進行中的手動執行佔用掉的排程窗口起始時刻（null＝沒有）。
+    /// 手動觸發不受窗口 End 停止，一趟大回填可以吃掉整段窗口——畫面上原本只看得到
+    /// 「排程設了卻沒跑」，看不出原因。
+    /// </summary>
+    public DateTime? SkippedScheduleAt { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }

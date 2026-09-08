@@ -364,10 +364,12 @@ public class AiAnalysisHostedService : BackgroundService
                             if (outcome.AiAnalyzed)
                             {
                                 hostStore.AttachAiResult(record.Date, outcome);
-                                Interlocked.Increment(ref totalDone);
+                                var doneNow = Interlocked.Increment(ref totalDone);
                                 Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);
-                                _runState.ReportProgress(totalDone, _runState.ProgressTotal, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
+                                // 用 Increment 的回傳值、且不碰分母：分片是並行的，
+                                // 「讀分母再寫回」會讓兩條分片的數字互相蓋（見 ReportProgressDone）
+                                _runState.ReportProgressDone(doneNow, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
                             }
                             else
                             {

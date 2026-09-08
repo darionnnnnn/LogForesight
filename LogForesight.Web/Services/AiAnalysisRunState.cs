@@ -125,6 +125,22 @@ public class AiAnalysisRunState
         }
     }
 
+    /// <summary>
+    /// 只推進分子與訊息，分母維持批次開頭設定的值。
+    /// 併發分片下呼叫端若寫成 <c>ReportProgress(done, ProgressTotal, …)</c>，那是
+    /// read-modify-write：兩條分片同時讀到舊分母再寫回，數字會互相蓋。
+    /// </summary>
+    public void ReportProgressDone(int done, string? message = null)
+    {
+        lock (_lock)
+        {
+            if (!IsRunning) return;
+            // 只增不減：分片完成順序不定，晚到的舊值不得把進度往回拉
+            if (done > ProgressDone) ProgressDone = done;
+            if (message != null) LatestMessage = message;
+        }
+    }
+
     public void EndRun(bool success, string? message = null)
     {
         TaskCompletionSource<bool>? tcsToComplete;
