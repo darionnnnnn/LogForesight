@@ -343,7 +343,7 @@ public class NetiqPipelineService
             // 進度分母（docs/archive/FEEDBACK-8-PLAN.md #2）：各 Sentinel 平行掃描完才知道各自要補幾天，
             // 這裡累加進共享的 HostDaysTotal，分母隨掃描進度自然變大
             result.AddToTotal(plans.Sum(p => p.MissingDates.Count));
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
 
             var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
 
@@ -466,7 +466,7 @@ public class NetiqPipelineService
             _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
             result.AddFailed(batch.Length);
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return;
         }
 
@@ -576,7 +576,7 @@ public class NetiqPipelineService
         {
             result.AddRerunRetained();
             _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return;
         }
 
@@ -654,7 +654,7 @@ public class NetiqPipelineService
             }
 
             // 統計完成即算 done（取數端不再處理 AI）：進度條分子分母只反映搜尋+統計的進度
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -662,7 +662,7 @@ public class NetiqPipelineService
             Log.Warn(ex, "[{Server}] [{Ip}] {Date} 分析失敗", sentinelName, target.IpAddress, date);
             _console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +
                               "（未寫入紀錄，下次執行自動重試）");
-            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
         }

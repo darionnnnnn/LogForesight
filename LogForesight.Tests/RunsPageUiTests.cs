@@ -135,4 +135,66 @@ public class RunsPageUiTests
         Assert.Contains("title: '執行站台', sortKey: 'affectedHosts'", js);
         Assert.DoesNotContain("title: '影響主機'", js);
     }
+    /// <summary>
+    /// 批次G1：phase 字面值集中在 RunPhases 之後，前端標籤表的完整性由這條測試守住。
+    /// 過去 Core／Web／JS 三層各寫裸字串，新增一個 phase 只要漏改前端，
+    /// 畫面就直接把裸 phase 字串印給使用者——沒有任何訊號會提醒你。
+    /// </summary>
+    [Fact]
+    public void 每個進度phase在前端都有標籤與單位()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        var labelTable = ExtractObjectLiteral(js, "PROGRESS_PHASE_LABEL");
+        var unitTable = ExtractObjectLiteral(js, "PROGRESS_PHASE_UNIT");
+
+        foreach (var phase in LogForesight.Core.Service.RunPhases.ProgressTracks)
+        {
+            // 標籤沒有對應時前端會 fallback 成裸 phase 字串，直接印給使用者——一律要求。
+            Assert.True(labelTable.Contains(phase),
+                $"phase「{phase}」在 runs.js 的 PROGRESS_PHASE_LABEL 沒有對應文案，畫面會印出裸字串");
+
+            // 單位的 fallback 是「主機日」，對本機／NetIQ 正確、對 PRTG 是錯的
+            // （PRTG 的粒度是 sensor／device／筆），所以只對 PRTG 類要求。
+            if (phase.StartsWith("prtg-", StringComparison.Ordinal))
+            {
+                Assert.True(unitTable.Contains(phase),
+                    $"phase「{phase}」在 runs.js 的 PROGRESS_PHASE_UNIT 沒有對應單位，會 fallback 成錯誤的「主機日」");
+            }
+        }
+    }
+
+    /// <summary>批次G1：訊號類 phase 不是進度，不得混進進度軌清單。</summary>
+    [Fact]
+    public void 訊號類phase不列為進度軌()
+    {
+        var tracks = LogForesight.Core.Service.RunPhases.ProgressTracks;
+
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.LocalDone, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.NetiqDone, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.PrtgDone, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.GuardPaused, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.GuardResumed, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.PrtgFindingsReady, tracks);
+
+        // 但它們都要在 All 裡（All 是「全部字面值」的單一清單）
+        foreach (var phase in tracks)
+        {
+            Assert.Contains(phase, LogForesight.Core.Service.RunPhases.All);
+        }
+    }
+
+    /// <summary>取出 `const NAME = { ... };` 的物件字面值內容。</summary>
+    private static string ExtractObjectLiteral(string js, string name)
+    {
+        var start = js.IndexOf($"const {name} = {{", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"runs.js 找不到 {name}");
+
+        var open = js.IndexOf('{', start);
+        var close = js.IndexOf("};", open, StringComparison.Ordinal);
+        Assert.True(close > open, $"{name} 的物件字面值沒有正確結束");
+
+        return js[open..close];
+    }
 }

@@ -174,7 +174,7 @@ public class SchedulerRunState
             {
                 LocalCompleted = true;
             }
-            else if (phase == "local")
+            else if (phase == RunPhases.Local)
             {
                 LocalCompleted = false;
                 LocalProgressPhase = phase;
@@ -189,15 +189,15 @@ public class SchedulerRunState
             {
                 PrtgCompleted = true;
             }
-            else if (phase == "guard-paused")
+            else if (phase == RunPhases.GuardPaused)
             {
                 PausedReason = "資源緊張，暫停中";
             }
-            else if (phase == "guard-resumed")
+            else if (phase == RunPhases.GuardResumed)
             {
                 PausedReason = null;
             }
-            else if (phase == AnalysisOrchestrator.PrtgFindingsReadyPhase)
+            else if (phase == RunPhases.PrtgFindingsReady)
             {
                 // 訊號不是進度：**必須排在下面的 "prtg-" 前綴分支之前**，
                 // 否則它會被當成 PRTG 進度軌的回報，把結構同步／取數的進度數字蓋成 0/0。
@@ -221,15 +221,15 @@ public class SchedulerRunState
     }
 
     /// <summary>本機分析路徑收尾時的完工訊號——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
-    public const string LocalDonePhase = "local-done";
+    public const string LocalDonePhase = RunPhases.LocalDone;
 
     /// <summary>NetIQ 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/>
     /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
-    public const string NetiqDonePhase = "netiq-done";
+    public const string NetiqDonePhase = RunPhases.NetiqDone;
 
     /// <summary>PRTG 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunPrtgFetchAsync"/>
     /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
-    public const string PrtgDonePhase = "prtg-done";
+    public const string PrtgDonePhase = RunPhases.PrtgDone;
 
     /// <param name="outcome">這次執行的結局；null＝沒有真的開始過（例如跨行程 Mutex 逾時），
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>

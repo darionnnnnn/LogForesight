@@ -10,7 +10,8 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - `LogForesight.Core/` — 分析邏輯類別庫。`Analysis/`（純規則/趨勢/關聯）、`Models/`、
   `Persistence/`（Sqlite/SqlServer 雙後端，`StorageBackend` 唯一路由點）、`Service/`
-  （`AnalysisOrchestrator` 分析主流程單一入口、NetIQ pipeline、體檢）。
+  （`AnalysisOrchestrator` 分析主流程單一入口與三路並行的組裝點、NetIQ pipeline、
+  `PrtgDailyPipeline` PRTG 每日路徑、體檢）。
   沿用批次時期 `namespace LogForesight`（資料夾不對應命名空間）。
 - `LogForesight.Web/` — 執行/查詢/維護介面。`Controllers/Api/`、`Services/`、`Auth/`、
   `Repositories/`、`wwwroot/js/`（原生 ES Modules：`core/` 共用、`pages/` 逐頁）、

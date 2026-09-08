@@ -214,7 +214,7 @@ public sealed class PrtgResourceGuard : IDisposable
             var pauseMsg = $"[PRTG資源守門] 進入暫停：資源緊張（{evalResult.TriggeredSensorDescription}），第 {_checkCount} 次檢查，預計等待 {_settings.PrtgResourceGuardPauseMinutes} 分鐘。";
             _recorder.Milestone(pauseMsg);
             _console.WriteLine(pauseMsg);
-            _progress?.Report("guard-paused", 0, 0);
+            _progress?.Report(RunPhases.GuardPaused, 0, 0);
 
             // 暫停重試迴圈
             while (true)
@@ -230,7 +230,7 @@ public sealed class PrtgResourceGuard : IDisposable
                     var limitMsg = $"[PRTG資源守門] 警告：單趟累計暫停時間已達上限（{_totalPausedMinutes} 分鐘），放行並不再暫停。";
                     _recorder.Milestone(limitMsg);
                     _console.WriteLine(limitMsg);
-                    _progress?.Report("guard-resumed", 0, 0);
+                    _progress?.Report(RunPhases.GuardResumed, 0, 0);
                     _consecutiveStrikes = 0;
                     _checkVersion++;
                     return;
@@ -244,7 +244,7 @@ public sealed class PrtgResourceGuard : IDisposable
                     var resumeMsg = $"[PRTG資源守門] 離開暫停：讀取感測器即時值失敗，放行不阻擋，第 {_checkCount} 次檢查。";
                     _recorder.Milestone(resumeMsg);
                     _console.WriteLine(resumeMsg);
-                    _progress?.Report("guard-resumed", 0, 0);
+                    _progress?.Report(RunPhases.GuardResumed, 0, 0);
                     _consecutiveStrikes = 0;
                     _checkVersion++;
                     return;
@@ -257,7 +257,7 @@ public sealed class PrtgResourceGuard : IDisposable
                     var resumeMsg = $"[PRTG資源守門] 離開暫停：受監看感測器無法量測，放行不阻擋，第 {_checkCount} 次檢查。";
                     _recorder.Milestone(resumeMsg);
                     _console.WriteLine(resumeMsg);
-                    _progress?.Report("guard-resumed", 0, 0);
+                    _progress?.Report(RunPhases.GuardResumed, 0, 0);
                     _consecutiveStrikes = 0;
                     _checkVersion++;
                     return;
@@ -269,7 +269,7 @@ public sealed class PrtgResourceGuard : IDisposable
                     var resumeMsg = $"[PRTG資源守門] 離開暫停：資源已回落正常，第 {_checkCount} 次檢查，恢復執行。";
                     _recorder.Milestone(resumeMsg);
                     _console.WriteLine(resumeMsg);
-                    _progress?.Report("guard-resumed", 0, 0);
+                    _progress?.Report(RunPhases.GuardResumed, 0, 0);
                     _consecutiveStrikes = 0;
                     _checkVersion++;
                     return;

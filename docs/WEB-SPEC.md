@@ -2246,7 +2246,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   ——三條軌長得一樣，只印「準備中」使用者無從分辨是哪一路。
   觸發式取數在等待分析結果的空檔回報累計已取 sensor 數，顯示
   「PRTG 觸發式取數　已取 N 個 sensor（等待分析結果）」。
-  phase 字面值一覽（Core 與 Web 兩邊約定的字串）：`local`／`netiq`／`prtg-sync`／
+  phase 字面值**集中在 Core 的 `RunPhases`**（Core 送出、Web 分派、前端標籤三層共用同一份；
+  前端對照表的完整性由 `RunsPageUiTests` 以反射逐條核對——漏補文案時畫面會印裸 phase 給使用者）。
+  一覽：`local`／`netiq`／`prtg-sync`／
   `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
   `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`；
   PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
