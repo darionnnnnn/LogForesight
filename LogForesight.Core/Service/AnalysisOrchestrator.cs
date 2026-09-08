@@ -930,11 +930,13 @@ public class AnalysisOrchestrator
                     var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                         replaceExisting: isRerun);
-                    result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
+                    // PRTG finding 追加：**必須排在案件掛接與執行摘要之前**——案件掛接吃的是
+                    // 記憶體裡的 record.TopIssues，摘要吃的是 record.RiskLevel，
+                    // 晚一步併入的 finding 就進不了問題案件，上調後的風險也不會出現在摘要。
+                    HostDayPostProcessor.AttachPrtgFindings(
+                        prtgFindings, historyService, record, currentHostId, aiConfigured: localUseAi);
 
-                    // PRTG finding 追加：**必須排在案件掛接之前**，案件掛接吃的是記憶體裡的
-                    // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
-                    HostDayPostProcessor.AttachPrtgFindings(prtgFindings, historyService, record, currentHostId);
+                    result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
                     // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
                     // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
@@ -1306,7 +1308,15 @@ public class AnalysisOrchestrator
                     var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
 
                     // 依 EventKey 去重：與寫入路徑對同一天重複呼叫也不會產生重複列
-                    if (hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings)) appendedHosts++;
+                    if (hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings, useAi))
+                    {
+                        appendedHosts++;
+
+                        // 這條路的紀錄早在案件掛接跑完之後才被追加 finding，掛接看不到它們。
+                        // 補掛一次（AttachNewDay 冪等，本來就是「下次執行冪等補掛」的語意），
+                        // 否則 PRTG finding 永遠進不了問題案件與處理狀態鏈。
+                        HostDayPostProcessor.AttachCase(caseCoordinator, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                    }
                     else pendingHosts++;
                 }
 

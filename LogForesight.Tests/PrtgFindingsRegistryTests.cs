@@ -162,4 +162,131 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.Equal(0, HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 999));
         Assert.Empty(record.TopIssues);
     }
+    // ── 批次C：風險單向上調與 AI 待補重標 ──────────────────────────────
+
+    private DailyAnalysisRecord Seed(EfAnalysisRecordStore store, string risk, bool aiAnalyzed = false, bool pruned = false)
+    {
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101,
+            Host = "SRV-TEST",
+            Date = DateTime.Today,
+            RiskLevel = risk,
+            AiAnalyzed = aiAnalyzed,
+            DetailPruned = pruned,
+            TopIssues = new List<LogIssueSignature>()
+        };
+        store.Append(record);
+        return record;
+    }
+
+    [Fact]
+    public void 風險上調_down規則把低風險日拉成高並記錄依據()
+    {
+        // down 在 PrtgRuleCatalog 是 High + ElevatesDayRisk。這個旗標過去是死值——
+        // 追加發生在風險計算之後，從來沒有生效過。
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(ByHost(101, Finding(2001)));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.Equal("prtg:down", record.RiskBasis);
+        Assert.True(record.AiPending);
+
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+        Assert.True(persisted.AiPending);
+    }
+
+    /// <summary>
+    /// Medium 嚴重度的 PRTG 規則（flapping／warning／silent）不拉風險——與事件層同語意：
+    /// `ComputeRuleBasedRisk` 也只有 High 嚴重度才把日風險拉到中。
+    /// 只有 down（High ＋ ElevatesDayRisk）會拉高。
+    /// </summary>
+    [Fact]
+    public void 風險上調_中嚴重度規則不改變風險等級()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(ByHost(101, Finding(2002, "flapping")));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Equal(RiskLevels.Low, record.RiskLevel);
+        Assert.False(record.AiPending);
+        // finding 本身仍然併入（問題排行、處理狀態鏈都看得到），只是不改變風險等級
+        Assert.Single(record.TopIssues);
+    }
+
+    [Fact]
+    public void 風險上調_絕不壓低既有等級()
+    {
+        // PRTG 只是輔助訊號，看不到事件層的證據——既有高風險不得被 PRTG 的中風險壓下來。
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.High);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(ByHost(101, Finding(2002, "flapping")));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+    }
+
+    [Fact]
+    public void 風險上調_AI未設定時不標待補()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(ByHost(101, Finding(2001)));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: false);
+
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.False(record.AiPending);
+    }
+
+    [Fact]
+    public void 風險上調_已完成AI的紀錄只升風險不重標待補()
+    {
+        // 重標會讓已定案的內容被無謂重跑。
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low, aiAnalyzed: true);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(ByHost(101, Finding(2001)));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.False(record.AiPending);
+    }
+
+    [Fact]
+    public void 風險上調_重複追加不重複改動()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = Seed(store, RiskLevels.Low);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(ByHost(101, Finding(2001)));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+        record.AiPending = false;   // 模擬 AI 已補寫完成
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        // 第二次因 EventKey 去重整段短路，不會再把已完成的紀錄標回待補
+        Assert.False(record.AiPending);
+        Assert.Single(record.TopIssues);
+    }
 }

@@ -13,6 +13,9 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 - **PRTG 不取代 NetIQ**：兩者各自取數、各自失敗隔離。一台主機有 PRTG 對應時，
   日後的分析會同時看兩種訊號；沒有對應時就只有 NetIQ。這個分岔發生在主機層，
   **不存在「PRTG+NetIQ」的合併規則平台**——規則各自歸屬自己的來源。
+  合成發生在**主機日的結論層**：PRTG finding 進當日 `lf_top_issues`、單向上調日風險、
+  並以獨立區塊進 AI prompt（見 §9）。跨來源的複合規則（例如磁碟事件＋PRTG 磁碟 sensor 趨勢）
+  屬於關聯層，見 `docs/BACKLOG.md`。
 - **模組可完整停用**：`PrtgEnabled` 預設關閉，關閉時夜間擷取與歷史回填完全短路、不建立任何連線。
   唯一的例外是環境探測（見 §6）——它的用途正是在啟用之前先摸清環境，因此只要求位址與認證資訊。
 
@@ -365,7 +368,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 | 規則代碼 | 語意 | 預設門檻 | 分類／嚴重度 |
 |---|---|---|---|
-| `down` | sensor 進入 Down 且日終未恢復 | 持續 ≥ 60 分鐘 | Service／High（提升日風險） |
+| `down` | sensor 進入 Down 且日終未恢復 | 持續 ≥ 60 分鐘 | Service／High（**提升日風險**） |
 | `flapping` | 一日內 Down↔Up 反覆 | ≥ 5 次往返 | Service／Medium |
 | `warning` | Warning 狀態累計 | ≥ 4 小時 | Resource／Medium |
 | `silent` | device 底下全部未暫停 sensor 皆 Unknown 或無狀態 | 整日 | Service／Medium |
@@ -403,6 +406,28 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 - 追加依 `EventKey` 去重，同一天重跑不產生重複。
 - **命中主機會回饋觸發式取數的佇列**（§3a）——這是「PRTG 規則驅動加強取數」的閉環。
 
+### finding 對日風險與 AI 的影響
+
+追加時**單向上調**當日風險等級，判定與事件層的 `ComputeRuleBasedRisk` 同語意：
+
+| finding | 風險 |
+|---|---|
+| 任一未被抑制且帶 `ElevatesDayRisk`（目前只有 `down`） | 高 |
+| 任一未被抑制且嚴重度為 High | 中 |
+| 其餘（`flapping`／`warning`／`silent` 皆為 Medium） | 不改變 |
+
+- **只升不降**：一律取 `RiskLevels.MoreSevere(既有, PRTG 推導)`。PRTG 是輔助訊號、看不到事件層的
+  證據，絕不用它壓低既有等級。
+- 上調時風險依據記為 `prtg:{規則代碼}`，畫面才說得出是哪個訊號拉上去的。
+- **風險由低升為非低時標記待補 AI 判讀**（判準同 `HostDayPostProcessor.NeedsBackfill`：
+  AI 已設定、未分析、非 `detail_pruned`）。已完成 AI 的紀錄只升風險不重標——重標會讓已定案的
+  內容被無謂重跑。深析報告由 AI 補寫時依既有機制重建，不另做。
+- **既有紀錄不回溯**：升級後既有紀錄維持原風險，下次追加（重跑或次日）才生效。一次性回填會讓
+  歷史風險日突然變多，管理者無從分辨是新問題還是舊資料被重算。
+- AI prompt 另有獨立的【PRTG 監控訊號】區塊，**只餵已判定的 finding、不餵原始數值**
+  （原始數值的解讀屬於特徵計算層，見 `docs/BACKLOG.md`；AI 只把已確定的結論翻成白話）。
+  finding 不混進事件清單——它們的 `EventId` 恆為 0，混在一起會被當成一筆讀不出意義的事件。
+
 ### 追加時機與 finding 登錄簿
 
 規則評估算完後把「哪台主機命中哪些 finding」發佈到一趟執行內共享的登錄簿
@@ -413,8 +438,10 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | 規則評估**之前**已落地 | PRTG 路徑在發佈後掃一次補追加 |
 | 規則評估**之後**才落地 | 兩條分析寫入路徑（本機／NetIQ）在紀錄剛寫完時就地併入 |
 
-- 就地追加**必須排在問題案件掛接之前**：案件掛接吃的是記憶體裡的 `TopIssues`，
-  晚一步併入的 finding 就永遠進不了問題案件與處理狀態鏈。因此就地追加同時寫記憶體與資料庫。
+- 就地追加**必須排在問題案件掛接與執行摘要之前**：案件掛接吃的是記憶體裡的 `TopIssues`、
+  摘要吃的是 `RiskLevel`，晚一步併入的 finding 就永遠進不了問題案件與處理狀態鏈。
+  因此就地追加同時寫記憶體與資料庫。補追加那條路的紀錄早在掛接跑完之後才被追加，
+  它自己補呼叫一次案件掛接（`AttachNewDay` 冪等）。
 - 兩條路都依 `EventKey` 去重，重跑同一天不產生重複；重跑模式覆寫紀錄後，寫入路徑會再走一次，
   finding 自然重新追加。
 - **發佈本身是給 AI 分析排程看的旗標**（走 `IRunProgress` 的 `prtg-findings-ready` 訊號，

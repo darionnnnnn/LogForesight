@@ -86,5 +86,7 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// 已被保留期精簡（<c>detail_pruned</c>）時不追加並回 false——硬造一筆只有 PRTG finding
     /// 的紀錄會讓「未回報主機」「覆蓋缺口」等既有統計失真。
     /// </summary>
-    bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings);
+    /// <param name="aiConfigured">AI 是否已設定：風險由低升為非低時據此決定要不要標記待補 AI 判讀。</param>
+    bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
+        bool aiConfigured = false);
 }

@@ -14,6 +14,36 @@ public static class PrtgFindingMapper
     public const string PrtgLogName = "PRTG";
     public const string PrtgSource = "PRTG";
 
+    /// <summary>
+    /// 一組 PRTG finding 推導出的日風險等級（docs/PRTG-SPEC.md §9）。
+    /// 判定與 <c>LogAnalysisService.ComputeRuleBasedRisk</c> 的 issues 部分同語意：
+    /// 任一未被抑制的 finding 帶 <c>ElevatesDayRisk</c> → 高；任一為 High → 中；否則低。
+    ///
+    /// 這是**單向上調**的輸入：呼叫端一律取 <c>RiskLevels.MoreSevere(既有, 這個)</c>，
+    /// 絕不用它壓低既有等級——PRTG 只是輔助訊號，看不到事件層的證據。
+    /// </summary>
+    public static string RiskFromFindings(IReadOnlyList<LogIssueSignature> findings)
+    {
+        if (findings.Any(f => !f.Suppressed && f.ElevatesDayRisk)) return RiskLevels.High;
+        if (findings.Any(f => !f.Suppressed && f.Severity == IssueSeverity.High)) return RiskLevels.Medium;
+        return RiskLevels.Low;
+    }
+
+    /// <summary>
+    /// 風險依據代碼（純顯示）：<c>prtg:{規則代碼}</c>。規則代碼取自 EventKey 的
+    /// <c>prtg:{code}:{objid}</c> 格式，取不到時退回 <c>prtg</c>。
+    /// 沒有這個代碼，畫面會出現「高風險」卻說不出是哪個訊號拉上去的。
+    /// </summary>
+    public static string RiskBasisFrom(IReadOnlyList<LogIssueSignature> findings)
+    {
+        var decisive = findings.FirstOrDefault(f => !f.Suppressed && f.ElevatesDayRisk)
+                       ?? findings.FirstOrDefault(f => !f.Suppressed && f.Severity == IssueSeverity.High);
+        if (decisive == null) return "prtg";
+
+        var parts = decisive.EventKey.Split(':');
+        return parts.Length >= 2 && parts[0] == "prtg" ? $"prtg:{parts[1]}" : "prtg";
+    }
+
     public static LogIssueSignature ToSignature(PrtgFinding finding, DateTime day)
     {
         var (category, severity, elevatesDayRisk, knownIssue) = PrtgRuleCatalog.TryGetRule(finding.RuleCode, out var rule)

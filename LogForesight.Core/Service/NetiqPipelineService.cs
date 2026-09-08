@@ -624,7 +624,8 @@ public class NetiqPipelineService
 
             // PRTG finding 追加：**必須排在案件掛接之前**，案件掛接吃的是記憶體裡的
             // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
-            HostDayPostProcessor.AttachPrtgFindings(_prtgFindings, plan.Store, record, target.HostId, logContext);
+            HostDayPostProcessor.AttachPrtgFindings(
+                _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
 
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(

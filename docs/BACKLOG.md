@@ -437,6 +437,16 @@
   見 docs/PRTG-SPEC.md §9）。仍遞延的是**值型規則**（趨勢、基線偏移）——需要數值基線，
   累積量判斷與匯出見 PRTG-SPEC §11（原始 hourly 另走 §10）。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
   規則各自歸屬自己的來源。
+
+- **跨來源關聯規則**（例如 Windows 磁碟錯誤事件 ＋ 同主機 PRTG disk sensor 趨勢下降 →
+  提升嚴重度）：屬於**關聯層**而不是規則表——關聯層的組合模式本來就是程式碼邏輯、不搬進
+  rules.json（見 `CorrelationAnalyzer` 與 docs/RULES-SPEC.md 語意邊界），因此與上一條
+  「不新增合併規則平台」的定案不衝突。前置有兩項：(a) `EfPrtgStore` 需要「按 hostId＋日期
+  取數值／狀態變更」的查詢方法（現行是全域批次撈、事後歸戶，方向相反）；(b) PRTG 規則評估
+  需移到分析之前，或為 `LogAnalysisService` 開一條 PRTG 訊號入口（該類別目前對 PRTG 零認識），
+  且必須「取不到就靜默跳過」才不破壞 PRTG 的失敗隔離。
+  **只用狀態變更型的既有四條 finding 就能做，不需要值型規則的數值基線**——
+  這片區域其餘項目綁在校準頁四項達「可用」，這一條不受該前提限制。
 - **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
   `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
   （恆 `ok`，無品質判定依據）、`lf_prtg_sensors.thresholds_json`（未向 PRTG 索取閾值欄）、

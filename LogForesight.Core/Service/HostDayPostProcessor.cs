@@ -143,7 +143,7 @@ public static class HostDayPostProcessor
     /// </summary>
     public static int AttachPrtgFindings(
         PrtgFindingsRegistry registry, IAnalysisRecordStore store,
-        DailyAnalysisRecord record, long hostId, string logContext = "")
+        DailyAnalysisRecord record, long hostId, bool aiConfigured = false, string logContext = "")
     {
         var findings = registry.For(hostId);
         if (findings.Count == 0) return 0;
@@ -159,7 +159,17 @@ public static class HostDayPostProcessor
             if (added.Count == 0) return 0;
 
             record.TopIssues.AddRange(added);
-            store.AttachPrtgFindings(hostId, record.Date, added);
+            store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured);
+
+            // 記憶體紀錄跟著上調，與資料庫端同一套判定（docs/PRTG-SPEC.md §9）——
+            // 呼叫端接著會用 record.RiskLevel 組執行摘要，不同步就會印出上調前的舊值。
+            var elevated = RiskLevels.MoreSevere(record.RiskLevel, PrtgFindingMapper.RiskFromFindings(added));
+            if (elevated != record.RiskLevel)
+            {
+                record.RiskLevel = elevated;
+                record.RiskBasis = PrtgFindingMapper.RiskBasisFrom(added);
+                if (aiConfigured && !record.AiAnalyzed && !record.DetailPruned) record.AiPending = true;
+            }
 
             Log.Info("{Context}{Date:yyyy-MM-dd} 主機 id={HostId} 併入 {Count} 項 PRTG finding",
                 logContext, record.Date, hostId, added.Count);

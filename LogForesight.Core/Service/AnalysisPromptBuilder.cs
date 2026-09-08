@@ -172,8 +172,27 @@ internal class AnalysisPromptBuilder
             }
         }
 
-        var flagged = issues.Where(i => i.KnownIssue != null).ToList();
-        var others = issues.Where(i => i.KnownIssue == null).ToList();
+        // PRTG 監控訊號自成一段，不混進事件清單（docs/PRTG-SPEC.md §9）：
+        // 它們不是 Windows／Linux 事件，EventId 恆為 0，混在事件列表裡會被當成一筆奇怪的事件。
+        // 這裡只餵**已由規則確定性判定過的 finding**，不餵原始數值——原始數值的解讀屬於
+        // 特徵計算層（見 docs/BACKLOG.md），AI 只負責把已確定的結論翻成白話。
+        var prtgFindings = issues.Where(i => i.Source == PrtgFindingMapper.PrtgSource).ToList();
+        if (prtgFindings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("【PRTG 監控訊號】（既有監控系統對這台主機的量測結果，由程式依規則確定性判定，" +
+                          "與上述事件日誌互為佐證）");
+            foreach (var f in prtgFindings)
+            {
+                var detail = !string.IsNullOrWhiteSpace(f.KnownIssue)
+                    ? f.KnownIssue
+                    : f.SampleMessages.FirstOrDefault() ?? f.EventKey;
+                sb.AppendLine($"- [{f.Severity}] {detail}");
+            }
+        }
+
+        var flagged = issues.Where(i => i.KnownIssue != null && i.Source != PrtgFindingMapper.PrtgSource).ToList();
+        var others = issues.Where(i => i.KnownIssue == null && i.Source != PrtgFindingMapper.PrtgSource).ToList();
 
         if (flagged.Count > 0)
         {
