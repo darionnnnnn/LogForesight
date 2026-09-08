@@ -779,11 +779,13 @@ public sealed class PrtgFetchService
     private static string StateChangesQuery(DateTime targetDate)
     {
         var daysAgo = (DateTime.Today - targetDate.Date).Days;
+        // 級距是**滾動時間窗**（7days＝now-7d 起算）而非日曆日：目標日剛好落在邊界那天時，
+        // 該日凌晨到執行時刻之間的變更會落在窗外。因此邊界一律往上跳一階，寧可多抓。
         var drel = daysAgo switch
         {
-            <= 7 => "7days",
-            <= 30 => "30days",
-            <= 365 => "12months",
+            < 7 => "7days",
+            < 30 => "30days",
+            < 365 => "12months",
             _ => null
         };
 

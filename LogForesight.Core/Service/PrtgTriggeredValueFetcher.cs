@@ -43,7 +43,15 @@ public sealed class PrtgTriggeredValueFetcher
         string? scope = null,
         IReadOnlyCollection<long>? extraScopeHosts = null)
     {
-        var effectiveScope = PrtgValueFetchScope.Normalize(scope);
+        // 白名單為空時 all-mapped 會退回 triggered（第二道防線，見 PrtgValueFetchScope）
+        var whitelistEmpty = whitelist == null || whitelist.Count == 0;
+        var effectiveScope = PrtgValueFetchScope.EffectiveScope(scope, whitelistEmpty);
+
+        if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(scope, whitelistEmpty))
+        {
+            _console.WriteLine("  ⚠ 取數範圍設為「全部已對應主機」但 sensor type 白名單為空，" +
+                               "等於對全部 sensor 取數——本次退回「只抓觸發主機」。請先設定白名單。");
+        }
         var hostMapRows = _store.GetHostMapForDate(day);
         var hostToDevices = new Dictionary<long, List<long>>();
         foreach (var row in hostMapRows)

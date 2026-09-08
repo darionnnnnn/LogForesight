@@ -191,8 +191,12 @@ public class SettingsController : ControllerBase
         }
 
         var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
-        var effectiveScope = PrtgValueFetchScope.Normalize(scope ?? settings.PrtgValueFetchScope);
         var whitelist = settings.PrtgSensorTypeWhitelist ?? new List<string>();
+        var requestedScope = scope ?? settings.PrtgValueFetchScope;
+
+        // 估算的是**實際會生效**的範圍：白名單為空時 all-mapped 會退回 triggered
+        // （見 PrtgValueFetchScope 的第二道防線），估設定值會給出一個永遠不會發生的數字。
+        var effectiveScope = PrtgValueFetchScope.EffectiveScope(requestedScope, whitelist.Count == 0);
         var prtgStore = _backend.PrtgStore();
 
         // 估算一律以「最新一日的 ok 對應」為準：實際取數用的是當日對應，但估算是設定當下的
@@ -226,9 +230,10 @@ public class SettingsController : ControllerBase
         var sensors = prtgStore.GetValueFetchTargets(whitelist, deviceObjids);
 
         string? warning = null;
-        if (effectiveScope == PrtgValueFetchScope.AllMapped && whitelist.Count == 0)
+        if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(requestedScope, whitelist.Count == 0))
         {
-            warning = "sensor type 白名單留空等於對全部 sensor 取數，這個模式不允許——請先設定白名單。";
+            warning = "sensor type 白名單留空等於對全部 sensor 取數，這個模式不允許——" +
+                      "夜間批次會退回「只抓觸發主機」。請先設定白名單。";
         }
         else if (sensors.Count >= PrtgFetchScopeSensorWarnThreshold)
         {

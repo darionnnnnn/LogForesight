@@ -145,7 +145,9 @@ public static class HostDayPostProcessor
         PrtgFindingsRegistry registry, IAnalysisRecordStore store,
         DailyAnalysisRecord record, long hostId, bool aiConfigured = false, string logContext = "")
     {
-        var findings = registry.For(hostId);
+        // 帶日期比對：兩條寫入路徑都在逐日迴圈裡呼叫，而 PRTG 只評估了登錄簿發佈的那一天。
+        // 回補多天缺漏日時，其餘日期在這裡就會拿到空清單。
+        var findings = registry.For(hostId, record.Date);
         if (findings.Count == 0) return 0;
 
         try
@@ -158,11 +160,14 @@ public static class HostDayPostProcessor
             var added = findings.Where(f => existingKeys.Add(f.EventKey)).ToList();
             if (added.Count == 0) return 0;
 
-            record.TopIssues.AddRange(added);
-            store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured);
+            // **先看資料庫端做了沒**：查無該主機當日列、或詳情已被保留期精簡（detail_pruned）時
+            // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
+            // 會是「高」，資料庫裡卻還是「低」。
+            if (!store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured)) return 0;
 
-            // 記憶體紀錄跟著上調，與資料庫端同一套判定（docs/PRTG-SPEC.md §9）——
-            // 呼叫端接著會用 record.RiskLevel 組執行摘要，不同步就會印出上調前的舊值。
+            record.TopIssues.AddRange(added);
+
+            // 記憶體紀錄跟著上調，與資料庫端同一套判定（docs/PRTG-SPEC.md §9）
             var elevated = RiskLevels.MoreSevere(record.RiskLevel, PrtgFindingMapper.RiskFromFindings(added));
             if (elevated != record.RiskLevel)
             {

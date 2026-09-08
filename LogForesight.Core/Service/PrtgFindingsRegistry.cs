@@ -30,6 +30,7 @@ public sealed class PrtgFindingsRegistry
     private readonly object _lock = new();
     private IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> _byHost =
         new Dictionary<long, IReadOnlyList<LogIssueSignature>>();
+    private DateTime _day;
     private bool _ready;
 
     /// <summary>PRTG finding 是否已全部算完並發佈。</summary>
@@ -49,24 +50,31 @@ public sealed class PrtgFindingsRegistry
     /// 一律發佈空集合——**「算不出東西」與「還沒算完」必須分得出來**，
     /// 不發佈的話 AI 排程會一路等到整趟取數結束，等於這個機制沒做。
     /// </summary>
-    public void Publish(IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> findingsByHost)
+    /// <param name="day">
+    /// 這批 finding 所屬的日期。**追加時一定要比對它**：兩條寫入路徑都在逐日迴圈裡呼叫，
+    /// 回補多天缺漏日時每一天都會經過同一個登錄簿，而 PRTG 只評估了這一天。
+    /// 少了這道比對，站台停機三天後開跑會把昨天的 down 掛到三天份的紀錄上，
+    /// 且 EventKey（`prtg:{code}:{objid}`）不含日期、去重完全生效，重跑也不會自癒。
+    /// </param>
+    public void Publish(DateTime day, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> findingsByHost)
     {
         lock (_lock)
         {
+            _day = day.Date;
             _byHost = findingsByHost;
             _ready = true;
         }
     }
 
     /// <summary>
-    /// 取得某主機的 finding。未就緒或該主機沒有 finding 時回空清單
-    /// （呼叫端不必分辨這兩者：兩種情況都是「現在沒有東西要追加」）。
+    /// 取得某主機**該日**的 finding。未就緒、日期不是這批 finding 所屬的日期、
+    /// 或該主機沒有 finding 時一律回空清單（呼叫端不必分辨：都是「現在沒有東西要追加」）。
     /// </summary>
-    public IReadOnlyList<LogIssueSignature> For(long hostId)
+    public IReadOnlyList<LogIssueSignature> For(long hostId, DateTime date)
     {
         lock (_lock)
         {
-            if (!_ready) return Array.Empty<LogIssueSignature>();
+            if (!_ready || date.Date != _day) return Array.Empty<LogIssueSignature>();
             return _byHost.TryGetValue(hostId, out var findings)
                 ? findings
                 : Array.Empty<LogIssueSignature>();
@@ -85,7 +93,8 @@ public sealed class PrtgFindingsRegistry
     private static PrtgFindingsRegistry CreateReady()
     {
         var registry = new PrtgFindingsRegistry();
-        registry.Publish(new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+        // 空集合對任何日期都回空清單，所以這裡的日期不影響行為
+        registry.Publish(DateTime.Today, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
         return registry;
     }
 }

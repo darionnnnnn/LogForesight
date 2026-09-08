@@ -207,7 +207,7 @@ internal static class PrtgDailyPipeline
             // 3b. 發佈 finding 登錄簿並宣告就緒（docs/PRTG-SPEC.md §9）。
             // **規則評估失敗、規則庫尚無 PRTG 規則、零 finding 都要發佈**——「算不出東西」與
             // 「還沒算完」必須分得出來，不發佈的話 AI 分析排程會一路等到整趟取數結束。
-            prtgFindings.Publish(findingsByHost.ToDictionary(
+            prtgFindings.Publish(day, findingsByHost.ToDictionary(
                 kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value));
 
             // 補追加「就緒之前就已落地」的主機日：分析與 PRTG 並行，規則評估完成時已經有
@@ -239,8 +239,11 @@ internal static class PrtgDailyPipeline
                     else pendingHosts++;
                 }
 
+                // 回 false 有兩種情況且這裡分不出來：當日紀錄還沒落地，或已由寫入路徑就地加過
+                // （後者在分析與 PRTG 並行下是常態）。文字因此不宣稱原因——寫成「尚未落地」
+                // 會把一批早就處理完的主機報成待處理。
                 var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {totalFindings} 筆、涉及主機 {involvedHosts} 台、" +
-                              $"已追加 {appendedHosts} 台（{pendingHosts} 台的當日紀錄尚未落地，稍後由分析路徑就地追加）";
+                              $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
                 prtgConsole.WriteLine(summary);
                 runRecorder.Milestone(summary);
             }
@@ -283,7 +286,13 @@ internal static class PrtgDailyPipeline
                     scope: systemSettings.PrtgValueFetchScope,
                     extraScopeHosts: scopeHostIds);
 
-                var scopeText = PrtgValueFetchScope.Normalize(systemSettings.PrtgValueFetchScope) switch
+                // 印「實際生效」的範圍而非設定值：白名單為空時 all-mapped 會退回 triggered，
+                // 印設定值會讓「我明明設了全部主機」與實際行為對不上。
+                var effectiveScopeText = PrtgValueFetchScope.EffectiveScope(
+                    systemSettings.PrtgValueFetchScope,
+                    systemSettings.PrtgSensorTypeWhitelist == null || systemSettings.PrtgSensorTypeWhitelist.Count == 0);
+
+                var scopeText = effectiveScopeText switch
                 {
                     PrtgValueFetchScope.AllMapped => "全部已對應主機",
                     PrtgValueFetchScope.TriggeredPlusList => "觸發主機＋指定清單",
@@ -337,7 +346,7 @@ internal static class PrtgDailyPipeline
             // 少了這道，AI 分析排程會一路等到整趟取數結束——等於這個機制沒做。
             if (!prtgFindings.IsReady)
             {
-                prtgFindings.Publish(new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
                 progress?.Report(RunPhases.PrtgFindingsReady, 0, 0);
             }
 

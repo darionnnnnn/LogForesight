@@ -447,6 +447,14 @@
   且必須「取不到就靜默跳過」才不破壞 PRTG 的失敗隔離。
   **只用狀態變更型的既有四條 finding 就能做，不需要值型規則的數值基線**——
   這片區域其餘項目綁在校準頁四項達「可用」，這一條不受該前提限制。
+- **PRTG finding 追加與紀錄重寫之間沒有樂觀併發保護**：`AttachPrtgFindings` 走
+  「讀 row → 反序列化 → 重新序列化 → SaveChanges」，與重跑模式的「刪除當日 → 重新寫入」
+  可能落在同一個 (hostId, date) 上，兩者之間沒有版本權杖。後寫的一方會整段覆蓋 `ContentJson`，
+  而 `lf_top_issues` 子列是各自寫入的——主列 JSON 與子列可能不一致（問題排行查得到、詳情頁看不到）。
+  窗口很窄（補追加只在規則評估後跑一次），且需要「同一台主機同一天同時被重跑與追加」才會撞上。
+  要修的話是給 `lf_daily_records` 一個 rowversion 並讓兩條寫入路徑都帶版本檢查，
+  影響面涵蓋全部紀錄寫入點，不宜順手做。
+
 - **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
   `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
   （恆 `ok`，無品質判定依據）、`lf_prtg_sensors.thresholds_json`（未向 PRTG 索取閾值欄）、

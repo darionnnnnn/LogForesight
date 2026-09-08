@@ -33,19 +33,41 @@ public static class PrtgValueFetchScope
     /// <param name="triggeredHosts">觸發主機：當日高／中風險 ∪ 規則命中</param>
     /// <param name="mappedHosts">有 `ok` 主機對應的全部主機（<c>all-mapped</c> 模式用）</param>
     /// <param name="extraHosts">指定清單解析出的主機 id（<c>triggered-plus-list</c> 模式用）</param>
+    /// <param name="whitelistEmpty">
+    /// sensor type 白名單是否為空。空白名單＋<see cref="AllMapped"/>＝對全部 sensor 取數，
+    /// 實機四萬多個一晚跑不完且會壓垮 PRTG core。設定層存檔時已擋一次，**這裡是第二道**：
+    /// 設定 blob 若由匯入或人工編輯繞過驗證寫進來，夜間批次不能就這樣去抓全機房。
+    /// 此時退回 <see cref="Triggered"/>，並由 <see cref="ShouldWarnUnsafeAllMapped"/> 讓呼叫端說明原因。
+    /// </param>
     public static IReadOnlyList<long> SelectHosts(
         string? scope,
         IEnumerable<long> triggeredHosts,
         IEnumerable<long> mappedHosts,
-        IEnumerable<long> extraHosts)
+        IEnumerable<long> extraHosts,
+        bool whitelistEmpty = false)
     {
-        return Normalize(scope) switch
+        return EffectiveScope(scope, whitelistEmpty) switch
         {
             AllMapped => mappedHosts.Distinct().ToList(),
             TriggeredPlusList => triggeredHosts.Concat(extraHosts).Distinct().ToList(),
             _ => triggeredHosts.Distinct().ToList()
         };
     }
+
+    /// <summary>
+    /// 實際生效的模式：<see cref="Normalize"/> 之後再套「空白名單不得走 all-mapped」這道防線。
+    /// 取數與回填都用它決定行為，也用它在執行輸出印出真正生效的範圍——
+    /// 印設定值而非生效值，會讓「我明明設了全部主機」與「它其實退回觸發主機」對不上。
+    /// </summary>
+    public static string EffectiveScope(string? scope, bool whitelistEmpty)
+    {
+        var normalized = Normalize(scope);
+        return normalized == AllMapped && whitelistEmpty ? Triggered : normalized;
+    }
+
+    /// <summary>設定要求 all-mapped 但白名單為空——呼叫端據此輸出警告。</summary>
+    public static bool ShouldWarnUnsafeAllMapped(string? scope, bool whitelistEmpty) =>
+        Normalize(scope) == AllMapped && whitelistEmpty;
 
     /// <summary>
     /// 指定主機名稱解析成主機 id：不分大小寫、去前後空白，

@@ -2330,6 +2330,11 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   整段窗口，而排程輪詢遇到 `IsRunning` 就直接略過；少了這個訊號，畫面上只看得到「排程設了卻沒跑」。
   狀態卡因此顯示一行說明（`status.skippedScheduleAt`），並在該次手動執行的最新訊息留一筆；
   **同一個窗口實例只記一次**（靠窗口起始時刻去重），否則每 60 秒輪詢就重複寫一則。
+  **該窗口已經跑過就不算被佔用**（`ScheduleCalculator.WindowAlreadyTriggered`，
+  與 `ShouldTriggerNow` 共用同一個判定）——22:00 觸發、22:40 跑完、23:00 有人按立即執行時，
+  少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
+  訊息進狀態卡與 NLog，**不進里程碑**：里程碑屬於某一次執行的紀錄，而這件事發生在輪詢執行緒、
+  拿不到那次執行的 recorder；事後追查走 NLog。
 - **三軌進度收成單一型別**：`SchedulerRunState` 的三組 `(Phase, Done, Total, Completed)` 是一個
   值型別 ×3，開始與結束共用同一個 `ResetTracks()`——逐欄重設會讓兩處各有一份 12 欄的清單、
   必須手動保持同步，漏一個就是上一趟的進度殘留在畫面上。**status API 的欄位名與這個內部結構無關**。

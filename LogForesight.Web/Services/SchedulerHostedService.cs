@@ -144,6 +144,9 @@ public class SchedulerHostedService : BackgroundService
     /// <summary>
     /// 手動執行佔住排程窗口時記一次（每個窗口實例只記一次，靠窗口起始時刻去重）。
     /// 少了這個訊號，管理者只會看到「排程設了卻沒跑」，而原因（有人按了立即執行）完全不在畫面上。
+    ///
+    /// 訊息進狀態卡的「最新訊息」與 NLog；**不進里程碑**——里程碑屬於某一次執行的紀錄，
+    /// 而這件事發生在輪詢執行緒、拿不到那次執行的 recorder。事後追查走 NLog。
     /// </summary>
     private void NoteSkippedScheduleWindow(ScheduleOptions options)
     {
@@ -156,6 +159,15 @@ public class SchedulerHostedService : BackgroundService
 
         // 現在不在任何窗口內就沒有「被佔用的窗口」可講
         if (windowStart == null) return;
+
+        // **這個窗口已經跑過就不算被佔用**：22:00 觸發、22:40 跑完，23:00 有人按立即執行——
+        // 少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
+        var scheduledTriggerTimes = _batchRunStore
+            .GetRecentRuns(RecentRunsLookbackDays, null)
+            .Where(r => r.Trigger == "schedule")
+            .Select(r => r.StartedAt);
+
+        if (ScheduleCalculator.WindowAlreadyTriggered(now, windowStart.Value, scheduledTriggerTimes)) return;
 
         if (_runState.NoteSkippedSchedule(windowStart.Value))
         {

@@ -1042,12 +1042,14 @@ public class PrtgFetchServiceTests : IDisposable
     /// 刻意不用 today／yesterday：跨午夜的執行在階段 3 跑過零點時目標日會落在前天，那兩個級距會整段漏掉。
     /// </summary>
     [Theory]
+    // 邊界一律往上跳一階：級距是滾動時間窗（7days＝now-7d 起算）而非日曆日，
+    // 目標日剛好是第 7 天時，該日凌晨到執行時刻之間的變更會落在 7days 窗外。
     [InlineData(1, "filter_drel=7days")]
-    [InlineData(7, "filter_drel=7days")]
-    [InlineData(8, "filter_drel=30days")]
-    [InlineData(30, "filter_drel=30days")]
-    [InlineData(31, "filter_drel=12months")]
-    [InlineData(365, "filter_drel=12months")]
+    [InlineData(6, "filter_drel=7days")]
+    [InlineData(7, "filter_drel=30days")]
+    [InlineData(29, "filter_drel=30days")]
+    [InlineData(30, "filter_drel=12months")]
+    [InlineData(364, "filter_drel=12months")]
     public async Task FetchDayAsync_狀態變更查詢帶相對日期過濾(int daysAgo, string expectedFilter)
     {
         var messageUrls = new List<string>();

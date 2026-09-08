@@ -39,7 +39,15 @@ public static class PrtgBackfillRunner
         string? scope = null,
         IReadOnlyCollection<long>? extraScopeHosts = null)
     {
-        var effectiveScope = PrtgValueFetchScope.Normalize(scope);
+        // 白名單為空時 all-mapped 會退回 triggered（第二道防線，見 PrtgValueFetchScope）
+        var whitelistEmpty = whitelist == null || whitelist.Count == 0;
+        var effectiveScope = PrtgValueFetchScope.EffectiveScope(scope, whitelistEmpty);
+
+        if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(scope, whitelistEmpty))
+        {
+            console.WriteLine("⚠ 取數範圍設為「全部已對應主機」但 sensor type 白名單為空，" +
+                              "等於對全部 sensor 取數——本次退回「只抓觸發主機」。請先設定白名單。");
+        }
         if (days <= 0)
         {
             console.WriteLine("回填天數必須大於 0。");

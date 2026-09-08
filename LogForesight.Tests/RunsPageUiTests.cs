@@ -158,15 +158,16 @@ public class RunsPageUiTests
 
         foreach (var phase in LogForesight.Core.Service.RunPhases.ProgressTracks)
         {
-            // 標籤沒有對應時前端會 fallback 成裸 phase 字串，直接印給使用者——一律要求。
-            Assert.True(labelTable.Contains(phase),
+            // 比對**鍵本身**而非子字串：`Contains("prtg-sync")` 在對照表只有
+            // 'prtg-sync-devices' 時仍為真，那正好繞過這條測試要擋的漏改。
+            Assert.True(ContainsKey(labelTable, phase),
                 $"phase「{phase}」在 runs.js 的 PROGRESS_PHASE_LABEL 沒有對應文案，畫面會印出裸字串");
 
             // 單位的 fallback 是「主機日」，對本機／NetIQ 正確、對 PRTG 是錯的
             // （PRTG 的粒度是 sensor／device／筆），所以只對 PRTG 類要求。
             if (phase.StartsWith("prtg-", StringComparison.Ordinal))
             {
-                Assert.True(unitTable.Contains(phase),
+                Assert.True(ContainsKey(unitTable, phase),
                     $"phase「{phase}」在 runs.js 的 PROGRESS_PHASE_UNIT 沒有對應單位，會 fallback 成錯誤的「主機日」");
             }
         }
@@ -191,6 +192,16 @@ public class RunsPageUiTests
             Assert.Contains(phase, LogForesight.Core.Service.RunPhases.All);
         }
     }
+
+    /// <summary>
+    /// 物件字面值裡有沒有這個**鍵**。JS 的鍵可能加引號也可能不加（`local: '…'` 與
+    /// `'prtg-sync': '…'` 兩種寫法本檔都有），兩種都要認。
+    /// </summary>
+    private static bool ContainsKey(string objectLiteral, string key) =>
+        objectLiteral.Contains($"'{key}':", StringComparison.Ordinal)
+        || objectLiteral.Contains($"\"{key}\":", StringComparison.Ordinal)
+        || System.Text.RegularExpressions.Regex.IsMatch(
+            objectLiteral, $@"(^|[,{{\s]){System.Text.RegularExpressions.Regex.Escape(key)}\s*:");
 
     /// <summary>取出 `const NAME = { ... };` 的物件字面值內容。</summary>
     private static string ExtractObjectLiteral(string js, string name)
@@ -234,8 +245,9 @@ public class RunsPageUiTests
         Assert.DoesNotContain("style=\"max-width: 120px;\"", cshtml);
 
         // 回填輸出預設收合（它是全頁最高的單一元素）
-        Assert.Contains("id=\"prtg-backfill-output-wrap\"", cshtml);
-        Assert.Contains("collapse", cshtml);
+        // 收合容器要真的掛上 collapse 行為，不是頁面任何一處出現 collapse 就算
+        Assert.Contains("class=\"collapse mt-2\" id=\"prtg-backfill-output-wrap\"", cshtml);
+        Assert.Contains("data-bs-target=\"#prtg-backfill-output-wrap\"", cshtml);
 
         // 頁籤與面板同層：頁籤結束標籤之後、第一個 data-panel 之前不得出現新的容器 div
         var tabsEnd = cshtml.IndexOf("</ul>", cshtml.IndexOf("id=\"runs-tabs\"", StringComparison.Ordinal), StringComparison.Ordinal);
