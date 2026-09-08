@@ -9,8 +9,10 @@ public sealed record PrtgTriggeredFetchResult(
     int TriggerHosts, int TargetSensors, int ValuesWritten, int FailedSensors);
 
 /// <summary>
-/// 觸發式 PRTG 數值取數：只對「昨日風險為高或中」的主機所對應的 device 上、
+/// 觸發式 PRTG 數值取數：預設只對「**目標日**風險為高或中」的主機所對應的 device 上、
 /// 且 type 命中白名單的 sensor 擷取 hourly 數值，並與分析流程並行進行。
+/// 目標日就是這趟批次處理的那一天（`day` 參數），不是固定的昨天——歷史回填也走這裡。
+/// 取數範圍可由 `PrtgValueFetchScope` 放寬，見 docs/PRTG-SPEC.md §3a。
 /// </summary>
 public sealed class PrtgTriggeredValueFetcher
 {

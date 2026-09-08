@@ -1,3 +1,4 @@
+using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -675,5 +676,55 @@ public class SchedulerRunStateTests
         var nextWindow = windowStart.AddDays(1);
         Assert.True(state.NoteSkippedSchedule(nextWindow));
         Assert.Equal(nextWindow, state.SkippedScheduleAt);
+    }
+    /// <summary>
+    /// 批次G3 驗收：三軌進度改成值型別是**內部結構**的重整，
+    /// `ScheduleStatusDto` 的欄位名是對外契約（前端逐一取用），不得跟著變。
+    /// 這條把契約寫成清單釘住——改名或漏欄位時測試紅，而不是等前端某個數字悄悄變成 undefined。
+    /// </summary>
+    [Fact]
+    public void 排程狀態DTO的進度欄位名維持不變()
+    {
+        var names = typeof(ScheduleStatusDto)
+            .GetProperties()
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var expected in new[]
+        {
+            // NetIQ 主軌（歷史名稱，沒有 Netiq 前綴）
+            "ProgressPhase", "ProgressDone", "ProgressTotal",
+            "LocalProgressPhase", "LocalProgressDone", "LocalProgressTotal",
+            "PrtgProgressPhase", "PrtgProgressDone", "PrtgProgressTotal",
+            "LocalCompleted", "NetiqCompleted", "PrtgCompleted",
+            "PausedReason", "SkippedScheduleAt"
+        })
+        {
+            Assert.True(names.Contains(expected), $"ScheduleStatusDto 少了對外欄位「{expected}」");
+        }
+    }
+
+    /// <summary>
+    /// 同上，但釘的是**狀態物件**的公開屬性——DTO 是照抄它的，兩邊任一改名都會讓對應斷掉。
+    /// </summary>
+    [Fact]
+    public void 狀態物件的進度屬性名維持不變()
+    {
+        var names = typeof(SchedulerRunState)
+            .GetProperties()
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var expected in new[]
+        {
+            "ProgressPhase", "ProgressDone", "ProgressTotal",
+            "LocalProgressPhase", "LocalProgressDone", "LocalProgressTotal",
+            "PrtgProgressPhase", "PrtgProgressDone", "PrtgProgressTotal",
+            "LocalCompleted", "NetiqCompleted", "PrtgCompleted",
+            "PrtgFindingsReady", "SkippedScheduleAt", "PausedReason"
+        })
+        {
+            Assert.True(names.Contains(expected), $"SchedulerRunState 少了公開屬性「{expected}」");
+        }
     }
 }
