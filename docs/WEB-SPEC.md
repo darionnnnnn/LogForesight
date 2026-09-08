@@ -2241,8 +2241,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   ——三條軌長得一樣，只印「準備中」使用者無從分辨是哪一路。
   觸發式取數在等待分析結果的空檔回報累計已取 sensor 數，顯示
   「PRTG 觸發式取數　已取 N 個 sensor（等待分析結果）」。
-  phase 字面值一覽（Core 與 Web 兩邊約定的字串）：`local`／`netiq`／`prtg-sync`／`prtg-values`／
+  phase 字面值一覽（Core 與 Web 兩邊約定的字串）：`local`／`netiq`／`prtg-sync`／
+  `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
   `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`。
+  **結構同步三階段各自回報自己的 phase**（常數見 `PrtgFetchService`）：分子是已讀取列數、
+  分母取 PRTG 回應的 `treesize`（缺這個欄位時分母 0，畫不定進度但分子照走）。
+  少了這三個 phase，從進入 PRTG 到觸發式取數之間整段只有一次 `prtg-sync (0,0)`，
+  「剛啟動」「結構同步跑四十分鐘」「卡死」在畫面上完全一樣。分頁每滿 50 頁另寫一行執行輸出。
 - **首次載入不慢半拍**：狀態查詢與 options／ai-status／settings 同時發出，
   不等那三支回來；頁面狀態文字初值為「載入中…」而非空白
   ——否則進站會先看到「沒有執行中」，過一下才跳出執行中。
@@ -2261,6 +2266,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **AI 分析排程未啟用的提示**：AI 已設定、AI 排程未啟用且待補件數大於 0 時，
   AI 分析狀態卡顯示「AI 分析排程未啟用，N 件待補不會被處理」——
   本機路徑改走 AI 排程後，排程沒開就等於本機也沒有 AI 判讀，這個缺口要說出來。
+- **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
+  「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+  `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
+  `disabled`／`backfill-pending`／`outside-window`／`no-pending`），
+  由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
+  前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
+  `disabled` 走既有那條帶件數的文案，`no-pending` 不需要說明（待補為 0 本身就講完了）。
 - **待補件數快取 30 秒**：該查詢在實機要 7~15 秒，而狀態卡執行中每 3 秒輪詢一次
   ——不快取等於自己把資料庫打慢。AI 排程每輪收尾與整批重標時使快取失效。
   **查詢刻意在鎖外執行**：那把鎖同時保護 AI 排程的開始與結束，

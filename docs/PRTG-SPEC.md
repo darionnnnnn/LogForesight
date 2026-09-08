@@ -79,7 +79,7 @@ PRTG 路徑的執行順序是：**結構與狀態變更同步 → 主機對應�
 |---|---|---|
 | 1. device 結構 | `table.json?content=devices` | `UpsertDevices`（全量 upsert） |
 | 2. sensor 結構 | `table.json?content=sensors` | `UpsertSensors`（全量 upsert，不覆蓋分類欄） |
-| 3. 狀態變更 | `table.json?content=messages` | `AppendStateChanges`（只取當日，去重） |
+| 3. 狀態變更 | `table.json?content=messages&filter_drel=…` | `AppendStateChanges`（只取當日，去重） |
 | 4. hourly 數值 | `historicdata.json?avg=3600` | `UpsertValues`（逐 sensor 寫入即釋放）。**觸發式，非全量**，見下 |
 
 ### 3a. 觸發式數值取數
@@ -105,6 +105,16 @@ PRTG 路徑的執行順序是：**結構與狀態變更同步 → 主機對應�
 - 對 PRTG 的併發上限由 `PrtgFetchConcurrency`（1~3，預設 2）以 semaphore 控制，每日擷取與歷史回填共用同一設定。
 - **分頁的停止條件是「未滿一頁」**，不只是「空頁」：PRTG 前面若有會忽略 `start` 參數的
   代理，只靠空頁判定會讓迴圈永遠跑不完、整趟夜間批次無聲卡死。
+- **狀態變更一律帶相對日期過濾 `filter_drel`**，取「涵蓋得到目標日的最小級距」
+  （7days／30days／12months；超過一年不帶）。messages 端點沒有「只取某一天」的參數，
+  不帶它就是把整台 PRTG 的訊息歷史從頭翻到尾、再由用戶端丟掉 99%，實機要翻幾百頁。
+  **用戶端的當日過濾仍然保留**：參數被舊版或中間代理忽略時結果照樣正確，只是慢。
+  刻意不用 `today`／`yesterday`——跨午夜的執行窗口在這個階段跑過零點時目標日會落在前天，
+  那兩個級距會整段漏掉。
+- **結構同步三階段各自回報進度**（`prtg-sync-devices`／`-sensors`／`-messages`）：
+  分子是已讀取列數、分母取回應的 `treesize`；每滿 50 頁另寫一行執行輸出。
+  結構同步**不套 `PrtgFetchConcurrency`**（分頁必須循序），也**不設整段逾時**
+  ——拍腦袋的倍數在大型環境會誤殺合法的長同步，停止鈕的取消訊號已穿透分頁迴圈。
 - 記憶體：逐頁轉換、累積滿 500 筆就寫一次；每批一個新的 `DbContext`（變更追蹤器每批歸零）。
   絕不把整份資料堆在記憶體最後才寫。
 - 單一 sensor 的數值擷取失敗（逾時、404、暫時 5xx）只影響它自己，其餘 sensor 照樣落地並回報

@@ -15,6 +15,19 @@ public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges,
 /// </summary>
 public sealed class PrtgFetchService
 {
+    // 進度回報的 phase 字面值。Web 端 SchedulerRunState 依 "prtg-" 前綴歸入 PRTG 進度軌，
+    // 前端 runs.js 另有一份標籤對照表——新增 phase 必須同步該表，否則畫面會印出裸 phase 字串。
+    /// <summary>階段 1：device 結構同步</summary>
+    public const string PrtgSyncDevicesPhase = "prtg-sync-devices";
+    /// <summary>階段 2：sensor 結構同步</summary>
+    public const string PrtgSyncSensorsPhase = "prtg-sync-sensors";
+    /// <summary>階段 3：狀態變更（messages）同步</summary>
+    public const string PrtgSyncMessagesPhase = "prtg-sync-messages";
+    /// <summary>階段 4：每日 hourly 數值</summary>
+    public const string PrtgValuesPhase = "prtg-values";
+    /// <summary>觸發式數值取數</summary>
+    public const string PrtgTriggeredPhase = "prtg-triggered";
+
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
     private readonly IRunConsole _console;
@@ -73,13 +86,11 @@ public sealed class PrtgFetchService
 
         if (syncStructure)
         {
-            progress?.Invoke("prtg-sync", 0, 0);
-
             // 階段 1：device 結構全量同步
             try
             {
                 _console.WriteLine("[階段 1/4] 開始同步 PRTG 裝置結構鏡像...");
-                devicesCount = await FetchDevicesAsync(ct);
+                devicesCount = await FetchDevicesAsync(ct, progress);
                 _console.WriteLine($"[階段 1/4] 裝置結構同步完成，共寫入/更新 {devicesCount} 台裝置。");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -96,7 +107,7 @@ public sealed class PrtgFetchService
             try
             {
                 _console.WriteLine("[階段 2/4] 開始同步 PRTG 感測器結構鏡像...");
-                (sensorsCount, sensorTargets) = await FetchSensorsAsync(ct);
+                (sensorsCount, sensorTargets) = await FetchSensorsAsync(ct, progress);
                 _console.WriteLine($"[階段 2/4] 感測器結構同步完成，共寫入/更新 {sensorsCount} 個感測器。");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -128,7 +139,7 @@ public sealed class PrtgFetchService
         try
         {
             _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{day:yyyy-MM-dd}）...");
-            stateChangesCount = await FetchStateChangesAsync(day, ct);
+            stateChangesCount = await FetchStateChangesAsync(day, ct, progress);
             _console.WriteLine($"[階段 3/4] 狀態變更同步完成，共寫入 {stateChangesCount} 筆。");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -148,7 +159,7 @@ public sealed class PrtgFetchService
             {
                 var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
                 _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
-                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, "prtg-values");
+                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, PrtgValuesPhase);
                 valuesCount = written;
                 _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
 
@@ -192,11 +203,11 @@ public sealed class PrtgFetchService
         }
 
         var targets = sensorObjids.Select(id => (Objid: id, Paused: false)).ToList();
-        return await FetchValuesAsync(day, targets, concurrency, ct, progress, "prtg-triggered");
+        return await FetchValuesAsync(day, targets, concurrency, ct, progress, PrtgTriggeredPhase);
     }
 
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>
-    private async Task<int> FetchDevicesAsync(CancellationToken ct)
+    private async Task<int> FetchDevicesAsync(CancellationToken ct, Action<string, int, int>? progress = null)
     {
         var syncedAt = DateTime.Now;
         var totalWritten = 0;
@@ -231,13 +242,17 @@ public sealed class PrtgFetchService
             {
                 totalWritten += _store.UpsertDevices(batch, syncedAt);
             },
-            ct: ct);
+            ct: ct,
+            phase: PrtgSyncDevicesPhase,
+            progress: progress,
+            stageLabel: "階段 1/4 裝置結構");
 
         return totalWritten;
     }
 
     /// <summary>階段 2：分頁抓取所有 sensors 並寫入鏡像表，同時收集未暫停名單供階段 4 使用</summary>
-    private async Task<(int TotalWritten, List<(long Objid, bool Paused)> SensorTargets)> FetchSensorsAsync(CancellationToken ct)
+    private async Task<(int TotalWritten, List<(long Objid, bool Paused)> SensorTargets)> FetchSensorsAsync(
+        CancellationToken ct, Action<string, int, int>? progress = null)
     {
         var syncedAt = DateTime.Now;
         var totalWritten = 0;
@@ -279,13 +294,16 @@ public sealed class PrtgFetchService
             {
                 totalWritten += _store.UpsertSensors(batch, syncedAt);
             },
-            ct: ct);
+            ct: ct,
+            phase: PrtgSyncSensorsPhase,
+            progress: progress,
+            stageLabel: "階段 2/4 感測器結構");
 
         return (totalWritten, targets);
     }
 
     /// <summary>階段 3：分頁抓取 messages 並只保留目標日期的紀錄，寫入狀態變更表</summary>
-    private async Task<int> FetchStateChangesAsync(DateTime day, CancellationToken ct)
+    private async Task<int> FetchStateChangesAsync(DateTime day, CancellationToken ct, Action<string, int, int>? progress = null)
     {
         var targetDate = day.Date;
         var totalWritten = 0;
@@ -295,7 +313,7 @@ public sealed class PrtgFetchService
         await FetchTablePagedAsync<PrtgStateChangeRow>(
             content: "messages",
             columns: "objid,datetime,parent,status,message",
-            extraQuery: "id=0",
+            extraQuery: StateChangesQuery(targetDate),
             mapper: el =>
             {
                 var dtStr = GetStringProperty(el, "datetime");
@@ -329,7 +347,10 @@ public sealed class PrtgFetchService
             {
                 totalWritten += _store.AppendStateChanges(batch);
             },
-            ct: ct);
+            ct: ct,
+            phase: PrtgSyncMessagesPhase,
+            progress: progress,
+            stageLabel: "階段 3/4 狀態變更");
 
         if (unparseableCount > 0)
         {
@@ -346,7 +367,7 @@ public sealed class PrtgFetchService
         int concurrency,
         CancellationToken ct,
         Action<string, int, int>? progress = null,
-        string stage = "prtg-values")
+        string stage = PrtgValuesPhase)
     {
         if (activeSensors.Count == 0)
         {
@@ -566,12 +587,24 @@ public sealed class PrtgFetchService
         string? extraQuery,
         Func<JsonElement, T?> mapper,
         Action<IReadOnlyList<T>> onBatch,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? phase = null,
+        Action<string, int, int>? progress = null,
+        string? stageLabel = null)
     {
         const int pageSize = 500;
+        // 每翻這麼多頁就寫一行執行輸出：結構同步在大型環境要翻數百頁，
+        // 沒有任何輸出時「跑得慢」與「卡死」在畫面上完全一樣。
+        const int consoleEveryPages = 50;
         var offset = 0;
         var totalMapped = 0;
+        var readRows = 0;
+        var pageIndex = 0;
+        var treeSize = 0;
         var buffer = new List<T>(pageSize);
+
+        // 分母尚未知（要等第一次回應的 treesize），先送 0 讓進度軌顯示不定進度
+        if (phase != null) progress?.Invoke(phase, 0, 0);
 
         while (true)
         {
@@ -589,6 +622,15 @@ public sealed class PrtgFetchService
                 arrayProp.ValueKind != JsonValueKind.Array)
             {
                 break;
+            }
+
+            // treesize＝PRTG 回報的該 content 總筆數，當進度分母。只在第一次取得時記錄
+            // （分頁過程中的值可能隨資料異動而變，分母來回跳動比沒有分母更難讀）。
+            // 沒有這個欄位時維持 0，進度軌顯示不定進度但仍有分子。
+            if (treeSize == 0)
+            {
+                var parsedTreeSize = GetLongProperty(root, "treesize");
+                if (parsedTreeSize is > 0 and <= int.MaxValue) treeSize = (int)parsedTreeSize.Value;
             }
 
             var countInPage = 0;
@@ -609,6 +651,19 @@ public sealed class PrtgFetchService
                         buffer.Clear();
                     }
                 }
+            }
+
+            pageIndex++;
+            readRows += countInPage;
+
+            // 分子用「已讀取的列數」而非已寫入數：寫入是每滿 500 筆才發生一次，
+            // 用寫入數當分子會讓進度以 500 為單位跳動、且最後一批寫入前看起來停滯。
+            if (phase != null) progress?.Invoke(phase, readRows, treeSize);
+
+            if (stageLabel != null && pageIndex % consoleEveryPages == 0)
+            {
+                var scope = treeSize > 0 ? $" / 約 {treeSize} 筆" : string.Empty;
+                _console.WriteLine($"  [{stageLabel}] 已翻 {pageIndex} 頁、累計讀取 {readRows} 筆{scope}...");
             }
 
             // 停止條件有兩道：空頁，以及「未滿一頁」＝最後一頁。
@@ -711,6 +766,29 @@ public sealed class PrtgFetchService
     /// </summary>
     private static string? Truncate(string? value, int maxLength) =>
         value != null && value.Length > maxLength ? value[..maxLength] : value;
+
+    /// <summary>
+    /// messages 端點的查詢字串。PRTG 的 messages 沒有「只取某一天」的參數，只有相對區間
+    /// <c>filter_drel</c>（today／yesterday／7days／30days／12months）；不帶它就是把整台 PRTG
+    /// 的訊息歷史從頭翻到尾，再由用戶端丟掉 99%。這裡取「涵蓋得到目標日的最小級距」，
+    /// **用戶端的當日過濾仍然保留**——參數被舊版或代理忽略時結果照樣正確，只是慢。
+    /// 刻意不用 today／yesterday：跨午夜的執行窗口在階段 3 跑過零點時，目標日就會落在
+    /// 前天，這兩個級距會整段漏掉。目標日超過 12 個月時不帶參數（全量翻），那是超出保留期的
+    /// 極端回填，不值得為它多一個級距。
+    /// </summary>
+    private static string StateChangesQuery(DateTime targetDate)
+    {
+        var daysAgo = (DateTime.Today - targetDate.Date).Days;
+        var drel = daysAgo switch
+        {
+            <= 7 => "7days",
+            <= 30 => "30days",
+            <= 365 => "12months",
+            _ => null
+        };
+
+        return drel == null ? "id=0" : $"id=0&filter_drel={drel}";
+    }
 
     private static string? GetStringProperty(JsonElement el, string propName)
     {

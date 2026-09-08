@@ -913,6 +913,14 @@ function applyScheduleStatus(status) {
     wasScheduleRunning = status.isRunning;
 }
 
+// AI 排程閒置原因的文案（後端 AiIdleReasons 的字面值）。
+// 'disabled' 另有帶件數的既有文案；'no-pending' 不需要說明（待補為 0 本身就講完了）。
+// 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
+const AI_IDLE_REASON_TEXT = {
+    'backfill-pending': '存量校正回填尚未完成，AI 分析要等它跑完才會開始。',
+    'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。'
+};
+
 function applyAiScheduleStatus(status) {
     lastAiScheduleStatus = status;
     const runStateEl = document.getElementById('schedule-ai-run-state');
@@ -943,13 +951,17 @@ function applyAiScheduleStatus(status) {
 
     const hintEl = document.getElementById('ai-schedule-disabled-hint');
     if (hintEl) {
+        // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
+        // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+        let hint = '';
         if (aiAvailable && !status.aiEnabled && status.pendingTotal > 0) {
-            hintEl.textContent = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
-            hintEl.classList.remove('d-none');
-        } else {
-            hintEl.textContent = '';
-            hintEl.classList.add('d-none');
+            hint = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
+        } else if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
+            hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
+
+        hintEl.textContent = hint;
+        hintEl.classList.toggle('d-none', hint === '');
     }
 
     renderAiScheduleProgress(status);
@@ -1000,11 +1012,17 @@ const PROGRESS_PHASE_LABEL = {
     local: '本機分析',
     netiq: 'NetIQ 機房分析',
     'prtg-sync': 'PRTG 結構同步',
+    'prtg-sync-devices': 'PRTG 裝置結構同步',
+    'prtg-sync-sensors': 'PRTG 感測器結構同步',
+    'prtg-sync-messages': 'PRTG 狀態變更同步',
     'prtg-values': 'PRTG 數值取數',
     'prtg-triggered': 'PRTG 觸發式取數'
 };
 const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
+    'prtg-sync-devices': '台',
+    'prtg-sync-sensors': '個',
+    'prtg-sync-messages': '筆',
     'prtg-values': 'sensor',
     'prtg-triggered': 'sensor'
 };

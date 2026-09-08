@@ -117,19 +117,37 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        if (!options.AiEnabled) return;
+        if (!options.AiEnabled)
+        {
+            _runState.SetIdleReason(AiIdleReasons.Disabled);
+            return;
+        }
 
         // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
         // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
         // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
-        if (!_backfiller.Progress.Completed) return;
+        if (!_backfiller.Progress.Completed)
+        {
+            _runState.SetIdleReason(AiIdleReasons.BackfillPending);
+            return;
+        }
 
         // 必須在執行窗口內
-        if (!ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)) return;
+        if (!ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows))
+        {
+            _runState.SetIdleReason(AiIdleReasons.OutsideWindow);
+            return;
+        }
 
         // 有待補資料才自動開跑
         var pendingCount = _recordQuery.CountPendingAi();
-        if (pendingCount == 0) return;
+        if (pendingCount == 0)
+        {
+            _runState.SetIdleReason(AiIdleReasons.NoPending);
+            return;
+        }
+
+        _runState.SetIdleReason(null);
 
         await TriggerRunAsync(forceRerun: false, trigger: "schedule", externalCt: stoppingToken);
     }

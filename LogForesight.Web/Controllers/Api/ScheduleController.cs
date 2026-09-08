@@ -423,6 +423,7 @@ public class ScheduleController : ControllerBase
             PendingTotal = _aiRunState.GetPendingAiCount(() => _records.CountPendingAi()),
             UnitText = "件",
             CanStop = snapshot.IsRunning,
+            IdleReason = snapshot.IsRunning ? null : snapshot.IdleReason,
             AiEnabled = options.AiEnabled,
             AiConcurrency = options.AiConcurrency,
             NextTriggerTime = options.AiEnabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows) : null,

@@ -641,4 +641,71 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(0, aiRun.AiFailures);
         Assert.False(string.IsNullOrEmpty(aiRun.AppVersion));
     }
+    /// <summary>
+    /// 批次A：AI 排程每輪有多個前置條件，任一不成立就整輪不跑，而畫面只顯示「閒置 + N 件待補」。
+    /// 每個提前返回都要寫下閒置原因，否則使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+    /// </summary>
+    [Fact]
+    public async Task TickAsync_AI未啟用時記錄閒置原因()
+    {
+        var (service, runState, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = false });
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
+    }
+
+    [Fact]
+    public async Task TickAsync_不在執行窗口時記錄閒置原因()
+    {
+        // 設定一個未涵蓋當前時間的窗口（同情境8的既有做法）
+        var now = DateTime.Now;
+        var options = new ScheduleOptions
+        {
+            AiEnabled = true,
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+
+        var (service, runState, _, _) = CreateTestHarness(options);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.OutsideWindow, runState.Snapshot().IdleReason);
+    }
+
+    [Fact]
+    public async Task TickAsync_無待補時記錄閒置原因()
+    {
+        var options = new ScheduleOptions
+        {
+            AiEnabled = true,
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+        };
+
+        var (service, runState, _, _) = CreateTestHarness(options);
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
+    }
+
+    /// <summary>執行中不得殘留閒置原因——畫面會同時顯示「執行中」與一句「為什麼沒在跑」。</summary>
+    [Fact]
+    public async Task TickAsync_開始執行後清空閒置原因()
+    {
+        var (service, runState, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = false });
+        await service.TickAsync();
+        Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
+
+        Assert.True(runState.TryBeginRun("manual:admin", 1, out _));
+        Assert.Null(runState.Snapshot().IdleReason);
+    }
 }

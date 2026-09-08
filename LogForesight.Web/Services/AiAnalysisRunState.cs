@@ -12,7 +12,24 @@ public record AiAnalysisSnapshot(
     int ProgressTotal,
     string? LatestMessage,
     RunOutcome? LastOutcome,
-    bool CanStop);
+    bool CanStop,
+    string? IdleReason);
+
+/// <summary>
+/// AI 排程閒置原因的字面值（與前端 runs.js 的文案對照表約定）。
+/// 每個值對應 <c>AiAnalysisHostedService.TickAsync</c> 的一個提前返回條件。
+/// </summary>
+public static class AiIdleReasons
+{
+    /// <summary>AI 排程未啟用</summary>
+    public const string Disabled = "disabled";
+    /// <summary>存量校正回填尚未完成（完成前搶跑等於把整庫重跑一遍）</summary>
+    public const string BackfillPending = "backfill-pending";
+    /// <summary>不在 AI 執行窗口內</summary>
+    public const string OutsideWindow = "outside-window";
+    /// <summary>沒有待補的主機日</summary>
+    public const string NoPending = "no-pending";
+}
 
 /// <summary>
 /// AI 分析排程的行程內單例執行狀態＋**自成一個併發 1 的 gate**——
@@ -40,6 +57,22 @@ public class AiAnalysisRunState
     public string? LatestMessage { get; private set; }
     public RunOutcome? LastOutcome { get; private set; }
 
+    /// <summary>
+    /// 閒置原因（非執行中時才有值）：AI 排程每輪輪詢有五個前置條件，任一不成立就整輪不跑，
+    /// 而畫面只看得到「閒置 + N 件待補」——使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
+    /// 值由 <c>AiAnalysisHostedService.TickAsync</c> 在每個提前返回處寫入，前端有對應文案。
+    /// </summary>
+    public string? IdleReason { get; private set; }
+
+    /// <summary>寫入閒置原因（執行中一律為 null，由 TryBeginRun 清空）。</summary>
+    public void SetIdleReason(string? reason)
+    {
+        lock (_lock)
+        {
+            if (!IsRunning) IdleReason = reason;
+        }
+    }
+
     /// <summary>gate 本體：已在跑就回 false，呼叫端不得再開一個；成功開始時回 true 並給出可用於停止的 cts</summary>
     public bool TryBeginRun(string trigger, int total, out CancellationTokenSource cts)
     {
@@ -52,6 +85,7 @@ public class AiAnalysisRunState
             }
 
             IsRunning = true;
+            IdleReason = null;
             Trigger = trigger;
             StartedAt = DateTime.Now;
             CompletedAt = null;
@@ -183,7 +217,7 @@ public class AiAnalysisRunState
             return new AiAnalysisSnapshot(
                 IsRunning, Trigger, StartedAt, CompletedAt,
                 ProgressDone, ProgressTotal, LatestMessage,
-                LastOutcome, IsRunning);
+                LastOutcome, IsRunning, IdleReason);
         }
     }
 }

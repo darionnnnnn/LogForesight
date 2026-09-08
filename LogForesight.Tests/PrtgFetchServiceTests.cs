@@ -990,7 +990,117 @@ public class PrtgFetchServiceTests : IDisposable
             });
 
         Assert.Equal(0, result.Failures);
-        Assert.Contains(reports, r => r.Stage == "prtg-sync" && r.Total == 0);
-        Assert.Contains(reports, r => r.Stage == "prtg-values" && r.Done == 2 && r.Total == 2);
+
+        // 結構同步三階段各自回報自己的 phase（批次A）：原本整段只送一次 (prtg-sync, 0, 0)，
+        // 畫面從進入 PRTG 到觸發式取數之間永遠是「準備中…」，跑得慢與卡死長得一樣。
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncDevicesPhase);
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncSensorsPhase);
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncMessagesPhase);
+
+        // 分母取 PRTG 回報的 treesize，分子是已讀取列數
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncDevicesPhase && r.Done == 1 && r.Total == 1);
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncSensorsPhase && r.Done == 2 && r.Total == 2);
+
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgValuesPhase && r.Done == 2 && r.Total == 2);
+    }
+
+    /// <summary>
+    /// 批次A：PRTG 沒有回報 treesize（或值不可用）時，分母維持 0（畫面顯示不定進度），
+    /// 分子仍照常累加——不得因為缺少分母就整段不回報，那正是原本「準備中…」的成因。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_treesize缺失時分母為0但分子照常回報()
+    {
+        var devJson = "{\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"paused\":false}]}";
+        var senJson = "{\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"S1\",\"paused\":true}]}";
+        var msgJson = "{\"messages\":[]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse(devJson);
+            if (url.Contains("content=sensors")) return JsonResponse(senJson);
+            if (url.Contains("content=messages")) return JsonResponse(msgJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var reports = new List<(string Stage, int Done, int Total)>();
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+            syncStructure: true, fetchValues: false,
+            progress: (stage, done, total) => reports.Add((stage, done, total)));
+
+        Assert.Equal(0, result.Failures);
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncDevicesPhase && r.Done == 1 && r.Total == 0);
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncSensorsPhase && r.Done == 1 && r.Total == 0);
+    }
+
+    /// <summary>
+    /// 批次A：messages 端點必須帶相對日期過濾 <c>filter_drel</c>，取「涵蓋得到目標日的最小級距」。
+    /// 不帶它就是把整台 PRTG 的訊息歷史從頭翻到尾、再由用戶端丟掉 99%——實機環境要翻幾百頁。
+    /// 刻意不用 today／yesterday：跨午夜的執行在階段 3 跑過零點時目標日會落在前天，那兩個級距會整段漏掉。
+    /// </summary>
+    [Theory]
+    [InlineData(1, "filter_drel=7days")]
+    [InlineData(7, "filter_drel=7days")]
+    [InlineData(8, "filter_drel=30days")]
+    [InlineData(30, "filter_drel=30days")]
+    [InlineData(31, "filter_drel=12months")]
+    [InlineData(365, "filter_drel=12months")]
+    public async Task FetchDayAsync_狀態變更查詢帶相對日期過濾(int daysAgo, string expectedFilter)
+    {
+        var messageUrls = new List<string>();
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                messageUrls.Add(url);
+                return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            }
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        await service.FetchDayAsync(DateTime.Today.AddDays(-daysAgo), 2, CancellationToken.None,
+            syncStructure: true, fetchValues: false);
+
+        var messageUrl = Assert.Single(messageUrls);
+        Assert.Contains(expectedFilter, messageUrl);
+        Assert.Contains("id=0", messageUrl);
+    }
+
+    /// <summary>
+    /// 批次A：目標日超過 12 個月（超出任何保留期的極端回填）時不帶級距參數，
+    /// 但 <c>id=0</c> 仍在——不得組出 <c>id=0&amp;</c> 這種尾巴懸空的查詢字串。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_目標日超過一年時不帶相對日期過濾()
+    {
+        var messageUrls = new List<string>();
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                messageUrls.Add(url);
+                return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            }
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        await service.FetchDayAsync(DateTime.Today.AddDays(-400), 2, CancellationToken.None,
+            syncStructure: true, fetchValues: false);
+
+        var messageUrl = Assert.Single(messageUrls);
+        Assert.DoesNotContain("filter_drel", messageUrl);
+        Assert.Contains("id=0", messageUrl);
+        Assert.DoesNotContain("id=0&&", messageUrl);
     }
 }
