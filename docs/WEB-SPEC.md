@@ -2237,6 +2237,18 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 （`override=true` 為覆寫匯出）。門檻定義與資料集內容見 docs/PRTG-SPEC.md §11。
 
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
+- **版面骨架**：三張等寬狀態卡（取數執行／AI 分析／PRTG 歷史回填，`.lf-run-status-grid`，
+  ≤991px 疊直）在上，四個頁籤（執行總表／異常彙總／執行紀錄／**排程設定**）在下，
+  與 `/admin/prtg`、`/admin/netiq`、設定頁「頁籤置頂 → 平行卡片」同一套骨架。
+  排程設定移進自己的頁籤，不再與即時狀態擠在同一張卡。
+  - **`#runs-tabs` 與四個 `[data-panel]` 必須是同層手足**（`bindTabs` 用 `tabsEl.parentElement`
+    找面板）；天數與圖例工具列插在中間不影響，切到「排程設定」時由 `runs.js` 整組隱藏。
+  - 進度軌區塊**預留固定高度**（`.lf-run-tracks`）：狀態卡每 3 秒重繪，進度條出現／消失時版面不得跳動。
+  - PRTG 回填輸出**預設收合**：它是全頁最高的單一元素，展開著會把那張卡撐得比另外兩張長一倍。
+  - 標籤／值成對用 `.lf-kv`；進度條高度與窄輸入框寬度用 `.lf-run-progress`／`.lf-input-narrow`，
+    頁面內**不留 inline style**。
+  - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
+    整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **狀態卡的三條進度軌**：本機／NetIQ／PRTG 三路並行，各自一條互不覆蓋的軌。
   三路收尾各送一個完工訊號（`local-done`／`netiq-done`／`prtg-done`），
   收到後**保留該軌最後的數字並標記完成**（畫成滿格、文字「已完成 x / y」），

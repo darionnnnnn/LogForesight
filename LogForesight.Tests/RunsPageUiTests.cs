@@ -39,9 +39,16 @@ public class RunsPageUiTests
         Assert.True(File.Exists(cshtmlPath), $"找不到檔案: {cshtmlPath}");
         var lines = File.ReadAllLines(cshtmlPath);
 
-        var statusLine = Array.Find(lines, l => l.Contains("schedule-status-text"));
-        Assert.NotNull(statusLine);
-        Assert.Contains("載入中", statusLine);
+        // 狀態文字初值必須是「載入中…」而非空白或「閒置」——狀態查詢與 options／ai-status
+        // 同時發出、不等彼此，初值寫成閒置的話進站會先看到「沒有執行中」，過一下才跳出執行中。
+        // 取數與 AI 兩張狀態卡各一個。
+        var runStateLine = Array.Find(lines, l => l.Contains("id=\"schedule-run-state\""));
+        Assert.NotNull(runStateLine);
+        Assert.Contains("載入中", runStateLine);
+
+        var aiStateLine = Array.Find(lines, l => l.Contains("id=\"schedule-ai-run-state\""));
+        Assert.NotNull(aiStateLine);
+        Assert.Contains("載入中", aiStateLine);
     }
 
     [Fact]
@@ -196,5 +203,72 @@ public class RunsPageUiTests
         Assert.True(close > open, $"{name} 的物件字面值沒有正確結束");
 
         return js[open..close];
+    }
+    /// <summary>
+    /// 批次F：頁籤置頂、四個面板同層手足、三張狀態卡平行。
+    /// **`#runs-tabs` 與 `[data-panel]` 必須是同一層手足**——bindTabs 用 tabsEl.parentElement
+    /// 找面板，中間插入包裝層會讓面板在容器外找不到（瀏覽器實測踩過的坑）。
+    /// </summary>
+    [Fact]
+    public void Runs頁面骨架為頁籤置頂與平行狀態卡()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+
+        // 四個面板（多了「排程設定」）
+        foreach (var panel in new[] { "summary", "errors", "list", "settings" })
+        {
+            Assert.Contains($"data-panel=\"{panel}\"", cshtml);
+        }
+        Assert.Contains("data-tab=\"settings\"", cshtml);
+
+        // 三張平行狀態卡
+        Assert.Contains("lf-run-status-grid", cshtml);
+        Assert.Contains("id=\"schedule-run-card\"", cshtml);
+        Assert.Contains("id=\"schedule-ai-card\"", cshtml);
+        Assert.Contains("id=\"prtg-backfill-section\"", cshtml);
+
+        // 卡中卡與 inline style 都不該再出現
+        Assert.DoesNotContain("style=\"background: var(--lf-gray-50);\"", cshtml);
+        Assert.DoesNotContain("style=\"height: 6px;\"", cshtml);
+        Assert.DoesNotContain("style=\"max-width: 120px;\"", cshtml);
+
+        // 回填輸出預設收合（它是全頁最高的單一元素）
+        Assert.Contains("id=\"prtg-backfill-output-wrap\"", cshtml);
+        Assert.Contains("collapse", cshtml);
+
+        // 頁籤與面板同層：頁籤結束標籤之後、第一個 data-panel 之前不得出現新的容器 div
+        var tabsEnd = cshtml.IndexOf("</ul>", cshtml.IndexOf("id=\"runs-tabs\"", StringComparison.Ordinal), StringComparison.Ordinal);
+        var firstPanel = cshtml.IndexOf("data-panel=\"summary\"", StringComparison.Ordinal);
+        Assert.True(tabsEnd > 0 && firstPanel > tabsEnd);
+    }
+
+    /// <summary>批次F：新版狀態卡用到的樣式都要在 site.css 定義，否則版面直接散掉。</summary>
+    [Fact]
+    public void Runs頁面樣式在site中已定義()
+    {
+        var root = FindRepoRoot();
+        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+
+        foreach (var cls in new[] { ".lf-run-status-grid", ".lf-kv", ".lf-run-progress", ".lf-run-tracks", ".lf-input-narrow" })
+        {
+            Assert.Contains(cls, css);
+        }
+    }
+
+    /// <summary>
+    /// 批次F：DevMonitor 只能看不能改——但要**看得到設定值**。
+    /// 整塊隱藏會讓「目前設定是什麼」也看不到，而那正是 dev 需要的資訊。
+    /// </summary>
+    [Fact]
+    public void 無維護權限時設定改為唯讀而非整塊隱藏()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+
+        Assert.Contains("schedule-readonly-hint", cshtml);
+        Assert.Contains("schedule-readonly-hint", js);
+        Assert.Contains("el.disabled = true", js);
     }
 }

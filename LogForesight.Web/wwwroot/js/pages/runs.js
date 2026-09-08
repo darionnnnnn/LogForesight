@@ -622,7 +622,16 @@ async function loadSchedule() {
     const user = await getCurrentUser();
     canMaintainSchedule = hasCapability(user, 'Maintain');
     if (!canMaintainSchedule) {
-        for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
+        // 動作類（按鈕）隱藏；設定類（輸入控制項）改成唯讀——整塊藏起來會連「目前設定是什麼」
+        // 都看不到，而那正是 DevMonitor 需要的資訊。
+        for (const el of document.querySelectorAll('[data-maintain-only]')) {
+            if (el.tagName === 'BUTTON' || el.querySelector('button')) {
+                el.classList.add('d-none');
+            } else {
+                el.disabled = true;
+            }
+        }
+        document.getElementById('schedule-readonly-hint')?.classList.remove('d-none');
     }
 
     const statusPromise = refreshScheduleStatus();
@@ -642,7 +651,7 @@ async function loadSchedule() {
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
-            daysHintEl.textContent = `將回填 ${settings.prtgBackfillDays} 天`;
+            daysHintEl.textContent = `往前 ${settings.prtgBackfillDays} 天`;
         }
     }
     await statusPromise;
@@ -841,12 +850,13 @@ function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
     if (!el) return;
 
     const start = new Date(startedAt).getTime();
-    el.classList.remove('d-none');
+    // 值本身在 lf-kv 列裡，要顯示／隱藏的是整列（標籤＋值），不是值本身
+    (document.getElementById(`${elementId}-row`) ?? el).classList.remove('d-none');
 
     clearInterval(elapsedTimers.get(elementId));
     function tick() {
         const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
-        el.textContent = `開始於 ${formatDateTime(startedAt)}・已耗時 ${formatDuration(seconds)}`;
+        el.textContent = `${formatDuration(seconds)}（開始於 ${formatDateTime(startedAt)}）`;
     }
     tick();
     elapsedTimers.set(elementId, setInterval(tick, 1000));
@@ -855,11 +865,12 @@ function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
 function stopElapsedTicker(elementId = 'schedule-elapsed') {
     clearInterval(elapsedTimers.get(elementId));
     elapsedTimers.delete(elementId);
-    document.getElementById(elementId)?.classList.add('d-none');
+    const el = document.getElementById(elementId);
+    (document.getElementById(`${elementId}-row`) ?? el)?.classList.add('d-none');
 }
 
 function applyScheduleStatus(status) {
-    document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
+
     const pausedBadge = document.getElementById('schedule-paused-badge');
     if (pausedBadge) {
         if (status.pausedReason) {
@@ -1564,7 +1575,13 @@ function bindPrtgBackfill() {
 
 // 三頁籤（回饋十七輪批次F-1）共用同一份天數篩選、同一次 load() 取回的資料——頁籤切換
 // 只是顯示/隱藏面板，不重新打 API（三個面板的資料本來就一起抓，見 load()）
-bindTabs(document.getElementById('runs-tabs'));
+// 天數與圖例只對三個報表頁籤有意義；切到「排程設定」時整組隱藏，
+// 留著會讓人以為那個天數也在篩設定。
+bindTabs(document.getElementById('runs-tabs'), {
+    onChange: (tab) => {
+        document.getElementById('runs-toolbar')?.classList.toggle('d-none', tab === 'settings');
+    }
+});
 
 loadSchedule();
 bindPrtgEnabledSwitch();

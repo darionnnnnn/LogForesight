@@ -150,4 +150,5 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 字型 | `wwwroot/fonts/` + site.css `@font-face` | Fira Sans ×4、Fira Code ×2（latin woff2） |
 | 元件 | `wwwroot/js/core/ui.js`、`format.js`、`charts.js` + site.css 元件區 | 列高/內距/動效/mono 套用 |
 | 版面 | `Views/Shared/_Layout.cshtml` + site.css 版面區 | 側欄/頂欄新語彙 |
+| 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + site.css `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
 | 前置 | `wwwroot/lib/bootstrap/dist/` | 5.1→5.3 升級（元件級變數 retheme 的前提） |
