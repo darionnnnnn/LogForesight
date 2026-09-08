@@ -208,4 +208,42 @@ public class PrtgResourceGuardTargetsTests : IDisposable
         Assert.NotEmpty(console.Lines);
         Assert.Contains(console.Lines, l => l.Contains("未偵測到任何受監看"));
     }
+    /// <summary>
+    /// 批次D：維護頁的「自動偵測並填入」要能在覆寫清單非空時重抓一份。
+    /// 不忽略覆寫的話，Resolve 會在第一步就短路、只把手填值原樣吐回來——
+    /// 而「已經手填了一些 objid，想重抓」正是這顆按鈕最常見的用法。
+    /// </summary>
+    [Fact]
+    public void Resolve_ignoreOverride為true時跳過覆寫清單改走自動偵測()
+    {
+        var store = CreateStore();
+        var console = new TestConsole();
+        var settings = new SystemSettings
+        {
+            PrtgResourceGuardSensorObjids = new List<string> { "9001", "9002" }
+        };
+
+        // 鏡像表為空 → 自動偵測找不到任何 sensor，但重點是「沒有回傳那兩個手填 objid」
+        var result = PrtgResourceGuardTargets.Resolve(
+            store, settings, Array.Empty<Sentinel>(), console, ignoreOverride: true);
+
+        Assert.DoesNotContain(9001L, result.SensorObjids);
+        Assert.DoesNotContain(9002L, result.SensorObjids);
+    }
+
+    [Fact]
+    public void Resolve_預設仍是覆寫優先()
+    {
+        // 守門執行本身一律走覆寫優先——那是它的既定契約，不得被這個新參數改變。
+        var store = CreateStore();
+        var console = new TestConsole();
+        var settings = new SystemSettings
+        {
+            PrtgResourceGuardSensorObjids = new List<string> { "9001" }
+        };
+
+        var result = PrtgResourceGuardTargets.Resolve(store, settings, Array.Empty<Sentinel>(), console);
+
+        Assert.Equal(new long[] { 9001 }, result.SensorObjids);
+    }
 }

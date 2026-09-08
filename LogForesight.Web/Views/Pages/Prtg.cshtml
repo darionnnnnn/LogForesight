@@ -163,8 +163,33 @@
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
                 </div>
 
-                <div class="d-flex align-items-center gap-3 mt-3">
+                <div class="mb-3">
+                    <label for="prtg-value-fetch-scope" class="form-label">數值取數的主機範圍</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                    <select class="form-select" id="prtg-value-fetch-scope">
+                        <option value="triggered">只抓觸發主機（預設）</option>
+                        <option value="all-mapped">全部已對應主機</option>
+                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
+                    </select>
+                    <div class="form-text">
+                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
+                    </div>
+                </div>
+
+                <div class="mb-3 d-none" id="prtg-value-fetch-extra-hosts-group">
+                    <label for="prtg-value-fetch-extra-hosts" class="form-label">額外納入的主機名稱</label>
+                    <textarea class="form-control lf-mono" id="prtg-value-fetch-extra-hosts" rows="4"
+                              placeholder="SRV-DB01&#10;SRV-APP02"></textarea>
+                    <div class="form-text">一行一個主機名稱，不分大小寫；對不到主機主檔的會在執行輸出列出並略過。</div>
+                </div>
+
+                <div class="d-flex align-items-center flex-wrap gap-3 mt-3">
                     <button type="submit" class="btn btn-primary" id="prtg-params-save">儲存</button>
+                    <button type="button" class="btn btn-outline-secondary" id="prtg-scope-estimate-btn">估算規模</button>
+                    <span id="prtg-scope-estimate-result" class="small"></span>
                 </div>
             </div>
         </div>
@@ -226,8 +251,9 @@
                     <div class="form-text">覆寫清單，一行一個 objid；留空＝自動偵測。</div>
                 </div>
 
-                <div class="d-flex align-items-center gap-3 mt-3 mb-3">
+                <div class="d-flex align-items-center flex-wrap gap-3 mt-3 mb-3">
                     <button type="button" class="btn btn-outline-secondary" id="prtg-guard-preview-btn">預覽受監看 sensor</button>
+                    <button type="button" class="btn btn-outline-secondary" id="prtg-guard-autofill-btn">自動偵測並填入</button>
                     <span class="text-muted small">守門設定與上方擷取參數同一顆「儲存」。</span>
                 </div>
 

@@ -91,13 +91,30 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 ### 3a. 觸發式數值取數
 
 實機環境有 42,393 個 sensor，逐一擷取一晚跑不完，且對「從沒出過問題的主機」取數沒有分析價值。
-因此**數值只對觸發主機取**，三重過濾：
+因此**預設數值只對觸發主機取**，三重過濾：
 
 1. **觸發主機** ＝ 當日 `lf_daily_records.risk_level` 為高或中的主機
    ∪ PRTG 規則命中的主機（§9）；
 2. 經**當日** `lf_prtg_host_map` 反查 device——**只取 `ok`**，
    `conflict` 歸屬不確定，納入會把數值掛到錯的主機上；
 3. device 上 type 命中 `PrtgSensorTypeWhitelist`（§7）且未暫停的 sensor。
+
+**取數範圍可放寬**（`PrtgValueFetchScope`，預設 `triggered`＝上述行為）。值型規則要設計基線時
+會需要更廣的樣本，因此開放管理者改變第 1 步的候選主機來源；第 2、3 步的收斂三種模式完全相同：
+
+| 模式 | 候選主機 |
+|---|---|
+| `triggered`（預設） | 當日高／中風險 ∪ PRTG 規則命中 |
+| `all-mapped` | 全部有 `ok` 對應的主機。**要求 sensor type 白名單非空**，留空等於對全部 sensor 取數，存檔時就擋下 |
+| `triggered-plus-list` | 觸發主機 ∪ `PrtgValueFetchExtraHosts` 指定的主機（名稱一行一個，不分大小寫） |
+
+- 判定收斂在 `PrtgValueFetchScope.SelectHosts`，**每日擷取與歷史回填共用同一份**，不各寫一份。
+- 不合法或未設定的值一律退回 `triggered`——設定壞掉不該讓夜間批次改抓全機房。
+- 指定主機以**名稱**存放，執行時解析成 id 並排除已停用與已合併的主機；對不到的名稱在執行輸出
+  列出並略過（靜默略過會讓管理者以為設定生效了）。
+- 維護頁提供**規模估算**（`GET settings/prtg-fetch-scope/estimate`）：把範圍放寬之前先看得到
+  「一晚要抓幾個 sensor」，超過門檻顯示提醒但**不擋存**——跑不完的症狀是隔天資料不全、
+  不是當下報錯，所以要在設定當下就講出來。`triggered` 的量逐日變動、事前算不出來，明講而不給假數字。
 
 **與分析並行、採輪詢**：NetIQ pipeline 內部是巢狀並行迴圈，沒有「單一主機完成」的掛載點，
 硬插回呼要動並行迴圈本體。改由 PRTG 路徑**定期查詢已落地的分析結果**，把新出現的問題主機
@@ -199,7 +216,8 @@ IP 比對會去除前後空白且不分大小寫。**對應作業只讀主機主
 - **斷點續傳靠冪等**：所有寫入都有自然鍵去重，中斷後重跑同一區間不會產生重複資料，
   因此不需要額外的水位紀錄。
 - **回填不做主機對應**：歷史對應無法重建，硬造出來的是假資料。
-- **回填套用與每日擷取相同的三重過濾**（§3a）：只回填「該日曾為高／中風險」的主機、
+- **回填套用與每日擷取相同的三重過濾與取數範圍設定**（§3a，共用 `PrtgValueFetchScope.SelectHosts`）：
+  預設只回填「該日曾為高／中風險」的主機、
   經該日（或最近一日）`ok` 對應的 device、且 type 命中白名單的 sensor。
   全量回填在實機是 42,393 sensor × 30 天，跑不完；對從沒出過問題的主機回填也沒有分析價值。
   某日沒有對應資料時取**該回填日往回**最近一日的對應（基準是正在回填的那一天，不是今天——
@@ -291,6 +309,8 @@ passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 | `PrtgSensorTypeWhitelist` | 8 種分析型 type | 要擷取數值的 sensor type（一行一個，不分大小寫）。**留空＝不限制**。預設不含 Ping（量大且雜訊高，需要時自行加入） |
+| `PrtgValueFetchScope` | `triggered` | 數值取數的主機範圍：`triggered`／`all-mapped`／`triggered-plus-list`（§3a）。`all-mapped` 要求白名單非空 |
+| `PrtgValueFetchExtraHosts` | 空 | `triggered-plus-list` 模式額外納入的主機名稱（一行一個，不分大小寫） |
 | `PrtgResourceGuardEnabled` | false | 資源守門總開關（§12） |
 | `PrtgResourceGuardSensorObjids` | 空 | 受監看 sensor 的覆寫清單（一行一個 objid）。**留空＝自動偵測** |
 | `PrtgResourceGuardCpuPercent` | 85 | CPU 使用率達此值算緊張（1~100） |
@@ -351,7 +371,8 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |
 | `GET／PUT／DELETE prtg-ip-excludes` | IP 排除清單的查詢、新增與移除（§4b） |
-| `GET prtg-resource-guard/preview` | 預覽受監看 sensor 與其當下值（§12）。**不要求 `PrtgEnabled` 與守門開關**——用途正是在啟用前確認偵測結果與數值語意 |
+| `GET prtg-resource-guard/preview[?forceAuto=]` | 預覽受監看 sensor 與其當下值（§12）。**不要求 `PrtgEnabled` 與守門開關**——用途正是在啟用前確認偵測結果與數值語意。`forceAuto=true` 忽略覆寫清單強制自動偵測 |
+| `GET prtg-fetch-scope/estimate?scope=` | 取數範圍的規模估算（§3a）：回該模式涵蓋的主機／device／sensor 數 |
 | `GET prtg-export`、`POST prtg-import` | 鏡像資料匯出／匯入（§10） |
 
 主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor）；
@@ -597,5 +618,8 @@ CPU 越高越糟、記憶體與健康度越低越糟，**方向相反**。設定
 ### 啟用前先預覽
 
 `GET settings/prtg-resource-guard/preview` 回受監看 sensor 清單與**當下的值**，
-並標明來源是覆寫清單還是自動偵測。它**不要求 `PrtgEnabled` 也不要求守門開關**
+並標明來源是覆寫清單還是自動偵測。維護頁另有「自動偵測並填入」按鈕，帶 `forceAuto=true`
+**忽略覆寫清單、強制重跑偵測**並把結果寫回輸入框——管理者最常見的操作是「已經手填了一些
+objid，想重抓一次」，不忽略覆寫的話只會把手填值原樣吐回來。偵測結果為空時**不清空輸入框**
+（手填的清單比一次失敗的偵測可信），填入後仍需按儲存才生效。它**不要求 `PrtgEnabled` 也不要求守門開關**
 ——用途正是在啟用之前確認偵測結果與數值語意（尤其記憶體 sensor 到底回可用還是使用百分比）。

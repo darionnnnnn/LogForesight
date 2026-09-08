@@ -421,6 +421,18 @@ public class SystemSettings
         "WMI Free Disk Space (Multi Disk)"
     };
 
+    /// <summary>
+    /// 數值取數的主機範圍（見 <c>PrtgValueFetchScope</c> 三個字面值）。
+    /// 預設 <c>triggered</c>＝只抓當日出問題的主機，與加入這個設定之前的行為相同。
+    /// </summary>
+    public string PrtgValueFetchScope { get; set; } = Service.PrtgValueFetchScope.Triggered;
+
+    /// <summary>
+    /// 取數範圍為 <c>triggered-plus-list</c> 時額外納入的主機名稱（一行一個，不分大小寫）。
+    /// 其他模式不使用。
+    /// </summary>
+    public List<string> PrtgValueFetchExtraHosts { get; set; } = new();
+
     /// <summary>資源守門總開關。預設關閉：未啟用時不監看主機資源，批次正常執行</summary>
     public bool PrtgResourceGuardEnabled { get; set; }
 

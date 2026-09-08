@@ -1345,12 +1345,33 @@ public class AnalysisOrchestrator
                 progress?.Report("prtg-triggered", 0, 0);
                 var triggeredFetcher = new PrtgTriggeredValueFetcher(
                     fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
+                // 取數範圍（docs/PRTG-SPEC.md §3a）：指定清單以主機名稱存放，這裡解析成 id；
+                // 對不到的名稱要說出來——管理者打錯字時靜默略過會讓人以為設定生效了。
+                var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(
+                    systemSettings.PrtgValueFetchExtraHosts,
+                    hostStore.GetAll().Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
+
+                if (unresolvedHosts.Count > 0)
+                {
+                    prtgConsole.WriteLine($"  ⚠ 取數範圍的指定主機有 {unresolvedHosts.Count} 個對不到主機主檔，已略過：" +
+                                          string.Join("、", unresolvedHosts.Take(10)));
+                }
+
                 triggeredResult = await triggeredFetcher.RunAsync(
                     day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
                     () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts,
-                    progress: (stage, done, total) => progress?.Report(stage, done, total));
+                    progress: (stage, done, total) => progress?.Report(stage, done, total),
+                    scope: systemSettings.PrtgValueFetchScope,
+                    extraScopeHosts: scopeHostIds);
 
-                var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}）：問題主機 {triggeredResult.TriggerHosts} 台、" +
+                var scopeText = PrtgValueFetchScope.Normalize(systemSettings.PrtgValueFetchScope) switch
+                {
+                    PrtgValueFetchScope.AllMapped => "全部已對應主機",
+                    PrtgValueFetchScope.TriggeredPlusList => "觸發主機＋指定清單",
+                    _ => "觸發主機"
+                };
+
+                var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}，範圍：{scopeText}）：主機 {triggeredResult.TriggerHosts} 台、" +
                               $"sensor {triggeredResult.TargetSensors} 個、數值 {triggeredResult.ValuesWritten} 筆" +
                               (triggeredResult.FailedSensors > 0 ? $"、失敗 sensor {triggeredResult.FailedSensors} 個" : "");
 

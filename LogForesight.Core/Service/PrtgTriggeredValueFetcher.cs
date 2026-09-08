@@ -39,8 +39,11 @@ public sealed class PrtgTriggeredValueFetcher
         CancellationToken ct,
         int pollSeconds = 30,
         IReadOnlyCollection<long>? extraTriggerHosts = null,
-        Action<string, int, int>? progress = null)
+        Action<string, int, int>? progress = null,
+        string? scope = null,
+        IReadOnlyCollection<long>? extraScopeHosts = null)
     {
+        var effectiveScope = PrtgValueFetchScope.Normalize(scope);
         var hostMapRows = _store.GetHostMapForDate(day);
         var hostToDevices = new Dictionary<long, List<long>>();
         foreach (var row in hostMapRows)
@@ -73,11 +76,19 @@ public sealed class PrtgTriggeredValueFetcher
                 Hosts = null
             };
             var records = _records.QueryLightweight(filter);
-            var candidateHosts = records.Select(r => r.HostId);
+            var triggered = records.Select(r => r.HostId).AsEnumerable();
             if (isFirstScan && extraTriggerHosts is { Count: > 0 })
             {
-                candidateHosts = candidateHosts.Concat(extraTriggerHosts);
+                triggered = triggered.Concat(extraTriggerHosts);
             }
+
+            // 取數範圍（docs/PRTG-SPEC.md §3a）：三種模式共用同一個下游收斂，差別只在候選主機怎麼來。
+            // all-mapped 的候選是「全部有 ok 對應的主機」，與輪詢無關——它在首輪就全部取完，
+            // 之後的輪詢因去重集合自然不再產生新主機。
+            var candidateHosts = PrtgValueFetchScope.SelectHosts(
+                effectiveScope, triggered, hostToDevices.Keys,
+                isFirstScan ? (extraScopeHosts ?? Array.Empty<long>()) : Array.Empty<long>());
+
             isFirstScan = false;
 
             var newHosts = candidateHosts

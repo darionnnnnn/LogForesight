@@ -211,7 +211,9 @@ public class SystemSettingsService : ISystemSettingsService
             effectivePrtgResourceGuardCheckSeconds: effectivePrtgResourceGuardCheckSeconds,
             effectivePrtgResourceGuardPauseMinutes: effectivePrtgResourceGuardPauseMinutes,
             effectivePrtgResourceGuardStrikes: effectivePrtgResourceGuardStrikes,
-            effectivePrtgResourceGuardMaxPauseMinutes: effectivePrtgResourceGuardMaxPauseMinutes);
+            effectivePrtgResourceGuardMaxPauseMinutes: effectivePrtgResourceGuardMaxPauseMinutes,
+            effectivePrtgValueFetchScope: request.PrtgValueFetchScope ?? before.PrtgValueFetchScope,
+            effectivePrtgSensorTypeWhitelist: request.PrtgSensorTypeWhitelist ?? before.PrtgSensorTypeWhitelist);
 
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
@@ -429,6 +431,8 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
             if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
             if (request.PrtgSensorTypeWhitelist != null) s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgValueFetchScope != null) s.PrtgValueFetchScope = request.PrtgValueFetchScope;
+            if (request.PrtgValueFetchExtraHosts != null) s.PrtgValueFetchExtraHosts = NormalizeLines(request.PrtgValueFetchExtraHosts);
             if (request.PrtgResourceGuardEnabled.HasValue) s.PrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled.Value;
             if (request.PrtgResourceGuardSensorObjids != null) s.PrtgResourceGuardSensorObjids = NormalizeLines(request.PrtgResourceGuardSensorObjids);
             if (request.PrtgResourceGuardCpuPercent.HasValue) s.PrtgResourceGuardCpuPercent = request.PrtgResourceGuardCpuPercent.Value;
@@ -492,6 +496,8 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgResourceGuardStrikes,
                     before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
+                    before.PrtgValueFetchScope,
+                    PrtgValueFetchExtraHosts = string.Join(", ", before.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
                     PrtgHasPasshash = !string.IsNullOrEmpty(before.PrtgPasshashEnc)
@@ -521,6 +527,8 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgResourceGuardStrikes,
                     saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
+                    saved.PrtgValueFetchScope,
+                    PrtgValueFetchExtraHosts = string.Join(", ", saved.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
                     PrtgHasPasshash = !string.IsNullOrEmpty(saved.PrtgPasshashEnc)
@@ -605,7 +613,9 @@ public class SystemSettingsService : ISystemSettingsService
             effectivePrtgResourceGuardCheckSeconds: effectivePrtgResourceGuardCheckSeconds,
             effectivePrtgResourceGuardPauseMinutes: effectivePrtgResourceGuardPauseMinutes,
             effectivePrtgResourceGuardStrikes: effectivePrtgResourceGuardStrikes,
-            effectivePrtgResourceGuardMaxPauseMinutes: effectivePrtgResourceGuardMaxPauseMinutes);
+            effectivePrtgResourceGuardMaxPauseMinutes: effectivePrtgResourceGuardMaxPauseMinutes,
+            effectivePrtgValueFetchScope: request.PrtgValueFetchScope ?? before.PrtgValueFetchScope,
+            effectivePrtgSensorTypeWhitelist: request.PrtgSensorTypeWhitelist ?? before.PrtgSensorTypeWhitelist);
 
         var saved = _store.Update(s =>
         {
@@ -623,6 +633,10 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
             if (request.PrtgSensorTypeWhitelist != null)
                 s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgValueFetchScope != null)
+                s.PrtgValueFetchScope = request.PrtgValueFetchScope;
+            if (request.PrtgValueFetchExtraHosts != null)
+                s.PrtgValueFetchExtraHosts = NormalizeLines(request.PrtgValueFetchExtraHosts);
             if (request.PrtgResourceGuardEnabled.HasValue) s.PrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled.Value;
             if (request.PrtgResourceGuardSensorObjids != null) s.PrtgResourceGuardSensorObjids = NormalizeLines(request.PrtgResourceGuardSensorObjids);
             if (request.PrtgResourceGuardCpuPercent.HasValue) s.PrtgResourceGuardCpuPercent = request.PrtgResourceGuardCpuPercent.Value;
@@ -661,6 +675,8 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgResourceGuardStrikes,
                     before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
+                    before.PrtgValueFetchScope,
+                    PrtgValueFetchExtraHosts = string.Join(", ", before.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
                     PrtgHasPasshash = !string.IsNullOrEmpty(before.PrtgPasshashEnc)
@@ -684,6 +700,8 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgResourceGuardStrikes,
                     saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
+                    saved.PrtgValueFetchScope,
+                    PrtgValueFetchExtraHosts = string.Join(", ", saved.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
                     PrtgHasPasshash = !string.IsNullOrEmpty(saved.PrtgPasshashEnc)
@@ -1068,6 +1086,24 @@ public class SystemSettingsService : ISystemSettingsService
     /// PRTG 共同驗證（Update 與 UpdatePrtg 共用同一份，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
     /// 涵蓋保留天數上限、認證方式合法性、啟用狀態下的 URL 與對應憑證存在性檢查。
     /// </summary>
+    /// <summary>
+    /// 取數範圍的驗證（docs/PRTG-SPEC.md §3a）。
+    /// **`all-mapped` 搭配空白名單＝對全部 sensor 取數**——實機四萬多個 sensor，
+    /// 一晚跑不完且會壓垮 PRTG core，因此在存檔時就擋下，而不是等夜間批次才發現。
+    /// 跨欄位檢查一律用 effective 值（請求值 ?? 已儲存值），只改其中一欄時上限才不會形同失效。
+    /// </summary>
+    private static void ValidatePrtgValueFetchScope(string? scope, List<string>? whitelist)
+    {
+        if (scope == null) return;
+
+        if (!PrtgValueFetchScope.IsValid(scope))
+            throw DomainException.Validation("取數範圍必須是 triggered、all-mapped 或 triggered-plus-list 其中之一。");
+
+        if (scope == PrtgValueFetchScope.AllMapped && (whitelist == null || whitelist.Count == 0))
+            throw DomainException.Validation(
+                "取數範圍設為「全部已對應主機」時，sensor type 白名單不可留空——留空等於對全部 sensor 取數，大型環境會壓垮 PRTG core。");
+    }
+
     private static void ValidatePrtgSettings(
         int effectiveRetentionDays,
         int effectivePrtgRetentionDays,
@@ -1090,8 +1126,12 @@ public class SystemSettingsService : ISystemSettingsService
         int effectivePrtgResourceGuardCheckSeconds,
         int effectivePrtgResourceGuardPauseMinutes,
         int effectivePrtgResourceGuardStrikes,
-        int effectivePrtgResourceGuardMaxPauseMinutes)
+        int effectivePrtgResourceGuardMaxPauseMinutes,
+        string? effectivePrtgValueFetchScope = null,
+        List<string>? effectivePrtgSensorTypeWhitelist = null)
     {
+        ValidatePrtgValueFetchScope(effectivePrtgValueFetchScope, effectivePrtgSensorTypeWhitelist);
+
         if (effectivePrtgRetentionDays > effectiveRetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
 
@@ -1302,6 +1342,8 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgBackfillDays = s.PrtgBackfillDays,
         PrtgRetentionDays = s.PrtgRetentionDays,
         PrtgSensorTypeWhitelist = s.PrtgSensorTypeWhitelist,
+        PrtgValueFetchScope = s.PrtgValueFetchScope,
+        PrtgValueFetchExtraHosts = s.PrtgValueFetchExtraHosts,
         PrtgResourceGuardEnabled = s.PrtgResourceGuardEnabled,
         PrtgResourceGuardSensorObjids = s.PrtgResourceGuardSensorObjids,
         PrtgResourceGuardCpuPercent = s.PrtgResourceGuardCpuPercent,
