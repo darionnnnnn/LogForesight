@@ -1043,7 +1043,8 @@ const PROGRESS_PHASE_LABEL = {
     'prtg-sync-sensors': 'PRTG 感測器結構同步',
     'prtg-sync-messages': 'PRTG 狀態變更同步',
     'prtg-values': 'PRTG 數值取數',
-    'prtg-triggered': 'PRTG 觸發式取數'
+    'prtg-triggered': 'PRTG 觸發式取數',
+    'prtg-wait-sync': '等待手動同步完成'
 };
 const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
@@ -1051,7 +1052,8 @@ const PROGRESS_PHASE_UNIT = {
     'prtg-sync-sensors': '個',
     'prtg-sync-messages': '筆',
     'prtg-values': 'sensor',
-    'prtg-triggered': 'sensor'
+    'prtg-triggered': 'sensor',
+    'prtg-wait-sync': ''
 };
 
 /**

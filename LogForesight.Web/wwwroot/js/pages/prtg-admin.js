@@ -1238,6 +1238,87 @@ function bindPrtgDataTransfer() {
 
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 
+// ── 同步結構與對應（docs/PRTG-SPEC.md §5a）────────────────────────────
+
+let structureSyncTimer = null;
+
+/**
+ * 把同步狀態畫到鏡像頁籤的卡片上。
+ * 執行中每 3 秒輪詢一次；結束後停掉輪詢並重新載入鏡像統計，
+ * 讓「裝置數／感測器數／對應結果」立刻反映這次同步的成果。
+ */
+function renderStructureSyncStatus(status) {
+    const statusEl = document.getElementById('prtg-structure-sync-status');
+    const progressEl = document.getElementById('prtg-structure-sync-progress');
+    const btn = document.getElementById('prtg-structure-sync-btn');
+    if (!statusEl || !progressEl || !btn) return;
+
+    if (status.isRunning) {
+        btn.disabled = true;
+        btn.textContent = '同步中…';
+        statusEl.textContent = status.latestMessage || '同步進行中…';
+        const phase = status.progressPhase;
+        progressEl.textContent = phase && status.progressTotal > 0
+            ? `${phase}：${status.progressDone} / ${status.progressTotal}`
+            : (phase ? `${phase}：進行中` : '');
+        return;
+    }
+
+    btn.disabled = false;
+    btn.textContent = '開始同步';
+    progressEl.textContent = '';
+
+    if (!status.lastCompletedAt) {
+        // 從未同步過與「同步到 0 筆」是兩件事，文案要分得出來
+        statusEl.textContent = '尚未同步。PRTG 剛啟用時請先執行一次，否則主機對應與資源守門的自動偵測都沒有資料可用。';
+        return;
+    }
+
+    const when = formatDateTime(status.lastCompletedAt);
+    if (status.lastSuccess) {
+        statusEl.textContent =
+            `上次同步：${when}　裝置 ${status.lastDevices ?? 0}、感測器 ${status.lastSensors ?? 0}；`
+            + `對應成功 ${status.lastMapOk ?? 0}、人工 ${status.lastMapManual ?? 0}、`
+            + `衝突 ${status.lastMapConflict ?? 0}、查無主機 ${status.lastMapUnmatched ?? 0}、`
+            + `略過 ${status.lastMapSkipped ?? 0}`;
+    } else {
+        statusEl.textContent = `上次同步（${when}）未成功：${status.lastErrorMessage || '原因不明'}`;
+    }
+}
+
+async function refreshStructureSyncStatus() {
+    try {
+        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
+        renderStructureSyncStatus(status);
+
+        if (status.isRunning) {
+            if (!structureSyncTimer) {
+                structureSyncTimer = setInterval(refreshStructureSyncStatus, 3000);
+            }
+        } else if (structureSyncTimer) {
+            clearInterval(structureSyncTimer);
+            structureSyncTimer = null;
+            await refreshPrtgMirror();
+        }
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindStructureSync() {
+    const btn = document.getElementById('prtg-structure-sync-btn');
+    btn?.addEventListener('click', async () => {
+        const restore = withBusy(btn, '啟動中');
+        try {
+            await api.post('/api/admin/settings/prtg-structure-sync/start', {});
+            toast('已開始同步結構與對應', 'success');
+            await refreshStructureSyncStatus();
+        } finally {
+            restore();
+        }
+    });
+}
+
 function init() {
     bindPrtgTest();
     bindPrtgMirror();
@@ -1248,10 +1329,12 @@ function init() {
     bindParamsForm();
     bindGuardPreview();
     bindScopeControls();
+    bindStructureSync();
     initCalibration();
     loadSettings();
     refreshPrtgMirror();
     refreshPrtgProbeStatus();
+    refreshStructureSyncStatus();
 }
 
 init();

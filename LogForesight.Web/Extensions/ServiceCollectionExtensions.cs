@@ -416,6 +416,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<PrtgBackfillRunState>();
         services.AddSingleton<PrtgBackfillService>();
 
+        // PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）：狀態單例、上次結果的持久化 store 與背景執行入口。
+        // 上次結果存 blob 而不是只留在記憶體——站台重啟後畫面仍要說得出上次同步是什麼時候。
+        services.AddSingleton<PrtgStructureSyncRunState>();
+        services.AddSingleton(sp => new PrtgStructureSyncStatusStore(
+            sp.GetRequiredService<StorageBackend>().Blob(PrtgStructureSyncStatusStore.BlobKey)));
+        services.AddSingleton<PrtgStructureSyncService>();
+
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
         // **§2a（回饋第十一輪）起只剩負責人一種**——使用者／主機／群組授權三種已退役
         // （主機主要來源是 NetIQ 掃描匯入，其餘動線見 docs/archive/FEEDBACK-11-PLAN.md §2a 對照表）。

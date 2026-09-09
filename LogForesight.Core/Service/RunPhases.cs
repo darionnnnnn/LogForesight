@@ -40,6 +40,12 @@ public static class RunPhases
     /// <summary>PRTG 觸發式數值取數</summary>
     public const string PrtgTriggered = PrtgFetchService.PrtgTriggeredPhase;
 
+    /// <summary>
+    /// PRTG 路徑正在等手動觸發的「同步結構與對應」跑完（docs/PRTG-SPEC.md §5a）。
+    /// 兩邊同時寫同一批鏡像表沒有意義，這一趟等它結束後直接沿用剛更新好的鏡像。
+    /// </summary>
+    public const string PrtgWaitSync = "prtg-wait-sync";
+
     // ── 完工訊號（done／total 恆為 0）────────────────────────
 
     /// <summary>本機路徑收尾</summary>
@@ -70,6 +76,7 @@ public static class RunPhases
     {
         Local, Netiq,
         PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered,
+        PrtgWaitSync,
         LocalDone, NetiqDone, PrtgDone,
         GuardPaused, GuardResumed, PrtgFindingsReady
     };
@@ -78,6 +85,7 @@ public static class RunPhases
     public static readonly IReadOnlyList<string> ProgressTracks = new[]
     {
         Local, Netiq,
-        PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered
+        PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered,
+        PrtgWaitSync
     };
 }

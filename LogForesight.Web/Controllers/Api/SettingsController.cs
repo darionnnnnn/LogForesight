@@ -27,6 +27,7 @@ public class SettingsController : ControllerBase
     private readonly IAuditService _audit;
     private readonly PrtgProbeService? _prtgProbe;
     private readonly PrtgBackfillService? _prtgBackfill;
+    private readonly PrtgStructureSyncService? _prtgStructureSync;
     private readonly StorageBackend? _backend;
     private readonly IHostStore? _hosts;
 
@@ -36,6 +37,7 @@ public class SettingsController : ControllerBase
         IAuditService audit,
         PrtgProbeService? prtgProbe = null,
         PrtgBackfillService? prtgBackfill = null,
+        PrtgStructureSyncService? prtgStructureSync = null,
         StorageBackend? backend = null,
         IHostStore? hosts = null)
     {
@@ -45,6 +47,7 @@ public class SettingsController : ControllerBase
         _audit = audit;
         _prtgProbe = prtgProbe;
         _prtgBackfill = prtgBackfill;
+        _prtgStructureSync = prtgStructureSync;
         _backend = backend;
     }
 
@@ -169,6 +172,33 @@ public class SettingsController : ControllerBase
             detail: new { });
 
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
+    }
+
+    // ── PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）───────────────────────
+
+    [HttpGet("prtg-structure-sync/status")]
+    public ApiResponse<PrtgStructureSyncStatusDto> GetPrtgStructureSyncStatus() =>
+        ApiResponse<PrtgStructureSyncStatusDto>.Ok(
+            _prtgStructureSync?.GetStatus() ?? new PrtgStructureSyncStatusDto());
+
+    [HttpPost("prtg-structure-sync/start")]
+    public ApiResponse<StartPrtgStructureSyncResultDto> StartPrtgStructureSync()
+    {
+        if (_prtgStructureSync == null)
+            throw DomainException.Validation("PRTG 同步服務未啟用。");
+
+        if (!_prtgStructureSync.TryStart(out var error))
+            throw DomainException.Validation(error ?? "無法啟動 PRTG 結構同步。");
+
+        _audit.Record(
+            action: AuditActions.PrtgStructureSyncRun,
+            summary: "執行 PRTG 結構同步與主機對應",
+            targetKind: "system_settings",
+            targetId: "prtg_structure_sync",
+            detail: new { });
+
+        return ApiResponse<StartPrtgStructureSyncResultDto>.Ok(
+            new StartPrtgStructureSyncResultDto { Started = true });
     }
 
     // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────

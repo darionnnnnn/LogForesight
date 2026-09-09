@@ -229,3 +229,36 @@ public class PrtgValueFetchScopeEstimateDto
     /// <summary>估算量超過建議上限時的提醒文字；未超過為 null</summary>
     public string? Warning { get; set; }
 }
+
+/// <summary>「同步結構與對應」的狀態（docs/PRTG-SPEC.md §5a）。Last* 全為 null 代表從未執行過。</summary>
+public class PrtgStructureSyncStatusDto
+{
+    public bool IsRunning { get; set; }
+    public DateTime? StartedAt { get; set; }
+    public string? LatestMessage { get; set; }
+    public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
+
+    public string? ProgressPhase { get; set; }
+    public int ProgressDone { get; set; }
+    public int ProgressTotal { get; set; }
+
+    public DateTime? LastCompletedAt { get; set; }
+    public bool? LastSuccess { get; set; }
+    public string? LastErrorMessage { get; set; }
+    public double? LastElapsedSeconds { get; set; }
+    public int? LastDevices { get; set; }
+    public int? LastSensors { get; set; }
+    public DateTime? LastMapDate { get; set; }
+    public int? LastMapOk { get; set; }
+    public int? LastMapManual { get; set; }
+    public int? LastMapConflict { get; set; }
+    public int? LastMapUnmatched { get; set; }
+    public int? LastMapSkipped { get; set; }
+}
+
+/// <summary>啟動「同步結構與對應」的回應</summary>
+public class StartPrtgStructureSyncResultDto
+{
+    public bool Started { get; set; }
+    public string? Error { get; set; }
+}

@@ -582,4 +582,28 @@ public class PrtgAdminPageUiTests
         // 估算端點的呼叫
         Assert.Contains("prtg-fetch-scope/estimate", js);
     }
+
+    /// <summary>
+    /// 「同步結構與對應」的入口在鏡像狀態頁籤（docs/PRTG-SPEC.md §5a）：
+    /// 按鈕、狀態列與前端綁定三者缺一，畫面上就會出現按不動或不會更新的控制項。
+    /// </summary>
+    [Fact]
+    public void 同步結構與對應的入口與前端綁定齊備()
+    {
+        var root = FindRepoRoot();
+
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        Assert.Contains("prtg-structure-sync-btn", cshtml);
+        Assert.Contains("prtg-structure-sync-status", cshtml);
+        Assert.Contains("prtg-structure-sync-progress", cshtml);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        Assert.Contains("prtg-structure-sync/start", js);
+        Assert.Contains("prtg-structure-sync/status", js);
+        Assert.Contains("bindStructureSync()", js);
+        Assert.Contains("refreshStructureSyncStatus()", js);
+
+        // 「尚未同步」與「同步到 0 筆」必須是不同文案——兩者混在一起會讓人以為同步過了
+        Assert.Contains("尚未同步", js);
+    }
 }
