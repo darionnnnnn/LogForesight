@@ -2273,12 +2273,38 @@ a.lf-calendar__cell:focus-visible {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--lf-space-3);
-    align-items: start;
+    /* stretch（而非 start）讓三張卡等高：三者的固定列數本來就不同（進度軌條數、有無說明段落），
+       align-items:start 會讓每張卡貼齊自己的內容高度，並排時高低不齊。
+       等高由 grid 給，不寫死 min-height——寫死的話內容一改就要回頭調數字。 */
+    align-items: stretch;
+}
+
+/* 卡片撐滿格線高度後，內容要能把按鈕列推到底，否則三張卡的按鈕會各自停在不同高度。 */
+.lf-run-status-grid > .lf-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.lf-run-status-grid > .lf-card > .lf-card__body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+}
+
+/* 按鈕列貼底：這一列在三張卡裡都是最後一個元素 */
+.lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
+    margin-top: auto;
+    padding-top: var(--lf-space-2);
 }
 
 @media (max-width: 991.98px) {
     .lf-run-status-grid {
         grid-template-columns: 1fr;
+    }
+
+    /* 疊直時每張卡各自為政，不必再把按鈕推到底 */
+    .lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
+        margin-top: var(--lf-space-2);
     }
 }
 
@@ -2311,6 +2337,11 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-run-tracks--single {
     min-height: 1.75rem;
+}
+
+/* 兩條軌的區塊（取數卡的本機＋NetIQ、PRTG 卡的每日擷取＋回填） */
+.lf-run-tracks--pair {
+    min-height: 3.25rem;
 }
 
 .lf-run-progress {

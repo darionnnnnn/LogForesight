@@ -70,6 +70,20 @@ public sealed class PrtgTriggeredValueFetcher
             }
         }
 
+        // all-mapped 的候選集合是「該日全部 ok 對應的主機」，與分析結果無關——首輪就會全部取完，
+        // 之後的輪詢只是空等到分析結束（畫面上 PRTG 軌長時間停在執行中）。因此這個模式單輪收工。
+        var singlePass = effectiveScope == PrtgValueFetchScope.AllMapped;
+
+        if (singlePass && hostToDevices.Count == 0)
+        {
+            // 管理者指定了「全部已對應主機」卻一台都沒有，多半是鏡像還沒同步過或對應全部落空。
+            // 靜默收工會讓畫面顯示「已完成」而什麼都沒抓到，看不出原因。
+            // triggered 模式沒有觸發主機是常態（當天沒人出問題），不在這裡出聲。
+            _console.WriteLine("  ⚠ 取數範圍是「全部已對應主機」，但這一天沒有任何已對應的 PRTG 主機，" +
+                               "本次沒有取到任何數值。請先執行「同步結構與對應」，" +
+                               "或到 PRTG 維護頁的鏡像狀態檢查主機對應結果。");
+        }
+
         var fetchedHosts = new HashSet<long>();
         var totalTargetSensors = 0;
         var totalValuesWritten = 0;
@@ -132,7 +146,7 @@ public sealed class PrtgTriggeredValueFetcher
         while (true)
         {
             await ScanAndFetchAsync();
-            if (analysisCompleted())
+            if (singlePass || analysisCompleted())
             {
                 break;
             }
@@ -140,8 +154,12 @@ public sealed class PrtgTriggeredValueFetcher
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(pollSeconds, 1)), ct);
         }
 
-        // 迴圈結束後再執行一次「掃描並取數」作為收尾掃描
-        await ScanAndFetchAsync();
+        // 迴圈結束後再執行一次「掃描並取數」作為收尾掃描：統計段先寫入紀錄、AI 段可能事後上調風險，
+        // 只靠過程中的輪詢會漏掉這些主機。all-mapped 的候選與分析無關，首輪已取完，不需要這一次。
+        if (!singlePass)
+        {
+            await ScanAndFetchAsync();
+        }
 
         return new PrtgTriggeredFetchResult(
             fetchedHosts.Count,

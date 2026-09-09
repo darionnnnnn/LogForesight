@@ -17,6 +17,42 @@ public class PrtgResourceGuardTargetsTests : IDisposable
 
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
 
+    /// <summary>
+    /// 呼叫受測方法。位址解析器預設用正式實作——測試位址都是合法 IP 或對不到的名稱，
+    /// 第一層純語法正規化與名稱字面比對就足夠，不會真的去查 DNS。
+    /// </summary>
+    private static PrtgResourceGuardTargetResult ResolveTargets(
+        EfPrtgStore store,
+        SystemSettings settings,
+        IReadOnlyList<Sentinel> sentinels,
+        IRunConsole console,
+        IPrtgAddressResolver? resolver = null,
+        bool ignoreOverride = false)
+        => PrtgResourceGuardTargets.Resolve(
+            new PrtgMirrorGuardSource(store), settings, sentinels, console,
+            resolver ?? new PrtgAddressResolver(), ignoreOverride);
+
+    /// <summary>可控的位址解析器：先走純語法正規化，對不到時查這張表。</summary>
+    private sealed class FakeResolver : IPrtgAddressResolver
+    {
+        private readonly Dictionary<string, string?> _map;
+
+        public FakeResolver(Dictionary<string, string?> map)
+        {
+            _map = new Dictionary<string, string?>(map, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public string? Resolve(string? value)
+        {
+            var normalized = PrtgAddress.Normalize(value);
+            if (normalized != null) return normalized;
+
+            var token = PrtgAddress.HostToken(value);
+            if (token == null) return null;
+            return _map.TryGetValue(token, out var mapped) ? mapped : null;
+        }
+    }
+
     private sealed class TestConsole : IRunConsole
     {
         public List<string> Lines { get; } = new();
@@ -39,7 +75,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             new() { Name = "S1", BaseUrl = "https://192.168.1.10:8443" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, sentinels, console);
+        var result = ResolveTargets(store, settings, sentinels, console);
 
         Assert.Equal(new long[] { 9001, 9002 }, result.SensorObjids);
         Assert.Empty(store.GetAllDevices());
@@ -56,7 +92,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             PrtgResourceGuardSensorObjids = new List<string> { "9001", "not-a-number", "9002" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, Array.Empty<Sentinel>(), console);
+        var result = ResolveTargets(store, settings, Array.Empty<Sentinel>(), console);
 
         Assert.Equal(new long[] { 9001, 9002 }, result.SensorObjids);
         Assert.Contains(console.Lines, l => l.Contains("not-a-number"));
@@ -88,7 +124,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             new() { Name = "S1", BaseUrl = "https://192.168.1.50:8443" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, sentinels, console);
+        var result = ResolveTargets(store, settings, sentinels, console);
 
         Assert.Equal(2, result.SensorObjids.Count);
         Assert.Contains(2001, result.SensorObjids);
@@ -124,7 +160,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             new() { Name = "S1", BaseUrl = "https://192.168.1.50:8443" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, sentinels, console);
+        var result = ResolveTargets(store, settings, sentinels, console);
 
         Assert.Single(result.SensorObjids);
         Assert.Equal(2002, result.SensorObjids[0]);
@@ -152,7 +188,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             new() { Name = "S1", BaseUrl = "https://srv-a.example.local:8443/" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, sentinels, console);
+        var result = ResolveTargets(store, settings, sentinels, console);
 
         Assert.Single(result.SensorObjids);
         Assert.Equal(2001, result.SensorObjids[0]);
@@ -179,7 +215,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             PrtgUrl = "https://unmatched-prtg.local"
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, Array.Empty<Sentinel>(), console);
+        var result = ResolveTargets(store, settings, Array.Empty<Sentinel>(), console);
 
         Assert.Single(result.SensorObjids);
         Assert.Equal(2099, result.SensorObjids[0]);
@@ -201,7 +237,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             new() { Name = "S1", BaseUrl = "https://sentinel.notfound.local:8443" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, sentinels, console);
+        var result = ResolveTargets(store, settings, sentinels, console);
 
         Assert.Empty(result.SensorObjids);
         Assert.Empty(result.SensorCategories);
@@ -224,7 +260,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
         };
 
         // 鏡像表為空 → 自動偵測找不到任何 sensor，但重點是「沒有回傳那兩個手填 objid」
-        var result = PrtgResourceGuardTargets.Resolve(
+        var result = ResolveTargets(
             store, settings, Array.Empty<Sentinel>(), console, ignoreOverride: true);
 
         Assert.DoesNotContain(9001L, result.SensorObjids);
@@ -242,8 +278,136 @@ public class PrtgResourceGuardTargetsTests : IDisposable
             PrtgResourceGuardSensorObjids = new List<string> { "9001" }
         };
 
-        var result = PrtgResourceGuardTargets.Resolve(store, settings, Array.Empty<Sentinel>(), console);
+        var result = ResolveTargets(store, settings, Array.Empty<Sentinel>(), console);
 
         Assert.Equal(new long[] { 9001 }, result.SensorObjids);
+    }
+
+    [Fact]
+    public void Resolve_device的Ip帶port時仍命中()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 1501, Name = "PRTG Core", Ip = "10.216.7.55:8080" }
+        }, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2501, DeviceObjid = 1501, Name = "CPU Load", Category = "cpu", Paused = false }
+        }, now);
+
+        var console = new TestConsole();
+        var settings = new SystemSettings { PrtgUrl = "https://10.216.7.55" };
+
+        var result = ResolveTargets(store, settings, Array.Empty<Sentinel>(), console);
+
+        Assert.Contains(2501L, result.SensorObjids);
+    }
+
+    [Fact]
+    public void Resolve_Sentinel位址為DNS名稱時以解析出的IP命中device()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 1502, Name = "SRV-B", Ip = "10.7.7.7" }
+        }, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2502, DeviceObjid = 1502, Name = "Memory", Category = "memory", Paused = false }
+        }, now);
+
+        var console = new TestConsole();
+        var settings = new SystemSettings();
+        var sentinels = new List<Sentinel>
+        {
+            new() { Name = "S1", BaseUrl = "https://srv-b.example.local:8443/" }
+        };
+        var resolver = new FakeResolver(new Dictionary<string, string?>
+        {
+            ["srv-b.example.local"] = "10.7.7.7"
+        });
+
+        var result = ResolveTargets(store, settings, sentinels, console, resolver);
+
+        Assert.Contains(2502L, result.SensorObjids);
+    }
+
+    /// <summary>可控的來源：直接餵裝置與感測器，用來證明判定邏輯與來源實作無關。</summary>
+    private sealed class FakeGuardSource : IPrtgResourceGuardSource
+    {
+        private readonly IReadOnlyList<PrtgDeviceRow> _devices;
+        private readonly IReadOnlyList<PrtgSensorRow> _sensors;
+
+        public FakeGuardSource(IReadOnlyList<PrtgDeviceRow> devices, IReadOnlyList<PrtgSensorRow> sensors, string label)
+        {
+            _devices = devices;
+            _sensors = sensors;
+            SourceLabel = label;
+        }
+
+        public string SourceLabel { get; }
+
+        public IReadOnlyList<PrtgDeviceRow> GetDevices() => _devices;
+
+        public IReadOnlyList<PrtgSensorRow> GetSensors() => _sensors;
+    }
+
+    /// <summary>
+    /// 同一組資料換不同來源要得到同一組 objid——判定邏輯只有一份，
+    /// 鏡像與即時查詢的差別只在資料哪裡來（docs/PRTG-SPEC.md §12）。
+    /// </summary>
+    [Fact]
+    public void Resolve_鏡像與即時兩種來源得到相同結果()
+    {
+        var devices = new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1601, Name = "SRV-C", Ip = "10.6.6.6" }
+        };
+        var sensors = new List<PrtgSensorRow>
+        {
+            new() { Objid = 2601, DeviceObjid = 1601, Name = "CPU Load", Category = "cpu", Paused = false }
+        };
+
+        var settings = new SystemSettings();
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.6.6.6:8443" } };
+
+        var fromMirror = PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(devices, sensors, "mirror"), settings, sentinels,
+            new TestConsole(), new PrtgAddressResolver());
+
+        var fromLive = PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(devices, sensors, "live"), settings, sentinels,
+            new TestConsole(), new PrtgAddressResolver());
+
+        Assert.Equal(fromMirror.SensorObjids, fromLive.SensorObjids);
+        Assert.Contains(2601L, fromLive.SensorObjids);
+    }
+
+    /// <summary>
+    /// 找不到裝置時的訊息要說出資料是哪裡來的：讀鏡像的「找不到」多半是還沒同步，
+    /// 直接查 PRTG 的「找不到」才代表 PRTG 上真的沒有。兩者處置完全不同。
+    /// </summary>
+    [Fact]
+    public void Resolve_找不到裝置時訊息標明資料來源()
+    {
+        var settings = new SystemSettings();
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.7.7.7:8443" } };
+
+        var mirrorConsole = new TestConsole();
+        PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(new List<PrtgDeviceRow>(), new List<PrtgSensorRow>(), "mirror"),
+            settings, sentinels, mirrorConsole, new PrtgAddressResolver());
+
+        var liveConsole = new TestConsole();
+        PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(new List<PrtgDeviceRow>(), new List<PrtgSensorRow>(), "live"),
+            settings, sentinels, liveConsole, new PrtgAddressResolver());
+
+        Assert.Contains(mirrorConsole.Lines, l => l.Contains("同步結構與對應"));
+        Assert.Contains(liveConsole.Lines, l => l.Contains("已直接查詢 PRTG"));
+        Assert.DoesNotContain(liveConsole.Lines, l => l.Contains("同步結構與對應"));
     }
 }

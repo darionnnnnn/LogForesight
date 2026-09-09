@@ -648,6 +648,8 @@ async function loadSchedule() {
     if (settings) {
         const prtgEnabledEl = document.getElementById('prtg-enabled');
         if (prtgEnabledEl) prtgEnabledEl.checked = Boolean(settings.prtgEnabled);
+        // 狀態卡的模組狀態與排程設定頁籤的開關同一個來源，不另打 API
+        renderPrtgModuleState(Boolean(settings.prtgEnabled));
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -672,8 +674,6 @@ function applyScheduleOptions(options) {
             : '全部主機（不含本機——本機分析已停用，等同排程觸發的完整執行）';
     }
 
-    const aiEnabledCheckbox = document.getElementById('schedule-ai-enabled');
-    if (aiEnabledCheckbox) aiEnabledCheckbox.checked = !!options.aiEnabled;
 
     const aiConcurrencyInput = document.getElementById('schedule-ai-concurrency');
     if (aiConcurrencyInput) {
@@ -696,12 +696,11 @@ function applyScheduleOptions(options) {
 
     const aiNextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (aiNextTriggerEl) {
-        if (!options.aiEnabled) {
-            aiNextTriggerEl.textContent = '排程未啟用';
-        } else if (options.nextAiTriggerTime) {
+        // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
+        if (options.nextAiTriggerTime) {
             aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
         } else {
-            aiNextTriggerEl.textContent = '—';
+            aiNextTriggerEl.textContent = '窗口內，隨時可跑';
         }
     }
 
@@ -799,7 +798,6 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
             windows: scheduleWindows,
             debugDump: document.getElementById('schedule-debug-dump').checked,
             localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked,
-            aiEnabled: document.getElementById('schedule-ai-enabled')?.checked ?? false,
             aiWindows: scheduleAiWindows,
             aiConcurrency: concurrencyVal
         });
@@ -981,9 +979,7 @@ function applyAiScheduleStatus(status) {
         // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
         // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
         let hint = '';
-        if (aiAvailable && !status.aiEnabled && status.pendingTotal > 0) {
-            hint = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
-        } else if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
+        if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
             hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
 
@@ -1017,12 +1013,14 @@ function applyAiScheduleStatus(status) {
 
     const nextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (nextTriggerEl) {
-        if (status.aiEnabled && status.nextTriggerTime) {
+        // AI 一律啟用；這一列說的是「積壓什麼時候會被背景消化」。
+        // 已在窗口內時後端回 null，代表現在就會跑。
+        if (!aiAvailable) {
+            nextTriggerEl.textContent = 'AI 服務未設定';
+        } else if (status.nextTriggerTime) {
             nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
-        } else if (!status.aiEnabled) {
-            nextTriggerEl.textContent = '排程未啟用';
         } else {
-            nextTriggerEl.textContent = '—';
+            nextTriggerEl.textContent = '窗口內，隨時可跑';
         }
     }
 
@@ -1043,7 +1041,8 @@ const PROGRESS_PHASE_LABEL = {
     'prtg-sync-sensors': 'PRTG 感測器結構同步',
     'prtg-sync-messages': 'PRTG 狀態變更同步',
     'prtg-values': 'PRTG 數值取數',
-    'prtg-triggered': 'PRTG 觸發式取數'
+    'prtg-triggered': 'PRTG 觸發式取數',
+    'prtg-wait-sync': '等待手動同步完成'
 };
 const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
@@ -1051,7 +1050,8 @@ const PROGRESS_PHASE_UNIT = {
     'prtg-sync-sensors': '個',
     'prtg-sync-messages': '筆',
     'prtg-values': 'sensor',
-    'prtg-triggered': 'sensor'
+    'prtg-triggered': 'sensor',
+    'prtg-wait-sync': ''
 };
 
 /**
@@ -1150,6 +1150,13 @@ function renderScheduleProgress(status) {
     if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
         const prefix = PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 觸發式取數');
         prtgCustomLabel = `${prefix}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
+    } else if (status.prtgCompleted) {
+        // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
+        // 分母為 0 代表這一路跑完了但什麼都沒抓到——那不是「已完成 0/0」能講清楚的，
+        // 要說出來才不會與「抓了一批」在畫面上長得一樣。
+        prtgCustomLabel = status.prtgProgressTotal > 0
+            ? `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`
+            : 'PRTG 擷取　已完成（本次沒有取到數值）';
     }
 
     updateProgressBar(
@@ -1162,6 +1169,79 @@ function renderScheduleProgress(status) {
         prtgCustomLabel,
         status.prtgCompleted
     );
+}
+
+// ── PRTG 卡：模組狀態與結構同步摘要（回饋第 40 輪批次A）────────────────
+
+let prtgSyncTimer = null;
+
+/**
+ * 「尚未同步」與「同步到 0 筆」是兩件事，文案必須分得出來——
+ * 前者要引導使用者去按同步，後者代表按過了但 PRTG 上沒有對得上的裝置。
+ */
+function renderPrtgSyncSummary(status) {
+    const el = document.getElementById('prtg-sync-summary');
+    if (!el) return;
+
+    if (status.isRunning) {
+        el.textContent = '同步中…';
+        return;
+    }
+
+    if (!status.lastCompletedAt) {
+        el.textContent = '尚未同步';
+        return;
+    }
+
+    if (!status.lastSuccess) {
+        el.textContent = `${formatDateTime(status.lastCompletedAt)} 未成功`;
+        return;
+    }
+
+    el.textContent =
+        `${formatDateTime(status.lastCompletedAt)}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
+        + `（衝突 ${formatNumber(status.lastMapConflict ?? 0)}、查無主機 ${formatNumber(status.lastMapUnmatched ?? 0)}）`;
+}
+
+async function refreshPrtgSyncStatus() {
+    try {
+        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
+        renderPrtgSyncSummary(status);
+
+        const btn = document.getElementById('prtg-sync-start');
+        if (btn) btn.disabled = status.isRunning;
+
+        if (status.isRunning) {
+            if (!prtgSyncTimer) prtgSyncTimer = setInterval(refreshPrtgSyncStatus, 3000);
+        } else if (prtgSyncTimer) {
+            clearInterval(prtgSyncTimer);
+            prtgSyncTimer = null;
+        }
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindPrtgSync() {
+    const btn = document.getElementById('prtg-sync-start');
+    btn?.addEventListener('click', async () => {
+        const restore = withBusy(btn, '啟動中');
+        try {
+            await api.post('/api/admin/settings/prtg-structure-sync/start', {});
+            toast('已開始同步結構與對應', 'success');
+            await refreshPrtgSyncStatus();
+        } finally {
+            restore();
+        }
+    });
+}
+
+/** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
+function renderPrtgModuleState(enabled) {
+    const el = document.getElementById('prtg-module-state');
+    if (!el) return;
+    el.textContent = enabled ? '已啟用' : '未啟用';
+    el.classList.toggle('text-muted', !enabled);
 }
 
 function renderAiScheduleProgress(status) {
@@ -1461,6 +1541,7 @@ function bindPrtgEnabledSwitch() {
         const nextVal = checkbox.checked;
         try {
             await api.put('/api/admin/settings/prtg-enabled', { enabled: nextVal });
+            renderPrtgModuleState(nextVal);
             toast('已更新 PRTG 擷取開關', 'success');
         } catch (error) {
             checkbox.checked = !nextVal;
@@ -1601,7 +1682,9 @@ bindTabs(document.getElementById('runs-tabs'), {
 loadSchedule();
 bindPrtgEnabledSwitch();
 bindPrtgBackfill();
+bindPrtgSync();
 refreshPrtgBackfillStatus();
+refreshPrtgSyncStatus();
 guardLoad([
     document.getElementById('run-summary'),
     document.getElementById('run-errors'),

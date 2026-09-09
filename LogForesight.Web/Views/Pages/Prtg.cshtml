@@ -194,71 +194,10 @@
             </div>
         </div>
 
-        <div class="lf-card mt-3">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">資源守門</h2>
-            </div>
-            <div class="lf-card__body">
-                <p class="text-muted small mb-3">執行期間監看 NetIQ 與 PRTG 主機的資源，緊張時暫停取數，等資源回落再繼續。</p>
-
-                <div class="mb-3">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="prtg-guard-enabled" />
-                        <label class="form-check-label" for="prtg-guard-enabled">啟用資源守門</label>
-                    </div>
-                </div>
-
-                <div class="row g-3 mb-3">
-                    <div class="col-md-6">
-                        <label for="prtg-guard-cpu-percent" class="form-label">CPU 門檻（%）</label>
-                        <input type="number" class="form-control" id="prtg-guard-cpu-percent" min="1" max="100" />
-                        <div class="form-text">CPU 使用率達此值算緊張。</div>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="prtg-guard-memory-free-percent" class="form-label">可用記憶體門檻（%）</label>
-                        <input type="number" class="form-control" id="prtg-guard-memory-free-percent" min="0" max="99" />
-                        <div class="form-text">可用記憶體低於此值算緊張。</div>
-                    </div>
-                </div>
-
-                <div class="row g-3 mb-3">
-                    <div class="col-md-3">
-                        <label for="prtg-guard-check-seconds" class="form-label">檢查間隔（秒）</label>
-                        <input type="number" class="form-control" id="prtg-guard-check-seconds" min="15" max="600" />
-                        <div class="form-text">檢查間隔（秒）。</div>
-                    </div>
-                    <div class="col-md-3">
-                        <label for="prtg-guard-pause-minutes" class="form-label">暫停檢查時間（分鐘）</label>
-                        <input type="number" class="form-control" id="prtg-guard-pause-minutes" min="1" max="60" />
-                        <div class="form-text">判定緊張後等待幾分鐘再檢查。</div>
-                    </div>
-                    <div class="col-md-3">
-                        <label for="prtg-guard-strikes" class="form-label">連續超標次數</label>
-                        <input type="number" class="form-control" id="prtg-guard-strikes" min="1" max="10" />
-                        <div class="form-text">連續幾次超標才算緊張。</div>
-                    </div>
-                    <div class="col-md-3">
-                        <label for="prtg-guard-max-pause-minutes" class="form-label">累計暫停上限（分鐘）</label>
-                        <input type="number" class="form-control" id="prtg-guard-max-pause-minutes" min="10" max="600" />
-                        <div class="form-text">單趟累計暫停上限（分鐘）；超過後放行並警告，避免門檻設錯造成整晚空轉。</div>
-                    </div>
-                </div>
-
-                <div class="mb-3">
-                    <label for="prtg-guard-sensor-objids" class="form-label">受監看感測器覆寫清單（objid）</label>
-                    <textarea class="form-control lf-mono" id="prtg-guard-sensor-objids" rows="4"
-                              placeholder="1001&#10;1002"></textarea>
-                    <div class="form-text">覆寫清單，一行一個 objid；留空＝自動偵測。</div>
-                </div>
-
-                <div class="d-flex align-items-center flex-wrap gap-3 mt-3 mb-3">
-                    <button type="button" class="btn btn-outline-secondary" id="prtg-guard-preview-btn">預覽受監看 sensor</button>
-                    <button type="button" class="btn btn-outline-secondary" id="prtg-guard-autofill-btn">自動偵測並填入</button>
-                    <span class="text-muted small">守門設定與上方擷取參數同一顆「儲存」。</span>
-                </div>
-
-                <div id="prtg-guard-preview-result"></div>
-            </div>
+        <div class="alert alert-light border mt-3 mb-0 small" role="note">
+            <strong>資源守門</strong>已移到
+            <a href="@Url.Content("~/admin/settings")#guard">系統管理 &gt; 設定 &gt; 資源守門</a>。
+            守門同時節制 NetIQ 取數與 PRTG 擷取兩路，不只是 PRTG 的事，因此設定與其他全站參數放在一起。
         </div>
     </form>
 </div>
@@ -275,6 +214,21 @@
                         顯示目前 PRTG 鏡像資料庫五表的同步統計與最近一次主機對應分析結果。
                     </p>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-mirror-refresh">重新整理</button>
+                </div>
+
+                <div class="border rounded p-3 mb-3" id="prtg-structure-sync-card">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <div>
+                            <div class="fw-semibold">同步結構與對應</div>
+                            <div class="text-muted small">
+                                立刻向 PRTG 取得裝置與感測器結構，並重算今天的主機對應。
+                                PRTG 剛啟用、或剛新增一批裝置時執行；平常由夜間排程自動進行。
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary" id="prtg-structure-sync-btn">開始同步</button>
+                    </div>
+                    <div class="small mt-2" id="prtg-structure-sync-status">上次同步：載入中…</div>
+                    <div class="small text-muted" id="prtg-structure-sync-progress"></div>
                 </div>
                 <div class="row g-3 mb-3" id="prtg-mirror-stats">
                     <div class="col-md-4">

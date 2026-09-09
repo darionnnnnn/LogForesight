@@ -171,4 +171,29 @@ public class PrtgResourceGuardPreviewEndpointTests : IDisposable
         Assert.NotNull(resAuto.Data);
         Assert.Equal("auto", resAuto.Data.Source);
     }
+
+    /// <summary>
+    /// 鏡像是空的（PRTG 剛啟用、還沒同步過）時改為直接查 PRTG；查不通就退回鏡像並標明來源
+    /// （docs/PRTG-SPEC.md §12）。靜默退回會讓使用者以為「PRTG 上真的沒有這些裝置」。
+    /// </summary>
+    [Fact]
+    public async Task 鏡像為空時改查PRTG_查不通則退回鏡像並標明來源()
+    {
+        var store = new SystemSettingsStore(_backend.Blob("system_settings"));
+        store.Update(s =>
+        {
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgResourceGuardSensorObjids = new List<string>();
+        });
+
+        var res = await _controller.PreviewPrtgResourceGuard(CancellationToken.None);
+
+        Assert.True(res.Success);
+        Assert.NotNull(res.Data);
+        Assert.Equal("mirror-fallback", res.Data!.Source);
+        Assert.Contains(res.Data.Warnings, w => w.Contains("直接查詢 PRTG 失敗"));
+    }
 }

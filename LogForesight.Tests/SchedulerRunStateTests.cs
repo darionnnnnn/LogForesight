@@ -1,3 +1,4 @@
+using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Xunit;
@@ -726,5 +727,34 @@ public class SchedulerRunStateTests
         {
             Assert.True(names.Contains(expected), $"SchedulerRunState 少了公開屬性「{expected}」");
         }
+    }
+
+    [Fact]
+    public void ReportProgress_prtgDone帶數字_保留取數結果並標記完成()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        state.ReportProgress(RunPhases.PrtgDone, 3, 40);
+
+        Assert.True(state.PrtgCompleted);
+        Assert.Equal(3, state.PrtgProgressDone);
+        Assert.Equal(40, state.PrtgProgressTotal);
+    }
+
+    [Fact]
+    public void ReportProgress_prtgDone帶零_不清掉軌上已累積的數字()
+    {
+        // PRTG 停用、初始化失敗或取消時完工訊號是 (0, 0)。既有規範是完工後保留最後的數字，
+        // 用 0 覆蓋會讓那條軌看起來什麼都沒做。
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        state.ReportProgress(RunPhases.PrtgTriggered, 5, 50);
+        state.ReportProgress(RunPhases.PrtgDone, 0, 0);
+
+        Assert.True(state.PrtgCompleted);
+        Assert.Equal(5, state.PrtgProgressDone);
+        Assert.Equal(50, state.PrtgProgressTotal);
     }
 }

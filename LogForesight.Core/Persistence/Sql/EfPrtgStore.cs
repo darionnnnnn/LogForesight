@@ -632,13 +632,29 @@ public sealed class EfPrtgStore
         ctx.SaveChanges();
     }
 
-    /// <summary>刪除一筆 IP 排除，回傳刪除筆數。</summary>
+    /// <summary>
+    /// 刪除一筆 IP 排除，回傳刪除筆數。
+    /// 同時以原始 trim 值與正規化值各嘗試一次，以相容舊的非 IP 排除列。
+    /// </summary>
     public int DeleteIpExclude(string ip)
     {
+        var trimmed = ip?.Trim();
+        var deleted = 0;
+
+        if (!string.IsNullOrEmpty(trimmed))
+        {
+            using var ctx = _contextFactory();
+            deleted = ctx.PrtgIpExcludes.Where(e => e.Ip == trimmed).ExecuteDelete();
+        }
+
         var normIp = PrtgHostMapper.NormalizeIp(ip);
-        if (normIp == null) return 0;
-        using var ctx = _contextFactory();
-        return ctx.PrtgIpExcludes.Where(e => e.Ip == normIp).ExecuteDelete();
+        if (normIp != null && normIp != trimmed)
+        {
+            using var ctx = _contextFactory();
+            deleted += ctx.PrtgIpExcludes.Where(e => e.Ip == normIp).ExecuteDelete();
+        }
+
+        return deleted;
     }
 
     private static string? Truncate(string? value, int maxLength) =>

@@ -30,9 +30,10 @@
                 <span class="lf-kv__value" id="schedule-elapsed"></span>
             </div>
 
-            @* 三條互不覆蓋的進度軌：本機／NetIQ／PRTG 並行執行，各自持有自己最後一次回報的值。
+            @* 本機與 NetIQ 兩條互不覆蓋的進度軌，各自持有自己最後一次回報的值。
+               PRTG 那一軌搬到自己的卡（三路並行，但 PRTG 有自己的總開關與同步狀態要交代）。
                區塊高度固定（lf-run-tracks 的 min-height），輪詢重繪時版面不跳動。 *@
-            <div class="lf-run-tracks">
+            <div class="lf-run-tracks lf-run-tracks--pair">
                 <div class="progress lf-run-progress mb-1 d-none" id="schedule-local-progress-wrap">
                     <div class="progress-bar bg-info" id="schedule-local-progress-bar" role="progressbar"></div>
                 </div>
@@ -41,10 +42,6 @@
                     <div class="progress-bar" id="schedule-progress-bar" role="progressbar"></div>
                 </div>
                 <div class="small text-muted mb-2 d-none" id="schedule-progress-text"></div>
-                <div class="progress lf-run-progress mb-1 d-none" id="schedule-prtg-progress-wrap">
-                    <div class="progress-bar" id="schedule-prtg-progress-bar" role="progressbar"></div>
-                </div>
-                <div class="small text-muted mb-2 d-none" id="schedule-prtg-progress-text"></div>
             </div>
 
             @* 手動執行佔用排程窗口時的說明：手動觸發不受窗口 End 停止，一趟大回填可以吃掉
@@ -53,7 +50,7 @@
 
             <div class="small text-muted lf-run-message" id="schedule-latest-message"></div>
 
-            <div class="d-flex flex-wrap align-items-center gap-2 mt-3" data-maintain-only>
+            <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions" data-maintain-only>
                 <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-run-now">立即執行</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-stop">停止執行</button>
             </div>
@@ -71,7 +68,7 @@
                 <span class="lf-kv__value" id="schedule-ai-run-state">載入中…</span>
             </div>
             <div class="lf-kv">
-                <span class="lf-kv__label">下次觸發</span>
+                <span class="lf-kv__label">背景補跑窗口</span>
                 <span class="lf-kv__value" id="schedule-ai-next-trigger">—</span>
             </div>
             <div class="lf-kv d-none" id="schedule-ai-elapsed-row">
@@ -96,7 +93,7 @@
 
             <div class="small text-muted lf-run-message" id="schedule-ai-latest-message"></div>
 
-            <div class="d-flex flex-wrap align-items-center gap-2 mt-3" data-maintain-only>
+            <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions" data-maintain-only>
                 <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-ai-run-now">立即補跑 AI</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-ai-stop">停止</button>
                 <button type="button" class="btn btn-sm btn-outline-warning" id="schedule-ai-force-rerun">強制重新分析</button>
@@ -104,33 +101,49 @@
         </div>
     </section>
 
-    @* PRTG 歷史回填：手動離峰作業，與上面兩張「自動排程的即時狀態」性質不同，各自一張卡 *@
-    <section class="lf-card" id="prtg-backfill-section">
+    @* PRTG：總開關、結構同步狀態、每日擷取進度、歷史回填四件事集中在這張卡。
+       每日擷取是三路並行的第三路，進度軌從取數卡搬過來——那條軌的內容全是 PRTG 的事。 *@
+    <section class="lf-card" id="prtg-status-card">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">PRTG 歷史回填</h2>
+            <h2 class="lf-card__title">PRTG</h2>
         </div>
         <div class="lf-card__body">
-            <p class="text-muted small mb-2">
-                從昨天往前補數值與狀態變更，只在離峰手動執行。
-                回填天數在 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護</a> 頁設定。
-            </p>
             <div class="lf-kv">
-                <span class="lf-kv__label">目前狀態</span>
-                <span class="lf-kv__value" id="prtg-backfill-status">閒置</span>
+                <span class="lf-kv__label">模組狀態</span>
+                <span class="lf-kv__value" id="prtg-module-state">載入中…</span>
+            </div>
+            <div class="lf-kv">
+                <span class="lf-kv__label">結構同步</span>
+                <span class="lf-kv__value" id="prtg-sync-summary">—</span>
             </div>
             <div class="lf-kv">
                 <span class="lf-kv__label">回填範圍</span>
                 <span class="lf-kv__value" id="prtg-backfill-days-hint">—</span>
             </div>
+            <div class="lf-kv">
+                <span class="lf-kv__label">回填狀態</span>
+                <span class="lf-kv__value" id="prtg-backfill-status">閒置</span>
+            </div>
 
-            <div class="lf-run-tracks lf-run-tracks--single">
+            @* 兩條軌：每日擷取（取數執行的第三路）與歷史回填（手動離峰作業）。
+               兩者可能同時在跑，各自預留高度。 *@
+            <div class="lf-run-tracks lf-run-tracks--pair">
+                <div class="progress lf-run-progress mb-1 d-none" id="schedule-prtg-progress-wrap">
+                    <div class="progress-bar" id="schedule-prtg-progress-bar" role="progressbar"></div>
+                </div>
+                <div class="small text-muted mb-2 d-none" id="schedule-prtg-progress-text"></div>
                 <div class="progress lf-run-progress mb-1 d-none" id="prtg-backfill-progress-wrap">
                     <div class="progress-bar" id="prtg-backfill-progress-bar" role="progressbar"></div>
                 </div>
                 <div class="small text-muted mb-2 d-none" id="prtg-backfill-progress-text"></div>
             </div>
 
-            <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+            @* 這張卡刻意沒有「最新訊息」列：狀態 API 的 latestMessage 是整趟執行共用的最後一行，
+               取數卡已經在顯示它，這裡再放一次只是重複。PRTG 分路的輸出要看執行詳情
+               （每一行都有 [PRTG] 前綴）。 *@
+
+            <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-sync-start" data-maintain-only>同步結構與對應</button>
                 <button type="button" class="btn btn-sm btn-primary" id="prtg-backfill-start" data-maintain-only>開始回填</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-output-toggle"
                         data-bs-toggle="collapse" data-bs-target="#prtg-backfill-output-wrap"
@@ -266,21 +279,18 @@
 
         <section class="lf-card mb-3">
             <div class="lf-card__header">
-                <h2 class="lf-card__title">AI 分析排程</h2>
+                <h2 class="lf-card__title">AI 分析</h2>
             </div>
             <div class="lf-card__body">
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="schedule-ai-enabled" data-maintain-only />
-                    <label class="form-check-label" for="schedule-ai-enabled">啟用 AI 分析排程</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="關閉時不會依窗口自動觸發 AI 分析，僅能手動補跑。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                </div>
+                <p class="text-muted small">
+                    AI 分析在每次取數執行產出結果後自動進行，不需要另外啟用；
+                    設定好「系統管理 &gt; 設定 &gt; AI 服務」即生效。
+                    以下設定的是<strong>背景補跑</strong>：積壓的待補要在哪個時段消化、同時跑幾件。
+                </p>
 
-                <label class="form-label small fw-semibold" for="schedule-ai-windows">AI 執行窗口</label>
+                <label class="form-label small fw-semibold" for="schedule-ai-windows">背景補跑窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="Start 到點觸發一次 AI 分析排程，消化待補積壓紀錄；End 到點對進行中的 AI 分析發出優雅停止（停在單筆邊界）。最多 4 組，時間不可重疊；支援跨午夜。">
+                        data-bs-content="消化積壓待補的時段。跟隨取數的即時分析不受此限制，窗口內外都會跟上；End 到點只對背景補跑發出優雅停止（停在單筆邊界）。最多 4 組，時間不可重疊；支援跨午夜。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <div id="schedule-ai-windows" class="mb-2"></div>

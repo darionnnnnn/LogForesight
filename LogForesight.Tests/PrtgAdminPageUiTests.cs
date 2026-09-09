@@ -132,7 +132,9 @@ public class PrtgAdminPageUiTests
         var cshtmlContent = File.ReadAllText(runsCshtmlPath);
 
         Assert.Contains("id=\"prtg-enabled\"", cshtmlContent);
-        Assert.Contains("prtg-backfill-section", cshtmlContent);
+        // 回填與每日擷取、總開關狀態、結構同步一起放在 PRTG 狀態卡（回饋第 40 輪批次A）
+        Assert.Contains("prtg-status-card", cshtmlContent);
+        Assert.Contains("prtg-backfill-start", cshtmlContent);
 
         var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
         Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
@@ -487,12 +489,13 @@ public class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void PrtgCshtml包含資源守門卡片所有必要元素Id()
+    public void 設定頁包含資源守門所有必要元素Id()
     {
+        // 守門搬到設定頁（回饋第 40 輪批次F）：它節制 NetIQ 與 PRTG 兩路，不只是 PRTG 的事
         var root = FindRepoRoot();
-        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
-        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
-        var content = File.ReadAllText(prtgCshtmlPath);
+        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
+        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
+        var content = File.ReadAllText(settingsCshtmlPath);
 
         Assert.Contains("prtg-guard-enabled", content);
         Assert.Contains("prtg-guard-cpu-percent", content);
@@ -507,12 +510,13 @@ public class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void PrtgCshtml記憶體欄位標籤包含可用二字()
+    public void 設定頁記憶體欄位標籤包含可用二字()
     {
+        // CPU 越高越糟、記憶體越低越糟，方向相反最容易寫反——標籤必須明說是「可用」
         var root = FindRepoRoot();
-        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
-        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
-        var lines = File.ReadAllLines(prtgCshtmlPath);
+        var settingsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml");
+        Assert.True(File.Exists(settingsCshtmlPath), $"找不到檔案: {settingsCshtmlPath}");
+        var lines = File.ReadAllLines(settingsCshtmlPath);
 
         var memoryLabelLine = Array.Find(lines, l => l.Contains("prtg-guard-memory-free-percent") && l.Contains("<label"));
         Assert.NotNull(memoryLabelLine);
@@ -520,14 +524,21 @@ public class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void PrtgAdminJs包含資源守門預覽端點路徑()
+    public void 守門模組包含資源守門預覽端點路徑()
     {
         var root = FindRepoRoot();
-        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-guard.js");
         Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
         var js = File.ReadAllText(jsPath);
 
         Assert.Contains("prtg-resource-guard/preview", js);
+
+        // 後端的 source 四個值前端都要有文案，否則使用者看不出資料是查 PRTG 還是讀鏡像
+        // （批次D 新增 live／mirror-fallback 兩個值）
+        Assert.Contains("override", js);
+        Assert.Contains("live", js);
+        Assert.Contains("mirror-fallback", js);
+        Assert.Contains("auto", js);
     }
 
     /// <summary>
@@ -536,22 +547,30 @@ public class PrtgAdminPageUiTests
     /// （後者覆蓋前者、無任何訊號），一併釘住。
     /// </summary>
     [Fact]
-    public void 資源守門與擷取參數共用儲存鈕且無重複函式()
+    public void 資源守門與設定頁其他欄位共用儲存鈕且無重複函式()
     {
+        // 守門不得有自己的儲存鈕：分兩顆時按其中一顆，另一區未存的改動會在重載時
+        // 被覆蓋回舊值且沒有提示。同檔曾出現兩份逐字重複的守門函式（後者覆蓋前者、
+        // 無任何訊號），一併釘住。
         var root = FindRepoRoot();
-        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
-        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        var settingsCshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml"));
+        var guardJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-guard.js"));
+        var settingsJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "settings.js"));
 
-        Assert.DoesNotContain("prtg-guard-" + "form", cshtml);
-        Assert.DoesNotContain("prtg-guard-" + "save", cshtml);
-        Assert.DoesNotContain("function bind" + "GuardForm", js);
-        Assert.Contains("prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids')", js);
+        Assert.DoesNotContain("prtg-guard-" + "form", settingsCshtml);
+        Assert.DoesNotContain("prtg-guard-" + "save", settingsCshtml);
+        Assert.DoesNotContain("function bind" + "GuardForm", guardJs);
+        Assert.Contains("prtgResourceGuardSensorObjids: collectLines('prtg-guard-sensor-objids')", guardJs);
+        // 守門欄位要真的併進整包儲存，否則設定永遠存不進去
+        Assert.Contains("collectGuardPayload()", settingsJs);
 
-        // 每個頂層函式只能定義一次（JS 宣告提升會讓後者無聲覆蓋前者）
-        var names = System.Text.RegularExpressions.Regex.Matches(js, @"^(?:async )?function (\w+)\(", System.Text.RegularExpressions.RegexOptions.Multiline)
-            .Select(m => m.Groups[1].Value).ToList();
-        var dup = names.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
-        Assert.True(dup.Count == 0, "重複定義的頂層函式：" + string.Join(", ", dup));
+        foreach (var (label, js) in new[] { ("prtg-guard.js", guardJs), ("settings.js", settingsJs) })
+        {
+            var names = System.Text.RegularExpressions.Regex.Matches(js, @"^(?:export )?(?:async )?function (\w+)\(", System.Text.RegularExpressions.RegexOptions.Multiline)
+                .Select(m => m.Groups[1].Value).ToList();
+            var dup = names.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+            Assert.True(dup.Count == 0, $"{label} 重複定義的頂層函式：" + string.Join(", ", dup));
+        }
     }
     /// <summary>批次D：守門「自動偵測並填入」按鈕與取數範圍欄位的接線。</summary>
     [Fact]
@@ -560,9 +579,13 @@ public class PrtgAdminPageUiTests
         var root = FindRepoRoot();
         var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        var settingsCshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml"));
+        var guardJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-guard.js"));
 
-        // 畫面元素
-        Assert.Contains("id=\"prtg-guard-autofill-btn\"", cshtml);
+        // 守門的自動偵測鈕在設定頁（批次F 搬遷後）
+        Assert.Contains("id=\"prtg-guard-autofill-btn\"", settingsCshtml);
+
+        // 取數範圍仍在 PRTG 維護頁
         Assert.Contains("id=\"prtg-value-fetch-scope\"", cshtml);
         Assert.Contains("id=\"prtg-value-fetch-extra-hosts\"", cshtml);
         Assert.Contains("id=\"prtg-scope-estimate-btn\"", cshtml);
@@ -573,7 +596,7 @@ public class PrtgAdminPageUiTests
         Assert.Contains("value=\"triggered-plus-list\"", cshtml);
 
         // 自動偵測必須帶 forceAuto，否則覆寫清單非空時只會把手填值原樣吐回來
-        Assert.Contains("forceAuto=true", js);
+        Assert.Contains("forceAuto=true", guardJs);
 
         // 新設定要真的進儲存 payload（後端有欄位、前端沒送＝設定永遠存不進去）
         Assert.Contains("prtgValueFetchScope:", js);
@@ -581,5 +604,77 @@ public class PrtgAdminPageUiTests
 
         // 估算端點的呼叫
         Assert.Contains("prtg-fetch-scope/estimate", js);
+    }
+
+    /// <summary>
+    /// 「同步結構與對應」的入口在鏡像狀態頁籤（docs/PRTG-SPEC.md §5a）：
+    /// 按鈕、狀態列與前端綁定三者缺一，畫面上就會出現按不動或不會更新的控制項。
+    /// </summary>
+    [Fact]
+    public void 同步結構與對應的入口與前端綁定齊備()
+    {
+        var root = FindRepoRoot();
+
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        Assert.Contains("prtg-structure-sync-btn", cshtml);
+        Assert.Contains("prtg-structure-sync-status", cshtml);
+        Assert.Contains("prtg-structure-sync-progress", cshtml);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        Assert.Contains("prtg-structure-sync/start", js);
+        Assert.Contains("prtg-structure-sync/status", js);
+        Assert.Contains("bindStructureSync()", js);
+        Assert.Contains("refreshStructureSyncStatus()", js);
+
+        // 「尚未同步」與「同步到 0 筆」必須是不同文案——兩者混在一起會讓人以為同步過了
+        Assert.Contains("尚未同步", js);
+    }
+
+    /// <summary>
+    /// 資源守門搬到設定頁（回饋第 40 輪批次F）：它同時節制 NetIQ 取數與 PRTG 擷取兩路，
+    /// 不只是 PRTG 的事。維護頁只留指路，欄位與兩顆偵測鈕都在設定頁的資源守門頁籤。
+    /// 欄位定義只有一份（prtg-guard.js），不在兩個頁面各寫一遍。
+    /// </summary>
+    [Fact]
+    public void 資源守門在設定頁而非PRTG維護頁()
+    {
+        var root = FindRepoRoot();
+
+        var settingsCshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Settings.cshtml"));
+        Assert.Contains("data-tab=\"guard\"", settingsCshtml);
+        Assert.Contains("data-panel=\"guard\"", settingsCshtml);
+        Assert.Contains("prtg-guard-enabled", settingsCshtml);
+        Assert.Contains("prtg-guard-cpu-percent", settingsCshtml);
+        Assert.Contains("prtg-guard-memory-free-percent", settingsCshtml);
+        Assert.Contains("prtg-guard-sensor-objids", settingsCshtml);
+        Assert.Contains("prtg-guard-preview-btn", settingsCshtml);
+        Assert.Contains("prtg-guard-autofill-btn", settingsCshtml);
+        // 方向相反最容易寫反，標籤要明說是「可用記憶體」
+        Assert.Contains("可用", settingsCshtml);
+
+        // 維護頁只剩指路，不再有任何守門欄位
+        var prtgCshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        Assert.DoesNotContain("prtg-guard-enabled", prtgCshtml);
+        Assert.DoesNotContain("prtg-guard-cpu-percent", prtgCshtml);
+        Assert.DoesNotContain("prtg-guard-preview-btn", prtgCshtml);
+        Assert.Contains("資源守門", prtgCshtml);   // 指路那段
+        Assert.Contains("admin/settings", prtgCshtml);
+
+        // 欄位的載入／收集／預覽只有一份實作
+        var guardJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-guard.js");
+        Assert.True(File.Exists(guardJsPath), "資源守門的前端模組不存在");
+        var guardJs = File.ReadAllText(guardJsPath);
+        Assert.Contains("export function loadGuardFields", guardJs);
+        Assert.Contains("export function collectGuardPayload", guardJs);
+        Assert.Contains("export function bindGuardPreview", guardJs);
+
+        var prtgAdminJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        Assert.DoesNotContain("prtg-guard", prtgAdminJs);
+
+        var settingsJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "settings.js"));
+        Assert.Contains("prtg-guard.js", settingsJs);
+        Assert.Contains("collectGuardPayload()", settingsJs);
+        Assert.Contains("loadGuardFields(current)", settingsJs);
+        Assert.Contains("bindGuardPreview()", settingsJs);
     }
 }

@@ -155,9 +155,14 @@ public class AnalysisOrchestrator
     private const int AnalysisMaxPoolSize =
         NetiqOptions.MaxParallelServersLimit * NetiqOptions.MaxParallelQueriesPerServerLimit + 2;
 
+    /// <param name="structureSyncGate">
+    /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）；未接上時為 null＝行為不變。
+    /// 只往下傳給 PRTG 路徑，不影響本機與 NetIQ 兩路。
+    /// </param>
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
-        RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null)
+        RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null,
+        IPrtgStructureSyncGate? structureSyncGate = null)
     {
         var runStopwatch = Stopwatch.StartNew();
         var result = new OrchestratorResult();
@@ -638,7 +643,7 @@ public class AnalysisOrchestrator
                 : Task.CompletedTask;
 
             var analysisTask = Task.WhenAll(localTask, netiqTask);
-            var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, yesterday, analysisTask, resourceGuard);
+            var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, yesterday, analysisTask, resourceGuard, structureSyncGate);
 
             // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
             // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，

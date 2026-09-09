@@ -20,9 +20,15 @@ namespace LogForesight.Core.Service;
 internal static class PrtgDailyPipeline
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    /// <param name="structureSyncGate">
+    /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）。Core 不認識 Web 的服務，
+    /// 由呼叫端注入；未接上時傳 null＝行為與沒有這個機制時完全相同。
+    /// 同步正在跑時這一趟先等它結束，然後跳過自己的結構同步——鏡像剛更新過，重做一次沒有意義。
+    /// </param>
     public static async Task RunAsync(
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, DateTime day, Task analysisTask,
-        PrtgResourceGuard? guard = null)
+        PrtgResourceGuard? guard = null,
+        IPrtgStructureSyncGate? structureSyncGate = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress, prtgFindings) = ctx;
@@ -47,6 +53,19 @@ internal static class PrtgDailyPipeline
 
             var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole, guard);
 
+            // 0. 手動同步佔用中就先等它（docs/PRTG-SPEC.md §5a）。等完之後鏡像是最新的，
+            //    本趟跳過自己的結構同步——重做一次要再爬一次整棵樹，沒有任何新資訊。
+            var skipStructureSync = false;
+            if (structureSyncGate != null && structureSyncGate.IsRunning)
+            {
+                prtgConsole.WriteLine("手動觸發的「同步結構與對應」進行中，等它完成後再繼續（本趟不重複同步結構）。");
+                runRecorder.Milestone("PRTG：等待手動同步結構與對應完成");
+                progress?.Report(RunPhases.PrtgWaitSync, 0, 0);
+                await structureSyncGate.WaitUntilIdleAsync(ct);
+                skipStructureSync = true;
+                prtgConsole.WriteLine("手動同步已完成，沿用剛更新的鏡像結構。");
+            }
+
             // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）
             // PRTG 進度 phase：prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）、prtg-done（完工）
             PrtgFetchResult? fetchResult = null;
@@ -55,7 +74,8 @@ internal static class PrtgDailyPipeline
             {
                 progress?.Report(RunPhases.PrtgSync, 0, 0);
                 fetchResult = await fetchService.FetchDayAsync(
-                    day, systemSettings.PrtgFetchConcurrency, ct, syncStructure: true, fetchValues: false,
+                    day, systemSettings.PrtgFetchConcurrency, ct,
+                    syncStructure: !skipStructureSync, fetchValues: false,
                     (stage, done, total) => progress?.Report(stage, done, total));
 
                 var summary = $"PRTG 每日擷取完成（{day:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
@@ -82,7 +102,7 @@ internal static class PrtgDailyPipeline
             // 2. PRTG 主機對應：獨立的 try/catch，對應失敗不拖垮前面的擷取結果
             try
             {
-                var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
+                var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole, new PrtgAddressResolver());
                 var mapResult = hostMapper.MapForDate(day);
                 runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
             }
@@ -359,7 +379,12 @@ internal static class PrtgDailyPipeline
                     triggeredResult?.FailedSensors ?? 0,
                     triggeredResult?.TriggerHosts ?? 0);
             }
-            progress?.Report(RunPhases.PrtgDone, 0, 0);
+            // 完工訊號帶結果數字（取數主機數／目標 sensor 數），畫面才說得出「已完成：主機 N 台／sensor M 個」。
+            // triggeredResult 為 null（PRTG 停用、初始化失敗、取消）時維持 (0, 0)。
+            progress?.Report(
+                RunPhases.PrtgDone,
+                triggeredResult?.TriggerHosts ?? 0,
+                triggeredResult?.TargetSensors ?? 0);
         }
     }
 }

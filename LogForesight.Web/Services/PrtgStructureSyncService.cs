@@ -1,0 +1,302 @@
+using NLog;
+using LogForesight.Core;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
+using LogForesight.Web.Models.Dto;
+
+namespace LogForesight.Web.Services;
+
+/// <summary>
+/// 「同步結構與對應」的行程內單例執行狀態＋併發 1 的 gate（比照回填與探測）。
+/// 另外持有目前階段的進度，供狀態端點畫進度軌。
+/// </summary>
+public class PrtgStructureSyncRunState : PrtgProbeRunState
+{
+    private readonly object _progressLock = new();
+
+    private string? _phase;
+    private int _done;
+    private int _total;
+
+    public void ResetProgress()
+    {
+        lock (_progressLock)
+        {
+            _phase = null;
+            _done = 0;
+            _total = 0;
+        }
+    }
+
+    public void UpdateProgress(string phase, int done, int total)
+    {
+        lock (_progressLock)
+        {
+            _phase = phase;
+            _done = done;
+            _total = total;
+        }
+    }
+
+    public (string? Phase, int Done, int Total) GetProgress()
+    {
+        lock (_progressLock)
+        {
+            return (_phase, _done, _total);
+        }
+    }
+}
+
+/// <summary>極薄的 IRunConsole adapter：把同步輸出逐行收集到執行狀態。</summary>
+public class PrtgStructureSyncConsole : IRunConsole
+{
+    private readonly PrtgStructureSyncRunState _state;
+
+    public PrtgStructureSyncConsole(PrtgStructureSyncRunState state) => _state = state;
+
+    public void WriteLine(string message = "") => _state.AppendLine(message);
+}
+
+/// <summary>
+/// 「同步結構與對應」服務：Singleton，背景執行並維護狀態（docs/PRTG-SPEC.md §5a）。
+///
+/// 為什麼是背景工作而不是同步端點：實機的結構同步要分頁讀完整棵裝置與感測器樹，
+/// 可能跑上數十分鐘，塞在 HTTP 請求裡必然逾時。
+/// </summary>
+public class PrtgStructureSyncService : IPrtgStructureSyncGate
+{
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>等待手動同步結束時的輪詢間隔。同步本身以分鐘計，秒級輪詢已足夠精細。</summary>
+    private static readonly TimeSpan WaitPollInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// 取數路徑等待手動同步的上限（暫定 90 分鐘）。實機的完整結構同步以數十分鐘計，
+    /// 這個值要明顯大於它，否則正常的長同步會被誤判成卡住。
+    /// </summary>
+    private static readonly TimeSpan MaxWait = TimeSpan.FromMinutes(90);
+
+    private readonly ISystemSettingsStore _settings;
+    private readonly StorageBackend _backend;
+    private readonly PrtgStructureSyncRunState _state;
+    private readonly SchedulerRunState _schedulerState;
+    private readonly IHostStore _hosts;
+    private readonly PrtgStructureSyncStatusStore _statusStore;
+    private readonly IHostApplicationLifetime? _lifetime;
+
+    /// <summary>本趟同步的取消來源；沒有執行中時為 null。</summary>
+    private CancellationTokenSource? _cts;
+
+    public PrtgStructureSyncService(
+        ISystemSettingsStore settings,
+        StorageBackend backend,
+        PrtgStructureSyncRunState state,
+        SchedulerRunState schedulerState,
+        IHostStore hosts,
+        PrtgStructureSyncStatusStore statusStore,
+        IHostApplicationLifetime? lifetime = null)
+    {
+        _lifetime = lifetime;
+        // 站台關閉時中止同步：這條路徑會對 PRTG 做整棵樹的分頁查詢，
+        // 沒有取消來源的話，PRTG 端卡住（TCP 半開、不回應）就會讓狀態永遠停在「執行中」，
+        // 而夜間取數的 PRTG 路徑正在等它結束——當晚整條 PRTG 路徑跟著掛住，
+        // 且 TryStart 會因「已在執行中」而拒絕重啟，不重開站台就回不來。
+        _lifetime?.ApplicationStopping.Register(() => Cancel());
+        _settings = settings;
+        _backend = backend;
+        _state = state;
+        _schedulerState = schedulerState;
+        _hosts = hosts;
+        _statusStore = statusStore;
+    }
+
+    /// <summary>同步是否正在執行——取數執行的 PRTG 路徑用它決定要不要等。</summary>
+    public bool IsRunning => _state.Snapshot().IsRunning;
+
+    /// <summary>對進行中的同步發出取消（站台關閉時自動呼叫）。沒有執行中時無作用。</summary>
+    public void Cancel()
+    {
+        try
+        {
+            _cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 剛好在收尾時撞上，忽略
+        }
+    }
+
+    /// <summary>
+    /// 等到手動同步結束為止。取消訊號穿透（讓整趟批次的取消語意一致）。
+    ///
+    /// **有上限**：同步的每一步都是對外部 PRTG 的 HTTP 查詢，對方卡住（TCP 半開、不回應）
+    /// 時狀態會一直停在「執行中」。無上限地等，等於讓當晚的 PRTG 路徑跟著永遠掛住。
+    /// 逾時後不擲例外、直接返回，讓這一趟照常做自己的結構同步——
+    /// 最壞情況是兩邊都寫鏡像（寫入本身是冪等的 upsert），比整條路徑停擺好。
+    /// </summary>
+    public async Task WaitUntilIdleAsync(CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + MaxWait;
+
+        while (IsRunning)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                Log.Warn("等待手動「同步結構與對應」超過 {0} 分鐘仍未結束，本趟不再等待，改為自行同步結構。",
+                    MaxWait.TotalMinutes);
+                return;
+            }
+
+            await Task.Delay(WaitPollInterval, ct);
+        }
+    }
+
+    public PrtgStructureSyncStatusDto GetStatus()
+    {
+        var s = _state.Snapshot();
+        var p = _state.GetProgress();
+        var last = _statusStore.GetOrNull();
+
+        return new PrtgStructureSyncStatusDto
+        {
+            IsRunning = s.IsRunning,
+            StartedAt = s.StartedAt,
+            LatestMessage = s.LatestMessage,
+            Output = s.Output,
+            ProgressPhase = p.Phase,
+            ProgressDone = p.Done,
+            ProgressTotal = p.Total,
+            LastCompletedAt = last?.CompletedAt,
+            LastSuccess = last?.Success,
+            LastErrorMessage = last?.ErrorMessage,
+            LastElapsedSeconds = last?.ElapsedSeconds,
+            LastDevices = last?.Devices,
+            LastSensors = last?.Sensors,
+            LastMapDate = last?.MapDate,
+            LastMapOk = last?.MapOk,
+            LastMapManual = last?.MapManual,
+            LastMapConflict = last?.MapConflict,
+            LastMapUnmatched = last?.MapUnmatched,
+            LastMapSkipped = last == null
+                ? null
+                : last.MapSkippedNoIp + last.MapSkippedExcluded + last.MapSkippedManualSibling
+        };
+    }
+
+    public bool TryStart(out string? error)
+    {
+        error = null;
+        var s = _settings.Get();
+
+        if (!s.PrtgEnabled)
+        {
+            error = "PRTG 未啟用。";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(s.PrtgUrl))
+        {
+            error = "尚未設定 PRTG 連線位址，無法同步。";
+            return false;
+        }
+
+        if (!PrtgClientFactory.HasUsableCredentials(s))
+        {
+            error = "尚未設定 PRTG 認證資訊（API token 或帳號密碼），無法同步。";
+            return false;
+        }
+
+        // 取數執行進行中不放行：那趟自己就會做結構同步，兩邊同時寫同一批鏡像表沒有意義，
+        // 而且會讓對應算在寫到一半的鏡像上。
+        if (_schedulerState.IsRunning)
+        {
+            error = "取數執行進行中，請等它結束後再同步（該趟本身就會同步結構與對應）。";
+            return false;
+        }
+
+        if (!_state.TryBegin())
+        {
+            error = "同步已在執行中。";
+            return false;
+        }
+
+        _state.ResetProgress();
+
+        var console = new PrtgStructureSyncConsole(_state);
+        PrtgClient? client;
+        try
+        {
+            client = PrtgClientFactory.Create(s);
+        }
+        catch (Exception ex)
+        {
+            _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            _state.EndRun(false);
+            error = $"初始化 PRTG 連線失敗：{ex.Message}";
+            return false;
+        }
+
+        var prtgStore = _backend.PrtgStore();
+        var fetchService = new PrtgFetchService(client, prtgStore, console);
+        var concurrency = s.PrtgFetchConcurrency;
+
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+
+        _ = Task.Run(async () =>
+        {
+            var success = false;
+            try
+            {
+                using (client)
+                {
+                    var status = await PrtgStructureSyncRunner.RunAsync(
+                        fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
+                        concurrency, console, cts.Token,
+                        progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
+
+                    _statusStore.Update(existing =>
+                    {
+                        existing.CompletedAt = status.CompletedAt;
+                        existing.Success = status.Success;
+                        existing.ErrorMessage = status.ErrorMessage;
+                        existing.ElapsedSeconds = status.ElapsedSeconds;
+                        existing.Devices = status.Devices;
+                        existing.Sensors = status.Sensors;
+                        existing.MapDate = status.MapDate;
+                        existing.MapOk = status.MapOk;
+                        existing.MapManual = status.MapManual;
+                        existing.MapConflict = status.MapConflict;
+                        existing.MapUnmatched = status.MapUnmatched;
+                        existing.MapSkippedNoIp = status.MapSkippedNoIp;
+                        existing.MapSkippedExcluded = status.MapSkippedExcluded;
+                        existing.MapSkippedManualSibling = status.MapSkippedManualSibling;
+                    });
+
+                    success = status.Success;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                console.WriteLine("同步已被取消（站台關閉或手動中止）。");
+                success = false;
+            }
+            catch (Exception ex)
+            {
+                console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
+                success = false;
+            }
+            finally
+            {
+                _state.EndRun(success);
+                _cts = null;
+                cts.Dispose();
+            }
+        });
+
+        return true;
+    }
+}

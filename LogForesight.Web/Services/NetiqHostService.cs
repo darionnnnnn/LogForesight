@@ -36,8 +36,10 @@ public class NetiqHostService : INetiqHostService
         IUserStore users,
         INetiqServerCatalog servers,
         IAuditService audit,
-        IUserDisplayNameService userDisplayNames)
+        IUserDisplayNameService userDisplayNames,
+        IPrtgHostMapRefresher? mapRefresher = null)
     {
+        _mapRefresher = mapRefresher;
         _hosts = hosts;
         _hostGroups = hostGroups;
         _users = users;
@@ -45,6 +47,9 @@ public class NetiqHostService : INetiqHostService
         _audit = audit;
         _userDisplayNames = userDisplayNames;
     }
+
+    /// <summary>停用／啟用會改變主機是否參與 PRTG 對應（docs/PRTG-SPEC.md §4）。</summary>
+    private readonly IPrtgHostMapRefresher? _mapRefresher;
 
     public NetiqOverviewDto GetOverview()
     {
@@ -241,6 +246,9 @@ public class NetiqHostService : INetiqHostService
             targetKind: "host",
             targetId: hostId.ToString(),
             detail: new { host.HostName, Active = active });
+
+        // 已停用的主機不參與 PRTG 對應，今天那筆要跟著變（docs/PRTG-SPEC.md §4）
+        _mapRefresher?.TryRefreshToday();
 
         return ToDto(_hosts.Get(hostId)!);
     }

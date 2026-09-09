@@ -377,6 +377,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<DataVersionStamp>(),
                 sp.GetRequiredService<BatchRunStore>(),
                 sp.GetRequiredService<DailyRecordBackfiller>(),
+                sp.GetRequiredService<IWebAiService>(),
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime);
@@ -415,6 +416,19 @@ public static class ServiceCollectionExtensions
         // PRTG 歷史回填（PRTG 第 1 輪批次E）：狀態單例與背景執行入口
         services.AddSingleton<PrtgBackfillRunState>();
         services.AddSingleton<PrtgBackfillService>();
+
+        // PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）：狀態單例、上次結果的持久化 store 與背景執行入口。
+        // 上次結果存 blob 而不是只留在記憶體——站台重啟後畫面仍要說得出上次同步是什麼時候。
+        services.AddSingleton<PrtgStructureSyncRunState>();
+        services.AddSingleton(sp => new PrtgStructureSyncStatusStore(
+            sp.GetRequiredService<StorageBackend>().Blob(PrtgStructureSyncStatusStore.BlobKey)));
+        services.AddSingleton<PrtgStructureSyncService>();
+
+        // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：
+        // 人工對應／IP 排除／主機主檔變更三條路徑共用同一份實作
+        services.AddSingleton<IPrtgHostMapRefresher>(sp => new PrtgHostMapRefresher(
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetService<StorageBackend>()));
 
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
         // **§2a（回饋第十一輪）起只剩負責人一種**——使用者／主機／群組授權三種已退役

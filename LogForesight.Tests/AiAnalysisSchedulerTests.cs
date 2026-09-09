@@ -57,8 +57,25 @@ public class AiAnalysisSchedulerTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>
+    /// 只回答「AI 有沒有設定好」的假服務。AI 分析沒有獨立的啟用開關（回饋第 40 輪批次E），
+    /// 這個判準就是它的總開關。
+    /// </summary>
+    private sealed class FakeWebAiService : IWebAiService
+    {
+        public FakeWebAiService(bool available) => Available = available;
+
+        public bool Available { get; }
+
+        public Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class =>
+            Task.FromResult<T?>(null);
+
+        public Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt) =>
+            Task.FromResult<string?>(null);
+    }
+
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
-        CreateTestHarness(ScheduleOptions? initialOptions = null)
+        CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -67,7 +84,6 @@ public class AiAnalysisSchedulerTests : IDisposable
             {
                 o.Enabled = initialOptions.Enabled;
                 o.Windows = initialOptions.Windows;
-                o.AiEnabled = initialOptions.AiEnabled;
                 o.AiWindows = initialOptions.AiWindows;
                 o.AiConcurrency = initialOptions.AiConcurrency;
             });
@@ -87,6 +103,7 @@ public class AiAnalysisSchedulerTests : IDisposable
             new DataVersionStamp(),
             BatchRuns(),
             CompletedBackfiller(),
+            new FakeWebAiService(aiAvailable),
             _suppressions,
             _ai);
 
@@ -292,7 +309,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     [Fact]
     public async Task 情境5_併發_AiConcurrency大於1時不同主機平行且同主機序列()
     {
-        var options = new ScheduleOptions { AiConcurrency = 2, AiEnabled = true };
+        var options = new ScheduleOptions { AiConcurrency = 2 };
         var (service, _, _, _) = CreateTestHarness(options);
         var store = _backend.RecordStore();
 
@@ -366,7 +383,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     [Fact]
     public async Task 補跑輸入為完整紀錄_prompt含真實關聯訊號且不含輕量佔位字串()
     {
-        var (service, _, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = true });
+        var (service, _, _, _) = CreateTestHarness(new ScheduleOptions());
         var store = _backend.RecordStore();
 
         var record = CreateRecord(1, "HOST-CORR", DateTime.Today.AddDays(-3), pending: true);
@@ -483,7 +500,6 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         var options = new ScheduleOptions
         {
-            AiEnabled = true,
             AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = windowStart, End = windowEnd } }
         };
 
@@ -506,7 +522,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         // 8c. 手動觸發不受窗口限制
         var manualRunState = new AiAnalysisRunState();
         var manualService = new AiAnalysisHostedService(
-            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), _suppressions, _ai);
+            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), new FakeWebAiService(true), _suppressions, _ai);
 
         manualRunState.TryBeginRun("manual:admin", 10, out _);
         await manualService.TickAsync();
@@ -646,9 +662,9 @@ public class AiAnalysisSchedulerTests : IDisposable
     /// 每個提前返回都要寫下閒置原因，否則使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
     /// </summary>
     [Fact]
-    public async Task TickAsync_AI未啟用時記錄閒置原因()
+    public async Task TickAsync_AI未設定時記錄閒置原因()
     {
-        var (service, runState, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = false });
+        var (service, runState, _, _) = CreateTestHarness(aiAvailable: false);
         _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
 
         await service.TickAsync();
@@ -664,7 +680,6 @@ public class AiAnalysisSchedulerTests : IDisposable
         var now = DateTime.Now;
         var options = new ScheduleOptions
         {
-            AiEnabled = true,
             AiWindows = new List<ScheduleWindow>
             {
                 new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
@@ -685,7 +700,6 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var options = new ScheduleOptions
         {
-            AiEnabled = true,
             AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
         };
 
@@ -701,7 +715,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     [Fact]
     public async Task TickAsync_開始執行後清空閒置原因()
     {
-        var (service, runState, _, _) = CreateTestHarness(new ScheduleOptions { AiEnabled = false });
+        var (service, runState, _, _) = CreateTestHarness(aiAvailable: false);
         await service.TickAsync();
         Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
 
@@ -744,7 +758,6 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var options = new ScheduleOptions
         {
-            AiEnabled = true,
             AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
         };
 
@@ -792,5 +805,88 @@ public class AiAnalysisSchedulerTests : IDisposable
         state.ReportProgressDone(5, "不該生效");
 
         Assert.Equal(0, state.Snapshot().ProgressDone);
+    }
+
+    /// <summary>
+    /// 取數執行一發佈當日 PRTG finding，AI 就要立刻開跑（回饋第 40 輪批次E）——
+    /// 不等自己下一輪 60 秒輪詢。使用者按下「立即執行」後看到取數在跑、AI 卻閒著，
+    /// 正是這一輪要解決的事。
+    /// </summary>
+    [Fact]
+    public async Task Finding就緒時立刻觸發AI而不等輪詢()
+    {
+        var (service, runState, _, schedulerState) = CreateTestHarness();
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
+        Assert.False(runState.IsRunning);
+
+        // 這一步是取數路徑送出的訊號，**沒有**呼叫 TickAsync
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        await WaitUntilAsync(() => runState.IsRunning, TimeSpan.FromSeconds(5));
+        Assert.True(runState.IsRunning);
+        Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+    }
+
+    /// <summary>
+    /// 同一趟執行內 finding 只會就緒一次，重複回報不得再觸發（登錄簿的補發保底會送第二次）。
+    /// </summary>
+    [Fact]
+    public async Task Finding重複回報不重複觸發()
+    {
+        var (service, runState, _, schedulerState) = CreateTestHarness();
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
+
+        var fired = 0;
+        schedulerState.PrtgFindingsBecameReady += () => Interlocked.Increment(ref fired);
+
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        Assert.Equal(1, fired);
+    }
+
+    /// <summary>AI 未設定時 finding 就緒不觸發，並寫下閒置原因。</summary>
+    [Fact]
+    public async Task AI未設定時Finding就緒不觸發()
+    {
+        var (service, runState, _, schedulerState) = CreateTestHarness(aiAvailable: false);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        await Task.Delay(500);
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
+    }
+
+    /// <summary>沒有待補時 finding 就緒不觸發——沒事可做就不該佔住 gate。</summary>
+    [Fact]
+    public async Task 無待補時Finding就緒不觸發()
+    {
+        var (service, runState, _, schedulerState) = CreateTestHarness();
+
+        Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        await Task.Delay(500);
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
+    }
+
+    /// <summary>輪詢用的等待：避免用固定 sleep 讓測試在慢機器上不穩定。</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return;
+            await Task.Delay(25);
+        }
     }
 }

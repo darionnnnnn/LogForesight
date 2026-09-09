@@ -443,4 +443,105 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         // 斷言其中存在一筆 stage == "prtg-triggered" && total == 0 && done == 該輪累計目標 sensor 數 (2)
         Assert.Contains(reports, r => r.Stage == "prtg-triggered" && r.Total == 0 && r.Done == 2);
     }
+
+    [Fact]
+    public async Task RunAsync_allMapped模式_分析未結束也在單輪內收工()
+    {
+        // all-mapped 的候選是「該日全部 ok 對應的主機」，與分析結果無關——首輪取完就該收工，
+        // 不該一路輪詢等到分析結束。analysisCompleted 恆為 false，靠的就是這條單輪收工路徑。
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" },
+            new() { Objid = 1002, Name = "Dev-2", Ip = "10.0.0.2" }
+        }, day);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-1", SensorType = "SNMP CPU Load", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1002, Name = "Sensor-2", SensorType = "SNMP Memory", Paused = false }
+        }, day);
+
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = 102, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+        var (client, _) = CreateClient(req => JsonResponse(histJson));
+
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        // 沒有任何高／中風險紀錄，所以 triggered 模式下會是 0 台；all-mapped 應該抓到 2 台。
+        // 白名單必須非空：空白名單下 all-mapped 會被 EffectiveScope 退回 triggered（第二道防線），
+        // 傳 null 的話這個測試量到的就不是 all-mapped 的行為。
+        var whitelist = new List<string> { "SNMP CPU Load", "SNMP Memory" };
+
+        // 取消權杖是這條測試的偵測器：單輪收工失效時輪詢迴圈會一直跑，
+        // 逾時後 Task.Delay 擲取消例外讓測試乾脆失敗，而不是把測試 host 掛住。
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        var result = await fetcher.RunAsync(
+            day, whitelist, concurrency: 2,
+            analysisCompleted: () => false, ct: cts.Token, pollSeconds: 1,
+            scope: PrtgValueFetchScope.AllMapped);
+        Assert.Equal(2, result.TriggerHosts);
+        Assert.Equal(2, result.TargetSensors);
+    }
+
+    [Fact]
+    public async Task RunAsync_allMapped模式_零已對應主機時輸出警告()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        // 對應表整個是空的（鏡像還沒同步過的實際情形）
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>());
+
+        var (client, _) = CreateClient(req => JsonResponse("{}"));
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        var result = await fetcher.RunAsync(
+            day, new List<string> { "SNMP CPU Load" }, concurrency: 2,
+            analysisCompleted: () => false, ct: cts.Token, pollSeconds: 1,
+            scope: PrtgValueFetchScope.AllMapped);
+
+        Assert.Equal(0, result.TriggerHosts);
+        Assert.Contains(console.Lines, l => l.Contains("沒有任何已對應的 PRTG 主機"));
+    }
+
+    [Fact]
+    public async Task RunAsync_triggered模式_零觸發主機時不輸出該警告()
+    {
+        // 沒有主機出問題是常態，不該對管理者示警。
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>());
+
+        var (client, _) = CreateClient(req => JsonResponse("{}"));
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        var result = await fetcher.RunAsync(
+            day, whitelist: null, concurrency: 2,
+            analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1,
+            scope: PrtgValueFetchScope.Triggered);
+
+        Assert.Equal(0, result.TriggerHosts);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("沒有任何已對應的 PRTG 主機"));
+    }
 }

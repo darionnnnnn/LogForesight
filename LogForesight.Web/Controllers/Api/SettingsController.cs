@@ -27,6 +27,8 @@ public class SettingsController : ControllerBase
     private readonly IAuditService _audit;
     private readonly PrtgProbeService? _prtgProbe;
     private readonly PrtgBackfillService? _prtgBackfill;
+    private readonly PrtgStructureSyncService? _prtgStructureSync;
+    private readonly IPrtgHostMapRefresher? _mapRefresher;
     private readonly StorageBackend? _backend;
     private readonly IHostStore? _hosts;
 
@@ -36,6 +38,8 @@ public class SettingsController : ControllerBase
         IAuditService audit,
         PrtgProbeService? prtgProbe = null,
         PrtgBackfillService? prtgBackfill = null,
+        PrtgStructureSyncService? prtgStructureSync = null,
+        IPrtgHostMapRefresher? mapRefresher = null,
         StorageBackend? backend = null,
         IHostStore? hosts = null)
     {
@@ -45,6 +49,8 @@ public class SettingsController : ControllerBase
         _audit = audit;
         _prtgProbe = prtgProbe;
         _prtgBackfill = prtgBackfill;
+        _prtgStructureSync = prtgStructureSync;
+        _mapRefresher = mapRefresher;
         _backend = backend;
     }
 
@@ -171,6 +177,33 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
     }
 
+    // ── PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）───────────────────────
+
+    [HttpGet("prtg-structure-sync/status")]
+    public ApiResponse<PrtgStructureSyncStatusDto> GetPrtgStructureSyncStatus() =>
+        ApiResponse<PrtgStructureSyncStatusDto>.Ok(
+            _prtgStructureSync?.GetStatus() ?? new PrtgStructureSyncStatusDto());
+
+    [HttpPost("prtg-structure-sync/start")]
+    public ApiResponse<StartPrtgStructureSyncResultDto> StartPrtgStructureSync()
+    {
+        if (_prtgStructureSync == null)
+            throw DomainException.Validation("PRTG 同步服務未啟用。");
+
+        if (!_prtgStructureSync.TryStart(out var error))
+            throw DomainException.Validation(error ?? "無法啟動 PRTG 結構同步。");
+
+        _audit.Record(
+            action: AuditActions.PrtgStructureSyncRun,
+            summary: "執行 PRTG 結構同步與主機對應",
+            targetKind: "system_settings",
+            targetId: "prtg_structure_sync",
+            detail: new { });
+
+        return ApiResponse<StartPrtgStructureSyncResultDto>.Ok(
+            new StartPrtgStructureSyncResultDto { Started = true });
+    }
+
     // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────
 
     /// <summary>
@@ -283,7 +316,7 @@ public class SettingsController : ControllerBase
         var isOverride = !forceAuto
             && settings.PrtgResourceGuardSensorObjids != null
             && settings.PrtgResourceGuardSensorObjids.Count > 0;
-        var source = isOverride ? "override" : "auto";
+        var source = isOverride ? "override" : "auto";  // 實際來源在下方依鏡像有無資料再決定
 
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
@@ -302,13 +335,47 @@ public class SettingsController : ControllerBase
         var sentinels = sentinelStore.GetAll();
         var prtgStore = _backend.PrtgStore();
 
+        // 資料來源（docs/PRTG-SPEC.md §12）：鏡像是空的、或使用者按了「自動偵測並填入」時直接查 PRTG。
+        // 讀鏡像的偵測在 PRTG 剛啟用時必然一無所獲，那正是使用者最需要這顆按鈕的時候。
+        // 走覆寫清單時不需要裝置資料，維持讀鏡像即可（那條路徑只用 sensor 分類）。
+        var mirrorDeviceCount = prtgStore.GetAllDevices().Count;
+        var useLive = !isOverride && (forceAuto || mirrorDeviceCount == 0);
+
         PrtgResourceGuardTargetResult targets;
+        PrtgClient? liveClient = null;
         try
         {
-            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console, ignoreOverride: forceAuto);
+            if (useLive)
+            {
+                try
+                {
+                    liveClient = PrtgClientFactory.Create(settings);
+                    targets = PrtgResourceGuardTargets.Resolve(
+                        new PrtgLiveGuardSource(liveClient, ct), settings, sentinels, console,
+                        new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                    source = "live";
+                }
+                catch (Exception liveEx)
+                {
+                    // 直接查 PRTG 失敗（連不上、認證錯、逾時）就退回鏡像，並把原因說出來——
+                    // 靜默退回會讓使用者以為「PRTG 上真的沒有這些裝置」。
+                    console.WriteLine($"[PRTG資源守門] 直接查詢 PRTG 失敗（{liveEx.Message}），改用本機鏡像資料。");
+                    targets = PrtgResourceGuardTargets.Resolve(
+                        new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
+                        new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                    source = "mirror-fallback";
+                }
+            }
+            else
+            {
+                targets = PrtgResourceGuardTargets.Resolve(
+                    new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
+                    new PrtgAddressResolver(), ignoreOverride: forceAuto);
+            }
         }
         catch (Exception ex)
         {
+            // 釋放交給下面的 finally，這裡不重複做
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
             {
                 Success = false,
@@ -317,6 +384,10 @@ public class SettingsController : ControllerBase
                 Warnings = console.Messages,
                 Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
             });
+        }
+        finally
+        {
+            liveClient?.Dispose();
         }
 
         try
@@ -753,7 +824,10 @@ public class SettingsController : ControllerBase
 
         var normIp = PrtgHostMapper.NormalizeIp(request?.Ip);
         if (normIp == null)
-            throw DomainException.Validation("IP 位址不能為空白。");
+            throw DomainException.Validation(
+                string.IsNullOrWhiteSpace(request?.Ip)
+                    ? "IP 位址不能為空白。"
+                    : $"「{request!.Ip.Trim()}」不是有效的 IP 位址。");
 
         var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
         if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
@@ -800,19 +874,23 @@ public class SettingsController : ControllerBase
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
-        var normIp = PrtgHostMapper.NormalizeIp(ip);
-        if (normIp == null)
-            throw DomainException.Validation("IP 位址不能為空白。");
+        // **刪除要把原字串交給 store**：正規化語意收緊為「只有合法 IP 才回值」之後，
+        // 舊資料裡非 IP 的排除列（早期不驗證內容時存進去的）正規化會回 null。
+        // 在這裡先正規化再擋 null，等於讓那些列永遠刪不掉——store 的原字串退路根本走不到。
+        var raw = ip?.Trim();
+        if (string.IsNullOrEmpty(raw))
+            throw DomainException.Validation("要刪除的排除項目不能為空白。");
 
         var store = _backend.PrtgStore();
-        var deleted = store.DeleteIpExclude(normIp);
+        var deleted = store.DeleteIpExclude(raw);
 
+        // 稽核記使用者實際送出的值：正規化後的值可能與畫面上那筆不同（甚至是 null）
         _audit.Record(
             action: AuditActions.PrtgIpExcludeDelete, // prtg_ip_exclude_delete
-            summary: $"刪除 PRTG 排除 IP {normIp}",
+            summary: $"刪除 PRTG 排除 IP {raw}",
             targetKind: "prtg_ip_exclude",
-            targetId: normIp,
-            detail: new { Ip = normIp, Deleted = deleted });
+            targetId: raw,
+            detail: new { Ip = raw, Deleted = deleted });
 
         var remapWarning = TryRemapToday();
 
@@ -823,23 +901,11 @@ public class SettingsController : ControllerBase
         });
     }
 
-    /// <summary>同步重算今天的 PRTG 主機對應；失敗時記錄 WARN 並回傳警告文字，不擲例外</summary>
-    private string? TryRemapToday()
-    {
-        if (_backend == null) return null;
-        try
-        {
-            var hostStore = new HostStore(_backend.Blob("hosts"));
-            var mapper = new PrtgHostMapper(_backend.PrtgStore(), hostStore, new RemapConsole());
-            mapper.MapForDate(DateTime.Today);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(ex, "重算今日 PRTG 對應失敗");
-            return $"重算今日 PRTG 對應失敗: {ex.Message}";
-        }
-    }
+    /// <summary>
+    /// 重算今天的對應（docs/PRTG-SPEC.md §4）。實作在 <see cref="PrtgHostMapRefresher"/>，
+    /// 與主機主檔變更那條觸發路徑共用同一份——兩處各寫一份的話，其中一邊改了規則另一邊不會跟上。
+    /// </summary>
+    private string? TryRemapToday() => _mapRefresher?.TryRefreshToday();
 
     private sealed class ResourceGuardWarningConsole : IRunConsole
     {
@@ -855,16 +921,6 @@ public class SettingsController : ControllerBase
         }
     }
 
-    private sealed class RemapConsole : IRunConsole
-    {
-        public void WriteLine(string message = "")
-        {
-            if (!string.IsNullOrEmpty(message))
-            {
-                Log.Debug(message);
-            }
-        }
-    }
 
     // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
 

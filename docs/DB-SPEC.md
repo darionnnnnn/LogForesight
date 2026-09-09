@@ -158,7 +158,7 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 
 **`ai_pending`（`lf_daily_records` 真實欄位）**：統計已寫入、等待 AI 分析排程撿取的第三態
 （與既有的 `ai_analyzed=false`＝「AI 判定不需要或已失敗」是不同語意，見
-docs/DETECTION-SPEC.md「兩個獨立排程」一節）。**讀取端一律以欄位為事實來源**——
+docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節）。**讀取端一律以欄位為事實來源**——
 ContentJson 內序列化的同名值僅為殘留，強制重新分析是整批 UPDATE 欄位、不重寫 ContentJson，
 兩者短暫分岔是設計內行為，不得把 JSON 值當判定來源。`Append` 寫入、`AttachAiResult`
 完成時清 false；複合索引 `IX_lf_daily_records_ai_pending_record_date (ai_pending, record_date)`
@@ -620,6 +620,11 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 永遠只來自該使用者有權的主機；AI 沒有任何工具/行動能力，純問答。
 
 ## Schema 升級機制（已落實）
+
+> PRTG 的「同步結構與對應」最近一次結果存在 `lf_blobs` 的 `prtg_sync_status`（單一物件型，
+> 見 `docs/PRTG-SPEC.md` §5a），零 DDL 異動——**從未執行過時整份不存在**，
+> 讀取端據此分辨「尚未同步」與「同步過但零筆」，不可用零值代表未執行。
+
 
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
 對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／

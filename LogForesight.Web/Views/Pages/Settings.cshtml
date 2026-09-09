@@ -8,6 +8,8 @@
     <li class="nav-item"><button class="nav-link" data-tab="ad" type="button">AD 驗證</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="analysis" type="button">分析參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
+    @* 資源守門：同時節制 NetIQ 取數與 PRTG 擷取兩路，因此放在全站設定而非 PRTG 維護頁 *@
+    <li class="nav-item"><button class="nav-link" data-tab="guard" type="button">資源守門</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mail" type="button">郵件通知</button></li>
     @* 外觀（docs/archive/FEEDBACK-10-PLAN.md §1）：放最後一個頁籤——找 logo／名稱的人會直覺點「外觀」，
        塞進「層級與顯示」反而找不到；擺最後則不動預設落地頁籤（層級與顯示仍是主要入口） *@
@@ -507,6 +509,83 @@
 
     @* 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：SMTP 連線＋收件人＋三路觸發開關。
        版面比照「AD 驗證」區塊（連線設定＋折疊進階＋測試按鈕） *@
+    <div class="lf-card mb-3 d-none" data-panel="guard" id="guard">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">資源守門</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small mb-2">
+                執行期間監看主機資源，緊張時暫停取數，等資源回落再繼續。
+                <strong>NetIQ 取數與 PRTG 擷取兩路都受它節制。</strong>
+            </p>
+            <p class="small mb-3" id="guard-prtg-hint">
+                資源數據取自 PRTG：需先在
+                <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a> 頁啟用模組並設定連線。
+            </p>
+
+            <div class="mb-3">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="prtg-guard-enabled" />
+                    <label class="form-check-label" for="prtg-guard-enabled">啟用資源守門</label>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <label for="prtg-guard-cpu-percent" class="form-label">CPU 門檻（%）</label>
+                    <input type="number" class="form-control" id="prtg-guard-cpu-percent" min="1" max="100" />
+                    <div class="form-text">CPU 使用率達此值算緊張。</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="prtg-guard-memory-free-percent" class="form-label">可用記憶體門檻（%）</label>
+                    <input type="number" class="form-control" id="prtg-guard-memory-free-percent" min="0" max="99" />
+                    <div class="form-text">可用<strong>記憶體</strong>低於此值算緊張（方向與 CPU 相反）。</div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                    <label for="prtg-guard-check-seconds" class="form-label">檢查間隔（秒）</label>
+                    <input type="number" class="form-control" id="prtg-guard-check-seconds" min="15" max="600" />
+                    <div class="form-text">檢查間隔（秒）。</div>
+                </div>
+                <div class="col-md-3">
+                    <label for="prtg-guard-pause-minutes" class="form-label">暫停檢查時間（分鐘）</label>
+                    <input type="number" class="form-control" id="prtg-guard-pause-minutes" min="1" max="60" />
+                    <div class="form-text">判定緊張後等待幾分鐘再檢查。</div>
+                </div>
+                <div class="col-md-3">
+                    <label for="prtg-guard-strikes" class="form-label">連續超標次數</label>
+                    <input type="number" class="form-control" id="prtg-guard-strikes" min="1" max="10" />
+                    <div class="form-text">連續幾次超標才算緊張。</div>
+                </div>
+                <div class="col-md-3">
+                    <label for="prtg-guard-max-pause-minutes" class="form-label">累計暫停上限（分鐘）</label>
+                    <input type="number" class="form-control" id="prtg-guard-max-pause-minutes" min="10" max="600" />
+                    <div class="form-text">單趟累計暫停上限；超過後放行並警告，避免門檻設錯造成整晚空轉。</div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="prtg-guard-sensor-objids" class="form-label">受監看感測器覆寫清單（objid）</label>
+                <textarea class="form-control lf-mono" id="prtg-guard-sensor-objids" rows="4"
+                          placeholder="1001&#10;1002"></textarea>
+                <div class="form-text">
+                    覆寫清單，一行一個 objid；留空＝自動偵測。
+                    鏡像尚未同步過時自動偵測會落空，這時用「自動偵測並填入」直接查 PRTG 取得 objid。
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center flex-wrap gap-3 mt-3 mb-3">
+                <button type="button" class="btn btn-outline-secondary" id="prtg-guard-preview-btn">預覽受監看 sensor</button>
+                <button type="button" class="btn btn-outline-secondary" id="prtg-guard-autofill-btn">自動偵測並填入</button>
+                <span class="text-muted small">與本頁其他設定共用下方的「儲存」。</span>
+            </div>
+
+            <div id="prtg-guard-preview-result"></div>
+        </div>
+    </div>
+
     <div class="lf-card mb-3 d-none" data-panel="mail">
         <div class="lf-card__header">
             <h2 class="lf-card__title">郵件通知</h2>

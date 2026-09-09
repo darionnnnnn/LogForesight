@@ -40,7 +40,15 @@ public static class RunPhases
     /// <summary>PRTG 觸發式數值取數</summary>
     public const string PrtgTriggered = PrtgFetchService.PrtgTriggeredPhase;
 
-    // ── 完工訊號（done／total 恆為 0）────────────────────────
+    /// <summary>
+    /// PRTG 路徑正在等手動觸發的「同步結構與對應」跑完（docs/PRTG-SPEC.md §5a）。
+    /// 兩邊同時寫同一批鏡像表沒有意義，這一趟等它結束後直接沿用剛更新好的鏡像。
+    /// </summary>
+    public const string PrtgWaitSync = "prtg-wait-sync";
+
+    // ── 完工訊號 ────────────────────────
+    // local-done／netiq-done 的 done／total 恆為 0；prtg-done 例外，它帶取數主機數與目標 sensor 數
+    // （畫面要說得出「已完成：主機 N 台／sensor M 個」，見 docs/WEB-SPEC.md §9.10）。
 
     /// <summary>本機路徑收尾</summary>
     public const string LocalDone = "local-done";
@@ -48,7 +56,11 @@ public static class RunPhases
     /// <summary>NetIQ 路徑收尾（finally，成功／失敗／取消皆送）</summary>
     public const string NetiqDone = "netiq-done";
 
-    /// <summary>PRTG 路徑收尾（finally，成功／失敗皆送）</summary>
+    /// <summary>
+    /// PRTG 路徑收尾（finally，成功／失敗皆送）。
+    /// **帶數字**：done＝實際取數的主機數、total＝目標 sensor 數；
+    /// 沒有可回報的量（停用、初始化失敗、取消）時為 0，此時不覆蓋軌上已累積的值。
+    /// </summary>
     public const string PrtgDone = "prtg-done";
 
     // ── 狀態訊號（done／total 恆為 0）────────────────────────
@@ -70,6 +82,7 @@ public static class RunPhases
     {
         Local, Netiq,
         PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered,
+        PrtgWaitSync,
         LocalDone, NetiqDone, PrtgDone,
         GuardPaused, GuardResumed, PrtgFindingsReady
     };
@@ -78,6 +91,7 @@ public static class RunPhases
     public static readonly IReadOnlyList<string> ProgressTracks = new[]
     {
         Local, Netiq,
-        PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered
+        PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered,
+        PrtgWaitSync
     };
 }
