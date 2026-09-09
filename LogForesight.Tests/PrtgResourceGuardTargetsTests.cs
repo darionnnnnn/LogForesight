@@ -29,7 +29,8 @@ public class PrtgResourceGuardTargetsTests : IDisposable
         IPrtgAddressResolver? resolver = null,
         bool ignoreOverride = false)
         => PrtgResourceGuardTargets.Resolve(
-            store, settings, sentinels, console, resolver ?? new PrtgAddressResolver(), ignoreOverride);
+            new PrtgMirrorGuardSource(store), settings, sentinels, console,
+            resolver ?? new PrtgAddressResolver(), ignoreOverride);
 
     /// <summary>可控的位址解析器：先走純語法正規化，對不到時查這張表。</summary>
     private sealed class FakeResolver : IPrtgAddressResolver
@@ -332,5 +333,81 @@ public class PrtgResourceGuardTargetsTests : IDisposable
         var result = ResolveTargets(store, settings, sentinels, console, resolver);
 
         Assert.Contains(2502L, result.SensorObjids);
+    }
+
+    /// <summary>可控的來源：直接餵裝置與感測器，用來證明判定邏輯與來源實作無關。</summary>
+    private sealed class FakeGuardSource : IPrtgResourceGuardSource
+    {
+        private readonly IReadOnlyList<PrtgDeviceRow> _devices;
+        private readonly IReadOnlyList<PrtgSensorRow> _sensors;
+
+        public FakeGuardSource(IReadOnlyList<PrtgDeviceRow> devices, IReadOnlyList<PrtgSensorRow> sensors, string label)
+        {
+            _devices = devices;
+            _sensors = sensors;
+            SourceLabel = label;
+        }
+
+        public string SourceLabel { get; }
+
+        public IReadOnlyList<PrtgDeviceRow> GetDevices() => _devices;
+
+        public IReadOnlyList<PrtgSensorRow> GetSensors() => _sensors;
+    }
+
+    /// <summary>
+    /// 同一組資料換不同來源要得到同一組 objid——判定邏輯只有一份，
+    /// 鏡像與即時查詢的差別只在資料哪裡來（docs/PRTG-SPEC.md §12）。
+    /// </summary>
+    [Fact]
+    public void Resolve_鏡像與即時兩種來源得到相同結果()
+    {
+        var devices = new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1601, Name = "SRV-C", Ip = "10.6.6.6" }
+        };
+        var sensors = new List<PrtgSensorRow>
+        {
+            new() { Objid = 2601, DeviceObjid = 1601, Name = "CPU Load", Category = "cpu", Paused = false }
+        };
+
+        var settings = new SystemSettings();
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.6.6.6:8443" } };
+
+        var fromMirror = PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(devices, sensors, "mirror"), settings, sentinels,
+            new TestConsole(), new PrtgAddressResolver());
+
+        var fromLive = PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(devices, sensors, "live"), settings, sentinels,
+            new TestConsole(), new PrtgAddressResolver());
+
+        Assert.Equal(fromMirror.SensorObjids, fromLive.SensorObjids);
+        Assert.Contains(2601L, fromLive.SensorObjids);
+    }
+
+    /// <summary>
+    /// 找不到裝置時的訊息要說出資料是哪裡來的：讀鏡像的「找不到」多半是還沒同步，
+    /// 直接查 PRTG 的「找不到」才代表 PRTG 上真的沒有。兩者處置完全不同。
+    /// </summary>
+    [Fact]
+    public void Resolve_找不到裝置時訊息標明資料來源()
+    {
+        var settings = new SystemSettings();
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.7.7.7:8443" } };
+
+        var mirrorConsole = new TestConsole();
+        PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(new List<PrtgDeviceRow>(), new List<PrtgSensorRow>(), "mirror"),
+            settings, sentinels, mirrorConsole, new PrtgAddressResolver());
+
+        var liveConsole = new TestConsole();
+        PrtgResourceGuardTargets.Resolve(
+            new FakeGuardSource(new List<PrtgDeviceRow>(), new List<PrtgSensorRow>(), "live"),
+            settings, sentinels, liveConsole, new PrtgAddressResolver());
+
+        Assert.Contains(mirrorConsole.Lines, l => l.Contains("同步結構與對應"));
+        Assert.Contains(liveConsole.Lines, l => l.Contains("已直接查詢 PRTG"));
+        Assert.DoesNotContain(liveConsole.Lines, l => l.Contains("同步結構與對應"));
     }
 }

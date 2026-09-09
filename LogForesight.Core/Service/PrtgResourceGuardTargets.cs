@@ -33,7 +33,7 @@ public static class PrtgResourceGuardTargets
     /// 只會把手填值原樣吐回來。守門執行本身一律傳 false（覆寫優先是它的既定契約）。
     /// </param>
     public static PrtgResourceGuardTargetResult Resolve(
-        EfPrtgStore prtgStore,
+        IPrtgResourceGuardSource source,
         SystemSettings settings,
         IReadOnlyList<Sentinel> sentinels,
         IRunConsole console,
@@ -62,7 +62,7 @@ public static class PrtgResourceGuardTargets
             var categories = new Dictionary<long, string>();
             try
             {
-                var sensors = prtgStore.GetAllSensors();
+                var sensors = source.GetSensors();
                 var sensorMap = sensors.ToDictionary(s => s.Objid);
                 foreach (var id in objids)
                 {
@@ -124,8 +124,8 @@ public static class PrtgResourceGuardTargets
             }
         }
 
-        var allDevices = prtgStore.GetAllDevices();
-        var allSensors = prtgStore.GetAllSensors();
+        var allDevices = source.GetDevices();
+        var allSensors = source.GetSensors();
 
         // 3. 對每個位址比對 device
         var sentinelDeviceObjids = new HashSet<long>();
@@ -134,7 +134,7 @@ public static class PrtgResourceGuardTargets
             var matchedDevs = FindDevicesForHost(sHost, allDevices, resolver);
             if (matchedDevs.Count == 0)
             {
-                console.WriteLine($"[PRTG資源守門] 找不到主機「{sHost}」對應的 PRTG 裝置。");
+                console.WriteLine($"[PRTG資源守門] 找不到主機「{sHost}」對應的 PRTG 裝置{SourceHint(source)}。");
             }
             else
             {
@@ -179,7 +179,7 @@ public static class PrtgResourceGuardTargets
 
         if (!prtgMatched && prtgHost != null)
         {
-            console.WriteLine($"[PRTG資源守門] 找不到 PRTG 主機「{prtgHost}」對應的 PRTG 裝置。");
+            console.WriteLine($"[PRTG資源守門] 找不到 PRTG 主機「{prtgHost}」對應的 PRTG 裝置{SourceHint(source)}。");
         }
 
         // 5. 取命中的 device 底下未暫停（Paused == false）且 Category 為 cpu 或 memory 的 sensor；
@@ -225,6 +225,15 @@ public static class PrtgResourceGuardTargets
         var sortedObjids = targetSensors.Keys.ToList();
         return new PrtgResourceGuardTargetResult(sortedObjids, targetSensors);
     }
+
+    /// <summary>
+    /// 訊息裡的來源註記：讀鏡像時「找不到」多半是鏡像還沒同步過，直接查 PRTG 時
+    /// 「找不到」才代表 PRTG 上真的沒有這台。兩者的處置完全不同，訊息要分得出來。
+    /// </summary>
+    private static string SourceHint(IPrtgResourceGuardSource source) =>
+        source.SourceLabel == "live"
+            ? "（已直接查詢 PRTG）"
+            : "（查的是本機鏡像；PRTG 剛啟用時請先執行「同步結構與對應」）";
 
     /// <summary>
     /// 依主機名稱比對 PRTG 裝置（先用解析器比對 IP，對不到時退回主機名稱字面比對）。

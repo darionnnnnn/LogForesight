@@ -313,7 +313,7 @@ public class SettingsController : ControllerBase
         var isOverride = !forceAuto
             && settings.PrtgResourceGuardSensorObjids != null
             && settings.PrtgResourceGuardSensorObjids.Count > 0;
-        var source = isOverride ? "override" : "auto";
+        var source = isOverride ? "override" : "auto";  // 實際來源在下方依鏡像有無資料再決定
 
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
@@ -332,13 +332,47 @@ public class SettingsController : ControllerBase
         var sentinels = sentinelStore.GetAll();
         var prtgStore = _backend.PrtgStore();
 
+        // 資料來源（docs/PRTG-SPEC.md §12）：鏡像是空的、或使用者按了「自動偵測並填入」時直接查 PRTG。
+        // 讀鏡像的偵測在 PRTG 剛啟用時必然一無所獲，那正是使用者最需要這顆按鈕的時候。
+        // 走覆寫清單時不需要裝置資料，維持讀鏡像即可（那條路徑只用 sensor 分類）。
+        var mirrorDeviceCount = prtgStore.GetAllDevices().Count;
+        var useLive = !isOverride && (forceAuto || mirrorDeviceCount == 0);
+
         PrtgResourceGuardTargetResult targets;
+        PrtgClient? liveClient = null;
         try
         {
-            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console, new PrtgAddressResolver(), ignoreOverride: forceAuto);
+            if (useLive)
+            {
+                try
+                {
+                    liveClient = PrtgClientFactory.Create(settings);
+                    targets = PrtgResourceGuardTargets.Resolve(
+                        new PrtgLiveGuardSource(liveClient, ct), settings, sentinels, console,
+                        new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                    source = "live";
+                }
+                catch (Exception liveEx)
+                {
+                    // 直接查 PRTG 失敗（連不上、認證錯、逾時）就退回鏡像，並把原因說出來——
+                    // 靜默退回會讓使用者以為「PRTG 上真的沒有這些裝置」。
+                    console.WriteLine($"[PRTG資源守門] 直接查詢 PRTG 失敗（{liveEx.Message}），改用本機鏡像資料。");
+                    targets = PrtgResourceGuardTargets.Resolve(
+                        new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
+                        new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                    source = "mirror-fallback";
+                }
+            }
+            else
+            {
+                targets = PrtgResourceGuardTargets.Resolve(
+                    new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
+                    new PrtgAddressResolver(), ignoreOverride: forceAuto);
+            }
         }
         catch (Exception ex)
         {
+            liveClient?.Dispose();
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
             {
                 Success = false,
@@ -347,6 +381,10 @@ public class SettingsController : ControllerBase
                 Warnings = console.Messages,
                 Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
             });
+        }
+        finally
+        {
+            liveClient?.Dispose();
         }
 
         try

@@ -105,7 +105,11 @@ public sealed class PrtgResourceGuard : IDisposable
         try
         {
             client = PrtgClientFactory.Create(settings);
-            var targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinelStore.GetAll(), console, new PrtgAddressResolver());
+            // 夜間批次一律讀鏡像：這裡在每趟批次啟動時跑，不能為了偵測而多打一輪 PRTG。
+            // 鏡像為空時偵測會落空，那時的解法是維護頁「自動偵測並填入」把 objid 存進覆寫清單。
+            var targets = PrtgResourceGuardTargets.Resolve(
+                new PrtgMirrorGuardSource(prtgStore), settings, sentinelStore.GetAll(), console,
+                new PrtgAddressResolver());
             return new PrtgResourceGuard(client, settings, targets, recorder, console, progress, ownsClient: true);
         }
         catch (Exception ex)
