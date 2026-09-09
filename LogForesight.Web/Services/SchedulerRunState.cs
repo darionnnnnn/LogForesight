@@ -227,6 +227,13 @@ public class SchedulerRunState
             }
             else if (phase == PrtgDonePhase)
             {
+                // 完工訊號帶「取了幾台主機／幾個 sensor」，讓畫面說得出結果而不只是「已完成」。
+                // total 為 0 代表這一路沒有可回報的量（PRTG 停用、初始化失敗、取消），
+                // 這時不覆蓋軌上已累積的數字——既有規範是完工後保留最後的數字，不清空。
+                if (total > 0)
+                {
+                    _prtg = new ProgressTrack(_prtg.Phase ?? phase, done, total);
+                }
                 _prtg.Completed = true;
             }
             else if (phase == RunPhases.GuardPaused)

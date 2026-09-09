@@ -359,7 +359,12 @@ internal static class PrtgDailyPipeline
                     triggeredResult?.FailedSensors ?? 0,
                     triggeredResult?.TriggerHosts ?? 0);
             }
-            progress?.Report(RunPhases.PrtgDone, 0, 0);
+            // 完工訊號帶結果數字（取數主機數／目標 sensor 數），畫面才說得出「已完成：主機 N 台／sensor M 個」。
+            // triggeredResult 為 null（PRTG 停用、初始化失敗、取消）時維持 (0, 0)。
+            progress?.Report(
+                RunPhases.PrtgDone,
+                triggeredResult?.TriggerHosts ?? 0,
+                triggeredResult?.TargetSensors ?? 0);
         }
     }
 }
