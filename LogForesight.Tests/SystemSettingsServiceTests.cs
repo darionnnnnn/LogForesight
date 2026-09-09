@@ -2450,4 +2450,52 @@ public class SystemSettingsServiceTests : IDisposable
         }));
         Assert.Contains("取數範圍", ex.Message);
     }
+
+    /// <summary>
+    /// 守門搬到設定頁後，它的儲存動線改走整包 `PUT /api/admin/settings`（回饋第 40 輪批次F）。
+    /// 整包請求裡的 PRTG 欄位一律「有送才更新」——只送守門欄位時，
+    /// PRTG 維護頁那些設定（位址、逾時、白名單…）不得被清掉。
+    /// </summary>
+    [Fact]
+    public void Update整包_只送守門欄位時其他PRTG設定不變()
+    {
+        var service = Create();
+
+        // 先用專屬端點設好 PRTG 連線與擷取參數
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgUrl = "https://prtg.example",
+            PrtgTimeoutSeconds = 45,
+            PrtgFetchConcurrency = 3,
+            PrtgSensorTypeWhitelist = new List<string> { "SNMP CPU Load" },
+            PrtgResourceGuardCpuPercent = 85
+        });
+
+        // 整包更新只帶守門欄位。`ValidRequest()` 為了測其他情境會填滿 PRTG 欄位，
+        // 這裡要模擬設定頁的實際送法——設定頁不送任何 PRTG 連線／擷取欄位（前端 payload 已無那些鍵），
+        // 所以逐一清成 null，讓「有送才更新」這條規則真的被測到。
+        var req = ValidRequest();
+        req.PrtgEnabled = null;
+        req.PrtgUrl = null;
+        req.PrtgAuthMode = null;
+        req.PrtgUsername = null;
+        req.PrtgIgnoreSslErrors = null;
+        req.PrtgTimeoutSeconds = null;
+        req.PrtgFetchConcurrency = null;
+        req.PrtgBackfillDays = null;
+        req.PrtgRetentionDays = null;
+        req.PrtgResourceGuardEnabled = true;
+        req.PrtgResourceGuardCpuPercent = 70;
+        var updated = service.Update(req);
+
+        // 守門有跟著改
+        Assert.True(updated.PrtgResourceGuardEnabled);
+        Assert.Equal(70, updated.PrtgResourceGuardCpuPercent);
+
+        // 其他 PRTG 設定原封不動
+        Assert.Equal("https://prtg.example", updated.PrtgUrl);
+        Assert.Equal(45, updated.PrtgTimeoutSeconds);
+        Assert.Equal(3, updated.PrtgFetchConcurrency);
+        Assert.Equal(new[] { "SNMP CPU Load" }, updated.PrtgSensorTypeWhitelist);
+    }
 }

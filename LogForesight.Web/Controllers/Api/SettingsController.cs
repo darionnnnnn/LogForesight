@@ -191,7 +191,15 @@ public class SettingsController : ControllerBase
             throw DomainException.Validation("PRTG 同步服務未啟用。");
 
         if (!_prtgStructureSync.TryStart(out var error))
-            throw DomainException.Validation(error ?? "無法啟動 PRTG 結構同步。");
+        {
+            // 被互斥擋下（取數執行中、或同步已在跑）語意上是狀態衝突而非輸入錯誤——
+            // 回 409 讓呼叫端分得出「你送錯了」與「現在不行，等一下再試」。
+            var isConflict = error != null &&
+                (error.Contains("執行中") || error.Contains("執行進行中"));
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動 PRTG 結構同步。");
+        }
 
         _audit.Record(
             action: AuditActions.PrtgStructureSyncRun,
@@ -747,7 +755,7 @@ public class SettingsController : ControllerBase
                 request.Note
             });
 
-        var remapWarning = TryRemapToday();
+        var remapWarning = _mapRefresher?.TryRefreshToday();
 
         var saved = store.GetManualMaps().FirstOrDefault(m => m.DeviceObjid == request.DeviceObjid);
 
@@ -780,7 +788,7 @@ public class SettingsController : ControllerBase
             targetId: deviceObjid.ToString(),
             detail: new { DeviceObjid = deviceObjid, Deleted = deleted });
 
-        var remapWarning = TryRemapToday();
+        var remapWarning = _mapRefresher?.TryRefreshToday();
 
         return ApiResponse<PrtgDeleteResultDto>.Ok(new PrtgDeleteResultDto
         {
@@ -853,7 +861,7 @@ public class SettingsController : ControllerBase
                 request.Note
             });
 
-        var remapWarning = TryRemapToday();
+        var remapWarning = _mapRefresher?.TryRefreshToday();
 
         var saved = store.GetIpExcludes().FirstOrDefault(e => e.Ip == normIp);
 
@@ -892,7 +900,7 @@ public class SettingsController : ControllerBase
             targetId: raw,
             detail: new { Ip = raw, Deleted = deleted });
 
-        var remapWarning = TryRemapToday();
+        var remapWarning = _mapRefresher?.TryRefreshToday();
 
         return ApiResponse<PrtgDeleteResultDto>.Ok(new PrtgDeleteResultDto
         {
@@ -900,12 +908,6 @@ public class SettingsController : ControllerBase
             RemapWarning = remapWarning
         });
     }
-
-    /// <summary>
-    /// 重算今天的對應（docs/PRTG-SPEC.md §4）。實作在 <see cref="PrtgHostMapRefresher"/>，
-    /// 與主機主檔變更那條觸發路徑共用同一份——兩處各寫一份的話，其中一邊改了規則另一邊不會跟上。
-    /// </summary>
-    private string? TryRemapToday() => _mapRefresher?.TryRefreshToday();
 
     private sealed class ResourceGuardWarningConsole : IRunConsole
     {

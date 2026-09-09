@@ -134,7 +134,8 @@ public static class PrtgResourceGuardTargets
             var matchedDevs = FindDevicesForHost(sHost, allDevices, resolver);
             if (matchedDevs.Count == 0)
             {
-                console.WriteLine($"[PRTG資源守門] 找不到主機「{sHost}」對應的 PRTG 裝置{SourceHint(source)}。");
+                console.WriteLine($"[PRTG資源守門] 找不到主機「{sHost}」對應的 PRTG 裝置" +
+                                  $"{UnresolvedHint(sHost, resolver)}{SourceHint(source)}。");
             }
             else
             {
@@ -179,7 +180,8 @@ public static class PrtgResourceGuardTargets
 
         if (!prtgMatched && prtgHost != null)
         {
-            console.WriteLine($"[PRTG資源守門] 找不到 PRTG 主機「{prtgHost}」對應的 PRTG 裝置{SourceHint(source)}。");
+            console.WriteLine($"[PRTG資源守門] 找不到 PRTG 主機「{prtgHost}」對應的 PRTG 裝置" +
+                              $"{UnresolvedHint(prtgHost, resolver)}{SourceHint(source)}。");
         }
 
         // 5. 取命中的 device 底下未暫停（Paused == false）且 Category 為 cpu 或 memory 的 sensor；
@@ -225,6 +227,13 @@ public static class PrtgResourceGuardTargets
         var sortedObjids = targetSensors.Keys.ToList();
         return new PrtgResourceGuardTargetResult(sortedObjids, targetSensors);
     }
+
+    /// <summary>
+    /// 位址本身解析不到時的註記：分辨「這個位址查不出 IP」與「查得出 IP 但沒有 device 用它」。
+    /// 前者要去修 DNS 或改設定，後者要去 PRTG 確認裝置——處置完全不同。
+    /// </summary>
+    private static string UnresolvedHint(string host, IPrtgAddressResolver resolver) =>
+        resolver.Resolve(host) == null ? $"（「{host}」本身也解析不出 IP）" : "";
 
     /// <summary>
     /// 訊息裡的來源註記：讀鏡像時「找不到」多半是鏡像還沒同步過，直接查 PRTG 時

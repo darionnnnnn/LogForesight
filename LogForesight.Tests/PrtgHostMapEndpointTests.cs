@@ -461,4 +461,40 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.True(res.Data!.Deleted);
         Assert.DoesNotContain(store.GetIpExcludes(), e => e.Ip == "10.8.8.9");
     }
+
+    /// <summary>
+    /// 「同步結構與對應」被互斥擋下時語意是狀態衝突（409），不是輸入錯誤（400）——
+    /// 呼叫端要分得出「你送錯了」與「現在不行，等一下再試」（docs/PRTG-SPEC.md §5a）。
+    /// </summary>
+    [Fact]
+    public void 同步端點_取數執行中回衝突而非驗證錯誤()
+    {
+        var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settingsStore.Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+        });
+
+        var schedulerState = new SchedulerRunState();
+        Assert.True(schedulerState.TryBeginRun("manual:tester", out _));
+
+        var syncService = new PrtgStructureSyncService(
+            settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState,
+            new HostStore(_backend.Blob("hosts")),
+            new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)));
+
+        var controller = new SettingsController(
+            new StubSystemSettingsService(),
+            new AiUsageStore(_backend.Blob("ai_usage")),
+            _audit,
+            backend: _backend,
+            prtgStructureSync: syncService);
+
+        var ex = Assert.Throws<DomainException>(() => controller.StartPrtgStructureSync());
+        Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
+        Assert.Contains("取數執行進行中", ex.Message);
+    }
 }

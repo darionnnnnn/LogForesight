@@ -303,6 +303,13 @@ public class HostDto
     public List<string> GroupNames { get; set; } = new();
     public List<long> OwnerUserIds { get; set; } = new();
     public List<string> OwnerNames { get; set; } = new();
+    /// <summary>
+    /// 重算今日 PRTG 對應的警告（null＝正常或不需要重算）。主機已經存好了，
+    /// 重算失敗只代表「對應要等下次夜間批次才會跟上」——把它說出來，
+    /// 否則使用者改完 IP 卻看到 PRTG 區塊還是舊的，會以為是存檔沒生效。
+    /// </summary>
+    public string? RemapWarning { get; set; }
+
 }
 
 /// <summary>主機簡易選項（指派下拉用，不分頁）</summary>

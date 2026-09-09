@@ -1,6 +1,7 @@
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -180,5 +181,45 @@ public class PrtgStructureSyncServiceTests : IDisposable
             () => service.WaitUntilIdleAsync(cts.Token));
 
         service.Cancel();
+    }
+
+    /// <summary>
+    /// 重算入口在 PRTG 未啟用時零成本返回（docs/PRTG-SPEC.md §4）——
+    /// 沒有鏡像資料，重算只會把空的對應寫一次，反而抹掉既有結果。
+    /// </summary>
+    [Fact]
+    public void 重算入口_PRTG未啟用時不做事()
+    {
+        var prtgStore = _backend.PrtgStore();
+        var day = DateTime.Today;
+        prtgStore.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 5001, HostId = 9, MapStatus = PrtgMapStatus.Ok, Ip = "10.5.0.1" }
+        });
+
+        // PRTG 未啟用（預設）
+        var refresher = new PrtgHostMapRefresher(_settingsStore, _backend);
+        Assert.Null(refresher.TryRefreshToday());
+
+        // 既有對應原封不動——若真的重算了，鏡像是空的會把它洗掉
+        var row = Assert.Single(prtgStore.GetHostMapForDate(day));
+        Assert.Equal(9, row.HostId);
+    }
+
+    [Fact]
+    public void 重算入口_PRTG啟用時會重算()
+    {
+        EnablePrtg();
+        var prtgStore = _backend.PrtgStore();
+        var day = DateTime.Today;
+        prtgStore.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 5002, HostId = 9, MapStatus = PrtgMapStatus.Ok, Ip = "10.5.0.2" }
+        });
+
+        Assert.Null(new PrtgHostMapRefresher(_settingsStore, _backend).TryRefreshToday());
+
+        // 鏡像是空的，重算後該日對應應該被清空
+        Assert.Empty(prtgStore.GetHostMapForDate(day));
     }
 }

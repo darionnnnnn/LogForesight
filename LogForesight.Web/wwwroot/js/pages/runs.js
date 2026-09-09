@@ -1033,6 +1033,12 @@ function applyAiScheduleStatus(status) {
 
 // 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）。
 // 放模組層而非函式內：狀態卡執行中每 3 秒重繪一次，對照表是常數，不必每次重建。
+/**
+ * PRTG 模組總開關的目前值。完工文字要靠它分辨「沒開」與「開了但沒抓到」，
+ * 而那個判斷發生在狀態輪詢裡（每 3 秒一次），不能每次都重打設定 API。
+ */
+let prtgModuleEnabled = false;
+
 const PROGRESS_PHASE_LABEL = {
     local: '本機分析',
     netiq: 'NetIQ 機房分析',
@@ -1152,11 +1158,17 @@ function renderScheduleProgress(status) {
         prtgCustomLabel = `${prefix}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
     } else if (status.prtgCompleted) {
         // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
-        // 分母為 0 代表這一路跑完了但什麼都沒抓到——那不是「已完成 0/0」能講清楚的，
-        // 要說出來才不會與「抓了一批」在畫面上長得一樣。
-        prtgCustomLabel = status.prtgProgressTotal > 0
-            ? `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`
-            : 'PRTG 擷取　已完成（本次沒有取到數值）';
+        // 三種情形要分得開：模組沒開、開了但什麼都沒抓到、抓到了。
+        // 全部混成「已完成」的話，使用者看不出該去開總開關還是該去查對應。
+        if (!prtgModuleEnabled) {
+            prtgCustomLabel = 'PRTG 擷取　未啟用';
+        } else if (status.prtgProgressTotal > 0) {
+            prtgCustomLabel = `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`;
+        } else {
+            // 沒抓到的原因（沒有已對應主機／當天沒人出問題）在執行輸出裡有明確一行，
+            // 前端拿不到生效範圍，不在這裡猜。
+            prtgCustomLabel = 'PRTG 擷取　已完成（本次沒有取到數值，原因見執行詳情）';
+        }
     }
 
     updateProgressBar(
@@ -1238,6 +1250,7 @@ function bindPrtgSync() {
 
 /** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
 function renderPrtgModuleState(enabled) {
+    prtgModuleEnabled = enabled;
     const el = document.getElementById('prtg-module-state');
     if (!el) return;
     el.textContent = enabled ? '已啟用' : '未啟用';
@@ -1542,6 +1555,11 @@ function bindPrtgEnabledSwitch() {
         try {
             await api.put('/api/admin/settings/prtg-enabled', { enabled: nextVal });
             renderPrtgModuleState(nextVal);
+            if (nextVal) {
+                // 啟用只是設定；鏡像要等夜間排程或手動同步才會有內容，
+                // 在那之前主機對應與資源守門的自動偵測都沒有資料可用。
+                toast('已啟用 PRTG。請執行一次「同步結構與對應」，否則主機對應與資源守門偵測沒有資料。', 'info');
+            }
             toast('已更新 PRTG 擷取開關', 'success');
         } catch (error) {
             checkbox.checked = !nextVal;

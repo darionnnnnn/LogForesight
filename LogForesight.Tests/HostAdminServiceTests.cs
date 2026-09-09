@@ -24,10 +24,13 @@ public class HostAdminServiceTests : IDisposable
     {
         public int Calls { get; private set; }
 
+        /// <summary>設定後由 <see cref="TryRefreshToday"/> 回傳，用來驗警告有沒有被帶進回應。</summary>
+        public string? WarningToReturn { get; set; }
+
         public string? TryRefreshToday()
         {
             Calls++;
-            return null;
+            return WarningToReturn;
         }
     }
 
@@ -647,5 +650,49 @@ public class HostAdminServiceTests : IDisposable
         var beforeUnmerge = _mapRefresher.Calls;
         service.UnmergeHost(a.HostId);
         Assert.Equal(beforeUnmerge + 1, _mapRefresher.Calls);
+    }
+
+    /// <summary>
+    /// 重算失敗只是「對應要等下次夜間批次才跟上」，主機本身已經存好了——
+    /// 但這件事要說出來，否則使用者改完 IP 看到 PRTG 區塊還是舊的，會以為存檔沒生效。
+    /// </summary>
+    [Fact]
+    public void 重算失敗時警告帶進主機儲存的回應()
+    {
+        _mapRefresher.WarningToReturn = "重算今日 PRTG 對應失敗: 資料庫忙碌";
+        var service = Create();
+
+        var dto = service.SaveHost(new SaveHostRequest
+        {
+            HostName = "warn-host",
+            IpAddress = "10.40.1.1",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+
+        Assert.Equal("重算今日 PRTG 對應失敗: 資料庫忙碌", dto.RemapWarning);
+    }
+
+    [Fact]
+    public void 不需要重算時回應不帶警告()
+    {
+        _mapRefresher.WarningToReturn = "不該出現";
+        var service = Create();
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "nowarn-host", IpAddress = "10.40.1.2", NetiqServer = "SENTINEL-A",
+            Os = "windows", Tier = "standard", Active = true
+        });
+
+        // 第二次只改描述——不重算，也就不該冒出警告
+        var dto = service.SaveHost(new SaveHostRequest
+        {
+            HostName = "nowarn-host", IpAddress = "10.40.1.2", NetiqServer = "SENTINEL-A",
+            RoleDesc = "只改描述", Os = "windows", Tier = "standard", Active = true
+        });
+
+        Assert.Null(dto.RemapWarning);
     }
 }

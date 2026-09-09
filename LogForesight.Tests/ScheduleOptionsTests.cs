@@ -37,4 +37,32 @@ public class ScheduleOptionsTests
         Assert.True(options!.LocalAnalysisEnabled);
         Assert.True(options.Enabled);
     }
+
+    /// <summary>
+    /// 舊版 blob 裡有 `aiEnabled` 欄位（本輪起 AI 沒有啟用開關）。反序列化必須忽略它、
+    /// 不擲例外——否則升級後排程設定整份讀不出來，畫面會顯示成「什麼都沒設定」。
+    /// </summary>
+    [Fact]
+    public void 舊JSON含aiEnabled仍可反序列化且該屬性已不存在()
+    {
+        var legacyJson = """
+        {
+          "enabled": true,
+          "aiEnabled": true,
+          "aiConcurrency": 3,
+          "localAnalysisEnabled": false
+        }
+        """;
+
+        var options = JsonSerializer.Deserialize<ScheduleOptions>(
+            legacyJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        Assert.NotNull(options);
+        Assert.True(options!.Enabled);
+        Assert.Equal(3, options.AiConcurrency);
+        Assert.False(options.LocalAnalysisEnabled);
+
+        // 型別上已經沒有這個屬性——留著的話文件與程式碼會各說各話
+        Assert.Null(typeof(ScheduleOptions).GetProperty("AiEnabled"));
+    }
 }

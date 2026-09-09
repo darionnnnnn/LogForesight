@@ -24,8 +24,20 @@ function collectLines(id) {
     return el.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 }
 
-/** 把已儲存的守門設定填進畫面欄位。 */
+/**
+ * 把已儲存的守門設定填進畫面欄位。
+ * 另外依 PRTG 是否啟用調整那行說明的樣式——守門的資源數據取自 PRTG，
+ * PRTG 沒開的話設定得再仔細也不會生效，這件事要看得出來。
+ */
 export function loadGuardFields(settings) {
+    const hintEl = document.getElementById('guard-prtg-hint');
+    if (hintEl) {
+        const prtgOff = !settings.prtgEnabled;
+        hintEl.classList.toggle('text-warning', prtgOff);
+        hintEl.classList.toggle('fw-semibold', prtgOff);
+        hintEl.classList.toggle('text-muted', !prtgOff);
+    }
+
     const guardEnabled = document.getElementById('prtg-guard-enabled');
     if (guardEnabled) guardEnabled.checked = Boolean(settings.prtgResourceGuardEnabled);
     const guardCpu = document.getElementById('prtg-guard-cpu-percent');

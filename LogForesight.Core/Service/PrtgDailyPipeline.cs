@@ -325,6 +325,14 @@ internal static class PrtgDailyPipeline
 
                 prtgConsole.WriteLine(summary);
                 runRecorder.Milestone(summary);
+
+                // 「設了全部已對應主機卻一台都沒有」要進里程碑：只印在執行輸出的話，
+                // 事後查執行紀錄看不到原因，而這正是最需要被看見的一種空轉。
+                if (effectiveScopeText == PrtgValueFetchScope.AllMapped && triggeredResult.TriggerHosts == 0)
+                {
+                    runRecorder.Milestone(
+                        $"PRTG 取數範圍為「全部已對應主機」，但 {day:yyyy-MM-dd} 沒有任何已對應的 PRTG 主機，本次未取得數值");
+                }
             }
             catch (OperationCanceledException)
             {

@@ -332,10 +332,13 @@ public class HostAdminService
             targetId: saved.HostId.ToString(),
             detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Tier, saved.Active });
 
-        // 在主機寫入**之後**才重算，且失敗不影響儲存結果（見 PrtgHostMapRefresher 的說明）
-        if (needsRemap) _mapRefresher?.TryRefreshToday();
+        // 在主機寫入**之後**才重算，且失敗不影響儲存結果——只把警告帶進回應
+        // （比照人工對應端點的 RemapWarning，見 PrtgHostMapRefresher 的說明）
+        var remapWarning = needsRemap ? _mapRefresher?.TryRefreshToday() : null;
 
-        return HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
+        var dto = HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
+        dto.RemapWarning = remapWarning;
+        return dto;
     }
 
     public HostDto SetHostGroups(long hostId, IEnumerable<long> groupIds)
