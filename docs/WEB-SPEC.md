@@ -2237,19 +2237,32 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 （`override=true` 為覆寫匯出）。門檻定義與資料集內容見 docs/PRTG-SPEC.md §11。
 
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
-- **版面骨架**：三張等寬狀態卡（取數執行／AI 分析／PRTG 歷史回填，`.lf-run-status-grid`，
+- **版面骨架**：三張等寬**等高**狀態卡（取數執行／AI 分析／PRTG，`.lf-run-status-grid`，
   ≤991px 疊直）在上，四個頁籤（執行總表／異常彙總／執行紀錄／**排程設定**）在下，
   與 `/admin/prtg`、`/admin/netiq`、設定頁「頁籤置頂 → 平行卡片」同一套骨架。
   排程設定自成一個頁籤，與即時狀態卡分離。
   - **`#runs-tabs` 與四個 `[data-panel]` 必須是同層手足**（`bindTabs` 用 `tabsEl.parentElement`
     找面板）；天數與圖例工具列插在中間不影響，切到「排程設定」時由 `runs.js` 整組隱藏。
-  - 進度軌區塊**預留固定高度**（`.lf-run-tracks`）：狀態卡每 3 秒重繪，進度條出現／消失時版面不得跳動。
+  - **三卡等高**由 grid `align-items: stretch` ＋ 卡片 `flex-direction: column` ＋
+    按鈕列 `.lf-run-actions` 的 `margin-top:auto` 三者共同達成，**不寫死 `min-height`**——
+    寫死的話內容一改就要回頭調數字。三張卡的固定列數本來就不同（軌條數、有無說明段落），
+    少了任一條，卡片就會各自貼齊自己的內容高度而高低不齊。
+  - 進度軌區塊**預留固定高度**（`.lf-run-tracks`，雙軌用 `--pair`、單軌用 `--single`）：
+    狀態卡每 3 秒重繪，進度條出現／消失時版面不得跳動。
   - PRTG 回填輸出**預設收合**：它是全頁最高的單一元素，展開著會把那張卡撐得比另外兩張長一倍。
   - 標籤／值成對用 `.lf-kv`；進度條高度與窄輸入框寬度用 `.lf-run-progress`／`.lf-input-narrow`，
     頁面內**不留 inline style**。
   - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
     整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
-- **狀態卡的三條進度軌**：本機／NetIQ／PRTG 三路並行，各自一條互不覆蓋的軌。
+- **三張卡各自承載什麼**：
+  - **取數執行**：本機與 NetIQ 兩條軌、最新訊息、立即執行／停止。
+  - **AI 分析**：待補件數、閒置原因、背景補跑窗口、立即補跑／強制重新分析。
+    **沒有啟用開關**——AI 服務設定好就一律啟用（見下方「AI 跟隨取數」）。
+  - **PRTG**：模組總開關狀態、結構同步摘要（§5a）、每日擷取軌、歷史回填軌與操作。
+    這張卡**刻意沒有「最新訊息」列**：狀態 API 的 `latestMessage` 是整趟共用的最後一行，
+    取數卡已在顯示，再放一次只是重複；PRTG 分路的輸出看執行詳情（每行有 `[PRTG]` 前綴）。
+- **狀態卡的三條進度軌**：本機／NetIQ／PRTG 三路並行，各自一條互不覆蓋的軌
+  （前兩條在取數卡、PRTG 那條在 PRTG 卡）。
   三路收尾各送一個完工訊號（`local-done`／`netiq-done`／`prtg-done`），
   收到後**保留該軌最後的數字並標記完成**（畫成滿格、文字「已完成 x / y」），
   **不清空**——清空會讓那條軌整個消失，使用者看不出那一路究竟跑完了沒。
@@ -2260,7 +2273,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   「PRTG 觸發式取數　已取 N 個 sensor（等待分析結果）」。
   phase 字面值**集中在 Core 的 `RunPhases`**（Core 送出、Web 分派、前端標籤三層共用同一份；
   前端對照表的完整性由 `RunsPageUiTests` 以反射逐條核對——漏補文案時畫面會印裸 phase 給使用者）。
-  一覽：`local`／`netiq`／`prtg-sync`／
+  一覽：`local`／`netiq`／`prtg-wait-sync`（等手動同步結束，§5a）／`prtg-sync`／
   `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
   `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`；
   PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
@@ -2284,13 +2297,15 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **不為 PRTG 另闢一區**——PRTG 沒有主機日語意，硬拆會做出一張空表。
 - **異常彙總的欄位是「執行站台」不是「影響主機」**：那一欄的來源是 `BatchRun.HostName`
   ＝跑批次的站台，不是被分析的主機。標成「影響主機」會讓人把站台名誤讀成出問題的主機。
-- **AI 分析排程未啟用的提示**：AI 已設定、AI 排程未啟用且待補件數大於 0 時，
-  AI 分析狀態卡顯示「AI 分析排程未啟用，N 件待補不會被處理」——
-  本機路徑改走 AI 排程後，排程沒開就等於本機也沒有 AI 判讀，這個缺口要說出來。
+- **AI 跟隨取數**：AI 分析**沒有獨立的啟用開關**，AI 服務設定好（`IWebAiService.Available`）就一律啟用。
+  取數執行一發佈當日 PRTG finding（`prtg-findings-ready`），`SchedulerRunState` 就發出通知讓
+  AI 立刻開跑，**不等自己的 60 秒輪詢**——否則使用者按下「立即執行」後看到的是取數在跑、AI 卻閒著。
+  即時觸發**不受 AI 執行窗口限制**（跟隨取數是「取數跑到哪、判讀跟到哪」）；
+  窗口只管背景消化積壓，狀態卡那一列因此標示為「背景補跑窗口」，已在窗口內時顯示「窗口內，隨時可跑」。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
-  `disabled`／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
+  `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
   由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
   `disabled` 走既有那條帶件數的文案，`no-pending` 不需要說明（待補為 0 本身就講完了）。

@@ -607,7 +607,9 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
 且與 NetIQ 的 AI 策略分岔。執行紀錄的 AI 呼叫統計因此只來自 AI 分析排程這一路。唯一例外是本機主機未登記（`HostId=0`）時維持統計模式、
 不標 `AiPending`：風險 log 暫存與待補查詢都以 HostId 為鍵，標了會產生永遠沒人消化的待補件。
 
-取數與 AI 判讀是兩個完全獨立的排程，各有自己的啟用開關與執行窗口，互不互斥、可同時執行：
+取數與 AI 判讀是兩條獨立的路徑，互不互斥、可同時執行。
+**AI 沒有自己的啟用開關**：AI 服務設定好就一律啟用，取數產出結果後立刻跟上；
+它另有一組執行窗口，但那只管「積壓什麼時候被背景消化」，不影響跟隨取數的即時判讀。
 
 1. **取數排程**（`SchedulerHostedService` → `NetiqPipelineService`）：聚合、規則分類、趨勢／
    慢速趨勢／關聯比對全部是確定性計算（`LogAnalysisService.BuildStatisticalRecordAsync`），
@@ -615,8 +617,12 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
    AI 分析排隊中」），並標記 `ai_pending = true`（`lf_daily_records` 的真實欄位，
    全域待補查詢與強制重跑都以欄位為唯一事實來源）。取數排程**不執行任何 AI 呼叫**，
    也不會因 AI 慢而被拖住。
-2. **AI 分析排程**（`AiAnalysisHostedService`）：常駐輪詢（60 秒），啟用且在自己的執行窗口內、
-   存量校正回填已完成、且有待補資料時自動開跑。以 `QueryPendingAi` 全庫掃描
+2. **AI 分析**（`AiAnalysisHostedService`）：兩條觸發路徑。
+   **跟隨取數**：取數路徑一發佈當日 PRTG finding，`SchedulerRunState` 就發出通知讓它立刻開跑
+   （trigger 記為 `fetch-followup`），**不等輪詢、不看執行窗口**——窗口是給背景消化用的，
+   跟隨取數要「取數跑到哪、判讀跟到哪」。
+   **背景輪詢**（60 秒）：在執行窗口內、存量校正回填已完成、且有待補資料時自動開跑，
+   負責消化積壓與重試失敗的單筆。兩條路徑共用同一個併發 1 的 gate，不會重入。以 `QueryPendingAi` 全庫掃描
    `ai_pending = true` 的主機日——**不設回望天數上限**、依日期新→舊處理；
    完整性閘門：取數排程執行中、且**當日 PRTG finding 尚未算完**時，跳過今天與昨天的待補
    （取數正在寫入的必然是最近日期；PRTG finding 會影響日風險與敘述，太早判讀等於讓 AI

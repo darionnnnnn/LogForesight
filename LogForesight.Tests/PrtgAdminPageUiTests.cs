@@ -532,6 +532,13 @@ public class PrtgAdminPageUiTests
         var js = File.ReadAllText(jsPath);
 
         Assert.Contains("prtg-resource-guard/preview", js);
+
+        // 後端的 source 四個值前端都要有文案，否則使用者看不出資料是查 PRTG 還是讀鏡像
+        // （批次D 新增 live／mirror-fallback 兩個值）
+        Assert.Contains("override", js);
+        Assert.Contains("live", js);
+        Assert.Contains("mirror-fallback", js);
+        Assert.Contains("auto", js);
     }
 
     /// <summary>

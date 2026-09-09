@@ -89,7 +89,15 @@ export function bindGuardPreview() {
             // 清單來源
             const sourceEl = document.createElement('div');
             sourceEl.className = 'small text-muted mb-2';
-            sourceEl.textContent = res.source === 'override' ? '來源：覆寫清單' : '來源：自動偵測';
+            // 來源要說清楚：讀鏡像的「找不到」多半是還沒同步，直接查 PRTG 的「找不到」
+            // 才代表 PRTG 上真的沒有那台裝置——兩者的處置完全不同。
+            const SOURCE_TEXT = {
+                override: '來源：覆寫清單',
+                live: '來源：直接查詢 PRTG',
+                'mirror-fallback': '來源：本機鏡像（直接查詢 PRTG 失敗，已退回鏡像）',
+                auto: '來源：自動偵測（本機鏡像）'
+            };
+            sourceEl.textContent = SOURCE_TEXT[res.source] ?? '來源：自動偵測';
             container.appendChild(sourceEl);
 
             // 偵測警告逐行顯示
