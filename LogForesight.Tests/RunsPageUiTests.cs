@@ -247,7 +247,7 @@ public class RunsPageUiTests
         Assert.Contains("lf-run-status-grid", cshtml);
         Assert.Contains("id=\"schedule-run-card\"", cshtml);
         Assert.Contains("id=\"schedule-ai-card\"", cshtml);
-        Assert.Contains("id=\"prtg-backfill-section\"", cshtml);
+        Assert.Contains("id=\"prtg-status-card\"", cshtml);
 
         // 卡中卡與 inline style 都不該再出現
         Assert.DoesNotContain("style=\"background: var(--lf-gray-50);\"", cshtml);
@@ -292,5 +292,70 @@ public class RunsPageUiTests
         Assert.Contains("schedule-readonly-hint", cshtml);
         Assert.Contains("schedule-readonly-hint", js);
         Assert.Contains("el.disabled = true", js);
+    }
+
+    /// <summary>
+    /// 三張狀態卡等高（回饋第 40 輪批次A）：grid 用 stretch、卡片是 flex column、
+    /// 按鈕列靠 `lf-run-actions` 貼底。三者缺一，卡片就會各自貼齊自己的內容高度而高低不齊。
+    /// </summary>
+    [Fact]
+    public void 狀態卡等高的三個必要條件都在()
+    {
+        var root = FindRepoRoot();
+        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+
+        Assert.Contains("align-items: stretch", css);
+        Assert.DoesNotContain("align-items: start", css.Split(".lf-run-status-grid")[1].Split('}')[0]);
+        Assert.Contains(".lf-run-status-grid > .lf-card", css);
+        Assert.Contains("margin-top: auto", css);
+
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        // 三張卡的按鈕列都要掛上貼底的類別，漏一張那張的按鈕就會浮在中間
+        Assert.Equal(3, CountOccurrences(cshtml, "lf-run-actions"));
+    }
+
+    /// <summary>
+    /// PRTG 的進度軌搬到自己的卡（回饋第 40 輪批次A）：那條軌的內容全是 PRTG 的事，
+    /// 與總開關、結構同步狀態、歷史回填放在一起才讀得出因果。
+    /// </summary>
+    [Fact]
+    public void PRTG卡承載每日擷取軌與同步狀態()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+
+        var prtgCardStart = cshtml.IndexOf("id=\"prtg-status-card\"", StringComparison.Ordinal);
+        Assert.True(prtgCardStart > 0, "找不到 PRTG 狀態卡");
+        var prtgCard = cshtml[prtgCardStart..];
+
+        // PRTG 軌與同步入口都在這張卡裡
+        Assert.Contains("schedule-prtg-progress-wrap", prtgCard);
+        Assert.Contains("prtg-sync-start", prtgCard);
+        Assert.Contains("prtg-sync-summary", prtgCard);
+        Assert.Contains("prtg-module-state", prtgCard);
+        Assert.Contains("prtg-backfill-start", prtgCard);
+
+        // 取數卡裡不該再有 PRTG 軌
+        var runCardStart = cshtml.IndexOf("id=\"schedule-run-card\"", StringComparison.Ordinal);
+        var runCard = cshtml[runCardStart..prtgCardStart];
+        Assert.DoesNotContain("schedule-prtg-progress", runCard);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("renderPrtgSyncSummary", js);
+        Assert.Contains("renderPrtgModuleState", js);
+        // 「尚未同步」與「同步到 0 筆」要分得出來
+        Assert.Contains("尚未同步", js);
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var idx = 0;
+        while ((idx = haystack.IndexOf(needle, idx, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            idx += needle.Length;
+        }
+        return count;
     }
 }

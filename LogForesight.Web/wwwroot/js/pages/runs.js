@@ -648,6 +648,8 @@ async function loadSchedule() {
     if (settings) {
         const prtgEnabledEl = document.getElementById('prtg-enabled');
         if (prtgEnabledEl) prtgEnabledEl.checked = Boolean(settings.prtgEnabled);
+        // 狀態卡的模組狀態與排程設定頁籤的開關同一個來源，不另打 API
+        renderPrtgModuleState(Boolean(settings.prtgEnabled));
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -1148,6 +1150,13 @@ function renderScheduleProgress(status) {
     if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
         const prefix = PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 觸發式取數');
         prtgCustomLabel = `${prefix}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
+    } else if (status.prtgCompleted) {
+        // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
+        // 分母為 0 代表這一路跑完了但什麼都沒抓到——那不是「已完成 0/0」能講清楚的，
+        // 要說出來才不會與「抓了一批」在畫面上長得一樣。
+        prtgCustomLabel = status.prtgProgressTotal > 0
+            ? `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`
+            : 'PRTG 擷取　已完成（本次沒有取到數值）';
     }
 
     updateProgressBar(
@@ -1160,6 +1169,79 @@ function renderScheduleProgress(status) {
         prtgCustomLabel,
         status.prtgCompleted
     );
+}
+
+// ── PRTG 卡：模組狀態與結構同步摘要（回饋第 40 輪批次A）────────────────
+
+let prtgSyncTimer = null;
+
+/**
+ * 「尚未同步」與「同步到 0 筆」是兩件事，文案必須分得出來——
+ * 前者要引導使用者去按同步，後者代表按過了但 PRTG 上沒有對得上的裝置。
+ */
+function renderPrtgSyncSummary(status) {
+    const el = document.getElementById('prtg-sync-summary');
+    if (!el) return;
+
+    if (status.isRunning) {
+        el.textContent = '同步中…';
+        return;
+    }
+
+    if (!status.lastCompletedAt) {
+        el.textContent = '尚未同步';
+        return;
+    }
+
+    if (!status.lastSuccess) {
+        el.textContent = `${formatDateTime(status.lastCompletedAt)} 未成功`;
+        return;
+    }
+
+    el.textContent =
+        `${formatDateTime(status.lastCompletedAt)}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
+        + `（衝突 ${formatNumber(status.lastMapConflict ?? 0)}、查無主機 ${formatNumber(status.lastMapUnmatched ?? 0)}）`;
+}
+
+async function refreshPrtgSyncStatus() {
+    try {
+        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
+        renderPrtgSyncSummary(status);
+
+        const btn = document.getElementById('prtg-sync-start');
+        if (btn) btn.disabled = status.isRunning;
+
+        if (status.isRunning) {
+            if (!prtgSyncTimer) prtgSyncTimer = setInterval(refreshPrtgSyncStatus, 3000);
+        } else if (prtgSyncTimer) {
+            clearInterval(prtgSyncTimer);
+            prtgSyncTimer = null;
+        }
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindPrtgSync() {
+    const btn = document.getElementById('prtg-sync-start');
+    btn?.addEventListener('click', async () => {
+        const restore = withBusy(btn, '啟動中');
+        try {
+            await api.post('/api/admin/settings/prtg-structure-sync/start', {});
+            toast('已開始同步結構與對應', 'success');
+            await refreshPrtgSyncStatus();
+        } finally {
+            restore();
+        }
+    });
+}
+
+/** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
+function renderPrtgModuleState(enabled) {
+    const el = document.getElementById('prtg-module-state');
+    if (!el) return;
+    el.textContent = enabled ? '已啟用' : '未啟用';
+    el.classList.toggle('text-muted', !enabled);
 }
 
 function renderAiScheduleProgress(status) {
@@ -1459,6 +1541,7 @@ function bindPrtgEnabledSwitch() {
         const nextVal = checkbox.checked;
         try {
             await api.put('/api/admin/settings/prtg-enabled', { enabled: nextVal });
+            renderPrtgModuleState(nextVal);
             toast('已更新 PRTG 擷取開關', 'success');
         } catch (error) {
             checkbox.checked = !nextVal;
@@ -1599,7 +1682,9 @@ bindTabs(document.getElementById('runs-tabs'), {
 loadSchedule();
 bindPrtgEnabledSwitch();
 bindPrtgBackfill();
+bindPrtgSync();
 refreshPrtgBackfillStatus();
+refreshPrtgSyncStatus();
 guardLoad([
     document.getElementById('run-summary'),
     document.getElementById('run-errors'),
