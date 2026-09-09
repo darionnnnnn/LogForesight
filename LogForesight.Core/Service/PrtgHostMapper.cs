@@ -13,12 +13,14 @@ public sealed class PrtgHostMapper
     private readonly EfPrtgStore _store;
     private readonly IHostStore _hostStore;
     private readonly IRunConsole _console;
+    private readonly IPrtgAddressResolver _resolver;
 
-    public PrtgHostMapper(EfPrtgStore store, IHostStore hostStore, IRunConsole console)
+    public PrtgHostMapper(EfPrtgStore store, IHostStore hostStore, IRunConsole console, IPrtgAddressResolver resolver)
     {
         _store = store;
         _hostStore = hostStore;
         _console = console;
+        _resolver = resolver;
     }
 
     /// <summary>
@@ -52,7 +54,7 @@ public sealed class PrtgHostMapper
         var hostLookup = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
         foreach (var host in activeHosts)
         {
-            var normIp = NormalizeIp(host.IpAddress);
+            var normIp = _resolver.Resolve(host.IpAddress);
             if (normIp == null) continue;
 
             if (!hostLookup.TryGetValue(normIp, out var list))
@@ -69,7 +71,7 @@ public sealed class PrtgHostMapper
         {
             if (manualMaps.TryGetValue(dev.Objid, out var manual) && hostById.ContainsKey(manual.HostId))
             {
-                var normIp = NormalizeIp(dev.Ip);
+                var normIp = _resolver.Resolve(dev.Ip);
                 if (normIp != null)
                 {
                     manualMappedIps.Add(normIp);
@@ -87,10 +89,10 @@ public sealed class PrtgHostMapper
         var skippedManualSibling = 0;
 
         // 3. 裝置分流：人工對應優先；無 IP 者跳過；排除清單跳過；同 IP 已有人工指定跳過；有 IP 者按正規化 IP 分組
-        var devicesWithIp = new List<PrtgDeviceRow>();
+        var devicesWithResolvedIp = new List<(PrtgDeviceRow Device, string ResolvedIp)>();
         foreach (var device in devices)
         {
-            var normIp = NormalizeIp(device.Ip);
+            var normIp = _resolver.Resolve(device.Ip);
 
             // 3.1 人工對應優先
             if (manualMaps.TryGetValue(device.Objid, out var manual))
@@ -144,35 +146,35 @@ public sealed class PrtgHostMapper
                 continue;
             }
 
-            devicesWithIp.Add(device);
+            devicesWithResolvedIp.Add((device, normIp));
         }
 
-        var deviceGroups = devicesWithIp
-            .GroupBy(d => NormalizeIp(d.Ip)!)
+        var deviceGroups = devicesWithResolvedIp
+            .GroupBy(x => x.ResolvedIp, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         foreach (var group in deviceGroups)
         {
             var ip = group.Key;
-            var groupDevices = group.ToList();
+            var groupItems = group.ToList();
 
             // 若同一個 IP 對應多個 PRTG device：
             // 規格限制：全部標記 Conflict，Note 註明「此 IP 同時有 N 個 PRTG device」，
             // 且 HostId 與 HostName 絕不猜測，一律填 null。
-            if (groupDevices.Count > 1)
+            if (groupItems.Count > 1)
             {
-                foreach (var dev in groupDevices)
+                foreach (var item in groupItems)
                 {
                     conflictCount++;
                     rows.Add(new PrtgHostMapRow
                     {
                         MapDate = targetDate,
-                        DeviceObjid = dev.Objid,
-                        Ip = dev.Ip,
+                        DeviceObjid = item.Device.Objid,
+                        Ip = item.Device.Ip,
                         HostId = null,
                         HostName = null,
                         MapStatus = PrtgMapStatus.Conflict,
-                        Note = $"此 IP 同時有 {groupDevices.Count} 個 PRTG device",
+                        Note = $"此 IP 同時有 {groupItems.Count} 個 PRTG device",
                         CreatedAt = now
                     });
                 }
@@ -180,7 +182,7 @@ public sealed class PrtgHostMapper
             }
 
             // 單一 PRTG device 比對 NetIQ 主機清單
-            var singleDev = groupDevices[0];
+            var singleDev = groupItems[0].Device;
             if (!hostLookup.TryGetValue(ip, out var matchedHosts) || matchedHosts.Count == 0)
             {
                 unmatchedCount++;

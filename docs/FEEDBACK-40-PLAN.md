@@ -268,6 +268,7 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| B1-step2 DNS 解析器＋對應與守門改用 | agy（正式碼）＋Claude（測試） | 通過 | 全套 3614 綠（+13）；Core 內 DNS 只剩解析器一處；守門殘留方法 0、名稱退路仍在；BOM 八檔與 dev 一致、無 NUL；突變解析器使用點與快取寫入→3 紅 | agy 在改完正式碼後被自己的 subagent rate limit 截斷（exit 0 但測試檔一處未改、新測試檔未建、驗收未跑，30 個呼叫點編譯不過）。查額度：Claude/GPT 組五小時窗口 0%、週 48%，依使用者指示改 Claude 自做測試部分。正式碼品質經檢視符合規格（含保留 step1 補的名稱退路），予以保留 |
 | B1-step1 純語法正規化層 | agy claude-opus-4-6-thinking | 通過（含 Claude 小修） | 全套 3601 綠（基線 3586，+15）；BOM 與 dev 一致、無 NUL；突變 port 拆解→2 紅、突變守門名稱 fallback→1 紅 | agy 交出時有 1 紅並宣稱「B2 再修」。實為**規格漏洞**：`NormalizeIp` 語意收緊打斷了守門「device 與 Sentinel 都填同一個 DNS 名稱」的字面比對能力，而 DNS 解不到的內網名稱在 B2 也救不回。Claude 小修：`PrtgAddress` 抽出 `HostToken`，守門 `FindDevicesForHost` 在前兩段都落空時加一段名稱字面比對。**契約補充**：守門的比對鍵優先序為「IP → DNS 解析出的 IP → 主機名稱字面」；對應（`MapForDate`）不走第三段（主機側只有 IP，名稱比對無意義），維持「解析不到就略過（無 IP）」 |
 
 ## 5. 體檢交接

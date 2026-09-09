@@ -1,4 +1,3 @@
-using System.Net;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 
@@ -38,6 +37,7 @@ public static class PrtgResourceGuardTargets
         SystemSettings settings,
         IReadOnlyList<Sentinel> sentinels,
         IRunConsole console,
+        IPrtgAddressResolver resolver,
         bool ignoreOverride = false)
     {
         // 1. 覆寫優先：PrtgResourceGuardSensorObjids 非空時，直接用它（逐項 long.TryParse，parse 失敗略過並警告）。
@@ -131,7 +131,7 @@ public static class PrtgResourceGuardTargets
         var sentinelDeviceObjids = new HashSet<long>();
         foreach (var sHost in sentinelHosts)
         {
-            var matchedDevs = FindDevicesForHost(sHost, allDevices);
+            var matchedDevs = FindDevicesForHost(sHost, allDevices, resolver);
             if (matchedDevs.Count == 0)
             {
                 console.WriteLine($"[PRTG資源守門] 找不到主機「{sHost}」對應的 PRTG 裝置。");
@@ -147,7 +147,7 @@ public static class PrtgResourceGuardTargets
         bool prtgMatched = false;
         if (prtgHost != null)
         {
-            var prtgDevs = FindDevicesForHost(prtgHost, allDevices);
+            var prtgDevs = FindDevicesForHost(prtgHost, allDevices, resolver);
             if (prtgDevs.Count > 0)
             {
                 prtgMatched = true;
@@ -227,20 +227,23 @@ public static class PrtgResourceGuardTargets
     }
 
     /// <summary>
-    /// 依主機名稱比對 PRTG 裝置（先比對純字串，比對不到時進行 DNS 解析比對 IPv4）。
+    /// 依主機名稱比對 PRTG 裝置（先用解析器比對 IP，對不到時退回主機名稱字面比對）。
     /// </summary>
     private static List<PrtgDeviceRow> FindDevicesForHost(
         string host,
-        IReadOnlyList<PrtgDeviceRow> allDevices)
+        IReadOnlyList<PrtgDeviceRow> allDevices,
+        IPrtgAddressResolver resolver)
     {
         var matched = new List<PrtgDeviceRow>();
-        var normHost = PrtgHostMapper.NormalizeIp(host);
-        if (normHost != null)
+
+        // 1. 兩邊都用解析器（IP 直接比、名稱先 DNS 解析成 IP 再比）
+        var resolvedHost = resolver.Resolve(host);
+        if (resolvedHost != null)
         {
             foreach (var dev in allDevices)
             {
-                var devIp = PrtgHostMapper.NormalizeIp(dev.Ip);
-                if (devIp != null && string.Equals(devIp, normHost, StringComparison.OrdinalIgnoreCase))
+                var devIp = resolver.Resolve(dev.Ip);
+                if (devIp != null && string.Equals(devIp, resolvedHost, StringComparison.OrdinalIgnoreCase))
                 {
                     matched.Add(dev);
                 }
@@ -250,27 +253,6 @@ public static class PrtgResourceGuardTargets
         if (matched.Count > 0)
         {
             return matched;
-        }
-
-        // 理由：Sentinel 常以 DNS 名稱設定、PRTG device 常填 IPv4，純字串比對會全數落空。
-        // 當以主機字串比對不到 device 時，執行一次 DNS 解析，再以解析出的 IPv4 比對 device 的 Ip。
-        var addresses = ResolveHostAddressesWithTimeout(host);
-        var ipv4Strings = addresses
-            .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-            .Select(a => PrtgHostMapper.NormalizeIp(a.ToString()))
-            .Where(ip => ip != null)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        if (ipv4Strings.Count > 0)
-        {
-            foreach (var dev in allDevices)
-            {
-                var devIp = PrtgHostMapper.NormalizeIp(dev.Ip);
-                if (devIp != null && ipv4Strings.Contains(devIp))
-                {
-                    matched.Add(dev);
-                }
-            }
         }
 
         // 最後退路：主機名稱字面比對。device 的 Ip 欄位也可能填 DNS 名稱，
@@ -293,29 +275,6 @@ public static class PrtgResourceGuardTargets
         }
 
         return matched;
-    }
-
-    /// <summary>
-    /// 對主機名稱進行 DNS 解析（帶 2 秒逾時保護）。
-    /// 理由：Sentinel 常以 DNS 名稱設定、PRTG device 常填 IPv4，純字串比對會全數落空。
-    /// 為避免解析不到的主機或網路問題拖慢整段批次偵測，使用 Task.Run 加上逾時保護。
-    /// 解析失敗或逾時一律視為找不到，不擲例外。
-    /// </summary>
-    private static IPAddress[] ResolveHostAddressesWithTimeout(string host, int timeoutMs = 2000)
-    {
-        try
-        {
-            var task = Task.Run(() => Dns.GetHostAddresses(host));
-            if (task.Wait(timeoutMs))
-            {
-                return task.Result;
-            }
-            return Array.Empty<IPAddress>();
-        }
-        catch (Exception)
-        {
-            return Array.Empty<IPAddress>();
-        }
     }
 
     /// <summary>

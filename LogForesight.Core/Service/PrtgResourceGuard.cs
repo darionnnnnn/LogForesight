@@ -105,7 +105,7 @@ public sealed class PrtgResourceGuard : IDisposable
         try
         {
             client = PrtgClientFactory.Create(settings);
-            var targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinelStore.GetAll(), console);
+            var targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinelStore.GetAll(), console, new PrtgAddressResolver());
             return new PrtgResourceGuard(client, settings, targets, recorder, console, progress, ownsClient: true);
         }
         catch (Exception ex)

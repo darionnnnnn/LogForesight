@@ -305,7 +305,7 @@ public class SettingsController : ControllerBase
         PrtgResourceGuardTargetResult targets;
         try
         {
-            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console, ignoreOverride: forceAuto);
+            targets = PrtgResourceGuardTargets.Resolve(prtgStore, settings, sentinels, console, new PrtgAddressResolver(), ignoreOverride: forceAuto);
         }
         catch (Exception ex)
         {
@@ -830,7 +830,7 @@ public class SettingsController : ControllerBase
         try
         {
             var hostStore = new HostStore(_backend.Blob("hosts"));
-            var mapper = new PrtgHostMapper(_backend.PrtgStore(), hostStore, new RemapConsole());
+            var mapper = new PrtgHostMapper(_backend.PrtgStore(), hostStore, new RemapConsole(), new PrtgAddressResolver());
             mapper.MapForDate(DateTime.Today);
             return null;
         }

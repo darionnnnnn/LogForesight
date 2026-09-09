@@ -82,7 +82,7 @@ internal static class PrtgDailyPipeline
             // 2. PRTG 主機對應：獨立的 try/catch，對應失敗不拖垮前面的擷取結果
             try
             {
-                var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole);
+                var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole, new PrtgAddressResolver());
                 var mapResult = hostMapper.MapForDate(day);
                 runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
             }

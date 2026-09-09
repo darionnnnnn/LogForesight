@@ -267,7 +267,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         hostStore.Upsert(host);
 
         // 跑一次今日對應，產生對應列
-        var mapper = new PrtgHostMapper(store, hostStore, new NoOpRunConsole());
+        var mapper = new PrtgHostMapper(store, hostStore, new NoOpRunConsole(), new PrtgAddressResolver());
         var initialResult = mapper.MapForDate(DateTime.Today);
         Assert.Equal(1, initialResult.Ok);
 

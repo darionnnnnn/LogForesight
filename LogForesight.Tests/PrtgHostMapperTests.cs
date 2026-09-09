@@ -18,6 +18,36 @@ public class PrtgHostMapperTests : IDisposable
 
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
 
+    /// <summary>
+    /// 建立對應服務。位址解析器預設用正式實作——測試用的 IP 都是合法 IP，
+    /// 第一層純語法正規化就會命中，不會真的去查 DNS。
+    /// 需要驗證 DNS 名稱路徑的測試自行傳入 <see cref="FakeResolver"/>。
+    /// </summary>
+    private static PrtgHostMapper CreateMapper(
+        EfPrtgStore store, IHostStore hostStore, IRunConsole console, IPrtgAddressResolver? resolver = null)
+        => new(store, hostStore, console, resolver ?? new PrtgAddressResolver());
+
+    /// <summary>可控的位址解析器：先走純語法正規化，對不到時查這張表。</summary>
+    private sealed class FakeResolver : IPrtgAddressResolver
+    {
+        private readonly Dictionary<string, string?> _map;
+
+        public FakeResolver(Dictionary<string, string?> map)
+        {
+            _map = new Dictionary<string, string?>(map, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public string? Resolve(string? value)
+        {
+            var normalized = PrtgAddress.Normalize(value);
+            if (normalized != null) return normalized;
+
+            var token = PrtgAddress.HostToken(value);
+            if (token == null) return null;
+            return _map.TryGetValue(token, out var mapped) ? mapped : null;
+        }
+    }
+
     private sealed class TestConsole : IRunConsole
     {
         public List<string> Lines { get; } = new();
@@ -44,7 +74,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -80,7 +110,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -117,7 +147,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -151,7 +181,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -185,7 +215,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -215,7 +245,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -247,7 +277,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act - 跑第 1 次
@@ -277,7 +307,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var day1 = new DateTime(2026, 8, 29);
         var day2 = new DateTime(2026, 8, 30);
 
@@ -308,7 +338,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -344,7 +374,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -429,7 +459,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -485,7 +515,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -536,7 +566,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -580,7 +610,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // 第一次執行：人工對應生效
@@ -628,7 +658,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -671,7 +701,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -717,7 +747,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -764,7 +794,7 @@ public class PrtgHostMapperTests : IDisposable
         });
 
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -801,7 +831,7 @@ public class PrtgHostMapperTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var mapper = new PrtgHostMapper(store, hostStore, console);
+        var mapper = CreateMapper(store, hostStore, console);
         var mapDate = new DateTime(2026, 8, 30);
 
         // Act
@@ -811,5 +841,81 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(1, result.Ok);
         Assert.Equal(0, result.SkippedExcluded);
         Assert.Equal(0, result.SkippedManualSibling);
+    }
+
+    [Fact]
+    public void MapForDate_device的Ip帶port時仍能對到主機()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 41, HostName = "srv-port", IpAddress = "10.1.2.3", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1401, Name = "PRTG-Port", Ip = "10.1.2.3:8080" });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var mapper = CreateMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        var result = mapper.MapForDate(mapDate);
+
+        Assert.Equal(1, result.Ok);
+        var row = Assert.Single(store.GetHostMapForDate(mapDate));
+        Assert.Equal(PrtgMapStatus.Ok, row.MapStatus);
+        Assert.Equal(41, row.HostId);
+    }
+
+    [Fact]
+    public void MapForDate_device的Ip為DNS名稱且能解析時對到主機()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 42, HostName = "srv-dns", IpAddress = "10.4.4.4", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1402, Name = "PRTG-Dns", Ip = "srv-dns.example.local" });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var resolver = new FakeResolver(new Dictionary<string, string?>
+        {
+            ["srv-dns.example.local"] = "10.4.4.4"
+        });
+        var mapper = CreateMapper(store, hostStore, console, resolver);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        var result = mapper.MapForDate(mapDate);
+
+        Assert.Equal(1, result.Ok);
+        var row = Assert.Single(store.GetHostMapForDate(mapDate));
+        Assert.Equal(PrtgMapStatus.Ok, row.MapStatus);
+        Assert.Equal(42, row.HostId);
+    }
+
+    [Fact]
+    public void MapForDate_device的Ip為DNS名稱但解析不到時計入略過而非unmatched()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 43, HostName = "srv-other", IpAddress = "10.5.5.5", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1403, Name = "PRTG-NoDns", Ip = "unknown.example.local" });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var resolver = new FakeResolver(new Dictionary<string, string?>());
+        var mapper = CreateMapper(store, hostStore, console, resolver);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        var result = mapper.MapForDate(mapDate);
+
+        Assert.Equal(1, result.SkippedNoIp);
+        Assert.Equal(0, result.Unmatched);
+        Assert.Empty(store.GetHostMapForDate(mapDate));
     }
 }
