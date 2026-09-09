@@ -7,6 +7,7 @@ import { api } from '../core/api.js';
 import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
+import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
 // 不放在表單欄位裡——<input type="file"> 的值無法用程式設定，載入既有圖示時填不回去
@@ -60,6 +61,7 @@ async function load() {
     renderRetentionFields(current);
     renderMailFields(current);
     renderBrandFields(current);
+    loadGuardFields(current);
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
     loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
@@ -891,6 +893,8 @@ function bindForm() {
         const restore = withBusy(saveButton, '儲存中');
         try {
             current = await api.put('/api/admin/settings', {
+                // 資源守門（docs/PRTG-SPEC.md §12）：欄位定義與收集都在 prtg-guard.js，這裡只併入
+                ...collectGuardPayload(),
                 unhandledSeverities: severities,
                 severityDisplayMode: collectDisplayMode(),
                 visibleDayRiskLevels: collectDayRiskLevels(),
@@ -1126,6 +1130,8 @@ bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
 bindTabs(document.getElementById('settings-tabs'));
+// 資源守門的「預覽／自動偵測」兩顆鈕（docs/PRTG-SPEC.md §12）
+bindGuardPreview();
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
         '#mail-test-btn, #mail-test-result'
