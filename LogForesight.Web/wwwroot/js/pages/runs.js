@@ -672,8 +672,6 @@ function applyScheduleOptions(options) {
             : '全部主機（不含本機——本機分析已停用，等同排程觸發的完整執行）';
     }
 
-    const aiEnabledCheckbox = document.getElementById('schedule-ai-enabled');
-    if (aiEnabledCheckbox) aiEnabledCheckbox.checked = !!options.aiEnabled;
 
     const aiConcurrencyInput = document.getElementById('schedule-ai-concurrency');
     if (aiConcurrencyInput) {
@@ -696,12 +694,11 @@ function applyScheduleOptions(options) {
 
     const aiNextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (aiNextTriggerEl) {
-        if (!options.aiEnabled) {
-            aiNextTriggerEl.textContent = '排程未啟用';
-        } else if (options.nextAiTriggerTime) {
+        // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
+        if (options.nextAiTriggerTime) {
             aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
         } else {
-            aiNextTriggerEl.textContent = '—';
+            aiNextTriggerEl.textContent = '窗口內，隨時可跑';
         }
     }
 
@@ -799,7 +796,6 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
             windows: scheduleWindows,
             debugDump: document.getElementById('schedule-debug-dump').checked,
             localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked,
-            aiEnabled: document.getElementById('schedule-ai-enabled')?.checked ?? false,
             aiWindows: scheduleAiWindows,
             aiConcurrency: concurrencyVal
         });
@@ -981,9 +977,7 @@ function applyAiScheduleStatus(status) {
         // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
         // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
         let hint = '';
-        if (aiAvailable && !status.aiEnabled && status.pendingTotal > 0) {
-            hint = `AI 分析排程未啟用，目前 ${formatNumber(status.pendingTotal)} 件待補不會被處理。`;
-        } else if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
+        if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
             hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
 
@@ -1017,12 +1011,14 @@ function applyAiScheduleStatus(status) {
 
     const nextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (nextTriggerEl) {
-        if (status.aiEnabled && status.nextTriggerTime) {
+        // AI 一律啟用；這一列說的是「積壓什麼時候會被背景消化」。
+        // 已在窗口內時後端回 null，代表現在就會跑。
+        if (!aiAvailable) {
+            nextTriggerEl.textContent = 'AI 服務未設定';
+        } else if (status.nextTriggerTime) {
             nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
-        } else if (!status.aiEnabled) {
-            nextTriggerEl.textContent = '排程未啟用';
         } else {
-            nextTriggerEl.textContent = '—';
+            nextTriggerEl.textContent = '窗口內，隨時可跑';
         }
     }
 

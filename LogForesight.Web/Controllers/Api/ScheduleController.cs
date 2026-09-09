@@ -85,7 +85,6 @@ public class ScheduleController : ControllerBase
             o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
             o.LocalAnalysisEnabled = request.LocalAnalysisEnabled;
-            o.AiEnabled = request.AiEnabled;
             o.AiWindows = request.AiWindows;
             o.AiConcurrency = Math.Clamp(request.AiConcurrency, 1, 8);
             o.UpdatedByAccount = _currentUser.Account;
@@ -96,7 +95,7 @@ public class ScheduleController : ControllerBase
             summary: $"更新排程設定：{(saved.Enabled ? "已啟用" : "未啟用")}、{saved.Windows.Count} 個執行窗口" +
                      (saved.DebugDump ? "，AI 診斷傾印開啟中" : "") +
                      (saved.LocalAnalysisEnabled ? "" : "，本機分析已停用") +
-                     $"，AI 排程：{(saved.AiEnabled ? "已啟用" : "未啟用")}、{saved.AiWindows.Count} 個執行窗口、併發 {saved.AiConcurrency}",
+                     $"，AI 分析：{saved.AiWindows.Count} 個背景補跑窗口、併發 {saved.AiConcurrency}",
             targetKind: "schedule",
             detail: new
             {
@@ -104,7 +103,6 @@ public class ScheduleController : ControllerBase
                 saved.Windows,
                 saved.DebugDump,
                 saved.LocalAnalysisEnabled,
-                saved.AiEnabled,
                 saved.AiWindows,
                 saved.AiConcurrency
             });
@@ -425,9 +423,12 @@ public class ScheduleController : ControllerBase
             UnitText = "件",
             CanStop = snapshot.IsRunning,
             IdleReason = snapshot.IsRunning ? null : snapshot.IdleReason,
-            AiEnabled = options.AiEnabled,
             AiConcurrency = options.AiConcurrency,
-            NextTriggerTime = options.AiEnabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows) : null,
+            // 「下一個背景補跑窗口」——AI 本身一律啟用，這個時間只說明積壓什麼時候會被消化。
+            // 已經在窗口內時為 null（不必說「下一次」，它現在就會跑）。
+            NextTriggerTime = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)
+                ? null
+                : ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows),
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
@@ -478,10 +479,11 @@ public class ScheduleController : ControllerBase
         Windows = options.Windows,
         DebugDump = options.DebugDump,
         LocalAnalysisEnabled = options.LocalAnalysisEnabled,
-        AiEnabled = options.AiEnabled,
         AiWindows = options.AiWindows,
         AiConcurrency = options.AiConcurrency,
-        NextAiTriggerTime = options.AiEnabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows) : null,
+        NextAiTriggerTime = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)
+            ? null
+            : ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows),
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)

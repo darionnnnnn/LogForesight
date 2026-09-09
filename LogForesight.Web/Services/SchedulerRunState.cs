@@ -1,3 +1,5 @@
+using NLog;
+
 namespace LogForesight.Web.Services;
 
 /// <summary>
@@ -35,6 +37,8 @@ public sealed record RunOutcome(bool Success, string? Message, string Trigger, D
 
 public class SchedulerRunState
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly object _lock = new();
     private CancellationTokenSource? _cts;
 
@@ -208,8 +212,16 @@ public class SchedulerRunState
     /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ／PRTG 三階段各自的
     /// 進度，供狀態 API 畫進度條。phase=="local" 寫入本機專屬欄位；phase 以 "prtg-" 開頭寫入 PRTG 專屬欄位；
     /// 其餘（netiq）寫入主進度欄位——三組欄位互不覆蓋。</summary>
+    /// <summary>
+    /// 當日 PRTG finding 剛到齊時觸發（每趟執行最多一次）。AI 分析服務據此立刻開跑，
+    /// 不必等自己的輪詢週期。訂閱者的例外由發佈端吞掉——通知失敗不能反過來弄壞取數執行。
+    /// </summary>
+    public event Action? PrtgFindingsBecameReady;
+
     public void ReportProgress(string phase, int done, int total)
     {
+        var becameReady = false;
+
         lock (_lock)
         {
             if (!IsRunning) return;
@@ -248,7 +260,13 @@ public class SchedulerRunState
             {
                 // 訊號不是進度：**必須排在下面的 "prtg-" 前綴分支之前**，
                 // 否則它會被當成 PRTG 進度軌的回報，把結構同步／取數的進度數字蓋成 0/0。
+                var wasReady = PrtgFindingsReady;
                 PrtgFindingsReady = true;
+
+                // 由 false 轉 true 的那一刻通知 AI：當日待補現在可以判讀了。
+                // 少了這一步，AI 要等自己下一輪 60 秒輪詢才會發現，使用者按下「立即執行」後
+                // 看到的是取數在跑、AI 卻閒置著。回呼在鎖外叫（見下方），避免訂閱者的工作被這把鎖串起來。
+                if (!wasReady) becameReady = true;
             }
             else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
             {
@@ -257,6 +275,20 @@ public class SchedulerRunState
             else
             {
                 _netiq = new ProgressTrack(phase, done, total);
+            }
+        }
+
+        // 鎖外通知：訂閱者會去查待補件數並啟動 AI 執行，那些工作不該把這把鎖held 住——
+        // 這把鎖同時保護整趟執行的狀態，卡住它等於卡住畫面的每一次狀態輪詢。
+        if (becameReady)
+        {
+            try
+            {
+                PrtgFindingsBecameReady?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "通知 AI 分析「PRTG finding 已就緒」時發生例外（不影響取數執行）");
             }
         }
     }

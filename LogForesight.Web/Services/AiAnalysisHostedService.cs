@@ -33,6 +33,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly ISuppressionStore? _suppressionStore;
     private readonly IAiService? _injectedAiService;
     private readonly IHostApplicationLifetime? _lifetime;
+    private readonly IWebAiService _webAi;
 
     public AiAnalysisHostedService(
         ScheduleOptionsStore optionsStore,
@@ -44,10 +45,12 @@ public class AiAnalysisHostedService : BackgroundService
         DataVersionStamp dataVersion,
         BatchRunStore batchRuns,
         DailyRecordBackfiller backfiller,
+        IWebAiService webAi,
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null)
     {
+        _webAi = webAi;
         _optionsStore = optionsStore;
         _schedulerRunState = schedulerRunState;
         _runState = runState;
@@ -63,6 +66,10 @@ public class AiAnalysisHostedService : BackgroundService
 
         // 站台關閉時對進行中的 AI 執行發出優雅停止
         _lifetime?.ApplicationStopping.Register(() => _runState.TryCancel());
+
+        // 取數執行一發佈當日 PRTG finding 就立刻開跑（回饋第 40 輪批次E）：
+        // 不等自己下一輪 60 秒輪詢，使用者按下「立即執行」後兩邊才是真的同時在動。
+        _schedulerRunState.PrtgFindingsBecameReady += OnPrtgFindingsBecameReady;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -99,6 +106,48 @@ public class AiAnalysisHostedService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// 當日 PRTG finding 到齊時的即時觸發（取數執行發的訊號）。
+    ///
+    /// 這裡刻意**不看 AI 執行窗口**：跟隨取數是「取數跑到哪、判讀跟到哪」，
+    /// 窗口是給背景消化積壓用的。窗口內外都要跟上，否則使用者手動執行一趟，
+    /// AI 得等到窗口開了才動。
+    /// 其餘前置條件（AI 已設定、存量校正完成、有待補、沒有正在跑）照樣要成立。
+    /// </summary>
+    private void OnPrtgFindingsBecameReady()
+    {
+        // 事件在取數執行的執行緒上發出，這裡不能同步等 AI 跑完。
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (_runState.IsRunning) return;
+                if (!_webAi.Available)
+                {
+                    _runState.SetIdleReason(AiIdleReasons.Disabled);
+                    return;
+                }
+                if (!_backfiller.Progress.Completed)
+                {
+                    _runState.SetIdleReason(AiIdleReasons.BackfillPending);
+                    return;
+                }
+                if (_recordQuery.CountPendingAi() == 0)
+                {
+                    _runState.SetIdleReason(AiIdleReasons.NoPending);
+                    return;
+                }
+
+                _runState.SetIdleReason(null);
+                await TriggerRunAsync(forceRerun: false, trigger: "fetch-followup");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "PRTG finding 就緒後的 AI 即時觸發失敗（背景輪詢仍會接手）");
+            }
+        });
+    }
+
     /// <summary>單次輪詢檢查與觸發，供常態輪詢與單元測試直接呼叫</summary>
     internal async Task TickAsync(CancellationToken stoppingToken = default)
     {
@@ -117,7 +166,8 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        if (!options.AiEnabled)
+        // AI 沒有獨立的啟用開關：服務設定好就一律啟用（回饋第 40 輪批次E）。
+        if (!_webAi.Available)
         {
             _runState.SetIdleReason(AiIdleReasons.Disabled);
             return;

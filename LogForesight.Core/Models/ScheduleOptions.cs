@@ -42,8 +42,9 @@ public class ScheduleOptions
     /// </summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
-    /// <summary>AI 分析排程是否啟用（預設 false）</summary>
-    public bool AiEnabled { get; set; } = false;
+    // AI 分析沒有獨立的啟用開關：AI 服務只要設定好就一律啟用。
+    // 取數執行一發佈當日 PRTG finding 就立刻開跑，其餘時間在 AiWindows 內背景消化積壓。
+    // 舊設定 blob 裡殘留的 aiEnabled 欄位由反序列化忽略，升級不需要任何動作。
 
     /// <summary>AI 排程的執行窗口（預設全天 00:00→23:59 一組），與取數的 Windows 完全獨立</summary>
     public List<ScheduleWindow> AiWindows { get; set; } = new() { new ScheduleWindow { Start = "00:00", End = "23:59" } };

@@ -14,7 +14,6 @@ public class ScheduleOptionsDto
     public bool LocalAnalysisEnabled { get; set; } = true;
 
     /// <summary>AI 分析排程是否啟用</summary>
-    public bool AiEnabled { get; set; }
 
     /// <summary>AI 排程的執行窗口</summary>
     public List<ScheduleWindow> AiWindows { get; set; } = new();
@@ -22,7 +21,7 @@ public class ScheduleOptionsDto
     /// <summary>AI 分析併發數</summary>
     public int AiConcurrency { get; set; } = 1;
 
-    /// <summary>AiEnabled=false 時為 null（沒有下一次）</summary>
+    /// <summary>已在背景補跑窗口內時為 null（不必說「下一次」，現在就會跑）</summary>
     public DateTime? NextAiTriggerTime { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
@@ -49,7 +48,6 @@ public class SaveScheduleOptionsRequest
     public bool LocalAnalysisEnabled { get; set; } = true;
 
     /// <summary>AI 分析排程是否啟用</summary>
-    public bool AiEnabled { get; set; }
 
     /// <summary>AI 排程的執行窗口</summary>
     public List<ScheduleWindow> AiWindows { get; set; } = new();
@@ -209,7 +207,6 @@ public class AiScheduleStatusDto
     /// </summary>
     public string? IdleReason { get; set; }
 
-    public bool AiEnabled { get; set; }
     public int AiConcurrency { get; set; } = 1;
     public DateTime? NextTriggerTime { get; set; }
     public bool? LastRunSuccess { get; set; }

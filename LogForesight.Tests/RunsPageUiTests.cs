@@ -91,22 +91,32 @@ public class RunsPageUiTests
         Assert.Contains("失敗", jsContent);
     }
 
+    /// <summary>
+    /// AI 分析沒有獨立的啟用開關（回饋第 40 輪批次E）：服務設定好就一律啟用，
+    /// 取數產出結果後立刻跟上。畫面因此不該再出現「排程未啟用」那套字眼與勾選框，
+    /// 閒置說明改由閒置原因對照表承擔。
+    /// </summary>
     [Fact]
-    public void RunsJs包含AI排程未啟用提示與元素Id()
+    public void AI分析沒有啟用開關且閒置說明仍在()
     {
         var root = FindRepoRoot();
         var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
-        Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
         var jsContent = File.ReadAllText(runsJsPath);
 
+        // 閒置說明的容器與對照表仍在——那是「為什麼現在沒在跑」的唯一出口
         Assert.Contains("ai-schedule-disabled-hint", jsContent);
-        Assert.Contains("AI 分析排程未啟用", jsContent);
+        Assert.Contains("AI_IDLE_REASON_TEXT", jsContent);
+
+        // 舊的啟用開關與其文案必須整組消失，否則畫面會出現按不動或說謊的控制項
+        Assert.DoesNotContain("AI 分析排程未啟用", jsContent);
+        Assert.DoesNotContain("schedule-ai-enabled", jsContent);
+        Assert.DoesNotContain("aiEnabled", jsContent);
 
         var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
-        Assert.True(File.Exists(cshtmlPath), $"找不到檔案: {cshtmlPath}");
         var cshtmlContent = File.ReadAllText(cshtmlPath);
 
         Assert.Contains("ai-schedule-disabled-hint", cshtmlContent);
+        Assert.DoesNotContain("schedule-ai-enabled", cshtmlContent);
     }
 
     [Fact]

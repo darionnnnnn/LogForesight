@@ -377,6 +377,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<DataVersionStamp>(),
                 sp.GetRequiredService<BatchRunStore>(),
                 sp.GetRequiredService<DailyRecordBackfiller>(),
+                sp.GetRequiredService<IWebAiService>(),
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime);

@@ -71,7 +71,7 @@
                 <span class="lf-kv__value" id="schedule-ai-run-state">載入中…</span>
             </div>
             <div class="lf-kv">
-                <span class="lf-kv__label">下次觸發</span>
+                <span class="lf-kv__label">背景補跑窗口</span>
                 <span class="lf-kv__value" id="schedule-ai-next-trigger">—</span>
             </div>
             <div class="lf-kv d-none" id="schedule-ai-elapsed-row">
@@ -266,21 +266,18 @@
 
         <section class="lf-card mb-3">
             <div class="lf-card__header">
-                <h2 class="lf-card__title">AI 分析排程</h2>
+                <h2 class="lf-card__title">AI 分析</h2>
             </div>
             <div class="lf-card__body">
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="schedule-ai-enabled" data-maintain-only />
-                    <label class="form-check-label" for="schedule-ai-enabled">啟用 AI 分析排程</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="關閉時不會依窗口自動觸發 AI 分析，僅能手動補跑。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                </div>
+                <p class="text-muted small">
+                    AI 分析在每次取數執行產出結果後自動進行，不需要另外啟用；
+                    設定好「系統管理 &gt; 設定 &gt; AI 服務」即生效。
+                    以下設定的是**背景補跑**：積壓的待補要在哪個時段消化、同時跑幾件。
+                </p>
 
-                <label class="form-label small fw-semibold" for="schedule-ai-windows">AI 執行窗口</label>
+                <label class="form-label small fw-semibold" for="schedule-ai-windows">背景補跑窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="Start 到點觸發一次 AI 分析排程，消化待補積壓紀錄；End 到點對進行中的 AI 分析發出優雅停止（停在單筆邊界）。最多 4 組，時間不可重疊；支援跨午夜。">
+                        data-bs-content="消化積壓待補的時段。跟隨取數的即時分析不受此限制，窗口內外都會跟上；End 到點只對背景補跑發出優雅停止（停在單筆邊界）。最多 4 組，時間不可重疊；支援跨午夜。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <div id="schedule-ai-windows" class="mb-2"></div>
