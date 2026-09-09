@@ -860,9 +860,10 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
         schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
 
-        await Task.Delay(500);
-        Assert.False(runState.IsRunning);
+        // 等回呼真的跑完並寫下閒置原因，再斷言沒開跑——固定 sleep 在慢機器上會假綠
+        await WaitUntilAsync(() => runState.Snapshot().IdleReason == AiIdleReasons.Disabled, TimeSpan.FromSeconds(5));
         Assert.Equal(AiIdleReasons.Disabled, runState.Snapshot().IdleReason);
+        Assert.False(runState.IsRunning);
     }
 
     /// <summary>沒有待補時 finding 就緒不觸發——沒事可做就不該佔住 gate。</summary>
@@ -874,9 +875,9 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
         schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
 
-        await Task.Delay(500);
-        Assert.False(runState.IsRunning);
+        await WaitUntilAsync(() => runState.Snapshot().IdleReason == AiIdleReasons.NoPending, TimeSpan.FromSeconds(5));
         Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
+        Assert.False(runState.IsRunning);
     }
 
     /// <summary>輪詢用的等待：避免用固定 sleep 讓測試在慢機器上不穩定。</summary>

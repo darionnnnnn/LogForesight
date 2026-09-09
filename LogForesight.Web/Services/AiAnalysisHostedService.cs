@@ -275,7 +275,7 @@ public class AiAnalysisHostedService : BackgroundService
                 // 本輪結束後若取數仍在跑、當日 PRTG finding 又還沒到齊，剩下的待補是被
                 // 完整性閘門擋住的（見 ExecuteProcessingLoopAsync）。「有待補卻不動」最像壞掉，
                 // 畫面要說得出原因。
-                if (_schedulerRunState.IsRunning && !_schedulerRunState.PrtgFindingsReady)
+                if (_schedulerRunState.IsWaitingForFindings())
                 {
                     _runState.SetIdleReason(AiIdleReasons.WaitingFetch);
                 }
@@ -333,7 +333,7 @@ public class AiAnalysisHostedService : BackgroundService
             // 待補——PRTG finding 會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。
             // finding 一發佈（PRTG 停用、規則評估失敗也算發佈）就全部合格，AI 因此能與取數並行，
             // 不必像過去那樣一路等到整趟取數結束。
-            bool waitingForFetch = _schedulerRunState.IsRunning && !_schedulerRunState.PrtgFindingsReady;
+            bool waitingForFetch = _schedulerRunState.IsWaitingForFindings();
             var cutoff = DateTime.Today.AddDays(-1); // 昨天
 
             var eligible = (waitingForFetch

@@ -37,7 +37,7 @@ public class NetiqHostService : INetiqHostService
         INetiqServerCatalog servers,
         IAuditService audit,
         IUserDisplayNameService userDisplayNames,
-        IPrtgHostMapRefresher? mapRefresher = null)
+        IPrtgHostMapRefresher mapRefresher)
     {
         _mapRefresher = mapRefresher;
         _hosts = hosts;
@@ -49,7 +49,7 @@ public class NetiqHostService : INetiqHostService
     }
 
     /// <summary>停用／啟用會改變主機是否參與 PRTG 對應（docs/PRTG-SPEC.md §4）。</summary>
-    private readonly IPrtgHostMapRefresher? _mapRefresher;
+    private readonly IPrtgHostMapRefresher _mapRefresher;
 
     public NetiqOverviewDto GetOverview()
     {
@@ -247,10 +247,13 @@ public class NetiqHostService : INetiqHostService
             targetId: hostId.ToString(),
             detail: new { host.HostName, Active = active });
 
-        // 已停用的主機不參與 PRTG 對應，今天那筆要跟著變（docs/PRTG-SPEC.md §4）
-        _mapRefresher?.TryRefreshToday();
+        // 已停用的主機不參與 PRTG 對應，今天那筆要跟著變（docs/PRTG-SPEC.md §4）。
+        // 重算失敗不影響停用本身，但要帶進回應——與改 IP 那條路徑同一種失敗、同一個 DTO 欄位。
+        var remapWarning = _mapRefresher.TryRefreshToday();
 
-        return ToDto(_hosts.Get(hostId)!);
+        var dto = ToDto(_hosts.Get(hostId)!);
+        dto.RemapWarning = remapWarning;
+        return dto;
     }
 
     /// <summary>

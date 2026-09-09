@@ -161,7 +161,8 @@ public class RunsPageUiTests
     public void 每個進度phase在前端都有標籤與單位()
     {
         var root = FindRepoRoot();
-        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        // 對照表在 core/run-phases.js（排程作業頁與 PRTG 維護頁共用同一份）
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "run-phases.js"));
 
         var labelTable = ExtractObjectLiteral(js, "PROGRESS_PHASE_LABEL");
         var unitTable = ExtractObjectLiteral(js, "PROGRESS_PHASE_UNIT");
@@ -171,14 +172,14 @@ public class RunsPageUiTests
             // 比對**鍵本身**而非子字串：`Contains("prtg-sync")` 在對照表只有
             // 'prtg-sync-devices' 時仍為真，那正好繞過這條測試要擋的漏改。
             Assert.True(ContainsKey(labelTable, phase),
-                $"phase「{phase}」在 runs.js 的 PROGRESS_PHASE_LABEL 沒有對應文案，畫面會印出裸字串");
+                $"phase「{phase}」在 core/run-phases.js 的 PROGRESS_PHASE_LABEL 沒有對應文案，畫面會印出裸字串");
 
             // 單位的 fallback 是「主機日」，對本機／NetIQ 正確、對 PRTG 是錯的
             // （PRTG 的粒度是 sensor／device／筆），所以只對 PRTG 類要求。
             if (phase.StartsWith("prtg-", StringComparison.Ordinal))
             {
                 Assert.True(ContainsKey(unitTable, phase),
-                    $"phase「{phase}」在 runs.js 的 PROGRESS_PHASE_UNIT 沒有對應單位，會 fallback 成錯誤的「主機日」");
+                    $"phase「{phase}」在 core/run-phases.js 的 PROGRESS_PHASE_UNIT 沒有對應單位，會 fallback 成錯誤的「主機日」");
             }
         }
     }
@@ -217,7 +218,7 @@ public class RunsPageUiTests
     private static string ExtractObjectLiteral(string js, string name)
     {
         var start = js.IndexOf($"const {name} = {{", StringComparison.Ordinal);
-        Assert.True(start >= 0, $"runs.js 找不到 {name}");
+        Assert.True(start >= 0, $"core/run-phases.js 找不到 {name}");
 
         var open = js.IndexOf('{', start);
         var close = js.IndexOf("};", open, StringComparison.Ordinal);

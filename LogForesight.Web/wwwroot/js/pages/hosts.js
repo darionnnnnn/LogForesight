@@ -572,8 +572,9 @@ async function setActive(host, active) {
     }
 
     try {
-        await api.put(`/api/admin/hosts/${host.hostId}/active`, { active });
+        const saved = await api.put(`/api/admin/hosts/${host.hostId}/active`, { active });
         toast(active ? '已啟用主機' : '已停用主機', 'success');
+        if (saved?.remapWarning) toast(saved.remapWarning, 'warning');
         await load();
     } catch {
         // 錯誤已由 api.js 顯示
@@ -659,6 +660,9 @@ form.addEventListener('submit', async event => {
         await api.put(`/api/admin/hosts/${saved.hostId}/owners`, { ids: ownerIds });
 
         toast(editingHost ? '已更新主機' : '已新增主機', 'success');
+        // 改了 IP／啟用狀態會重算今天的 PRTG 對應；重算失敗不影響儲存，但要說出來，
+        // 否則使用者看到 PRTG 區塊還是舊的，會以為存檔沒生效（docs/PRTG-SPEC.md §4）
+        if (saved.remapWarning) toast(saved.remapWarning, 'warning');
         modal.hide();
         await load();
     } catch {

@@ -11,6 +11,10 @@ public interface IPrtgStructureSyncGate
     /// <summary>手動同步是否正在執行。</summary>
     bool IsRunning { get; }
 
-    /// <summary>等到手動同步結束為止；已經結束時立即返回。</summary>
-    Task WaitUntilIdleAsync(CancellationToken ct);
+    /// <summary>
+    /// 等到手動同步結束為止；已經結束時立即返回。
+    /// 回 true＝同步已結束、鏡像是新的；回 false＝等到上限仍未結束（對方卡住），
+    /// 呼叫端**不得**把鏡像當成剛更新過的。
+    /// </summary>
+    Task<bool> WaitUntilIdleAsync(CancellationToken ct);
 }

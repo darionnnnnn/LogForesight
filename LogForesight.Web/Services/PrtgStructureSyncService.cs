@@ -135,7 +135,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// 逾時後不擲例外、直接返回，讓這一趟照常做自己的結構同步——
     /// 最壞情況是兩邊都寫鏡像（寫入本身是冪等的 upsert），比整條路徑停擺好。
     /// </summary>
-    public async Task WaitUntilIdleAsync(CancellationToken ct)
+    public async Task<bool> WaitUntilIdleAsync(CancellationToken ct)
     {
         var deadline = DateTime.UtcNow + MaxWait;
 
@@ -147,11 +147,13 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             {
                 Log.Warn("等待手動「同步結構與對應」超過 {0} 分鐘仍未結束，本趟不再等待，改為自行同步結構。",
                     MaxWait.TotalMinutes);
-                return;
+                return false;
             }
 
             await Task.Delay(WaitPollInterval, ct);
         }
+
+        return true;
     }
 
     public PrtgStructureSyncStatusDto GetStatus()
@@ -186,9 +188,35 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         };
     }
 
-    public bool TryStart(out string? error)
+    /// <summary>把一趟的結果整份寫進持久化 store（成功、失敗、取消三條路徑共用）。</summary>
+    private void Persist(PrtgStructureSyncStatus status) =>
+        _statusStore.Update(existing =>
+        {
+            existing.CompletedAt = status.CompletedAt;
+            existing.Success = status.Success;
+            existing.ErrorMessage = status.ErrorMessage;
+            existing.ElapsedSeconds = status.ElapsedSeconds;
+            existing.Devices = status.Devices;
+            existing.Sensors = status.Sensors;
+            existing.MapDate = status.MapDate;
+            existing.MapOk = status.MapOk;
+            existing.MapManual = status.MapManual;
+            existing.MapConflict = status.MapConflict;
+            existing.MapUnmatched = status.MapUnmatched;
+            existing.MapSkippedNoIp = status.MapSkippedNoIp;
+            existing.MapSkippedExcluded = status.MapSkippedExcluded;
+            existing.MapSkippedManualSibling = status.MapSkippedManualSibling;
+        });
+
+    /// <param name="error">拒絕原因；成功時為 null。</param>
+    /// <param name="isConflict">
+    /// true＝被互斥擋下（取數執行中、同步已在跑）——那是狀態衝突，呼叫端該回 409；
+    /// false＝設定不齊等輸入面的問題，該回 400。由這裡判定，呼叫端不必解析訊息文字。
+    /// </param>
+    public bool TryStart(out string? error, out bool isConflict)
     {
         error = null;
+        isConflict = false;
         var s = _settings.Get();
 
         if (!s.PrtgEnabled)
@@ -214,12 +242,14 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         if (_schedulerState.IsRunning)
         {
             error = "取數執行進行中，請等它結束後再同步（該趟本身就會同步結構與對應）。";
+            isConflict = true;
             return false;
         }
 
         if (!_state.TryBegin())
         {
             error = "同步已在執行中。";
+            isConflict = true;
             return false;
         }
 
@@ -258,30 +288,22 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
                         concurrency, console, cts.Token,
                         progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
 
-                    _statusStore.Update(existing =>
-                    {
-                        existing.CompletedAt = status.CompletedAt;
-                        existing.Success = status.Success;
-                        existing.ErrorMessage = status.ErrorMessage;
-                        existing.ElapsedSeconds = status.ElapsedSeconds;
-                        existing.Devices = status.Devices;
-                        existing.Sensors = status.Sensors;
-                        existing.MapDate = status.MapDate;
-                        existing.MapOk = status.MapOk;
-                        existing.MapManual = status.MapManual;
-                        existing.MapConflict = status.MapConflict;
-                        existing.MapUnmatched = status.MapUnmatched;
-                        existing.MapSkippedNoIp = status.MapSkippedNoIp;
-                        existing.MapSkippedExcluded = status.MapSkippedExcluded;
-                        existing.MapSkippedManualSibling = status.MapSkippedManualSibling;
-                    });
-
+                    Persist(status);
                     success = status.Success;
                 }
             }
             catch (OperationCanceledException)
             {
                 console.WriteLine("同步已被取消（站台關閉或手動中止）。");
+                // 取消也要落地：不寫的話狀態卡會沿用上一筆「成功」的摘要，
+                // 而執行輸出（行程內狀態）在站台重啟後一起消失，這趟被腰斬就沒有任何痕跡。
+                Persist(new PrtgStructureSyncStatus
+                {
+                    CompletedAt = DateTime.Now,
+                    Success = false,
+                    ErrorMessage = "同步已被取消（站台關閉或手動中止）",
+                    MapDate = DateTime.Today
+                });
                 success = false;
             }
             catch (Exception ex)

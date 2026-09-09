@@ -1319,3 +1319,24 @@ export function withBusy(button, busyText) {
         button.innerHTML = original;
     };
 }
+
+/**
+ * 讀多行文字欄位：一行一項，去空白行。元素不存在回空陣列。
+ * 設定類頁面共用（白名單、objid 清單、指定主機清單都是這個形狀）。
+ */
+export function collectLines(id) {
+    const el = document.getElementById(id);
+    if (!el) return [];
+    return el.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+}
+
+/**
+ * 讀數字欄位：空白或非數字回預設值。元素不存在也回預設值。
+ * **空白要回預設值而不是 0**——`Number('')` 是 0，直接轉會把清空的 CPU 門檻存成 0。
+ */
+export function numberOr(id, fallback) {
+    const raw = document.getElementById(id)?.value ?? '';
+    if (raw.trim() === '') return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+}

@@ -4,9 +4,11 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
+import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, renderSpinner, confirmAction,
-    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS
+    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
+    collectLines, numberOr
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
@@ -206,12 +208,6 @@ function bindScopeControls() {
     });
 }
 
-function collectLines(id) {
-    const value = document.getElementById(id)?.value ?? '';
-    return value.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0);
-}
 
 function bindPrtgTest() {
     const button = document.getElementById('prtg-test-btn');
@@ -298,12 +294,6 @@ function bindConnectionForm() {
 }
 
 /** 讀數字欄位：空白或非數字才回 fallback，0 是合法值（例如可用記憶體門檻）不可被 `||` 吞掉。 */
-function numberOr(id, fallback) {
-    const raw = document.getElementById(id)?.value ?? '';
-    if (raw.trim() === '') return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : fallback;
-}
 
 function bindParamsForm() {
     const form = document.getElementById('prtg-params-form');
@@ -1063,14 +1053,16 @@ function renderStructureSyncStatus(status) {
         btn.textContent = '同步中…';
         statusEl.textContent = status.latestMessage || '同步進行中…';
         const phase = status.progressPhase;
+        // 走與排程作業頁同一份對照表，不把 prtg-sync-devices 這種裸 phase 印給使用者
+        const label = PROGRESS_PHASE_LABEL[phase] ?? phase;
         progressEl.textContent = phase && status.progressTotal > 0
-            ? `${phase}：${status.progressDone} / ${status.progressTotal}`
-            : (phase ? `${phase}：進行中` : '');
+            ? `${label}：${status.progressDone} / ${status.progressTotal}`
+            : (phase ? `${label}：進行中` : '');
         return;
     }
 
     btn.disabled = false;
-    btn.textContent = '開始同步';
+    btn.textContent = '同步結構與對應';
     progressEl.textContent = '';
 
     if (!status.lastCompletedAt) {

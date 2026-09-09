@@ -6,6 +6,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, renderSpinner
@@ -655,6 +656,10 @@ async function loadSchedule() {
         if (daysHintEl && settings.prtgBackfillDays) {
             daysHintEl.textContent = `往前 ${settings.prtgBackfillDays} 天`;
         }
+    } else {
+        // 設定 API 需要 Maintain；DevMonitor 讀不到就明講「—」，不能讓「載入中…」永遠掛著
+        const stateEl = document.getElementById('prtg-module-state');
+        if (stateEl) stateEl.textContent = '—';
     }
     await statusPromise;
 }
@@ -697,7 +702,10 @@ function applyScheduleOptions(options) {
     const aiNextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (aiNextTriggerEl) {
         // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
-        if (options.nextAiTriggerTime) {
+        // 與 ai-status 那條路徑同一套判斷，否則載入瞬間會先閃「隨時可跑」再被改成「未設定」。
+        if (!aiAvailable) {
+            aiNextTriggerEl.textContent = 'AI 服務未設定';
+        } else if (options.nextAiTriggerTime) {
             aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
         } else {
             aiNextTriggerEl.textContent = '窗口內，隨時可跑';
@@ -941,6 +949,7 @@ function applyScheduleStatus(status) {
 // 'disabled' 另有帶件數的既有文案；'no-pending' 不需要說明（待補為 0 本身就講完了）。
 // 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
 const AI_IDLE_REASON_TEXT = {
+    'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
     'backfill-pending': '存量校正回填尚未完成，AI 分析要等它跑完才會開始。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
     'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
@@ -979,7 +988,8 @@ function applyAiScheduleStatus(status) {
         // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
         // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
         let hint = '';
-        if (aiAvailable && !status.isRunning && status.pendingTotal > 0) {
+        // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事
+        if (!status.isRunning && status.pendingTotal > 0) {
             hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
 
@@ -1036,29 +1046,11 @@ function applyAiScheduleStatus(status) {
 /**
  * PRTG 模組總開關的目前值。完工文字要靠它分辨「沒開」與「開了但沒抓到」，
  * 而那個判斷發生在狀態輪詢裡（每 3 秒一次），不能每次都重打設定 API。
+ * **null＝尚未從設定得知**：狀態輪詢與設定查詢是並行發出的，狀態可能先回來；
+ * 這時不能把「還不知道」畫成「未啟用」。
  */
-let prtgModuleEnabled = false;
+let prtgModuleEnabled = null;
 
-const PROGRESS_PHASE_LABEL = {
-    local: '本機分析',
-    netiq: 'NetIQ 機房分析',
-    'prtg-sync': 'PRTG 結構同步',
-    'prtg-sync-devices': 'PRTG 裝置結構同步',
-    'prtg-sync-sensors': 'PRTG 感測器結構同步',
-    'prtg-sync-messages': 'PRTG 狀態變更同步',
-    'prtg-values': 'PRTG 數值取數',
-    'prtg-triggered': 'PRTG 觸發式取數',
-    'prtg-wait-sync': '等待手動同步完成'
-};
-const PROGRESS_PHASE_UNIT = {
-    'prtg-sync': 'sensor',
-    'prtg-sync-devices': '台',
-    'prtg-sync-sensors': '個',
-    'prtg-sync-messages': '筆',
-    'prtg-values': 'sensor',
-    'prtg-triggered': 'sensor',
-    'prtg-wait-sync': ''
-};
 
 /**
  * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
@@ -1160,7 +1152,7 @@ function renderScheduleProgress(status) {
         // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
         // 三種情形要分得開：模組沒開、開了但什麼都沒抓到、抓到了。
         // 全部混成「已完成」的話，使用者看不出該去開總開關還是該去查對應。
-        if (!prtgModuleEnabled) {
+        if (prtgModuleEnabled === false) {
             prtgCustomLabel = 'PRTG 擷取　未啟用';
         } else if (status.prtgProgressTotal > 0) {
             prtgCustomLabel = `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`;

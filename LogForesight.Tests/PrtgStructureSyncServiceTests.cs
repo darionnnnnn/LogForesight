@@ -60,8 +60,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
     {
         var service = Create();
 
-        Assert.False(service.TryStart(out var error));
+        Assert.False(service.TryStart(out var error, out var isConflict));
         Assert.Contains("PRTG 未啟用", error);
+        Assert.False(isConflict);   // 設定不齊是輸入面問題，不是衝突
     }
 
     [Fact]
@@ -70,7 +71,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         _settingsStore.Update(s => s.PrtgEnabled = true);
         var service = Create();
 
-        Assert.False(service.TryStart(out var error));
+        Assert.False(service.TryStart(out var error, out _));
         Assert.Contains("連線位址", error);
     }
 
@@ -84,7 +85,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         });
         var service = Create();
 
-        Assert.False(service.TryStart(out var error));
+        Assert.False(service.TryStart(out var error, out _));
         Assert.Contains("認證", error);
     }
 
@@ -101,8 +102,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         var service = Create(schedulerState);
 
-        Assert.False(service.TryStart(out var error));
+        Assert.False(service.TryStart(out var error, out var isConflict));
         Assert.Contains("取數執行進行中", error);
+        Assert.True(isConflict);
     }
 
     [Fact]
@@ -115,7 +117,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         var service = Create(schedulerState);
 
-        Assert.True(service.TryStart(out var error));
+        Assert.True(service.TryStart(out var error, out _));
         Assert.Null(error);
     }
 
@@ -172,7 +174,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
     {
         EnablePrtg();
         var service = Create();
-        Assert.True(service.TryStart(out _));
+        Assert.True(service.TryStart(out _, out _));
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();

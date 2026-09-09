@@ -116,6 +116,19 @@ public class SchedulerRunState
     /// </summary>
     public bool PrtgFindingsReady { get; private set; }
 
+    /// <summary>
+    /// 「取數執行中且當日 finding 尚未到齊」的原子判定。分兩次讀 <see cref="IsRunning"/> 與
+    /// <see cref="PrtgFindingsReady"/> 會在 <see cref="EndRun"/> 的空隙拿到 (true, false)——
+    /// 執行剛結束、旗標剛被重設——讓 AI 誤以為還要等，整批把最近兩天的待補濾掉。
+    /// </summary>
+    public bool IsWaitingForFindings()
+    {
+        lock (_lock)
+        {
+            return IsRunning && !PrtgFindingsReady;
+        }
+    }
+
     public bool LocalCompleted => _local.Completed;
     public bool NetiqCompleted => _netiq.Completed;
     public bool PrtgCompleted => _prtg.Completed;

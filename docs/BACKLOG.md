@@ -485,8 +485,9 @@
   觸發條件：實機運行後發現擷取靜默失敗難以察覺時。
 - **歷史回填沒有完成水位**：靠寫入冪等達成「重跑不重複」，但**不會跳過已完成的日期**——
   回填 30 天中斷在第 29 天，重跑仍是 30 天全打一次 API。以目前的回填規模可接受。
-- **探測與回填的互斥是 TOCTOU**：兩者各自「先看對方狀態再開始」，中間沒有共同的鎖，理論上
-  兩個管理員同一秒各按一個按鈕可以同時起跑。實務上是手動觸發的低頻操作，暫不處理。
+- **探測／回填／同步結構與對應的互斥是 TOCTOU**：三者各自「先看對方狀態再開始」，中間沒有
+  共同的鎖，理論上兩個管理員同一秒各按一個按鈕可以同時起跑；「同步結構與對應」對「取數執行中」的
+  檢查也是同一形狀。實務上是手動觸發的低頻操作，且鏡像寫入是冪等 upsert，暫不處理。
 - **多台 PRTG core server**：本期假設單一 server（設定是 `SystemSettings` 單例）。要支援多台
   需比照 Sentinel 改成 store 化。觸發條件：環境真的出現第二台 PRTG。
 
@@ -588,11 +589,14 @@
 `GetLatestHostMapWithDate`＋`GetAllDevices`＋主機主檔三個全表讀進記憶體排序後才 `Skip/Take`，
 分頁只省傳輸沒省查詢。**觸發時機**：衝突列破千或翻頁明顯變慢。
 
-## 資源守門 DNS 解析改非同步
+## PRTG 位址解析與守門即時來源改非同步
 
-`PrtgResourceGuardTargets.ResolveHostAddressesWithTimeout` 用 `Task.Run`＋`Wait(2000)` 阻塞，
-逾時後那個 task 沒人回收。改 `Dns.GetHostAddressesAsync`＋`CancellationTokenSource`，
-但 `Resolve` 整條是同步 API，要一起改成 async。**觸發時機**：偵測到 DNS 逾時堆積或執行緒池飢餓。
+`PrtgAddressResolver` 的 DNS 查詢用 `Task.Run`＋`Wait(2000)` 阻塞，逾時後那個 task 沒人回收；
+`PrtgLiveGuardSource` 的分頁查詢也是 `GetAwaiter().GetResult()` 同步阻塞 async，而它跑在
+「自動偵測並填入」的 HTTP 請求執行緒上，多人同時按就是執行緒池飢餓。兩者都卡在
+`PrtgResourceGuardTargets.Resolve`／`IPrtgResourceGuardSource` 是同步簽章——要一起改成 async，
+連帶動到 `PrtgHostMapper.MapForDate` 與所有呼叫端。**觸發時機**：偵測到 DNS 逾時堆積、
+執行緒池飢餓，或自動偵測的回應時間在實機超過十秒。
 
 ## UI 字串測試偵測不到「形狀」問題
 

@@ -736,6 +736,8 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 三份隨主機數成長，3000 台的 `hosts` 約 4 MB，而 `IHostStore.GetAll()` 在單一 HTTP 請求內
 會被呼叫十餘次（`HostLookup`／`HostAliasIndex`／可見範圍解析各自都要）。
 `JsonBlobCollection` 因此對這三份、且只有這三份啟用讀取快取。
+單一物件型的 `JsonBlobSingleton` 家族（`system_settings`、`schedule_options`、`netiq_options`、
+`prtg_sync_status` 等）不走快取——每份都小，且讀取端不在請求熱路徑上。
 
 `version` 是 `bigint`，`EfJsonBlobStore.Mutate` 每次寫入遞增 1，唯一用途是讓快取判斷
 「內容有沒有變過」——`ReadVersion()` 只讀這一個整數欄，不拉整份內容。

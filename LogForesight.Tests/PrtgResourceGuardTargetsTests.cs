@@ -1,3 +1,4 @@
+using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -356,35 +357,69 @@ public class PrtgResourceGuardTargetsTests : IDisposable
     }
 
     /// <summary>
-    /// 同一組資料換不同來源要得到同一組 objid——判定邏輯只有一份，
-    /// 鏡像與即時查詢的差別只在資料哪裡來（docs/PRTG-SPEC.md §12）。
+    /// 同一組資料，鏡像來源與**真的走 HTTP 的即時來源**要得到同一組 objid——
+    /// 判定邏輯只有一份，鏡像與即時查詢的差別只在資料哪裡來（docs/PRTG-SPEC.md §12）。
+    /// 兩邊必須是不同的實作才有意義：都餵同一份假清單的話，斷言在任何實作下都會過。
     /// </summary>
     [Fact]
     public void Resolve_鏡像與即時兩種來源得到相同結果()
     {
-        var devices = new List<PrtgDeviceRow>
+        var now = DateTime.Now;
+        var store = CreateStore();
+        store.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1601, Name = "SRV-C", Ip = "10.6.6.6" } }, now);
+        store.UpsertSensors(new[]
         {
-            new() { Objid = 1601, Name = "SRV-C", Ip = "10.6.6.6" }
-        };
-        var sensors = new List<PrtgSensorRow>
+            new PrtgSensorRow { Objid = 2601, DeviceObjid = 1601, Name = "CPU Load", SensorType = "SNMP CPU Load", Category = "cpu", Paused = false }
+        }, now);
+
+        var handler = new StubHandler
         {
-            new() { Objid = 2601, DeviceObjid = 1601, Name = "CPU Load", Category = "cpu", Paused = false }
+            OnSend = req =>
+            {
+                var url = req.RequestUri!.ToString();
+                if (url.Contains("content=devices"))
+                    return Json("{\"devices\":[{\"objid\":1601,\"device\":\"SRV-C\",\"host\":\"10.6.6.6\"}]}");
+                if (url.Contains("content=sensors"))
+                    return Json("{\"sensors\":[{\"objid\":2601,\"parentid\":1601,\"sensor\":\"CPU Load\",\"type\":\"SNMP CPU Load\",\"status\":\"Up\"}]}");
+                return Json("{}");
+            }
         };
 
         var settings = new SystemSettings();
         var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.6.6.6:8443" } };
 
         var fromMirror = PrtgResourceGuardTargets.Resolve(
-            new FakeGuardSource(devices, sensors, "mirror"), settings, sentinels,
-            new TestConsole(), new PrtgAddressResolver());
+            new PrtgMirrorGuardSource(store), settings, sentinels, new TestConsole(), new PrtgAddressResolver());
 
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
         var fromLive = PrtgResourceGuardTargets.Resolve(
-            new FakeGuardSource(devices, sensors, "live"), settings, sentinels,
-            new TestConsole(), new PrtgAddressResolver());
+            new PrtgLiveGuardSource(client), settings, sentinels, new TestConsole(), new PrtgAddressResolver());
 
         Assert.Equal(fromMirror.SensorObjids, fromLive.SensorObjids);
         Assert.Contains(2601L, fromLive.SensorObjids);
+        // 即時來源真的打過 HTTP（不是又讀了鏡像）
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("content=devices"));
     }
+
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        public Func<HttpRequestMessage, HttpResponseMessage> OnSend { get; set; } =
+            _ => throw new InvalidOperationException("測試未設定 OnSend");
+
+        public List<string> RequestedUrls { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            lock (RequestedUrls) RequestedUrls.Add(request.RequestUri!.ToString());
+            return Task.FromResult(OnSend(request));
+        }
+    }
+
+    private static HttpResponseMessage Json(string json) =>
+        new(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
 
     /// <summary>
     /// 找不到裝置時的訊息要說出資料是哪裡來的：讀鏡像的「找不到」多半是還沒同步，

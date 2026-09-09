@@ -153,12 +153,45 @@ public class PrtgDailyPipelineTests : IDisposable
 
         public bool IsRunning => _running;
 
-        public Task WaitUntilIdleAsync(CancellationToken ct)
+        /// <summary>false＝模擬等到上限仍未結束（對方卡住）。</summary>
+        public bool ResultToReturn { get; set; } = true;
+
+        public Task<bool> WaitUntilIdleAsync(CancellationToken ct)
         {
             WaitCalls++;
             _running = false;
-            return Task.CompletedTask;
+            return Task.FromResult(ResultToReturn);
         }
+    }
+
+    /// <summary>
+    /// 等到上限對方仍未結束時，本趟**不得**跳過結構同步——鏡像不是新的。
+    /// 少了這條，PRTG 卡住的那一晚鏡像沒更新，畫面與執行紀錄卻都顯示正常。
+    /// </summary>
+    [Fact]
+    public async Task 等待手動同步逾時則本趟自行同步結構()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+        });
+
+        var (ctx, console, _, _) = CreateContext();
+        var gate = new FakeStructureSyncGate(running: true) { ResultToReturn = false };
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            DateTime.Today.AddDays(-1), Task.CompletedTask, guard: null, structureSyncGate: gate);
+
+        Assert.Equal(1, gate.WaitCalls);
+        Assert.Contains(console.Lines, l => l.Contains("等待手動同步逾時"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("沿用剛更新的鏡像結構"));
+        // 真的去爬結構了（第一階段的開場訊息在 HTTP 呼叫之前就印）
+        Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
     }
 
     /// <summary>
@@ -192,6 +225,8 @@ public class PrtgDailyPipelineTests : IDisposable
         // 等完之後**真的沒有重新爬結構**：結構同步的第一階段會印「開始同步 PRTG 裝置結構鏡像」，
         // 跳過時走的是讀鏡像那條路，完全不進那三個階段。
         Assert.DoesNotContain(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
+        // 但對應照做（對昨天）——跳過的只有結構同步這一步
+        Assert.Contains(console.Lines, l => l.Contains("對應完成"));
     }
 
     /// <summary>閘門閒置（或根本沒接上）時行為與沒有這個機制時完全相同。</summary>

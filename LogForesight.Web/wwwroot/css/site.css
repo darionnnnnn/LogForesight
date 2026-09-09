@@ -2291,7 +2291,7 @@ a.lf-calendar__cell:focus-visible {
     flex: 1 1 auto;
 }
 
-/* 按鈕列貼底：這一列在三張卡裡都是最後一個元素 */
+/* 按鈕列貼底：這一列是三張卡可見內容的最後一個元素（PRTG 卡後面的回填輸出預設收合，不占高度） */
 .lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
     margin-top: auto;
     padding-top: var(--lf-space-2);

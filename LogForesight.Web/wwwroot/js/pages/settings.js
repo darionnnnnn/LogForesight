@@ -4,7 +4,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable } from '../core/ui.js';
+import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
@@ -426,12 +426,6 @@ function setNumber(id, value) {
 }
 
 /** 一行一項、去除空白行——與後端 SystemSettingsService.NormalizeLines 對齊的寬鬆解析 */
-function collectLines(id) {
-    return document.getElementById(id).value
-        .split('\n')
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
-}
 
 /** docs/archive/HISTORY.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
 function renderAdFields(settings) {

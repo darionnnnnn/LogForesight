@@ -7,22 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { withBusy } from '../core/ui.js';
-
-/** 讀取數字欄位，空白或非數字時回預設值。 */
-function numberOr(id, fallback) {
-    const el = document.getElementById(id);
-    if (!el) return fallback;
-    const n = Number(el.value);
-    return Number.isFinite(n) ? n : fallback;
-}
-
-/** 讀取多行文字欄位，去掉空白行。 */
-function collectLines(id) {
-    const el = document.getElementById(id);
-    if (!el) return [];
-    return el.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-}
+import { withBusy, collectLines, numberOr } from '../core/ui.js';
 
 /**
  * 把已儲存的守門設定填進畫面欄位。

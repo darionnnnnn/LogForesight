@@ -334,7 +334,7 @@ public class HostAdminService
 
         // 在主機寫入**之後**才重算，且失敗不影響儲存結果——只把警告帶進回應
         // （比照人工對應端點的 RemapWarning，見 PrtgHostMapRefresher 的說明）
-        var remapWarning = needsRemap ? _mapRefresher?.TryRefreshToday() : null;
+        var remapWarning = needsRemap ? _mapRefresher.TryRefreshToday() : null;
 
         var dto = HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
         dto.RemapWarning = remapWarning;
@@ -515,7 +515,7 @@ public class HostAdminService
             detail: new { Source = source.HostName, Target = target.HostName });
 
         // 已合併（有墓碑）的主機不參與 PRTG 對應，今天那筆要跟著消失（docs/PRTG-SPEC.md §4）
-        _mapRefresher?.TryRefreshToday();
+        _mapRefresher.TryRefreshToday();
     }
 
     public void UnmergeHost(long hostId)
@@ -539,6 +539,6 @@ public class HostAdminService
             detail: new { Source = host.HostName, Target = target?.HostName });
 
         // 解除合併後這台恢復啟用，重新有資格參與對應（docs/PRTG-SPEC.md §4）
-        _mapRefresher?.TryRefreshToday();
+        _mapRefresher.TryRefreshToday();
     }
 }

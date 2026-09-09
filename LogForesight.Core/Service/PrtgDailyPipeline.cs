@@ -61,9 +61,18 @@ internal static class PrtgDailyPipeline
                 prtgConsole.WriteLine("手動觸發的「同步結構與對應」進行中，等它完成後再繼續（本趟不重複同步結構）。");
                 runRecorder.Milestone("PRTG：等待手動同步結構與對應完成");
                 progress?.Report(RunPhases.PrtgWaitSync, 0, 0);
-                await structureSyncGate.WaitUntilIdleAsync(ct);
-                skipStructureSync = true;
-                prtgConsole.WriteLine("手動同步已完成，沿用剛更新的鏡像結構。");
+                skipStructureSync = await structureSyncGate.WaitUntilIdleAsync(ct);
+                if (skipStructureSync)
+                {
+                    prtgConsole.WriteLine("手動同步已完成，沿用剛更新的鏡像結構。");
+                }
+                else
+                {
+                    // 等到上限對方還沒結束（PRTG 端卡住）：鏡像不能當成新的，本趟照常自己同步。
+                    // 寫成「已完成、沿用」會讓這一晚鏡像其實沒更新卻處處顯示正常。
+                    prtgConsole.WriteLine("  ⚠ 等待手動同步逾時，它可能已卡住；本趟改為自行同步結構。");
+                    runRecorder.Milestone("PRTG：等待手動同步逾時，改為自行同步結構");
+                }
             }
 
             // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）

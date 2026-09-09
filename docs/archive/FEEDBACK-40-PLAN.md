@@ -1,6 +1,6 @@
 # 回饋修正第 40 輪規劃
 
-> 狀態：全案完成，待使用者實測
+> 狀態：全案完成（含逐條回檢與換模型體檢），最終測試數見 §6／§7；待使用者實測
 > 基準：dev@e61aec9（3586 綠，略過 6）
 > 來源：使用者回饋六項（狀態卡高度／AI 與 PRTG 三路同步／資源守門搬設定頁／自動偵測直查 PRTG／
 > PRTG 主機對應時機／排程流程梳理）
@@ -271,6 +271,7 @@
 | B2 對應重算服務＋主機主檔觸發 | Claude | 通過（**終檢才發現整段漏做**） | `HostAdminServiceTests`／`NetiqHostServiceTests` 新增五條觸發條件測試；突變重算呼叫→3 紅 | 規劃有寫、實作漏掉，而且我已先在 PRTG-SPEC §4 寫了「主機新增或改 IP 會重算」——**文件先說了謊**。靠自己做「定案逐條比對」抓到（兩個終檢代理都沒抓到這條，代理看 diff，看不到「規劃有寫、diff 沒有」）。補做時另發現：把原本必然執行的 `TryRemapToday` 改成可選相依後，既有的「重算確實發生」測試因為沒傳入實作而靜默失效——可選相依的老坑又踩一次 |
 | 終檢（兩個獨立 Explore＋自審） | Claude | 完成 | 全套 3661 綠（+25）；新增 `JsModuleImportTests` 讓「漏 import」變成建置時就紅 | **最嚴重的是我自己造成的**：抽 `prtg-guard.js` 時多切了三行，且未帶走它依賴的 import——模組載入即擲 ReferenceError，**設定頁與 PRTG 維護頁兩頁的 JS 全都不會執行**。`node --check` 只驗語法、UI 測試只比對字串，兩者都抓不到。已修並補上能抓到同型問題的測試。其餘處置見下方「終檢處置」 |
 | F 資源守門搬設定頁 | Claude（agy 五小時額度歸零） | 通過 | 全套 3636 綠（+1）；守門欄位在設定頁、維護頁零殘留；`prtg-admin.js` 中 `prtg-guard` 零命中（欄位實作只有一份）；BOM 與 NUL 無新增 | 前端沒有把守門那 100 行複製到設定頁，而是抽成獨立模組 `prtg-guard.js`（`loadGuardFields`／`collectGuardPayload`／`bindGuardPreview` 三個出口），設定頁 import 使用，維護頁整段移除。**有四條舊測試守著「守門在 PRTG 維護頁」的舊契約**，本輪推翻後全部改為指向新位置（含「記憶體標籤要有可用二字」這條方向性守門，不可因搬遷而遺失）。全套跑到一條 `SentinelRestDirectoryClientTests` 紅，單獨重跑 47 綠、本輪未改該檔，確認是 BACKLOG 已記載的並行負載不穩定測試（清單首位），非本輪造成 |
+| G 文件同步 | Claude | 通過 | PRTG-SPEC／WEB-SPEC／DETECTION-SPEC／DB-SPEC／README／CLAUDE.md 六份；終檢文件面 Explore 另抓出 WEB-SPEC 四處矛盾（見 §5） | 順手補守門 preview 的 `source` 新值前端文案（原本沒有對應文字）並加測試釘住 |
 | A 狀態卡版面重定義 | Claude（agy 五小時額度歸零） | 通過 | 全套 3635 綠（+2）；瀏覽器實測（載入真正的 site.css）1400px 寬三卡各 377px 等高、三個按鈕列同在 y=341；800px 寬單欄堆疊不重疊；BOM 與 NUL 皆無新增 | 兩件事與規劃不同：(1) 規劃寫 PRTG 卡要有「最新訊息」列，實作時發現狀態 API 的 `latestMessage` 是整趟共用的最後一行、取數卡已在顯示，再放一次只是重複，且沒有分路訊息可填——**移除該元素**並在頁面留註解說明改由執行詳情承擔（每行有 `[PRTG]` 前綴）；(2) 卡片 id 由 `prtg-backfill-section` 改為 `prtg-status-card`，有**兩個**測試檔引用舊 id，第二個是跑全套才發現的。等高不寫死 `min-height`，改由 grid `stretch` 加卡片 flex column 與 `lf-run-actions` 貼底達成，內容增減不必回頭調數字 |
 | E AI 跟隨取數、移除 `AiEnabled` | Claude（agy 五小時額度歸零） | 通過 | 全套 3633 綠（+4）；`aiEnabled`／`AiEnabled` 在程式碼與前端零命中；BOM 三個原本就有 BOM 的檔維持原樣、其餘無 BOM、無 NUL；突變即時觸發訂閱→3 紅 | 移除類改動的兩個漏網點都被抓到：(1) `runs.js` 有**兩處**消費 `aiEnabled`，第一輪只改了狀態卡那處，排程設定表單載入那處是靠事後 grep 清零才發現；(2) `RunsPageUiTests` 有一條守住舊契約的測試（斷言畫面含「AI 分析排程未啟用」），本輪推翻該行為後它變紅——改寫成守住新契約（開關與文案必須整組消失、閒置說明仍在）。即時觸發刻意不看 AI 執行窗口：跟隨取數是「取數跑到哪、判讀跟到哪」，窗口只管背景消化積壓，否則手動執行一趟還要等窗口開了 AI 才動 |
 | D 守門自動偵測走 PRTG 即時查詢 | Claude（agy 五小時額度歸零） | 通過 | 全套 3629 綠（+3）；判定邏輯單一入口（`FindDevicesForHost` 三處引用皆同一份）；夜間批次仍讀鏡像（`PrtgMirrorGuardSource` 一處）；BOM 五檔與 dev 一致、無 NUL；突變即時查詢判定→1 紅 | `source` 新增兩個值 `live` 與 `mirror-fallback`。既有「留空時為 auto」的測試仍成立，因為它的 `PrtgUrl` 為空、在到達新分支前就提早返回——另補一條涵蓋新行為的測試，避免既有測試的綠燈被誤讀成新路徑有覆蓋 |
@@ -333,17 +334,80 @@
 - device 分組鍵用解析層而非 PLAN 契約寫的純語法層：填 DNS 名稱的 device 在純語法層一律回 null，
   用純語法當鍵它們根本進不了分組、也就永遠對不到主機。**推翻 PLAN 契約，改文件**（PRTG-SPEC §4）。
 - 即時觸發的 trigger 固定為 `fetch-followup`、不看窗口：這是刻意的（見批次 E 執行紀錄）。
-- 同步被拒回 400 而非 409：既有 `DomainException.Validation` 的一致做法，前端只看訊息。
 - `PrtgLiveGuardSource` 同步阻塞 async：介面是同步簽章，改成 async 要動判定邏輯的簽章，
-  收益不足以在本輪動它。已記 BACKLOG 方向。
+  收益不足以在本輪動它。BACKLOG「PRTG 位址解析與守門即時來源改非同步」已記（體檢輪補上）。
 - `TryStart` 的 TOCTOU 窗口（檢查與 `TryBegin` 之間）：窗口極窄，且兩邊寫入皆冪等。
+
+## 5a. 明確不做（本輪定案）
+
+- P1 不套 `ui-ux-pro-max`：純對齊修正，不動設計 token。
+- `PrtgValueFetchScope` 三值不新增；執行紀錄 PRTG 狀態四值不新增（零對應主機仍算 `success`）。
+- `lf_prtg_devices.Ip` 不洗成正規化值，鏡像永遠是 PRTG 原始字串。
+- 即時來源不用 `filter_parentid`（先比對位址才知道命中哪些裝置，逐裝置查是 N 次往返）。
+- 即時觸發的 AI 不看執行窗口；窗口只管背景消化積壓。
+- 「每日擷取」軌閒置時不顯示上一趟結果：軌是行程內狀態、`EndRun` 即重設，上一趟抓了多少看執行紀錄的
+  PRTG 欄位（體檢輪推翻批次 A 契約的那一句，WEB-SPEC §9.10 已改寫）。
+- 同步的 `TryStart` 與取數執行之間的 TOCTOU 窗口不加鎖（BACKLOG 已記，與探測／回填同形）。
 
 ## 6. 體檢交接
 
-- **全套測試：通過 3668、略過 6、總計 3674，全綠。** 基線 3586 → 3668，淨增 82（含逐條回檢補上的 7 條）。
+- 實作模型：Claude Opus 5（agy `claude-opus-4-6-thinking` 只做完 B1 兩段）。
+- 體檢模型：**Claude Fable 5.1**（使用者 `/model` 切換後下收尾指令；feature 已併 dev、分支已刪，
+  體檢對象為 `origin/dev..dev`，修正直接 commit 進 dev）。
+- 實作方最沒把握的地方（供體檢優先）：`c10f04b`／`5d5e448` 兩個終檢後手改 commit 沒被任何獨立審查看過；
+  `PrtgLiveGuardSource` 對真實 PRTG 回應形狀只有假 HTTP 覆蓋；等待手動同步的 90 分鐘上限是拍腦袋值。
+
+- **全套測試（體檢後最終）：通過 3669、略過 6、總計 3675，全綠。** 基線 3586 → 3669，淨增 83。
 - 略過的 6 條是規模壓測（`LF_SCALE_BENCH=1` 才跑），與本輪無關。
 - 全套跑動期間曾見一條 `SentinelRestDirectoryClientTests` 紅、單獨重跑 47 綠；本輪未改該檔，
   確認是 BACKLOG 已記載的並行負載不穩定測試（清單首位）。
-- CLAUDE.md 測試基線已更新為 3668。
+- CLAUDE.md 測試基線已更新為 3669。
 - **未經實機驗證的項目**：`PrtgLiveGuardSource` 對真實 PRTG 的 `table.json` 回應形狀
   （欄位名、`status` 的暫停字樣、分頁行為）只有假 HTTP 覆蓋；等待上限 90 分鐘是暫定值。
+
+## 7. 體檢輪修正（換模型：Fable 5.1）
+
+兩個獨立 Explore（獵 bug／架構、規劃比對／文件）＋Claude 親讀兩個終檢後手改 commit 的正式碼 diff。
+代理回報 26 條，逐條核對後：**19 條成立已修，4 條查證為誤報不改，3 條屬刻意設計不改**。
+
+**成立已修（哪裡／症狀／修法／迴歸測試）**
+
+| # | 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `PrtgDailyPipeline` 等待手動同步 | **高**：等到 90 分鐘上限仍未結束時仍 `skipStructureSync = true`，這一晚鏡像沒更新，卻印「已完成、沿用」——上限加了但退路沒接上（c10f04b 引入） | `WaitUntilIdleAsync` 改回 `bool`，逾時回 false 則照常自行同步並寫里程碑 | `等待手動同步逾時則本趟自行同步結構`；突變回無條件 true → 紅 |
+| 2 | `prtg-guard.js` 抽出時 | `numberOr`／`collectLines` 又複製了兩份（三份），且 guard 版的 `numberOr` 空白欄位回 0 不回預設值 | 兩個 helper 收進 `core/ui.js`（空白回預設值那版），三頁 import | `JsModuleImportTests` 守 import |
+| 3 | `JsModuleImportTests` | 只認 `fn(`，抓不到 `api.get` 這種物件型匯出的漏 import——正是原始事故的形狀 | 物件型匯出（等號右邊 `{`／`[`）另認 `obj.`／`obj[`；箭頭函式仍算函式，否則 `line`／`button` 撞頁面迴圈變數誤報 | 突變拿掉 `prtg-guard.js` 的 `api` import → 紅 |
+| 4 | `SettingsController` live 預覽 | `catch (Exception)` 吞掉請求取消，當成「PRTG 連不上」繼續打第二個連線 | `catch (OperationCanceledException) when (ct.IsCancellationRequested)` 穿透；HttpClient 逾時（同為 OCE）仍退回鏡像——與 EDGEOPS 記過的坑相反方向 | — |
+| 5 | `PrtgStructureSyncService` 取消路徑 | 取消不寫持久化狀態，狀態卡沿用上一筆「成功」 | 三條路徑共用 `Persist()`，取消也落一筆 `Success=false` | 既有持久化測試 |
+| 6 | `AiAnalysisHostedService` | `IsRunning` 與 `PrtgFindingsReady` 分兩次無鎖讀，`EndRun` 空隙會拿到 (true,false) 誤濾最近兩天待補 | `SchedulerRunState.IsWaitingForFindings()` 鎖內原子判定，兩處改用 | — |
+| 7 | `PrtgResourceGuardTargets` | `sortedObjids` 沒排序，寫回覆寫清單的順序不決定性 | `OrderBy` | — |
+| 8 | 409 判定 | 靠錯誤訊息含「執行中」字串決定狀態碼 | `TryStart(out error, out isConflict)` 由服務判定 | 互斥測試斷言 `isConflict`；突變 → 紅 |
+| 9 | `runs.js` `prtgModuleEnabled` | 初值 false，設定 API 尚未回來或 403 時把「已啟用」畫成「未啟用」 | 三態（null＝未知）；設定讀不到時模組狀態顯示「—」 | — |
+| 10 | `HostDto.RemapWarning` | 後端加了欄位、`hosts.js` 沒接（R38 記過的形狀）；`NetiqHostService.SetActive` 回 DTO 卻永遠 null | 儲存與停用兩處 toast；`SetActive` 帶警告 | — |
+| 11 | `NetiqHostService` | `IPrtgHostMapRefresher? = null` 可選相依（記憶已記五犯），與 `HostAdminService` 必填不一致 | 改必填；`HostAdminService` 的死碼 `?.` 拿掉 | — |
+| 12 | `prtg-admin.js` 同步進度列 | 把 `prtg-sync-devices` 裸 phase 印給使用者（WEB-SPEC 明禁） | `PROGRESS_PHASE_LABEL`／`UNIT` 抽到 `core/run-phases.js`，兩頁共用 | `RunsPageUiTests` 反射對照表改讀 core 檔 |
+| 13 | 維護頁按鈕文字 | 「開始同步」，README 與規格全寫「同步結構與對應」 | 統一 | — |
+| 14 | `runs.js` 閒置原因 | 對照表沒有 `disabled`，且外層 `aiAvailable &&` 讓它永遠不顯示；WEB-SPEC 說有——文件說謊 | 補文案、拿掉前提；options 路徑同套 `aiAvailable` 判斷（載入瞬間不再閃錯文案） | `RunsPageUiTests` |
+| 15 | `PrtgDailyPipelineTests` | C 驗收「對應照跑」沒有斷言 | 補 `對應完成` 斷言 | — |
+| 16 | `PrtgResourceGuardTargetsTests` 等價測試 | 兩邊餵同一份假清單，斷言恆成立 | 改為真鏡像 store vs 真 `PrtgLiveGuardSource`（假 HTTP），並斷言即時來源真的打過 HTTP | — |
+| 17 | `AiAnalysisSchedulerTests` 證否兩條 | 固定 `Task.Delay(500)`，慢機器假綠 | 改等 `IdleReason` 被寫下再斷言 | — |
+| 18 | 文件 | WEB-SPEC「保留數字不清空」讀起來像畫面行為（實際執行結束三軌隱藏）；BACKLOG 指向已刪的 `ResolveHostAddressesWithTimeout`；DB-SPEC §F 未登記 `prtg_sync_status`；PLAN §5 自相矛盾（400 vs §4a 的 409）、執行紀錄缺 G 列、缺「明確不做」節 | 全部改正 | — |
+| 19 | `site.css` 註解 | 「按鈕列是最後一個元素」與 PRTG 卡不符 | 改正 | — |
+
+**查證為誤報、不改**
+- 「候選有主機但取數全失敗時里程碑會誤報」：`TriggerHosts` 在取數**之前**就把候選計入 `fetchedHosts`，與 fetcher 的警告條件等價。
+- 「AI 已設定的兩個判準不一致」：寫入端 `AppSettings.Ai.IsConfigured` 與讀取端 `IWebAiService.Available` 都走 `AiProviders.IsConfigured`，同一份。
+- `PrtgLiveGuardSource` 產出的列沒 `Truncate`：它從不落地（唯讀偵測），CLAUDE.md 那條紅線只管寫入路徑。
+- `PrtgUrl` 未設定時 corehealth fallback 仍生效：PRTG-SPEC §12 明寫「`PrtgUrl` 根本解析不出 host 時改找 corehealth」，是刻意設計。
+
+**刻意不改（已在 §5a 明確不做）**：「每日擷取」軌閒置時顯示上一趟結果（推翻批次 A 那句契約，改 WEB-SPEC）；
+`TryStart` TOCTOU；`PrtgLiveGuardSource` 同步阻塞（BACKLOG 已改指正確位置）。
+
+**體檢後全套：通過 3669、略過 6、總計 3675，全綠。** 突變驗證四處（逾時不跳過、import 守門、409 旗標、
+既有的重算警告）皆紅。
+
+## 8. 終檢輪
+
+體檢修正直接 commit 進 dev（feature 分支已刪、未 push），修正後全套重跑 3669 綠；
+修正 commit 本身再掃一次：`WaitUntilIdleAsync` 簽章改動的三個實作／假物件都跟上、`TryStart` 六個測試呼叫點都跟上、
+`core/run-phases.js` 的兩個匯入頁與 `RunsPageUiTests` 路徑一致。終檢無新發現。

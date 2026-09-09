@@ -2266,6 +2266,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   三路收尾各送一個完工訊號（`local-done`／`netiq-done`／`prtg-done`），
   收到後**保留該軌最後的數字並標記完成**（畫成滿格、文字「已完成 x / y」），
   **不清空**——清空會讓那條軌整個消失，使用者看不出那一路究竟跑完了沒。
+  這是**執行中**的行為：整趟結束後三軌整組隱藏、狀態卡改顯示上次結局；
+  PRTG 那一路抓了多少要看執行紀錄的 PRTG 欄位（`BatchRun` 的分路結構化欄位），狀態卡不保存上一趟的軌。
   `LatestActivity()` 跳過已完成的軌，單一告示因此仍會落回還在推進的那一路。
   沒有量化分母時（`total=0`）文字為「{軌別}　準備中…」，**必須帶軌別**
   ——三條軌長得一樣，只印「準備中」使用者無從分辨是哪一路。
@@ -2308,7 +2310,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
   由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
-  `disabled`＝AI 服務未設定，直接顯示該原因、不帶件數，`no-pending` 不需要說明（待補為 0 本身就講完了）。
+  `disabled`＝AI 服務未設定，閒置說明列出該原因並指路到設定頁、不帶件數（「背景補跑窗口」列同時顯示「AI 服務未設定」），
+  `no-pending` 不需要說明（待補為 0 本身就講完了）。
 - **待補件數快取 30 秒**：該查詢在實機要 7~15 秒，而狀態卡執行中每 3 秒輪詢一次
   ——不快取等於自己把資料庫打慢。AI 排程每輪收尾與整批重標時使快取失效。
   **查詢刻意在鎖外執行**：那把鎖同時保護 AI 排程的開始與結束，

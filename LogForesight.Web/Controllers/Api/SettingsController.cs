@@ -190,12 +190,10 @@ public class SettingsController : ControllerBase
         if (_prtgStructureSync == null)
             throw DomainException.Validation("PRTG 同步服務未啟用。");
 
-        if (!_prtgStructureSync.TryStart(out var error))
+        if (!_prtgStructureSync.TryStart(out var error, out var isConflict))
         {
-            // 被互斥擋下（取數執行中、或同步已在跑）語意上是狀態衝突而非輸入錯誤——
+            // 被互斥擋下（取數執行中、或同步已在跑）是狀態衝突而非輸入錯誤——
             // 回 409 讓呼叫端分得出「你送錯了」與「現在不行，等一下再試」。
-            var isConflict = error != null &&
-                (error.Contains("執行中") || error.Contains("執行進行中"));
             throw isConflict
                 ? DomainException.Conflict(error!)
                 : DomainException.Validation(error ?? "無法啟動 PRTG 結構同步。");
@@ -362,6 +360,12 @@ public class SettingsController : ControllerBase
                         new PrtgLiveGuardSource(liveClient, ct), settings, sentinels, console,
                         new PrtgAddressResolver(), ignoreOverride: forceAuto);
                     source = "live";
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // 請求本身被取消（使用者關掉分頁）要穿透，不能當成「PRTG 連不上」繼續往下打第二個連線。
+                    // 只在 ct 真的取消時放行：HttpClient 逾時也是 OperationCanceledException，那種要退回鏡像。
+                    throw;
                 }
                 catch (Exception liveEx)
                 {

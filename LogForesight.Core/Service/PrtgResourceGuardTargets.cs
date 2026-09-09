@@ -224,7 +224,9 @@ public static class PrtgResourceGuardTargets
             return new PrtgResourceGuardTargetResult(Array.Empty<long>(), targetSensors);
         }
 
-        var sortedObjids = targetSensors.Keys.ToList();
+        // 排序：這份清單會被「自動偵測並填入」寫進覆寫清單再存檔，同樣的資料兩次偵測
+        // 要得到同樣的字串，否則設定頁的「有未存變更」會被 Dictionary 的鍵序騙到。
+        var sortedObjids = targetSensors.Keys.OrderBy(x => x).ToList();
         return new PrtgResourceGuardTargetResult(sortedObjids, targetSensors);
     }
 

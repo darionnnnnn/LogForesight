@@ -32,14 +32,21 @@ public class JsModuleImportTests
         var coreDir = Path.Combine(jsRoot, "core");
         Assert.True(Directory.Exists(coreDir), $"找不到目錄: {coreDir}");
 
-        // 1. 蒐集 core/ 各模組匯出的具名函式
-        var exported = new Dictionary<string, string>(StringComparer.Ordinal);
+        // 1. 蒐集 core/ 各模組的具名匯出，並記住它是函式還是物件／常數：
+        //    函式只會以 `fn(` 出現；物件型（例如 `export const api = {...}`）以 `api.` 出現。
+        //    分開比對是為了避免 `button`／`line` 這類常見識別字（它們是函式匯出）
+        //    撞到頁面裡的迴圈變數或參數名——那些不是行首宣告，靠「區域宣告清單」濾不掉。
+        var exported = new Dictionary<string, (string Source, bool IsObject)>(StringComparer.Ordinal);
         foreach (var coreFile in Directory.GetFiles(coreDir, "*.js"))
         {
             var text = File.ReadAllText(coreFile);
-            foreach (Match m in Regex.Matches(text, @"^export\s+(?:async\s+)?(?:function|const|let)\s+(\w+)", RegexOptions.Multiline))
+            foreach (Match m in Regex.Matches(text, @"^export\s+(?:async\s+)?(function|const|let)\s+(\w+)(?:\s*=\s*(\S))?", RegexOptions.Multiline))
             {
-                exported[m.Groups[1].Value] = Path.GetFileName(coreFile);
+                // 「物件型」＝等號右邊是 `{` 或 `[` 開頭的字面值；`export const line = (…) =>` 是箭頭函式，
+                // 按關鍵字判會把它當成物件、再拿頁面裡的迴圈變數 `line.xxx` 來誤報。
+                var rhs = m.Groups[3].Success ? m.Groups[3].Value : "";
+                var isObject = m.Groups[1].Value != "function" && (rhs == "{" || rhs == "[");
+                exported[m.Groups[2].Value] = (Path.GetFileName(coreFile), isObject);
             }
         }
 
@@ -69,14 +76,17 @@ public class JsModuleImportTests
                     .Select(m => m.Groups[1].Value),
                 StringComparer.Ordinal);
 
-            foreach (var (name, source) in exported)
+            foreach (var (name, info) in exported)
             {
                 if (imported.Contains(name) || locallyDefined.Contains(name)) continue;
 
-                // 以識別字邊界比對，避免 `formatDate` 命中 `formatDateTime`
-                if (Regex.IsMatch(text, $@"(?<![\w.]){Regex.Escape(name)}\s*\("))
+                // 以識別字邊界比對，避免 `formatDate` 命中 `formatDateTime`。
+                // 函式型匯出只認 `fn(`；物件型匯出另認 `obj.`／`obj[`——原始事故是漏了 `api` 的 import，
+                // `api.get(` 只認 `(` 的話這條測試對它視而不見。
+                var usage = info.IsObject ? @"\s*[(.\[]" : @"\s*\(";
+                if (Regex.IsMatch(text, $@"(?<![\w.$]){Regex.Escape(name)}{usage}"))
                 {
-                    problems.Add($"{Path.GetFileName(pageFile)} 用了 {source} 的 {name}() 卻沒有 import");
+                    problems.Add($"{Path.GetFileName(pageFile)} 用了 {info.Source} 的 {name} 卻沒有 import");
                 }
             }
         }
