@@ -135,8 +135,12 @@ public class HostDetailController : ControllerBase
         string? excludedIp = null;
         if (!string.IsNullOrWhiteSpace(host?.IpAddress))
         {
+            // 正規化回 null 代表「不是合法 IP」，兩邊都 null 時 `==` 會成立而誤判成命中
+            // （主機 IP 欄填了 DNS 名稱 ＋ 排除清單裡有舊的非 IP 列，就會湊出這個組合）。
             var normHostIp = PrtgHostMapper.NormalizeIp(host.IpAddress);
-            var match = store.GetIpExcludes().FirstOrDefault(e => PrtgHostMapper.NormalizeIp(e.Ip) == normHostIp);
+            var match = normHostIp == null
+                ? null
+                : store.GetIpExcludes().FirstOrDefault(e => PrtgHostMapper.NormalizeIp(e.Ip) == normHostIp);
             if (match != null)
             {
                 ipExcluded = true;

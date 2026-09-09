@@ -235,8 +235,3 @@ export function bindGuardPreview() {
     }
 }
 
-
-// ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
-
-let conflictPage = 1;
-let conflictPageSize = loadPageSize('prtg-conflicts');

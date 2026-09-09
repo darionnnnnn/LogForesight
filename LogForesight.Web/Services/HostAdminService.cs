@@ -64,8 +64,10 @@ public class HostAdminService
         INetiqHostService netiqHosts,
         IAuditService audit,
         IUserDisplayNameService userDisplayNames,
-        EfPrtgStore prtgStore)
+        EfPrtgStore prtgStore,
+        IPrtgHostMapRefresher mapRefresher)
     {
+        _mapRefresher = mapRefresher;
         _hosts = hosts;
         _hostGroups = hostGroups;
         _users = users;
@@ -75,6 +77,8 @@ public class HostAdminService
         _userDisplayNames = userDisplayNames;
         _prtgStore = prtgStore;
     }
+
+    private readonly IPrtgHostMapRefresher _mapRefresher;
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
     {
@@ -291,6 +295,11 @@ public class HostAdminService
         var isNew = existing == null;
 
         var ipChanged = existing?.IpAddress != request.IpAddress;
+        // PRTG 對應的另一半來自主機主檔：IP 或啟用狀態一改，今天的對應就過期了
+        // （docs/PRTG-SPEC.md §4）。新增有 IP 的主機同理。
+        var activeChanged = existing != null && existing.Active != request.Active;
+        var needsRemap = ipChanged || activeChanged ||
+                         (isNew && !string.IsNullOrWhiteSpace(request.IpAddress));
 
         var saved = _hosts.Upsert(new WebHost
         {
@@ -322,6 +331,9 @@ public class HostAdminService
             targetKind: "host",
             targetId: saved.HostId.ToString(),
             detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Tier, saved.Active });
+
+        // 在主機寫入**之後**才重算，且失敗不影響儲存結果（見 PrtgHostMapRefresher 的說明）
+        if (needsRemap) _mapRefresher?.TryRefreshToday();
 
         return HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
     }
@@ -498,6 +510,9 @@ public class HostAdminService
             targetKind: "host",
             targetId: sourceHostId.ToString(),
             detail: new { Source = source.HostName, Target = target.HostName });
+
+        // 已合併（有墓碑）的主機不參與 PRTG 對應，今天那筆要跟著消失（docs/PRTG-SPEC.md §4）
+        _mapRefresher?.TryRefreshToday();
     }
 
     public void UnmergeHost(long hostId)
@@ -519,5 +534,8 @@ public class HostAdminService
             targetKind: "host",
             targetId: hostId.ToString(),
             detail: new { Source = host.HostName, Target = target?.HostName });
+
+        // 解除合併後這台恢復啟用，重新有資格參與對應（docs/PRTG-SPEC.md §4）
+        _mapRefresher?.TryRefreshToday();
     }
 }

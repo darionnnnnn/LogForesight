@@ -13,8 +13,22 @@ public class NetiqHostServiceTests
     private readonly FakeHostStore _hosts = new();
     private readonly FakeNetiqServerCatalog _servers = new("SENTINEL-A", "SENTINEL-B");
 
+    /// <summary>記錄「重算今天的 PRTG 對應」被叫了幾次（docs/PRTG-SPEC.md §4）。</summary>
+    private sealed class CountingMapRefresher : LogForesight.Web.Services.IPrtgHostMapRefresher
+    {
+        public int Calls { get; private set; }
+
+        public string? TryRefreshToday()
+        {
+            Calls++;
+            return null;
+        }
+    }
+
+    private readonly CountingMapRefresher _mapRefresher = new();
+
     private NetiqHostService Create() =>
-        new(_hosts, new FakeHostGroupStore(), new FakeUserStore(), _servers, new RecordingAuditService(), new UserDisplayNameService(new FakeSystemSettingsStore()));
+        new(_hosts, new FakeHostGroupStore(), new FakeUserStore(), _servers, new RecordingAuditService(), new UserDisplayNameService(new FakeSystemSettingsStore()), _mapRefresher);
 
     // ── 單筆登錄 ──────────────────────────────────────────────────────────────
 
@@ -200,4 +214,25 @@ public class NetiqHostServiceTests
     // FakeNetiqServerCatalog 已搬到 TestDoubles\NetiqFakes.cs（HostAdminServiceTests／
     // NetiqLifecycleTests／SentinelEventFetchServiceTests 都要共用，搬出去後不再需要
     // NetiqHostServiceTests.FakeNetiqServerCatalog 這種跨類別限定名稱）。
+
+    /// <summary>
+    /// 停用／啟用會改變主機是否參與 PRTG 對應，今天那筆要跟著變（docs/PRTG-SPEC.md §4）。
+    /// 不重算的話要等到隔天夜間批次，而畫面上完全沒有跡象。
+    /// </summary>
+    [Fact]
+    public void SetActive_會重算今日PRTG對應()
+    {
+        var service = Create();
+        var host = service.AddHost(new AddNetiqHostRequest
+        {
+            IpAddress = "10.1.2.77",
+            NetiqServer = "SENTINEL-A",
+            RoleDesc = "測試"
+        });
+        var before = _mapRefresher.Calls;
+
+        service.SetActive(host.HostId, active: false);
+
+        Assert.Equal(before + 1, _mapRefresher.Calls);
+    }
 }

@@ -1225,8 +1225,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
   依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
-- **「AI 分析中」徽章**：取數與 AI 判讀拆成兩個獨立排程後
-  （見 docs/DETECTION-SPEC.md「兩個獨立排程」一節），統計已寫入、
+- **「AI 分析中」徽章**：取數與 AI 判讀脫鉤後
+  （見 docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節），統計已寫入、
   等待 AI 分析排程撿取的紀錄（`AiPending=true`）在清單頁與詳情頁顯示 `lf-badge--info`
   「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
   兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
@@ -1816,7 +1816,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
-  七個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  八個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
@@ -2158,7 +2158,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 ### 9.9e `/admin/prtg` PRTG 維護（`Maintain`）
 
 PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
-動態工作（總開關、歷史回填）在排程作業頁——功能依性質分置，不散落各頁。
+動態工作（總開關、同步結構與對應、歷史回填）在排程作業頁——功能依性質分置，不散落各頁。
 
 四個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
 `bindTabs` 的 `{ hash: true }` 選項讓切換同步網址 hash（`history.replaceState`，
@@ -2170,10 +2170,8 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
   **數值取數的主機範圍**（三選一；選「觸發主機＋指定清單」才顯示主機名稱輸入框，
   另有「估算規模」鈕呼叫 `prtg-fetch-scope/estimate` 顯示該模式一晚要抓幾個 sensor，
   超過門檻顯示提醒但不擋存；模組規格見 docs/PRTG-SPEC.md §3a），
-  另有**資源守門**設定卡與「預覽受監看 sensor」／**「自動偵測並填入」**
-  （後者帶 `forceAuto=true` 忽略覆寫清單重跑偵測並寫回輸入框，偵測為空時不清空既有內容；
-  模組規格見 docs/PRTG-SPEC.md §12）；
-  守門卡**與擷取參數共用同一顆儲存鈕**——分兩顆時按其中一顆，另一張卡未存的改動會在重載時被覆蓋回舊值且沒有提示。
+  **資源守門不在這一頁**——它同時節制 NetIQ 取數與 PRTG 擷取兩路，設定在
+  「設定 > 資源守門」頁籤（§9.9b），此處只留一行指路連結。
   連線與擷取參數**各自一顆儲存鈕**，都走同一個專屬端點但**只送自己頁籤的欄位**
   ——端點是「有送才更新」，多送會把另一個頁籤的值一起覆寫。
   「測試連線」在連線頁籤，用表單目前值試連，**並帶上擷取參數頁籤當下的逾時與忽略 SSL**
@@ -2184,7 +2182,9 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
   （整包更新中的 PRTG 欄位因此一律可空、有送才更新）。
   `PrtgRetentionDays` 受「不可大於歷史資料保留天數」約束，前端先提示、後端仍驗一次，
   且該檢查以 **effective 值**（未送就取已儲存值）比較，否則只調小歷史保留天數時上限會失效。
-- **鏡像狀態**：device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、主機對應摘要、
+- **鏡像狀態**：**「同步結構與對應」的入口與上次結果**（docs/PRTG-SPEC.md §5a；
+  執行中每 3 秒輪詢，結束後自動重載本頁的鏡像統計；從未執行過顯示「尚未同步」）、
+  device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、主機對應摘要、
   **衝突清單（分頁，走 `core/ui.js` 既有的 `renderPagination`）**、人工對應清單與指派入口、
   **IP 排除清單**（見 docs/PRTG-SPEC.md §4b）。
   衝突清單每列標示型別徽章：**同 IP 多裝置**（要從幾台 device 中挑一台）與
@@ -2308,7 +2308,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
   由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
-  `disabled` 走既有那條帶件數的文案，`no-pending` 不需要說明（待補為 0 本身就講完了）。
+  `disabled`＝AI 服務未設定，直接顯示該原因、不帶件數，`no-pending` 不需要說明（待補為 0 本身就講完了）。
 - **待補件數快取 30 秒**：該查詢在實機要 7~15 秒，而狀態卡執行中每 3 秒輪詢一次
   ——不快取等於自己把資料庫打慢。AI 排程每輪收尾與整批重標時使快取失效。
   **查詢刻意在鎖外執行**：那把鎖同時保護 AI 排程的開始與結束，
@@ -2376,16 +2376,17 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
   **PRTG 進度軌**：PRTG 擷取與本機／NetIQ 並行，因此在 NetIQ、本機之外自成一組**互不覆蓋**的欄位
-  （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-sync`（結構同步，total=0 顯示不定進度）／
-  `prtg-values`（每日數值）／`prtg-triggered`（觸發式取數）／`prtg-done`（收尾清空，
-  放在 finally，成功失敗都送，比照 `netiq-done`）。分子逐 sensor 累加。
+  （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-wait-sync`（等手動同步結束，§5a）／
+  `prtg-sync`（結構同步的總稱，實際回報走三個 `prtg-sync-*` 子階段）／
+  `prtg-values`（每日數值）／`prtg-triggered`（觸發式取數）／`prtg-done`（放在 finally，
+  成功失敗都送，**帶取數主機數與目標 sensor 數；保留數字並標記完成、不清空**）。分子逐 sensor 累加。
   **`ReportProgress` 的最後一個分支是 catch-all（寫進 NetIQ 主組）**——PRTG 的 phase
   必須顯式分支，否則會蓋掉 NetIQ 的進度條（已有反例測試釘住）。
   **PRTG 歷史回填**另有自己的進度（獨立狀態物件與端點，不走 `SchedulerRunState`）：
   「第 X / N 天（日期）：sensor a / b」，天數層與 sensor 層兩級，換日時 sensor 進度重設。
   進度欄位加在 `PrtgBackfillRunState` 自己身上，**不動它繼承的 `PrtgProbeRunState`**
   ——環境探測沒有自然分母，刻意不加進度。
-  **AI 補寫進度**：AI 判讀已拆成獨立的 AI 分析排程（見 docs/DETECTION-SPEC.md「兩個獨立排程」），
+  **AI 補寫進度**：AI 判讀已與取數脫鉤（見 docs/DETECTION-SPEC.md「取數排程與 AI 服務」），
   取數執行不再含 AI 段——原 `netiq-ai`／`netiq-backpressure` 子進度軌與 AI 統計欄位
   （`AiQueued`/`AiCompleted`/`AiAbandoned`）已隨之移除。AI 補寫的進度改在排程作業頁的
   「AI 分析狀態」卡（`/api/admin/schedule/ai-status`：執行狀態、已處理／目標件數、
@@ -2480,8 +2481,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   pageSize/maxDays`；天數上限 `max(90, RunLogRetentionDays)`，`maxDays` 供前端「全部」鈕取值、
   不在前端寫死；分頁以最新一頁為第 1 頁、只計算當頁日期，errors/list 的天數上限同一套）、
   `GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`、`GET api/runs/list?days=`
-  （DevMonitor 或 Maintain）；排程（`api/admin/schedule`）：`GET/PUT options`（含 AI 排程三欄
-  `aiEnabled`/`aiWindows`/`aiConcurrency`）、`GET status`／`GET ai-status`（讀端 DevMonitor 或
+  （DevMonitor 或 Maintain）；排程（`api/admin/schedule`）：`GET/PUT options`（含 AI 兩欄
+  `aiWindows`/`aiConcurrency`——AI 沒有啟用開關，見 §9.10）、`GET status`／`GET ai-status`（讀端 DevMonitor 或
   Maintain；ai-status 含執行狀態、進度件數、**待補積壓總數**）、
   `GET run-preview?scope=all|segment|host`、`POST run`、`POST cancel`、
   `POST ai-run`（body `{forceRerun}`，強制重新分析走「停止→取得 gate→整批重標→重新開始」）、

@@ -1,3 +1,4 @@
+using NLog;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -65,8 +66,16 @@ public class PrtgStructureSyncConsole : IRunConsole
 /// </summary>
 public class PrtgStructureSyncService : IPrtgStructureSyncGate
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     /// <summary>等待手動同步結束時的輪詢間隔。同步本身以分鐘計，秒級輪詢已足夠精細。</summary>
     private static readonly TimeSpan WaitPollInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// 取數路徑等待手動同步的上限（暫定 90 分鐘）。實機的完整結構同步以數十分鐘計，
+    /// 這個值要明顯大於它，否則正常的長同步會被誤判成卡住。
+    /// </summary>
+    private static readonly TimeSpan MaxWait = TimeSpan.FromMinutes(90);
 
     private readonly ISystemSettingsStore _settings;
     private readonly StorageBackend _backend;
@@ -74,6 +83,10 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     private readonly SchedulerRunState _schedulerState;
     private readonly IHostStore _hosts;
     private readonly PrtgStructureSyncStatusStore _statusStore;
+    private readonly IHostApplicationLifetime? _lifetime;
+
+    /// <summary>本趟同步的取消來源；沒有執行中時為 null。</summary>
+    private CancellationTokenSource? _cts;
 
     public PrtgStructureSyncService(
         ISystemSettingsStore settings,
@@ -81,8 +94,15 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         PrtgStructureSyncRunState state,
         SchedulerRunState schedulerState,
         IHostStore hosts,
-        PrtgStructureSyncStatusStore statusStore)
+        PrtgStructureSyncStatusStore statusStore,
+        IHostApplicationLifetime? lifetime = null)
     {
+        _lifetime = lifetime;
+        // 站台關閉時中止同步：這條路徑會對 PRTG 做整棵樹的分頁查詢，
+        // 沒有取消來源的話，PRTG 端卡住（TCP 半開、不回應）就會讓狀態永遠停在「執行中」，
+        // 而夜間取數的 PRTG 路徑正在等它結束——當晚整條 PRTG 路徑跟著掛住，
+        // 且 TryStart 會因「已在執行中」而拒絕重啟，不重開站台就回不來。
+        _lifetime?.ApplicationStopping.Register(() => Cancel());
         _settings = settings;
         _backend = backend;
         _state = state;
@@ -94,16 +114,42 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// <summary>同步是否正在執行——取數執行的 PRTG 路徑用它決定要不要等。</summary>
     public bool IsRunning => _state.Snapshot().IsRunning;
 
+    /// <summary>對進行中的同步發出取消（站台關閉時自動呼叫）。沒有執行中時無作用。</summary>
+    public void Cancel()
+    {
+        try
+        {
+            _cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 剛好在收尾時撞上，忽略
+        }
+    }
+
     /// <summary>
     /// 等到手動同步結束為止。取消訊號穿透（讓整趟批次的取消語意一致）。
-    /// 這裡刻意不設等待上限：同步本身沒有無限迴圈的路徑，它的 finally 一定會把狀態收掉；
-    /// 加一個拍腦袋的上限只會在大型環境的正常長同步上誤觸發，反而讓兩邊同時寫鏡像。
+    ///
+    /// **有上限**：同步的每一步都是對外部 PRTG 的 HTTP 查詢，對方卡住（TCP 半開、不回應）
+    /// 時狀態會一直停在「執行中」。無上限地等，等於讓當晚的 PRTG 路徑跟著永遠掛住。
+    /// 逾時後不擲例外、直接返回，讓這一趟照常做自己的結構同步——
+    /// 最壞情況是兩邊都寫鏡像（寫入本身是冪等的 upsert），比整條路徑停擺好。
     /// </summary>
     public async Task WaitUntilIdleAsync(CancellationToken ct)
     {
+        var deadline = DateTime.UtcNow + MaxWait;
+
         while (IsRunning)
         {
             ct.ThrowIfCancellationRequested();
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                Log.Warn("等待手動「同步結構與對應」超過 {0} 分鐘仍未結束，本趟不再等待，改為自行同步結構。",
+                    MaxWait.TotalMinutes);
+                return;
+            }
+
             await Task.Delay(WaitPollInterval, ct);
         }
     }
@@ -197,6 +243,9 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         var fetchService = new PrtgFetchService(client, prtgStore, console);
         var concurrency = s.PrtgFetchConcurrency;
 
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+
         _ = Task.Run(async () =>
         {
             var success = false;
@@ -206,7 +255,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
                 {
                     var status = await PrtgStructureSyncRunner.RunAsync(
                         fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
-                        concurrency, console, CancellationToken.None,
+                        concurrency, console, cts.Token,
                         progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
 
                     _statusStore.Update(existing =>
@@ -230,6 +279,11 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
                     success = status.Success;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                console.WriteLine("同步已被取消（站台關閉或手動中止）。");
+                success = false;
+            }
             catch (Exception ex)
             {
                 console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
@@ -238,6 +292,8 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             finally
             {
                 _state.EndRun(success);
+                _cts = null;
+                cts.Dispose();
             }
         });
 

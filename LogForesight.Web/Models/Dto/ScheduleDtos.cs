@@ -13,9 +13,8 @@ public class ScheduleOptionsDto
     /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true，見 ScheduleOptions.LocalAnalysisEnabled。</summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
-    /// <summary>AI 分析排程是否啟用</summary>
 
-    /// <summary>AI 排程的執行窗口</summary>
+    /// <summary>AI 的背景補跑窗口（跟隨取數的即時分析不受此限制）</summary>
     public List<ScheduleWindow> AiWindows { get; set; } = new();
 
     /// <summary>AI 分析併發數</summary>
@@ -47,9 +46,8 @@ public class SaveScheduleOptionsRequest
     /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true。</summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
-    /// <summary>AI 分析排程是否啟用</summary>
 
-    /// <summary>AI 排程的執行窗口</summary>
+    /// <summary>AI 的背景補跑窗口（跟隨取數的即時分析不受此限制）</summary>
     public List<ScheduleWindow> AiWindows { get; set; } = new();
 
     /// <summary>AI 分析併發數（1~8）</summary>

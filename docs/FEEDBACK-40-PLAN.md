@@ -1,6 +1,6 @@
 # 回饋修正第 40 輪規劃
 
-> 狀態：規劃完成、待實作
+> 狀態：全案完成，待使用者實測
 > 基準：dev@e61aec9（3586 綠，略過 6）
 > 來源：使用者回饋六項（狀態卡高度／AI 與 PRTG 三路同步／資源守門搬設定頁／自動偵測直查 PRTG／
 > PRTG 主機對應時機／排程流程梳理）
@@ -268,6 +268,8 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| B2 對應重算服務＋主機主檔觸發 | Claude | 通過（**終檢才發現整段漏做**） | `HostAdminServiceTests`／`NetiqHostServiceTests` 新增五條觸發條件測試；突變重算呼叫→3 紅 | 規劃有寫、實作漏掉，而且我已先在 PRTG-SPEC §4 寫了「主機新增或改 IP 會重算」——**文件先說了謊**。靠自己做「定案逐條比對」抓到（兩個終檢代理都沒抓到這條，代理看 diff，看不到「規劃有寫、diff 沒有」）。補做時另發現：把原本必然執行的 `TryRemapToday` 改成可選相依後，既有的「重算確實發生」測試因為沒傳入實作而靜默失效——可選相依的老坑又踩一次 |
+| 終檢（兩個獨立 Explore＋自審） | Claude | 完成 | 全套 3661 綠（+25）；新增 `JsModuleImportTests` 讓「漏 import」變成建置時就紅 | **最嚴重的是我自己造成的**：抽 `prtg-guard.js` 時多切了三行，且未帶走它依賴的 import——模組載入即擲 ReferenceError，**設定頁與 PRTG 維護頁兩頁的 JS 全都不會執行**。`node --check` 只驗語法、UI 測試只比對字串，兩者都抓不到。已修並補上能抓到同型問題的測試。其餘處置見下方「終檢處置」 |
 | F 資源守門搬設定頁 | Claude（agy 五小時額度歸零） | 通過 | 全套 3636 綠（+1）；守門欄位在設定頁、維護頁零殘留；`prtg-admin.js` 中 `prtg-guard` 零命中（欄位實作只有一份）；BOM 與 NUL 無新增 | 前端沒有把守門那 100 行複製到設定頁，而是抽成獨立模組 `prtg-guard.js`（`loadGuardFields`／`collectGuardPayload`／`bindGuardPreview` 三個出口），設定頁 import 使用，維護頁整段移除。**有四條舊測試守著「守門在 PRTG 維護頁」的舊契約**，本輪推翻後全部改為指向新位置（含「記憶體標籤要有可用二字」這條方向性守門，不可因搬遷而遺失）。全套跑到一條 `SentinelRestDirectoryClientTests` 紅，單獨重跑 47 綠、本輪未改該檔，確認是 BACKLOG 已記載的並行負載不穩定測試（清單首位），非本輪造成 |
 | A 狀態卡版面重定義 | Claude（agy 五小時額度歸零） | 通過 | 全套 3635 綠（+2）；瀏覽器實測（載入真正的 site.css）1400px 寬三卡各 377px 等高、三個按鈕列同在 y=341；800px 寬單欄堆疊不重疊；BOM 與 NUL 皆無新增 | 兩件事與規劃不同：(1) 規劃寫 PRTG 卡要有「最新訊息」列，實作時發現狀態 API 的 `latestMessage` 是整趟共用的最後一行、取數卡已在顯示，再放一次只是重複，且沒有分路訊息可填——**移除該元素**並在頁面留註解說明改由執行詳情承擔（每行有 `[PRTG]` 前綴）；(2) 卡片 id 由 `prtg-backfill-section` 改為 `prtg-status-card`，有**兩個**測試檔引用舊 id，第二個是跑全套才發現的。等高不寫死 `min-height`，改由 grid `stretch` 加卡片 flex column 與 `lf-run-actions` 貼底達成，內容增減不必回頭調數字 |
 | E AI 跟隨取數、移除 `AiEnabled` | Claude（agy 五小時額度歸零） | 通過 | 全套 3633 綠（+4）；`aiEnabled`／`AiEnabled` 在程式碼與前端零命中；BOM 三個原本就有 BOM 的檔維持原樣、其餘無 BOM、無 NUL；突變即時觸發訂閱→3 紅 | 移除類改動的兩個漏網點都被抓到：(1) `runs.js` 有**兩處**消費 `aiEnabled`，第一輪只改了狀態卡那處，排程設定表單載入那處是靠事後 grep 清零才發現；(2) `RunsPageUiTests` 有一條守住舊契約的測試（斷言畫面含「AI 分析排程未啟用」），本輪推翻該行為後它變紅——改寫成守住新契約（開關與文案必須整組消失、閒置說明仍在）。即時觸發刻意不看 AI 執行窗口：跟隨取數是「取數跑到哪、判讀跟到哪」，窗口只管背景消化積壓，否則手動執行一趟還要等窗口開了 AI 才動 |
@@ -277,6 +279,43 @@
 | B1-step2 DNS 解析器＋對應與守門改用 | agy（正式碼）＋Claude（測試） | 通過 | 全套 3614 綠（+13）；Core 內 DNS 只剩解析器一處；守門殘留方法 0、名稱退路仍在；BOM 八檔與 dev 一致、無 NUL；突變解析器使用點與快取寫入→3 紅 | agy 在改完正式碼後被自己的 subagent rate limit 截斷（exit 0 但測試檔一處未改、新測試檔未建、驗收未跑，30 個呼叫點編譯不過）。查額度：Claude/GPT 組五小時窗口 0%、週 48%，依使用者指示改 Claude 自做測試部分。正式碼品質經檢視符合規格（含保留 step1 補的名稱退路），予以保留 |
 | B1-step1 純語法正規化層 | agy claude-opus-4-6-thinking | 通過（含 Claude 小修） | 全套 3601 綠（基線 3586，+15）；BOM 與 dev 一致、無 NUL；突變 port 拆解→2 紅、突變守門名稱 fallback→1 紅 | agy 交出時有 1 紅並宣稱「B2 再修」。實為**規格漏洞**：`NormalizeIp` 語意收緊打斷了守門「device 與 Sentinel 都填同一個 DNS 名稱」的字面比對能力，而 DNS 解不到的內網名稱在 B2 也救不回。Claude 小修：`PrtgAddress` 抽出 `HostToken`，守門 `FindDevicesForHost` 在前兩段都落空時加一段名稱字面比對。**契約補充**：守門的比對鍵優先序為「IP → DNS 解析出的 IP → 主機名稱字面」；對應（`MapForDate`）不走第三段（主機側只有 IP，名稱比對無意義），維持「解析不到就略過（無 IP）」 |
 
-## 5. 體檢交接
+## 5. 終檢處置
 
-（實作完成後填：測試總數、全綠與否、與基線 3586 的差）
+兩個獨立 Explore（程式碼／文件）＋Claude 自審的定案逐條比對，合計處理：
+
+**高嚴重度（已修）**
+- `prtg-guard.js` 抽出時多切三行且漏帶 import → 兩頁 JS 全死。補 `JsModuleImportTests` 釘住。
+- `DeletePrtgIpExclude` 端點先正規化再擋 null，讓 store 的原字串退路永遠走不到——
+  B1 的破壞性判準反例其實不成立（store 層測試綠著、功能是壞的）。改傳原字串，並補端點層測試。
+- 批次 B2 整段漏做（見執行紀錄）。
+- WEB-SPEC 四處與程式碼矛盾：設定頁頁籤數、§9.9e 守門卡已搬走、排程 API 的 `aiEnabled`、
+  PRTG phase 一覽與「收尾清空」。
+
+**中嚴重度（已修）**
+- `DashboardController` 的 `null == null` 誤判：主機 IP 填 DNS 名稱時，會與舊的非 IP 排除列誤判成命中。
+- 同步工作沒有取消來源，PRTG 端卡住時狀態永遠停在執行中，而夜間取數的 PRTG 路徑正在等它
+  → 當晚整條 PRTG 路徑掛住且無法重啟。加上站台關閉取消，等待端加 90 分鐘上限（逾時後自行同步，
+  鏡像寫入是冪等 upsert，比整條路徑停擺好）。
+- `PrtgLiveGuardSource` 零測試覆蓋（PLAN D 驗收有列）→ 補七條，含「PRTG 忽略分頁位移」的無窮迴圈保險絲。
+- `PrtgStructureSyncService` 零測試覆蓋（PLAN C 驗收有列）→ 補八條（前置檢查、互斥、持久化、取消）。
+- 守門 preview 的 `source` 新值前端沒有文案。
+- `Runs.cshtml` 誤用 Markdown 星號，畫面會直接印出 `**`。
+
+**刻意不改（已記錄理由）**
+- device 分組鍵用解析層而非 PLAN 契約寫的純語法層：填 DNS 名稱的 device 在純語法層一律回 null，
+  用純語法當鍵它們根本進不了分組、也就永遠對不到主機。**推翻 PLAN 契約，改文件**（PRTG-SPEC §4）。
+- 即時觸發的 trigger 固定為 `fetch-followup`、不看窗口：這是刻意的（見批次 E 執行紀錄）。
+- 同步被拒回 400 而非 409：既有 `DomainException.Validation` 的一致做法，前端只看訊息。
+- `PrtgLiveGuardSource` 同步阻塞 async：介面是同步簽章，改成 async 要動判定邏輯的簽章，
+  收益不足以在本輪動它。已記 BACKLOG 方向。
+- `TryStart` 的 TOCTOU 窗口（檢查與 `TryBegin` 之間）：窗口極窄，且兩邊寫入皆冪等。
+
+## 6. 體檢交接
+
+- **全套測試：通過 3661、略過 6、總計 3667，全綠。** 基線 3586 → 3661，淨增 75。
+- 略過的 6 條是規模壓測（`LF_SCALE_BENCH=1` 才跑），與本輪無關。
+- 全套跑動期間曾見一條 `SentinelRestDirectoryClientTests` 紅、單獨重跑 47 綠；本輪未改該檔，
+  確認是 BACKLOG 已記載的並行負載不穩定測試（清單首位）。
+- CLAUDE.md 測試基線已更新為 3661。
+- **未經實機驗證的項目**：`PrtgLiveGuardSource` 對真實 PRTG 的 `table.json` 回應形狀
+  （欄位名、`status` 的暫停字樣、分頁行為）只有假 HTTP 覆蓋；等待上限 90 分鐘是暫定值。

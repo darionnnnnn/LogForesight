@@ -48,6 +48,13 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
 {
     private const int PageSize = 500;
 
+    /// <summary>
+    /// 分頁上限（保險絲）。終止條件是「這一頁不滿 PageSize」，但那假設 PRTG 會遵守 start 位移；
+    /// 權限受限的 token 或某些版本可能每次都回滿一頁相同內容，迴圈就永遠不會結束。
+    /// 50 頁 × 500＝25000 筆，遠超過自動偵測需要的量。
+    /// </summary>
+    private const int MaxPages = 50;
+
     private readonly PrtgClient _client;
     private readonly CancellationToken _ct;
 
@@ -87,8 +94,9 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
     {
         var results = new List<T>();
         var offset = 0;
+        var pages = 0;
 
-        while (true)
+        while (pages++ < MaxPages)
         {
             _ct.ThrowIfCancellationRequested();
 

@@ -46,7 +46,9 @@ public static class RunPhases
     /// </summary>
     public const string PrtgWaitSync = "prtg-wait-sync";
 
-    // ── 完工訊號（done／total 恆為 0）────────────────────────
+    // ── 完工訊號 ────────────────────────
+    // local-done／netiq-done 的 done／total 恆為 0；prtg-done 例外，它帶取數主機數與目標 sensor 數
+    // （畫面要說得出「已完成：主機 N 台／sensor M 個」，見 docs/WEB-SPEC.md §9.10）。
 
     /// <summary>本機路徑收尾</summary>
     public const string LocalDone = "local-done";
@@ -54,7 +56,11 @@ public static class RunPhases
     /// <summary>NetIQ 路徑收尾（finally，成功／失敗／取消皆送）</summary>
     public const string NetiqDone = "netiq-done";
 
-    /// <summary>PRTG 路徑收尾（finally，成功／失敗皆送）</summary>
+    /// <summary>
+    /// PRTG 路徑收尾（finally，成功／失敗皆送）。
+    /// **帶數字**：done＝實際取數的主機數、total＝目標 sensor 數；
+    /// 沒有可回報的量（停用、初始化失敗、取消）時為 0，此時不覆蓋軌上已累積的值。
+    /// </summary>
     public const string PrtgDone = "prtg-done";
 
     // ── 狀態訊號（done／total 恆為 0）────────────────────────

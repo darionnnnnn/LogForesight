@@ -19,6 +19,20 @@ public class HostAdminServiceTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
+    /// <summary>記錄「重算今天的 PRTG 對應」被叫了幾次，供斷言觸發條件（docs/PRTG-SPEC.md §4）。</summary>
+    private sealed class CountingMapRefresher : IPrtgHostMapRefresher
+    {
+        public int Calls { get; private set; }
+
+        public string? TryRefreshToday()
+        {
+            Calls++;
+            return null;
+        }
+    }
+
+    private readonly CountingMapRefresher _mapRefresher = new();
+
     private HostAdminService Create() => new(
         _hosts,
         _groups,
@@ -27,7 +41,8 @@ public class HostAdminServiceTests : IDisposable
         new FakeNetiqHostServiceForAdmin(),
         _audit,
         new UserDisplayNameService(new FakeSystemSettingsStore()),
-        new EfPrtgStore(_fx.NewContext));
+        new EfPrtgStore(_fx.NewContext),
+        _mapRefresher);
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -37,7 +52,8 @@ public class HostAdminServiceTests : IDisposable
         new FakeNetiqHostServiceForAdmin(),
         _audit,
         new UserDisplayNameService(new FakeSystemSettingsStore()),
-        prtgStore);
+        prtgStore,
+        _mapRefresher);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -498,6 +514,138 @@ public class HostAdminServiceTests : IDisposable
         Assert.Empty(result.Items);
         Assert.Equal(0, result.Total);
     }
-}
 
-// FakeNetiqHostServiceForAdmin／FakeNetiqServerCatalog 已搬到 TestDoubles\NetiqFakes.cs。
+    // ── PRTG 對應的重算觸發（docs/PRTG-SPEC.md §4）──────────────────────────
+    //
+    // 對應的另一半來自主機主檔：IP 或啟用狀態一改，今天的對應就過期了。
+    // 不重算的話要等到隔天夜間批次才對得上，而畫面上完全沒有跡象。
+
+    [Fact]
+    public void 新增有IP的主機會重算今日對應()
+    {
+        var service = Create();
+
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "new-host",
+            IpAddress = "10.20.30.40",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+
+        Assert.Equal(1, _mapRefresher.Calls);
+    }
+
+    [Fact]
+    public void 只改角色描述不重算()
+    {
+        var service = Create();
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "desc-host",
+            IpAddress = "10.20.30.41",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+        var callsAfterCreate = _mapRefresher.Calls;
+
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "desc-host",
+            IpAddress = "10.20.30.41",
+            NetiqServer = "SENTINEL-A",
+            RoleDesc = "改了描述",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+
+        Assert.Equal(callsAfterCreate, _mapRefresher.Calls);
+    }
+
+    [Fact]
+    public void 改IP會重算今日對應()
+    {
+        var service = Create();
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "ip-host",
+            IpAddress = "10.20.30.42",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+        var callsAfterCreate = _mapRefresher.Calls;
+
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "ip-host",
+            IpAddress = "10.20.30.99",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+
+        Assert.Equal(callsAfterCreate + 1, _mapRefresher.Calls);
+    }
+
+    [Fact]
+    public void 停用主機會重算今日對應()
+    {
+        // 已停用的主機不參與對應，停用後那筆對應要跟著消失
+        var service = Create();
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "off-host",
+            IpAddress = "10.20.30.43",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = true
+        });
+        var callsAfterCreate = _mapRefresher.Calls;
+
+        service.SaveHost(new SaveHostRequest
+        {
+            HostName = "off-host",
+            IpAddress = "10.20.30.43",
+            NetiqServer = "SENTINEL-A",
+            Os = "windows",
+            Tier = "standard",
+            Active = false
+        });
+
+        Assert.Equal(callsAfterCreate + 1, _mapRefresher.Calls);
+    }
+
+    [Fact]
+    public void 合併與解除合併都會重算今日對應()
+    {
+        // 已合併（有墓碑）的主機不參與對應，解除後又恢復資格——兩個方向都要重算
+        var service = Create();
+        var a = service.SaveHost(new SaveHostRequest
+        {
+            HostName = "merge-a", IpAddress = "10.30.1.1", NetiqServer = "SENTINEL-A",
+            Os = "windows", Tier = "standard", Active = true
+        });
+        var b = service.SaveHost(new SaveHostRequest
+        {
+            HostName = "merge-b", IpAddress = "10.30.1.2", NetiqServer = "SENTINEL-A",
+            Os = "windows", Tier = "standard", Active = true
+        });
+
+        var beforeMerge = _mapRefresher.Calls;
+        service.MergeHost(a.HostId, b.HostId);
+        Assert.Equal(beforeMerge + 1, _mapRefresher.Calls);
+
+        var beforeUnmerge = _mapRefresher.Calls;
+        service.UnmergeHost(a.HostId);
+        Assert.Equal(beforeUnmerge + 1, _mapRefresher.Calls);
+    }
+}

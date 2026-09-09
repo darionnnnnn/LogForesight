@@ -29,11 +29,17 @@ public class PrtgHostMapEndpointTests : IDisposable
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}" },
             _dir);
 
+        // 重算今日對應是這些端點的既定副作用（docs/PRTG-SPEC.md §4）——
+        // 不傳 refresher 的話那段會靜默跳過，「重算確實發生」那條測試就量不到東西。
+        var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settingsStore.Update(x => x.PrtgEnabled = true);
+
         _controller = new SettingsController(
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
-            backend: _backend);
+            backend: _backend,
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -305,7 +311,8 @@ public class PrtgHostMapEndpointTests : IDisposable
             new FakeNetiqHostServiceForAdmin(),
             _audit,
             new UserDisplayNameService(new FakeSystemSettingsStore()),
-            _backend.PrtgStore());
+            _backend.PrtgStore(),
+            new PrtgHostMapRefresher(new FakeSystemSettingsStore(), _backend));
 
         var list = service.GetAllActiveHostOptions();
 
@@ -416,5 +423,42 @@ public class PrtgHostMapEndpointTests : IDisposable
         // 三台裡兩台人工對應，真正被略過的只有 dev-c 一台
         Assert.Equal(1, a.SameIpSkippedCount);
         Assert.Equal(1, bRow.SameIpSkippedCount);
+    }
+
+    /// <summary>
+    /// 排除清單的刪除要走**真實的 API 動線**（docs/PRTG-SPEC.md §4b）。
+    /// store 層的相容退路測試會綠，但使用者按的是這顆端點——正規化語意收緊後，
+    /// 端點若先正規化再擋 null，舊的非 IP 排除列就永遠刪不掉，而 store 測試看不出來。
+    /// </summary>
+    [Fact]
+    public void 刪除端點_非IP字串不會被當成驗證錯誤擋下()
+    {
+        // 正規化語意收緊為「只有合法 IP 才回值」之後，舊資料裡的非 IP 排除列
+        // （早期 Upsert 不驗證內容時存進去的）正規化會回 null。端點若先正規化再擋 null，
+        // 那些列就永遠刪不掉，而 store 層的相容測試照樣全綠——這條守的是端點這一段。
+        // 現行寫入路徑已不接受非 IP，所以這裡驗的是「請求能走到 store」而非刪除筆數。
+        var res = _controller.DeletePrtgIpExclude("prtg-old-name");
+
+        Assert.True(res.Success);
+        Assert.False(res.Data!.Deleted);   // 這個測試庫裡沒有那筆，重點是沒有擲驗證例外
+    }
+
+    [Fact]
+    public void 刪除端點_空白仍然被擋下()
+    {
+        Assert.Throws<DomainException>(() => _controller.DeletePrtgIpExclude("   "));
+    }
+
+    /// <summary>合法 IP 帶 port 也要刪得掉（清單存的是正規化後的值）。</summary>
+    [Fact]
+    public void 刪除端點_帶port的IP可以刪掉已正規化的列()
+    {
+        var store = _backend.PrtgStore();
+        store.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.8.8.9", CreatedBy = "admin", CreatedAt = DateTime.Now });
+
+        var res = _controller.DeletePrtgIpExclude("10.8.8.9:8080");
+
+        Assert.True(res.Data!.Deleted);
+        Assert.DoesNotContain(store.GetIpExcludes(), e => e.Ip == "10.8.8.9");
     }
 }

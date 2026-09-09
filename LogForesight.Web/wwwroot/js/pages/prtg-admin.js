@@ -378,6 +378,11 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
 }
 
+// ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
+
+let conflictPage = 1;
+let conflictPageSize = loadPageSize('prtg-conflicts');
+
 async function refreshConflicts(page = conflictPage) {
     conflictPage = page;
     try {

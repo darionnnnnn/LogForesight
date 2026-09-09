@@ -28,6 +28,7 @@ public class SettingsController : ControllerBase
     private readonly PrtgProbeService? _prtgProbe;
     private readonly PrtgBackfillService? _prtgBackfill;
     private readonly PrtgStructureSyncService? _prtgStructureSync;
+    private readonly IPrtgHostMapRefresher? _mapRefresher;
     private readonly StorageBackend? _backend;
     private readonly IHostStore? _hosts;
 
@@ -38,6 +39,7 @@ public class SettingsController : ControllerBase
         PrtgProbeService? prtgProbe = null,
         PrtgBackfillService? prtgBackfill = null,
         PrtgStructureSyncService? prtgStructureSync = null,
+        IPrtgHostMapRefresher? mapRefresher = null,
         StorageBackend? backend = null,
         IHostStore? hosts = null)
     {
@@ -48,6 +50,7 @@ public class SettingsController : ControllerBase
         _prtgProbe = prtgProbe;
         _prtgBackfill = prtgBackfill;
         _prtgStructureSync = prtgStructureSync;
+        _mapRefresher = mapRefresher;
         _backend = backend;
     }
 
@@ -372,7 +375,7 @@ public class SettingsController : ControllerBase
         }
         catch (Exception ex)
         {
-            liveClient?.Dispose();
+            // 釋放交給下面的 finally，這裡不重複做
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
             {
                 Success = false,
@@ -821,7 +824,10 @@ public class SettingsController : ControllerBase
 
         var normIp = PrtgHostMapper.NormalizeIp(request?.Ip);
         if (normIp == null)
-            throw DomainException.Validation("IP 位址不能為空白。");
+            throw DomainException.Validation(
+                string.IsNullOrWhiteSpace(request?.Ip)
+                    ? "IP 位址不能為空白。"
+                    : $"「{request!.Ip.Trim()}」不是有效的 IP 位址。");
 
         var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
         if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
@@ -868,19 +874,23 @@ public class SettingsController : ControllerBase
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
-        var normIp = PrtgHostMapper.NormalizeIp(ip);
-        if (normIp == null)
-            throw DomainException.Validation("IP 位址不能為空白。");
+        // **刪除要把原字串交給 store**：正規化語意收緊為「只有合法 IP 才回值」之後，
+        // 舊資料裡非 IP 的排除列（早期不驗證內容時存進去的）正規化會回 null。
+        // 在這裡先正規化再擋 null，等於讓那些列永遠刪不掉——store 的原字串退路根本走不到。
+        var raw = ip?.Trim();
+        if (string.IsNullOrEmpty(raw))
+            throw DomainException.Validation("要刪除的排除項目不能為空白。");
 
         var store = _backend.PrtgStore();
-        var deleted = store.DeleteIpExclude(normIp);
+        var deleted = store.DeleteIpExclude(raw);
 
+        // 稽核記使用者實際送出的值：正規化後的值可能與畫面上那筆不同（甚至是 null）
         _audit.Record(
             action: AuditActions.PrtgIpExcludeDelete, // prtg_ip_exclude_delete
-            summary: $"刪除 PRTG 排除 IP {normIp}",
+            summary: $"刪除 PRTG 排除 IP {raw}",
             targetKind: "prtg_ip_exclude",
-            targetId: normIp,
-            detail: new { Ip = normIp, Deleted = deleted });
+            targetId: raw,
+            detail: new { Ip = raw, Deleted = deleted });
 
         var remapWarning = TryRemapToday();
 
@@ -891,23 +901,11 @@ public class SettingsController : ControllerBase
         });
     }
 
-    /// <summary>同步重算今天的 PRTG 主機對應；失敗時記錄 WARN 並回傳警告文字，不擲例外</summary>
-    private string? TryRemapToday()
-    {
-        if (_backend == null) return null;
-        try
-        {
-            var hostStore = new HostStore(_backend.Blob("hosts"));
-            var mapper = new PrtgHostMapper(_backend.PrtgStore(), hostStore, new RemapConsole(), new PrtgAddressResolver());
-            mapper.MapForDate(DateTime.Today);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(ex, "重算今日 PRTG 對應失敗");
-            return $"重算今日 PRTG 對應失敗: {ex.Message}";
-        }
-    }
+    /// <summary>
+    /// 重算今天的對應（docs/PRTG-SPEC.md §4）。實作在 <see cref="PrtgHostMapRefresher"/>，
+    /// 與主機主檔變更那條觸發路徑共用同一份——兩處各寫一份的話，其中一邊改了規則另一邊不會跟上。
+    /// </summary>
+    private string? TryRemapToday() => _mapRefresher?.TryRefreshToday();
 
     private sealed class ResourceGuardWarningConsole : IRunConsole
     {
@@ -923,16 +921,6 @@ public class SettingsController : ControllerBase
         }
     }
 
-    private sealed class RemapConsole : IRunConsole
-    {
-        public void WriteLine(string message = "")
-        {
-            if (!string.IsNullOrEmpty(message))
-            {
-                Log.Debug(message);
-            }
-        }
-    }
 
     // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
 

@@ -158,7 +158,7 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 
 **`ai_pending`（`lf_daily_records` 真實欄位）**：統計已寫入、等待 AI 分析排程撿取的第三態
 （與既有的 `ai_analyzed=false`＝「AI 判定不需要或已失敗」是不同語意，見
-docs/DETECTION-SPEC.md「兩個獨立排程」一節）。**讀取端一律以欄位為事實來源**——
+docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節）。**讀取端一律以欄位為事實來源**——
 ContentJson 內序列化的同名值僅為殘留，強制重新分析是整批 UPDATE 欄位、不重寫 ContentJson，
 兩者短暫分岔是設計內行為，不得把 JSON 值當判定來源。`Append` 寫入、`AttachAiResult`
 完成時清 false；複合索引 `IX_lf_daily_records_ai_pending_record_date (ai_pending, record_date)`
