@@ -1355,5 +1355,42 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.EarliestChangedAt);
         Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.LatestChangedAt);
     }
-}
 
+    [Fact]
+    public void DeleteIpExclude_舊的非IP排除列_以原始值精準刪除()
+    {
+        var store = CreateStore();
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgIpExcludes.Add(new PrtgIpExcludeRow
+            {
+                Ip = "prtg-old-name",
+                CreatedBy = "admin",
+                CreatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+        }
+
+        var deleted = store.DeleteIpExclude("prtg-old-name");
+        Assert.Equal(1, deleted);
+    }
+
+    [Fact]
+    public void DeleteIpExclude_帶port的IP_能刪到已正規化的排除列()
+    {
+        var store = CreateStore();
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgIpExcludes.Add(new PrtgIpExcludeRow
+            {
+                Ip = "10.9.9.9",
+                CreatedBy = "admin",
+                CreatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+        }
+
+        var deleted = store.DeleteIpExclude("10.9.9.9:8080");
+        Assert.Equal(1, deleted);
+    }
+}

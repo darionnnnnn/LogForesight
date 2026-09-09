@@ -273,6 +273,25 @@ public static class PrtgResourceGuardTargets
             }
         }
 
+        // 最後退路：主機名稱字面比對。device 的 Ip 欄位也可能填 DNS 名稱，
+        // 而內網名稱未必進得了 DNS（解析失敗時上面兩段都落空）——兩邊填同一個名稱時仍應命中。
+        // 只在前兩段都對不到時才走，且比對前先去掉 scheme 與 port。
+        if (matched.Count == 0)
+        {
+            var hostToken = PrtgAddress.HostToken(host);
+            if (hostToken != null)
+            {
+                foreach (var dev in allDevices)
+                {
+                    var devToken = PrtgAddress.HostToken(dev.Ip);
+                    if (devToken != null && string.Equals(devToken, hostToken, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched.Add(dev);
+                    }
+                }
+            }
+        }
+
         return matched;
     }
 

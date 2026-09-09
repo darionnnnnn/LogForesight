@@ -4,7 +4,7 @@
 > 基準：dev@e61aec9（3586 綠，略過 6）
 > 來源：使用者回饋六項（狀態卡高度／AI 與 PRTG 三路同步／資源守門搬設定頁／自動偵測直查 PRTG／
 > PRTG 主機對應時機／排程流程梳理）
-> 實作方式：整輪 Claude 自做，不委派；仍按批次→階段拆分、逐階段驗收、每批一個 commit。
+> 實作方式：委派 agy（`claude-opus-4-6-thinking`），Claude 規劃與驗收；額度用盡改 Claude 自做（切換點記在執行紀錄，不換回）。
 > 分支：自 `dev` 開 `feature/feedback-40`。
 
 ## 0. 核對結果摘要
@@ -53,26 +53,50 @@
 
 ### B1 PRTG 位址正規化（對應與守門共用）
 
-**現況**：`PrtgHostMapper.NormalizeIp` 只 trim＋小寫；守門 `PrtgResourceGuardTargets` 對 Sentinel 位址做 DNS 解析，但對 device 側的 `Ip` 直接比對。
+**現況**：`PrtgHostMapper.NormalizeIp` 只 trim＋小寫，**有 20 個呼叫點**（Core 對應、`EfPrtgStore` 的 IP 排除鍵、`SettingsController` 六處、`DashboardController`）；守門 `PrtgResourceGuardTargets` 對 Sentinel 位址做 DNS 解析（`FindDevicesForHost`／`ResolveHostAddressesWithTimeout`），但對 device 側的 `Ip` 直接字串比對。
+
+**分層（本輪關鍵設計判斷）**：正規化拆成**兩層**，因為 `NormalizeIp` 同時被當成「IP 排除清單的儲存鍵」與「device 分組鍵」——把 DNS 併進單一入口會讓每次存取排除清單、每個 device 分組都做一次 DNS 查詢，且分組鍵會隨 DNS 結果變動。
 
 **契約**
-- 新增 Core 共用的位址正規化（單一入口，兩個消費點都改用它）：輸入 PRTG device 的 `host` 原始字串，輸出「可比對的 IPv4 字串或 null」。
-  - 去前後空白、去 scheme（`http://`、`https://`）、去尾端 port（`:數字`；IPv6 中括號形式 `[::1]:port` 也要能拆），去尾端路徑。
-  - 剩餘字串是合法 IP → 回正規化形式（`IPAddress.Parse` 後 `ToString()`，消除前導零與大小寫差異）。
-  - 不是 IP → DNS 解析（逾時 2 秒、暫定），取第一個 IPv4；無 IPv4 或失敗 → null。
-  - 解析結果**同一趟內快取**（同一名稱只解析一次），解析並行上限 8（暫定）；快取生命週期由呼叫端持有（對應一趟一份、守門解析一次一份），不做跨趟靜態快取。
-- `lf_prtg_devices.Ip` 欄位**保持存原始字串**，正規化只在比對時做——鏡像必須是 PRTG 現況，不可洗資料。
-- 對應（`MapForDate`）：device 正規化為 null → 計入 `skipped_no_ip`（與 PRTG-SPEC §4 表述一致）；主機側 `WebHost.IpAddress` 也走同一個正規化（它已是驗證過的 IP，正規化只消差異）。
-- 守門（`Resolve`）：device 側改用同一個正規化再與位址比對；Sentinel `BaseUrl` 與 `PrtgUrl` 側（使用者環境同樣是「IP＋port」或 DNS 名稱）也走**同一個正規化**——去 scheme／port 後是 IP 就直接比、是名稱就 DNS 解析成 IP 再比。既有守門內的 DNS 程式碼併入新入口，不得兩份。
-- 比對一律在「雙方都正規化成 IPv4 字串」之後進行；任一側正規化為 null 即視為對不到（訊息要說明是哪一側解析失敗）。
+
+*第一層：純語法正規化（無 IO，取代 `NormalizeIp` 的實作）*
+- 新增 Core 的位址正規化工具（純靜態、無 IO、無快取），輸入任意位址字串，輸出「正規化 IPv4／IPv6 字串或 null」：
+  - 去前後空白；去 scheme（`http://`、`https://`）；去尾端路徑與 query；去尾端 port（`host:數字`；IPv6 中括號形式 `[::1]:8080` 也要能拆，裸 IPv6 不得被誤拆）。
+  - 剩餘字串是合法 IP → `IPAddress.Parse(...).ToString()`（消除前導零與大小寫差異）。
+  - 不是 IP → **回 null**（不做 DNS）。
+- `PrtgHostMapper.NormalizeIp` 改為委派給它，**簽章與可見性不變**，20 個呼叫點不動。
+- **破壞性判準與反例**：語意從「任何非空字串都回值」收緊為「只有 IP 回值」。受影響的是 IP 排除清單——舊資料可能存了非 IP 字串（`UpsertIpExclude` 原本不驗證），收緊後 `DeleteIpExclude` 會回 0、使用者刪不掉自己存過的列。
+  因此 `DeleteIpExclude` 改為**先以原始字串（trim 後）精準比對刪除，再以正規化值刪除**，兩者任一命中即算成功；`UpsertIpExclude` 維持「正規化為 null 就不寫入」。合法值長得像它的反例：`"10.1.2.3"`（正規化成功，走新路徑）與 `"prtg-old-name"`（正規化 null，走原始字串路徑）都必須可刪。
+
+*第二層：位址解析器（有 IO，只給對應與守門用）*
+- 新增可注入的解析介面（單一方法：原始位址字串 → 正規化 IPv4 或 null），正式實作為：
+  1. 先跑第一層；成功直接回（**不做 DNS**）。
+  2. 失敗時取「去 scheme／port／路徑後的主機名稱 token」做 DNS 解析（逾時 2 秒，暫定），取第一個 IPv4，再跑一次第一層。
+  3. 無 IPv4、解析失敗或逾時 → null，不擲例外。
+- **實例內快取**：同一名稱在同一個解析器實例內只解析一次（含失敗結果，避免逾時重複付 2 秒）。**不得使用 static 快取**——跨趟快取會讓 DNS 變更在站台重啟前不生效。
+- 生命週期：`MapForDate` 一趟建一個、守門 `Resolve` 一次建一個。
+- 守門既有的 `ResolveHostAddressesWithTimeout` 與 `FindDevicesForHost` 內的 DNS 邏輯**移除並改用解析器**，不得留兩份 DNS 程式碼。
+- **守門的比對鍵有三段優先序**（B1-step1 補充）：IP → DNS 解析出的 IP → **主機名稱字面**。
+  第三段是既有能力，不可移除：device 的 `Ip` 欄位也可能填 DNS 名稱，而內網名稱未必進得了 DNS，
+  兩邊填同一個名稱時仍應命中。對應（`MapForDate`）**不走第三段**——主機側只有 IP，名稱比對無意義，
+  維持「解析不到就略過（無 IP）」。
+
+*消費端行為*
+- `lf_prtg_devices.Ip` 欄位**保持存 PRTG 原始字串**，正規化只在比對時做——鏡像必須是 PRTG 現況，不可洗資料。
+- 對應（`MapForDate`）：device 側與主機側（`WebHost.IpAddress`）都改用解析器取得比對值；device 解析為 null → 計入 `skipped_no_ip`；**排除清單與 device 分組鍵仍用第一層**（純語法），避免分組鍵隨 DNS 變動。
+- 守門（`Resolve`）：device 側、Sentinel `BaseUrl` 側、`PrtgUrl` 側三者都走解析器（使用者環境是「IP＋port」或 DNS 名稱）。既有的 corehealth fallback 與 `Uri.TryCreate` 取 host 的流程保留。
+- 比對一律在「雙方都解析成 IPv4 字串」之後進行；任一側為 null 即視為對不到，訊息要說明是哪一側解析失敗。
 
 **不能破壞**：既有一對一／衝突／人工對應／排除的判定順序與結果；`Note` 長度截斷。
 
 **驗收**
-- 單元測試：`"10.1.2.3:8080"`→`10.1.2.3`；`"https://10.1.2.3:443/"`→`10.1.2.3`；`"010.001.002.003"`→`10.1.2.3`；`"[fe80::1]:80"`→ null（無 IPv4）；空字串→ null；DNS 名稱用可注入的解析器測（解析成功→IP、失敗→null、同名只解析一次）。
+- 第一層單元測試：`"10.1.2.3:8080"`→`10.1.2.3`；`"https://10.1.2.3:443/"`→`10.1.2.3`；`" 010.001.002.003 "`→`10.1.2.3`；`"[fe80::1]:80"`→`fe80::1`；`"::1"`（裸 IPv6，不得被誤拆成 `:` + port）→`::1`；`"prtg.local"`→null；`""`／null→null。
+- 第二層單元測試（假解析器）：IP 直接回不呼叫 DNS（斷言解析器呼叫次數 0）；名稱解析成功回 IPv4；解析失敗回 null；**同一名稱查兩次只解析一次**（含失敗案例）。
 - `PrtgHostMapperTests` 新增：device host 帶 port 對到主機 `ok`；DNS 名稱可解析對到 `ok`；解析失敗計入 `skipped_no_ip` 而非 `unmatched`。
-- `PrtgResourceGuardTargetsTests` 新增：device `Ip` 帶 port 仍能命中；Sentinel `BaseUrl` 為「IP:port」與為 DNS 名稱（可注入解析器）兩種都能命中；解析失敗的訊息指出是位址側還是 device 側。
-- grep：`NormalizeIp(` 在 Core 只剩新入口一處定義；守門檔內無第二份 `Dns.GetHostAddresses` 呼叫。
+- `PrtgResourceGuardTargetsTests` 新增：device `Ip` 帶 port 仍能命中；Sentinel `BaseUrl` 為「IP:port」與為 DNS 名稱兩種都能命中。
+- `EfPrtgStoreTests` 新增：存入非 IP 的舊排除列後仍可用原字串刪除（回 1）；IP 列以帶 port 的字串刪除也命中。
+- grep：`Dns.GetHostAddresses` 在 `LogForesight.Core` 只有解析器一處（`grep -rc` 應為 1）。
+- 全套測試綠，總數比 3586 多。
 
 ### B2 對應重算服務＋主機新增／改 IP 觸發
 
@@ -240,8 +264,11 @@
 
 ## 4. 執行紀錄
 
+本輪委派模型：agy 的 `claude-opus-4-6-thinking`（整輪同一個，額度用盡才改 Claude 自做）。
+
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| B1-step1 純語法正規化層 | agy claude-opus-4-6-thinking | 通過（含 Claude 小修） | 全套 3601 綠（基線 3586，+15）；BOM 與 dev 一致、無 NUL；突變 port 拆解→2 紅、突變守門名稱 fallback→1 紅 | agy 交出時有 1 紅並宣稱「B2 再修」。實為**規格漏洞**：`NormalizeIp` 語意收緊打斷了守門「device 與 Sentinel 都填同一個 DNS 名稱」的字面比對能力，而 DNS 解不到的內網名稱在 B2 也救不回。Claude 小修：`PrtgAddress` 抽出 `HostToken`，守門 `FindDevicesForHost` 在前兩段都落空時加一段名稱字面比對。**契約補充**：守門的比對鍵優先序為「IP → DNS 解析出的 IP → 主機名稱字面」；對應（`MapForDate`）不走第三段（主機側只有 IP，名稱比對無意義），維持「解析不到就略過（無 IP）」 |
 
 ## 5. 體檢交接
 

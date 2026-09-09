@@ -261,12 +261,11 @@ public sealed class PrtgHostMapper
     }
 
     /// <summary>
-    /// 唯一的 IP 正規化公開方法：去頭尾空白、轉小寫。若為 null 或全空白則回傳 null。
+    /// 唯一的 IP 正規化公開方法。語意已收緊為「只有合法 IP 才回值，其餘回 null」。
     /// </summary>
     public static string? NormalizeIp(string? ip)
     {
-        if (string.IsNullOrWhiteSpace(ip)) return null;
-        return ip.Trim().ToLowerInvariant();
+        return PrtgAddress.Normalize(ip);
     }
 
     /// <summary>
