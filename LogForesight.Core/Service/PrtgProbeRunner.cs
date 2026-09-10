@@ -393,6 +393,24 @@ public static class PrtgProbeRunner
             string Show(List<long> ids) => ids.Count == 0 ? "（空）" : string.Join(",", ids);
             console.WriteLine($"     {content}：start=0 → [{Show(page0)}]；start={probeCount} → [{Show(page1)}]；start={farOffset} → [{Show(pageFar)}]");
 
+            // 排序穩定性：分頁的前提除了「遵守 start」，還有「兩次查詢之間順序一致」。
+            // 順序不穩定時同一筆會重複出現、另一筆從沒被讀到，而且完全靜默——
+            // 分頁的去重擋得住重複，擋不住漏列。sortby=objid 是讓順序固定的手段，
+            // 這裡實測它在這台 PRTG 上有沒有效（不支援時 PRTG 會忽略參數而非報錯）。
+            var sorted = await ReadObjidsAsync(client, content, extraQuery + "&sortby=objid", 0, probeCount, ct);
+            var naturalAscending = IsAscending(page0);
+            var sortedAscending = IsAscending(sorted);
+            console.WriteLine($"     {content}：頁內 objid 遞增＝{(naturalAscending ? "是" : "否")}；" +
+                              $"帶 sortby=objid → [{Show(sorted)}]，遞增＝{(sortedAscending ? "是" : "否")}");
+            if (!naturalAscending && sortedAscending)
+                console.WriteLine($"     {content}：✓ sortby=objid 有效（預設順序不穩定，分頁必須帶它才不會漏列）");
+            else if (!naturalAscending && !sortedAscending)
+                console.WriteLine($"     {content}：✗ sortby=objid 無效，且預設順序非遞增——分頁可能漏列，只能改用單次大 count");
+            else if (naturalAscending && !sortedAscending)
+                console.WriteLine($"     {content}：⚠ 預設已遞增，但帶 sortby=objid 後反而不是——不要帶這個參數");
+            else
+                console.WriteLine($"     {content}：✓ 預設順序已遞增，sortby=objid 不改變結果");
+
             if (page0.Count == 0)
             {
                 console.WriteLine($"     {content}：第一頁就沒有資料，無法判定");
@@ -431,6 +449,18 @@ public static class PrtgProbeRunner
         {
             console.WriteLine($"     {content}：無法判定（{ex.Message}）");
         }
+    }
+
+    /// <summary>
+    /// 少於兩筆時視為遞增（無從判定，不要因為資料太少就報警）。
+    /// </summary>
+    private static bool IsAscending(List<long> ids)
+    {
+        for (var i = 1; i < ids.Count; i++)
+        {
+            if (ids[i] <= ids[i - 1]) return false;
+        }
+        return true;
     }
 
     private static async Task<List<long>> ReadObjidsAsync(PrtgClient client, string content, string extraQuery, int start, int count, CancellationToken ct)

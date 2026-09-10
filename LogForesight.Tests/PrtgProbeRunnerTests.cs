@@ -468,7 +468,11 @@ public class PrtgProbeRunnerTests
     /// 建一個把步驟 1~7 都餵最小合法資料的替身，步驟 8 的三次 count=5 查詢交給 pagingResponder
     /// （依 content 與 start 決定回哪些 objid）。步驟 6 的 devices 大 count 回 deviceRows 筆。
     /// </summary>
-    private static StubHandler BuildPagingStub(Func<string, int, long[]> pagingResponder, int deviceTreesize = 2, int deviceRows = 2)
+    private static StubHandler BuildPagingStub(
+        Func<string, int, long[]> pagingResponder,
+        int deviceTreesize = 2,
+        int deviceRows = 2,
+        Func<string, long[]>? sortedResponder = null)
     {
         return new StubHandler
         {
@@ -482,7 +486,10 @@ public class PrtgProbeRunnerTests
                 {
                     var content = url.Contains("content=devices") ? "devices" : url.Contains("content=sensors") ? "sensors" : "messages";
                     var startText = url.Split("start=")[1].Split('&')[0];
-                    var ids = pagingResponder(content, int.Parse(startText));
+                    // sortby 查詢固定打 start=0；未指定 sortedResponder 時等同「排序參數不改變結果」
+                    var ids = url.Contains("sortby=objid")
+                        ? (sortedResponder?.Invoke(content) ?? pagingResponder(content, 0))
+                        : pagingResponder(content, int.Parse(startText));
                     var rows = string.Join(",", ids.Select(id => $"{{\"objid\": {id}}}"));
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"treesize\": 12, \"{content}\": [{rows}]}}"));
                 }
@@ -572,6 +579,58 @@ public class PrtgProbeRunnerTests
         Assert.True(result);
         Assert.Contains(console.Lines, l => l.Contains("messages：無法判定（"));
         Assert.Contains(console.Lines, l => l.Contains("devices：總筆數不足 5 筆"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_預設順序不穩定但sortby有效時判為必須帶sortby()
+    {
+        // 實機（24.1.92）的 messages 同頁內 objid 不遞增，這是分頁漏列的來源
+        var stub = BuildPagingStub(
+            (_, start) => start == 0 ? new long[] { 59590, 82114, 56991, 85029, 57288 } : new long[] { 87261, 59520 },
+            sortedResponder: _ => new long[] { 1001, 1002, 1003, 1004, 1005 });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("devices：頁內 objid 遞增＝否") && l.Contains("遞增＝是"));
+        Assert.Contains(console.Lines, l => l.Contains("devices：✓ sortby=objid 有效"));
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=devices") && u.Contains("sortby=objid"));
+        // messages 的 sortby 查詢必須保留相對日期過濾，否則是整台訊息歷史的查詢
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("sortby=objid") && u.Contains("filter_drel=7days"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_sortby無效且預設非遞增時判為只能單次大count()
+    {
+        var unsorted = new long[] { 59590, 82114, 56991, 85029, 57288 };
+        var stub = BuildPagingStub(
+            (_, start) => start == 0 ? unsorted : new long[] { 87261, 59520 },
+            sortedResponder: _ => unsorted);
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result, "排序診斷不影響探測成敗");
+        Assert.Contains(console.Lines, l => l.Contains("sensors：✗ sortby=objid 無效，且預設順序非遞增"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_預設已遞增時判為不需要sortby()
+    {
+        var stub = BuildPagingStub((_, start) => start switch
+        {
+            0 => new long[] { 1, 2, 3, 4, 5 },
+            5 => new long[] { 6, 7, 8, 9, 10 },
+            _ => Array.Empty<long>()
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("devices：✓ 預設順序已遞增，sortby=objid 不改變結果"));
     }
 
     [Fact]
