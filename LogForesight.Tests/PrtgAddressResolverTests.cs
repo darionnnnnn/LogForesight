@@ -115,4 +115,46 @@ public class PrtgAddressResolverTests
         Assert.Null(resolver.Resolve("   "));
         Assert.Empty(dns.Calls);
     }
+
+    [Fact]
+    public void Resolve_壞掉的IPv4佔位值_回null且完全不查DNS()
+    {
+        var dns = new FakeDns(_ => throw new InvalidOperationException("不該被呼叫"));
+        var resolver = new PrtgAddressResolver(dns.Lookup);
+
+        Assert.Null(resolver.Resolve("10.2xx.x.x"));
+        Assert.Null(resolver.Resolve("10.2.3.256"));
+        Assert.Null(resolver.Resolve("10.2.3.4 (old)"));
+        Assert.Empty(dns.Calls);
+    }
+
+    [Fact]
+    public void Resolve_內部憑證主機名帶scheme與port_DNS收到純主機名()
+    {
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.9.9.9") });
+        var resolver = new PrtgAddressResolver(dns.Lookup);
+
+        var result = resolver.Resolve("https://netiq.corp.local:8443/");
+
+        Assert.Equal("10.9.9.9", result);
+        Assert.Equal(new[] { "netiq.corp.local" }, dns.Calls);
+    }
+
+    /// <summary>
+    /// 真 DNS 路徑：<c>.invalid</c> 是 RFC 2606 保留網域，正常解析器都會失敗，離線也一樣。
+    /// 驗證的是「不擲例外、且不會拖到舊的 2 秒以上」；**不斷言回 null**——
+    /// 有 NXDOMAIN 劫持的網路會給 <c>.invalid</c> 一個假 IP，那是網路的事不是程式的事。
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Network")]
+    public void Resolve_真DNS解析保留網域_回null且在逾時內返回()
+    {
+        var resolver = new PrtgAddressResolver();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        _ = resolver.Resolve("nonexistent-host.invalid");
+
+        sw.Stop();
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"耗時 {sw.Elapsed}");
+    }
 }

@@ -12,6 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, renderSpinner
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
 
 /* 色值對齊 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以字面值對齊：success=--lf-success、
@@ -647,10 +648,10 @@ async function loadSchedule() {
 
     applyScheduleOptions(options);
     if (settings) {
-        const prtgEnabledEl = document.getElementById('prtg-enabled');
-        if (prtgEnabledEl) prtgEnabledEl.checked = Boolean(settings.prtgEnabled);
-        // 狀態卡的模組狀態與排程設定頁籤的開關同一個來源，不另打 API
-        renderPrtgModuleState(Boolean(settings.prtgEnabled));
+        // 啟用開關在 PRTG 維護頁「擷取參數」的取數範圍下拉，本頁只顯示狀態
+        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope);
+        // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
+        prtgConnectionConfigured = hasPrtgConnection(settings);
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -911,8 +912,14 @@ function applyScheduleStatus(status) {
         renderLastRunOutcome(messageEl, status);
     }
 
-    const stopButton = document.getElementById('schedule-stop');
-    if (canMaintainSchedule) stopButton.classList.toggle('d-none', !status.canStop);
+    // 執行中只留「停止執行」，閒置只留「立即執行」——兩顆並排時使用者得自己判斷哪顆有效。
+    // 用 d-none 而非 disabled：灰掉的鈕仍佔位，讀起來像「壞了」而不是「現在不適用」。
+    if (canMaintainSchedule) {
+        const runNowButton = document.getElementById('schedule-run-now');
+        const stopButton = document.getElementById('schedule-stop');
+        runNowButton?.classList.toggle('d-none', status.isRunning);
+        stopButton?.classList.toggle('d-none', !status.canStop);
+    }
 
     const nextTriggerEl = document.getElementById('schedule-next-trigger');
     if (status.scheduleEnabled && status.nextTriggerTime) {
@@ -1010,16 +1017,12 @@ function applyAiScheduleStatus(status) {
         }
     }
 
-    const stopButton = document.getElementById('schedule-ai-stop');
-    if (stopButton && canMaintainSchedule) {
-        stopButton.classList.toggle('d-none', !status.canStop);
+    // 同取數卡：執行中只留「停止」，閒置只留兩顆啟動鈕（見 docs/WEB-SPEC.md §9.10）
+    if (canMaintainSchedule) {
+        document.getElementById('schedule-ai-stop')?.classList.toggle('d-none', !status.canStop);
+        document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', status.isRunning);
+        document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', status.isRunning);
     }
-
-    const runNowBtn = document.getElementById('schedule-ai-run-now');
-    if (runNowBtn) runNowBtn.disabled = status.isRunning;
-
-    const forceBtn = document.getElementById('schedule-ai-force-rerun');
-    if (forceBtn) forceBtn.disabled = status.isRunning;
 
     const nextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (nextTriggerEl) {
@@ -1050,6 +1053,8 @@ function applyAiScheduleStatus(status) {
  * 這時不能把「還不知道」畫成「未啟用」。
  */
 let prtgModuleEnabled = null;
+/** PRTG 連線是否已設定（位址＋認證齊備）。立即執行的提醒條件之一。 */
+let prtgConnectionConfigured = false;
 
 
 /**
@@ -1213,7 +1218,8 @@ async function refreshPrtgSyncStatus() {
         renderPrtgSyncSummary(status);
 
         const btn = document.getElementById('prtg-sync-start');
-        if (btn) btn.disabled = status.isRunning;
+        // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
+        if (btn) btn.disabled = status.isRunning || prtgModuleEnabled === false;
 
         if (status.isRunning) {
             if (!prtgSyncTimer) prtgSyncTimer = setInterval(refreshPrtgSyncStatus, 3000);
@@ -1229,6 +1235,11 @@ async function refreshPrtgSyncStatus() {
 function bindPrtgSync() {
     const btn = document.getElementById('prtg-sync-start');
     btn?.addEventListener('click', async () => {
+        // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
+        if (prtgModuleEnabled === false) {
+            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
+            return;
+        }
         const restore = withBusy(btn, '啟動中');
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
@@ -1241,12 +1252,35 @@ function bindPrtgSync() {
 }
 
 /** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
-function renderPrtgModuleState(enabled) {
+function renderPrtgModuleState(enabled, scope) {
     prtgModuleEnabled = enabled;
     const el = document.getElementById('prtg-module-state');
-    if (!el) return;
-    el.textContent = enabled ? '已啟用' : '未啟用';
-    el.classList.toggle('text-muted', !enabled);
+    if (el) {
+        // 啟用時把生效範圍一起說出來——「已啟用」三個字看不出夜間到底會抓哪些主機
+        el.textContent = prtgModuleStateText(enabled, scope);
+        el.classList.toggle('text-muted', !enabled);
+    }
+
+    // 未啟用時同步與回填一定被後端拒絕（PrtgStructureSyncService／PrtgBackfillService），
+    // 讓兩顆鈕灰掉並指出開關在哪，比按下去看紅字有用。
+    document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled);
+    for (const id of ['prtg-sync-start', 'prtg-backfill-start']) {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = !enabled;
+    }
+}
+
+/**
+ * 連線是否已設定：與後端 PrtgClientFactory.HasUsableCredentials 同義（位址＋任一種認證）。
+ * 只用來決定立即執行要不要提醒「填好了忘了開」——完全沒設定 PRTG 的站台不該每次執行都被問。
+ */
+function hasPrtgConnection(settings) {
+    if (!settings?.prtgUrl) return false;
+    const mode = settings.prtgAuthMode || 'token';
+    if (mode === 'token') return Boolean(settings.prtgHasApiToken);
+    if (mode === 'password') return Boolean(settings.prtgUsername && settings.prtgHasPassword);
+    if (mode === 'passhash') return Boolean(settings.prtgUsername && settings.prtgHasPasshash);
+    return false;
 }
 
 function renderAiScheduleProgress(status) {
@@ -1514,6 +1548,19 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         if (!confirmed) return;
     }
 
+    // 「連線填好了卻忘了開擷取」是最常見的踩雷，執行前提醒一次。
+    // 完全沒設定 PRTG 的站台不提醒——每次手動執行都被問一次只會讓人麻痺。
+    if (prtgModuleEnabled === false && prtgConnectionConfigured) {
+        const goOn = await confirmAction({
+            title: 'PRTG 尚未啟用',
+            message: '這次執行不會做 PRTG 擷取（連線已設定，但擷取未啟用）。\n'
+                + '要啟用請到 PRTG 維護頁「擷取參數」選擇取數範圍。\n\n仍要開始執行嗎？',
+            confirmText: '仍要開始',
+            confirmVariant: 'primary'
+        });
+        if (!goOn) return;
+    }
+
     const submitButton = document.getElementById('run-now-submit');
     const restore = withBusy(submitButton, '送出中');
     try {
@@ -1538,27 +1585,6 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
 
 // ── PRTG 擷取開關與歷史回填 ─────────────────────────────────────────────────
 
-function bindPrtgEnabledSwitch() {
-    const checkbox = document.getElementById('prtg-enabled');
-    if (!checkbox) return;
-
-    checkbox.addEventListener('change', async () => {
-        const nextVal = checkbox.checked;
-        try {
-            await api.put('/api/admin/settings/prtg-enabled', { enabled: nextVal });
-            renderPrtgModuleState(nextVal);
-            if (nextVal) {
-                // 啟用只是設定；鏡像要等夜間排程或手動同步才會有內容，
-                // 在那之前主機對應與資源守門的自動偵測都沒有資料可用。
-                toast('已啟用 PRTG。請執行一次「同步結構與對應」，否則主機對應與資源守門偵測沒有資料。', 'info');
-            }
-            toast('已更新 PRTG 擷取開關', 'success');
-        } catch (error) {
-            checkbox.checked = !nextVal;
-            toast(error?.message || '更新 PRTG 擷取開關失敗。', 'danger');
-        }
-    });
-}
 
 let prtgBackfillPollTimer = null;
 
@@ -1612,7 +1638,8 @@ function renderPrtgBackfillStatus(status) {
         return;
     }
 
-    startButton.disabled = false;
+    // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
+    startButton.disabled = prtgModuleEnabled === false;
     if (!status.completedAt) {
         statusEl.textContent = '';
         return;
@@ -1649,6 +1676,11 @@ function bindPrtgBackfill() {
     const outputEl = document.getElementById('prtg-backfill-output');
 
     startButton?.addEventListener('click', async () => {
+        // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
+        if (prtgModuleEnabled === false) {
+            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
+            return;
+        }
         const ok = await confirmAction({
             title: '確認執行 PRTG 歷史資料回填',
             message: '回填會逐日擷取歷史監控數據與狀態變更，請確認目前為離峰時間。是否確定開始？',
@@ -1690,7 +1722,6 @@ bindTabs(document.getElementById('runs-tabs'), {
 });
 
 loadSchedule();
-bindPrtgEnabledSwitch();
 bindPrtgBackfill();
 bindPrtgSync();
 refreshPrtgBackfillStatus();

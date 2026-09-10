@@ -25,12 +25,6 @@ public interface ISystemSettingsService
     SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request);
 
     /// <summary>
-    /// 只切換 PRTG 總開關（排程作業頁用）。刻意不走整包設定更新：
-    /// 整包更新會在「讀取到送出之間」覆蓋他人的改動，也會被與 PRTG 無關的跨欄位驗證擋下。
-    /// </summary>
-    bool SetPrtgEnabled(bool enabled);
-
-    /// <summary>
     /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合（RecordRepository 據此過濾問題聚合，
     /// 這是全站唯一的過濾點，見 docs/archive/HISTORY.md S1）；
     /// DefaultHidden 回傳 null（表示不過濾，維持顯示層各自決定）。
@@ -543,40 +537,14 @@ public class SystemSettingsService : ISystemSettingsService
         return ToDto(saved);
     }
 
-    public bool SetPrtgEnabled(bool enabled)
-    {
-        if (enabled)
-        {
-            var settings = _store.Get();
-            if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
-            {
-                throw DomainException.Validation("請先於 PRTG 維護頁完成連線設定。");
-            }
-        }
-
-        var saved = _store.Update(s =>
-        {
-            s.PrtgEnabled = enabled;
-            s.UpdatedByAccount = _currentUser.Account;
-        });
-
-        _audit.Record(
-            action: AuditActions.SettingsUpdate,
-            summary: enabled ? "開啟 PRTG 整合" : "關閉 PRTG 整合",
-            targetKind: "system_settings",
-            targetId: "system_settings",
-            detail: new { PrtgEnabled = enabled });
-
-        return saved.PrtgEnabled;
-    }
-
     public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request)
     {
         var before = _store.Get();
 
         var effectiveRetentionDays = before.RetentionDays;
         var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
-        var effectivePrtgEnabled = before.PrtgEnabled;
+        // 啟用與取數範圍在維護頁是同一個下拉，因此走同一個專屬端點一起存
+        var effectivePrtgEnabled = request.PrtgEnabled ?? before.PrtgEnabled;
         var effectivePrtgUrl = request.PrtgUrl ?? before.PrtgUrl;
         var effectivePrtgAuthMode = request.PrtgAuthMode ?? before.PrtgAuthMode;
         var effectivePrtgUsername = request.PrtgUsername ?? before.PrtgUsername;
@@ -626,6 +594,7 @@ public class SystemSettingsService : ISystemSettingsService
                 apiToken: request.PrtgApiToken, clearApiToken: request.ClearPrtgApiToken,
                 password: request.PrtgPassword, clearPassword: request.ClearPrtgPassword,
                 passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
+            if (request.PrtgEnabled.HasValue) s.PrtgEnabled = request.PrtgEnabled.Value;
             if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
             if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
             if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
@@ -676,6 +645,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
                     before.PrtgValueFetchScope,
+                    before.PrtgEnabled,
                     PrtgValueFetchExtraHosts = string.Join(", ", before.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
@@ -701,6 +671,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
                     saved.PrtgValueFetchScope,
+                    saved.PrtgEnabled,
                     PrtgValueFetchExtraHosts = string.Join(", ", saved.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
@@ -1179,7 +1150,7 @@ public class SystemSettingsService : ISystemSettingsService
         if (effectivePrtgEnabled)
         {
             if (string.IsNullOrWhiteSpace(effectivePrtgUrl))
-                throw DomainException.Validation("啟用 PRTG 時，PRTG 位址不可為空。");
+                throw DomainException.Validation("啟用 PRTG 擷取前，請先在「連線」頁籤設定 PRTG 位址。");
 
             if (!IsValidHttpUrl(effectivePrtgUrl))
                 throw DomainException.Validation("PRTG 位址格式不合法，必須以 http:// 或 https:// 開頭。");

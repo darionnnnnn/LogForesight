@@ -251,13 +251,19 @@ public static class PrtgProbeRunner
             int totalDevices = parsedDevHosts.Rows.Count;
             int withHost = 0;
             int ipv4Count = 0;
+            int ipv6Count = 0;
             int dnsCount = 0;
+            var invalidSamples = new List<string>();
+            int invalidCount = 0;
 
+            // 判定與主機對應、資源守門用同一份純語法層（PrtgAddress）：
+            // 「10.1.2.3:8080」在主機對應算 IP，這裡就不能算成名稱，否則探測結論與實際對應結果對不上。
             foreach (var d in parsedDevHosts.Rows)
             {
                 if (string.IsNullOrWhiteSpace(d.Host)) continue;
                 withHost++;
-                if (IPAddress.TryParse(d.Host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
+                var normalized = PrtgAddress.Normalize(d.Host);
+                if (normalized != null && IPAddress.TryParse(normalized, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
                 {
                     ipv4Count++;
                     if (d.Objid.HasValue)
@@ -265,16 +271,37 @@ public static class PrtgProbeRunner
                         ipv4DeviceIds.Add(d.Objid.Value);
                     }
                 }
-                else
+                else if (normalized != null)
+                {
+                    // 合法 IPv6：主機對應比得到，但步驟 7 的「IPv4 覆蓋」不算它
+                    ipv6Count++;
+                }
+                else if (PrtgAddress.IsDnsCandidate(PrtgAddress.HostToken(d.Host)))
                 {
                     dnsCount++;
+                }
+                else
+                {
+                    // 打壞的 IP（10.2xx.x.x）、含備註或空白——主機對應與守門都不會拿它去 DNS，等於沒設 host
+                    invalidCount++;
+                    if (invalidSamples.Count < 5)
+                        invalidSamples.Add($"objid {d.Objid?.ToString() ?? "?"}「{d.Host}」");
                 }
             }
 
             console.WriteLine($"     Device 總筆數：{totalDevices}");
             console.WriteLine($"     有設定 host 值的 Device 數：{withHost}");
             console.WriteLine($"     其中為 IPv4 位址者：{ipv4Count} 台");
-            console.WriteLine($"     其中非 IPv4（DNS 名稱或其它）者：{dnsCount} 台");
+            console.WriteLine($"     其中為 DNS 名稱者：{dnsCount} 台（主機對應需靠 DNS 解析）");
+            if (ipv6Count > 0)
+            {
+                console.WriteLine($"     其中為 IPv6 位址者：{ipv6Count} 台");
+            }
+            if (invalidCount > 0)
+            {
+                console.WriteLine($"     其中無法判定（打壞的 IP 或含備註）者：{invalidCount} 台——不會被解析也對不到主機，建議到 PRTG 修正：" +
+                                  string.Join("、", invalidSamples) + (invalidCount > invalidSamples.Count ? "…" : ""));
+            }
         });
 
         if (!allOk)

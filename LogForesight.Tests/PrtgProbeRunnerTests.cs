@@ -232,7 +232,10 @@ public class PrtgProbeRunnerTests
                             {""objid"": 2, ""device"": ""Host2"", ""host"": ""10.0.0.1""},
                             {""objid"": 3, ""device"": ""Host3"", ""host"": ""server.example.local""},
                             {""objid"": 4, ""device"": ""Host4"", ""host"": ""db-01.corp""},
-                            {""objid"": 5, ""device"": ""Host5"", ""host"": """" }
+                            {""objid"": 5, ""device"": ""Host5"", ""host"": """" },
+                            {""objid"": 6, ""device"": ""Host6"", ""host"": ""10.0.0.2:8080""},
+                            {""objid"": 7, ""device"": ""Placeholder"", ""host"": ""10.2xx.x.x""},
+                            {""objid"": 8, ""device"": ""Host8"", ""host"": ""[fe80::1]:8080""}
                         ]
                     }"));
                 }
@@ -247,9 +250,13 @@ public class PrtgProbeRunnerTests
 
         Assert.True(result);
 
-        Assert.Contains(console.Lines, l => l.Contains("有設定 host 值的 Device 數：4"));
-        Assert.Contains(console.Lines, l => l.Contains("其中為 IPv4 位址者：2 台"));
-        Assert.Contains(console.Lines, l => l.Contains("其中非 IPv4（DNS 名稱或其它）者：2 台"));
+        Assert.Contains(console.Lines, l => l.Contains("有設定 host 值的 Device 數：7"));
+        // IPv6 是合法位址，不能被列進「無法判定」叫人去修
+        Assert.Contains(console.Lines, l => l.Contains("其中為 IPv6 位址者：1 台"));
+        // 「IP 帶 port」與主機對應同一份判定，算 IPv4
+        Assert.Contains(console.Lines, l => l.Contains("其中為 IPv4 位址者：3 台"));
+        Assert.Contains(console.Lines, l => l.Contains("其中為 DNS 名稱者：2 台"));
+        Assert.Contains(console.Lines, l => l.Contains("無法判定") && l.Contains("1 台") && l.Contains("objid 7「10.2xx.x.x」"));
     }
 
     [Fact]

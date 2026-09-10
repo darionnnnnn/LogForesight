@@ -108,6 +108,9 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 | `all-mapped` | 全部有 `ok` 對應的主機。**要求 sensor type 白名單非空**，留空等於對全部 sensor 取數，存檔時就擋下 |
 | `triggered-plus-list` | 觸發主機 ∪ `PrtgValueFetchExtraHosts` 指定的主機（名稱一行一個，不分大小寫） |
 
+- **畫面上「關閉」是這個下拉的第一個選項**：選它送 `PrtgEnabled=false` 且**不送** `PrtgValueFetchScope`
+  （範圍留著原值，重新啟用時不必再選一次）；選任一範圍送 `PrtgEnabled=true` 加該範圍。
+  啟用與範圍本來就是同一個決定，拆成開關加下拉只會讓人設了範圍卻忘了開。
 - 判定收斂在 `PrtgValueFetchScope.SelectHosts`，**每日擷取與歷史回填共用同一份**，不各寫一份。
 - **`all-mapped` ＋ 空白名單有兩道閘門**：設定層存檔時拒絕，執行層（`EffectiveScope`）
   再退回 `triggered` 並在執行輸出說明。設定 blob 若由匯入或人工編輯繞過驗證寫進來，
@@ -185,8 +188,13 @@ PRTG device 的 `host` 欄位與主機主檔的 IP 都先過同一套正規化�
    去 IPv4 各段前導零，最後要求結果是合法 IP，否則回 null。
    `PrtgHostMapper.NormalizeIp` 是它的對外名稱，另有二十個呼叫點（IP 排除清單的儲存鍵等）
    共用同一份判定。
-2. **解析層**（`PrtgAddressResolver`，有 IO）：純語法層回 null 時，把主機名稱送 DNS 解析
-   （逾時 2 秒）取第一個 IPv4。**同一個實例內同一名稱只解析一次，失敗結果也快取**，
+2. **解析層**（`PrtgAddressResolver`，有 IO）：純語法層回 null 時，先過 `PrtgAddress.IsDnsCandidate`
+   ——只有長得像主機名稱的值（ASCII 英數、`-`、`_`、`.`，每段 1–63 字，結尾單一個點先去掉）才送 DNS；
+   **整串沒有字母、或第一段全數字且每段都不超過 3 字的值視為打壞的 IPv4**（PRTG 裝置 host 常見
+   `10.2xx.x.x` 這種佔位值），直接回 null 不付 IO。「每段 ≤ 3 字」是為了不誤擋 `1.dc.corp.local`
+   這種第一段是數字的真 FQDN。**非 ASCII（IDN）名稱不送 DNS**——內網幾乎不會有，且字面比對仍可命中。
+   通過者以 `Dns.GetHostAddressesAsync` 只查 IPv4、逾時 1 秒可取消（不用 `Task.Run + Wait`：逾時後
+   執行緒不回收，且 lambda 內的例外會讓偵錯器中斷）。**同一個實例內同一名稱只解析一次，失敗結果也快取**，
    避免解析不到的位址重複付逾時；不做跨趟的靜態快取（DNS 變更要能在下一趟生效）。
 
 device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 不產生對應列，計入「略過（無 IP）」。
@@ -297,6 +305,8 @@ device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 
   - 歷史回填與同步可並行（回填不碰結構表）。
 - **前置條件**：`PrtgEnabled` 未啟用、未設定連線位址、或認證不齊時拒絕啟動並說明原因——
   這條路徑一開始就要對 PRTG 發動整棵樹的查詢，缺任何一項都不可能成功。
+  未啟用時前端兩個入口（維護頁鏡像頁籤、排程作業頁 PRTG 卡）的按鈕先灰掉並指出開關在哪，
+  後端的拒絕訊息同樣指路——只說「未啟用」而不說去哪開，使用者會在錯的頁面找。
 - 入口在 PRTG 維護頁「鏡像狀態」頁籤與排程作業頁的 PRTG 狀態卡，兩處同一份狀態。
 - 啟用 `PrtgEnabled` 時**不**自動啟動——啟用只是設定，什麼時候對 PRTG 發動一輪全量查詢由管理者決定。
 
@@ -309,7 +319,8 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
 3. **sensor type 分布**（依數量排序，含 unit 樣本，以及累積覆蓋 50/80/90/95% 各需幾個 type）
 4. 相依性（dependency）設定的使用比例
 5. 群組樹概要
-6. **IP 覆蓋概要**：有幾個 device 設了 IPv4、有幾個是 DNS 名稱——直接決定主機對應能對到多少
+6. **IP 覆蓋概要**：有幾個 device 設了 IPv4（判定與主機對應同一份純語法層，IP 帶 port 算 IP）、幾個是 DNS 名稱、
+   幾個「無法判定」（打壞的 IP 如 `10.2xx.x.x`、含備註）並列出前 5 筆 objid——後者不會被解析也對不到主機，探測時就該看到
 
 探測**不檢查 `PrtgEnabled`**（只需要位址與認證資訊）：它的用途正是在啟用模組之前先摸清環境。
 
@@ -370,7 +381,7 @@ passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼
 
 | 設定 | 預設 | 說明 |
 |---|---|---|
-| `PrtgEnabled` | false | 模組總開關。關閉時整條路徑短路 |
+| `PrtgEnabled` | false | 模組總開關。關閉時整條路徑短路。**畫面入口是維護頁「擷取參數」的取數範圍下拉**（見下方操作介面），不另設開關 |
 | `PrtgUrl` | — | PRTG core server 位址（含 scheme）。啟用時必填且須為 http/https |
 | `PrtgAuthMode` | `token` | 認證方式：`token`／`password`／`passhash`。見 §6a |
 | `PrtgApiTokenEnc` | — | API token 密文（`CryptoHelper`，AES-256-CBC）。write-only，DTO 只回布林。`token` 模式使用 |
@@ -383,7 +394,7 @@ passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 | `PrtgSensorTypeWhitelist` | 8 種分析型 type | 要擷取數值的 sensor type（一行一個，不分大小寫）。**留空＝不限制**。預設不含 Ping（量大且雜訊高，需要時自行加入） |
-| `PrtgValueFetchScope` | `triggered` | 數值取數的主機範圍：`triggered`／`all-mapped`／`triggered-plus-list`（§3a）。`all-mapped` 要求白名單非空 |
+| `PrtgValueFetchScope` | `triggered` | 數值取數的主機範圍：`triggered`／`all-mapped`／`triggered-plus-list`（§3a）。`all-mapped` 要求白名單非空。畫面上與 `PrtgEnabled` 併成同一個四選一下拉，「關閉」不是合法值、只代表 `PrtgEnabled=false` |
 | `PrtgValueFetchExtraHosts` | 空 | `triggered-plus-list` 模式額外納入的主機名稱（一行一個，不分大小寫） |
 | `PrtgResourceGuardEnabled` | false | 資源守門總開關（§12） |
 | `PrtgResourceGuardSensorObjids` | 空 | 受監看 sensor 的覆寫清單（一行一個 objid）。**留空＝自動偵測** |
@@ -408,12 +419,11 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 | 頁面 | 內容 |
 |---|---|
-| **PRTG 維護頁 `/admin/prtg`**（權限 Maintain，側欄「系統管理」內緊鄰 NetIQ） | 四個頁籤：連線／擷取參數／鏡像狀態（含「同步結構與對應」§5a）／環境探測（含校準匯出 §11 與資料搬運 §10）。各頁籤的卡片與儲存行為見 docs/WEB-SPEC.md §9.9e，此處不重複 |
+| **PRTG 維護頁 `/admin/prtg`**（權限 Maintain，側欄「系統管理」內緊鄰 NetIQ） | 四個頁籤：連線／擷取參數（**首欄「PRTG 擷取」四選一下拉＝總開關＋取數範圍**）／鏡像狀態（含「同步結構與對應」§5a）／環境探測（含校準匯出 §11 與資料搬運 §10）。各頁籤的卡片與儲存行為見 docs/WEB-SPEC.md §9.9e，此處不重複 |
 | **設定頁「資源守門」頁籤** | 八個 `PrtgResourceGuard*` 欄位與「預覽／自動偵測並填入」兩顆鈕（§12）。與該頁其他設定共用整包儲存，不另開儲存鈕——分兩顆時按其中一顆，另一區未存的改動會在重載時被覆蓋回舊值 |
-| **排程作業頁** | `PrtgEnabled` 總開關（**切換即存**，走單一用途端點，不與排程表單同一顆儲存）、**同步結構與對應**與**歷史回填**的操作與進度、每日擷取進度軌（回填天數在維護頁設定，此處顯示「將回填 N 天」） |
+| **排程作業頁** | 模組狀態（未啟用時附連結指向維護頁「擷取參數」；啟用時一併顯示生效範圍）、**同步結構與對應**與**歷史回填**的操作與進度、每日擷取進度軌（回填天數在維護頁設定，此處顯示「將回填 N 天」）。**這頁沒有開關**——兩個入口寫同一個值會互相蓋 |
 
-連線與參數的存檔走 `PUT settings/prtg` 專屬端點，`PrtgEnabled` 走
-`PUT settings/prtg-enabled` 單一用途端點——都不走整包設定更新：
+連線、參數與 `PrtgEnabled` 的存檔一律走 `PUT settings/prtg` 專屬端點——不走整包設定更新：
 整包更新會在「讀取到送出之間」覆蓋他人的改動，也會被與 PRTG 無關的跨欄位驗證擋下。
 認證驗證與憑證寫入在整包更新與專屬端點之間**共用同一份實作**，不得各寫一份。
 
@@ -444,8 +454,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-backfill/start`、`GET prtg-backfill/status` | 歷史回填（status 含天數與當日 sensor 進度） |
 | `POST prtg-structure-sync/start`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過 |
-| `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；不含總開關） |
-| `PUT prtg-enabled` | PRTG 總開關（排程作業頁，只更新這一個欄位） |
+| `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；**含總開關 `PrtgEnabled`**，有送才更新） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |
 | `GET／PUT／DELETE prtg-ip-excludes` | IP 排除清單的查詢、新增與移除（§4b） |
@@ -652,12 +661,16 @@ PRTG 維護頁因此提供跨後端的資料通道：
 `PrtgResourceGuardSensorObjids` 非空時直接用它（覆寫優先，完全不做偵測）；留空時自動偵測：
 
 1. 目標位址＝每台 `Sentinel.BaseUrl` 的 host ＋ `PrtgUrl` 的 host。
-2. 找 `Ip` 與位址相同的 device。**比對鍵有三段優先序，一段都不能少**：
-   1. 兩邊都是 IP（過 §4 純語法層）→ 直接比。
-   2. 有一邊是名稱 → DNS 解析成 IPv4 再比。
-      **少了這段幾乎必然全數落空**：Sentinel 慣以 DNS 名稱設定、PRTG device 慣填 IPv4。
-   3. 前兩段都對不到 → 退回**主機名稱字面比對**。device 的 `Ip` 也可能填 DNS 名稱，
+2. 找 `Ip` 與位址相同的 device。**比對鍵有三段、依序命中即停，一段都不能少**：
+   1. 來源位址解析成 IP（來源只有幾筆，名稱走 DNS），device 側**只做 §4 純語法層**後比 IP。
+      **少了 DNS 幾乎必然全數落空**：Sentinel 慣以 DNS 名稱設定、PRTG device 慣填 IPv4。
+   2. 對不到 → **主機名稱字面比對**（兩邊去 scheme／port 後相等）。device 的 `Ip` 也可能填 DNS 名稱，
       而內網名稱未必進得了 DNS，兩邊填同一個名稱時仍應命中；少了這段，內網名稱環境會整組失效。
+   3. 仍對不到 → device 側才做 DNS，只對通過 `IsDnsCandidate` 的名稱型 device，且**整趟預算 20 次**
+      （常數 `DeviceDnsBudget.Limit`，跨全部來源位址共用；同名只扣一次；純 IP 與亂值不扣）。
+      用盡時輸出「裝置側 DNS 解析已達上限 20 次，其餘 N 台名稱型裝置未解析」並建議改以 IP 設定或用覆寫清單。
+      這是保險絲不是閘門：偵測跑在 HTTP 請求執行緒與每趟批次上，幾百台名稱型 device 每台付一次逾時就是數分鐘。
+      代價是預算之外的名稱型 device 即使解析後會命中也會被漏掉——有警告可循，而且多數環境在前兩段就命中。
 3. PRTG 主機另有 fallback：位址對不到 device、或 `PrtgUrl` 根本解析不出 host 時，改找底下有 `corehealth` type sensor 的 device
    ——PRTG 的 Core Health sensor 只掛在 core server 自己身上。
 4. 取命中 device 底下**未暫停**且 `category` 為 `cpu`／`memory` 的 sensor；PRTG 主機另加 corehealth。

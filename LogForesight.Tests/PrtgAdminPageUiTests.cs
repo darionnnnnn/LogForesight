@@ -124,15 +124,20 @@ public class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void Runs排程頁包含Prtg開關與歷史回填()
+    public void Runs排程頁的Prtg卡顯示狀態並指路而非自帶開關()
     {
         var root = FindRepoRoot();
         var runsCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
         Assert.True(File.Exists(runsCshtmlPath), $"找不到檔案: {runsCshtmlPath}");
         var cshtmlContent = File.ReadAllText(runsCshtmlPath);
 
-        Assert.Contains("id=\"prtg-enabled\"", cshtmlContent);
-        // 回填與每日擷取、總開關狀態、結構同步一起放在 PRTG 狀態卡（回饋第 40 輪批次A）
+        // 啟用開關已併入 PRTG 維護頁「擷取參數」的取數範圍下拉（回饋第 41 輪批次F）——
+        // 兩個入口寫同一個值會互相蓋，本頁只顯示狀態並指路
+        Assert.DoesNotContain("id=\"prtg-enabled\"", cshtmlContent);
+        Assert.Contains("id=\"prtg-disabled-hint\"", cshtmlContent);
+        Assert.Contains("admin/prtg", cshtmlContent);
+
+        // 回填與每日擷取、模組狀態、結構同步一起放在 PRTG 狀態卡（回饋第 40 輪批次A）
         Assert.Contains("prtg-status-card", cshtmlContent);
         Assert.Contains("prtg-backfill-start", cshtmlContent);
 
@@ -140,8 +145,11 @@ public class PrtgAdminPageUiTests
         Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
         var jsContent = File.ReadAllText(runsJsPath);
 
-        Assert.Contains("/api/admin/settings/prtg-enabled", jsContent);
-        Assert.DoesNotContain("prtgEnabled:", jsContent);
+        // 端點連同 SetPrtgEnabled 一起移除，前端不得再呼叫
+        Assert.DoesNotContain("/api/admin/settings/prtg-enabled", jsContent);
+        // 狀態文字與維護頁的下拉共用同一份標籤，不各寫一份
+        Assert.Contains("prtg-scope-labels.js", jsContent);
+        Assert.Contains("prtgModuleStateText", jsContent);
     }
 
     [Fact]
@@ -590,10 +598,19 @@ public class PrtgAdminPageUiTests
         Assert.Contains("id=\"prtg-value-fetch-extra-hosts\"", cshtml);
         Assert.Contains("id=\"prtg-scope-estimate-btn\"", cshtml);
 
-        // 三個模式的選項都要在
+        // 「關閉」與三個模式併成同一個下拉（回饋第 41 輪批次F）：選任一範圍即啟用
+        Assert.Contains("value=\"off\"", cshtml);
         Assert.Contains("value=\"triggered\"", cshtml);
+        // 「關閉」必須是第一個選項：它是預設值，排在後面會讓沒存過設定的站台看起來像已啟用
+        var scopeSelectStart = cshtml.IndexOf("id=\"prtg-value-fetch-scope\"", StringComparison.Ordinal);
+        Assert.True(scopeSelectStart >= 0, "找不到取數範圍下拉");
+        var firstOption = cshtml.IndexOf("<option", scopeSelectStart, StringComparison.Ordinal);
+        Assert.Contains("value=\"off\"", cshtml.Substring(firstOption, 40));
         Assert.Contains("value=\"all-mapped\"", cshtml);
         Assert.Contains("value=\"triggered-plus-list\"", cshtml);
+        // 啟用旗標要跟著存，否則選了範圍也不會啟用
+        Assert.Contains("prtgEnabled:", js);
+        Assert.Contains("prtg-scope-labels.js", js);
 
         // 自動偵測必須帶 forceAuto，否則覆寫清單非空時只會把手填值原樣吐回來
         Assert.Contains("forceAuto=true", guardJs);
@@ -604,6 +621,48 @@ public class PrtgAdminPageUiTests
 
         // 估算端點的呼叫
         Assert.Contains("prtg-fetch-scope/estimate", js);
+    }
+
+    /// <summary>
+    /// 維護頁鏡像頁籤的同步鈕在 PRTG 未啟用時要閘住，而它的 disabled 有兩個寫入點
+    /// （載入設定時的閘、同步狀態輪詢結束時的復原）。輪詢那處若寫死 false，
+    /// 頁面載入後一秒閘就被打開、說明行卻還亮著——與排程頁同型的問題，兩邊都要鎖。
+    /// </summary>
+    [Fact]
+    public void 維護頁同步鈕在所有寫入點都尊重PRTG開關()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+
+        Assert.Contains("btn.disabled = !prtgEnabled;", js);
+        Assert.DoesNotContain("btn.disabled = false;", js);
+        // 點擊時的第二道：輪詢競態下按鈕可能還可按
+        Assert.Contains("if (!prtgEnabled) {", js);
+        Assert.Contains("prtg-structure-sync-disabled-hint", js);
+    }
+
+    /// <summary>
+    /// 下拉的 option 在 cshtml 靜態產生、狀態標籤在 core/prtg-scope-labels.js——兩份 value 集合必須一致，
+    /// 否則新增一個模式時只改到一邊，狀態文字會退回 triggered 而不自知。
+    /// </summary>
+    [Fact]
+    public void 取數範圍下拉的value集合與狀態標籤模組一致()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        var labels = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "prtg-scope-labels.js"));
+
+        var selectStart = cshtml.IndexOf("id=\"prtg-value-fetch-scope\"", StringComparison.Ordinal);
+        var selectEnd = cshtml.IndexOf("</select>", selectStart, StringComparison.Ordinal);
+        var optionValues = System.Text.RegularExpressions.Regex.Matches(cshtml[selectStart..selectEnd], "value=\"([^\"]+)\"")
+            .Select(m => m.Groups[1].Value).OrderBy(v => v).ToArray();
+
+        var labelStart = labels.IndexOf("PRTG_SCOPE_LABEL = {", StringComparison.Ordinal);
+        var labelEnd = labels.IndexOf("};", labelStart, StringComparison.Ordinal);
+        var labelKeys = System.Text.RegularExpressions.Regex.Matches(labels[labelStart..labelEnd], @"(?:\[PRTG_SCOPE_OFF\]|'([a-z-]+)')\s*:")
+            .Select(m => m.Groups[1].Success ? m.Groups[1].Value : "off").OrderBy(v => v).ToArray();
+
+        Assert.Equal(optionValues, labelKeys);
     }
 
     /// <summary>

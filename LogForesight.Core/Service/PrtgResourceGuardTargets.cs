@@ -124,14 +124,17 @@ public static class PrtgResourceGuardTargets
             }
         }
 
-        var allDevices = source.GetDevices();
+        // 裝置依 objid 排序：裝置側 DNS 有預算上限，「哪 20 台吃到預算」不能取決於
+        // 資料庫或 PRTG API 的回傳順序，否則同一份資料兩次偵測可能命中不同集合。
+        var allDevices = source.GetDevices().OrderBy(d => d.Objid).ToList();
         var allSensors = source.GetSensors();
 
-        // 3. 對每個位址比對 device
+        // 3. 對每個位址比對 device。裝置側 DNS 解析的預算跨全部來源位址共用。
+        var budget = new DeviceDnsBudget();
         var sentinelDeviceObjids = new HashSet<long>();
         foreach (var sHost in sentinelHosts)
         {
-            var matchedDevs = FindDevicesForHost(sHost, allDevices, resolver);
+            var matchedDevs = FindDevicesForHost(sHost, allDevices, resolver, budget);
             if (matchedDevs.Count == 0)
             {
                 console.WriteLine($"[PRTG資源守門] 找不到主機「{sHost}」對應的 PRTG 裝置" +
@@ -148,7 +151,7 @@ public static class PrtgResourceGuardTargets
         bool prtgMatched = false;
         if (prtgHost != null)
         {
-            var prtgDevs = FindDevicesForHost(prtgHost, allDevices, resolver);
+            var prtgDevs = FindDevicesForHost(prtgHost, allDevices, resolver, budget);
             if (prtgDevs.Count > 0)
             {
                 prtgMatched = true;
@@ -176,6 +179,12 @@ public static class PrtgResourceGuardTargets
                     prtgDeviceObjids.Add(coreHealthSensor.DeviceObjid);
                 }
             }
+        }
+
+        if (budget.Skipped > 0)
+        {
+            console.WriteLine($"[PRTG資源守門] 裝置側 DNS 解析已達上限 {DeviceDnsBudget.Limit} 次，" +
+                              $"其餘 {budget.Skipped} 台名稱型裝置未解析；建議在 PRTG 以 IP 設定裝置，或改用覆寫清單。");
         }
 
         if (!prtgMatched && prtgHost != null)
@@ -247,50 +256,94 @@ public static class PrtgResourceGuardTargets
             : "（查的是本機鏡像；PRTG 剛啟用時請先執行「同步結構與對應」）";
 
     /// <summary>
-    /// 依主機名稱比對 PRTG 裝置（先用解析器比對 IP，對不到時退回主機名稱字面比對）。
+    /// 裝置側 DNS 解析的整趟預算。守門偵測跑在 HTTP 請求執行緒與每趟批次上，
+    /// 幾百台名稱型裝置每台付一次逾時就是數分鐘；這是保險絲不是閘門，所以是常數不開設定
+    /// （同 <see cref="PrtgLiveGuardSource"/> 的分頁上限）。只計「真的送出去」的解析：
+    /// 純語法就能判定的 IP、不像主機名稱的亂值都不扣預算。
+    /// </summary>
+    private sealed class DeviceDnsBudget
+    {
+        public const int Limit = 20;
+        private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+
+        private readonly HashSet<string> _skipped = new(StringComparer.OrdinalIgnoreCase);
+
+        public int Used { get; private set; }
+
+        /// <summary>因預算用盡而沒解析的**不重複**名稱數。多個來源位址會各掃一遍裝置，同一台只算一次。</summary>
+        public int Skipped => _skipped.Count;
+
+        /// <summary>同一個 token 只扣一次預算（解析器自己有快取，第二次不付 IO）。</summary>
+        public bool TryTake(string token)
+        {
+            if (_seen.Contains(token)) return true;
+            if (Used >= Limit)
+            {
+                _skipped.Add(token);
+                return false;
+            }
+            _seen.Add(token);
+            Used++;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 依主機位址比對 PRTG 裝置，四步依序、命中即停：
+    /// 1. 來源位址解析成 IP（來源只有幾筆，可付 DNS）；裝置側只做純語法正規化後比 IP。
+    /// 2. 主機名稱字面比對（兩邊去 scheme／port 後相等）——內網名稱未必進得了 DNS，兩邊填同一個名稱仍應命中。
+    /// 3. 裝置側才做 DNS：只對長得像主機名稱的裝置、且受整趟預算限制。
+    /// 三段比對鍵的語意與 docs/PRTG-SPEC.md §12 相同，只是把裝置側解析延後到最後——
+    /// 它是全表 × 逾時的成本所在，多數環境在前兩步就命中。
     /// </summary>
     private static List<PrtgDeviceRow> FindDevicesForHost(
         string host,
         IReadOnlyList<PrtgDeviceRow> allDevices,
-        IPrtgAddressResolver resolver)
+        IPrtgAddressResolver resolver,
+        DeviceDnsBudget budget)
     {
         var matched = new List<PrtgDeviceRow>();
 
-        // 1. 兩邊都用解析器（IP 直接比、名稱先 DNS 解析成 IP 再比）
+        // 1. 來源位址解析成 IP，裝置側純語法比對
         var resolvedHost = resolver.Resolve(host);
         if (resolvedHost != null)
         {
             foreach (var dev in allDevices)
             {
-                var devIp = resolver.Resolve(dev.Ip);
+                var devIp = PrtgAddress.Normalize(dev.Ip);
                 if (devIp != null && string.Equals(devIp, resolvedHost, StringComparison.OrdinalIgnoreCase))
-                {
                     matched.Add(dev);
-                }
             }
+            if (matched.Count > 0) return matched;
         }
 
-        if (matched.Count > 0)
+        // 2. 主機名稱字面比對
+        var hostToken = PrtgAddress.HostToken(host);
+        if (hostToken != null)
         {
-            return matched;
-        }
-
-        // 最後退路：主機名稱字面比對。device 的 Ip 欄位也可能填 DNS 名稱，
-        // 而內網名稱未必進得了 DNS（解析失敗時上面兩段都落空）——兩邊填同一個名稱時仍應命中。
-        // 只在前兩段都對不到時才走，且比對前先去掉 scheme 與 port。
-        if (matched.Count == 0)
-        {
-            var hostToken = PrtgAddress.HostToken(host);
-            if (hostToken != null)
+            foreach (var dev in allDevices)
             {
-                foreach (var dev in allDevices)
-                {
-                    var devToken = PrtgAddress.HostToken(dev.Ip);
-                    if (devToken != null && string.Equals(devToken, hostToken, StringComparison.OrdinalIgnoreCase))
-                    {
-                        matched.Add(dev);
-                    }
-                }
+                var devToken = PrtgAddress.HostToken(dev.Ip);
+                if (devToken != null && string.Equals(devToken, hostToken, StringComparison.OrdinalIgnoreCase))
+                    matched.Add(dev);
+            }
+            if (matched.Count > 0) return matched;
+        }
+
+        // 3. 裝置側 DNS（只對名稱型裝置、受預算限制）
+        if (resolvedHost != null)
+        {
+            foreach (var dev in allDevices)
+            {
+                if (PrtgAddress.Normalize(dev.Ip) != null) continue;   // 純 IP 在第 1 步比過了
+                var devToken = PrtgAddress.HostToken(dev.Ip);
+                if (devToken == null) continue;
+                if (!PrtgAddress.IsDnsCandidate(devToken)) continue;                         // 亂值不送 DNS
+                if (!budget.TryTake(devToken)) continue;
+
+                var devIp = resolver.Resolve(devToken);
+                if (devIp != null && string.Equals(devIp, resolvedHost, StringComparison.OrdinalIgnoreCase))
+                    matched.Add(dev);
             }
         }
 

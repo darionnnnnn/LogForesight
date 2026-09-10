@@ -447,7 +447,7 @@ public sealed class CalibrationService
                     ["HostsReachingSufficient"] = 0
                 },
                 CurrentThresholds = thresholds,
-                Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
+                Explanations = new List<string> { "請先在 PRTG 維護頁「連線」頁籤完成連線設定，並在「擷取參數」頁籤選擇取數範圍以啟用擷取" }
             };
         }
 
@@ -637,7 +637,7 @@ public sealed class CalibrationService
                     ["SilentDeviceDays"] = 0
                 },
                 CurrentThresholds = thresholds,
-                Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
+                Explanations = new List<string> { "請先在 PRTG 維護頁「連線」頁籤完成連線設定，並在「擷取參數」頁籤選擇取數範圍以啟用擷取" }
             };
         }
 
@@ -757,7 +757,7 @@ public sealed class CalibrationService
                     ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays
                 },
                 CurrentThresholds = thresholds,
-                Explanations = new List<string> { "請先在 PRTG 維護頁完成連線設定並於排程作業頁啟用 PRTG 擷取" }
+                Explanations = new List<string> { "請先在 PRTG 維護頁「連線」頁籤完成連線設定，並在「擷取參數」頁籤選擇取數範圍以啟用擷取" }
             };
         }
 

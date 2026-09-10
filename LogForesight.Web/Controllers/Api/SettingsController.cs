@@ -91,11 +91,6 @@ public class SettingsController : ControllerBase
     public ApiResponse<SystemSettingsDto> UpdatePrtg([FromBody] UpdatePrtgSettingsRequest request) =>
         ApiResponse<SystemSettingsDto>.Ok(_settings.UpdatePrtg(request));
 
-    /// <summary>PRTG 總開關（排程作業頁）：只更新這一個欄位，不動其他設定</summary>
-    [HttpPut("prtg-enabled")]
-    public ApiResponse<bool> SetPrtgEnabled([FromBody] SetPrtgEnabledRequest request) =>
-        ApiResponse<bool>.Ok(_settings.SetPrtgEnabled(request.Enabled));
-
     /// <summary>AI token 用量統計（回饋二十七輪作業 B）：今日／累計＋近 30 天每日明細</summary>
     [HttpGet("ai-usage")]
     public ApiResponse<AiUsageDto> GetAiUsage() =>
@@ -220,6 +215,17 @@ public class SettingsController : ControllerBase
     [HttpGet("prtg-fetch-scope/estimate")]
     public ApiResponse<PrtgValueFetchScopeEstimateDto> EstimatePrtgFetchScope([FromQuery] string? scope)
     {
+        // 維護頁下拉的「關閉」不是後端的合法 scope；Normalize 會把它退回 triggered 而給出一組
+        // 看起來正常的數字——關閉狀態下不會取數，回一個估算值是語意矛盾。
+        if (string.Equals(scope, "off", StringComparison.OrdinalIgnoreCase))
+        {
+            return ApiResponse<PrtgValueFetchScopeEstimateDto>.Ok(new PrtgValueFetchScopeEstimateDto
+            {
+                Success = false,
+                ErrorMessage = "PRTG 擷取已關閉，沒有規模可估算。"
+            });
+        }
+
         if (_backend == null)
         {
             return ApiResponse<PrtgValueFetchScopeEstimateDto>.Ok(new PrtgValueFetchScopeEstimateDto

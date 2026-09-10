@@ -52,8 +52,6 @@ internal class FakeSystemSettingsService : ISystemSettingsService
 
     public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request) => throw new NotSupportedException("測試未使用此方法");
 
-    public bool SetPrtgEnabled(bool enabled) => throw new NotSupportedException("測試未使用此方法");
-
     public HashSet<string>? GetVisibleSeverities() => VisibleSeverities;
 
     public IReadOnlySet<string>? GetVisibleDayRiskLevels() => VisibleDayRiskLevels;

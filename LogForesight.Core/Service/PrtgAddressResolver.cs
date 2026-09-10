@@ -46,11 +46,16 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
         if (token == null)
             return null;
 
-        // 3. 查實例快取（含失敗結果）
+        // 3. 不像主機名稱的值（打壞的 IPv4、含空白或備註）不送 DNS，直接視為解析不到。
+        //    沒付 IO 所以不寫快取。
+        if (!PrtgAddress.IsDnsCandidate(token))
+            return null;
+
+        // 4. 查實例快取（含失敗結果）
         if (_cache.TryGetValue(token, out var cached))
             return cached;
 
-        // 4. DNS 解析，取第一個 IPv4 位址
+        // 5. DNS 解析，取第一個 IPv4 位址
         string? result = null;
         try
         {
@@ -68,22 +73,25 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
         return result;
     }
 
+    /// <summary>DNS 解析逾時。來源位址只有幾筆、裝置側已由候選判定與守門預算減量，1 秒足夠。</summary>
+    private static readonly TimeSpan DnsTimeout = TimeSpan.FromSeconds(1);
+
     /// <summary>
-    /// 對主機名稱進行 DNS 解析（帶 2 秒逾時保護）。
+    /// 對主機名稱進行 DNS 解析（帶逾時保護，只查 IPv4）。
     /// 理由：Sentinel 常以 DNS 名稱設定、PRTG device 常填 IPv4，純字串比對會全數落空。
-    /// 為避免解析不到的主機或網路問題拖慢整段批次偵測，使用 Task.Run 加上逾時保護。
-    /// 解析失敗或逾時一律視為找不到，不擲例外。
+    /// 用 <see cref="Dns.GetHostAddressesAsync(string, AddressFamily, CancellationToken)"/> 加逾時取消，
+    /// 而不是 <c>Task.Run + Wait</c>：後者逾時後那個 task 沒人回收、執行緒繼續卡在 OS 解析，
+    /// 而且例外在 lambda 內擲出會讓偵錯器以「使用者未處理」中斷。
+    /// 介面維持同步簽章（改 async 連動主機對應與守門全部呼叫端，見 docs/BACKLOG.md），
+    /// 這裡同步等待非同步結果；解析失敗或逾時一律視為找不到，不擲例外。
     /// </summary>
     private static IPAddress[] DnsLookupWithTimeout(string host)
     {
         try
         {
-            var task = Task.Run(() => Dns.GetHostAddresses(host));
-            if (task.Wait(2000))
-            {
-                return task.Result;
-            }
-            return Array.Empty<IPAddress>();
+            using var cts = new CancellationTokenSource(DnsTimeout);
+            return Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cts.Token)
+                .GetAwaiter().GetResult();
         }
         catch (Exception)
         {

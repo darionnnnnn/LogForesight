@@ -445,4 +445,172 @@ public class PrtgResourceGuardTargetsTests : IDisposable
         Assert.Contains(liveConsole.Lines, l => l.Contains("已直接查詢 PRTG"));
         Assert.DoesNotContain(liveConsole.Lines, l => l.Contains("同步結構與對應"));
     }
+
+    /// <summary>記錄每次解析請求的假解析器：用來斷言「裝置側到底有沒有送 DNS」。</summary>
+    private sealed class RecordingResolver : IPrtgAddressResolver
+    {
+        private readonly Dictionary<string, string?> _map;
+        public List<string> DnsCalls { get; } = new();
+
+        public RecordingResolver(Dictionary<string, string?> map)
+        {
+            _map = new Dictionary<string, string?>(map, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public string? Resolve(string? value)
+        {
+            var normalized = PrtgAddress.Normalize(value);
+            if (normalized != null) return normalized;
+            var token = PrtgAddress.HostToken(value);
+            if (token == null) return null;
+            DnsCalls.Add(token);
+            return _map.TryGetValue(token, out var mapped) ? mapped : null;
+        }
+    }
+
+    [Fact]
+    public void Resolve_裝置host為壞掉的IPv4佔位值_裝置側完全不送DNS且其他裝置照常命中()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 1601, Name = "Placeholder", Ip = "10.2xx.x.x" },
+            new PrtgDeviceRow { Objid = 1602, Name = "NetIQ", Ip = "10.20.30.40" }
+        }, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2601, DeviceObjid = 1601, Name = "CPU", Category = "cpu", Paused = false },
+            new PrtgSensorRow { Objid = 2602, DeviceObjid = 1602, Name = "CPU", Category = "cpu", Paused = false }
+        }, now);
+
+        var console = new TestConsole();
+        var resolver = new RecordingResolver(new Dictionary<string, string?>());
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.20.30.40:8443" } };
+
+        var result = ResolveTargets(store, new SystemSettings(), sentinels, console, resolver);
+
+        Assert.Equal(new[] { 2602L }, result.SensorObjids);
+        Assert.Empty(resolver.DnsCalls);
+    }
+
+    [Fact]
+    public void Resolve_來源與裝置同名稱且DNS皆失敗_字面比對命中且裝置側不送DNS()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 1611, Name = "NetIQ", Ip = "netiq.corp.local" },
+            new PrtgDeviceRow { Objid = 1612, Name = "Other", Ip = "other.corp.local" }
+        }, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2611, DeviceObjid = 1611, Name = "CPU", Category = "cpu", Paused = false },
+            new PrtgSensorRow { Objid = 2612, DeviceObjid = 1612, Name = "CPU", Category = "cpu", Paused = false }
+        }, now);
+
+        var console = new TestConsole();
+        var resolver = new RecordingResolver(new Dictionary<string, string?>());
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://netiq.corp.local:8443" } };
+
+        var result = ResolveTargets(store, new SystemSettings(), sentinels, console, resolver);
+
+        Assert.Equal(new[] { 2611L }, result.SensorObjids);
+        // 只有來源位址本身查過 DNS，裝置側零次
+        Assert.All(resolver.DnsCalls, c => Assert.Equal("netiq.corp.local", c));
+    }
+
+    [Fact]
+    public void Resolve_名稱型裝置超過預算_解析次數受限並輸出警告()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var devices = Enumerable.Range(1, 30)
+            .Select(i => new PrtgDeviceRow { Objid = 1700 + i, Name = $"D{i}", Ip = $"dev{i:00}.corp.local" })
+            .ToList();
+        store.UpsertDevices(devices, now);
+        store.UpsertSensors(devices
+            .Select(d => new PrtgSensorRow { Objid = 1000 + d.Objid, DeviceObjid = d.Objid, Name = "CPU", Category = "cpu", Paused = false })
+            .ToList(), now);
+
+        var console = new TestConsole();
+        var resolver = new RecordingResolver(new Dictionary<string, string?>());
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.1.1.1:8443" } };
+
+        var result = ResolveTargets(store, new SystemSettings(), sentinels, console, resolver);
+
+        Assert.Empty(result.SensorObjids);
+        var deviceCalls = resolver.DnsCalls.Where(c => c.StartsWith("dev", StringComparison.Ordinal)).Distinct().Count();
+        Assert.Equal(20, deviceCalls);
+        Assert.Contains(console.Lines, l => l.Contains("已達上限 20 次") && l.Contains("10 台"));
+    }
+
+    [Fact]
+    public void Resolve_命中裝置在預算之後_會被漏掉但有警告_文件化的取捨()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var devices = Enumerable.Range(1, 25)
+            .Select(i => new PrtgDeviceRow { Objid = 1800 + i, Name = $"D{i}", Ip = $"dev{i:00}.corp.local" })
+            .ToList();
+        store.UpsertDevices(devices, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2825, DeviceObjid = 1825, Name = "CPU", Category = "cpu", Paused = false }
+        }, now);
+
+        var console = new TestConsole();
+        var resolver = new RecordingResolver(new Dictionary<string, string?> { ["dev25.corp.local"] = "10.1.1.1" });
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.1.1.1:8443" } };
+
+        var result = ResolveTargets(store, new SystemSettings(), sentinels, console, resolver);
+
+        Assert.Empty(result.SensorObjids);
+        Assert.Contains(console.Lines, l => l.Contains("已達上限"));
+    }
+
+    [Fact]
+    public void Resolve_兩個來源位址共用預算_略過台數不重複計()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var devices = Enumerable.Range(1, 30)
+            .Select(i => new PrtgDeviceRow { Objid = 1900 + i, Name = $"D{i}", Ip = $"dev{i:00}.corp.local" })
+            .ToList();
+        store.UpsertDevices(devices, now);
+
+        var console = new TestConsole();
+        var resolver = new RecordingResolver(new Dictionary<string, string?>());
+        var sentinels = new List<Sentinel>
+        {
+            new() { Name = "S1", BaseUrl = "https://10.1.1.1:8443" },
+            new() { Name = "S2", BaseUrl = "https://10.1.1.2:8443" }
+        };
+
+        ResolveTargets(store, new SystemSettings(), sentinels, console, resolver);
+
+        var deviceCalls = resolver.DnsCalls.Where(c => c.StartsWith("dev", StringComparison.Ordinal)).Distinct().Count();
+        Assert.Equal(20, deviceCalls);
+        Assert.Contains(console.Lines, l => l.Contains("已達上限 20 次") && l.Contains("其餘 10 台"));
+    }
+
+    [Fact]
+    public void Resolve_名稱型裝置恰好等於預算_不印上限警告()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var devices = Enumerable.Range(1, 20)
+            .Select(i => new PrtgDeviceRow { Objid = 2000 + i, Name = $"D{i}", Ip = $"dev{i:00}.corp.local" })
+            .ToList();
+        store.UpsertDevices(devices, now);
+
+        var console = new TestConsole();
+        var resolver = new RecordingResolver(new Dictionary<string, string?>());
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.1.1.1:8443" } };
+
+        ResolveTargets(store, new SystemSettings(), sentinels, console, resolver);
+
+        Assert.DoesNotContain(console.Lines, l => l.Contains("已達上限"));
+    }
 }

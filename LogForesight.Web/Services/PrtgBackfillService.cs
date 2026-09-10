@@ -133,7 +133,7 @@ public class PrtgBackfillService
 
         if (!s.PrtgEnabled)
         {
-            error = "PRTG 未啟用。";
+            error = "PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。";
             return false;
         }
 

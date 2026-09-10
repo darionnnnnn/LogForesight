@@ -1249,7 +1249,7 @@ public class SystemSettingsServiceTests : IDisposable
         request.PrtgUrl = "   ";
 
         var ex = Assert.Throws<DomainException>(() => service.Update(request));
-        Assert.Contains("PRTG 位址不可為空", ex.Message);
+        Assert.Contains("「連線」頁籤", ex.Message);
     }
 
     [Theory]
@@ -1861,16 +1861,21 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(new[] { "SNMP Memory", "SNMP Linux Meminfo" }, getDto.PrtgSensorTypeWhitelist);
     }
 
+    /// <summary>
+    /// 啟用開關併進維護頁「擷取參數」的取數範圍下拉之後，唯一的寫入入口是 UpdatePrtg
+    /// （回饋第 41 輪批次F）。啟用時的位址／認證驗證與整包更新共用 ValidatePrtgSettings。
+    /// </summary>
     [Fact]
-    public void SetPrtgEnabled_開啟時若URL為空擲DomainException()
+    public void UpdatePrtg_開啟時若URL為空擲DomainException()
     {
         var service = Create();
-        var ex = Assert.Throws<DomainException>(() => service.SetPrtgEnabled(true));
-        Assert.Contains("請先於 PRTG 維護頁完成連線設定", ex.Message);
+        var ex = Assert.Throws<DomainException>(() =>
+            service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = true }));
+        Assert.Contains("「連線」頁籤", ex.Message);
     }
 
     [Fact]
-    public void SetPrtgEnabled_開啟時URL與憑證齊備成功寫入且Get讀回為true()
+    public void UpdatePrtg_開啟時URL與憑證齊備成功寫入且Get讀回為true()
     {
         var service = Create();
         _store.Update(s =>
@@ -1880,15 +1885,20 @@ public class SystemSettingsServiceTests : IDisposable
             s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("my-token");
         });
 
-        var result = service.SetPrtgEnabled(true);
-        Assert.True(result);
+        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgEnabled = true,
+            PrtgValueFetchScope = LogForesight.Core.Service.PrtgValueFetchScope.Triggered
+        });
+        Assert.True(saved.PrtgEnabled);
 
         var dto = service.Get();
         Assert.True(dto.PrtgEnabled);
+        Assert.Equal(LogForesight.Core.Service.PrtgValueFetchScope.Triggered, dto.PrtgValueFetchScope);
     }
 
     [Fact]
-    public void SetPrtgEnabled_關閉時即使URL為空也成功()
+    public void UpdatePrtg_關閉時即使URL為空也成功()
     {
         var service = Create();
         _store.Update(s =>
@@ -1897,11 +1907,54 @@ public class SystemSettingsServiceTests : IDisposable
             s.PrtgEnabled = true;
         });
 
-        var result = service.SetPrtgEnabled(false);
-        Assert.False(result);
+        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false });
+        Assert.False(saved.PrtgEnabled);
 
         var dto = service.Get();
         Assert.False(dto.PrtgEnabled);
+    }
+
+    /// <summary>
+    /// 前端選「關閉」時不送 PrtgValueFetchScope——範圍要留著，下次重新啟用不必再選一次。
+    /// </summary>
+    [Fact]
+    public void UpdatePrtg_關閉時未送取數範圍_既有範圍不被清掉()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "https://prtg.example.local";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("my-token");
+            s.PrtgEnabled = true;
+            s.PrtgValueFetchScope = LogForesight.Core.Service.PrtgValueFetchScope.TriggeredPlusList;
+        });
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false });
+
+        var dto = service.Get();
+        Assert.False(dto.PrtgEnabled);
+        Assert.Equal(LogForesight.Core.Service.PrtgValueFetchScope.TriggeredPlusList, dto.PrtgValueFetchScope);
+    }
+
+    /// <summary>不送 PrtgEnabled 的請求（只改參數）不得動到開關。</summary>
+    [Fact]
+    public void UpdatePrtg_未送PrtgEnabled時開關不變()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "https://prtg.example.local";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("my-token");
+            s.PrtgEnabled = true;
+        });
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgTimeoutSeconds = 90 });
+
+        var dto = service.Get();
+        Assert.True(dto.PrtgEnabled);
+        Assert.Equal(90, dto.PrtgTimeoutSeconds);
     }
 
     [Fact]
@@ -1977,7 +2030,7 @@ public class SystemSettingsServiceTests : IDisposable
         request.PrtgUrl = "";
 
         var ex = Assert.Throws<DomainException>(() => service.Update(request));
-        Assert.Contains("PRTG 位址不可為空", ex.Message);
+        Assert.Contains("「連線」頁籤", ex.Message);
     }
 
     [Fact]
