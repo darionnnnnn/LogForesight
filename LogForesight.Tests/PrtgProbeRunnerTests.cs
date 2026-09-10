@@ -463,4 +463,138 @@ public class PrtgProbeRunnerTests
         Assert.Contains(console.Lines, l => l.Contains("失敗：連線 PRTG 伺服器失敗"));
         Assert.Contains(console.Lines, l => l.Contains("探測終止（連線或認證失敗）"));
     }
+
+    /// <summary>
+    /// 建一個把步驟 1~7 都餵最小合法資料的替身，步驟 8 的三次 count=5 查詢交給 pagingResponder
+    /// （依 content 與 start 決定回哪些 objid）。步驟 6 的 devices 大 count 回 deviceRows 筆。
+    /// </summary>
+    private static StubHandler BuildPagingStub(Func<string, int, long[]> pagingResponder, int deviceTreesize = 2, int deviceRows = 2)
+    {
+        return new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                var url = req.RequestUri!.ToString();
+                if (url.Contains("/api/status.json"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.2.98""}"));
+
+                if (url.Contains("count=5&start="))
+                {
+                    var content = url.Contains("content=devices") ? "devices" : url.Contains("content=sensors") ? "sensors" : "messages";
+                    var startText = url.Split("start=")[1].Split('&')[0];
+                    var ids = pagingResponder(content, int.Parse(startText));
+                    var rows = string.Join(",", ids.Select(id => $"{{\"objid\": {id}}}"));
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"treesize\": 12, \"{content}\": [{rows}]}}"));
+                }
+
+                if (url.Contains("content=devices") && url.Contains("count=1"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"treesize\": {deviceTreesize}, \"devices\": [{{\"objid\": 1}}]}}"));
+                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""sensors"": [{""objid"": 10}]}"));
+                if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""sensors"": [{""objid"": 101, ""device"": ""A"", ""sensor"": ""Ping"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1}]}"));
+                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
+                {
+                    var rows = string.Join(",", Enumerable.Range(1, deviceRows).Select(i => $"{{\"objid\": {i}, \"device\": \"D{i}\", \"host\": \"10.0.0.{i}\", \"group\": \"G\"}}"));
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"treesize\": {deviceTreesize}, \"devices\": [{rows}]}}"));
+                }
+
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_遵守start且超出範圍回空頁時判為可正常收斂()
+    {
+        var stub = BuildPagingStub((_, start) => start switch
+        {
+            0 => new long[] { 1, 2, 3, 4, 5 },
+            5 => new long[] { 6, 7, 8, 9, 10 },
+            _ => Array.Empty<long>()
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("devices：✓ 遵守 start，超出範圍回空頁"));
+        Assert.Contains(console.Lines, l => l.Contains("sensors：✓ 遵守 start"));
+        Assert.Contains(console.Lines, l => l.Contains("messages：✓ 遵守 start"));
+        // messages 的診斷必須帶相對日期過濾，否則是整台訊息歷史的查詢
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("count=5&start=0") && u.Contains("filter_drel=7days"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_完全忽略start時判為只能單次大count()
+    {
+        var stub = BuildPagingStub((_, _) => new long[] { 1, 2, 3, 4, 5 });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result, "步驟 8 是診斷，結論不影響探測成敗");
+        Assert.Contains(console.Lines, l => l.Contains("devices：✗ 完全忽略 start"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_超出範圍夾到末頁或回第一頁時提示需要保險絲()
+    {
+        var stub = BuildPagingStub((content, start) => (content, start) switch
+        {
+            (_, 0) => new long[] { 1, 2, 3, 4, 5 },
+            (_, 5) => new long[] { 6, 7, 8, 9, 10 },
+            ("devices", _) => new long[] { 1, 2, 3, 4, 5 },   // 回到第一頁
+            _ => new long[] { 8, 9, 10, 11, 12 }               // 夾到最後一頁
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("devices：⚠ 遵守 start，但超出範圍時回到第一頁"));
+        Assert.Contains(console.Lines, l => l.Contains("sensors：⚠ 遵守 start，但超出範圍時夾到最後一頁"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_單次查詢失敗只印原因不算探測失敗()
+    {
+        var stub = BuildPagingStub((content, _) => content == "messages"
+            ? throw new HttpRequestException("messages 端點 500")
+            : new long[] { 1, 2 });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("messages：無法判定（"));
+        Assert.Contains(console.Lines, l => l.Contains("devices：總筆數不足 5 筆"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟6_device大count取樣少於treesize時警告截斷()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>(), deviceTreesize: 10, deviceRows: 3);
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("警告：Device 總數為 10 筆，本次查詢僅取樣到 3 筆"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟6_treesize小於實際筆數時指出treesize不是總筆數()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>(), deviceTreesize: 2, deviceRows: 4);
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("treesize 回報 2 筆但實際取得 4 筆"));
+    }
 }
