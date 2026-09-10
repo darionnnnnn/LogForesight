@@ -2271,7 +2271,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     取數卡已在顯示，再放一次只是重複；PRTG 分路的輸出看執行詳情（每行有 `[PRTG]` 前綴）。
 - **動作鈕互斥**：執行中只顯示「停止」，閒置只顯示啟動類（立即執行／立即補跑 AI／強制重新分析），
   以 `d-none` 切換而非 `disabled`——兩顆並排時使用者得自己判斷哪顆有效，灰掉的鈕仍佔位、讀起來像壞了。
-  PRTG 卡沒有停止鈕可換，維持 `disabled`。
+  PRTG 卡的兩顆啟動鈕（同步／回填）沒有對應的停止鈕可換，維持 `disabled`；
+  同步的停止鈕是獨立一顆，只在同步執行中出現（見下方「停止鈕」）。
 - **狀態卡的三條進度軌**：本機／NetIQ／PRTG 三路並行，各自一條互不覆蓋的軌
   （前兩條在取數卡、PRTG 那條在 PRTG 卡）。
   三路收尾各送一個完工訊號（`local-done`／`netiq-done`／`prtg-done`），

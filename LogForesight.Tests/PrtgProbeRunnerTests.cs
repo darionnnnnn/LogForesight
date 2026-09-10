@@ -633,6 +633,55 @@ public class PrtgProbeRunnerTests
         Assert.Contains(console.Lines, l => l.Contains("devices：✓ 預設順序已遞增，sortby=objid 不改變結果"));
     }
 
+    /// <summary>
+    /// 沒設 dependency 的 sensor 這一欄是缺的。mapper 若把它當損壞列剔除，分母會縮水，
+    /// 截斷警告就會在明明沒截斷時誤報——探測輸出裡出現一句錯的警告比沒有警告更糟。
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_步驟4_sensor沒有dependency欄位時不誤報截斷()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("count=1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 3, ""sensors"": [{""objid"": 10}]}"));
+            if (url.Contains("columns=objid,dependency"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    @"{""treesize"": 3, ""sensors"": [{""objid"": 1, ""dependency"": ""200""}, {""objid"": 2}, {""objid"": 3}]}"));
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：1 / 3"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("僅取樣到") && l.Contains("下列比例僅供參考"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟5_群組取樣少於treesize時警告截斷()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=groups"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    @"{""treesize"": 1500, ""groups"": [{""objid"": 10, ""group"": ""A""}, {""objid"": 11, ""group"": ""B""}]}"));
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("群組總數為 1500，本次查詢僅取樣到 2 筆"));
+    }
+
     [Fact]
     public async Task RunAsync_步驟6_device大count取樣少於treesize時警告截斷()
     {

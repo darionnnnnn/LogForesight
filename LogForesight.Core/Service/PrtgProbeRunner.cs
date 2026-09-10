@@ -174,11 +174,9 @@ public static class PrtgProbeRunner
                 return;
             }
 
-            var parsedDeps = ParseTable(depJson, "sensors", el =>
-            {
-                var dep = GetStringProperty(el, "dependency");
-                return dep;
-            });
+            // 沒設 dependency 的 sensor 這一欄是缺的：回空字串讓它留在分母裡，
+            // 回 null 會被 ParseTable 當成損壞列剔除，分母縮水後截斷警告會在沒截斷時誤報。
+            var parsedDeps = ParseTable(depJson, "sensors", el => GetStringProperty(el, "dependency") ?? string.Empty);
 
             if (parsedDeps.CorruptedCount > 0)
             {
@@ -220,6 +218,12 @@ public static class PrtgProbeRunner
             }
 
             var totalGrp = parsedGroups.TotalTreesize ?? parsedGroups.Rows.Count;
+            // 與其他單發大 count 同一道截斷偵測：只取樣到 1000 筆時「群組總數」仍會印 treesize，看不出缺口
+            var fetchedGrp = parsedGroups.Rows.Count + parsedGroups.CorruptedCount;
+            if (totalGrp > fetchedGrp)
+            {
+                console.WriteLine($"     ⚠ 警告：群組總數為 {totalGrp}，本次查詢僅取樣到 {fetchedGrp} 筆，下列名稱不完整");
+            }
             var validGroupNames = parsedGroups.Rows.Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
             var top20 = validGroupNames.Take(20).ToList();
             console.WriteLine($"     群組總數：{totalGrp}，前 20 個群組名稱：{string.Join("，", top20)}");
@@ -360,7 +364,8 @@ public static class PrtgProbeRunner
 
         // 步驟 8：分頁語意診斷（不影響探測成敗）——回答「這台 PRTG 的 table.json 遵不遵守 start 位移」。
         // 結構同步與資源守門的分頁迴圈都以「遵守 start」為前提；忽略 start 或超出範圍時夾回某一頁的
-        // 環境會讓分頁永遠收不斂。這一步只做三次 count=5 的小查詢，結果純供人工判讀，任何一筆失敗
+        // 環境會讓分頁永遠收不斂。這一步每個 content 只做四次 count=5 的小查詢（三次位移＋一次排序對照），
+        // 結果純供人工判讀，任何一筆失敗
         // 都只印出原因、不把整趟探測算失敗。
         console.WriteLine("[8] 分頁語意診斷（table.json 的 start 位移是否被遵守）");
         foreach (var (content, extra) in new[] { ("devices", ""), ("sensors", ""), ("messages", "&id=0&filter_drel=7days") })
@@ -382,7 +387,8 @@ public static class PrtgProbeRunner
     }
 
     /// <summary>
-    /// 對單一 content 發三次 count=5 查詢（start=0、start=5、start=999999），比較各頁 objid 集合，
+    /// 對單一 content 發三次 count=5 查詢（start=0、start=5、start=999999）比較各頁 objid 集合，
+    /// 再發一次 start=0&amp;sortby=objid 當排序對照，
     /// 歸納這台 PRTG 對 start 位移的處理方式。判讀結果與分頁迴圈的影響一起印出。
     /// </summary>
     private static async Task DiagnosePagingAsync(PrtgClient client, IRunConsole console, string content, string extraQuery, CancellationToken ct)

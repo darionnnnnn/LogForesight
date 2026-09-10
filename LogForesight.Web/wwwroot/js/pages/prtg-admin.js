@@ -1169,7 +1169,7 @@ function bindStructureSync() {
         const restore = withBusy(cancelBtn, '停止中');
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
-            toast('已送出停止要求，同步會在目前這一頁查詢結束後中止', 'success');
+            toast('已送出停止要求，進行中的查詢會被中斷', 'success');
         } finally {
             restore();
         }

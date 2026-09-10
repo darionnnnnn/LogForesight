@@ -272,21 +272,23 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             return false;
         }
 
+        // 取消來源先建好再搶執行權：IsRunning 一轉 true，停止鈕就按得下去，
+        // _cts 若還是 null 那一下會落空——畫面說「已送出停止」而同步照跑完整趟。
+        // TryBegin 與指派之間仍有兩個指令的窗口，要完全關掉得讓執行狀態自己持有 cts
+        //（SchedulerRunState.TryBeginRun 的做法），這裡的後果只是「再按一次」，不為此重構。
+        var cts = new CancellationTokenSource();
         if (!_state.TryBegin())
         {
+            cts.Dispose();
             error = "同步已在執行中。";
             isConflict = true;
             return false;
         }
-
-        // 一旦 IsRunning 轉 true，閘門與停止鈕就看得到這一趟了。兩件事必須在這一刻就位：
-        // ① 把「上一趟成功」的旗標歸零，否則下面任何一條 early return 都會讓閘門沿用舊結果，
-        //    當晚的取數會以為鏡像剛更新過而跳過自己的結構同步；
-        // ② 備好取消來源，否則使用者在啟動後立刻按停止會落在 _cts 還是 null 的空窗，
-        //    畫面說「已送出停止」而同步照跑完整趟。
-        _lastRunSucceeded = false;
-        var cts = new CancellationTokenSource();
         _cts = cts;
+
+        // 「上一趟成功」的旗標同時歸零：下面任何一條 early return 都不能讓閘門沿用舊結果，
+        // 否則當晚的取數會以為鏡像剛更新過而跳過自己的結構同步。
+        _lastRunSucceeded = false;
 
         _state.ResetProgress();
 

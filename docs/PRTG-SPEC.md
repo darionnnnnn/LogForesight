@@ -146,7 +146,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
   未知時 400 頁，並允許再多讀一頁確認結尾（總筆數剛好是「上限 × 頁大小」時，最後一頁是滿頁、
   下一頁才是空頁）。`treesize` 在帶 filter 的查詢下是否為過濾後筆數並無保證，因此**只能放大上限、
   不能縮小**，否則合法的長同步會被誤判。翻到上限仍未收斂時擲
-  `PrtgPagingNotConvergedException`（含 content、頁數、已讀筆數），**不靜默截斷**。
+  `PrtgPagingNotConvergedException`（含 content、頁數、已讀筆數、重複列數），**不靜默截斷**。
   該階段計為失敗，但**已寫入的筆數照樣回報**（寫入是冪等 upsert，留著比丟掉好）。
 - **去重與收斂都以「該 content 真正的唯一鍵」為準**，預設是 objid。
   **messages 是例外**：它的 `objid` 是發出訊息的 sensor 而不是訊息自己的 id，同一天同一顆 sensor
@@ -168,7 +168,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
   那兩個級距會整段漏掉。
 - **結構同步三階段各自回報進度**（`prtg-sync-devices`／`-sensors`／`-messages`）：
   分子是已讀取列數、分母取回應的 `treesize`；每滿 50 頁另寫一行執行輸出。
-  各階段完成時寫出**耗時**與跳過的重複列數——沒有這兩個數字，「哪個階段值得優化」無從判斷。
+  各階段完成時寫出**耗時**——沒有這個數字，「哪個階段值得優化」無從判斷。
   結構同步**不套 `PrtgFetchConcurrency`**（分頁必須循序），也**不設整段逾時**
   ——拍腦袋的倍數在大型環境會誤殺合法的長同步。中止的手段是 §5a 的停止鈕，
   收斂的保證是上面的三道停止條件與頁數上限。
@@ -314,7 +314,8 @@ device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 
   塞在 HTTP 請求裡必然逾時。狀態與進度走 `GET prtg-structure-sync/status`。
 - **可中止**：`POST prtg-structure-sync/cancel`（權限同 start，寫稽核）。沒有執行中時回 409——
   「沒東西可停」不是停止成功。兩個入口（維護頁鏡像頁籤、排程作業頁 PRTG 卡）各有一顆停止鈕，
-  只在同步執行中出現。取消訊號穿透分頁迴圈，會在當前這一頁查詢結束後生效。
+  只在同步執行中出現。取消 token 一路傳進 HTTP 呼叫，進行中的那一頁查詢會**當場中斷**，
+  不等它回來；已寫入鏡像的頁留著（寫入是冪等 upsert）。
   取消也會落地成「上次結果」，畫面說明鏡像可能不完整、夜間取數會重新同步。
 - **上次結果持久化**（blob `prtg_sync_status`）：站台重啟後畫面仍要說得出上次同步是什麼時候、
   對應成果如何。**從未執行過時整個物件為 null，畫面顯示「尚未同步」**——
@@ -491,8 +492,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET prtg-mirror` | 鏡像狀態與主機對應摘要 |
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-backfill/start`、`GET prtg-backfill/status` | 歷史回填（status 含天數與當日 sensor 進度） |
-| `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409；成功時回 200（取消訊號已送出，實際中止發生在當前這一頁查詢結束後，
-狀態要看 status 而不是這個回應） |
+| `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409；成功時回 200（只代表取消訊號已送出，實際結束要看 status） |
 | `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；**含總開關 `PrtgEnabled`**，有送才更新） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |

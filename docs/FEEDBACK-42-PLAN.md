@@ -1,6 +1,6 @@
 # 回饋第 42 輪規劃：PRTG 分頁收斂保險絲、資源守門截斷、同步可取消
 
-> 狀態：實作與終檢完成，待使用者實測後併 dev
+> 狀態：全案完成已併 dev（體檢：Fable 5.1）
 > 基準：dev@0c325e9（3725 綠）；本輪分支 feature/feedback-42 已有前置 commit 1b528a1（3731 綠）
 > 來源：正式環境（6349 台裝置、42864 個感測器）啟用 PRTG 後的程式碼體檢與環境探測結果
 > 實作方式：Claude 親做（替身要模擬「永遠回滿頁」與「夾到末頁」，測試形狀不直觀，不委派）
@@ -135,7 +135,7 @@
 
 ### 測試／驗收
 
-- 端點測試：未執行中 → 409；執行中 → 202 且服務的 Cancel 被呼叫。
+- 端點測試：未執行中 → 409；執行中 → 成功（200）且服務的 Cancel 被呼叫。
 - 閘門測試：等待中的那趟結果 Success=false 時 `WaitUntilIdleAsync` 回 false；成功時回 true。
 - 稽核測試：取消端點寫入 `PrtgStructureSyncCancel`。
 - `PrtgDailyPipeline` 既有「等待同步後跳過結構同步」測試補反例：閘門回 false 時照做結構同步。
@@ -243,13 +243,34 @@
 
 ## 體檢交接
 
+- 實作模型：Opus 5（批次 0 前置由 Fable 5.1 做，批次 0b～D 與終檢修正由 Opus 5 做）；體檢模型：Fable 5.1；subagent 一律 scan-low（Opus，low）。
+- 實作方最沒把握的地方：(1) `sortby=objid` 在 messages 上是否被 PRTG 接受尚未實機驗證；(2) 閘門「回 true」分支無單元測試；(3) 終檢後的兩個手改 commit（806e1a4、2d7bd01）沒有被獨立審過。
 - 分支 `feature/feedback-42`，基準 dev@0c325e9（3725 綠）。
-- 本輪測試總數 **3759 綠**（略過 6），較基準 +34。
+- 本輪測試總數 **3761 綠**（略過 6，體檢後），較基準 +36。
 - 無 schema 變更，可直接回退分支。
 - 部署後必做兩件事：① 重按「自動偵測並填入」並儲存（舊清單可能是從截斷後的 25000 筆偵測的）；
   ② 手動跑一次「同步結構與對應」，看各階段耗時與重複列數，決定 BACKLOG 的三項要不要提前。
 - 下次執行環境探測時看步驟 8 的排序判定：若印出「sortby=objid 無效，且預設順序非遞增」，
   代表分頁仍可能漏列，要回頭評估結構同步是否改單次大 count。
+
+## 體檢輪修正（換模型：Fable 5.1；掃描 subagent：scan-low）
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `runs.js` PRTG 卡停止鈕 | 輪詢無條件拿掉 `d-none`，而 `data-maintain-only` 的權限隱藏也靠 `d-none`：同步執行中時 DevMonitor（唯讀）會看到並能點「停止同步」（後端會擋，但畫面露出不該有的動作鈕） | 切換前看 `canMaintainSchedule` | `RunsPageUiTests` 補字串斷言 |
+| 2 | `PrtgStructureSyncService.TryStart` | 註解宣稱「_cts 空窗已消除」，實際 TryBegin 到指派之間仍有窗口 | cts 先建好、TryBegin 一成功就指派，窗口縮到兩個指令；註解改成如實描述，並寫明完全關掉要讓執行狀態持有 cts（`SchedulerRunState.TryBeginRun` 的做法），後果只是「再按一次」不為此重構 | 既有「啟動後立刻按停止不會落空」 |
+| 3 | `PrtgProbeRunner` 步驟 4 | 本輪新加的截斷警告分母算錯：沒設 dependency 的 sensor 這一欄是缺的，mapper 回 null 被當損壞列剔除，分母縮水後**沒截斷也會誤報** | mapper 回空字串讓它留在分母 | 「sensor沒有dependency欄位時不誤報截斷」 |
+| 4 | `PrtgProbeRunner` 步驟 5 | groups 單發 `count=1000` 是同型的單發大 count，卻沒有截斷偵測；群組超過 1000 時「群組總數」印 treesize 看起來完全正常 | 取樣數（含損壞列）少於 treesize 就警告 | 「群組取樣少於treesize時警告截斷」 |
+| 5 | PRTG-SPEC §5a／端點表、兩處前端 toast | 說取消「會在當前這一頁查詢結束後生效」；實際取消 token 直接傳進 HTTP 呼叫，進行中的那一頁會**當場中斷** | 三處改成如實描述 | — |
+| 6 | PRTG-SPEC §3 | 例外列舉少了重複列數；「重複列數」在同一節寫了兩次 | 補列舉、刪重複句 | — |
+| 7 | WEB-SPEC 排程頁動作鈕互斥 | 既有句「PRTG 卡沒有停止鈕可換」與本輪新增的停止鈕矛盾 | 改成「兩顆啟動鈕沒有對應停止鈕；同步停止鈕獨立一顆」 | — |
+| 8 | BACKLOG「PRTG 整合遞延」 | 本輪三項插到了該段原有引言前面，引言變成三項的後記；(c) 條漏寫守門也改單次大 count | 搬到引言後、補守門 | — |
+| 9 | `PrtgProbeRunner` 註解、PLAN 驗收行 | 註解仍寫「三次 count=5」（實際四次）；驗收行仍寫 202 | 跟上事實 | — |
+| 10 | CLAUDE.md「不要做」 | 本輪兩條教訓（外部 objid 不一定是列唯一鍵、單發大 count 要比對 treesize）同屬既有第 6 條「外部系統不給保證」母題，清單未涵蓋 | 新增一條併在第 6 條前 | — |
+
+掃描另列但**判定不修**的項目：(a) `WaitUntilIdleAsync` 在連續兩趟緊接時會讀到下一趟的初值 false——安全方向（多同步一次）；(b) 整頁都是非 object 的滿頁會被當成收斂而靜默結束——PRTG 不會回這種頁，真回了也是整頁垃圾；(c) messages 列鍵用原始 datetime 字串，兩個不同寫法的同一時刻會被算成兩列——只影響計數，DB 端仍去重；(d) 守門來源對 `results.Count > treesize`（treesize 低報）不出聲——不是截斷；(e) 探測的 `extraQuery` 自帶前導 `&`、分頁器的不帶，兩套約定並存但互不呼叫；(f) `PrtgResourceGuardTargetsTests` 建守門來源時沒傳 console，該路徑的截斷警告測不到（測試面缺口）。
+
+體檢後全量：見下方終檢輪。
 
 ## 定案逐條比對（實作完成後親做，非委派）
 
