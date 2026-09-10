@@ -100,7 +100,7 @@ public sealed class PrtgFetchService
                 if (!outcome.Converged)
                 {
                     failures++;
-                    _console.WriteLine($"[階段 1/4] ✗ {outcome.Error}");
+                    _console.WriteLine($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -126,7 +126,7 @@ public sealed class PrtgFetchService
                 if (!outcome.Converged)
                 {
                     failures++;
-                    _console.WriteLine($"[階段 2/4] ✗ {outcome.Error}");
+                    _console.WriteLine($"[階段 2/4] ✗ {outcome.Error}已寫入 {sensorsCount} 個感測器，鏡像不完整。");
                     // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
                     // 數值表會安靜地少一大塊而看不出邊界在哪。
                     _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
@@ -169,7 +169,7 @@ public sealed class PrtgFetchService
             if (!outcome.Converged)
             {
                 failures++;
-                _console.WriteLine($"[階段 3/4] ✗ {outcome.Error}");
+                _console.WriteLine($"[階段 3/4] ✗ {outcome.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

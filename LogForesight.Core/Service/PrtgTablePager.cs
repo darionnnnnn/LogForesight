@@ -7,7 +7,7 @@ namespace LogForesight.Core.Service;
 /// 這是 PRTG 端行為異常（忽略位移、代理快取同一頁）的訊號，必須看得見——
 /// 靜默截斷會讓鏡像少一大塊而畫面顯示同步成功。
 /// </summary>
-public sealed class PrtgPagingNotConvergedException : Exception
+internal sealed class PrtgPagingNotConvergedException : Exception
 {
     public PrtgPagingNotConvergedException(string content, int pages, int readRows, int duplicateRows)
         : base($"{content} 分頁未收斂：已翻 {pages} 頁、讀取 {readRows} 筆" +
@@ -27,22 +27,22 @@ public sealed class PrtgPagingNotConvergedException : Exception
 }
 
 /// <summary>分頁結果統計。ReadRows 含重複列，Mapped 是實際交給 onBatch 的筆數。</summary>
-public sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages);
+internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages);
 
 /// <summary>
 /// PRTG table.json 的唯一分頁實作。所有需要翻頁讀取 PRTG 表格的路徑都走這裡，
 /// 避免同一套停止條件在多處各寫一份而只修到一半。
 /// </summary>
-public static class PrtgTablePager
+internal static class PrtgTablePager
 {
-    public const int DefaultPageSize = 500;
+    internal const int DefaultPageSize = 500;
 
     /// <summary>
     /// treesize 未知時的頁數上限（＝20 萬筆）。treesize 已知時取「推算值與它的較大者」——
     /// treesize 在帶 filter 的查詢下是否為過濾後筆數並無保證，讓它只能放大上限、不能縮小，
     /// 否則會把合法的長同步誤判成未收斂。
     /// </summary>
-    public const int DefaultMaxPages = 400;
+    internal const int DefaultMaxPages = 400;
 
     /// <summary>每翻這麼多頁寫一行執行輸出：大型環境要翻數百頁，沒有輸出時「慢」與「卡死」看起來一樣。</summary>
     private const int ConsoleEveryPages = 50;
@@ -68,7 +68,7 @@ public static class PrtgTablePager
     /// 順序不穩定時會靜默漏列（去重擋得住重複、擋不住漏列）。不支援的版本會忽略這個參數。
     /// </summary>
     /// <exception cref="PrtgPagingNotConvergedException">翻到頁數上限仍未收斂。</exception>
-    public static async Task<PrtgPagerResult> FetchAsync<T>(
+    internal static async Task<PrtgPagerResult> FetchAsync<T>(
         PrtgClient client,
         IRunConsole console,
         string content,
