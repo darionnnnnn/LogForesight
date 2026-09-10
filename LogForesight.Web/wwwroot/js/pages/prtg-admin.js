@@ -1091,7 +1091,8 @@ function renderStructureSyncStatus(status) {
         return;
     }
 
-    btn.disabled = false;
+    // 未啟用時的閘由 syncStructureSyncGate 設定；這裡是輪詢，不能把它打開
+    btn.disabled = !prtgEnabled;
     btn.textContent = '同步結構與對應';
     progressEl.textContent = '';
 
@@ -1135,6 +1136,11 @@ async function refreshStructureSyncStatus() {
 function bindStructureSync() {
     const btn = document.getElementById('prtg-structure-sync-btn');
     btn?.addEventListener('click', async () => {
+        // 按鈕已依模組狀態灰掉，這裡是輪詢競態時的第二道（後端還有第三道）
+        if (!prtgEnabled) {
+            toast('PRTG 擷取未啟用，請先在「擷取參數」頁籤選擇取數範圍。', 'warning');
+            return;
+        }
         const restore = withBusy(btn, '啟動中');
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});

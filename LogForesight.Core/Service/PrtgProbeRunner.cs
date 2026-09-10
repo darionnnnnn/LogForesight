@@ -251,6 +251,7 @@ public static class PrtgProbeRunner
             int totalDevices = parsedDevHosts.Rows.Count;
             int withHost = 0;
             int ipv4Count = 0;
+            int ipv6Count = 0;
             int dnsCount = 0;
             var invalidSamples = new List<string>();
             int invalidCount = 0;
@@ -270,6 +271,11 @@ public static class PrtgProbeRunner
                         ipv4DeviceIds.Add(d.Objid.Value);
                     }
                 }
+                else if (normalized != null)
+                {
+                    // 合法 IPv6：主機對應比得到，但步驟 7 的「IPv4 覆蓋」不算它
+                    ipv6Count++;
+                }
                 else if (PrtgAddress.IsDnsCandidate(PrtgAddress.HostToken(d.Host)))
                 {
                     dnsCount++;
@@ -287,6 +293,10 @@ public static class PrtgProbeRunner
             console.WriteLine($"     有設定 host 值的 Device 數：{withHost}");
             console.WriteLine($"     其中為 IPv4 位址者：{ipv4Count} 台");
             console.WriteLine($"     其中為 DNS 名稱者：{dnsCount} 台（主機對應需靠 DNS 解析）");
+            if (ipv6Count > 0)
+            {
+                console.WriteLine($"     其中為 IPv6 位址者：{ipv6Count} 台");
+            }
             if (invalidCount > 0)
             {
                 console.WriteLine($"     其中無法判定（打壞的 IP 或含備註）者：{invalidCount} 台——不會被解析也對不到主機，建議到 PRTG 修正：" +

@@ -66,7 +66,7 @@ public class CalibrationServiceTests : IDisposable
         var summary1 = service.AssessStatus(new DateTime(2026, 8, 31));
         Assert.Equal(CalibrationStatus.Unavailable, summary1.PrtgValueBaseline.Status);
         Assert.Equal("無法取得", summary1.PrtgValueBaseline.StatusText);
-        Assert.Contains(summary1.PrtgValueBaseline.Explanations, s => s.Contains("請先在 PRTG 維護頁完成連線設定"));
+        Assert.Contains(summary1.PrtgValueBaseline.Explanations, s => s.Contains("「擷取參數」頁籤選擇取數範圍"));
 
         // (b) PRTG 已啟用但鏡像無任何 sensor
         _settingsStore.Update(s => s.PrtgEnabled = true);

@@ -4,21 +4,17 @@
  * 啟用與範圍在畫面上是同一個下拉：選「關閉」＝ PrtgEnabled false，選任一範圍＝ true 加該範圍。
  * 後端仍是兩個欄位（PrtgEnabled 有七個消費端、PrtgValueFetchScope 有六個），這裡只負責 UI 的對應。
  *
- * 維護頁（設定入口）與排程作業頁（狀態顯示）共用這一份，兩頁各寫一份就會在改字時只改到一邊。
+ * 維護頁（載入／存檔的值對應）與排程作業頁（狀態顯示）共用這一份，兩頁各寫一份就會在改字時只改到一邊。
  */
 
 /** 「關閉」這個選項的值。不是後端的合法 scope，只存在於畫面上。 */
 export const PRTG_SCOPE_OFF = 'off';
 
-/** 下拉選單的四個選項，順序即畫面順序。 */
-export const PRTG_SCOPE_OPTIONS = [
-    { value: PRTG_SCOPE_OFF, label: '關閉（預設）' },
-    { value: 'triggered', label: '只抓觸發主機' },
-    { value: 'all-mapped', label: '全部已對應主機' },
-    { value: 'triggered-plus-list', label: '觸發主機＋指定清單' }
-];
-
-/** 值 → 顯示字串。狀態文字用它，不重寫一份。 */
+/**
+ * 值 → 顯示字串。狀態文字用它，不重寫一份。
+ * 下拉的 <option> 由 Prtg.cshtml 靜態產生（那邊的 off 寫「關閉（預設）」），
+ * 這份是「狀態顯示」用的短標籤；`PrtgAdminPageUiTests` 鎖住兩邊的 value 集合一致。
+ */
 export const PRTG_SCOPE_LABEL = {
     [PRTG_SCOPE_OFF]: '關閉',
     'triggered': '只抓觸發主機',

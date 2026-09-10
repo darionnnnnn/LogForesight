@@ -2043,8 +2043,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      前狀態、批次／跨主機取「新轉入」子集，信件的問題數／主機數也只算該子集）——已上報過的
      問題改備註重存不重寄。fire-and-forget，內部 try/catch 到底，寄送成敗不影響狀態變更。
 
-  **PRTG 不在本頁**：連線設定與全部擷取參數都在 `/admin/prtg`（§9.9e），
-  總開關與歷史回填在排程作業頁（§9.10）。「資料保留」頁籤底部有一行指路。
+  **PRTG 不在本頁**：總開關、連線設定與全部擷取參數都在 `/admin/prtg`（§9.9e），
+  歷史回填在排程作業頁（§9.10）。「資料保留」頁籤底部有一行指路。
   設定頁不送出任何 PRTG 欄位，故 `UpdateSystemSettingsRequest` 中的 PRTG 欄位
   **一律可空、有送才更新**（見 docs/PRTG-SPEC.md §7 的警語）。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
@@ -2168,11 +2168,10 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
 
 - **連線**：連線設定（認證方式三選一：API token／帳號密碼／帳號＋passhash）。
   未填位址或認證就在「擷取參數」選取數範圍時，存檔被擋且訊息指回本頁籤。
-- **擷取參數**：首欄 **「PRTG 擷取」四選一下拉**（關閉／只抓觸發主機／全部已對應主機／觸發主機＋指定清單
-  ＝ `PrtgEnabled` 加 `PrtgValueFetchScope`，見 docs/PRTG-SPEC.md §3a；選「關閉」時不送範圍，
-  範圍留著原值供下次啟用；選「觸發主機＋指定清單」才顯示主機名稱輸入框；「估算規模」鈕呼叫
-  `prtg-fetch-scope/estimate` 顯示該模式一晚要抓幾個 sensor，超過門檻顯示提醒但不擋存，
-  選「關閉」時整顆藏起來——不會取數就沒有規模可估）、
+- **擷取參數**：首欄 **「PRTG 擷取」四選一下拉**（＝ `PrtgEnabled` 加 `PrtgValueFetchScope`，
+  值的語意與存檔規則見 docs/PRTG-SPEC.md §3a；本頁只記 UI：選「觸發主機＋指定清單」才顯示主機名稱輸入框，
+  「估算規模」鈕呼叫 `prtg-fetch-scope/estimate` 顯示該模式一晚要抓幾個 sensor、超過門檻提醒但不擋存，
+  選「關閉」時整顆藏起來且後端對 `scope=off` 回失敗——不會取數就沒有規模可估）、
   忽略 SSL、逾時、併發、回填天數、保留天數、sensor type 白名單，
   **資源守門不在這一頁**——它同時節制 NetIQ 取數與 PRTG 擷取兩路，設定在
   「設定 > 資源守門」頁籤（§9.9b），此處只留一行指路連結。
@@ -2188,8 +2187,7 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
   且該檢查以 **effective 值**（未送就取已儲存值）比較，否則只調小歷史保留天數時上限會失效。
 - **鏡像狀態**：**「同步結構與對應」的入口與上次結果**（docs/PRTG-SPEC.md §5a；
   執行中每 3 秒輪詢，結束後自動重載本頁的鏡像統計；從未執行過顯示「尚未同步」；
-  **PRTG 擷取未啟用時按鈕灰掉並說明去「擷取參數」開**——後端一定會拒絕，
-  按下去看紅字不如一開始就說清楚）、
+  未啟用時本入口按鈕閘住並指路，見 docs/PRTG-SPEC.md §5a）、
   device／sensor 計數、各類資料最新時間點、白名單覆蓋量級、主機對應摘要、
   **衝突清單（分頁，走 `core/ui.js` 既有的 `renderPagination`）**、人工對應清單與指派入口、
   **IP 排除清單**（見 docs/PRTG-SPEC.md §4b）。
@@ -2211,8 +2209,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
-排程作業頁的那兩組另見 §9.10：`PUT api/admin/settings/prtg-enabled`（總開關）、
-`POST/GET api/admin/settings/prtg-backfill/start|status`（歷史回填）。
+排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status`（歷史回填）。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
 「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。
 
@@ -2264,9 +2261,10 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **取數執行**：本機與 NetIQ 兩條軌、最新訊息、立即執行／停止。
   - **AI 分析**：待補件數、閒置原因、背景補跑窗口、立即補跑／強制重新分析。
     **沒有啟用開關**——AI 服務設定好就一律啟用（見下方「AI 跟隨取數」）。
-  - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍，未啟用時附連結指向 PRTG 維護頁
-    「擷取參數」，並把同步與回填兩顆鈕灰掉）、結構同步摘要（§5a）、每日擷取軌、歷史回填軌與操作。
-    **開關不在本頁**：它是維護頁「擷取參數」四選一下拉的一部分（見 docs/PRTG-SPEC.md §3a）。
+  - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍；未啟用時附連結指向維護頁「擷取參數」，
+    同步與回填兩顆鈕閘住，見 docs/PRTG-SPEC.md §5a）、結構同步摘要（§5a）、每日擷取軌、歷史回填軌與操作。
+    模組狀態與閘只在頁面載入時讀一次設定——在另一分頁改了開關，本頁要重新整理才會跟上；
+    點擊時有第二道檢查、後端有第三道，所以不會誤送，只是反向（剛啟用、本頁仍灰）要重整。
     這張卡**刻意沒有「最新訊息」列**：狀態 API 的 `latestMessage` 是整趟共用的最後一行，
     取數卡已在顯示，再放一次只是重複；PRTG 分路的輸出看執行詳情（每行有 `[PRTG]` 前綴）。
 - **動作鈕互斥**：執行中只顯示「停止」，閒置只顯示啟動類（立即執行／立即補跑 AI／強制重新分析），

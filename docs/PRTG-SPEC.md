@@ -189,8 +189,10 @@ PRTG device 的 `host` 欄位與主機主檔的 IP 都先過同一套正規化�
    `PrtgHostMapper.NormalizeIp` 是它的對外名稱，另有二十個呼叫點（IP 排除清單的儲存鍵等）
    共用同一份判定。
 2. **解析層**（`PrtgAddressResolver`，有 IO）：純語法層回 null 時，先過 `PrtgAddress.IsDnsCandidate`
-   ——只有長得像主機名稱的值（英數、`-`、`_`、`.`，每段 1–63 字）才送 DNS；**第一段全數字或整串沒有
-   字母的值視為打壞的 IPv4**（PRTG 裝置 host 常見 `10.2xx.x.x` 這種佔位值），直接回 null 不付 IO。
+   ——只有長得像主機名稱的值（ASCII 英數、`-`、`_`、`.`，每段 1–63 字，結尾單一個點先去掉）才送 DNS；
+   **整串沒有字母、或第一段全數字且每段都不超過 3 字的值視為打壞的 IPv4**（PRTG 裝置 host 常見
+   `10.2xx.x.x` 這種佔位值），直接回 null 不付 IO。「每段 ≤ 3 字」是為了不誤擋 `1.dc.corp.local`
+   這種第一段是數字的真 FQDN。**非 ASCII（IDN）名稱不送 DNS**——內網幾乎不會有，且字面比對仍可命中。
    通過者以 `Dns.GetHostAddressesAsync` 只查 IPv4、逾時 1 秒可取消（不用 `Task.Run + Wait`：逾時後
    執行緒不回收，且 lambda 內的例外會讓偵錯器中斷）。**同一個實例內同一名稱只解析一次，失敗結果也快取**，
    避免解析不到的位址重複付逾時；不做跨趟的靜態快取（DNS 變更要能在下一趟生效）。
@@ -452,8 +454,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-backfill/start`、`GET prtg-backfill/status` | 歷史回填（status 含天數與當日 sensor 進度） |
 | `POST prtg-structure-sync/start`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過 |
-| `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；不含總開關） |
-| `PUT prtg-enabled` | PRTG 總開關（排程作業頁，只更新這一個欄位） |
+| `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；**含總開關 `PrtgEnabled`**，有送才更新） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |
 | `GET／PUT／DELETE prtg-ip-excludes` | IP 排除清單的查詢、新增與移除（§4b） |

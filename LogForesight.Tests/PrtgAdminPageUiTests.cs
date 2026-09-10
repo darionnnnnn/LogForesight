@@ -624,6 +624,48 @@ public class PrtgAdminPageUiTests
     }
 
     /// <summary>
+    /// 維護頁鏡像頁籤的同步鈕在 PRTG 未啟用時要閘住，而它的 disabled 有兩個寫入點
+    /// （載入設定時的閘、同步狀態輪詢結束時的復原）。輪詢那處若寫死 false，
+    /// 頁面載入後一秒閘就被打開、說明行卻還亮著——與排程頁同型的問題，兩邊都要鎖。
+    /// </summary>
+    [Fact]
+    public void 維護頁同步鈕在所有寫入點都尊重PRTG開關()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+
+        Assert.Contains("btn.disabled = !prtgEnabled;", js);
+        Assert.DoesNotContain("btn.disabled = false;", js);
+        // 點擊時的第二道：輪詢競態下按鈕可能還可按
+        Assert.Contains("if (!prtgEnabled) {", js);
+        Assert.Contains("prtg-structure-sync-disabled-hint", js);
+    }
+
+    /// <summary>
+    /// 下拉的 option 在 cshtml 靜態產生、狀態標籤在 core/prtg-scope-labels.js——兩份 value 集合必須一致，
+    /// 否則新增一個模式時只改到一邊，狀態文字會退回 triggered 而不自知。
+    /// </summary>
+    [Fact]
+    public void 取數範圍下拉的value集合與狀態標籤模組一致()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        var labels = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "prtg-scope-labels.js"));
+
+        var selectStart = cshtml.IndexOf("id=\"prtg-value-fetch-scope\"", StringComparison.Ordinal);
+        var selectEnd = cshtml.IndexOf("</select>", selectStart, StringComparison.Ordinal);
+        var optionValues = System.Text.RegularExpressions.Regex.Matches(cshtml[selectStart..selectEnd], "value=\"([^\"]+)\"")
+            .Select(m => m.Groups[1].Value).OrderBy(v => v).ToArray();
+
+        var labelStart = labels.IndexOf("PRTG_SCOPE_LABEL = {", StringComparison.Ordinal);
+        var labelEnd = labels.IndexOf("};", labelStart, StringComparison.Ordinal);
+        var labelKeys = System.Text.RegularExpressions.Regex.Matches(labels[labelStart..labelEnd], @"(?:\[PRTG_SCOPE_OFF\]|'([a-z-]+)')\s*:")
+            .Select(m => m.Groups[1].Success ? m.Groups[1].Value : "off").OrderBy(v => v).ToArray();
+
+        Assert.Equal(optionValues, labelKeys);
+    }
+
+    /// <summary>
     /// 「同步結構與對應」的入口在鏡像狀態頁籤（docs/PRTG-SPEC.md §5a）：
     /// 按鈕、狀態列與前端綁定三者缺一，畫面上就會出現按不動或不會更新的控制項。
     /// </summary>

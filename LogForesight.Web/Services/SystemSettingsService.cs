@@ -25,11 +25,6 @@ public interface ISystemSettingsService
     SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request);
 
     /// <summary>
-    /// 只切換 PRTG 總開關（排程作業頁用）。刻意不走整包設定更新：
-    /// 整包更新會在「讀取到送出之間」覆蓋他人的改動，也會被與 PRTG 無關的跨欄位驗證擋下。
-    /// </summary>
-
-    /// <summary>
     /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合（RecordRepository 據此過濾問題聚合，
     /// 這是全站唯一的過濾點，見 docs/archive/HISTORY.md S1）；
     /// DefaultHidden 回傳 null（表示不過濾，維持顯示層各自決定）。
@@ -650,6 +645,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
                     before.PrtgValueFetchScope,
+                    before.PrtgEnabled,
                     PrtgValueFetchExtraHosts = string.Join(", ", before.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
@@ -675,6 +671,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
                     saved.PrtgValueFetchScope,
+                    saved.PrtgEnabled,
                     PrtgValueFetchExtraHosts = string.Join(", ", saved.PrtgValueFetchExtraHosts),
                     PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
                     PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),

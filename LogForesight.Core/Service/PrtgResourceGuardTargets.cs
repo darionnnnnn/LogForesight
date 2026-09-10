@@ -124,7 +124,9 @@ public static class PrtgResourceGuardTargets
             }
         }
 
-        var allDevices = source.GetDevices();
+        // 裝置依 objid 排序：裝置側 DNS 有預算上限，「哪 20 台吃到預算」不能取決於
+        // 資料庫或 PRTG API 的回傳順序，否則同一份資料兩次偵測可能命中不同集合。
+        var allDevices = source.GetDevices().OrderBy(d => d.Objid).ToList();
         var allSensors = source.GetSensors();
 
         // 3. 對每個位址比對 device。裝置側 DNS 解析的預算跨全部來源位址共用。
@@ -333,8 +335,9 @@ public static class PrtgResourceGuardTargets
         {
             foreach (var dev in allDevices)
             {
+                if (PrtgAddress.Normalize(dev.Ip) != null) continue;   // 純 IP 在第 1 步比過了
                 var devToken = PrtgAddress.HostToken(dev.Ip);
-                if (devToken == null || PrtgAddress.Normalize(devToken) != null) continue;   // 純 IP 在第 1 步比過了
+                if (devToken == null) continue;
                 if (!PrtgAddress.IsDnsCandidate(devToken)) continue;                         // 亂值不送 DNS
                 if (!budget.TryTake(devToken)) continue;
 

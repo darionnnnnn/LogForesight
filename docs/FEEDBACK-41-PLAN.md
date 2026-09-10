@@ -1,7 +1,7 @@
 # 回饋第 41 輪規劃：PRTG 位址解析對裝置側亂值做 DNS、阻塞式逾時
 
-> 狀態：A–G 全部實作完成，逐條回檢補三處，瀏覽器動線已驗證；待使用者實測、換模型體檢後併 dev
-> 基準：dev@cde4791（3669 綠）
+> 狀態：全案完成已併 dev（體檢輪修正 11 條、終檢見文末）
+> 基準：dev@cde4791（3669 綠）→ 本輪收斂 3710 綠（略過 6）
 > 來源：使用者實測——設定頁「資源守門 › 自動偵測並填入」在偵錯器內於 `PrtgAddressResolver.DnsLookupWithTimeout`
 > 停在 `SocketException: 無法識別這台主機`，`host` 是 PRTG 裝置 host 欄位的值（形如 `10.2xx.x.x`），不是使用者填的 NetIQ 網址。
 > 實作方式：Claude 自己做（3 檔＋測試）。
@@ -17,14 +17,14 @@
 | `PrtgAddress.HostToken` 只切 scheme／第一個 `/`／單一冒號 port；不檢查剩餘字串是否像主機名稱。`10.2xx.x.x`、`10.2.3.4 (舊機)`、`10.2.3.256`、`10.2.3.4.5` 之類都會原樣送 DNS | `PrtgAddress.cs` |
 | 使用者側的來源位址（Sentinel `BaseUrl`、`PrtgUrl`）形式為 `https://IP:port` 與 `https://內部憑證主機名:port`，經 `Uri.Host` 取出後皆正常；問題不在來源側 | `PrtgResourceGuardTargets.Resolve` 步驟 2 |
 
-## 討論項目（待使用者定案）
+## 討論項目（已定案）
 
 **D1. 裝置側要不要保留 DNS？**
 - 我上一則建議的 A（裝置側完全不 DNS）會推翻 §4 的 R40 定案：填 DNS 名稱的裝置在主機對應會退回「略過（無 IP）」，名稱型裝置永遠對不到主機。
 - **改建議 A′（本 PLAN 依此寫）**：兩處都保留三段比對，但 DNS 只在「值看起來是主機名稱」時才做（批次A），逾時改非同步可取消且降到 1 秒（批次B），守門偵測再加一層「裝置側 DNS 只在字面比對落空後才做、且整趟有總預算」（批次C）。主機對應是排程／背景作業，不加總預算。
 - 若你仍要 A，批次C 改為「裝置側只走純語法＋字面比對」，並同步改 §4 定案與兩個既有測試（`MapForDate_device的Ip為DNS名稱且能解析時對到主機` 會反轉）。
 
-**D2. 亂值的實際內容。** 使用者確認偵錯器裡的 `host` 就是字面的 `10.2xx.x.x`——PRTG 上某台裝置 host 欄位的佔位值。批次A 的守門用 RFC 1123 主機名稱字元集（英數、`-`、`.`，每段 1–63 字、不得以 `-` 開頭結尾、不得全數字），`10.2xx.x.x` 不論真實內容為何都會被擋（含 `x` 的段不是全數字但整體不像名稱？——注意：`10.2xx.x.x` 依 RFC 其實是合法主機名稱字元）。因此批次A 額外加一條：**四段皆以數字開頭、以 `.` 分隔的字串視為「壞掉的 IPv4」，不送 DNS**。需要你確認原值以決定是否還要別的規則；未回覆就依這兩條做。
+**D2. 亂值的實際內容。** 使用者確認偵錯器裡的 `host` 就是字面的 `10.2xx.x.x`——PRTG 上某台裝置 host 欄位的佔位值。它依 RFC 是合法主機名稱字元，光靠字元集擋不住，因此批次A 在字元集之外另加「壞掉的 IPv4」判定；規則本體以批次A 定案（經體檢輪修正）為準。
 
 ## 批次總覽
 
@@ -33,12 +33,12 @@
 | A | `PrtgAddress` 新增「可送 DNS 的主機名稱」判定，resolver 據此守門 | 小 | 無 |
 | B | resolver 的 DNS 改 `GetHostAddressesAsync`＋`CancellationToken` 逾時 1 秒，移除 `Task.Run + Wait` | 小 | 無 |
 | C | 守門偵測：裝置側 DNS 延後到字面比對落空、整趟總預算、統計訊息 | 中 | A、B |
-| D | 文件：PRTG-SPEC §4／§12、BACKLOG 該條結案 | 小 | A–C |
+| D | 文件：PRTG-SPEC §4／§6／§7／§12、WEB-SPEC §9.9e／§9.10、BACKLOG 該條結案 | 小 | A–C |
 | E | 四角度回檢修正 | 小 | A–D |
 | F | PRTG 模組總開關找不到、同步在未啟用時擲例外 | 小 | 無 |
 | G | 排程頁三張卡的按鈕互斥（執行中只留「停止」） | 小 | 無 |
 
-建議順序 A → B → C → D → E（已完成）→ F → G。
+順序 A → B → C → D → E → F → G，全部完成。
 
 ## 批次A：主機名稱守門
 
@@ -49,8 +49,9 @@
 - 新增 `PrtgAddress.IsDnsCandidate(string? token) : bool`（純語法、無 IO）：
   1. token 非空、長度 ≤ 253、只含 `[A-Za-z0-9._-]`（Windows 內網名稱偶有 `_`，解析器實務上接受）；
   2. 以 `.` 拆段，每段 1–63 字、不以 `-` 開頭或結尾；
-  3. **不得**是「第一段全數字、或整串沒有任何字母」的形狀（那是壞掉的 IPv4，如 `10.2xx.x.x`、`10.2.3.256`、`10.2.3.4.5`；
-     原案「每段以數字開頭」擋不住字面的 `10.2xx.x.x`，實作時修正）；
+  3. **不得**是「整串沒有任何字母」或「第一段全數字且每段都 ≤ 3 字」的形狀（那是壞掉的 IPv4，如 `10.2xx.x.x`、`10.2.3.256`、`10.2.3.4.5`；
+     原案「每段以數字開頭」擋不住字面的 `10.2xx.x.x`，實作時改「第一段全數字」；體檢輪發現那會誤擋 `1.dc.corp.local`，再加「每段 ≤ 3 字」）；
+     結尾單一個點先去掉；只接受 ASCII（IDN 不送 DNS，規格 §4 明寫）；
   4. 含 `:` 者（裸 IPv6 拆 port 後仍含冒號）一律 false——它若合法早在 `Normalize` 通過。
 - `Resolve` 在查快取前先過 `IsDnsCandidate`，false 直接回 null（**不寫快取，因為沒付 IO**）。
 - `HostToken` 不改語意（字面比對仍要用它）。
@@ -92,7 +93,7 @@
   2. 裝置側先只做 `PrtgAddress.Normalize`（純語法）與來源 IP 比。
   3. 沒命中 → 字面比對（`HostToken` 相等）。
   4. 仍沒命中 → 才對「`IsDnsCandidate` 為 true」的裝置逐一 `Resolve` 比對，受**整趟預算**限制：`DeviceDnsBudget = 20` 次（未快取的解析次數；含失敗）。預算用盡即停止，並輸出一行警告：「裝置側 DNS 解析已達上限 N 次，其餘 M 台名稱型裝置未解析；建議在 PRTG 以 IP 設定裝置或改用覆寫清單」。
-  - 規格 §12 三段語意不變（IP 比 → 名稱解析比 → 字面比），只是把字面比提前於**裝置側**解析，並加預算。三段結果集合仍相同（IP 命中優先），不影響既有測試。
+  - 規格 §12 三段語意不變（IP 比 → 名稱解析比 → 字面比），只是把字面比提前於**裝置側**解析，並加預算。裝置側 DNS 受預算限制，超出預算的名稱型裝置可能漏掉（文件化的取捨，見驗收最後一條）；既有測試不受影響。
 - 預算是常數不是設定（無消費端紅線；它是保險絲不是閘門），與 `PrtgLiveGuardSource.MaxPages` 同性質。
 - `UnresolvedHint` 只查來源位址，維持。
 - `PrtgHostMapper` **不動**（背景作業、§4 定案不變）；它得到的是批次A／B 的守門與逾時縮短。
@@ -141,7 +142,6 @@
 **D3. 立即執行的「PRTG 尚未啟用」提示要不要看連線設定？** → **依建議實作**：只在連線已設定但模組關閉時提示。
 使用者要求：手動立即執行時若 PRTG 未啟用，跳出「PRTG 尚未啟用，是否要開始排程」讓人確認。
 照字面做的話，**根本沒有 PRTG 的站台每次手動執行都會被問一次**，這種每次都要多按一下的提示是最招人罵的那種。
-  照字面做的話，根本沒有 PRTG 的站台每次手動執行都會被問一次，那種每次都要多按一下的提示最招人罵。
   判定用 `hasPrtgConnection()`（位址＋依認證方式檢查 token／帳密／passhash 旗標），與後端
   `PrtgClientFactory.HasUsableCredentials` 同義。
 
@@ -292,6 +292,43 @@
 
 **批次D 第 4 項（本檔 `git mv` 進 `docs/archive/` 並補索引）刻意未做**——那是收尾步驟，
 等使用者實測通過、併 dev 時才執行。
+
+## 體檢交接
+
+- 實作：批次A–E 由 Fable 5.1 實作；批次F–G 由 Opus 5 實作（使用者中途 `/model` 切換）。
+- 體檢：Fable 5.1（使用者切回後下收尾指令）。A–E 與體檢方同一模型，依使用者「進行收尾流程」的指示
+  由使用者覆寫「換模型體檢」紀律；補救方式是三個掃 diff 的 subagent 全部派 **Opus low**（使用者指定），
+  換一個視角掃 A–E 的程式碼，Fable 只做取捨與修。
+- 實作方最沒把握的地方：`IsDnsCandidate` 的判定邊界（會不會誤擋真主機名稱）、同一顆按鈕的 `disabled`
+  有幾個寫入點沒盤全、探測步驟 6 改判定後有無誤傷。體檢確實在這三處都抓到問題（見下）。
+
+## 體檢輪修正
+
+三個 Opus low subagent（Core diff、Web diff、文件稽核）回報後由 Fable 逐條取捨。修 11 條、記錄不修 4 條：
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| C1 | `PrtgAddress.IsDnsCandidate` | 「第一段全數字」誤擋 `1.dc.corp.local`、`0.pool.ntp.org` 這種真 FQDN——三個呼叫端（主機對應、結構同步、守門）都會把這種裝置從「對應成功」退化成「略過」 | 收緊為「第一段全數字**且每段 ≤ 3 字**」；`10.2xx.x.x`、`10.20.3x.4` 仍擋 | `PrtgAddressTests` Theory 加 4 真 3 假案例 |
+| C2 | 同上 | root-qualified FQDN `srv.corp.local.` 因結尾空 label 被擋 | 先去掉單一個結尾點；兩個點仍擋 | 同上 |
+| C3 | `PrtgProbeRunner` 步驟 6 | IPv6 裝置被列進「無法判定，建議到 PRTG 修正」——它是合法位址、主機對應比得到 | 加第四桶「IPv6 位址者」 | `PrtgProbeRunnerTests` 加一台 `[fe80::1]:8080` |
+| C4 | `PrtgResourceGuardTargets.Resolve` | `GetAllDevices` 沒有 `OrderBy`，「哪 20 台吃到預算」取決於 DB／API 回傳順序；`Resolve_命中裝置在預算之後` 那條測試其實靠插入序才綠 | 進入比對前依 objid 排序 | 既有預算測試改為確定性 |
+| C5 | `FindDevicesForHost` 步驟 3 | skip 條件寫成 `Normalize(HostToken(dev.Ip))`，與步驟 1 的 `Normalize(dev.Ip)` 靠 `HostToken` 冪等才等值 | 改為直接 `Normalize(dev.Ip) != null` | — |
+| C6 | `PrtgAddressResolverTests` 真 DNS 測試 | 有 NXDOMAIN 劫持的網路會給 `.invalid` 一個假 IP，`Assert.Null` 會紅 | 只斷言「不擲例外且 < 3 秒」 | 同一條 |
+| W1 | `prtg-admin.js` `renderStructureSyncStatus` | 同步鈕的閘被輪詢打開：非執行中一律 `disabled = false`，頁面載入一秒後閘沒了、說明行還亮著——與 F5 同型，第三個寫入點漏盤 | 改 `disabled = !prtgEnabled`；click 加第二道 | `PrtgAdminPageUiTests.維護頁同步鈕在所有寫入點都尊重PRTG開關` |
+| W2 | `SystemSettingsService.UpdatePrtg` 稽核 | 移除 `SetPrtgEnabled` 後「誰關掉 PRTG 擷取」從此查不到——`UpdatePrtg` 的 audit before/after 欄位沒有 `PrtgEnabled` | 兩個匿名物件各加該欄 | — |
+| W3 | `SystemSettingsService.cs:28` | `SetPrtgEnabled` 的 XML 註解成了孤兒，疊在下一個成員上 | 刪 | — |
+| W4 | `CalibrationService` 三處 | 說明文字仍寫「於排程作業頁啟用 PRTG 擷取」——F6 只盤到兩處，同型第三處漏掉 | 改指向「擷取參數」頁籤 | `CalibrationServiceTests` 斷言更新 |
+| W5 | `prtg-scope-labels.js` | `PRTG_SCOPE_OPTIONS` 是死匯出；模組宣稱「不各寫一份」但 option 其實在 cshtml | 刪死匯出，明寫 cshtml 是 option 來源 | `PrtgAdminPageUiTests.取數範圍下拉的value集合與狀態標籤模組一致` 鎖住兩邊集合 |
+| W6 | `SettingsController.EstimatePrtgFetchScope` | `scope=off` 經 `Normalize` 退回 `triggered`，回一組「關閉狀態下的估算值」 | 明確回 `Success=false` | — |
+| D1–D6 | 現況文件 | PRTG-SPEC 端點表仍列 `PUT prtg-enabled`／`PUT prtg` 寫「不含總開關」；WEB-SPEC §9.9b 與端點清單仍說總開關在排程頁；BACKLOG 兩處敘事字眼；CLAUDE.md 基線；PRTG-SPEC 與 WEB-SPEC 之間三組重複段落 | 全部修正；重複段落留 PRTG-SPEC、WEB-SPEC 改一行連結 | — |
+
+不修、留紀錄：
+- `catch (Exception)` 全吞與全站 `when (ex is not OperationCanceledException)` 慣例不一致——`Resolve` 的契約是「一律不擲」，逾時本身就是 OCE，收窄後也只是落到外層 catch-all，淨效果為零。
+- 候選判定在快取之前重複執行——純字串掃描，成本可忽略。
+- `canStop` 恆等於 `isRunning`（`ScheduleController`），「兩顆都隱藏」的空窗不存在。
+- 排程頁的模組狀態與閘只在載入時讀一次，跨分頁改開關要重整——記進 WEB-SPEC §9.10 為已知取捨；有第二、三道擋誤送。
+
+修正後全套 3710 綠（略過 6）。
 
 ## 明確不做（本輪定案）
 - 不把 `IPrtgAddressResolver`／`IPrtgResourceGuardSource` 改 async（BACKLOG 保留）。

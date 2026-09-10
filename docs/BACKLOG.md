@@ -556,7 +556,7 @@
 
 ### PRTG UI 重構（已完成，保留結論）
 
-三項已於 PRTG 第 4 輪落地：獨立維護頁 `/admin/prtg`、歷史回填與總開關搬到排程作業頁、
+三項已於 PRTG 第 4 輪落地：獨立維護頁 `/admin/prtg`、歷史回填搬到排程作業頁（總開關現為維護頁「擷取參數」下拉的一部分，見 PRTG-SPEC §3a）、
 主機頁整合 PRTG 對應（清單篩選／明細區塊／人工對應）。現況見 docs/PRTG-SPEC.md §4a 與 §7。
 
 
@@ -572,7 +572,7 @@
 `PrtgBackfillService` 只有啟動沒有取消：按下「開始回填」後只能等它跑完（預設 30 天、逐日擷取），
 誤按或發現範圍設錯時沒有退路。取數執行與 AI 分析都有停止鈕，只有這條沒有。
 處理方向：比照 `SchedulerHostedService` 的取消權杖與 `canStop` 狀態欄位，
-前端沿用回饋第 41 輪批次G 的「執行中只顯示停止」規則。
+前端沿用 WEB-SPEC §9.10「動作鈕互斥」的規則。
 **觸發時機**：使用者反映誤按無法中止，或回填天數調大後單趟超過一小時。
 
 ## PRTG 主機對應：名稱型裝置多且解析不到時每趟付 N 秒
@@ -608,8 +608,8 @@
 
 ## PRTG 位址解析與守門即時來源改非同步
 
-`PrtgAddressResolver` 的 DNS 查詢已改為 `GetHostAddressesAsync` 加 1 秒取消逾時（同步等待），
-逾時後不再佔執行緒；但 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的分頁查詢也是
+`PrtgAddressResolver` 的 DNS 查詢是 `GetHostAddressesAsync` 加 1 秒取消逾時（同步等待），
+不佔執行緒；未解的是 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的分頁查詢也是
 `GetAwaiter().GetResult()` 同步阻塞 async，而它跑在「自動偵測並填入」的 HTTP 請求執行緒上，
 多人同時按就是執行緒池飢餓。要一起改成 async，連帶動到 `PrtgResourceGuardTargets.Resolve`、
 `IPrtgResourceGuardSource`、`PrtgHostMapper.MapForDate` 與所有呼叫端。**觸發時機**：

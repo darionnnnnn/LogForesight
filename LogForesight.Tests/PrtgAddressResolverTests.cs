@@ -141,8 +141,9 @@ public class PrtgAddressResolverTests
     }
 
     /// <summary>
-    /// 真 DNS 路徑：<c>.invalid</c> 是 RFC 2606 保留網域，任何解析器都必須失敗，離線也一樣。
-    /// 驗證的是「失敗回 null、不擲例外、且不會拖到舊的 2 秒以上」。
+    /// 真 DNS 路徑：<c>.invalid</c> 是 RFC 2606 保留網域，正常解析器都會失敗，離線也一樣。
+    /// 驗證的是「不擲例外、且不會拖到舊的 2 秒以上」；**不斷言回 null**——
+    /// 有 NXDOMAIN 劫持的網路會給 <c>.invalid</c> 一個假 IP，那是網路的事不是程式的事。
     /// </summary>
     [Fact]
     [Trait("Category", "Network")]
@@ -151,10 +152,9 @@ public class PrtgAddressResolverTests
         var resolver = new PrtgAddressResolver();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        var result = resolver.Resolve("nonexistent-host.invalid");
+        _ = resolver.Resolve("nonexistent-host.invalid");
 
         sw.Stop();
-        Assert.Null(result);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"耗時 {sw.Elapsed}");
     }
 }

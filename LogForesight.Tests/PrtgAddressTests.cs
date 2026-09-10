@@ -90,6 +90,10 @@ public class PrtgAddressTests
     [InlineData("netiq.corp.local")]
     [InlineData("srv_01.corp")]
     [InlineData("1and1.example.com")]
+    [InlineData("1.dc.corp.local")]        // 第一段全數字但有超過 3 字的段：真 FQDN
+    [InlineData("0.pool.ntp.org")]
+    [InlineData("123.example.com")]
+    [InlineData("srv.corp.local.")]        // root-qualified
     public void IsDnsCandidate_像主機名稱_回true(string token)
     {
         Assert.True(PrtgAddress.IsDnsCandidate(token));
@@ -99,6 +103,9 @@ public class PrtgAddressTests
     [InlineData("10.2xx.x.x")]          // PRTG 裝置 host 的佔位值：第一段全數字
     [InlineData("10.2.3.256")]          // 打壞的 IPv4：沒有字母
     [InlineData("10.2.3.4.5")]
+    [InlineData("10.20.3x.4")]          // 第一段全數字且每段 ≤ 3 字
+    [InlineData("10.2xx.x.x.")]         // 結尾點去掉後仍是壞 IPv4
+    [InlineData("srv.corp.local..")]    // 兩個結尾點：去掉一個後仍有空 label
     [InlineData("10.2.3.4 (old)")]      // 含空白與括號
     [InlineData("srv a")]
     [InlineData("-bad.host")]
