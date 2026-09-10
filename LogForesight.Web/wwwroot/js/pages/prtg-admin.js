@@ -12,8 +12,12 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
+import { PRTG_SCOPE_OFF, toScopeSelectValue } from '../core/prtg-scope-labels.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
+
+/** 目前已儲存的 PRTG 擷取開關。鏡像頁籤的「同步結構與對應」關閉時要擋住（後端也會擋，這是提前告知）。 */
+let prtgEnabled = false;
 
 /** PRTG 認證方式切換：依選取模式切換 token / password / passhash 區塊顯示（只動 classList 不設 style.display） */
 function syncPrtgAuthFields() {
@@ -115,11 +119,14 @@ function renderPrtgFields(settings) {
         (settings.prtgSensorTypeWhitelist ?? []).join('\n');
 
 
+    prtgEnabled = Boolean(settings.prtgEnabled);
     const scopeSelect = document.getElementById('prtg-value-fetch-scope');
     if (scopeSelect) {
-        scopeSelect.value = settings.prtgValueFetchScope || 'triggered';
+        // 「關閉」與三個範圍是同一個下拉：未啟用一律顯示關閉，啟用時顯示已存的範圍
+        scopeSelect.value = toScopeSelectValue(prtgEnabled, settings.prtgValueFetchScope);
         syncScopeFields();
     }
+    syncStructureSyncGate();
     const extraHosts = document.getElementById('prtg-value-fetch-extra-hosts');
     if (extraHosts) extraHosts.value = (settings.prtgValueFetchExtraHosts ?? []).join('\n');
     document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
@@ -146,13 +153,29 @@ async function loadSettings() {
 }
 
 /**
- * 取數範圍切換：只有「觸發主機＋指定清單」需要主機名稱輸入框。
+ * 取數範圍切換：只有「觸發主機＋指定清單」需要主機名稱輸入框；
+ * 選「關閉」時連「估算規模」都沒有意義（不會取數），一併藏起來。
  * 用 classList 切換而非 style.display（同本頁認證方式切換的既有作法）。
  */
 function syncScopeFields() {
-    const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
+    const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? PRTG_SCOPE_OFF;
+    const off = scope === PRTG_SCOPE_OFF;
     document.getElementById('prtg-value-fetch-extra-hosts-group')
-        ?.classList.toggle('d-none', scope !== 'triggered-plus-list');
+        ?.classList.toggle('d-none', off || scope !== 'triggered-plus-list');
+    document.getElementById('prtg-scope-estimate-btn')?.classList.toggle('d-none', off);
+    if (off) document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
+}
+
+/**
+ * 鏡像頁籤「同步結構與對應」的閘：擷取未啟用時同步一定被後端拒絕（PrtgStructureSyncService），
+ * 讓按鈕直接灰掉並說去哪開，比按下去看紅字有用。以「已儲存的值」為準——
+ * 下拉改了還沒存不算啟用，否則會讓人以為存過了。
+ */
+function syncStructureSyncGate() {
+    const btn = document.getElementById('prtg-structure-sync-btn');
+    if (btn) btn.disabled = !prtgEnabled;
+    document.getElementById('prtg-structure-sync-disabled-hint')
+        ?.classList.toggle('d-none', prtgEnabled);
 }
 
 function bindScopeControls() {
@@ -316,15 +339,22 @@ function bindParamsForm() {
             const fetchConcurrency = Number(document.getElementById('prtg-fetch-concurrency').value) || 2;
             const backfillDays = Number(document.getElementById('prtg-backfill-days').value) || 30;
 
+            // 下拉的「關閉」對應 prtgEnabled=false，此時不送 prtgValueFetchScope——
+            // 範圍留著原值，下次重新啟用不必再選一次
+            const scopeValue = document.getElementById('prtg-value-fetch-scope')?.value ?? PRTG_SCOPE_OFF;
+            const enabled = scopeValue !== PRTG_SCOPE_OFF;
+
             const payload = {
+                prtgEnabled: enabled,
                 prtgIgnoreSslErrors: ignoreSsl,
                 prtgTimeoutSeconds: timeoutSeconds,
                 prtgFetchConcurrency: fetchConcurrency,
                 prtgBackfillDays: backfillDays,
                 prtgRetentionDays: prtgRetentionDays,
                 prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist'),
-                prtgValueFetchScope: document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered',
-                prtgValueFetchExtraHosts: collectLines('prtg-value-fetch-extra-hosts')
+                prtgValueFetchExtraHosts: collectLines('prtg-value-fetch-extra-hosts'),
+                // 關閉時整個鍵不送：範圍留著原值，下次重新啟用不必再選一次
+                ...(enabled ? { prtgValueFetchScope: scopeValue } : {})
             };
 
             await api.put('/api/admin/settings/prtg', payload);

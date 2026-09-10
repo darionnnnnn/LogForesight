@@ -918,4 +918,32 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(0, result.Unmatched);
         Assert.Empty(store.GetHostMapForDate(mapDate));
     }
+
+    /// <summary>
+    /// 記錄「哪些值真的被拿去查 DNS」的假解析器：正式實作的候選判定在解析器內，
+    /// 這裡用正式實作包一層假 DNS，證明佔位值連假 DNS 都沒被呼叫。
+    /// </summary>
+    [Fact]
+    public void MapForDate_device的Ip為打壞的IPv4佔位值_計入略過且不送DNS()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 44, HostName = "srv-x", IpAddress = "10.6.6.6", Active = true });
+        });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 1404, Name = "Placeholder", Ip = "10.2xx.x.x" });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var dnsCalls = new List<string>();
+        var resolver = new PrtgAddressResolver(host => { dnsCalls.Add(host); return Array.Empty<System.Net.IPAddress>(); });
+        var mapper = CreateMapper(store, hostStore, console, resolver);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        var result = mapper.MapForDate(mapDate);
+
+        Assert.Equal(1, result.SkippedNoIp);
+        Assert.Empty(dnsCalls);
+    }
 }

@@ -101,7 +101,8 @@
         </div>
     </section>
 
-    @* PRTG：總開關、結構同步狀態、每日擷取進度、歷史回填四件事集中在這張卡。
+    @* PRTG：模組狀態、結構同步狀態、每日擷取進度、歷史回填四件事集中在這張卡。
+       啟用開關在 PRTG 維護頁「擷取參數」的取數範圍下拉，這裡只顯示狀態並指路。
        每日擷取是三路並行的第三路，進度軌從取數卡搬過來——那條軌的內容全是 PRTG 的事。 *@
     <section class="lf-card" id="prtg-status-card">
         <div class="lf-card__header">
@@ -111,6 +112,12 @@
             <div class="lf-kv">
                 <span class="lf-kv__label">模組狀態</span>
                 <span class="lf-kv__value" id="prtg-module-state">載入中…</span>
+            </div>
+            @* 未啟用時指路：開關與取數範圍是維護頁「擷取參數」的同一個下拉，
+               卡片上只說「未啟用」的話，使用者會在這頁到處找開關。 *@
+            <div class="small text-warning d-none" id="prtg-disabled-hint">
+                到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇取數範圍即可啟用；
+                未啟用時無法同步結構與回填。
             </div>
             <div class="lf-kv">
                 <span class="lf-kv__label">結構同步</span>
@@ -308,23 +315,6 @@
                            min="1" max="8" value="1" data-maintain-only />
                     <div class="form-text small text-muted">同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。</div>
                 </div>
-            </div>
-        </section>
-
-        <section class="lf-card mb-3">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">PRTG 擷取</h2>
-            </div>
-            <div class="lf-card__body">
-                <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="prtg-enabled" data-maintain-only />
-                    <label class="form-check-label" for="prtg-enabled">啟用 PRTG 擷取</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="夜間批次是否包含 PRTG 擷取。數值預設只對當日判定為高／中風險的主機擷取（觸發式取數），取數範圍與連線設定請至 PRTG 維護頁。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                </div>
-                <div class="form-text">連線設定、擷取參數與取數範圍在 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護</a> 頁。</div>
             </div>
         </section>
 

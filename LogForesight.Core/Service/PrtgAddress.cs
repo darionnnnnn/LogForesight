@@ -81,4 +81,45 @@ public static class PrtgAddress
         s = s.Trim().ToLowerInvariant();
         return s.Length == 0 ? null : s;
     }
+
+    /// <summary>
+    /// 判定 <see cref="HostToken"/> 的結果是否「值得送 DNS 解析」。純語法、無 IO。
+    /// 只有長得像主機名稱的值才回 true：英數、<c>-</c>、<c>_</c>、<c>.</c>，總長 ≤ 253，
+    /// 每段 1–63 字且不以 <c>-</c> 開頭或結尾。
+    /// 另外把「壞掉的 IPv4」擋掉：第一段全數字（<c>10.2xx.x.x</c>、<c>10.2.3.4.5</c>）、
+    /// 或整串沒有任何字母（<c>10.2.3.256</c>）——這些是打錯的 IP，不是主機名稱，
+    /// 送 DNS 只會白付一次逾時。合法 IP 早在 <see cref="Normalize"/> 通過，不會走到這裡。
+    /// </summary>
+    public static bool IsDnsCandidate(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        var s = token.Trim();
+        if (s.Length > 253) return false;
+        if (s.Contains(':')) return false;
+
+        var hasLetter = false;
+        foreach (var c in s)
+        {
+            if (char.IsAsciiLetter(c)) hasLetter = true;
+            else if (!char.IsAsciiDigit(c) && c != '-' && c != '_' && c != '.') return false;
+        }
+        if (!hasLetter) return false;
+
+        var labels = s.Split('.');
+        for (var i = 0; i < labels.Length; i++)
+        {
+            var label = labels[i];
+            if (label.Length is 0 or > 63) return false;
+            if (label[0] == '-' || label[^1] == '-') return false;
+        }
+
+        // 第一段全數字：那是打壞的 IPv4，不是主機名稱
+        var first = labels[0];
+        var firstAllDigits = true;
+        foreach (var c in first)
+        {
+            if (!char.IsAsciiDigit(c)) { firstAllDigits = false; break; }
+        }
+        return !firstAllDigits;
+    }
 }

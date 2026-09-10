@@ -188,7 +188,6 @@ public class PrtgFetchScopeEstimateEndpointTests : IDisposable
         public SystemSettingsDto Get() => new();
         public SystemSettingsDto Update(UpdateSystemSettingsRequest request) => throw new NotSupportedException();
         public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request) => throw new NotSupportedException();
-        public bool SetPrtgEnabled(bool enabled) => throw new NotSupportedException();
         public HashSet<string>? GetVisibleSeverities() => null;
         public IReadOnlySet<string>? GetVisibleDayRiskLevels() => null;
         public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) => throw new NotSupportedException();

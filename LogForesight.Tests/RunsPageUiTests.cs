@@ -348,6 +348,51 @@ public class RunsPageUiTests
         Assert.Contains("尚未同步", js);
     }
 
+    /// <summary>
+    /// 三張卡的動作鈕互斥（回饋第 41 輪批次G）：執行中只留「停止」，閒置只留啟動類。
+    /// 兩顆並排時使用者得自己判斷哪顆有效；灰掉的鈕仍佔位、讀起來像「壞了」，所以一律用 d-none 切換。
+    /// </summary>
+    [Fact]
+    public void 排程頁三張卡的動作鈕以顯示隱藏互斥而非灰掉()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        // 取數卡：立即執行在執行中要藏起來（原本永遠可見）
+        Assert.Contains("runNowButton?.classList.toggle('d-none', status.isRunning)", js);
+        Assert.Contains("stopButton?.classList.toggle('d-none', !status.canStop)", js);
+
+        // AI 卡：兩顆啟動鈕改為隱藏，不再只是 disabled
+        Assert.Contains("document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', status.isRunning)", js);
+        Assert.Contains("document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', status.isRunning)", js);
+        Assert.DoesNotContain("runNowBtn.disabled = status.isRunning", js);
+        Assert.DoesNotContain("forceBtn.disabled = status.isRunning", js);
+    }
+
+    /// <summary>
+    /// PRTG 卡在模組未啟用時要把同步與回填灰掉並指路（回饋第 41 輪批次F5）。
+    /// 兩處輪詢（同步狀態、回填狀態）都會重設同一顆按鈕的 disabled，
+    /// 少接一處就會在下一次輪詢把閘打開——所以兩處都要看得到模組開關。
+    /// </summary>
+    [Fact]
+    public void PRTG未啟用時同步與回填按鈕在所有寫入點都被閘住()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        // renderPrtgModuleState 一次設定兩顆
+        Assert.Contains("'prtg-sync-start', 'prtg-backfill-start'", js);
+        Assert.Contains("prtg-disabled-hint", js);
+
+        // 兩處輪詢各自也要看模組開關，否則會把閘打開
+        Assert.Contains("status.isRunning || prtgModuleEnabled === false", js);
+        Assert.Contains("startButton.disabled = prtgModuleEnabled === false", js);
+
+        // 立即執行前的提醒：只在「連線已設定但未啟用」時問，沒設定 PRTG 的站台不該每次被問
+        Assert.Contains("prtgModuleEnabled === false && prtgConnectionConfigured", js);
+        Assert.Contains("hasPrtgConnection", js);
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;

@@ -82,4 +82,34 @@ public class PrtgAddressTests
     {
         Assert.Null(PrtgAddress.Normalize(null));
     }
+
+    [Theory]
+    [InlineData("srv-a.example.local")]
+    [InlineData("srv-a")]
+    [InlineData("a-b.c")]
+    [InlineData("netiq.corp.local")]
+    [InlineData("srv_01.corp")]
+    [InlineData("1and1.example.com")]
+    public void IsDnsCandidate_像主機名稱_回true(string token)
+    {
+        Assert.True(PrtgAddress.IsDnsCandidate(token));
+    }
+
+    [Theory]
+    [InlineData("10.2xx.x.x")]          // PRTG 裝置 host 的佔位值：第一段全數字
+    [InlineData("10.2.3.256")]          // 打壞的 IPv4：沒有字母
+    [InlineData("10.2.3.4.5")]
+    [InlineData("10.2.3.4 (old)")]      // 含空白與括號
+    [InlineData("srv a")]
+    [InlineData("-bad.host")]
+    [InlineData("bad-.host")]
+    [InlineData("a..b")]
+    [InlineData("fe80::1")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void IsDnsCandidate_不像主機名稱或壞掉的IPv4_回false(string? token)
+    {
+        Assert.False(PrtgAddress.IsDnsCandidate(token));
+    }
 }

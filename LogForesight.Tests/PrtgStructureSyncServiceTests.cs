@@ -61,7 +61,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
         var service = Create();
 
         Assert.False(service.TryStart(out var error, out var isConflict));
-        Assert.Contains("PRTG 未啟用", error);
+        // 訊息要指出開關在哪：只說「未啟用」會讓人在排程作業頁到處找（回饋第 41 輪批次F6）
+        Assert.Contains("PRTG 擷取未啟用", error);
+        Assert.Contains("擷取參數", error);
         Assert.False(isConflict);   // 設定不齊是輸入面問題，不是衝突
     }
 

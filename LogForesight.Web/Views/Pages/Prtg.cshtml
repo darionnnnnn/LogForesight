@@ -122,6 +122,25 @@
                 <h2 class="lf-card__title">擷取參數</h2>
             </div>
             <div class="lf-card__body">
+                <div class="mb-3">
+                    <label for="prtg-value-fetch-scope" class="form-label fw-semibold">PRTG 擷取</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="選擇任一範圍即啟用 PRTG 擷取。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                    <select class="form-select" id="prtg-value-fetch-scope">
+                        <option value="off">關閉（預設）</option>
+                        <option value="triggered">只抓觸發主機</option>
+                        <option value="all-mapped">全部已對應主機</option>
+                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
+                    </select>
+                    <div class="form-text">
+                        選擇任一範圍即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
+                        環境探測與資源守門預覽不受影響。
+                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
+                    </div>
+                </div>
+
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <div class="form-check">
@@ -161,22 +180,6 @@
                     </button>
                     <textarea class="form-control lf-mono" id="prtg-sensor-type-whitelist" rows="6"
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
-                </div>
-
-                <div class="mb-3">
-                    <label for="prtg-value-fetch-scope" class="form-label">數值取數的主機範圍</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <select class="form-select" id="prtg-value-fetch-scope">
-                        <option value="triggered">只抓觸發主機（預設）</option>
-                        <option value="all-mapped">全部已對應主機</option>
-                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
-                    </select>
-                    <div class="form-text">
-                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
-                    </div>
                 </div>
 
                 <div class="mb-3 d-none" id="prtg-value-fetch-extra-hosts-group">
@@ -226,6 +229,9 @@
                             </div>
                         </div>
                         <button type="button" class="btn btn-sm btn-primary" id="prtg-structure-sync-btn">同步結構與對應</button>
+                    </div>
+                    <div class="small text-warning mt-2 d-none" id="prtg-structure-sync-disabled-hint">
+                        PRTG 擷取未啟用，無法同步。請到「擷取參數」頁籤選擇取數範圍。
                     </div>
                     <div class="small mt-2" id="prtg-structure-sync-status">上次同步：載入中…</div>
                     <div class="small text-muted" id="prtg-structure-sync-progress"></div>

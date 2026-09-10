@@ -476,10 +476,17 @@ public class UpdateSystemSettingsRequest
 
 /// <summary>
 /// PRTG 設定專屬更新請求（「系統管理 > PRTG 維護」頁，docs/archive/FEEDBACK-37-PLAN.md 批次F1）。
-/// 涵蓋 PRTG 全部可編欄位（連線設定與擷取參數），不含總開關 PrtgEnabled。
+/// 涵蓋 PRTG 全部可編欄位：總開關、連線設定與擷取參數。
 /// </summary>
 public class UpdatePrtgSettingsRequest
 {
+    /// <summary>
+    /// PRTG 擷取總開關。null＝本次請求未提供（沿用既有值）。
+    /// 維護頁「擷取參數」的取數範圍下拉把「關閉」與三個範圍併成一個選單，
+    /// 選「關閉」送 false、選任一範圍送 true——啟用與範圍是同一個決定，分兩個控制項只會讓人漏開。
+    /// </summary>
+    public bool? PrtgEnabled { get; set; }
+
     /// <summary>PRTG 位址。null＝本次請求未提供（沿用既有值）。</summary>
     [StringLength(500)]
     public string? PrtgUrl { get; set; }
@@ -671,12 +678,6 @@ public class TestPrtgConnectionResultDto
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public long? ElapsedMs { get; set; }
-}
-
-/// <summary>PRTG 總開關設定請求（排程作業頁）</summary>
-public class SetPrtgEnabledRequest
-{
-    public bool Enabled { get; set; }
 }
 
 /// <summary>

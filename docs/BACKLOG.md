@@ -567,6 +567,23 @@
 （記錄列表與處理狀態彙總），不影響夜間批次。**觸發時機**：使用者反映該頁面慢，
 或執行詳情裡這支查詢的慢 SQL 警告變多時。
 
+## PRTG 歷史回填沒有停止鈕
+
+`PrtgBackfillService` 只有啟動沒有取消：按下「開始回填」後只能等它跑完（預設 30 天、逐日擷取），
+誤按或發現範圍設錯時沒有退路。取數執行與 AI 分析都有停止鈕，只有這條沒有。
+處理方向：比照 `SchedulerHostedService` 的取消權杖與 `canStop` 狀態欄位，
+前端沿用回饋第 41 輪批次G 的「執行中只顯示停止」規則。
+**觸發時機**：使用者反映誤按無法中止，或回填天數調大後單趟超過一小時。
+
+## PRTG 主機對應：名稱型裝置多且解析不到時每趟付 N 秒
+
+`PrtgHostMapper.MapForDate` 依 PRTG-SPEC §4 定案對每台名稱型 device 做 DNS（分組鍵要用解析後的 IP），
+解析器每趟 `new`、失敗快取不跨趟，逾時 1 秒——500 台解析不到的名稱型 device 就是每趟 500 秒，
+夜間批次與手動「同步結構與對應」都付。候選判定已把打壞的 IP 擋在 DNS 之外，但合法名稱解析不到
+（內網名稱沒進 DNS）擋不住。處理方向：解析改批次並行（`Task.WhenAll` 分批 16）或跨趟負向快取帶 TTL；
+兩者都要動 `IPrtgAddressResolver` 簽章。**觸發時機**：探測「IP 覆蓋概要」的 DNS 名稱台數破百、
+或同步結構與對應的執行紀錄顯示對應階段超過兩分鐘。
+
 ## 偶發測試：Sentinel 多段預算用盡
 
 `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外` 以
@@ -591,11 +608,11 @@
 
 ## PRTG 位址解析與守門即時來源改非同步
 
-`PrtgAddressResolver` 的 DNS 查詢用 `Task.Run`＋`Wait(2000)` 阻塞，逾時後那個 task 沒人回收；
-`PrtgLiveGuardSource` 的分頁查詢也是 `GetAwaiter().GetResult()` 同步阻塞 async，而它跑在
-「自動偵測並填入」的 HTTP 請求執行緒上，多人同時按就是執行緒池飢餓。兩者都卡在
-`PrtgResourceGuardTargets.Resolve`／`IPrtgResourceGuardSource` 是同步簽章——要一起改成 async，
-連帶動到 `PrtgHostMapper.MapForDate` 與所有呼叫端。**觸發時機**：偵測到 DNS 逾時堆積、
+`PrtgAddressResolver` 的 DNS 查詢已改為 `GetHostAddressesAsync` 加 1 秒取消逾時（同步等待），
+逾時後不再佔執行緒；但 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的分頁查詢也是
+`GetAwaiter().GetResult()` 同步阻塞 async，而它跑在「自動偵測並填入」的 HTTP 請求執行緒上，
+多人同時按就是執行緒池飢餓。要一起改成 async，連帶動到 `PrtgResourceGuardTargets.Resolve`、
+`IPrtgResourceGuardSource`、`PrtgHostMapper.MapForDate` 與所有呼叫端。**觸發時機**：
 執行緒池飢餓，或自動偵測的回應時間在實機超過十秒。
 
 ## UI 字串測試偵測不到「形狀」問題
