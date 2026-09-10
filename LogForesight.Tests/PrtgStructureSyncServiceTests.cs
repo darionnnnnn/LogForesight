@@ -192,6 +192,10 @@ public class PrtgStructureSyncServiceTests : IDisposable
         Assert.True(service.TryStart(out _, out _));
 
         Assert.True(service.TryCancel());
+
+        // 等背景工作真的收掉再結束測試：不等的話 Dispose 會在它還在寫 SQLite 時刪目錄
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.IsRunning && DateTime.UtcNow < deadline) Thread.Sleep(50);
     }
 
     [Fact]

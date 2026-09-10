@@ -82,6 +82,19 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
     }
 
+    /// <summary>
+    /// 等背景同步真的結束再讓測試收尾。不等的話 Dispose 會在它還在寫 SQLite 時刪掉目錄，
+    /// 變成偶發的紅——而且紅在別的測試上。
+    /// </summary>
+    private static void WaitUntilIdle(PrtgStructureSyncService service)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.IsRunning && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(50);
+        }
+    }
+
     private void EnablePrtg() => _settingsStore.Update(s =>
     {
         s.PrtgEnabled = true;
@@ -114,6 +127,8 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
 
         Assert.True(res.Success);
         Assert.Contains(_audit.Entries, e => e.Action == AuditActions.PrtgStructureSyncCancel);
+
+        WaitUntilIdle(sync);
     }
 
     [Fact]
