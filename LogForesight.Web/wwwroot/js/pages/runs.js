@@ -1221,6 +1221,15 @@ async function refreshPrtgSyncStatus() {
         // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
         if (btn) btn.disabled = status.isRunning || prtgModuleEnabled === false;
 
+        // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
+        // 這裡會動 d-none，而 data-maintain-only 的隱藏也是靠 d-none——沒有 Maintain 時
+        // 不能碰它，否則輪詢會把唯讀使用者看不到的停止鈕重新露出來。
+        const cancelBtn = document.getElementById('prtg-sync-cancel');
+        if (cancelBtn && canMaintainSchedule) {
+            cancelBtn.classList.toggle('d-none', !status.isRunning);
+            if (!status.isRunning) cancelBtn.disabled = false;
+        }
+
         if (status.isRunning) {
             if (!prtgSyncTimer) prtgSyncTimer = setInterval(refreshPrtgSyncStatus, 3000);
         } else if (prtgSyncTimer) {
@@ -1244,6 +1253,18 @@ function bindPrtgSync() {
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
             toast('已開始同步結構與對應', 'success');
+            await refreshPrtgSyncStatus();
+        } finally {
+            restore();
+        }
+    });
+
+    const cancelBtn = document.getElementById('prtg-sync-cancel');
+    cancelBtn?.addEventListener('click', async () => {
+        const restore = withBusy(cancelBtn, '停止中');
+        try {
+            await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
+            toast('已送出停止要求，進行中的查詢會被中斷', 'success');
             await refreshPrtgSyncStatus();
         } finally {
             restore();

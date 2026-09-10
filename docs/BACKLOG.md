@@ -425,6 +425,13 @@
 （見 docs/PRTG-SPEC.md）。以下是明確不做／待條件成熟的項目，多數要等值型規則的數值基線
 累積足夠才有辦法設計。
 
+- **結構同步的取數縮圈與取法統一**（觸發條件：結構同步實測耗時超過可接受範圍——
+  每階段耗時已寫在執行輸出）。三項一起評估：
+  (a) 感測器階段只抓有對應裝置的感測器（全量抓，但只有有對應的會被消費）；
+  (b) 規則評估先過濾未對應的感測器（對全部感測器算 finding，算完才丟）；
+  (c) 環境探測與資源守門用單次大 `count`、結構同步用分頁，同一份資料兩種取法。
+  三項都是效能與一致性，不影響正確性；先看實測數字再決定值不值得動。
+
 - **分析層的值型部分（L2~L5：特徵計算／弱訊號偵測／訊號合成／LLM 敘述化）**：狀態變更型規則
   （第一階）已完成並接上 `lf_top_issues` 全鏈；值型規則要看數值趨勢與基線偏移，
   依賴實際累積的 hourly 數值。觸發條件：`/admin/calibration` 校準頁四項判定達「可用」
@@ -609,7 +616,7 @@
 ## PRTG 位址解析與守門即時來源改非同步
 
 `PrtgAddressResolver` 的 DNS 查詢是 `GetHostAddressesAsync` 加 1 秒取消逾時（同步等待），
-不佔執行緒；未解的是 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的分頁查詢也是
+不佔執行緒；未解的是 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的單次查詢也是
 `GetAwaiter().GetResult()` 同步阻塞 async，而它跑在「自動偵測並填入」的 HTTP 請求執行緒上，
 多人同時按就是執行緒池飢餓。要一起改成 async，連帶動到 `PrtgResourceGuardTargets.Resolve`、
 `IPrtgResourceGuardSource`、`PrtgHostMapper.MapForDate` 與所有呼叫端。**觸發時機**：

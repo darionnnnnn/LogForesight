@@ -174,11 +174,9 @@ public static class PrtgProbeRunner
                 return;
             }
 
-            var parsedDeps = ParseTable(depJson, "sensors", el =>
-            {
-                var dep = GetStringProperty(el, "dependency");
-                return dep;
-            });
+            // 沒設 dependency 的 sensor 這一欄是缺的：回空字串讓它留在分母裡，
+            // 回 null 會被 ParseTable 當成損壞列剔除，分母縮水後截斷警告會在沒截斷時誤報。
+            var parsedDeps = ParseTable(depJson, "sensors", el => GetStringProperty(el, "dependency") ?? string.Empty);
 
             if (parsedDeps.CorruptedCount > 0)
             {
@@ -187,6 +185,11 @@ public static class PrtgProbeRunner
 
             var withDep = parsedDeps.Rows.Count(d => HasDependency(d));
             var total = parsedDeps.Rows.Count;
+            // 與另外兩處單次大 count 同一道截斷偵測：取樣不齊時下面的比例是拿部分樣本算的
+            if (sensorCount > 0 && total < sensorCount)
+            {
+                console.WriteLine($"     ⚠ 警告：Sensor 總數為 {sensorCount} 筆，本次查詢僅取樣到 {total} 筆，下列比例僅供參考");
+            }
             var pct = total > 0 ? (withDep * 100.0 / total) : 0.0;
             console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）");
             console.WriteLine("     （註：PRTG 預設每個 sensor 相依於父物件，此比例含預設值，不代表人工維護的相依拓撲）");
@@ -215,6 +218,12 @@ public static class PrtgProbeRunner
             }
 
             var totalGrp = parsedGroups.TotalTreesize ?? parsedGroups.Rows.Count;
+            // 與其他單發大 count 同一道截斷偵測：只取樣到 1000 筆時「群組總數」仍會印 treesize，看不出缺口
+            var fetchedGrp = parsedGroups.Rows.Count + parsedGroups.CorruptedCount;
+            if (totalGrp > fetchedGrp)
+            {
+                console.WriteLine($"     ⚠ 警告：群組總數為 {totalGrp}，本次查詢僅取樣到 {fetchedGrp} 筆，下列名稱不完整");
+            }
             var validGroupNames = parsedGroups.Rows.Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
             var top20 = validGroupNames.Take(20).ToList();
             console.WriteLine($"     群組總數：{totalGrp}，前 20 個群組名稱：{string.Join("，", top20)}");
@@ -290,6 +299,16 @@ public static class PrtgProbeRunner
             }
 
             console.WriteLine($"     Device 總筆數：{totalDevices}");
+            // 與 sensor 步驟同一道截斷偵測：單次大 count 拿到的筆數少於 treesize 就是被截斷，
+            // 少了這行，下面的 IP 覆蓋比例會用不完整的分母算出好看的數字。
+            if (deviceCount > 0 && totalDevices < deviceCount)
+            {
+                console.WriteLine($"     ⚠ 警告：Device 總數為 {deviceCount} 筆，本次查詢僅取樣到 {totalDevices} 筆");
+            }
+            else if (deviceCount > 0 && totalDevices > deviceCount)
+            {
+                console.WriteLine($"     ⚠ 注意：treesize 回報 {deviceCount} 筆但實際取得 {totalDevices} 筆——treesize 不是這個 content 的實際總筆數");
+            }
             console.WriteLine($"     有設定 host 值的 Device 數：{withHost}");
             console.WriteLine($"     其中為 IPv4 位址者：{ipv4Count} 台");
             console.WriteLine($"     其中為 DNS 名稱者：{dnsCount} 台（主機對應需靠 DNS 解析）");
@@ -343,6 +362,17 @@ public static class PrtgProbeRunner
             return Task.CompletedTask;
         });
 
+        // 步驟 8：分頁語意診斷（不影響探測成敗）——回答「這台 PRTG 的 table.json 遵不遵守 start 位移」。
+        // 結構同步與資源守門的分頁迴圈都以「遵守 start」為前提；忽略 start 或超出範圍時夾回某一頁的
+        // 環境會讓分頁永遠收不斂。這一步每個 content 只做四次 count=5 的小查詢（三次位移＋一次排序對照），
+        // 結果純供人工判讀，任何一筆失敗
+        // 都只印出原因、不把整趟探測算失敗。
+        console.WriteLine("[8] 分頁語意診斷（table.json 的 start 位移是否被遵守）");
+        foreach (var (content, extra) in new[] { ("devices", ""), ("sensors", ""), ("messages", "&id=0&filter_drel=7days") })
+        {
+            await DiagnosePagingAsync(client, console, content, extra, ct);
+        }
+
         console.WriteLine();
         if (allOk)
         {
@@ -354,6 +384,101 @@ public static class PrtgProbeRunner
         }
 
         return allOk;
+    }
+
+    /// <summary>
+    /// 對單一 content 發三次 count=5 查詢（start=0、start=5、start=999999）比較各頁 objid 集合，
+    /// 再發一次 start=0&amp;sortby=objid 當排序對照，
+    /// 歸納這台 PRTG 對 start 位移的處理方式。判讀結果與分頁迴圈的影響一起印出。
+    /// </summary>
+    private static async Task DiagnosePagingAsync(PrtgClient client, IRunConsole console, string content, string extraQuery, CancellationToken ct)
+    {
+        const int probeCount = 5;
+        const int farOffset = 999999;
+        try
+        {
+            var page0 = await ReadObjidsAsync(client, content, extraQuery, 0, probeCount, ct);
+            var page1 = await ReadObjidsAsync(client, content, extraQuery, probeCount, probeCount, ct);
+            var pageFar = await ReadObjidsAsync(client, content, extraQuery, farOffset, probeCount, ct);
+
+            string Show(List<long> ids) => ids.Count == 0 ? "（空）" : string.Join(",", ids);
+            console.WriteLine($"     {content}：start=0 → [{Show(page0)}]；start={probeCount} → [{Show(page1)}]；start={farOffset} → [{Show(pageFar)}]");
+
+            if (page0.Count == 0)
+            {
+                console.WriteLine($"     {content}：第一頁就沒有資料，無法判定");
+                return;
+            }
+
+            // 排序穩定性：分頁的前提除了「遵守 start」，還有「兩次查詢之間順序一致」。
+            // 順序不穩定時同一筆會重複出現、另一筆從沒被讀到，而且完全靜默——
+            // 分頁的去重擋得住重複，擋不住漏列。sortby=objid 是讓順序固定的手段，
+            // 這裡實測它在這台 PRTG 上有沒有效（不支援時 PRTG 會忽略參數而非報錯）。
+            var sorted = await ReadObjidsAsync(client, content, extraQuery + "&sortby=objid", 0, probeCount, ct);
+            var naturalAscending = IsAscending(page0);
+            var sortedAscending = IsAscending(sorted);
+            console.WriteLine($"     {content}：頁內 objid 遞增＝{(naturalAscending ? "是" : "否")}；" +
+                              $"帶 sortby=objid → [{Show(sorted)}]，遞增＝{(sortedAscending ? "是" : "否")}");
+            if (!naturalAscending && sortedAscending)
+                console.WriteLine($"     {content}：✓ sortby=objid 有效（預設順序不穩定，分頁必須帶它才不會漏列）");
+            else if (!naturalAscending && !sortedAscending)
+                console.WriteLine($"     {content}：✗ sortby=objid 無效，且預設順序非遞增——分頁可能漏列，只能改用單次大 count");
+            else if (naturalAscending && !sortedAscending)
+                console.WriteLine($"     {content}：⚠ 預設已遞增，但帶 sortby=objid 後反而不是——不要帶這個參數");
+            else
+                console.WriteLine($"     {content}：✓ 預設順序已遞增，sortby=objid 不改變結果");
+
+            var sameAsFirst = page1.SequenceEqual(page0);
+            var farSameAsFirst = pageFar.SequenceEqual(page0);
+
+            if (page0.Count < probeCount)
+            {
+                console.WriteLine($"     {content}：總筆數不足 {probeCount} 筆，無法判定 start 語意（資料太少，分頁本來就只有一頁）");
+            }
+            else if (sameAsFirst)
+            {
+                console.WriteLine($"     {content}：✗ 完全忽略 start——第二頁與第一頁相同。分頁在這個環境抓不到第一頁以外的資料，只能靠單次大 count 抓完");
+            }
+            else if (pageFar.Count == 0)
+            {
+                console.WriteLine($"     {content}：✓ 遵守 start，超出範圍回空頁（分頁迴圈可正常收斂）");
+            }
+            else if (farSameAsFirst)
+            {
+                console.WriteLine($"     {content}：⚠ 遵守 start，但超出範圍時回到第一頁——總筆數剛好是頁大小整數倍時，分頁迴圈會在最後多讀一次第一頁；需要「本頁無新 objid 即停」的保險絲");
+            }
+            else
+            {
+                console.WriteLine($"     {content}：⚠ 遵守 start，但超出範圍時夾到最後一頁（非空、與第一頁不同）——總筆數剛好是頁大小整數倍時會重讀末頁；需要「本頁無新 objid 即停」的保險絲");
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     {content}：無法判定（{ex.Message}）");
+        }
+    }
+
+    /// <summary>
+    /// 少於兩筆時視為遞增（無從判定，不要因為資料太少就報警）。
+    /// </summary>
+    private static bool IsAscending(List<long> ids)
+    {
+        for (var i = 1; i < ids.Count; i++)
+        {
+            if (ids[i] <= ids[i - 1]) return false;
+        }
+        return true;
+    }
+
+    private static async Task<List<long>> ReadObjidsAsync(PrtgClient client, string content, string extraQuery, int start, int count, CancellationToken ct)
+    {
+        var json = await client.GetJsonAsync($"/api/table.json?content={content}&columns=objid&count={count}&start={start}{extraQuery}", ct);
+        var parsed = ParseTable(json, content, el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? (long?)id : null);
+        return parsed.Rows.Select(r => r!.Value).ToList();
     }
 
     private static async Task<bool> StepAsync(IRunConsole console, int index, string title, Func<Task> action)

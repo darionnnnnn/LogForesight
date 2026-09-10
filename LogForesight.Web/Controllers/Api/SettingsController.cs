@@ -205,6 +205,31 @@ public class SettingsController : ControllerBase
             new StartPrtgStructureSyncResultDto { Started = true });
     }
 
+    /// <summary>
+    /// 中止進行中的結構同步（docs/PRTG-SPEC.md §5a）。這條路徑要對 PRTG 爬整棵樹，
+    /// 大型環境會跑上數十分鐘；沒有這顆鈕時唯一的中止方式是重啟站台。
+    /// </summary>
+    [HttpPost("prtg-structure-sync/cancel")]
+    public ApiResponse<StartPrtgStructureSyncResultDto> CancelPrtgStructureSync()
+    {
+        if (_prtgStructureSync == null)
+            throw DomainException.Validation("PRTG 同步服務未啟用。");
+
+        // 沒有執行中就不是「停止成功」——回 409 與 start 被互斥擋下時同一種語意。
+        if (!_prtgStructureSync.TryCancel())
+            throw DomainException.Conflict("目前沒有進行中的結構同步。");
+
+        _audit.Record(
+            action: AuditActions.PrtgStructureSyncCancel,
+            summary: "中止 PRTG 結構同步",
+            targetKind: "system_settings",
+            targetId: "prtg_structure_sync",
+            detail: new { });
+
+        return ApiResponse<StartPrtgStructureSyncResultDto>.Ok(
+            new StartPrtgStructureSyncResultDto { Started = false });
+    }
+
     // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────
 
     /// <summary>
@@ -363,7 +388,7 @@ public class SettingsController : ControllerBase
                 {
                     liveClient = PrtgClientFactory.Create(settings);
                     targets = PrtgResourceGuardTargets.Resolve(
-                        new PrtgLiveGuardSource(liveClient, ct), settings, sentinels, console,
+                        new PrtgLiveGuardSource(liveClient, ct, console), settings, sentinels, console,
                         new PrtgAddressResolver(), ignoreOverride: forceAuto);
                     source = "live";
                 }

@@ -335,6 +335,7 @@ public class RunsPageUiTests
         Assert.Contains("prtg-sync-summary", prtgCard);
         Assert.Contains("prtg-module-state", prtgCard);
         Assert.Contains("prtg-backfill-start", prtgCard);
+        Assert.Contains("prtg-sync-cancel", prtgCard);
 
         // 取數卡裡不該再有 PRTG 軌
         var runCardStart = cshtml.IndexOf("id=\"schedule-run-card\"", StringComparison.Ordinal);
@@ -343,6 +344,10 @@ public class RunsPageUiTests
 
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
         Assert.Contains("renderPrtgSyncSummary", js);
+        Assert.Contains("prtg-structure-sync/cancel", js);
+        // 停止鈕的顯示切換走 d-none，與 data-maintain-only 的隱藏同一個 class——
+        // 輪詢必須看權限旗標，否則會把唯讀使用者不該看到的停止鈕露出來
+        Assert.Contains("cancelBtn && canMaintainSchedule", js);
         Assert.Contains("renderPrtgModuleState", js);
         // 「尚未同步」與「同步到 0 筆」要分得出來
         Assert.Contains("尚未同步", js);

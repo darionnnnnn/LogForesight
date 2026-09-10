@@ -148,6 +148,7 @@ public static class AuditActions
     // PRTG 歷史回填（PRTG 第 1 輪批次E）
     public const string PrtgBackfillRun = "prtg_backfill_run";
     public const string PrtgStructureSyncRun = "prtg_structure_sync_run";
+    public const string PrtgStructureSyncCancel = "prtg_structure_sync_cancel";
 
     // PRTG 人工主機對應（PRTG 第 2 輪任務E-1）
     public const string PrtgManualMapSet = "prtg_manual_map_set";

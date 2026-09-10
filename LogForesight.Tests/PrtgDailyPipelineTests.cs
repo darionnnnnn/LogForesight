@@ -188,7 +188,7 @@ public class PrtgDailyPipelineTests : IDisposable
             DateTime.Today.AddDays(-1), Task.CompletedTask, guard: null, structureSyncGate: gate);
 
         Assert.Equal(1, gate.WaitCalls);
-        Assert.Contains(console.Lines, l => l.Contains("等待手動同步逾時"));
+        Assert.Contains(console.Lines, l => l.Contains("手動同步未成功結束"));
         Assert.DoesNotContain(console.Lines, l => l.Contains("沿用剛更新的鏡像結構"));
         // 真的去爬結構了（第一階段的開場訊息在 HTTP 呼叫之前就印）
         Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));

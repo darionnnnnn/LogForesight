@@ -85,8 +85,17 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     private readonly PrtgStructureSyncStatusStore _statusStore;
     private readonly IHostApplicationLifetime? _lifetime;
 
-    /// <summary>本趟同步的取消來源；沒有執行中時為 null。</summary>
-    private CancellationTokenSource? _cts;
+    /// <summary>
+    /// 本趟同步的取消來源；沒有執行中時為 null。
+    /// volatile：寫入在啟動執行緒、讀取在按下停止鈕的請求執行緒。
+    /// </summary>
+    private volatile CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// 最近一趟同步是否成功（取消與階段失敗都算不成功）。閘門用它決定要不要讓取數跳過自己的結構同步。
+    /// 初值 false：這個行程還沒跑過成功的同步時，取數一律自己來。
+    /// </summary>
+    private volatile bool _lastRunSucceeded;
 
     public PrtgStructureSyncService(
         ISystemSettingsStore settings,
@@ -113,6 +122,17 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
 
     /// <summary>同步是否正在執行——取數執行的 PRTG 路徑用它決定要不要等。</summary>
     public bool IsRunning => _state.Snapshot().IsRunning;
+
+    /// <summary>
+    /// 使用者主動中止：沒有執行中時回 false 讓呼叫端回報狀態衝突，
+    /// 不要把「沒東西可停」說成停止成功。
+    /// </summary>
+    public bool TryCancel()
+    {
+        if (!IsRunning) return false;
+        Cancel();
+        return true;
+    }
 
     /// <summary>對進行中的同步發出取消（站台關閉時自動呼叫）。沒有執行中時無作用。</summary>
     public void Cancel()
@@ -153,7 +173,13 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             await Task.Delay(WaitPollInterval, ct);
         }
 
-        return true;
+        // 跑完了但不成功（被取消、有階段失敗）＝鏡像是半套的，呼叫端要自己再同步一次。
+        if (!_lastRunSucceeded)
+        {
+            Log.Warn("手動「同步結構與對應」已結束但未成功，鏡像可能不完整，本趟改為自行同步結構。");
+        }
+
+        return _lastRunSucceeded;
     }
 
     public PrtgStructureSyncStatusDto GetStatus()
@@ -246,12 +272,23 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             return false;
         }
 
+        // 取消來源先建好再搶執行權：IsRunning 一轉 true，停止鈕就按得下去，
+        // _cts 若還是 null 那一下會落空——畫面說「已送出停止」而同步照跑完整趟。
+        // TryBegin 與指派之間仍有兩個指令的窗口，要完全關掉得讓執行狀態自己持有 cts
+        //（SchedulerRunState.TryBeginRun 的做法），這裡的後果只是「再按一次」，不為此重構。
+        var cts = new CancellationTokenSource();
         if (!_state.TryBegin())
         {
+            cts.Dispose();
             error = "同步已在執行中。";
             isConflict = true;
             return false;
         }
+        _cts = cts;
+
+        // 「上一趟成功」的旗標同時歸零：下面任何一條 early return 都不能讓閘門沿用舊結果，
+        // 否則當晚的取數會以為鏡像剛更新過而跳過自己的結構同步。
+        _lastRunSucceeded = false;
 
         _state.ResetProgress();
 
@@ -264,6 +301,8 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         catch (Exception ex)
         {
             _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            _cts = null;
+            cts.Dispose();
             _state.EndRun(false);
             error = $"初始化 PRTG 連線失敗：{ex.Message}";
             return false;
@@ -272,9 +311,6 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         var prtgStore = _backend.PrtgStore();
         var fetchService = new PrtgFetchService(client, prtgStore, console);
         var concurrency = s.PrtgFetchConcurrency;
-
-        var cts = new CancellationTokenSource();
-        _cts = cts;
 
         _ = Task.Run(async () =>
         {
@@ -313,6 +349,9 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             }
             finally
             {
+                // 先寫旗標再結束執行狀態：等待方看到 IsRunning 轉 false 的下一刻就會讀它，
+                // 反過來寫會讓那一瞬間讀到上一趟的結果。
+                _lastRunSucceeded = success;
                 _state.EndRun(success);
                 _cts = null;
                 cts.Dispose();

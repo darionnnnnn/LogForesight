@@ -1078,12 +1078,15 @@ function renderStructureSyncStatus(status) {
     const statusEl = document.getElementById('prtg-structure-sync-status');
     const progressEl = document.getElementById('prtg-structure-sync-progress');
     const btn = document.getElementById('prtg-structure-sync-btn');
+    const cancelBtn = document.getElementById('prtg-structure-sync-cancel-btn');
     if (!statusEl || !progressEl || !btn) return;
 
     if (status.isRunning) {
         structureSyncRunning = true;
         btn.disabled = true;
         btn.textContent = '同步中…';
+        // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409
+        cancelBtn?.classList.remove('d-none');
         statusEl.textContent = status.latestMessage || '同步進行中…';
         const phase = status.progressPhase;
         // 走與排程作業頁同一份對照表，不把 prtg-sync-devices 這種裸 phase 印給使用者
@@ -1098,6 +1101,8 @@ function renderStructureSyncStatus(status) {
     // 未啟用時的閘由 syncStructureSyncGate 設定；這裡是輪詢，不能把它打開
     btn.disabled = !prtgEnabled;
     btn.textContent = '同步結構與對應';
+    cancelBtn?.classList.add('d-none');
+    if (cancelBtn) cancelBtn.disabled = false;
     progressEl.textContent = '';
 
     if (!status.lastCompletedAt) {
@@ -1114,7 +1119,9 @@ function renderStructureSyncStatus(status) {
             + `衝突 ${status.lastMapConflict ?? 0}、查無主機 ${status.lastMapUnmatched ?? 0}、`
             + `略過 ${status.lastMapSkipped ?? 0}`;
     } else {
-        statusEl.textContent = `上次同步（${when}）未成功：${status.lastErrorMessage || '原因不明'}`;
+        // 未成功的同步＝鏡像可能只有半套，要說出後續會怎樣，否則使用者不知道該不該重跑
+        statusEl.textContent = `上次同步（${when}）未成功：${status.lastErrorMessage || '原因不明'}`
+            + '。鏡像可能不完整，夜間取數會重新同步。';
     }
 }
 
@@ -1154,6 +1161,18 @@ function bindStructureSync() {
         }
         // 輪詢要在 restore 之後：restore 會把按鈕設回可按，若先輪詢再 restore，
         // 同步進行中的「灰掉」會被 restore 打開三秒。
+        await refreshStructureSyncStatus();
+    });
+
+    const cancelBtn = document.getElementById('prtg-structure-sync-cancel-btn');
+    cancelBtn?.addEventListener('click', async () => {
+        const restore = withBusy(cancelBtn, '停止中');
+        try {
+            await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
+            toast('已送出停止要求，進行中的查詢會被中斷', 'success');
+        } finally {
+            restore();
+        }
         await refreshStructureSyncStatus();
     });
 }

@@ -38,8 +38,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
     private PrtgStructureSyncStatusStore StatusStore() =>
         new(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
 
-    private PrtgStructureSyncService Create(SchedulerRunState? schedulerState = null) =>
-        new(_settingsStore, _backend, new PrtgStructureSyncRunState(),
+    private PrtgStructureSyncService Create(
+        SchedulerRunState? schedulerState = null, PrtgStructureSyncRunState? state = null) =>
+        new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(),
             schedulerState ?? new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")), StatusStore());
 
@@ -161,7 +162,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
     }
 
     [Fact]
-    public void 等待閘門_同步未執行時立即返回()
+    public async Task 等待閘門_同步未執行時立即返回且不放行跳過()
     {
         var service = Create();
 
@@ -169,6 +170,70 @@ public class PrtgStructureSyncServiceTests : IDisposable
         // 沒有執行中就不該等待，逾時保護不該被觸發
         var task = service.WaitUntilIdleAsync(CancellationToken.None);
         Assert.True(task.IsCompleted);
+
+        // 這個行程還沒跑過成功的同步：回 false 讓取數自己同步結構。
+        // 回 true 的話，鏡像其實是舊的（甚至空的），當晚整條路徑會用錯資料而畫面一切正常。
+        Assert.False(await task);
+    }
+
+    /// <summary>
+    /// 一趟同步跑完但沒成功（連不上 PRTG）之後，閘門必須回 false 讓取數自己同步結構。
+    /// 回 true 的話，當晚會沿用半套的鏡像，而畫面上與完整的鏡像一模一樣。
+    /// </summary>
+    [Fact]
+    public async Task 等待閘門_同步結束但未成功時回false()
+    {
+        EnablePrtg();
+        var service = Create();
+        Assert.True(service.TryStart(out _, out _));
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (service.IsRunning && DateTime.UtcNow < deadline) Thread.Sleep(50);
+        Assert.False(service.IsRunning, "背景同步應在逾時前結束（連的是不存在的位址）");
+
+        Assert.False(await service.WaitUntilIdleAsync(CancellationToken.None));
+        Assert.False(service.GetStatus().LastSuccess);
+    }
+
+    [Fact]
+    public void 中止_沒有執行中時回false()
+    {
+        var service = Create();
+
+        // 「沒東西可停」不能說成停止成功——端點據此回 409
+        Assert.False(service.TryCancel());
+    }
+
+    [Fact]
+    public void 中止_執行中時回true()
+    {
+        // 直接標記執行中，不啟動真的背景工作（它連的是不存在的位址，可能瞬間就結束）
+        var state = new PrtgStructureSyncRunState();
+        Assert.True(state.TryBegin());
+        var service = Create(state: state);
+
+        Assert.True(service.TryCancel());
+    }
+
+    /// <summary>
+    /// 啟動後立刻按停止：取消來源必須在 IsRunning 轉 true 的同一刻就備好，
+    /// 否則這一下會落在 _cts 還是 null 的空窗——畫面說「已送出停止」而同步照跑完整趟。
+    /// </summary>
+    [Fact]
+    public void 中止_啟動後立刻按停止不會落空()
+    {
+        EnablePrtg();
+        var service = Create();
+        Assert.True(service.TryStart(out _, out _));
+
+        Assert.True(service.TryCancel());
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (service.IsRunning && DateTime.UtcNow < deadline) Thread.Sleep(50);
+        Assert.False(service.IsRunning);
+
+        // 被取消的那一趟不算成功，閘門不能放行
+        Assert.False(service.GetStatus().LastSuccess);
     }
 
     [Fact]
