@@ -90,8 +90,18 @@ public sealed class PrtgFetchService
             try
             {
                 _console.WriteLine("[階段 1/4] 開始同步 PRTG 裝置結構鏡像...");
-                devicesCount = await FetchDevicesAsync(ct, progress);
-                _console.WriteLine($"[階段 1/4] 裝置結構同步完成，共寫入/更新 {devicesCount} 台裝置。");
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var outcome = await FetchDevicesAsync(ct, progress);
+                stopwatch.Stop();
+                devicesCount = outcome.Written;
+                _console.WriteLine($"[階段 1/4] 裝置結構同步完成，共寫入/更新 {devicesCount} 台裝置{FormatStageStats(stopwatch, outcome)}。");
+                // 分頁未收斂：已寫入的部分留著（寫入是冪等 upsert），但這一階段必須計為失敗，
+                // 否則畫面會把「少了一大塊的鏡像」顯示成一次成功的同步。
+                if (!outcome.Converged)
+                {
+                    failures++;
+                    _console.WriteLine($"[階段 1/4] ✗ {outcome.Error}");
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -107,8 +117,17 @@ public sealed class PrtgFetchService
             try
             {
                 _console.WriteLine("[階段 2/4] 開始同步 PRTG 感測器結構鏡像...");
-                (sensorsCount, sensorTargets) = await FetchSensorsAsync(ct, progress);
-                _console.WriteLine($"[階段 2/4] 感測器結構同步完成，共寫入/更新 {sensorsCount} 個感測器。");
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var (outcome, targets) = await FetchSensorsAsync(ct, progress);
+                stopwatch.Stop();
+                sensorsCount = outcome.Written;
+                sensorTargets = targets;
+                _console.WriteLine($"[階段 2/4] 感測器結構同步完成，共寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, outcome)}。");
+                if (!outcome.Converged)
+                {
+                    failures++;
+                    _console.WriteLine($"[階段 2/4] ✗ {outcome.Error}");
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -139,8 +158,16 @@ public sealed class PrtgFetchService
         try
         {
             _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{day:yyyy-MM-dd}）...");
-            stateChangesCount = await FetchStateChangesAsync(day, ct, progress);
-            _console.WriteLine($"[階段 3/4] 狀態變更同步完成，共寫入 {stateChangesCount} 筆。");
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var outcome = await FetchStateChangesAsync(day, ct, progress);
+            stopwatch.Stop();
+            stateChangesCount = outcome.Written;
+            _console.WriteLine($"[階段 3/4] 狀態變更同步完成，共寫入 {stateChangesCount} 筆{FormatStageStats(stopwatch, outcome)}。");
+            if (!outcome.Converged)
+            {
+                failures++;
+                _console.WriteLine($"[階段 3/4] ✗ {outcome.Error}");
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -207,12 +234,12 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>
-    private async Task<int> FetchDevicesAsync(CancellationToken ct, Action<string, int, int>? progress = null)
+    private async Task<StageOutcome> FetchDevicesAsync(CancellationToken ct, Action<string, int, int>? progress = null)
     {
         var syncedAt = DateTime.Now;
         var totalWritten = 0;
 
-        await FetchTablePagedAsync<PrtgDeviceRow>(
+        var paged = await RunPagedStageAsync(() => FetchTablePagedAsync<PrtgDeviceRow>(
             content: "devices",
             columns: "objid,device,host,group,status,tags,paused,dependency",
             extraQuery: null,
@@ -245,20 +272,20 @@ public sealed class PrtgFetchService
             ct: ct,
             phase: PrtgSyncDevicesPhase,
             progress: progress,
-            stageLabel: "階段 1/4 裝置結構");
+            stageLabel: "階段 1/4 裝置結構"));
 
-        return totalWritten;
+        return StageOutcome.From(totalWritten, paged);
     }
 
     /// <summary>階段 2：分頁抓取所有 sensors 並寫入鏡像表，同時收集未暫停名單供階段 4 使用</summary>
-    private async Task<(int TotalWritten, List<(long Objid, bool Paused)> SensorTargets)> FetchSensorsAsync(
+    private async Task<(StageOutcome Outcome, List<(long Objid, bool Paused)> SensorTargets)> FetchSensorsAsync(
         CancellationToken ct, Action<string, int, int>? progress = null)
     {
         var syncedAt = DateTime.Now;
         var totalWritten = 0;
         var targets = new List<(long Objid, bool Paused)>();
 
-        await FetchTablePagedAsync<PrtgSensorRow>(
+        var paged = await RunPagedStageAsync(() => FetchTablePagedAsync<PrtgSensorRow>(
             content: "sensors",
             columns: "objid,parentid,sensor,type,tags,unit,status,paused,dependency",
             extraQuery: null,
@@ -297,20 +324,20 @@ public sealed class PrtgFetchService
             ct: ct,
             phase: PrtgSyncSensorsPhase,
             progress: progress,
-            stageLabel: "階段 2/4 感測器結構");
+            stageLabel: "階段 2/4 感測器結構"));
 
-        return (totalWritten, targets);
+        return (StageOutcome.From(totalWritten, paged), targets);
     }
 
     /// <summary>階段 3：分頁抓取 messages 並只保留目標日期的紀錄，寫入狀態變更表</summary>
-    private async Task<int> FetchStateChangesAsync(DateTime day, CancellationToken ct, Action<string, int, int>? progress = null)
+    private async Task<StageOutcome> FetchStateChangesAsync(DateTime day, CancellationToken ct, Action<string, int, int>? progress = null)
     {
         var targetDate = day.Date;
         var totalWritten = 0;
         var unparseableCount = 0;
         var now = DateTime.Now;
 
-        await FetchTablePagedAsync<PrtgStateChangeRow>(
+        var paged = await RunPagedStageAsync(() => FetchTablePagedAsync<PrtgStateChangeRow>(
             content: "messages",
             columns: "objid,datetime,parent,status,message",
             extraQuery: StateChangesQuery(targetDate),
@@ -350,14 +377,14 @@ public sealed class PrtgFetchService
             ct: ct,
             phase: PrtgSyncMessagesPhase,
             progress: progress,
-            stageLabel: "階段 3/4 狀態變更");
+            stageLabel: "階段 3/4 狀態變更"));
 
         if (unparseableCount > 0)
         {
             _console.WriteLine($"  ⚠ 狀態變更中有 {unparseableCount} 筆紀錄無法解析時間，已略過。");
         }
 
-        return totalWritten;
+        return StageOutcome.From(totalWritten, paged);
     }
 
     /// <summary>階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表</summary>
@@ -581,7 +608,47 @@ public sealed class PrtgFetchService
     /// 每批轉換累積達 pageSize（500）即回呼寫入資料庫並清空緩衝，避免整份堆積於記憶體。
     /// 當遠端回傳空陣列時結束分頁。
     /// </summary>
-    private async Task<int> FetchTablePagedAsync<T>(
+    /// <summary>
+    /// 一個分頁階段的產出。Converged=false 代表分頁翻到上限仍未到結尾——
+    /// 已寫入的筆數仍然有效（寫入是冪等 upsert），呼叫端據此把階段計為失敗但保留數字。
+    /// </summary>
+    private sealed record StageOutcome(int Written, int Duplicates, bool Converged, string? Error)
+    {
+        public static StageOutcome From(int written, PagedStageResult paged) =>
+            new(written, paged.Result?.DuplicateRows ?? 0, paged.Error == null, paged.Error);
+    }
+
+    private sealed record PagedStageResult(PrtgPagerResult? Result, string? Error);
+
+    /// <summary>
+    /// 執行一次分頁讀取，把「分頁未收斂」轉成可回報的結果而不是例外——
+    /// 它與連線失敗不同，前面已經寫進鏡像的資料是有效的，不該讓整個階段的數字歸零。
+    /// 其他例外照樣往外擲，由呼叫端的既有 catch 處理。
+    /// </summary>
+    private static async Task<PagedStageResult> RunPagedStageAsync(Func<Task<PrtgPagerResult>> fetch)
+    {
+        try
+        {
+            return new PagedStageResult(await fetch(), null);
+        }
+        catch (PrtgPagingNotConvergedException ex)
+        {
+            return new PagedStageResult(null, ex.Message);
+        }
+    }
+
+    /// <summary>階段完成行的附註：耗時一定寫，重複列數只在非零時寫。</summary>
+    private static string FormatStageStats(System.Diagnostics.Stopwatch stopwatch, StageOutcome outcome)
+    {
+        var stats = $"（耗時 {stopwatch.Elapsed.TotalSeconds:F1} 秒";
+        if (outcome.Duplicates > 0) stats += $"、跳過重複列 {outcome.Duplicates} 筆";
+        return stats + "）";
+    }
+
+    /// <summary>
+    /// PRTG table.json 分頁讀取的呼叫入口，實作在 <see cref="PrtgTablePager"/>（全專案唯一一份分頁邏輯）。
+    /// </summary>
+    private Task<PrtgPagerResult> FetchTablePagedAsync<T>(
         string content,
         string columns,
         string? extraQuery,
@@ -591,101 +658,8 @@ public sealed class PrtgFetchService
         string? phase = null,
         Action<string, int, int>? progress = null,
         string? stageLabel = null)
-    {
-        const int pageSize = 500;
-        // 每翻這麼多頁就寫一行執行輸出：結構同步在大型環境要翻數百頁，
-        // 沒有任何輸出時「跑得慢」與「卡死」在畫面上完全一樣。
-        const int consoleEveryPages = 50;
-        var offset = 0;
-        var totalMapped = 0;
-        var readRows = 0;
-        var pageIndex = 0;
-        var treeSize = 0;
-        var buffer = new List<T>(pageSize);
-
-        // 分母尚未知（要等第一次回應的 treesize），先送 0 讓進度軌顯示不定進度
-        if (phase != null) progress?.Invoke(phase, 0, 0);
-
-        while (true)
-        {
-            ct.ThrowIfCancellationRequested();
-            var query = string.IsNullOrEmpty(extraQuery)
-                ? $"api/table.json?content={content}&columns={columns}&start={offset}&count={pageSize}"
-                : $"api/table.json?content={content}&columns={columns}&start={offset}&count={pageSize}&{extraQuery}";
-
-            var json = await _client.GetJsonAsync(query, ct);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.ValueKind != JsonValueKind.Object ||
-                !root.TryGetProperty(content, out var arrayProp) ||
-                arrayProp.ValueKind != JsonValueKind.Array)
-            {
-                break;
-            }
-
-            // treesize＝PRTG 回報的該 content 總筆數，當進度分母。只在第一次取得時記錄
-            // （分頁過程中的值可能隨資料異動而變，分母來回跳動比沒有分母更難讀）。
-            // 沒有這個欄位時維持 0，進度軌顯示不定進度但仍有分子。
-            if (treeSize == 0)
-            {
-                var parsedTreeSize = GetLongProperty(root, "treesize");
-                if (parsedTreeSize is > 0 and <= int.MaxValue) treeSize = (int)parsedTreeSize.Value;
-            }
-
-            var countInPage = 0;
-            foreach (var item in arrayProp.EnumerateArray())
-            {
-                countInPage++;
-                if (item.ValueKind != JsonValueKind.Object)
-                    continue;
-
-                var mapped = mapper(item);
-                if (mapped != null)
-                {
-                    buffer.Add(mapped);
-                    if (buffer.Count >= pageSize)
-                    {
-                        totalMapped += buffer.Count;
-                        onBatch(buffer);
-                        buffer.Clear();
-                    }
-                }
-            }
-
-            pageIndex++;
-            readRows += countInPage;
-
-            // 分子用「已讀取的列數」而非已寫入數：寫入是每滿 500 筆才發生一次，
-            // 用寫入數當分子會讓進度以 500 為單位跳動、且最後一批寫入前看起來停滯。
-            if (phase != null) progress?.Invoke(phase, readRows, treeSize);
-
-            if (stageLabel != null && pageIndex % consoleEveryPages == 0)
-            {
-                var scope = treeSize > 0 ? $" / 約 {treeSize} 筆" : string.Empty;
-                _console.WriteLine($"  [{stageLabel}] 已翻 {pageIndex} 頁、累計讀取 {readRows} 筆{scope}...");
-            }
-
-            // 停止條件有兩道：空頁，以及「未滿一頁」＝最後一頁。
-            // 只靠空頁是不夠的——PRTG 前面若擺了會忽略 start 參數的代理，每次都會回同一頁非空資料，
-            // 迴圈就永遠不會結束，整趟夜間批次卡死在這裡（而且沒有任何錯誤訊息）。
-            if (countInPage < pageSize)
-            {
-                break;
-            }
-
-            offset += countInPage;
-        }
-
-        if (buffer.Count > 0)
-        {
-            totalMapped += buffer.Count;
-            onBatch(buffer);
-            buffer.Clear();
-        }
-
-        return totalMapped;
-    }
+        => PrtgTablePager.FetchAsync(
+            _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

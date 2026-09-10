@@ -594,17 +594,17 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchDayAsync_伺服器忽略start參數時仍會終止不會無限迴圈()
+    public async Task FetchDayAsync_伺服器忽略start參數且每頁回滿時仍會終止()
     {
-        // PRTG 前面若擺了會忽略 start 參數的代理，每頁都回同一批非空資料。
-        // 分頁若只靠「空頁」判定結束，這裡會永遠跑不完、整趟夜間批次無聲卡死。
+        // PRTG 前面若擺了會忽略 start 參數的代理，**每頁都回滿一頁**同一批資料。
+        // 只靠「空頁」或「未滿一頁」判定都會永遠跑不完、整趥夜間批次無聲卡死。
+        // 替身必須真的回滿頁（500 筆），每頁只回兩筆的替身第一頁就已經「未滿一頁」而停，根本沒測到這件事。
+        var fullPage = BuildDevicePage(1, 500);
+
         var (client, handler) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices"))
-                return JsonResponse("{\"treesize\":2,\"devices\":[" +
-                    "{\"objid\":701,\"device\":\"Dev-701\",\"paused\":false}," +
-                    "{\"objid\":702,\"device\":\"Dev-702\",\"paused\":false}]}");
+            if (url.Contains("content=devices")) return JsonResponse(fullPage);
             if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
             if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
             return JsonResponse("{}", HttpStatusCode.NotFound);
@@ -617,11 +617,55 @@ public class PrtgFetchServiceTests : IDisposable
         var finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10)));
 
         Assert.Same(task, finished);
-        await task;
-        Assert.True(handler.RequestedUrls.Count(u => u.Contains("content=devices")) <= 2,
-            "未滿一頁就該停止分頁，不應反覆請求同一個 content=devices");
+        var result = await task;
+        Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("content=devices")));
+        Assert.Equal(500, result.Devices);
+        Assert.Equal(0, result.Failures);
     }
 
+    [Fact]
+    public async Task FetchDayAsync_超出範圍夾到末頁時備註重複列數與階段耗時()
+    {
+        // 實機行為（探測步驟 8 實測）：start 超出範圍時回最後一頁而非空頁
+        var page1 = BuildDevicePage(1, 500);
+        var page2 = BuildDevicePage(501, 500);
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse(url.Contains("start=0") ? page1 : page2);
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+
+        Assert.Equal(1000, result.Devices);
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(3, handler.RequestedUrls.Count(u => u.Contains("content=devices")));
+        Assert.Contains(console.Lines, l => l.Contains("跳過重複列 500 筆"));
+        Assert.Contains(console.Lines, l => l.Contains("[階段 1/4]") && l.Contains("耗時"));
+    }
+
+    /// <summary>產生一頁 devices（objid 從 firstObjid 連號）。</summary>
+    private static string BuildDevicePage(int firstObjid, int count)
+    {
+        var sb = new StringBuilder();
+        sb.Append("{\"devices\":[");
+        for (var i = 0; i < count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append($"{{\"objid\":{firstObjid + i},\"device\":\"Dev-{firstObjid + i}\",\"paused\":false}}");
+        }
+        sb.Append("]}");
+        return sb.ToString();
+    }
     [Fact]
     public async Task FetchDayAsync_數值時間無法解析時回報略過筆數而非靜默跳過()
     {
