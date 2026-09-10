@@ -18,6 +18,8 @@ bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
 /** 目前已儲存的 PRTG 擷取開關。鏡像頁籤的「同步結構與對應」關閉時要擋住（後端也會擋，這是提前告知）。 */
 let prtgEnabled = false;
+/** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
+let structureSyncRunning = false;
 
 /** PRTG 認證方式切換：依選取模式切換 token / password / passhash 區塊顯示（只動 classList 不設 style.display） */
 function syncPrtgAuthFields() {
@@ -173,7 +175,7 @@ function syncScopeFields() {
  */
 function syncStructureSyncGate() {
     const btn = document.getElementById('prtg-structure-sync-btn');
-    if (btn) btn.disabled = !prtgEnabled;
+    if (btn) btn.disabled = !prtgEnabled || structureSyncRunning;
     document.getElementById('prtg-structure-sync-disabled-hint')
         ?.classList.toggle('d-none', prtgEnabled);
 }
@@ -1079,6 +1081,7 @@ function renderStructureSyncStatus(status) {
     if (!statusEl || !progressEl || !btn) return;
 
     if (status.isRunning) {
+        structureSyncRunning = true;
         btn.disabled = true;
         btn.textContent = '同步中…';
         statusEl.textContent = status.latestMessage || '同步進行中…';
@@ -1091,6 +1094,7 @@ function renderStructureSyncStatus(status) {
         return;
     }
 
+    structureSyncRunning = false;
     // 未啟用時的閘由 syncStructureSyncGate 設定；這裡是輪詢，不能把它打開
     btn.disabled = !prtgEnabled;
     btn.textContent = '同步結構與對應';
@@ -1145,10 +1149,12 @@ function bindStructureSync() {
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
             toast('已開始同步結構與對應', 'success');
-            await refreshStructureSyncStatus();
         } finally {
             restore();
         }
+        // 輪詢要在 restore 之後：restore 會把按鈕設回可按，若先輪詢再 restore，
+        // 同步進行中的「灰掉」會被 restore 打開三秒。
+        await refreshStructureSyncStatus();
     });
 }
 

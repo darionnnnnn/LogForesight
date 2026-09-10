@@ -635,10 +635,14 @@ public class PrtgAdminPageUiTests
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
 
         Assert.Contains("btn.disabled = !prtgEnabled;", js);
+        Assert.Contains("btn.disabled = !prtgEnabled || structureSyncRunning;", js);
         Assert.DoesNotContain("btn.disabled = false;", js);
         // 點擊時的第二道：輪詢競態下按鈕可能還可按
         Assert.Contains("if (!prtgEnabled) {", js);
         Assert.Contains("prtg-structure-sync-disabled-hint", js);
+        // withBusy 的 restore 必須在輪詢之前，否則同步進行中的灰掉會被 restore 打開
+        var restoreAt = js.Replace("\r\n", "\n").IndexOf("restore();\n        }\n        // 輪詢要在 restore 之後", StringComparison.Ordinal);
+        Assert.True(restoreAt >= 0, "bindStructureSync 的 restore 應在 refreshStructureSyncStatus 之前");
     }
 
     /// <summary>
@@ -659,10 +663,15 @@ public class PrtgAdminPageUiTests
 
         var labelStart = labels.IndexOf("PRTG_SCOPE_LABEL = {", StringComparison.Ordinal);
         var labelEnd = labels.IndexOf("};", labelStart, StringComparison.Ordinal);
-        var labelKeys = System.Text.RegularExpressions.Regex.Matches(labels[labelStart..labelEnd], @"(?:\[PRTG_SCOPE_OFF\]|'([a-z-]+)')\s*:")
+        var labelKeys = System.Text.RegularExpressions.Regex.Matches(labels[labelStart..labelEnd], @"(?:\[PRTG_SCOPE_OFF\]|'([a-z0-9_-]+)')\s*:")
             .Select(m => m.Groups[1].Success ? m.Groups[1].Value : "off").OrderBy(v => v).ToArray();
 
         Assert.Equal(optionValues, labelKeys);
+
+        // 「off」在前端是常數、在後端 estimate 端點是字面——兩邊要同一個值
+        Assert.Contains("PRTG_SCOPE_OFF = 'off'", labels);
+        var controller = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Controllers", "Api", "SettingsController.cs"));
+        Assert.Contains("string.Equals(scope, \"off\"", controller);
     }
 
     /// <summary>

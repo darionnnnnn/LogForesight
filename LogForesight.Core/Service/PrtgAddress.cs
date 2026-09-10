@@ -79,6 +79,12 @@ public static class PrtgAddress
         }
 
         s = s.Trim().ToLowerInvariant();
+
+        // root-qualified FQDN（srv.corp.local.）去掉單一個結尾點：這裡是三層（純語法、解析、字面比對）
+        // 共同的入口，只在判定層剝會讓「srv.corp.local」與「srv.corp.local.」在快取與預算裡變成兩把鍵。
+        if (s.Length > 1 && s.EndsWith('.'))
+            s = s[..^1];
+
         return s.Length == 0 ? null : s;
     }
 
@@ -87,10 +93,11 @@ public static class PrtgAddress
     /// 只有長得像主機名稱的值才回 true：英數、<c>-</c>、<c>_</c>、<c>.</c>，總長 ≤ 253，
     /// 每段 1–63 字且不以 <c>-</c> 開頭或結尾。
     /// 另外把「壞掉的 IPv4」擋掉：整串沒有任何字母（<c>10.2.3.256</c>、<c>10.2.3.4.5</c>），
-    /// 或第一段全數字**且每一段都不超過 3 字**（<c>10.2xx.x.x</c>、<c>10.20.3x.4</c>）——
-    /// 這些是打錯的 IP，不是主機名稱，送 DNS 只會白付一次逾時。
-    /// 「每段 ≤ 3 字」這個條件是為了不誤擋 <c>1.dc.corp.local</c>、<c>0.pool.ntp.org</c>
-    /// 這種第一段是數字的真 FQDN。結尾單一個點（root-qualified，<c>srv.corp.local.</c>）先去掉再判。
+    /// 或第一段全數字**且每一段都只含數字或佔位字 x**（<c>10.2xx.x.x</c>、<c>10.20.3x.4</c>、
+    /// <c>192.168.1.100x</c>）——這些是打錯或用 x 遮掉的 IP，不是主機名稱，送 DNS 只會白付一次逾時。
+    /// 條件刻意收得很窄：<c>163.com</c>、<c>104.com.tw</c>、<c>1.dc.hq.tw</c> 這種第一段是數字的真網域
+    /// 都有非 x 的字母，照常送 DNS；<c>10.2.3.4-old</c> 這種也放行（付一次逾時、失敗有快取），
+    /// 寧可多查一次也不誤擋真主機。結尾點由 <see cref="HostToken"/> 統一去掉，這裡再防一次給直接呼叫者。
     /// 只接受 ASCII：非 ASCII（IDN）名稱不送 DNS，字面比對仍可命中（docs/PRTG-SPEC.md §4）。
     /// 合法 IP 早在 <see cref="Normalize"/> 通過，不會走到這裡。
     /// </summary>
@@ -118,8 +125,7 @@ public static class PrtgAddress
             if (label[0] == '-' || label[^1] == '-') return false;
         }
 
-        // 第一段全數字且每段都很短：那是打壞的 IPv4（10.2xx.x.x），不是主機名稱。
-        // 真 FQDN 至少會有一段像 corp／local／org 這種超過 3 字的字，靠這點分開。
+        // 第一段全數字且每段只有數字或 x：那是打壞或用 x 遮掉的 IPv4（10.2xx.x.x），不是主機名稱。
         var firstAllDigits = true;
         foreach (var c in labels[0])
         {
@@ -129,7 +135,10 @@ public static class PrtgAddress
 
         foreach (var label in labels)
         {
-            if (label.Length > 3) return true;
+            foreach (var c in label)
+            {
+                if (!char.IsAsciiDigit(c) && c != 'x' && c != 'X') return true;   // 有別的字母：當主機名稱
+            }
         }
         return false;
     }

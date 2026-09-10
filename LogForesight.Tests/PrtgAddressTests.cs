@@ -53,6 +53,22 @@ public class PrtgAddressTests
         Assert.Equal("fe80::1", PrtgAddress.Normalize("fe80::1"));
     }
 
+    [Theory]
+    [InlineData("srv.corp.local.", "srv.corp.local")]
+    [InlineData("https://SRV.corp.local.:8443/", "srv.corp.local")]
+    [InlineData(".", ".")]                       // 單一個點不剝成空字串
+    [InlineData("srv.corp.local..", "srv.corp.local.")]   // 只剝一個
+    public void HostToken_只去掉單一個結尾點_三層共用同一把鍵(string input, string expected)
+    {
+        Assert.Equal(expected, PrtgAddress.HostToken(input));
+    }
+
+    [Fact]
+    public void Normalize_IP帶結尾點_視為該IP()
+    {
+        Assert.Equal("10.1.2.3", PrtgAddress.Normalize("10.1.2.3."));
+    }
+
     [Fact]
     public void Normalize_主機名稱_回傳null()
     {
@@ -90,10 +106,14 @@ public class PrtgAddressTests
     [InlineData("netiq.corp.local")]
     [InlineData("srv_01.corp")]
     [InlineData("1and1.example.com")]
-    [InlineData("1.dc.corp.local")]        // 第一段全數字但有超過 3 字的段：真 FQDN
+    [InlineData("1.dc.corp.local")]        // 第一段全數字但有非 x 字母：真 FQDN
     [InlineData("0.pool.ntp.org")]
     [InlineData("123.example.com")]
-    [InlineData("srv.corp.local.")]        // root-qualified
+    [InlineData("163.com")]                // 短標籤真網域
+    [InlineData("104.com.tw")]
+    [InlineData("1.dc.hq.tw")]
+    [InlineData("10.2.3.4-old")]           // 有非 x 字母就放行：寧可多查一次
+    [InlineData("SRV.CORP.LOCAL.")]        // root-qualified、大寫
     public void IsDnsCandidate_像主機名稱_回true(string token)
     {
         Assert.True(PrtgAddress.IsDnsCandidate(token));
@@ -103,8 +123,14 @@ public class PrtgAddressTests
     [InlineData("10.2xx.x.x")]          // PRTG 裝置 host 的佔位值：第一段全數字
     [InlineData("10.2.3.256")]          // 打壞的 IPv4：沒有字母
     [InlineData("10.2.3.4.5")]
-    [InlineData("10.20.3x.4")]          // 第一段全數字且每段 ≤ 3 字
+    [InlineData("10.20.3x.4")]          // 第一段全數字且每段只有數字或 x
+    [InlineData("192.168.1.100x")]
+    [InlineData("10.2xxx.x.x")]
+    [InlineData("10.2.3.4x")]
     [InlineData("10.2xx.x.x.")]         // 結尾點去掉後仍是壞 IPv4
+    [InlineData(".a.b")]
+    [InlineData("10..2.x")]
+    [InlineData(".")]
     [InlineData("srv.corp.local..")]    // 兩個結尾點：去掉一個後仍有空 label
     [InlineData("10.2.3.4 (old)")]      // 含空白與括號
     [InlineData("srv a")]

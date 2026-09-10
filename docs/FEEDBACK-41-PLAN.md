@@ -1,7 +1,7 @@
 # 回饋第 41 輪規劃：PRTG 位址解析對裝置側亂值做 DNS、阻塞式逾時
 
 > 狀態：全案完成已併 dev（體檢輪修正 11 條、終檢見文末）
-> 基準：dev@cde4791（3669 綠）→ 本輪收斂 3710 綠（略過 6）
+> 基準：dev@cde4791（3669 綠）→ 本輪收斂 3725 綠（略過 6）
 > 來源：使用者實測——設定頁「資源守門 › 自動偵測並填入」在偵錯器內於 `PrtgAddressResolver.DnsLookupWithTimeout`
 > 停在 `SocketException: 無法識別這台主機`，`host` 是 PRTG 裝置 host 欄位的值（形如 `10.2xx.x.x`），不是使用者填的 NetIQ 網址。
 > 實作方式：Claude 自己做（3 檔＋測試）。
@@ -49,9 +49,10 @@
 - 新增 `PrtgAddress.IsDnsCandidate(string? token) : bool`（純語法、無 IO）：
   1. token 非空、長度 ≤ 253、只含 `[A-Za-z0-9._-]`（Windows 內網名稱偶有 `_`，解析器實務上接受）；
   2. 以 `.` 拆段，每段 1–63 字、不以 `-` 開頭或結尾；
-  3. **不得**是「整串沒有任何字母」或「第一段全數字且每段都 ≤ 3 字」的形狀（那是壞掉的 IPv4，如 `10.2xx.x.x`、`10.2.3.256`、`10.2.3.4.5`；
-     原案「每段以數字開頭」擋不住字面的 `10.2xx.x.x`，實作時改「第一段全數字」；體檢輪發現那會誤擋 `1.dc.corp.local`，再加「每段 ≤ 3 字」）；
-     結尾單一個點先去掉；只接受 ASCII（IDN 不送 DNS，規格 §4 明寫）；
+  3. **不得**是「整串沒有任何字母」或「第一段全數字且每段只含數字或 x」的形狀（那是壞掉的 IPv4，如 `10.2xx.x.x`、`192.168.1.100x`、`10.2.3.256`；
+     這條規則改了三次：原案「每段以數字開頭」擋不住字面的 `10.2xx.x.x`；實作改「第一段全數字」，體檢抓到誤擋 `1.dc.corp.local`；
+     體檢改「每段 ≤ 3 字」，終檢抓到既誤擋 `163.com` 又漏擋 `192.168.1.100x`——最後收窄到「只有數字與 x」才同時擋得住佔位值、放得過真網域）；
+     結尾單一個點在 `HostToken` 統一去掉（三層共用同一把鍵）；只接受 ASCII（IDN 不送 DNS，規格 §4 明寫）；
   4. 含 `:` 者（裸 IPv6 拆 port 後仍含冒號）一律 false——它若合法早在 `Normalize` 通過。
 - `Resolve` 在查快取前先過 `IsDnsCandidate`，false 直接回 null（**不寫快取，因為沒付 IO**）。
 - `HostToken` 不改語意（字面比對仍要用它）。
@@ -308,8 +309,8 @@
 
 | # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
 |---|---|---|---|---|
-| C1 | `PrtgAddress.IsDnsCandidate` | 「第一段全數字」誤擋 `1.dc.corp.local`、`0.pool.ntp.org` 這種真 FQDN——三個呼叫端（主機對應、結構同步、守門）都會把這種裝置從「對應成功」退化成「略過」 | 收緊為「第一段全數字**且每段 ≤ 3 字**」；`10.2xx.x.x`、`10.20.3x.4` 仍擋 | `PrtgAddressTests` Theory 加 4 真 3 假案例 |
-| C2 | 同上 | root-qualified FQDN `srv.corp.local.` 因結尾空 label 被擋 | 先去掉單一個結尾點；兩個點仍擋 | 同上 |
+| C1 | `PrtgAddress.IsDnsCandidate` | 「第一段全數字」誤擋 `1.dc.corp.local`、`0.pool.ntp.org` 這種真 FQDN——三個呼叫端（主機對應、結構同步、守門）都會把這種裝置從「對應成功」退化成「略過」 | 體檢輪先收緊為「每段 ≤ 3 字」，終檢再改（見終檢輪） | `PrtgAddressTests` Theory 擴充 |
+| C2 | 同上 | root-qualified FQDN `srv.corp.local.` 因結尾空 label 被擋 | 判定層先去掉結尾點（終檢移到 `HostToken`，見終檢輪） | 同上 |
 | C3 | `PrtgProbeRunner` 步驟 6 | IPv6 裝置被列進「無法判定，建議到 PRTG 修正」——它是合法位址、主機對應比得到 | 加第四桶「IPv6 位址者」 | `PrtgProbeRunnerTests` 加一台 `[fe80::1]:8080` |
 | C4 | `PrtgResourceGuardTargets.Resolve` | `GetAllDevices` 沒有 `OrderBy`，「哪 20 台吃到預算」取決於 DB／API 回傳順序；`Resolve_命中裝置在預算之後` 那條測試其實靠插入序才綠 | 進入比對前依 objid 排序 | 既有預算測試改為確定性 |
 | C5 | `FindDevicesForHost` 步驟 3 | skip 條件寫成 `Normalize(HostToken(dev.Ip))`，與步驟 1 的 `Normalize(dev.Ip)` 靠 `HostToken` 冪等才等值 | 改為直接 `Normalize(dev.Ip) != null` | — |
@@ -329,6 +330,22 @@
 - 排程頁的模組狀態與閘只在載入時讀一次，跨分頁改開關要重整——記進 WEB-SPEC §9.10 為已知取捨；有第二、三道擋誤送。
 
 修正後全套 3710 綠（略過 6）。
+
+## 終檢輪
+
+併 dev 後派 scan-low（Opus low）掃體檢修正 commit 本身，抓到體檢修正引入的三條、疑慮六條；修五條：
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| T1 | `IsDnsCandidate` | 體檢輪的「每段 ≤ 3 字」既**誤擋** `163.com`、`104.com.tw`、`1.dc.hq.tw`（兩字母國碼＋短子網域），又**漏擋** `192.168.1.100x`、`10.2xxx.x.x`——規則被調成只擋測試裡那一個字面形狀 | 改為「第一段全數字且每段只含數字或 x」；有任何非 x 字母就當主機名稱送 DNS，寧可多付一次逾時 | Theory 真值加 `163.com`／`104.com.tw`／`1.dc.hq.tw`／`10.2.3.4-old`／大寫 root-qualified；假值加 `192.168.1.100x`／`10.2xxx.x.x`／`10.2.3.4x`／`.a.b`／`10..2.x`／`.` |
+| T2 | `HostToken` | 結尾點只在判定層剝，`srv.corp.local.` 與 `srv.corp.local` 在字面比對、預算、解析快取裡是兩把鍵——同一台裝置吃兩次預算、明明同名卻掉到 DNS | 在 `HostToken` 統一剝單一個結尾點（三層共用入口） | `HostToken_只去掉單一個結尾點`、`Normalize_IP帶結尾點_視為該IP` |
+| T3 | `prtg-admin.js` `bindStructureSync` | `withBusy` 的 `restore()` 在輪詢之後執行，同步進行中的灰掉被 restore 打開三秒（既有寫法，但體檢新加的測試 `DoesNotContain("disabled = false")` 掃不到這條路徑，會誤以為已鎖死） | restore 移到輪詢之前 | UI 測試斷言順序 |
+| T4 | `prtg-admin.js` `syncStructureSyncGate` | 只看開關不看執行中：存檔後 `renderPrtgFields` 重跑 gate 會把同步中的按鈕打開 | 加 `structureSyncRunning` 模組變數，gate 取兩者聯集 | 同上 |
+| T5 | `PrtgAdminPageUiTests` | 標籤鍵 Regex `[a-z-]+` 遇到含數字的鍵會靜默漏抓；後端 estimate 的 `"off"` 是字面、前端是常數，兩邊沒鎖 | Regex 放寬；加斷言鎖住兩邊都是 `off` | 同一條測試 |
+
+不修、留紀錄：初始化時 `loadSettings` 與 `refreshStructureSyncStatus` 併發，設定 API 失敗會停在「未啟用」——fail-closed，可接受；`Normalize(dev.Ip)` 在步驟 1 與 3 各算一次——純字串，可忽略；`IsDnsCandidate` 剝尾點後才比 253——符合 DNS 慣例。
+
+終檢後全套 3725 綠（略過 6）。
 
 ## 明確不做（本輪定案）
 - 不把 `IPrtgAddressResolver`／`IPrtgResourceGuardSource` 改 async（BACKLOG 保留）。
