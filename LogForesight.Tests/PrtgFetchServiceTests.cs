@@ -653,6 +653,46 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Contains(console.Lines, l => l.Contains("[階段 1/4]") && l.Contains("耗時"));
     }
 
+    /// <summary>
+    /// messages 的 objid 是「發出訊息的 sensor」，同一顆 sensor 一天會有很多筆狀態變更。
+    /// 分頁若按 objid 去重，每顆 sensor 只會留下第一筆，而且整頁同一顆 sensor 時
+    /// 還會被當成分頁結尾提早停止——兩個後果都是靜默的，畫面照樣顯示同步完成。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_同一sensor同一天多筆狀態變更全部寫入()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var messages = new StringBuilder();
+        messages.Append("{\"messages\":[");
+        for (var i = 0; i < 6; i++)
+        {
+            if (i > 0) messages.Append(',');
+            // 同一顆 sensor（9001），六個不同時間
+            messages.Append($"{{\"objid\":9001,\"datetime\":\"2026-08-30 1{i}:00:00\",\"status\":\"Down\",\"message\":\"m{i}\"}}");
+        }
+        messages.Append("]}");
+        var messagesJson = messages.ToString();
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse(url.Contains("start=0") ? messagesJson : "{\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var service = new PrtgFetchService(client, store, new TestConsole());
+
+        var result = await service.FetchDayAsync(day, 1, CancellationToken.None);
+
+        Assert.Equal(6, result.StateChanges);
+        using var ctx = _fx.NewContext();
+        Assert.Equal(6, await ctx.PrtgStateChanges.CountAsync(c => c.SensorObjid == 9001));
+    }
+
     /// <summary>產生一頁 devices（objid 從 firstObjid 連號）。</summary>
     private static string BuildDevicePage(int firstObjid, int count)
     {

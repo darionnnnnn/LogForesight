@@ -127,6 +127,9 @@ public sealed class PrtgFetchService
                 {
                     failures++;
                     _console.WriteLine($"[階段 2/4] ✗ {outcome.Error}");
+                    // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
+                    // 數值表會安靜地少一大塊而看不出邊界在哪。
+                    _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -377,7 +380,13 @@ public sealed class PrtgFetchService
             ct: ct,
             phase: PrtgSyncMessagesPhase,
             progress: progress,
-            stageLabel: "階段 3/4 狀態變更"));
+            stageLabel: "階段 3/4 狀態變更",
+            // messages 的 objid 是「發出訊息的 sensor」而不是訊息自己的 id：
+            // 同一天同一顆 sensor 會有很多列。列鍵要與 lf_prtg_state_changes 的去重鍵
+            //（sensor_objid + changed_at）一致，否則每顆 sensor 只會留下第一筆狀態變更。
+            rowKey: el => GetStringProperty(el, "objid") is { } id
+                ? id + "|" + (GetStringProperty(el, "datetime") ?? string.Empty)
+                : null));
 
         if (unparseableCount > 0)
         {
@@ -657,9 +666,11 @@ public sealed class PrtgFetchService
         CancellationToken ct,
         string? phase = null,
         Action<string, int, int>? progress = null,
-        string? stageLabel = null)
+        string? stageLabel = null,
+        Func<JsonElement, string?>? rowKey = null)
         => PrtgTablePager.FetchAsync(
-            _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel);
+            _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
+            rowKey: rowKey);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

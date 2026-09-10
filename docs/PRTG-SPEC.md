@@ -139,16 +139,22 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 - **一律拉 hourly 聚合（`avg=3600`），絕不拉 raw**——raw 查詢是 PRTG API 最昂貴的操作。
 - 對 PRTG 的併發上限由 `PrtgFetchConcurrency`（1~3，預設 2）以 semaphore 控制，每日擷取與歷史回填共用同一設定。
 - **分頁只有一份實作**（`PrtgTablePager`），停止條件三道，任一成立即停：空頁或回應不是陣列／
-  本頁未滿一頁／**本頁沒有任何沒見過的 objid**。第三道才是真正的收斂條件——實機的 PRTG 在
+  本頁未滿一頁／**本頁沒有任何沒見過的列**。第三道才是真正的收斂條件——實機的 PRTG 在
   `start` 超出範圍時會**夾到最後一頁**而不是回空頁，總筆數剛好是頁大小整數倍時，
   只靠前兩道會永遠跑不完、整趟夜間批次無聲卡死。
 - **頁數上限是最後一道保險絲**：`treesize` 已知時取「⌈treesize ÷ 頁大小⌉ + 2」與 400 頁的較大者，
-  未知時 400 頁。`treesize` 在帶 filter 的查詢下是否為過濾後筆數並無保證，因此**只能放大上限、
+  未知時 400 頁，並允許再多讀一頁確認結尾（總筆數剛好是「上限 × 頁大小」時，最後一頁是滿頁、
+  下一頁才是空頁）。`treesize` 在帶 filter 的查詢下是否為過濾後筆數並無保證，因此**只能放大上限、
   不能縮小**，否則合法的長同步會被誤判。翻到上限仍未收斂時擲
   `PrtgPagingNotConvergedException`（含 content、頁數、已讀筆數），**不靜默截斷**。
   該階段計為失敗，但**已寫入的筆數照樣回報**（寫入是冪等 upsert，留著比丟掉好）。
-- **去重以 objid 為準**：夾到末頁時整頁都是讀過的資料，重複的列不再交給 mapper，
-  階段完成行會寫出跳過的重複列數。objid 讀不到的列一律當新的——判不了重寧可重複寫入，不能靜默丟資料。
+- **去重與收斂都以「該 content 真正的唯一鍵」為準**，預設是 objid。
+  **messages 是例外**：它的 `objid` 是發出訊息的 sensor 而不是訊息自己的 id，同一天同一顆 sensor
+  會有很多列，所以那條路徑的列鍵是「objid ＋ 時間」，與 `lf_prtg_state_changes` 的去重鍵一致。
+  拿 objid 當鍵的話，每顆 sensor 只會留下第一筆狀態變更，而且整頁同一顆 sensor 時還會被當成
+  分頁結尾提早停止——兩個後果都是靜默的。鍵取不到的列一律當新的：判不了重寧可重複寫入
+  （寫入是冪等 upsert），不能靜默丟資料。夾到末頁時重複的列不再交給 mapper，
+  階段完成行會寫出跳過的重複列數。
 - **查詢一律帶 `sortby=objid`**：分頁的前提除了「遵守 `start`」還有「兩次查詢之間順序一致」。
   順序不穩定時會靜默漏列（去重擋得住重複、擋不住漏列）。不支援的版本會忽略這個參數。
   這台 PRTG 接不接受 `sortby`，用環境探測步驟 8 實測（§6）。
@@ -346,7 +352,8 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
    多於 `treesize` 時指出 `treesize` 不是該 content 的總筆數
 7. Type × IPv4 覆蓋交叉統計
 8. **分頁語意診斷**（純診斷，結果不影響探測成敗）：對 `devices`／`sensors`／`messages`（帶 `filter_drel=7days`）
-   各發三次 `count=5` 查詢（`start=0`、`start=5`、`start=999999`），比較 objid 集合後歸納這台 PRTG 對 `start` 的處理：
+   各發四次 `count=5` 查詢（`start=0`、`start=5`、`start=999999`，再加一次 `start=0&sortby=objid` 當排序對照），
+   比較 objid 集合後歸納這台 PRTG 對 `start` 的處理：
    遵守且超出範圍回空頁（分頁可收斂）／超出範圍夾到末頁或回到第一頁（總筆數剛好整除頁大小時會重讀，
    分頁需要「本頁無新 objid 即停」的保險絲）／完全忽略 `start`（分頁抓不到第一頁以外的資料，只能單次大 `count`）。
    同一步另做**排序穩定性判定**：比對不帶與帶 `sortby=objid` 兩次查詢的頁內 objid 是否遞增，
@@ -484,7 +491,8 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET prtg-mirror` | 鏡像狀態與主機對應摘要 |
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-backfill/start`、`GET prtg-backfill/status` | 歷史回填（status 含天數與當日 sensor 進度） |
-| `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409 |
+| `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409；成功時回 200（取消訊號已送出，實際中止發生在當前這一頁查詢結束後，
+狀態要看 status 而不是這個回應） |
 | `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；**含總開關 `PrtgEnabled`**，有送才更新） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |
@@ -727,6 +735,10 @@ PRTG 維護頁因此提供跨後端的資料通道：
 回應的 `warnings` 會寫出「只取到 N 個／總數 M」並指路到覆寫清單。靜默截斷的症狀是
 「未偵測到任何受監看的感測器」，與「PRTG 上真的沒有」一模一樣，查不出原因。
 單次上限擋不住的規模只能改用**覆寫清單直接指定 objid**，那不是分頁能解的問題。
+
+**覆寫清單的內容要定期複查**：清單是「自動偵測並填入」當下的快照，感測器增減後不會自己更新；
+偵測若在當時被截斷，存下來的也是不完整的清單，而畫面上與完整的清單長得一模一樣。
+感測器數量成長過、或看到上面的截斷警告之後，重按一次「自動偵測並填入」再儲存。
 
 preview 端點在「使用者按了自動偵測」或「鏡像裡一台裝置都沒有」時走即時查詢；
 查不通（連不上、認證錯、逾時）就**退回鏡像並在回應標明 `mirror-fallback` 與原因**——

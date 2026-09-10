@@ -43,8 +43,8 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private PrtgStructureSyncService CreateSyncService() =>
-        new(_settingsStore, _backend, new PrtgStructureSyncRunState(), new SchedulerRunState(),
+    private PrtgStructureSyncService CreateSyncService(PrtgStructureSyncRunState? state = null) =>
+        new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(), new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")),
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)));
 
@@ -82,19 +82,6 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
     }
 
-    /// <summary>
-    /// 等背景同步真的結束再讓測試收尾。不等的話 Dispose 會在它還在寫 SQLite 時刪掉目錄，
-    /// 變成偶發的紅——而且紅在別的測試上。
-    /// </summary>
-    private static void WaitUntilIdle(PrtgStructureSyncService service)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (service.IsRunning && DateTime.UtcNow < deadline)
-        {
-            Thread.Sleep(50);
-        }
-    }
-
     private void EnablePrtg() => _settingsStore.Update(s =>
     {
         s.PrtgEnabled = true;
@@ -118,17 +105,17 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
     [Fact]
     public void 執行中時中止並寫稽核()
     {
-        EnablePrtg();
-        var sync = CreateSyncService();
-        Assert.True(sync.TryStart(out _, out _));
+        // 直接把共用的執行狀態標成執行中，不啟動真的背景工作——
+        // 背景工作連的是不存在的位址，可能在斷言之前就自己結束，那是計時競態不是測試。
+        var state = new PrtgStructureSyncRunState();
+        Assert.True(state.TryBegin());
+        var sync = CreateSyncService(state);
         var controller = CreateController(sync);
 
         var res = controller.CancelPrtgStructureSync();
 
         Assert.True(res.Success);
         Assert.Contains(_audit.Entries, e => e.Action == AuditActions.PrtgStructureSyncCancel);
-
-        WaitUntilIdle(sync);
     }
 
     [Fact]

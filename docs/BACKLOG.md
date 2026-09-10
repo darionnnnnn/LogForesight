@@ -616,7 +616,7 @@
 ## PRTG 位址解析與守門即時來源改非同步
 
 `PrtgAddressResolver` 的 DNS 查詢是 `GetHostAddressesAsync` 加 1 秒取消逾時（同步等待），
-不佔執行緒；未解的是 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的分頁查詢也是
+不佔執行緒；未解的是 `IPrtgAddressResolver` 仍是同步簽章，`PrtgLiveGuardSource` 的單次查詢也是
 `GetAwaiter().GetResult()` 同步阻塞 async，而它跑在「自動偵測並填入」的 HTTP 請求執行緒上，
 多人同時按就是執行緒池飢餓。要一起改成 async，連帶動到 `PrtgResourceGuardTargets.Resolve`、
 `IPrtgResourceGuardSource`、`PrtgHostMapper.MapForDate` 與所有呼叫端。**觸發時機**：

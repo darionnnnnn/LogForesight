@@ -51,7 +51,8 @@ public class PrtgTablePagerTests
 
     /// <summary>把回應交給分頁器，收集被寫出的 objid。</summary>
     private static async Task<(PrtgPagerResult Result, List<long> Written, StubHandler Handler, TestConsole Console)> RunAsync(
-        Func<string, string> responder, int pageSize, int maxPagesWhenUnknown = PrtgTablePager.DefaultMaxPages)
+        Func<string, string> responder, int pageSize, int maxPagesWhenUnknown = PrtgTablePager.DefaultMaxPages,
+        Func<JsonElement, string?>? rowKey = null, string content = "devices")
     {
         var handler = new StubHandler { Responder = responder };
         using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
@@ -59,12 +60,13 @@ public class PrtgTablePagerTests
         var written = new List<long>();
 
         var result = await PrtgTablePager.FetchAsync<long>(
-            client, console, "devices", "objid", null,
+            client, console, content, "objid", null,
             mapper: el => el.GetProperty("objid").GetInt64(),
             onBatch: batch => written.AddRange(batch),
             ct: CancellationToken.None,
             pageSize: pageSize,
-            maxPagesWhenTreeSizeUnknown: maxPagesWhenUnknown);
+            maxPagesWhenTreeSizeUnknown: maxPagesWhenUnknown,
+            rowKey: rowKey);
 
         return (result, written, handler, console);
     }
@@ -136,8 +138,9 @@ public class PrtgTablePagerTests
             pageSize: 5, maxPagesWhenUnknown: 3));
 
         Assert.Equal("devices", ex.Content);
-        Assert.Equal(3, ex.Pages);
-        Assert.Equal(15, ex.ReadRows);
+        // 上限 3 頁，但允許多讀一頁確認結尾（第 4 頁仍是滿頁全新才判定未收斂）
+        Assert.Equal(4, ex.Pages);
+        Assert.Equal(20, ex.ReadRows);
         Assert.Contains("分頁未收斂", ex.Message);
     }
 
@@ -152,7 +155,80 @@ public class PrtgTablePagerTests
             _ => Page("devices", Enumerable.Range(0, 5).Select(_ => ++next), treesize: 250),
             pageSize: 5, maxPagesWhenUnknown: 3));
 
-        Assert.Equal(52, ex.Pages); // ceil(250/5) + 2
+        Assert.Equal(53, ex.Pages); // ceil(250/5) + 2，再加確認結尾的那一頁
+    }
+
+    /// <summary>
+    /// 總筆數剛好是「上限 × 頁大小」時，最後一頁是滿頁、下一頁才是空頁。
+    /// 在最後一頁就判定未收斂，會把合法的收尾當成故障。
+    /// </summary>
+    [Fact]
+    public async Task 總筆數剛好等於上限乘頁大小時仍能正常收斂()
+    {
+        var next = 0L;
+        var (result, written, _, _) = await RunAsync(url =>
+        {
+            var start = StartOf(url);
+            if (start >= 15) return Page("devices", Array.Empty<long>());
+            return Page("devices", Enumerable.Range(0, 5).Select(_ => ++next));
+        }, pageSize: 5, maxPagesWhenUnknown: 3);
+
+        Assert.Equal(4, result.Pages);   // 3 頁資料 + 1 頁空頁
+        Assert.Equal(15, written.Count);
+    }
+
+    /// <summary>
+    /// messages 的 objid 是「發出訊息的 sensor」，同一天同一顆 sensor 會有很多列。
+    /// 按 objid 去重會讓每顆 sensor 只留下第一筆狀態變更，而且整頁都是已見過的 objid 時
+    /// 還會被當成結尾提早停止——兩個後果都是靜默的。
+    /// </summary>
+    [Fact]
+    public async Task objid非唯一時用列鍵判重不會丟資料也不會提早停止()
+    {
+        // 三頁都是同一顆 sensor(9001) 的不同訊息（時間不同），第四頁才收尾。
+        // 拿 objid 當鍵會在第二頁就判定「沒有新的」而停止，整段狀態變更只剩 5 筆。
+        var seq = 0;
+        string MessagePage(int count)
+        {
+            var rows = string.Join(",", Enumerable.Range(0, count)
+                .Select(_ => $"{{\"objid\":9001,\"datetime\":\"2026-09-10 10:{seq++:00}\"}}"));
+            return "{\"messages\":[" + rows + "]}";
+        }
+
+        var (result, written, _, _) = await RunAsync(
+            url => StartOf(url) >= 15 ? MessagePage(2) : MessagePage(5),
+            pageSize: 5, content: "messages",
+            rowKey: el => el.GetProperty("objid").GetRawText() + "|" + el.GetProperty("datetime").GetString());
+
+        Assert.Equal(4, result.Pages);
+        Assert.Equal(0, result.DuplicateRows);
+        Assert.Equal(17, written.Count);   // 5+5+5+2，一列都沒被丟掉
+    }
+
+    /// <summary>
+    /// objid 非唯一時仍要收斂：夾到末頁時整頁內容與上一頁完全相同。
+    /// </summary>
+    [Fact]
+    public async Task objid非唯一時夾到末頁仍會收斂()
+    {
+        // 夾到末頁＝整頁的列鍵都見過了
+        string PageFor(int start)
+        {
+            var baseTime = start == 0 ? 0 : 10;
+            var rows = string.Join(",", Enumerable.Range(0, 5)
+                .Select(i => $"{{\"objid\":9001,\"datetime\":\"2026-09-10 10:{baseTime + i:00}\"}}"));
+            return "{\"messages\":[" + rows + "]}";
+        }
+
+        var (result, written, handler, _) = await RunAsync(
+            url => PageFor(StartOf(url) == 0 ? 0 : 5),
+            pageSize: 5, content: "messages",
+            rowKey: el => el.GetProperty("objid").GetRawText() + "|" + el.GetProperty("datetime").GetString());
+
+        Assert.Equal(3, result.Pages);
+        Assert.Equal(3, handler.RequestedUrls.Count);
+        Assert.Equal(10, written.Count);
+        Assert.Equal(5, result.DuplicateRows);
     }
 
     [Fact]
@@ -173,8 +249,8 @@ public class PrtgTablePagerTests
             pageSize: 5,
             maxPagesWhenTreeSizeUnknown: 3));
 
-        // 三頁 15 筆都已交給 onBatch（寫入是冪等 upsert，留著比丟掉好）
-        Assert.Equal(15, written.Count);
+        // 讀到的四頁 20 筆都已交給 onBatch（寫入是冪等 upsert，留著比丟掉好）
+        Assert.Equal(20, written.Count);
     }
 
     [Fact]
@@ -219,6 +295,36 @@ public class PrtgTablePagerTests
 
         Assert.Equal(0, result.DuplicateRows);
         Assert.Equal(5, written.Count);
+    }
+
+    [Fact]
+    public async Task 夾到末頁時進度分子不會超過分母()
+    {
+        var all = Enumerable.Range(1, 10).Select(i => (long)i).ToArray();
+        var handler = new StubHandler
+        {
+            Responder = url =>
+            {
+                var start = StartOf(url);
+                var slice = start < all.Length ? all.Skip(start).Take(5) : all.Skip(5).Take(5);
+                return Page("devices", slice, treesize: 10);
+            }
+        };
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var reported = new List<(int Done, int Total)>();
+
+        await PrtgTablePager.FetchAsync<long>(
+            client, new TestConsole(), "devices", "objid", null,
+            mapper: el => el.GetProperty("objid").GetInt64(),
+            onBatch: _ => { },
+            ct: CancellationToken.None,
+            phase: "prtg-sync-devices",
+            progress: (_, done, total) => reported.Add((done, total)),
+            pageSize: 5);
+
+        // 第三頁是重讀的末頁：分子若不夾住分母，畫面會出現 15 / 10
+        Assert.All(reported, r => Assert.True(r.Total == 0 || r.Done <= r.Total,
+            $"進度分子 {r.Done} 不應超過分母 {r.Total}"));
     }
 
     [Fact]

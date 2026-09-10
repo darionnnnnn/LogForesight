@@ -187,6 +187,11 @@ public static class PrtgProbeRunner
 
             var withDep = parsedDeps.Rows.Count(d => HasDependency(d));
             var total = parsedDeps.Rows.Count;
+            // 與另外兩處單次大 count 同一道截斷偵測：取樣不齊時下面的比例是拿部分樣本算的
+            if (sensorCount > 0 && total < sensorCount)
+            {
+                console.WriteLine($"     ⚠ 警告：Sensor 總數為 {sensorCount} 筆，本次查詢僅取樣到 {total} 筆，下列比例僅供參考");
+            }
             var pct = total > 0 ? (withDep * 100.0 / total) : 0.0;
             console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）");
             console.WriteLine("     （註：PRTG 預設每個 sensor 相依於父物件，此比例含預設值，不代表人工維護的相依拓撲）");
@@ -393,6 +398,12 @@ public static class PrtgProbeRunner
             string Show(List<long> ids) => ids.Count == 0 ? "（空）" : string.Join(",", ids);
             console.WriteLine($"     {content}：start=0 → [{Show(page0)}]；start={probeCount} → [{Show(page1)}]；start={farOffset} → [{Show(pageFar)}]");
 
+            if (page0.Count == 0)
+            {
+                console.WriteLine($"     {content}：第一頁就沒有資料，無法判定");
+                return;
+            }
+
             // 排序穩定性：分頁的前提除了「遵守 start」，還有「兩次查詢之間順序一致」。
             // 順序不穩定時同一筆會重複出現、另一筆從沒被讀到，而且完全靜默——
             // 分頁的去重擋得住重複，擋不住漏列。sortby=objid 是讓順序固定的手段，
@@ -410,12 +421,6 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     {content}：⚠ 預設已遞增，但帶 sortby=objid 後反而不是——不要帶這個參數");
             else
                 console.WriteLine($"     {content}：✓ 預設順序已遞增，sortby=objid 不改變結果");
-
-            if (page0.Count == 0)
-            {
-                console.WriteLine($"     {content}：第一頁就沒有資料，無法判定");
-                return;
-            }
 
             var sameAsFirst = page1.SequenceEqual(page0);
             var farSameAsFirst = pageFar.SequenceEqual(page0);

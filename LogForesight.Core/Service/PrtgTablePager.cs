@@ -9,18 +9,21 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public sealed class PrtgPagingNotConvergedException : Exception
 {
-    public PrtgPagingNotConvergedException(string content, int pages, int readRows)
-        : base($"{content} 分頁未收斂：已翻 {pages} 頁、讀取 {readRows} 筆仍未到結尾。" +
+    public PrtgPagingNotConvergedException(string content, int pages, int readRows, int duplicateRows)
+        : base($"{content} 分頁未收斂：已翻 {pages} 頁、讀取 {readRows} 筆" +
+               (duplicateRows > 0 ? $"（其中重複 {duplicateRows} 筆）" : "") + "仍未到結尾。" +
                "PRTG 端可能忽略了 start 位移，或前方代理反覆回傳同一頁。")
     {
         Content = content;
         Pages = pages;
         ReadRows = readRows;
+        DuplicateRows = duplicateRows;
     }
 
     public string Content { get; }
     public int Pages { get; }
     public int ReadRows { get; }
+    public int DuplicateRows { get; }
 }
 
 /// <summary>分頁結果統計。ReadRows 含重複列，Mapped 是實際交給 onBatch 的筆數。</summary>
@@ -50,9 +53,16 @@ public static class PrtgTablePager
     /// 停止條件三道，任一成立即停：
     /// (a) 回應不是預期的陣列，或空頁；
     /// (b) 本頁筆數少於頁大小（＝最後一頁）；
-    /// (c) 本頁沒有任何沒見過的 objid。
+    /// (c) 本頁沒有任何沒見過的列（依 <paramref name="rowKey"/> 判定）。
     /// (c) 是真正的收斂條件：實機的 PRTG 在 start 超出範圍時會夾到最後一頁而非回空頁，
     /// 總筆數剛好是頁大小整數倍時只靠 (a)(b) 永遠停不下來。
+    ///
+    /// <paramref name="rowKey"/> 必須是該 content 真正的唯一鍵，預設是 objid。
+    /// **messages 的 objid 是「發出訊息的 sensor」而不是訊息自己的 id**，同一天同一顆 sensor
+    /// 會有很多列——拿 objid 當鍵會把第二筆以後全部丟掉，還會在整頁都是同一顆 sensor 時
+    /// 誤判成結尾。那條路徑要傳「objid + 時間」，與 lf_prtg_state_changes 的去重鍵一致。
+    /// 鍵取不到（null）的列一律當成沒見過：判不了重寧可重複寫入（寫入是冪等 upsert），
+    /// 不能靜默丟資料。
     ///
     /// 查詢一律帶 sortby=objid：分頁的前提除了「遵守 start」還有「兩次查詢之間順序一致」，
     /// 順序不穩定時會靜默漏列（去重擋得住重複、擋不住漏列）。不支援的版本會忽略這個參數。
@@ -71,8 +81,11 @@ public static class PrtgTablePager
         Action<string, int, int>? progress = null,
         string? stageLabel = null,
         int pageSize = DefaultPageSize,
-        int maxPagesWhenTreeSizeUnknown = DefaultMaxPages)
+        int maxPagesWhenTreeSizeUnknown = DefaultMaxPages,
+        Func<JsonElement, string?>? rowKey = null)
     {
+        rowKey ??= DefaultRowKey;
+
         var offset = 0;
         var totalMapped = 0;
         var readRows = 0;
@@ -80,7 +93,7 @@ public static class PrtgTablePager
         var pageIndex = 0;
         var treeSize = 0;
         var maxPages = maxPagesWhenTreeSizeUnknown;
-        var seenObjids = new HashSet<long>();
+        var seenKeys = new HashSet<string>();
         var buffer = new List<T>(pageSize);
 
         // 分母尚未知（要等第一次回應的 treesize），先送 0 讓進度軌顯示不定進度
@@ -128,21 +141,14 @@ public static class PrtgTablePager
                     continue;
 
                 // 去重在轉換之前：夾到末頁時整頁都是讀過的資料，重複寫入雖被 upsert 吸收，
-                // 但會讓寫入數虛報，也白跑一趟資料庫。objid 讀不到的列無從判重，一律當新的。
-                var objid = GetLongProperty(item, "objid");
-                if (objid.HasValue)
+                // 但會讓寫入數虛報，也白跑一趟資料庫。
+                var key = rowKey(item);
+                if (key != null && !seenKeys.Add(key))
                 {
-                    if (!seenObjids.Add(objid.Value))
-                    {
-                        duplicateRows++;
-                        continue;
-                    }
-                    newInPage++;
+                    duplicateRows++;
+                    continue;
                 }
-                else
-                {
-                    newInPage++;
-                }
+                newInPage++;
 
                 var mapped = mapper(item);
                 if (mapped != null)
@@ -162,7 +168,9 @@ public static class PrtgTablePager
 
             // 分子用「已讀取的列數」而非已寫入數：寫入是每滿一頁才發生一次，
             // 用寫入數當分子會讓進度以頁為單位跳動、且最後一批寫入前看起來停滯。
-            if (phase != null) progress?.Invoke(phase, readRows, treeSize);
+            // 分子夾住分母：夾到末頁時會多讀一整頁，不夾的話進度會顯示 1500/1000
+            var reported = treeSize > 0 ? Math.Min(readRows, treeSize) : readRows;
+            if (phase != null) progress?.Invoke(phase, reported, treeSize);
 
             if (stageLabel != null && pageIndex % ConsoleEveryPages == 0)
             {
@@ -174,7 +182,9 @@ public static class PrtgTablePager
             if (countInPage < pageSize) break;
             if (newInPage == 0) break;
 
-            if (pageIndex >= maxPages)
+            // 上限允許多讀一頁再判定：總筆數剛好是「上限 × 頁大小」時，最後一頁是滿頁，
+            // 下一頁才是空頁——在這裡就擲例外會把合法的收尾判成未收斂。
+            if (pageIndex > maxPages)
             {
                 // 已寫出的資料留著（呼叫端的寫入是冪等 upsert），但這一階段必須報失敗。
                 if (buffer.Count > 0)
@@ -183,7 +193,7 @@ public static class PrtgTablePager
                     onBatch(buffer);
                     buffer.Clear();
                 }
-                throw new PrtgPagingNotConvergedException(content, pageIndex, readRows);
+                throw new PrtgPagingNotConvergedException(content, pageIndex, readRows, duplicateRows);
             }
 
             offset += countInPage;
@@ -198,6 +208,9 @@ public static class PrtgTablePager
 
         return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex);
     }
+
+    /// <summary>預設列鍵：objid。devices 與 sensors 的 objid 是主鍵，這對它們成立。</summary>
+    private static string? DefaultRowKey(JsonElement el) => GetLongProperty(el, "objid")?.ToString();
 
     private static long? GetLongProperty(JsonElement el, string propName)
     {
