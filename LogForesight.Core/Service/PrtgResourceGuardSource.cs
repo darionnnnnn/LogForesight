@@ -46,25 +46,27 @@ public sealed class PrtgMirrorGuardSource : IPrtgResourceGuardSource
 /// </summary>
 public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
 {
-    private const int PageSize = 500;
-
     /// <summary>
-    /// 分頁上限（保險絲）。終止條件是「這一頁不滿 PageSize」，但那假設 PRTG 會遵守 start 位移；
-    /// 權限受限的 token 或某些版本可能每次都回滿一頁相同內容，迴圈就永遠不會結束。
-    /// 50 頁 × 500＝25000 筆，遠超過自動偵測需要的量。
+    /// 單次查詢的筆數上限。這條路徑跑在 HTTP 請求執行緒上，分頁翻上百頁的逾時風險
+    /// 比一次取回數萬筆的記憶體成本實際得多——每筆只有四個欄位。
+    /// 實際筆數少於 treesize（或無 treesize 而剛好取到這個數）時視為被截斷並發警告，
+    /// 絕不靜默：偵測結果少一半而畫面顯示「未偵測到」是查不出原因的。
     /// </summary>
-    private const int MaxPages = 50;
+    private const int MaxSingleFetchCount = 50000;
 
     private readonly PrtgClient _client;
     private readonly CancellationToken _ct;
+    private readonly IRunConsole? _console;
 
     private List<PrtgDeviceRow>? _devices;
     private List<PrtgSensorRow>? _sensors;
 
-    public PrtgLiveGuardSource(PrtgClient client, CancellationToken ct = default)
+    /// <param name="console">截斷警告的去處；null＝不回報（僅測試與不需要警告的呼叫端）。</param>
+    public PrtgLiveGuardSource(PrtgClient client, CancellationToken ct = default, IRunConsole? console = null)
     {
         _client = client;
         _ct = ct;
+        _console = console;
     }
 
     public string SourceLabel => "live";
@@ -90,40 +92,50 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
             Paused = IsPaused(el)
         });
 
+    /// <summary>
+    /// 單次取回整份表格（不分頁），並在筆數對不上 treesize 時發出截斷警告。
+    /// </summary>
     private List<T> FetchAll<T>(string content, string columns, Func<JsonElement, T> map)
     {
         var results = new List<T>();
-        var offset = 0;
-        var pages = 0;
+        _ct.ThrowIfCancellationRequested();
 
-        while (pages++ < MaxPages)
+        var query = $"api/table.json?content={content}&columns={columns}&count={MaxSingleFetchCount}";
+        var json = _client.GetJsonAsync(query, _ct).GetAwaiter().GetResult();
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(content, out var arr) ||
+            arr.ValueKind != JsonValueKind.Array)
         {
-            _ct.ThrowIfCancellationRequested();
+            return results;
+        }
 
-            var query = $"api/table.json?content={content}&columns={columns}&start={offset}&count={PageSize}";
-            var json = _client.GetJsonAsync(query, _ct).GetAwaiter().GetResult();
+        foreach (var el in arr.EnumerateArray())
+        {
+            results.Add(map(el));
+        }
 
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object ||
-                !root.TryGetProperty(content, out var arr) ||
-                arr.ValueKind != JsonValueKind.Array)
-            {
-                break;
-            }
-
-            var count = 0;
-            foreach (var el in arr.EnumerateArray())
-            {
-                results.Add(map(el));
-                count++;
-            }
-
-            if (count < PageSize) break;
-            offset += count;
+        var treeSize = GetLong(root, "treesize");
+        if (treeSize is > 0 && results.Count < treeSize.Value)
+        {
+            Warn(content, results.Count, treeSize.Value.ToString());
+        }
+        else if (treeSize is null or <= 0 && results.Count >= MaxSingleFetchCount)
+        {
+            Warn(content, results.Count, "未知");
         }
 
         return results;
+    }
+
+    private void Warn(string content, int got, string total)
+    {
+        var label = content == "devices" ? "裝置" : "感測器";
+        _console?.WriteLine(
+            $"[PRTG資源守門] 只取到 {got} 個{label}（總數 {total}），自動偵測的結果可能漏掉部分{label}。" +
+            "請改用「受監看 sensor 覆寫清單」直接指定 objid。");
     }
 
     private static string? GetString(JsonElement el, string name) =>

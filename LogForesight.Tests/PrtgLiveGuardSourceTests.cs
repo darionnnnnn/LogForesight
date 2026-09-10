@@ -7,9 +7,9 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 直接查 PRTG 的守門來源（docs/PRTG-SPEC.md §12）：分頁合併、欄位映射、
-/// 以及「PRTG 不遵守分頁位移」時的保險絲。這條路徑跑在使用者按下「自動偵測並填入」時，
-/// 卡住的症狀是畫面轉圈到逾時，不會有錯誤訊息。
+/// 直接查 PRTG 的守門來源（docs/PRTG-SPEC.md §12）：單次取回、欄位映射、截斷警告。
+/// 這條路徑跑在使用者按下「自動偵測並填入」時，取不齊的症狀是「未偵測到任何受監看的感測器」，
+/// 與「PRTG 上真的沒有」看起來一模一樣——所以取不齊一定要出聲。
 /// </summary>
 public class PrtgLiveGuardSourceTests
 {
@@ -36,10 +36,21 @@ public class PrtgLiveGuardSourceTests
         return (new PrtgClient("https://prtg.example.com", "token123", 30, true, handler), handler);
     }
 
-    private static string DevicePage(int start, int count) =>
-        "{\"devices\":[" + string.Join(",",
+    private static string DevicePage(int start, int count, int? treesize = null) =>
+        "{" + (treesize.HasValue ? $"\"treesize\":{treesize.Value}," : "") + "\"devices\":[" + string.Join(",",
             Enumerable.Range(start, count).Select(i =>
                 $"{{\"objid\":{1000 + i},\"device\":\"DEV-{i}\",\"host\":\"10.0.0.{i % 250}\"}}")) + "]}";
+
+    private static string SensorPage(int count, int? treesize = null) =>
+        "{" + (treesize.HasValue ? $"\"treesize\":{treesize.Value}," : "") + "\"sensors\":[" + string.Join(",",
+            Enumerable.Range(0, count).Select(i =>
+                $"{{\"objid\":{20000 + i},\"parentid\":1001,\"sensor\":\"S-{i}\",\"type\":\"Ping\",\"status\":\"Up\"}}")) + "]}";
+
+    private sealed class TestConsole : IRunConsole
+    {
+        public List<string> Lines { get; } = new();
+        public void WriteLine(string message = "") => Lines.Add(message);
+    }
 
     [Fact]
     public void GetDevices_單頁時直接回傳並映射欄位()
@@ -63,42 +74,71 @@ public class PrtgLiveGuardSourceTests
     }
 
     [Fact]
-    public void GetDevices_多頁時合併且只在最後一頁不滿時停止()
+    public void GetDevices_一次取回全部且不分頁()
     {
-        var page = 0;
-        var (client, handler) = CreateClient(_ =>
-        {
-            page++;
-            // 第一頁滿 500、第二頁 3 筆
-            return Json(page == 1 ? DevicePage(0, 500) : DevicePage(500, 3));
-        });
+        var (client, handler) = CreateClient(_ => Json(DevicePage(0, 503, treesize: 503)));
 
         using (client)
         {
-            var devices = new PrtgLiveGuardSource(client).GetDevices();
+            var console = new TestConsole();
+            var devices = new PrtgLiveGuardSource(client, console: console).GetDevices();
 
             Assert.Equal(503, devices.Count);
-            Assert.Equal(2, handler.RequestedUrls.Count);
-            Assert.Contains("start=0", handler.RequestedUrls[0]);
-            Assert.Contains("start=500", handler.RequestedUrls[1]);
+            var url = Assert.Single(handler.RequestedUrls);
+            Assert.Contains("count=50000", url);
+            Assert.DoesNotContain("start=", url);
+            Assert.Empty(console.Lines);
         }
     }
 
     /// <summary>
-    /// PRTG 若忽略 start 位移、每次都回滿一頁，終止條件「不滿一頁」永遠不成立。
-    /// 沒有分頁上限的話這裡會是無窮迴圈，而它跑在 HTTP 請求執行緒上。
+    /// 正式環境有 42864 個感測器。取不齊時若不出聲，落在後段的感測器一律顯示「未偵測到」，
+    /// 使用者只會以為 PRTG 上沒有那些感測器。
     /// </summary>
     [Fact]
-    public void GetDevices_對方忽略分頁位移時靠上限停止()
+    public void GetSensors_取到的筆數少於treesize時發出截斷警告()
     {
-        var (client, handler) = CreateClient(_ => Json(DevicePage(0, 500)));
+        var (client, _) = CreateClient(_ => Json(SensorPage(25000, treesize: 42864)));
 
         using (client)
         {
-            var devices = new PrtgLiveGuardSource(client).GetDevices();
+            var console = new TestConsole();
+            var sensors = new PrtgLiveGuardSource(client, console: console).GetSensors();
 
-            Assert.Equal(50, handler.RequestedUrls.Count);   // MaxPages
-            Assert.Equal(50 * 500, devices.Count);
+            Assert.Equal(25000, sensors.Count);   // 取到的照樣回傳，不是全有或全無
+            var warning = Assert.Single(console.Lines);
+            Assert.Contains("25000", warning);
+            Assert.Contains("42864", warning);
+            Assert.Contains("覆寫清單", warning);
+        }
+    }
+
+    [Fact]
+    public void GetDevices_無treesize且剛好取到上限時視為可能截斷()
+    {
+        var (client, _) = CreateClient(_ => Json(DevicePage(0, 50000)));
+
+        using (client)
+        {
+            var console = new TestConsole();
+            new PrtgLiveGuardSource(client, console: console).GetDevices();
+
+            var warning = Assert.Single(console.Lines);
+            Assert.Contains("總數 未知", warning);
+        }
+    }
+
+    [Fact]
+    public void GetDevices_取滿treesize時不發警告()
+    {
+        var (client, _) = CreateClient(_ => Json(DevicePage(0, 10, treesize: 10)));
+
+        using (client)
+        {
+            var console = new TestConsole();
+            new PrtgLiveGuardSource(client, console: console).GetDevices();
+
+            Assert.Empty(console.Lines);
         }
     }
 

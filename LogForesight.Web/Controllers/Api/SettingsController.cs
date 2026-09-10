@@ -363,7 +363,7 @@ public class SettingsController : ControllerBase
                 {
                     liveClient = PrtgClientFactory.Create(settings);
                     targets = PrtgResourceGuardTargets.Resolve(
-                        new PrtgLiveGuardSource(liveClient, ct), settings, sentinels, console,
+                        new PrtgLiveGuardSource(liveClient, ct, console), settings, sentinels, console,
                         new PrtgAddressResolver(), ignoreOverride: forceAuto);
                     source = "live";
                 }
