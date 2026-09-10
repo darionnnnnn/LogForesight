@@ -161,7 +161,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
     }
 
     [Fact]
-    public void 等待閘門_同步未執行時立即返回()
+    public async Task 等待閘門_同步未執行時立即返回且不放行跳過()
     {
         var service = Create();
 
@@ -169,6 +169,29 @@ public class PrtgStructureSyncServiceTests : IDisposable
         // 沒有執行中就不該等待，逾時保護不該被觸發
         var task = service.WaitUntilIdleAsync(CancellationToken.None);
         Assert.True(task.IsCompleted);
+
+        // 這個行程還沒跑過成功的同步：回 false 讓取數自己同步結構。
+        // 回 true 的話，鏡像其實是舊的（甚至空的），當晚整條路徑會用錯資料而畫面一切正常。
+        Assert.False(await task);
+    }
+
+    [Fact]
+    public void 中止_沒有執行中時回false()
+    {
+        var service = Create();
+
+        // 「沒東西可停」不能說成停止成功——端點據此回 409
+        Assert.False(service.TryCancel());
+    }
+
+    [Fact]
+    public void 中止_執行中時回true()
+    {
+        EnablePrtg();
+        var service = Create();
+        Assert.True(service.TryStart(out _, out _));
+
+        Assert.True(service.TryCancel());
     }
 
     [Fact]

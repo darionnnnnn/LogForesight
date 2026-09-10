@@ -696,6 +696,12 @@ public class PrtgAdminPageUiTests
 
         // 「尚未同步」與「同步到 0 筆」必須是不同文案——兩者混在一起會讓人以為同步過了
         Assert.Contains("尚未同步", js);
+
+        // 停止鈕：這條路徑在大型環境要跑數十分鐘，沒有它時唯一的中止方式是重啟站台
+        Assert.Contains("prtg-structure-sync-cancel-btn", cshtml);
+        Assert.Contains("prtg-structure-sync/cancel", js);
+        // 未成功的同步要說出鏡像可能不完整，否則使用者不知道該不該重跑
+        Assert.Contains("鏡像可能不完整", js);
     }
 
     /// <summary>
