@@ -1,6 +1,6 @@
 # 回饋第 43 輪規劃：PRTG 取數效能——先量測再定案
 
-> 狀態：規劃完成待確認（批次 0／0b 已實作並 push；批次 A～F 定案見下，確認後委派 impl-low）
+> 狀態：規劃完成，六項待決已由使用者採納建議定案；批次 A～G 依序委派 impl-low
 > 基準：dev@1c42277（3761 綠）
 > 來源：使用者回報「抓取 sensor 有點慢」，PRTG 主機 CPU／RAM 約 60%
 > 實作方式：批次 0 委派 `impl-low`（Opus，low）；規劃、驗收、後續批次定案由 Claude 做
@@ -29,9 +29,10 @@
 | C | 分頁大小 5000 與寫入批次 500 拆開 | Core 2 檔＋測試＋spec §3 | 無 |
 | D | `PrtgFetchConcurrency` 範圍 1～8，說明文字改寫 | Web 3 檔＋測試 | 無 |
 | E | 取數策略（保守／激進）設定＋快照背景服務＋夜間逐顆查詢依策略開關 | Core 4 檔、Web 5 檔、測試、spec | A、B |
-| F | 文件：PRTG-SPEC §2／§3／§6／§12、WEB-SPEC §9.9e、BACKLOG、CLAUDE.md 基線 | 文件 | A～E |
+| G | 校準與快照相容：可用列定義、三處品質統計、匯出欄位、判定文案 | Core 2 檔、Web 2 檔、測試、spec §11 | E |
+| F | 文件：PRTG-SPEC §2／§3／§6／§11／§12、WEB-SPEC §9.9e／§9.9f、BACKLOG、CLAUDE.md 基線 | 文件 | A～G |
 
-建議順序 A → B → C → D → E → F。A 到 D 各自獨立、都小，E 最大且依賴 A（快照與逐顆查詢寫同一張表，解析要先對）與 B（快照失敗要能分辨是空白頁）。
+建議順序 A → B → C → D → E → G → F。A 到 D 各自獨立、都小，E 最大且依賴 A（快照與逐顆查詢寫同一張表，解析要先對）與 B（快照失敗要能分辨是空白頁）。
 
 ## 批次0：探測步驟 9 效能量測
 
@@ -128,7 +129,7 @@
 | 項目 | 保守（預設） | 激進 | 證據 |
 |---|---|---|---|
 | 快照間隔 | 15 分鐘 | 5 分鐘 | 掃描間隔 77.6% 是 60 秒，5 分鐘不超過掃描密度；兩欄快照約 10 秒 |
-| 快照查詢 | `columns=objid,lastvalue_raw&count=50000`（同） | 同 | 9b 同量級 9.6 秒成功；六欄 13 MB 成功；九欄 18 MB 失敗過 |
+| 快照查詢 | `columns=objid,lastvalue_raw,interval&count=50000`（同） | 同 | 9b 一欄 9.6 秒、9d-1 六欄 38 秒都成功；九欄 18 MB 失敗過 |
 | 夜間逐顆歷史查詢（觸發主機） | **關**：數值全由快照供應 | **開**：沿用取數範圍設定，給觸發主機 PRTG 真平均 | 單顆 5～72 秒、每晚數百顆 |
 | 回填併發 | 建議 2（設定獨立，範圍 1～8） | 建議 4 | 併發 4 兩次都加速 2 倍以上且延遲 ≤1.23；8 今天排隊 |
 | 每日 PRTG 負擔（估） | 96 次快照 ≈ 16 分鐘，分散整天、同時只有 1 個請求 | 288 次快照 ≈ 48 分鐘 ＋ 夜間數百次 historicdata（併發 4 約 30～60 分鐘） | — |
@@ -138,8 +139,8 @@
 
 **快照的資料語意**（寫進 PRTG-SPEC §2／§3）：
 - 只存「有 ok 對應的裝置」底下、符合 sensor type 白名單、未暫停的感測器（與 `GetValueFetchTargets` 同一套選法，裝置集合取當天 host map 的 ok 對應；當天沒有就用前一天）。全量存 42863 顆會讓 `lf_prtg_values` 每天多 100 萬列，沒有消費端的資料不存。
-- 每小時一列，`AvgValue`＝樣本平均、`MinValue`／`MaxValue`＝樣本極值（這兩欄從此有值）、`Coverage`＝樣本數 ÷ 期望樣本數（60 ÷ 間隔）、`Quality`＝新值 `sampled`。
-- 流量類感測器的主要頻道是「最近一次掃描的傳輸量」，存的是每次掃描量的平均，**不是**小時總量；規格與品質欄位都要讓消費端分得出來。
+- 每小時一列，`AvgValue`＝樣本平均、`MinValue`／`MaxValue`＝樣本極值（這兩欄從此有值）、`Coverage`＝樣本數 ÷ 期望樣本數 × 100（**與既有 PRTG coverage 同為百分比尺度**，期望樣本數＝60 ÷ 間隔分鐘）、`Quality`＝新值 `sampled`。
+- **流量類（volume）主要頻道要正規化到小時量**：歷史值第一頻道是「整小時總量」（探測 9d-2：126,883 MB ≈ 296 Mbit/s），快照 `lastvalue_raw` 是「最近一次掃描的傳輸量」；不換算的話同一顆感測器的 ok 列與 sampled 列會差 60 倍，基線統計整個失真。快照查詢因此帶 `interval` 欄（`columns=objid,lastvalue_raw,interval`），對 type 屬於流量集合（**暫定**：`SNMP Traffic 64bit`、`SNMP Traffic 32bit`、`Windows Network Card`）的感測器，樣本值＝`lastvalue_raw × 3600 ÷ 掃描間隔秒數`；`interval` 解析不了時用 60 秒並在執行輸出計數。其他 type 不換算。
 - 同一（感測器, 小時）若之後被逐顆歷史查詢或回填寫入，`ok` 覆蓋 `sampled`（Upsert 既有行為，精確值優先）。
 - 快照累積在記憶體，整點寫入一次；站台重啟丟失的只有當前這一小時的部分樣本，coverage 會如實反映。
 
@@ -210,7 +211,7 @@
 1. 設定 `PrtgFetchStrategy`：`conservative`（預設）／`aggressive`，static class 同 `PrtgValueFetchScope` 形式（常數、IsValid、Normalize），並提供 `Profile(strategy)` 回 (SnapshotIntervalMinutes, NightlyExactValues)＝保守 (15, false)、激進 (5, true)。不合法值退回保守。
 2. UI：擷取參數頁籤，緊接「PRTG 擷取」下拉之後新增「取數策略」下拉，兩個 option 各附一句說明；選到激進時顯示上面的提醒文字（`text-warning`）。popover 說明兩者差異與每日負擔估計。
 3. 快照背景服務 `PrtgSnapshotHostedService`（Web，樣板 AiAnalysisHostedService）：每 60 秒 tick；前置條件依序：`PrtgEnabled`、連線設定齊、距上次成功快照 ≥ 目前間隔（含退避）、結構同步未執行中。任一不成立就整輪不跑並記閒置原因。
-4. 快照一次：`content=sensors&columns=objid,lastvalue_raw&count=50000`；回傳筆數少於 treesize 時寫警告（同守門的截斷判定）；只累積目標集合內的 objid（目標集合＝當天 ok 對應裝置的 `GetValueFetchTargets(白名單)`，每小時刷新一次，當天沒有對應就用前一天）。
+4. 快照一次：`content=sensors&columns=objid,lastvalue_raw,interval&count=50000`（9d-1 六欄 38 秒、9b 一欄 10 秒，三欄估 12～15 秒）；回傳筆數少於 treesize 時寫警告（同守門的截斷判定）；只累積目標集合內的 objid（目標集合＝當天 ok 對應裝置的 `GetValueFetchTargets(白名單)`，每小時刷新一次，當天沒有對應就用前一天）。
 5. 累積器（Core，純類別可單測）：per objid 的 sum／count／min／max，整點翻頁時把上一小時寫成 `PrtgValueRow`（Quality＝`sampled`，Coverage＝count ÷ (60 ÷ 間隔)）。站台停止時把當前小時的部分樣本也寫出（coverage 如實）。
 6. 退避：連續失敗（例外、HTML 頁、逾時）3 次 → 間隔加倍，上限 60 分鐘；成功即恢復設定值。每次狀態變化寫一行到執行輸出（走 NLog 與鏡像狀態的執行輸出）。
 7. 夜間路徑：`PrtgDailyPipeline` 在策略為保守時**跳過觸發式取數階段**，執行輸出印「取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應」；激進時行為不變。歷史回填不受策略影響（永遠用 historicdata，併發吃設定值）。
@@ -227,24 +228,65 @@
 - UI 測試：下拉存在、激進提醒文字存在、鏡像頁籤有快照行。
 - 全套綠。
 
+## 校準數值匯出的現況與快照的相容問題（核對結果）
+
+- 校準（`CalibrationService`，Core）讀數值表只經 `EfPrtgStore` 三個查詢，**全部硬編 `Quality == ok`**：每日聚合、涵蓋摘要、量級。服務層只用 `SensorObjid`／`PeriodStart`／`AvgValue`／`Quality`；`MinValue`／`MaxValue`／`Coverage` 沒有任何讀取端。匯出檔的 `MinValue`／`MaxValue` 是「當日各小時 AvgValue 的極值」，不是列的極值欄。
+- 值型基線判定：sensor 某日涵蓋＝該日 `ok` 列數 ≥ 12（常數 `ValueBaselineMinDailyOkHours`）；主機涵蓋天數取名下 sensor 最大值；10 台各 28 天可用、56 天充足。**快照寫的 `sampled` 會落進三處統計的「其他」桶**，不進 OkCount 也不進平均，保守策略下這一項永遠判不足。
+- 「觸發式取數量級」判定以 `TotalCount > 0` 計天數，不受品質影響；但保守策略下沒有觸發式取數，名稱與 `OkRatio` 語意都會誤導。
+- 匯出是單一 JSON（`FormatVersion`＋四個資料集），值型基線列有 `OkHours`／`UnknownCount`／`NodataCount`，沒有 Quality、Coverage、也沒有 `OtherCount`。
+- 測試餵的數值列品質**一律 ok**，沒有任何一筆非 ok；`Coverage` 全檔沒設過值。
+- **校準結果的下游**：程式碼沒有任何消費端，匯出檔只供人下載分析後回頭改 `CalibrationConstants`（規則門檻）與設計值型規則。值型規則（趨勢、基線偏移）在 BACKLOG，觸發條件正是「校準四項達可用」；目前 Core/Analysis 沒有任何 PRTG 數值的介面或佔位，`TrendAnalyzer` 系列全是 NetIQ 事件次數。
+
+## 批次G：校準與快照相容
+
+### 定案
+
+1. **可用列（usable）**的統一定義，寫在 `EfPrtgStore` 一處供三個查詢共用：`Quality == ok`，或 `Quality == sampled 且 Coverage ≥ 50`（**暫定**：一小時內至少一半的期望樣本；保守 15 分鐘＝4 個樣本要有 2 個）。三處統計的桶改為 `OkCount`／`SampledCount`（僅計可用的 sampled）／`UnknownCount`／`NodataCount`／`OtherCount`（含 coverage 不足的 sampled、paused、untrusted）。
+2. 值型基線判定：某日涵蓋＝該日**可用列數** ≥ 12（常數改名 `ValueBaselineMinDailyUsableHours`，值不變）；每日平均／極值納入可用列；`EarliestOkPeriod`／`LatestOkPeriod` 改為可用列的起訖。
+3. 「觸發式取數量級」判定與文案改為「**數值取得量級**」：天數判定不變（任何品質的列）；`OkRatio` 改為 `UsableRatio`（可用列 ÷ 全部），另出 `SampledRatio`。UI 卡片標題、標籤表、規格同步。
+4. 匯出 `FormatVersion` +1；值型基線列加 `SampledHours`、`MinObserved`／`MaxObserved`（當日各可用列 `MinValue`／`MaxValue` 的極值，沒有就 null；既有 `MinValue`／`MaxValue` 語意不變）；量級列加 `SampledCount`。
+5. 補充說明文案（`Explanations`）把「ok 小時數」改成「可用小時數」，並在有 sampled 列時多一句「其中 N 小時為快照取樣值」。
+6. 流量類 sampled 值已在批次 E 正規化到小時量，校準端不再另外處理；規格 §11 註明「流量類的 sampled 列是估算值（每次掃描量 × 3600 ÷ 掃描間隔）」。
+
+### 驗收
+
+- 三個查詢：ok 與 coverage ≥ 50 的 sampled 都算可用；coverage 49 的 sampled 落「其他」；unknown／nodata 各自計數不變。
+- 值型基線：只有 sampled 列（coverage 100）的環境，10 台各 28 天 → 可用；同樣資料但 coverage 全 40 → 不足。
+- 匯出：`FormatVersion` 變更、四個新欄位存在且值正確；既有欄位順序不變。
+- 量級卡：標題與 KeyMetrics 鍵名改名，前端標籤表對應；UI 測試補字串斷言。
+- 既有校準測試全綠（它們只餵 ok，語意不變）。
+
+## 校準後的用途與後續方向（確認結果，寫進 BACKLOG）
+
+校準匯出目前的用途是離線分析後回頭改常數，程式碼不讀它。快照讓「值型基線」在保守策略下也能累積：白名單內、有對應主機的感測器全部每小時一列，10 台主機 28 天的門檻預估最快一個月達標（現況只有觸發主機、且解析壞掉，永遠不會達標）。達標後的下一步已足夠具體，記進 BACKLOG 作為 R44 候選，觸發條件不變（校準四項達可用）：
+
+- **值型規則第一階**（規則維護頁 prtg 平台）：per 感測器、per 小時段的 28 天基線（平均與標準差，只用可用列），三條規則——基線偏移（連續 N 小時超過 μ+kσ）、磁碟可用空間趨勢（線性外推 N 天內耗盡）、CPU／記憶體持續高檔（24 小時平均超過門檻）。門檻常數先用校準匯出的 P90／P99 定，同 §11 的作法。
+- **資源守門改讀快照**：守門的即時值探針每趟批次打 PRTG，快照有了之後可以改讀最近一次快照（15 分鐘內），少一輪 PRTG 往返；快照過期才退回即時查詢。
+- **校準頁加「快照涵蓋」指標**：目標集合有幾顆、最近 24 小時每顆平均 coverage，讓管理者知道基線在累積。
+
 ## 批次F：文件
 
 - PRTG-SPEC §2：`lf_prtg_values` 的 `min_value`／`max_value` 從「無寫入邏輯」改為快照寫入；`quality` 加 `sampled`；先備欄位清單同步。
 - PRTG-SPEC §3：分頁 5000／批次 500；histdata 解析改原始欄位；空白 HTML 頁；取數策略與快照（新小節 §3b）；夜間逐顆查詢依策略。
 - PRTG-SPEC §6：探測步驟 4／9a 在空白頁時的輸出。
+- PRTG-SPEC §11：可用列定義、`sampled` 與 coverage 門檻、數值取得量級改名、匯出新欄位與 FormatVersion、流量類估算值註記。
 - PRTG-SPEC §12：守門即時來源在空白頁時的退回原因。
+- WEB-SPEC §9.9f：校準卡片標題與指標改名。
+- BACKLOG：上節「校準後的用途與後續方向」三項，觸發條件「校準四項達可用」。
 - WEB-SPEC §9.9e：擷取參數頁籤新增策略下拉與提醒；鏡像頁籤快照行；併發說明文字。
 - BACKLOG：objid 清單比對（觸發條件：分頁放大後感測器階段仍 > 5 分鐘）；messages 推送方案（觸發條件：夜間第三階段實測 > 10 分鐘）；historicdata 流量類多頻道（觸發條件：值型規則需要速率而非量）。
 - CLAUDE.md：測試基線。
 
-## 待決（請使用者確認）
+## 待決結果（使用者採納建議，2026-09-11）
 
-1. 快照間隔保守 15／激進 5 分鐘、退避上限 60 分鐘（暫定）。
-2. 分頁 5000、寫入批次 500（暫定）。
-3. 併發範圍 1～8，說明文字建議保守 2／激進 4；預設值維持 2。
-4. 保守策略下夜間**完全不**逐顆查詢（數值只來自快照）。若希望保守也保留觸發主機的精確值，改成「保守＝快照 15 分鐘＋夜間逐顆併發 2」，PRTG 負擔會回到現況水準。
-5. 快照只存 ok 對應裝置＋白名單型的感測器（不存全部 42863 顆）。
-6. 校準頁的品質統計把 `sampled` 獨立計數（批次 E 第 9 條）還是先算進「其他」。
+1. 快照間隔保守 15／激進 5 分鐘、退避上限 60 分鐘：採納。
+2. 分頁 5000、寫入批次 500：採納。
+3. 併發範圍 1～8，說明文字建議保守 2／激進 4，預設 2：採納。
+4. 保守策略下夜間完全不逐顆查詢：採納。
+5. 快照只存 ok 對應裝置＋白名單型的感測器：採納。
+6. 校準的 `sampled` 獨立計數並納入可用列：採納（批次 G）。
+
+另外兩項仍缺實機資料，不阻擋實作：夜間執行輸出的階段 3 耗時（決定 messages 推送要不要提前）與「時間欄位無法解析」一行（驗證批次 A 的 P0 判斷；批次 A 不論如何都要做，原始欄位是正確做法）。
 
 ## 明確不做（本輪定案）
 
