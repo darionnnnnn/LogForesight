@@ -2551,4 +2551,54 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(3, updated.PrtgFetchConcurrency);
         Assert.Equal(new[] { "SNMP CPU Load" }, updated.PrtgSensorTypeWhitelist);
     }
+
+    [Theory]
+    [InlineData(8, true)]
+    [InlineData(9, false)]
+    public void UpdateSystemSettingsRequest_PrtgFetchConcurrency_8接受_9拒絕(int concurrency, bool expectedValid)
+    {
+        var request = ValidRequest();
+        request.PrtgFetchConcurrency = concurrency;
+
+        var results = new List<ValidationResult>();
+        var ok = Validator.TryValidateObject(
+            request, new ValidationContext(request), results, validateAllProperties: true);
+
+        if (expectedValid)
+        {
+            Assert.DoesNotContain(results, r => r.MemberNames.Contains(nameof(UpdateSystemSettingsRequest.PrtgFetchConcurrency)));
+        }
+        else
+        {
+            Assert.False(ok);
+            Assert.Contains(results, r => r.MemberNames.Contains(nameof(UpdateSystemSettingsRequest.PrtgFetchConcurrency)) &&
+                                          r.ErrorMessage!.Contains("必須介於 1~8"));
+        }
+    }
+
+    [Theory]
+    [InlineData(8, true)]
+    [InlineData(9, false)]
+    public void UpdatePrtgSettingsRequest_PrtgFetchConcurrency_8接受_9拒絕(int concurrency, bool expectedValid)
+    {
+        var request = new UpdatePrtgSettingsRequest
+        {
+            PrtgFetchConcurrency = concurrency
+        };
+
+        var results = new List<ValidationResult>();
+        var ok = Validator.TryValidateObject(
+            request, new ValidationContext(request), results, validateAllProperties: true);
+
+        if (expectedValid)
+        {
+            Assert.DoesNotContain(results, r => r.MemberNames.Contains(nameof(UpdatePrtgSettingsRequest.PrtgFetchConcurrency)));
+        }
+        else
+        {
+            Assert.False(ok);
+            Assert.Contains(results, r => r.MemberNames.Contains(nameof(UpdatePrtgSettingsRequest.PrtgFetchConcurrency)) &&
+                                          r.ErrorMessage!.Contains("必須介於 1~8"));
+        }
+    }
 }

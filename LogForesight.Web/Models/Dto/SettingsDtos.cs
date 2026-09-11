@@ -434,7 +434,7 @@ public class UpdateSystemSettingsRequest
     [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
     public int? PrtgTimeoutSeconds { get; set; }
 
-    [Range(1, 3, ErrorMessage = "PRTG 併發請求數上限必須介於 1~3")]
+    [Range(1, 8, ErrorMessage = "PRTG 併發請求數上限必須介於 1~8")]
     public int? PrtgFetchConcurrency { get; set; }
 
     [Range(1, 365, ErrorMessage = "PRTG 歷史回填天數必須介於 1~365 天")]
@@ -527,7 +527,7 @@ public class UpdatePrtgSettingsRequest
     public int? PrtgTimeoutSeconds { get; set; }
 
     /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
-    [Range(1, 3, ErrorMessage = "PRTG 併發請求數上限必須介於 1~3")]
+    [Range(1, 8, ErrorMessage = "PRTG 併發請求數上限必須介於 1~8")]
     public int? PrtgFetchConcurrency { get; set; }
 
     /// <summary>null＝本次請求未提供（沿用既有值）。</summary>

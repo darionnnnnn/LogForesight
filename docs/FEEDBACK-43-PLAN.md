@@ -326,3 +326,4 @@
 | A historicdata 解析 | impl-low（opus，low）＋Claude 修正 | 已實作 | Claude 親驗：全套 3787 綠、突變關掉顯示字串分支 13 條紅 | **Claude 推翻規格並改寫實作**：規格原訂「datetime_raw 優先」，實機證實同一列的 datetime_raw（46275.6666666667＝16:00）與顯示字串（23:00）差 7 小時，用 raw 會讓整份基線平移數小時且無徵兆。改為顯示字串前段優先、raw 只當退路並回報筆數。執行端另抓到 TryGetProperty 在重複鍵時回最後一個（多頻道會取到第二頻道），改用自寫的取第一個 |
 | B 空白 HTML 頁辨識 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：三檔皆在白名單、BOM 與 CRLF 未動、無 NUL、全套 3793 綠、突變關掉 HTML 判定 2 條紅 | 無落差；agy 依規格把既有探測測試改餵非 HTML 以保留原意，另加 HTML 走例外的測試 |
 | C 分頁 5000／批次 500 | agy（gemini-3.8-flash-high）＋Claude 補修 | 已實作 | Claude 親驗：四檔皆在白名單、BOM 與 CRLF 未動、無 NUL、spec 無敘事字眼、全套 3795 綠 | 規格白名單漏了 PrtgFetchServiceTests.cs，agy 遵守限制未動並誠實回報三條會紅的既有測試；Claude 補修（滿頁筆數改用常數 PageSizeForFullPage＝5000）|
+| D 併發上限 1～8 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：BOM 還原、全套 3800 綠、突變關掉逾時判定 1 條紅 | **agy 剝掉 Prtg.cshtml 的 BOM**（skill 已知失敗模式），Claude 還原；agy 的逾時判定用訊息字串比對（在地化字串，誤判風險），Claude 改為結構化判定並補上根因：PrtgClient 包裝例外時沒帶 InnerException，例外鏈斷掉（兩處包裝點一起修）|

@@ -983,6 +983,41 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchDayAsync_單一sensor逾時其餘正常_回報逾時計數且其餘數值照樣落地()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":3,\"sensors\":[" +
+                    "{\"objid\":901,\"parentid\":1,\"sensor\":\"A\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":902,\"parentid\":1,\"sensor\":\"B\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":903,\"parentid\":1,\"sensor\":\"C\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+            {
+                if (url.Contains("id=902")) throw new TaskCanceledException();
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":5,\"coverage\":100}]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(2, result.Values);
+        Assert.Contains(console.Lines, l => l.Contains("其中 1 個是請求逾時"));
+
+        using var ctx = _fx.NewContext();
+        Assert.Equal(2, ctx.PrtgValues.Count());
+    }
+
+    [Fact]
     public async Task FetchDayAsync_全部sensor數值擷取皆失敗時計為階段失敗()
     {
         var (client, _) = CreateClient(req =>

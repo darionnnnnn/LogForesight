@@ -45,7 +45,7 @@ public sealed class PrtgFetchService
     /// 執行指定日期的 PRTG 每日擷取。
     /// </summary>
     /// <param name="day">目標日期（本地時間）</param>
-    /// <param name="concurrency">hourly 數值抓取併發上限（1~3）</param>
+    /// <param name="concurrency">hourly 數值抓取併發上限（1~8）</param>
     /// <param name="ct">取消語彙基元</param>
     /// <param name="syncStructure">
     /// 是否同步 device／sensor 結構（階段 1、2）。每日擷取為 true。
@@ -189,7 +189,7 @@ public sealed class PrtgFetchService
             {
                 var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
                 _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
-                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, PrtgValuesPhase);
+                var (written, failedSensorCount, _) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, PrtgValuesPhase);
                 valuesCount = written;
                 _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
 
@@ -233,7 +233,8 @@ public sealed class PrtgFetchService
         }
 
         var targets = sensorObjids.Select(id => (Objid: id, Paused: false)).ToList();
-        return await FetchValuesAsync(day, targets, concurrency, ct, progress, PrtgTriggeredPhase);
+        var (written, failed, _) = await FetchValuesAsync(day, targets, concurrency, ct, progress, PrtgTriggeredPhase);
+        return (written, failed);
     }
 
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>
@@ -397,7 +398,7 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表</summary>
-    private async Task<(int Written, int FailedSensors)> FetchValuesAsync(
+    private async Task<(int Written, int FailedSensors, int TimedOutSensors)> FetchValuesAsync(
         DateTime day,
         IReadOnlyList<(long Objid, bool Paused)> activeSensors,
         int concurrency,
@@ -407,7 +408,7 @@ public sealed class PrtgFetchService
     {
         if (activeSensors.Count == 0)
         {
-            return (0, 0);
+            return (0, 0, 0);
         }
 
         var totalSensors = activeSensors.Count;
@@ -421,6 +422,7 @@ public sealed class PrtgFetchService
         var totalUnparsed = 0;
         var totalOaFallback = 0;
         var failedSensors = 0;
+        var timedOutSensors = 0;
         var completedSensors = 0;
         string? firstFailureMessage = null;
 
@@ -453,6 +455,10 @@ public sealed class PrtgFetchService
                 // 讓例外往外逃會被階段層的 catch 接住，於是「三千個 sensor 已寫進去、
                 // 第七個逾時」會被回報成「數值 0 筆、階段失敗」——已落地的資料反而看不見。
                 Interlocked.Increment(ref failedSensors);
+                if (IsTimeoutException(ex, ct))
+                {
+                    Interlocked.Increment(ref timedOutSensors);
+                }
                 Interlocked.CompareExchange(ref firstFailureMessage, ex.Message, null);
             }
             finally
@@ -467,7 +473,8 @@ public sealed class PrtgFetchService
 
         if (failedSensors > 0)
         {
-            _console.WriteLine($"  ⚠ 有 {failedSensors} 個感測器的數值擷取失敗（其餘感測器不受影響，明日排程會自動再試）。"
+            var timedOutPart = timedOutSensors > 0 ? $"（其中 {timedOutSensors} 個是請求逾時）" : "";
+            _console.WriteLine($"  ⚠ 有 {failedSensors} 個感測器的數值擷取失敗{timedOutPart}（其餘感測器不受影響，明日排程會自動再試）。"
                 + $"首則錯誤：{firstFailureMessage}");
         }
 
@@ -486,7 +493,31 @@ public sealed class PrtgFetchService
                 + "（多半是 PRTG 伺服器的地區日期格式與本機不符，請比對 PRTG 的時間顯示設定）。");
         }
 
-        return (totalValues, failedSensors);
+        return (totalValues, failedSensors, timedOutSensors);
+    }
+
+    private static bool IsTimeoutException(Exception ex, CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested)
+            return false;
+
+        if (ex is OperationCanceledException)
+            return true;
+
+        if (ex is TimeoutException)
+            return true;
+
+        if (ex is AggregateException aex)
+            return aex.InnerExceptions.Any(inner => IsTimeoutException(inner, ct));
+
+        // PrtgClient 把逾時包成 PrtgClientException，真正的型別在 InnerException。
+        // 不比對訊息字串：那是在地化的，而且 PRTG 自己的錯誤訊息也可能帶到相同字樣。
+        if (ex.InnerException != null && IsTimeoutException(ex.InnerException, ct))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -322,7 +322,7 @@ public class SettingsController : ControllerBase
         });
     }
 
-    /// <summary>估算量達到這個數就提醒「一晚可能跑不完」。實機併發上限 3、單次 historicdata 往返
+    /// <summary>估算量達到這個數就提醒「一晚可能跑不完」。實機併發上限 8、單次 historicdata 往返
     /// 以秒計，五千個 sensor 已是數小時等級。刻意不開設定——它是提醒不是閘門。</summary>
     private const int PrtgFetchScopeSensorWarnThreshold = 5000;
 

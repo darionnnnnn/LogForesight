@@ -192,7 +192,9 @@ public sealed class PrtgClient : IDisposable
             catch (Exception ex)
             {
                 var sanitized = StripSecrets(ex.Message);
-                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}");
+                // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
+            // 訊息字串是在地化的，比對它遲早會錯。
+            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex);
             }
 
             using (resp)
@@ -271,7 +273,9 @@ public sealed class PrtgClient : IDisposable
         catch (Exception ex)
         {
             var sanitized = StripSecrets(ex.Message);
-            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}");
+            // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
+            // 訊息字串是在地化的，比對它遲早會錯。
+            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex);
         }
 
         using (resp)
