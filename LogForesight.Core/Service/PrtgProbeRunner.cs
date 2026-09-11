@@ -188,6 +188,13 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     ⚠ 有 {parsedDeps.CorruptedCount} 筆無法解析");
             }
 
+            // 0 列＋有損壞筆數＝整份回應沒被解析（不是 JSON、或根不是物件）。
+            // 只印「無法解析」看不出回了什麼，把長度與開頭印出來才分得出錯誤頁、登入頁與空回應。
+            if (parsedDeps.Rows.Count == 0 && parsedDeps.CorruptedCount >= 1)
+            {
+                console.WriteLine($"     ⚠ 回應無法解析：長度 {System.Text.Encoding.UTF8.GetByteCount(depJson)} bytes，開頭：{Head200(depJson)}");
+            }
+
             var withDep = parsedDeps.Rows.Count(d => HasDependency(d));
             var total = parsedDeps.Rows.Count;
             // 與另外兩處單次大 count 同一道截斷偵測：取樣不齊時下面的比例是拿部分樣本算的
@@ -381,7 +388,7 @@ public static class PrtgProbeRunner
         // 步驟 9：效能量測（不影響探測成敗）——量「分頁放大有沒有效」「只取 objid 省多少」「併發開到幾級還不排隊」。
         // 三個子量測各自 try/catch，任何失敗只印原因、不把整趟探測算失敗。
         console.WriteLine("[9] 效能量測（table.json 分頁大小、objid-only、historicdata 併發）");
-        console.WriteLine("     本步驟會發 64 次 historicdata 與 6 次 table.json，供後續決定分頁大小與併發上限");
+        console.WriteLine("     本步驟會發 87 次 historicdata 與 9 次 table.json，供後續決定分頁大小、併發上限與值的取得方式");
 
         PerfSample? fullColumns50000 = null;
         try
@@ -410,9 +417,11 @@ public static class PrtgProbeRunner
             console.WriteLine($"     9b：無法量測（{ex.Message}）");
         }
 
+        // 9c 用掉的 objid 要告訴 9d：同一顆重查會吃到 PRTG 快取，量出來的延遲比實際快
+        var usedObjids = new HashSet<long>();
         try
         {
-            await MeasureConcurrencyAsync(client, console, sensorSamples, ct);
+            usedObjids = await MeasureConcurrencyAsync(client, console, sensorSamples, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -421,6 +430,60 @@ public static class PrtgProbeRunner
         catch (Exception ex)
         {
             console.WriteLine($"     9c：無法量測（{ex.Message}）");
+        }
+
+        // 9d：值的取得方式要選快照還是 historicdata，四個子量測各自容錯
+        var snapshot = new Dictionary<long, (string? LastValue, string? Raw)>();
+        try
+        {
+            snapshot = await MeasureSnapshotAsync(client, console, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-1：無法量測（{ex.Message}）");
+        }
+
+        try
+        {
+            await MeasureValueLatencyAsync(client, console, sensorSamples, usedObjids, snapshot, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-2：無法量測（{ex.Message}）");
+        }
+
+        try
+        {
+            await MeasureFixedCostAsync(client, console, sensorSamples, usedObjids, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-3：無法量測（{ex.Message}）");
+        }
+
+        try
+        {
+            await MeasureMessageVolumeAsync(client, console, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-4：無法量測（{ex.Message}）");
         }
 
         console.WriteLine();
@@ -445,11 +508,15 @@ public static class PrtgProbeRunner
     {
         const int probeCount = 5;
         const int farOffset = 999999;
+        var isMessages = string.Equals(content, "messages", StringComparison.OrdinalIgnoreCase);
         try
         {
-            var page0 = await ReadObjidsAsync(client, content, extraQuery, 0, probeCount, ct);
-            var page1 = await ReadObjidsAsync(client, content, extraQuery, probeCount, probeCount, ct);
-            var pageFar = await ReadObjidsAsync(client, content, extraQuery, farOffset, probeCount, ct);
+            var rows0 = await ReadPagingRowsAsync(client, content, extraQuery, 0, probeCount, isMessages, ct);
+            var rows1 = await ReadPagingRowsAsync(client, content, extraQuery, probeCount, probeCount, isMessages, ct);
+            var rowsFar = await ReadPagingRowsAsync(client, content, extraQuery, farOffset, probeCount, isMessages, ct);
+            var page0 = rows0.Select(r => r.Objid).ToList();
+            var page1 = rows1.Select(r => r.Objid).ToList();
+            var pageFar = rowsFar.Select(r => r.Objid).ToList();
 
             string Show(List<long> ids) => ids.Count == 0 ? "（空）" : string.Join(",", ids);
             console.WriteLine($"     {content}：start=0 → [{Show(page0)}]；start={probeCount} → [{Show(page1)}]；start={farOffset} → [{Show(pageFar)}]");
@@ -464,12 +531,33 @@ public static class PrtgProbeRunner
             // 順序不穩定時同一筆會重複出現、另一筆從沒被讀到，而且完全靜默——
             // 分頁的去重擋得住重複，擋不住漏列。sortby=objid 是讓順序固定的手段，
             // 這裡實測它在這台 PRTG 上有沒有效（不支援時 PRTG 會忽略參數而非報錯）。
-            var sorted = await ReadObjidsAsync(client, content, extraQuery + "&sortby=objid", 0, probeCount, ct);
+            var sortedRows = await ReadPagingRowsAsync(client, content, extraQuery + "&sortby=objid", 0, probeCount, isMessages, ct);
+            var sorted = sortedRows.Select(r => r.Objid).ToList();
             var naturalAscending = IsAscending(page0);
             var sortedAscending = IsAscending(sorted);
+            // messages 的列鍵含時間，objid 不是它的排序依據：用 objid 判順序會把「依時間遞減」誤判成順序不穩
+            var messagesMonotonic = false;
+            var datetimeUndeterminable = false;
+            if (isMessages)
+            {
+                var (dtText, dtMonotonic) = DescribeDatetimeMonotonicity(rows0);
+                messagesMonotonic = dtMonotonic;
+                datetimeUndeterminable = dtText.StartsWith("無法判定", StringComparison.Ordinal);
+                console.WriteLine($"     messages：頁內 datetime 單調＝{dtText}");
+            }
             console.WriteLine($"     {content}：頁內 objid 遞增＝{(naturalAscending ? "是" : "否")}；" +
                               $"帶 sortby=objid → [{Show(sorted)}]，遞增＝{(sortedAscending ? "是" : "否")}");
-            if (!naturalAscending && sortedAscending)
+            if (isMessages)
+            {
+                if (messagesMonotonic)
+                    console.WriteLine($"     messages：✓ 依時間排序、順序穩定，分頁可行（列鍵含時間）；sortby=objid {(sortedAscending ? "有效" : "無效")}，不影響結論");
+                else if (datetimeUndeterminable)
+                    // 解析不了時間不代表順序壞了，只是這台 PRTG 的日期格式本機讀不懂——不能印成漏列警告
+                    console.WriteLine("     messages：？ datetime 欄位本機解析失敗，無法判定順序；請對照上一行的樣本與 PRTG 的日期格式設定");
+                else
+                    console.WriteLine("     messages：⚠ 頁內順序不依時間也不依 objid，分頁可能漏列");
+            }
+            else if (!naturalAscending && sortedAscending)
                 console.WriteLine($"     {content}：✓ sortby=objid 有效（預設順序不穩定，分頁必須帶它才不會漏列）");
             else if (!naturalAscending && !sortedAscending)
                 console.WriteLine($"     {content}：✗ sortby=objid 無效，且預設順序非遞增——分頁可能漏列，只能改用單次大 count");
@@ -591,7 +679,7 @@ public static class PrtgProbeRunner
     /// 9c：以步驟 3 的樣本挑最多 64 顆未暫停的感測器，分成四組不重複樣本，
     /// 依序以併發 1／2／4／8 查同一天的 historicdata，比較總耗時加速與平均延遲放大。
     /// </summary>
-    private static async Task MeasureConcurrencyAsync(PrtgClient client, IRunConsole console, List<SensorTypeSample> samples, CancellationToken ct)
+    private static async Task<HashSet<long>> MeasureConcurrencyAsync(PrtgClient client, IRunConsole console, List<SensorTypeSample> samples, CancellationToken ct)
     {
         var candidates = samples
             .Where(s => s.Objid.HasValue)
@@ -606,7 +694,7 @@ public static class PrtgProbeRunner
         if (candidates.Count == 0)
         {
             console.WriteLine("     9c：無可用感測器，略過");
-            return;
+            return new HashSet<long>();
         }
 
         if (candidates.Count < 64)
@@ -682,7 +770,7 @@ public static class PrtgProbeRunner
         if (baseline.AvgMs <= 0 || baseline.TotalMs <= 0)
         {
             console.WriteLine("     9c：基準級無有效樣本，無法比較");
-            return;
+            return new HashSet<long>(candidates);
         }
 
         foreach (var level in levels.Skip(1))
@@ -698,6 +786,234 @@ public static class PrtgProbeRunner
             var mark = latencyRatio > 1.5 ? " ← PRTG 端開始排隊" : string.Empty;
             console.WriteLine($"     9c：併發 {level} 相對併發 1：總耗時 ×{1 / speedup:F2}（加速 {speedup:F1} 倍）、平均延遲 ×{latencyRatio:F2}{mark}");
         }
+
+        return new HashSet<long>(candidates);
+    }
+
+    /// <summary>9d-1 快照的一列。</summary>
+    private sealed record SnapshotRow(long? Objid, string? Status, string? Interval, string? LastValue, string? Raw);
+
+    /// <summary>
+    /// 9d-1：一次快照全部 sensor 的目前值，量成本並看 interval／status 分布與
+    /// lastvalue_raw 的可解析率——這三項決定「只拉快照」能不能取代 historicdata。
+    /// 回傳 objid → (lastvalue, lastvalue_raw) 供 9d-2 對照。
+    /// </summary>
+    private static async Task<Dictionary<long, (string? LastValue, string? Raw)>> MeasureSnapshotAsync(PrtgClient client, IRunConsole console, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var json = await client.GetJsonAsync(
+            "/api/table.json?content=sensors&columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw&count=50000", ct);
+        sw.Stop();
+
+        var parsed = ParseTable(json, "sensors", el => new SnapshotRow(
+            long.TryParse(GetStringProperty(el, "objid"), out var id) ? id : (long?)null,
+            GetStringProperty(el, "status"),
+            GetStringProperty(el, "interval"),
+            GetStringProperty(el, "lastvalue"),
+            GetStringProperty(el, "lastvalue_raw")));
+        var rows = parsed.Rows;
+
+        console.WriteLine($"     9d-1：快照 耗時 {sw.Elapsed.TotalMilliseconds:F0} ms、回傳 {rows.Count} 筆、{System.Text.Encoding.UTF8.GetByteCount(json)} bytes");
+
+        var intervalText = rows.Any(r => !string.IsNullOrWhiteSpace(r.Interval))
+            ? TopDistribution(rows.Select(r => r.Interval), rows.Count)
+            : "interval 欄位不可用";
+        console.WriteLine($"     9d-1：interval 分布（前 5）：{intervalText}");
+        console.WriteLine($"     9d-1：status 分布（前 5）：{TopDistribution(rows.Select(r => r.Status), rows.Count)}");
+
+        var numeric = rows.Count(r => double.TryParse(r.Raw, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out _));
+        var numericPct = rows.Count > 0 ? numeric * 100.0 / rows.Count : 0.0;
+        console.WriteLine($"     9d-1：lastvalue_raw 可解析為數字：{numeric}/{rows.Count} 筆（{numericPct:F1}%）");
+
+        var map = new Dictionary<long, (string? LastValue, string? Raw)>();
+        foreach (var r in rows)
+        {
+            if (!r.Objid.HasValue) continue;
+            map[r.Objid.Value] = (r.LastValue, r.Raw);
+        }
+        return map;
+    }
+
+    /// <summary>依筆數降序取前 5 種值，百分比以總筆數為分母（空值不列入項目，但留在分母裡）。</summary>
+    private static string TopDistribution(IEnumerable<string?> values, int total)
+    {
+        var groups = values
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .GroupBy(v => v!, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToList();
+        if (groups.Count == 0) return "無";
+        return string.Join("、", groups.Select(g =>
+        {
+            var pct = total > 0 ? g.Count() * 100.0 / total : 0.0;
+            return $"{g.Key}×{g.Count()}（{pct:F1}%）";
+        }));
+    }
+
+    /// <summary>9d-2 要對照單位與延遲的五種 type（常見數值型感測器）。</summary>
+    private static readonly string[] ValueProbeTypes =
+        { "SNMP CPU Load", "SNMP Memory", "SNMP Disk Free", "SNMP Traffic 64bit", "Ping" };
+
+    /// <summary>
+    /// 從樣本里挑指定筆數的「未暫停、有 objid、未被用過」感測器，並把挑中的記進 used。
+    /// </summary>
+    private static List<long> PickUnusedSensors(List<SensorTypeSample> samples, HashSet<long> used, Func<SensorTypeSample, bool> filter, int take)
+    {
+        var picked = new List<long>();
+        foreach (var s in samples)
+        {
+            if (picked.Count >= take) break;
+            if (!s.Objid.HasValue) continue;
+            if (s.Status != null && s.Status.IndexOf("paus", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+            if (!filter(s)) continue;
+            if (!used.Add(s.Objid.Value)) continue;
+            picked.Add(s.Objid.Value);
+        }
+        return picked;
+    }
+
+    /// <summary>
+    /// 9d-2：五種 type 各挑最多 3 顆，循序各發一次 1 天 historicdata，
+    /// 把延遲、末列原始內容與快照的 lastvalue／lastvalue_raw 排在一起，用來對單位與判斷兩路數值一不一致。
+    /// </summary>
+    private static async Task MeasureValueLatencyAsync(PrtgClient client, IRunConsole console, List<SensorTypeSample> samples,
+        HashSet<long> used, Dictionary<long, (string? LastValue, string? Raw)> snapshot, CancellationToken ct)
+    {
+        var sdate = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd-00-00-00");
+        var edate = DateTime.Today.ToString("yyyy-MM-dd-00-00-00");
+
+        foreach (var type in ValueProbeTypes)
+        {
+            var ids = PickUnusedSensors(samples, used, s => string.Equals(s.Type, type, StringComparison.OrdinalIgnoreCase), 3);
+            if (ids.Count == 0)
+            {
+                console.WriteLine($"     9d-2：{type} 該 type 無樣本");
+                continue;
+            }
+
+            var latencies = new List<double>();
+            foreach (var id in ids)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var json = await client.GetJsonAsync($"/api/historicdata.json?id={id}&avg=3600&sdate={sdate}&edate={edate}", ct);
+                sw.Stop();
+                latencies.Add(sw.Elapsed.TotalMilliseconds);
+
+                var lastValue = "無";
+                var lastRaw = "無";
+                if (snapshot.TryGetValue(id, out var snap))
+                {
+                    lastValue = snap.LastValue ?? "無";
+                    lastRaw = snap.Raw ?? "無";
+                }
+
+                console.WriteLine($"     9d-2：{type} objid={id} 耗時 {sw.Elapsed.TotalMilliseconds:F0} ms、列數 {CountHistData(json)}" +
+                                  $"、histdata 末列：{LastHistDataText(json)}、快照 lastvalue=「{lastValue}」 lastvalue_raw=「{lastRaw}」");
+            }
+
+            console.WriteLine($"     9d-2：{type} 平均延遲 {latencies.Average():F0} ms（{ids.Count} 顆）");
+        }
+    }
+
+    /// <summary>historicdata 末列的原始 JSON 文字（截 300 字、換行改空白）；沒有列時回「無」。</summary>
+    private static string LastHistDataText(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return "無";
+            if (!root.TryGetProperty("histdata", out var arr) || arr.ValueKind != JsonValueKind.Array) return "無";
+            var len = arr.GetArrayLength();
+            if (len == 0) return "無";
+            var text = arr[len - 1].GetRawText();
+            return Head300(text);
+        }
+        catch
+        {
+            return "無";
+        }
+    }
+
+    private static string Head300(string text)
+    {
+        var head = text.Length > 300 ? text[..300] : text;
+        return head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+    }
+
+    /// <summary>
+    /// 9d-3：同一種感測器各 4 顆分別查 1 小時與 1 天，看 historicdata 的成本是固定的還是隨跨度成長——
+    /// 前者代表回填可以拉大跨度省呼叫次數。
+    /// </summary>
+    private static async Task MeasureFixedCostAsync(PrtgClient client, IRunConsole console, List<SensorTypeSample> samples, HashSet<long> used, CancellationToken ct)
+    {
+        var ids = PickUnusedSensors(samples, used, s => string.Equals(s.Type, "Ping", StringComparison.OrdinalIgnoreCase), 8);
+        if (ids.Count == 0)
+        {
+            console.WriteLine("     9d-3：無可用 Ping 感測器，略過");
+            return;
+        }
+        if (ids.Count < 8)
+        {
+            console.WriteLine($"     9d-3：⚠ 可用 Ping 感測器只有 {ids.Count} 顆，兩組樣本數不等，結論僅供參考");
+        }
+
+        var hourCount = Math.Min(4, (ids.Count + 1) / 2);
+        var hourIds = ids.Take(hourCount).ToList();
+        var dayIds = ids.Skip(hourCount).ToList();
+
+        var hourSdate = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd-23-00-00");
+        var daySdate = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd-00-00-00");
+        var edate = DateTime.Today.ToString("yyyy-MM-dd-00-00-00");
+
+        async Task<(double AvgMs, double AvgRows, int Count)> RunGroup(List<long> groupIds, string sdate)
+        {
+            var latencies = new List<double>();
+            var rows = new List<int>();
+            foreach (var id in groupIds)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var json = await client.GetJsonAsync($"/api/historicdata.json?id={id}&avg=3600&sdate={sdate}&edate={edate}", ct);
+                sw.Stop();
+                latencies.Add(sw.Elapsed.TotalMilliseconds);
+                rows.Add(CountHistData(json));
+            }
+            return (latencies.Count > 0 ? latencies.Average() : 0.0, rows.Count > 0 ? rows.Average() : 0.0, latencies.Count);
+        }
+
+        var hour = await RunGroup(hourIds, hourSdate);
+        var day = await RunGroup(dayIds, daySdate);
+
+        console.WriteLine($"     9d-3：1 小時 平均延遲 {hour.AvgMs:F0} ms、平均列數 {hour.AvgRows:F1}；1 天 平均延遲 {day.AvgMs:F0} ms、平均列數 {day.AvgRows:F1}");
+
+        if (hour.Count == 0 || day.Count == 0 || day.AvgMs <= 0)
+        {
+            console.WriteLine("     9d-3：兩組中有一組無有效樣本，無法比較");
+            return;
+        }
+
+        if (hour.AvgMs >= day.AvgMs * 0.7)
+            console.WriteLine("     9d-3：✓ historicdata 成本以每次呼叫為主，與時間跨度關係小");
+        else
+            console.WriteLine("     9d-3：⚠ 成本隨時間跨度成長");
+    }
+
+    /// <summary>9d-4：以 count=1 只要 treesize，看 messages 每日與每週的量級。</summary>
+    private static async Task MeasureMessageVolumeAsync(PrtgClient client, IRunConsole console, CancellationToken ct)
+    {
+        async Task<string> TreesizeAsync(string drel)
+        {
+            var json = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid&count=1&id=0&filter_drel={drel}", ct);
+            var parsed = ParseTable(json, "messages", el => GetStringProperty(el, "objid") ?? string.Empty);
+            return parsed.TotalTreesize?.ToString() ?? "未知";
+        }
+
+        var today = await TreesizeAsync("today");
+        var week = await TreesizeAsync("7days");
+        console.WriteLine($"     9d-4：messages treesize today={today}、7days={week}");
     }
 
     private static int TypePriorityRank(string type)
@@ -739,11 +1055,58 @@ public static class PrtgProbeRunner
         return true;
     }
 
-    private static async Task<List<long>> ReadObjidsAsync(PrtgClient client, string content, string extraQuery, int start, int count, CancellationToken ct)
+    /// <summary>分頁診斷讀到的一列：objid 與（messages 才有的）datetime 原始字串。</summary>
+    private sealed record PagingRow(long Objid, string? DatetimeText);
+
+    /// <summary>
+    /// 讀一頁 objid；messages 多帶 datetime（它的順序依據是時間）。
+    /// devices／sensors 不帶 datetime，避免沒有這個欄位的 content 多要一個未知欄位。
+    /// </summary>
+    private static async Task<List<PagingRow>> ReadPagingRowsAsync(PrtgClient client, string content, string extraQuery, int start, int count, bool withDatetime, CancellationToken ct)
     {
-        var json = await client.GetJsonAsync($"/api/table.json?content={content}&columns=objid&count={count}&start={start}{extraQuery}", ct);
-        var parsed = ParseTable(json, content, el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? (long?)id : null);
-        return parsed.Rows.Select(r => r!.Value).ToList();
+        var columns = withDatetime ? "objid,datetime" : "objid";
+        var json = await client.GetJsonAsync($"/api/table.json?content={content}&columns={columns}&count={count}&start={start}{extraQuery}", ct);
+        var parsed = ParseTable(json, content, el => long.TryParse(GetStringProperty(el, "objid"), out var id)
+            ? new PagingRow(id, GetStringProperty(el, "datetime"))
+            : null);
+        return parsed.Rows;
+    }
+
+    /// <summary>
+    /// 頁內 datetime 是否單調（非遞增或非遞減）。有任一筆解析失敗就不下判斷，
+    /// 不能拿部分可解析的子集去證明「順序沒問題」。
+    /// </summary>
+    private static (string Text, bool Monotonic) DescribeDatetimeMonotonicity(List<PagingRow> rows)
+    {
+        var times = new List<DateTime>();
+        var failed = 0;
+        foreach (var r in rows)
+        {
+            if (DateTime.TryParse(r.DatetimeText, out var dt)) times.Add(dt);
+            else failed++;
+        }
+
+        if (failed > 0) return ($"無法判定（datetime 解析失敗 {failed} 筆）", false);
+
+        var nonIncreasing = true;
+        var nonDecreasing = true;
+        for (var i = 1; i < times.Count; i++)
+        {
+            if (times[i] > times[i - 1]) nonIncreasing = false;
+            if (times[i] < times[i - 1]) nonDecreasing = false;
+        }
+
+        if (nonIncreasing) return ("是（遞減）", true);
+        if (nonDecreasing) return ("是（遞增）", true);
+        return ("否（不單調）", false);
+    }
+
+    /// <summary>取前 200 字並把換行與 Tab 換成空白，讓診斷行維持單行。</summary>
+    private static string Head200(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+        var head = text.Length > 200 ? text[..200] : text;
+        return head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
     }
 
     private static async Task<bool> StepAsync(IRunConsole console, int index, string title, Func<Task> action)

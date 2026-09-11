@@ -345,7 +345,7 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
 1. PRTG 版本
 2. device 與 sensor 總數
 3. **sensor type 分布**（依數量排序，含 unit 樣本，以及累積覆蓋 50/80/90/95% 各需幾個 type）
-4. 相依性（dependency）設定的使用比例
+4. 相依性（dependency）設定的使用比例；整份回應無法解析（不是 JSON、或根不是物件）時印出回應長度與開頭 200 字
 5. 群組樹概要
 6. **IP 覆蓋概要**：有幾個 device 設了 IPv4（判定與主機對應同一份純語法層，IP 帶 port 算 IP）、幾個是 DNS 名稱、
    幾個「無法判定」（打壞的 IP 如 `10.2xx.x.x`、含備註）並列出前 5 筆 objid——後者不會被解析也對不到主機，探測時就該看到。
@@ -360,8 +360,12 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
    同一步另做**排序穩定性判定**：比對不帶與帶 `sortby=objid` 兩次查詢的頁內 objid 是否遞增，
    回答「這台 PRTG 接不接受 `sortby`」。順序不穩定時分頁會靜默漏列，去重擋得住重複、擋不住漏列。
    結構同步與資源守門的分頁迴圈都以「遵守 `start` 且順序穩定」為前提，這一步就是驗證那兩個前提。
-9. **效能量測**（純診斷，結果不影響探測成敗）：三個子量測各自獨立容錯，任一失敗只印原因、繼續下一個。
-   成本固定為 6 次 `table.json` 與 64 次 `historicdata`。
+   `messages` 的順序依據是時間不是 objid（objid 是發出訊息的 sensor），因此它的四次查詢帶
+   `columns=objid,datetime`，順序判定看頁內 `datetime` 是否單調（全部可解析且非遞增或非遞減）；
+   單調即代表分頁可行（列鍵含時間），`sortby=objid` 對它有效與否只是資訊、不影響結論；
+   有任一筆 `datetime` 解析失敗就不下判斷。`devices`／`sensors` 仍以 objid 判順序。
+9. **效能量測**（純診斷，結果不影響探測成敗）：各子量測獨立容錯，任一失敗只印原因、繼續下一個。
+   成本固定為 9 次 `table.json` 與 87 次 `historicdata`。
    - **9a 分頁大小**：以結構同步同一組欄位（`objid,parentid,sensor,type,tags,unit,status,paused,dependency`）
      依序發 `count=500`／`2500`／`5000`／`50000` 各一次，每次印耗時、筆數、位元組數與**每千筆耗時**。
      結論行比較 `count=500` 與 `count=5000` 的每千筆耗時：後者低於前者一半代表每次請求的固定成本佔大宗、
@@ -374,6 +378,21 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
      `historicdata`（查詢形狀與夜間取數相同）。每級印總耗時、平均與最大延遲、失敗數與回傳列數；
      結論行以併發 1 為基準給總耗時倍率與加速倍數，平均延遲放大超過 1.5 倍時標記「PRTG 端開始排隊」。
      樣本不足 64 顆時盡量平均分配並註明結論僅供參考，一顆都沒有就略過。
+   - **9d 值的取得方式**：回答「數值要走快照還是 `historicdata`」。9c 已量測過的 objid 不再重用
+     （同一顆重查會吃到 PRTG 快取，量出來的延遲比實際快），9d-2 與 9d-3 挑的也彼此不重複。
+     - **9d-1 快照成本與分布**：`columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw&count=50000`
+       一次，印耗時、筆數、位元組數，以及 `interval`／`status` 各前 5 名的分布與
+       `lastvalue_raw` 可解析為數字的比例（`InvariantCulture`）——後者決定快照的值能不能直接當數值用。
+       `interval` 欄不可用時明說。每筆的 `lastvalue`／`lastvalue_raw` 留給 9d-2 對照。
+     - **9d-2 單位對照與各 type 延遲**：`SNMP CPU Load`、`SNMP Memory`、`SNMP Disk Free`、
+       `SNMP Traffic 64bit`、`Ping` 五種各挑最多 3 顆未暫停的感測器，循序各發一次 1 天 `historicdata`
+       （查詢形狀與夜間取數相同），每顆印延遲、列數、`histdata` 末列原始內容（截 300 字）與快照的
+       `lastvalue`／`lastvalue_raw`，每種 type 再印平均延遲。某 type 沒有樣本時明說。
+     - **9d-3 固定成本**：另挑最多 8 顆 `Ping`，前半查 1 小時、後半查 1 天，循序發。
+       比較兩組平均延遲與平均列數：1 小時延遲達 1 天的 0.7 倍以上代表成本以每次呼叫為主、
+       與時間跨度關係小（回填可以拉大跨度省呼叫次數），否則是成本隨跨度成長。
+     - **9d-4 messages 量級**：`content=messages&count=1&id=0` 配 `filter_drel=today` 與 `7days`
+       各一次，只讀 `treesize`，看訊息量級。
 
 探測**不檢查 `PrtgEnabled`**（只需要位址與認證資訊）：它的用途正是在啟用模組之前先摸清環境。
 
