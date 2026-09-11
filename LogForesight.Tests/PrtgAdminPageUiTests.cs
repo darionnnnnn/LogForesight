@@ -751,4 +751,45 @@ public class PrtgAdminPageUiTests
         Assert.Contains("loadGuardFields(current)", settingsJs);
         Assert.Contains("bindGuardPreview()", settingsJs);
     }
+
+    [Fact]
+    public void PrtgCshtml包含取數策略下拉與選項與激進提示()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("prtg-fetch-strategy", content);
+        Assert.Contains("value=\"conservative\"", content);
+        Assert.Contains("value=\"aggressive\"", content);
+        Assert.Contains("prtg-strategy-aggressive-hint", content);
+    }
+
+    [Fact]
+    public void PrtgAdminJs包含PrtgFetchStrategy且含切換提醒邏輯()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("prtgFetchStrategy", js);
+        Assert.Contains("prtg-strategy-aggressive-hint", js);
+        Assert.Contains("syncStrategyHint", js);
+    }
+
+    [Fact]
+    public void PrtgCshtml保留Utf8Bom()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var bytes = File.ReadAllBytes(prtgCshtmlPath);
+
+        Assert.True(bytes.Length >= 3, "Prtg.cshtml 長度小於 3 位元組");
+        Assert.Equal(0xEF, bytes[0]);
+        Assert.Equal(0xBB, bytes[1]);
+        Assert.Equal(0xBF, bytes[2]);
+    }
 }

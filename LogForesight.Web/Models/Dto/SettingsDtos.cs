@@ -162,6 +162,9 @@ public class SystemSettingsDto
     /// <summary>數值取數的主機範圍（triggered／all-mapped／triggered-plus-list）</summary>
     public string PrtgValueFetchScope { get; set; } = LogForesight.Core.Service.PrtgValueFetchScope.Triggered;
 
+    /// <summary>PRTG 取數策略（conservative／aggressive）</summary>
+    public string PrtgFetchStrategy { get; set; } = "";
+
     /// <summary>triggered-plus-list 模式額外納入的主機名稱</summary>
     public List<string> PrtgValueFetchExtraHosts { get; set; } = new();
 
@@ -448,6 +451,9 @@ public class UpdateSystemSettingsRequest
     /// <summary>數值取數的主機範圍。可空，有送才更新</summary>
     public string? PrtgValueFetchScope { get; set; }
 
+    /// <summary>PRTG 取數策略（conservative／aggressive）。可空，有送才更新</summary>
+    public string? PrtgFetchStrategy { get; set; }
+
     /// <summary>triggered-plus-list 模式額外納入的主機名稱。可空，有送才更新</summary>
     public List<string>? PrtgValueFetchExtraHosts { get; set; }
 
@@ -543,6 +549,9 @@ public class UpdatePrtgSettingsRequest
 
     /// <summary>數值取數的主機範圍。可空，有送才更新</summary>
     public string? PrtgValueFetchScope { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
+    public string? PrtgFetchStrategy { get; set; }
 
     /// <summary>triggered-plus-list 模式額外納入的主機名稱。可空，有送才更新</summary>
     public List<string>? PrtgValueFetchExtraHosts { get; set; }

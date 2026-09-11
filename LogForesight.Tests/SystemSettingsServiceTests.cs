@@ -2504,6 +2504,110 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Contains("取數範圍", ex.Message);
     }
 
+    [Fact]
+    public void PrtgFetchStrategy_新建設定讀出預設值為conservative()
+    {
+        var service = Create();
+        var settings = service.Get();
+        Assert.Equal(LogForesight.Core.Service.PrtgFetchStrategy.Conservative, settings.PrtgFetchStrategy);
+    }
+
+    [Fact]
+    public void PrtgFetchStrategy_UpdatePrtg存讀往返()
+    {
+        var service = Create();
+        var updated = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
+        });
+        Assert.Equal(LogForesight.Core.Service.PrtgFetchStrategy.Aggressive, updated.PrtgFetchStrategy);
+        Assert.Equal(LogForesight.Core.Service.PrtgFetchStrategy.Aggressive, service.Get().PrtgFetchStrategy);
+    }
+
+    [Fact]
+    public void PrtgFetchStrategy_UpdatePrtg未送該鍵時沿用既有值()
+    {
+        var service = Create();
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
+        });
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgTimeoutSeconds = 90
+        });
+
+        Assert.Equal(LogForesight.Core.Service.PrtgFetchStrategy.Aggressive, service.Get().PrtgFetchStrategy);
+    }
+
+    [Fact]
+    public void PrtgFetchStrategy_Update整包不合法值擲DomainException()
+    {
+        var service = Create();
+        var req = ValidRequest();
+        req.PrtgFetchStrategy = "turbo";
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(req));
+        Assert.Contains("conservative", ex.Message);
+    }
+
+    [Fact]
+    public void PrtgFetchStrategy_UpdatePrtg不合法值擲DomainException()
+    {
+        var service = Create();
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgFetchStrategy = "turbo"
+        }));
+        Assert.Contains("conservative", ex.Message);
+    }
+
+    [Fact]
+    public void PrtgFetchStrategy_Update整包稽核紀錄Before與After皆包含欄位()
+    {
+        var audit = new RecordingAuditService();
+        var service = new SystemSettingsService(_store, FakeCurrentUser.WithCapabilities(), audit, new FakeUserStore(),
+            new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
+                _mailRecords, new FakeHandlingStore(),
+                MailState), new FakeReportUsageQuery());
+
+        var req = ValidRequest();
+        req.PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive;
+        service.Update(req);
+
+        var record = audit.Entries.Last();
+        var detailNode = System.Text.Json.Nodes.JsonNode.Parse(record.DetailJson!)!;
+        var detailObj = detailNode.AsObject();
+
+        Assert.True(detailObj["Before"]!.AsObject().ContainsKey("PrtgFetchStrategy"));
+        Assert.True(detailObj["After"]!.AsObject().ContainsKey("PrtgFetchStrategy"));
+    }
+
+    [Fact]
+    public void PrtgFetchStrategy_UpdatePrtg稽核紀錄Before與After皆包含欄位()
+    {
+        var audit = new RecordingAuditService();
+        var service = new SystemSettingsService(_store, FakeCurrentUser.WithCapabilities(), audit, new FakeUserStore(),
+            new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
+                _mailRecords, new FakeHandlingStore(),
+                MailState), new FakeReportUsageQuery());
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
+        });
+
+        var record = audit.Entries.Last();
+        var detailNode = System.Text.Json.Nodes.JsonNode.Parse(record.DetailJson!)!;
+        var detailObj = detailNode.AsObject();
+
+        Assert.True(detailObj["Before"]!.AsObject().ContainsKey("PrtgFetchStrategy"));
+        Assert.True(detailObj["After"]!.AsObject().ContainsKey("PrtgFetchStrategy"));
+    }
+
     /// <summary>
     /// 守門搬到設定頁後，它的儲存動線改走整包 `PUT /api/admin/settings`（回饋第 40 輪批次F）。
     /// 整包請求裡的 PRTG 欄位一律「有送才更新」——只送守門欄位時，

@@ -128,6 +128,11 @@ function renderPrtgFields(settings) {
         scopeSelect.value = toScopeSelectValue(prtgEnabled, settings.prtgValueFetchScope);
         syncScopeFields();
     }
+    const strategySelect = document.getElementById('prtg-fetch-strategy');
+    if (strategySelect) {
+        strategySelect.value = settings.prtgFetchStrategy === 'aggressive' ? 'aggressive' : 'conservative';
+        syncStrategyHint();
+    }
     syncStructureSyncGate();
     const extraHosts = document.getElementById('prtg-value-fetch-extra-hosts');
     if (extraHosts) extraHosts.value = (settings.prtgValueFetchExtraHosts ?? []).join('\n');
@@ -169,6 +174,16 @@ function syncScopeFields() {
 }
 
 /**
+ * 取數策略切換：激進策略顯示警告區塊（負載較高提示）。
+ */
+function syncStrategyHint() {
+    const select = document.getElementById('prtg-fetch-strategy');
+    const isAggressive = (select ? select.value : '') === 'aggressive';
+    document.getElementById('prtg-strategy-aggressive-hint')
+        ?.classList.toggle('d-none', !isAggressive);
+}
+
+/**
  * 鏡像頁籤「同步結構與對應」的閘：擷取未啟用時同步一定被後端拒絕（PrtgStructureSyncService），
  * 讓按鈕直接灰掉並說去哪開，比按下去看紅字有用。以「已儲存的值」為準——
  * 下拉改了還沒存不算啟用，否則會讓人以為存過了。
@@ -183,6 +198,9 @@ function syncStructureSyncGate() {
 function bindScopeControls() {
     const select = document.getElementById('prtg-value-fetch-scope');
     if (select) select.addEventListener('change', syncScopeFields);
+
+    const strategySelect = document.getElementById('prtg-fetch-strategy');
+    if (strategySelect) strategySelect.addEventListener('change', syncStrategyHint);
 
     const button = document.getElementById('prtg-scope-estimate-btn');
     const result = document.getElementById('prtg-scope-estimate-result');
@@ -345,9 +363,11 @@ function bindParamsForm() {
             // 範圍留著原值，下次重新啟用不必再選一次
             const scopeValue = document.getElementById('prtg-value-fetch-scope')?.value ?? PRTG_SCOPE_OFF;
             const enabled = scopeValue !== PRTG_SCOPE_OFF;
+            const fetchStrategy = document.getElementById('prtg-fetch-strategy')?.value || 'conservative';
 
             const payload = {
                 prtgEnabled: enabled,
+                prtgFetchStrategy: fetchStrategy,
                 prtgIgnoreSslErrors: ignoreSsl,
                 prtgTimeoutSeconds: timeoutSeconds,
                 prtgFetchConcurrency: fetchConcurrency,
