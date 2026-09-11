@@ -723,11 +723,6 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>
-    /// PRTG table.json 分頁抓取與解析的單一私有輔助方法（階段 1、2、3 共用）。
-    /// 每批轉換累積達 pageSize（500）即回呼寫入資料庫並清空緩衝，避免整份堆積於記憶體。
-    /// 當遠端回傳空陣列時結束分頁。
-    /// </summary>
-    /// <summary>
     /// 一個分頁階段的產出。Converged=false 代表分頁翻到上限仍未到結尾——
     /// 已寫入的筆數仍然有效（寫入是冪等 upsert），呼叫端據此把階段計為失敗但保留數字。
     /// </summary>
@@ -765,7 +760,8 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>
-    /// PRTG table.json 分頁讀取的呼叫入口，實作在 <see cref="PrtgTablePager"/>（全專案唯一一份分頁邏輯）。
+    /// PRTG table.json 分頁讀取的呼叫入口（階段 1、2、3 共用），實作在 <see cref="PrtgTablePager"/>（全專案唯一一份分頁邏輯）。
+    /// 分頁 5000／寫入批次 500。
     /// </summary>
     private Task<PrtgPagerResult> FetchTablePagedAsync<T>(
         string content,

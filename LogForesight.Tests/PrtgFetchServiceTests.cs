@@ -547,8 +547,8 @@ public class PrtgFetchServiceTests : IDisposable
     {
         // 第一頁 500 筆
         var page1Sb = new StringBuilder();
-        page1Sb.Append("{\"treesize\":503,\"devices\":[");
-        for (var i = 1; i <= 500; i++)
+        page1Sb.Append("{\"treesize\":5003,\"devices\":[");
+        for (var i = 1; i <= 5000; i++)
         {
             if (i > 1) page1Sb.Append(',');
             page1Sb.Append($"{{\"objid\":{i},\"device\":\"Dev-{i}\",\"paused\":false}}");
@@ -557,13 +557,13 @@ public class PrtgFetchServiceTests : IDisposable
         var page1Json = page1Sb.ToString();
 
         // 第二頁 3 筆
-        var page2Json = "{\"treesize\":503,\"devices\":[" +
-                        "{\"objid\":501,\"device\":\"Dev-501\",\"paused\":false}," +
-                        "{\"objid\":502,\"device\":\"Dev-502\",\"paused\":false}," +
-                        "{\"objid\":503,\"device\":\"Dev-503\",\"paused\":false}" +
+        var page2Json = "{\"treesize\":5003,\"devices\":[" +
+                        "{\"objid\":5001,\"device\":\"Dev-5001\",\"paused\":false}," +
+                        "{\"objid\":5002,\"device\":\"Dev-5002\",\"paused\":false}," +
+                        "{\"objid\":5003,\"device\":\"Dev-5003\",\"paused\":false}" +
                         "]}";
         // 第三頁空陣列
-        var page3Json = "{\"treesize\":503,\"devices\":[]}";
+        var page3Json = "{\"treesize\":5003,\"devices\":[]}";
 
         var (client, _) = CreateClient(req =>
         {
@@ -571,7 +571,7 @@ public class PrtgFetchServiceTests : IDisposable
             if (url.Contains("content=devices"))
             {
                 if (url.Contains("start=0")) return JsonResponse(page1Json);
-                if (url.Contains("start=500")) return JsonResponse(page2Json);
+                if (url.Contains("start=5000")) return JsonResponse(page2Json);
                 return JsonResponse(page3Json);
             }
             if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
@@ -586,11 +586,11 @@ public class PrtgFetchServiceTests : IDisposable
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
         Assert.Equal(0, result.Failures);
-        Assert.Equal(503, result.Devices);
+        Assert.Equal(5003, result.Devices);
 
         using var ctx = _fx.NewContext();
         var count = await ctx.PrtgDevices.CountAsync();
-        Assert.Equal(503, count);
+        Assert.Equal(5003, count);
     }
 
     [Fact]
@@ -599,7 +599,7 @@ public class PrtgFetchServiceTests : IDisposable
         // PRTG 前面若擺了會忽略 start 參數的代理，**每頁都回滿一頁**同一批資料。
         // 只靠「空頁」或「未滿一頁」判定都會永遠跑不完、整趥夜間批次無聲卡死。
         // 替身必須真的回滿頁（500 筆），每頁只回兩筆的替身第一頁就已經「未滿一頁」而停，根本沒測到這件事。
-        var fullPage = BuildDevicePage(1, 500);
+        var fullPage = BuildDevicePage(1, PageSizeForFullPage);
 
         var (client, handler) = CreateClient(req =>
         {
@@ -619,7 +619,7 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Same(task, finished);
         var result = await task;
         Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("content=devices")));
-        Assert.Equal(500, result.Devices);
+        Assert.Equal(PageSizeForFullPage, result.Devices);
         Assert.Equal(0, result.Failures);
     }
 
@@ -627,8 +627,8 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task FetchDayAsync_超出範圍夾到末頁時備註重複列數與階段耗時()
     {
         // 實機行為（探測步驟 8 實測）：start 超出範圍時回最後一頁而非空頁
-        var page1 = BuildDevicePage(1, 500);
-        var page2 = BuildDevicePage(501, 500);
+        var page1 = BuildDevicePage(1, PageSizeForFullPage);
+        var page2 = BuildDevicePage(PageSizeForFullPage + 1, PageSizeForFullPage);
 
         var (client, handler) = CreateClient(req =>
         {
@@ -646,10 +646,10 @@ public class PrtgFetchServiceTests : IDisposable
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
-        Assert.Equal(1000, result.Devices);
+        Assert.Equal(PageSizeForFullPage * 2, result.Devices);
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, handler.RequestedUrls.Count(u => u.Contains("content=devices")));
-        Assert.Contains(console.Lines, l => l.Contains("跳過重複列 500 筆"));
+        Assert.Contains(console.Lines, l => l.Contains($"跳過重複列 {PageSizeForFullPage} 筆"));
         Assert.Contains(console.Lines, l => l.Contains("[階段 1/4]") && l.Contains("耗時"));
     }
 
@@ -692,6 +692,12 @@ public class PrtgFetchServiceTests : IDisposable
         using var ctx = _fx.NewContext();
         Assert.Equal(6, await ctx.PrtgStateChanges.CountAsync(c => c.SensorObjid == 9001));
     }
+
+    /// <summary>
+    /// 「滿頁」的筆數＝分頁器的預設 count。要模擬「PRTG 回滿一頁」就必須剛好是這個數，
+    /// 少一筆就會被停止條件判成最後一頁，整個情境就測不到了。
+    /// </summary>
+    private const int PageSizeForFullPage = 5000;
 
     /// <summary>產生一頁 devices（objid 從 firstObjid 連號）。</summary>
     private static string BuildDevicePage(int firstObjid, int count)

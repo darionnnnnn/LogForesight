@@ -52,7 +52,7 @@ public class PrtgTablePagerTests
     /// <summary>把回應交給分頁器，收集被寫出的 objid。</summary>
     private static async Task<(PrtgPagerResult Result, List<long> Written, StubHandler Handler, TestConsole Console)> RunAsync(
         Func<string, string> responder, int pageSize, int maxPagesWhenUnknown = PrtgTablePager.DefaultMaxPages,
-        Func<JsonElement, string?>? rowKey = null, string content = "devices")
+        Func<JsonElement, string?>? rowKey = null, string content = "devices", int? batchSize = null)
     {
         var handler = new StubHandler { Responder = responder };
         using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
@@ -66,7 +66,8 @@ public class PrtgTablePagerTests
             ct: CancellationToken.None,
             pageSize: pageSize,
             maxPagesWhenTreeSizeUnknown: maxPagesWhenUnknown,
-            rowKey: rowKey);
+            rowKey: rowKey,
+            batchSize: batchSize ?? PrtgTablePager.DefaultBatchSize);
 
         return (result, written, handler, console);
     }
@@ -247,7 +248,8 @@ public class PrtgTablePagerTests
             onBatch: batch => written.AddRange(batch),
             ct: CancellationToken.None,
             pageSize: 5,
-            maxPagesWhenTreeSizeUnknown: 3));
+            maxPagesWhenTreeSizeUnknown: 3,
+            batchSize: 5));
 
         // 讀到的四頁 20 筆都已交給 onBatch（寫入是冪等 upsert，留著比丟掉好）
         Assert.Equal(20, written.Count);
@@ -341,5 +343,59 @@ public class PrtgTablePagerTests
             onBatch: _ => { },
             ct: cts.Token,
             pageSize: 5));
+    }
+
+    [Fact]
+    public async Task pageSize與batchSize獨立()
+    {
+        var handler = new StubHandler
+        {
+            Responder = url =>
+            {
+                var start = StartOf(url);
+                return start == 0
+                    ? Page("devices", Enumerable.Range(1, 1200).Select(i => (long)i))
+                    : Page("devices", Array.Empty<long>());
+            }
+        };
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var batchSizes = new List<int>();
+        var written = new List<long>();
+
+        var result = await PrtgTablePager.FetchAsync<long>(
+            client, new TestConsole(), "devices", "objid", null,
+            mapper: el => el.GetProperty("objid").GetInt64(),
+            onBatch: batch =>
+            {
+                batchSizes.Add(batch.Count);
+                written.AddRange(batch);
+            },
+            ct: CancellationToken.None,
+            pageSize: 5000,
+            batchSize: 500);
+
+        Assert.Equal(3, batchSizes.Count);
+        Assert.Equal(new[] { 500, 500, 200 }, batchSizes);
+        Assert.Equal(1200, result.Mapped);
+        Assert.Equal(1200, written.Count);
+        Assert.Single(handler.RequestedUrls);
+    }
+
+    [Fact]
+    public async Task 預設分頁大小為5000且批次為500()
+    {
+        var handler = new StubHandler { Responder = _ => Page("devices", Array.Empty<long>()) };
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+
+        await PrtgTablePager.FetchAsync<long>(
+            client, new TestConsole(), "devices", "objid", null,
+            mapper: el => el.GetProperty("objid").GetInt64(),
+            onBatch: _ => { },
+            ct: CancellationToken.None);
+
+        var url = Assert.Single(handler.RequestedUrls);
+        Assert.Contains("count=5000", url);
+        Assert.Equal(5000, PrtgTablePager.DefaultPageSize);
+        Assert.Equal(500, PrtgTablePager.DefaultBatchSize);
     }
 }
