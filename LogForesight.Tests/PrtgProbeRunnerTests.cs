@@ -705,4 +705,160 @@ public class PrtgProbeRunnerTests
 
         Assert.Contains(console.Lines, l => l.Contains("treesize 回報 2 筆但實際取得 4 筆"));
     }
+
+    /// <summary>
+    /// 步驟 1~8 餵最小合法資料、步驟 3 的 sensor 表由 step3Sensors 指定，
+    /// 步驟 9 的量測查詢（9a／9b／historicdata）交給 perfResponder，回 null 表示走預設空回應。
+    /// </summary>
+    private static StubHandler BuildPerfStub(string step3Sensors, Func<string, HttpResponseMessage?>? perfResponder = null)
+    {
+        return new StubHandler
+        {
+            OnSend = (req, _) =>
+            {
+                var url = req.RequestUri!.ToString();
+
+                var custom = perfResponder?.Invoke(url);
+                if (custom != null) return Task.FromResult(custom);
+
+                if (url.Contains("/api/status.json"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.2.98""}"));
+                if (url.Contains("count=1"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
+                if (url.Contains("columns=objid,device,sensor,type,tags,unit"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, step3Sensors));
+                if (url.Contains("columns=objid,dependency"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": []}"));
+                if (url.Contains("content=groups"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""groups"": []}"));
+                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
+                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""devices"": []}"));
+
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+            }
+        };
+    }
+
+    private static string SensorRows(int count, string type = "Ping", string status = "Up")
+    {
+        var rows = Enumerable.Range(1, count)
+            .Select(i => $"{{\"objid\": {i}, \"type\": \"{type}\", \"status\": \"{status}\", \"parentid\": 1}}");
+        return "{\"sensors\": [" + string.Join(",", rows) + "]}";
+    }
+
+    private static int CountFromUrl(string url) => int.Parse(url.Split("count=")[1].Split('&')[0]);
+
+    [Fact]
+    public async Task RunAsync_步驟9a_四個count都發出並印每千筆與結論()
+    {
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        {
+            if (!url.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency")) return null;
+            var count = CountFromUrl(url);
+            var rows = Enumerable.Range(1, count).Select(i => $"{{\"objid\": {i}}}");
+            return JsonResponse(HttpStatusCode.OK, "{\"sensors\": [" + string.Join(",", rows) + "]}");
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        foreach (var line in console.Lines.Where(l => l.Contains("9a") || l.Contains("9b") || l.Contains("9c")))
+            _output.WriteLine(line);
+
+        Assert.True(result);
+        foreach (var count in new[] { 500, 2500, 5000, 50000 })
+        {
+            Assert.Contains(stub.RequestedUrls, u => u.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency") && u.Contains($"count={count}&start=0"));
+            Assert.Single(console.Lines, l => l.Contains($"9a：count={count} →"));
+        }
+        Assert.Equal(4, console.Lines.Count(l => l.Contains("9a：count=")));
+        Assert.Single(console.Lines, l => l.Contains("9a：") && !l.Contains("9a：count="));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9c_無可用感測器時印略過且探測仍回true()
+    {
+        var stub = BuildPerfStub(SensorRows(3, status: "Paused"));
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("無可用感測器，略過"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9c_樣本8顆時印分配警告且四級各一行()
+    {
+        var stub = BuildPerfStub(SensorRows(8), url => url.Contains("/api/historicdata.json")
+            ? JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-09-10 00:00:00"", ""value"": ""1""}]}")
+            : null);
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        foreach (var line in console.Lines.Where(l => l.Contains("9c")))
+            _output.WriteLine(line);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("可用感測器只有 8 顆"));
+        Assert.Equal(4, console.Lines.Count(l => l.Contains("9c：併發 ") && l.Contains("→ 總耗時")));
+        Assert.Equal(3, console.Lines.Count(l => l.Contains("相對併發 1：總耗時 ×")));
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("/api/historicdata.json") && u.Contains("avg=3600") && u.Contains("sdate="));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9c_單顆historicdata失敗計入失敗數不中斷()
+    {
+        // objid 1~8 依序分成 [1,2]／[3,4]／[5,6]／[7,8]：objid 5 落在併發 4 那一級
+        var stub = BuildPerfStub(SensorRows(8), url =>
+        {
+            if (!url.Contains("/api/historicdata.json")) return null;
+            if (url.Contains("id=5&")) return JsonResponse(HttpStatusCode.InternalServerError, @"{""error"": ""boom""}");
+            return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""value"": ""1""}]}");
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        foreach (var line in console.Lines.Where(l => l.Contains("9c")))
+            _output.WriteLine(line);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9c：併發 4 → ") && l.Contains("失敗 1"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9a_全欄位50000失敗時9b仍印自己的數字()
+    {
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        {
+            if (url.Contains("columns=objid,parentid,") && url.Contains("count=50000"))
+                return JsonResponse(HttpStatusCode.InternalServerError, @"{""error"": ""boom""}");
+            if (url.Contains("columns=objid,parentid,"))
+            {
+                var count = CountFromUrl(url);
+                var rows = Enumerable.Range(1, count).Select(i => $"{{\"objid\": {i}}}");
+                return JsonResponse(HttpStatusCode.OK, "{\"sensors\": [" + string.Join(",", rows) + "]}");
+            }
+            if (url.Contains("columns=objid&count=50000"))
+                return JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1}]}");
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        foreach (var line in console.Lines.Where(l => l.Contains("9a") || l.Contains("9b")))
+            _output.WriteLine(line);
+
+        Assert.True(result);
+        var objidOnly = console.Lines.Single(l => l.Contains("9b：objid-only"));
+        Assert.DoesNotContain("%", objidOnly);
+    }
 }

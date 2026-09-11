@@ -70,7 +70,7 @@ public static class PrtgProbeRunner
         {
             // 註：PRTG sensors 表沒有 unit 欄位（未知欄位會被靜默忽略），單位資訊實際在
             // lastvalue 的格式化字串（如「92 %」「12 kbit/s」）；unit 欄保留作 fallback。
-            var senTableJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,device,sensor,type,tags,unit,lastvalue,parentid&count=50000", ct);
+            var senTableJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,device,sensor,type,tags,unit,lastvalue,parentid,status&count=50000", ct);
             var parsedSensors = ParseTable(senTableJson, "sensors", el =>
             {
                 var type = GetStringProperty(el, "type");
@@ -85,7 +85,12 @@ public static class PrtgProbeRunner
                 {
                     parentId = pid;
                 }
-                return new SensorTypeSample(type, unit, parentId);
+                long? objid = null;
+                if (long.TryParse(GetStringProperty(el, "objid"), out var oid))
+                {
+                    objid = oid;
+                }
+                return new SensorTypeSample(type, unit, parentId, objid, GetStringProperty(el, "status"));
             });
 
             if (parsedSensors.CorruptedCount > 0)
@@ -373,6 +378,51 @@ public static class PrtgProbeRunner
             await DiagnosePagingAsync(client, console, content, extra, ct);
         }
 
+        // 步驟 9：效能量測（不影響探測成敗）——量「分頁放大有沒有效」「只取 objid 省多少」「併發開到幾級還不排隊」。
+        // 三個子量測各自 try/catch，任何失敗只印原因、不把整趟探測算失敗。
+        console.WriteLine("[9] 效能量測（table.json 分頁大小、objid-only、historicdata 併發）");
+        console.WriteLine("     本步驟會發 64 次 historicdata 與 6 次 table.json，供後續決定分頁大小與併發上限");
+
+        PerfSample? fullColumns50000 = null;
+        try
+        {
+            fullColumns50000 = await MeasurePagingAsync(client, console, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9a：無法量測（{ex.Message}）");
+        }
+
+        try
+        {
+            await MeasureObjidOnlyAsync(client, console, fullColumns50000, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9b：無法量測（{ex.Message}）");
+        }
+
+        try
+        {
+            await MeasureConcurrencyAsync(client, console, sensorSamples, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9c：無法量測（{ex.Message}）");
+        }
+
         console.WriteLine();
         if (allOk)
         {
@@ -462,6 +512,221 @@ public static class PrtgProbeRunner
         }
     }
 
+    /// <summary>單次量測結果：耗時（毫秒）、回傳筆數、回應位元組數。</summary>
+    private sealed record PerfSample(double ElapsedMs, int RowCount, int Bytes);
+
+    /// <summary>結構同步用的欄位組，9a 以它量「分頁放大有沒有效」。</summary>
+    private const string PagingColumns = "objid,parentid,sensor,type,tags,unit,status,paused,dependency";
+
+    /// <summary>
+    /// 9a：同一組欄位依序用 count=500／2500／5000／50000 各查一次，比較每千筆耗時，
+    /// 判斷回應時間是固定成本佔大宗（分頁放大有效）還是與筆數近似線性。
+    /// 回傳 count=50000 那次的結果供 9b 比較。
+    /// </summary>
+    private static async Task<PerfSample?> MeasurePagingAsync(PrtgClient client, IRunConsole console, CancellationToken ct)
+    {
+        var counts = new[] { 500, 2500, 5000, 50000 };
+        var samples = new Dictionary<int, PerfSample>();
+
+        foreach (var count in counts)
+        {
+            var sample = await MeasureTableAsync(client, $"/api/table.json?content=sensors&columns={PagingColumns}&count={count}&start=0", ct);
+            samples[count] = sample;
+            console.WriteLine($"     9a：count={count} → 耗時 {sample.ElapsedMs:F0} ms、回傳 {sample.RowCount} 筆、{sample.Bytes} bytes、每千筆 {PerThousandMs(sample):F1} ms");
+        }
+
+        if (samples.Values.Any(s => s.RowCount == 0))
+        {
+            console.WriteLine("     9a：樣本不足，無法判定");
+        }
+        else
+        {
+            var a = PerThousandMs(samples[500]);
+            var b = PerThousandMs(samples[5000]);
+            if (b < a * 0.5)
+                console.WriteLine($"     9a：✓ 每次請求的固定成本佔大宗（每千筆 {a:F1} ms → {b:F1} ms），分頁放大有效");
+            else
+                console.WriteLine($"     9a：⚠ 回應時間與筆數近似線性（每千筆 {a:F1} ms → {b:F1} ms），分頁放大效益有限");
+        }
+
+        return samples.TryGetValue(50000, out var full) ? full : null;
+    }
+
+    /// <summary>
+    /// 9b：只取 objid 的同筆數查詢，與 9a 的全欄位 count=50000 比耗時與位元組。
+    /// 9a 那次沒有結果時只印自己的數字。
+    /// </summary>
+    private static async Task MeasureObjidOnlyAsync(PrtgClient client, IRunConsole console, PerfSample? fullColumns, CancellationToken ct)
+    {
+        var sample = await MeasureTableAsync(client, "/api/table.json?content=sensors&columns=objid&count=50000", ct);
+        if (fullColumns != null && fullColumns.ElapsedMs > 0 && fullColumns.Bytes > 0)
+        {
+            var timePct = sample.ElapsedMs * 100.0 / fullColumns.ElapsedMs;
+            var bytePct = sample.Bytes * 100.0 / fullColumns.Bytes;
+            console.WriteLine($"     9b：objid-only 耗時 {sample.ElapsedMs:F0} ms（全欄位的 {timePct:F0}%）、{sample.Bytes} bytes（全欄位的 {bytePct:F0}%）");
+        }
+        else
+        {
+            console.WriteLine($"     9b：objid-only 耗時 {sample.ElapsedMs:F0} ms、{sample.Bytes} bytes");
+        }
+    }
+
+    private static async Task<PerfSample> MeasureTableAsync(PrtgClient client, string url, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var json = await client.GetJsonAsync(url, ct);
+        sw.Stop();
+        var parsed = ParseTable(json, "sensors", el => GetStringProperty(el, "objid") ?? string.Empty);
+        return new PerfSample(sw.Elapsed.TotalMilliseconds, parsed.Rows.Count, System.Text.Encoding.UTF8.GetByteCount(json));
+    }
+
+    private static double PerThousandMs(PerfSample sample)
+        => sample.RowCount > 0 ? sample.ElapsedMs * 1000.0 / sample.RowCount : 0.0;
+
+    /// <summary>9c 併發量測的優先 type 順序：先挑最輕、最可能有歷史資料的感測器。</summary>
+    private static readonly string[] ConcurrencyTypePriority =
+        { "Ping", "SNMP CPU Load", "SNMP Traffic 64bit", "SNMP Memory" };
+
+    /// <summary>
+    /// 9c：以步驟 3 的樣本挑最多 64 顆未暫停的感測器，分成四組不重複樣本，
+    /// 依序以併發 1／2／4／8 查同一天的 historicdata，比較總耗時加速與平均延遲放大。
+    /// </summary>
+    private static async Task MeasureConcurrencyAsync(PrtgClient client, IRunConsole console, List<SensorTypeSample> samples, CancellationToken ct)
+    {
+        var candidates = samples
+            .Where(s => s.Objid.HasValue)
+            .Where(s => s.Status == null || s.Status.IndexOf("paus", StringComparison.OrdinalIgnoreCase) < 0)
+            .GroupBy(s => s.Objid!.Value)
+            .Select(g => g.First())
+            .OrderBy(s => TypePriorityRank(s.Type))
+            .Take(64)
+            .Select(s => s.Objid!.Value)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            console.WriteLine("     9c：無可用感測器，略過");
+            return;
+        }
+
+        if (candidates.Count < 64)
+        {
+            console.WriteLine($"     9c：⚠ 可用感測器只有 {candidates.Count} 顆，各級樣本數不等，結論僅供參考");
+        }
+
+        // 不重複分組：同一顆重查會吃到 PRTG 快取，讓後面的等級看起來變快
+        var groups = new List<List<long>>();
+        var taken = 0;
+        for (var i = 0; i < 4; i++)
+        {
+            var size = (candidates.Count - taken) / (4 - i);
+            groups.Add(candidates.Skip(taken).Take(size).ToList());
+            taken += size;
+        }
+
+        var sdate = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd-00-00-00");
+        var edate = DateTime.Today.ToString("yyyy-MM-dd-00-00-00");
+
+        var levels = new[] { 1, 2, 4, 8 };
+        var results = new Dictionary<int, (double TotalMs, double AvgMs, double MaxMs, int Failed, int Rows)>();
+
+        for (var i = 0; i < levels.Length; i++)
+        {
+            var level = levels[i];
+            var ids = groups[i];
+            var latencies = new List<double>();
+            var failed = 0;
+            var rows = 0;
+            var gate = new object();
+
+            using var limiter = new SemaphoreSlim(level, level);
+            var swTotal = System.Diagnostics.Stopwatch.StartNew();
+            await Task.WhenAll(ids.Select(async id =>
+            {
+                await limiter.WaitAsync(ct);
+                try
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var json = await client.GetJsonAsync(
+                        $"/api/historicdata.json?id={id}&avg=3600&sdate={sdate}&edate={edate}", ct);
+                    sw.Stop();
+                    var count = CountHistData(json);
+                    lock (gate)
+                    {
+                        latencies.Add(sw.Elapsed.TotalMilliseconds);
+                        rows += count;
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    lock (gate) { failed++; }
+                }
+                finally
+                {
+                    limiter.Release();
+                }
+            }));
+            swTotal.Stop();
+
+            var avg = latencies.Count > 0 ? latencies.Average() : 0.0;
+            var max = latencies.Count > 0 ? latencies.Max() : 0.0;
+            results[level] = (swTotal.Elapsed.TotalMilliseconds, avg, max, failed, rows);
+            console.WriteLine($"     9c：併發 {level} → 總耗時 {swTotal.Elapsed.TotalMilliseconds:F0} ms、平均延遲 {avg:F0} ms、最大延遲 {max:F0} ms、失敗 {failed}、回傳列數 {rows}");
+        }
+
+        var baseline = results[1];
+        if (baseline.AvgMs <= 0 || baseline.TotalMs <= 0)
+        {
+            console.WriteLine("     9c：基準級無有效樣本，無法比較");
+            return;
+        }
+
+        foreach (var level in levels.Skip(1))
+        {
+            var r = results[level];
+            if (r.TotalMs <= 0 || r.AvgMs <= 0)
+            {
+                console.WriteLine($"     9c：併發 {level} 相對併發 1：無有效樣本，無法比較");
+                continue;
+            }
+            var speedup = baseline.TotalMs / r.TotalMs;
+            var latencyRatio = r.AvgMs / baseline.AvgMs;
+            var mark = latencyRatio > 1.5 ? " ← PRTG 端開始排隊" : string.Empty;
+            console.WriteLine($"     9c：併發 {level} 相對併發 1：總耗時 ×{1 / speedup:F2}（加速 {speedup:F1} 倍）、平均延遲 ×{latencyRatio:F2}{mark}");
+        }
+    }
+
+    private static int TypePriorityRank(string type)
+    {
+        for (var i = 0; i < ConcurrencyTypePriority.Length; i++)
+        {
+            if (string.Equals(type, ConcurrencyTypePriority[i], StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return ConcurrencyTypePriority.Length;
+    }
+
+    /// <summary>historicdata 回應的資料列數＝根物件 histdata 陣列長度；不是陣列或缺失算 0。</summary>
+    private static int CountHistData(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return 0;
+            if (!root.TryGetProperty("histdata", out var arr) || arr.ValueKind != JsonValueKind.Array) return 0;
+            return arr.GetArrayLength();
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     /// <summary>
     /// 少於兩筆時視為遞增（無從判定，不要因為資料太少就報警）。
     /// </summary>
@@ -496,7 +761,7 @@ public static class PrtgProbeRunner
         }
     }
 
-    private sealed record SensorTypeSample(string Type, string? Unit, int? ParentId);
+    private sealed record SensorTypeSample(string Type, string? Unit, int? ParentId, long? Objid = null, string? Status = null);
 
     private sealed record DeviceHostSample(int? Objid, string? Host);
 
