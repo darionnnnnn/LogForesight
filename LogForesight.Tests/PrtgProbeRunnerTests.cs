@@ -874,7 +874,7 @@ public class PrtgProbeRunnerTests
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("columns=objid,dependency"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "<html>error</html>"));
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "not json at all"));
             return inner(req, ct);
         };
 
@@ -884,7 +884,47 @@ public class PrtgProbeRunnerTests
 
         Assert.True(result);
         Assert.Contains(console.Lines, l => l.Contains("回應無法解析：長度") && l.Contains("bytes"));
-        Assert.Contains(console.Lines, l => l.Contains("開頭：<html>"));
+        Assert.Contains(console.Lines, l => l.Contains("開頭：not json at all"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟4_回應HTML時擲例外且步驟失敗()
+    {
+        const string html = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("columns=objid,dependency"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, html));
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.False(result);
+        Assert.Contains(console.Lines, l => l.Contains("失敗：PRTG 回傳 HTML 而非 JSON") && l.Contains("no-content"));
+        Assert.Contains(console.Lines, l => l.Contains("探測失敗"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9a_回應HTML時印無法量測不中斷探測()
+    {
+        const string html = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+            url.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency")
+                ? JsonResponse(HttpStatusCode.OK, html)
+                : null);
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9a：無法量測（PRTG 回傳 HTML 而非 JSON"));
     }
 
     /// <summary>正常解析時不能冒出這一行，否則每次探測都會多一句假警告。</summary>

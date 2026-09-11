@@ -298,7 +298,17 @@ public sealed class PrtgClient : IDisposable
                 throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
             }
 
-            return await resp.Content.ReadAsStringAsync(ct);
+            var text = await resp.Content.ReadAsStringAsync(ct);
+            var trimmed = text.Trim();
+            if (trimmed.StartsWith('<'))
+            {
+                var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;
+                var sanitized = head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+                throw new PrtgClientException(
+                    $"PRTG 回傳 HTML 而非 JSON（多半是伺服器端處理逾時或負載過高回的空白頁）：{sanitized}");
+            }
+
+            return text;
         }
     }
 

@@ -111,6 +111,69 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task GetJsonAsync_回傳HTML時擲例外且訊息可辨識()
+    {
+        const string html73Bytes = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(HtmlResponse(HttpStatusCode.OK, html73Bytes))
+        };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+            client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
+
+        Assert.Contains("HTML 而非 JSON", ex.Message);
+        Assert.Contains("no-content", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_前後有空白的HTML照樣辨識()
+    {
+        const string htmlWithWhitespace = "\r\n  \t <HTML><BODY class=\"no-content\"><B class=\"no-content\">OK</B></BODY></HTML> \r\n ";
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(HtmlResponse(HttpStatusCode.OK, htmlWithWhitespace))
+        };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
+            client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
+
+        Assert.Contains("HTML 而非 JSON", ex.Message);
+        Assert.Contains("no-content", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_正常JSON不受影響()
+    {
+        const string json = @"{""devices"":[]}";
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json))
+        };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        var result = await client.GetJsonAsync("/api/table.json?content=devices");
+
+        Assert.Equal(json, result);
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_空內容不擲例外()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, ""))
+        };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        var result = await client.GetJsonAsync("/api/table.json?content=sensors");
+
+        Assert.Equal("", result);
+    }
+
+    [Fact]
     public async Task 例外訊息不含apitoken()
     {
         // 刻意用含特殊字元的 token：底層例外訊息帶的是請求 URL，token 在那裡是 URL 編碼過的，
