@@ -194,7 +194,8 @@
 
 1. 兩個 DTO 的 `[Range(1, 3)]` 改 `[Range(1, 8)]`，錯誤訊息同步；cshtml `max="8"`，說明文字改：「保守建議 2、激進建議 4；實測併發 8 時 PRTG 端開始排隊、單次延遲可能超過逾時。」
 2. `SettingsController` 估算端點的註解與假設（「實機併發上限 3」）跟著改。
-3. 新增測試：8 接受、9 拒絕。
+3. 「請求逾時（秒）」的說明文字加一句：「historicdata 單次實測最長超過 100 秒，激進策略或回填建議設 120 以上。」取數階段的失敗計數把**逾時**獨立列出（既有只有一個失敗數）。
+4. 新增測試：8 接受、9 拒絕；逾時計數一條。
 
 ## 批次E：取數策略設定＋快照背景服務
 
@@ -210,14 +211,17 @@
 
 1. 設定 `PrtgFetchStrategy`：`conservative`（預設）／`aggressive`，static class 同 `PrtgValueFetchScope` 形式（常數、IsValid、Normalize），並提供 `Profile(strategy)` 回 (SnapshotIntervalMinutes, NightlyExactValues)＝保守 (15, false)、激進 (5, true)。不合法值退回保守。
 2. UI：擷取參數頁籤，緊接「PRTG 擷取」下拉之後新增「取數策略」下拉，兩個 option 各附一句說明；選到激進時顯示上面的提醒文字（`text-warning`）。popover 說明兩者差異與每日負擔估計。
-3. 快照背景服務 `PrtgSnapshotHostedService`（Web，樣板 AiAnalysisHostedService）：每 60 秒 tick；前置條件依序：`PrtgEnabled`、連線設定齊、距上次成功快照 ≥ 目前間隔（含退避）、結構同步未執行中。任一不成立就整輪不跑並記閒置原因。
+3. 快照背景服務 `PrtgSnapshotHostedService`（Web，樣板 AiAnalysisHostedService）：每 60 秒 tick；前置條件依序：`PrtgEnabled`、連線設定齊、距上次成功快照 ≥ 目前間隔（含退避）、結構同步未執行中、**取數執行不在 PRTG 階段且歷史回填未執行中**（不把快照疊在已經在打 PRTG 的路徑上）。任一不成立就整輪不跑並記閒置原因；被夜間階段擋掉的那一次不算失敗，也不改變下次時間。
 4. 快照一次：`content=sensors&columns=objid,lastvalue_raw,interval&count=50000`（9d-1 六欄 38 秒、9b 一欄 10 秒，三欄估 12～15 秒）；回傳筆數少於 treesize 時寫警告（同守門的截斷判定）；只累積目標集合內的 objid（目標集合＝當天 ok 對應裝置的 `GetValueFetchTargets(白名單)`，每小時刷新一次，當天沒有對應就用前一天）。
-5. 累積器（Core，純類別可單測）：per objid 的 sum／count／min／max，整點翻頁時把上一小時寫成 `PrtgValueRow`（Quality＝`sampled`，Coverage＝count ÷ (60 ÷ 間隔)）。站台停止時把當前小時的部分樣本也寫出（coverage 如實）。
+5. 累積器（Core，純類別可單測）：per objid 的 sum／count／min／max，整點翻頁時把上一小時寫成 `PrtgValueRow`（Quality＝`sampled`，Coverage＝count ÷ 期望樣本數 × 100）。站台停止時把當前小時的部分樣本也寫出（coverage 如實）。**整點寫入對既有 `sampled` 列採合併而非覆蓋**（依樣本數加權平均、極值取聯集、coverage 相加）：站台在一小時內重啟兩次，第二次寫出的部分樣本才不會把第一次的蓋掉；既有列是 `ok` 時不動（精確值優先）。這需要儲存層一個新方法（`MergeSampledValues`），`UpsertValues` 的覆蓋語意不變。
+5a. `interval` 欄位解析：接受「60 s」「5 m」「1 h」三種單位；解析失敗用 60 秒並計數，執行輸出每小時彙報一次「N 顆感測器的掃描間隔無法解析，以 60 秒計」。
+5b. 估算：既有「估算規模」端點與按鈕（擷取參數頁籤）加一段快照估算——目標集合幾顆、每天幾列、依 `PrtgRetentionDays` 估表會長到幾列；策略下拉的 popover 引用同一組數字。
 6. 退避：連續失敗（例外、HTML 頁、逾時）3 次 → 間隔加倍，上限 60 分鐘；成功即恢復設定值。每次狀態變化寫一行到執行輸出（走 NLog 與鏡像狀態的執行輸出）。
 7. 夜間路徑：`PrtgDailyPipeline` 在策略為保守時**跳過觸發式取數階段**，執行輸出印「取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應」；激進時行為不變。歷史回填不受策略影響（永遠用 historicdata，併發吃設定值）。
 8. 可觀測：鏡像狀態 DTO 加 `SnapshotLastAt`／`SnapshotSensors`／`SnapshotIntervalMinutes`（含退避後的實際值）／`SnapshotConsecutiveFailures`；鏡像頁籤「各類資料最新時間點」加一行「數值快照：最近 {時間}，{N} 顆，間隔 {M} 分鐘」，退避中標示。
 9. `PrtgDataQuality.Sampled = "sampled"`；儲存層三處統計的「其他」桶改為明確計 `SampledCount`（校準頁 §11 之後要用）。
 10. 不動 `PrtgValueFetchScope` 的語意；快照永遠是「全部 ok 對應裝置」，取數範圍只管激進的夜間逐顆與回填。
+11. **升級注意**（寫進 PLAN 體檢交接與 PRTG-SPEC §3b）：升級後策略預設保守，夜間觸發式取數**不再執行**，數值改由快照供應；既有部署若依賴夜間逐顆查詢要切激進。每晚執行輸出固定印一行目前策略與快照狀態，讓這個改變在畫面上看得到。時間基準：快照的小時邊界用站台本機時間，historicdata 的 `datetime_raw` 是 PRTG 伺服器本機時間，兩者同一時區才能對得上（現況如此；規格註明）。
 
 ### 驗收
 
@@ -241,12 +245,18 @@
 
 ### 定案
 
-1. **可用列（usable）**的統一定義，寫在 `EfPrtgStore` 一處供三個查詢共用：`Quality == ok`，或 `Quality == sampled 且 Coverage ≥ 50`（**暫定**：一小時內至少一半的期望樣本；保守 15 分鐘＝4 個樣本要有 2 個）。三處統計的桶改為 `OkCount`／`SampledCount`（僅計可用的 sampled）／`UnknownCount`／`NodataCount`／`OtherCount`（含 coverage 不足的 sampled、paused、untrusted）。
+1. **可用列（usable）**的統一定義，寫在 `EfPrtgStore` 一處供三個查詢共用：`Quality == ok`，或 `Quality == sampled 且 Coverage ≥ 75`（**暫定**：保守 15 分鐘＝4 個樣本要有 3 個、激進 5 分鐘＝12 個要有 9 個。兩個樣本的平均當一小時的代表值太薄，門檻用 75 不用 50）。三處統計的桶改為 `OkCount`／`SampledCount`（僅計可用的 sampled）／`UnknownCount`／`NodataCount`／`OtherCount`（含 coverage 不足的 sampled、paused、untrusted）。
 2. 值型基線判定：某日涵蓋＝該日**可用列數** ≥ 12（常數改名 `ValueBaselineMinDailyUsableHours`，值不變）；每日平均／極值納入可用列；`EarliestOkPeriod`／`LatestOkPeriod` 改為可用列的起訖。
 3. 「觸發式取數量級」判定與文案改為「**數值取得量級**」：天數判定不變（任何品質的列）；`OkRatio` 改為 `UsableRatio`（可用列 ÷ 全部），另出 `SampledRatio`。UI 卡片標題、標籤表、規格同步。
 4. 匯出 `FormatVersion` +1；值型基線列加 `SampledHours`、`MinObserved`／`MaxObserved`（當日各可用列 `MinValue`／`MaxValue` 的極值，沒有就 null；既有 `MinValue`／`MaxValue` 語意不變）；量級列加 `SampledCount`。
 5. 補充說明文案（`Explanations`）把「ok 小時數」改成「可用小時數」，並在有 sampled 列時多一句「其中 N 小時為快照取樣值」。
 6. 流量類 sampled 值已在批次 E 正規化到小時量，校準端不再另外處理；規格 §11 註明「流量類的 sampled 列是估算值（每次掃描量 × 3600 ÷ 掃描間隔）」。
+7. **匯出是給 Claude 讀來設計值型規則與調門檻的**，原始每日列（數千顆 × 56 天＝數十萬列、數十 MB）沒辦法直接讀，只能餵腳本。匯出因此加三個**摘要資料集**，讓規則設計不必碰原始列：
+   - `ValueSensorSummaries`：每顆感測器一列——`SensorObjid`、`HostName`、`SensorType`、`Unit`（取自鏡像）、`IsVolumeNormalized`、`Days`、`UsableHours`、`SampledRatio`、`Mean`、`StdDev`、`P50`、`P90`、`P99`、`Max`（以可用列的 AvgValue 算）。
+   - `ValueTypeProfiles`：每種 sensor type 一列——感測器數、總可用小時、每日平均值的 `P50`／`P90`／`P99`／`Max`、**每小時段（0～23）的平均值曲線**（24 個數）。基線偏移與時段規則要看的就是這條曲線。
+   - `Context`：策略、快照間隔、目標集合大小、白名單、`PrtgRetentionDays`、統計視窗起訖、鏡像的裝置與感測器總數。沒有這些，讀匯出的人不知道數字在什麼條件下量的。
+   原始 `ValueBaselines` 保留給腳本，加 `?detail=summary` 查詢參數可只匯出摘要（預設全量）。匯出前卡片先顯示「本次匯出約 N 列、M MB」。
+8. 校準頁值型基線卡加兩個指標：`SnapshotTargets`（快照目標集合幾顆）與 `SnapshotCoverage24h`（最近 24 小時每顆平均 coverage），讓管理者看得到基線在累積。
 
 ### 驗收
 
@@ -254,6 +264,8 @@
 - 值型基線：只有 sampled 列（coverage 100）的環境，10 台各 28 天 → 可用；同樣資料但 coverage 全 40 → 不足。
 - 匯出：`FormatVersion` 變更、四個新欄位存在且值正確；既有欄位順序不變。
 - 量級卡：標題與 KeyMetrics 鍵名改名，前端標籤表對應；UI 測試補字串斷言。
+- 摘要資料集：兩顆感測器各 3 天的資料，`ValueSensorSummaries` 的 Mean／P90 正確、`ValueTypeProfiles` 的 24 點曲線在有值的小時段有值、其餘 null；`?detail=summary` 不含 `ValueBaselines`；`Context` 含策略與間隔。
+- 快照涵蓋指標：目標 5 顆、24 小時內 coverage 平均正確。
 - 既有校準測試全綠（它們只餵 ok，語意不變）。
 
 ## 校準後的用途與後續方向（確認結果，寫進 BACKLOG）
@@ -262,7 +274,7 @@
 
 - **值型規則第一階**（規則維護頁 prtg 平台）：per 感測器、per 小時段的 28 天基線（平均與標準差，只用可用列），三條規則——基線偏移（連續 N 小時超過 μ+kσ）、磁碟可用空間趨勢（線性外推 N 天內耗盡）、CPU／記憶體持續高檔（24 小時平均超過門檻）。門檻常數先用校準匯出的 P90／P99 定，同 §11 的作法。
 - **資源守門改讀快照**：守門的即時值探針每趟批次打 PRTG，快照有了之後可以改讀最近一次快照（15 分鐘內），少一輪 PRTG 往返；快照過期才退回即時查詢。
-- **校準頁加「快照涵蓋」指標**：目標集合有幾顆、最近 24 小時每顆平均 coverage，讓管理者知道基線在累積。
+- （「校準頁快照涵蓋指標」與「匯出摘要資料集」已納入本輪批次 G，不留在 BACKLOG。）
 
 ## 批次F：文件
 
@@ -287,6 +299,15 @@
 6. 校準的 `sampled` 獨立計數並納入可用列：採納（批次 G）。
 
 另外兩項仍缺實機資料，不阻擋實作：夜間執行輸出的階段 3 耗時（決定 messages 推送要不要提前）與「時間欄位無法解析」一行（驗證批次 A 的 P0 判斷；批次 A 不論如何都要做，原始欄位是正確做法）。
+
+## 規劃完成後複檢（四角度）
+
+- **整體專案**：快照與既有三條打 PRTG 的路徑（夜間、回填、結構同步）互斥已寫進前置條件；同一（感測器, 小時）的寫入優先序（ok 覆蓋 sampled、sampled 對 sampled 合併）已定；保留期與表成長有估算入口；升級後預設行為改變已列升級注意。時區假設寫明。
+- **程式面**：`interval` 解析容錯、快照 50000 上限截斷警告沿用守門判定、累積器可單測、hosted service 的 tick internal 可單測；批次 A 的 OLE 日期為 Unspecified 種類，與既有 PeriodStart 一致；批次 C 的上限推算在 5000 下仍以 400 為底。
+- **使用者**：可用門檻從 50 提到 75，兩個樣本代表一小時說不過去；切換策略後既有列不受影響、只影響之後的 coverage 期望值（寫進 §3b）；匯出前看得到大小；快照有沒有在跑，鏡像頁籤與校準卡都看得到；激進提醒文字含「看到間隔被自動拉長就切回保守」的具體操作。
+- **管理者**：策略變更走四份稽核；預設保守是低負載方向；`sampled` 列在回退舊版程式碼時只會落進「其他」桶，不會炸；匯出 FormatVersion 有升版；逾時建議寫在說明文字，不是藏在規格裡。
+- **匯出給 Claude 讀的目的**：原始列留給腳本，摘要三個資料集直接可讀（每顆一列、每 type 一列含 24 點曲線、Context）；估計摘要層在 3500 顆感測器下約 3500 ＋ 33 列、遠小於 1 MB。
+- 複檢有新增事項（批次 D 逾時、E 的 5／5a／5b／11、G 的 1／7／8），皆已寫入上文；無其他發現。
 
 ## 明確不做（本輪定案）
 
