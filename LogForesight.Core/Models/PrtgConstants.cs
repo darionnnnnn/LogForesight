@@ -43,7 +43,14 @@ public static class PrtgDataQuality
     public const string Unknown = "unknown";
     public const string NoData = "nodata";
     public const string Untrusted = "untrusted";
+
+    /// <summary>
+    /// 站台定時快照自行平均得到的小時值，精度低於 PRTG 的真平均，
+    /// Coverage 是「實得樣本數 ÷ 期望樣本數 × 100」。
+    /// </summary>
+    public const string Sampled = "sampled";
 }
+
 
 /// <summary>
 /// PRTG 主機對應狀態常數。

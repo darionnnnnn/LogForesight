@@ -1393,4 +1393,148 @@ public class EfPrtgStoreTests : IDisposable
         var deleted = store.DeleteIpExclude("10.9.9.9:8080");
         Assert.Equal(1, deleted);
     }
+
+    [Fact]
+    public void MergeSampledValues_無既有列_新增且欄位正確()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var now = new DateTime(2026, 9, 11, 11, 0, 0);
+
+        var rows = new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7001,
+                PeriodStart = period,
+                AvgValue = 42.5,
+                MinValue = 10.0,
+                MaxValue = 80.0,
+                Coverage = 50.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = now
+            }
+        };
+
+        var count = store.MergeSampledValues(rows);
+        Assert.Equal(1, count);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.PrtgValues.Single(v => v.SensorObjid == 7001 && v.PeriodStart == period);
+        Assert.Equal(42.5, row.AvgValue);
+        Assert.Equal(10.0, row.MinValue);
+        Assert.Equal(80.0, row.MaxValue);
+        Assert.Equal(50.0, row.Coverage);
+        Assert.Equal(PrtgDataQuality.Sampled, row.Quality);
+        Assert.Equal(now, row.CreatedAt);
+    }
+
+    [Fact]
+    public void MergeSampledValues_既有sampled列_加權平均與聯集極值與累加覆蓋率()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var t1 = new DateTime(2026, 9, 11, 10, 30, 0);
+        var t2 = new DateTime(2026, 9, 11, 11, 0, 0);
+
+        // 既有 sampled（Avg 10、Cov 25、Min 8、Max 12）
+        store.MergeSampledValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7002,
+                PeriodStart = period,
+                AvgValue = 10.0,
+                MinValue = 8.0,
+                MaxValue = 12.0,
+                Coverage = 25.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = t1
+            }
+        });
+
+        // 新 sampled（Avg 20、Cov 25、Min 5、Max 25）
+        var mergedCount = store.MergeSampledValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7002,
+                PeriodStart = period,
+                AvgValue = 20.0,
+                MinValue = 5.0,
+                MaxValue = 25.0,
+                Coverage = 25.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = t2
+            }
+        });
+
+        Assert.Equal(1, mergedCount);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.PrtgValues.Single(v => v.SensorObjid == 7002 && v.PeriodStart == period);
+        // (10 * 25 + 20 * 25) / (25 + 25) = 15
+        Assert.Equal(15.0, row.AvgValue);
+        // Cov = 25 + 25 = 50
+        Assert.Equal(50.0, row.Coverage);
+        // Min = min(8, 5) = 5
+        Assert.Equal(5.0, row.MinValue);
+        // Max = max(12, 25) = 25
+        Assert.Equal(25.0, row.MaxValue);
+        Assert.Equal(PrtgDataQuality.Sampled, row.Quality);
+        Assert.Equal(t2, row.CreatedAt);
+    }
+
+    [Fact]
+    public void MergeSampledValues_既有ok列_完全不動且不計入回傳數()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var t1 = new DateTime(2026, 9, 11, 10, 30, 0);
+        var t2 = new DateTime(2026, 9, 11, 11, 0, 0);
+
+        // 先寫入一筆精確值（ok）
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7003,
+                PeriodStart = period,
+                AvgValue = 99.0,
+                MinValue = 90.0,
+                MaxValue = 100.0,
+                Coverage = 100.0,
+                Quality = PrtgDataQuality.Ok,
+                CreatedAt = t1
+            }
+        });
+
+        // 嘗試以 sampled 合併
+        var count = store.MergeSampledValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7003,
+                PeriodStart = period,
+                AvgValue = 10.0,
+                MinValue = 5.0,
+                MaxValue = 20.0,
+                Coverage = 50.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = t2
+            }
+        });
+
+        // 不動，該列不計入回傳數
+        Assert.Equal(0, count);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.PrtgValues.Single(v => v.SensorObjid == 7003 && v.PeriodStart == period);
+        Assert.Equal(99.0, row.AvgValue);
+        Assert.Equal(90.0, row.MinValue);
+        Assert.Equal(100.0, row.MaxValue);
+        Assert.Equal(100.0, row.Coverage);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+        Assert.Equal(t1, row.CreatedAt);
+    }
 }

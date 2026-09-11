@@ -300,6 +300,123 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 合併快照計算出的每小時取樣數值（Quality == sampled）。
+    /// 自然鍵為 (SensorObjid, PeriodStart)：
+    /// 1. 無既有列 → 新增（原樣寫入，計入回傳數）。
+    /// 2. 既有列 Quality == sampled → 依樣本數（Coverage 作為代理權重）加權平均合併，計入回傳數。
+    /// 3. 既有列 Quality != sampled（如 ok 等精確值）→ 不動（精確值優先），該列不計入回傳數。
+    /// 回傳實際寫入或合併的列數。
+    /// </summary>
+    public int MergeSampledValues(IReadOnlyList<PrtgValueRow> values)
+    {
+        var now = DateTime.Now;
+        return BatchWrite(values, (ctx, batch) =>
+        {
+            var sensorIds = batch.Select(v => v.SensorObjid).Distinct().ToList();
+            var minTime = batch.Min(v => v.PeriodStart);
+            var maxTime = batch.Max(v => v.PeriodStart);
+
+            var existing = ctx.PrtgValues
+                .Where(v => sensorIds.Contains(v.SensorObjid) && v.PeriodStart >= minTime && v.PeriodStart <= maxTime)
+                .ToList()
+                .GroupBy(v => (v.SensorObjid, v.PeriodStart))
+                .ToDictionary(g => g.Key, g => g.First());
+
+            var writtenOrMergedCount = 0;
+
+            foreach (var item in batch)
+            {
+                var key = (item.SensorObjid, item.PeriodStart);
+                var writeTime = item.CreatedAt != default ? item.CreatedAt : now;
+
+                if (!existing.TryGetValue(key, out var row))
+                {
+                    var newRow = new PrtgValueRow
+                    {
+                        SensorObjid = item.SensorObjid,
+                        PeriodStart = item.PeriodStart,
+                        AvgValue = item.AvgValue,
+                        MinValue = item.MinValue,
+                        MaxValue = item.MaxValue,
+                        Coverage = item.Coverage,
+                        Quality = !string.IsNullOrEmpty(item.Quality) ? item.Quality : PrtgDataQuality.Sampled,
+                        CreatedAt = writeTime
+                    };
+                    ctx.PrtgValues.Add(newRow);
+                    existing[key] = newRow;
+                    writtenOrMergedCount++;
+                }
+                else if (string.Equals(row.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase))
+                {
+                    var oldAvg = row.AvgValue;
+                    var newAvg = item.AvgValue;
+                    var oldCov = row.Coverage;
+                    var newCov = item.Coverage;
+
+                    // Coverage 相加後夾在 100 以內；任一為 null 時退化成有值的那個
+                    double? mergedCov;
+                    if (oldCov.HasValue && newCov.HasValue)
+                    {
+                        mergedCov = Math.Min(100.0, oldCov.Value + newCov.Value);
+                    }
+                    else
+                    {
+                        mergedCov = oldCov ?? newCov;
+                    }
+
+                    // 加權平均用 (oldAvg * oldCov + newAvg * newCov) / (oldCov + newCov)，任一為 null 時退化成有值的那個
+                    double? mergedAvg;
+                    if (oldAvg == null)
+                    {
+                        mergedAvg = newAvg;
+                    }
+                    else if (newAvg == null)
+                    {
+                        mergedAvg = oldAvg;
+                    }
+                    else if (oldCov.HasValue && newCov.HasValue && (oldCov.Value + newCov.Value > 0))
+                    {
+                        mergedAvg = (oldAvg.Value * oldCov.Value + newAvg.Value * newCov.Value) / (oldCov.Value + newCov.Value);
+                    }
+                    else if (oldCov.HasValue && !newCov.HasValue)
+                    {
+                        mergedAvg = oldAvg;
+                    }
+                    else if (!oldCov.HasValue && newCov.HasValue)
+                    {
+                        mergedAvg = newAvg;
+                    }
+                    else
+                    {
+                        mergedAvg = (oldAvg.Value + newAvg.Value) / 2.0;
+                    }
+
+                    // MinValue 取兩者最小、MaxValue 取兩者最大（null 視為缺席）
+                    double? mergedMin = (row.MinValue.HasValue && item.MinValue.HasValue)
+                        ? Math.Min(row.MinValue.Value, item.MinValue.Value)
+                        : row.MinValue ?? item.MinValue;
+
+                    double? mergedMax = (row.MaxValue.HasValue && item.MaxValue.HasValue)
+                        ? Math.Max(row.MaxValue.Value, item.MaxValue.Value)
+                        : row.MaxValue ?? item.MaxValue;
+
+                    row.AvgValue = mergedAvg;
+                    row.MinValue = mergedMin;
+                    row.MaxValue = mergedMax;
+                    row.Coverage = mergedCov;
+                    row.CreatedAt = writeTime;
+
+                    writtenOrMergedCount++;
+                }
+                // 若既有列 Quality != Sampled（即 ok 等精確值）：不動，該列不計入回傳數
+            }
+
+            ctx.SaveChanges();
+            return writtenOrMergedCount;
+        });
+    }
+
+    /// <summary>
     /// PRTG 主機對應按日寫入。該日期的對應整份就地取代——先刪除該 map_date 的所有列，再寫入新的一批。
     /// 傳入空清單時仍然清空該日，回傳 0。
     /// </summary>
