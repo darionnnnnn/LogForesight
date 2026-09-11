@@ -419,6 +419,7 @@ public sealed class PrtgFetchService
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var totalValues = 0;
         var totalUnparsed = 0;
+        var totalOaFallback = 0;
         var failedSensors = 0;
         var completedSensors = 0;
         string? firstFailureMessage = null;
@@ -432,8 +433,9 @@ public sealed class PrtgFetchService
                 if (_guard != null) await _guard.WaitIfBusyAsync(ct);
                 var query = $"api/historicdata.json?id={target.Objid}&avg=3600&sdate={sdate}&edate={edate}";
                 var json = await _client.GetJsonAsync(query, ct);
-                var rows = ParseHistoricData(json, target.Objid, out var unparsed);
+                var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var oaFallback);
                 if (unparsed > 0) Interlocked.Add(ref totalUnparsed, unparsed);
+                if (oaFallback > 0) Interlocked.Add(ref totalOaFallback, oaFallback);
                 if (rows.Count > 0)
                 {
                     // 逐 sensor 寫入資料庫後立即釋放記憶體，絕不累積成大清單一次寫入
@@ -469,6 +471,15 @@ public sealed class PrtgFetchService
                 + $"首則錯誤：{firstFailureMessage}");
         }
 
+        // 時間改用 OLE 日期退路的筆數：實機證實 datetime_raw 與顯示字串可能差好幾個小時，
+        // 走退路的資料落在哪個小時並不可靠，必須看得見而不是靜默接受。
+        if (totalOaFallback > 0)
+        {
+            _console.WriteLine($"  ⚠ 有 {totalOaFallback} 筆數值的時間是以 PRTG 的原始日期數值推得"
+                + "（顯示字串無法解析）。該數值的時間可能與 PRTG 畫面上的時間不同，"
+                + "請比對 PRTG 的地區與時間顯示設定。");
+        }
+
         if (totalUnparsed > 0)
         {
             _console.WriteLine($"  ⚠ 有 {totalUnparsed} 筆數值的時間欄位無法解析而略過"
@@ -492,8 +503,10 @@ public sealed class PrtgFetchService
     /// 時間欄位無法解析而被略過的筆數。PRTG 依伺服器地區設定輸出時間字串，格式與本機不符時
     /// 整段資料會解析失敗——這種缺口必須被看見，不能靜默略過（無聲的洞會讓後續基線以為那段本來就沒資料）。
     /// </param>
-    private static List<PrtgValueRow> ParseHistoricData(string json, long sensorObjid, out int unparsedCount)
+    private static List<PrtgValueRow> ParseHistoricData(
+        string json, long sensorObjid, out int unparsedCount, out int oaFallbackCount)
     {
+        oaFallbackCount = 0;
         var rows = new List<PrtgValueRow>();
         var now = DateTime.Now;
         unparsedCount = 0;
@@ -511,22 +524,23 @@ public sealed class PrtgFetchService
         {
             if (item.ValueKind != JsonValueKind.Object) continue;
 
-            if (!item.TryGetProperty("datetime", out var dtProp))
+            if (!TryResolvePeriodStart(item, out var periodStart, out var usedOaDate))
             {
                 unparsedCount++;
                 continue;
             }
-            var dtStr = dtProp.GetString();
-            if (string.IsNullOrWhiteSpace(dtStr) || !DateTime.TryParse(dtStr, out var periodStart))
-            {
-                unparsedCount++;
-                continue;
-            }
+            if (usedOaDate) oaFallbackCount++;
 
             // 判定 Coverage 是否為 0
             double? coverage = null;
             var isCoverageZero = false;
-            if (item.TryGetProperty("coverage", out var covProp))
+            // coverage_raw 是 PRTG 的原始整數（10000 代表 100%），優先採用；沒有才退回帶單位的 coverage 字串。
+            if (TryGetFirstProperty(item, "coverage_raw", out var covRawProp) && TryReadNumber(covRawProp, out var covRawVal))
+            {
+                coverage = covRawVal / 100.0;
+                if (covRawVal == 0) isCoverageZero = true;
+            }
+            else if (item.TryGetProperty("coverage", out var covProp))
             {
                 if (covProp.ValueKind == JsonValueKind.Number && covProp.TryGetDouble(out var covVal))
                 {
@@ -551,18 +565,29 @@ public sealed class PrtgFetchService
             // 取得數值屬性（支援 value_ 或 value）
             string? valueRaw = null;
             double? parsedValue = null;
-            var hasValueProp = item.TryGetProperty("value_", out var valProp) || item.TryGetProperty("value", out valProp);
+            JsonElement valProp2 = default;
+            double valRawVal = 0;
+            // value_raw 是 PRTG 的原始數字（value 則帶單位、依伺服器地區格式化），優先採用第一組（主要頻道）。
+            var hasValueRaw = TryGetFirstProperty(item, "value_raw", out var valRawProp) && TryReadNumber(valRawProp, out valRawVal);
+            var hasValueProp = hasValueRaw || item.TryGetProperty("value_", out valProp2) || item.TryGetProperty("value", out valProp2);
 
-            if (hasValueProp)
+            if (hasValueRaw)
             {
-                if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out var v))
+                parsedValue = valRawVal;
+                valueRaw = valRawProp.ValueKind == JsonValueKind.String
+                    ? valRawProp.GetString()
+                    : valRawProp.GetRawText();
+            }
+            else if (hasValueProp)
+            {
+                if (valProp2.ValueKind == JsonValueKind.Number && valProp2.TryGetDouble(out var v))
                 {
                     parsedValue = v;
-                    valueRaw = valProp.GetRawText();
+                    valueRaw = valProp2.GetRawText();
                 }
-                else if (valProp.ValueKind == JsonValueKind.String)
+                else if (valProp2.ValueKind == JsonValueKind.String)
                 {
-                    valueRaw = valProp.GetString();
+                    valueRaw = valProp2.GetString();
                     if (!string.IsNullOrWhiteSpace(valueRaw) &&
                         double.TryParse(valueRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v2))
                     {
@@ -574,7 +599,7 @@ public sealed class PrtgFetchService
             string quality;
             double? avgValue = null;
 
-            if (!hasValueProp || valProp.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ||
+            if (!hasValueProp || (!hasValueRaw && valProp2.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) ||
                 string.IsNullOrWhiteSpace(valueRaw) || valueRaw == "\"\"")
             {
                 quality = PrtgDataQuality.NoData;
@@ -610,6 +635,91 @@ public sealed class PrtgFetchService
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// 從 historicdata 的一列取出時段起點。
+    /// 先用 datetime_raw（OLE Automation 日期數字，與地區設定無關）；不可用時才退回 datetime 字串，
+    /// 並且只取「起 - 訖」區間的前段。兩者皆不可用時回 false，由呼叫端計入略過筆數。
+    /// </summary>
+    private static bool TryResolvePeriodStart(JsonElement item, out DateTime periodStart, out bool usedOaDate)
+    {
+        periodStart = default;
+        usedOaDate = false;
+
+        // 顯示字串優先。實機（PRTG 24.1.92）同一列的 datetime_raw 與 datetime 差 7 小時
+        // （raw 46275.6666666667＝16:00，字串是「下午 11:00:00 - 上午 12:00:00」＝23:00），
+        // 兩者不是同一個時間基準。字串是管理者在 PRTG 畫面上看到的那個時間，鏡像要跟它對齊，
+        // 否則整份基線會整體平移數小時，而且沒有任何徵兆。
+        if (item.TryGetProperty("datetime", out var dtProp) && dtProp.ValueKind == JsonValueKind.String)
+        {
+            var dtStr = dtProp.GetString();
+            if (!string.IsNullOrWhiteSpace(dtStr))
+            {
+                // 「起 - 訖」區間字串只取前段（＝小時起點）
+                var sepIndex = dtStr.IndexOf(" - ", StringComparison.Ordinal);
+                var head = (sepIndex >= 0 ? dtStr[..sepIndex] : dtStr).Trim();
+                if (head.Length > 0 &&
+                    (DateTime.TryParse(head, CultureInfo.CurrentCulture, DateTimeStyles.None, out periodStart) ||
+                     DateTime.TryParse(head, CultureInfo.InvariantCulture, DateTimeStyles.None, out periodStart)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // 退路：字串解析不了（PRTG 的地區格式與站台文化不合）時才用 OLE 日期。
+        // 呼叫端會把用到退路的筆數回報出來——時間可能與 PRTG 畫面差幾小時，要看得見。
+        if (TryGetFirstProperty(item, "datetime_raw", out var rawProp) && TryReadNumber(rawProp, out var oaDate))
+        {
+            try
+            {
+                periodStart = DateTime.FromOADate(oaDate);
+                usedOaDate = true;
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                // OLE 日期超出合法範圍：視為不可用。
+            }
+        }
+
+        periodStart = default;
+        return false;
+    }
+
+    /// <summary>
+    /// 取出同名屬性中的「第一個」。PRTG 的 historicdata 一列會為每個頻道重複 value／value_raw，
+    /// 第一組才是主要頻道；JsonElement.TryGetProperty 在重複鍵時回的是最後一個，不能用。
+    /// </summary>
+    private static bool TryGetFirstProperty(JsonElement item, string name, out JsonElement found)
+    {
+        foreach (var prop in item.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, name, StringComparison.Ordinal))
+            {
+                found = prop.Value;
+                return true;
+            }
+        }
+        found = default;
+        return false;
+    }
+
+    /// <summary>
+    /// 讀取 JSON 屬性中的數字：數字型別直接取，字串型別以 InvariantCulture 嘗試解析。
+    /// </summary>
+    private static bool TryReadNumber(JsonElement prop, out double value)
+    {
+        value = 0;
+        if (prop.ValueKind == JsonValueKind.Number) return prop.TryGetDouble(out value);
+        if (prop.ValueKind == JsonValueKind.String)
+        {
+            var text = prop.GetString();
+            return !string.IsNullOrWhiteSpace(text) &&
+                   double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+        return false;
     }
 
     /// <summary>

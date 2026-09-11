@@ -706,6 +706,211 @@ public class PrtgFetchServiceTests : IDisposable
         sb.Append("]}");
         return sb.ToString();
     }
+    // ── 批次 A：historicdata 改用原始欄位（datetime_raw／value_raw／coverage_raw）──────────
+
+    /// <summary>
+    /// 只回一個 sensor（objid 9001）與指定 histdata 原文的假 PRTG。
+    /// </summary>
+    private (PrtgClient Client, StubHandler Handler) CreateHistClient(string histJson)
+    {
+        return CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":1,\"sensor\":\"S\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata")) return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+    }
+
+    /// <summary>
+    /// 以指定文化執行：顯示字串的解析會用 CurrentCulture 試一次，
+    /// 繁中格式的斷言不能依賴跑測試那台機器剛好是 zh-TW。
+    /// </summary>
+    private async Task<(PrtgFetchResult Result, List<PrtgValueRow> Rows, TestConsole Console)> RunHistWithCultureAsync(
+        string histJson, string cultureName)
+    {
+        var original = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(cultureName);
+        try
+        {
+            return await RunHistAsync(histJson);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    private async Task<(PrtgFetchResult Result, List<PrtgValueRow> Rows, TestConsole Console)> RunHistAsync(string histJson)
+    {
+        var (client, _) = CreateHistClient(histJson);
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, CreateStore(), console);
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 10), 1, CancellationToken.None);
+        using var ctx = _fx.NewContext();
+        var rows = await ctx.PrtgValues.OrderBy(v => v.PeriodStart).ToListAsync();
+        return (result, rows, console);
+    }
+
+    /// <summary>
+    /// PRTG 24.1.92 繁中實機的一列原文。關鍵事實：同一列的 datetime_raw（OLE 46275.6666666667
+    /// ＝2026-09-10 16:00）與顯示字串（下午 11:00＝23:00）**差 7 小時**，兩者不是同一個時間基準。
+    /// 鏡像要跟管理者在 PRTG 畫面上看到的時間對齊，所以顯示字串優先；拿 raw 當主要來源會讓
+    /// 整份基線整體平移數小時而毫無徵兆。value／value_raw 重複是多頻道，取第一組（主要頻道）。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_實機形狀_顯示字串優先於datetime_raw()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"2026/9/10 下午 11:00:00 - 上午 12:00:00\",\"datetime_raw\":46275.6666666667," +
+                       "\"value\":\"4 %\",\"value_raw\":3.5593,\"value\":\"6 %\",\"value_raw\":5.6949," +
+                       "\"coverage\":\"100 %\",\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistWithCultureAsync(histJson, "zh-TW");
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        // 用 raw 會得到 16:00；必須是顯示字串的 23:00
+        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), row.PeriodStart);
+        Assert.Equal(3.5593, row.AvgValue!.Value, 4);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+        Assert.Equal(100.0, row.Coverage!.Value, 6);
+        // 走的是顯示字串，不該出現退路警告
+        Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// 不依賴機器文化的版本：顯示字串用 ISO 形式，raw 指向完全不同的時間。
+    /// 這一條在任何文化的機器上都必須通過，是「顯示字串優先」的主要守門。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串可解析時不採用datetime_raw()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"2026-09-10 23:00:00 - 2026-09-11 00:00:00\",\"datetime_raw\":46275.6666666667," +
+                       "\"value_raw\":3.5593,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (_, rows, console) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), row.PeriodStart);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// 顯示字串解析不了（PRTG 的地區格式與站台文化不合）時才退回 OLE 日期，
+    /// 並且要出聲——走退路的資料落在哪個小時不可靠，靜默接受等於讓基線悄悄錯位。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串不可解析時退回datetime_raw並警告()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"完全不是日期\",\"datetime_raw\":46275.6666666667,\"value_raw\":12.5,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10, 16, 0, 0), row.PeriodStart);
+        Assert.Equal(12.5, row.AvgValue!.Value, 6);
+        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("時間欄位無法解析"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_沒有datetime欄位時用datetime_raw()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_\":7,\"coverage\":100}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10, 16, 0, 0), row.PeriodStart);
+        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_datetime_raw超出OLE合法範圍且字串不可解析時計入略過()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"完全不是日期\",\"datetime_raw\":1e12,\"value_\":7,\"coverage\":100}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(0, result.Values);
+        Assert.Empty(rows);
+        Assert.Contains(console.Lines, l => l.Contains("時間欄位無法解析"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_datetime_raw與datetime皆不可解析時計入略過筆數()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"完全不是日期\",\"datetime_raw\":\"abc\",\"value_raw\":1.0}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(0, result.Values);
+        Assert.Empty(rows);
+        Assert.Contains(console.Lines, l => l.Contains("時間欄位無法解析"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_coverage_raw為0時仍判Unknown()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_raw\":45.2,\"coverage_raw\":0}" +
+                       "]}";
+
+        var (_, rows, _) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(PrtgDataQuality.Unknown, row.Quality);
+        Assert.Null(row.AvgValue);
+        Assert.Equal(0.0, row.Coverage!.Value, 6);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_coverage_raw換算為百分比()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_raw\":1.25,\"coverage_raw\":8500}" +
+                       "]}";
+
+        var (_, rows, _) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(85.0, row.Coverage!.Value, 6);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_只有value_raw沒有value時照樣取得值()
+    {
+        // 不依賴 value_／value：整列只有原始欄位也要能落地。
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_raw\":\"3.5593\",\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, _) = await RunHistAsync(histJson);
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(3.5593, row.AvgValue!.Value, 4);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+    }
+
     [Fact]
     public async Task FetchDayAsync_數值時間無法解析時回報略過筆數而非靜默跳過()
     {
