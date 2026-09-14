@@ -111,6 +111,22 @@ public static class PrtgSensorTypeCategoryMap
 }
 
 /// <summary>
+/// PRTG 流量型感測器類型（值經過每小時流量正規化）。
+/// </summary>
+public static class PrtgVolumeSensorTypes
+{
+    private static readonly HashSet<string> Types = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SNMP Traffic 64bit",
+        "SNMP Traffic 32bit",
+        "Windows Network Card"
+    };
+
+    public static bool IsVolume(string? sensorType) =>
+        sensorType != null && Types.Contains(sensorType);
+}
+
+/// <summary>
 /// PRTG 認證方式常數。
 /// <see cref="Token"/>（token）走 apitoken 參數；
 /// <see cref="Password"/>（password）走 PRTG 的 username＋passhash 流程

@@ -51,8 +51,12 @@ public class CalibrationController : ControllerBase
     /// 匯出校準數值封裝包為 JSON 檔案
     /// </summary>
     [HttpGet("export")]
-    public IActionResult Export([FromQuery(Name = "override")] bool isOverride = false)
+    public IActionResult Export(
+        [FromQuery(Name = "override")] bool isOverride = false,
+        [FromQuery(Name = "detail")] string? detail = null)
     {
+        var summaryOnly = string.Equals(detail, "summary", StringComparison.OrdinalIgnoreCase);
+
         // 強制重算：判定快取只以日期為鍵，設定（白名單、保留天數）剛改過時舊摘要會與
         // 即時算出的資料集口徑不一致、稽核也會記到舊狀態。匯出是低頻操作，重算一次可接受；
         // 隨後 BuildExportPackage 內的判定直接命中這次更新的快取，不會跑第二遍。
@@ -74,9 +78,11 @@ public class CalibrationController : ControllerBase
                 $"校準資料累積量未達標（{string.Join("、", ineligible)}），需全數達到「可用」以上才允許匯出；若確認要強制匯出請勾選「仍要匯出」。");
         }
 
-        var package = _calibrationService.BuildExportPackage();
+        var package = _calibrationService.BuildExportPackage(summaryOnly: summaryOnly);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(package, ExportJsonOptions);
-        var fileName = $"calibration-{DateTime.Today:yyyyMMdd}.json";
+        var fileName = summaryOnly
+            ? $"calibration-{DateTime.Today:yyyyMMdd}-summary.json"
+            : $"calibration-{DateTime.Today:yyyyMMdd}.json";
 
         _audit.Record(
             action: AuditActions.CalibrationExport,
@@ -89,7 +95,8 @@ public class CalibrationController : ControllerBase
                 PrtgRuleThresholds = summary.PrtgRuleThresholds.Status.ToString(),
                 TriggeredFetchMagnitude = summary.TriggeredFetchMagnitude.Status.ToString(),
                 ResidualCredentialThresholds = summary.ResidualCredentialThresholds.Status.ToString(),
-                Override = isOverride
+                Override = isOverride,
+                Detail = summaryOnly ? "summary" : "full"
             });
 
         return File(bytes, "application/json", fileName);

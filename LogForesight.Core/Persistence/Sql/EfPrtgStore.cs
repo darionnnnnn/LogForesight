@@ -1105,6 +1105,62 @@ public sealed class EfPrtgStore
                 summary.LatestChangedAt)
             : new PrtgStateChangeCoverageSummary(0, 0, 0, null, null);
     }
+
+    /// <summary>
+    /// 依感測器類型與小時分組，計算可用列的小時數值曲線（SQL 聚合）。
+    /// </summary>
+    public List<PrtgTypeHourlyProfile> GetUsableHourlyProfileByType(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return BuildUsableHourlyProfileQuery(
+            ctx.PrtgValues.AsNoTracking(),
+            ctx.PrtgSensors.AsNoTracking(),
+            fromInclusive,
+            toExclusive)
+            .ToList();
+    }
+
+    internal static IQueryable<PrtgTypeHourlyProfile> BuildUsableHourlyProfileQuery(
+        IQueryable<PrtgValueRow> values,
+        IQueryable<PrtgSensorRow> sensors,
+        DateTime fromInclusive,
+        DateTime toExclusive)
+    {
+        return from v in values
+               where v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive
+                     && (v.Quality == PrtgDataQuality.Ok ||
+                         (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                     && v.AvgValue != null
+               join s in sensors on v.SensorObjid equals s.Objid
+               group v by new { s.SensorType, v.PeriodStart.Hour } into g
+               select new PrtgTypeHourlyProfile(
+                   g.Key.SensorType,
+                   g.Key.Hour,
+                   g.Average(x => x.AvgValue),
+                   g.Count());
+    }
+
+    /// <summary>
+    /// 取得指定時間之後的快照取樣涵蓋（包含 coverage 不足 75 的取樣列）。
+    /// </summary>
+    public PrtgSampledCoverage GetSampledCoverageSince(DateTime fromInclusive)
+    {
+        using var ctx = _contextFactory();
+        var result = ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.Quality == PrtgDataQuality.Sampled && v.PeriodStart >= fromInclusive)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                SensorCount = g.Select(v => v.SensorObjid).Distinct().Count(),
+                AverageCoverage = g.Average(v => v.Coverage)
+            })
+            .FirstOrDefault();
+
+        return result != null
+            ? new PrtgSampledCoverage(result.SensorCount, result.AverageCoverage)
+            : new PrtgSampledCoverage(0, null);
+    }
 }
 
 /// <summary>
@@ -1181,4 +1237,14 @@ public sealed record PrtgStateChangeCoverageSummary(
     int TotalCount,
     DateTime? EarliestChangedAt,
     DateTime? LatestChangedAt);
+
+/// <summary>
+/// PRTG 每種 type 的每小時數值曲線分組
+/// </summary>
+public sealed record PrtgTypeHourlyProfile(string SensorType, int Hour, double? AvgValue, int UsableCount);
+
+/// <summary>
+/// PRTG 快照取樣涵蓋指標
+/// </summary>
+public sealed record PrtgSampledCoverage(int SensorCount, double? AverageCoverage);
 

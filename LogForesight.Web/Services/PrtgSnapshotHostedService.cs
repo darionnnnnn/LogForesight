@@ -39,12 +39,6 @@ public class PrtgSnapshotHostedService : BackgroundService
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(60);
 
     private static readonly Regex IntervalRegex = new(@"^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$", RegexOptions.Compiled);
-    private static readonly HashSet<string> TrafficSensorTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "SNMP Traffic 64bit",
-        "SNMP Traffic 32bit",
-        "Windows Network Card"
-    };
 
     private readonly ISystemSettingsStore _settingsStore;
     private readonly StorageBackend _backend;
@@ -298,7 +292,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 double sampleValue;
                 if (_sensorTypes != null &&
                     _sensorTypes.TryGetValue(objid.Value, out var sensorType) &&
-                    TrafficSensorTypes.Contains(sensorType))
+                    PrtgVolumeSensorTypes.IsVolume(sensorType))
                 {
                     sampleValue = lastValueRaw.Value * 3600.0 / intervalSeconds;
                 }

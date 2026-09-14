@@ -1608,4 +1608,98 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(PrtgDataQuality.Ok, row.Quality);
         Assert.Equal(t1, row.CreatedAt);
     }
+
+    [Fact]
+    public void 小時曲線查詢_SQLServer翻譯得出來()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;")
+            .Options;
+        using var ctx = new LfDbContext(options);
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 31);
+        var sql = EfPrtgStore.BuildUsableHourlyProfileQuery(ctx.PrtgValues, ctx.PrtgSensors, from, to).ToQueryString();
+
+        Assert.NotNull(sql);
+        Assert.Contains("DATEPART", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void 小時曲線查詢_SQLite翻譯得出來()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite("Data Source=:memory:")
+            .Options;
+        using var ctx = new LfDbContext(options);
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 31);
+        var sql = EfPrtgStore.BuildUsableHourlyProfileQuery(ctx.PrtgValues, ctx.PrtgSensors, from, to).ToQueryString();
+
+        Assert.NotNull(sql);
+        Assert.Contains("strftime", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void 小時曲線_只算可用列且依type與小時分組()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var from = new DateTime(2026, 9, 1, 0, 0, 0);
+        var to = new DateTime(2026, 9, 2, 0, 0, 0);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 101, DeviceObjid = 1, SensorType = "TypeA", Paused = false },
+            new() { Objid = 102, DeviceObjid = 1, SensorType = "TypeA", Paused = false },
+            new() { Objid = 201, DeviceObjid = 2, SensorType = "TypeB", Paused = false }
+        }, now);
+
+        // type A 的 01 時兩列可用（10、30）＋ 01 時一列 coverage 74 的 sampled（999）、13 時一列可用（50）；type B 的 01 時一列可用（7）
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 101, PeriodStart = new DateTime(2026, 9, 1, 1, 0, 0), AvgValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 102, PeriodStart = new DateTime(2026, 9, 1, 1, 0, 0), AvgValue = 30.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 101, PeriodStart = new DateTime(2026, 9, 1, 1, 30, 0), AvgValue = 999.0, Quality = PrtgDataQuality.Sampled, Coverage = 74.0 },
+            new() { SensorObjid = 101, PeriodStart = new DateTime(2026, 9, 1, 13, 0, 0), AvgValue = 50.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 201, PeriodStart = new DateTime(2026, 9, 1, 1, 0, 0), AvgValue = 7.0, Quality = PrtgDataQuality.Ok }
+        });
+
+        var results = store.GetUsableHourlyProfileByType(from, to);
+
+        // A 的 01 時 AvgValue=20、UsableCount=2（不含 999）；A 的 13 時 50；B 的 01 時 7
+        Assert.Equal(3, results.Count);
+
+        var a01 = Assert.Single(results, r => r.SensorType == "TypeA" && r.Hour == 1);
+        Assert.Equal(20.0, a01.AvgValue);
+        Assert.Equal(2, a01.UsableCount);
+
+        var a13 = Assert.Single(results, r => r.SensorType == "TypeA" && r.Hour == 13);
+        Assert.Equal(50.0, a13.AvgValue);
+        Assert.Equal(1, a13.UsableCount);
+
+        var b01 = Assert.Single(results, r => r.SensorType == "TypeB" && r.Hour == 1);
+        Assert.Equal(7.0, b01.AvgValue);
+        Assert.Equal(1, b01.UsableCount);
+    }
+
+    [Fact]
+    public void 快照取樣涵蓋_只看sampled且含coverage不足者()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 9, 10, 0, 0, 0);
+
+        // 窗口內兩顆感測器的 sampled（coverage 100、50）＋ 窗口外一列 ＋ 一列 ok
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 501, PeriodStart = new DateTime(2026, 9, 10, 2, 0, 0), AvgValue = 10.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 502, PeriodStart = new DateTime(2026, 9, 10, 3, 0, 0), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 50.0 },
+            new() { SensorObjid = 503, PeriodStart = new DateTime(2026, 9, 9, 23, 0, 0), AvgValue = 30.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 504, PeriodStart = new DateTime(2026, 9, 10, 4, 0, 0), AvgValue = 40.0, Quality = PrtgDataQuality.Ok, Coverage = 100.0 }
+        });
+
+        var result = store.GetSampledCoverageSince(from);
+
+        Assert.Equal(2, result.SensorCount);
+        Assert.Equal(75.0, result.AverageCoverage);
+    }
 }

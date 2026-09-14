@@ -1430,6 +1430,317 @@ public class CalibrationServiceTests : IDisposable
         Assert.True(sampledHoursIdx >= 0, "JSON 應包含 SampledHours");
         Assert.True(okHoursIdx < sampledHoursIdx, "OkHours 在 JSON 中的位置應早於 SampledHours");
     }
+
+    [Fact]
+    public void 值型基線_KeyMetrics含快照涵蓋與列數()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        // 寫入 24 小時內之 sampled 列
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = DateTime.Now.AddHours(-5), AvgValue = 50.0, Quality = PrtgDataQuality.Sampled, Coverage = 80.0 },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1), AvgValue = 50.0, Quality = PrtgDataQuality.Ok, Coverage = 100.0 }
+        });
+
+        var service = CreateService();
+        var summary = service.AssessStatus(anchor);
+
+        var km = summary.PrtgValueBaseline.KeyMetrics;
+        Assert.True(km.ContainsKey("SnapshotTargets"));
+        Assert.True(km.ContainsKey("SnapshotSensors24h"));
+        Assert.True(km.ContainsKey("SnapshotCoverage24h"));
+        Assert.True(km.ContainsKey("ValueBaselineRows"));
+
+        Assert.Equal(1, Convert.ToInt32(km["SnapshotTargets"]));
+        Assert.Equal(1, Convert.ToInt32(km["SnapshotSensors24h"]));
+        Assert.Equal(80.0, Convert.ToDouble(km["SnapshotCoverage24h"]));
+        Assert.True(Convert.ToInt32(km["ValueBaselineRows"]) > 0);
+    }
+
+    [Fact]
+    public void 值型基線_有可用取樣列時說明含快照取樣小時數()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        // 3 列 coverage 100 的 sampled ＋ 若干 ok
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(1), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(2), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(3), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(4), AvgValue = 20.0, Quality = PrtgDataQuality.Ok, Coverage = 100.0 },
+        });
+
+        var service = CreateService();
+        var summary = service.AssessStatus(anchor);
+
+        Assert.Contains(summary.PrtgValueBaseline.Explanations, s => s.Contains("3 小時為快照取樣值"));
+
+        // 只有 ok 列時不含「快照取樣值」
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgValues.RemoveRange(ctx.PrtgValues);
+            ctx.SaveChanges();
+        }
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(1), AvgValue = 20.0, Quality = PrtgDataQuality.Ok, Coverage = 100.0 },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(2), AvgValue = 20.0, Quality = PrtgDataQuality.Ok, Coverage = 100.0 },
+        });
+
+        CalibrationService.ClearAssessmentCache();
+        var summaryOkOnly = service.AssessStatus(anchor, forceRefresh: true);
+        Assert.DoesNotContain(summaryOkOnly.PrtgValueBaseline.Explanations, s => s.Contains("快照取樣值"));
+    }
+
+    [Fact]
+    public void 值型基線_快照取樣小時與逐日列數只算白名單內的sensor()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        // 1001 在白名單內（SNMP Disk Free）；2001 是 Ping，不在測試預設白名單
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 2001, DeviceObjid = 10, SensorType = "Ping", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        var day = anchor.AddDays(-1);
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = day.AddHours(1), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 1001, PeriodStart = day.AddHours(2), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            // 白名單外：同一天 5 小時、另一天 1 小時，都不得計入
+            new() { SensorObjid = 2001, PeriodStart = day.AddHours(1), AvgValue = 1.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 2001, PeriodStart = day.AddHours(2), AvgValue = 1.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 2001, PeriodStart = day.AddHours(3), AvgValue = 1.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 2001, PeriodStart = day.AddHours(4), AvgValue = 1.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 2001, PeriodStart = day.AddHours(5), AvgValue = 1.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 2001, PeriodStart = day.AddDays(-1).AddHours(1), AvgValue = 1.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+        });
+
+        CalibrationService.ClearAssessmentCache();
+        var summary = CreateService().AssessStatus(anchor, forceRefresh: true);
+
+        Assert.Contains(summary.PrtgValueBaseline.Explanations, s => s.Contains("有 2 小時為快照取樣值"));
+        // 逐日列數要與匯出 ValueBaselines 的白名單篩選一致：只有 1001 的那一天
+        Assert.Equal(1, Convert.ToInt32(summary.PrtgValueBaseline.KeyMetrics["ValueBaselineRows"]));
+    }
+
+    [Fact]
+    public void 匯出_感測器摘要統計依nearest_rank與母體標準差()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Unit = "%", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        // 某顆感測器每日平均 [10, 20, 30, 40]
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-3).AddHours(1), AvgValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-2).AddHours(1), AvgValue = 20.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(1), AvgValue = 30.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 40.0, Quality = PrtgDataQuality.Ok },
+        });
+
+        var service = CreateService();
+        var package = service.BuildExportPackage(anchor);
+
+        var sensorSummary = Assert.Single(package.ValueSensorSummaries);
+        Assert.Equal(1001, sensorSummary.SensorObjid);
+        Assert.Equal("HOST-1", sensorSummary.HostName);
+        Assert.Equal("SNMP Disk Free", sensorSummary.SensorType);
+        Assert.Equal("%", sensorSummary.Unit);
+        Assert.False(sensorSummary.IsVolumeNormalized);
+        Assert.Equal(4, sensorSummary.Days);
+        Assert.Equal(4, sensorSummary.UsableHours);
+        Assert.Equal(0.0, sensorSummary.SampledRatio);
+
+        // Mean=25、P50=20（ceil(2)=2 → 第 2 個）、P90=40（ceil(3.6)=4）、Max=40、StdDev=√125≈11.1803（容許 4 位小數）
+        Assert.Equal(25.0, sensorSummary.Mean);
+        Assert.Equal(20.0, sensorSummary.P50);
+        Assert.Equal(40.0, sensorSummary.P90);
+        Assert.Equal(40.0, sensorSummary.P99);
+        Assert.Equal(40.0, sensorSummary.Max);
+        Assert.NotNull(sensorSummary.StdDev);
+        Assert.Equal(11.1803, sensorSummary.StdDev.Value, 4);
+    }
+
+    [Fact]
+    public void 匯出_型別曲線長度24且只在有資料的小時有值()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        // 只在 2 時與 14 時有資料
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(2), AvgValue = 25.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(14), AvgValue = 75.0, Quality = PrtgDataQuality.Ok }
+        });
+
+        var service = CreateService();
+        var package = service.BuildExportPackage(anchor);
+
+        var profile = Assert.Single(package.ValueTypeProfiles);
+        Assert.Equal("SNMP Disk Free", profile.SensorType);
+        Assert.Equal(24, profile.HourlyCurve.Length);
+        Assert.Equal(25.0, profile.HourlyCurve[2]);
+        Assert.Equal(75.0, profile.HourlyCurve[14]);
+        Assert.Null(profile.HourlyCurve[0]);
+        Assert.Null(profile.HourlyCurve[1]);
+        Assert.Null(profile.HourlyCurve[3]);
+        Assert.Null(profile.HourlyCurve[23]);
+    }
+
+    [Fact]
+    public void 匯出_流量類標示IsVolumeNormalized()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        _settingsStore.Update(s =>
+        {
+            s.PrtgSensorTypeWhitelist = new List<string> { "SNMP Traffic 64bit", "Ping" };
+        });
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Traffic 64bit", Paused = false },
+            new() { Objid = 1002, DeviceObjid = 10, SensorType = "Ping", Paused = false },
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 1000.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1002, PeriodStart = anchor.AddHours(1), AvgValue = 2.0, Quality = PrtgDataQuality.Ok },
+        });
+
+        var service = CreateService();
+        var package = service.BuildExportPackage(anchor);
+
+        var traffic = Assert.Single(package.ValueSensorSummaries, s => s.SensorObjid == 1001);
+        var ping = Assert.Single(package.ValueSensorSummaries, s => s.SensorObjid == 1002);
+
+        Assert.True(traffic.IsVolumeNormalized);
+        Assert.False(ping.IsVolumeNormalized);
+    }
+
+    [Fact]
+    public void 匯出_Context帶齊條件()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        _settingsStore.Update(s =>
+        {
+            s.PrtgFetchStrategy = "conservative";
+            s.PrtgRetentionDays = 90;
+        });
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        var service = CreateService();
+        var package = service.BuildExportPackage(anchor);
+
+        var ctx = package.Context;
+        Assert.NotNull(ctx);
+        Assert.Equal("full", ctx.Detail);
+        Assert.Equal("conservative", ctx.FetchStrategy);
+        Assert.Equal(15, ctx.SnapshotIntervalMinutes);
+        Assert.Equal(75.0, ctx.SampledMinCoverage);
+        Assert.False(string.IsNullOrWhiteSpace(ctx.StatisticsBasis));
+    }
+
+    [Fact]
+    public void 匯出_summaryOnly時ValueBaselines為空但摘要照出()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50.0, Quality = PrtgDataQuality.Ok }
+        });
+
+        var service = CreateService();
+        var package = service.BuildExportPackage(anchor, summaryOnly: true);
+
+        Assert.Empty(package.ValueBaselines);
+        Assert.NotEmpty(package.ValueSensorSummaries);
+        Assert.NotEmpty(package.ValueTypeProfiles);
+        Assert.Equal("summary", package.Context.Detail);
+    }
 }
 
 public class CalibrationControllerTests : IDisposable
@@ -1603,6 +1914,31 @@ public class CalibrationControllerTests : IDisposable
         Assert.NotNull(data.TriggeredFetchMagnitude);
         Assert.NotNull(data.ResidualCredentialThresholds);
         Assert.False(data.CanExport);
+    }
+
+    [Fact]
+    public void Export_帶detail為summary_檔名含summary且匯出包ValueBaselines為空且稽核Detail為summary()
+    {
+        var controller = CreateController();
+
+        var result = controller.Export(isOverride: true, detail: "summary");
+        var fileResult = Assert.IsType<FileContentResult>(result);
+
+        Assert.Equal($"calibration-{DateTime.Today:yyyyMMdd}-summary.json", fileResult.FileDownloadName);
+        Assert.Contains("-summary", fileResult.FileDownloadName);
+
+        using var doc = JsonDocument.Parse(fileResult.FileContents);
+        var root = doc.RootElement;
+        Assert.True(root.TryGetProperty("ValueBaselines", out var vb));
+        Assert.Equal(0, vb.GetArrayLength());
+        Assert.True(root.TryGetProperty("Context", out var ctx));
+        Assert.Equal("summary", ctx.GetProperty("Detail").GetString());
+
+        var auditEntry = Assert.Single(_audit.Entries);
+        Assert.NotNull(auditEntry.DetailJson);
+        using var auditDoc = JsonDocument.Parse(auditEntry.DetailJson!);
+        Assert.True(auditDoc.RootElement.TryGetProperty("Detail", out var auditDetailProp));
+        Assert.Equal("summary", auditDetailProp.GetString());
     }
 }
 
