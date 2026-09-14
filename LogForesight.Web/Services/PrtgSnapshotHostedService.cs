@@ -53,6 +53,8 @@ public class PrtgSnapshotHostedService : BackgroundService
     private readonly List<PrtgValueRow> _pendingWrite = new();
     /// <summary>待寫清單的上限：資料庫長時間寫不進去時捨棄最舊的列，不讓記憶體無限長。約 10 小時 × 2 萬顆。</summary>
     private const int MaxPendingWriteRows = 200_000;
+    /// <summary>最近一次從設定算出的每小時期望樣本數（見 ExpectedSamplesPerHour）。</summary>
+    private int _expectedSamplesPerHour;
 
     private DateTime? _lastSuccessAt;
 
@@ -97,6 +99,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         var settings = _settingsStore.Get();
         _effectiveIntervalMinutes = PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes;
+        _expectedSamplesPerHour = ExpectedSamplesPerHour(settings);
         if (_effectiveIntervalMinutes <= 0)
         {
             _effectiveIntervalMinutes = PrtgFetchStrategy.ConservativeIntervalMinutes;
@@ -158,6 +161,8 @@ public class PrtgSnapshotHostedService : BackgroundService
     internal async Task TickAsync(CancellationToken ct = default)
     {
         var settings = _settingsStore.Get();
+        // 記住最近一次讀到的期望樣本數：站台停止時不再讀設定（關機路徑上資料庫未必還在）
+        _expectedSamplesPerHour = ExpectedSamplesPerHour(settings);
 
         // 1. PrtgEnabled 為 false → 不跑。
         if (!settings.PrtgEnabled)
@@ -503,7 +508,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         try
         {
             var now = Now();
-            WriteSampledRows(_accumulator.DrainAll(ExpectedSamplesPerHour(_settingsStore.Get()), now));
+            WriteSampledRows(_accumulator.DrainAll(_expectedSamplesPerHour, now));
         }
         catch (Exception ex)
         {

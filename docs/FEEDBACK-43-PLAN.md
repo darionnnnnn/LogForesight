@@ -380,3 +380,14 @@
 - `summaryOnly` 仍跑全部查詢：它承諾的是檔案小，不是省查詢；記憶體峰值未量測，實機看。
 - `treesize` 讀取／「數字或字串都收」的 JSON 輔助各有多份：跨四個既有檔案的收斂，不在體檢範圍。
 - `OnStopping` 與 tick 對同一 (sensor, 小時) 的合併寫入無互斥：兩邊拿到的列不重複，只可能互蓋 coverage 合併結果，影響一列。
+
+## 終檢輪（併 dev 後，scan-low 掃體檢修正 commit a62aad1）
+
+- `SystemSettingsService.ValidatePrtgFetchStrategy`：體檢把 `null` 放寬成空白也放行，但寫入端只判 `!= null`，直呼 API 送空字串會把使用者選的 `aggressive` 靜默覆寫成空值。改回只放行 `null`（原本擔心的「既有設定被寫成空字串」沒有任何寫入路徑會產生）。
+- `PrtgClient.GetJsonAsync` 的 HTML 訊息只寫「伺服器端逾時或負載過高回的空白頁」；砍掉測試連線那道判定後，位址打錯或認證錯拿到登入頁的使用者會被指到錯的方向。訊息改為同時說明登入頁與空白頁兩種情況。
+- `OnStopping` 用 `_settingsStore.Get()` 算期望樣本數，關機路徑上資料庫未必還在，擲例外會連最後一次補寫一起丟掉。改為記住 tick 時算好的值。
+- **看過但不改**：`WriteSampledRows` 失敗後整批重試，`MergeSampledValues` 對 `sampled` 列是合併（coverage 相加），`BatchWrite` 每 500 筆一批各自提交——若失敗發生在第二批之後，重試會讓前幾批的 coverage 被加兩次（夾在 100）。只在「資料庫寫到一半才壞」時發生，影響是那幾批的 coverage 偏高；要真正冪等需要合併寫入帶寫入序號，記 BACKLOG 觸發條件「實機執行輸出出現寫入失敗重試」。
+- `SystemSettingsService.cs` 在 E2a 被寫成 CRLF（dev 是 LF），體檢修正時 Edit 工具正規化回 LF，所以該 commit 顯示整檔 diff；對 dev 的淨變更只有驗證那幾行。
+- 其餘八個角度（raw 缺失時行為、實機案例、跨午夜與時區、`continue` 流程、待寫清單鎖與截斷、砍分支後的測試覆蓋、二元組呼叫端、警告串接、鍵名殘留、測試手法穩定性、用語）已查無發現。
+
+終檢後全套 3887 綠（略過 6）。

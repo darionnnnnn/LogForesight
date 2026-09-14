@@ -304,7 +304,7 @@ public sealed class PrtgClient : IDisposable
                 var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;
                 var sanitized = head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
                 throw new PrtgClientException(
-                    $"PRTG 回傳 HTML 而非 JSON（多半是伺服器端處理逾時或負載過高回的空白頁）：{sanitized}");
+                    $"PRTG 回傳 HTML 而非 JSON（登入頁代表連線位址或認證資訊有誤；空白頁多半是伺服器端處理逾時或負載過高）：{sanitized}");
             }
 
             return text;

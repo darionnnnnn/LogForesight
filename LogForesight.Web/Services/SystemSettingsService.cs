@@ -1085,8 +1085,7 @@ public class SystemSettingsService : ISystemSettingsService
     /// </summary>
     private static void ValidatePrtgFetchStrategy(string? strategy)
     {
-        // 空白視同未設定：執行期 Normalize 會退回保守，這裡擋下只會讓存檔卡死在一個看不見的值上。
-        if (string.IsNullOrWhiteSpace(strategy)) return;
+        if (strategy == null) return;
 
         if (!PrtgFetchStrategy.IsValid(strategy))
             throw DomainException.Validation("PRTG 取數策略只能是 conservative 或 aggressive。");
