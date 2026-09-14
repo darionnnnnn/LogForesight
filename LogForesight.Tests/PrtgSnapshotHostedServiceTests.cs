@@ -12,7 +12,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// PRTG 數值快照背景服務單元測試（階段規格：批次 E2b）。
+/// PRTG 數值快照背景服務單元測試（docs/PRTG-SPEC.md §3b）。
 /// </summary>
 public class PrtgSnapshotHostedServiceTests : IDisposable
 {
@@ -326,6 +326,102 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var statusAfterSuccess = service.GetStatus();
         Assert.Equal(0, statusAfterSuccess.ConsecutiveFailures);
         Assert.Equal(15, statusAfterSuccess.IntervalMinutes);
+    }
+
+    /// <summary>
+    /// PRTG 呼叫成功但整點寫入資料庫失敗：取出的列已不在累積器，必須留著下次再寫，
+    /// 而且這不是 PRTG 的失敗，不能推進退避。
+    /// </summary>
+    [Fact]
+    public async Task TickAsync_整點寫入資料庫失敗_列留待下次重試且不計為PRTG失敗()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        var json = "{\"treesize\":1,\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(json));
+
+        var console = new TestConsole();
+        var service = CreateService(console);
+        var clock = DateTime.Today.AddHours(10).AddMinutes(5);
+        service.Now = () => clock;
+
+        // 10:05 取到一筆樣本，留在 10 點桶
+        await service.TickAsync();
+        Assert.Equal(1, service.GetStatus().PendingSamples);
+
+        // 讓數值表暫時不存在：跨到 11 點後的整點寫入會失敗
+        var dbPath = Path.Combine(_dir, "test.db");
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE lf_prtg_values RENAME TO lf_prtg_values_hidden";
+            cmd.ExecuteNonQuery();
+        }
+
+        clock = clock.AddHours(1);
+        await service.TickAsync();
+        var status = service.GetStatus();
+        Assert.NotNull(status.LastSuccessAt);
+        Assert.Equal(0, status.ConsecutiveFailures);
+        Assert.Equal(15, status.IntervalMinutes);
+        Assert.Contains(console.Lines, l => l.Contains("寫入資料庫失敗") && l.Contains("留待下次重試"));
+
+        // 表回來後，下一次快照把留著的列補寫進去
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE lf_prtg_values_hidden RENAME TO lf_prtg_values";
+            cmd.ExecuteNonQuery();
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+
+        var written = _backend.PrtgStore().GetDailyValueAggregations(DateTime.Today, DateTime.Today.AddDays(1));
+        var row = Assert.Single(written, a => a.SensorObjid == 501);
+        // 只有 1 個樣本（coverage 25），是一列 sampled 但不可用：總數 1、可用 0
+        Assert.Equal(1, row.TotalCount);
+        Assert.Equal(0, row.UsableCount);
+    }
+
+    /// <summary>
+    /// 退避期間取到的樣本本來就少，coverage 要照策略設定的間隔算（15 分鐘＝一小時 4 個），
+    /// 不能照拉長後的間隔算——否則 1 個樣本會被算成滿涵蓋，通過可用門檻進基線。
+    /// </summary>
+    [Fact]
+    public async Task TickAsync_退避期間的coverage_以策略間隔而非生效間隔計算()
+    {
+        SetupTargetSensors(new[] { (601L, "Ping") });
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        _stubHandler.OnSend = (_, _) => throw new HttpRequestException("Simulated HTTP failure");
+        for (var i = 0; i < 3; i++)
+        {
+            await service.TickAsync();
+            clock = clock.AddMinutes(15);
+        }
+        Assert.Equal(30, service.GetStatus().IntervalMinutes);
+
+        // 失敗在 10:00／10:15／10:30，退避後間隔 30 分鐘；11:00 成功一次：11 點桶只有 1 個樣本
+        var successJson = "{\"treesize\":1,\"sensors\":[{\"objid\":601,\"lastvalue_raw\":50,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(successJson));
+        clock = DateTime.Today.AddHours(11);
+        await service.TickAsync();
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+
+        // 跨到 12 點，整點寫出 11 點桶
+        clock = DateTime.Today.AddHours(12);
+        await service.TickAsync();
+
+        var rows = _backend.PrtgStore().GetDailyValueAggregations(DateTime.Today, DateTime.Today.AddDays(1));
+        var agg = Assert.Single(rows, a => a.SensorObjid == 601);
+        // 1 個樣本 ÷ 期望 4 個 ＝ 25，coverage 不足 75 → 不算可用列
+        Assert.Equal(0, agg.UsableCount);
+        Assert.Equal(1, agg.OtherCount);
     }
 
     /// <summary>

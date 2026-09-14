@@ -814,6 +814,11 @@ public static class PrtgProbeRunner
         var rows = parsed.Rows;
 
         console.WriteLine($"     9d-1：快照 耗時 {sw.Elapsed.TotalMilliseconds:F0} ms、回傳 {rows.Count} 筆、{System.Text.Encoding.UTF8.GetByteCount(json)} bytes");
+        // 與其他單發大 count 同一道截斷偵測：拿半份樣本算分布與可解析率，結論會失真而看不出來
+        if (parsed.TotalTreesize.HasValue && rows.Count < parsed.TotalTreesize.Value)
+        {
+            console.WriteLine($"     9d-1：⚠ 只取到 {rows.Count} 筆／treesize {parsed.TotalTreesize.Value}，樣本被截斷，下列分布與可解析率僅代表取到的部分");
+        }
 
         var intervalText = rows.Any(r => !string.IsNullOrWhiteSpace(r.Interval))
             ? TopDistribution(rows.Select(r => r.Interval), rows.Count)

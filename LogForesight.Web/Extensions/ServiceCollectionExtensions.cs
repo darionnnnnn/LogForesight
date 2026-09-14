@@ -424,7 +424,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<StorageBackend>().Blob(PrtgStructureSyncStatusStore.BlobKey)));
         services.AddSingleton<PrtgStructureSyncService>();
 
-        // PRTG 數值快照背景服務（批次 E2b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
+        // PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
         services.AddSingleton<PrtgSnapshotHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
 

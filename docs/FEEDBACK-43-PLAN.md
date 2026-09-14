@@ -1,6 +1,6 @@
 # 回饋第 43 輪規劃：PRTG 取數效能——先量測再定案
 
-> 狀態：規劃完成，六項待決已由使用者採納建議定案；批次 A～G 依序委派 impl-low
+> 狀態：全案完成（體檢後 3887 綠），待併 dev
 > 基準：dev@1c42277（3761 綠）
 > 來源：使用者回報「抓取 sensor 有點慢」，PRTG 主機 CPU／RAM 約 60%
 > 實作方式：批次 0 委派 `impl-low`（Opus，low）；規劃、驗收、後續批次定案由 Claude 做
@@ -31,6 +31,8 @@
 | E | 取數策略（保守／激進）設定＋快照背景服務＋夜間逐顆查詢依策略開關 | Core 4 檔、Web 5 檔、測試、spec | A、B |
 | G | 校準與快照相容：可用列定義、三處品質統計、匯出欄位、判定文案 | Core 2 檔、Web 2 檔、測試、spec §11 | E |
 | F | 文件：PRTG-SPEC §2／§3／§6／§11／§12、WEB-SPEC §9.9e／§9.9f、BACKLOG、CLAUDE.md 基線 | 文件 | A～G |
+
+實際拆批：E 拆成 E1（Core）／E2a（設定接線）／E2b（快照服務）／E2c（可觀測性與估算）／E3（popover 與暫停原因）；G 拆成 G1（可用列）／G2（摘要匯出）／G3（顯示層）。各批的驗收見文末執行紀錄。
 
 建議順序 A → B → C → D → E → G → F。A 到 D 各自獨立、都小，E 最大且依賴 A（快照與逐顆查詢寫同一張表，解析要先對）與 B（快照失敗要能分辨是空白頁）。
 
@@ -343,3 +345,38 @@
 - 夜間執行輸出只印取數策略與快照間隔，不印快照服務的即時狀態：Core 無法參照 Web 的快照服務；快照狀態看鏡像頁籤。
 - 匯出前的 MB 提示以每列 300 位元組估算，是量級提示不是精確值。
 - 快照服務的暫停原因只給狀態查詢，不寫 log 與執行輸出（每 60 秒一次會洗版）。
+
+## 體檢交接
+
+- 實作方：Claude Opus 5（規劃、規格、驗收、手改）＋ agy（gemini-3.8-flash-high，批次 B～G3、E3 的產出）＋ impl-low（Opus low，批次 0b、A）。
+- 體檢方：Claude Fable 5.1（使用者以 /model 切換後下收尾指令）；subagent 用 scan-low（Opus，low）。
+- 實作收官：feature/feedback-43 共 18 個 commit，全套 3883 綠（略過 6），基線 3761。
+- 實作方最沒把握的地方：(1) 快照服務的例外路徑——PRTG 呼叫成功但 `MergeSampledValues` 寫 DB 失敗時的資料流；(2) `ParseHistoricData` 的顯示字串解析在非台灣地區設定的 PRTG 上是否會把 M/d 與 d/M 對調而靜默寫錯小時；(3) `GetSampledCoverageSince` 的 `GroupBy(_ => 1)` 只在 SQLite 跑過；(4) 校準摘要資料集在數千顆感測器下的記憶體用量沒有量測。
+
+## 體檢輪修正（Fable 5.1；scan-low 三路掃描＋親讀快照服務、累積器、合併寫入、解析器）
+
+| 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|
+| `PrtgFetchService.TryResolvePeriodStart` | d/M 格式的 PRTG（en-GB 等）配上 M/d 或 y/M/d 的站台文化，「10/09/2026」被讀成 10 月 9 日，解析成功、不計 unparsed、不走退路——整批基線平移到錯的日期而無徵兆 | 先讀 `datetime_raw`；字串解析結果與 raw 差超過 24 小時（實機差 7 小時是時區基準不同，月日對調至少差一天）就換下一個文化，都不合才退到 raw 並計入回報 | `FetchDayAsync_顯示字串月日對調時_以datetime_raw擋下並回報`（突變：門檻放到無限大 → 紅） |
+| 同上，`value_`／`value` 退路 | 沒有 `value_raw` 時退路仍用 `TryGetProperty`，多頻道重複鍵回最後一個＝最後一個頻道，與「取第一組主要頻道」相反 | 退路也改 `TryGetFirstProperty` | `FetchDayAsync_value退路遇重複鍵_取第一組主要頻道`（突變 → 紅） |
+| `PrtgSnapshotHostedService.ExecuteSnapshotAsync` | PRTG 呼叫成功後 `DrainBefore` 已把整點桶從累積器移除，`MergeSampledValues` 寫 DB 擲例外時整小時樣本無聲消失；例外還被當成 PRTG 失敗推進退避、`LastSuccessAt` 已先推進 | 新增待寫清單 `_pendingWrite`（上限 20 萬列）：寫入失敗留著下次快照或站台停止時再寫，只寫 Warn 與 NLog，不進退避 | `TickAsync_整點寫入資料庫失敗_列留待下次重試且不計為PRTG失敗`（突變：失敗時清掉待寫清單 → 紅） |
+| 同上，`ExpectedSamplesPerHour` | 期望樣本數用退避後的生效間隔算：退避到 60 分鐘時 1 個樣本＝coverage 100，取樣不足的列通過 75 門檻進基線 | 改以策略設定的間隔算（`ExpectedSamplesPerHour(settings)`） | `TickAsync_退避期間的coverage_以策略間隔而非生效間隔計算`（突變：期望固定 1 → 紅） |
+| 同上，`IsFetchRunningPrtgPhase` | 讀 `SchedulerRunState.ProgressPhase`（NetIQ 軌）判 `prtg-` 前綴，永遠不成立的死碼 | 砍掉，只看 `PrtgProgressPhase` | 既有前置條件測試 |
+| `PrtgClient.TestConnectionAsync` | `GetJsonAsync` 已先對 HTML 擲例外，方法內的第二道 HTML 判定永遠到不了（同一判定三份的其中一份成了死碼） | 砍掉，留一行註解指向統一判定；另修同檔一段少縮 4 格的註解 | 既有 `PrtgClientTests` |
+| `SettingsController` 估算端點 | 白名單為空且列數超標時 `else if` 只顯示前者，最危險的組合反而看不到列數 | 兩個警告各自成立各自講，以空白接起 | 既有 `估算_白名單為空時快照警告` |
+| `SystemSettingsService.ValidatePrtgFetchStrategy` | 既有設定若被寫成空白字串，之後每次存檔都被擋（驗的是 request ?? before） | 空白視同未設定放行，執行期 Normalize 本來就退回保守 | — |
+| `CalibrationService` 門檻字典 | 鍵仍叫 `MinDailyOkHours`，與「可用列」口徑不一致 | 改 `MinDailyUsableHours`，前端標籤同步 | 既有校準測試 |
+| `PrtgProbeRunner` 9d-1 | `count=50000` 單發未比對 treesize，分布與可解析率可能建立在半份樣本上 | 少於 treesize 時印截斷警告 | — |
+| `PrtgSnapshotStatus.PendingBuckets` | 無任何消費端 | 砍掉 | — |
+| `FetchValuesAsync` 回傳 `TimedOutSensors` | 兩個呼叫端都丟棄，逾時數只在函式內印出 | 回傳值改回二元組 | — |
+| 正式碼與測試註解 | 「批次 E2b」「批次 E2c」「批次 A」等只對本輪有意義的字眼 | 改指 `docs/PRTG-SPEC.md §3a／§3b` | — |
+| 文件 | §2「依樣本數加權」實為依 coverage；§3a「不採用 50000」寫兩次；§3b「每小時彙報」實為每次快照、退避「3 次起」實為每滿 3 次、interval 單位未列全、「保留 100 行」無畫面出口；§10 未說匯入不看 quality；BACKLOG 值型規則三條與 objid 清單比對未互相指路 | 逐條改正 | — |
+
+體檢後全套 3887 綠（略過 6）。
+
+**看過但不改**（記錄理由）：
+- 三處「ok 對應裝置集合」建法不同（校準用 anchor 回看 30 天、快照用當天退一天、估算用最新一日）：校準卡與估算的「快照目標數」在對應中斷超過一天時會高於實際；收斂需要 store 開一支共用查詢，屬設計變更，記 BACKLOG 觸發條件。
+- `ParseIntervalSeconds` 接受 9 種單位寫法（規劃只列 3 種）：PRTG 的 interval 字串格式未在實機逐一驗證，多收不會誤判，文件補列。
+- `summaryOnly` 仍跑全部查詢：它承諾的是檔案小，不是省查詢；記憶體峰值未量測，實機看。
+- `treesize` 讀取／「數字或字串都收」的 JSON 輔助各有多份：跨四個既有檔案的收斂，不在體檢範圍。
+- `OnStopping` 與 tick 對同一 (sensor, 小時) 的合併寫入無互斥：兩邊拿到的列不重複，只可能互蓋 coverage 合併結果，影響一列。

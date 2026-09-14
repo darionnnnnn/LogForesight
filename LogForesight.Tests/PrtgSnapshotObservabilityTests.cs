@@ -20,7 +20,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// PRTG 數值快照可觀測性與規模估算單元測試（階段規格：批次 E2c）。
+/// PRTG 數值快照可觀測性與規模估算單元測試（docs/PRTG-SPEC.md §3b、§8）。
 /// </summary>
 public class PrtgSnapshotObservabilityTests : IDisposable
 {

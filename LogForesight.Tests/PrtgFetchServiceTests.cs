@@ -712,7 +712,7 @@ public class PrtgFetchServiceTests : IDisposable
         sb.Append("]}");
         return sb.ToString();
     }
-    // ── 批次 A：historicdata 改用原始欄位（datetime_raw／value_raw／coverage_raw）──────────
+    // ── historicdata 原始欄位解析（datetime_raw／value_raw／coverage_raw，docs/PRTG-SPEC.md §3a）──────────
 
     /// <summary>
     /// 只回一個 sensor（objid 9001）與指定 histdata 原文的假 PRTG。
@@ -787,6 +787,46 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(100.0, row.Coverage!.Value, 6);
         // 走的是顯示字串，不該出現退路警告
         Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// d/M 格式的 PRTG（如 en-GB）配上 M/d 或 y/M/d 的站台文化：「10/09/2026」會被解析成 10 月 9 日，
+    /// 而且解析成功、不報錯。datetime_raw 與顯示字串同一天（只差幾小時），差超過一天就是月日讀反了，
+    /// 這時要退到 raw 並回報，不能讓錯的日期靜默進基線。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串月日對調時_以datetime_raw擋下並回報()
+    {
+        // raw 46275.6666666667 ＝ 2026-09-10 16:00；字串 10/09/2026 在 M/d 文化會讀成 2026-10-09
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"10/09/2026 23:00:00 - 11/09/2026 00:00:00\",\"datetime_raw\":46275.6666666667," +
+                       "\"value_raw\":3.5593,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistWithCultureAsync(histJson, "en-US");
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10), row.PeriodStart.Date);
+        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// 沒有 value_raw 時退回 value_，多頻道的重複鍵同樣要取第一組（主要頻道），
+    /// 不能因為走了退路就變成取最後一個頻道。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_value退路遇重複鍵_取第一組主要頻道()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"2026-09-10 23:00:00 - 2026-09-11 00:00:00\"," +
+                       "\"value_\":4,\"value_\":6,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (_, rows, _) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(4.0, row.AvgValue!.Value, 6);
     }
 
     /// <summary>

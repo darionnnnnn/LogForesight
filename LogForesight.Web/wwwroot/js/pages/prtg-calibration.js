@@ -69,7 +69,7 @@ const THRESHOLD_LABELS = {
     RequiredHosts: '需要主機數',
     AvailableCoverageDays: '可用所需涵蓋天數',
     SufficientCoverageDays: '充足所需涵蓋天數',
-    MinDailyOkHours: '單日有效小時數下限',
+    MinDailyUsableHours: '單日可用小時數下限',
     WindowDays: '評估視窗天數',
     AvailableDays: '可用所需天數',
     SufficientDays: '充足所需天數',

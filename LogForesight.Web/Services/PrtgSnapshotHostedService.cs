@@ -13,13 +13,12 @@ using LogLevel = NLog.LogLevel;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// PRTG 即時快照狀態 DTO（供 E2c UI 與監控查詢）。
+/// PRTG 數值快照服務的狀態（供鏡像狀態端點與測試查詢）。
 /// </summary>
 /// <param name="LastSuccessAt">上次成功快照時間</param>
 /// <param name="LastSensorCount">上次成功快照處理的感測器數量</param>
 /// <param name="IntervalMinutes">目前生效間隔（含退避後）</param>
 /// <param name="ConsecutiveFailures">連續失敗次數</param>
-/// <param name="PendingBuckets">累積器中待寫出的小時桶數量</param>
 /// <param name="PendingSamples">累積器中待寫出的總樣本數量</param>
 /// <param name="LastSkipReason">快照跳過原因（若因前置條件未滿足暫停）</param>
 public sealed record PrtgSnapshotStatus(
@@ -27,12 +26,11 @@ public sealed record PrtgSnapshotStatus(
     int LastSensorCount,
     int IntervalMinutes,
     int ConsecutiveFailures,
-    int PendingBuckets,
     int PendingSamples,
     string? LastSkipReason);
 
 /// <summary>
-/// PRTG 數值快照背景服務（批次 E2b）：定期發送一次 table.json 取得即時快照數值，
+/// PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定期發送一次 table.json 取得即時快照數值，
 /// 由內部累積器依小時平均後寫入 lf_prtg_values。
 /// </summary>
 public class PrtgSnapshotHostedService : BackgroundService
@@ -50,6 +48,11 @@ public class PrtgSnapshotHostedService : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
 
     private readonly PrtgSnapshotAccumulator _accumulator = new();
+
+    /// <summary>已從累積器取出、但還沒寫成功的整點列（資料庫暫時寫不進去時暫存，見 WriteSampledRows）。</summary>
+    private readonly List<PrtgValueRow> _pendingWrite = new();
+    /// <summary>待寫清單的上限：資料庫長時間寫不進去時捨棄最舊的列，不讓記憶體無限長。約 10 小時 × 2 萬顆。</summary>
+    private const int MaxPendingWriteRows = 200_000;
 
     private DateTime? _lastSuccessAt;
 
@@ -102,7 +105,13 @@ public class PrtgSnapshotHostedService : BackgroundService
         _lifetime.ApplicationStopping.Register(OnStopping);
     }
 
-    private int ExpectedSamplesPerHour => Math.Max(1, 60 / _effectiveIntervalMinutes);
+    /// <summary>
+    /// 每小時期望樣本數以策略設定的間隔算，不用退避後的生效間隔：
+    /// 退避期間實際取到的樣本本來就少，coverage 要如實變低；改用拉長後的間隔算會把 1 個樣本算成滿涵蓋，
+    /// 讓取樣不足的列通過可用門檻進入基線。
+    /// </summary>
+    private static int ExpectedSamplesPerHour(SystemSettings settings) =>
+        Math.Max(1, 60 / Math.Max(1, PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes));
 
     public PrtgSnapshotStatus GetStatus() =>
         new(
@@ -110,7 +119,6 @@ public class PrtgSnapshotHostedService : BackgroundService
             LastSensorCount: _lastSensorCount,
             IntervalMinutes: _effectiveIntervalMinutes,
             ConsecutiveFailures: _consecutiveFailures,
-            PendingBuckets: _accumulator.BucketCount,
             PendingSamples: _accumulator.SampleCount,
             LastSkipReason: _lastSkipReason);
 
@@ -221,13 +229,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         if (!_schedulerRunState.IsRunning) return false;
         if (_schedulerRunState.PrtgCompleted) return false;
+        // 只看 PRTG 軌的 phase：ProgressPhase 是 NetIQ 軌的，永遠不會以 prtg- 開頭
         var prtgPhase = _schedulerRunState.PrtgProgressPhase;
-        if (prtgPhase != null && prtgPhase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
-            return true;
-        var mainPhase = _schedulerRunState.ProgressPhase;
-        if (mainPhase != null && mainPhase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
-            return true;
-        return false;
+        return prtgPhase != null && prtgPhase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ExecuteSnapshotAsync(SystemSettings settings, DateTime now, CancellationToken ct)
@@ -340,11 +344,36 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         RecordSuccess(settings, addedCount, now);
 
-        var store = _backend.PrtgStore();
-        var drainedRows = _accumulator.DrainBefore(currentHour, ExpectedSamplesPerHour, now);
-        if (drainedRows.Count > 0)
+        WriteSampledRows(_accumulator.DrainBefore(currentHour, ExpectedSamplesPerHour(settings), now));
+    }
+
+    /// <summary>
+    /// 把已從累積器取出的整點列寫進資料庫。寫入失敗時列留在待寫清單、下次再試——
+    /// 取出的列在累積器裡已經不存在，讓例外往上丟等於整個小時的樣本無聲消失；
+    /// 這也不是 PRTG 的失敗，不能進退避計數。
+    /// </summary>
+    private void WriteSampledRows(IReadOnlyList<PrtgValueRow> rows)
+    {
+        lock (_pendingWrite)
         {
-            store.MergeSampledValues(drainedRows);
+            _pendingWrite.AddRange(rows);
+            if (_pendingWrite.Count == 0) return;
+
+            try
+            {
+                _backend.PrtgStore().MergeSampledValues(_pendingWrite);
+                _pendingWrite.Clear();
+            }
+            catch (Exception ex)
+            {
+                var dropped = Math.Max(0, _pendingWrite.Count - MaxPendingWriteRows);
+                if (dropped > 0) _pendingWrite.RemoveRange(0, dropped);
+                var msg = $"快照樣本寫入資料庫失敗，{_pendingWrite.Count} 列留待下次重試"
+                          + (dropped > 0 ? $"（已超過待寫上限，最舊的 {dropped} 列捨棄）" : "")
+                          + $"：{ex.Message}";
+                WriteOutput(msg, LogLevel.Warn);
+                Log.Error(ex, "PRTG 快照樣本寫入資料庫失敗");
+            }
         }
     }
 
@@ -474,11 +503,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         try
         {
             var now = Now();
-            var rows = _accumulator.DrainAll(ExpectedSamplesPerHour, now);
-            if (rows.Count > 0)
-            {
-                _backend.PrtgStore().MergeSampledValues(rows);
-            }
+            WriteSampledRows(_accumulator.DrainAll(ExpectedSamplesPerHour(_settingsStore.Get()), now));
         }
         catch (Exception ex)
         {

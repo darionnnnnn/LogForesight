@@ -309,15 +309,17 @@ public class SettingsController : ControllerBase
         var snapshotRetentionDays = Math.Min(settings.PrtgRetentionDays, settings.RetentionDays);
         var snapshotRowsAtRetention = snapshotRowsPerDay * snapshotRetentionDays;
 
-        string? snapshotWarning = null;
+        // 兩個條件各自成立各自講：最危險的組合（不限制＋數千萬列）不能只看到其中一句。
+        var snapshotWarnings = new List<string>();
         if (whitelist.Count == 0)
         {
-            snapshotWarning = "sensor type 白名單為空：快照會存下已對應裝置上的全部感測器，資料表成長最快。建議設定白名單。";
+            snapshotWarnings.Add("sensor type 白名單為空：快照會存下已對應裝置上的全部感測器，資料表成長最快。建議設定白名單。");
         }
-        else if (snapshotRowsAtRetention >= SnapshotRowsWarnThreshold)
+        if (snapshotRowsAtRetention >= SnapshotRowsWarnThreshold)
         {
-            snapshotWarning = $"快照在保留期內約累積 {snapshotRowsAtRetention:N0} 列，建議縮小 sensor type 白名單或調短 PRTG 保留天數。";
+            snapshotWarnings.Add($"快照在保留期內約累積 {snapshotRowsAtRetention:N0} 列，建議縮小 sensor type 白名單或調短 PRTG 保留天數。");
         }
+        string? snapshotWarning = snapshotWarnings.Count > 0 ? string.Join(" ", snapshotWarnings) : null;
 
         string? warning = null;
         if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(requestedScope, whitelist.Count == 0))

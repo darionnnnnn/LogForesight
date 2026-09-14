@@ -61,7 +61,7 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 `unknown` 與 `nodata` 的列**仍然寫入**（數值欄為 null）——「這個時段沒有可信資料」
 本身就是要保留的事實。
 
-**同一（sensor, 小時）的寫入優先序**：`ok` 覆蓋 `sampled`（精確值優先，走 `UpsertValues` 的同鍵覆蓋）；`sampled` 對既有 `sampled` **合併**（依樣本數加權平均、極值取聯集、coverage 相加，上限 100），既有列是 `ok` 時不動（`MergeSampledValues`）。站台一小時內重啟兩次，第二次寫出的部分樣本不會蓋掉第一次的。
+**同一（sensor, 小時）的寫入優先序**：`ok` 覆蓋 `sampled`（精確值優先，走 `UpsertValues` 的同鍵覆蓋）；`sampled` 對既有 `sampled` **合併**（以 coverage 為權重加權平均、極值取聯集、coverage 相加，上限 100），既有列是 `ok` 時不動（`MergeSampledValues`）。站台一小時內重啟兩次，第二次寫出的部分樣本不會蓋掉第一次的。
 
 **可用列（usable）**＝`ok`，或 `sampled` 且 `coverage ≥ 75`（常數 `PrtgValueUsability.SampledMinCoverage`）。校準（§11）與任何基線統計只認可用列；coverage 不足的 `sampled` 與 `unknown`／`nodata` 一樣排除。門檻 75 的意思是保守策略一小時 4 個樣本要有 3 個、激進 12 個要有 9 個——兩個樣本的平均不足以代表一小時。
 
@@ -180,7 +180,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
   結構同步**不套 `PrtgFetchConcurrency`**（分頁必須循序），也**不設整段逾時**
   ——拍腦袋的倍數在大型環境會誤殺合法的長同步。中止的手段是 §5a 的停止鈕，
   收斂的保證是上面的三道停止條件與頁數上限。
-- **PRTG 對大回應會回 HTTP 200 的空白 HTML 頁**（實測 73 bytes 的 `no-content OK`，同一查詢前一天成功）。`PrtgClient.GetJsonAsync` 讀到的內容去空白後以 `<` 開頭時擲 `PrtgClientException`，訊息含「PRTG 回傳 HTML 而非 JSON」與開頭 80 字。影響面：分頁階段計為失敗且原因明確、資源守門即時來源退回鏡像（§12）、探測子量測印「無法量測」＋原因（§6）、快照計一次失敗（§3b）。這也是分頁大小不採用 50000 的原因。
+- **PRTG 對大回應會回 HTTP 200 的空白 HTML 頁**（實測 73 bytes 的 `no-content OK`，同一查詢前一天成功）。`PrtgClient.GetJsonAsync` 讀到的內容去空白後以 `<` 開頭時擲 `PrtgClientException`，訊息含「PRTG 回傳 HTML 而非 JSON」與開頭 80 字。影響面：分頁階段計為失敗且原因明確、資源守門即時來源退回鏡像（§12）、探測子量測印「無法量測」＋原因（§6）、快照計一次失敗（§3b）。
 - 記憶體：單頁最多 5000 筆 JSON（實測約 2 MB）＋ 500 筆緩衝，記憶體嚴格有界；逐頁轉換、每累積滿 500 筆就寫入一次；每批一個新的 `DbContext`（變更追蹤器每批歸零）。
   絕不把整份資料堆在記憶體最後才寫。
 - 單一 sensor 的數值擷取失敗（逾時、404、暫時 5xx）只影響它自己，其餘 sensor 照樣落地並回報
@@ -216,10 +216,12 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 - 查詢：`table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000`（實測兩到三欄約 10～15 秒）。回傳筆數少於 `treesize` 時寫截斷警告（與資源守門同一道判定）。
 - **目標集合**＝當天 `ok` 對應裝置上、符合白名單、未暫停的 sensor（`GetValueFetchTargets`），每小時刷新一次；當天沒有對應就用前一天。集合外的 objid 不累積——全量 4 萬顆每天會多百萬列而沒有消費端。
 - **累積器**（`PrtgSnapshotAccumulator`，Core）：per (objid, 小時) 累積 sum／count／min／max，整點把上一小時寫成 `sampled` 列（合併寫入，§2）；站台停止時把當前小時的部分樣本也寫出，coverage 如實反映缺口。
-- **流量類正規化**：`lastvalue_raw` 是「最近一次掃描的傳輸量」，`historicdata` 第一頻道是「整小時總量」。type 屬於 `PrtgVolumeSensorTypes`（`SNMP Traffic 64bit`、`SNMP Traffic 32bit`、`Windows Network Card`）的樣本換算為 `lastvalue_raw × 3600 ÷ 掃描間隔秒數`；`interval` 接受「60 s」「5 m」「1 h」，解析不了以 60 秒計並在執行輸出每小時彙報筆數。其他 type 不換算（CPU／記憶體／磁碟／Ping 的 `lastvalue_raw` 與歷史值同尺度，已實測）。
-- **退避**：連續失敗（例外、空白 HTML 頁、逾時）3 次起，生效間隔加倍，上限 60 分鐘；成功即恢復策略設定值。間隔**從上次嘗試起算**——從上次成功起算時 PRTG 回不來就會每 60 秒重打一次全量快照。每次間隔變化寫一行執行輸出。
+- **流量類正規化**：`lastvalue_raw` 是「最近一次掃描的傳輸量」，`historicdata` 第一頻道是「整小時總量」。type 屬於 `PrtgVolumeSensorTypes`（`SNMP Traffic 64bit`、`SNMP Traffic 32bit`、`Windows Network Card`）的樣本換算為 `lastvalue_raw × 3600 ÷ 掃描間隔秒數`；`interval` 接受純數字秒數與「60 s」「5 m」「1 h」（單位可用全稱），解析不了以 60 秒計並在每次快照的執行輸出回報筆數。其他 type 不換算（CPU／記憶體／磁碟／Ping 的 `lastvalue_raw` 與歷史值同尺度，已實測）。
+- **退避**：連續失敗（例外、空白 HTML 頁、逾時）每滿 3 次，生效間隔加倍一次（第 3、6、9 次各加倍），上限 60 分鐘；成功即恢復策略設定值。間隔**從上次嘗試起算**——從上次成功起算時 PRTG 回不來就會每 60 秒重打一次全量快照。每次間隔變化寫一行執行輸出。
 - 快照服務不受資源守門節制（它不在夜間批次內，且同時只有一個請求）；也不套 `PrtgFetchConcurrency`。
-- 服務自己的執行輸出保留最近 100 行。
+- 狀態變化（截斷、退避、恢復、寫入失敗）寫 NLog，服務內只保留最近 100 行供測試觀察，畫面不另列。
+- **整點寫入失敗不丟樣本**：已從累積器取出的列留在待寫清單（上限 20 萬列，超過捨棄最舊），下次快照或站台停止時再寫；資料庫寫不進去不算 PRTG 失敗、不進退避。
+- coverage 的期望樣本數以**策略設定的間隔**算，不用退避後的生效間隔——退避期間樣本本來就少，coverage 要如實變低，否則 1 個樣本會被算成滿涵蓋而通過可用門檻。
 - **時間基準**：快照的小時邊界用站台本機時間，`historicdata` 的時間是 PRTG 伺服器本機時間；兩者同一時區才對得上。
 - **規模估算**：取數範圍的估算端點另回快照目標數、每日列數、依保留天數估的總列數；總列數達 2,000 萬或白名單為空時帶警告。保留天數以 `min(PrtgRetentionDays, RetentionDays)` 近似，不含低於下限的退回邏輯。
 
@@ -699,6 +701,7 @@ PRTG 維護頁因此提供跨後端的資料通道：
 - **匯入**：上傳同一個檔案，全部走既有的自然鍵冪等寫入
   （數值依 `(sensor_objid, period_start)`、狀態變更依 `(sensor_objid, changed_at)`、結構表依 objid），
   **重複匯入不產生重複資料**，也**不覆蓋人工指定的 sensor 分類**。
+  數值列依鍵**無條件覆蓋**（不看 quality）：匯入的 `ok` 列會蓋掉本機 `sampled` 列（精確值優先，正確），匯入的 `sampled` 列也會蓋掉本機 `ok` 列——搬運方向是正式機→開發機，後者在實務上不會發生。
   格式版本不符時拒絕匯入並說明支援版本。
 - 匯出與匯入都寫稽核。本輪不做壓縮與增量匯出（等實際檔案大小出來再議）。
 
@@ -745,6 +748,7 @@ PRTG 維護頁因此提供跨後端的資料通道：
   `PrtgRetentionDays` 小於充足所需天數時提醒：資料會在累積足夠前被清掉。
   有可用的 `sampled` 列時多一句「可用小時中有 N 小時為快照取樣值」。
 - 三個數值查詢（涵蓋摘要、每日聚合、每日量級）的可用判定**內嵌在 EF 查詢投影裡**、同一個運算式，計數拆成 `OkCount`／`SampledCount`（僅計可用的 sampled）／`UsableCount`／`UnknownCount`／`NodataCount`／`OtherCount`（含 coverage 不足的 sampled、paused、untrusted）。抽成 C# 方法會讓 EF 無法翻譯或退到用戶端評估。
+- 門檻字典的鍵為 `MinDailyUsableHours`（值 12）。
 - 值型基線卡另列：快照目標 sensor 數（`SnapshotTargets`）、近 24 小時有取樣的 sensor 數與平均 coverage（`SnapshotSensors24h`／`SnapshotCoverage24h`，含 coverage 不足的取樣列——回答「快照有沒有在跑」而非「可不可用」）、逐日列數（`ValueBaselineRows`，預告完整匯出大小）。
 - 數值取得量級卡的比例：`UsableRatio`（可用列 ÷ 全部）、`SampledRatio`（可用 sampled ÷ 全部）、`OkRatio`（PRTG 真平均 ÷ 全部）。
 - 判定結果在行程內快取 10 分鐘（累積量以「天」為單位變動，十分鐘內不會有不同結論）；

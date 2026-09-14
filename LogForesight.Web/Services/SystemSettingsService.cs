@@ -1085,7 +1085,8 @@ public class SystemSettingsService : ISystemSettingsService
     /// </summary>
     private static void ValidatePrtgFetchStrategy(string? strategy)
     {
-        if (strategy == null) return;
+        // 空白視同未設定：執行期 Normalize 會退回保守，這裡擋下只會讓存檔卡死在一個看不見的值上。
+        if (string.IsNullOrWhiteSpace(strategy)) return;
 
         if (!PrtgFetchStrategy.IsValid(strategy))
             throw DomainException.Validation("PRTG 取數策略只能是 conservative 或 aggressive。");
@@ -1128,7 +1129,7 @@ public class SystemSettingsService : ISystemSettingsService
         if (effectivePrtgRetentionDays > effectiveRetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
 
-        ValidatePrtgAuthMode(effectivePrtgAuthMode);
+        ValidatePrtgAuthMode(effectivePrtgAuthMode);
 
         // 覆寫清單打錯字若拖到夜間執行才在 console 看到「略過非數字」，全部打錯時等於守門靜默失效——
 

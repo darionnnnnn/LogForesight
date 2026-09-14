@@ -189,7 +189,7 @@ public sealed class PrtgFetchService
             {
                 var activeSensors = sensorTargets.Where(s => !s.Paused).ToList();
                 _console.WriteLine($"[階段 4/4] 開始擷取 PRTG 每小時數值（{day:yyyy-MM-dd}，未暫停感測器：{activeSensors.Count} 個，併發：{Math.Max(concurrency, 1)}）...");
-                var (written, failedSensorCount, _) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, PrtgValuesPhase);
+                var (written, failedSensorCount) = await FetchValuesAsync(day, activeSensors, concurrency, ct, progress, PrtgValuesPhase);
                 valuesCount = written;
                 _console.WriteLine($"[階段 4/4] 每小時數值擷取完成，共寫入 {valuesCount} 筆數值。");
 
@@ -233,7 +233,7 @@ public sealed class PrtgFetchService
         }
 
         var targets = sensorObjids.Select(id => (Objid: id, Paused: false)).ToList();
-        var (written, failed, _) = await FetchValuesAsync(day, targets, concurrency, ct, progress, PrtgTriggeredPhase);
+        var (written, failed) = await FetchValuesAsync(day, targets, concurrency, ct, progress, PrtgTriggeredPhase);
         return (written, failed);
     }
 
@@ -398,7 +398,7 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表</summary>
-    private async Task<(int Written, int FailedSensors, int TimedOutSensors)> FetchValuesAsync(
+    private async Task<(int Written, int FailedSensors)> FetchValuesAsync(
         DateTime day,
         IReadOnlyList<(long Objid, bool Paused)> activeSensors,
         int concurrency,
@@ -408,7 +408,7 @@ public sealed class PrtgFetchService
     {
         if (activeSensors.Count == 0)
         {
-            return (0, 0, 0);
+            return (0, 0);
         }
 
         var totalSensors = activeSensors.Count;
@@ -493,7 +493,7 @@ public sealed class PrtgFetchService
                 + "（多半是 PRTG 伺服器的地區日期格式與本機不符，請比對 PRTG 的時間顯示設定）。");
         }
 
-        return (totalValues, failedSensors, timedOutSensors);
+        return (totalValues, failedSensors);
     }
 
     private static bool IsTimeoutException(Exception ex, CancellationToken ct)
@@ -600,7 +600,7 @@ public sealed class PrtgFetchService
             double valRawVal = 0;
             // value_raw 是 PRTG 的原始數字（value 則帶單位、依伺服器地區格式化），優先採用第一組（主要頻道）。
             var hasValueRaw = TryGetFirstProperty(item, "value_raw", out var valRawProp) && TryReadNumber(valRawProp, out valRawVal);
-            var hasValueProp = hasValueRaw || item.TryGetProperty("value_", out valProp2) || item.TryGetProperty("value", out valProp2);
+            var hasValueProp = hasValueRaw || TryGetFirstProperty(item, "value_", out valProp2) || TryGetFirstProperty(item, "value", out valProp2);
 
             if (hasValueRaw)
             {
@@ -670,18 +670,32 @@ public sealed class PrtgFetchService
 
     /// <summary>
     /// 從 historicdata 的一列取出時段起點。
-    /// 先用 datetime_raw（OLE Automation 日期數字，與地區設定無關）；不可用時才退回 datetime 字串，
-    /// 並且只取「起 - 訖」區間的前段。兩者皆不可用時回 false，由呼叫端計入略過筆數。
+    /// 以 datetime 顯示字串為準（只取「起 - 訖」區間的前段），datetime_raw（OLE Automation 日期數字）
+    /// 只用來驗證字串解析沒有讀錯月日，以及在字串解析不了時當退路。兩者皆不可用時回 false，由呼叫端計入略過筆數。
     /// </summary>
     private static bool TryResolvePeriodStart(JsonElement item, out DateTime periodStart, out bool usedOaDate)
     {
         periodStart = default;
         usedOaDate = false;
 
-        // 顯示字串優先。實機（PRTG 24.1.92）同一列的 datetime_raw 與 datetime 差 7 小時
-        // （raw 46275.6666666667＝16:00，字串是「下午 11:00:00 - 上午 12:00:00」＝23:00），
-        // 兩者不是同一個時間基準。字串是管理者在 PRTG 畫面上看到的那個時間，鏡像要跟它對齊，
-        // 否則整份基線會整體平移數小時，而且沒有任何徵兆。
+        // datetime_raw 與顯示字串不是同一個時間基準：實機（PRTG 24.1.92）同一列的 raw 46275.6666666667＝16:00，
+        // 字串是「下午 11:00:00 - 上午 12:00:00」＝23:00，差 7 小時。字串是管理者在 PRTG 畫面上看到的那個時間，
+        // 鏡像要跟它對齊，否則整份基線會整體平移數小時而沒有任何徵兆。
+        // raw 仍然有用：兩者同一天，所以拿它驗證字串解析有沒有把月與日對調——
+        // 「10/09/2026」在 d/M 的 PRTG 配上 M/d 的站台文化會被讀成 10 月 9 日，而且解析成功、什麼都不會報。
+        DateTime? oaDate = null;
+        if (TryGetFirstProperty(item, "datetime_raw", out var rawProp) && TryReadNumber(rawProp, out var oaNumber))
+        {
+            try
+            {
+                oaDate = DateTime.FromOADate(oaNumber);
+            }
+            catch (ArgumentException)
+            {
+                // OLE 日期超出合法範圍：視為不可用。
+            }
+        }
+
         if (item.TryGetProperty("datetime", out var dtProp) && dtProp.ValueKind == JsonValueKind.String)
         {
             var dtStr = dtProp.GetString();
@@ -690,34 +704,38 @@ public sealed class PrtgFetchService
                 // 「起 - 訖」區間字串只取前段（＝小時起點）
                 var sepIndex = dtStr.IndexOf(" - ", StringComparison.Ordinal);
                 var head = (sepIndex >= 0 ? dtStr[..sepIndex] : dtStr).Trim();
-                if (head.Length > 0 &&
-                    (DateTime.TryParse(head, CultureInfo.CurrentCulture, DateTimeStyles.None, out periodStart) ||
-                     DateTime.TryParse(head, CultureInfo.InvariantCulture, DateTimeStyles.None, out periodStart)))
+                if (head.Length > 0)
                 {
-                    return true;
+                    foreach (var culture in new[] { CultureInfo.CurrentCulture, CultureInfo.InvariantCulture })
+                    {
+                        if (!DateTime.TryParse(head, culture, DateTimeStyles.None, out var parsed)) continue;
+                        // 有 raw 可對照時，字串結果必須落在 raw 的一天之內；差超過一天就是月日讀反了，換下一個文化再試。
+                        if (oaDate.HasValue && Math.Abs((parsed - oaDate.Value).TotalHours) > MaxDisplayVsRawDriftHours) continue;
+                        periodStart = parsed;
+                        return true;
+                    }
                 }
             }
         }
 
-        // 退路：字串解析不了（PRTG 的地區格式與站台文化不合）時才用 OLE 日期。
+        // 退路：字串解析不了、或每種文化解出來的日期都對不上 raw 時才用 OLE 日期。
         // 呼叫端會把用到退路的筆數回報出來——時間可能與 PRTG 畫面差幾小時，要看得見。
-        if (TryGetFirstProperty(item, "datetime_raw", out var rawProp) && TryReadNumber(rawProp, out var oaDate))
+        if (oaDate.HasValue)
         {
-            try
-            {
-                periodStart = DateTime.FromOADate(oaDate);
-                usedOaDate = true;
-                return true;
-            }
-            catch (ArgumentException)
-            {
-                // OLE 日期超出合法範圍：視為不可用。
-            }
+            periodStart = oaDate.Value;
+            usedOaDate = true;
+            return true;
         }
 
         periodStart = default;
         return false;
     }
+
+    /// <summary>
+    /// 顯示字串與 datetime_raw 允許的最大差距（小時）。實機兩者差 7 小時（時區基準不同），
+    /// 月日對調的錯誤至少差一天；取 24 小時能放過前者、擋下後者。
+    /// </summary>
+    private const double MaxDisplayVsRawDriftHours = 24;
 
     /// <summary>
     /// 取出同名屬性中的「第一個」。PRTG 的 historicdata 一列會為每個頻道重複 value／value_raw，

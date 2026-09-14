@@ -642,7 +642,7 @@ public sealed class CalibrationService
             ["RequiredHosts"] = CalibrationConstants.ValueBaselineRequiredHosts,
             ["AvailableCoverageDays"] = CalibrationConstants.ValueBaselineAvailableDays,
             ["SufficientCoverageDays"] = CalibrationConstants.ValueBaselineSufficientDays,
-            ["MinDailyOkHours"] = CalibrationConstants.ValueBaselineMinDailyUsableHours
+            ["MinDailyUsableHours"] = CalibrationConstants.ValueBaselineMinDailyUsableHours
         };
 
         if (!settings.PrtgEnabled || allSensors.Count == 0)
