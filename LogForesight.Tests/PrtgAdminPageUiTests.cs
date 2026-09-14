@@ -830,4 +830,58 @@ public class PrtgAdminPageUiTests
         Assert.True(triggeredIdx >= 0, "prtg-admin.js 應包含 scope === 'triggered'");
         Assert.True(snapshotTargetsIdx < triggeredIdx, "snapshotTargets 第一次出現的位置應早於 scope === 'triggered' 的位置");
     }
+
+    [Fact]
+    public void Calibration校準頁顯示層指標標籤與摘要匯出及大小提示齊備()
+    {
+        var root = FindRepoRoot();
+
+        // 1. Prtg.cshtml 含 數值取得量級、不含 觸發式取數量級；含 calibration-summary-check、calibration-export-size-hint；開頭三個位元組仍是 0xEF 0xBB 0xBF
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var cshtmlContent = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("數值取得量級", cshtmlContent);
+        Assert.DoesNotContain("觸發式取數量級", cshtmlContent);
+        Assert.Contains("calibration-summary-check", cshtmlContent);
+        Assert.Contains("calibration-export-size-hint", cshtmlContent);
+
+        var cshtmlBytes = File.ReadAllBytes(prtgCshtmlPath);
+        Assert.True(cshtmlBytes.Length >= 3, "Prtg.cshtml 長度小於 3 位元組");
+        Assert.Equal(0xEF, cshtmlBytes[0]);
+        Assert.Equal(0xBB, cshtmlBytes[1]);
+        Assert.Equal(0xBF, cshtmlBytes[2]);
+
+        // 2. prtg-calibration.js 含指標鍵、detail=summary、控制項 id
+        var calibrationJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-calibration.js");
+        Assert.True(File.Exists(calibrationJsPath), $"找不到檔案: {calibrationJsPath}");
+        var jsContent = File.ReadAllText(calibrationJsPath);
+
+        Assert.Contains("'UsableRatio'", jsContent);
+        Assert.Contains("'SampledRatio'", jsContent);
+        Assert.Contains("'SnapshotTargets'", jsContent);
+        Assert.Contains("'SnapshotSensors24h'", jsContent);
+        Assert.Contains("'SnapshotCoverage24h'", jsContent);
+        Assert.Contains("'ValueBaselineRows'", jsContent);
+        Assert.Contains("detail=summary", jsContent);
+        Assert.Contains("calibration-summary-check", jsContent);
+        Assert.Contains("calibration-export-size-hint", jsContent);
+
+        // 3. prtg-calibration.js 不含舊詞
+        Assert.DoesNotContain("觸發式取數量級", jsContent);
+        Assert.DoesNotContain("每晚", jsContent);
+        Assert.DoesNotContain("有效資料佔比", jsContent);
+
+        // 4. prtg-calibration.js 中 /api/admin/calibration/export 只出現一次
+        var exportUrlMatches = System.Text.RegularExpressions.Regex.Matches(jsContent, @"/api/admin/calibration/export");
+        Assert.Single(exportUrlMatches);
+
+        // 5. prtg-calibration.js 含 EXPORT_BYTES_PER_BASELINE_ROW 與 MB
+        Assert.Contains("EXPORT_BYTES_PER_BASELINE_ROW", jsContent);
+        Assert.Contains("MB", jsContent);
+
+        // 6. prtg-calibration.js 中 calibration-export-size-hint 的設定只出現在一處
+        var hintMatches = System.Text.RegularExpressions.Regex.Matches(jsContent, @"getElementById\(['""]calibration-export-size-hint['""]\)");
+        Assert.Single(hintMatches);
+    }
 }

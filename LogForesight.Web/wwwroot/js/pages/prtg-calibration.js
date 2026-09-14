@@ -61,6 +61,9 @@ function renderExplanations(containerId, list) {
     }
 }
 
+// 值型基線逐日列序列化後的平均位元組數（估算值，只用於匯出前提示）
+const EXPORT_BYTES_PER_BASELINE_ROW = 300;
+
 /** 門檻鍵的中文標籤（後端 CurrentThresholds 的鍵；沒對應到的鍵原樣顯示） */
 const THRESHOLD_LABELS = {
     RequiredHosts: '需要主機數',
@@ -156,7 +159,11 @@ function renderAssessment(data) {
         ['EarliestOkDate', '最早有效資料日'],
         ['LatestOkDate', '最晚有效資料日'],
         ['SensorsWithoutValues', '白名單內無數值的 sensor 數'],
-        ['UnmappedSensors', '未對應主機的 sensor 數']
+        ['UnmappedSensors', '未對應主機的 sensor 數'],
+        ['SnapshotTargets', '快照目標感測器數'],
+        ['SnapshotSensors24h', '近 24 小時有取樣的感測器數'],
+        ['SnapshotCoverage24h', '近 24 小時平均取樣涵蓋（%）'],
+        ['ValueBaselineRows', '值型基線逐日列數（決定完整匯出大小）']
     ]);
 
     // 2. PRTG 規則門檻
@@ -169,17 +176,19 @@ function renderAssessment(data) {
         ['TotalRuleHits', '四條合計命中筆數']
     ]);
 
-    // 3. 觸發式取數量級
+    // 3. 數值取得量級
     renderCard('triggered-fetch-magnitude', data.triggeredFetchMagnitude, [
         ['DaysWithValues', '有數值天數'],
         ['WindowDays', '評估視窗天數'],
-        ['SensorsPerNightMin', '每晚 sensor 數（最少）'],
-        ['SensorsPerNightMedian', '每晚 sensor 數（中位）'],
-        ['SensorsPerNightMax', '每晚 sensor 數（最多）'],
-        ['RowsPerNightMin', '每晚列數（最少）'],
-        ['RowsPerNightMedian', '每晚列數（中位）'],
-        ['RowsPerNightMax', '每晚列數（最多）'],
-        ['OkRatio', '有效資料佔比']
+        ['SensorsPerNightMin', '每日 sensor 數（最少）'],
+        ['SensorsPerNightMedian', '每日 sensor 數（中位）'],
+        ['SensorsPerNightMax', '每日 sensor 數（最多）'],
+        ['RowsPerNightMin', '每日列數（最少）'],
+        ['RowsPerNightMedian', '每日列數（中位）'],
+        ['RowsPerNightMax', '每日列數（最多）'],
+        ['UsableRatio', '可用資料佔比（0～1）'],
+        ['SampledRatio', '快照取樣佔比（0～1）'],
+        ['OkRatio', 'PRTG 真平均佔比（0～1）']
     ]);
 
     // 4. 殘留判定門檻
@@ -190,6 +199,17 @@ function renderAssessment(data) {
         ['TruncatedRatio', '明細截斷比例'],
         ['MatchedCount', '現行門檻命中數']
     ]);
+
+    const sizeHint = document.getElementById('calibration-export-size-hint');
+    if (sizeHint) {
+        const rows = data.prtgValueBaseline?.keyMetrics?.ValueBaselineRows;
+        if (rows > 0) {
+            const mb = Math.max(0.1, Math.round(rows * EXPORT_BYTES_PER_BASELINE_ROW / 1048576 * 10) / 10);
+            sizeHint.textContent = `完整匯出約含 ${formatNumber(rows)} 列逐日資料、約 ${mb} MB；勾選「只匯出摘要」可大幅縮小檔案`;
+        } else {
+            sizeHint.textContent = '';
+        }
+    }
 
     const hint = document.getElementById('calibration-status-hint');
     if (hint) {
@@ -236,11 +256,14 @@ async function downloadPackage() {
     const exportBtn = document.getElementById('calibration-export-btn');
     const overrideCheck = document.getElementById('calibration-override-check');
     const isOverride = overrideCheck ? overrideCheck.checked : false;
+    const summaryCheck = document.getElementById('calibration-summary-check');
+    const isSummary = summaryCheck ? summaryCheck.checked : false;
 
     const restore = withBusy(exportBtn, '匯出中…');
 
     try {
-        const downloadUrl = appUrl(`/api/admin/calibration/export?override=${isOverride ? 'true' : 'false'}`);
+        const detailParam = isSummary ? '&detail=summary' : '';
+        const downloadUrl = appUrl(`/api/admin/calibration/export?override=${isOverride ? 'true' : 'false'}${detailParam}`);
         const response = await fetch(downloadUrl, {
             method: 'GET',
             headers: {

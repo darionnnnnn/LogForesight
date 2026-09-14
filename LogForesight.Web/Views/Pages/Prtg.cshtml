@@ -452,11 +452,11 @@
                     </div>
                 </div>
 
-                <!-- 3. 觸發式取數量級 -->
+                <!-- 3. 數值取得量級 -->
                 <div class="col-lg-6">
                     <div class="border rounded p-3 h-100 bg-light" id="calibration-card-triggered-fetch-magnitude">
                         <div class="d-flex align-items-center justify-content-between mb-2">
-                            <h3 class="h6 fw-bold mb-0">觸發式取數量級</h3>
+                            <h3 class="h6 fw-bold mb-0">數值取得量級</h3>
                             <span class="badge bg-secondary" id="badge-triggered-fetch-magnitude">尚未計算</span>
                         </div>
                         <div class="mb-3" id="metrics-triggered-fetch-magnitude">
@@ -507,12 +507,21 @@
 
             <!-- 匯出操作區 -->
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="calibration-override-check" />
-                    <label class="form-check-label small" for="calibration-override-check">
-                        仍要匯出（若指標未全數達標，強制覆寫閘門限制進行匯出）
-                    </label>
+                <div class="d-flex flex-column gap-1">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="calibration-summary-check" />
+                        <label class="form-check-label small" for="calibration-summary-check">
+                            只匯出摘要（不含逐日原始列，檔案小、適合直接閱讀）
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="calibration-override-check" />
+                        <label class="form-check-label small" for="calibration-override-check">
+                            仍要匯出（若指標未全數達標，強制覆寫閘門限制進行匯出）
+                        </label>
+                    </div>
                 </div>
+                <span class="text-muted small" id="calibration-export-size-hint"></span>
                 <button type="button" class="btn btn-success" id="calibration-export-btn" disabled>
                     <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#file-earmark-text"></use></svg>
                     匯出校準數值
