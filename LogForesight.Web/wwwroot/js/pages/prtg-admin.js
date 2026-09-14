@@ -137,6 +137,7 @@ function renderPrtgFields(settings) {
     const extraHosts = document.getElementById('prtg-value-fetch-extra-hosts');
     if (extraHosts) extraHosts.value = (settings.prtgValueFetchExtraHosts ?? []).join('\n');
     document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
+    document.getElementById('prtg-snapshot-estimate-result')?.replaceChildren();
 
     document.getElementById('prtg-test-result').replaceChildren();
     renderUpdatedAt(settings);
@@ -170,7 +171,10 @@ function syncScopeFields() {
     document.getElementById('prtg-value-fetch-extra-hosts-group')
         ?.classList.toggle('d-none', off || scope !== 'triggered-plus-list');
     document.getElementById('prtg-scope-estimate-btn')?.classList.toggle('d-none', off);
-    if (off) document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
+    if (off) {
+        document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
+        document.getElementById('prtg-snapshot-estimate-result')?.replaceChildren();
+    }
 }
 
 /**
@@ -210,6 +214,8 @@ function bindScopeControls() {
         const restore = withBusy(button, '估算中');
         result.replaceChildren();
         result.className = 'small';
+        const snapshotResult = document.getElementById('prtg-snapshot-estimate-result');
+        snapshotResult?.replaceChildren();
 
         try {
             // 估算的是「目前選的模式」而非已儲存的模式——管理者是在決定要不要改設定。
@@ -222,6 +228,17 @@ function bindScopeControls() {
                 result.className = 'text-danger small';
                 result.textContent = res.errorMessage || '估算失敗。';
                 return;
+            }
+
+            if (snapshotResult) {
+                const snapBase = `快照（不受取數範圍影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
+                if (res.snapshotWarning) {
+                    snapshotResult.className = 'text-warning small d-block';
+                    snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}`;
+                } else {
+                    snapshotResult.className = 'text-muted small d-block';
+                    snapshotResult.textContent = snapBase;
+                }
             }
 
             if (scope === 'triggered') {
@@ -410,6 +427,21 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-last-sensor-sync', `最後同步：${data.lastSensorSync ? formatDateTime(data.lastSensorSync) : '-'}`);
     setTxt('prtg-mirror-last-value-at', `數值：${data.lastValueAt ? formatDateTime(data.lastValueAt) : '-'}`);
     setTxt('prtg-mirror-last-state-change-at', `狀態變更：${data.lastStateChangeAt ? formatDateTime(data.lastStateChangeAt) : '-'}`);
+
+    const snapEl = document.getElementById('prtg-mirror-snapshot');
+    if (!data.snapshotLastAt) {
+        setTxt('prtg-mirror-snapshot', '數值快照：尚未執行');
+        snapEl?.classList.remove('text-warning');
+    } else {
+        let snapText = `數值快照：最近 ${formatDateTime(data.snapshotLastAt)}，${formatNumber(data.snapshotSensors)} 顆，間隔 ${data.snapshotIntervalMinutes} 分鐘`;
+        if (data.snapshotBackingOff) {
+            snapText += `（PRTG 連續失敗 ${data.snapshotConsecutiveFailures} 次，已自動拉長間隔）`;
+            snapEl?.classList.add('text-warning');
+        } else {
+            snapEl?.classList.remove('text-warning');
+        }
+        setTxt('prtg-mirror-snapshot', snapText);
+    }
 
     setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
     setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));

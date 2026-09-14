@@ -31,6 +31,7 @@ public class SettingsController : ControllerBase
     private readonly IPrtgHostMapRefresher? _mapRefresher;
     private readonly StorageBackend? _backend;
     private readonly IHostStore? _hosts;
+    private readonly PrtgSnapshotHostedService? _snapshot;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -41,7 +42,8 @@ public class SettingsController : ControllerBase
         PrtgStructureSyncService? prtgStructureSync = null,
         IPrtgHostMapRefresher? mapRefresher = null,
         StorageBackend? backend = null,
-        IHostStore? hosts = null)
+        IHostStore? hosts = null,
+        PrtgSnapshotHostedService? snapshot = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -52,6 +54,7 @@ public class SettingsController : ControllerBase
         _prtgStructureSync = prtgStructureSync;
         _mapRefresher = mapRefresher;
         _backend = backend;
+        _snapshot = snapshot;
     }
 
     [HttpGet]
@@ -299,6 +302,23 @@ public class SettingsController : ControllerBase
 
         var sensors = prtgStore.GetValueFetchTargets(whitelist, deviceObjids);
 
+        var allOkDevices = mapRows.Select(m => m.DeviceObjid).Distinct().ToList();
+        var snapshotTargets = prtgStore.GetValueFetchTargets(whitelist, allOkDevices).Count;
+        var snapshotRowsPerDay = snapshotTargets * 24L;
+        // 這是與 RuntimeSettingsResolver 的 PRTG 保留期規則對齊的顯示用近似值（不含低於下限的退回邏輯）。
+        var snapshotRetentionDays = Math.Min(settings.PrtgRetentionDays, settings.RetentionDays);
+        var snapshotRowsAtRetention = snapshotRowsPerDay * snapshotRetentionDays;
+
+        string? snapshotWarning = null;
+        if (whitelist.Count == 0)
+        {
+            snapshotWarning = "sensor type 白名單為空：快照會存下已對應裝置上的全部感測器，資料表成長最快。建議設定白名單。";
+        }
+        else if (snapshotRowsAtRetention >= SnapshotRowsWarnThreshold)
+        {
+            snapshotWarning = $"快照在保留期內約累積 {snapshotRowsAtRetention:N0} 列，建議縮小 sensor type 白名單或調短 PRTG 保留天數。";
+        }
+
         string? warning = null;
         if (PrtgValueFetchScope.ShouldWarnUnsafeAllMapped(requestedScope, whitelist.Count == 0))
         {
@@ -318,13 +338,21 @@ public class SettingsController : ControllerBase
             Devices = deviceObjids.Count,
             Sensors = sensors.Count,
             WhitelistEmpty = whitelist.Count == 0,
-            Warning = warning
+            Warning = warning,
+            SnapshotTargets = snapshotTargets,
+            SnapshotRowsPerDay = snapshotRowsPerDay,
+            SnapshotRetentionDays = snapshotRetentionDays,
+            SnapshotRowsAtRetention = snapshotRowsAtRetention,
+            SnapshotWarning = snapshotWarning
         });
     }
 
     /// <summary>估算量達到這個數就提醒「一晚可能跑不完」。實機併發上限 8、單次 historicdata 往返
     /// 以秒計，五千個 sensor 已是數小時等級。刻意不開設定——它是提醒不是閘門。</summary>
     private const int PrtgFetchScopeSensorWarnThreshold = 5000;
+
+    /// <summary>快照在保留期內累積列數達到這個數就發出警告（暫定值，約 2000 萬列）。</summary>
+    private const long SnapshotRowsWarnThreshold = 20_000_000;
 
     /// <summary>PRTG 資源守門受監看感測器預覽（批次F 階段4）</summary>
     /// <param name="forceAuto">
@@ -516,6 +544,22 @@ public class SettingsController : ControllerBase
         var mapConflict = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Conflict);
         var mapUnmatched = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Unmatched);
 
+        DateTime? snapshotLastAt = null;
+        int snapshotSensors = 0;
+        int snapshotIntervalMinutes = 0;
+        int snapshotConsecutiveFailures = 0;
+        bool snapshotBackingOff = false;
+
+        if (_snapshot != null)
+        {
+            var st = _snapshot.GetStatus();
+            snapshotLastAt = st.LastSuccessAt;
+            snapshotSensors = st.LastSensorCount;
+            snapshotIntervalMinutes = st.IntervalMinutes;
+            snapshotConsecutiveFailures = st.ConsecutiveFailures;
+            snapshotBackingOff = st.IntervalMinutes > PrtgFetchStrategy.Profile(_settings.Get().PrtgFetchStrategy).SnapshotIntervalMinutes;
+        }
+
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
         {
             DeviceCount = summary.DeviceCount,
@@ -530,7 +574,12 @@ public class SettingsController : ControllerBase
             MapUnmatched = mapUnmatched,
             WhitelistSensorCount = coverage.WhitelistSensorCount,
             OnMappedDeviceCount = coverage.OnMappedDeviceCount,
-            IpExcludeCount = store.GetIpExcludes().Count
+            IpExcludeCount = store.GetIpExcludes().Count,
+            SnapshotLastAt = snapshotLastAt,
+            SnapshotSensors = snapshotSensors,
+            SnapshotIntervalMinutes = snapshotIntervalMinutes,
+            SnapshotConsecutiveFailures = snapshotConsecutiveFailures,
+            SnapshotBackingOff = snapshotBackingOff
         });
     }
 

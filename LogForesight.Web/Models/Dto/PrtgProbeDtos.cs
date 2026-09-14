@@ -62,6 +62,11 @@ public class PrtgMirrorStatusDto
     public int WhitelistSensorCount { get; set; }
     public int OnMappedDeviceCount { get; set; }
     public int IpExcludeCount { get; set; }
+    public DateTime? SnapshotLastAt { get; set; }
+    public int SnapshotSensors { get; set; }
+    public int SnapshotIntervalMinutes { get; set; }
+    public int SnapshotConsecutiveFailures { get; set; }
+    public bool SnapshotBackingOff { get; set; }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>
@@ -228,6 +233,21 @@ public class PrtgValueFetchScopeEstimateDto
 
     /// <summary>估算量超過建議上限時的提醒文字；未超過為 null</summary>
     public string? Warning { get; set; }
+
+    /// <summary>快照目標感測器數量（不受取數範圍影響）</summary>
+    public int SnapshotTargets { get; set; }
+
+    /// <summary>快照每天產生的列數（Targets * 24）</summary>
+    public long SnapshotRowsPerDay { get; set; }
+
+    /// <summary>快照保留天數（PRTG 保留天數與全站保留天數之較小者）</summary>
+    public int SnapshotRetentionDays { get; set; }
+
+    /// <summary>快照在保留期內累積的總列數</summary>
+    public long SnapshotRowsAtRetention { get; set; }
+
+    /// <summary>快照規模警示（白名單為空或累積列數超標時提示）</summary>
+    public string? SnapshotWarning { get; set; }
 }
 
 /// <summary>「同步結構與對應」的狀態（docs/PRTG-SPEC.md §5a）。Last* 全為 null 代表從未執行過。</summary>

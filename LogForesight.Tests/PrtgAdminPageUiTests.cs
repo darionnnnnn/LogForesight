@@ -792,4 +792,42 @@ public class PrtgAdminPageUiTests
         Assert.Equal(0xBB, bytes[1]);
         Assert.Equal(0xBF, bytes[2]);
     }
+
+    [Fact]
+    public void PrtgCshtml包含快照狀態與規模估算元素且保留Utf8Bom()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+
+        var content = File.ReadAllText(prtgCshtmlPath);
+        Assert.Contains("id=\"prtg-mirror-snapshot\"", content);
+        Assert.Contains("id=\"prtg-snapshot-estimate-result\"", content);
+
+        var bytes = File.ReadAllBytes(prtgCshtmlPath);
+        Assert.True(bytes.Length >= 3, "Prtg.cshtml 長度小於 3 位元組");
+        Assert.Equal(0xEF, bytes[0]);
+        Assert.Equal(0xBB, bytes[1]);
+        Assert.Equal(0xBF, bytes[2]);
+    }
+
+    [Fact]
+    public void PrtgAdminJs包含快照狀態與規模估算且早於觸發主機早退()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("snapshotLastAt", js);
+        Assert.Contains("snapshotBackingOff", js);
+        Assert.Contains("snapshotRowsAtRetention", js);
+
+        var snapshotTargetsIdx = js.IndexOf("snapshotTargets", StringComparison.Ordinal);
+        var triggeredIdx = js.IndexOf("scope === 'triggered'", StringComparison.Ordinal);
+
+        Assert.True(snapshotTargetsIdx >= 0, "prtg-admin.js 應包含 snapshotTargets");
+        Assert.True(triggeredIdx >= 0, "prtg-admin.js 應包含 scope === 'triggered'");
+        Assert.True(snapshotTargetsIdx < triggeredIdx, "snapshotTargets 第一次出現的位置應早於 scope === 'triggered' 的位置");
+    }
 }
