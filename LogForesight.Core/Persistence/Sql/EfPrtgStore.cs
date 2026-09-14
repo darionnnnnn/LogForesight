@@ -879,8 +879,8 @@ public sealed class EfPrtgStore
 
     /// <summary>
     /// 取得指定期間內每個 sensor 的數值涵蓋摘要（依 sensor_objid 排序）。
-    /// 全程在 SQL 端以 GroupBy 聚合，統計有效小時數（ok）、涵蓋天數（ok 相異日）、
-    /// 最早／最晚有效起點，以及各品質筆數。
+    /// 全程在 SQL 端以 GroupBy 聚合，統計有效小時數（ok）、可用天數（usable 相異日）、
+    /// 最早／最晚可用起點，以及各品質與可用筆數。
     /// </summary>
     /// <param name="fromInclusive">起始時間（含）</param>
     /// <param name="toExclusive">結束時間（不含）</param>
@@ -893,45 +893,60 @@ public sealed class EfPrtgStore
             .Select(v => new
             {
                 v.SensorObjid,
-                OkPeriod = v.Quality == PrtgDataQuality.Ok ? (DateTime?)v.PeriodStart : null,
-                OkDate = v.Quality == PrtgDataQuality.Ok ? (DateTime?)v.PeriodStart.Date : null,
+                UsablePeriod = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    ? (DateTime?)v.PeriodStart : null,
+                UsableDate = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    ? (DateTime?)v.PeriodStart.Date : null,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    && v.Quality != PrtgDataQuality.Unknown
+                    && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
             })
             .GroupBy(x => x.SensorObjid)
             .Select(g => new
             {
                 SensorObjid = g.Key,
                 OkCount = g.Sum(x => x.OkCount),
-                OkDays = g.Select(x => x.OkDate).Distinct().Count(),
-                EarliestOkPeriod = g.Min(x => x.OkPeriod),
-                LatestOkPeriod = g.Max(x => x.OkPeriod),
+                UsableDays = g.Select(x => x.UsableDate).Distinct().Count(),
+                EarliestUsablePeriod = g.Min(x => x.UsablePeriod),
+                LatestUsablePeriod = g.Max(x => x.UsablePeriod),
                 UnknownCount = g.Sum(x => x.UnknownCount),
                 NodataCount = g.Sum(x => x.NodataCount),
                 OtherCount = g.Sum(x => x.OtherCount),
-                TotalCount = g.Count()
+                TotalCount = g.Count(),
+                SampledCount = g.Sum(x => x.SampledCount),
+                UsableCount = g.Sum(x => x.UsableCount)
             })
             .OrderBy(r => r.SensorObjid)
             .AsEnumerable()
             .Select(r => new PrtgSensorValueCoverage(
                 r.SensorObjid,
                 r.OkCount,
-                r.OkDays,
-                r.EarliestOkPeriod,
-                r.LatestOkPeriod,
+                r.UsableDays,
+                r.EarliestUsablePeriod,
+                r.LatestUsablePeriod,
                 r.UnknownCount,
                 r.NodataCount,
                 r.OtherCount,
-                r.TotalCount))
+                r.TotalCount,
+                r.SampledCount,
+                r.UsableCount))
             .ToList();
     }
 
     /// <summary>
     /// 取得指定期間內每個 (sensor_objid, 日期) 的每日數值聚合（匯出用，依 sensor_objid 與日期排序）。
-    /// 數值統計（平均、最小、最大）僅納入 Quality == ok 且 AvgValue != null 的列，null 絕對不當成 0 計算；
-    /// 當日完全無 ok 列時仍回傳該 (sensor, 日) 一列（數值統計為 null，ok 列數為 0）。
+    /// 數值統計（平均、最小、最大）僅納入可用列且 AvgValue != null 的列，null 絕對不當成 0 計算；
+    /// 觀測極值（MinObserved、MaxObserved）取可用列的 MinValue 與 MaxValue 極值；
+    /// 當日完全無可用列時仍回傳該 (sensor, 日) 一列（數值統計為 null，可用列數為 0）。
     /// </summary>
     /// <param name="fromInclusive">起始時間（含）</param>
     /// <param name="toExclusive">結束時間（不含）</param>
@@ -945,25 +960,40 @@ public sealed class EfPrtgStore
             {
                 v.SensorObjid,
                 Date = v.PeriodStart.Date,
-                OkAvgValue = (v.Quality == PrtgDataQuality.Ok && v.AvgValue != null) ? v.AvgValue : null,
+                UsableAvgValue = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) && v.AvgValue != null ? v.AvgValue : null,
+                UsableMinValue = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? v.MinValue : null,
+                UsableMaxValue = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? v.MaxValue : null,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    && v.Quality != PrtgDataQuality.Unknown
+                    && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
             })
             .GroupBy(x => new { x.SensorObjid, x.Date })
             .Select(g => new
             {
                 g.Key.SensorObjid,
                 g.Key.Date,
-                AvgValue = g.Average(x => x.OkAvgValue),
-                MinValue = g.Min(x => x.OkAvgValue),
-                MaxValue = g.Max(x => x.OkAvgValue),
+                AvgValue = g.Average(x => x.UsableAvgValue),
+                MinValue = g.Min(x => x.UsableAvgValue),
+                MaxValue = g.Max(x => x.UsableAvgValue),
                 OkCount = g.Sum(x => x.OkCount),
                 UnknownCount = g.Sum(x => x.UnknownCount),
                 NodataCount = g.Sum(x => x.NodataCount),
                 OtherCount = g.Sum(x => x.OtherCount),
-                TotalCount = g.Count()
+                TotalCount = g.Count(),
+                SampledCount = g.Sum(x => x.SampledCount),
+                UsableCount = g.Sum(x => x.UsableCount),
+                MinObserved = g.Min(x => x.UsableMinValue),
+                MaxObserved = g.Max(x => x.UsableMaxValue)
             })
             .OrderBy(r => r.SensorObjid)
             .ThenBy(r => r.Date)
@@ -978,7 +1008,11 @@ public sealed class EfPrtgStore
                 r.UnknownCount,
                 r.NodataCount,
                 r.OtherCount,
-                r.TotalCount))
+                r.TotalCount,
+                r.SampledCount,
+                r.UsableCount,
+                r.MinObserved,
+                r.MaxObserved))
             .ToList();
     }
 
@@ -999,9 +1033,15 @@ public sealed class EfPrtgStore
                 Date = v.PeriodStart.Date,
                 v.SensorObjid,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    && v.Quality != PrtgDataQuality.Unknown
+                    && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
             })
             .GroupBy(x => x.Date)
             .Select(g => new
@@ -1012,7 +1052,9 @@ public sealed class EfPrtgStore
                 OkCount = g.Sum(x => x.OkCount),
                 UnknownCount = g.Sum(x => x.UnknownCount),
                 NodataCount = g.Sum(x => x.NodataCount),
-                OtherCount = g.Sum(x => x.OtherCount)
+                OtherCount = g.Sum(x => x.OtherCount),
+                SampledCount = g.Sum(x => x.SampledCount),
+                UsableCount = g.Sum(x => x.UsableCount)
             })
             .OrderBy(r => r.Date)
             .AsEnumerable()
@@ -1023,9 +1065,12 @@ public sealed class EfPrtgStore
                 r.OkCount,
                 r.UnknownCount,
                 r.NodataCount,
-                r.OtherCount))
+                r.OtherCount,
+                r.SampledCount,
+                r.UsableCount))
             .ToList();
     }
+
 
     /// <summary>
     /// 取得指定期間內狀態變更的涵蓋摘要。
@@ -1084,13 +1129,15 @@ public sealed record PrtgWhitelistCoverage(int WhitelistSensorCount, int OnMappe
 public sealed record PrtgSensorValueCoverage(
     long SensorObjid,
     int OkCount,
-    int OkDays,
-    DateTime? EarliestOkPeriod,
-    DateTime? LatestOkPeriod,
+    int UsableDays,
+    DateTime? EarliestUsablePeriod,
+    DateTime? LatestUsablePeriod,
     int UnknownCount,
     int NodataCount,
     int OtherCount,
-    int TotalCount);
+    int TotalCount,
+    int SampledCount,
+    int UsableCount);
 
 /// <summary>
 /// PRTG sensor 每日數值聚合統計（匯出用）
@@ -1105,7 +1152,11 @@ public sealed record PrtgDailyValueAggregation(
     int UnknownCount,
     int NodataCount,
     int OtherCount,
-    int TotalCount);
+    int TotalCount,
+    int SampledCount,
+    int UsableCount,
+    double? MinObserved,
+    double? MaxObserved);
 
 /// <summary>
 /// PRTG 每日數值量級統計
@@ -1117,7 +1168,9 @@ public sealed record PrtgDailyValueMagnitude(
     int OkCount,
     int UnknownCount,
     int NodataCount,
-    int OtherCount);
+    int OtherCount,
+    int SampledCount,
+    int UsableCount);
 
 /// <summary>
 /// PRTG 狀態變更涵蓋摘要

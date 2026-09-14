@@ -51,6 +51,20 @@ public static class PrtgDataQuality
     public const string Sampled = "sampled";
 }
 
+/// <summary>
+/// PRTG 數值可用性常數。
+/// </summary>
+public static class PrtgValueUsability
+{
+    /// <summary>
+    /// 取樣列（sampled）算作可用列的 coverage 下限（百分比）。
+    /// 保守策略 15 分鐘一次，一小時期望 4 個樣本，要有 3 個（75%）；
+    /// 激進 5 分鐘一次期望 12 個，要有 9 個（75%）。
+    /// 兩個樣本的平均當一小時的代表值太薄。
+    /// </summary>
+    public const double SampledMinCoverage = 75.0;
+}
+
 
 /// <summary>
 /// PRTG 主機對應狀態常數。

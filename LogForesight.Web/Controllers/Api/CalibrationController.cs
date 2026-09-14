@@ -80,7 +80,7 @@ public class CalibrationController : ControllerBase
 
         _audit.Record(
             action: AuditActions.CalibrationExport,
-            summary: $"匯出校準數值（PRTG值型基線：{summary.PrtgValueBaseline.StatusText}、PRTG規則門檻：{summary.PrtgRuleThresholds.StatusText}、觸發式取數量級：{summary.TriggeredFetchMagnitude.StatusText}、殘留判定門檻：{summary.ResidualCredentialThresholds.StatusText}{(isOverride ? "，覆寫匯出" : "")}）",
+            summary: $"匯出校準數值（PRTG值型基線：{summary.PrtgValueBaseline.StatusText}、PRTG規則門檻：{summary.PrtgRuleThresholds.StatusText}、數值取得量級：{summary.TriggeredFetchMagnitude.StatusText}、殘留判定門檻：{summary.ResidualCredentialThresholds.StatusText}{(isOverride ? "，覆寫匯出" : "")}）",
             targetKind: "calibration_data",
             targetId: DateTime.Today.ToString("yyyyMMdd"),
             detail: new

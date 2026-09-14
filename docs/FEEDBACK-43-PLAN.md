@@ -260,7 +260,7 @@
 
 ### 驗收
 
-- 三個查詢：ok 與 coverage ≥ 50 的 sampled 都算可用；coverage 49 的 sampled 落「其他」；unknown／nodata 各自計數不變。
+- 三個查詢：ok 與 coverage ≥ 75 的 sampled 都算可用；coverage 74 的 sampled 落「其他」；unknown／nodata 各自計數不變。
 - 值型基線：只有 sampled 列（coverage 100）的環境，10 台各 28 天 → 可用；同樣資料但 coverage 全 40 → 不足。
 - 匯出：`FormatVersion` 變更、四個新欄位存在且值正確；既有欄位順序不變。
 - 量級卡：標題與 KeyMetrics 鍵名改名，前端標籤表對應；UI 測試補字串斷言。
@@ -331,3 +331,4 @@
 | E2a 策略設定 Web 接線 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：六檔皆在白名單、四份稽核欄位逐一核對（496／528／655／682）、全套 3838 綠、突變移除驗證 2 條紅 | **agy 再次剝掉 BOM**（這次是 SystemSettingsService.cs），Claude 還原；Prtg.cshtml 的 BOM 這次有保住 |
 | E2b 快照背景服務 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：三檔皆在白名單、BOM／CRLF／NUL 正確、快照測試 12 綠、兩處突變各 1 條紅、全套綠（Sentinel 一條時間相依偶發紅，單獨重跑兩次 47/47，與本輪無關） | **Claude 抓到兩個測試沒抓到的缺陷**：(1) 退避形同虛設——間隔從「上次成功」量，PRTG 回不來時上次成功永遠停在過去，服務每 60 秒重打一次全量快照，違反「不大量消耗 PRTG」前提；改為從「上次嘗試」量，回歸測試先對舊碼確認為紅。既有退避測試原本靠此 bug 才通過（同一瞬間連 tick 三次），改為推進時鐘。(2) ExecutionOutputs 無上限，站台長時間運行會記憶體洩漏；加上限 100 並補測試。 |
 | E2c 快照可觀測性與規模估算 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：六檔皆在白名單、BOM 與 dev 一致（Prtg.cshtml 的 BOM 保住）、無 NUL、建構子只多了規格允許的那一個可選參數、快照估算行只設一次且在 triggered 早退之前、聚焦測試 42 綠、全套 3858 綠、兩處突變（退避比較 > 改 >=、白名單為空警告）各 1 條紅 | agy 新建的測試檔寫成 LF，Claude 改為 CRLF。**已知簡化**：估算的保留天數用 min(PrtgRetentionDays, RetentionDays) 顯示近似值（不含低於下限的退回邏輯）；夜間執行輸出只印取數策略、未印快照狀態（Core 無法參照 Web 的快照服務）。 |
+| G1 可用列定義與校準計數 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：六檔皆在白名單、BOM 與換行與 dev 一致、無 NUL；可用判定三個查詢內嵌共 14 處；校準匯出 FormatVersion 升為 2、資料搬運 FormatVersion 仍為 1；兩處突變（coverage 邊界 >= 改 >、值型基線涵蓋改回只算 ok）各 1 條紅；全套 3863 綠 | Claude 補清三處殘留的「觸發式取數量級」註解。**規格與規劃落差**：G1 規格未含 G.5「快照取樣小時」說明句，已補進 G2 規格；G.7 匯出前的 MB 估算已補進 G3 規格；本檔 G 驗收段 coverage 門檻誤寫 50，改為 75。 |

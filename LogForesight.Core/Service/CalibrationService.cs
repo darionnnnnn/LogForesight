@@ -32,7 +32,7 @@ public enum CalibrationStatus
 public static class CalibrationConstants
 {
     /// <summary>匯出檔案格式版本</summary>
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
 
     // ── 1. PRTG 值型基線門檻 ──────────────────────────────────────────
     /// <summary>值型基線所需最少主機數</summary>
@@ -41,8 +41,8 @@ public static class CalibrationConstants
     public const int ValueBaselineAvailableDays = 28;
     /// <summary>值型基線「充足」所需最少涵蓋天數</summary>
     public const int ValueBaselineSufficientDays = 56;
-    /// <summary>單日視為有效涵蓋的 ok 時數下限</summary>
-    public const int ValueBaselineMinDailyOkHours = 12;
+    /// <summary>單日視為有效涵蓋的可用小時數下限</summary>
+    public const int ValueBaselineMinDailyUsableHours = 12;
     /// <summary>值型基線回看評估窗口天數</summary>
     public const int ValueBaselineWindowDays = 56;
 
@@ -58,7 +58,7 @@ public static class CalibrationConstants
     /// <summary>規則門檻回看評估窗口天數</summary>
     public const int RuleThresholdWindowDays = 56;
 
-    // ── 3. 觸發式取數量級門檻 ────────────────────────────────────────
+    // ── 3. 數值取得量級門檻 ────────────────────────────────────────
     /// <summary>觸發式取數「可用」所需有數值天數</summary>
     public const int TriggeredMagnitudeAvailableDays = 14;
     /// <summary>觸發式取數「充足」所需有數值天數</summary>
@@ -136,7 +136,10 @@ public sealed record CalibrationValueBaselineRow(
     double? MaxValue,
     int OkHours,
     int UnknownCount,
-    int NodataCount);
+    int NodataCount,
+    int SampledHours,
+    double? MinObserved,
+    double? MaxObserved);
 
 /// <summary>
 /// PRTG 規則門檻與現況命中資料集（匯出用）
@@ -370,7 +373,10 @@ public sealed class CalibrationService
                 agg.MaxValue,
                 agg.OkCount,
                 agg.UnknownCount,
-                agg.NodataCount
+                agg.NodataCount,
+                agg.SampledCount,
+                agg.MinObserved,
+                agg.MaxObserved
             ));
         }
 
@@ -429,7 +435,7 @@ public sealed class CalibrationService
             ["RequiredHosts"] = CalibrationConstants.ValueBaselineRequiredHosts,
             ["AvailableCoverageDays"] = CalibrationConstants.ValueBaselineAvailableDays,
             ["SufficientCoverageDays"] = CalibrationConstants.ValueBaselineSufficientDays,
-            ["MinDailyOkHours"] = CalibrationConstants.ValueBaselineMinDailyOkHours
+            ["MinDailyOkHours"] = CalibrationConstants.ValueBaselineMinDailyUsableHours
         };
 
         if (!settings.PrtgEnabled || allSensors.Count == 0)
@@ -495,22 +501,22 @@ public sealed class CalibrationService
         var whitelistedObjids = whitelistedSensors.Select(x => x.Objid).ToHashSet();
         var coverageInScope = coverage.Where(c => whitelistedObjids.Contains(c.SensorObjid)).ToList();
         var earliestOk = coverageInScope
-            .Where(c => c.EarliestOkPeriod.HasValue)
-            .Select(c => c.EarliestOkPeriod!.Value)
+            .Where(c => c.EarliestUsablePeriod.HasValue)
+            .Select(c => c.EarliestUsablePeriod!.Value)
             .DefaultIfEmpty()
             .Min();
         var latestOk = coverageInScope
-            .Where(c => c.LatestOkPeriod.HasValue)
-            .Select(c => c.LatestOkPeriod!.Value)
+            .Where(c => c.LatestUsablePeriod.HasValue)
+            .Select(c => c.LatestUsablePeriod!.Value)
             .DefaultIfEmpty()
             .Max();
-        var sensorsWithoutValues = whitelistedObjids.Count - coverageInScope.Count(c => c.OkCount > 0);
+        var sensorsWithoutValues = whitelistedObjids.Count - coverageInScope.Count(c => c.UsableCount > 0);
         // 未對應 sensor：白名單內但所屬 device 沒有成功對應到主機——這些 sensor 就算有數值
         // 也進不了主機層的基線，與「有對應但還沒累積夠」是不同的問題，補充說明的方向也不同
         var unmappedSensors = whitelistedSensors.Count(x => !okDeviceMap.ContainsKey(x.DeviceObjid));
 
         var sensorCoverageDays = dailyAggs
-            .Where(a => a.OkCount >= CalibrationConstants.ValueBaselineMinDailyOkHours)
+            .Where(a => a.UsableCount >= CalibrationConstants.ValueBaselineMinDailyUsableHours)
             .GroupBy(a => a.SensorObjid)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Date.Date).Distinct().Count());
 
@@ -749,7 +755,7 @@ public sealed class CalibrationService
         {
             return new CalibrationItemAssessment
             {
-                ItemName = "觸發式取數量級",
+                ItemName = "數值取得量級",
                 Status = CalibrationStatus.Unavailable,
                 KeyMetrics = new Dictionary<string, object>
                 {
@@ -779,8 +785,12 @@ public sealed class CalibrationService
         var sensorCounts = withValues.Select(m => m.SensorCount).ToList();
         var rowCounts = withValues.Select(m => m.TotalCount).ToList();
         var okTotal = withValues.Sum(m => m.OkCount);
+        var sampledTotal = withValues.Sum(m => m.SampledCount);
+        var usableTotal = withValues.Sum(m => m.UsableCount);
         var rowsTotal = rowCounts.Sum();
         var okRatio = rowsTotal > 0 ? (double)okTotal / rowsTotal : 0.0;
+        var usableRatio = rowsTotal > 0 ? (double)usableTotal / rowsTotal : 0.0;
+        var sampledRatio = rowsTotal > 0 ? (double)sampledTotal / rowsTotal : 0.0;
 
         // 分母為零一律判不足：若有數值天數為 0，不得判為可用
         CalibrationStatus status;
@@ -825,7 +835,7 @@ public sealed class CalibrationService
 
         return new CalibrationItemAssessment
         {
-            ItemName = "觸發式取數量級",
+            ItemName = "數值取得量級",
             Status = status,
             KeyMetrics = new Dictionary<string, object>
             {
@@ -837,7 +847,9 @@ public sealed class CalibrationService
                 ["RowsPerNightMin"] = rowCounts.DefaultIfEmpty(0).Min(),
                 ["RowsPerNightMedian"] = Median(rowCounts),
                 ["RowsPerNightMax"] = rowCounts.DefaultIfEmpty(0).Max(),
-                ["OkRatio"] = Math.Round(okRatio, 3)
+                ["OkRatio"] = Math.Round(okRatio, 3),
+                ["UsableRatio"] = Math.Round(usableRatio, 3),
+                ["SampledRatio"] = Math.Round(sampledRatio, 3)
             },
             CurrentThresholds = thresholds,
             Explanations = explanations

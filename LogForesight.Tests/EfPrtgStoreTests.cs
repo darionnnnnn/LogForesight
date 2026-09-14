@@ -1196,18 +1196,18 @@ public class EfPrtgStoreTests : IDisposable
 
         var s3001 = result.Single(r => r.SensorObjid == 3001);
         Assert.Equal(4, s3001.OkCount);
-        Assert.Equal(3, s3001.OkDays);
-        Assert.Equal(new DateTime(2026, 8, 20, 10, 0, 0), s3001.EarliestOkPeriod);
-        Assert.Equal(new DateTime(2026, 8, 22, 9, 0, 0), s3001.LatestOkPeriod);
+        Assert.Equal(3, s3001.UsableDays);
+        Assert.Equal(new DateTime(2026, 8, 20, 10, 0, 0), s3001.EarliestUsablePeriod);
+        Assert.Equal(new DateTime(2026, 8, 22, 9, 0, 0), s3001.LatestUsablePeriod);
         Assert.Equal(1, s3001.UnknownCount);
         Assert.Equal(0, s3001.NodataCount);
         Assert.Equal(5, s3001.TotalCount);
 
         var s3002 = result.Single(r => r.SensorObjid == 3002);
         Assert.Equal(0, s3002.OkCount);
-        Assert.Equal(0, s3002.OkDays); // 涵蓋天數為 0（不是 3）
-        Assert.Null(s3002.EarliestOkPeriod);
-        Assert.Null(s3002.LatestOkPeriod);
+        Assert.Equal(0, s3002.UsableDays); // 涵蓋天數為 0（不是 3）
+        Assert.Null(s3002.EarliestUsablePeriod);
+        Assert.Null(s3002.LatestUsablePeriod);
         Assert.Equal(2, s3002.UnknownCount);
         Assert.Equal(1, s3002.NodataCount);
         Assert.Equal(3, s3002.TotalCount);
@@ -1330,8 +1330,8 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Single(cov);
         Assert.Equal(3, cov[0].OkCount);
         Assert.Equal(3, cov[0].TotalCount);
-        Assert.Equal(new DateTime(2026, 8, 31, 0, 0, 0), cov[0].EarliestOkPeriod);
-        Assert.Equal(new DateTime(2026, 8, 31, 23, 0, 0), cov[0].LatestOkPeriod);
+        Assert.Equal(new DateTime(2026, 8, 31, 0, 0, 0), cov[0].EarliestUsablePeriod);
+        Assert.Equal(new DateTime(2026, 8, 31, 23, 0, 0), cov[0].LatestUsablePeriod);
 
         // 2. GetDailyValueAggregations
         var aggs = store.GetDailyValueAggregations(from, to);
@@ -1354,6 +1354,77 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(1, stateSummary.DistinctSensors);
         Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.EarliestChangedAt);
         Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.LatestChangedAt);
+    }
+
+    [Fact]
+    public void 校準查詢_可用列一致性_三個查詢分類與統計完全一致()
+    {
+        var store = CreateStore();
+        var date = new DateTime(2026, 8, 31);
+        var from = date;
+        var to = date.AddDays(1);
+
+        // 同一顆 sensor、同一天、不同小時，寫入七列
+        var values = new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(1), Quality = PrtgDataQuality.Ok, Coverage = null, AvgValue = 10.0, MinValue = null, MaxValue = null },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(2), Quality = PrtgDataQuality.Sampled, Coverage = 100.0, AvgValue = 20.0, MinValue = 15.0, MaxValue = 25.0 },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(3), Quality = PrtgDataQuality.Sampled, Coverage = 75.0, AvgValue = 30.0, MinValue = 28.0, MaxValue = 40.0 },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(4), Quality = PrtgDataQuality.Sampled, Coverage = 74.0, AvgValue = 999.0, MinValue = 1.0, MaxValue = 9999.0 },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(5), Quality = PrtgDataQuality.Unknown, Coverage = null, AvgValue = null, MinValue = null, MaxValue = null },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(6), Quality = PrtgDataQuality.NoData, Coverage = null, AvgValue = null, MinValue = null, MaxValue = null },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(7), Quality = PrtgDataQuality.Paused, Coverage = null, AvgValue = null, MinValue = null, MaxValue = null },
+        };
+        store.UpsertValues(values);
+
+        // 1. GetValueCoverageSummary
+        var covList = store.GetValueCoverageSummary(from, to);
+        Assert.Single(covList);
+        var cov = covList[0];
+        Assert.Equal(5001, cov.SensorObjid);
+        Assert.Equal(1, cov.OkCount);
+        Assert.Equal(2, cov.SampledCount);
+        Assert.Equal(3, cov.UsableCount);
+        Assert.Equal(1, cov.UnknownCount);
+        Assert.Equal(1, cov.NodataCount);
+        Assert.Equal(2, cov.OtherCount);
+        Assert.Equal(7, cov.TotalCount);
+        Assert.Equal(1, cov.UsableDays);
+        Assert.Equal(date.AddHours(1), cov.EarliestUsablePeriod);
+        Assert.Equal(date.AddHours(3), cov.LatestUsablePeriod);
+
+        // 2. GetDailyValueAggregations
+        var aggList = store.GetDailyValueAggregations(from, to);
+        Assert.Single(aggList);
+        var agg = aggList[0];
+        Assert.Equal(5001, agg.SensorObjid);
+        Assert.Equal(date, agg.Date);
+        Assert.Equal(1, agg.OkCount);
+        Assert.Equal(2, agg.SampledCount);
+        Assert.Equal(3, agg.UsableCount);
+        Assert.Equal(1, agg.UnknownCount);
+        Assert.Equal(1, agg.NodataCount);
+        Assert.Equal(2, agg.OtherCount);
+        Assert.Equal(7, agg.TotalCount);
+        Assert.Equal(20.0, agg.AvgValue);
+        Assert.Equal(10.0, agg.MinValue);
+        Assert.Equal(30.0, agg.MaxValue);
+        Assert.Equal(15.0, agg.MinObserved);
+        Assert.Equal(40.0, agg.MaxObserved);
+
+        // 3. GetDailyValueMagnitudes
+        var magList = store.GetDailyValueMagnitudes(from, to);
+        Assert.Single(magList);
+        var mag = magList[0];
+        Assert.Equal(date, mag.Date);
+        Assert.Equal(1, mag.SensorCount);
+        Assert.Equal(7, mag.TotalCount);
+        Assert.Equal(1, mag.OkCount);
+        Assert.Equal(2, mag.SampledCount);
+        Assert.Equal(3, mag.UsableCount);
+        Assert.Equal(1, mag.UnknownCount);
+        Assert.Equal(1, mag.NodataCount);
+        Assert.Equal(2, mag.OtherCount);
     }
 
     [Fact]
