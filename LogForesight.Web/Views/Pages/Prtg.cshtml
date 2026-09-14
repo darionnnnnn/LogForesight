@@ -141,6 +141,24 @@
                     </div>
                 </div>
 
+                <div class="mb-3">
+                    <label for="prtg-fetch-strategy" class="form-label fw-semibold">取數策略</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="保守：每 15 分鐘對 PRTG 發一次全量快照（一天約 96 次，單次約 10～15 秒，同時只有 1 個請求），夜間不逐顆查詢，數值全由快照供應。激進：每 5 分鐘一次（一天約 288 次），另在夜間對觸發主機逐顆查詢歷史值（每晚數百次、單次 5～70 秒），PRTG 負擔明顯較高。實際的快照目標感測器數與每日寫入列數，請按下方「估算規模」查看。兩種策略下快照連續失敗 3 次都會自動拉長間隔（上限 60 分鐘）。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                    <select class="form-select" id="prtg-fetch-strategy">
+                        <option value="conservative">保守（預設）：每 15 分鐘快照一次，夜間不逐顆查詢</option>
+                        <option value="aggressive">激進：每 5 分鐘快照一次，夜間另逐顆查詢觸發主機</option>
+                    </select>
+                    <div class="form-text">
+                        快照是對 PRTG 發一次全量查詢取即時值，由站台自己平均成小時值。
+                    </div>
+                    <div class="small text-warning mt-2 d-none" id="prtg-strategy-aggressive-hint">
+                        激進策略每 5 分鐘對 PRTG 發一次全量快照，並在每晚對觸發主機逐顆查詢歷史值，PRTG 負載明顯較高。請先用保守策略觀察執行輸出裡的快照耗時與失敗數，確認 PRTG 承受得住再切換；切換後若看到快照間隔被自動拉長，代表 PRTG 已經回不來，請切回保守。
+                    </div>
+                </div>
+
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <div class="form-check">
@@ -152,14 +170,15 @@
                     <div class="col-md-6">
                         <label for="prtg-timeout-seconds" class="form-label">請求逾時（秒）</label>
                         <input type="number" class="form-control" id="prtg-timeout-seconds" min="5" max="600" />
+                        <div class="form-text">historicdata 單次實測最長超過 100 秒，激進策略或執行歷史回填時建議設 120 以上。</div>
                     </div>
                 </div>
 
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label for="prtg-fetch-concurrency" class="form-label">併發請求數</label>
-                        <input type="number" class="form-control" id="prtg-fetch-concurrency" min="1" max="3" />
-                        <div class="form-text">PRTG core 在大量 sensor 下對併發敏感，建議維持 2。</div>
+                        <input type="number" class="form-control" id="prtg-fetch-concurrency" min="1" max="8" />
+                        <div class="form-text">保守策略建議 2、激進策略建議 4；實測併發 8 時 PRTG 端開始排隊，單次延遲可能超過請求逾時。</div>
                     </div>
                     <div class="col-md-4">
                         <label for="prtg-backfill-days" class="form-label">歷史回填天數</label>
@@ -193,6 +212,7 @@
                     <button type="submit" class="btn btn-primary" id="prtg-params-save">儲存</button>
                     <button type="button" class="btn btn-outline-secondary" id="prtg-scope-estimate-btn">估算規模</button>
                     <span id="prtg-scope-estimate-result" class="small"></span>
+                    <span class="small d-block" id="prtg-snapshot-estimate-result"></span>
                 </div>
             </div>
         </div>
@@ -259,6 +279,7 @@
                             <div class="text-muted small">最新歷史數據時間</div>
                             <div class="small fw-semibold" id="prtg-mirror-last-value-at">數值：-</div>
                             <div class="small fw-semibold" id="prtg-mirror-last-state-change-at">狀態變更：-</div>
+                            <div class="small fw-semibold" id="prtg-mirror-snapshot">數值快照：-</div>
                         </div>
                     </div>
                 </div>
@@ -435,11 +456,11 @@
                     </div>
                 </div>
 
-                <!-- 3. 觸發式取數量級 -->
+                <!-- 3. 數值取得量級 -->
                 <div class="col-lg-6">
                     <div class="border rounded p-3 h-100 bg-light" id="calibration-card-triggered-fetch-magnitude">
                         <div class="d-flex align-items-center justify-content-between mb-2">
-                            <h3 class="h6 fw-bold mb-0">觸發式取數量級</h3>
+                            <h3 class="h6 fw-bold mb-0">數值取得量級</h3>
                             <span class="badge bg-secondary" id="badge-triggered-fetch-magnitude">尚未計算</span>
                         </div>
                         <div class="mb-3" id="metrics-triggered-fetch-magnitude">
@@ -490,12 +511,21 @@
 
             <!-- 匯出操作區 -->
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="calibration-override-check" />
-                    <label class="form-check-label small" for="calibration-override-check">
-                        仍要匯出（若指標未全數達標，強制覆寫閘門限制進行匯出）
-                    </label>
+                <div class="d-flex flex-column gap-1">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="calibration-summary-check" />
+                        <label class="form-check-label small" for="calibration-summary-check">
+                            只匯出摘要（不含逐日原始列，檔案小、適合直接閱讀）
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="calibration-override-check" />
+                        <label class="form-check-label small" for="calibration-override-check">
+                            仍要匯出（若指標未全數達標，強制覆寫閘門限制進行匯出）
+                        </label>
+                    </div>
                 </div>
+                <span class="text-muted small" id="calibration-export-size-hint"></span>
                 <button type="button" class="btn btn-success" id="calibration-export-btn" disabled>
                     <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#file-earmark-text"></use></svg>
                     匯出校準數值

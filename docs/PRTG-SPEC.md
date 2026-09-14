@@ -51,7 +51,8 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 
 | 值 | 意義 | 目前是否會被寫入 |
 |---|---|---|
-| `ok` | 正常量測值 | 是 |
+| `ok` | PRTG `historicdata` 的整小時真平均 | 是（激進策略夜間取數、歷史回填） |
+| `sampled` | 站台以數值快照（§3b）自行平均的小時值；`min_value`／`max_value` 為該小時樣本極值，`coverage`＝樣本數 ÷ 期望樣本數 × 100 | 是（快照服務） |
 | `unknown` | PRTG 回報 unknown，或 coverage 為 0 | 是 |
 | `nodata` | 該時段沒有資料 | 是 |
 | `paused` | PRTG 上被暫停 | 否——被暫停的 sensor 整段不抓、不寫任何列 |
@@ -59,6 +60,10 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 
 `unknown` 與 `nodata` 的列**仍然寫入**（數值欄為 null）——「這個時段沒有可信資料」
 本身就是要保留的事實。
+
+**同一（sensor, 小時）的寫入優先序**：`ok` 覆蓋 `sampled`（精確值優先，走 `UpsertValues` 的同鍵覆蓋）；`sampled` 對既有 `sampled` **合併**（以 coverage 為權重加權平均、極值取聯集、coverage 相加，上限 100），既有列是 `ok` 時不動（`MergeSampledValues`）。站台一小時內重啟兩次，第二次寫出的部分樣本不會蓋掉第一次的。
+
+**可用列（usable）**＝`ok`，或 `sampled` 且 `coverage ≥ 75`（常數 `PrtgValueUsability.SampledMinCoverage`）。校準（§11）與任何基線統計只認可用列；coverage 不足的 `sampled` 與 `unknown`／`nodata` 一樣排除。門檻 75 的意思是保守策略一小時 4 個樣本要有 3 個、激進 12 個要有 9 個——兩個樣本的平均不足以代表一小時。
 
 `lf_prtg_state_changes.quality` 欄位同樣存在，但狀態變更沒有可用的品質判定依據，
 目前一律寫 `ok`。
@@ -86,7 +91,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 | 1. device 結構 | `table.json?content=devices` | `UpsertDevices`（全量 upsert） |
 | 2. sensor 結構 | `table.json?content=sensors` | `UpsertSensors`（全量 upsert，不覆蓋分類欄） |
 | 3. 狀態變更 | `table.json?content=messages&filter_drel=…` | `AppendStateChanges`（只取當日，去重） |
-| 4. hourly 數值 | `historicdata.json?avg=3600` | `UpsertValues`（逐 sensor 寫入即釋放）。**觸發式，非全量**，見下 |
+| 4. hourly 數值 | `historicdata.json?avg=3600` | `UpsertValues`（逐 sensor 寫入即釋放）。**觸發式，非全量**，見下；**只在激進策略執行**（§3b） |
 
 ### 3a. 觸發式數值取數
 
@@ -137,13 +142,16 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 無觸發主機時整段短路為 0 次 `historicdata` 呼叫，執行輸出會寫明觸發主機數、目標 sensor 數與寫入筆數。
 
 - **一律拉 hourly 聚合（`avg=3600`），絕不拉 raw**——raw 查詢是 PRTG API 最昂貴的操作。
-- 對 PRTG 的併發上限由 `PrtgFetchConcurrency`（1~3，預設 2）以 semaphore 控制，每日擷取與歷史回填共用同一設定。
-- **分頁只有一份實作**（`PrtgTablePager`），停止條件三道，任一成立即停：空頁或回應不是陣列／
+- 對 PRTG 的併發上限由 `PrtgFetchConcurrency`（1~8，預設 2）以 semaphore 控制，每日擷取與歷史回填共用同一設定。
+  實測 `historicdata` 單次 5～72 秒、最長超過 100 秒；併發 4 加速 2 倍以上且延遲放大 ≤1.23 倍，併發 8 時 PRTG 端開始排隊。畫面建議保守 2、激進 4，激進或回填時請求逾時建議 120 秒以上。
+- **分頁只有一份實作**（`PrtgTablePager`），查詢分頁大小（`count`）預設 5000、寫入批次（`batchSize`）預設 500，兩者各自獨立。
+  分頁大小不採用 50000 是因實機實測有高機率回傳空白 HTML 頁導致解析失敗。
+  停止條件三道，任一成立即停：空頁或回應不是陣列／
   本頁未滿一頁／**本頁沒有任何沒見過的列**。第三道才是真正的收斂條件——實機的 PRTG 在
   `start` 超出範圍時會**夾到最後一頁**而不是回空頁，總筆數剛好是頁大小整數倍時，
   只靠前兩道會永遠跑不完、整趟夜間批次無聲卡死。
 - **頁數上限是最後一道保險絲**：`treesize` 已知時取「⌈treesize ÷ 頁大小⌉ + 2」與 400 頁的較大者，
-  未知時 400 頁，並允許再多讀一頁確認結尾（總筆數剛好是「上限 × 頁大小」時，最後一頁是滿頁、
+  未知時 400 頁（以單頁 5000 筆推算為 200 萬筆上限），並允許再多讀一頁確認結尾（總筆數剛好是「上限 × 頁大小」時，最後一頁是滿頁、
   下一頁才是空頁）。`treesize` 在帶 filter 的查詢下是否為過濾後筆數並無保證，因此**只能放大上限、
   不能縮小**，否則合法的長同步會被誤判。翻到上限仍未收斂時擲
   `PrtgPagingNotConvergedException`（含 content、頁數、已讀筆數、重複列數），**不靜默截斷**。
@@ -167,17 +175,55 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
   刻意不用 `today`／`yesterday`——跨午夜的執行窗口在這個階段跑過零點時目標日會落在前天，
   那兩個級距會整段漏掉。
 - **結構同步三階段各自回報進度**（`prtg-sync-devices`／`-sensors`／`-messages`）：
-  分子是已讀取列數、分母取回應的 `treesize`；每滿 50 頁另寫一行執行輸出。
+  分子是已讀取列數、分母取回應的 `treesize`；每滿 5 頁另寫一行執行輸出（常數 `ConsoleEveryPages`）。
   各階段完成時寫出**耗時**——沒有這個數字，「哪個階段值得優化」無從判斷。
   結構同步**不套 `PrtgFetchConcurrency`**（分頁必須循序），也**不設整段逾時**
   ——拍腦袋的倍數在大型環境會誤殺合法的長同步。中止的手段是 §5a 的停止鈕，
   收斂的保證是上面的三道停止條件與頁數上限。
-- 記憶體：逐頁轉換、累積滿 500 筆就寫一次；每批一個新的 `DbContext`（變更追蹤器每批歸零）。
+- **PRTG 對大回應會回 HTTP 200 的空白 HTML 頁**（實測 73 bytes 的 `no-content OK`，同一查詢前一天成功）。`PrtgClient.GetJsonAsync` 讀到的內容去空白後以 `<` 開頭時擲 `PrtgClientException`，訊息含「PRTG 回傳 HTML 而非 JSON」與開頭 80 字。影響面：分頁階段計為失敗且原因明確、資源守門即時來源退回鏡像（§12）、探測子量測印「無法量測」＋原因（§6）、快照計一次失敗（§3b）。
+- 記憶體：單頁最多 5000 筆 JSON（實測約 2 MB）＋ 500 筆緩衝，記憶體嚴格有界；逐頁轉換、每累積滿 500 筆就寫入一次；每批一個新的 `DbContext`（變更追蹤器每批歸零）。
   絕不把整份資料堆在記憶體最後才寫。
 - 單一 sensor 的數值擷取失敗（逾時、404、暫時 5xx）只影響它自己，其餘 sensor 照樣落地並回報
   實際寫入筆數；只有「有 sensor 要抓卻一筆都沒抓到」才把該階段計為失敗。
+  失敗數中的**逾時另外列出**：判定看例外鏈（`PrtgClient` 包裝例外時一律帶 `InnerException`），不比對在地化訊息字串。
+- **`historicdata` 的欄位解析**（`PrtgFetchService.ParseHistoricData`）：
+  - 值：取**第一個** `value_raw`（主要頻道；多頻道時同名鍵會重複出現，`JsonElement.TryGetProperty` 回的是最後一個，因此自行逐屬性取第一個）；缺失時退回 `value_`／`value`。
+  - coverage：`coverage_raw ÷ 100`（10000＝100%）優先於 `coverage` 字串。
+  - 時間：`datetime` 是本地化的區間字串（如「2026/9/10 下午 11:00:00 - 上午 12:00:00」），取「 - 」前段，先以伺服器目前文化、再以 InvariantCulture 解析。**`datetime_raw`（OLE 日期）只當退路**：實機同一列的 `datetime_raw` 與顯示字串差數小時，拿它當主來源會讓整份基線平移而無徵兆。用到退路的筆數在執行輸出單獨回報（「原始日期數值推得」）。
 - 數值的時間欄位解析失敗時**會計數並在執行輸出回報筆數**，不靜默略過
   （PRTG 依伺服器地區設定輸出時間字串，格式不符時整段會解析失敗——這種缺口必須被看見）。
+
+### 3b. 取數策略與數值快照
+
+`PrtgFetchStrategy` 決定數值怎麼取。兩種策略的每個數值都取自實機探測能穩定取回的範圍，激進是可靠範圍的上緣，不是極限。
+
+| 項目 | `conservative`（保守，預設） | `aggressive`（激進） |
+|---|---|---|
+| 快照間隔 | 15 分鐘 | 5 分鐘 |
+| 夜間逐顆 `historicdata`（§3a 階段 4） | **不執行**，數值全由快照供應 | 執行，沿用取數範圍設定，給觸發主機 PRTG 真平均 |
+| 每日 PRTG 負擔（估） | 約 96 次快照，分散整天、同時只有 1 個請求 | 約 288 次快照＋每晚數百次 `historicdata` |
+
+- 常數與判定收斂在 `PrtgFetchStrategy`（`IsValid`／`Normalize`／`Profile`）；不合法或未設定的值退回保守。
+- 保守策略下夜間路徑印「取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。」；每晚開頭另印一行目前策略與快照間隔。
+- **歷史回填不受策略影響**：永遠用 `historicdata`，併發吃 `PrtgFetchConcurrency`。
+- 切換策略不回頭改既有列，只影響之後寫出的 coverage 期望值。
+
+**升級注意**：策略預設保守，升級後夜間觸發式取數**不再執行**，數值改由快照供應；依賴夜間逐顆查詢的部署要切激進。
+
+**快照服務**（`PrtgSnapshotHostedService`，Web 背景服務）：
+
+- 每 60 秒檢查一次，依序全部成立才發快照：`PrtgEnabled`、連線設定齊備、結構同步未執行、歷史回填未執行、夜間取數不在 PRTG 階段（進度 phase 不以 `prtg-` 開頭）、距上次嘗試已滿目前間隔。前五項不成立時記下暫停原因供鏡像狀態顯示（§7 操作介面），不寫 log；「未到間隔」是正常等待，不算暫停。
+- 查詢：`table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000`（實測兩到三欄約 10～15 秒）。回傳筆數少於 `treesize` 時寫截斷警告（與資源守門同一道判定）。
+- **目標集合**＝當天 `ok` 對應裝置上、符合白名單、未暫停的 sensor（`GetValueFetchTargets`），每小時刷新一次；當天沒有對應就用前一天。集合外的 objid 不累積——全量 4 萬顆每天會多百萬列而沒有消費端。
+- **累積器**（`PrtgSnapshotAccumulator`，Core）：per (objid, 小時) 累積 sum／count／min／max，整點把上一小時寫成 `sampled` 列（合併寫入，§2）；站台停止時把當前小時的部分樣本也寫出，coverage 如實反映缺口。
+- **流量類正規化**：`lastvalue_raw` 是「最近一次掃描的傳輸量」，`historicdata` 第一頻道是「整小時總量」。type 屬於 `PrtgVolumeSensorTypes`（`SNMP Traffic 64bit`、`SNMP Traffic 32bit`、`Windows Network Card`）的樣本換算為 `lastvalue_raw × 3600 ÷ 掃描間隔秒數`；`interval` 接受純數字秒數與「60 s」「5 m」「1 h」（單位可用全稱），解析不了以 60 秒計並在每次快照的執行輸出回報筆數。其他 type 不換算（CPU／記憶體／磁碟／Ping 的 `lastvalue_raw` 與歷史值同尺度，已實測）。
+- **退避**：連續失敗（例外、空白 HTML 頁、逾時）每滿 3 次，生效間隔加倍一次（第 3、6、9 次各加倍），上限 60 分鐘；成功即恢復策略設定值。間隔**從上次嘗試起算**——從上次成功起算時 PRTG 回不來就會每 60 秒重打一次全量快照。每次間隔變化寫一行執行輸出。
+- 快照服務不受資源守門節制（它不在夜間批次內，且同時只有一個請求）；也不套 `PrtgFetchConcurrency`。
+- 狀態變化（截斷、退避、恢復、寫入失敗）寫 NLog，服務內只保留最近 100 行供測試觀察，畫面不另列。
+- **整點寫入失敗不丟樣本**：已從累積器取出的列留在待寫清單（上限 20 萬列，超過捨棄最舊），下次快照或站台停止時再寫；資料庫寫不進去不算 PRTG 失敗、不進退避。
+- coverage 的期望樣本數以**策略設定的間隔**算，不用退避後的生效間隔——退避期間樣本本來就少，coverage 要如實變低，否則 1 個樣本會被算成滿涵蓋而通過可用門檻。
+- **時間基準**：快照的小時邊界用站台本機時間，`historicdata` 的時間是 PRTG 伺服器本機時間；兩者同一時區才對得上。
+- **規模估算**：取數範圍的估算端點另回快照目標數、每日列數、依保留天數估的總列數；總列數達 2,000 萬或白名單為空時帶警告。保留天數以 `min(PrtgRetentionDays, RetentionDays)` 近似，不含低於下限的退回邏輯。
 
 ## 4. 主機對應
 
@@ -300,6 +346,7 @@ device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 
   仍對不到就跳過該日數值。
 - 狀態變更維持全量回填（單次 API 呼叫，成本低）。
 - 回填與環境探測**互斥**（兩者會打同一台 PRTG），任一執行中時另一個拒絕啟動。
+- 回填**不受取數策略影響**（§3b），寫入的是 `ok` 列，會覆蓋同一小時的 `sampled` 列。
 
 ## 5a. 同步結構與對應（手動）
 
@@ -345,7 +392,7 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
 1. PRTG 版本
 2. device 與 sensor 總數
 3. **sensor type 分布**（依數量排序，含 unit 樣本，以及累積覆蓋 50/80/90/95% 各需幾個 type）
-4. 相依性（dependency）設定的使用比例
+4. 相依性（dependency）設定的使用比例；整份回應無法解析（不是 JSON、或根不是物件）時印出回應長度與開頭 200 字
 5. 群組樹概要
 6. **IP 覆蓋概要**：有幾個 device 設了 IPv4（判定與主機對應同一份純語法層，IP 帶 port 算 IP）、幾個是 DNS 名稱、
    幾個「無法判定」（打壞的 IP 如 `10.2xx.x.x`、含備註）並列出前 5 筆 objid——後者不會被解析也對不到主機，探測時就該看到。
@@ -360,6 +407,41 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
    同一步另做**排序穩定性判定**：比對不帶與帶 `sortby=objid` 兩次查詢的頁內 objid 是否遞增，
    回答「這台 PRTG 接不接受 `sortby`」。順序不穩定時分頁會靜默漏列，去重擋得住重複、擋不住漏列。
    結構同步與資源守門的分頁迴圈都以「遵守 `start` 且順序穩定」為前提，這一步就是驗證那兩個前提。
+   `messages` 的順序依據是時間不是 objid（objid 是發出訊息的 sensor），因此它的四次查詢帶
+   `columns=objid,datetime`，順序判定看頁內 `datetime` 是否單調（全部可解析且非遞增或非遞減）；
+   單調即代表分頁可行（列鍵含時間），`sortby=objid` 對它有效與否只是資訊、不影響結論；
+   有任一筆 `datetime` 解析失敗就不下判斷。`devices`／`sensors` 仍以 objid 判順序。
+9. **效能量測**（純診斷，結果不影響探測成敗）：各子量測獨立容錯，任一失敗只印原因、繼續下一個。
+   成本固定為 9 次 `table.json` 與 87 次 `historicdata`。
+   - **9a 分頁大小**：以結構同步同一組欄位（`objid,parentid,sensor,type,tags,unit,status,paused,dependency`）
+     依序發 `count=500`／`2500`／`5000`／`50000` 各一次，每次印耗時、筆數、位元組數與**每千筆耗時**。
+     結論行比較 `count=500` 與 `count=5000` 的每千筆耗時：後者低於前者一半代表每次請求的固定成本佔大宗、
+     分頁放大有效；否則是回應時間與筆數近似線性、放大效益有限。任一次回 0 筆時印「樣本不足，無法判定」。
+   - **9b objid-only**：`columns=objid&count=50000` 一次，與 9a 的 `count=50000` 那次比耗時與位元組的百分比，
+     回答「只取 objid 能省多少」。9a 那次沒有結果時只印自己的數字。
+   - **9c historicdata 併發**：由步驟 3 的樣本挑未暫停且有 objid 的感測器（依 type 優先序
+     `Ping`→`SNMP CPU Load`→`SNMP Traffic 64bit`→`SNMP Memory`→其他），最多 64 顆分成**不重複**的四組
+     （重查同一顆會吃到 PRTG 快取，讓後面的等級看起來變快），依序以併發 1／2／4／8 查同一天的
+     `historicdata`（查詢形狀與夜間取數相同）。每級印總耗時、平均與最大延遲、失敗數與回傳列數；
+     結論行以併發 1 為基準給總耗時倍率與加速倍數，平均延遲放大超過 1.5 倍時標記「PRTG 端開始排隊」。
+     樣本不足 64 顆時盡量平均分配並註明結論僅供參考，一顆都沒有就略過。
+   - **9d 值的取得方式**：回答「數值要走快照還是 `historicdata`」。9c 已量測過的 objid 不再重用
+     （同一顆重查會吃到 PRTG 快取，量出來的延遲比實際快），9d-2 與 9d-3 挑的也彼此不重複。
+     - **9d-1 快照成本與分布**：`columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw&count=50000`
+       一次，印耗時、筆數、位元組數，以及 `interval`／`status` 各前 5 名的分布與
+       `lastvalue_raw` 可解析為數字的比例（`InvariantCulture`）——後者決定快照的值能不能直接當數值用。
+       `interval` 欄不可用時明說。每筆的 `lastvalue`／`lastvalue_raw` 留給 9d-2 對照。
+     - **9d-2 單位對照與各 type 延遲**：`SNMP CPU Load`、`SNMP Memory`、`SNMP Disk Free`、
+       `SNMP Traffic 64bit`、`Ping` 五種各挑最多 3 顆未暫停的感測器，循序各發一次 1 天 `historicdata`
+       （查詢形狀與夜間取數相同），每顆印延遲、列數、`histdata` 末列原始內容（截 300 字）與快照的
+       `lastvalue`／`lastvalue_raw`，每種 type 再印平均延遲。某 type 沒有樣本時明說。
+     - **9d-3 固定成本**：另挑最多 8 顆 `Ping`，前半查 1 小時、後半查 1 天，循序發。
+       比較兩組平均延遲與平均列數：1 小時延遲達 1 天的 0.7 倍以上代表成本以每次呼叫為主、
+       與時間跨度關係小（回填可以拉大跨度省呼叫次數），否則是成本隨跨度成長。
+     - **9d-4 messages 量級**：`content=messages&count=1&id=0` 配 `filter_drel=today` 與 `7days`
+       各一次，只讀 `treesize`，看訊息量級。
+
+任一子量測或步驟遇到 PRTG 回空白 HTML 頁（§3a）時，該項印「無法量測（PRTG 回傳 HTML 而非 JSON…）」並繼續下一項；步驟 4 的「回應無法解析」診斷行保留給其他非 HTML 的壞回應。
 
 探測**不檢查 `PrtgEnabled`**（只需要位址與認證資訊）：它的用途正是在啟用模組之前先摸清環境。
 
@@ -429,12 +511,13 @@ passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼
 | `PrtgPasshashEnc` | — | PRTG passhash 密文。write-only，DTO 只回布林。`passhash` 模式使用 |
 | `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤。自簽憑證環境的顯式逃生門，啟用時每次建立連線都記 WARN |
 | `PrtgTimeoutSeconds` | 60 | 單次請求逾時（5~600） |
-| `PrtgFetchConcurrency` | 2 | 對 PRTG 的併發上限（1~3） |
+| `PrtgFetchConcurrency` | 2 | 對 PRTG 的併發上限（1~8）。建議保守 2、激進 4 |
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
 | `PrtgSensorTypeWhitelist` | 8 種分析型 type | 要擷取數值的 sensor type（一行一個，不分大小寫）。**留空＝不限制**。預設不含 Ping（量大且雜訊高，需要時自行加入） |
 | `PrtgValueFetchScope` | `triggered` | 數值取數的主機範圍：`triggered`／`all-mapped`／`triggered-plus-list`（§3a）。`all-mapped` 要求白名單非空。畫面上與 `PrtgEnabled` 併成同一個四選一下拉，「關閉」不是合法值、只代表 `PrtgEnabled=false` |
 | `PrtgValueFetchExtraHosts` | 空 | `triggered-plus-list` 模式額外納入的主機名稱（一行一個，不分大小寫） |
+| `PrtgFetchStrategy` | `conservative` | 取數策略：`conservative`／`aggressive`（§3b）。決定快照間隔與夜間是否逐顆查詢歷史值 |
 | `PrtgResourceGuardEnabled` | false | 資源守門總開關（§12） |
 | `PrtgResourceGuardSensorObjids` | 空 | 受監看 sensor 的覆寫清單（一行一個 objid）。**留空＝自動偵測** |
 | `PrtgResourceGuardCpuPercent` | 85 | CPU 使用率達此值算緊張（1~100） |
@@ -489,7 +572,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | 端點 | 用途 |
 |---|---|
 | `POST prtg-test` | 測試連線（用表單當下的值，token／密碼／passhash 留空沿用已存） |
-| `GET prtg-mirror` | 鏡像狀態與主機對應摘要 |
+| `GET prtg-mirror` | 鏡像狀態與主機對應摘要；含快照最近成功時間、感測器數、生效間隔、連續失敗數、是否退避中、暫停原因 |
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-backfill/start`、`GET prtg-backfill/status` | 歷史回填（status 含天數與當日 sensor 進度） |
 | `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409；成功時回 200（只代表取消訊號已送出，實際結束要看 status） |
@@ -498,7 +581,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁。每列帶 `conflictKind`（`multi-device`／`multi-host`）、同 IP 的 device 清單與候選主機清單，供指派介面依型別分岔 |
 | `GET／PUT／DELETE prtg-ip-excludes` | IP 排除清單的查詢、新增與移除（§4b） |
 | `GET prtg-resource-guard/preview[?forceAuto=]` | 預覽受監看 sensor 與其當下值（§12）。**不要求 `PrtgEnabled` 與守門開關**——用途正是在啟用前確認偵測結果與數值語意。`forceAuto=true` 忽略覆寫清單強制自動偵測。回應的 `source` 四值：`override`（覆寫清單）／`live`（直接查 PRTG）／`mirror-fallback`（查 PRTG 失敗、退回鏡像）／`auto`（讀鏡像） |
-| `GET prtg-fetch-scope/estimate?scope=` | 取數範圍的規模估算（§3a）：回該模式涵蓋的主機／device／sensor 數 |
+| `GET prtg-fetch-scope/estimate?scope=` | 取數範圍的規模估算（§3a）：回該模式涵蓋的主機／device／sensor 數，另回快照目標數、每日列數、保留期總列數與警告（§3b） |
 | `GET prtg-export`、`POST prtg-import` | 鏡像資料匯出／匯入（§10） |
 
 主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor）；
@@ -551,7 +634,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
   「未回報主機」「覆蓋缺口」等既有統計失真。沒被分析涵蓋的主機，其 finding 留待隔日。
 - 詳情已被保留期精簡（`detail_pruned`）的紀錄不追加，避免把精簡後的殘骸寫回。
 - 追加依 `EventKey` 去重，同一天重跑不產生重複。
-- **命中主機會回饋觸發式取數的佇列**（§3a）——這是「PRTG 規則驅動加強取數」的閉環。
+- **命中主機會回饋觸發式取數的佇列**（§3a）——這是「PRTG 規則驅動加強取數」的閉環。只在激進策略成立；保守策略夜間不逐顆查詢（§3b），命中主機的數值來自快照。
 
 ### finding 對日風險與 AI 的影響
 
@@ -618,18 +701,19 @@ PRTG 維護頁因此提供跨後端的資料通道：
 - **匯入**：上傳同一個檔案，全部走既有的自然鍵冪等寫入
   （數值依 `(sensor_objid, period_start)`、狀態變更依 `(sensor_objid, changed_at)`、結構表依 objid），
   **重複匯入不產生重複資料**，也**不覆蓋人工指定的 sensor 分類**。
+  數值列依鍵**無條件覆蓋**（不看 quality）：匯入的 `ok` 列會蓋掉本機 `sampled` 列（精確值優先，正確），匯入的 `sampled` 列也會蓋掉本機 `ok` 列——搬運方向是正式機→開發機，後者在實務上不會發生。
   格式版本不符時拒絕匯入並說明支援版本。
 - 匯出與匯入都寫稽核。本輪不做壓縮與增量匯出（等實際檔案大小出來再議）。
 
 ### 值型規則的資料取得流程
 
-1. **累積**：觸發式取數（§3a）會自然累積「出過問題的主機」的數值；
-   要為特定主機補基線時，對它跑一次歷史回填（§5，同樣只回填曾為高／中風險的主機）。
+1. **累積**：數值快照（§3b）持續累積白名單內、有對應主機的全部 sensor 的 `sampled` 列；激進策略另由夜間逐顆查詢寫入觸發主機的 `ok` 列。
+   要為特定主機補精確值時，對它跑一次歷史回填（§5，同樣只回填曾為高／中風險的主機）。
    值型規則的基線通常需要 4~8 週資料。
 2. **搬運**：正式機匯出目標區間 → 開發機匯入。
-3. **分析時的資料品質**：`lf_prtg_values.quality` 的 `ok`／`unknown`／`nodata`
+3. **分析時的資料品質**：`lf_prtg_values.quality` 的 `ok`／`sampled`／`unknown`／`nodata`
    **不得混為一談**（見 §2 資料品質旗標）——`unknown` 與 `nodata` 的列數值欄為 null，
-   代表「這個時段沒有可信資料」，計算基線與趨勢時必須排除，不能當成 0。
+   代表「這個時段沒有可信資料」，計算基線與趨勢時必須排除，不能當成 0；基線只用可用列（§2）。
 
 ## 11. 校準數值匯出
 
@@ -643,9 +727,9 @@ PRTG 維護頁因此提供跨後端的資料通道：
 
 | 項 | 什麼算一個 | 可用 | 充足 |
 |---|---|---|---|
-| PRTG 值型基線 | 一個「有對應主機的白名單 sensor」；某 sensor 某天算涵蓋＝該日 `ok` 列數 ≥ 12 | ≥10 台主機各涵蓋 ≥28 天 | ≥10 台各 ≥56 天 |
+| PRTG 值型基線 | 一個「有對應主機的白名單 sensor」；某 sensor 某天算涵蓋＝該日**可用列**數 ≥ 12（§2） | ≥10 台主機各涵蓋 ≥28 天 | ≥10 台各 ≥56 天 |
 | PRTG 規則門檻 | 一個 sensor-日 | 狀態變更涵蓋 ≥28 天且 **down** 命中 ≥30 筆 | 涵蓋 ≥56 天且 down ≥100 筆 |
-| 觸發式取數量級 | 一晚 | 近 30 天內有數值的天數 ≥14 | ≥28 |
+| 數值取得量級 | 一天 | 近 30 天內有數值的天數 ≥14（任何品質的列都算） | ≥28 |
 | 殘留判定門檻 | 一個含登入失敗明細且未精簡的主機日 | ≥200 主機日且涵蓋 ≥14 天 | ≥1000 且 ≥28 天 |
 
 判定規則：
@@ -662,16 +746,24 @@ PRTG 維護頁因此提供跨後端的資料通道：
   四條各自的 sensor-日數都列在累積量指標裡。
 - 補充說明一律帶實際數字（目前值與所需值、預估還需幾天），並會在
   `PrtgRetentionDays` 小於充足所需天數時提醒：資料會在累積足夠前被清掉。
+  有可用的 `sampled` 列時多一句「可用小時中有 N 小時為快照取樣值」。
+- 三個數值查詢（涵蓋摘要、每日聚合、每日量級）的可用判定**內嵌在 EF 查詢投影裡**、同一個運算式，計數拆成 `OkCount`／`SampledCount`（僅計可用的 sampled）／`UsableCount`／`UnknownCount`／`NodataCount`／`OtherCount`（含 coverage 不足的 sampled、paused、untrusted）。抽成 C# 方法會讓 EF 無法翻譯或退到用戶端評估。
+- 門檻字典的鍵為 `MinDailyUsableHours`（值 12）。
+- 值型基線卡另列：快照目標 sensor 數（`SnapshotTargets`）、近 24 小時有取樣的 sensor 數與平均 coverage（`SnapshotSensors24h`／`SnapshotCoverage24h`，含 coverage 不足的取樣列——回答「快照有沒有在跑」而非「可不可用」）、逐日列數（`ValueBaselineRows`，預告完整匯出大小）。
+- 數值取得量級卡的比例：`UsableRatio`（可用列 ÷ 全部）、`SampledRatio`（可用 sampled ÷ 全部）、`OkRatio`（PRTG 真平均 ÷ 全部）。
 - 判定結果在行程內快取 10 分鐘（累積量以「天」為單位變動，十分鐘內不會有不同結論）；
   「重新計算」按鈕強制重算，匯出則沿用快取，同一次匯出不必把整組查詢跑兩遍。
 
 ### 匯出檔
 
-自描述 JSON（UTF-8 無 BOM），含四項判定摘要與四個資料集：
+自描述 JSON（UTF-8 無 BOM，`FormatVersion` 2），含四項判定摘要、四個資料集與三個摘要資料集。匯出的主要讀者是設計值型規則與調門檻的開發端：原始逐日列留給腳本，摘要資料集可直接閱讀。`detail=summary` 只匯出摘要（`ValueBaselines` 為空、檔名加 `-summary`），預設全量。
 
-- **值型基線**：per-sensor **每日聚合**（區間 56 天），含平均／最小／最大、
-  `ok` 小時數與 `unknown`／`nodata` 列數。數值統計**只納入 `ok` 且非 null 的列**
-  （§2 資料品質旗標）。需要原始 hourly 時走 §10 的資料搬運，不放進校準檔。
+- **值型基線**（`ValueBaselines`）：per-sensor **每日聚合**（區間 56 天），含平均／最小／最大（當日各可用列 `AvgValue` 的統計）、
+  `OkHours`、`UnknownCount`／`NodataCount`，以及 `SampledHours`、`MinObserved`／`MaxObserved`（當日各可用列 `MinValue`／`MaxValue` 的極值，`ok` 列沒有這兩欄時為 null）。數值統計**只納入可用且非 null 的列**（§2）。流量類的 `sampled` 列是估算值（每次掃描量 × 3600 ÷ 掃描間隔）。需要原始 hourly 時走 §10 的資料搬運，不放進校準檔。
+- **感測器摘要**（`ValueSensorSummaries`）：值型基線範圍內每顆 sensor 一列——主機、type、單位、是否流量正規化、天數、可用小時、取樣佔比、平均、標準差、P50／P90／P99、最大值。
+- **type 輪廓**（`ValueTypeProfiles`）：每種 type 一列——sensor 數、可用小時、每日平均值的 P50／P90／P99／最大值，以及 0～23 時的平均值曲線（24 個數，沒資料的小時為 null）。小時曲線在資料庫端依 `(type, PeriodStart.Hour)` 聚合，SQLite 翻成 `strftime`、SQL Server 翻成 `DATEPART`（兩者以 `ToQueryString` 測試守住）。
+- **條件**（`Context`）：匯出模式、取數策略、快照間隔、快照目標數、白名單、`PrtgRetentionDays`、統計視窗起訖、鏡像 device／sensor 總數、可用門檻、統計口徑說明。
+- 統計口徑：分位數與標準差以**可用列的每日平均值**為樣本（非每小時值，每顆最多 56 個樣本、有界）；分位數用 nearest-rank，標準差用母體標準差。
 - **規則門檻**：三個部分——
   (a) 近 56 天每規則每日命中數（依 `lf_top_issues` 的 EventKey 前綴分組：該表沒有 rule_id 欄，
   且 PRTG finding 的 EventId 恆為 0，既有聚合會讓四條規則塌成一格）；
@@ -681,7 +773,7 @@ PRTG 維護頁因此提供跨後端的資料通道：
   必須看底層分佈（有多少 sensor-日的 Down 持續 30 分鐘、多少持續 120 分鐘）。門檻取 1 而不是 0：
   flap 與 warning 的判定是 `>=`，設 0 會讓當日零事件的 sensor 也算命中。
   `silent` 不納入分佈——它的判定來源是 sensor 現況而非變更表，逐日重放只會得到同一個數字複製 N 份。
-- **觸發式量級**：近 30 天每日的相異 sensor 數、列數與各品質列數。
+- **數值取得量級**：近 30 天每日的相異 sensor 數、列數與各品質列數（含 `SampledCount`／`UsableCount`）。
 - **殘留判定**：每候選主機日的指標（候選組數、明細總數、前二組集中度、機械型態佔比、
   單組集中度、是否截斷、是否命中），上限最近 5000 個主機日。
   **不含任何帳號名稱**——校準只需要統計形狀。指標計算與正式判定**共用同一份實作**
@@ -741,7 +833,7 @@ PRTG 維護頁因此提供跨後端的資料通道：
 感測器數量成長過、或看到上面的截斷警告之後，重按一次「自動偵測並填入」再儲存。
 
 preview 端點在「使用者按了自動偵測」或「鏡像裡一台裝置都沒有」時走即時查詢；
-查不通（連不上、認證錯、逾時）就**退回鏡像並在回應標明 `mirror-fallback` 與原因**——
+查不通（連不上、認證錯、逾時、PRTG 回空白 HTML 頁）就**退回鏡像並在回應標明 `mirror-fallback` 與原因**——
 靜默退回會讓使用者以為「PRTG 上真的沒有這些裝置」。
 
 夜間批次在鏡像為空的那一晚偵測必然落空。解法是先在畫面按「自動偵測並填入」
@@ -766,7 +858,7 @@ CPU 越高越糟、記憶體與健康度越低越糟，**方向相反**。設定
 每趟執行一個實例，插在**兩處**：NetIQ 每批查詢之前、PRTG 每個 `historicdata` 請求之前
 （每日取數與觸發式取數共用同一個方法，一處即涵蓋）。
 **本機分析不插**——它只讀本機事件與資料庫，暫停它沒有意義。
-**歷史回填與環境探測不受守門**（離峰手動作業）。
+**歷史回填與環境探測不受守門**（離峰手動作業）；**數值快照也不受守門**（§3b，不在夜間批次內且同時只有一個請求）。
 
 - 距上次檢查未滿 `CheckSeconds` 直接放行；讀值後未超標歸零計數。
 - 連續達 `Strikes` 次才進入暫停，等 `PauseMinutes` 後重檢，直到不超標才放行。

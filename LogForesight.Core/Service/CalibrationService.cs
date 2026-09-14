@@ -32,7 +32,7 @@ public enum CalibrationStatus
 public static class CalibrationConstants
 {
     /// <summary>匯出檔案格式版本</summary>
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
 
     // ── 1. PRTG 值型基線門檻 ──────────────────────────────────────────
     /// <summary>值型基線所需最少主機數</summary>
@@ -41,8 +41,8 @@ public static class CalibrationConstants
     public const int ValueBaselineAvailableDays = 28;
     /// <summary>值型基線「充足」所需最少涵蓋天數</summary>
     public const int ValueBaselineSufficientDays = 56;
-    /// <summary>單日視為有效涵蓋的 ok 時數下限</summary>
-    public const int ValueBaselineMinDailyOkHours = 12;
+    /// <summary>單日視為有效涵蓋的可用小時數下限</summary>
+    public const int ValueBaselineMinDailyUsableHours = 12;
     /// <summary>值型基線回看評估窗口天數</summary>
     public const int ValueBaselineWindowDays = 56;
 
@@ -58,7 +58,7 @@ public static class CalibrationConstants
     /// <summary>規則門檻回看評估窗口天數</summary>
     public const int RuleThresholdWindowDays = 56;
 
-    // ── 3. 觸發式取數量級門檻 ────────────────────────────────────────
+    // ── 3. 數值取得量級門檻 ────────────────────────────────────────
     /// <summary>觸發式取數「可用」所需有數值天數</summary>
     public const int TriggeredMagnitudeAvailableDays = 14;
     /// <summary>觸發式取數「充足」所需有數值天數</summary>
@@ -136,7 +136,10 @@ public sealed record CalibrationValueBaselineRow(
     double? MaxValue,
     int OkHours,
     int UnknownCount,
-    int NodataCount);
+    int NodataCount,
+    int SampledHours,
+    double? MinObserved,
+    double? MaxObserved);
 
 /// <summary>
 /// PRTG 規則門檻與現況命中資料集（匯出用）
@@ -206,6 +209,72 @@ public sealed record CalibrationResidualCandidateRow(
     bool IsMatch);
 
 /// <summary>
+/// 每顆感測器的分佈摘要（匯出用）
+/// </summary>
+public sealed record CalibrationValueSensorSummary(
+    long SensorObjid,
+    string? HostName,
+    string SensorType,
+    string? Unit,               // 取自鏡像 PrtgSensorRow.Unit
+    bool IsVolumeNormalized,    // PrtgVolumeSensorTypes.IsVolume(SensorType)
+    int Days,                   // UsableCount > 0 的日數
+    int UsableHours,            // UsableCount 總和
+    double SampledRatio,        // SampledCount 總和 ÷ UsableCount 總和（分母 0 時為 0），Math.Round(..., 3)
+    double? Mean,
+    double? StdDev,
+    double? P50,
+    double? P90,
+    double? P99,
+    double? Max);
+
+/// <summary>
+/// 每種感測器類型的分佈與小時曲線（匯出用）
+/// </summary>
+public sealed record CalibrationValueTypeProfile(
+    string SensorType,
+    int SensorCount,            // 該 type 在 ValueSensorSummaries 中的感測器數
+    int UsableHours,            // 該 type 的 UsableHours 總和
+    double? DailyP50,           // 該 type 所有感測器的每日平均值合在一起的分位數
+    double? DailyP90,
+    double? DailyP99,
+    double? DailyMax,
+    double?[] HourlyCurve);     // 長度固定 24，索引＝小時；取自 GetUsableHourlyProfileByType，沒資料的小時為 null
+
+/// <summary>
+/// 校準匯出上下文環境與口徑說明（匯出用）
+/// </summary>
+public sealed record CalibrationExportContext(
+    string Detail,                          // "full" 或 "summary"
+    string FetchStrategy,                   // 設定的取數策略字串
+    int SnapshotIntervalMinutes,            // PrtgFetchStrategy.Profile(策略).SnapshotIntervalMinutes
+    int SnapshotTargets,
+    IReadOnlyList<string> SensorTypeWhitelist,
+    int PrtgRetentionDays,
+    DateTime WindowFrom,
+    DateTime WindowToExclusive,
+    int MirrorDeviceCount,                  // GetMirrorSummary().DeviceCount
+    int MirrorSensorCount,                  // GetMirrorSummary().SensorCount
+    double SampledMinCoverage,              // PrtgValueUsability.SampledMinCoverage
+    string StatisticsBasis)
+{
+    public CalibrationExportContext() : this(
+        "full",
+        string.Empty,
+        0,
+        0,
+        Array.Empty<string>(),
+        0,
+        default,
+        default,
+        0,
+        0,
+        PrtgValueUsability.SampledMinCoverage,
+        string.Empty)
+    {
+    }
+}
+
+/// <summary>
 /// 校準數值匯出包（自描述 JSON 物件）
 /// </summary>
 public sealed class CalibrationExportPackage
@@ -217,6 +286,9 @@ public sealed class CalibrationExportPackage
     public CalibrationRuleThresholdDataset RuleThresholds { get; init; } = new();
     public List<PrtgDailyValueMagnitude> TriggeredMagnitudes { get; init; } = new();
     public List<CalibrationResidualCandidateRow> ResidualCandidates { get; init; } = new();
+    public List<CalibrationValueSensorSummary> ValueSensorSummaries { get; init; } = new();
+    public List<CalibrationValueTypeProfile> ValueTypeProfiles { get; init; } = new();
+    public CalibrationExportContext Context { get; init; } = new();
 }
 
 /// <summary>
@@ -319,7 +391,7 @@ public sealed class CalibrationService
     /// <summary>
     /// 組裝校準數值匯出物件（包含檔案摘要與四大資料集）。
     /// </summary>
-    public CalibrationExportPackage BuildExportPackage(DateTime? anchor = null)
+    public CalibrationExportPackage BuildExportPackage(DateTime? anchor = null, bool summaryOnly = false)
     {
         var anchorDate = (anchor ?? DateTime.Today).Date;
         var now = DateTime.Now;
@@ -345,34 +417,172 @@ public sealed class CalibrationService
             : null;
 
         var valueBaselineRows = new List<CalibrationValueBaselineRow>();
-        foreach (var agg in dailyAggs)
+        if (!summaryOnly)
         {
-            if (!sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)) continue;
-            if (whitelistSet != null && !whitelistSet.Contains(sensor.SensorType)) continue;
-
-            long? hostId = null;
-            string? hostName = null;
-            if (hostByDevice.TryGetValue(sensor.DeviceObjid, out var hostInfo))
+            foreach (var agg in dailyAggs)
             {
-                hostId = hostInfo.HostId;
-                hostName = hostInfo.HostName;
-            }
+                if (!sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)) continue;
+                if (whitelistSet != null && !whitelistSet.Contains(sensor.SensorType)) continue;
 
-            valueBaselineRows.Add(new CalibrationValueBaselineRow(
-                agg.SensorObjid,
-                sensor.DeviceObjid,
-                hostId,
-                hostName,
-                sensor.SensorType,
-                agg.Date,
-                agg.AvgValue,
-                agg.MinValue,
-                agg.MaxValue,
-                agg.OkCount,
-                agg.UnknownCount,
-                agg.NodataCount
+                long? hostId = null;
+                string? hostName = null;
+                if (hostByDevice.TryGetValue(sensor.DeviceObjid, out var hostInfo))
+                {
+                    hostId = hostInfo.HostId;
+                    hostName = hostInfo.HostName;
+                }
+
+                valueBaselineRows.Add(new CalibrationValueBaselineRow(
+                    agg.SensorObjid,
+                    sensor.DeviceObjid,
+                    hostId,
+                    hostName,
+                    sensor.SensorType,
+                    agg.Date,
+                    agg.AvgValue,
+                    agg.MinValue,
+                    agg.MaxValue,
+                    agg.OkCount,
+                    agg.UnknownCount,
+                    agg.NodataCount,
+                    agg.SampledCount,
+                    agg.MinObserved,
+                    agg.MaxObserved
+                ));
+            }
+        }
+
+        // 1b. 每顆感測器的分佈摘要（ValueSensorSummaries）
+        var scopedAggsBySensor = dailyAggs
+            .Where(agg => sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)
+                       && (whitelistSet == null || whitelistSet.Contains(sensor.SensorType)))
+            .GroupBy(agg => agg.SensorObjid)
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        var valueSensorSummaries = new List<CalibrationValueSensorSummary>();
+        foreach (var group in scopedAggsBySensor)
+        {
+            var sensor = sensorsByObjid[group.Key];
+            string? hostName = hostByDevice.TryGetValue(sensor.DeviceObjid, out var hostInfo) ? hostInfo.HostName : null;
+            var aggs = group.ToList();
+
+            var days = aggs.Count(a => a.UsableCount > 0);
+            var usableHours = aggs.Sum(a => a.UsableCount);
+            var sampledHours = aggs.Sum(a => a.SampledCount);
+            var sampledRatio = usableHours > 0 ? Math.Round((double)sampledHours / usableHours, 3) : 0.0;
+
+            var samples = aggs
+                .Where(a => a.AvgValue != null)
+                .Select(a => a.AvgValue!.Value)
+                .OrderBy(v => v)
+                .ToList();
+
+            double? mean = samples.Count > 0 ? samples.Average() : null;
+            double? stdDev = CalculatePopulationStdDev(samples, mean);
+            double? p50 = Percentile(samples, 50);
+            double? p90 = Percentile(samples, 90);
+            double? p99 = Percentile(samples, 99);
+            double? max = samples.Count > 0 ? samples[^1] : null;
+
+            valueSensorSummaries.Add(new CalibrationValueSensorSummary(
+                SensorObjid: sensor.Objid,
+                HostName: hostName,
+                SensorType: sensor.SensorType,
+                Unit: sensor.Unit,
+                IsVolumeNormalized: PrtgVolumeSensorTypes.IsVolume(sensor.SensorType),
+                Days: days,
+                UsableHours: usableHours,
+                SampledRatio: sampledRatio,
+                Mean: mean,
+                StdDev: stdDev,
+                P50: p50,
+                P90: p90,
+                P99: p99,
+                Max: max
             ));
         }
+
+        // 1c. 每種感測器類型的分佈與小時曲線（ValueTypeProfiles）
+        var hourlyProfiles = _prtgStore.GetUsableHourlyProfileByType(valueBaselineFrom, valueBaselineToExclusive);
+        var hourlyByType = hourlyProfiles
+            .GroupBy(p => p.SensorType, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToDictionary(p => p.Hour, p => p.AvgValue), StringComparer.OrdinalIgnoreCase);
+
+        var scopedDailyAggsByType = dailyAggs
+            .Where(agg => sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)
+                       && (whitelistSet == null || whitelistSet.Contains(sensor.SensorType)))
+            .GroupBy(agg => sensorsByObjid[agg.SensorObjid].SensorType, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        var valueTypeProfiles = new List<CalibrationValueTypeProfile>();
+        var summariesByType = valueSensorSummaries
+            .GroupBy(s => s.SensorType, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var typeGroup in summariesByType)
+        {
+            var sensorType = typeGroup.Key;
+            var sensorCount = typeGroup.Count();
+            var usableHours = typeGroup.Sum(s => s.UsableHours);
+
+            List<double> typeSamples = new();
+            if (scopedDailyAggsByType.TryGetValue(sensorType, out var typeAggs))
+            {
+                typeSamples = typeAggs
+                    .Where(a => a.AvgValue != null)
+                    .Select(a => a.AvgValue!.Value)
+                    .OrderBy(v => v)
+                    .ToList();
+            }
+
+            double? dailyP50 = Percentile(typeSamples, 50);
+            double? dailyP90 = Percentile(typeSamples, 90);
+            double? dailyP99 = Percentile(typeSamples, 99);
+            double? dailyMax = typeSamples.Count > 0 ? typeSamples[^1] : null;
+
+            var hourlyCurve = new double?[24];
+            if (hourlyByType.TryGetValue(sensorType, out var hourMap))
+            {
+                for (int h = 0; h < 24; h++)
+                {
+                    if (hourMap.TryGetValue(h, out var avgVal))
+                    {
+                        hourlyCurve[h] = avgVal;
+                    }
+                }
+            }
+
+            valueTypeProfiles.Add(new CalibrationValueTypeProfile(
+                SensorType: sensorType,
+                SensorCount: sensorCount,
+                UsableHours: usableHours,
+                DailyP50: dailyP50,
+                DailyP90: dailyP90,
+                DailyP99: dailyP99,
+                DailyMax: dailyMax,
+                HourlyCurve: hourlyCurve
+            ));
+        }
+
+        // 1d. 匯出上下文（CalibrationExportContext）
+        var mirrorSummary = _prtgStore.GetMirrorSummary();
+        var snapshotTargets = _prtgStore.GetValueFetchTargets(whitelist, hostByDevice.Keys).Count;
+        var exportContext = new CalibrationExportContext(
+            Detail: summaryOnly ? "summary" : "full",
+            FetchStrategy: settings.PrtgFetchStrategy ?? string.Empty,
+            SnapshotIntervalMinutes: PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes,
+            SnapshotTargets: snapshotTargets,
+            SensorTypeWhitelist: settings.PrtgSensorTypeWhitelist ?? new List<string>(),
+            PrtgRetentionDays: settings.PrtgRetentionDays,
+            WindowFrom: valueBaselineFrom,
+            WindowToExclusive: valueBaselineToExclusive,
+            MirrorDeviceCount: mirrorSummary.DeviceCount,
+            MirrorSensorCount: mirrorSummary.SensorCount,
+            SampledMinCoverage: PrtgValueUsability.SampledMinCoverage,
+            StatisticsBasis: "每感測器與每 type 的分位數、平均與標準差以「可用列的每日平均值」為樣本（非每小時值）；HourlyCurve 為各小時段可用列的平均值；可用列＝ok，或 coverage ≥ SampledMinCoverage 的 sampled；流量類（IsVolumeNormalized）的 sampled 值為估算的小時量。"
+        );
 
         // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 目前四條規則門檻現值
         var ruleFrom = anchorDate.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
@@ -417,7 +627,10 @@ public sealed class CalibrationService
             ValueBaselines = valueBaselineRows,
             RuleThresholds = ruleDataset,
             TriggeredMagnitudes = triggeredMagnitudes,
-            ResidualCandidates = residualCandidates
+            ResidualCandidates = residualCandidates,
+            ValueSensorSummaries = valueSensorSummaries,
+            ValueTypeProfiles = valueTypeProfiles,
+            Context = exportContext
         };
     }
 
@@ -429,7 +642,7 @@ public sealed class CalibrationService
             ["RequiredHosts"] = CalibrationConstants.ValueBaselineRequiredHosts,
             ["AvailableCoverageDays"] = CalibrationConstants.ValueBaselineAvailableDays,
             ["SufficientCoverageDays"] = CalibrationConstants.ValueBaselineSufficientDays,
-            ["MinDailyOkHours"] = CalibrationConstants.ValueBaselineMinDailyOkHours
+            ["MinDailyUsableHours"] = CalibrationConstants.ValueBaselineMinDailyUsableHours
         };
 
         if (!settings.PrtgEnabled || allSensors.Count == 0)
@@ -495,22 +708,22 @@ public sealed class CalibrationService
         var whitelistedObjids = whitelistedSensors.Select(x => x.Objid).ToHashSet();
         var coverageInScope = coverage.Where(c => whitelistedObjids.Contains(c.SensorObjid)).ToList();
         var earliestOk = coverageInScope
-            .Where(c => c.EarliestOkPeriod.HasValue)
-            .Select(c => c.EarliestOkPeriod!.Value)
+            .Where(c => c.EarliestUsablePeriod.HasValue)
+            .Select(c => c.EarliestUsablePeriod!.Value)
             .DefaultIfEmpty()
             .Min();
         var latestOk = coverageInScope
-            .Where(c => c.LatestOkPeriod.HasValue)
-            .Select(c => c.LatestOkPeriod!.Value)
+            .Where(c => c.LatestUsablePeriod.HasValue)
+            .Select(c => c.LatestUsablePeriod!.Value)
             .DefaultIfEmpty()
             .Max();
-        var sensorsWithoutValues = whitelistedObjids.Count - coverageInScope.Count(c => c.OkCount > 0);
+        var sensorsWithoutValues = whitelistedObjids.Count - coverageInScope.Count(c => c.UsableCount > 0);
         // 未對應 sensor：白名單內但所屬 device 沒有成功對應到主機——這些 sensor 就算有數值
         // 也進不了主機層的基線，與「有對應但還沒累積夠」是不同的問題，補充說明的方向也不同
         var unmappedSensors = whitelistedSensors.Count(x => !okDeviceMap.ContainsKey(x.DeviceObjid));
 
         var sensorCoverageDays = dailyAggs
-            .Where(a => a.OkCount >= CalibrationConstants.ValueBaselineMinDailyOkHours)
+            .Where(a => a.UsableCount >= CalibrationConstants.ValueBaselineMinDailyUsableHours)
             .GroupBy(a => a.SensorObjid)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Date.Date).Distinct().Count());
 
@@ -561,6 +774,13 @@ public sealed class CalibrationService
             explanations.Add($"PRTG 資料保留天數目前為 {settings.PrtgRetentionDays} 天，小於充足所需的 {CalibrationConstants.ValueBaselineSufficientDays} 天，資料會在累積足夠前被清掉，請調高");
         }
 
+        // 只算白名單範圍內的 sensor，與本項其他統計（coverageInScope）同一口徑
+        var sampledHours = dailyAggs.Where(a => whitelistedObjids.Contains(a.SensorObjid)).Sum(a => a.SampledCount);
+        if (sampledHours > 0)
+        {
+            explanations.Add($"可用小時中有 {sampledHours} 小時為快照取樣值（coverage ≥ {PrtgValueUsability.SampledMinCoverage:0} 的取樣列才計入）");
+        }
+
         if (status == CalibrationStatus.Insufficient)
         {
             if (mappedHostsCount < CalibrationConstants.ValueBaselineRequiredHosts)
@@ -589,6 +809,15 @@ public sealed class CalibrationService
             }
         }
 
+        var snapshotTargets = _prtgStore.GetValueFetchTargets(whitelist, okDeviceMap.Keys).Count;
+        var sampled24h = _prtgStore.GetSampledCoverageSince(DateTime.Now.AddHours(-24));
+        var snapshotSensors24h = sampled24h.SensorCount;
+        var snapshotCoverage24h = sampled24h.AverageCoverage.HasValue
+            ? Math.Round(sampled24h.AverageCoverage.Value, 1)
+            : 0.0;
+        // 匯出的 ValueBaselines 依白名單篩選，預告大小要用同一個範圍
+        var valueBaselineRows = dailyAggs.Count(a => whitelistedObjids.Contains(a.SensorObjid));
+
         return new CalibrationItemAssessment
         {
             ItemName = "PRTG 值型基線",
@@ -603,7 +832,11 @@ public sealed class CalibrationService
                 ["EarliestOkDate"] = earliestOk == default ? "—" : earliestOk.ToString("yyyy-MM-dd"),
                 ["LatestOkDate"] = latestOk == default ? "—" : latestOk.ToString("yyyy-MM-dd"),
                 ["SensorsWithoutValues"] = sensorsWithoutValues,
-                ["UnmappedSensors"] = unmappedSensors
+                ["UnmappedSensors"] = unmappedSensors,
+                ["SnapshotTargets"] = snapshotTargets,
+                ["SnapshotSensors24h"] = snapshotSensors24h,
+                ["SnapshotCoverage24h"] = snapshotCoverage24h,
+                ["ValueBaselineRows"] = valueBaselineRows
             },
             CurrentThresholds = thresholds,
             Explanations = explanations
@@ -749,7 +982,7 @@ public sealed class CalibrationService
         {
             return new CalibrationItemAssessment
             {
-                ItemName = "觸發式取數量級",
+                ItemName = "數值取得量級",
                 Status = CalibrationStatus.Unavailable,
                 KeyMetrics = new Dictionary<string, object>
                 {
@@ -779,8 +1012,12 @@ public sealed class CalibrationService
         var sensorCounts = withValues.Select(m => m.SensorCount).ToList();
         var rowCounts = withValues.Select(m => m.TotalCount).ToList();
         var okTotal = withValues.Sum(m => m.OkCount);
+        var sampledTotal = withValues.Sum(m => m.SampledCount);
+        var usableTotal = withValues.Sum(m => m.UsableCount);
         var rowsTotal = rowCounts.Sum();
         var okRatio = rowsTotal > 0 ? (double)okTotal / rowsTotal : 0.0;
+        var usableRatio = rowsTotal > 0 ? (double)usableTotal / rowsTotal : 0.0;
+        var sampledRatio = rowsTotal > 0 ? (double)sampledTotal / rowsTotal : 0.0;
 
         // 分母為零一律判不足：若有數值天數為 0，不得判為可用
         CalibrationStatus status;
@@ -825,7 +1062,7 @@ public sealed class CalibrationService
 
         return new CalibrationItemAssessment
         {
-            ItemName = "觸發式取數量級",
+            ItemName = "數值取得量級",
             Status = status,
             KeyMetrics = new Dictionary<string, object>
             {
@@ -837,7 +1074,9 @@ public sealed class CalibrationService
                 ["RowsPerNightMin"] = rowCounts.DefaultIfEmpty(0).Min(),
                 ["RowsPerNightMedian"] = Median(rowCounts),
                 ["RowsPerNightMax"] = rowCounts.DefaultIfEmpty(0).Max(),
-                ["OkRatio"] = Math.Round(okRatio, 3)
+                ["OkRatio"] = Math.Round(okRatio, 3),
+                ["UsableRatio"] = Math.Round(usableRatio, 3),
+                ["SampledRatio"] = Math.Round(sampledRatio, 3)
             },
             CurrentThresholds = thresholds,
             Explanations = explanations
@@ -1249,12 +1488,34 @@ public sealed class CalibrationService
         return (samples, summaries);
     }
 
-    /// <summary>最近秩位法（nearest-rank）：第 ceil(p × N) 個值。樣本為空時由呼叫端保證不會進來。</summary>
-    private static int Percentile(List<int> sortedValues, double p)
+    /// <summary>最近秩位法（nearest-rank）的索引：第 ceil(fraction × N) 個值（0 起算後減 1），夾在 [0, N-1]。兩個分位數方法共用這一份。</summary>
+    private static int NearestRankIndex(int count, double fraction)
     {
-        var rank = (int)Math.Ceiling(p * sortedValues.Count);
+        var rank = (int)Math.Ceiling(fraction * count);
         if (rank < 1) rank = 1;
-        if (rank > sortedValues.Count) rank = sortedValues.Count;
-        return sortedValues[rank - 1];
+        if (rank > count) rank = count;
+        return rank - 1;
+    }
+
+    /// <summary>最近秩位法（nearest-rank）：第 ceil(p × N) 個值，p 為 0～1。樣本為空時由呼叫端保證不會進來。</summary>
+    private static int Percentile(List<int> sortedValues, double p) =>
+        sortedValues[NearestRankIndex(sortedValues.Count, p)];
+
+    /// <summary>最近秩位法（nearest-rank）：P(p) = sorted[ceil(p / 100.0 * n) - 1]，p 為 0～100；n == 0 時為 null。</summary>
+    private static double? Percentile(List<double> sortedValues, double p) =>
+        sortedValues.Count == 0 ? null : sortedValues[NearestRankIndex(sortedValues.Count, p / 100.0)];
+
+    /// <summary>母體標準差（除以 n）；n == 0 時為 null。</summary>
+    private static double? CalculatePopulationStdDev(IReadOnlyList<double> values, double? mean)
+    {
+        if (values == null || values.Count == 0 || !mean.HasValue) return null;
+        var avg = mean.Value;
+        double sumSquaredDiff = 0.0;
+        for (int i = 0; i < values.Count; i++)
+        {
+            var diff = values[i] - avg;
+            sumSquaredDiff += diff * diff;
+        }
+        return Math.Sqrt(sumSquaredDiff / values.Count);
     }
 }

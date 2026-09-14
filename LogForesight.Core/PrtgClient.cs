@@ -120,13 +120,8 @@ public sealed class PrtgClient : IDisposable
     public async Task<TimeSpan> TestConnectionAsync(CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
+        // HTML 頁（空白頁、登入頁）由 GetJsonAsync 統一判定並擲例外，這裡拿到的一定是 JSON 文字
         var json = await GetJsonAsync("/api/table.json?content=sensors&columns=objid&count=1", ct);
-
-        var trimmed = json.TrimStart();
-        if (trimmed.StartsWith('<'))
-        {
-            throw new PrtgClientException("PRTG 回傳 HTML 內容而非 JSON，請確認連線位址是否正確或認證資訊是否有效。");
-        }
 
         try
         {
@@ -192,7 +187,9 @@ public sealed class PrtgClient : IDisposable
             catch (Exception ex)
             {
                 var sanitized = StripSecrets(ex.Message);
-                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}");
+                // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
+                // 訊息字串是在地化的，比對它遲早會錯。
+                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex);
             }
 
             using (resp)
@@ -271,7 +268,9 @@ public sealed class PrtgClient : IDisposable
         catch (Exception ex)
         {
             var sanitized = StripSecrets(ex.Message);
-            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}");
+            // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
+            // 訊息字串是在地化的，比對它遲早會錯。
+            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex);
         }
 
         using (resp)
@@ -298,7 +297,17 @@ public sealed class PrtgClient : IDisposable
                 throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
             }
 
-            return await resp.Content.ReadAsStringAsync(ct);
+            var text = await resp.Content.ReadAsStringAsync(ct);
+            var trimmed = text.Trim();
+            if (trimmed.StartsWith('<'))
+            {
+                var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;
+                var sanitized = head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+                throw new PrtgClientException(
+                    $"PRTG 回傳 HTML 而非 JSON（多半是伺服器端處理逾時或負載過高回的空白頁）：{sanitized}");
+            }
+
+            return text;
         }
     }
 

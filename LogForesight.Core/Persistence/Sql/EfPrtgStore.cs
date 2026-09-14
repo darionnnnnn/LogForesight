@@ -300,6 +300,123 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 合併快照計算出的每小時取樣數值（Quality == sampled）。
+    /// 自然鍵為 (SensorObjid, PeriodStart)：
+    /// 1. 無既有列 → 新增（原樣寫入，計入回傳數）。
+    /// 2. 既有列 Quality == sampled → 依樣本數（Coverage 作為代理權重）加權平均合併，計入回傳數。
+    /// 3. 既有列 Quality != sampled（如 ok 等精確值）→ 不動（精確值優先），該列不計入回傳數。
+    /// 回傳實際寫入或合併的列數。
+    /// </summary>
+    public int MergeSampledValues(IReadOnlyList<PrtgValueRow> values)
+    {
+        var now = DateTime.Now;
+        return BatchWrite(values, (ctx, batch) =>
+        {
+            var sensorIds = batch.Select(v => v.SensorObjid).Distinct().ToList();
+            var minTime = batch.Min(v => v.PeriodStart);
+            var maxTime = batch.Max(v => v.PeriodStart);
+
+            var existing = ctx.PrtgValues
+                .Where(v => sensorIds.Contains(v.SensorObjid) && v.PeriodStart >= minTime && v.PeriodStart <= maxTime)
+                .ToList()
+                .GroupBy(v => (v.SensorObjid, v.PeriodStart))
+                .ToDictionary(g => g.Key, g => g.First());
+
+            var writtenOrMergedCount = 0;
+
+            foreach (var item in batch)
+            {
+                var key = (item.SensorObjid, item.PeriodStart);
+                var writeTime = item.CreatedAt != default ? item.CreatedAt : now;
+
+                if (!existing.TryGetValue(key, out var row))
+                {
+                    var newRow = new PrtgValueRow
+                    {
+                        SensorObjid = item.SensorObjid,
+                        PeriodStart = item.PeriodStart,
+                        AvgValue = item.AvgValue,
+                        MinValue = item.MinValue,
+                        MaxValue = item.MaxValue,
+                        Coverage = item.Coverage,
+                        Quality = !string.IsNullOrEmpty(item.Quality) ? item.Quality : PrtgDataQuality.Sampled,
+                        CreatedAt = writeTime
+                    };
+                    ctx.PrtgValues.Add(newRow);
+                    existing[key] = newRow;
+                    writtenOrMergedCount++;
+                }
+                else if (string.Equals(row.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase))
+                {
+                    var oldAvg = row.AvgValue;
+                    var newAvg = item.AvgValue;
+                    var oldCov = row.Coverage;
+                    var newCov = item.Coverage;
+
+                    // Coverage 相加後夾在 100 以內；任一為 null 時退化成有值的那個
+                    double? mergedCov;
+                    if (oldCov.HasValue && newCov.HasValue)
+                    {
+                        mergedCov = Math.Min(100.0, oldCov.Value + newCov.Value);
+                    }
+                    else
+                    {
+                        mergedCov = oldCov ?? newCov;
+                    }
+
+                    // 加權平均用 (oldAvg * oldCov + newAvg * newCov) / (oldCov + newCov)，任一為 null 時退化成有值的那個
+                    double? mergedAvg;
+                    if (oldAvg == null)
+                    {
+                        mergedAvg = newAvg;
+                    }
+                    else if (newAvg == null)
+                    {
+                        mergedAvg = oldAvg;
+                    }
+                    else if (oldCov.HasValue && newCov.HasValue && (oldCov.Value + newCov.Value > 0))
+                    {
+                        mergedAvg = (oldAvg.Value * oldCov.Value + newAvg.Value * newCov.Value) / (oldCov.Value + newCov.Value);
+                    }
+                    else if (oldCov.HasValue && !newCov.HasValue)
+                    {
+                        mergedAvg = oldAvg;
+                    }
+                    else if (!oldCov.HasValue && newCov.HasValue)
+                    {
+                        mergedAvg = newAvg;
+                    }
+                    else
+                    {
+                        mergedAvg = (oldAvg.Value + newAvg.Value) / 2.0;
+                    }
+
+                    // MinValue 取兩者最小、MaxValue 取兩者最大（null 視為缺席）
+                    double? mergedMin = (row.MinValue.HasValue && item.MinValue.HasValue)
+                        ? Math.Min(row.MinValue.Value, item.MinValue.Value)
+                        : row.MinValue ?? item.MinValue;
+
+                    double? mergedMax = (row.MaxValue.HasValue && item.MaxValue.HasValue)
+                        ? Math.Max(row.MaxValue.Value, item.MaxValue.Value)
+                        : row.MaxValue ?? item.MaxValue;
+
+                    row.AvgValue = mergedAvg;
+                    row.MinValue = mergedMin;
+                    row.MaxValue = mergedMax;
+                    row.Coverage = mergedCov;
+                    row.CreatedAt = writeTime;
+
+                    writtenOrMergedCount++;
+                }
+                // 若既有列 Quality != Sampled（即 ok 等精確值）：不動，該列不計入回傳數
+            }
+
+            ctx.SaveChanges();
+            return writtenOrMergedCount;
+        });
+    }
+
+    /// <summary>
     /// PRTG 主機對應按日寫入。該日期的對應整份就地取代——先刪除該 map_date 的所有列，再寫入新的一批。
     /// 傳入空清單時仍然清空該日，回傳 0。
     /// </summary>
@@ -762,8 +879,8 @@ public sealed class EfPrtgStore
 
     /// <summary>
     /// 取得指定期間內每個 sensor 的數值涵蓋摘要（依 sensor_objid 排序）。
-    /// 全程在 SQL 端以 GroupBy 聚合，統計有效小時數（ok）、涵蓋天數（ok 相異日）、
-    /// 最早／最晚有效起點，以及各品質筆數。
+    /// 全程在 SQL 端以 GroupBy 聚合，統計有效小時數（ok）、可用天數（usable 相異日）、
+    /// 最早／最晚可用起點，以及各品質與可用筆數。
     /// </summary>
     /// <param name="fromInclusive">起始時間（含）</param>
     /// <param name="toExclusive">結束時間（不含）</param>
@@ -776,45 +893,60 @@ public sealed class EfPrtgStore
             .Select(v => new
             {
                 v.SensorObjid,
-                OkPeriod = v.Quality == PrtgDataQuality.Ok ? (DateTime?)v.PeriodStart : null,
-                OkDate = v.Quality == PrtgDataQuality.Ok ? (DateTime?)v.PeriodStart.Date : null,
+                UsablePeriod = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    ? (DateTime?)v.PeriodStart : null,
+                UsableDate = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    ? (DateTime?)v.PeriodStart.Date : null,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    && v.Quality != PrtgDataQuality.Unknown
+                    && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
             })
             .GroupBy(x => x.SensorObjid)
             .Select(g => new
             {
                 SensorObjid = g.Key,
                 OkCount = g.Sum(x => x.OkCount),
-                OkDays = g.Select(x => x.OkDate).Distinct().Count(),
-                EarliestOkPeriod = g.Min(x => x.OkPeriod),
-                LatestOkPeriod = g.Max(x => x.OkPeriod),
+                UsableDays = g.Select(x => x.UsableDate).Distinct().Count(),
+                EarliestUsablePeriod = g.Min(x => x.UsablePeriod),
+                LatestUsablePeriod = g.Max(x => x.UsablePeriod),
                 UnknownCount = g.Sum(x => x.UnknownCount),
                 NodataCount = g.Sum(x => x.NodataCount),
                 OtherCount = g.Sum(x => x.OtherCount),
-                TotalCount = g.Count()
+                TotalCount = g.Count(),
+                SampledCount = g.Sum(x => x.SampledCount),
+                UsableCount = g.Sum(x => x.UsableCount)
             })
             .OrderBy(r => r.SensorObjid)
             .AsEnumerable()
             .Select(r => new PrtgSensorValueCoverage(
                 r.SensorObjid,
                 r.OkCount,
-                r.OkDays,
-                r.EarliestOkPeriod,
-                r.LatestOkPeriod,
+                r.UsableDays,
+                r.EarliestUsablePeriod,
+                r.LatestUsablePeriod,
                 r.UnknownCount,
                 r.NodataCount,
                 r.OtherCount,
-                r.TotalCount))
+                r.TotalCount,
+                r.SampledCount,
+                r.UsableCount))
             .ToList();
     }
 
     /// <summary>
     /// 取得指定期間內每個 (sensor_objid, 日期) 的每日數值聚合（匯出用，依 sensor_objid 與日期排序）。
-    /// 數值統計（平均、最小、最大）僅納入 Quality == ok 且 AvgValue != null 的列，null 絕對不當成 0 計算；
-    /// 當日完全無 ok 列時仍回傳該 (sensor, 日) 一列（數值統計為 null，ok 列數為 0）。
+    /// 數值統計（平均、最小、最大）僅納入可用列且 AvgValue != null 的列，null 絕對不當成 0 計算；
+    /// 觀測極值（MinObserved、MaxObserved）取可用列的 MinValue 與 MaxValue 極值；
+    /// 當日完全無可用列時仍回傳該 (sensor, 日) 一列（數值統計為 null，可用列數為 0）。
     /// </summary>
     /// <param name="fromInclusive">起始時間（含）</param>
     /// <param name="toExclusive">結束時間（不含）</param>
@@ -828,25 +960,40 @@ public sealed class EfPrtgStore
             {
                 v.SensorObjid,
                 Date = v.PeriodStart.Date,
-                OkAvgValue = (v.Quality == PrtgDataQuality.Ok && v.AvgValue != null) ? v.AvgValue : null,
+                UsableAvgValue = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) && v.AvgValue != null ? v.AvgValue : null,
+                UsableMinValue = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? v.MinValue : null,
+                UsableMaxValue = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? v.MaxValue : null,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    && v.Quality != PrtgDataQuality.Unknown
+                    && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
             })
             .GroupBy(x => new { x.SensorObjid, x.Date })
             .Select(g => new
             {
                 g.Key.SensorObjid,
                 g.Key.Date,
-                AvgValue = g.Average(x => x.OkAvgValue),
-                MinValue = g.Min(x => x.OkAvgValue),
-                MaxValue = g.Max(x => x.OkAvgValue),
+                AvgValue = g.Average(x => x.UsableAvgValue),
+                MinValue = g.Min(x => x.UsableAvgValue),
+                MaxValue = g.Max(x => x.UsableAvgValue),
                 OkCount = g.Sum(x => x.OkCount),
                 UnknownCount = g.Sum(x => x.UnknownCount),
                 NodataCount = g.Sum(x => x.NodataCount),
                 OtherCount = g.Sum(x => x.OtherCount),
-                TotalCount = g.Count()
+                TotalCount = g.Count(),
+                SampledCount = g.Sum(x => x.SampledCount),
+                UsableCount = g.Sum(x => x.UsableCount),
+                MinObserved = g.Min(x => x.UsableMinValue),
+                MaxObserved = g.Max(x => x.UsableMaxValue)
             })
             .OrderBy(r => r.SensorObjid)
             .ThenBy(r => r.Date)
@@ -861,7 +1008,11 @@ public sealed class EfPrtgStore
                 r.UnknownCount,
                 r.NodataCount,
                 r.OtherCount,
-                r.TotalCount))
+                r.TotalCount,
+                r.SampledCount,
+                r.UsableCount,
+                r.MinObserved,
+                r.MaxObserved))
             .ToList();
     }
 
@@ -882,9 +1033,15 @@ public sealed class EfPrtgStore
                 Date = v.PeriodStart.Date,
                 v.SensorObjid,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
+                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (v.Quality != PrtgDataQuality.Ok && v.Quality != PrtgDataQuality.Unknown && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
+                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
+                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                    && v.Quality != PrtgDataQuality.Unknown
+                    && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
             })
             .GroupBy(x => x.Date)
             .Select(g => new
@@ -895,7 +1052,9 @@ public sealed class EfPrtgStore
                 OkCount = g.Sum(x => x.OkCount),
                 UnknownCount = g.Sum(x => x.UnknownCount),
                 NodataCount = g.Sum(x => x.NodataCount),
-                OtherCount = g.Sum(x => x.OtherCount)
+                OtherCount = g.Sum(x => x.OtherCount),
+                SampledCount = g.Sum(x => x.SampledCount),
+                UsableCount = g.Sum(x => x.UsableCount)
             })
             .OrderBy(r => r.Date)
             .AsEnumerable()
@@ -906,9 +1065,12 @@ public sealed class EfPrtgStore
                 r.OkCount,
                 r.UnknownCount,
                 r.NodataCount,
-                r.OtherCount))
+                r.OtherCount,
+                r.SampledCount,
+                r.UsableCount))
             .ToList();
     }
+
 
     /// <summary>
     /// 取得指定期間內狀態變更的涵蓋摘要。
@@ -943,6 +1105,62 @@ public sealed class EfPrtgStore
                 summary.LatestChangedAt)
             : new PrtgStateChangeCoverageSummary(0, 0, 0, null, null);
     }
+
+    /// <summary>
+    /// 依感測器類型與小時分組，計算可用列的小時數值曲線（SQL 聚合）。
+    /// </summary>
+    public List<PrtgTypeHourlyProfile> GetUsableHourlyProfileByType(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return BuildUsableHourlyProfileQuery(
+            ctx.PrtgValues.AsNoTracking(),
+            ctx.PrtgSensors.AsNoTracking(),
+            fromInclusive,
+            toExclusive)
+            .ToList();
+    }
+
+    internal static IQueryable<PrtgTypeHourlyProfile> BuildUsableHourlyProfileQuery(
+        IQueryable<PrtgValueRow> values,
+        IQueryable<PrtgSensorRow> sensors,
+        DateTime fromInclusive,
+        DateTime toExclusive)
+    {
+        return from v in values
+               where v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive
+                     && (v.Quality == PrtgDataQuality.Ok ||
+                         (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                     && v.AvgValue != null
+               join s in sensors on v.SensorObjid equals s.Objid
+               group v by new { s.SensorType, v.PeriodStart.Hour } into g
+               select new PrtgTypeHourlyProfile(
+                   g.Key.SensorType,
+                   g.Key.Hour,
+                   g.Average(x => x.AvgValue),
+                   g.Count());
+    }
+
+    /// <summary>
+    /// 取得指定時間之後的快照取樣涵蓋（包含 coverage 不足 75 的取樣列）。
+    /// </summary>
+    public PrtgSampledCoverage GetSampledCoverageSince(DateTime fromInclusive)
+    {
+        using var ctx = _contextFactory();
+        var result = ctx.PrtgValues
+            .AsNoTracking()
+            .Where(v => v.Quality == PrtgDataQuality.Sampled && v.PeriodStart >= fromInclusive)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                SensorCount = g.Select(v => v.SensorObjid).Distinct().Count(),
+                AverageCoverage = g.Average(v => v.Coverage)
+            })
+            .FirstOrDefault();
+
+        return result != null
+            ? new PrtgSampledCoverage(result.SensorCount, result.AverageCoverage)
+            : new PrtgSampledCoverage(0, null);
+    }
 }
 
 /// <summary>
@@ -967,13 +1185,15 @@ public sealed record PrtgWhitelistCoverage(int WhitelistSensorCount, int OnMappe
 public sealed record PrtgSensorValueCoverage(
     long SensorObjid,
     int OkCount,
-    int OkDays,
-    DateTime? EarliestOkPeriod,
-    DateTime? LatestOkPeriod,
+    int UsableDays,
+    DateTime? EarliestUsablePeriod,
+    DateTime? LatestUsablePeriod,
     int UnknownCount,
     int NodataCount,
     int OtherCount,
-    int TotalCount);
+    int TotalCount,
+    int SampledCount,
+    int UsableCount);
 
 /// <summary>
 /// PRTG sensor 每日數值聚合統計（匯出用）
@@ -988,7 +1208,11 @@ public sealed record PrtgDailyValueAggregation(
     int UnknownCount,
     int NodataCount,
     int OtherCount,
-    int TotalCount);
+    int TotalCount,
+    int SampledCount,
+    int UsableCount,
+    double? MinObserved,
+    double? MaxObserved);
 
 /// <summary>
 /// PRTG 每日數值量級統計
@@ -1000,7 +1224,9 @@ public sealed record PrtgDailyValueMagnitude(
     int OkCount,
     int UnknownCount,
     int NodataCount,
-    int OtherCount);
+    int OtherCount,
+    int SampledCount,
+    int UsableCount);
 
 /// <summary>
 /// PRTG 狀態變更涵蓋摘要
@@ -1011,4 +1237,14 @@ public sealed record PrtgStateChangeCoverageSummary(
     int TotalCount,
     DateTime? EarliestChangedAt,
     DateTime? LatestChangedAt);
+
+/// <summary>
+/// PRTG 每種 type 的每小時數值曲線分組
+/// </summary>
+public sealed record PrtgTypeHourlyProfile(string SensorType, int Hour, double? AvgValue, int UsableCount);
+
+/// <summary>
+/// PRTG 快照取樣涵蓋指標
+/// </summary>
+public sealed record PrtgSampledCoverage(int SensorCount, double? AverageCoverage);
 

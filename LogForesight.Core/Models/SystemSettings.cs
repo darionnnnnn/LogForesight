@@ -422,6 +422,13 @@ public class SystemSettings
     };
 
     /// <summary>
+    /// PRTG 取數策略（<see cref="Service.PrtgFetchStrategy.Conservative"/> 或 <see cref="Service.PrtgFetchStrategy.Aggressive"/>）。
+    /// 保守（預設）：快照間隔 15 分鐘，夜間不逐顆查詢歷史值（數值由快照供應）；
+    /// 激進：快照間隔 5 分鐘，夜間照舊逐顆查詢觸發主機歷史值。
+    /// </summary>
+    public string PrtgFetchStrategy { get; set; } = Service.PrtgFetchStrategy.Conservative;
+
+    /// <summary>
     /// 數值取數的主機範圍（見 <c>PrtgValueFetchScope</c> 三個字面值）。
     /// 預設 <c>triggered</c>＝只抓當日出問題的主機，與加入這個設定之前的行為相同。
     /// </summary>

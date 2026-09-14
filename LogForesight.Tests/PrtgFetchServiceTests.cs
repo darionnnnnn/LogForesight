@@ -547,8 +547,8 @@ public class PrtgFetchServiceTests : IDisposable
     {
         // 第一頁 500 筆
         var page1Sb = new StringBuilder();
-        page1Sb.Append("{\"treesize\":503,\"devices\":[");
-        for (var i = 1; i <= 500; i++)
+        page1Sb.Append("{\"treesize\":5003,\"devices\":[");
+        for (var i = 1; i <= 5000; i++)
         {
             if (i > 1) page1Sb.Append(',');
             page1Sb.Append($"{{\"objid\":{i},\"device\":\"Dev-{i}\",\"paused\":false}}");
@@ -557,13 +557,13 @@ public class PrtgFetchServiceTests : IDisposable
         var page1Json = page1Sb.ToString();
 
         // 第二頁 3 筆
-        var page2Json = "{\"treesize\":503,\"devices\":[" +
-                        "{\"objid\":501,\"device\":\"Dev-501\",\"paused\":false}," +
-                        "{\"objid\":502,\"device\":\"Dev-502\",\"paused\":false}," +
-                        "{\"objid\":503,\"device\":\"Dev-503\",\"paused\":false}" +
+        var page2Json = "{\"treesize\":5003,\"devices\":[" +
+                        "{\"objid\":5001,\"device\":\"Dev-5001\",\"paused\":false}," +
+                        "{\"objid\":5002,\"device\":\"Dev-5002\",\"paused\":false}," +
+                        "{\"objid\":5003,\"device\":\"Dev-5003\",\"paused\":false}" +
                         "]}";
         // 第三頁空陣列
-        var page3Json = "{\"treesize\":503,\"devices\":[]}";
+        var page3Json = "{\"treesize\":5003,\"devices\":[]}";
 
         var (client, _) = CreateClient(req =>
         {
@@ -571,7 +571,7 @@ public class PrtgFetchServiceTests : IDisposable
             if (url.Contains("content=devices"))
             {
                 if (url.Contains("start=0")) return JsonResponse(page1Json);
-                if (url.Contains("start=500")) return JsonResponse(page2Json);
+                if (url.Contains("start=5000")) return JsonResponse(page2Json);
                 return JsonResponse(page3Json);
             }
             if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
@@ -586,11 +586,11 @@ public class PrtgFetchServiceTests : IDisposable
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
         Assert.Equal(0, result.Failures);
-        Assert.Equal(503, result.Devices);
+        Assert.Equal(5003, result.Devices);
 
         using var ctx = _fx.NewContext();
         var count = await ctx.PrtgDevices.CountAsync();
-        Assert.Equal(503, count);
+        Assert.Equal(5003, count);
     }
 
     [Fact]
@@ -599,7 +599,7 @@ public class PrtgFetchServiceTests : IDisposable
         // PRTG 前面若擺了會忽略 start 參數的代理，**每頁都回滿一頁**同一批資料。
         // 只靠「空頁」或「未滿一頁」判定都會永遠跑不完、整趥夜間批次無聲卡死。
         // 替身必須真的回滿頁（500 筆），每頁只回兩筆的替身第一頁就已經「未滿一頁」而停，根本沒測到這件事。
-        var fullPage = BuildDevicePage(1, 500);
+        var fullPage = BuildDevicePage(1, PageSizeForFullPage);
 
         var (client, handler) = CreateClient(req =>
         {
@@ -619,7 +619,7 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Same(task, finished);
         var result = await task;
         Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("content=devices")));
-        Assert.Equal(500, result.Devices);
+        Assert.Equal(PageSizeForFullPage, result.Devices);
         Assert.Equal(0, result.Failures);
     }
 
@@ -627,8 +627,8 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task FetchDayAsync_超出範圍夾到末頁時備註重複列數與階段耗時()
     {
         // 實機行為（探測步驟 8 實測）：start 超出範圍時回最後一頁而非空頁
-        var page1 = BuildDevicePage(1, 500);
-        var page2 = BuildDevicePage(501, 500);
+        var page1 = BuildDevicePage(1, PageSizeForFullPage);
+        var page2 = BuildDevicePage(PageSizeForFullPage + 1, PageSizeForFullPage);
 
         var (client, handler) = CreateClient(req =>
         {
@@ -646,10 +646,10 @@ public class PrtgFetchServiceTests : IDisposable
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
-        Assert.Equal(1000, result.Devices);
+        Assert.Equal(PageSizeForFullPage * 2, result.Devices);
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, handler.RequestedUrls.Count(u => u.Contains("content=devices")));
-        Assert.Contains(console.Lines, l => l.Contains("跳過重複列 500 筆"));
+        Assert.Contains(console.Lines, l => l.Contains($"跳過重複列 {PageSizeForFullPage} 筆"));
         Assert.Contains(console.Lines, l => l.Contains("[階段 1/4]") && l.Contains("耗時"));
     }
 
@@ -693,6 +693,12 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(6, await ctx.PrtgStateChanges.CountAsync(c => c.SensorObjid == 9001));
     }
 
+    /// <summary>
+    /// 「滿頁」的筆數＝分頁器的預設 count。要模擬「PRTG 回滿一頁」就必須剛好是這個數，
+    /// 少一筆就會被停止條件判成最後一頁，整個情境就測不到了。
+    /// </summary>
+    private const int PageSizeForFullPage = 5000;
+
     /// <summary>產生一頁 devices（objid 從 firstObjid 連號）。</summary>
     private static string BuildDevicePage(int firstObjid, int count)
     {
@@ -706,6 +712,251 @@ public class PrtgFetchServiceTests : IDisposable
         sb.Append("]}");
         return sb.ToString();
     }
+    // ── historicdata 原始欄位解析（datetime_raw／value_raw／coverage_raw，docs/PRTG-SPEC.md §3a）──────────
+
+    /// <summary>
+    /// 只回一個 sensor（objid 9001）與指定 histdata 原文的假 PRTG。
+    /// </summary>
+    private (PrtgClient Client, StubHandler Handler) CreateHistClient(string histJson)
+    {
+        return CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":1,\"sensor\":\"S\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata")) return JsonResponse(histJson);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+    }
+
+    /// <summary>
+    /// 以指定文化執行：顯示字串的解析會用 CurrentCulture 試一次，
+    /// 繁中格式的斷言不能依賴跑測試那台機器剛好是 zh-TW。
+    /// </summary>
+    private async Task<(PrtgFetchResult Result, List<PrtgValueRow> Rows, TestConsole Console)> RunHistWithCultureAsync(
+        string histJson, string cultureName)
+    {
+        var original = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(cultureName);
+        try
+        {
+            return await RunHistAsync(histJson);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    private async Task<(PrtgFetchResult Result, List<PrtgValueRow> Rows, TestConsole Console)> RunHistAsync(string histJson)
+    {
+        var (client, _) = CreateHistClient(histJson);
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, CreateStore(), console);
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 10), 1, CancellationToken.None);
+        using var ctx = _fx.NewContext();
+        var rows = await ctx.PrtgValues.OrderBy(v => v.PeriodStart).ToListAsync();
+        return (result, rows, console);
+    }
+
+    /// <summary>
+    /// PRTG 24.1.92 繁中實機的一列原文。關鍵事實：同一列的 datetime_raw（OLE 46275.6666666667
+    /// ＝2026-09-10 16:00）與顯示字串（下午 11:00＝23:00）**差 7 小時**，兩者不是同一個時間基準。
+    /// 鏡像要跟管理者在 PRTG 畫面上看到的時間對齊，所以顯示字串優先；拿 raw 當主要來源會讓
+    /// 整份基線整體平移數小時而毫無徵兆。value／value_raw 重複是多頻道，取第一組（主要頻道）。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_實機形狀_顯示字串優先於datetime_raw()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"2026/9/10 下午 11:00:00 - 上午 12:00:00\",\"datetime_raw\":46275.6666666667," +
+                       "\"value\":\"4 %\",\"value_raw\":3.5593,\"value\":\"6 %\",\"value_raw\":5.6949," +
+                       "\"coverage\":\"100 %\",\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistWithCultureAsync(histJson, "zh-TW");
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        // 用 raw 會得到 16:00；必須是顯示字串的 23:00
+        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), row.PeriodStart);
+        Assert.Equal(3.5593, row.AvgValue!.Value, 4);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+        Assert.Equal(100.0, row.Coverage!.Value, 6);
+        // 走的是顯示字串，不該出現退路警告
+        Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// d/M 格式的 PRTG（如 en-GB）配上 M/d 或 y/M/d 的站台文化：「10/09/2026」會被解析成 10 月 9 日，
+    /// 而且解析成功、不報錯。datetime_raw 與顯示字串同一天（只差幾小時），差超過一天就是月日讀反了，
+    /// 這時要退到 raw 並回報，不能讓錯的日期靜默進基線。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串月日對調時_以datetime_raw擋下並回報()
+    {
+        // raw 46275.6666666667 ＝ 2026-09-10 16:00；字串 10/09/2026 在 M/d 文化會讀成 2026-10-09
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"10/09/2026 23:00:00 - 11/09/2026 00:00:00\",\"datetime_raw\":46275.6666666667," +
+                       "\"value_raw\":3.5593,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistWithCultureAsync(histJson, "en-US");
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10), row.PeriodStart.Date);
+        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// 沒有 value_raw 時退回 value_，多頻道的重複鍵同樣要取第一組（主要頻道），
+    /// 不能因為走了退路就變成取最後一個頻道。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_value退路遇重複鍵_取第一組主要頻道()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"2026-09-10 23:00:00 - 2026-09-11 00:00:00\"," +
+                       "\"value_\":4,\"value_\":6,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (_, rows, _) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(4.0, row.AvgValue!.Value, 6);
+    }
+
+    /// <summary>
+    /// 不依賴機器文化的版本：顯示字串用 ISO 形式，raw 指向完全不同的時間。
+    /// 這一條在任何文化的機器上都必須通過，是「顯示字串優先」的主要守門。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串可解析時不採用datetime_raw()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"2026-09-10 23:00:00 - 2026-09-11 00:00:00\",\"datetime_raw\":46275.6666666667," +
+                       "\"value_raw\":3.5593,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (_, rows, console) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), row.PeriodStart);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>
+    /// 顯示字串解析不了（PRTG 的地區格式與站台文化不合）時才退回 OLE 日期，
+    /// 並且要出聲——走退路的資料落在哪個小時不可靠，靜默接受等於讓基線悄悄錯位。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串不可解析時退回datetime_raw並警告()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"完全不是日期\",\"datetime_raw\":46275.6666666667,\"value_raw\":12.5,\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10, 16, 0, 0), row.PeriodStart);
+        Assert.Equal(12.5, row.AvgValue!.Value, 6);
+        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("時間欄位無法解析"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_沒有datetime欄位時用datetime_raw()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_\":7,\"coverage\":100}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(new DateTime(2026, 9, 10, 16, 0, 0), row.PeriodStart);
+        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_datetime_raw超出OLE合法範圍且字串不可解析時計入略過()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"完全不是日期\",\"datetime_raw\":1e12,\"value_\":7,\"coverage\":100}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(0, result.Values);
+        Assert.Empty(rows);
+        Assert.Contains(console.Lines, l => l.Contains("時間欄位無法解析"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_datetime_raw與datetime皆不可解析時計入略過筆數()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime\":\"完全不是日期\",\"datetime_raw\":\"abc\",\"value_raw\":1.0}" +
+                       "]}";
+
+        var (result, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(0, result.Values);
+        Assert.Empty(rows);
+        Assert.Contains(console.Lines, l => l.Contains("時間欄位無法解析"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_coverage_raw為0時仍判Unknown()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_raw\":45.2,\"coverage_raw\":0}" +
+                       "]}";
+
+        var (_, rows, _) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(PrtgDataQuality.Unknown, row.Quality);
+        Assert.Null(row.AvgValue);
+        Assert.Equal(0.0, row.Coverage!.Value, 6);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_coverage_raw換算為百分比()
+    {
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_raw\":1.25,\"coverage_raw\":8500}" +
+                       "]}";
+
+        var (_, rows, _) = await RunHistAsync(histJson);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(85.0, row.Coverage!.Value, 6);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_只有value_raw沒有value時照樣取得值()
+    {
+        // 不依賴 value_／value：整列只有原始欄位也要能落地。
+        var histJson = "{\"histdata\":[" +
+                       "{\"datetime_raw\":46275.6666666667,\"value_raw\":\"3.5593\",\"coverage_raw\":10000}" +
+                       "]}";
+
+        var (result, rows, _) = await RunHistAsync(histJson);
+
+        Assert.Equal(1, result.Values);
+        var row = Assert.Single(rows);
+        Assert.Equal(3.5593, row.AvgValue!.Value, 4);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+    }
+
     [Fact]
     public async Task FetchDayAsync_數值時間無法解析時回報略過筆數而非靜默跳過()
     {
@@ -766,6 +1017,41 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
         Assert.Contains(console.Lines, l => l.Contains("1 個感測器的數值擷取失敗"));
+
+        using var ctx = _fx.NewContext();
+        Assert.Equal(2, ctx.PrtgValues.Count());
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_單一sensor逾時其餘正常_回報逾時計數且其餘數值照樣落地()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":3,\"sensors\":[" +
+                    "{\"objid\":901,\"parentid\":1,\"sensor\":\"A\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":902,\"parentid\":1,\"sensor\":\"B\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":903,\"parentid\":1,\"sensor\":\"C\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+            {
+                if (url.Contains("id=902")) throw new TaskCanceledException();
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":5,\"coverage\":100}]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(2, result.Values);
+        Assert.Contains(console.Lines, l => l.Contains("其中 1 個是請求逾時"));
 
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.PrtgValues.Count());

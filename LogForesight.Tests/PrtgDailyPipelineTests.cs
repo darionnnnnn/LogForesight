@@ -109,6 +109,7 @@ public class PrtgDailyPipelineTests : IDisposable
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
             s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
         });
 
         var (ctx, _, progress, registry) = CreateContext();
@@ -178,6 +179,7 @@ public class PrtgDailyPipelineTests : IDisposable
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
             s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
         });
 
         var (ctx, console, _, _) = CreateContext();
@@ -208,6 +210,7 @@ public class PrtgDailyPipelineTests : IDisposable
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
             s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
         });
 
         var (ctx, console, progress, _) = CreateContext();
@@ -259,6 +262,7 @@ public class PrtgDailyPipelineTests : IDisposable
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
             s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
         });
 
         var (ctx, console, _, _) = CreateContext();
@@ -268,5 +272,69 @@ public class PrtgDailyPipelineTests : IDisposable
             DateTime.Today.AddDays(-1), Task.CompletedTask, guard: null, structureSyncGate: null);
 
         Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
+    }
+
+    /// <summary>
+    /// 保守策略下：不執行觸發式取數、印出保守說明與策略狀態，其餘階段（finding、done）照跑。
+    /// </summary>
+    [Fact]
+    public async Task 保守策略_不執行觸發式取數_印出策略狀態與略過說明()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+
+        var (ctx, console, progress, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            DateTime.Today.AddDays(-1), Task.CompletedTask, guard: null);
+
+        Assert.True(registry.IsReady);
+        // 印出策略狀態行
+        Assert.Contains(console.Lines, l => l.Contains("PRTG 取數策略：保守（快照間隔 15 分鐘）。"));
+        // 印出保守策略略過說明
+        Assert.Contains(console.Lines, l => l.Contains("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。"));
+        // 不應包含觸發式取數階段
+        Assert.DoesNotContain(RunPhases.PrtgTriggered, progress.Phases);
+        // 其餘階段照常完成
+        Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
+        Assert.Contains(RunPhases.PrtgDone, progress.Phases);
+    }
+
+    /// <summary>
+    /// 激進策略下：進入觸發式取數階段、印出激進策略狀態。
+    /// </summary>
+    [Fact]
+    public async Task 激進策略_進入觸發式取數_印出激進策略狀態()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
+        });
+
+        var (ctx, console, progress, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            DateTime.Today.AddDays(-1), Task.CompletedTask, guard: null);
+
+        // 印出激進策略狀態行
+        Assert.Contains(console.Lines, l => l.Contains("PRTG 取數策略：激進（快照間隔 5 分鐘）。"));
+        // 激進策略會進入觸發式取數階段
+        Assert.Contains(RunPhases.PrtgTriggered, progress.Phases);
+        // 不含保守策略跳過訊息
+        Assert.DoesNotContain(console.Lines, l => l.Contains("取數策略為保守"));
     }
 }

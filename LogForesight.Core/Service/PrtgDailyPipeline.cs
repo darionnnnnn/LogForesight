@@ -53,6 +53,10 @@ internal static class PrtgDailyPipeline
 
             var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole, guard);
 
+            var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
+            var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";
+            prtgConsole.WriteLine($"PRTG 取數策略：{strategyLabel}（快照間隔 {strategyProfile.SnapshotIntervalMinutes} 分鐘）。");
+
             // 0. 手動同步佔用中就先等它（docs/PRTG-SPEC.md §5a）。等完之後鏡像是最新的，
             //    本趟跳過自己的結構同步——重做一次要再爬一次整棵樹，沒有任何新資訊。
             var skipStructureSync = false;
@@ -292,66 +296,73 @@ internal static class PrtgDailyPipeline
             progress?.Report(RunPhases.PrtgFindingsReady, 0, 0);
 
             // 4. PRTG 觸發式數值取數：獨立的 try/catch，與分析並行輪詢
-            try
+            if (!strategyProfile.NightlyExactValues)
             {
-                progress?.Report(RunPhases.PrtgTriggered, 0, 0);
-                var triggeredFetcher = new PrtgTriggeredValueFetcher(
-                    fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
-                // 取數範圍（docs/PRTG-SPEC.md §3a）：指定清單以主機名稱存放，這裡解析成 id；
-                // 對不到的名稱要說出來——管理者打錯字時靜默略過會讓人以為設定生效了。
-                var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(
-                    systemSettings.PrtgValueFetchExtraHosts,
-                    hostStore.GetAll().Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
-
-                if (unresolvedHosts.Count > 0)
-                {
-                    prtgConsole.WriteLine($"  ⚠ 取數範圍的指定主機有 {unresolvedHosts.Count} 個對不到主機主檔，已略過：" +
-                                          string.Join("、", unresolvedHosts.Take(10)));
-                }
-
-                triggeredResult = await triggeredFetcher.RunAsync(
-                    day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
-                    () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts,
-                    progress: (stage, done, total) => progress?.Report(stage, done, total),
-                    scope: systemSettings.PrtgValueFetchScope,
-                    extraScopeHosts: scopeHostIds);
-
-                // 印「實際生效」的範圍而非設定值：白名單為空時 all-mapped 會退回 triggered，
-                // 印設定值會讓「我明明設了全部主機」與實際行為對不上。
-                var effectiveScopeText = PrtgValueFetchScope.EffectiveScope(
-                    systemSettings.PrtgValueFetchScope,
-                    systemSettings.PrtgSensorTypeWhitelist == null || systemSettings.PrtgSensorTypeWhitelist.Count == 0);
-
-                var scopeText = effectiveScopeText switch
-                {
-                    PrtgValueFetchScope.AllMapped => "全部已對應主機",
-                    PrtgValueFetchScope.TriggeredPlusList => "觸發主機＋指定清單",
-                    _ => "觸發主機"
-                };
-
-                var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}，範圍：{scopeText}）：主機 {triggeredResult.TriggerHosts} 台、" +
-                              $"sensor {triggeredResult.TargetSensors} 個、數值 {triggeredResult.ValuesWritten} 筆" +
-                              (triggeredResult.FailedSensors > 0 ? $"、失敗 sensor {triggeredResult.FailedSensors} 個" : "");
-
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
-
-                // 「設了全部已對應主機卻一台都沒有」要進里程碑：只印在執行輸出的話，
-                // 事後查執行紀錄看不到原因，而這正是最需要被看見的一種空轉。
-                if (effectiveScopeText == PrtgValueFetchScope.AllMapped && triggeredResult.TriggerHosts == 0)
-                {
-                    runRecorder.Milestone(
-                        $"PRTG 取數範圍為「全部已對應主機」，但 {day:yyyy-MM-dd} 沒有任何已對應的 PRTG 主機，本次未取得數值");
-                }
+                prtgConsole.WriteLine("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。");
             }
-            catch (OperationCanceledException)
+            else
             {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG 觸發式取數失敗，不影響分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 觸發式取數失敗：{ex.Message}");
+                try
+                {
+                    progress?.Report(RunPhases.PrtgTriggered, 0, 0);
+                    var triggeredFetcher = new PrtgTriggeredValueFetcher(
+                        fetchService, backend.PrtgStore(), backend.RecordStore(), prtgConsole);
+                    // 取數範圍（docs/PRTG-SPEC.md §3a）：指定清單以主機名稱存放，這裡解析成 id；
+                    // 對不到的名稱要說出來——管理者打錯字時靜默略過會讓人以為設定生效了。
+                    var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(
+                        systemSettings.PrtgValueFetchExtraHosts,
+                        hostStore.GetAll().Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
+
+                    if (unresolvedHosts.Count > 0)
+                    {
+                        prtgConsole.WriteLine($"  ⚠ 取數範圍的指定主機有 {unresolvedHosts.Count} 個對不到主機主檔，已略過：" +
+                                              string.Join("、", unresolvedHosts.Take(10)));
+                    }
+
+                    triggeredResult = await triggeredFetcher.RunAsync(
+                        day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
+                        () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleTriggerHosts,
+                        progress: (stage, done, total) => progress?.Report(stage, done, total),
+                        scope: systemSettings.PrtgValueFetchScope,
+                        extraScopeHosts: scopeHostIds);
+
+                    // 印「實際生效」的範圍而非設定值：白名單為空時 all-mapped 會退回 triggered，
+                    // 印設定值會讓「我明明設了全部主機」與實際行為對不上。
+                    var effectiveScopeText = PrtgValueFetchScope.EffectiveScope(
+                        systemSettings.PrtgValueFetchScope,
+                        systemSettings.PrtgSensorTypeWhitelist == null || systemSettings.PrtgSensorTypeWhitelist.Count == 0);
+
+                    var scopeText = effectiveScopeText switch
+                    {
+                        PrtgValueFetchScope.AllMapped => "全部已對應主機",
+                        PrtgValueFetchScope.TriggeredPlusList => "觸發主機＋指定清單",
+                        _ => "觸發主機"
+                    };
+
+                    var summary = $"PRTG 觸發式取數完成（{day:yyyy-MM-dd}，範圍：{scopeText}）：主機 {triggeredResult.TriggerHosts} 台、" +
+                                  $"sensor {triggeredResult.TargetSensors} 個、數值 {triggeredResult.ValuesWritten} 筆" +
+                                  (triggeredResult.FailedSensors > 0 ? $"、失敗 sensor {triggeredResult.FailedSensors} 個" : "");
+
+                    prtgConsole.WriteLine(summary);
+                    runRecorder.Milestone(summary);
+
+                    // 「設了全部已對應主機卻一台都沒有」要進里程碑：只印在執行輸出的話，
+                    // 事後查執行紀錄看不到原因，而這正是最需要被看見的一種空轉。
+                    if (effectiveScopeText == PrtgValueFetchScope.AllMapped && triggeredResult.TriggerHosts == 0)
+                    {
+                        runRecorder.Milestone(
+                            $"PRTG 取數範圍為「全部已對應主機」，但 {day:yyyy-MM-dd} 沒有任何已對應的 PRTG 主機，本次未取得數值");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "PRTG 觸發式取數失敗，不影響分析成果");
+                    prtgConsole.WriteLine($"\n  ✗ PRTG 觸發式取數失敗：{ex.Message}");
+                }
             }
 
             if (syncFailed)

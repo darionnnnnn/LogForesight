@@ -35,20 +35,21 @@ internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRo
 /// </summary>
 internal static class PrtgTablePager
 {
-    internal const int DefaultPageSize = 500;
+    internal const int DefaultPageSize = 5000;
+    internal const int DefaultBatchSize = 500;
 
     /// <summary>
-    /// treesize 未知時的頁數上限（＝20 萬筆）。treesize 已知時取「推算值與它的較大者」——
+    /// treesize 未知時的頁數上限（＝200 萬筆）。treesize 已知時取「推算值與它的較大者」——
     /// treesize 在帶 filter 的查詢下是否為過濾後筆數並無保證，讓它只能放大上限、不能縮小，
     /// 否則會把合法的長同步誤判成未收斂。
     /// </summary>
     internal const int DefaultMaxPages = 400;
 
     /// <summary>每翻這麼多頁寫一行執行輸出：大型環境要翻數百頁，沒有輸出時「慢」與「卡死」看起來一樣。</summary>
-    private const int ConsoleEveryPages = 50;
+    private const int ConsoleEveryPages = 5;
 
     /// <summary>
-    /// 逐頁讀取並轉換，每累積滿一頁大小就呼叫 onBatch 寫出（絕不把整份資料堆在記憶體）。
+    /// 逐頁讀取並轉換，每累積滿批次大小就呼叫 onBatch 寫出（絕不把整份資料堆在記憶體）。
     ///
     /// 停止條件三道，任一成立即停：
     /// (a) 回應不是預期的陣列，或空頁；
@@ -82,7 +83,8 @@ internal static class PrtgTablePager
         string? stageLabel = null,
         int pageSize = DefaultPageSize,
         int maxPagesWhenTreeSizeUnknown = DefaultMaxPages,
-        Func<JsonElement, string?>? rowKey = null)
+        Func<JsonElement, string?>? rowKey = null,
+        int batchSize = DefaultBatchSize)
     {
         rowKey ??= DefaultRowKey;
 
@@ -94,7 +96,7 @@ internal static class PrtgTablePager
         var treeSize = 0;
         var maxPages = maxPagesWhenTreeSizeUnknown;
         var seenKeys = new HashSet<string>();
-        var buffer = new List<T>(pageSize);
+        var buffer = new List<T>(batchSize);
 
         // 分母尚未知（要等第一次回應的 treesize），先送 0 讓進度軌顯示不定進度
         if (phase != null) progress?.Invoke(phase, 0, 0);
@@ -154,7 +156,7 @@ internal static class PrtgTablePager
                 if (mapped != null)
                 {
                     buffer.Add(mapped);
-                    if (buffer.Count >= pageSize)
+                    if (buffer.Count >= batchSize)
                     {
                         totalMapped += buffer.Count;
                         onBatch(buffer);
@@ -166,7 +168,7 @@ internal static class PrtgTablePager
             pageIndex++;
             readRows += countInPage;
 
-            // 分子用「已讀取的列數」而非已寫入數：寫入是每滿一頁才發生一次，
+            // 分子用「已讀取的列數」而非已寫入數：寫入是每滿一批才發生一次，
             // 用寫入數當分子會讓進度以頁為單位跳動、且最後一批寫入前看起來停滯。
             // 分子夾住分母：夾到末頁時會多讀一整頁，不夾的話進度會顯示 1500/1000
             var reported = treeSize > 0 ? Math.Min(readRows, treeSize) : readRows;

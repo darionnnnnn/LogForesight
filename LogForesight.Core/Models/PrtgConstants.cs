@@ -43,7 +43,28 @@ public static class PrtgDataQuality
     public const string Unknown = "unknown";
     public const string NoData = "nodata";
     public const string Untrusted = "untrusted";
+
+    /// <summary>
+    /// 站台定時快照自行平均得到的小時值，精度低於 PRTG 的真平均，
+    /// Coverage 是「實得樣本數 ÷ 期望樣本數 × 100」。
+    /// </summary>
+    public const string Sampled = "sampled";
 }
+
+/// <summary>
+/// PRTG 數值可用性常數。
+/// </summary>
+public static class PrtgValueUsability
+{
+    /// <summary>
+    /// 取樣列（sampled）算作可用列的 coverage 下限（百分比）。
+    /// 保守策略 15 分鐘一次，一小時期望 4 個樣本，要有 3 個（75%）；
+    /// 激進 5 分鐘一次期望 12 個，要有 9 個（75%）。
+    /// 兩個樣本的平均當一小時的代表值太薄。
+    /// </summary>
+    public const double SampledMinCoverage = 75.0;
+}
+
 
 /// <summary>
 /// PRTG 主機對應狀態常數。
@@ -87,6 +108,22 @@ public static class PrtgSensorTypeCategoryMap
             ["SNMP Memory"] = PrtgSensorCategories.Memory,
             ["SNMP Linux Meminfo"] = PrtgSensorCategories.Memory,
         };
+}
+
+/// <summary>
+/// PRTG 流量型感測器類型（值經過每小時流量正規化）。
+/// </summary>
+public static class PrtgVolumeSensorTypes
+{
+    private static readonly HashSet<string> Types = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SNMP Traffic 64bit",
+        "SNMP Traffic 32bit",
+        "Windows Network Card"
+    };
+
+    public static bool IsVolume(string? sensorType) =>
+        sensorType != null && Types.Contains(sensorType);
 }
 
 /// <summary>

@@ -1,0 +1,382 @@
+# 回饋第 43 輪規劃：PRTG 取數效能——先量測再定案
+
+> 狀態：全案完成（體檢後 3887 綠），待併 dev
+> 基準：dev@1c42277（3761 綠）
+> 來源：使用者回報「抓取 sensor 有點慢」，PRTG 主機 CPU／RAM 約 60%
+> 實作方式：批次 0 委派 `impl-low`（Opus，low）；規劃、驗收、後續批次定案由 Claude 做
+> subagent：核對與終檢用 scan-low（Opus，low）；實作用 impl-low（Opus，low，本輪新建於 ~/.claude/agents/）
+
+## 為什麼先量測
+
+慢有兩個完全不同的來源，加速手段沒有交集，而且現在沒有任何一個數字能分辨：
+
+| 來源 | 現況 | 可能的槓桿 | 不知道的事 |
+|---|---|---|---|
+| 結構同步分頁 | 每頁 500 筆寫死，sensors 要翻 86 頁、循序 | 分頁放大（探測已證明單次 50000 筆可行） | 每次請求的固定成本佔多少——決定放大有沒有效 |
+| 數值擷取 | 每顆 sensor 一次 `historicdata`，併發鎖 1～3 | 併發上限放寬 | PRTG 端在併發 4／8 時延遲會不會放大（CPU 60% 看不出排隊） |
+| 結構同步全量 | 每天重抓 42864 筆結構 | 先抓 objid 清單比對再補細節 | objid-only 查詢比全欄位省多少 |
+
+沒有這三個數字就定案，等於拍腦袋。探測本來就是回答「環境長什麼樣」的工具，加一步量測是它的本分。
+
+## 批次總覽
+
+| 批次 | 內容 | 規模 | 相依 |
+|---|---|---|---|
+| 0（已完成） | 探測步驟 9：分頁大小、objid-only、historicdata 併發 | 1 檔＋測試＋spec §6 | 無 |
+| 0b（已完成） | 探測補強：步驟 4 診斷、步驟 8 messages 時間判定、步驟 9d 快照／各 type 延遲／固定成本／messages 量級 | 同上 | 0 |
+| A | historicdata 解析改用 `datetime_raw`／`value_raw`（P0：現況在這台 PRTG 一筆都解析不到） | Core 1 檔＋測試 | 無 |
+| B | `PrtgClient` 辨識 PRTG 回的空白 HTML 頁，明講原因 | Core 1 檔＋測試 | 無 |
+| C | 分頁大小 5000 與寫入批次 500 拆開 | Core 2 檔＋測試＋spec §3 | 無 |
+| D | `PrtgFetchConcurrency` 範圍 1～8，說明文字改寫 | Web 3 檔＋測試 | 無 |
+| E | 取數策略（保守／激進）設定＋快照背景服務＋夜間逐顆查詢依策略開關 | Core 4 檔、Web 5 檔、測試、spec | A、B |
+| G | 校準與快照相容：可用列定義、三處品質統計、匯出欄位、判定文案 | Core 2 檔、Web 2 檔、測試、spec §11 | E |
+| F | 文件：PRTG-SPEC §2／§3／§6／§11／§12、WEB-SPEC §9.9e／§9.9f、BACKLOG、CLAUDE.md 基線 | 文件 | A～G |
+
+實際拆批：E 拆成 E1（Core）／E2a（設定接線）／E2b（快照服務）／E2c（可觀測性與估算）／E3（popover 與暫停原因）；G 拆成 G1（可用列）／G2（摘要匯出）／G3（顯示層）。各批的驗收見文末執行紀錄。
+
+建議順序 A → B → C → D → E → G → F。A 到 D 各自獨立、都小，E 最大且依賴 A（快照與逐顆查詢寫同一張表，解析要先對）與 B（快照失敗要能分辨是空白頁）。
+
+## 批次0：探測步驟 9 效能量測
+
+### 現況與核對結果
+
+- 探測（`PrtgProbeRunner`）現有 8 步，步驟 3 已用單次 `count=50000` 抓回全部 sensor，樣本存在 `sensorSamples` 但**沒有 objid 與 status**（`SensorTypeSample(Type, Unit, ParentId)`）。
+- 步驟 8 是純診斷形式（失敗只印、不影響 `allOk`），步驟 9 沿用同一形式。
+- 夜間取數的 historicdata 查詢形狀：`api/historicdata.json?id={objid}&avg=3600&sdate={yyyy-MM-dd-00-00-00}&edate={翌日 00:00}`（`PrtgFetchService.FetchValuesAsync`）。量測必須用同一形狀，否則量到的不是夜間的成本。
+- 結構同步 sensors 的欄位：`objid,parentid,sensor,type,tags,unit,status,paused,dependency`。量測分頁大小要用同一組欄位。
+
+### 定案
+
+1. **步驟 9 三個子量測**，各自獨立容錯（任一失敗只印原因），整步不影響探測成敗：
+   - **9a 分頁大小**：sensors、結構同步同一組欄位、`start=0`，依序 `count=500／2500／5000／50000`，每次印耗時、筆數、回應位元組，並換算「每千筆耗時」。結論行：`count=5000` 的每千筆耗時低於 `count=500` 的一半（**暫定**門檻）→「每次請求固定成本佔大宗，分頁放大有效」，否則「近似線性，放大效益有限」。
+   - **9b objid-only**：sensors `count=50000`、`columns=objid` 一次，與 9a 的 50000 全欄位比耗時與位元組。結論行：objid-only 佔全欄位的百分比。
+   - **9c historicdata 併發**：從步驟 3 樣本挑 status 不含「paus」的 sensor，type 優先常見型（Ping、SNMP CPU Load、SNMP Traffic 64bit、SNMP Memory），取 **64 顆分 4 組各 16 顆、不重複**——同一顆重查會吃到 PRTG 快取，讓後面的併發等級看起來變快。併發等級 1／2／4／8 各用一組；查詢形狀同夜間取數，日期取昨天。每級印：總耗時、平均與最大單次延遲、失敗數、回傳列數合計。結論行：各級相對等級 1 的「總耗時加速倍數」與「平均延遲放大倍數」；平均延遲放大超過 1.5 倍（**暫定**）的等級標「PRTG 端開始排隊」。不足 64 顆時用可得數量平均分配並印警告；一顆都沒有時印「無可用感測器，略過」。
+2. **成本先講**：步驟開頭印「本步驟會發 64 次 historicdata 與 6 次 table.json」，讓管理者知道這一步不是免費的。
+3. 步驟 3 的欄位加 `status`，樣本型別加 `Objid` 與 `Status`——9c 的選樣依賴它們。
+4. 不寫資料庫、不新增設定、取消 token 穿透。
+
+### 改動
+
+1. `PrtgProbeRunner.cs`：步驟 9 與其三個子量測；步驟 3 樣本擴欄。
+2. `PrtgProbeRunnerTests.cs`：新增測試，既有 stub 補路由。
+3. `docs/PRTG-SPEC.md` §6：第 9 項一段。
+
+### 測試／驗收
+
+- 9a：四個 count 的查詢都發出、印四行耗時與一行結論。
+- 9c：無可用 sensor → 印略過、探測仍回 true；樣本 8 顆 → 印分配警告、四級各一行；某次 historicdata 回 500 → 計入失敗數、不中斷、探測仍回 true。
+- 既有探測測試全綠；全套 `dotnet test` 綠（基線 3761）。
+
+## 批次 0 量測結果（2026-09-11 實機）
+
+| 子量測 | 結果 | 意涵 |
+|---|---|---|
+| 9a | count=500 每次 3.9 秒、count=5000 每次 10.1 秒；每千筆 7.7 秒 → 2.0 秒 | 每次請求固定成本約 3 秒；感測器 86 頁 ≈ 5.5 分鐘，5000 一頁 ≈ 1.5 分鐘，再大沒有更省 |
+| 9b | objid-only 9.3 秒、1.5 MB（全欄位的 12%／8%） | 清單比對便宜，但分頁放大後省的量不值得多一套邏輯 |
+| 9c | historicdata 單次平均 21.5 秒、最大 95～107 秒；併發 8 總耗時 ×0.19、平均延遲 ×0.82 | 這個 API 在這台 PRTG 就是慢；併發 8 無排隊跡象 |
+| 異常 | 步驟 4 相依性回 0 筆＋1 筆無法解析（上一輪同一查詢正常） | 整份回應無法當 JSON 解析，原始內容未知 |
+| 異常 | messages 的 sortby=objid 無效、objid 非遞增 | messages 天生依時間排序，objid 判定不適用；要改看時間欄位 |
+
+## 方案評估：值的取得方式
+
+**改變優先順序的事實**：`lf_prtg_values` 目前沒有任何分析程式在讀（全 repo 只有儲存層與資料搬運碰它），
+它在累積的是值型規則的基線（BACKLOG：校準頁判定「可用」後才有消費端）。每晚最貴的一段是在為「未來的消費端」
+累積基線，而基線要的是**全部感測器長期樣本**，現在的取法只涵蓋觸發主機的幾百顆。
+
+| 方案 | 取法 | 每日請求 | 涵蓋 | 精度 | 已知代價 | 要先驗證 |
+|---|---|---|---|---|---|---|
+| A 現況 | 每顆 historicdata、avg=3600、前一日 | 觸發主機感測器數（數百） | 幾百顆 | PRTG 真平均 | 單次 20 秒；all-mapped 範圍不可行 | — |
+| B 快照 | 定時 table.json 一次拿全部 `lastvalue_raw`，自己平均成小時值 | 96（每 15 分）或 288（每 5 分） | 全部 42863 顆 | 取樣平均（每小時 4～12 點） | 站台白天要活著；主要頻道 only（現況亦然） | lastvalue_raw 與 historicdata value_ 尺度是否一致；快照一次成本；掃描間隔分布 |
+| C 混合 | B 供日常基線；historicdata 只留回填與精確需求 | 同 B | 全部 | 同 B | 兩套邏輯並存 | 同 B |
+| D 推送 | PRTG 通知（HTTP action）推狀態變更給站台 | 0（被動） | 全部 | 即時 | 要動 PRTG 端設定；只解 messages 不解數值 | messages 每晚量級（決定值不值得） |
+
+**探測要補的證據**（批次 0b）：B 的三個驗證項、A 的「20 秒是不是固定成本」（1 小時 vs 1 天）、
+各 type 的 historicdata 延遲（9c 只量了 Ping）、histdata 一列的原始鍵值（看頻道形狀）、messages 量級。
+分頁放大（原批次 A）與快照方案無關，仍值得做；併發放寬對回填仍有價值，優先度降後。
+
+## 批次0b：探測補強（診斷修正＋方案 B／D 的證據）
+
+### 定案
+
+1. 步驟 4：JSON 解析失敗時印回應長度與前 200 字（去換行），下次探測直接看得到原因。
+2. 步驟 8 messages：查詢加 `datetime` 欄，判定頁內時間是否單調；單調 → 「依時間排序、順序穩定，分頁可行（列鍵含時間）」；sortby 無效改為資訊而非失敗。
+3. 步驟 9d 四個子量測（純診斷，各自容錯）：
+   - 9d-1 快照成本與分布：`columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw&count=50000` 一次；印耗時、筆數、位元組、interval 前 5 值分布、status 前 5 值分布、lastvalue_raw 可解析成數字的比例。
+   - 9d-2 單位對照與各 type 延遲：五種 type（SNMP CPU Load、SNMP Memory、SNMP Disk Free、SNMP Traffic 64bit、Ping）各 3 顆未暫停、未被 9c 用過的感測器，各發一次 1 天 historicdata（同夜間形狀、循序）；每顆印 type、objid、耗時、histdata 最後一列原始鍵值（截 300 字）、快照的 lastvalue 與 lastvalue_raw；每 type 一行平均延遲。
+   - 9d-3 固定成本：4 顆 Ping 查 1 小時、另 4 顆查 1 天（不重複、不與 9c／9d-2 重複）；印兩組平均延遲與列數。
+   - 9d-4 messages 量級：`filter_drel=today` 與 `7days` 各 `count=1`，印 treesize。
+4. 成本行更新：historicdata 64＋23 次、table.json 6＋3 次。
+
+### 驗收
+
+- 步驟 4 解析失敗 → 印「回應長度 N、開頭：…」；步驟 8 messages 時間單調 → 新結論字串；9d 各子量測對 `{}` 容錯、各印一行以上；探測回傳值不受影響；既有測試綠；全套綠（基線 3766）。
+
+## 批次 0b 量測結果（2026-09-11 實機，第二次）
+
+| 量測 | 結果 | 意涵 |
+|---|---|---|
+| 步驟 4／9a count=50000 | 兩者都拿到 73 bytes 的 HTML：`<HTML><BODY class="no-content"><B class="no-content">OK</B></BODY></HTML>`，HTTP 200 | PRTG 對大回應會**靜默放棄**回空白頁；昨天同一查詢成功。50000 不可靠，5000 兩次都穩 |
+| 9c（第二次） | 併發 4 總耗時 ×0.39、延遲 ×1.23；併發 8 總耗時 ×0.55、延遲 ×1.81（排隊）；最大延遲 116 秒 | 併發表現日間差異大，PRTG 負載主導；8 會排隊且超過預設 60 秒逾時 |
+| 9d-1 快照 | 六欄 42863 筆 37.8 秒、13 MB；interval 60 秒佔 77.6%、5 分鐘 13.0%；status Up 96.0%；lastvalue_raw 可解析 97.0% | 只帶兩欄的快照約 10 秒（9b 同量級）；每 5 分鐘一次不超過掃描密度 |
+| 9d-2 尺度 | CPU／記憶體／磁碟／Ping：`lastvalue_raw` 與 histdata 第一頻道 `value_raw` 同尺度（磁碟連小數相同）；流量：快照是「最近一次掃描的傳輸量」、歷史值是「整小時總量」，同為位元組但語意不同 | 四類可直接當樣本；流量要標示為每次掃描量 |
+| 9d-2 各 type 延遲 | CPU 11 秒、記憶體 34 秒、磁碟 23 秒、流量 49 秒、Ping 10 秒；單顆 0.3～72 秒 | historicdata 在這台就是慢且不穩 |
+| 9d-3 | 1 小時 48 秒 vs 1 天 15 秒 | 成本以每次呼叫為主，與跨度無關 |
+| 9d-4 | messages treesize today＝7days＝1,000,000 | 這個數字是上限值，沒有量級資訊；第三階段實際頁數要看夜間執行輸出 |
+| histdata 形狀 | `datetime` 是本地化區間字串「2026/9/10 下午 11:00:00 - 上午 12:00:00」；`value` 是帶單位字串「4 %」；`value`／`value_raw` 每個頻道重複一組；另有 `datetime_raw`（OLE 日期）與 `value_raw`（純數字） | **現行解析用 `datetime`＋`value`，在這台 PRTG 一筆都解析不到**；夜間執行輸出應有「時間欄位無法解析」一行（待使用者確認） |
+
+## 定案：兩種取數策略
+
+**第一原則**：兩種策略的每個數值都從「這兩次探測實測能穩定取回」的範圍內挑。激進不是把數字推到極限，是在可靠範圍內取上緣。
+
+| 項目 | 保守（預設） | 激進 | 證據 |
+|---|---|---|---|
+| 快照間隔 | 15 分鐘 | 5 分鐘 | 掃描間隔 77.6% 是 60 秒，5 分鐘不超過掃描密度；兩欄快照約 10 秒 |
+| 快照查詢 | `columns=objid,lastvalue_raw,interval&count=50000`（同） | 同 | 9b 一欄 9.6 秒、9d-1 六欄 38 秒都成功；九欄 18 MB 失敗過 |
+| 夜間逐顆歷史查詢（觸發主機） | **關**：數值全由快照供應 | **開**：沿用取數範圍設定，給觸發主機 PRTG 真平均 | 單顆 5～72 秒、每晚數百顆 |
+| 回填併發 | 建議 2（設定獨立，範圍 1～8） | 建議 4 | 併發 4 兩次都加速 2 倍以上且延遲 ≤1.23；8 今天排隊 |
+| 每日 PRTG 負擔（估） | 96 次快照 ≈ 16 分鐘，分散整天、同時只有 1 個請求 | 288 次快照 ≈ 48 分鐘 ＋ 夜間數百次 historicdata（併發 4 約 30～60 分鐘） | — |
+| 自我保護（同） | 快照連續失敗 3 次 → 間隔加倍（上限 60 分鐘）並寫執行輸出；成功即恢復 | 同 | 第一原則 |
+
+**激進策略的提醒文字**（UI 下拉切到激進時顯示，也寫進規格）：「激進策略每 5 分鐘對 PRTG 發一次全量快照，並在每晚對觸發主機逐顆查詢歷史值，PRTG 負載明顯較高。請先用保守策略觀察執行輸出裡的快照耗時與失敗數，確認 PRTG 承受得住再切換；切換後若看到快照間隔被自動拉長，代表 PRTG 已經回不來，請切回保守。」
+
+**快照的資料語意**（寫進 PRTG-SPEC §2／§3）：
+- 只存「有 ok 對應的裝置」底下、符合 sensor type 白名單、未暫停的感測器（與 `GetValueFetchTargets` 同一套選法，裝置集合取當天 host map 的 ok 對應；當天沒有就用前一天）。全量存 42863 顆會讓 `lf_prtg_values` 每天多 100 萬列，沒有消費端的資料不存。
+- 每小時一列，`AvgValue`＝樣本平均、`MinValue`／`MaxValue`＝樣本極值（這兩欄從此有值）、`Coverage`＝樣本數 ÷ 期望樣本數 × 100（**與既有 PRTG coverage 同為百分比尺度**，期望樣本數＝60 ÷ 間隔分鐘）、`Quality`＝新值 `sampled`。
+- **流量類（volume）主要頻道要正規化到小時量**：歷史值第一頻道是「整小時總量」（探測 9d-2：126,883 MB ≈ 296 Mbit/s），快照 `lastvalue_raw` 是「最近一次掃描的傳輸量」；不換算的話同一顆感測器的 ok 列與 sampled 列會差 60 倍，基線統計整個失真。快照查詢因此帶 `interval` 欄（`columns=objid,lastvalue_raw,interval`），對 type 屬於流量集合（**暫定**：`SNMP Traffic 64bit`、`SNMP Traffic 32bit`、`Windows Network Card`）的感測器，樣本值＝`lastvalue_raw × 3600 ÷ 掃描間隔秒數`；`interval` 解析不了時用 60 秒並在執行輸出計數。其他 type 不換算。
+- 同一（感測器, 小時）若之後被逐顆歷史查詢或回填寫入，`ok` 覆蓋 `sampled`（Upsert 既有行為，精確值優先）。
+- 快照累積在記憶體，整點寫入一次；站台重啟丟失的只有當前這一小時的部分樣本，coverage 會如實反映。
+
+## 批次A：historicdata 解析改用原始欄位（P0）
+
+### 現況與核對結果
+
+- `ParseHistoricData` 只讀 `datetime`（`DateTime.TryParse`，目前文化）與 `value_`／`value`；全 repo 沒有 `datetime_raw`／`value_raw` 的解析。實機 histdata 的 `datetime` 是「起 - 訖」區間字串、`value` 帶單位，兩者都解析失敗。
+- 唯一呼叫端是 `FetchValuesAsync`，夜間觸發式取數與歷史回填都走它。
+- 既有測試替身全部只餵 `datetime`＋`value_`，沒有一個是實機形狀。
+
+### 定案
+
+1. 時間：優先 `datetime_raw`（數字，OLE 日期，`DateTime.FromOADate`）；缺失時退回 `datetime`，先以「 - 」切開取前段再 `TryParse`（InvariantCulture 與目前文化各試一次）。都失敗才計入無法解析。
+2. 值：優先第一個 `value_raw`（數字或可解析字串）；缺失時退回既有 `value_`／`value` 邏輯。重複鍵取第一個＝主要頻道（System.Text.Json 的 `TryGetProperty` 行為）。
+3. `coverage_raw`（整數，10000＝100%）優先於 `coverage` 字串。
+4. 品質判定規則不變（NoData／Unknown／Ok）。
+5. 既有測試不改斷言；新增一條用探測印出的實機列（CPU Load 那一列原文）驗證：時間＝2026-09-10 23:00、值＝3.5593、品質 ok、coverage 100。
+
+### 驗收
+
+- 實機形狀列解析正確；只有 `datetime`＋`value_` 的舊替身仍解析正確；`datetime_raw` 為非數字字串時退回 `datetime`。全套綠。
+
+## 批次B：PrtgClient 辨識空白 HTML 頁
+
+### 定案
+
+1. `GetJsonAsync` 在狀態碼檢查通過、讀完內容後，若內容去空白後以 `<` 開頭，擲 `PrtgClientException`，訊息：「PRTG 回傳 HTML 而非 JSON（多半是伺服器端處理逾時或負載過高回的空白頁）：{開頭 80 字}」。既有的測試連線與 getpasshash 路徑已各有同型檢查，不動。
+2. 影響面：分頁（階段失敗計數、訊息明確）、資源守門即時來源（退回鏡像，原因文字變得看得懂）、探測步驟 4／9a（改印無法量測＋原因）。探測步驟 4 的「回應無法解析」診斷行保留（其他非 HTML 的壞回應仍用得到）。
+
+### 驗收
+
+- 回 HTML 時擲例外且訊息含「HTML 而非 JSON」；回正常 JSON 不受影響；探測既有測試裡餵 HTML 的案例改斷言新訊息。全套綠。
+
+## 批次C：分頁大小與寫入批次拆開
+
+### 定案
+
+1. `PrtgTablePager.FetchAsync` 的 `pageSize`（查詢 `count`、停止條件、上限推算）預設改 **5000**（暫定，兩次實測 10 秒／2 MB 穩定）；新增 `batchSize`（onBatch 沖洗門檻）預設 **500**，兩者獨立。
+2. 「每滿 N 頁寫一行執行輸出」由 50 改為 **5**（感測器只剩 9 頁，50 永遠印不到）。
+3. 記憶體：單頁最多 5000 筆 JSON（約 2 MB）＋ 500 筆緩衝，仍有界。
+4. 三個呼叫端不動（吃預設）。
+
+### 驗收
+
+- 既有分頁測試改傳 `batchSize` 者維持語意；新增「pageSize 5000、batchSize 500 時 1200 筆資料 onBatch 被叫 3 次（500／500／200）且只發 1 次請求」。全套綠。
+
+## 批次D：併發上限放寬
+
+### 定案
+
+1. 兩個 DTO 的 `[Range(1, 3)]` 改 `[Range(1, 8)]`，錯誤訊息同步；cshtml `max="8"`，說明文字改：「保守建議 2、激進建議 4；實測併發 8 時 PRTG 端開始排隊、單次延遲可能超過逾時。」
+2. `SettingsController` 估算端點的註解與假設（「實機併發上限 3」）跟著改。
+3. 「請求逾時（秒）」的說明文字加一句：「historicdata 單次實測最長超過 100 秒，激進策略或回填建議設 120 以上。」取數階段的失敗計數把**逾時**獨立列出（既有只有一個失敗數）。
+4. 新增測試：8 接受、9 拒絕；逾時計數一條。
+
+## 批次E：取數策略設定＋快照背景服務
+
+### 現況與核對結果
+
+- 新增字串設定的接線共 14 處（模型、兩個更新 DTO、讀取 DTO、Service 的兩條寫入、驗證、四份稽核欄位、ToDto、前端載入／儲存、cshtml），樣板是 `PrtgValueFetchScope`。稽核四份是手寫匿名物件，漏一份不會編譯錯。
+- 背景服務樣板：`AiAnalysisHostedService`（每輪先看前置條件、不成立整輪不跑、`TickAsync` internal 可單測）；既有服務的間隔都是編譯期常數，「間隔由設定決定」是新的。
+- `GetValueFetchTargets(whitelist, deviceObjids)` 回未暫停的 sensor objid；`GetHostMapForDate(day)` 取當天對應；`UpsertValues` 以 (SensorObjid, PeriodStart) 為鍵、同鍵覆蓋、`CreatedAt` 一併更新。
+- `PrtgDataQuality` 五個字串常數；讀取端三處都是 `== Ok`／`!= Ok` 與「其他」桶，新增 `sampled` 會落進「其他」，不會漏接但也不會有獨立計數（校準頁 §11 要不要分開算，見待決）。
+- 「PRTG 擷取」下拉已合併 `PrtgEnabled` 與 `PrtgValueFetchScope` 兩個欄位；策略**不**併進去，另開一個下拉。
+
+### 定案
+
+1. 設定 `PrtgFetchStrategy`：`conservative`（預設）／`aggressive`，static class 同 `PrtgValueFetchScope` 形式（常數、IsValid、Normalize），並提供 `Profile(strategy)` 回 (SnapshotIntervalMinutes, NightlyExactValues)＝保守 (15, false)、激進 (5, true)。不合法值退回保守。
+2. UI：擷取參數頁籤，緊接「PRTG 擷取」下拉之後新增「取數策略」下拉，兩個 option 各附一句說明；選到激進時顯示上面的提醒文字（`text-warning`）。popover 說明兩者差異與每日負擔估計。
+3. 快照背景服務 `PrtgSnapshotHostedService`（Web，樣板 AiAnalysisHostedService）：每 60 秒 tick；前置條件依序：`PrtgEnabled`、連線設定齊、距上次成功快照 ≥ 目前間隔（含退避）、結構同步未執行中、**取數執行不在 PRTG 階段且歷史回填未執行中**（不把快照疊在已經在打 PRTG 的路徑上）。任一不成立就整輪不跑並記閒置原因；被夜間階段擋掉的那一次不算失敗，也不改變下次時間。
+4. 快照一次：`content=sensors&columns=objid,lastvalue_raw,interval&count=50000`（9d-1 六欄 38 秒、9b 一欄 10 秒，三欄估 12～15 秒）；回傳筆數少於 treesize 時寫警告（同守門的截斷判定）；只累積目標集合內的 objid（目標集合＝當天 ok 對應裝置的 `GetValueFetchTargets(白名單)`，每小時刷新一次，當天沒有對應就用前一天）。
+5. 累積器（Core，純類別可單測）：per objid 的 sum／count／min／max，整點翻頁時把上一小時寫成 `PrtgValueRow`（Quality＝`sampled`，Coverage＝count ÷ 期望樣本數 × 100）。站台停止時把當前小時的部分樣本也寫出（coverage 如實）。**整點寫入對既有 `sampled` 列採合併而非覆蓋**（依樣本數加權平均、極值取聯集、coverage 相加）：站台在一小時內重啟兩次，第二次寫出的部分樣本才不會把第一次的蓋掉；既有列是 `ok` 時不動（精確值優先）。這需要儲存層一個新方法（`MergeSampledValues`），`UpsertValues` 的覆蓋語意不變。
+5a. `interval` 欄位解析：接受「60 s」「5 m」「1 h」三種單位；解析失敗用 60 秒並計數，執行輸出每小時彙報一次「N 顆感測器的掃描間隔無法解析，以 60 秒計」。
+5b. 估算：既有「估算規模」端點與按鈕（擷取參數頁籤）加一段快照估算——目標集合幾顆、每天幾列、依 `PrtgRetentionDays` 估表會長到幾列；策略下拉的 popover 引用同一組數字。
+6. 退避：連續失敗（例外、HTML 頁、逾時）3 次 → 間隔加倍，上限 60 分鐘；成功即恢復設定值。每次狀態變化寫一行到執行輸出（走 NLog 與鏡像狀態的執行輸出）。
+7. 夜間路徑：`PrtgDailyPipeline` 在策略為保守時**跳過觸發式取數階段**，執行輸出印「取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應」；激進時行為不變。歷史回填不受策略影響（永遠用 historicdata，併發吃設定值）。
+8. 可觀測：鏡像狀態 DTO 加 `SnapshotLastAt`／`SnapshotSensors`／`SnapshotIntervalMinutes`（含退避後的實際值）／`SnapshotConsecutiveFailures`；鏡像頁籤「各類資料最新時間點」加一行「數值快照：最近 {時間}，{N} 顆，間隔 {M} 分鐘」，退避中標示。
+9. `PrtgDataQuality.Sampled = "sampled"`；儲存層三處統計的「其他」桶改為明確計 `SampledCount`（校準頁 §11 之後要用）。
+10. 不動 `PrtgValueFetchScope` 的語意；快照永遠是「全部 ok 對應裝置」，取數範圍只管激進的夜間逐顆與回填。
+11. **升級注意**（寫進 PLAN 體檢交接與 PRTG-SPEC §3b）：升級後策略預設保守，夜間觸發式取數**不再執行**，數值改由快照供應；既有部署若依賴夜間逐顆查詢要切激進。每晚執行輸出固定印一行目前策略與快照狀態，讓這個改變在畫面上看得到。時間基準：快照的小時邊界用站台本機時間，historicdata 的 `datetime_raw` 是 PRTG 伺服器本機時間，兩者同一時區才能對得上（現況如此；規格註明）。
+
+### 驗收
+
+- 策略：預設保守；存讀往返；不合法值拒絕；四份稽核欄位都含策略（測試比對 Before／After 鍵集合）。
+- 累積器：三個樣本平均／極值正確；整點翻頁寫出上一小時且 coverage＝3/12（間隔 5 分鐘）；跨小時不混算。
+- 背景服務 tick：`PrtgEnabled` 關 → 不發請求；未到間隔 → 不發；HTML 回應 → 失敗計數＋1、三次後間隔加倍、成功後恢復；目標集合外的 objid 不進累積器。
+- 夜間路徑：保守策略下 `PrtgDailyPipeline` 不呼叫觸發式取數且印指定字句；激進下照舊（既有測試加策略參數）。
+- UI 測試：下拉存在、激進提醒文字存在、鏡像頁籤有快照行。
+- 全套綠。
+
+## 校準數值匯出的現況與快照的相容問題（核對結果）
+
+- 校準（`CalibrationService`，Core）讀數值表只經 `EfPrtgStore` 三個查詢，**全部硬編 `Quality == ok`**：每日聚合、涵蓋摘要、量級。服務層只用 `SensorObjid`／`PeriodStart`／`AvgValue`／`Quality`；`MinValue`／`MaxValue`／`Coverage` 沒有任何讀取端。匯出檔的 `MinValue`／`MaxValue` 是「當日各小時 AvgValue 的極值」，不是列的極值欄。
+- 值型基線判定：sensor 某日涵蓋＝該日 `ok` 列數 ≥ 12（常數 `ValueBaselineMinDailyOkHours`）；主機涵蓋天數取名下 sensor 最大值；10 台各 28 天可用、56 天充足。**快照寫的 `sampled` 會落進三處統計的「其他」桶**，不進 OkCount 也不進平均，保守策略下這一項永遠判不足。
+- 「觸發式取數量級」判定以 `TotalCount > 0` 計天數，不受品質影響；但保守策略下沒有觸發式取數，名稱與 `OkRatio` 語意都會誤導。
+- 匯出是單一 JSON（`FormatVersion`＋四個資料集），值型基線列有 `OkHours`／`UnknownCount`／`NodataCount`，沒有 Quality、Coverage、也沒有 `OtherCount`。
+- 測試餵的數值列品質**一律 ok**，沒有任何一筆非 ok；`Coverage` 全檔沒設過值。
+- **校準結果的下游**：程式碼沒有任何消費端，匯出檔只供人下載分析後回頭改 `CalibrationConstants`（規則門檻）與設計值型規則。值型規則（趨勢、基線偏移）在 BACKLOG，觸發條件正是「校準四項達可用」；目前 Core/Analysis 沒有任何 PRTG 數值的介面或佔位，`TrendAnalyzer` 系列全是 NetIQ 事件次數。
+
+## 批次G：校準與快照相容
+
+### 定案
+
+1. **可用列（usable）**的統一定義，寫在 `EfPrtgStore` 一處供三個查詢共用：`Quality == ok`，或 `Quality == sampled 且 Coverage ≥ 75`（**暫定**：保守 15 分鐘＝4 個樣本要有 3 個、激進 5 分鐘＝12 個要有 9 個。兩個樣本的平均當一小時的代表值太薄，門檻用 75 不用 50）。三處統計的桶改為 `OkCount`／`SampledCount`（僅計可用的 sampled）／`UnknownCount`／`NodataCount`／`OtherCount`（含 coverage 不足的 sampled、paused、untrusted）。
+2. 值型基線判定：某日涵蓋＝該日**可用列數** ≥ 12（常數改名 `ValueBaselineMinDailyUsableHours`，值不變）；每日平均／極值納入可用列；`EarliestOkPeriod`／`LatestOkPeriod` 改為可用列的起訖。
+3. 「觸發式取數量級」判定與文案改為「**數值取得量級**」：天數判定不變（任何品質的列）；`OkRatio` 改為 `UsableRatio`（可用列 ÷ 全部），另出 `SampledRatio`。UI 卡片標題、標籤表、規格同步。
+4. 匯出 `FormatVersion` +1；值型基線列加 `SampledHours`、`MinObserved`／`MaxObserved`（當日各可用列 `MinValue`／`MaxValue` 的極值，沒有就 null；既有 `MinValue`／`MaxValue` 語意不變）；量級列加 `SampledCount`。
+5. 補充說明文案（`Explanations`）把「ok 小時數」改成「可用小時數」，並在有 sampled 列時多一句「其中 N 小時為快照取樣值」。
+6. 流量類 sampled 值已在批次 E 正規化到小時量，校準端不再另外處理；規格 §11 註明「流量類的 sampled 列是估算值（每次掃描量 × 3600 ÷ 掃描間隔）」。
+7. **匯出是給 Claude 讀來設計值型規則與調門檻的**，原始每日列（數千顆 × 56 天＝數十萬列、數十 MB）沒辦法直接讀，只能餵腳本。匯出因此加三個**摘要資料集**，讓規則設計不必碰原始列：
+   - `ValueSensorSummaries`：每顆感測器一列——`SensorObjid`、`HostName`、`SensorType`、`Unit`（取自鏡像）、`IsVolumeNormalized`、`Days`、`UsableHours`、`SampledRatio`、`Mean`、`StdDev`、`P50`、`P90`、`P99`、`Max`（以可用列的 AvgValue 算）。
+   - `ValueTypeProfiles`：每種 sensor type 一列——感測器數、總可用小時、每日平均值的 `P50`／`P90`／`P99`／`Max`、**每小時段（0～23）的平均值曲線**（24 個數）。基線偏移與時段規則要看的就是這條曲線。
+   - `Context`：策略、快照間隔、目標集合大小、白名單、`PrtgRetentionDays`、統計視窗起訖、鏡像的裝置與感測器總數。沒有這些，讀匯出的人不知道數字在什麼條件下量的。
+   原始 `ValueBaselines` 保留給腳本，加 `?detail=summary` 查詢參數可只匯出摘要（預設全量）。匯出前卡片先顯示「本次匯出約 N 列、M MB」。
+8. 校準頁值型基線卡加兩個指標：`SnapshotTargets`（快照目標集合幾顆）與 `SnapshotCoverage24h`（最近 24 小時每顆平均 coverage），讓管理者看得到基線在累積。
+
+### 驗收
+
+- 三個查詢：ok 與 coverage ≥ 75 的 sampled 都算可用；coverage 74 的 sampled 落「其他」；unknown／nodata 各自計數不變。
+- 值型基線：只有 sampled 列（coverage 100）的環境，10 台各 28 天 → 可用；同樣資料但 coverage 全 40 → 不足。
+- 匯出：`FormatVersion` 變更、四個新欄位存在且值正確；既有欄位順序不變。
+- 量級卡：標題與 KeyMetrics 鍵名改名，前端標籤表對應；UI 測試補字串斷言。
+- 摘要資料集：兩顆感測器各 3 天的資料，`ValueSensorSummaries` 的 Mean／P90 正確、`ValueTypeProfiles` 的 24 點曲線在有值的小時段有值、其餘 null；`?detail=summary` 不含 `ValueBaselines`；`Context` 含策略與間隔。
+- 快照涵蓋指標：目標 5 顆、24 小時內 coverage 平均正確。
+- 既有校準測試全綠（它們只餵 ok，語意不變）。
+
+## 校準後的用途與後續方向（確認結果，寫進 BACKLOG）
+
+校準匯出目前的用途是離線分析後回頭改常數，程式碼不讀它。快照讓「值型基線」在保守策略下也能累積：白名單內、有對應主機的感測器全部每小時一列，10 台主機 28 天的門檻預估最快一個月達標（現況只有觸發主機、且解析壞掉，永遠不會達標）。達標後的下一步已足夠具體，記進 BACKLOG 作為 R44 候選，觸發條件不變（校準四項達可用）：
+
+- **值型規則第一階**（規則維護頁 prtg 平台）：per 感測器、per 小時段的 28 天基線（平均與標準差，只用可用列），三條規則——基線偏移（連續 N 小時超過 μ+kσ）、磁碟可用空間趨勢（線性外推 N 天內耗盡）、CPU／記憶體持續高檔（24 小時平均超過門檻）。門檻常數先用校準匯出的 P90／P99 定，同 §11 的作法。
+- **資源守門改讀快照**：守門的即時值探針每趟批次打 PRTG，快照有了之後可以改讀最近一次快照（15 分鐘內），少一輪 PRTG 往返；快照過期才退回即時查詢。
+- （「校準頁快照涵蓋指標」與「匯出摘要資料集」已納入本輪批次 G，不留在 BACKLOG。）
+
+## 批次F：文件
+
+- PRTG-SPEC §2：`lf_prtg_values` 的 `min_value`／`max_value` 從「無寫入邏輯」改為快照寫入；`quality` 加 `sampled`；先備欄位清單同步。
+- PRTG-SPEC §3：分頁 5000／批次 500；histdata 解析改原始欄位；空白 HTML 頁；取數策略與快照（新小節 §3b）；夜間逐顆查詢依策略。
+- PRTG-SPEC §6：探測步驟 4／9a 在空白頁時的輸出。
+- PRTG-SPEC §11：可用列定義、`sampled` 與 coverage 門檻、數值取得量級改名、匯出新欄位與 FormatVersion、流量類估算值註記。
+- PRTG-SPEC §12：守門即時來源在空白頁時的退回原因。
+- WEB-SPEC §9.9f：校準卡片標題與指標改名。
+- BACKLOG：上節「校準後的用途與後續方向」三項，觸發條件「校準四項達可用」。
+- WEB-SPEC §9.9e：擷取參數頁籤新增策略下拉與提醒；鏡像頁籤快照行；併發說明文字。
+- BACKLOG：objid 清單比對（觸發條件：分頁放大後感測器階段仍 > 5 分鐘）；messages 推送方案（觸發條件：夜間第三階段實測 > 10 分鐘）；historicdata 流量類多頻道（觸發條件：值型規則需要速率而非量）。
+- CLAUDE.md：測試基線。
+
+## 待決結果（使用者採納建議，2026-09-11）
+
+1. 快照間隔保守 15／激進 5 分鐘、退避上限 60 分鐘：採納。
+2. 分頁 5000、寫入批次 500：採納。
+3. 併發範圍 1～8，說明文字建議保守 2／激進 4，預設 2：採納。
+4. 保守策略下夜間完全不逐顆查詢：採納。
+5. 快照只存 ok 對應裝置＋白名單型的感測器：採納。
+6. 校準的 `sampled` 獨立計數並納入可用列：採納（批次 G）。
+
+另外兩項仍缺實機資料，不阻擋實作：夜間執行輸出的階段 3 耗時（決定 messages 推送要不要提前）與「時間欄位無法解析」一行（驗證批次 A 的 P0 判斷；批次 A 不論如何都要做，原始欄位是正確做法）。
+
+## 規劃完成後複檢（四角度）
+
+- **整體專案**：快照與既有三條打 PRTG 的路徑（夜間、回填、結構同步）互斥已寫進前置條件；同一（感測器, 小時）的寫入優先序（ok 覆蓋 sampled、sampled 對 sampled 合併）已定；保留期與表成長有估算入口；升級後預設行為改變已列升級注意。時區假設寫明。
+- **程式面**：`interval` 解析容錯、快照 50000 上限截斷警告沿用守門判定、累積器可單測、hosted service 的 tick internal 可單測；批次 A 的 OLE 日期為 Unspecified 種類，與既有 PeriodStart 一致；批次 C 的上限推算在 5000 下仍以 400 為底。
+- **使用者**：可用門檻從 50 提到 75，兩個樣本代表一小時說不過去；切換策略後既有列不受影響、只影響之後的 coverage 期望值（寫進 §3b）；匯出前看得到大小；快照有沒有在跑，鏡像頁籤與校準卡都看得到；激進提醒文字含「看到間隔被自動拉長就切回保守」的具體操作。
+- **管理者**：策略變更走四份稽核；預設保守是低負載方向；`sampled` 列在回退舊版程式碼時只會落進「其他」桶，不會炸；匯出 FormatVersion 有升版；逾時建議寫在說明文字，不是藏在規格裡。
+- **匯出給 Claude 讀的目的**：原始列留給腳本，摘要三個資料集直接可讀（每顆一列、每 type 一列含 24 點曲線、Context）；估計摘要層在 3500 顆感測器下約 3500 ＋ 33 列、遠小於 1 MB。
+- 複檢有新增事項（批次 D 逾時、E 的 5／5a／5b／11、G 的 1／7／8），皆已寫入上文；無其他發現。
+
+## 明確不做（本輪定案）
+
+- 探測不改任何取數行為。
+- 結構同步改單次 50000：兩次實測一次失敗（空白頁），不可靠。
+- objid 清單比對、messages 推送、流量類多頻道：進 BACKLOG 附觸發條件。
+- 快照存全部 42863 顆：沒有消費端的資料不存，每天百萬列會讓保留期內的表長到數千萬列。
+- 併發上限超過 8：實測 8 已排隊。
+
+## 執行紀錄
+
+| 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
+|---|---|---|---|---|
+| 0 探測步驟 9 | general-purpose（opus；impl-low 定義本會話尚未登錄，紀律以提示內嵌） | 已實作 | Claude 親驗：全套 3766 綠（+5）、五條新測試、spec 段無敘事字眼、選樣優先序與不重複分組核對過 | 執行端三條沒把握：9c 平均延遲以 double 判 ≤0 但印 F0（真機延遲數十 ms 無觀感問題）；既有 BuildPagingStub 情境 9c 實際跑 1 顆而非略過（既有斷言不受影響）；測試 5「回 500」讀成 HTTP 500（與規格原意一致） |
+| 0b 探測補強 | impl-low（opus，low） | 已實作 | Claude 親驗：全套 3778 綠（+12）、messages 時間判定與 9d 四子量測輸出核對 | 執行端四條沒把握：histdata 末列印出前把換行摺成空白（接受）；datetime 解析失敗時原本落到「漏列」警告，Claude 改成獨立的「無法判定」行；type 名稱完全比對（實機字串已核對一致）；9d-3 Ping 不足時的前半分法由執行端定 |
+| A historicdata 解析 | impl-low（opus，low）＋Claude 修正 | 已實作 | Claude 親驗：全套 3787 綠、突變關掉顯示字串分支 13 條紅 | **Claude 推翻規格並改寫實作**：規格原訂「datetime_raw 優先」，實機證實同一列的 datetime_raw（46275.6666666667＝16:00）與顯示字串（23:00）差 7 小時，用 raw 會讓整份基線平移數小時且無徵兆。改為顯示字串前段優先、raw 只當退路並回報筆數。執行端另抓到 TryGetProperty 在重複鍵時回最後一個（多頻道會取到第二頻道），改用自寫的取第一個 |
+| B 空白 HTML 頁辨識 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：三檔皆在白名單、BOM 與 CRLF 未動、無 NUL、全套 3793 綠、突變關掉 HTML 判定 2 條紅 | 無落差；agy 依規格把既有探測測試改餵非 HTML 以保留原意，另加 HTML 走例外的測試 |
+| C 分頁 5000／批次 500 | agy（gemini-3.8-flash-high）＋Claude 補修 | 已實作 | Claude 親驗：四檔皆在白名單、BOM 與 CRLF 未動、無 NUL、spec 無敘事字眼、全套 3795 綠 | 規格白名單漏了 PrtgFetchServiceTests.cs，agy 遵守限制未動並誠實回報三條會紅的既有測試；Claude 補修（滿頁筆數改用常數 PageSizeForFullPage＝5000）|
+| D 併發上限 1～8 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：BOM 還原、全套 3800 綠、突變關掉逾時判定 1 條紅 | **agy 剝掉 Prtg.cshtml 的 BOM**（skill 已知失敗模式），Claude 還原；agy 的逾時判定用訊息字串比對（在地化字串，誤判風險），Claude 改為結構化判定並補上根因：PrtgClient 包裝例外時沒帶 InnerException，例外鏈斷掉（兩處包裝點一起修）|
+| E1 Core（策略／取樣品質／累積器／合併寫入／夜間分岔） | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：十檔皆在白名單、BOM 與 NUL 乾淨、全套 3828 綠、兩處突變（夜間分岔、合併只動 sampled 列）各 1 條紅 | 無落差；agy 依規格把三條既有 pipeline 測試顯式設為激進以保留原意。另記：SentinelRestDirectoryClientTests 有一條時間相依的偶發紅，與本輪 diff 無關（單獨重跑兩次皆綠）|
+| E2a 策略設定 Web 接線 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：六檔皆在白名單、四份稽核欄位逐一核對（496／528／655／682）、全套 3838 綠、突變移除驗證 2 條紅 | **agy 再次剝掉 BOM**（這次是 SystemSettingsService.cs），Claude 還原；Prtg.cshtml 的 BOM 這次有保住 |
+| E2b 快照背景服務 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：三檔皆在白名單、BOM／CRLF／NUL 正確、快照測試 12 綠、兩處突變各 1 條紅、全套綠（Sentinel 一條時間相依偶發紅，單獨重跑兩次 47/47，與本輪無關） | **Claude 抓到兩個測試沒抓到的缺陷**：(1) 退避形同虛設——間隔從「上次成功」量，PRTG 回不來時上次成功永遠停在過去，服務每 60 秒重打一次全量快照，違反「不大量消耗 PRTG」前提；改為從「上次嘗試」量，回歸測試先對舊碼確認為紅。既有退避測試原本靠此 bug 才通過（同一瞬間連 tick 三次），改為推進時鐘。(2) ExecutionOutputs 無上限，站台長時間運行會記憶體洩漏；加上限 100 並補測試。 |
+| E2c 快照可觀測性與規模估算 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：六檔皆在白名單、BOM 與 dev 一致（Prtg.cshtml 的 BOM 保住）、無 NUL、建構子只多了規格允許的那一個可選參數、快照估算行只設一次且在 triggered 早退之前、聚焦測試 42 綠、全套 3858 綠、兩處突變（退避比較 > 改 >=、白名單為空警告）各 1 條紅 | agy 新建的測試檔寫成 LF，Claude 改為 CRLF。**已知簡化**：估算的保留天數用 min(PrtgRetentionDays, RetentionDays) 顯示近似值（不含低於下限的退回邏輯）；夜間執行輸出只印取數策略、未印快照狀態（Core 無法參照 Web 的快照服務）。 |
+| G1 可用列定義與校準計數 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：六檔皆在白名單、BOM 與換行與 dev 一致、無 NUL；可用判定三個查詢內嵌共 14 處；校準匯出 FormatVersion 升為 2、資料搬運 FormatVersion 仍為 1；兩處突變（coverage 邊界 >= 改 >、值型基線涵蓋改回只算 ok）各 1 條紅；全套 3863 綠 | Claude 補清三處殘留的「觸發式取數量級」註解。**規格與規劃落差**：G1 規格未含 G.5「快照取樣小時」說明句，已補進 G2 規格；G.7 匯出前的 MB 估算已補進 G3 規格；本檔 G 驗收段 coverage 門檻誤寫 50，改為 75。 |
+| G2 匯出摘要資料集與快照涵蓋指標 | agy（gemini-3.8-flash-high）＋Claude 修正 | 已實作 | Claude 親驗：七檔皆在白名單、BOM 與換行一致、無 NUL；小時曲線 ToQueryString 實際產出 SQL Server DATEPART 與 SQLite strftime；流量 type 集合只剩 Core 一份；三處突變（小時分組改分鐘 2 條紅、快照取樣小時拿掉白名單 1 條紅、逐日列數拿掉白名單 1 條紅）；全套 3876 綠 | **Claude 抓到兩處測試沒抓到的缺陷**：(1) 值型基線的「快照取樣小時」說明句與 `ValueBaselineRows` 用的是未篩選的全部 sensor，本項其他統計與匯出的 ValueBaselines 都只算白名單，數字會偏大、匯出大小預告失準；改為限縮白名單並補回歸測試。(2) agy 另寫了一份 nearest-rank 分位數，與既有的整數版邏輯重複（p 尺度一個 0～1、一個 0～100），違反「輔助方法只能有一份」；收斂成共用的 `NearestRankIndex`。另清掉快照服務移除集合後留下的多餘空行。 |
+| G3 校準頁顯示層 | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：三檔皆在白名單、Prtg.cshtml BOM 保住、無 NUL；量級卡改名、四個快照指標與三個比例標籤、「只匯出摘要」勾選框、匯出大小提示（列數＋MB 估算）；匯出網址只組一次、提示只設一次、舊字樣（觸發式取數量級／每晚／有效資料佔比）清零；突變拿掉 detail 參數 UI 測試紅；全套 3877 綠 | 無落差。agy 回報其編輯工具會剝掉 cshtml 的 BOM，已自行補回（Claude 驗證與 dev 一致）。MB 估算以每列 300 位元組計，是提示用的近似值。 |
+| E3 策略說明 popover 與快照暫停原因（補齊 E.2／E.3／E.5b） | agy（gemini-3.8-flash-high） | 已實作 | Claude 親驗：八檔皆在白名單、Prtg.cshtml BOM 保住、無 NUL；popover 由 layout.js 既有初始化涵蓋、未另寫一套；五個前置條件各設原因、未到間隔不設、通過後清除；前端「目前暫停」只附加一處；突變拿掉清除暫停原因測試紅；全套 3883 綠 | 這一批是逐條比對規劃時發現的缺口：E.2 的策略 popover、E.5b 的「popover 引用估算數字」（改為指路到「估算規模」按鈕，數字不寫死在說明文字）、E.3 的「記閒置原因」原本都沒有實作。**已知簡化**：E.11 夜間執行輸出只印策略、不印快照狀態（Core 無法參照 Web 的快照服務），不補。 |
+| F 文件 | Claude | 已完成 | PRTG-SPEC §2（sampled 旗標、寫入優先序、可用列）、§3（併發 1～8、解析規則、空白 HTML 頁、逾時獨立計數）、新增 §3b（兩種策略、快照服務、流量正規化、退避、升級注意、時間基準、規模估算）、§5（回填不受策略影響）、§6（空白頁輸出）、§7（策略設定列）、§8（估算與鏡像端點欄位）、§9（規則回饋只在激進成立）、§10、§11（可用列判定、量級改名、摘要資料集、FormatVersion 2、統計口徑）、§12（快照不受守門、空白頁退回）；WEB-SPEC §9.9e（策略下拉與 popover、快照行與暫停原因、估算只設一次）、§9.9f（卡片標籤、只匯出摘要、大小提示、detail 參數）、§9.10（每 5 頁）；BACKLOG 五項（值型規則第一階、守門改讀快照、objid 清單比對、messages 推送、流量多頻道）；CLAUDE.md 基線 3883 與文件地圖。腳本先在副本乾跑、每處替換斷言命中 1 次，BOM 與 HEAD 一致；新增行掃敘事字眼無新增 | 無 |
+
+## 已知簡化（實作後確認，不補）
+
+- 規模估算的保留天數以 `min(PrtgRetentionDays, RetentionDays)` 近似，不含低於下限時的退回邏輯。
+- 夜間執行輸出只印取數策略與快照間隔，不印快照服務的即時狀態：Core 無法參照 Web 的快照服務；快照狀態看鏡像頁籤。
+- 匯出前的 MB 提示以每列 300 位元組估算，是量級提示不是精確值。
+- 快照服務的暫停原因只給狀態查詢，不寫 log 與執行輸出（每 60 秒一次會洗版）。
+
+## 體檢交接
+
+- 實作方：Claude Opus 5（規劃、規格、驗收、手改）＋ agy（gemini-3.8-flash-high，批次 B～G3、E3 的產出）＋ impl-low（Opus low，批次 0b、A）。
+- 體檢方：Claude Fable 5.1（使用者以 /model 切換後下收尾指令）；subagent 用 scan-low（Opus，low）。
+- 實作收官：feature/feedback-43 共 18 個 commit，全套 3883 綠（略過 6），基線 3761。
+- 實作方最沒把握的地方：(1) 快照服務的例外路徑——PRTG 呼叫成功但 `MergeSampledValues` 寫 DB 失敗時的資料流；(2) `ParseHistoricData` 的顯示字串解析在非台灣地區設定的 PRTG 上是否會把 M/d 與 d/M 對調而靜默寫錯小時；(3) `GetSampledCoverageSince` 的 `GroupBy(_ => 1)` 只在 SQLite 跑過；(4) 校準摘要資料集在數千顆感測器下的記憶體用量沒有量測。
+
+## 體檢輪修正（Fable 5.1；scan-low 三路掃描＋親讀快照服務、累積器、合併寫入、解析器）
+
+| 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|
+| `PrtgFetchService.TryResolvePeriodStart` | d/M 格式的 PRTG（en-GB 等）配上 M/d 或 y/M/d 的站台文化，「10/09/2026」被讀成 10 月 9 日，解析成功、不計 unparsed、不走退路——整批基線平移到錯的日期而無徵兆 | 先讀 `datetime_raw`；字串解析結果與 raw 差超過 24 小時（實機差 7 小時是時區基準不同，月日對調至少差一天）就換下一個文化，都不合才退到 raw 並計入回報 | `FetchDayAsync_顯示字串月日對調時_以datetime_raw擋下並回報`（突變：門檻放到無限大 → 紅） |
+| 同上，`value_`／`value` 退路 | 沒有 `value_raw` 時退路仍用 `TryGetProperty`，多頻道重複鍵回最後一個＝最後一個頻道，與「取第一組主要頻道」相反 | 退路也改 `TryGetFirstProperty` | `FetchDayAsync_value退路遇重複鍵_取第一組主要頻道`（突變 → 紅） |
+| `PrtgSnapshotHostedService.ExecuteSnapshotAsync` | PRTG 呼叫成功後 `DrainBefore` 已把整點桶從累積器移除，`MergeSampledValues` 寫 DB 擲例外時整小時樣本無聲消失；例外還被當成 PRTG 失敗推進退避、`LastSuccessAt` 已先推進 | 新增待寫清單 `_pendingWrite`（上限 20 萬列）：寫入失敗留著下次快照或站台停止時再寫，只寫 Warn 與 NLog，不進退避 | `TickAsync_整點寫入資料庫失敗_列留待下次重試且不計為PRTG失敗`（突變：失敗時清掉待寫清單 → 紅） |
+| 同上，`ExpectedSamplesPerHour` | 期望樣本數用退避後的生效間隔算：退避到 60 分鐘時 1 個樣本＝coverage 100，取樣不足的列通過 75 門檻進基線 | 改以策略設定的間隔算（`ExpectedSamplesPerHour(settings)`） | `TickAsync_退避期間的coverage_以策略間隔而非生效間隔計算`（突變：期望固定 1 → 紅） |
+| 同上，`IsFetchRunningPrtgPhase` | 讀 `SchedulerRunState.ProgressPhase`（NetIQ 軌）判 `prtg-` 前綴，永遠不成立的死碼 | 砍掉，只看 `PrtgProgressPhase` | 既有前置條件測試 |
+| `PrtgClient.TestConnectionAsync` | `GetJsonAsync` 已先對 HTML 擲例外，方法內的第二道 HTML 判定永遠到不了（同一判定三份的其中一份成了死碼） | 砍掉，留一行註解指向統一判定；另修同檔一段少縮 4 格的註解 | 既有 `PrtgClientTests` |
+| `SettingsController` 估算端點 | 白名單為空且列數超標時 `else if` 只顯示前者，最危險的組合反而看不到列數 | 兩個警告各自成立各自講，以空白接起 | 既有 `估算_白名單為空時快照警告` |
+| `SystemSettingsService.ValidatePrtgFetchStrategy` | 既有設定若被寫成空白字串，之後每次存檔都被擋（驗的是 request ?? before） | 空白視同未設定放行，執行期 Normalize 本來就退回保守 | — |
+| `CalibrationService` 門檻字典 | 鍵仍叫 `MinDailyOkHours`，與「可用列」口徑不一致 | 改 `MinDailyUsableHours`，前端標籤同步 | 既有校準測試 |
+| `PrtgProbeRunner` 9d-1 | `count=50000` 單發未比對 treesize，分布與可解析率可能建立在半份樣本上 | 少於 treesize 時印截斷警告 | — |
+| `PrtgSnapshotStatus.PendingBuckets` | 無任何消費端 | 砍掉 | — |
+| `FetchValuesAsync` 回傳 `TimedOutSensors` | 兩個呼叫端都丟棄，逾時數只在函式內印出 | 回傳值改回二元組 | — |
+| 正式碼與測試註解 | 「批次 E2b」「批次 E2c」「批次 A」等只對本輪有意義的字眼 | 改指 `docs/PRTG-SPEC.md §3a／§3b` | — |
+| 文件 | §2「依樣本數加權」實為依 coverage；§3a「不採用 50000」寫兩次；§3b「每小時彙報」實為每次快照、退避「3 次起」實為每滿 3 次、interval 單位未列全、「保留 100 行」無畫面出口；§10 未說匯入不看 quality；BACKLOG 值型規則三條與 objid 清單比對未互相指路 | 逐條改正 | — |
+
+體檢後全套 3887 綠（略過 6）。
+
+**看過但不改**（記錄理由）：
+- 三處「ok 對應裝置集合」建法不同（校準用 anchor 回看 30 天、快照用當天退一天、估算用最新一日）：校準卡與估算的「快照目標數」在對應中斷超過一天時會高於實際；收斂需要 store 開一支共用查詢，屬設計變更，記 BACKLOG 觸發條件。
+- `ParseIntervalSeconds` 接受 9 種單位寫法（規劃只列 3 種）：PRTG 的 interval 字串格式未在實機逐一驗證，多收不會誤判，文件補列。
+- `summaryOnly` 仍跑全部查詢：它承諾的是檔案小，不是省查詢；記憶體峰值未量測，實機看。
+- `treesize` 讀取／「數字或字串都收」的 JSON 輔助各有多份：跨四個既有檔案的收斂，不在體檢範圍。
+- `OnStopping` 與 tick 對同一 (sensor, 小時) 的合併寫入無互斥：兩邊拿到的列不重複，只可能互蓋 coverage 合併結果，影響一列。

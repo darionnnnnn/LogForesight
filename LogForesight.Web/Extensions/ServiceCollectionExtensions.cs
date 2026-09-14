@@ -424,6 +424,10 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<StorageBackend>().Blob(PrtgStructureSyncStatusStore.BlobKey)));
         services.AddSingleton<PrtgStructureSyncService>();
 
+        // PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
+        services.AddSingleton<PrtgSnapshotHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
+
         // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：
         // 人工對應／IP 排除／主機主檔變更三條路徑共用同一份實作
         services.AddSingleton<IPrtgHostMapRefresher>(sp => new PrtgHostMapRefresher(

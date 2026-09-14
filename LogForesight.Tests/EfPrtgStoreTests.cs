@@ -1196,18 +1196,18 @@ public class EfPrtgStoreTests : IDisposable
 
         var s3001 = result.Single(r => r.SensorObjid == 3001);
         Assert.Equal(4, s3001.OkCount);
-        Assert.Equal(3, s3001.OkDays);
-        Assert.Equal(new DateTime(2026, 8, 20, 10, 0, 0), s3001.EarliestOkPeriod);
-        Assert.Equal(new DateTime(2026, 8, 22, 9, 0, 0), s3001.LatestOkPeriod);
+        Assert.Equal(3, s3001.UsableDays);
+        Assert.Equal(new DateTime(2026, 8, 20, 10, 0, 0), s3001.EarliestUsablePeriod);
+        Assert.Equal(new DateTime(2026, 8, 22, 9, 0, 0), s3001.LatestUsablePeriod);
         Assert.Equal(1, s3001.UnknownCount);
         Assert.Equal(0, s3001.NodataCount);
         Assert.Equal(5, s3001.TotalCount);
 
         var s3002 = result.Single(r => r.SensorObjid == 3002);
         Assert.Equal(0, s3002.OkCount);
-        Assert.Equal(0, s3002.OkDays); // 涵蓋天數為 0（不是 3）
-        Assert.Null(s3002.EarliestOkPeriod);
-        Assert.Null(s3002.LatestOkPeriod);
+        Assert.Equal(0, s3002.UsableDays); // 涵蓋天數為 0（不是 3）
+        Assert.Null(s3002.EarliestUsablePeriod);
+        Assert.Null(s3002.LatestUsablePeriod);
         Assert.Equal(2, s3002.UnknownCount);
         Assert.Equal(1, s3002.NodataCount);
         Assert.Equal(3, s3002.TotalCount);
@@ -1330,8 +1330,8 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Single(cov);
         Assert.Equal(3, cov[0].OkCount);
         Assert.Equal(3, cov[0].TotalCount);
-        Assert.Equal(new DateTime(2026, 8, 31, 0, 0, 0), cov[0].EarliestOkPeriod);
-        Assert.Equal(new DateTime(2026, 8, 31, 23, 0, 0), cov[0].LatestOkPeriod);
+        Assert.Equal(new DateTime(2026, 8, 31, 0, 0, 0), cov[0].EarliestUsablePeriod);
+        Assert.Equal(new DateTime(2026, 8, 31, 23, 0, 0), cov[0].LatestUsablePeriod);
 
         // 2. GetDailyValueAggregations
         var aggs = store.GetDailyValueAggregations(from, to);
@@ -1354,6 +1354,77 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(1, stateSummary.DistinctSensors);
         Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.EarliestChangedAt);
         Assert.Equal(new DateTime(2026, 8, 31, 12, 0, 0), stateSummary.LatestChangedAt);
+    }
+
+    [Fact]
+    public void 校準查詢_可用列一致性_三個查詢分類與統計完全一致()
+    {
+        var store = CreateStore();
+        var date = new DateTime(2026, 8, 31);
+        var from = date;
+        var to = date.AddDays(1);
+
+        // 同一顆 sensor、同一天、不同小時，寫入七列
+        var values = new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(1), Quality = PrtgDataQuality.Ok, Coverage = null, AvgValue = 10.0, MinValue = null, MaxValue = null },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(2), Quality = PrtgDataQuality.Sampled, Coverage = 100.0, AvgValue = 20.0, MinValue = 15.0, MaxValue = 25.0 },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(3), Quality = PrtgDataQuality.Sampled, Coverage = 75.0, AvgValue = 30.0, MinValue = 28.0, MaxValue = 40.0 },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(4), Quality = PrtgDataQuality.Sampled, Coverage = 74.0, AvgValue = 999.0, MinValue = 1.0, MaxValue = 9999.0 },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(5), Quality = PrtgDataQuality.Unknown, Coverage = null, AvgValue = null, MinValue = null, MaxValue = null },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(6), Quality = PrtgDataQuality.NoData, Coverage = null, AvgValue = null, MinValue = null, MaxValue = null },
+            new() { SensorObjid = 5001, PeriodStart = date.AddHours(7), Quality = PrtgDataQuality.Paused, Coverage = null, AvgValue = null, MinValue = null, MaxValue = null },
+        };
+        store.UpsertValues(values);
+
+        // 1. GetValueCoverageSummary
+        var covList = store.GetValueCoverageSummary(from, to);
+        Assert.Single(covList);
+        var cov = covList[0];
+        Assert.Equal(5001, cov.SensorObjid);
+        Assert.Equal(1, cov.OkCount);
+        Assert.Equal(2, cov.SampledCount);
+        Assert.Equal(3, cov.UsableCount);
+        Assert.Equal(1, cov.UnknownCount);
+        Assert.Equal(1, cov.NodataCount);
+        Assert.Equal(2, cov.OtherCount);
+        Assert.Equal(7, cov.TotalCount);
+        Assert.Equal(1, cov.UsableDays);
+        Assert.Equal(date.AddHours(1), cov.EarliestUsablePeriod);
+        Assert.Equal(date.AddHours(3), cov.LatestUsablePeriod);
+
+        // 2. GetDailyValueAggregations
+        var aggList = store.GetDailyValueAggregations(from, to);
+        Assert.Single(aggList);
+        var agg = aggList[0];
+        Assert.Equal(5001, agg.SensorObjid);
+        Assert.Equal(date, agg.Date);
+        Assert.Equal(1, agg.OkCount);
+        Assert.Equal(2, agg.SampledCount);
+        Assert.Equal(3, agg.UsableCount);
+        Assert.Equal(1, agg.UnknownCount);
+        Assert.Equal(1, agg.NodataCount);
+        Assert.Equal(2, agg.OtherCount);
+        Assert.Equal(7, agg.TotalCount);
+        Assert.Equal(20.0, agg.AvgValue);
+        Assert.Equal(10.0, agg.MinValue);
+        Assert.Equal(30.0, agg.MaxValue);
+        Assert.Equal(15.0, agg.MinObserved);
+        Assert.Equal(40.0, agg.MaxObserved);
+
+        // 3. GetDailyValueMagnitudes
+        var magList = store.GetDailyValueMagnitudes(from, to);
+        Assert.Single(magList);
+        var mag = magList[0];
+        Assert.Equal(date, mag.Date);
+        Assert.Equal(1, mag.SensorCount);
+        Assert.Equal(7, mag.TotalCount);
+        Assert.Equal(1, mag.OkCount);
+        Assert.Equal(2, mag.SampledCount);
+        Assert.Equal(3, mag.UsableCount);
+        Assert.Equal(1, mag.UnknownCount);
+        Assert.Equal(1, mag.NodataCount);
+        Assert.Equal(2, mag.OtherCount);
     }
 
     [Fact]
@@ -1392,5 +1463,243 @@ public class EfPrtgStoreTests : IDisposable
 
         var deleted = store.DeleteIpExclude("10.9.9.9:8080");
         Assert.Equal(1, deleted);
+    }
+
+    [Fact]
+    public void MergeSampledValues_無既有列_新增且欄位正確()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var now = new DateTime(2026, 9, 11, 11, 0, 0);
+
+        var rows = new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7001,
+                PeriodStart = period,
+                AvgValue = 42.5,
+                MinValue = 10.0,
+                MaxValue = 80.0,
+                Coverage = 50.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = now
+            }
+        };
+
+        var count = store.MergeSampledValues(rows);
+        Assert.Equal(1, count);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.PrtgValues.Single(v => v.SensorObjid == 7001 && v.PeriodStart == period);
+        Assert.Equal(42.5, row.AvgValue);
+        Assert.Equal(10.0, row.MinValue);
+        Assert.Equal(80.0, row.MaxValue);
+        Assert.Equal(50.0, row.Coverage);
+        Assert.Equal(PrtgDataQuality.Sampled, row.Quality);
+        Assert.Equal(now, row.CreatedAt);
+    }
+
+    [Fact]
+    public void MergeSampledValues_既有sampled列_加權平均與聯集極值與累加覆蓋率()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var t1 = new DateTime(2026, 9, 11, 10, 30, 0);
+        var t2 = new DateTime(2026, 9, 11, 11, 0, 0);
+
+        // 既有 sampled（Avg 10、Cov 25、Min 8、Max 12）
+        store.MergeSampledValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7002,
+                PeriodStart = period,
+                AvgValue = 10.0,
+                MinValue = 8.0,
+                MaxValue = 12.0,
+                Coverage = 25.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = t1
+            }
+        });
+
+        // 新 sampled（Avg 20、Cov 25、Min 5、Max 25）
+        var mergedCount = store.MergeSampledValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7002,
+                PeriodStart = period,
+                AvgValue = 20.0,
+                MinValue = 5.0,
+                MaxValue = 25.0,
+                Coverage = 25.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = t2
+            }
+        });
+
+        Assert.Equal(1, mergedCount);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.PrtgValues.Single(v => v.SensorObjid == 7002 && v.PeriodStart == period);
+        // (10 * 25 + 20 * 25) / (25 + 25) = 15
+        Assert.Equal(15.0, row.AvgValue);
+        // Cov = 25 + 25 = 50
+        Assert.Equal(50.0, row.Coverage);
+        // Min = min(8, 5) = 5
+        Assert.Equal(5.0, row.MinValue);
+        // Max = max(12, 25) = 25
+        Assert.Equal(25.0, row.MaxValue);
+        Assert.Equal(PrtgDataQuality.Sampled, row.Quality);
+        Assert.Equal(t2, row.CreatedAt);
+    }
+
+    [Fact]
+    public void MergeSampledValues_既有ok列_完全不動且不計入回傳數()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var t1 = new DateTime(2026, 9, 11, 10, 30, 0);
+        var t2 = new DateTime(2026, 9, 11, 11, 0, 0);
+
+        // 先寫入一筆精確值（ok）
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7003,
+                PeriodStart = period,
+                AvgValue = 99.0,
+                MinValue = 90.0,
+                MaxValue = 100.0,
+                Coverage = 100.0,
+                Quality = PrtgDataQuality.Ok,
+                CreatedAt = t1
+            }
+        });
+
+        // 嘗試以 sampled 合併
+        var count = store.MergeSampledValues(new List<PrtgValueRow>
+        {
+            new()
+            {
+                SensorObjid = 7003,
+                PeriodStart = period,
+                AvgValue = 10.0,
+                MinValue = 5.0,
+                MaxValue = 20.0,
+                Coverage = 50.0,
+                Quality = PrtgDataQuality.Sampled,
+                CreatedAt = t2
+            }
+        });
+
+        // 不動，該列不計入回傳數
+        Assert.Equal(0, count);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.PrtgValues.Single(v => v.SensorObjid == 7003 && v.PeriodStart == period);
+        Assert.Equal(99.0, row.AvgValue);
+        Assert.Equal(90.0, row.MinValue);
+        Assert.Equal(100.0, row.MaxValue);
+        Assert.Equal(100.0, row.Coverage);
+        Assert.Equal(PrtgDataQuality.Ok, row.Quality);
+        Assert.Equal(t1, row.CreatedAt);
+    }
+
+    [Fact]
+    public void 小時曲線查詢_SQLServer翻譯得出來()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;")
+            .Options;
+        using var ctx = new LfDbContext(options);
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 31);
+        var sql = EfPrtgStore.BuildUsableHourlyProfileQuery(ctx.PrtgValues, ctx.PrtgSensors, from, to).ToQueryString();
+
+        Assert.NotNull(sql);
+        Assert.Contains("DATEPART", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void 小時曲線查詢_SQLite翻譯得出來()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite("Data Source=:memory:")
+            .Options;
+        using var ctx = new LfDbContext(options);
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 31);
+        var sql = EfPrtgStore.BuildUsableHourlyProfileQuery(ctx.PrtgValues, ctx.PrtgSensors, from, to).ToQueryString();
+
+        Assert.NotNull(sql);
+        Assert.Contains("strftime", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void 小時曲線_只算可用列且依type與小時分組()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        var from = new DateTime(2026, 9, 1, 0, 0, 0);
+        var to = new DateTime(2026, 9, 2, 0, 0, 0);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 101, DeviceObjid = 1, SensorType = "TypeA", Paused = false },
+            new() { Objid = 102, DeviceObjid = 1, SensorType = "TypeA", Paused = false },
+            new() { Objid = 201, DeviceObjid = 2, SensorType = "TypeB", Paused = false }
+        }, now);
+
+        // type A 的 01 時兩列可用（10、30）＋ 01 時一列 coverage 74 的 sampled（999）、13 時一列可用（50）；type B 的 01 時一列可用（7）
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 101, PeriodStart = new DateTime(2026, 9, 1, 1, 0, 0), AvgValue = 10.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 102, PeriodStart = new DateTime(2026, 9, 1, 1, 0, 0), AvgValue = 30.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 101, PeriodStart = new DateTime(2026, 9, 1, 1, 30, 0), AvgValue = 999.0, Quality = PrtgDataQuality.Sampled, Coverage = 74.0 },
+            new() { SensorObjid = 101, PeriodStart = new DateTime(2026, 9, 1, 13, 0, 0), AvgValue = 50.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 201, PeriodStart = new DateTime(2026, 9, 1, 1, 0, 0), AvgValue = 7.0, Quality = PrtgDataQuality.Ok }
+        });
+
+        var results = store.GetUsableHourlyProfileByType(from, to);
+
+        // A 的 01 時 AvgValue=20、UsableCount=2（不含 999）；A 的 13 時 50；B 的 01 時 7
+        Assert.Equal(3, results.Count);
+
+        var a01 = Assert.Single(results, r => r.SensorType == "TypeA" && r.Hour == 1);
+        Assert.Equal(20.0, a01.AvgValue);
+        Assert.Equal(2, a01.UsableCount);
+
+        var a13 = Assert.Single(results, r => r.SensorType == "TypeA" && r.Hour == 13);
+        Assert.Equal(50.0, a13.AvgValue);
+        Assert.Equal(1, a13.UsableCount);
+
+        var b01 = Assert.Single(results, r => r.SensorType == "TypeB" && r.Hour == 1);
+        Assert.Equal(7.0, b01.AvgValue);
+        Assert.Equal(1, b01.UsableCount);
+    }
+
+    [Fact]
+    public void 快照取樣涵蓋_只看sampled且含coverage不足者()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 9, 10, 0, 0, 0);
+
+        // 窗口內兩顆感測器的 sampled（coverage 100、50）＋ 窗口外一列 ＋ 一列 ok
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 501, PeriodStart = new DateTime(2026, 9, 10, 2, 0, 0), AvgValue = 10.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 502, PeriodStart = new DateTime(2026, 9, 10, 3, 0, 0), AvgValue = 20.0, Quality = PrtgDataQuality.Sampled, Coverage = 50.0 },
+            new() { SensorObjid = 503, PeriodStart = new DateTime(2026, 9, 9, 23, 0, 0), AvgValue = 30.0, Quality = PrtgDataQuality.Sampled, Coverage = 100.0 },
+            new() { SensorObjid = 504, PeriodStart = new DateTime(2026, 9, 10, 4, 0, 0), AvgValue = 40.0, Quality = PrtgDataQuality.Ok, Coverage = 100.0 }
+        });
+
+        var result = store.GetSampledCoverageSince(from);
+
+        Assert.Equal(2, result.SensorCount);
+        Assert.Equal(75.0, result.AverageCoverage);
     }
 }
