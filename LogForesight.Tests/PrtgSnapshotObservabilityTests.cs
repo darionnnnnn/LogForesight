@@ -223,6 +223,22 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         Assert.Equal(0, res.Data.SnapshotIntervalMinutes);
         Assert.Equal(0, res.Data.SnapshotConsecutiveFailures);
         Assert.False(res.Data.SnapshotBackingOff);
+        Assert.Null(res.Data.SnapshotSkipReason);
+    }
+
+    [Fact]
+    public async Task 鏡像狀態_快照暫停時帶出原因()
+    {
+        var service = CreateService();
+        _settingsStore.Update(s => s.PrtgEnabled = false);
+
+        await service.TickAsync();
+
+        var controller = CreateController(snapshot: service);
+        var res = controller.GetPrtgMirrorStatus();
+
+        Assert.NotNull(res.Data);
+        Assert.Equal("PRTG 擷取未啟用", res.Data.SnapshotSkipReason);
     }
 
     [Fact]

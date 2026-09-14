@@ -429,19 +429,23 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-last-state-change-at', `狀態變更：${data.lastStateChangeAt ? formatDateTime(data.lastStateChangeAt) : '-'}`);
 
     const snapEl = document.getElementById('prtg-mirror-snapshot');
+    let snapText;
     if (!data.snapshotLastAt) {
-        setTxt('prtg-mirror-snapshot', '數值快照：尚未執行');
+        snapText = '數值快照：尚未執行';
         snapEl?.classList.remove('text-warning');
     } else {
-        let snapText = `數值快照：最近 ${formatDateTime(data.snapshotLastAt)}，${formatNumber(data.snapshotSensors)} 顆，間隔 ${data.snapshotIntervalMinutes} 分鐘`;
+        snapText = `數值快照：最近 ${formatDateTime(data.snapshotLastAt)}，${formatNumber(data.snapshotSensors)} 顆，間隔 ${data.snapshotIntervalMinutes} 分鐘`;
         if (data.snapshotBackingOff) {
             snapText += `（PRTG 連續失敗 ${data.snapshotConsecutiveFailures} 次，已自動拉長間隔）`;
             snapEl?.classList.add('text-warning');
         } else {
             snapEl?.classList.remove('text-warning');
         }
-        setTxt('prtg-mirror-snapshot', snapText);
     }
+    if (data.snapshotSkipReason) {
+        snapText += `（目前暫停：${data.snapshotSkipReason}）`;
+    }
+    setTxt('prtg-mirror-snapshot', snapText);
 
     setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
     setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));

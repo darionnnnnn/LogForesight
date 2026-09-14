@@ -143,6 +143,10 @@
 
                 <div class="mb-3">
                     <label for="prtg-fetch-strategy" class="form-label fw-semibold">取數策略</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="保守：每 15 分鐘對 PRTG 發一次全量快照（一天約 96 次，單次約 10～15 秒，同時只有 1 個請求），夜間不逐顆查詢，數值全由快照供應。激進：每 5 分鐘一次（一天約 288 次），另在夜間對觸發主機逐顆查詢歷史值（每晚數百次、單次 5～70 秒），PRTG 負擔明顯較高。實際的快照目標感測器數與每日寫入列數，請按下方「估算規模」查看。兩種策略下快照連續失敗 3 次都會自動拉長間隔（上限 60 分鐘）。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
                     <select class="form-select" id="prtg-fetch-strategy">
                         <option value="conservative">保守（預設）：每 15 分鐘快照一次，夜間不逐顆查詢</option>
                         <option value="aggressive">激進：每 5 分鐘快照一次，夜間另逐顆查詢觸發主機</option>

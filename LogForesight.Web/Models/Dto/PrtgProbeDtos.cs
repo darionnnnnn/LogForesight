@@ -67,6 +67,7 @@ public class PrtgMirrorStatusDto
     public int SnapshotIntervalMinutes { get; set; }
     public int SnapshotConsecutiveFailures { get; set; }
     public bool SnapshotBackingOff { get; set; }
+    public string? SnapshotSkipReason { get; set; }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>

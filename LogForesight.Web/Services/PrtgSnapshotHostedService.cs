@@ -21,13 +21,15 @@ namespace LogForesight.Web.Services;
 /// <param name="ConsecutiveFailures">連續失敗次數</param>
 /// <param name="PendingBuckets">累積器中待寫出的小時桶數量</param>
 /// <param name="PendingSamples">累積器中待寫出的總樣本數量</param>
+/// <param name="LastSkipReason">快照跳過原因（若因前置條件未滿足暫停）</param>
 public sealed record PrtgSnapshotStatus(
     DateTime? LastSuccessAt,
     int LastSensorCount,
     int IntervalMinutes,
     int ConsecutiveFailures,
     int PendingBuckets,
-    int PendingSamples);
+    int PendingSamples,
+    string? LastSkipReason);
 
 /// <summary>
 /// PRTG 數值快照背景服務（批次 E2b）：定期發送一次 table.json 取得即時快照數值，
@@ -60,6 +62,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private int _lastSensorCount;
     private int _effectiveIntervalMinutes;
     private int _consecutiveFailures;
+    private string? _lastSkipReason;
 
     private DateTime? _targetRefreshHour;
     private HashSet<long>? _targetObjids;
@@ -108,7 +111,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             IntervalMinutes: _effectiveIntervalMinutes,
             ConsecutiveFailures: _consecutiveFailures,
             PendingBuckets: _accumulator.BucketCount,
-            PendingSamples: _accumulator.SampleCount);
+            PendingSamples: _accumulator.SampleCount,
+            LastSkipReason: _lastSkipReason);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -148,19 +152,41 @@ public class PrtgSnapshotHostedService : BackgroundService
         var settings = _settingsStore.Get();
 
         // 1. PrtgEnabled 為 false → 不跑。
-        if (!settings.PrtgEnabled) return;
+        if (!settings.PrtgEnabled)
+        {
+            _lastSkipReason = "PRTG 擷取未啟用";
+            return;
+        }
 
         // 2. 連線設定不齊（PrtgUrl 空 或 PrtgClientFactory.HasUsableCredentials(settings) 為 false）→ 不跑。
-        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings)) return;
+        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
+        {
+            _lastSkipReason = "PRTG 連線設定不齊";
+            return;
+        }
 
         // 3. 結構同步執行中（PrtgStructureSyncService.IsRunning）→ 不跑。
-        if (_structureSync.IsRunning) return;
+        if (_structureSync.IsRunning)
+        {
+            _lastSkipReason = "結構同步執行中，暫停快照";
+            return;
+        }
 
         // 4. 歷史回填執行中（PrtgBackfillService 的狀態 IsRunning）→ 不跑。
-        if (_backfill.GetStatus().IsRunning) return;
+        if (_backfill.GetStatus().IsRunning)
+        {
+            _lastSkipReason = "歷史回填執行中，暫停快照";
+            return;
+        }
 
         // 5. 取數執行正在 PRTG 階段（SchedulerRunState 的快照裡，進度 phase 以 prtg- 開頭）→ 不跑。
-        if (IsFetchRunningPrtgPhase()) return;
+        if (IsFetchRunningPrtgPhase())
+        {
+            _lastSkipReason = "夜間取數正在 PRTG 階段，暫停快照";
+            return;
+        }
+
+        _lastSkipReason = null;
 
         // 若無退避，生效間隔隨策略設定更新
         if (_consecutiveFailures == 0)

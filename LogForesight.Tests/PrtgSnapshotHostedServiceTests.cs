@@ -475,4 +475,56 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
         Assert.Single(_stubHandler.RequestedUrls);
     }
+
+    [Fact]
+    public async Task 前置條件不成立時記錄暫停原因()
+    {
+        SetupTargetSensors(new[] { (901L, "Ping") });
+        var service = CreateService();
+
+        Assert.True(_syncState.TryBegin());
+        Assert.True(_structureSync.IsRunning);
+
+        await service.TickAsync();
+
+        Assert.Empty(_stubHandler.RequestedUrls);
+        var status = service.GetStatus();
+        Assert.NotNull(status.LastSkipReason);
+        Assert.Contains("結構同步", status.LastSkipReason);
+    }
+
+    [Fact]
+    public async Task 前置條件恢復後清除暫停原因()
+    {
+        var tableJson = "{\"treesize\":1,\"sensors\":[{\"objid\":902,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(tableJson));
+        SetupTargetSensors(new[] { (902L, "Ping") });
+        var service = CreateService();
+
+        Assert.True(_syncState.TryBegin());
+        await service.TickAsync();
+        Assert.Contains("結構同步", service.GetStatus().LastSkipReason);
+
+        _syncState.EndRun(true);
+        Assert.False(_structureSync.IsRunning);
+
+        await service.TickAsync();
+        Assert.Null(service.GetStatus().LastSkipReason);
+    }
+
+    [Fact]
+    public async Task 未到間隔不設暫停原因()
+    {
+        var tableJson = "{\"treesize\":1,\"sensors\":[{\"objid\":903,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(tableJson));
+        SetupTargetSensors(new[] { (903L, "Ping") });
+        var service = CreateService();
+
+        await service.TickAsync();
+        Assert.NotNull(service.GetStatus().LastSuccessAt);
+        Assert.Null(service.GetStatus().LastSkipReason);
+
+        await service.TickAsync();
+        Assert.Null(service.GetStatus().LastSkipReason);
+    }
 }

@@ -884,4 +884,36 @@ public class PrtgAdminPageUiTests
         var hintMatches = System.Text.RegularExpressions.Regex.Matches(jsContent, @"getElementById\(['""]calibration-export-size-hint['""]\)");
         Assert.Single(hintMatches);
     }
+
+    [Fact]
+    public void PrtgCshtml取數策略包含說明Popover且保留Utf8Bom()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(prtgCshtmlPath), $"找不到檔案: {prtgCshtmlPath}");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("prtg-fetch-strategy", content);
+        Assert.Contains("一天約 96 次", content);
+        Assert.Contains("一天約 288 次", content);
+
+        var bytes = File.ReadAllBytes(prtgCshtmlPath);
+        Assert.True(bytes.Length >= 3, "Prtg.cshtml 長度小於 3 位元組");
+        Assert.Equal(0xEF, bytes[0]);
+        Assert.Equal(0xBB, bytes[1]);
+        Assert.Equal(0xBF, bytes[2]);
+    }
+
+    [Fact]
+    public void PrtgAdminJs包含快照暫停原因且目前暫停僅出現一次()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("snapshotSkipReason", js);
+        var pauseMatches = System.Text.RegularExpressions.Regex.Matches(js, "目前暫停");
+        Assert.Single(pauseMatches);
+    }
 }
