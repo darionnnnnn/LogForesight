@@ -1660,9 +1660,18 @@ function renderPrtgBackfillStatus(status) {
     const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
     // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
     const currentDayNo = Math.min(status.daysDone + 1, status.daysTotal || 0);
-    const label = dateStr
+    const dayLabel = dateStr
         ? `第 ${currentDayNo} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
         : `已完成 ${status.daysDone} / ${status.daysTotal} 天`;
+    // 翻狀態變更在逐日之前、可能要好幾分鐘：這段不顯示讀取量，畫面會一直停在 sensor 0 / 0
+    let label = status.daysTotal > 0 ? dayLabel : null;
+    if (status.readingStateChanges) {
+        const read = status.stateChangesRead || 0;
+        const total = status.stateChangesTotal || 0;
+        label = total > 0
+            ? `讀取狀態變更：${formatNumber(read)} / 約 ${formatNumber(total)} 筆`
+            : `讀取狀態變更：${formatNumber(read)}`;
+    }
 
     updateProgressBar(
         { wrapEl, barEl, textEl },
@@ -1671,8 +1680,17 @@ function renderPrtgBackfillStatus(status) {
         status.daysTotal,
         null,
         '天',
-        status.daysTotal > 0 ? label : null
+        label
     );
+
+    // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
+    // 這裡會動 d-none，而 data-maintain-only 的隱藏也是靠 d-none——沒有 Maintain 時
+    // 不能碰它，否則輪詢會把唯讀使用者看不到的停止鈕重新露出來。
+    const cancelBtn = document.getElementById('prtg-backfill-cancel');
+    if (cancelBtn && canMaintainSchedule) {
+        cancelBtn.classList.toggle('d-none', !status.isRunning);
+        if (!status.isRunning) cancelBtn.disabled = false;
+    }
 
     if (status.isRunning) {
         startButton.disabled = true;
@@ -1684,6 +1702,10 @@ function renderPrtgBackfillStatus(status) {
     startButton.disabled = prtgModuleEnabled === false;
     if (!status.completedAt) {
         statusEl.textContent = '';
+        return;
+    }
+    if (status.cancelled) {
+        statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ■ 已停止`;
         return;
     }
     statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
@@ -1740,6 +1762,18 @@ function bindPrtgBackfill() {
             // 啟動失敗（如尚未設定連線位址、與探測互斥）：訊息要讓使用者看得到，不能靜默
             startButton.disabled = false;
             toast(error?.message || '無法啟動 PRTG 歷史回填。', 'danger');
+        }
+    });
+
+    const cancelBtn = document.getElementById('prtg-backfill-cancel');
+    cancelBtn?.addEventListener('click', async () => {
+        const restore = withBusy(cancelBtn, '停止中');
+        try {
+            await api.post('/api/admin/settings/prtg-backfill/cancel', {});
+            toast('已送出停止，回填會在目前這一步結束後停下', 'success');
+            await refreshPrtgBackfillStatus();
+        } finally {
+            restore();
         }
     });
 

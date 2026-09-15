@@ -422,6 +422,32 @@ public class RunsPageUiTests
         Assert.Contains("第 ${", js);
     }
 
+    /// <summary>
+    /// 歷史回填可停止、翻狀態變更期間有進度、停止後狀態文字說得出「已停止」（批次 C）。
+    /// 停止鈕照結構同步停止鈕的寫法：輪詢切 d-none 時必須看權限旗標。
+    /// </summary>
+    [Fact]
+    public void 歷史回填有停止鈕_狀態變更讀取進度與已停止文字()
+    {
+        var root = FindRepoRoot();
+        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+        var cshtml = File.ReadAllText(cshtmlPath);
+        Assert.Contains("class=\"btn btn-sm btn-outline-danger d-none\" id=\"prtg-backfill-cancel\" data-maintain-only", cshtml);
+
+        // Runs.cshtml 在 dev 就帶 UTF-8 BOM，改檔不得把它弄掉
+        var head = File.ReadAllBytes(cshtmlPath).Take(3).ToArray();
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, head);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("prtg-backfill/cancel", js);
+        Assert.Contains("readingStateChanges", js);
+        Assert.Contains("已停止", js);
+        Assert.Contains("讀取狀態變更：${formatNumber(read)} / 約 ${formatNumber(total)} 筆", js);
+        Assert.Contains("已送出停止，回填會在目前這一步結束後停下", js);
+        // 權限守門：同步與回填兩顆停止鈕的輪詢切換都要看 canMaintainSchedule
+        Assert.Equal(2, CountOccurrences(js, "cancelBtn && canMaintainSchedule"));
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;

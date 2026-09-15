@@ -175,6 +175,31 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
     }
 
+    /// <summary>
+    /// 停止進行中的歷史回填：回填逐日打 PRTG，天數多時可跑上數小時；
+    /// 沒有這顆鈕時唯一的中止方式是重啟站台。
+    /// </summary>
+    [HttpPost("prtg-backfill/cancel")]
+    public ApiResponse<StartPrtgBackfillResultDto> CancelPrtgBackfill()
+    {
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用。");
+
+        // 沒有執行中就不是「停止成功」——回 409，與結構同步停止同一種語意。
+        if (!_prtgBackfill.TryCancel())
+            throw DomainException.Conflict("目前沒有進行中的歷史回填。");
+
+        _audit.Record(
+            action: AuditActions.PrtgBackfillCancel,
+            summary: "停止 PRTG 歷史回填",
+            targetKind: "system_settings",
+            targetId: "prtg_backfill",
+            detail: new { });
+
+        return ApiResponse<StartPrtgBackfillResultDto>.Ok(
+            new StartPrtgBackfillResultDto { Started = false });
+    }
+
     // ── PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）───────────────────────
 
     [HttpGet("prtg-structure-sync/status")]

@@ -46,7 +46,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         _backfillState = new PrtgBackfillRunState();
         _probeState = new PrtgProbeRunState();
-        _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore);
+        _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore, _schedulerRunState, _syncState);
 
         _stubHandler = new StubHandler();
 
@@ -222,6 +222,83 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
         Assert.Single(_stubHandler.RequestedUrls);
         Assert.NotNull(service.GetStatus().LastSuccessAt);
+    }
+
+    [Fact]
+    public async Task 暫停超過15分鐘後恢復_寫出暫停時長()
+    {
+        var tableJson = "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(tableJson));
+        SetupTargetSensors(new[] { (101L, "Ping") });
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        Assert.True(_syncState.TryBegin());
+        await service.TickAsync();
+
+        clock = DateTime.Today.AddHours(10).AddMinutes(40);
+        _syncState.EndRun(true);
+        await service.TickAsync();
+
+        Assert.Contains(service.ExecutionOutputs, l =>
+            l == "快照已恢復：因「結構同步執行中，暫停快照」暫停 40 分鐘（10:00～10:40），這段期間的取樣列 coverage 會偏低");
+
+        // 已清掉暫停開始時間：之後正常 tick 不再重複寫
+        clock = clock.AddMinutes(20);
+        await service.TickAsync();
+        Assert.Single(service.ExecutionOutputs, l => l.StartsWith("快照已恢復"));
+    }
+
+    [Fact]
+    public async Task 暫停不到15分鐘_不寫()
+    {
+        var tableJson = "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(tableJson));
+        SetupTargetSensors(new[] { (101L, "Ping") });
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        Assert.True(_syncState.TryBegin());
+        await service.TickAsync();
+
+        clock = DateTime.Today.AddHours(10).AddMinutes(10);
+        _syncState.EndRun(true);
+        await service.TickAsync();
+
+        Assert.DoesNotContain(service.ExecutionOutputs, l => l.StartsWith("快照已恢復"));
+        Assert.Single(_stubHandler.RequestedUrls); // 恢復後照常快照，不是整條沒走到
+    }
+
+    [Fact]
+    public async Task 暫停中原因改變_不重設開始時間且印最後原因()
+    {
+        var tableJson = "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(tableJson));
+        SetupTargetSensors(new[] { (101L, "Ping") });
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        Assert.True(_syncState.TryBegin());
+        await service.TickAsync();
+
+        // 10:10 同步結束但回填開始：原因換了，開始時間仍是 10:00
+        clock = DateTime.Today.AddHours(10).AddMinutes(10);
+        _syncState.EndRun(true);
+        Assert.True(_backfillState.TryBeginRun(out _));
+        await service.TickAsync();
+
+        clock = DateTime.Today.AddHours(10).AddMinutes(30);
+        _backfillState.FinishRun(true, cancelled: false);
+        await service.TickAsync();
+
+        Assert.Contains(service.ExecutionOutputs, l =>
+            l.Contains("因「歷史回填執行中，暫停快照」暫停 30 分鐘（10:00～10:30）"));
     }
 
     [Fact]

@@ -118,6 +118,47 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         Assert.Contains(_audit.Entries, e => e.Action == AuditActions.PrtgStructureSyncCancel);
     }
 
+    private PrtgBackfillService CreateBackfillService(PrtgBackfillRunState state) =>
+        new(_settingsStore, _backend, state, new PrtgProbeRunState(),
+            new HostStore(_backend.Blob("hosts")), new SchedulerRunState(), new PrtgStructureSyncRunState());
+
+    private SettingsController CreateBackfillController(PrtgBackfillService backfill)
+    {
+        var controller = new SettingsController(
+            new StubSystemSettingsService(),
+            new AiUsageStore(_backend.Blob("ai_usage")),
+            _audit,
+            prtgBackfill: backfill,
+            backend: _backend);
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        return controller;
+    }
+
+    [Fact]
+    public void 回填停止_沒有進行中回409且不寫稽核()
+    {
+        var controller = CreateBackfillController(CreateBackfillService(new PrtgBackfillRunState()));
+
+        var ex = Assert.Throws<DomainException>(() => controller.CancelPrtgBackfill());
+        Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
+        Assert.Equal("目前沒有進行中的歷史回填。", ex.Message);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 回填停止_執行中時取消語彙基元並寫稽核()
+    {
+        var state = new PrtgBackfillRunState();
+        Assert.True(state.TryBeginRun(out var token));
+        var controller = CreateBackfillController(CreateBackfillService(state));
+
+        var res = controller.CancelPrtgBackfill();
+
+        Assert.True(res.Success);
+        Assert.True(token.IsCancellationRequested);
+        Assert.Contains(_audit.Entries, e => e.Action == AuditActions.PrtgBackfillCancel && e.Summary == "停止 PRTG 歷史回填");
+    }
+
     [Fact]
     public void 同步服務未接上時回輸入錯誤而非500()
     {

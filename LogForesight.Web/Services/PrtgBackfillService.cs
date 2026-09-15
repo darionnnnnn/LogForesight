@@ -1,4 +1,5 @@
 using LogForesight.Core;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
@@ -8,7 +9,8 @@ namespace LogForesight.Web.Services;
 /// <summary>PRTG 歷史回填的進度快照。</summary>
 public record PrtgBackfillProgress(
     int DaysDone, int DaysTotal, DateTime? CurrentDate,
-    int SensorsDone, int SensorsTotal);
+    int SensorsDone, int SensorsTotal,
+    int StateChangesRead, int StateChangesTotal, bool ReadingStateChanges);
 
 /// <summary>
 /// PRTG 歷史回填的行程內單例執行狀態＋併發 1 的 gate。
@@ -23,6 +25,63 @@ public class PrtgBackfillRunState : PrtgProbeRunState
     private DateTime? _currentDate;
     private int _sensorsDone;
     private int _sensorsTotal;
+    private int _stateChangesRead;
+    private int _stateChangesTotal;
+    private bool _readingStateChanges;
+
+    /// <summary>本趟的取消來源；沒有執行中時為 null。與執行權一起在同一把鎖內建立，停止鈕不會落空。</summary>
+    private CancellationTokenSource? _cts;
+
+    /// <summary>最近一趟是否被使用者停止（新一趟開始時歸零）。</summary>
+    public bool Cancelled
+    {
+        get { lock (_progressLock) return _cancelled; }
+    }
+
+    private bool _cancelled;
+
+    /// <summary>
+    /// 搶執行權並建立本趟的取消來源。已在執行中回 false。
+    /// 取消來源與執行權在同一把鎖內建立：IsRunning 一轉 true 就一定有 cts 可取消。
+    /// </summary>
+    public bool TryBeginRun(out CancellationToken token)
+    {
+        lock (_progressLock)
+        {
+            if (!TryBegin())
+            {
+                token = default;
+                return false;
+            }
+            _cts = new CancellationTokenSource();
+            _cancelled = false;
+            token = _cts.Token;
+            return true;
+        }
+    }
+
+    /// <summary>要求停止進行中的回填；沒有執行中時回 false。</summary>
+    public bool TryCancel()
+    {
+        lock (_progressLock)
+        {
+            if (_cts == null || !Snapshot().IsRunning) return false;
+            _cts.Cancel();
+            return true;
+        }
+    }
+
+    /// <summary>結束本趟：記住是否被停止、釋放並清空取消來源，再結束執行狀態。</summary>
+    public void FinishRun(bool success, bool cancelled)
+    {
+        lock (_progressLock)
+        {
+            _cancelled = cancelled;
+            _cts?.Dispose();
+            _cts = null;
+        }
+        EndRun(success);
+    }
 
     public void ResetProgress()
     {
@@ -33,6 +92,9 @@ public class PrtgBackfillRunState : PrtgProbeRunState
             _currentDate = null;
             _sensorsDone = 0;
             _sensorsTotal = 0;
+            _stateChangesRead = 0;
+            _stateChangesTotal = 0;
+            _readingStateChanges = false;
         }
     }
 
@@ -45,6 +107,8 @@ public class PrtgBackfillRunState : PrtgProbeRunState
             _currentDate = currentDate;
             _sensorsDone = 0;
             _sensorsTotal = 0;
+            // 進到逐日階段代表狀態變更已翻完
+            _readingStateChanges = false;
         }
     }
 
@@ -57,13 +121,25 @@ public class PrtgBackfillRunState : PrtgProbeRunState
         }
     }
 
+    /// <summary>狀態變更區間讀取進度（已讀筆數, 約略總筆數）。</summary>
+    public void UpdateStateChanges(int done, int total)
+    {
+        lock (_progressLock)
+        {
+            _stateChangesRead = done;
+            _stateChangesTotal = total;
+            _readingStateChanges = true;
+        }
+    }
+
     public PrtgBackfillProgress GetProgress()
     {
         lock (_progressLock)
         {
             return new PrtgBackfillProgress(
                 _daysDone, _daysTotal, _currentDate,
-                _sensorsDone, _sensorsTotal);
+                _sensorsDone, _sensorsTotal,
+                _stateChangesRead, _stateChangesTotal, _readingStateChanges);
         }
     }
 }
@@ -92,18 +168,27 @@ public class PrtgBackfillService
 
     private readonly IHostStore _hosts;
 
+    // 必要相依，不設預設值：回填與取數、結構同步會打同一台 PRTG，這兩道互斥是保護；
+    // 做成可選的話漏注入時保護會靜默消失。
+    private readonly SchedulerRunState _schedulerRunState;
+    private readonly PrtgStructureSyncRunState _structureSyncState;
+
     public PrtgBackfillService(
         ISystemSettingsStore settings,
         StorageBackend backend,
         PrtgBackfillRunState state,
         PrtgProbeRunState probeState,
-        IHostStore hosts)
+        IHostStore hosts,
+        SchedulerRunState schedulerRunState,
+        PrtgStructureSyncRunState structureSyncState)
     {
         _settings = settings;
         _backend = backend;
         _state = state;
         _probeState = probeState;
         _hosts = hosts;
+        _schedulerRunState = schedulerRunState;
+        _structureSyncState = structureSyncState;
     }
 
     public PrtgBackfillStatusDto GetStatus()
@@ -122,8 +207,23 @@ public class PrtgBackfillService
             DaysTotal = p.DaysTotal,
             CurrentDate = p.CurrentDate,
             SensorsDone = p.SensorsDone,
-            SensorsTotal = p.SensorsTotal
+            SensorsTotal = p.SensorsTotal,
+            StateChangesRead = p.StateChangesRead,
+            StateChangesTotal = p.StateChangesTotal,
+            ReadingStateChanges = p.ReadingStateChanges,
+            Cancelled = _state.Cancelled
         };
+    }
+
+    /// <summary>要求停止進行中的回填；沒有執行中回 false。</summary>
+    public bool TryCancel() => _state.TryCancel();
+
+    /// <summary>「（已 N 分鐘）」後綴；取不到開始時間時回空字串（兩道執行中閘門共用）。</summary>
+    private static string ElapsedSuffix(DateTime? startedAt)
+    {
+        if (!startedAt.HasValue) return "";
+        var minutes = (int)Math.Max(0, (DateTime.Now - startedAt.Value).TotalMinutes);
+        return $"（已 {minutes} 分鐘）";
     }
 
     public bool TryStart(out string? error)
@@ -157,13 +257,39 @@ public class PrtgBackfillService
 
         // 回填不重跑結構同步、sensor 清單來自鏡像——鏡像空的就沒有東西可回填，
         // 放行只會空跑 N 天然後報成功（一筆資料都沒抓的成功最難察覺），在入口就擋下
-        if (_backend.PrtgStore().GetSensorTargets().Count == 0)
+        var prtgStoreForGate = _backend.PrtgStore();
+        if (prtgStoreForGate.GetSensorTargets().Count == 0)
         {
             error = "鏡像尚無任何感測器結構。請先執行一次每日擷取（或等夜間排程跑過）再回填。";
             return false;
         }
 
-        if (!_state.TryBegin())
+        // 取數執行與回填同時打同一台 PRTG，兩邊都會變慢且互相拖累
+        if (_schedulerRunState.IsRunning)
+        {
+            error = $"取數執行中{ElapsedSuffix(_schedulerRunState.StartedAt)}，回填會與它同時查詢同一台 PRTG。請等它結束，或在取數執行卡按「停止執行」後再回填。";
+            return false;
+        }
+
+        // 判斷方式與快照服務一致（PrtgStructureSyncService.IsRunning＝執行狀態快照的 IsRunning）
+        var syncSnapshot = _structureSyncState.Snapshot();
+        if (syncSnapshot.IsRunning)
+        {
+            error = $"「同步結構與對應」執行中{ElapsedSuffix(syncSnapshot.StartedAt)}，請等它完成，或在 PRTG 卡按停止後再回填。";
+            return false;
+        }
+
+        // 沒有任何主機對應時，逐日目標 sensor 一律是 0 個——放行只會空跑並報成功
+        var lookback = PrtgTriggeredValueFetcher.HostMapLookbackDays;
+        var hasAnyMapping = prtgStoreForGate.GetLatestHostMapWithDate(lookback).Rows
+            .Any(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId != null);
+        if (!hasAnyMapping)
+        {
+            error = $"近 {lookback} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。";
+            return false;
+        }
+
+        if (!_state.TryBeginRun(out var runToken))
         {
             error = "回填已在執行中。";
             return false;
@@ -180,7 +306,7 @@ public class PrtgBackfillService
         catch (Exception ex)
         {
             _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
-            _state.EndRun(false);
+            _state.FinishRun(false, cancelled: false);
             error = $"初始化 PRTG 連線失敗：{ex.Message}";
             return false;
         }
@@ -193,6 +319,7 @@ public class PrtgBackfillService
         _ = Task.Run(async () =>
         {
             var success = false;
+            var cancelled = false;
             try
             {
                 using (client)
@@ -209,13 +336,20 @@ public class PrtgBackfillService
                     }
 
                     success = await PrtgBackfillRunner.RunAsync(
-                        fetchService, days, concurrency, console, CancellationToken.None,
+                        fetchService, days, concurrency, console, runToken,
                         prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist,
                         dayProgress: (dDone, dTotal, curDate) => _state.UpdateDay(dDone, dTotal, curDate),
                         sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
                         scope: s.PrtgValueFetchScope,
-                        extraScopeHosts: scopeHostIds);
+                        extraScopeHosts: scopeHostIds,
+                        stateChangeProgress: (read, total) => _state.UpdateStateChanges(read, total));
                 }
+            }
+            catch (OperationCanceledException) when (runToken.IsCancellationRequested)
+            {
+                // 摘要已由 runner 印出（已停止：完成 x／N 天）
+                cancelled = true;
+                success = false;
             }
             catch (Exception ex)
             {
@@ -224,7 +358,7 @@ public class PrtgBackfillService
             }
             finally
             {
-                _state.EndRun(success);
+                _state.FinishRun(success, cancelled);
             }
         });
 
