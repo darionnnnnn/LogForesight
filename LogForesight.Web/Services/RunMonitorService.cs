@@ -103,11 +103,33 @@ public class RunMonitorService
             var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hosts.Count };
             var failedHosts = new List<string>();
 
-            var latestFetchRun = runs
-                .Where(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt.ToString("yyyy-MM-dd") == dateStr)
-                .OrderByDescending(r => r.StartedAt)
-                .FirstOrDefault();
-            summary.PrtgOutcome = latestFetchRun?.PrtgOutcome;
+            // 執行總表的 PRTG 欄依「資料日期」取（而不是開始日期）：
+            // 一趟夜間取數處理的是前一天的資料（資料日期為 StartedAt.Date - 1 天，或多日執行中 PrtgDays 記錄的各個資料日期）。
+            // 若依開始日期取，不僅舊紀錄會錯開一天，多日回望重跑的舊日也無法對應到正確的 PRTG 結果。
+            // 規則（在取數類執行中，依 StartedAt 由新到舊找第一個符合者）：
+            // 1. PrtgDays 非 null 且含 Date.Date == D 的一筆 → 用那筆的 Outcome；
+            // 2. 否則，PrtgDays 為 null（舊紀錄）且 StartedAt.Date == D.AddDays(1) → 用該執行的 PrtgOutcome（處理前一天）；
+            // 3. 都沒有 → null。
+            // 注意：PrtgDays 非 null 但不含 D 的執行不得落到第 2 條。
+            string? prtgOutcome = null;
+            foreach (var run in runs.Where(r => r.JobType != BatchRun.JobTypeAi).OrderByDescending(r => r.StartedAt))
+            {
+                if (run.PrtgDays != null)
+                {
+                    var dayStat = run.PrtgDays.FirstOrDefault(d => d.Date.Date == date.Date);
+                    if (dayStat != null)
+                    {
+                        prtgOutcome = dayStat.Outcome;
+                        break;
+                    }
+                }
+                else if (run.StartedAt.Date == date.Date.AddDays(1))
+                {
+                    prtgOutcome = run.PrtgOutcome;
+                    break;
+                }
+            }
+            summary.PrtgOutcome = prtgOutcome;
 
             foreach (var host in hosts)
             {

@@ -890,4 +890,95 @@ public class AiAnalysisSchedulerTests : IDisposable
             await Task.Delay(25);
         }
     }
+
+    [Fact]
+    public async Task 取數執行中送出PRTG日期範圍_範圍內的舊日待補不判讀()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var threeDaysAgo = today.AddDays(-3);
+        var fiveDaysAgo = today.AddDays(-5);
+        var sixDaysAgo = today.AddDays(-6);
+
+        store.Append(CreateRecord(1, "HOST-A", threeDaysAgo, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", fiveDaysAgo, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", sixDaysAgo, pending: true));
+
+        // 模擬取數排程執行中，並送出 PRTG 5 天範圍
+        schedulerState.TryBeginRun("schedule", out _);
+        schedulerState.ReportProgress(RunPhases.PrtgDateRange, 5, 0);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recThree = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, threeDaysAgo);
+        var recFive = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, fiveDaysAgo);
+        var recSix = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, sixDaysAgo);
+
+        // 3天前與5天前在範圍內，不判讀（維持 pending）
+        Assert.True(recThree!.AiPending);
+        Assert.True(recFive!.AiPending);
+        // 6天前在範圍外，合格判讀（完成）
+        Assert.False(recSix!.AiPending);
+    }
+
+    [Fact]
+    public async Task 日期範圍訊號後finding就緒_範圍內待補全部放行()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var threeDaysAgo = today.AddDays(-3);
+        var fiveDaysAgo = today.AddDays(-5);
+
+        store.Append(CreateRecord(1, "HOST-A", threeDaysAgo, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", fiveDaysAgo, pending: true));
+
+        // 模擬取數排程執行中，先送日期範圍
+        schedulerState.TryBeginRun("schedule", out _);
+        schedulerState.ReportProgress(RunPhases.PrtgDateRange, 5, 0);
+
+        // 後續 finding 就緒
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recThree = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, threeDaysAgo);
+        var recFive = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, fiveDaysAgo);
+
+        // finding 已就緒，全部合格放行
+        Assert.False(recThree!.AiPending);
+        Assert.False(recFive!.AiPending);
+    }
+
+    [Fact]
+    public async Task 未送日期範圍_維持只擋昨天之後()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var yesterday = today.AddDays(-1);
+        var threeDaysAgo = today.AddDays(-3);
+
+        store.Append(CreateRecord(1, "HOST-A", today, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", yesterday, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", threeDaysAgo, pending: true));
+
+        // 模擬取數排程執行中，但未送 PrtgDateRange
+        schedulerState.TryBeginRun("schedule", out _);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recToday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, today);
+        var recYesterday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, yesterday);
+        var recThree = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, threeDaysAgo);
+
+        // 只擋昨天之後（今天與昨天被擋，3天前通過）
+        Assert.True(recToday!.AiPending);
+        Assert.True(recYesterday!.AiPending);
+        Assert.False(recThree!.AiPending);
+    }
 }

@@ -241,6 +241,7 @@ internal static class PrtgDailyPipeline
             // 5. 逐日迴圈（days 的順序，由近到遠）
             for (var i = 0; i < days.Count; i++)
             {
+                progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
                 if (days.Count > 1)
                 {

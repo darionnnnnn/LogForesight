@@ -116,6 +116,32 @@ public class SchedulerRunState
     /// </summary>
     public bool PrtgFindingsReady { get; private set; }
 
+    /// <summary>本趟 PRTG 處理的日期範圍起點（含）</summary>
+    public DateTime? PrtgRangeStart { get; private set; }
+
+    /// <summary>本趟 PRTG 處理的天數</summary>
+    public int PrtgDayCount { get; private set; }
+
+    /// <summary>本趟 PRTG 目前處理到第幾天（1 起算，0＝尚未開始逐日）</summary>
+    public int PrtgDayIndex { get; private set; }
+
+    /// <summary>
+    /// AI 完整性閘門的待補截止日期原子判定（同一把鎖內讀）。
+    /// 取數未執行、或 finding 已就緒 → null；否則回 PrtgRangeStart ?? DateTime.Today.AddDays(-1)。
+    /// 語意：日期 ≥ 回傳值的待補現在不能判讀。
+    /// </summary>
+    public DateTime? FindingsWaitCutoff()
+    {
+        lock (_lock)
+        {
+            if (!IsRunning || PrtgFindingsReady)
+            {
+                return null;
+            }
+            return PrtgRangeStart ?? DateTime.Today.AddDays(-1);
+        }
+    }
+
     /// <summary>
     /// 「取數執行中且當日 finding 尚未到齊」的原子判定。分兩次讀 <see cref="IsRunning"/> 與
     /// <see cref="PrtgFindingsReady"/> 會在 <see cref="EndRun"/> 的空隙拿到 (true, false)——
@@ -177,6 +203,9 @@ public class SchedulerRunState
             LatestMessage = null;
             ResetTracks();
             PrtgFindingsReady = false;
+            PrtgRangeStart = null;
+            PrtgDayCount = 0;
+            PrtgDayIndex = 0;
             SkippedScheduleAt = null;
             PausedReason = null;
             _cts = new CancellationTokenSource();
@@ -281,6 +310,15 @@ public class SchedulerRunState
                 // 看到的是取數在跑、AI 卻閒置著。回呼在鎖外叫（見下方），避免訂閱者的工作被這把鎖串起來。
                 if (!wasReady) becameReady = true;
             }
+            else if (phase == RunPhases.PrtgDateRange)
+            {
+                PrtgDayCount = done;
+                PrtgDayIndex = total;
+                if (total == 0)
+                {
+                    PrtgRangeStart = DateTime.Today.AddDays(-Math.Max(1, done));
+                }
+            }
             else if (phase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase))
             {
                 _prtg = new ProgressTrack(phase, done, total);
@@ -328,6 +366,9 @@ public class SchedulerRunState
             StartedAt = null;
             ResetTracks();
             PrtgFindingsReady = false;
+            PrtgRangeStart = null;
+            PrtgDayCount = 0;
+            PrtgDayIndex = 0;
             SkippedScheduleAt = null;
             PausedReason = null;
             _cts?.Dispose();

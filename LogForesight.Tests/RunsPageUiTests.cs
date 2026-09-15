@@ -409,6 +409,19 @@ public class RunsPageUiTests
         Assert.Contains("尚未同步", js);
     }
 
+    [Fact]
+    public void RunsJs包含PRTG回望提示與進度天數標示()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains("prtgFetchStrategy", js);
+        Assert.Contains("PRTG 將逐日查詢歷史值", js);
+        Assert.Contains("PRTG 回望範圍", js);
+        Assert.Contains("prtgDayIndex", js);
+        Assert.Contains("第 ${", js);
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;

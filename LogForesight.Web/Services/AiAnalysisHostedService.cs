@@ -329,15 +329,14 @@ public class AiAnalysisHostedService : BackgroundService
             }
 
             // 1. 完整性閘門：只處理「資料已完整落地」的主機日。
-            // 取數執行中時，當日 PRTG finding 尚未算完（PrtgFindingsReady == false）就跳過今天與昨天的
-            // 待補——PRTG finding 會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。
-            // finding 一發佈（PRTG 停用、規則評估失敗也算發佈）就全部合格，AI 因此能與取數並行，
-            // 不必像過去那樣一路等到整趟取數結束。
-            bool waitingForFetch = _schedulerRunState.IsWaitingForFindings();
-            var cutoff = DateTime.Today.AddDays(-1); // 昨天
+            // 範圍來自取數路徑送出的 PrtgDateRange，回望重跑的舊日同樣要等 finding 到齊——PRTG finding
+            // 會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。
+            // finding 一發佈（PRTG 停用、規則評估失敗也算發佈）或取數未執行時 cutoff 為 null（全部合格），
+            // AI 因此能與取數並行，不必像過去那樣一路等到整趟取數結束。
+            var cutoff = _schedulerRunState.FindingsWaitCutoff();
 
-            var eligible = (waitingForFetch
-                    ? rawPending.Where(r => r.Date.Date < cutoff)
+            var eligible = (cutoff.HasValue
+                    ? rawPending.Where(r => r.Date.Date < cutoff.Value.Date)
                     : rawPending.AsEnumerable())
                 .Where(r => !attempted.Contains((r.HostId, r.Host, r.Date.Date)))
                 .ToList();

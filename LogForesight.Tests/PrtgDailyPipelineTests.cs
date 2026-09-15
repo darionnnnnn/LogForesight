@@ -780,4 +780,43 @@ public class PrtgDailyPipelineTests : IDisposable
 
         Assert.Contains(console.Lines, l => l.Contains("其餘 2 天的 PRTG 數值不在立即執行內取，請用排程作業頁的「開始回填」。"));
     }
+
+    [Fact]
+    public async Task 多日執行逐日回報PRTG日期範圍與當前天次()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+
+        var (ctx, _, progress, _) = CreateContext();
+        var days = new[]
+        {
+            DateTime.Today.AddDays(-1),
+            DateTime.Today.AddDays(-2),
+            DateTime.Today.AddDays(-3)
+        };
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            days, Task.CompletedTask, guard: null);
+
+        var dateRangeReports = progress.Reports.Where(r => r.Phase == RunPhases.PrtgDateRange).ToList();
+        Assert.Equal(4, dateRangeReports.Count);
+        // 第一次為迴圈前：(3, 0)
+        Assert.Equal(3, dateRangeReports[0].Done);
+        Assert.Equal(0, dateRangeReports[0].Total);
+        // 後三次為逐日迴圈開始時：(3, 1), (3, 2), (3, 3)
+        Assert.Equal(3, dateRangeReports[1].Done);
+        Assert.Equal(1, dateRangeReports[1].Total);
+        Assert.Equal(3, dateRangeReports[2].Done);
+        Assert.Equal(2, dateRangeReports[2].Total);
+        Assert.Equal(3, dateRangeReports[3].Done);
+        Assert.Equal(3, dateRangeReports[3].Total);
+    }
 }

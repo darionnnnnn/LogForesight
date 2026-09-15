@@ -75,8 +75,8 @@ public static class RunPhases
     public const string PrtgFindingsReady = AnalysisOrchestrator.PrtgFindingsReadyPhase;
 
     /// <summary>
-    /// PRTG 本趟處理的日期範圍訊號。**不是進度**，done 帶本趟 PRTG 處理的天數、total 恆為 0；
-    /// Web 端必須在 prtg- 前綴分支之前顯式處理（下一批做）。
+    /// PRTG 本趟處理的日期範圍訊號。**不是進度**，done 帶本趟天數、total 帶目前處理到第幾天（0＝尚未開始逐日）。
+    /// Web 端必須在 prtg- 前綴分支之前顯式處理。
     /// </summary>
     public const string PrtgDateRange = "prtg-date-range";
 

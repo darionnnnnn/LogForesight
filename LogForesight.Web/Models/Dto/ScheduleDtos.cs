@@ -85,6 +85,8 @@ public class ScheduleStatusDto
     public string? PrtgProgressPhase { get; set; }
     public int PrtgProgressDone { get; set; }
     public int PrtgProgressTotal { get; set; }
+    public int PrtgDayCount { get; set; }
+    public int PrtgDayIndex { get; set; }
 
     public bool LocalCompleted { get; set; }
     public bool NetiqCompleted { get; set; }
