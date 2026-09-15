@@ -8,6 +8,17 @@ namespace LogForesight.Core.Service;
 /// <summary>PRTG 每日擷取結果摘要。</summary>
 public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges, int Values, int Failures);
 
+/// <summary>PRTG 狀態變更區間擷取結果摘要。</summary>
+public sealed record PrtgStateChangeRangeResult(
+    IReadOnlyDictionary<DateTime, int> WrittenByDay, // 各日「新增」筆數（鍵為日期、只含區間內有列的日期）
+    int TotalWritten,
+    int ReadRows,
+    int Pages,
+    int DuplicateRows,
+    bool StoppedEarly,
+    bool Converged,
+    string? Error);
+
 /// <summary>
 /// PRTG 每日擷取服務：負責將 PRTG 的裝置結構、感測器結構、狀態變更（訊息）與 hourly 聚合數值
 /// 擷取並寫入本機鏡像表（lf_prtg_*）。
@@ -157,19 +168,25 @@ public sealed class PrtgFetchService
             }
         }
 
-        // 階段 3：狀態變更（前一日增量）
+        // 階段 3：狀態變更（前一日～今日區間）
         try
         {
-            _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{day:yyyy-MM-dd}）...");
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var outcome = await FetchStateChangesAsync(day, ct, progress);
-            stopwatch.Stop();
-            stateChangesCount = outcome.Written;
-            _console.WriteLine($"[階段 3/4] 狀態變更同步完成，共寫入 {stateChangesCount} 筆{FormatStageStats(stopwatch, outcome)}。");
-            if (!outcome.Converged)
+            // 規則評估看 day-1 ～ day+1 的變更，只寫目標日會讓跨午夜的 down 持續時間算不準；今天的部分列之後會被冪等補齊。
+            // 若 day.Date.AddDays(-1) > DateTime.Today（理論上不會），兩端互換不必處理——直接以 day 當兩端。
+            var fromDate = day.Date.AddDays(-1);
+            var toDate = DateTime.Today;
+            if (fromDate > toDate)
+            {
+                fromDate = day.Date;
+                toDate = day.Date;
+            }
+
+            var rangeResult = await FetchStateChangesRangeAsync(fromDate, toDate, ct, progress);
+            stateChangesCount = rangeResult.TotalWritten;
+            if (!rangeResult.Converged)
             {
                 failures++;
-                _console.WriteLine($"[階段 3/4] ✗ {outcome.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
+                _console.WriteLine($"[階段 3/4] ✗ {rangeResult.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -333,18 +350,28 @@ public sealed class PrtgFetchService
         return (StageOutcome.From(totalWritten, paged), targets);
     }
 
-    /// <summary>階段 3：分頁抓取 messages 並只保留目標日期的紀錄，寫入狀態變更表</summary>
-    private async Task<StageOutcome> FetchStateChangesAsync(DateTime day, CancellationToken ct, Action<string, int, int>? progress = null)
+    /// <summary>
+    /// 區間分頁抓取 messages 並依日分桶寫入狀態變更表，支援依時間排序提早停止。
+    /// </summary>
+    public async Task<PrtgStateChangeRangeResult> FetchStateChangesRangeAsync(
+        DateTime fromDate, DateTime toDate, CancellationToken ct, Action<string, int, int>? progress = null)
     {
-        var targetDate = day.Date;
+        var from = fromDate.Date;
+        var to = toDate.Date;
+        var threshold = from.AddDays(-1);
         var totalWritten = 0;
         var unparseableCount = 0;
+        var writtenByDay = new Dictionary<DateTime, int>();
         var now = DateTime.Now;
+        DateTime? stoppedPageLatestTime = null;
+
+        _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{from:yyyy-MM-dd} ～ {to:yyyy-MM-dd}）...");
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         var paged = await RunPagedStageAsync(() => FetchTablePagedAsync<PrtgStateChangeRow>(
             content: "messages",
             columns: "objid,datetime,parent,status,message",
-            extraQuery: StateChangesQuery(targetDate),
+            extraQuery: StateChangesQuery(from),
             mapper: el =>
             {
                 var dtStr = GetStringProperty(el, "datetime");
@@ -354,8 +381,8 @@ public sealed class PrtgFetchService
                     return null;
                 }
 
-                // 只保留 datetime 落在 day 當天的紀錄（本地時間比對，不做時區轉換）
-                if (changedAt.Date != targetDate)
+                // 區間以日期計、含兩端：fromDate.Date <= changedAt.Date <= toDate.Date 的列寫入
+                if (changedAt.Date < from || changedAt.Date > to)
                 {
                     return null;
                 }
@@ -376,7 +403,14 @@ public sealed class PrtgFetchService
             },
             onBatch: batch =>
             {
-                totalWritten += _store.AppendStateChanges(batch);
+                // AppendStateChanges 只回總數，按日期分組各呼叫一次才能得到正確的每日新增數
+                foreach (var group in batch.GroupBy(r => r.ChangedAt.Date))
+                {
+                    var subBatch = group.ToList();
+                    var written = _store.AppendStateChanges(subBatch);
+                    totalWritten += written;
+                    writtenByDay[group.Key] = writtenByDay.GetValueOrDefault(group.Key) + written;
+                }
             },
             ct: ct,
             phase: PrtgSyncMessagesPhase,
@@ -387,14 +421,71 @@ public sealed class PrtgFetchService
             //（sensor_objid + changed_at）一致，否則每顆 sensor 只會留下第一筆狀態變更。
             rowKey: el => GetStringProperty(el, "objid") is { } id
                 ? id + "|" + (GetStringProperty(el, "datetime") ?? string.Empty)
-                : null));
+                : null,
+            stopAfterPage: pageElements =>
+            {
+                // 1. 本頁至少一列；
+                if (pageElements.Count == 0) return false;
+
+                // 2. 本頁每一列的 datetime 都能解析（任一筆失敗 → 不停）；
+                var dts = new List<DateTime>(pageElements.Count);
+                foreach (var el in pageElements)
+                {
+                    var dtStr = GetStringProperty(el, "datetime");
+                    if (string.IsNullOrWhiteSpace(dtStr) || !DateTime.TryParse(dtStr, out var dt))
+                    {
+                        return false;
+                    }
+                    dts.Add(dt);
+                }
+
+                // 3. 本頁列依時間非遞增（前一列 >= 後一列；有任一處遞增 → 不停）；
+                for (var i = 0; i < dts.Count - 1; i++)
+                {
+                    if (dts[i] < dts[i + 1])
+                    {
+                        return false;
+                    }
+                }
+
+                // 4. 本頁最新的一筆（第一列）早於 fromDate.Date.AddDays(-1)（即整頁都比區間起點再早一天以上）。
+                if (dts[0] < threshold)
+                {
+                    stoppedPageLatestTime = dts[0];
+                    return true;
+                }
+
+                return false;
+            }));
 
         if (unparseableCount > 0)
         {
             _console.WriteLine($"  ⚠ 狀態變更中有 {unparseableCount} 筆紀錄無法解析時間，已略過。");
         }
 
-        return StageOutcome.From(totalWritten, paged);
+        var pages = paged.Result?.Pages ?? paged.Exception?.Pages ?? 0;
+        var readRows = paged.Result?.ReadRows ?? paged.Exception?.ReadRows ?? 0;
+        var duplicateRows = paged.Result?.DuplicateRows ?? paged.Exception?.DuplicateRows ?? 0;
+        var stoppedEarly = paged.Result?.StoppedEarly ?? false;
+        var converged = paged.Error == null;
+
+        if (converged)
+        {
+            var stopDesc = stoppedEarly
+                ? $"依時間排序於第 {pages} 頁提早結束（該頁最新 {stoppedPageLatestTime:yyyy-MM-dd HH:mm:ss}，早於 {threshold:yyyy-MM-dd}）"
+                : $"已翻到結尾（{pages} 頁）";
+            _console.WriteLine($"[階段 3/4] 狀態變更同步完成：共讀取 {pages} 頁、{readRows} 筆，新增 {totalWritten} 筆（其餘已存在），{stopDesc}（耗時 {stopwatch.Elapsed.TotalSeconds:F1} 秒）。");
+        }
+
+        return new PrtgStateChangeRangeResult(
+            WrittenByDay: writtenByDay,
+            TotalWritten: totalWritten,
+            ReadRows: readRows,
+            Pages: pages,
+            DuplicateRows: duplicateRows,
+            StoppedEarly: stoppedEarly,
+            Converged: converged,
+            Error: paged.Error);
     }
 
     /// <summary>階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表</summary>
@@ -781,7 +872,7 @@ public sealed class PrtgFetchService
             new(written, paged.Result?.DuplicateRows ?? 0, paged.Error == null, paged.Error);
     }
 
-    private sealed record PagedStageResult(PrtgPagerResult? Result, string? Error);
+    private sealed record PagedStageResult(PrtgPagerResult? Result, string? Error, PrtgPagingNotConvergedException? Exception = null);
 
     /// <summary>
     /// 執行一次分頁讀取，把「分頁未收斂」轉成可回報的結果而不是例外——
@@ -796,7 +887,7 @@ public sealed class PrtgFetchService
         }
         catch (PrtgPagingNotConvergedException ex)
         {
-            return new PagedStageResult(null, ex.Message);
+            return new PagedStageResult(null, ex.Message, ex);
         }
     }
 
@@ -822,10 +913,11 @@ public sealed class PrtgFetchService
         string? phase = null,
         Action<string, int, int>? progress = null,
         string? stageLabel = null,
-        Func<JsonElement, string?>? rowKey = null)
+        Func<JsonElement, string?>? rowKey = null,
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
         => PrtgTablePager.FetchAsync(
             _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
-            rowKey: rowKey);
+            rowKey: rowKey, stopAfterPage: stopAfterPage);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

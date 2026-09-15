@@ -404,15 +404,15 @@ public class PrtgFetchServiceTests : IDisposable
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
         Assert.Equal(0, result.Failures);
-        Assert.Equal(1, result.StateChanges);
+        // 新語意：抓取目標日前一天～今天，因此 2026-08-29 (301)、2026-08-30 (302)、2026-08-31 (303) 皆在區間內並寫入
+        Assert.Equal(3, result.StateChanges);
 
         using var ctx = _fx.NewContext();
         var changes = await ctx.PrtgStateChanges.ToListAsync();
-        Assert.Single(changes);
-        Assert.Equal(302, changes[0].SensorObjid);
-        Assert.Equal("Warning", changes[0].Status);
-        Assert.Equal("Target day", changes[0].Message);
-        Assert.Equal(new DateTime(2026, 8, 30, 12, 0, 0), changes[0].ChangedAt);
+        Assert.Equal(3, changes.Count);
+        Assert.Contains(changes, c => c.SensorObjid == 301 && c.Message == "Prev day");
+        Assert.Contains(changes, c => c.SensorObjid == 302 && c.Message == "Target day");
+        Assert.Contains(changes, c => c.SensorObjid == 303 && c.Message == "Next day");
     }
 
     [Fact]
@@ -1412,14 +1412,20 @@ public class PrtgFetchServiceTests : IDisposable
     /// 刻意不用 today／yesterday：跨午夜的執行在階段 3 跑過零點時目標日會落在前天，那兩個級距會整段漏掉。
     /// </summary>
     [Theory]
-    // 邊界一律往上跳一階：級距是滾動時間窗（7days＝now-7d 起算）而非日曆日，
-    // 目標日剛好是第 7 天時，該日凌晨到執行時刻之間的變更會落在 7days 窗外。
+    // 邊界一律往上跳一階：級距是滾動時間窗（7days＝now-7d 起算）而非日曆日。
+    // 因 FetchDayAsync 需涵蓋目標日前一天（day - 1），最舊日期為 today - (daysAgo + 1)：
+    // daysAgo = 1 -> fromDate 為 2 天前 -> 7days
+    // daysAgo = 5 -> fromDate 為 6 天前 -> 7days
+    // daysAgo = 6 -> fromDate 為 7 天前 -> 30days
+    // daysAgo = 28 -> fromDate 為 29 天前 -> 30days
+    // daysAgo = 29 -> fromDate 為 30 天前 -> 12months
+    // daysAgo = 363 -> fromDate 為 364 天前 -> 12months
     [InlineData(1, "filter_drel=7days")]
-    [InlineData(6, "filter_drel=7days")]
-    [InlineData(7, "filter_drel=30days")]
-    [InlineData(29, "filter_drel=30days")]
-    [InlineData(30, "filter_drel=12months")]
-    [InlineData(364, "filter_drel=12months")]
+    [InlineData(5, "filter_drel=7days")]
+    [InlineData(6, "filter_drel=30days")]
+    [InlineData(28, "filter_drel=30days")]
+    [InlineData(29, "filter_drel=12months")]
+    [InlineData(363, "filter_drel=12months")]
     public async Task FetchDayAsync_狀態變更查詢帶相對日期過濾(int daysAgo, string expectedFilter)
     {
         var messageUrls = new List<string>();
@@ -1439,6 +1445,39 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
         await service.FetchDayAsync(DateTime.Today.AddDays(-daysAgo), 2, CancellationToken.None,
             syncStructure: true, fetchValues: false);
+
+        var messageUrl = Assert.Single(messageUrls);
+        Assert.Contains(expectedFilter, messageUrl);
+        Assert.Contains("id=0", messageUrl);
+    }
+
+    /// <summary>
+    /// 驗證 FetchStateChangesRangeAsync 依 fromDate 距今天數選擇最小涵蓋級距。
+    /// 級距表與簽章不變：&lt;7 為 7days、&lt;30 為 30days、&lt;365 為 12months。
+    /// </summary>
+    [Theory]
+    [InlineData(1, "filter_drel=7days")]
+    [InlineData(6, "filter_drel=7days")]
+    [InlineData(7, "filter_drel=30days")]
+    [InlineData(29, "filter_drel=30days")]
+    [InlineData(30, "filter_drel=12months")]
+    [InlineData(364, "filter_drel=12months")]
+    public async Task FetchStateChangesRangeAsync_查詢帶相對日期過濾(int daysAgo, string expectedFilter)
+    {
+        var messageUrls = new List<string>();
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                messageUrls.Add(url);
+                return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-daysAgo), DateTime.Today, CancellationToken.None);
 
         var messageUrl = Assert.Single(messageUrls);
         Assert.Contains(expectedFilter, messageUrl);
@@ -1474,5 +1513,341 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.DoesNotContain("filter_drel", messageUrl);
         Assert.Contains("id=0", messageUrl);
         Assert.DoesNotContain("id=0&&", messageUrl);
+    }
+
+    private static string BuildMessagePage(int count, Func<int, (long Objid, string DtStr, string Status, string Message)> rowGenerator, int? treesize = null)
+    {
+        var sb = new StringBuilder(count * 80 + 30);
+        sb.Append('{');
+        if (treesize.HasValue) sb.Append($"\"treesize\":{treesize.Value},");
+        sb.Append("\"messages\":[");
+        for (var i = 0; i < count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            var (objid, dtStr, status, msg) = rowGenerator(i);
+            sb.Append($"{{\"objid\":{objid},\"datetime\":\"{dtStr}\",\"status\":\"{status}\",\"message\":\"{msg}\"}}");
+        }
+        sb.Append("]}");
+        return sb.ToString();
+    }
+
+    [Fact]
+    public async Task 區間取法_依時間遞減且整頁早於門檻_提早停止且不發下一頁()
+    {
+        var fromDate = new DateTime(2026, 8, 30);
+        var toDate = new DateTime(2026, 8, 31);
+
+        // 第 1 頁（滿頁 5000 筆）：含 8/31 與 8/30 兩天的列，時間遞減
+        var page1 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = i < 2500
+                ? new DateTime(2026, 8, 31, 23, 59, 59).AddSeconds(-i)
+                : new DateTime(2026, 8, 30, 23, 59, 59).AddSeconds(-(i - 2500));
+            return (10000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        // 第 2 頁（滿頁 5000 筆）：整頁早於 fromDate - 1天（2026-08-29 00:00:00），第一筆為 2026-08-28 23:59:59
+        var page2 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = new DateTime(2026, 8, 28, 23, 59, 59).AddSeconds(-i);
+            return (20000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        // 第 3 頁：存在但不得被請求
+        var page3 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = new DateTime(2026, 8, 27, 23, 59, 59).AddSeconds(-i);
+            return (30000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                if (url.Contains("start=0")) return JsonResponse(page1);
+                if (url.Contains("start=5000")) return JsonResponse(page2);
+                if (url.Contains("start=10000")) return JsonResponse(page3);
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+
+        Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("content=messages")));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("start=10000"));
+        Assert.True(result.StoppedEarly);
+        Assert.True(result.Converged);
+        Assert.Equal(2, result.Pages);
+        Assert.Equal(5000, result.TotalWritten);
+        Assert.Equal(2500, result.WrittenByDay[new DateTime(2026, 8, 30)]);
+        Assert.Equal(2500, result.WrittenByDay[new DateTime(2026, 8, 31)]);
+        Assert.False(result.WrittenByDay.ContainsKey(new DateTime(2026, 8, 28)));
+
+        using var ctx = _fx.NewContext();
+        Assert.Equal(5000, await ctx.PrtgStateChanges.CountAsync());
+        Assert.False(await ctx.PrtgStateChanges.AnyAsync(r => r.ChangedAt.Date == new DateTime(2026, 8, 28)));
+    }
+
+    [Fact]
+    public async Task 區間取法_頁內時間不單調_不提早停止()
+    {
+        var fromDate = new DateTime(2026, 8, 30);
+        var toDate = new DateTime(2026, 8, 31);
+
+        var page1 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = new DateTime(2026, 8, 31, 23, 59, 59).AddSeconds(-i);
+            return (10000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        // 第 2 頁整頁很舊，但在 index 50 有一處遞增
+        var page2 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            DateTime dt;
+            if (i == 50)
+                dt = new DateTime(2026, 8, 28, 10, 0, 0);
+            else if (i == 51)
+                dt = new DateTime(2026, 8, 28, 10, 5, 0); // 遞增！
+            else
+                dt = new DateTime(2026, 8, 28, 9, 0, 0).AddSeconds(-i);
+
+            return (20000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                if (url.Contains("start=0")) return JsonResponse(page1);
+                if (url.Contains("start=5000")) return JsonResponse(page2);
+                if (url.Contains("start=10000")) return JsonResponse("{\"messages\":[]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("start=10000"));
+        Assert.False(result.StoppedEarly);
+    }
+
+    [Fact]
+    public async Task 區間取法_頁內有時間無法解析_不提早停止()
+    {
+        var fromDate = new DateTime(2026, 8, 30);
+        var toDate = new DateTime(2026, 8, 31);
+
+        var page1 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = new DateTime(2026, 8, 31, 23, 59, 59).AddSeconds(-i);
+            return (10000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        // 第 2 頁夾一筆無法解析的時間
+        var page2 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            if (i == 50)
+                return (20000 + i, "invalid-date", "Up", $"m{i}");
+
+            var dt = new DateTime(2026, 8, 28, 23, 59, 59).AddSeconds(-i);
+            return (20000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                if (url.Contains("start=0")) return JsonResponse(page1);
+                if (url.Contains("start=5000")) return JsonResponse(page2);
+                if (url.Contains("start=10000")) return JsonResponse("{\"messages\":[]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("start=10000"));
+        Assert.False(result.StoppedEarly);
+    }
+
+    [Fact]
+    public async Task 區間取法_頁內有一筆晚於門檻_不提早停止()
+    {
+        var fromDate = new DateTime(2026, 8, 30);
+        var toDate = new DateTime(2026, 8, 31);
+        // 門檻為 fromDate - 1天 = 2026-08-29 00:00:00
+
+        var page1 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = new DateTime(2026, 8, 31, 23, 59, 59).AddSeconds(-i);
+            return (10000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        // 第 2 頁第一筆恰在門檻當天 (2026-08-29 10:00:00，不早於門檻)
+        var page2 = BuildMessagePage(PageSizeForFullPage, i =>
+        {
+            var dt = i == 0
+                ? new DateTime(2026, 8, 29, 10, 0, 0)
+                : new DateTime(2026, 8, 28, 23, 59, 59).AddSeconds(-i);
+            return (20000 + i, dt.ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}");
+        });
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                if (url.Contains("start=0")) return JsonResponse(page1);
+                if (url.Contains("start=5000")) return JsonResponse(page2);
+                if (url.Contains("start=10000")) return JsonResponse("{\"messages\":[]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("start=10000"));
+        Assert.False(result.StoppedEarly);
+    }
+
+    [Fact]
+    public async Task 區間取法_區間外的列不寫入且每日新增數正確()
+    {
+        var fromDate = new DateTime(2026, 8, 20);
+        var toDate = new DateTime(2026, 8, 22);
+
+        var msgJson = "{\"messages\":[" +
+                      "{\"objid\":501,\"datetime\":\"2026-08-23 10:00:00\",\"status\":\"Down\",\"message\":\"After toDate\"}," +
+                      "{\"objid\":502,\"datetime\":\"2026-08-22 15:00:00\",\"status\":\"Up\",\"message\":\"On toDate 1\"}," +
+                      "{\"objid\":503,\"datetime\":\"2026-08-22 16:00:00\",\"status\":\"Warning\",\"message\":\"On toDate 2\"}," +
+                      "{\"objid\":504,\"datetime\":\"2026-08-21 08:00:00\",\"status\":\"Down\",\"message\":\"Inside range\"}," +
+                      "{\"objid\":505,\"datetime\":\"2026-08-20 23:59:59\",\"status\":\"Up\",\"message\":\"On fromDate\"}," +
+                      "{\"objid\":506,\"datetime\":\"2026-08-19 23:59:59\",\"status\":\"Down\",\"message\":\"Before fromDate\"}" +
+                      "]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+                return url.Contains("start=0") ? JsonResponse(msgJson) : JsonResponse("{\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+
+        Assert.Equal(4, result.TotalWritten);
+        Assert.Equal(2, result.WrittenByDay[new DateTime(2026, 8, 22)]);
+        Assert.Equal(1, result.WrittenByDay[new DateTime(2026, 8, 21)]);
+        Assert.Equal(1, result.WrittenByDay[new DateTime(2026, 8, 20)]);
+        Assert.False(result.WrittenByDay.ContainsKey(new DateTime(2026, 8, 23)));
+        Assert.False(result.WrittenByDay.ContainsKey(new DateTime(2026, 8, 19)));
+
+        using var ctx = _fx.NewContext();
+        var rows = await ctx.PrtgStateChanges.ToListAsync();
+        Assert.Equal(4, rows.Count);
+        Assert.DoesNotContain(rows, r => r.SensorObjid == 501);
+        Assert.DoesNotContain(rows, r => r.SensorObjid == 506);
+    }
+
+    [Fact]
+    public async Task 區間取法_重跑同區間_新增數為0且摘要註明其餘已存在()
+    {
+        var fromDate = new DateTime(2026, 8, 20);
+        var toDate = new DateTime(2026, 8, 21);
+
+        var msgJson = "{\"messages\":[" +
+                      "{\"objid\":601,\"datetime\":\"2026-08-20 10:00:00\",\"status\":\"Down\",\"message\":\"m1\"}," +
+                      "{\"objid\":602,\"datetime\":\"2026-08-21 11:00:00\",\"status\":\"Up\",\"message\":\"m2\"}" +
+                      "]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+                return url.Contains("start=0") ? JsonResponse(msgJson) : JsonResponse("{\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        // 第一次執行：新增 2 筆
+        var res1 = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        Assert.Equal(2, res1.TotalWritten);
+
+        // 第二次執行（同一區間重跑）：新增 0 筆
+        var res2 = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        Assert.Equal(0, res2.TotalWritten);
+        Assert.Equal(0, res2.WrittenByDay[new DateTime(2026, 8, 20)]);
+        Assert.Equal(0, res2.WrittenByDay[new DateTime(2026, 8, 21)]);
+        Assert.Contains(console.Lines, l => l.Contains("新增 0 筆") && l.Contains("其餘已存在"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_狀態變更寫入目標日前一天到今天()
+    {
+        var day = DateTime.Today.AddDays(-2);
+
+        // 目標日前兩天 (day - 2)、前一天 (day - 1)、當天 (day)、今天 (Today)、明天 (Today + 1)
+        var msgJson = "{\"messages\":[" +
+                      $"{{\"objid\":701,\"datetime\":\"{day.AddDays(-2):yyyy-MM-dd 12:00:00}\",\"status\":\"Down\",\"message\":\"day-2\"}}," +
+                      $"{{\"objid\":702,\"datetime\":\"{day.AddDays(-1):yyyy-MM-dd 12:00:00}\",\"status\":\"Warning\",\"message\":\"day-1\"}}," +
+                      $"{{\"objid\":703,\"datetime\":\"{day:yyyy-MM-dd 12:00:00}\",\"status\":\"Up\",\"message\":\"day\"}}," +
+                      $"{{\"objid\":704,\"datetime\":\"{DateTime.Today:yyyy-MM-dd 08:00:00}\",\"status\":\"Up\",\"message\":\"today\"}}," +
+                      $"{{\"objid\":705,\"datetime\":\"{DateTime.Today.AddDays(1):yyyy-MM-dd 08:00:00}\",\"status\":\"Down\",\"message\":\"tomorrow\"}}" +
+                      "]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return url.Contains("start=0") ? JsonResponse(msgJson) : JsonResponse("{\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console);
+
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, syncStructure: true, fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        // 目標日前兩天 (701) 與明天 (705) 不寫；前一天 (702)、目標日 (703)、今天 (704) 寫入
+        Assert.Equal(3, result.StateChanges);
+
+        using var ctx = _fx.NewContext();
+        var rows = await ctx.PrtgStateChanges.ToListAsync();
+        Assert.Equal(3, rows.Count);
+        Assert.Contains(rows, r => r.SensorObjid == 702);
+        Assert.Contains(rows, r => r.SensorObjid == 703);
+        Assert.Contains(rows, r => r.SensorObjid == 704);
+        Assert.DoesNotContain(rows, r => r.SensorObjid == 701);
+        Assert.DoesNotContain(rows, r => r.SensorObjid == 705);
     }
 }

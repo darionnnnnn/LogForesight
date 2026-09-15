@@ -27,7 +27,7 @@ internal sealed class PrtgPagingNotConvergedException : Exception
 }
 
 /// <summary>分頁結果統計。ReadRows 含重複列，Mapped 是實際交給 onBatch 的筆數。</summary>
-internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages);
+internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages, bool StoppedEarly = false);
 
 /// <summary>
 /// PRTG table.json 的唯一分頁實作。所有需要翻頁讀取 PRTG 表格的路徑都走這裡，
@@ -84,7 +84,8 @@ internal static class PrtgTablePager
         int pageSize = DefaultPageSize,
         int maxPagesWhenTreeSizeUnknown = DefaultMaxPages,
         Func<JsonElement, string?>? rowKey = null,
-        int batchSize = DefaultBatchSize)
+        int batchSize = DefaultBatchSize,
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
     {
         rowKey ??= DefaultRowKey;
 
@@ -97,6 +98,7 @@ internal static class PrtgTablePager
         var maxPages = maxPagesWhenTreeSizeUnknown;
         var seenKeys = new HashSet<string>();
         var buffer = new List<T>(batchSize);
+        var stoppedEarly = false;
 
         // 分母尚未知（要等第一次回應的 treesize），先送 0 讓進度軌顯示不定進度
         if (phase != null) progress?.Invoke(phase, 0, 0);
@@ -136,11 +138,14 @@ internal static class PrtgTablePager
 
             var countInPage = 0;
             var newInPage = 0;
+            List<JsonElement>? pageElements = stopAfterPage != null ? new List<JsonElement>() : null;
             foreach (var item in arrayProp.EnumerateArray())
             {
                 countInPage++;
                 if (item.ValueKind != JsonValueKind.Object)
                     continue;
+
+                pageElements?.Add(item);
 
                 // 去重在轉換之前：夾到末頁時整頁都是讀過的資料，重複寫入雖被 upsert 吸收，
                 // 但會讓寫入數虛報，也白跑一趟資料庫。
@@ -180,6 +185,12 @@ internal static class PrtgTablePager
                 console.WriteLine($"  [{stageLabel}] 已翻 {pageIndex} 頁、累計讀取 {readRows} 筆{scope}...");
             }
 
+            if (stopAfterPage != null && pageElements != null && stopAfterPage(pageElements))
+            {
+                stoppedEarly = true;
+                break;
+            }
+
             if (countInPage == 0) break;
             if (countInPage < pageSize) break;
             if (newInPage == 0) break;
@@ -208,7 +219,7 @@ internal static class PrtgTablePager
             buffer.Clear();
         }
 
-        return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex);
+        return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex, stoppedEarly);
     }
 
     /// <summary>預設列鍵：objid。devices 與 sensors 的 objid 是主鍵，這對它們成立。</summary>
