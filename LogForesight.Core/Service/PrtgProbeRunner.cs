@@ -388,7 +388,7 @@ public static class PrtgProbeRunner
         // 步驟 9：效能量測（不影響探測成敗）——量「分頁放大有沒有效」「只取 objid 省多少」「併發開到幾級還不排隊」。
         // 三個子量測各自 try/catch，任何失敗只印原因、不把整趟探測算失敗。
         console.WriteLine("[9] 效能量測（table.json 分頁大小、objid-only、historicdata 併發）");
-        console.WriteLine("     本步驟會發 87 次 historicdata 與 9 次 table.json，供後續決定分頁大小、併發上限與值的取得方式");
+        console.WriteLine("     本步驟會發 87 次 historicdata 與 11 次 table.json，供後續決定分頁大小、併發上限與值的取得方式");
 
         PerfSample? fullColumns50000 = null;
         try
@@ -1006,19 +1006,87 @@ public static class PrtgProbeRunner
             console.WriteLine("     9d-3：⚠ 成本隨時間跨度成長");
     }
 
-    /// <summary>9d-4：以 count=1 只要 treesize，看 messages 每日與每週的量級。</summary>
+    /// <summary>9d-4：以 count=1 只要 treesize，看 messages 每日與每週的量級，並判定 filter_drel 是否生效。</summary>
     private static async Task MeasureMessageVolumeAsync(PrtgClient client, IRunConsole console, CancellationToken ct)
     {
-        async Task<string> TreesizeAsync(string drel)
+        async Task<(string Text, int? Treesize)> TreesizeAsync(string drel)
         {
             var json = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid&count=1&id=0&filter_drel={drel}", ct);
             var parsed = ParseTable(json, "messages", el => GetStringProperty(el, "objid") ?? string.Empty);
-            return parsed.TotalTreesize?.ToString() ?? "未知";
+            return (parsed.TotalTreesize?.ToString() ?? "未知", parsed.TotalTreesize);
         }
 
-        var today = await TreesizeAsync("today");
-        var week = await TreesizeAsync("7days");
+        var (today, todayTreesize) = await TreesizeAsync("today");
+        var (week, _) = await TreesizeAsync("7days");
         console.WriteLine($"     9d-4：messages treesize today={today}、7days={week}");
+
+        try
+        {
+            var firstRows = await ReadPagingRowsAsync(client, "messages", "&id=0&filter_drel=today", 0, 5, true, ct);
+
+            if (!todayTreesize.HasValue)
+            {
+                console.WriteLine("     9d-4：filter_drel=today 無法判定（treesize 非數字）");
+                return;
+            }
+
+            if (firstRows.Count == 0)
+            {
+                console.WriteLine("     9d-4：filter_drel=today 無法判定（第一頁就沒有列）");
+                return;
+            }
+
+            foreach (var r in firstRows)
+            {
+                if (string.IsNullOrWhiteSpace(r.DatetimeText) || !DateTime.TryParse(r.DatetimeText, out _))
+                {
+                    console.WriteLine("     9d-4：filter_drel=today 無法判定（解析失敗）");
+                    return;
+                }
+            }
+
+            var lastStart = Math.Max(0, todayTreesize.Value - 5);
+            var lastRows = await ReadPagingRowsAsync(client, "messages", "&id=0&filter_drel=today", lastStart, 5, true, ct);
+
+            if (lastRows.Count == 0)
+            {
+                console.WriteLine($"     9d-4：filter_drel=today ⚠ treesize 可能被封頂（start={lastStart} 取不到資料，treesize 不是實際筆數）");
+                return;
+            }
+
+            var lastParsed = new List<(PagingRow Row, DateTime Parsed)>();
+            foreach (var r in lastRows)
+            {
+                if (string.IsNullOrWhiteSpace(r.DatetimeText) || !DateTime.TryParse(r.DatetimeText, out var dt))
+                {
+                    console.WriteLine("     9d-4：filter_drel=today 無法判定（解析失敗）");
+                    return;
+                }
+                lastParsed.Add((r, dt));
+            }
+
+            var oldest = lastParsed.OrderBy(x => x.Parsed).First();
+            if (oldest.Parsed.Date == DateTime.Today)
+            {
+                console.WriteLine($"     9d-4：filter_drel=today 生效（末頁仍在今天：{oldest.Row.DatetimeText}）");
+            }
+            else if (oldest.Parsed.Date < DateTime.Today)
+            {
+                console.WriteLine($"     9d-4：filter_drel=today ⚠ 被忽略（末頁已到 {oldest.Row.DatetimeText}，參數沒有縮小範圍；狀態變更階段會翻完整份歷史，靠依時間提早停止節省查詢）");
+            }
+            else
+            {
+                console.WriteLine($"     9d-4：filter_drel=today 無法判定（最舊時間晚於今天：{oldest.Row.DatetimeText}）");
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-4：filter_drel=today 無法判定（{ex.Message}）");
+        }
     }
 
     private static int TypePriorityRank(string type)
