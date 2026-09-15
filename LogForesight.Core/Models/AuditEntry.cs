@@ -147,6 +147,7 @@ public static class AuditActions
 
     // PRTG 歷史回填（PRTG 第 1 輪批次E）
     public const string PrtgBackfillRun = "prtg_backfill_run";
+    public const string PrtgBackfillCancel = "prtg_backfill_cancel";
     public const string PrtgStructureSyncRun = "prtg_structure_sync_run";
     public const string PrtgStructureSyncCancel = "prtg_structure_sync_cancel";
 

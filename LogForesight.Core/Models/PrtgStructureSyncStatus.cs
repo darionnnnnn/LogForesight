@@ -8,6 +8,12 @@ namespace LogForesight.Core.Models;
 /// </summary>
 public class PrtgStructureSyncStatus
 {
+    public const string SourceManual = "manual";
+    public const string SourceNightly = "nightly";
+
+    /// <summary>同步來源（manual: 手動同步；nightly: 夜間取數）。</summary>
+    public string Source { get; set; } = SourceManual;
+
     /// <summary>最近一次執行結束的時間（成功或失敗都記）。</summary>
     public DateTime CompletedAt { get; set; }
 
@@ -36,4 +42,27 @@ public class PrtgStructureSyncStatus
     public int MapSkippedNoIp { get; set; }
     public int MapSkippedExcluded { get; set; }
     public int MapSkippedManualSibling { get; set; }
+
+    /// <summary>
+    /// 把另一份結果的全部欄位抄進來（手動同步與夜間取數兩個寫入點共用）。
+    /// 欄位清單只在這裡維護一份：各寫一份的話，加欄位時漏改一處不會有任何編譯或測試訊號。
+    /// </summary>
+    public void CopyFrom(PrtgStructureSyncStatus other)
+    {
+        Source = other.Source;
+        CompletedAt = other.CompletedAt;
+        Success = other.Success;
+        ErrorMessage = other.ErrorMessage;
+        ElapsedSeconds = other.ElapsedSeconds;
+        Devices = other.Devices;
+        Sensors = other.Sensors;
+        MapDate = other.MapDate;
+        MapOk = other.MapOk;
+        MapManual = other.MapManual;
+        MapConflict = other.MapConflict;
+        MapUnmatched = other.MapUnmatched;
+        MapSkippedNoIp = other.MapSkippedNoIp;
+        MapSkippedExcluded = other.MapSkippedExcluded;
+        MapSkippedManualSibling = other.MapSkippedManualSibling;
+    }
 }

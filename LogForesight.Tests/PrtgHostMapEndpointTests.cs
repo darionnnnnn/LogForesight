@@ -483,7 +483,8 @@ public class PrtgHostMapEndpointTests : IDisposable
         var syncService = new PrtgStructureSyncService(
             settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState,
             new HostStore(_backend.Blob("hosts")),
-            new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)));
+            new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
+            new PrtgBackfillRunState());
 
         var controller = new SettingsController(
             new StubSystemSettingsService(),

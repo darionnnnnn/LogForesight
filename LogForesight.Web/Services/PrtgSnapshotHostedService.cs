@@ -69,6 +69,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     private int _consecutiveFailures;
     private string? _lastSkipReason;
 
+    /// <summary>目前這段暫停的開始時間（null＝沒有暫停）。</summary>
+    private DateTime? _skipSince;
+
+    /// <summary>暫停超過這個長度，恢復時才寫執行輸出。</summary>
+    private static readonly TimeSpan PauseReportThreshold = TimeSpan.FromMinutes(15);
+
     private DateTime? _targetRefreshHour;
     private HashSet<long>? _targetObjids;
     private Dictionary<long, string>? _sensorTypes;
@@ -167,38 +173,39 @@ public class PrtgSnapshotHostedService : BackgroundService
         // 1. PrtgEnabled 為 false → 不跑。
         if (!settings.PrtgEnabled)
         {
-            _lastSkipReason = "PRTG 擷取未啟用";
+            NoteSkip("PRTG 擷取未啟用", trackPause: false);
             return;
         }
 
         // 2. 連線設定不齊（PrtgUrl 空 或 PrtgClientFactory.HasUsableCredentials(settings) 為 false）→ 不跑。
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
-            _lastSkipReason = "PRTG 連線設定不齊";
+            NoteSkip("PRTG 連線設定不齊", trackPause: false);
             return;
         }
 
         // 3. 結構同步執行中（PrtgStructureSyncService.IsRunning）→ 不跑。
         if (_structureSync.IsRunning)
         {
-            _lastSkipReason = "結構同步執行中，暫停快照";
+            NoteSkip("結構同步執行中，暫停快照");
             return;
         }
 
         // 4. 歷史回填執行中（PrtgBackfillService 的狀態 IsRunning）→ 不跑。
         if (_backfill.GetStatus().IsRunning)
         {
-            _lastSkipReason = "歷史回填執行中，暫停快照";
+            NoteSkip("歷史回填執行中，暫停快照");
             return;
         }
 
         // 5. 取數執行正在 PRTG 階段（SchedulerRunState 的快照裡，進度 phase 以 prtg- 開頭）→ 不跑。
         if (IsFetchRunningPrtgPhase())
         {
-            _lastSkipReason = "夜間取數正在 PRTG 階段，暫停快照";
+            NoteSkip("夜間取數正在 PRTG 階段，暫停快照");
             return;
         }
 
+        NoteResumed();
         _lastSkipReason = null;
 
         // 若無退避，生效間隔隨策略設定更新
@@ -227,6 +234,39 @@ public class PrtgSnapshotHostedService : BackgroundService
         catch (Exception ex)
         {
             RecordFailure(ex);
+        }
+    }
+
+    /// <summary>
+    /// 前置條件不通過：記下原因；由「通過」轉「不通過」時記下暫停開始時間。
+    /// 暫停中原因改變不重設開始時間（恢復時印最後一個原因）。
+    /// 「未啟用／設定不齊」不算暫停（trackPause=false）：那段期間本來就沒有在取樣，
+    /// 啟用當天印「暫停 43200 分鐘、coverage 偏低」是假訊息；要量的是取數、同步、回填佔用造成的暫停。
+    /// </summary>
+    private void NoteSkip(string reason, bool trackPause = true)
+    {
+        _lastSkipReason = reason;
+        if (trackPause) _skipSince ??= Now();
+        else _skipSince = null;
+    }
+
+    /// <summary>
+    /// 前置條件回到通過：暫停超過門檻才寫一行，讓「這段期間取樣列 coverage 偏低」看得到。
+    /// 門檻內的暫停不寫——保守策略一次快照間隔就是 15 分鐘，寫了只是洗版。
+    /// </summary>
+    private void NoteResumed()
+    {
+        if (!_skipSince.HasValue) return;
+
+        var since = _skipSince.Value;
+        var now = Now();
+        _skipSince = null;
+        if (now - since > PauseReportThreshold)
+        {
+            var minutes = (int)(now - since).TotalMinutes;
+            WriteOutput(
+                $"快照已恢復：因「{_lastSkipReason}」暫停 {minutes} 分鐘（{since:HH:mm}～{now:HH:mm}），這段期間的取樣列 coverage 會偏低",
+                LogLevel.Info);
         }
     }
 

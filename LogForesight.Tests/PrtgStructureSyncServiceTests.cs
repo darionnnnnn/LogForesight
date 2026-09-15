@@ -39,10 +39,11 @@ public class PrtgStructureSyncServiceTests : IDisposable
         new(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
 
     private PrtgStructureSyncService Create(
-        SchedulerRunState? schedulerState = null, PrtgStructureSyncRunState? state = null) =>
+        SchedulerRunState? schedulerState = null, PrtgStructureSyncRunState? state = null,
+        PrtgBackfillRunState? backfillState = null) =>
         new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(),
             schedulerState ?? new SchedulerRunState(),
-            new HostStore(_backend.Blob("hosts")), StatusStore());
+            new HostStore(_backend.Blob("hosts")), StatusStore(), backfillState ?? new PrtgBackfillRunState());
 
     private void EnablePrtg()
     {
@@ -96,6 +97,21 @@ public class PrtgStructureSyncServiceTests : IDisposable
     /// 取數執行進行中不得啟動同步：那一趟自己就會同步結構與對應，
     /// 兩邊同時寫同一批鏡像表沒有意義，而且會讓對應算在寫到一半的鏡像上。
     /// </summary>
+    /// <summary>回填執行中同樣拒絕：兩者會同時對同一台 PRTG 發查詢；回填端的反向閘門在 PrtgBackfillService。</summary>
+    [Fact]
+    public void TryStart_歷史回填執行中時拒絕()
+    {
+        EnablePrtg();
+        var backfillState = new PrtgBackfillRunState();
+        Assert.True(backfillState.TryBeginRun(out _));
+
+        var service = Create(backfillState: backfillState);
+
+        Assert.False(service.TryStart(out var error, out var isConflict));
+        Assert.Contains("歷史回填執行中", error);
+        Assert.True(isConflict);
+    }
+
     [Fact]
     public void TryStart_取數執行進行中時拒絕()
     {
@@ -135,6 +151,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         Assert.Null(StatusStore().GetOrNull());
         var freshStatus = Create().GetStatus();
         Assert.Null(freshStatus.LastCompletedAt);
+        Assert.Null(freshStatus.LastSource);
 
         // 寫入一筆「執行過但零筆」
         StatusStore().Update(x =>
@@ -159,6 +176,26 @@ public class PrtgStructureSyncServiceTests : IDisposable
         Assert.Equal(0, status.LastMapOk);
         // 三種略過加總成一個數字給畫面
         Assert.Equal(6, status.LastMapSkipped);
+        Assert.Equal("manual", status.LastSource);
+    }
+
+    [Fact]
+    public void 手動同步成功後_LastSource為manual()
+    {
+        var service = Create();
+        service.Persist(new PrtgStructureSyncStatus
+        {
+            CompletedAt = new DateTime(2026, 9, 9, 10, 0, 0),
+            Success = true,
+            Devices = 10,
+            Sensors = 20,
+            MapDate = new DateTime(2026, 9, 9),
+            MapOk = 10
+        });
+
+        var status = service.GetStatus();
+        Assert.True(status.LastSuccess);
+        Assert.Equal("manual", status.LastSource);
     }
 
     [Fact]

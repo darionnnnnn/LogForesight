@@ -395,19 +395,39 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
     }
 
-    /// <summary>發佈後內容不再變動是登錄簿的前提（NetIQ 是多執行緒平行迴圈，For 會被並行呼叫）。</summary>
     [Fact]
-    public void 二次發佈以最後一次為準且日期跟著換()
+    public void 跨日獨立發佈各日finding並存()
     {
         var registry = new PrtgFindingsRegistry();
-        registry.Publish(DateTime.Today.AddDays(-1), ByHost(101, Finding(2001)));
-        Assert.Single(registry.For(101, DateTime.Today.AddDays(-1)));
+        var day1 = DateTime.Today.AddDays(-2);
+        var day2 = DateTime.Today.AddDays(-1);
+        var day3 = DateTime.Today;
 
-        registry.Publish(DateTime.Today, ByHost(102, Finding(2002, "flapping")));
+        registry.Publish(day1, ByHost(101, Finding(2001)));
+        registry.Publish(day2, ByHost(102, Finding(2002, "flapping")));
 
-        Assert.Empty(registry.For(101, DateTime.Today.AddDays(-1)));
-        Assert.Empty(registry.For(101, DateTime.Today));
-        Assert.Single(registry.For(102, DateTime.Today));
+        Assert.Single(registry.For(101, day1));
+        Assert.Empty(registry.For(102, day1));
+        Assert.Empty(registry.For(101, day2));
+        Assert.Single(registry.For(102, day2));
+        Assert.Empty(registry.For(101, day3));
+
+        Assert.True(registry.IsPublished(day1));
+        Assert.True(registry.IsPublished(day2));
+        Assert.False(registry.IsPublished(day3));
+    }
+
+    [Fact]
+    public void 同日二次發佈以最後一次為準()
+    {
+        var registry = new PrtgFindingsRegistry();
+        var day1 = DateTime.Today.AddDays(-1);
+
+        registry.Publish(day1, ByHost(101, Finding(2001)));
+        Assert.Equal("prtg:down:2001", Assert.Single(registry.For(101, day1)).EventKey);
+
+        registry.Publish(day1, ByHost(101, Finding(2002, "flapping")));
+        Assert.Equal("prtg:flapping:2002", Assert.Single(registry.For(101, day1)).EventKey);
     }
     // ── 體檢輪：並行競態與 AI 回寫 ─────────────────────────────────
 

@@ -757,4 +757,84 @@ public class SchedulerRunStateTests
         Assert.Equal(5, state.PrtgProgressDone);
         Assert.Equal(50, state.PrtgProgressTotal);
     }
+
+    [Fact]
+    public void PrtgDateRange不動進度軌也不觸發就緒事件()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        state.ReportProgress(RunPhases.Netiq, 10, 20);
+        state.ReportProgress(RunPhases.PrtgTriggered, 5, 50);
+
+        var readyTriggered = false;
+        state.PrtgFindingsBecameReady += () => readyTriggered = true;
+
+        state.ReportProgress(RunPhases.PrtgDateRange, 3, 0);
+
+        // NetIQ 軌與 PRTG 軌數字不變
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(20, state.ProgressTotal);
+        Assert.Equal(5, state.PrtgProgressDone);
+        Assert.Equal(50, state.PrtgProgressTotal);
+
+        // 未觸發就緒事件
+        Assert.False(readyTriggered);
+        Assert.False(state.PrtgFindingsReady);
+
+        // PrtgRangeStart 正確
+        Assert.Equal(DateTime.Today.AddDays(-3), state.PrtgRangeStart);
+        Assert.Equal(3, state.PrtgDayCount);
+        Assert.Equal(0, state.PrtgDayIndex);
+    }
+
+    [Fact]
+    public void EndRun後PrtgRangeStart清除()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+        state.ReportProgress(RunPhases.PrtgDateRange, 5, 0);
+
+        Assert.NotNull(state.PrtgRangeStart);
+        Assert.Equal(5, state.PrtgDayCount);
+
+        state.EndRun();
+
+        Assert.Null(state.PrtgRangeStart);
+        Assert.Equal(0, state.PrtgDayCount);
+        Assert.Equal(0, state.PrtgDayIndex);
+        Assert.Null(state.FindingsWaitCutoff());
+    }
+
+    [Fact]
+    public void PrtgDateRange多次回報_記錄天數與當前天次且RangeStart不重算()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        state.ReportProgress(RunPhases.Netiq, 10, 20);
+        state.ReportProgress(RunPhases.PrtgTriggered, 5, 50);
+
+        // 第一次：迴圈前 (3, 0)
+        state.ReportProgress(RunPhases.PrtgDateRange, 3, 0);
+        var firstStart = state.PrtgRangeStart;
+        Assert.Equal(DateTime.Today.AddDays(-3), firstStart);
+        Assert.Equal(3, state.PrtgDayCount);
+        Assert.Equal(0, state.PrtgDayIndex);
+
+        // 第二次：第 2 天開始 (3, 2)
+        state.ReportProgress(RunPhases.PrtgDateRange, 3, 2);
+        Assert.Equal(3, state.PrtgDayCount);
+        Assert.Equal(2, state.PrtgDayIndex);
+        Assert.Equal(firstStart, state.PrtgRangeStart);
+
+        // 兩條進度軌數字不變
+        Assert.Equal(10, state.ProgressDone);
+        Assert.Equal(20, state.ProgressTotal);
+        Assert.Equal(5, state.PrtgProgressDone);
+        Assert.Equal(50, state.PrtgProgressTotal);
+
+        // FindingsWaitCutoff 回傳第一次算的 PrtgRangeStart
+        Assert.Equal(firstStart, state.FindingsWaitCutoff());
+    }
 }

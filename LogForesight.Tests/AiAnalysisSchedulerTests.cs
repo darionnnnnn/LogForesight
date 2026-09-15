@@ -818,15 +818,33 @@ public class AiAnalysisSchedulerTests : IDisposable
         var (service, runState, _, schedulerState) = CreateTestHarness();
         _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
 
+        // 只有一筆待補、假 AI 立刻回應：執行可能在兩次輪詢之間開始又結束，斷言就看不到「執行中」。
+        // 讓 AI 回應卡在閘門上，執行一定停在「執行中」直到斷言完成。
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (_, _) =>
+        {
+            await gate.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
         Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
         Assert.False(runState.IsRunning);
 
         // 這一步是取數路徑送出的訊號，**沒有**呼叫 TickAsync
         schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
 
-        await WaitUntilAsync(() => runState.IsRunning, TimeSpan.FromSeconds(5));
-        Assert.True(runState.IsRunning);
-        Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+        try
+        {
+            await WaitUntilAsync(() => runState.IsRunning, TimeSpan.FromSeconds(10));
+            Assert.True(runState.IsRunning);
+            Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+        }
+        finally
+        {
+            // 放行後等執行真的結束再離開：測試 Dispose 釋放 backend 時背景分析還在跑會偶發紅
+            gate.TrySetResult(true);
+            await WaitUntilAsync(() => !runState.IsRunning, TimeSpan.FromSeconds(10));
+        }
     }
 
     /// <summary>
@@ -889,5 +907,96 @@ public class AiAnalysisSchedulerTests : IDisposable
             if (condition()) return;
             await Task.Delay(25);
         }
+    }
+
+    [Fact]
+    public async Task 取數執行中送出PRTG日期範圍_範圍內的舊日待補不判讀()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var threeDaysAgo = today.AddDays(-3);
+        var fiveDaysAgo = today.AddDays(-5);
+        var sixDaysAgo = today.AddDays(-6);
+
+        store.Append(CreateRecord(1, "HOST-A", threeDaysAgo, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", fiveDaysAgo, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", sixDaysAgo, pending: true));
+
+        // 模擬取數排程執行中，並送出 PRTG 5 天範圍
+        schedulerState.TryBeginRun("schedule", out _);
+        schedulerState.ReportProgress(RunPhases.PrtgDateRange, 5, 0);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recThree = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, threeDaysAgo);
+        var recFive = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, fiveDaysAgo);
+        var recSix = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, sixDaysAgo);
+
+        // 3天前與5天前在範圍內，不判讀（維持 pending）
+        Assert.True(recThree!.AiPending);
+        Assert.True(recFive!.AiPending);
+        // 6天前在範圍外，合格判讀（完成）
+        Assert.False(recSix!.AiPending);
+    }
+
+    [Fact]
+    public async Task 日期範圍訊號後finding就緒_範圍內待補全部放行()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var threeDaysAgo = today.AddDays(-3);
+        var fiveDaysAgo = today.AddDays(-5);
+
+        store.Append(CreateRecord(1, "HOST-A", threeDaysAgo, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", fiveDaysAgo, pending: true));
+
+        // 模擬取數排程執行中，先送日期範圍
+        schedulerState.TryBeginRun("schedule", out _);
+        schedulerState.ReportProgress(RunPhases.PrtgDateRange, 5, 0);
+
+        // 後續 finding 就緒
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recThree = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, threeDaysAgo);
+        var recFive = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, fiveDaysAgo);
+
+        // finding 已就緒，全部合格放行
+        Assert.False(recThree!.AiPending);
+        Assert.False(recFive!.AiPending);
+    }
+
+    [Fact]
+    public async Task 未送日期範圍_維持只擋昨天之後()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var today = DateTime.Today;
+        var yesterday = today.AddDays(-1);
+        var threeDaysAgo = today.AddDays(-3);
+
+        store.Append(CreateRecord(1, "HOST-A", today, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", yesterday, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", threeDaysAgo, pending: true));
+
+        // 模擬取數排程執行中，但未送 PrtgDateRange
+        schedulerState.TryBeginRun("schedule", out _);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        var recToday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, today);
+        var recYesterday = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, yesterday);
+        var recThree = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, threeDaysAgo);
+
+        // 只擋昨天之後（今天與昨天被擋，3天前通過）
+        Assert.True(recToday!.AiPending);
+        Assert.True(recYesterday!.AiPending);
+        Assert.False(recThree!.AiPending);
     }
 }

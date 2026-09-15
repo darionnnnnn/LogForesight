@@ -1214,7 +1214,7 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_步驟9_成本行標示87次historicdata與9次tablejson()
+    public async Task RunAsync_步驟9_成本行標示87次historicdata與11次tablejson()
     {
         var stub = BuildPerfStub(@"{""sensors"": []}");
 
@@ -1222,6 +1222,157 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.Contains(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata 與 9 次 table.json"));
+        Assert.Contains(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata 與 11 次 table.json"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d4_末頁仍在今天_判定生效()
+    {
+        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        {
+            if (!url.Contains("content=messages")) return null;
+            if (url.Contains("count=1&id=0&filter_drel="))
+            {
+                return url.Contains("filter_drel=today")
+                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 10, ""messages"": []}")
+                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 20, ""messages"": []}");
+            }
+            if (url.Contains("columns=objid,datetime") && url.Contains("filter_drel=today"))
+            {
+                if (url.Contains("start=0"))
+                {
+                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
+                        {{""objid"": 1, ""datetime"": ""{todayStr} 12:00:00""}},
+                        {{""objid"": 2, ""datetime"": ""{todayStr} 11:00:00""}},
+                        {{""objid"": 3, ""datetime"": ""{todayStr} 10:00:00""}},
+                        {{""objid"": 4, ""datetime"": ""{todayStr} 09:00:00""}},
+                        {{""objid"": 5, ""datetime"": ""{todayStr} 08:00:00""}}
+                    ]}}");
+                }
+                if (url.Contains("start=5"))
+                {
+                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
+                        {{""objid"": 6, ""datetime"": ""{todayStr} 07:00:00""}},
+                        {{""objid"": 7, ""datetime"": ""{todayStr} 06:00:00""}},
+                        {{""objid"": 8, ""datetime"": ""{todayStr} 05:00:00""}},
+                        {{""objid"": 9, ""datetime"": ""{todayStr} 04:00:00""}},
+                        {{""objid"": 10, ""datetime"": ""{todayStr} 03:00:00""}}
+                    ]}}");
+                }
+            }
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-4：messages treesize today=10、7days=20"));
+        Assert.Contains(console.Lines, l => l.Contains($"9d-4：filter_drel=today 生效（末頁仍在今天：{todayStr} 03:00:00）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d4_末頁早於今天_判定被忽略()
+    {
+        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
+        var yesterdayStr = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd");
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        {
+            if (!url.Contains("content=messages")) return null;
+            if (url.Contains("count=1&id=0&filter_drel="))
+            {
+                return url.Contains("filter_drel=today")
+                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 10, ""messages"": []}")
+                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 20, ""messages"": []}");
+            }
+            if (url.Contains("columns=objid,datetime") && url.Contains("filter_drel=today"))
+            {
+                if (url.Contains("start=0"))
+                {
+                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
+                        {{""objid"": 1, ""datetime"": ""{todayStr} 12:00:00""}}
+                    ]}}");
+                }
+                if (url.Contains("start=5"))
+                {
+                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
+                        {{""objid"": 10, ""datetime"": ""{yesterdayStr} 23:00:00""}}
+                    ]}}");
+                }
+            }
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains($"9d-4：filter_drel=today ⚠ 被忽略（末頁已到 {yesterdayStr} 23:00:00，參數沒有縮小範圍；狀態變更階段會翻完整份歷史，靠依時間提早停止節省查詢）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d4_末頁取不到資料_判定treesize可能封頂()
+    {
+        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        {
+            if (!url.Contains("content=messages")) return null;
+            if (url.Contains("count=1&id=0&filter_drel="))
+            {
+                return url.Contains("filter_drel=today")
+                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1000000, ""messages"": []}")
+                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1000000, ""messages"": []}");
+            }
+            if (url.Contains("columns=objid,datetime") && url.Contains("filter_drel=today"))
+            {
+                if (url.Contains("start=0"))
+                {
+                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
+                        {{""objid"": 1, ""datetime"": ""{todayStr} 12:00:00""}}
+                    ]}}");
+                }
+                if (url.Contains("start=999995"))
+                {
+                    return JsonResponse(HttpStatusCode.OK, @"{""messages"": []}");
+                }
+            }
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-4：filter_drel=today ⚠ treesize 可能被封頂（start=999995 取不到資料，treesize 不是實際筆數）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d4_treesize非數字_判定無法判定且不影響其他步驟()
+    {
+        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        {
+            if (!url.Contains("content=messages")) return null;
+            if (url.Contains("count=1&id=0&filter_drel="))
+            {
+                return url.Contains("filter_drel=today")
+                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": ""not_a_number"", ""messages"": []}")
+                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 100, ""messages"": []}");
+            }
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-4：messages treesize today=未知、7days=100"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-4：filter_drel=today 無法判定（treesize 非數字）"));
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("filter_drel=today") && u.Contains("start=0") && u.Contains("count=5"));
+        Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("filter_drel=today") && !u.Contains("start=0") && u.Contains("count=5"));
     }
 }

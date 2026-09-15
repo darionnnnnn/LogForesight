@@ -94,7 +94,21 @@ public class BatchRun
 
     /// <summary>PRTG 擷取失敗（<see cref="PrtgOutcome"/>）</summary>
     public const string PrtgOutcomeFailed = "failed";
+
+    /// <summary>逐日 PRTG 統計（null＝舊紀錄或未執行 PRTG）</summary>
+    public List<PrtgDayStat>? PrtgDays { get; set; }
 }
+
+/// <summary>PRTG 單日擷取與分析統計摘要（逐日 PRTG 統計）。</summary>
+public sealed record PrtgDayStat(
+    DateTime Date,
+    string Outcome,
+    int Findings,
+    int AttributedHosts,
+    bool MapAvailable,
+    int TriggerHosts,
+    int TargetSensors,
+    int FailedSensors);
 
 /// <summary>
 /// 執行期間的診斷紀錄（↔ lf_batch_run_logs）。

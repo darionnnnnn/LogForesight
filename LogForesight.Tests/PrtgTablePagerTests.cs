@@ -52,7 +52,8 @@ public class PrtgTablePagerTests
     /// <summary>把回應交給分頁器，收集被寫出的 objid。</summary>
     private static async Task<(PrtgPagerResult Result, List<long> Written, StubHandler Handler, TestConsole Console)> RunAsync(
         Func<string, string> responder, int pageSize, int maxPagesWhenUnknown = PrtgTablePager.DefaultMaxPages,
-        Func<JsonElement, string?>? rowKey = null, string content = "devices", int? batchSize = null)
+        Func<JsonElement, string?>? rowKey = null, string content = "devices", int? batchSize = null,
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
     {
         var handler = new StubHandler { Responder = responder };
         using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
@@ -67,7 +68,8 @@ public class PrtgTablePagerTests
             pageSize: pageSize,
             maxPagesWhenTreeSizeUnknown: maxPagesWhenUnknown,
             rowKey: rowKey,
-            batchSize: batchSize ?? PrtgTablePager.DefaultBatchSize);
+            batchSize: batchSize ?? PrtgTablePager.DefaultBatchSize,
+            stopAfterPage: stopAfterPage);
 
         return (result, written, handler, console);
     }
@@ -397,5 +399,42 @@ public class PrtgTablePagerTests
         Assert.Contains("count=5000", url);
         Assert.Equal(5000, PrtgTablePager.DefaultPageSize);
         Assert.Equal(500, PrtgTablePager.DefaultBatchSize);
+    }
+
+    [Fact]
+    public async Task 掛鉤在第1頁回true_只發1次請求且StoppedEarly為true且緩衝列有交給onBatch()
+    {
+        var (result, written, handler, _) = await RunAsync(
+            url => StartOf(url) == 0
+                ? Page("devices", new long[] { 1, 2, 3, 4, 5 })
+                : Page("devices", new long[] { 6, 7, 8, 9, 10 }),
+            pageSize: 5,
+            batchSize: 10,
+            stopAfterPage: _ => true);
+
+        Assert.Single(handler.RequestedUrls);
+        Assert.True(result.StoppedEarly);
+        Assert.Equal(1, result.Pages);
+        Assert.Equal(5, result.Mapped);
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5 }, written);
+    }
+
+    [Fact]
+    public async Task 掛鉤恆回false_行為與不傳掛鉤相同且StoppedEarly為false()
+    {
+        Func<string, string> responder = url => StartOf(url) == 0
+            ? Page("devices", new long[] { 1, 2, 3, 4, 5 }, treesize: 7)
+            : Page("devices", new long[] { 6, 7 }, treesize: 7);
+
+        var (baselineResult, baselineWritten, baselineHandler, _) = await RunAsync(responder, pageSize: 5);
+        var (result, written, handler, _) = await RunAsync(responder, pageSize: 5, stopAfterPage: _ => false);
+
+        Assert.False(result.StoppedEarly);
+        Assert.Equal(baselineResult.Pages, result.Pages);
+        Assert.Equal(baselineResult.Mapped, result.Mapped);
+        Assert.Equal(baselineResult.ReadRows, result.ReadRows);
+        Assert.Equal(baselineResult.DuplicateRows, result.DuplicateRows);
+        Assert.Equal(baselineWritten, written);
+        Assert.Equal(baselineHandler.RequestedUrls.Count, handler.RequestedUrls.Count);
     }
 }

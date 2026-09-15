@@ -130,12 +130,13 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var runs = Runs();
         var baseDate = DateTime.Today.AddDays(-1);
 
+        // 依新規則：取數執行的 StartedAt 為資料日期的隔天（處理前一天）
         // 同一天兩筆取數執行（前者 success、後者 partial）
         var run1 = new BatchRun
         {
             HostName = "FETCH-1",
-            StartedAt = baseDate.AddHours(2),
-            FinishedAt = baseDate.AddHours(2).AddMinutes(10),
+            StartedAt = baseDate.AddDays(1).AddHours(2),
+            FinishedAt = baseDate.AddDays(1).AddHours(2).AddMinutes(10),
             ExitCode = 0,
             PrtgOutcome = BatchRun.PrtgOutcomeSuccess,
             JobType = null
@@ -143,8 +144,8 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var run2 = new BatchRun
         {
             HostName = "FETCH-2",
-            StartedAt = baseDate.AddHours(4),
-            FinishedAt = baseDate.AddHours(4).AddMinutes(10),
+            StartedAt = baseDate.AddDays(1).AddHours(4),
+            FinishedAt = baseDate.AddDays(1).AddHours(4).AddMinutes(10),
             ExitCode = 0,
             PrtgOutcome = BatchRun.PrtgOutcomePartial,
             JobType = null
@@ -153,8 +154,8 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var runAi = new BatchRun
         {
             HostName = "AI-RUN",
-            StartedAt = baseDate.AddHours(6),
-            FinishedAt = baseDate.AddHours(6).AddMinutes(10),
+            StartedAt = baseDate.AddDays(1).AddHours(6),
+            FinishedAt = baseDate.AddDays(1).AddHours(6).AddMinutes(10),
             ExitCode = 1,
             PrtgOutcome = BatchRun.PrtgOutcomeFailed,
             JobType = BatchRun.JobTypeAi
@@ -180,6 +181,115 @@ public class BranchOutcomeAndCacheTests : IDisposable
 
         var summary = Assert.Single(summaries, s => s.Date == DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"));
         Assert.Null(summary.PrtgOutcome);
+    }
+
+    [Fact]
+    public void PRTG欄依逐日統計對應資料日期()
+    {
+        var runs = Runs();
+        var today = DateTime.Today;
+        var day1 = today.AddDays(-1);
+        var day2 = today.AddDays(-2);
+        var day3 = today.AddDays(-3);
+
+        // 一趟多日取數執行，在 day1 開始，PrtgDays 含 day2 (Success) 與 day3 (Partial)
+        var multiRun = new BatchRun
+        {
+            HostName = "FETCH-MULTI",
+            StartedAt = day1.AddHours(2),
+            FinishedAt = day1.AddHours(3),
+            ExitCode = 0,
+            PrtgOutcome = BatchRun.PrtgOutcomePartial,
+            PrtgDays = new List<PrtgDayStat>
+            {
+                new(day2, BatchRun.PrtgOutcomeSuccess, 5, 2, true, 2, 10, 0),
+                new(day3, BatchRun.PrtgOutcomePartial, 2, 1, true, 1, 5, 1)
+            }
+        };
+        runs.StartRun(multiRun);
+
+        var service = CreateService();
+        // 查最近 3 天：day1, day2, day3
+        var summaries = service.GetDaySummaries(3, page: 1, pageSize: 30);
+
+        var summaryDay1 = Assert.Single(summaries, s => s.Date == day1.ToString("yyyy-MM-dd"));
+        var summaryDay2 = Assert.Single(summaries, s => s.Date == day2.ToString("yyyy-MM-dd"));
+        var summaryDay3 = Assert.Single(summaries, s => s.Date == day3.ToString("yyyy-MM-dd"));
+
+        // 該趟開始日 (day1) 那一列不顯示它（PrtgDays 不含 day1 且非 null，不得落到舊規則）
+        Assert.Null(summaryDay1.PrtgOutcome);
+        // day2 與 day3 兩列各自顯示該日 Outcome
+        Assert.Equal(BatchRun.PrtgOutcomeSuccess, summaryDay2.PrtgOutcome);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, summaryDay3.PrtgOutcome);
+    }
+
+    [Fact]
+    public void 舊紀錄無逐日統計_對應開始日前一天()
+    {
+        var runs = Runs();
+        var today = DateTime.Today;
+        var day1 = today.AddDays(-1);
+        var day2 = today.AddDays(-2);
+
+        // 舊紀錄無 PrtgDays，在 day1 執行（處理 day2 的資料）
+        var legacyRun = new BatchRun
+        {
+            HostName = "FETCH-LEGACY",
+            StartedAt = day1.AddHours(3),
+            FinishedAt = day1.AddHours(3).AddMinutes(10),
+            ExitCode = 0,
+            PrtgOutcome = BatchRun.PrtgOutcomeSuccess,
+            PrtgDays = null
+        };
+        runs.StartRun(legacyRun);
+
+        var service = CreateService();
+        var summaries = service.GetDaySummaries(2, page: 1, pageSize: 30);
+
+        var summaryDay1 = Assert.Single(summaries, s => s.Date == day1.ToString("yyyy-MM-dd"));
+        var summaryDay2 = Assert.Single(summaries, s => s.Date == day2.ToString("yyyy-MM-dd"));
+
+        // 開始日前一天 (day2) 對應到該執行的 PrtgOutcome
+        Assert.Equal(BatchRun.PrtgOutcomeSuccess, summaryDay2.PrtgOutcome);
+        // 開始日 (day1) 本身不對應到該執行
+        Assert.Null(summaryDay1.PrtgOutcome);
+    }
+
+    [Fact]
+    public void 有逐日統計但不含該日_不落到舊規則()
+    {
+        var runs = Runs();
+        var today = DateTime.Today;
+        var day1 = today.AddDays(-1);
+        var day2 = today.AddDays(-2);
+        var day3 = today.AddDays(-3);
+
+        // 在 day1 開始執行，若照舊規則（StartedAt.Date == day2.AddDays(1)）會對應到 day2；
+        // 但此執行 PrtgDays 非 null（含 day3 但不含 day2），依規則不得落到舊規則
+        var run = new BatchRun
+        {
+            HostName = "FETCH-PARTIAL-DAYS",
+            StartedAt = day1.AddHours(2),
+            FinishedAt = day1.AddHours(3),
+            ExitCode = 0,
+            PrtgOutcome = BatchRun.PrtgOutcomeSuccess,
+            PrtgDays = new List<PrtgDayStat>
+            {
+                new(day3, BatchRun.PrtgOutcomePartial, 2, 1, true, 1, 5, 1)
+            }
+        };
+        runs.StartRun(run);
+
+        var service = CreateService();
+        var summaries = service.GetDaySummaries(3, page: 1, pageSize: 30);
+
+        var summaryDay2 = Assert.Single(summaries, s => s.Date == day2.ToString("yyyy-MM-dd"));
+        var summaryDay3 = Assert.Single(summaries, s => s.Date == day3.ToString("yyyy-MM-dd"));
+
+        // day2 即使 StartedAt.Date == day2.AddDays(1)，但因為 PrtgDays 非 null 且不含 day2，不得落到舊規則
+        Assert.Null(summaryDay2.PrtgOutcome);
+        // day3 正常對應
+        Assert.Equal(BatchRun.PrtgOutcomePartial, summaryDay3.PrtgOutcome);
     }
 
     private class CountingAnalysisRecordQuery : FakeAnalysisRecordQuery, IAnalysisRecordQuery

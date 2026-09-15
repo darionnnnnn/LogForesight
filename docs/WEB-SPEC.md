@@ -2187,7 +2187,7 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
   `PrtgRetentionDays` 受「不可大於歷史資料保留天數」約束，前端先提示、後端仍驗一次，
   且該檢查以 **effective 值**（未送就取已儲存值）比較，否則只調小歷史保留天數時上限會失效。
 - **鏡像狀態**：**「同步結構與對應」的入口與上次結果**（docs/PRTG-SPEC.md §5a；
-  執行中每 3 秒輪詢，結束後自動重載本頁的鏡像統計；從未執行過顯示「尚未同步」；
+  執行中每 3 秒輪詢，結束後自動重載本頁的鏡像統計；從未執行過顯示「尚未同步」，成功時在時間後標來源「（夜間取數）／（手動）」；
   未啟用時本入口按鈕閘住並指路，見 docs/PRTG-SPEC.md §5a）、
   **停止鈕**（只在同步執行中出現；上次同步未成功時，狀態文字要說出「鏡像可能不完整，
   夜間取數會重新同步」——只說失敗不說後果，使用者不知道該不該自己重跑）、
@@ -2212,7 +2212,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
-排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status`（歷史回填）。
+排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status|cancel`（歷史回填）。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
 「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。
 
@@ -2275,7 +2275,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **動作鈕互斥**：執行中只顯示「停止」，閒置只顯示啟動類（立即執行／立即補跑 AI／強制重新分析），
   以 `d-none` 切換而非 `disabled`——兩顆並排時使用者得自己判斷哪顆有效，灰掉的鈕仍佔位、讀起來像壞了。
   PRTG 卡的兩顆啟動鈕（同步／回填）沒有對應的停止鈕可換，維持 `disabled`；
-  同步的停止鈕是獨立一顆，只在同步執行中出現（見下方「停止鈕」）。
+  同步與回填的停止鈕各是獨立一顆，只在各自執行中出現（見下方「停止鈕」）；沒有 `Maintain` 時永遠隱藏，輪詢不得把它翻出來。
 - **狀態卡的三條進度軌**：本機／NetIQ／PRTG 三路並行，各自一條互不覆蓋的軌
   （前兩條在取數卡、PRTG 那條在 PRTG 卡）。
   三路收尾各送一個完工訊號（`local-done`／`netiq-done`／`prtg-done`），
@@ -2294,7 +2294,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
   `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`；
   PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
-  否則會把 PRTG 進度軌的數字蓋成 0/0）。
+  否則會把 PRTG 進度軌的數字蓋成 0/0）；PRTG 日期範圍訊號 `prtg-date-range`（同樣不是進度，同樣要排在前綴分支之前：
+  `done`＝本趟天數、`total`＝目前第幾天。回望多日時 PRTG 軌文字加「（第 i／N 天）」，AI 完整性閘門依它擋住整個範圍）。
   **結構同步三階段各自回報自己的 phase**（常數見 `PrtgFetchService`）：分子是已讀取列數、
   分母取 PRTG 回應的 `treesize`（缺這個欄位時分母 0，畫不定進度但分子照走）。
   少了這三個 phase，從進入 PRTG 到觸發式取數之間整段只有一次 `prtg-sync (0,0)`，
@@ -2311,6 +2312,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 四值：`disabled` 未啟用／`success`／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
   「sensor N」是目標數扣掉失敗數，另附觸發主機數。資料來自 `BatchRun` 的分路結構化欄位；
+  總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（其餘逐日欄位尚無畫面消費，見 docs/BACKLOG.md）；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
   **舊紀錄那些欄位為 null，畫面顯示「—」**，與「數字是 0」語意分開
   （0＝跑了但沒抓到，null＝這一路沒有產出）。總表主體仍是主機×日，
   **不為 PRTG 另闢一區**——PRTG 沒有主機日語意，硬拆會做出一張空表。
@@ -2357,7 +2359,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   「PRTG 尚未啟用／仍要開始」。**連線根本沒設定的站台不提示**——每次手動執行都被問一次只會讓人麻痺，
   而「連線填好了卻忘了開擷取」才是真的會讓人白跑一晚的狀態。提示不分執行範圍：
   網段範圍的手動執行一樣會走 PRTG 日路徑（它只看設定不看範圍）。前端只是提前問，
-  後端短路行為不變）、**「分析本機主機」開關**：停用後排程與立即執行
+  後端短路行為不變。PRTG 已啟用、範圍為全部主機且回望天數大於 1 時**再問一次**：激進策略提示「會對 N 天的觸發主機逐顆查詢歷史值、可能耗時數小時並明顯增加 PRTG 負載」並建議縮小天數或改保守；保守策略說明「會補齊 N 天的狀態變更與規則評估，過去日數值請用 PRTG 卡的開始回填」。網段範圍與指定主機更新的 PRTG 只處理昨天，不問）、**「分析本機主機」開關**：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
   隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」
@@ -2409,7 +2411,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **`ReportProgress` 的最後一個分支是 catch-all（寫進 NetIQ 主組）**——PRTG 的 phase
   必須顯式分支，否則會蓋掉 NetIQ 的進度條（已有反例測試釘住）。
   **PRTG 歷史回填**另有自己的進度（獨立狀態物件與端點，不走 `SchedulerRunState`）：
-  「第 X / N 天（日期）：sensor a / b」，天數層與 sensor 層兩級，換日時 sensor 進度重設。
+  先是「讀取狀態變更：N / 約 T 筆」（整趟只翻一次；約略總數還不知道時只印已讀筆數），之後「第 X / N 天（日期）：sensor a / b」，換日時 sensor 進度重設；
+  結束後被停止的顯示「■ 已停止」。
   進度欄位加在 `PrtgBackfillRunState` 自己身上，**不動它繼承的 `PrtgProbeRunState`**
   ——環境探測沒有自然分母，刻意不加進度。
   **AI 補寫進度**：AI 判讀已與取數脫鉤（見 docs/DETECTION-SPEC.md「取數排程與 AI 服務」），

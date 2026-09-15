@@ -652,6 +652,7 @@ async function loadSchedule() {
         renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope);
         // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
         prtgConnectionConfigured = hasPrtgConnection(settings);
+        prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -1055,6 +1056,8 @@ function applyAiScheduleStatus(status) {
 let prtgModuleEnabled = null;
 /** PRTG 連線是否已設定（位址＋認證齊備）。立即執行的提醒條件之一。 */
 let prtgConnectionConfigured = false;
+/** PRTG 取數策略（aggressive | conservative）。立即執行的提醒條件之一。 */
+let prtgFetchStrategy = null;
 
 
 /**
@@ -1149,10 +1152,14 @@ function renderScheduleProgress(status) {
         status.netiqCompleted
     );
 
+    let prtgPhaseLabel = PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 擷取');
+    if (status.prtgDayCount > 1 && status.prtgDayIndex > 0) {
+        prtgPhaseLabel += `（第 ${status.prtgDayIndex}／${status.prtgDayCount} 天）`;
+    }
+
     let prtgCustomLabel = null;
     if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
-        const prefix = PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 觸發式取數');
-        prtgCustomLabel = `${prefix}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
+        prtgCustomLabel = `${prtgPhaseLabel}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
     } else if (status.prtgCompleted) {
         // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
         // 三種情形要分得開：模組沒開、開了但什麼都沒抓到、抓到了。
@@ -1173,7 +1180,7 @@ function renderScheduleProgress(status) {
         status.isRunning && (!!status.prtgProgressPhase || !!status.prtgCompleted),
         status.prtgProgressDone,
         status.prtgProgressTotal,
-        PROGRESS_PHASE_LABEL[status.prtgProgressPhase] ?? (status.prtgProgressPhase || 'PRTG 擷取'),
+        prtgPhaseLabel,
         PROGRESS_PHASE_UNIT[status.prtgProgressPhase] ?? 'sensor',
         prtgCustomLabel,
         status.prtgCompleted
@@ -1207,8 +1214,9 @@ function renderPrtgSyncSummary(status) {
         return;
     }
 
+    const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
     el.textContent =
-        `${formatDateTime(status.lastCompletedAt)}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
+        `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
         + `（衝突 ${formatNumber(status.lastMapConflict ?? 0)}、查無主機 ${formatNumber(status.lastMapUnmatched ?? 0)}）`;
 }
 
@@ -1582,6 +1590,19 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         if (!goOn) return;
     }
 
+    if (prtgModuleEnabled === true && scope === 'all' && days !== null && days > 1) {
+        const isAggressive = prtgFetchStrategy === 'aggressive';
+        const confirmed = await confirmAction({
+            title: isAggressive ? 'PRTG 將逐日查詢歷史值' : 'PRTG 回望範圍',
+            message: isAggressive
+                ? `PRTG 採激進策略：這次會對 ${days} 天的觸發主機逐顆查詢歷史值，可能耗時數小時並明顯增加 PRTG 負載。\n可先縮小回望天數，或到 PRTG 維護頁「擷取參數」改為保守策略。\n\n仍要開始執行嗎？`
+                : `PRTG 會補齊這 ${days} 天的狀態變更與規則評估，讓重跑的日子也帶到 PRTG 訊號。\n過去日的數值不在立即執行內取（保守策略），需要時請用下方 PRTG 卡的「開始回填」。\n\n仍要開始執行嗎？`,
+            confirmText: '仍要開始',
+            confirmVariant: 'primary'
+        });
+        if (!confirmed) return;
+    }
+
     const submitButton = document.getElementById('run-now-submit');
     const restore = withBusy(submitButton, '送出中');
     try {
@@ -1639,9 +1660,18 @@ function renderPrtgBackfillStatus(status) {
     const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
     // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
     const currentDayNo = Math.min(status.daysDone + 1, status.daysTotal || 0);
-    const label = dateStr
+    const dayLabel = dateStr
         ? `第 ${currentDayNo} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
         : `已完成 ${status.daysDone} / ${status.daysTotal} 天`;
+    // 翻狀態變更在逐日之前、可能要好幾分鐘：這段不顯示讀取量，畫面會一直停在 sensor 0 / 0
+    let label = status.daysTotal > 0 ? dayLabel : null;
+    if (status.readingStateChanges) {
+        const read = status.stateChangesRead || 0;
+        const total = status.stateChangesTotal || 0;
+        label = total > 0
+            ? `讀取狀態變更：${formatNumber(read)} / 約 ${formatNumber(total)} 筆`
+            : `讀取狀態變更：${formatNumber(read)}`;
+    }
 
     updateProgressBar(
         { wrapEl, barEl, textEl },
@@ -1650,8 +1680,17 @@ function renderPrtgBackfillStatus(status) {
         status.daysTotal,
         null,
         '天',
-        status.daysTotal > 0 ? label : null
+        label
     );
+
+    // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
+    // 這裡會動 d-none，而 data-maintain-only 的隱藏也是靠 d-none——沒有 Maintain 時
+    // 不能碰它，否則輪詢會把唯讀使用者看不到的停止鈕重新露出來。
+    const cancelBtn = document.getElementById('prtg-backfill-cancel');
+    if (cancelBtn && canMaintainSchedule) {
+        cancelBtn.classList.toggle('d-none', !status.isRunning);
+        if (!status.isRunning) cancelBtn.disabled = false;
+    }
 
     if (status.isRunning) {
         startButton.disabled = true;
@@ -1663,6 +1702,10 @@ function renderPrtgBackfillStatus(status) {
     startButton.disabled = prtgModuleEnabled === false;
     if (!status.completedAt) {
         statusEl.textContent = '';
+        return;
+    }
+    if (status.cancelled) {
+        statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ■ 已停止`;
         return;
     }
     statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
@@ -1719,6 +1762,18 @@ function bindPrtgBackfill() {
             // 啟動失敗（如尚未設定連線位址、與探測互斥）：訊息要讓使用者看得到，不能靜默
             startButton.disabled = false;
             toast(error?.message || '無法啟動 PRTG 歷史回填。', 'danger');
+        }
+    });
+
+    const cancelBtn = document.getElementById('prtg-backfill-cancel');
+    cancelBtn?.addEventListener('click', async () => {
+        const restore = withBusy(cancelBtn, '停止中');
+        try {
+            await api.post('/api/admin/settings/prtg-backfill/cancel', {});
+            toast('已送出停止，回填會在目前這一步結束後停下', 'success');
+            await refreshPrtgBackfillStatus();
+        } finally {
+            restore();
         }
     });
 

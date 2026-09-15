@@ -34,6 +34,15 @@ public class PrtgBackfillStatusDto
     public DateTime? CurrentDate { get; set; }
     public int SensorsDone { get; set; }
     public int SensorsTotal { get; set; }
+
+    /// <summary>狀態變更區間已讀取筆數</summary>
+    public int StateChangesRead { get; set; }
+    /// <summary>狀態變更區間約略總筆數（0＝未知）</summary>
+    public int StateChangesTotal { get; set; }
+    /// <summary>是否正在翻狀態變更（逐日數值開始前）</summary>
+    public bool ReadingStateChanges { get; set; }
+    /// <summary>最近一趟是否被使用者停止</summary>
+    public bool Cancelled { get; set; }
 }
 
 /// <summary>啟動 PRTG 歷史回填回應</summary>
@@ -275,6 +284,7 @@ public class PrtgStructureSyncStatusDto
     public int? LastMapConflict { get; set; }
     public int? LastMapUnmatched { get; set; }
     public int? LastMapSkipped { get; set; }
+    public string? LastSource { get; set; }
 }
 
 /// <summary>啟動「同步結構與對應」的回應</summary>

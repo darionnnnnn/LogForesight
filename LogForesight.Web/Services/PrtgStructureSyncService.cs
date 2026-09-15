@@ -81,6 +81,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     private readonly StorageBackend _backend;
     private readonly PrtgStructureSyncRunState _state;
     private readonly SchedulerRunState _schedulerState;
+    private readonly PrtgBackfillRunState _backfillState;
     private readonly IHostStore _hosts;
     private readonly PrtgStructureSyncStatusStore _statusStore;
     private readonly IHostApplicationLifetime? _lifetime;
@@ -104,8 +105,10 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         SchedulerRunState schedulerState,
         IHostStore hosts,
         PrtgStructureSyncStatusStore statusStore,
+        PrtgBackfillRunState backfillState,
         IHostApplicationLifetime? lifetime = null)
     {
+        _backfillState = backfillState;
         _lifetime = lifetime;
         // 站台關閉時中止同步：這條路徑會對 PRTG 做整棵樹的分頁查詢，
         // 沒有取消來源的話，PRTG 端卡住（TCP 半開、不回應）就會讓狀態永遠停在「執行中」，
@@ -210,28 +213,18 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             LastMapUnmatched = last?.MapUnmatched,
             LastMapSkipped = last == null
                 ? null
-                : last.MapSkippedNoIp + last.MapSkippedExcluded + last.MapSkippedManualSibling
+                : last.MapSkippedNoIp + last.MapSkippedExcluded + last.MapSkippedManualSibling,
+            LastSource = last?.Source
         };
     }
 
     /// <summary>把一趟的結果整份寫進持久化 store（成功、失敗、取消三條路徑共用）。</summary>
-    private void Persist(PrtgStructureSyncStatus status) =>
+    internal void Persist(PrtgStructureSyncStatus status) =>
         _statusStore.Update(existing =>
         {
-            existing.CompletedAt = status.CompletedAt;
-            existing.Success = status.Success;
-            existing.ErrorMessage = status.ErrorMessage;
-            existing.ElapsedSeconds = status.ElapsedSeconds;
-            existing.Devices = status.Devices;
-            existing.Sensors = status.Sensors;
-            existing.MapDate = status.MapDate;
-            existing.MapOk = status.MapOk;
-            existing.MapManual = status.MapManual;
-            existing.MapConflict = status.MapConflict;
-            existing.MapUnmatched = status.MapUnmatched;
-            existing.MapSkippedNoIp = status.MapSkippedNoIp;
-            existing.MapSkippedExcluded = status.MapSkippedExcluded;
-            existing.MapSkippedManualSibling = status.MapSkippedManualSibling;
+            existing.CopyFrom(status);
+            // 這條路徑一定是手動同步，不信任呼叫端帶進來的來源
+            existing.Source = PrtgStructureSyncStatus.SourceManual;
         });
 
     /// <param name="error">拒絕原因；成功時為 null。</param>
@@ -268,6 +261,14 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         if (_schedulerState.IsRunning)
         {
             error = "取數執行進行中，請等它結束後再同步（該趟本身就會同步結構與對應）。";
+            isConflict = true;
+            return false;
+        }
+
+        // 回填執行中也不放行：兩者會同時對同一台 PRTG 發查詢（回填端反向的閘門在 PrtgBackfillService）
+        if (_backfillState.Snapshot().IsRunning)
+        {
+            error = "歷史回填執行中，請等它完成或按停止後再同步。";
             isConflict = true;
             return false;
         }

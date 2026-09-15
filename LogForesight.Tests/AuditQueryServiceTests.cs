@@ -70,4 +70,23 @@ public class AuditQueryServiceTests : IDisposable
 
         Assert.Single(顛倒.Data!.Items);
     }
+
+    /// <summary>
+    /// 每個動作代碼都要有中文名稱：稽核頁的「動作」欄直接印對照表的值，漏登錄的代碼會以
+    /// <c>prtg_backfill_run</c> 這種內部字串出現在畫面上。用反射掃常數，新增動作忘了登錄時這裡就紅。
+    /// </summary>
+    [Fact]
+    public void 每個稽核動作代碼都有中文名稱()
+    {
+        var names = _service.GetActionNames();
+        var codes = typeof(AuditActions)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string) && f.Name != nameof(AuditActions.SystemAccount))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToList();
+
+        Assert.NotEmpty(codes);
+        var missing = codes.Where(c => !names.ContainsKey(c)).ToList();
+        Assert.True(missing.Count == 0, "缺中文名稱的動作代碼：" + string.Join(", ", missing));
+    }
 }

@@ -132,6 +132,87 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         Assert.Equal(0, result.FailedSensors);
     }
 
+    /// <summary>
+    /// 回望多日時只有最新一天重算主機對應，較舊的日子沒有自己的對應列。
+    /// 觸發式取數要沿用「該日或之前最近一日」的對應，否則那些日子一個數值都不會取。
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_該日沒有對應時沿用之前最近一日的對應()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        recordStore.Append(CreateRecord(101, "SRV-HIGH", day, "高"));
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" }
+        }, day);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-1", SensorType = "SNMP CPU Load", Paused = false }
+        }, day);
+
+        // 對應只存在於三天前，目標日當天沒有對應列
+        store.ReplaceHostMapForDate(day.AddDays(-3), new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
+        var (client, handler) = CreateClient(req => JsonResponse(histJson));
+
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        var result = await fetcher.RunAsync(
+            day, whitelist: null, concurrency: 1,
+            analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1);
+
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=2001") && u.Contains("historicdata"));
+        Assert.Equal(1, result.TriggerHosts);
+        Assert.Equal(1, result.TargetSensors);
+    }
+
+    /// <summary>該日之後才有的對應不得往回套用到該日。</summary>
+    [Fact]
+    public async Task RunAsync_只有該日之後的對應時不取數()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        var console = new TestConsole();
+
+        recordStore.Append(CreateRecord(101, "SRV-HIGH", day, "高"));
+
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" }
+        }, day);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-1", SensorType = "SNMP CPU Load", Paused = false }
+        }, day);
+
+        store.ReplaceHostMapForDate(day.AddDays(2), new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var (client, handler) = CreateClient(req => JsonResponse("{\"histdata\":[]}"));
+        var fetchService = new PrtgFetchService(client, store, console);
+        var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
+
+        var result = await fetcher.RunAsync(
+            day, whitelist: null, concurrency: 1,
+            analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1);
+
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata"));
+        Assert.Equal(0, result.TargetSensors);
+    }
+
     [Fact]
     public async Task RunAsync_MapStatus為conflict或unmatched的device不取數()
     {

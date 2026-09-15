@@ -38,7 +38,8 @@ public static class PrtgRuleEvaluator
         IReadOnlyDictionary<long, long> sensorToDevice,
         IReadOnlyList<(long Objid, long DeviceObjid, string? Status)> sensorStatuses,
         PrtgRuleThresholds? thresholds = null,
-        IReadOnlySet<string>? enabledRuleCodes = null)
+        IReadOnlySet<string>? enabledRuleCodes = null,
+        bool includeSilent = true)
     {
         thresholds ??= new PrtgRuleThresholds();
         var findings = new List<PrtgFinding>();
@@ -176,24 +177,28 @@ public static class PrtgRuleEvaluator
         }
 
         // 4. 沉默 device（RuleSilent）
-        var deviceGroups = sensorStatuses.GroupBy(s => s.DeviceObjid);
-        foreach (var group in deviceGroups)
+        // 沉默的依據是 sensor 目前狀態，不是狀態變更；對過去日評估等於把今天的沉默套到過去，是假訊號。
+        if (includeSilent)
         {
-            var deviceObjid = group.Key;
-            var sensors = group.ToList();
-            if (sensors.Count == 0)
+            var deviceGroups = sensorStatuses.GroupBy(s => s.DeviceObjid);
+            foreach (var group in deviceGroups)
             {
-                continue;
-            }
+                var deviceObjid = group.Key;
+                var sensors = group.ToList();
+                if (sensors.Count == 0)
+                {
+                    continue;
+                }
 
-            if (sensors.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)) && IsEnabled(RuleSilent))
-            {
-                findings.Add(new PrtgFinding(
-                    deviceObjid,
-                    null,
-                    RuleSilent,
-                    $"Device 底下全部 {sensors.Count} 個未暫停 sensor 皆為 Unknown 或無狀態",
-                    sensors.Count));
+                if (sensors.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)) && IsEnabled(RuleSilent))
+                {
+                    findings.Add(new PrtgFinding(
+                        deviceObjid,
+                        null,
+                        RuleSilent,
+                        $"Device 底下全部 {sensors.Count} 個未暫停 sensor 皆為 Unknown 或無狀態",
+                        sensors.Count));
+                }
             }
         }
 

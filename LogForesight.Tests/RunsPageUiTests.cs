@@ -196,6 +196,7 @@ public class RunsPageUiTests
         Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.GuardPaused, tracks);
         Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.GuardResumed, tracks);
         Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.PrtgFindingsReady, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.PrtgDateRange, tracks);
 
         // 但它們都要在 All 裡（All 是「全部字面值」的單一清單）
         foreach (var phase in tracks)
@@ -396,6 +397,55 @@ public class RunsPageUiTests
         // 立即執行前的提醒：只在「連線已設定但未啟用」時問，沒設定 PRTG 的站台不該每次被問
         Assert.Contains("prtgModuleEnabled === false && prtgConnectionConfigured", js);
         Assert.Contains("hasPrtgConnection", js);
+    }
+
+    [Fact]
+    public void 排程頁PRTG同步摘要包含來源標示()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("lastSource", js);
+        Assert.Contains("夜間取數", js);
+        Assert.Contains("尚未同步", js);
+    }
+
+    [Fact]
+    public void RunsJs包含PRTG回望提示與進度天數標示()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains("prtgFetchStrategy", js);
+        Assert.Contains("PRTG 將逐日查詢歷史值", js);
+        Assert.Contains("PRTG 回望範圍", js);
+        Assert.Contains("prtgDayIndex", js);
+        Assert.Contains("第 ${", js);
+    }
+
+    /// <summary>
+    /// 歷史回填可停止、翻狀態變更期間有進度、停止後狀態文字說得出「已停止」（docs/WEB-SPEC.md §9.10）。
+    /// 停止鈕照結構同步停止鈕的寫法：輪詢切 d-none 時必須看權限旗標。
+    /// </summary>
+    [Fact]
+    public void 歷史回填有停止鈕_狀態變更讀取進度與已停止文字()
+    {
+        var root = FindRepoRoot();
+        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+        var cshtml = File.ReadAllText(cshtmlPath);
+        Assert.Contains("class=\"btn btn-sm btn-outline-danger d-none\" id=\"prtg-backfill-cancel\" data-maintain-only", cshtml);
+
+        // Runs.cshtml 在 dev 就帶 UTF-8 BOM，改檔不得把它弄掉
+        var head = File.ReadAllBytes(cshtmlPath).Take(3).ToArray();
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, head);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("prtg-backfill/cancel", js);
+        Assert.Contains("readingStateChanges", js);
+        Assert.Contains("已停止", js);
+        Assert.Contains("讀取狀態變更：${formatNumber(read)} / 約 ${formatNumber(total)} 筆", js);
+        Assert.Contains("已送出停止，回填會在目前這一步結束後停下", js);
+        // 權限守門：同步與回填兩顆停止鈕的輪詢切換都要看 canMaintainSchedule
+        Assert.Equal(2, CountOccurrences(js, "cancelBtn && canMaintainSchedule"));
     }
 
     private static int CountOccurrences(string haystack, string needle)

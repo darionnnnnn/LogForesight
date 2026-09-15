@@ -49,7 +49,7 @@ public static class PrtgStructureSyncRunner
             syncFailures = fetchResult.Failures;
 
             console.WriteLine($"結構同步完成：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
-                              $"狀態變更 {fetchResult.StateChanges}" +
+                              $"狀態變更新增 {fetchResult.StateChanges}" +
                               (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : ""));
 
             // 分頁階段的失敗不會擲例外，只累加 Failures——沒有這道判斷的話，
