@@ -818,15 +818,33 @@ public class AiAnalysisSchedulerTests : IDisposable
         var (service, runState, _, schedulerState) = CreateTestHarness();
         _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
 
+        // 只有一筆待補、假 AI 立刻回應：執行可能在兩次輪詢之間開始又結束，斷言就看不到「執行中」。
+        // 讓 AI 回應卡在閘門上，執行一定停在「執行中」直到斷言完成。
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (_, _) =>
+        {
+            await gate.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
         Assert.True(schedulerState.TryBeginRun("manual:admin", out _));
         Assert.False(runState.IsRunning);
 
         // 這一步是取數路徑送出的訊號，**沒有**呼叫 TickAsync
         schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
 
-        await WaitUntilAsync(() => runState.IsRunning, TimeSpan.FromSeconds(5));
-        Assert.True(runState.IsRunning);
-        Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+        try
+        {
+            await WaitUntilAsync(() => runState.IsRunning, TimeSpan.FromSeconds(10));
+            Assert.True(runState.IsRunning);
+            Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+        }
+        finally
+        {
+            // 放行後等執行真的結束再離開：測試 Dispose 釋放 backend 時背景分析還在跑會偶發紅
+            gate.TrySetResult(true);
+            await WaitUntilAsync(() => !runState.IsRunning, TimeSpan.FromSeconds(10));
+        }
     }
 
     /// <summary>

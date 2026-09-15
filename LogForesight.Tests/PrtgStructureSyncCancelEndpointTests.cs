@@ -46,7 +46,8 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
     private PrtgStructureSyncService CreateSyncService(PrtgStructureSyncRunState? state = null) =>
         new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(), new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")),
-            new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)));
+            new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
+            new PrtgBackfillRunState());
 
     private SettingsController CreateController(PrtgStructureSyncService? sync)
     {

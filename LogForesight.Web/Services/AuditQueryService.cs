@@ -93,7 +93,26 @@ public class AuditQueryService
         [AuditActions.ScheduleManualRun] = "手動觸發分析",
         [AuditActions.ScheduleManualCancel] = "取消執行中的分析",
 
-        [AuditActions.NetiqProbeRun] = "執行 NetIQ API 診斷"
+        [AuditActions.NetiqProbeRun] = "執行 NetIQ API 診斷",
+
+        [AuditActions.PrtgConnectionTest] = "測試 PRTG 連線",
+        [AuditActions.PrtgProbeRun] = "執行 PRTG 環境探測",
+        [AuditActions.PrtgBackfillRun] = "啟動 PRTG 歷史回填",
+        [AuditActions.PrtgBackfillCancel] = "停止 PRTG 歷史回填",
+        [AuditActions.PrtgStructureSyncRun] = "啟動 PRTG 同步結構與對應",
+        [AuditActions.PrtgStructureSyncCancel] = "停止 PRTG 同步結構與對應",
+        [AuditActions.PrtgManualMapSet] = "設定 PRTG 人工主機對應",
+        [AuditActions.PrtgManualMapDelete] = "刪除 PRTG 人工主機對應",
+        [AuditActions.PrtgIpExcludeSet] = "設定 PRTG IP 排除",
+        [AuditActions.PrtgIpExcludeDelete] = "刪除 PRTG IP 排除",
+        [AuditActions.PrtgDataExport] = "匯出 PRTG 鏡像資料",
+        [AuditActions.PrtgDataImport] = "匯入 PRTG 鏡像資料",
+        [AuditActions.PrtgSettingsUpdate] = "更新 PRTG 設定",
+
+        [AuditActions.CalibrationExport] = "匯出校準數值",
+
+        [AuditActions.IssueOwnerUpdate] = "設定問題負責人",
+        [AuditActions.IssueOwnerDelete] = "刪除問題負責人"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry, IReadOnlyDictionary<string, string> displayNameByAccount) => new()

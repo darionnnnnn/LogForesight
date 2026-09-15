@@ -250,10 +250,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=sensors"))
                 return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
             if (url.Contains("content=messages"))
-            {
-                cts.Cancel();
                 return JsonResponse(msgJson);
-            }
             if (url.Contains("historicdata.json"))
                 return JsonResponse(histJson);
             return JsonResponse("{}", HttpStatusCode.NotFound);
@@ -263,7 +260,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console);
 
-        // 預置鏡像：鏡像為空時 FetchDayAsync 在入口就短路，走不到觸發取消的 messages 請求
+        // 預置鏡像：鏡像為空時 FetchDayAsync 在入口就短路，走不到會回報 sensor 進度的數值階段
         store.UpsertSensors(new List<PrtgSensorRow>
         {
             new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
@@ -271,10 +268,14 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
-            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token);
+            // 第一天唯一一顆 sensor 的數值寫完（進度回報 1/1）當下按停止：
+            // 這一天已沒有任何取消檢查點、照常做完，第二天入口才中斷
+            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token,
+                sensorProgress: (done, total) => { if (total > 0 && done == total) cts.Cancel(); });
         });
 
-        Assert.Contains(console.Lines, l => l.Contains("回填已中斷"));
+        // 已完成天數要算到第 1 天，不能因「現在已取消」把做完的那天少算掉
+        Assert.Contains(console.Lines, l => l.Contains("回填已中斷（已停止：完成 1／5 天）"));
     }
 
     [Fact]
@@ -515,7 +516,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         Assert.True(ok);
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata.json"));
         Assert.Contains(console.Lines, l => l.Contains("問題主機 0 台") && l.Contains("sensor 0 個") && l.Contains("數值 0 筆"));
-        // 觸發式分支的摘要改為「成功／失敗／略過」三項（有對應但無問題主機＝成功，不是略過）
+        // 觸發式分支的摘要有「成功／失敗／略過」三項（有對應但無問題主機＝成功，不是略過）
         Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 1 天、失敗 0 天、略過 0 天"));
     }
 
@@ -689,7 +690,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
     }
 
-    // ── 觸發式回填：狀態變更只翻一次、略過語意、取消（批次 C）────────────────
+    // ── 觸發式回填：狀態變更只翻一次、略過語意、取消（docs/PRTG-SPEC.md §5）────────────────
 
     private const string EmptyMessagesJson = "{\"treesize\":0,\"messages\":[]}";
     private const string OneHourHistJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
@@ -873,7 +874,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         Assert.False(state.Cancelled);
     }
 
-    // ── PrtgBackfillService 啟動閘門與停止（批次 C）──────────────────────────
+    // ── PrtgBackfillService 啟動閘門與停止（docs/PRTG-SPEC.md §5）──────────────────────────
 
     private sealed class ServiceHarness : IDisposable
     {
@@ -956,7 +957,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         Assert.False(h.Service.TryStart(out var error));
         Assert.Equal(
-            $"近 {PrtgTriggeredValueFetcher.HostMapLookbackDays} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。",
+            $"近 {SystemSettings.DefaultPrtgBackfillDays + PrtgTriggeredValueFetcher.HostMapLookbackDays} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。",
             error);
         Assert.False(h.Service.GetStatus().IsRunning);
     }

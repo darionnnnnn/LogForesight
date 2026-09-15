@@ -134,10 +134,7 @@ public class SchedulerRunState
     {
         lock (_lock)
         {
-            if (!IsRunning || PrtgFindingsReady)
-            {
-                return null;
-            }
+            if (!IsWaitingForFindings()) return null;
             return PrtgRangeStart ?? DateTime.Today.AddDays(-1);
         }
     }

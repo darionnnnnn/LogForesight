@@ -2212,7 +2212,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
-排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status`（歷史回填）。
+排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status|cancel`（歷史回填）。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
 「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。
 
@@ -2312,7 +2312,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 四值：`disabled` 未啟用／`success`／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
   「sensor N」是目標數扣掉失敗數，另附觸發主機數。資料來自 `BatchRun` 的分路結構化欄位；
-  總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
+  總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（其餘逐日欄位尚無畫面消費，見 docs/BACKLOG.md）；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
   **舊紀錄那些欄位為 null，畫面顯示「—」**，與「數字是 0」語意分開
   （0＝跑了但沒抓到，null＝這一路沒有產出）。總表主體仍是主機×日，
   **不為 PRTG 另闢一區**——PRTG 沒有主機日語意，硬拆會做出一張空表。
@@ -2411,7 +2411,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **`ReportProgress` 的最後一個分支是 catch-all（寫進 NetIQ 主組）**——PRTG 的 phase
   必須顯式分支，否則會蓋掉 NetIQ 的進度條（已有反例測試釘住）。
   **PRTG 歷史回填**另有自己的進度（獨立狀態物件與端點，不走 `SchedulerRunState`）：
-  先是「讀取狀態變更：N / 約 T 筆」（整趟只翻一次），之後「第 X / N 天（日期）：sensor a / b」，換日時 sensor 進度重設；
+  先是「讀取狀態變更：N / 約 T 筆」（整趟只翻一次；約略總數還不知道時只印已讀筆數），之後「第 X / N 天（日期）：sensor a / b」，換日時 sensor 進度重設；
   結束後被停止的顯示「■ 已停止」。
   進度欄位加在 `PrtgBackfillRunState` 自己身上，**不動它繼承的 `PrtgProbeRunState`**
   ——環境探測沒有自然分母，刻意不加進度。

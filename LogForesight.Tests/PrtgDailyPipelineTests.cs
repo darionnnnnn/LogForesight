@@ -96,7 +96,6 @@ public class PrtgDailyPipelineTests : IDisposable
             new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
 
         Assert.True(registry.IsReady);
-        Assert.Equal(0, registry.HostCount);
         Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
         Assert.Contains(RunPhases.PrtgDone, progress.Phases);
         Assert.Contains(console.Lines, l => l.Contains("PRTG 未啟用"));
@@ -122,14 +121,22 @@ public class PrtgDailyPipelineTests : IDisposable
         });
 
         var (ctx, _, progress, registry) = CreateContext();
+        var days = new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) };
 
         await PrtgDailyPipeline.RunAsync(
-            ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+            ctx, _backend, new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, guard: null);
 
         Assert.True(registry.IsReady);
         Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
         Assert.Contains(RunPhases.PrtgDone, progress.Phases);
+
+        // 逐日迴圈之前就失敗：每一天都要記成 failed，總表才不會把這幾天當成沒有逐日統計的舊紀錄去猜
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId);
+        Assert.NotNull(run!.PrtgDays);
+        Assert.Equal(days.Select(d => d.Date), run.PrtgDays!.Select(s => s.Date));
+        Assert.All(run.PrtgDays, s => Assert.Equal(BatchRun.PrtgOutcomeFailed, s.Outcome));
     }
 
     /// <summary>
@@ -515,7 +522,7 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
-    public void BuildPrtgDays_規格測試()
+    public void BuildPrtgDays_回望天數與範圍決定PRTG處理哪些天()
     {
         var today = new DateTime(2026, 9, 15);
         var retention = new RetentionOptions { RetentionDays = 30 };
@@ -548,6 +555,12 @@ public class PrtgDailyPipelineTests : IDisposable
         var daysNetiq = AnalysisOrchestrator.BuildPrtgDays(
             new RunRequest { Scope = RunScope.NetiqHosts, BackfillOverride = 5 }, retention, today);
         Assert.Equal(new[] { today.AddDays(-1) }, daysNetiq);
+
+        // 只跑本機（LocalOnly）與指定主機更新一樣只處理昨天：對一台主機的更新不該觸發全機房 N 天的 PRTG 查詢
+        var localOnly = AnalysisOrchestrator.BuildPrtgDays(
+            new RunRequest { Scope = RunScope.LocalOnly, BackfillOverride = 30 }, new RetentionOptions(), today);
+        Assert.Single(localOnly);
+        Assert.Equal(today.AddDays(-1), localOnly[0]);
     }
 
     [Fact]

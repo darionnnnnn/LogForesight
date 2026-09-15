@@ -113,6 +113,7 @@ public static class PrtgBackfillRunner
                 dayProgress?.Invoke(i - 1, days, day);
                 sensorProgress?.Invoke(0, 0);
 
+                var dayInterrupted = false;
                 try
                 {
                     if (!triggered)
@@ -215,16 +216,21 @@ public static class PrtgBackfillRunner
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
+                    dayInterrupted = true;
                     throw;
                 }
                 catch (Exception ex)
                 {
+                    // 停止當下連線被中止會以 IOException 之類收場而不是 OCE：那一天同樣是被打斷、不算處理完
+                    if (ct.IsCancellationRequested) dayInterrupted = true;
                     failedDays++;
                     console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：{ex.Message}");
                 }
                 finally
                 {
-                    if (!ct.IsCancellationRequested) processedDays = i;
+                    // 這一天沒有被取消打斷（正常結束或非取消的失敗）才算處理完；
+                    // 只看「現在有沒有取消」會把「做完第 i 天之後才按停止」少算一天
+                    if (!dayInterrupted) processedDays = i;
                 }
             }
 

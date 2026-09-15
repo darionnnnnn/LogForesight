@@ -1,6 +1,6 @@
 # 回饋第 44 輪規劃：立即執行回望連動 PRTG、狀態變更一次取完、回填閘門
 
-> 狀態：實作完成（3953 綠），待收尾體檢
+> 狀態：全案完成（3955 綠），待併 dev
 > 基準：dev@ece6eae（3887 綠）
 > 來源：使用者實測——排程頁「立即執行」回望 30 天時本機／NetIQ 重跑了 30 天，PRTG 只處理昨天；
 > 每一天的 PRTG 階段 3 都在翻「約 100 萬筆」的 messages；按「開始回填」顯示 `sensor 0 / 0` 且結構同步「尚未同步」。
@@ -169,3 +169,46 @@
   （同一時間簡單提示詞可正常回覆），改由 impl-low（Opus，low）實作，自該批起不換回。
 - agy 中途被中斷未產出回報兩次（A、A2），diff 完整留在工作樹，由 Claude 逐行讀 diff 驗收。
 - agy 剝 BOM 一次（B2 的 `ScheduleController.cs`），Claude 還原。
+
+## 體檢交接
+
+- 實作方：Claude Opus 5（規劃、規格、驗收、補修）＋ agy（gemini-3.8-flash-high，A／A2／D／B1／B2）＋ impl-low（Opus low，C）。
+- 體檢方：Claude Fable 5.1（使用者以 /model 切換後下收尾指令）；subagent 用 scan-low（Opus，low）。
+- 實作收官：feature/feedback-44 共 8 個 commit（含規劃），全套 3953 綠（略過 6），基線 3887。
+- 實作方最沒把握的地方：(1) 提早停止的四條件在「同一秒多列且順序在該秒內不穩」時的邊界；(2) `PrtgFindingsReady` 正常路徑送一次、finally 補發時再送一次，對 AI 排程的副作用；(3) 觸發式取數改用「該日之前最近 31 天內的對應」對 `all-mapped` 模式候選集合的影響；(4) 回填 `TryBeginRun` 在自己的鎖內呼叫基底 `TryBegin`，鎖順序；(5) 執行總表 `GetRecentRuns` 時間窗對「開始日＝資料日隔天」是否夠；(6) 實作端回報：進度回呼 `(done,total)` 的語意沒查證就直接轉給回填進度、無對應閘門只測了擋下的一面。
+
+## 體檢輪修正（Fable 5.1；scan-low 三路掃 diff：缺陷、架構、文件）
+
+| 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|
+| `AnalysisOrchestrator.BuildPrtgDays` | 只排除 `NetiqHosts`，`LocalOnly`（只跑本機）帶回望天數時 PRTG 也跑 N 天——對一台主機的更新觸發全機房多日查詢 | 非 `Full` 一律只處理昨天 | `BuildPrtgDays_回望天數與範圍決定PRTG處理哪些天` 補 LocalOnly 斷言；突變改成只排除 NetiqHosts → 紅 |
+| `PrtgDailyPipeline` | 逐日統計在迴圈後才寫進 `BatchRun.PrtgDays`，取消或例外時整段丟失，總表對已完成的日子畫不出徽章 | 逐日狀態存 `dayStates`，`finally` 統一寫入（只含進過迴圈的日子）；`days` 必須嚴格遞減否則擲例外（「最新一天重算對應」的前提） | 既有多日測試覆蓋 |
+| `PrtgStructureSyncService` | 回填端擋同步、同步端不擋回填：互斥只有一個方向 | 建構子接 `PrtgBackfillRunState`，回填執行中拒絕啟動（409） | `TryStart_歷史回填執行中時拒絕`；突變拿掉閘門 → 紅 |
+| `PrtgBackfillService` 無對應閘門 | 只看近 31 天有沒有對應，逐日迴圈卻以各回填日為基準往回 31 天：只有今天有對應時閘門放行、每一天都被略過 | 視窗改「回填天數＋31」 | 既有閘門測試預期改視窗；突變改回 31 → 紅 |
+| `PrtgBackfillRunner.processedDays` | `finally` 用「現在有沒有取消」判斷，做完第 i 天之後才按停止會少算一天 | `dayInterrupted` 旗標只在取消真的打斷那一天時設 | `RunAsync_收到取消語彙基元時中斷並拋出例外` 改在 sensor 進度 1/1 時取消並斷言「完成 1／5 天」；突變改回舊判斷 → 紅 |
+| `PrtgSnapshotHostedService` | 「未啟用／設定不齊」也算暫停：啟用當天印「暫停 43200 分鐘」 | `NoteSkip(reason, trackPause:false)`，只量取數／同步／回填佔用造成的暫停 | 既有快照測試 |
+| `PrtgFetchService` 階段 3 輸出 | 未收斂時不印任何統計，看不出翻了幾頁；「頁內順序不依時間」與「翻到底」印同一句 | 未收斂也印頁數／筆數／耗時並標「未完成」；`nonMonotonicSeen` 區分兩種結尾 | 既有階段 3 測試 |
+| `AuditQueryService.ActionNames` | 13 個 PRTG 動作與校準匯出沒有中文名稱，稽核頁印 `prtg_backfill_run` 這種內部字串（既有缺口，本輪新增的 cancel 也中） | 補齊對照表 | `每個稽核動作代碼都有中文名稱`（反射掃 `AuditActions` 全部常數） |
+| 死碼／無消費端 | `PrtgRulesUnavailableException` 沒人擲；`PrtgStateChangeRangeResult.DuplicateRows`、`PrtgFindingsRegistry.HostCount` 沒人讀 | 移除 | — |
+| 敘事字眼 | 測試註解「批次 C」「改為」、測試名 `BuildPrtgDays_規格測試`、回填鎖說明與實際取鎖順序不符、里程碑「狀態變更 N」其實是新增數 | 改成規格引用與現況描述；`FindingsWaitCutoff` 改呼叫 `IsWaitingForFindings()` 不再抄一份判定 | — |
+| 文件 | BACKLOG 互斥「三者」少了取數執行、停止鈕條目已完成未移除；PRTG-SPEC §3a 仍寫「當日」對應、§5 互斥重複一行、§5a 說回填與同步可並行；WEB-SPEC 端點清單缺 cancel、回填進度沒寫無總數的分支 | 改正；BACKLOG 新增「回饋四十四輪遞延」四條（保守策略無逐 sensor 值、回填天數不隨回望、逐日 PRTG 明細無畫面、暫停門檻 15 分鐘） | — |
+
+只記錄不修：30 天（校準／估算）與 31 天（對應回望）是不同用途的常數；全量分支回填仍逐日翻狀態變更區間（只有測試走到）；提早停止依賴 messages 依時間排序（若 PRTG 哪天真的遵守 `sortby=objid` 會退化成翻到底，`nonMonotonicSeen` 會印出來）；管線與觸發式取數在對應失敗時的分岔（前者不歸戶、後者取不到）；三種取消機制（取數、同步、回填）各自一套狀態物件。
+
+體檢後全套 3955 綠（略過 6）。
+
+## 終檢輪（scan-low 掃體檢修正 diff，Fable 取捨）
+
+| 哪裡 | 症狀 | 處置 |
+|---|---|---|
+| `PrtgDailyPipeline` 逐日狀態表 | 鍵以 `.Date` 寫入、查表用原值：呼叫端傳帶時分的日期會 `KeyNotFoundException`，被觸發式取數的 catch 吞掉整趟 | 契約加「必須是純日期」檢查（與遞減檢查同處擲例外），查表不再各自正規化 |
+| `PrtgDailyPipeline` 迴圈前失敗 | 結構同步擲例外時 `dayStates` 為空，`PrtgDays` 不寫；總表會拿「舊紀錄規則」去猜這幾天 | `finally` 補分支：迴圈前失敗整排記 `failed` |
+| `PrtgBackfillRunner.dayInterrupted` | 只認 OCE：停止當下連線以 `IOException` 收場的那一天會被算成處理完 | 一般 catch 內 `ct.IsCancellationRequested` 也設旗標 |
+| `PrtgFetchService` 階段 3 輸出 | 途中有頁不依時間、之後某頁滿足門檻提早停止時，不依時間的事實不再出現 | 提早停止句尾附「途中有頁內順序不依時間的頁」 |
+| `PrtgStructureSyncRunner` | 「狀態變更 N」同型只改一半 | 改「狀態變更新增 N」 |
+| `AiAnalysisSchedulerTests` 閘門測試 | 放行後沒等執行結束就 Dispose backend，偶發紅 | `finally` 等 `IsRunning` 轉 false |
+| PRTG-SPEC §5 | 刪掉「回填與探測互斥」後，探測端的反向閘門無處記載 | 閘門句補「反向也成立」 |
+
+只記錄不修：`NoteSkip(trackPause:false)` 會清掉先前「真的暫停」的起點——回填中把 PRTG 關掉再開，那段暫停不印；反過來保留起點會讓「關掉 12 小時再開」印出假暫停，取後者。
+
+終檢後全套 3955 綠（略過 6）。

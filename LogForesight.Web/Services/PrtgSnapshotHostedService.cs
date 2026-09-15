@@ -173,14 +173,14 @@ public class PrtgSnapshotHostedService : BackgroundService
         // 1. PrtgEnabled 為 false → 不跑。
         if (!settings.PrtgEnabled)
         {
-            NoteSkip("PRTG 擷取未啟用");
+            NoteSkip("PRTG 擷取未啟用", trackPause: false);
             return;
         }
 
         // 2. 連線設定不齊（PrtgUrl 空 或 PrtgClientFactory.HasUsableCredentials(settings) 為 false）→ 不跑。
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
-            NoteSkip("PRTG 連線設定不齊");
+            NoteSkip("PRTG 連線設定不齊", trackPause: false);
             return;
         }
 
@@ -240,11 +240,14 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// <summary>
     /// 前置條件不通過：記下原因；由「通過」轉「不通過」時記下暫停開始時間。
     /// 暫停中原因改變不重設開始時間（恢復時印最後一個原因）。
+    /// 「未啟用／設定不齊」不算暫停（trackPause=false）：那段期間本來就沒有在取樣，
+    /// 啟用當天印「暫停 43200 分鐘、coverage 偏低」是假訊息；要量的是取數、同步、回填佔用造成的暫停。
     /// </summary>
-    private void NoteSkip(string reason)
+    private void NoteSkip(string reason, bool trackPause = true)
     {
         _lastSkipReason = reason;
-        _skipSince ??= Now();
+        if (trackPause) _skipSince ??= Now();
+        else _skipSince = null;
     }
 
     /// <summary>

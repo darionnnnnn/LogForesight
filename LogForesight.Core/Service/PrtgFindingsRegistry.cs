@@ -37,12 +37,6 @@ public sealed class PrtgFindingsRegistry
         get { lock (_lock) { return _byDate.Count > 0; } }
     }
 
-    /// <summary>所有已發佈日期的主機數加總（就緒前為 0）。僅供執行輸出與測試用。</summary>
-    public int HostCount
-    {
-        get { lock (_lock) { return _byDate.Values.Sum(map => map.Count); } }
-    }
-
     /// <summary>指定日期的 PRTG finding 是否已發佈。</summary>
     public bool IsPublished(DateTime date)
     {

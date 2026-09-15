@@ -29,7 +29,7 @@ public class PrtgBackfillRunState : PrtgProbeRunState
     private int _stateChangesTotal;
     private bool _readingStateChanges;
 
-    /// <summary>本趟的取消來源；沒有執行中時為 null。與執行權一起在同一把鎖內建立，停止鈕不會落空。</summary>
+    /// <summary>本趟的取消來源；沒有執行中時為 null。在 _progressLock 內先搶執行權（基底自有一把鎖）再建立它，IsRunning 一轉 true 就一定有東西可取消。</summary>
     private CancellationTokenSource? _cts;
 
     /// <summary>最近一趟是否被使用者停止（新一趟開始時歸零）。</summary>
@@ -42,7 +42,7 @@ public class PrtgBackfillRunState : PrtgProbeRunState
 
     /// <summary>
     /// 搶執行權並建立本趟的取消來源。已在執行中回 false。
-    /// 取消來源與執行權在同一把鎖內建立：IsRunning 一轉 true 就一定有 cts 可取消。
+    /// 取鎖順序固定是 _progressLock → 基底鎖（TryBegin／Snapshot／EndRun 各自持有基底鎖），基底不會回呼本類別，不會反向。
     /// </summary>
     public bool TryBeginRun(out CancellationToken token)
     {
@@ -279,13 +279,16 @@ public class PrtgBackfillService
             return false;
         }
 
-        // 沒有任何主機對應時，逐日目標 sensor 一律是 0 個——放行只會空跑並報成功
+        // 沒有任何主機對應時，逐日目標 sensor 一律是 0 個——放行只會空跑並報成功。
+        // 逐日迴圈以每個回填日為基準往回找 HostMapLookbackDays 天，閘門的視窗因此要涵蓋「最舊回填日再往回」整段，
+        // 否則只有今天有對應時閘門放行、每一天卻都被略過。
         var lookback = PrtgTriggeredValueFetcher.HostMapLookbackDays;
-        var hasAnyMapping = prtgStoreForGate.GetLatestHostMapWithDate(lookback).Rows
+        var gateWindow = s.PrtgBackfillDays + lookback;
+        var hasAnyMapping = prtgStoreForGate.GetLatestHostMapWithDate(gateWindow).Rows
             .Any(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId != null);
         if (!hasAnyMapping)
         {
-            error = $"近 {lookback} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。";
+            error = $"近 {gateWindow} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。";
             return false;
         }
 

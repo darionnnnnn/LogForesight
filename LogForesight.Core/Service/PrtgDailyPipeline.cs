@@ -33,7 +33,16 @@ internal static class PrtgDailyPipeline
     {
         if (days == null || days.Count == 0)
         {
-            throw new ArgumentException("Days list must contain at least one day.", nameof(days));
+            throw new ArgumentException("日期清單至少要有一天。", nameof(days));
+        }
+        // 契約：純日期、由近到遠且不重複。帶時分的值會讓逐日狀態表查不到鍵；
+        // 升冪傳入會讓狀態變更區間只涵蓋末幾天、對應重算對錯天，而且沒有任何徵兆。
+        if (days.Any(d => d != d.Date))
+            throw new ArgumentException("日期清單必須是純日期（不含時分）。", nameof(days));
+        for (var i = 1; i < days.Count; i++)
+        {
+            if (days[i] >= days[i - 1])
+                throw new ArgumentException("日期清單必須由近到遠且不重複。", nameof(days));
         }
 
         var newest = days[0].Date;
@@ -48,6 +57,12 @@ internal static class PrtgDailyPipeline
         var totalTargetSensors = 0;
         var totalFailedSensors = 0;
         var totalValuesWritten = 0;
+
+        // 逐日累計（規則評估、歸戶、觸發式取數）在 finally 才寫進執行紀錄：
+        // 中途被停止或擲例外時，已經評估完的日子也要留下逐日結果，執行總表才不會整排「—」。
+        var dayStates = new Dictionary<DateTime, PrtgDayState>();
+        PrtgFetchResult? fetchResult = null;
+        var syncFailed = false;
 
         try
         {
@@ -94,8 +109,6 @@ internal static class PrtgDailyPipeline
 
             // 1. 結構同步＋狀態變更只做一次（區間覆蓋 oldest.AddDays(-1) 到今天，目標日為 newest）
             var syncStopwatch = Stopwatch.StartNew();
-            PrtgFetchResult? fetchResult = null;
-            var syncFailed = false;
             try
             {
                 progress?.Report(RunPhases.PrtgSync, 0, 0);
@@ -106,7 +119,7 @@ internal static class PrtgDailyPipeline
                     stateChangesFrom: oldest.AddDays(-1));
 
                 var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
-                              $"狀態變更 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
+                              $"狀態變更新增 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
                               (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
 
                 prtgConsole.WriteLine(summary);
@@ -170,7 +183,7 @@ internal static class PrtgDailyPipeline
                 }
             }
 
-            // 4. 送出契約 7 的日期範圍訊號（在逐日迴圈開始前，一次）
+            // 日期範圍訊號（不是進度）：Web 端據此擋住本趟範圍內的 AI 待補、顯示第 i／N 天。迴圈前先送一次「尚未開始逐日」
             progress?.Report(RunPhases.PrtgDateRange, days.Count, 0);
 
             // 規則庫判定（迴圈前判一次、印一次既有訊息，所有日期發佈空結果）
@@ -227,54 +240,41 @@ internal static class PrtgDailyPipeline
                 .Select(s => (s.Objid, s.DeviceObjid, s.Status))
                 .ToList();
 
-            var dayFindingsCounts = new Dictionary<DateTime, int>();
-            var dayAttributedCounts = new Dictionary<DateTime, int>();
-            var dayMapAvailable = new Dictionary<DateTime, bool>();
-            var dayRuleTriggerHosts = new Dictionary<DateTime, HashSet<long>>();
-
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，不硬造（docs/PRTG-SPEC.md §5）。
             // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。
             List<PrtgHostMapRow> ResolveHostMapRows(DateTime d) => d == newest
                 ? prtgStore.GetHostMapForDate(newest)
                 : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
 
-            // 5. 逐日迴圈（days 的順序，由近到遠）
+            // 逐日迴圈（days 的順序，由近到遠）
             for (var i = 0; i < days.Count; i++)
             {
                 progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
+                var state = dayStates[day] = new PrtgDayState();
                 if (days.Count > 1)
                 {
                     prtgConsole.WriteLine($"第 {i + 1}／{days.Count} 天（{day:yyyy-MM-dd}）");
                 }
 
-                if (!rulesAvailable)
-                {
-                    var hostMapRows = ResolveHostMapRows(day);
-                    var mapAvail = hostMapRows.Any(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId.HasValue);
-                    dayMapAvailable[day] = mapAvail;
-                    dayFindingsCounts[day] = 0;
-                    dayAttributedCounts[day] = 0;
-                    dayRuleTriggerHosts[day] = new HashSet<long>();
-                    prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
-                    continue;
-                }
-
                 try
                 {
-                    var hostMapRows = ResolveHostMapRows(day);
-
                     var deviceToHost = new Dictionary<long, long>();
-                    foreach (var row in hostMapRows)
+                    foreach (var row in ResolveHostMapRows(day))
                     {
                         if (row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue)
                         {
                             deviceToHost[row.DeviceObjid] = row.HostId.Value;
                         }
                     }
+                    state.MapAvailable = deviceToHost.Count > 0;
 
-                    var mapAvailable = deviceToHost.Count > 0;
-                    dayMapAvailable[day] = mapAvailable;
+                    // 規則庫沒有 PRTG 規則：該日照樣發佈空結果（「算不出東西」與「還沒算完」要分得出來）
+                    if (!rulesAvailable)
+                    {
+                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                        continue;
+                    }
 
                     var allChanges = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
                     var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
@@ -282,21 +282,17 @@ internal static class PrtgDailyPipeline
                     var findings = PrtgRuleEvaluator.Evaluate(
                         day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes,
                         includeSilent: day == newest);
+                    state.Findings = findings.Count;
 
-                    dayFindingsCounts[day] = findings.Count;
-
-                    if (!mapAvailable)
+                    if (!state.MapAvailable)
                     {
-                        // 理由：用今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一樣（docs/PRTG-SPEC.md §5「回填不做主機對應」同一條線）。
+                        // 用今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一樣（docs/PRTG-SPEC.md §5「回填不做主機對應」同一條線）。
                         prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶");
-                        dayAttributedCounts[day] = 0;
-                        dayRuleTriggerHosts[day] = new HashSet<long>();
                         prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
                     }
                     else
                     {
                         var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
-                        var triggerHosts = new HashSet<long>();
                         foreach (var finding in findings)
                         {
                             if (deviceToHost.TryGetValue(finding.DeviceObjid, out var hostId))
@@ -307,12 +303,10 @@ internal static class PrtgDailyPipeline
                                     findingsByHost[hostId] = hostFindings;
                                 }
                                 hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
-                                triggerHosts.Add(hostId);
+                                state.TriggerHosts.Add(hostId);
                             }
                         }
-
-                        dayAttributedCounts[day] = findingsByHost.Count;
-                        dayRuleTriggerHosts[day] = triggerHosts;
+                        state.AttributedHosts = findingsByHost.Count;
 
                         prtgFindings.Publish(day, findingsByHost.ToDictionary(
                             kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value));
@@ -362,10 +356,6 @@ internal static class PrtgDailyPipeline
                 {
                     Log.Error(ex, "PRTG 規則評估失敗，不影響分析成果");
                     prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
-                    if (!dayFindingsCounts.ContainsKey(day)) dayFindingsCounts[day] = 0;
-                    if (!dayAttributedCounts.ContainsKey(day)) dayAttributedCounts[day] = 0;
-                    if (!dayMapAvailable.ContainsKey(day)) dayMapAvailable[day] = false;
-                    if (!dayRuleTriggerHosts.ContainsKey(day)) dayRuleTriggerHosts[day] = new HashSet<long>();
                     if (!prtgFindings.IsPublished(day))
                     {
                         prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
@@ -373,11 +363,10 @@ internal static class PrtgDailyPipeline
                 }
             }
 
-            // 7. 迴圈結束後才送 PrtgFindingsReady（一次）
+            // 全部日期發佈完才送就緒訊號（一次）：AI 排程等的是「本趟範圍內的 finding 都到齊」
             progress?.Report(RunPhases.PrtgFindingsReady, 0, 0);
 
-            // 8. 觸發式數值取數
-            var dayTriggeredResults = new Dictionary<DateTime, PrtgTriggeredFetchResult>();
+            // 觸發式數值取數
             if (!strategyProfile.NightlyExactValues)
             {
                 prtgConsole.WriteLine("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。");
@@ -417,15 +406,15 @@ internal static class PrtgDailyPipeline
 
                     foreach (var day in days)
                     {
-                        var ruleHosts = dayRuleTriggerHosts.TryGetValue(day, out var th) ? th : new HashSet<long>();
+                        var state = dayStates[day];
                         var dayResult = await triggeredFetcher.RunAsync(
                             day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
-                            () => analysisTask.IsCompleted, ct, extraTriggerHosts: ruleHosts,
+                            () => analysisTask.IsCompleted, ct, extraTriggerHosts: state.TriggerHosts,
                             progress: (stage, done, total) => progress?.Report(stage, done, total),
                             scope: systemSettings.PrtgValueFetchScope,
                             extraScopeHosts: scopeHostIds);
 
-                        dayTriggeredResults[day] = dayResult;
+                        state.Triggered = dayResult;
                         totalTriggerHosts += dayResult.TriggerHosts;
                         totalTargetSensors += dayResult.TargetSensors;
                         totalValuesWritten += dayResult.ValuesWritten;
@@ -456,40 +445,7 @@ internal static class PrtgDailyPipeline
                 }
             }
 
-            // 每天另外收集一筆 PrtgDayStat（契約 6），迴圈後呼叫 runRecorder.RecordPrtgDays(...)
-            var dayStats = new List<PrtgDayStat>(days.Count);
-            foreach (var day in days)
-            {
-                var trigRes = dayTriggeredResults.TryGetValue(day, out var r) ? r : null;
-                var dayFailedSensors = trigRes?.FailedSensors ?? 0;
-
-                string dayOutcome;
-                if (syncFailed)
-                {
-                    dayOutcome = BatchRun.PrtgOutcomeFailed;
-                }
-                else if (dayFailedSensors > 0 || (fetchResult != null && fetchResult.Failures > 0))
-                {
-                    dayOutcome = BatchRun.PrtgOutcomePartial;
-                }
-                else
-                {
-                    dayOutcome = BatchRun.PrtgOutcomeSuccess;
-                }
-
-                dayStats.Add(new PrtgDayStat(
-                    Date: day,
-                    Outcome: dayOutcome,
-                    Findings: dayFindingsCounts.TryGetValue(day, out var fc) ? fc : 0,
-                    AttributedHosts: dayAttributedCounts.TryGetValue(day, out var ac) ? ac : 0,
-                    MapAvailable: dayMapAvailable.TryGetValue(day, out var ma) && ma,
-                    TriggerHosts: trigRes?.TriggerHosts ?? 0,
-                    TargetSensors: trigRes?.TargetSensors ?? 0,
-                    FailedSensors: dayFailedSensors));
-            }
-            runRecorder.RecordPrtgDays(dayStats);
-
-            // 9. outcome 判定沿用現有規則，改用累加後的數字
+            // outcome 判定沿用現有規則，改用累加後的數字
             if (syncFailed)
             {
                 prtgOutcome = BatchRun.PrtgOutcomeFailed;
@@ -541,12 +497,51 @@ internal static class PrtgDailyPipeline
                     totalTriggerHosts);
             }
 
+            // 逐日結果：只記有進到逐日迴圈的日子（PRTG 未啟用時一天都沒有，PrtgDays 維持 null）。
+            // 中途被停止的日子就記到哪算到哪，執行總表才看得出「哪幾天其實已經評估完了」。
+            if (dayStates.Count > 0)
+            {
+                var stageFailed = fetchResult != null && fetchResult.Failures > 0;
+                runRecorder.RecordPrtgDays(days
+                    .Where(dayStates.ContainsKey)
+                    .Select(day =>
+                    {
+                        var s = dayStates[day];
+                        var failedSensors = s.Triggered?.FailedSensors ?? 0;
+                        var outcome = syncFailed ? BatchRun.PrtgOutcomeFailed
+                            : (failedSensors > 0 || stageFailed) ? BatchRun.PrtgOutcomePartial
+                            : BatchRun.PrtgOutcomeSuccess;
+                        return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
+                            s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors);
+                    })
+                    .ToList());
+            }
+            else if (prtgOutcome == BatchRun.PrtgOutcomeFailed)
+            {
+                // 逐日迴圈之前就失敗（結構同步擲例外）：每一天都沒評估，整排記失敗；
+                // 不記的話總表會把這幾天當成沒有逐日統計的舊紀錄去猜
+                runRecorder.RecordPrtgDays(days
+                    .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomeFailed, 0, 0, false, 0, 0, 0))
+                    .ToList());
+            }
+
             // 完工訊號帶結果數字（取數主機數／目標 sensor 數）
             progress?.Report(
                 RunPhases.PrtgDone,
                 totalTriggerHosts,
                 totalTargetSensors);
         }
+    }
+
+    /// <summary>某一天在這趟裡累計出來的結果，最後寫成 <see cref="PrtgDayStat"/>。</summary>
+    private sealed class PrtgDayState
+    {
+        public int Findings;
+        public int AttributedHosts;
+        public bool MapAvailable;
+        /// <summary>規則命中的主機，觸發式取數會把它們併進候選（規則命中但風險未上調的主機也要取數）。</summary>
+        public HashSet<long> TriggerHosts { get; } = new();
+        public PrtgTriggeredFetchResult? Triggered;
     }
 
     /// <summary>

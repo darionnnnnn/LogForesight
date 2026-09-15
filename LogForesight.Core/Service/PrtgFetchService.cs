@@ -14,7 +14,6 @@ public sealed record PrtgStateChangeRangeResult(
     int TotalWritten,
     int ReadRows,
     int Pages,
-    int DuplicateRows,
     bool StoppedEarly,
     bool Converged,
     string? Error);
@@ -366,6 +365,7 @@ public sealed class PrtgFetchService
         var writtenByDay = new Dictionary<DateTime, int>();
         var now = DateTime.Now;
         DateTime? stoppedPageLatestTime = null;
+        var nonMonotonicSeen = false;
 
         _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{from:yyyy-MM-dd} ～ {to:yyyy-MM-dd}）...");
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -446,6 +446,7 @@ public sealed class PrtgFetchService
                 {
                     if (dts[i] < dts[i + 1])
                     {
+                        nonMonotonicSeen = true;
                         return false;
                     }
                 }
@@ -467,16 +468,22 @@ public sealed class PrtgFetchService
 
         var pages = paged.Result?.Pages ?? paged.Exception?.Pages ?? 0;
         var readRows = paged.Result?.ReadRows ?? paged.Exception?.ReadRows ?? 0;
-        var duplicateRows = paged.Result?.DuplicateRows ?? paged.Exception?.DuplicateRows ?? 0;
         var stoppedEarly = paged.Result?.StoppedEarly ?? false;
         var converged = paged.Error == null;
 
-        if (converged)
         {
+            // 未收斂也要印統計與耗時：「翻了幾頁才卡住」是判斷該不該調頁數上限的依據
+            // 提早停止之前若曾有頁內順序不依時間的頁，也要說：那是判斷「提早停止是否可信」的線索
+            var nonMonotonicNote = stoppedEarly && nonMonotonicSeen ? "；途中有頁內順序不依時間的頁" : "";
             var stopDesc = stoppedEarly
-                ? $"依時間排序於第 {pages} 頁提早結束（該頁最新 {stoppedPageLatestTime:yyyy-MM-dd HH:mm:ss}，早於 {threshold:yyyy-MM-dd}）"
-                : $"已翻到結尾（{pages} 頁）";
-            _console.WriteLine($"[階段 3/4] 狀態變更同步完成：共讀取 {pages} 頁、{readRows} 筆，新增 {totalWritten} 筆（其餘已存在），{stopDesc}（耗時 {stopwatch.Elapsed.TotalSeconds:F1} 秒）。");
+                ? $"依時間排序於第 {pages} 頁提早結束（該頁最新 {stoppedPageLatestTime:yyyy-MM-dd HH:mm:ss}，早於 {threshold:yyyy-MM-dd}{nonMonotonicNote}）"
+                : !converged
+                    ? $"翻到第 {pages} 頁仍未收斂"
+                    : nonMonotonicSeen
+                        ? $"頁內順序不依時間，翻到底（{pages} 頁）"
+                        : $"已翻到結尾（{pages} 頁）";
+            var head = converged ? "狀態變更同步完成" : "狀態變更同步未完成";
+            _console.WriteLine($"[階段 3/4] {head}：共讀取 {pages} 頁、{readRows} 筆，新增 {totalWritten} 筆（其餘已存在），{stopDesc}（耗時 {stopwatch.Elapsed.TotalSeconds:F1} 秒）。");
             // 各日新增數：回望多日時看得出「哪一天真的有變更、哪一天是空的」，
             // 只印總數的話，某一天整段沒取到與那天本來就沒事長得一模一樣
             if (writtenByDay.Count > 1)
@@ -491,7 +498,6 @@ public sealed class PrtgFetchService
             TotalWritten: totalWritten,
             ReadRows: readRows,
             Pages: pages,
-            DuplicateRows: duplicateRows,
             StoppedEarly: stoppedEarly,
             Converged: converged,
             Error: paged.Error);
