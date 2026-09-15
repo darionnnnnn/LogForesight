@@ -2,6 +2,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Analysis;
+using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -82,6 +83,7 @@ internal static class PrtgDailyPipeline
 
             // 1. 結構與狀態變更同步（數值階段略過，改由下方觸發式取數執行）
             // PRTG 進度 phase：prtg-sync（結構同步）、prtg-values（每日數值）、prtg-triggered（觸發式數值）、prtg-done（完工）
+            var syncStopwatch = Stopwatch.StartNew();
             PrtgFetchResult? fetchResult = null;
             var syncFailed = false;
             try
@@ -114,10 +116,11 @@ internal static class PrtgDailyPipeline
             }
 
             // 2. PRTG 主機對應：獨立的 try/catch，對應失敗不拖垮前面的擷取結果
+            PrtgHostMapResult? mapResult = null;
             try
             {
                 var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole, new PrtgAddressResolver());
-                var mapResult = hostMapper.MapForDate(day);
+                mapResult = hostMapper.MapForDate(day);
                 runRecorder.Milestone($"PRTG 主機對應完成（{day:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
             }
             catch (OperationCanceledException)
@@ -128,6 +131,32 @@ internal static class PrtgDailyPipeline
             {
                 Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
                 prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
+            }
+
+            syncStopwatch.Stop();
+
+            // 結構同步與主機對應都成功時，將狀態寫入 blob（保留手動同步時相同的結構資訊）
+            // 任一條件不成立就不寫（保留上一次狀態），失敗只記 Log.Warn 不影響其他階段
+            var nightlySyncStatus = BuildNightlySyncStatus(
+                skipStructureSync,
+                fetchResult,
+                syncFailed,
+                mapResult,
+                day,
+                syncStopwatch.Elapsed,
+                DateTime.Now);
+
+            if (nightlySyncStatus != null)
+            {
+                try
+                {
+                    var syncStatusStore = new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
+                    syncStatusStore.Update(existing => existing.CopyFrom(nightlySyncStatus));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "夜間結構同步狀態寫入 blob 失敗，不影響 PRTG 其他階段與 outcome");
+                }
             }
 
             // 3. PRTG 規則評估：獨立的 try/catch
@@ -415,5 +444,45 @@ internal static class PrtgDailyPipeline
                 triggeredResult?.TriggerHosts ?? 0,
                 triggeredResult?.TargetSensors ?? 0);
         }
+    }
+
+    /// <summary>
+    /// 決定夜間取數是否要寫入結構同步狀態，以及產生對應的狀態物件。
+    /// 任一條件不成立（跳過結構同步、擷取擲例外、有失敗階段、對應失敗）回傳 null；全部成功才回傳狀態。
+    /// 失敗的夜間同步若覆寫一筆「成功的手動同步」，畫面會從「上次成功」變成「上次失敗」，
+    /// 但鏡像其實是手動那次的完整資料；反過來鏡像不完整時不能宣稱成功。
+    /// </summary>
+    internal static PrtgStructureSyncStatus? BuildNightlySyncStatus(
+        bool structureSyncSkipped,
+        PrtgFetchResult? fetchResult,
+        bool fetchThrew,
+        PrtgHostMapResult? mapResult,
+        DateTime day,
+        TimeSpan elapsed,
+        DateTime now)
+    {
+        if (structureSyncSkipped || fetchThrew || fetchResult == null || fetchResult.Failures > 0 || mapResult == null)
+        {
+            return null;
+        }
+
+        return new PrtgStructureSyncStatus
+        {
+            CompletedAt = now,
+            Success = true,
+            ErrorMessage = null,
+            ElapsedSeconds = elapsed.TotalSeconds,
+            Devices = fetchResult.Devices,
+            Sensors = fetchResult.Sensors,
+            MapDate = day,
+            MapOk = mapResult.Ok,
+            MapManual = mapResult.Manual,
+            MapConflict = mapResult.Conflict,
+            MapUnmatched = mapResult.Unmatched,
+            MapSkippedNoIp = mapResult.SkippedNoIp,
+            MapSkippedExcluded = mapResult.SkippedExcluded,
+            MapSkippedManualSibling = mapResult.SkippedManualSibling,
+            Source = PrtgStructureSyncStatus.SourceNightly
+        };
     }
 }

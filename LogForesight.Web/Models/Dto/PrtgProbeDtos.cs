@@ -275,6 +275,7 @@ public class PrtgStructureSyncStatusDto
     public int? LastMapConflict { get; set; }
     public int? LastMapUnmatched { get; set; }
     public int? LastMapSkipped { get; set; }
+    public string? LastSource { get; set; }
 }
 
 /// <summary>啟動「同步結構與對應」的回應</summary>

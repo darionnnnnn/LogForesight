@@ -1168,9 +1168,10 @@ function renderStructureSyncStatus(status) {
     }
 
     const when = formatDateTime(status.lastCompletedAt);
+    const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
     if (status.lastSuccess) {
         statusEl.textContent =
-            `上次同步：${when}　裝置 ${status.lastDevices ?? 0}、感測器 ${status.lastSensors ?? 0}；`
+            `上次同步：${when}${sourceLabel}　裝置 ${status.lastDevices ?? 0}、感測器 ${status.lastSensors ?? 0}；`
             + `對應成功 ${status.lastMapOk ?? 0}、人工 ${status.lastMapManual ?? 0}、`
             + `衝突 ${status.lastMapConflict ?? 0}、查無主機 ${status.lastMapUnmatched ?? 0}、`
             + `略過 ${status.lastMapSkipped ?? 0}`;

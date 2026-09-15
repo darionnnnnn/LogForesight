@@ -337,4 +337,171 @@ public class PrtgDailyPipelineTests : IDisposable
         // 不含保守策略跳過訊息
         Assert.DoesNotContain(console.Lines, l => l.Contains("取數策略為保守"));
     }
+
+    [Fact]
+    public void 夜間同步狀態_全部成功_回傳夜間來源的完整狀態()
+    {
+        var fetchResult = new PrtgFetchResult(12, 34, 0, 0, 0);
+        var mapResult = new PrtgHostMapResult(
+            Ok: 5,
+            Conflict: 1,
+            Unmatched: 2,
+            SkippedNoIp: 3,
+            Manual: 4,
+            SkippedExcluded: 6,
+            SkippedManualSibling: 7);
+        var day = new DateTime(2026, 9, 15);
+        var elapsed = TimeSpan.FromSeconds(42.5);
+        var now = new DateTime(2026, 9, 15, 3, 30, 0);
+
+        var status = PrtgDailyPipeline.BuildNightlySyncStatus(
+            structureSyncSkipped: false,
+            fetchResult: fetchResult,
+            fetchThrew: false,
+            mapResult: mapResult,
+            day: day,
+            elapsed: elapsed,
+            now: now);
+
+        Assert.NotNull(status);
+        Assert.Equal("nightly", status.Source);
+        Assert.True(status.Success);
+        Assert.Null(status.ErrorMessage);
+        Assert.Equal(day, status.MapDate);
+        Assert.Equal(now, status.CompletedAt);
+        Assert.Equal(42.5, status.ElapsedSeconds);
+        Assert.Equal(12, status.Devices);
+        Assert.Equal(34, status.Sensors);
+        Assert.Equal(5, status.MapOk);
+        Assert.Equal(4, status.MapManual);
+        Assert.Equal(1, status.MapConflict);
+        Assert.Equal(2, status.MapUnmatched);
+        Assert.Equal(3, status.MapSkippedNoIp);
+        Assert.Equal(6, status.MapSkippedExcluded);
+        Assert.Equal(7, status.MapSkippedManualSibling);
+    }
+
+    [Fact]
+    public void 夜間同步狀態_有失敗階段_回傳null()
+    {
+        var fetchResult = new PrtgFetchResult(12, 34, 0, 0, 1);
+        var mapResult = new PrtgHostMapResult(5, 1, 2, 3, 4, 6, 7);
+        var day = new DateTime(2026, 9, 15);
+        var elapsed = TimeSpan.FromSeconds(42.5);
+        var now = new DateTime(2026, 9, 15, 3, 30, 0);
+
+        var status = PrtgDailyPipeline.BuildNightlySyncStatus(
+            structureSyncSkipped: false,
+            fetchResult: fetchResult,
+            fetchThrew: false,
+            mapResult: mapResult,
+            day: day,
+            elapsed: elapsed,
+            now: now);
+
+        Assert.Null(status);
+    }
+
+    [Fact]
+    public void 夜間同步狀態_擷取擲例外_回傳null()
+    {
+        var fetchResult = new PrtgFetchResult(12, 34, 0, 0, 0);
+        var mapResult = new PrtgHostMapResult(5, 1, 2, 3, 4, 6, 7);
+        var day = new DateTime(2026, 9, 15);
+        var elapsed = TimeSpan.FromSeconds(42.5);
+        var now = new DateTime(2026, 9, 15, 3, 30, 0);
+
+        var status = PrtgDailyPipeline.BuildNightlySyncStatus(
+            structureSyncSkipped: false,
+            fetchResult: fetchResult,
+            fetchThrew: true,
+            mapResult: mapResult,
+            day: day,
+            elapsed: elapsed,
+            now: now);
+
+        Assert.Null(status);
+    }
+
+    [Fact]
+    public void 夜間同步狀態_跳過結構同步_回傳null()
+    {
+        var fetchResult = new PrtgFetchResult(12, 34, 0, 0, 0);
+        var mapResult = new PrtgHostMapResult(5, 1, 2, 3, 4, 6, 7);
+        var day = new DateTime(2026, 9, 15);
+        var elapsed = TimeSpan.FromSeconds(42.5);
+        var now = new DateTime(2026, 9, 15, 3, 30, 0);
+
+        var status = PrtgDailyPipeline.BuildNightlySyncStatus(
+            structureSyncSkipped: true,
+            fetchResult: fetchResult,
+            fetchThrew: false,
+            mapResult: mapResult,
+            day: day,
+            elapsed: elapsed,
+            now: now);
+
+        Assert.Null(status);
+    }
+
+    [Fact]
+    public void 夜間同步狀態_對應失敗_回傳null()
+    {
+        var fetchResult = new PrtgFetchResult(12, 34, 0, 0, 0);
+        var day = new DateTime(2026, 9, 15);
+        var elapsed = TimeSpan.FromSeconds(42.5);
+        var now = new DateTime(2026, 9, 15, 3, 30, 0);
+
+        var status = PrtgDailyPipeline.BuildNightlySyncStatus(
+            structureSyncSkipped: false,
+            fetchResult: fetchResult,
+            fetchThrew: false,
+            mapResult: null,
+            day: day,
+            elapsed: elapsed,
+            now: now);
+
+        Assert.Null(status);
+    }
+
+    [Fact]
+    public async Task 夜間取數連不上PRTG_不覆寫既有同步狀態()
+    {
+        var store = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
+        var fixedTime = new DateTime(2026, 3, 31, 12, 0, 0);
+        store.Update(s =>
+        {
+            s.CompletedAt = fixedTime;
+            s.Success = true;
+            s.Source = PrtgStructureSyncStatus.SourceManual;
+            s.Devices = 10;
+            s.Sensors = 50;
+            s.MapOk = 8;
+        });
+
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+
+        var (ctx, _, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            DateTime.Today.AddDays(-1), Task.CompletedTask, guard: null, structureSyncGate: null);
+
+        var after = store.GetOrNull();
+        Assert.NotNull(after);
+        Assert.Equal(fixedTime, after.CompletedAt);
+        Assert.True(after.Success);
+        Assert.Equal("manual", after.Source);
+        Assert.Equal(10, after.Devices);
+        Assert.Equal(50, after.Sensors);
+        Assert.Equal(8, after.MapOk);
+    }
 }

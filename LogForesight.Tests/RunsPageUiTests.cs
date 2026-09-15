@@ -398,6 +398,16 @@ public class RunsPageUiTests
         Assert.Contains("hasPrtgConnection", js);
     }
 
+    [Fact]
+    public void 排程頁PRTG同步摘要包含來源標示()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("lastSource", js);
+        Assert.Contains("夜間取數", js);
+        Assert.Contains("尚未同步", js);
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;

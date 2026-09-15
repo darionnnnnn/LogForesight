@@ -916,4 +916,14 @@ public class PrtgAdminPageUiTests
         var pauseMatches = System.Text.RegularExpressions.Regex.Matches(js, "目前暫停");
         Assert.Single(pauseMatches);
     }
+
+    [Fact]
+    public void Prtg維護頁結構同步狀態包含來源標示()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        Assert.Contains("lastSource", js);
+        Assert.Contains("夜間取數", js);
+        Assert.Contains("尚未同步", js);
+    }
 }

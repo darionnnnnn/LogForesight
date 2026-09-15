@@ -135,6 +135,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         Assert.Null(StatusStore().GetOrNull());
         var freshStatus = Create().GetStatus();
         Assert.Null(freshStatus.LastCompletedAt);
+        Assert.Null(freshStatus.LastSource);
 
         // 寫入一筆「執行過但零筆」
         StatusStore().Update(x =>
@@ -159,6 +160,26 @@ public class PrtgStructureSyncServiceTests : IDisposable
         Assert.Equal(0, status.LastMapOk);
         // 三種略過加總成一個數字給畫面
         Assert.Equal(6, status.LastMapSkipped);
+        Assert.Equal("manual", status.LastSource);
+    }
+
+    [Fact]
+    public void 手動同步成功後_LastSource為manual()
+    {
+        var service = Create();
+        service.Persist(new PrtgStructureSyncStatus
+        {
+            CompletedAt = new DateTime(2026, 9, 9, 10, 0, 0),
+            Success = true,
+            Devices = 10,
+            Sensors = 20,
+            MapDate = new DateTime(2026, 9, 9),
+            MapOk = 10
+        });
+
+        var status = service.GetStatus();
+        Assert.True(status.LastSuccess);
+        Assert.Equal("manual", status.LastSource);
     }
 
     [Fact]

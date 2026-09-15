@@ -210,28 +210,18 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             LastMapUnmatched = last?.MapUnmatched,
             LastMapSkipped = last == null
                 ? null
-                : last.MapSkippedNoIp + last.MapSkippedExcluded + last.MapSkippedManualSibling
+                : last.MapSkippedNoIp + last.MapSkippedExcluded + last.MapSkippedManualSibling,
+            LastSource = last?.Source
         };
     }
 
     /// <summary>把一趟的結果整份寫進持久化 store（成功、失敗、取消三條路徑共用）。</summary>
-    private void Persist(PrtgStructureSyncStatus status) =>
+    internal void Persist(PrtgStructureSyncStatus status) =>
         _statusStore.Update(existing =>
         {
-            existing.CompletedAt = status.CompletedAt;
-            existing.Success = status.Success;
-            existing.ErrorMessage = status.ErrorMessage;
-            existing.ElapsedSeconds = status.ElapsedSeconds;
-            existing.Devices = status.Devices;
-            existing.Sensors = status.Sensors;
-            existing.MapDate = status.MapDate;
-            existing.MapOk = status.MapOk;
-            existing.MapManual = status.MapManual;
-            existing.MapConflict = status.MapConflict;
-            existing.MapUnmatched = status.MapUnmatched;
-            existing.MapSkippedNoIp = status.MapSkippedNoIp;
-            existing.MapSkippedExcluded = status.MapSkippedExcluded;
-            existing.MapSkippedManualSibling = status.MapSkippedManualSibling;
+            existing.CopyFrom(status);
+            // 這條路徑一定是手動同步，不信任呼叫端帶進來的來源
+            existing.Source = PrtgStructureSyncStatus.SourceManual;
         });
 
     /// <param name="error">拒絕原因；成功時為 null。</param>

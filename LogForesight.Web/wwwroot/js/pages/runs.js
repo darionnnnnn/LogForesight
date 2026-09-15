@@ -1207,8 +1207,9 @@ function renderPrtgSyncSummary(status) {
         return;
     }
 
+    const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
     el.textContent =
-        `${formatDateTime(status.lastCompletedAt)}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
+        `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
         + `（衝突 ${formatNumber(status.lastMapConflict ?? 0)}、查無主機 ${formatNumber(status.lastMapUnmatched ?? 0)}）`;
 }
 
