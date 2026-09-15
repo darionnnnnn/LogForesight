@@ -11,12 +11,13 @@ namespace LogForesight.Core.Service;
 ///    在紀錄剛寫完、問題案件掛接之前當場併入，PRTG finding 因此能一併進案件與處理狀態鏈；
 /// 2. **就緒之前**已落地的主機日——由 PRTG 路徑在發佈後掃一次補追加。
 ///
+/// 登錄簿按日期保存各日的評估結果（同日重複發佈以後者為準，不覆蓋其他日期）。
 /// 「就緒」是給 AI 分析排程看的旗標：AI 排程要等當日 PRTG finding 都到齊才能判讀，
 /// 否則 AI 看到的是缺了 PRTG 訊號的半份資料。發佈之後 AI 排程即可處理當日待補，
 /// 不必等整趟取數結束。
 ///
 /// 執行緒安全：NetIQ 路徑是多 Sentinel 平行迴圈，<see cref="For"/> 會被多執行緒同時呼叫。
-/// 發佈只有一次、發佈後內容不再變動，讀取取的是不可變快照。
+/// 各日發佈後內容獨立保存且不可變，讀取取的是快照。
 /// </summary>
 public sealed class PrtgFindingsRegistry
 {
@@ -28,54 +29,60 @@ public sealed class PrtgFindingsRegistry
     public static PrtgFindingsRegistry Empty { get; } = CreateReady();
 
     private readonly object _lock = new();
-    private IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> _byHost =
-        new Dictionary<long, IReadOnlyList<LogIssueSignature>>();
-    private DateTime _day;
-    private bool _ready;
+    private readonly Dictionary<DateTime, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>>> _byDate = new();
 
-    /// <summary>PRTG finding 是否已全部算完並發佈。</summary>
+    /// <summary>PRTG finding 是否已發佈（至少一天已發佈即為 true，維持現有呼叫端與測試語意）。</summary>
     public bool IsReady
     {
-        get { lock (_lock) { return _ready; } }
+        get { lock (_lock) { return _byDate.Count > 0; } }
     }
 
-    /// <summary>已發佈的主機數（就緒前為 0）。供執行輸出與測試用。</summary>
+    /// <summary>所有已發佈日期的主機數加總（就緒前為 0）。僅供執行輸出與測試用。</summary>
     public int HostCount
     {
-        get { lock (_lock) { return _byHost.Count; } }
+        get { lock (_lock) { return _byDate.Values.Sum(map => map.Count); } }
     }
 
-    /// <summary>
-    /// 發佈規則評估結果並標記就緒。PRTG 停用、結構同步失敗、規則庫尚無 PRTG 規則等情況
-    /// 一律發佈空集合——**「算不出東西」與「還沒算完」必須分得出來**，
-    /// 不發佈的話 AI 排程會一路等到整趟取數結束，等於這個機制沒做。
-    /// </summary>
-    /// <param name="day">
-    /// 這批 finding 所屬的日期。**追加時一定要比對它**：兩條寫入路徑都在逐日迴圈裡呼叫，
-    /// 回補多天缺漏日時每一天都會經過同一個登錄簿，而 PRTG 只評估了這一天。
-    /// 少了這道比對，站台停機三天後開跑會把昨天的 down 掛到三天份的紀錄上，
-    /// 且 EventKey（`prtg:{code}:{objid}`）不含日期、去重完全生效，重跑也不會自癒。
-    /// </param>
-    public void Publish(DateTime day, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> findingsByHost)
+    /// <summary>指定日期的 PRTG finding 是否已發佈。</summary>
+    public bool IsPublished(DateTime date)
     {
         lock (_lock)
         {
-            _day = day.Date;
-            _byHost = findingsByHost;
-            _ready = true;
+            return _byDate.ContainsKey(date.Date);
         }
     }
 
     /// <summary>
-    /// 取得某主機**該日**的 finding。未就緒、日期不是這批 finding 所屬的日期、
-    /// 或該主機沒有 finding 時一律回空清單（呼叫端不必分辨：都是「現在沒有東西要追加」）。
+    /// 發佈特定日期的規則評估結果並按日保存。同日重複發佈以後者為準，不覆蓋其他已發佈日期的結果。
+    /// PRTG 停用、結構同步失敗、規則庫尚無 PRTG 規則等情況一律發佈空集合——
+    /// **「算不出東西」與「還沒算完」必須分得出來**，不發佈的話 AI 排程會一路等到整趟取數結束，
+    /// 等於這個機制沒做。
+    /// </summary>
+    /// <param name="day">
+    /// 這批 finding 所屬的日期。**追加時一定要比對它**：兩條寫入路徑都在逐日迴圈裡呼叫，
+    /// 回補多天缺漏日時每一天都會經過同一個登錄簿，必須依日期各自比對。
+    /// 少了這道比對，站台停機三天後開跑會把昨天的 down 掛到三天份的紀錄上，
+    /// 且 EventKey（`prtg:{code}:{objid}`）不含日期、去重完全生效，重跑也不會自癒。
+    /// </param>
+    /// <param name="findingsByHost">該日各主機命中的 finding 清單。</param>
+    public void Publish(DateTime day, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> findingsByHost)
+    {
+        lock (_lock)
+        {
+            _byDate[day.Date] = findingsByHost;
+        }
+    }
+
+    /// <summary>
+    /// 取得某主機**該日**的 finding。該日尚未發佈、或該主機該日沒有 finding 時一律回空清單
+    /// （呼叫端不必分辨：都是「現在沒有東西要追加」）。
     /// </summary>
     public IReadOnlyList<LogIssueSignature> For(long hostId, DateTime date)
     {
         lock (_lock)
         {
-            if (!_ready || date.Date != _day) return Array.Empty<LogIssueSignature>();
-            return _byHost.TryGetValue(hostId, out var findings)
+            if (!_byDate.TryGetValue(date.Date, out var hostMap)) return Array.Empty<LogIssueSignature>();
+            return hostMap.TryGetValue(hostId, out var findings)
                 ? findings
                 : Array.Empty<LogIssueSignature>();
         }

@@ -168,4 +168,48 @@ public class BatchRunBranchOutcomeTests
         Assert.Equal("partial", BatchRun.PrtgOutcomePartial);
         Assert.Equal("failed", BatchRun.PrtgOutcomeFailed);
     }
+
+    [Fact]
+    public void RecordPrtgDays寫入且BatchRunStore讀取完整()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+
+        var d1 = new DateTime(2026, 9, 1);
+        var d2 = new DateTime(2026, 9, 2);
+        var dayStats = new List<PrtgDayStat>
+        {
+            new(d1, BatchRun.PrtgOutcomePartial, 2, 1, true, 1, 10, 1),
+            new(d2, BatchRun.PrtgOutcomeSuccess, 3, 2, true, 2, 12, 0)
+        };
+
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            recorder.RecordPrtgDays(dayStats);
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(1);
+        Assert.NotNull(run);
+        Assert.NotNull(run!.PrtgDays);
+        Assert.Equal(2, run.PrtgDays!.Count);
+
+        Assert.Equal(d1, run.PrtgDays[0].Date);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, run.PrtgDays[0].Outcome);
+        Assert.Equal(2, run.PrtgDays[0].Findings);
+        Assert.Equal(1, run.PrtgDays[0].AttributedHosts);
+        Assert.True(run.PrtgDays[0].MapAvailable);
+        Assert.Equal(1, run.PrtgDays[0].TriggerHosts);
+        Assert.Equal(10, run.PrtgDays[0].TargetSensors);
+        Assert.Equal(1, run.PrtgDays[0].FailedSensors);
+
+        Assert.Equal(d2, run.PrtgDays[1].Date);
+        Assert.Equal(BatchRun.PrtgOutcomeSuccess, run.PrtgDays[1].Outcome);
+        Assert.Equal(3, run.PrtgDays[1].Findings);
+        Assert.Equal(2, run.PrtgDays[1].AttributedHosts);
+        Assert.True(run.PrtgDays[1].MapAvailable);
+        Assert.Equal(2, run.PrtgDays[1].TriggerHosts);
+        Assert.Equal(12, run.PrtgDays[1].TargetSensors);
+        Assert.Equal(0, run.PrtgDays[1].FailedSensors);
+    }
 }

@@ -75,6 +75,12 @@ public static class RunPhases
     public const string PrtgFindingsReady = AnalysisOrchestrator.PrtgFindingsReadyPhase;
 
     /// <summary>
+    /// PRTG 本趟處理的日期範圍訊號。**不是進度**，done 帶本趟 PRTG 處理的天數、total 恆為 0；
+    /// Web 端必須在 prtg- 前綴分支之前顯式處理（下一批做）。
+    /// </summary>
+    public const string PrtgDateRange = "prtg-date-range";
+
+    /// <summary>
     /// 全部 phase 字面值。前端標籤對照表的完整性檢查用——
     /// 新增 phase 卻忘了補前端文案時，畫面會印出裸 phase 字串給使用者。
     /// </summary>
@@ -84,7 +90,7 @@ public static class RunPhases
         PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered,
         PrtgWaitSync,
         LocalDone, NetiqDone, PrtgDone,
-        GuardPaused, GuardResumed, PrtgFindingsReady
+        GuardPaused, GuardResumed, PrtgFindingsReady, PrtgDateRange
     };
 
     /// <summary>會畫進度條的 phase（需要前端標籤與單位）。訊號類不在內。</summary>

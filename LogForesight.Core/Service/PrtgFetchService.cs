@@ -69,9 +69,11 @@ public sealed class PrtgFetchService
     /// 觸發式流程傳 false（略過階段 4，改由觸發式取數獨立呼叫 <see cref="FetchValuesForSensorsAsync"/>）。
     /// </param>
     /// <param name="progress">進度回呼（stage, done, total），null＝不回報</param>
+    /// <param name="stateChangesFrom">狀態變更區間起點（非 null 時階段 3 使用此起點到今天，null 時維持 day-1）</param>
     public async Task<PrtgFetchResult> FetchDayAsync(
         DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true, bool fetchValues = true,
-        Action<string, int, int>? progress = null)
+        Action<string, int, int>? progress = null,
+        DateTime? stateChangesFrom = null)
     {
         var devicesCount = 0;
         var sensorsCount = 0;
@@ -173,7 +175,7 @@ public sealed class PrtgFetchService
         {
             // 規則評估看 day-1 ～ day+1 的變更，只寫目標日會讓跨午夜的 down 持續時間算不準；今天的部分列之後會被冪等補齊。
             // 若 day.Date.AddDays(-1) > DateTime.Today（理論上不會），兩端互換不必處理——直接以 day 當兩端。
-            var fromDate = day.Date.AddDays(-1);
+            var fromDate = stateChangesFrom?.Date ?? day.Date.AddDays(-1);
             var toDate = DateTime.Today;
             if (fromDate > toDate)
             {
@@ -475,6 +477,13 @@ public sealed class PrtgFetchService
                 ? $"依時間排序於第 {pages} 頁提早結束（該頁最新 {stoppedPageLatestTime:yyyy-MM-dd HH:mm:ss}，早於 {threshold:yyyy-MM-dd}）"
                 : $"已翻到結尾（{pages} 頁）";
             _console.WriteLine($"[階段 3/4] 狀態變更同步完成：共讀取 {pages} 頁、{readRows} 筆，新增 {totalWritten} 筆（其餘已存在），{stopDesc}（耗時 {stopwatch.Elapsed.TotalSeconds:F1} 秒）。");
+            // 各日新增數：回望多日時看得出「哪一天真的有變更、哪一天是空的」，
+            // 只印總數的話，某一天整段沒取到與那天本來就沒事長得一模一樣
+            if (writtenByDay.Count > 1)
+            {
+                _console.WriteLine("[階段 3/4] 各日新增：" + string.Join("、",
+                    writtenByDay.OrderByDescending(kv => kv.Key).Select(kv => $"{kv.Key:MM-dd} {kv.Value} 筆")));
+            }
         }
 
         return new PrtgStateChangeRangeResult(

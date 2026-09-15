@@ -643,7 +643,8 @@ public class AnalysisOrchestrator
                 : Task.CompletedTask;
 
             var analysisTask = Task.WhenAll(localTask, netiqTask);
-            var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, yesterday, analysisTask, resourceGuard, structureSyncGate);
+            var prtgDays = BuildPrtgDays(request, retention, DateTime.Today);
+            var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, resourceGuard, structureSyncGate);
 
             // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
             // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
@@ -1190,6 +1191,35 @@ public class AnalysisOrchestrator
             console.WriteLine(
                 "\n  📄 詳細風險報告（含 AI 深入分析與原始 log）已產生，可於 Web 的分析紀錄詳情檢視。");
         }
+    }
+
+    /// <summary>
+    /// 組裝 PRTG 路徑要處理的日期清單（由近到遠、已去重、至少一天）。
+    /// </summary>
+    internal static IReadOnlyList<DateTime> BuildPrtgDays(RunRequest request, RetentionOptions retention, DateTime today)
+    {
+        // request.Scope == RunScope.NetiqHosts（指定主機更新）→ 只有 today-1。
+        // 理由：指定一台主機的更新不該觸發全機房 N 天的 PRTG 查詢。
+        if (request.Scope == RunScope.NetiqHosts)
+        {
+            return new[] { today.Date.AddDays(-1) };
+        }
+
+        // request.BackfillOverride 為 null 或 ≤ 1 → 只有 today-1。
+        if (!request.BackfillOverride.HasValue || request.BackfillOverride.Value <= 1)
+        {
+            return new[] { today.Date.AddDays(-1) };
+        }
+
+        // 否則 n = Math.Min(BackfillOverride, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
+        // （與本機路徑同一個夾制），回傳 today-1, today-2, …, today-n。
+        var n = Math.Min(request.BackfillOverride.Value, LogForesight.Core.Models.NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
+        var days = new List<DateTime>(n);
+        for (var i = 1; i <= n; i++)
+        {
+            days.Add(today.Date.AddDays(-i));
+        }
+        return days;
     }
 }
 

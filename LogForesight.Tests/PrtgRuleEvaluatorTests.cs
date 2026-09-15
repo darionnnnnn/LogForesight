@@ -381,4 +381,34 @@ public class PrtgRuleEvaluatorTests
         Assert.Equal(101, findings[0].SensorObjid);
         Assert.DoesNotContain(findings, f => f.SensorObjid == 102);
     }
+
+    [Fact]
+    public void Evaluate_includeSilent控制是否評估沉默Device()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            // sensor 101: 22:00 進入 Down（120 分鐘 >= 60）
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 22, 0, 0), Status = "Down" }
+        };
+
+        var sensorToDevice = new Dictionary<long, long>
+        {
+            [101] = 1
+        };
+
+        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status)>
+        {
+            (201, 2, "Unknown") // Device 2 全 Unknown -> 觸發 Silent
+        };
+
+        // includeSilent: true (預設)
+        var findingsWithSilent = PrtgRuleEvaluator.Evaluate(_day, changes, sensorToDevice, sensorStatuses);
+        Assert.Contains(findingsWithSilent, f => f.RuleCode == PrtgRuleEvaluator.RuleDown && f.SensorObjid == 101);
+        Assert.Contains(findingsWithSilent, f => f.RuleCode == PrtgRuleEvaluator.RuleSilent && f.DeviceObjid == 2);
+
+        // includeSilent: false
+        var findingsWithoutSilent = PrtgRuleEvaluator.Evaluate(_day, changes, sensorToDevice, sensorStatuses, includeSilent: false);
+        Assert.Contains(findingsWithoutSilent, f => f.RuleCode == PrtgRuleEvaluator.RuleDown && f.SensorObjid == 101);
+        Assert.DoesNotContain(findingsWithoutSilent, f => f.RuleCode == PrtgRuleEvaluator.RuleSilent);
+    }
 }

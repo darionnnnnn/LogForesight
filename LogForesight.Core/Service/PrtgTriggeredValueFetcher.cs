@@ -16,6 +16,12 @@ public sealed record PrtgTriggeredFetchResult(
 /// </summary>
 public sealed class PrtgTriggeredValueFetcher
 {
+    /// <summary>
+    /// 過去日沿用既有主機對應時往回找的天數（與歷史回填的「近 31 天」同一個窗）。
+    /// PRTG 路徑的規則歸戶與觸發式取數共用，兩者看到的主機對應必須一致。
+    /// </summary>
+    public const int HostMapLookbackDays = 31;
+
     private readonly PrtgFetchService _fetchService;
     private readonly EfPrtgStore _store;
     private readonly IAnalysisRecordQuery _records;
@@ -54,7 +60,10 @@ public sealed class PrtgTriggeredValueFetcher
             _console.WriteLine("  ⚠ 取數範圍設為「全部已對應主機」但 sensor type 白名單為空，" +
                                "等於對全部 sensor 取數——本次退回「只抓觸發主機」。請先設定白名單。");
         }
-        var hostMapRows = _store.GetHostMapForDate(day);
+        // 取「該日或之前最近一日」的對應，不是只取該日：主機對應只對最新一天重算，
+        // 回望多日時較舊的日子沒有自己的對應列，只取該日會讓那些日子一台主機都對不到、一個數值都不取。
+        // 也不能拿今天的對應套到過去日——那會把裝置掛到錯的主機上（docs/PRTG-SPEC.md §5）。
+        var hostMapRows = _store.GetLatestHostMapWithDate(HostMapLookbackDays, anchor: day).Rows;
         var hostToDevices = new Dictionary<long, List<long>>();
         foreach (var row in hostMapRows)
         {

@@ -196,6 +196,7 @@ public class RunsPageUiTests
         Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.GuardPaused, tracks);
         Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.GuardResumed, tracks);
         Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.PrtgFindingsReady, tracks);
+        Assert.DoesNotContain(LogForesight.Core.Service.RunPhases.PrtgDateRange, tracks);
 
         // 但它們都要在 All 裡（All 是「全部字面值」的單一清單）
         foreach (var phase in tracks)

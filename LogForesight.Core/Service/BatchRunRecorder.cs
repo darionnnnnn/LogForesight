@@ -165,6 +165,15 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    public void RecordPrtgDays(IReadOnlyList<PrtgDayStat> days)
+    {
+        if (_store == null) return;
+        lock (_countLock)
+        {
+            _run.PrtgDays = days.ToList();
+        }
+    }
+
     public void Finish(int exitCode)
     {
         if (_finished || _store == null) return;
