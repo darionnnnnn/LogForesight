@@ -45,9 +45,11 @@ public class BulkScaleGateTests : IDisposable
         var issueOwnerAdmin = new IssueOwnerAdminService(
             new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, new RecordingAuditService(), currentUser, displayNames);
 
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
         return new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore,
-            new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore()),
+            caseCoordinator,
+            new WorkOrderCoordinator(new FakeWorkOrderStore(_caseStore), _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts),
             new FakeNoiseMarkStore(), repository, _hosts, _users, visibility,
             currentUser,
             new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore),

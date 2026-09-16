@@ -49,11 +49,12 @@ internal class HandlingServiceFacade
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
             audit, currentUser, displayNames);
+        var workOrders = new WorkOrderCoordinator(new FakeWorkOrderStore(cases), cases, issueStore, caseCoordinator, store, hosts);
         _day = new DayHandlingCommandService(
-            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
+            store, issueStore, caseCoordinator, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
             displayNames, mail, issueOwners);
         _issue = new IssueHandlingCommandService(
-            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
+            store, issueStore, cases, caseCoordinator, workOrders, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, displayNames, mail);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery(),

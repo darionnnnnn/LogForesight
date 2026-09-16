@@ -59,6 +59,20 @@ public class WorkOrderCoordinator
             throw new ArgumentException("WorkOrderCoordinator：交辦單至少要有一個成員。", nameof(req));
 
         var actor = req.Actor;
+
+        // 有效成員（新案件＋改連＋改派）為零時不建單、不併入、不寫事件：全被略過的指派
+        // 若照建，會留下零成員的進行中空單。預判與寫入共用同一份分類（ClassifyMembers）
+        var preview = ClassifyMembers(req.Members, req.Source, req.EventId, req.HandlerId, null, req.ReassignConflicts);
+        if (preview.EffectiveCount == 0)
+        {
+            ValidateMembers(req.Members, req.Source, req.EventId, "（未建立）");
+            return new WorkOrderMemberOutcome
+            {
+                WorkOrderId = 0, CreatedOrder = false, SkippedConflicts = preview.Skipped,
+                DaySync = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0)
+            };
+        }
+
         var draft = new WorkOrder
         {
             SourceName = req.Source, EventId = req.EventId, IssueLabel = req.IssueLabel,
@@ -93,8 +107,9 @@ public class WorkOrderCoordinator
         {
             AppendEvent(order.WorkOrderId, WorkOrderEventActions.Created, actor, added, null);
         }
-        else
+        else if (added > 0)
         {
+            // 併入但沒有東西進來（成員早已在這張單上）：不寫 merged_in、不動範圍與 LastAppendedAt
             UpdateOrder(order.WorkOrderId, o =>
             {
                 MergeScope(o, req.ScopeKind, req.ScopeGroupIds, req.AutoAttach);
@@ -115,13 +130,17 @@ public class WorkOrderCoordinator
         var order = GetActive(workOrderId);
 
         var (outcome, sourceOrders) = MembersInto(order, members, reassignConflicts, actor);
-        UpdateOrder(workOrderId, o =>
+        var added = outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned;
+        if (added > 0)
         {
-            o.LastAppendedAt = actor.OccurredAt;
-            return true;
-        });
-        AppendEvent(workOrderId, WorkOrderEventActions.Appended, actor,
-            outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned, null);
+            // 零有效成員（全被略過或早已在單上）：沒有追加任何東西，不寫事件、不推進 LastAppendedAt
+            UpdateOrder(workOrderId, o =>
+            {
+                o.LastAppendedAt = actor.OccurredAt;
+                return true;
+            });
+            AppendEvent(workOrderId, WorkOrderEventActions.Appended, actor, added, null);
+        }
 
         RecomputeSources(sourceOrders, workOrderId, actor.OccurredAt);
         return outcome;
@@ -146,72 +165,40 @@ public class WorkOrderCoordinator
         var source = order.SourceName;
         var eventId = order.EventId.Value;
 
-        // 主機驗證一次取整份主機表：逐成員 FindByName 會讓查詢次數隨成員數線性增長
-        var knownHosts = _hosts.GetAll().Select(h => h.HostName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var member in members)
-        {
-            if (!knownHosts.Contains(member.HostName))
-                throw new InvalidOperationException($"WorkOrderCoordinator：找不到主機「{member.HostName}」。");
+        ValidateMembers(members, source, eventId, order.WorkOrderId.ToString());
+        var plan = ClassifyMembers(members, source, eventId, order.HandlerId, order.WorkOrderId, reassignConflicts);
 
-            var parsed = IssueSignatureKey.TryParseSignature(member.IssueKey);
-            if (parsed == null || parsed.Value.EventId != eventId
-                || !string.Equals(parsed.Value.Source, source, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
-                    $"WorkOrderCoordinator：成員「{member.HostName}」的問題簽章與交辦單 {order.WorkOrderId} 的問題不符。");
+        var outcome = new WorkOrderMemberOutcome { WorkOrderId = order.WorkOrderId, SkippedConflicts = plan.Skipped };
+        var sourceOrders = new HashSet<long>();
+
+        var newCases = new List<IssueCase>(plan.New.Count);
+        foreach (var member in plan.New)
+        {
+            var day = member.TriggerDate.Date;
+            newCases.Add(new IssueCase
+            {
+                CaseId = Guid.NewGuid().ToString("n"),
+                HostName = member.HostName, IssueKey = member.IssueKey, IssueLabel = member.IssueLabel,
+                Status = IssueHandlingStatuses.InProgress, HandlerId = order.HandlerId,
+                Note = order.Note, DueDate = order.DueDate,
+                FirstLinkedDate = day, LastLinkedDate = day,
+                CreatedAt = actor.OccurredAt, CreatedByAccount = actor.ActorAccount, UpdatedAt = actor.OccurredAt,
+                WorkOrderId = order.WorkOrderId
+            });
         }
 
-        var existingByKey = new Dictionary<(string HostName, string IssueKey), IssueCase>(MemberKeyComparer.Instance);
-        foreach (var openCase in _cases.GetOpenMany(members.Select(m => m.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), source, eventId))
-            existingByKey.TryAdd((openCase.HostName, openCase.IssueKey), openCase);
-
-        var outcome = new WorkOrderMemberOutcome { WorkOrderId = order.WorkOrderId };
-        var sourceOrders = new HashSet<long>();
-        var seen = new HashSet<(string HostName, string IssueKey)>(MemberKeyComparer.Instance);
-        var newCases = new List<IssueCase>();
-        var relinked = new List<IssueCase>();
-        var reassigned = new List<IssueCase>();
-
-        foreach (var member in members)
+        var relinked = plan.Relink;
+        foreach (var existing in relinked)
         {
-            if (!seen.Add((member.HostName, member.IssueKey))) continue;
-
-            if (!existingByKey.TryGetValue((member.HostName, member.IssueKey), out var existing))
-            {
-                var day = member.TriggerDate.Date;
-                newCases.Add(new IssueCase
-                {
-                    CaseId = Guid.NewGuid().ToString("n"),
-                    HostName = member.HostName, IssueKey = member.IssueKey, IssueLabel = member.IssueLabel,
-                    Status = IssueHandlingStatuses.InProgress, HandlerId = order.HandlerId,
-                    Note = order.Note, DueDate = order.DueDate,
-                    FirstLinkedDate = day, LastLinkedDate = day,
-                    CreatedAt = actor.OccurredAt, CreatedByAccount = actor.ActorAccount, UpdatedAt = actor.OccurredAt,
-                    WorkOrderId = order.WorkOrderId
-                });
-                continue;
-            }
-
-            if (existing.HandlerId == order.HandlerId)
-            {
-                if (existing.WorkOrderId == order.WorkOrderId) continue;
-                if (existing.WorkOrderId != null) sourceOrders.Add(existing.WorkOrderId.Value);
-                existing.WorkOrderId = order.WorkOrderId;
-                existing.UpdatedAt = actor.OccurredAt;
-                relinked.Add(existing);
-                continue;
-            }
-
-            if (!reassignConflicts)
-            {
-                outcome.SkippedConflicts.Add(new WorkOrderConflict
-                {
-                    HostName = existing.HostName, IssueKey = existing.IssueKey, HandlerId = existing.HandlerId
-                });
-                continue;
-            }
-
             if (existing.WorkOrderId != null) sourceOrders.Add(existing.WorkOrderId.Value);
-            reassigned.Add(existing);
+            existing.WorkOrderId = order.WorkOrderId;
+            existing.UpdatedAt = actor.OccurredAt;
+        }
+
+        var reassigned = plan.Reassign;
+        foreach (var existing in reassigned)
+        {
+            if (existing.WorkOrderId != null) sourceOrders.Add(existing.WorkOrderId.Value);
         }
 
         outcome.DaySync = _caseCoordinator.SubmitCaseDays(newCases, new CaseDayIntent
@@ -230,6 +217,77 @@ public class WorkOrderCoordinator
         outcome.LinkedExisting = relinked.Count;
         outcome.Reassigned = reassigned.Count;
         return (outcome, sourceOrders);
+    }
+
+    /// <summary>成員驗證：主機存在、簽章與單的問題相符（orderLabel 只用於訊息）</summary>
+    private void ValidateMembers(List<WorkOrderMember> members, string source, int eventId, string orderLabel)
+    {
+        // 主機驗證一次取整份主機表：逐成員 FindByName 會讓查詢次數隨成員數線性增長
+        var knownHosts = _hosts.GetAll().Select(h => h.HostName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var member in members)
+        {
+            if (!knownHosts.Contains(member.HostName))
+                throw new InvalidOperationException($"WorkOrderCoordinator：找不到主機「{member.HostName}」。");
+
+            var parsed = IssueSignatureKey.TryParseSignature(member.IssueKey);
+            if (parsed == null || parsed.Value.EventId != eventId
+                || !string.Equals(parsed.Value.Source, source, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"WorkOrderCoordinator：成員「{member.HostName}」的問題簽章與交辦單 {orderLabel} 的問題不符。");
+        }
+    }
+
+    /// <summary>成員分類的結果：只讀不寫（案件物件尚未被修改）</summary>
+    private sealed record MemberPlan(
+        List<WorkOrderMember> New, List<IssueCase> Relink, List<IssueCase> Reassign, List<WorkOrderConflict> Skipped)
+    {
+        public int EffectiveCount => New.Count + Relink.Count + Reassign.Count;
+    }
+
+    /// <summary>
+    /// 成員分類的唯一一份（建單前的預判與寫入共用）：一次 GetOpenMany 取既有進行中案件配對。
+    /// 無進行中案件＝新案件；同處理人＝改連（已在 workOrderId 這張單上的不算）；
+    /// 他人且 reassignConflicts＝改派；他人未要求改派＝略過。workOrderId 為 null＝尚未有單。
+    /// </summary>
+    private MemberPlan ClassifyMembers(List<WorkOrderMember> members, string source, int eventId, long handlerId, long? workOrderId, bool reassignConflicts)
+    {
+        var existingByKey = new Dictionary<(string HostName, string IssueKey), IssueCase>(MemberKeyComparer.Instance);
+        foreach (var openCase in _cases.GetOpenMany(members.Select(m => m.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), source, eventId))
+            existingByKey.TryAdd((openCase.HostName, openCase.IssueKey), openCase);
+
+        var plan = new MemberPlan(new List<WorkOrderMember>(), new List<IssueCase>(), new List<IssueCase>(), new List<WorkOrderConflict>());
+        var seen = new HashSet<(string HostName, string IssueKey)>(MemberKeyComparer.Instance);
+
+        foreach (var member in members)
+        {
+            if (!seen.Add((member.HostName, member.IssueKey))) continue;
+
+            if (!existingByKey.TryGetValue((member.HostName, member.IssueKey), out var existing))
+            {
+                plan.New.Add(member);
+                continue;
+            }
+
+            if (existing.HandlerId == handlerId)
+            {
+                if (workOrderId != null && existing.WorkOrderId == workOrderId) continue;
+                plan.Relink.Add(existing);
+                continue;
+            }
+
+            if (!reassignConflicts)
+            {
+                plan.Skipped.Add(new WorkOrderConflict
+                {
+                    HostName = existing.HostName, IssueKey = existing.IssueKey, HandlerId = existing.HandlerId
+                });
+                continue;
+            }
+
+            plan.Reassign.Add(existing);
+        }
+
+        return plan;
     }
 
     // ── 改派／拆單 ───────────────────────────────────────────────────────────

@@ -127,6 +127,44 @@ public class WorkOrderCoordinatorTests
 
     // ── Create ───────────────────────────────────────────────────────────────
 
+    /// <summary>有效成員為零（全是他人案件且不改派）時不建單，避免留下零成員的進行中空單</summary>
+    [Fact]
+    public void Create_成員全是他人案件且不改派_不建單不寫事件_略過照實回報()
+    {
+        var w = new World();
+        w.AddCase("b1", "H1", Bob, workOrderId: null);
+        w.AddCase("b2", "H2", Carol, workOrderId: null);
+
+        var outcome = w.Coordinator.Create(Request(Alice, "H1", "H2"));
+
+        Assert.Empty(w.Orders.All);
+        Assert.Empty(w.Orders.ListEvents(0));
+        Assert.Equal(0, outcome.WorkOrderId);
+        Assert.False(outcome.CreatedOrder);
+        Assert.Equal(0, outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned);
+        Assert.Equal(new[] { ("H1", (long?)Bob), ("H2", (long?)Carol) },
+            outcome.SkippedConflicts.Select(c => (c.HostName, c.HandlerId)).OrderBy(x => x.HostName));
+        Assert.Equal(new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0), outcome.DaySync);
+        Assert.Null(w.Cases.GetOpen("H1", IssueKey)!.WorkOrderId);
+    }
+
+    [Fact]
+    public void Append_成員全被略過_不寫appended事件且LastAppendedAt不變()
+    {
+        var w = new World();
+        var orderId = w.AddOrder(Alice);
+        w.AddCase("b1", "H1", Bob, workOrderId: null);
+        var before = w.Orders.Get(orderId)!.LastAppendedAt;
+        var eventsBefore = w.Events(orderId);
+
+        var outcome = w.Coordinator.Append(orderId, new List<WorkOrderMember> { Member("H1") }, reassignConflicts: false, Actor(T0.AddHours(1)));
+
+        Assert.Single(outcome.SkippedConflicts);
+        Assert.Equal(before, w.Orders.Get(orderId)!.LastAppendedAt);
+        Assert.DoesNotContain(WorkOrderEventActions.Appended, w.Events(orderId));
+        Assert.Equal(eventsBefore, w.Events(orderId));
+    }
+
     [Fact]
     public void Create_三台主機_新建一台_改連一台_略過他人衝突一台()
     {

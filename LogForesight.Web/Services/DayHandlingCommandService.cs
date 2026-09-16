@@ -25,6 +25,7 @@ public class DayHandlingCommandService
     private readonly IRecordHandlingStore _store;
     private readonly IIssueHandlingStore _issueStore;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly WorkOrderCoordinator _workOrders;
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
     private readonly IUserStore _users;
@@ -48,6 +49,7 @@ public class DayHandlingCommandService
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
         IssueCaseCoordinator caseCoordinator,
+        WorkOrderCoordinator workOrders,
         IRecordRepository repository,
         IHostStore hosts,
         IUserStore users,
@@ -66,6 +68,7 @@ public class DayHandlingCommandService
         _store = store;
         _issueStore = issueStore;
         _caseCoordinator = caseCoordinator;
+        _workOrders = workOrders;
         _repository = repository;
         _hosts = hosts;
         _users = users;
@@ -243,8 +246,12 @@ public class DayHandlingCommandService
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var dayIssueHandlings = _issueStore.GetForDay(host.HostName, date)
             .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
-        var occurredAt = DateTime.Now;
-        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
+        var actor = new WorkOrderActor
+        {
+            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
+            ActorAccount = _currentUser.Account,
+            OccurredAt = DateTime.Now
+        };
 
         var created = 0;
         var reassigned = 0;
@@ -259,28 +266,36 @@ public class DayHandlingCommandService
                 IssueHandlingStatuses.IsClosed(existingHandling.Status))
                 continue;
 
-            var result = _caseCoordinator.BuildCase(
-                host.HostName, key, HandlingTextHelpers.IssueLabel(issue), date,
-                handlerId, note: null, dueDate: null,
-                actorId, _currentUser.Account, occurredAt);
+            // 寫入走交辦單協調器（每個問題一張 day_assign 單；同處理人同問題已有進行中單時自動併入），
+            // 與既有 BuildCase／ReassignCase 語意一一對應：
+            //   - 無進行中案件→建案並回溯歷史（NewCases）
+            //   - 處理人就是自己的進行中案件→不算略過，只改連本單（LinkedExisting）
+            //   - 他人進行中案件→預設保留原處理人並回報（SkippedConflicts，不搶走）；
+            //     使用者在前端確認過「要改派」才換人（§9），改派留下 case_reassign 歷程
+            var outcome = _workOrders.Create(new WorkOrderCreateRequest
+            {
+                Source = issue.Source, EventId = issue.EventId, IssueLabel = HandlingTextHelpers.IssueLabel(issue),
+                HandlerId = handlerId, Origin = WorkOrderOrigins.DayAssign,
+                ScopeKind = WorkOrderScopes.Hosts, ScopeGroupIds = new List<long>(), AutoAttach = false,
+                Note = null, DueDate = null,
+                ReassignConflicts = reassign,
+                Members = new List<WorkOrderMember>
+                {
+                    new()
+                    {
+                        HostName = host.HostName, IssueKey = key,
+                        IssueLabel = HandlingTextHelpers.IssueLabel(issue), TriggerDate = date
+                    }
+                },
+                Actor = actor
+            });
 
-            if (result.Created)
+            created += outcome.NewCases;
+            reassigned += outcome.Reassigned;
+            foreach (var conflict in outcome.SkippedConflicts)
             {
-                created++;
-            }
-            else if (result.ExistingHandlerId is { } existingHandlerId && existingHandlerId != handlerId)
-            {
-                // 已由他人的進行中案件涵蓋：預設保留原處理人並回報（既有語意，不搶走）；
-                // 使用者在前端確認過「要改派」才換人（§9），改派留下 case_reassign 歷程
-                if (reassign)
-                {
-                    _caseCoordinator.ReassignCase(host.HostName, key, handlerId, actorId, _currentUser.Account, occurredAt);
-                    reassigned++;
-                }
-                else
-                {
-                    skippedHandlerIds.Add(existingHandlerId);
-                }
+                // 既有語意：進行中案件沒有處理人時不列入略過名單
+                if (conflict.HandlerId.HasValue) skippedHandlerIds.Add(conflict.HandlerId.Value);
             }
         }
 

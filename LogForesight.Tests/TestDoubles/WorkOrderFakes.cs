@@ -10,14 +10,14 @@ namespace LogForesight.Tests;
 /// </summary>
 internal class FakeWorkOrderStore : IWorkOrderStore
 {
-    private readonly FakeIssueCaseStore _cases;
+    private readonly IIssueCaseStore _cases;
     private readonly List<WorkOrder> _orders = new();
     private readonly List<WorkOrderEvent> _events = new();
     private long _nextId = 1;
     private long _nextEventId = 1;
     private long _versionTicks = new DateTime(2026, 1, 1).Ticks;
 
-    public FakeWorkOrderStore(FakeIssueCaseStore cases) => _cases = cases;
+    public FakeWorkOrderStore(IIssueCaseStore cases) => _cases = cases;
 
     /// <summary>接下來幾次 Save 要擲併發例外（注入用）</summary>
     public int FailNextSaves { get; set; }

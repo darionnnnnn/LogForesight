@@ -83,7 +83,9 @@ internal sealed class ScaleServices
         var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames);
 
         IssueCommands = new IssueHandlingCommandService(
-            recordHandling, IssueHandlings, Cases, CaseCoordinator, noiseMarks, Repository,
+            recordHandling, IssueHandlings, Cases, CaseCoordinator,
+            new WorkOrderCoordinator(backend.WorkOrderStore(), Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts),
+            noiseMarks, Repository,
             Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress,
             new UserCapabilityResolver(userGroups, Hosts), issueOwnerAdmin, displayNames);
     }

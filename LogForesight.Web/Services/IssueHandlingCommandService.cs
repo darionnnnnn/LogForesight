@@ -18,6 +18,7 @@ public class IssueHandlingCommandService
     private readonly IIssueHandlingStore _issueStore;
     private readonly IIssueCaseStore _cases;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly WorkOrderCoordinator _workOrders;
     private readonly INoiseMarkStore _noiseMarks;
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
@@ -48,6 +49,7 @@ public class IssueHandlingCommandService
         IIssueHandlingStore issueStore,
         IIssueCaseStore cases,
         IssueCaseCoordinator caseCoordinator,
+        WorkOrderCoordinator workOrders,
         INoiseMarkStore noiseMarks,
         IRecordRepository repository,
         IHostStore hosts,
@@ -66,6 +68,7 @@ public class IssueHandlingCommandService
         _issueStore = issueStore;
         _cases = cases;
         _caseCoordinator = caseCoordinator;
+        _workOrders = workOrders;
         _noiseMarks = noiseMarks;
         _repository = repository;
         _hosts = hosts;
@@ -406,7 +409,7 @@ public class IssueHandlingCommandService
 
     /// <summary>
     /// 跨主機批次建案：對每台勾選主機的這個問題（取該主機在篩選區間內最近一次出現的確切
-    /// 問題簽章）呼叫 BuildCase——已有他人進行中案件的主機依 2.1 保留原處理人、列入略過清單，
+    /// 問題簽章）依處理人建交辦單（WorkOrderCoordinator.Create）——已有他人進行中案件的主機依 2.1 保留原處理人、列入略過清單，
     /// 建案本身仍走全部留存歷史回溯關聯（Q6：受影響主機的認定範圍與回溯深度是兩件事）。
     /// </summary>
     public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request)
@@ -447,41 +450,105 @@ public class IssueHandlingCommandService
         var reassignIds = request.ReassignHostIds.ToHashSet();
         var visibleToAssignee = new Dictionary<long, IReadOnlySet<long>>();
 
-        var occurredAt = DateTime.Now;
-        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
+        var actor = new WorkOrderActor
+        {
+            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
+            ActorAccount = _currentUser.Account,
+            OccurredAt = DateTime.Now
+        };
+
+        // 改派前的原處理人：必須在寫入前一次取得（寫入後案件的處理人已換成新的人）
+        var reassignHostNames = plan
+            .Where(p => reassignIds.Contains(p.Occurrence.Host.HostId))
+            .Select(p => p.Occurrence.Host.HostName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var previousHandlerByHost = new Dictionary<string, long?>(StringComparer.OrdinalIgnoreCase);
+        if (reassignHostNames.Count > 0)
+        {
+            foreach (var openCase in _cases.GetOpenMany(reassignHostNames, request.Source, request.EventId))
+                previousHandlerByHost.TryAdd(openCase.HostName, openCase.HandlerId);
+        }
+
+        // 寫入一律走交辦單協調器（每位處理人一張單），與既有 BuildCase／ReassignCase 語意一一對應：
+        //   - 無進行中案件→建案並回溯歷史（NewCases）
+        //   - 同一處理人已有進行中案件→不建不略過，只改連本單（LinkedExisting，不計入任何清單）
+        //   - 他人進行中案件且沒勾改派→略過並回報原處理人（SkippedConflicts）
+        //   - 他人進行中案件且勾了改派→只換處理人、記 CaseReassign 並改連本單（ReassignConflicts=true）
+        // 改派是逐台語意（§9），所以同一位處理人的主機分「改派／不改派」兩組各呼叫一次；
+        // 第二次會因「同處理人同問題已有進行中單」自動併入同一張單。
         var created = 0;
+        var skippedHosts = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var reassignedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in plan.GroupBy(p => p.Handler.UserId))
+        {
+            var handler = group.First().Handler;
+            var issueLabel = HandlingTextHelpers.IssueLabel(group.First().Occurrence.Issue);
+
+            foreach (var reassignGroup in new[] { true, false })
+            {
+                var members = group
+                    .Where(p => reassignIds.Contains(p.Occurrence.Host.HostId) == reassignGroup)
+                    .Select(p => new WorkOrderMember
+                    {
+                        HostName = p.Occurrence.Host.HostName,
+                        IssueKey = IssueSignatureKey.For(p.Occurrence.Issue),
+                        IssueLabel = HandlingTextHelpers.IssueLabel(p.Occurrence.Issue),
+                        TriggerDate = p.Occurrence.Date
+                    })
+                    .ToList();
+                if (members.Count == 0) continue;
+
+                var outcome = _workOrders.Create(new WorkOrderCreateRequest
+                {
+                    Source = request.Source, EventId = request.EventId, IssueLabel = issueLabel,
+                    HandlerId = handler.UserId, Origin = WorkOrderOrigins.Manual,
+                    ScopeKind = WorkOrderScopes.Hosts, ScopeGroupIds = new List<long>(), AutoAttach = false,
+                    Note = request.Note, DueDate = request.DueDate,
+                    ReassignConflicts = reassignGroup,
+                    Members = members,
+                    Actor = actor
+                });
+
+                created += outcome.NewCases;
+                foreach (var conflict in outcome.SkippedConflicts)
+                {
+                    // 既有 BuildCase 對「進行中案件沒有處理人」不算略過，這裡維持同語意
+                    if (conflict.HandlerId.HasValue) skippedHosts.TryAdd(conflict.HostName, conflict.HandlerId.Value);
+                }
+                if (reassignGroup && outcome.Reassigned > 0)
+                {
+                    // 改派組內「原處理人不是本人」的主機就是被改派的（本人的走 LinkedExisting）
+                    foreach (var member in members)
+                    {
+                        if (previousHandlerByHost.TryGetValue(member.HostName, out var previous)
+                            && previous.HasValue && previous.Value != handler.UserId)
+                            reassignedHosts.Add(member.HostName);
+                    }
+                }
+            }
+        }
+
+        // 依原本的主機順序組回既有回傳（清單順序與改寫前一致）
         var skipped = new List<BulkAssignSkippedDto>();
         var reassigned = new List<BulkAssignReassignedDto>();
         var noAccess = new List<AssigneeNoAccessDto>();
-
         foreach (var (o, handler) in plan)
         {
-            var key = IssueSignatureKey.For(o.Issue);
-            var result = _caseCoordinator.BuildCase(
-                o.Host.HostName, key, HandlingTextHelpers.IssueLabel(o.Issue), o.Date,
-                handler.UserId, request.Note, request.DueDate,
-                actorId, _currentUser.Account, occurredAt);
-
-            if (result.Created)
+            var hostName = o.Host.HostName;
+            if (skippedHosts.TryGetValue(hostName, out var existingHandlerId))
             {
-                created++;
+                skipped.Add(new BulkAssignSkippedDto { HostName = hostName, ExistingHandlerName = ResolveDisplayName(existingHandlerId) });
+                continue;   // 沒換人＝這台主機的處理人沒變，不必檢查可見性
             }
-            else if (result.ExistingHandlerId.HasValue)
-            {
-                var existingName = ResolveDisplayName(result.ExistingHandlerId.Value);
 
-                // 已有他人的進行中案件：只有明確勾了「改派」才換人（§9），
-                // 否則維持既有語意——保留原處理人並回報略過，不靜默搶走
-                if (reassignIds.Contains(o.Host.HostId) && result.ExistingHandlerId.Value != handler.UserId)
+            if (reassignedHosts.Contains(hostName))
+            {
+                reassigned.Add(new BulkAssignReassignedDto
                 {
-                    _caseCoordinator.ReassignCase(o.Host.HostName, key, handler.UserId, actorId, _currentUser.Account, occurredAt);
-                    reassigned.Add(new BulkAssignReassignedDto { HostName = o.Host.HostName, PreviousHandlerName = existingName });
-                }
-                else
-                {
-                    skipped.Add(new BulkAssignSkippedDto { HostName = o.Host.HostName, ExistingHandlerName = existingName });
-                    continue;   // 沒換人＝這台主機的處理人沒變，不必檢查可見性
-                }
+                    HostName = hostName,
+                    PreviousHandlerName = ResolveDisplayName(previousHandlerByHost[hostName].GetValueOrDefault())
+                });
             }
 
             // 被指派者看不到這台主機時提示執行指派的人（§7）：指派仍然成立，
@@ -495,7 +562,7 @@ public class IssueHandlingCommandService
             {
                 noAccess.Add(new AssigneeNoAccessDto
                 {
-                    HostName = o.Host.HostName,
+                    HostName = hostName,
                     HandlerName = _displayNameService.WithAccount(handler.DisplayName, handler.Account)
                 });
             }
