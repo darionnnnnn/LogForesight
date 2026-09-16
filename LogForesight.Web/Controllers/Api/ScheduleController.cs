@@ -299,8 +299,9 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public ApiResponse Cancel()
     {
+        // 沒有可停止的對象是狀態衝突而非輸入錯誤——與 PRTG 停止端點同一種語意，一律 409。
         if (!_runState.TryCancel())
-            throw DomainException.Validation("目前沒有正在執行的分析。");
+            throw DomainException.Conflict("目前沒有正在執行的分析。");
 
         _audit.Record(action: AuditActions.ScheduleManualCancel, summary: "手動停止進行中的執行（優雅停止，停在主機日邊界）", targetKind: "schedule");
         return ApiResponse.Ok();
@@ -445,6 +446,16 @@ public class ScheduleController : ControllerBase
     {
         var force = request?.ForceRerun ?? false;
 
+        // 取數執行中不放行手動 AI：那一輪會被 AI 的資料完整性閘門擋掉而空跑，
+        // 「強制重新分析」更會在資料還沒到齊時整批重標重跑。取數本身會在 PRTG finding 就緒時
+        // 以 fetch-followup 內部觸發 AI，所以守門只放在 controller，不下沉到 service。
+        if (_runState.IsRunning)
+            throw DomainException.Conflict("取數執行中，AI 分析會自動跟隨取數進度；請等它結束後再手動補跑。");
+
+        // AI 服務不可用時直接擋下（判定沿用本檔既有語意：_webAi 為 null 視為可用、不擋）。
+        if (!(_webAi?.Available ?? true))
+            throw DomainException.Validation("AI 服務尚未設定或無法使用，請先到系統設定頁完成 AI 設定後再執行分析。");
+
         _audit.Record(
             action: AuditActions.ScheduleManualRun,
             summary: $"手動觸發 AI 分析執行（{(force ? "強制重新分析全部紀錄" : "補跑待補紀錄")}）",
@@ -464,8 +475,9 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public ApiResponse CancelAi()
     {
+        // 同上：沒有可停止的對象回 409。
         if (!_aiRunState.TryCancel())
-            throw DomainException.Validation("目前沒有可停止的 AI 分析執行（可能已結束或已在停止中）。");
+            throw DomainException.Conflict("目前沒有可停止的 AI 分析執行（可能已結束或已在停止中）。");
 
         _audit.Record(
             action: AuditActions.ScheduleManualCancel,

@@ -226,9 +226,15 @@ public class PrtgBackfillService
         return $"（已 {minutes} 分鐘）";
     }
 
-    public bool TryStart(out string? error)
+    /// <param name="error">拒絕原因；成功時為 null。</param>
+    /// <param name="isConflict">
+    /// true＝被互斥擋下（環境探測／取數／結構同步／回填自己正在跑）——狀態衝突，呼叫端該回 409；
+    /// false＝設定或前提不齊，該回 400。與 <see cref="PrtgStructureSyncService.TryStart"/> 同一套。
+    /// </param>
+    public bool TryStart(out string? error, out bool isConflict)
     {
         error = null;
+        isConflict = false;
         var s = _settings.Get();
 
         if (!s.PrtgEnabled)
@@ -252,6 +258,7 @@ public class PrtgBackfillService
         if (_probeState.Snapshot().IsRunning)
         {
             error = "環境探測執行中，請稍後再試。";
+            isConflict = true;
             return false;
         }
 
@@ -268,6 +275,7 @@ public class PrtgBackfillService
         if (_schedulerRunState.IsRunning)
         {
             error = $"取數執行中{ElapsedSuffix(_schedulerRunState.StartedAt)}，回填會與它同時查詢同一台 PRTG。請等它結束，或在取數執行卡按「停止執行」後再回填。";
+            isConflict = true;
             return false;
         }
 
@@ -276,6 +284,7 @@ public class PrtgBackfillService
         if (syncSnapshot.IsRunning)
         {
             error = $"「同步結構與對應」執行中{ElapsedSuffix(syncSnapshot.StartedAt)}，請等它完成，或在 PRTG 卡按停止後再回填。";
+            isConflict = true;
             return false;
         }
 
@@ -295,6 +304,7 @@ public class PrtgBackfillService
         if (!_state.TryBeginRun(out var runToken))
         {
             error = "回填已在執行中。";
+            isConflict = true;
             return false;
         }
 

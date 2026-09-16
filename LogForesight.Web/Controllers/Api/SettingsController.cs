@@ -162,8 +162,14 @@ public class SettingsController : ControllerBase
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
 
-        if (!_prtgBackfill.TryStart(out var error))
-            throw DomainException.Validation(error ?? "無法啟動 PRTG 歷史回填。");
+        if (!_prtgBackfill.TryStart(out var error, out var isConflict))
+        {
+            // 被互斥擋下（探測／取數／結構同步／回填自己在跑）是狀態衝突，回 409；
+            // 設定或前提不齊仍是 400。與結構同步端點同一套分支。
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動 PRTG 歷史回填。");
+        }
 
         _audit.Record(
             action: AuditActions.PrtgBackfillRun,
