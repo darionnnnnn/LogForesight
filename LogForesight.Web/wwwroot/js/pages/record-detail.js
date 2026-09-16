@@ -414,6 +414,8 @@ function priorHandlingTrigger(issue) {
                 body: issueHistoryBody(history),
                 size: 'modal-lg'
             });
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }

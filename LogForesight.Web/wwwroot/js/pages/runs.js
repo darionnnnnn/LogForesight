@@ -612,7 +612,10 @@ let canMaintainSchedule = false;
 // AI 未設定時「AI 診斷傾印」開關與徽章整組隱藏（docs/archive/FEEDBACK-7-PLAN.md）：這是除錯用的手動
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
 // 只是不顯示——避免隱藏期間存檔把設定意外歸零。
-let aiAvailable = false;
+// 三態（回饋第 45 輪終檢）：null＝還沒問到。初值用 false 的話，狀態卡可能在 AI 狀態回來之前
+// 先把兩顆啟動鈕藏起來並顯示「AI 服務未設定」——把「還不知道」畫成「已知是關的」，
+// 與同頁 prtgModuleEnabled 的三態原則同一個理由。
+let aiAvailable = null;
 let lastAiScheduleStatus = null;
 /**
  * 取數排程是否執行中（回饋四十五輪 A2/C1）。AI 卡的兩顆啟動鈕要在取數執行中隱藏，
@@ -669,7 +672,7 @@ async function loadSchedule() {
         api.get('/api/admin/settings', { silent: true }).catch(() => null)
     ]);
     aiAvailable = aiReady;
-    document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
+    document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', aiAvailable !== true);
     if (lastAiScheduleStatus) applyAiScheduleStatus(lastAiScheduleStatus);
 
     applyScheduleOptions(options);
@@ -697,7 +700,7 @@ function applyScheduleOptions(options) {
     scheduleAiWindows = (options.aiWindows && options.aiWindows.length > 0 ? options.aiWindows : [{ start: '00:00', end: '23:59' }]).map(w => ({ ...w }));
     document.getElementById('schedule-enabled').checked = options.enabled;
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
-    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || !aiAvailable);
+    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || aiAvailable !== true);
     document.getElementById('schedule-local-analysis').checked = options.localAnalysisEnabled;
     localAnalysisEnabled = options.localAnalysisEnabled;
     const scopeAllLabel = document.getElementById('run-now-scope-all-label');
@@ -1051,7 +1054,8 @@ function applyAiScheduleStatus(status) {
     // 取數狀態未知（null）時不算執行中，故用 `=== true`。
     if (canMaintainSchedule) {
         const fetchRunning = fetchScheduleRunning === true;
-        const hideAiStart = status.isRunning || fetchRunning || !aiAvailable;
+        // aiAvailable 為 null（還沒問到）時不隱藏：未知不等於未設定
+        const hideAiStart = status.isRunning || fetchRunning || aiAvailable === false;
         document.getElementById('schedule-ai-stop')?.classList.toggle('d-none', !status.canStop);
         document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', hideAiStart);
         document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', hideAiStart);
@@ -1064,7 +1068,7 @@ function applyAiScheduleStatus(status) {
     if (nextTriggerEl) {
         // AI 一律啟用；這一列說的是「積壓什麼時候會被背景消化」。
         // 已在窗口內時後端回 null，代表現在就會跑。
-        if (!aiAvailable) {
+        if (aiAvailable === false) {
             nextTriggerEl.textContent = 'AI 服務未設定';
         } else if (status.nextTriggerTime) {
             nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
@@ -1094,7 +1098,7 @@ function renderAiActionsHint(fetchRunning) {
 
     let text = '';
     let showLink = false;
-    if (!aiAvailable) {
+    if (aiAvailable === false) {
         text = 'AI 服務未設定，請先到系統設定完成設定：';
         showLink = true;
     } else if (fetchRunning) {
@@ -1390,10 +1394,11 @@ function renderPrtgModuleState(enabled, scope) {
 
     // 未啟用時同步與回填一定被後端拒絕（PrtgStructureSyncService／PrtgBackfillService），
     // 讓兩顆鈕灰掉並指出開關在哪，比按下去看紅字有用。
-    document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled);
+    document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled === true);
     for (const id of ['prtg-sync-start', 'prtg-backfill-start']) {
         const btn = document.getElementById(id);
-        if (btn) btn.disabled = !enabled;
+        // 與同檔其餘六處一致：只認明確的啟用，其他一律當未啟用（回饋第 45 輪終檢補上的第七處）
+        if (btn) btn.disabled = enabled !== true;
     }
 }
 
@@ -1870,6 +1875,8 @@ function bindPrtgBackfill() {
             await api.post('/api/admin/settings/prtg-backfill/cancel', {});
             toast('已送出停止，回填會在目前這一步結束後停下', 'success');
             await refreshPrtgBackfillStatus();
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }

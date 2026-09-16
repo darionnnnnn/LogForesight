@@ -287,6 +287,8 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
         document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
         document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
         renderOptionsUpdated(options);
+    } catch {
+        // 錯誤已由 api.js 顯示
     } finally {
         restore();
     }

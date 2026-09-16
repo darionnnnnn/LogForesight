@@ -249,10 +249,11 @@
   「依日期」視角在 3000 台 × 長區間會感覺到；改法同本輪對 `AggregateByHost` 做的（SQL 端 GROUP BY 後
   才折併別名）。
 - **`BatchRunStore` 有與修掉前的 `EfRecordHandlingStore` 相同的雙實例序號結構**（Web Singleton ＋
-  分析端 `AnalysisOrchestrator` 自建），且建構式做 `ReadAllRunLines()`／`ReadAllLogs()` 全量讀。
-  目前 Web 端只讀（`RunMonitorService` 四個 Get 方法）所以不會撞號，但哪天在 Web 端加寫入路徑
-  就會靜默重號；建構式全量讀在執行歷程累積後也會拖慢站台啟動。改法同 S6 對 `EfRecordHandlingStore`
+  分析端 `AnalysisOrchestrator` 自建）。目前 Web 端只讀（`RunMonitorService` 四個 Get 方法）
+  所以不會撞號，但哪天在 Web 端加寫入路徑就會靜默重號。改法同 S6 對 `EfRecordHandlingStore`
   做的：序號改為每次寫入重讀尾端。
+  （建構式的全量讀已改為索引反向 seek，不再是啟動成本；雙實例本身仍在，也是「執行紀錄不能
+  改成常駐記憶體投影」的原因——投影會讓頁面看不到分析端剛寫入的紀錄。）
 - **初次上線的歷史回補**：實測穩態 3000 主機日／小時，3000 台每日增量約一小時沒問題；但
   `InitialHistoryDays` 預設 120 天 × 3000 台 ＝ 36 萬主機日 ≈ 五天，期間站台數字不完整。
   這是分批上線程序（依 Sentinel 或主機群組分梯次啟用）要解的，不是程式碼。
@@ -641,8 +642,9 @@
 
 ## PRTG 衝突清單分頁：後端仍全表載入
 
-`GetLatestHostMapWithDate`＋`GetAllDevices`＋主機主檔三個全表讀進記憶體排序後才 `Skip/Take`，
-分頁只省傳輸沒省查詢。**觸發時機**：衝突列破千或翻頁明顯變慢。
+`GetLatestHostMapWithDate`＋主機主檔仍是全表讀進記憶體排序後才 `Skip/Take`，
+分頁只省傳輸沒省查詢（裝置索引已改為跨請求快取，翻頁不再重建，但另外兩個全表讀還在）。
+**觸發時機**：衝突列破千或翻頁明顯變慢。
 
 ## PRTG 位址解析與守門即時來源改非同步
 

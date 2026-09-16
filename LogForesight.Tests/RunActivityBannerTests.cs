@@ -119,6 +119,44 @@ public class RunActivityBannerTests : IDisposable
         Assert.True(activity.IsRunning);
         Assert.Contains("愛麗絲", activity.TriggerText!);
     }
+
+    /// <summary>
+    /// 告示的 IsRunning 是「取數或 AI 任一在跑」的聯集，但互斥判斷不能用聯集：
+    /// 主機更新只在取數執行中才會被後端擋下，AI 單獨在跑時那個動作是允許的。
+    /// 少了這條守門，畫面會在 AI 分析期間停用「指定主機更新」並說「取數執行中」，兩件事都不成立。
+    /// </summary>
+    [Fact]
+    public void 只有AI在執行時不算取數執行()
+    {
+        var aiRunState = new AiAnalysisRunState();
+        Assert.True(aiRunState.TryBeginRun("schedule", 10, out _));
+
+        var activity = CreateRunActivityController(new SchedulerRunState(), aiRunState).Get().Data!;
+
+        Assert.True(activity.IsRunning);        // 告示照樣要出現（畫面確實會變慢）
+        Assert.False(activity.IsFetchRun);      // 但主機更新不該被擋
+    }
+
+    [Fact]
+    public void 取數執行中算取數執行()
+    {
+        var runState = new SchedulerRunState();
+        Assert.True(runState.TryBeginRun("schedule", out _));
+
+        var activity = CreateRunActivityController(runState, new AiAnalysisRunState()).Get().Data!;
+
+        Assert.True(activity.IsRunning);
+        Assert.True(activity.IsFetchRun);
+    }
+
+    [Fact]
+    public void 兩者都閒置時不算取數執行()
+    {
+        var activity = CreateRunActivityController(new SchedulerRunState(), new AiAnalysisRunState()).Get().Data!;
+
+        Assert.False(activity.IsRunning);
+        Assert.False(activity.IsFetchRun);
+    }
 }
 
 /// <summary>階段 A3 的前端結構斷言：告示的來源只剩共用版型一處。</summary>
@@ -223,8 +261,14 @@ public class RunActivityBannerUiTests
         // 用 disabled 加說明，不是把按鈕藏起來（藏起來會被當成權限被拿掉）
         Assert.DoesNotContain("style.display", body);
 
-        // 說明文字抽成常數由兩處共用，函式內引用它
-        Assert.Contains("RUN_BUSY_NOTE_TEXT = '排程執行中", js);
+        // 說明文字抽成常數由兩處共用，函式內引用它。
+        // 講的是「取數執行中」而不是籠統的「排程執行中」：AI 分析排程單獨在跑時
+        // 這個動作是允許的，說成排程會讓使用者以為系統壞了。
+        Assert.Contains("RUN_BUSY_NOTE_TEXT = '取數執行中", js);
+
+        // 停用條件只看取數，不看「取數或 AI 任一在跑」的聯集
+        Assert.Contains("isFetchRun === true", js);
+        Assert.DoesNotContain("event.detail?.isRunning === true", js);
 
         var note = FunctionBody(js, "function ensureRunActivityNotes()", "window.addEventListener(RUN_ACTIVITY_EVENT");
         Assert.Contains("RUN_BUSY_NOTE_TEXT", note);

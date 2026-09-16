@@ -956,6 +956,8 @@ function bindPrtgMirror() {
                 refreshIpExcludes()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }

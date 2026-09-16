@@ -527,8 +527,10 @@ public class RunsPageUiTests
         var body = ExtractBlock(js, "function applyAiScheduleStatus(");
         Assert.False(string.IsNullOrWhiteSpace(body), "擷取不到 applyAiScheduleStatus 主體");
 
-        // 三個因子都要在同一個 OR 運算式裡
-        Assert.Contains("status.isRunning || fetchRunning || !aiAvailable", body);
+        // 三個因子都要在同一個 OR 運算式裡。AI 可用性是三態：null＝還沒問到，
+        // 此時**不得**隱藏（把「還不知道」畫成「已知是關的」），所以比對的是明確的 false。
+        Assert.Contains("status.isRunning || fetchRunning || aiAvailable === false", body);
+        Assert.DoesNotContain("|| !aiAvailable", body);
         // 取數狀態未知（null）時不算執行中——只認明確 true
         Assert.Contains("fetchScheduleRunning === true", body);
         // 兩顆啟動鈕都吃這個結果
@@ -561,7 +563,9 @@ public class RunsPageUiTests
         var hintBody = ExtractBlock(js, "function renderAiActionsHint(");
         Assert.False(string.IsNullOrWhiteSpace(hintBody), "擷取不到 renderAiActionsHint 主體");
         Assert.Contains("schedule-ai-actions-hint", hintBody);
-        Assert.Contains("!aiAvailable", hintBody);
+        // 說明列同樣只在「明確知道未設定」時出現，未知時不顯示
+        Assert.Contains("aiAvailable === false", hintBody);
+        Assert.DoesNotContain("if (!aiAvailable)", hintBody);
         Assert.Contains("fetchRunning", hintBody);
         Assert.Contains("AI 服務未設定", hintBody);
         Assert.Contains("取數執行中", hintBody);

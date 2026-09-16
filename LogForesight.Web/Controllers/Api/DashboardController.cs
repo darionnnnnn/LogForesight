@@ -89,7 +89,9 @@ public class RunActivityController : ControllerBase
                 // 沒在跑時不講（閒置沒有「觸發者」可言）。
                 TriggerText = _runState.IsRunning
                     ? RunTriggerText.Of(_runState.Trigger, _userDisplayNames, _users)
-                    : null
+                    : null,
+                // 取數分支：互斥判斷要分得出「取數在跑」與「只有 AI 在跑」（見 DTO 註解）
+                IsFetchRun = _runState.IsRunning
             });
         }
 
@@ -104,7 +106,9 @@ public class RunActivityController : ControllerBase
             UnitText = ai.IsRunning ? "件" : null,
             TriggerText = ai.IsRunning
                 ? RunTriggerText.Of(ai.Trigger, _userDisplayNames, _users)
-                : null
+                : null,
+            // AI 分支：取數此時必定閒置（上面的分支沒進來），主機更新不該被擋
+            IsFetchRun = false
         });
     }
 }

@@ -29,10 +29,16 @@ const LEGEND = [
 // 按鈕點下去只會打到後端的 400（ScheduleController 的 host 分支已擋），不如直接不顯示。
 let localAnalysisEnabled = true;
 
-// 排程執行中就不能再觸發這台主機的更新（後端會回 409）。狀態來自 layout.js 的全站告示輪詢，
+// 取數排程執行中就不能再觸發這台主機的更新（後端會擋）。狀態來自 layout.js 的全站告示輪詢，
 // 這裡只訂閱、不自己打 /api/run-activity（事件名與 core/layout.js 的 RUN_ACTIVITY_EVENT 相同）。
+//
+// **只看取數、不看聯集**：告示的 isRunning 是「取數或 AI 任一在跑」，但後端只在取數執行中
+// 擋主機更新，AI 單獨在跑時這個動作是允許的——用聯集會在 AI 分析期間停用按鈕並說
+// 「排程執行中」，兩件事都不成立。
 const RUN_ACTIVITY_EVENT = 'lf:run-activity';
-let schedulerRunning = false;
+
+/** layout.js 每次輪詢都會更新 window.lfRunActivity；這裡取初值，避免在第一次事件之前停在錯的狀態 */
+let schedulerRunning = window.lfRunActivity?.isFetchRun === true;
 
 async function load() {
     renderLoading(document.getElementById('host-timeline'), 2);
@@ -534,8 +540,8 @@ function openHostUpdateModal(detail) {
     hostUpdateModal.show();
 }
 
-/** 排程執行中的說明文字（兩處共用同一句） */
-const RUN_BUSY_NOTE_TEXT = '排程執行中，結束後可用。';
+/** 取數執行中的說明文字（兩處共用同一句） */
+const RUN_BUSY_NOTE_TEXT = '取數執行中，結束後可用。';
 
 /**
  * 排程執行中時停用「指定主機更新」，並在**按鈕旁**與**表單內**各說明一次原因。
@@ -597,7 +603,7 @@ function ensureRunActivityNotes() {
 }
 
 window.addEventListener(RUN_ACTIVITY_EVENT, event => {
-    schedulerRunning = event.detail?.isRunning === true;
+    schedulerRunning = event.detail?.isFetchRun === true;
     applyRunActivityState();
 });
 

@@ -422,6 +422,11 @@ async function refreshRunActivity() {
     }
 
     renderRunActivity(activity);
+
+    // 保存最後一次狀態：事件只有「發生的當下」在監聽的人收得到，而頁面模組是另一支
+    // module、註冊監聽的時機不保證早於第一次輪詢。晚註冊的人讀不到值就會停在初值，
+    // 最長要等一輪輪詢才校正——期間畫面顯示的是錯的。
+    window.lfRunActivity = activity;
     window.dispatchEvent(new CustomEvent(RUN_ACTIVITY_EVENT, { detail: activity }));
 
     setTimeout(refreshRunActivity, activity?.isRunning ? 30000 : 60000);

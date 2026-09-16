@@ -303,6 +303,8 @@ async function selectAllMatching(button) {
             toast(`已選取符合目前篩選的 ${result.hostIds.length} 台主機。`, 'success');
         }
         render();
+    } catch {
+        // 錯誤已由 api.js 顯示
     } finally {
         restore();
     }
