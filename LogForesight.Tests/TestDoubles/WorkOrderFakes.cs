@@ -50,7 +50,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     public List<WorkOrder> GetAllActive() =>
         _orders.Where(o => o.ClosedAt == null).Select(Clone).ToList();
 
-    public long Insert(WorkOrder order)
+    public virtual long Insert(WorkOrder order)
     {
         var hook = BeforeNextInsert;
         BeforeNextInsert = null;
@@ -63,7 +63,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         return order.WorkOrderId;
     }
 
-    public void Save(WorkOrder order)
+    public virtual void Save(WorkOrder order)
     {
         SaveCalls++;
         if (FailNextSaves > 0)
@@ -81,7 +81,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         _orders[index] = Clone(order);
     }
 
-    public void AppendEvent(WorkOrderEvent evt)
+    public virtual void AppendEvent(WorkOrderEvent evt)
     {
         evt.EventId = _nextEventId++;
         _events.Add(new WorkOrderEvent

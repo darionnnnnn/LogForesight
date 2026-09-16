@@ -49,7 +49,7 @@ internal static class PrtgDailyPipeline
         var oldest = days[^1].Date;
 
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
@@ -416,7 +416,7 @@ internal static class PrtgDailyPipeline
                             {
                                 appendedHosts++;
                                 corroboratedCount += hostCorroborated;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
                             }
                             else pendingHosts++;
                         }

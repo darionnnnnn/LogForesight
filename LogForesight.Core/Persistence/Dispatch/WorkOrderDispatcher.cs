@@ -12,7 +12,7 @@ public sealed class DispatchDecision
 {
     public DispatchDecisionKind Kind { get; init; }
 
-    /// <summary>Skip 時的原因：muted／gate_suppressed／gate_noise／gate_severity／disabled／no_candidate</summary>
+    /// <summary>Skip 時的原因：muted／gate_suppressed／gate_noise／gate_severity／gate_dismissed／disabled／no_candidate</summary>
     public string? SkipReason { get; init; }
 
     /// <summary>no_candidate 的細分：no_pool／all_paused／no_visibility</summary>
@@ -25,6 +25,13 @@ public sealed class DispatchDecision
 
     /// <summary>CreateFor 時新單的 <see cref="WorkOrderOrigins"/></summary>
     public string? Origin { get; init; }
+
+    /// <summary>
+    /// 非 Skip 時命中的步驟：<see cref="WorkOrderDispatcher.StepAttach"/>（④ 續掛）、
+    /// <see cref="WorkOrderOrigins.OwnerRule"/>（⑤）、<see cref="WorkOrderOrigins.AutoDispatch"/>（⑥）。
+    /// ⑤⑥ 掛進該人既有單時也是 AttachTo，只看 Kind 分不出來，歷程動作靠這欄決定。
+    /// </summary>
+    public string? Step { get; init; }
 }
 
 /// <summary>
@@ -34,11 +41,16 @@ public sealed class DispatchDecision
 /// </summary>
 public static class WorkOrderDispatcher
 {
+    public const string SkipUnavailable = "unavailable";
     public const string SkipMuted = "muted";
     public const string SkipSuppressed = "gate_suppressed";
     public const string SkipNoise = "gate_noise";
     public const string SkipSeverity = "gate_severity";
+    public const string SkipDismissed = "gate_dismissed";
     public const string SkipDisabled = "disabled";
+
+    /// <summary>決策步驟：④ 續掛（⑤⑥ 沿用 <see cref="WorkOrderOrigins"/> 的值）</summary>
+    public const string StepAttach = "attach";
     public const string SkipNoCandidate = "no_candidate";
 
     public const string NoCandidateNoPool = "no_pool";
@@ -47,6 +59,9 @@ public static class WorkOrderDispatcher
 
     public static DispatchDecision Decide(DispatchContext ctx, WebHost host, LogIssueSignature issue, DateTime recordDate)
     {
+        // 派工脈絡建立失敗：本趟不派工，不查任何資料
+        if (ctx.Unavailable) return Skip(SkipUnavailable);
+
         // ⓪ 靜音
         if (ctx.IsMuted(issue.Source, issue.EventId, recordDate)) return Skip(SkipMuted);
 
@@ -54,6 +69,9 @@ public static class WorkOrderDispatcher
         if (issue.Suppressed) return Skip(SkipSuppressed);
         if (ctx.IsNoise(host.HostName, IssueSignatureKey.For(issue))) return Skip(SkipNoise);
         if (!ctx.UnhandledSeverities.Contains(issue.Severity)) return Skip(SkipSeverity);
+
+        // 閘門 4：最近一件以不處理類結案→不再打擾（續掛、負責人、自動派工一律適用）
+        if (ctx.IsDismissed(host.HostName, IssueSignatureKey.For(issue))) return Skip(SkipDismissed);
 
         var activeOrders = ctx.ActiveOrdersFor(issue.Source, issue.EventId);
 
@@ -69,7 +87,8 @@ public static class WorkOrderDispatcher
             {
                 Kind = DispatchDecisionKind.AttachTo,
                 WorkOrderId = attachable.WorkOrderId,
-                HandlerId = attachable.HandlerId
+                HandlerId = attachable.HandlerId,
+                Step = StepAttach
             };
         }
 
@@ -156,8 +175,8 @@ public static class WorkOrderDispatcher
             .FirstOrDefault();
 
         return existing != null
-            ? new DispatchDecision { Kind = DispatchDecisionKind.AttachTo, WorkOrderId = existing.WorkOrderId, HandlerId = handlerId }
-            : new DispatchDecision { Kind = DispatchDecisionKind.CreateFor, HandlerId = handlerId, Origin = origin };
+            ? new DispatchDecision { Kind = DispatchDecisionKind.AttachTo, WorkOrderId = existing.WorkOrderId, HandlerId = handlerId, Step = origin }
+            : new DispatchDecision { Kind = DispatchDecisionKind.CreateFor, HandlerId = handlerId, Origin = origin, Step = origin };
     }
 
     private static DispatchDecision Skip(string reason) =>

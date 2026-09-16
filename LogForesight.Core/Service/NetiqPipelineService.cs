@@ -58,6 +58,7 @@ public class NetiqPipelineService
     private readonly RiskReportService _reportService;
     private readonly BatchRunRecorder _runRecorder;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly NightlyDispatch _dispatch;
     private readonly IRunConsole _console;
     private readonly IRiskyEventStore? _riskyEventStore;
     private readonly PrtgFindingsRegistry _prtgFindings;
@@ -104,7 +105,7 @@ public class NetiqPipelineService
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
-        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
+        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, NightlyDispatch dispatch, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int? rawEventRetentionDays = null, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
         bool onlyMissingOrFailed = false,
@@ -124,6 +125,7 @@ public class NetiqPipelineService
         _reportService = reportService;
         _runRecorder = runRecorder;
         _caseCoordinator = caseCoordinator;
+        _dispatch = dispatch;
         _console = console;
         _riskyEventStore = riskyEventStore;
         // 未提供時用「已就緒且無 finding」的共用實例（語意等同 PRTG 停用），
@@ -627,7 +629,7 @@ public class NetiqPipelineService
             HostDayPostProcessor.AttachPrtgFindings(
                 _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
 
-            HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
+            HostDayPostProcessor.AttachCase(_caseCoordinator, _dispatch, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(

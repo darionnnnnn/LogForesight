@@ -25,6 +25,7 @@ public class WorkOrderCoordinator
 
     private readonly IWorkOrderStore _orders;
     private readonly IIssueCaseStore _cases;
+    private readonly IIssueHandlingStore _issueHandlings;
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRecordHandlingStore _handlingLog;
     private readonly IHostStore _hosts;
@@ -32,12 +33,14 @@ public class WorkOrderCoordinator
     public WorkOrderCoordinator(
         IWorkOrderStore orders,
         IIssueCaseStore cases,
+        IIssueHandlingStore issueHandlings,
         IssueCaseCoordinator caseCoordinator,
         IRecordHandlingStore handlingLog,
         IHostStore hosts)
     {
         _orders = orders;
         _cases = cases;
+        _issueHandlings = issueHandlings;
         _caseCoordinator = caseCoordinator;
         _handlingLog = handlingLog;
         _hosts = hosts;
@@ -366,6 +369,113 @@ public class WorkOrderCoordinator
             });
         }
     }
+
+    // ── 夜間派工 ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 夜間派工建單：決策必須是 CreateFor。一律 Hosts＋不續掛——之後同問題的新主機由派工的
+    /// 「該人此問題已有進行中單→掛入」接上，不靠範圍續掛（自動派工的處理人不一定看得到全部主機）。
+    /// 撞部分唯一索引時採用既有單、不寫 created；成員數由 <see cref="RecordNightlyAppended"/> 記。
+    /// </summary>
+    public (WorkOrder Order, bool Created) EnsureNightlyOrder(DispatchDecision decision, LogIssueSignature issue, DateTime occurredAt)
+    {
+        if (decision.Kind != DispatchDecisionKind.CreateFor)
+            throw new ArgumentException("WorkOrderCoordinator：夜間建單的決策必須是 CreateFor。", nameof(decision));
+
+        var (order, created) = InsertOrAdopt(new WorkOrder
+        {
+            SourceName = issue.Source, EventId = issue.EventId, IssueLabel = issue.SourceEventLabel,
+            HandlerId = decision.HandlerId!.Value, Origin = decision.Origin!,
+            ScopeKind = WorkOrderScopes.Hosts, ScopeGroupIds = new List<long>(), AutoAttach = false,
+            Note = NightlyNoteOf(decision.Origin!), DueDate = null,
+            CreatedById = null, CreatedByAccount = AuditActions.SystemAccount, CreatedAt = occurredAt,
+            LastAppendedAt = occurredAt
+        });
+        if (created)
+            AppendEvent(order.WorkOrderId, WorkOrderEventActions.Created, NightlyActor(occurredAt), 0, null);
+        return (order, created);
+    }
+
+    /// <summary>
+    /// 夜間派工寫成員：每個成員建一件進行中案件與當日一列（只掛當日，不回溯歷史——不走
+    /// <see cref="IssueCaseCoordinator.SubmitCaseDays"/>），歷程動作依決策步驟。案件、逐日列各一次 SaveMany。
+    /// </summary>
+    public void WriteNightlyMembers(
+        WebHost host, DateTime date,
+        IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
+        DateTime occurredAt)
+    {
+        if (members.Count == 0) return;
+
+        var day = date.Date;
+        var cases = new List<IssueCase>(members.Count);
+        var rows = new List<IssueHandling>(members.Count);
+        var logs = new List<RecordHandlingLog>(members.Count);
+        foreach (var (issue, workOrderId, handlerId, step) in members)
+        {
+            var key = IssueSignatureKey.For(issue);
+            var note = NightlyNoteOf(step);
+            var caseId = Guid.NewGuid().ToString("n");
+
+            cases.Add(new IssueCase
+            {
+                CaseId = caseId, HostName = host.HostName, IssueKey = key, IssueLabel = issue.SourceEventLabel,
+                Status = IssueHandlingStatuses.InProgress, HandlerId = handlerId, Note = note,
+                FirstLinkedDate = day, LastLinkedDate = day,
+                CreatedAt = occurredAt, UpdatedAt = occurredAt, CreatedByAccount = string.Empty,
+                WorkOrderId = workOrderId
+            });
+            rows.Add(new IssueHandling
+            {
+                HostName = host.HostName, Date = day, IssueKey = key, Status = IssueHandlingStatuses.InProgress,
+                Note = note, DueDate = null, CaseId = caseId,
+                ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
+            });
+            logs.Add(new RecordHandlingLog
+            {
+                HostName = host.HostName, Date = day, Status = IssueHandlingStatuses.InProgress, IssueKey = key,
+                IssueLabel = issue.SourceEventLabel, Note = note,
+                ActorId = null, ActorAccount = string.Empty,
+                Action = NightlyActionOf(step), CreatedAt = occurredAt
+            });
+        }
+
+        _cases.SaveMany(cases);
+        _issueHandlings.SaveMany(rows);
+        foreach (var log in logs) _handlingLog.AppendLog(log);
+    }
+
+    /// <summary>夜間派工一趟結束：對本趟有新增成員的單記一筆 appended 並推進 LastAppendedAt</summary>
+    public void RecordNightlyAppended(long workOrderId, int memberDelta, DateTime occurredAt)
+    {
+        AppendEvent(workOrderId, WorkOrderEventActions.Appended, NightlyActor(occurredAt), memberDelta, "夜間派工");
+        UpdateOrder(workOrderId, o =>
+        {
+            o.LastAppendedAt = occurredAt;
+            return true;
+        });
+    }
+
+    private static WorkOrderActor NightlyActor(DateTime occurredAt) =>
+        new() { ActorId = null, ActorAccount = AuditActions.SystemAccount, OccurredAt = occurredAt };
+
+    /// <summary>夜間派工系統說明的唯一一份（建單備註、案件與逐日列備註共用）</summary>
+    private static string NightlyNoteOf(string step) => step switch
+    {
+        WorkOrderOrigins.OwnerRule => "系統依問題檔案自動派送",
+        WorkOrderOrigins.AutoDispatch => "系統自動派工",
+        WorkOrderDispatcher.StepAttach => "系統依交辦單續掛",
+        _ => throw new ArgumentException($"WorkOrderCoordinator：不支援的夜間派工步驟「{step}」。", nameof(step))
+    };
+
+    /// <summary>夜間派工歷程動作的唯一一份</summary>
+    private static string NightlyActionOf(string step) => step switch
+    {
+        WorkOrderOrigins.OwnerRule => HandlingActions.OwnerAutoAssign,
+        WorkOrderOrigins.AutoDispatch => HandlingActions.AutoDispatch,
+        WorkOrderDispatcher.StepAttach => HandlingActions.WorkOrderAttach,
+        _ => throw new ArgumentException($"WorkOrderCoordinator：不支援的夜間派工步驟「{step}」。", nameof(step))
+    };
 
     // ── 取消／代為結案／回覆 ─────────────────────────────────────────────────
 

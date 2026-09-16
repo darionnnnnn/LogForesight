@@ -18,8 +18,11 @@ public sealed class DispatchContext
     private readonly Dictionary<(string SourceKey, int EventId), HashSet<long>> _chosen = new();
     private readonly List<WorkOrder> _registeredOrders = new();
     private readonly Dictionary<string, int> _skipCounts = new(StringComparer.Ordinal);
+    private readonly IIssueCaseStore _cases;
+    private readonly Dictionary<string, HashSet<string>> _dismissedByHost = new(StringComparer.OrdinalIgnoreCase);
 
     private DispatchContext(
+        IIssueCaseStore cases,
         DispatchCandidatePool pool,
         Dictionary<(string SourceUpper, int EventId), IssueProfile> profiles,
         Dictionary<(string SourceKey, int EventId), List<WorkOrder>> activeOrders,
@@ -27,8 +30,10 @@ public sealed class DispatchContext
         Dictionary<string, HashSet<string>> noiseByHost,
         Dictionary<string, Dictionary<(string SourceKey, int EventId), (DateTime ClosedAt, long HandlerId)>> continuityByHost,
         HashSet<IssueSeverity> unhandledSeverities,
-        bool autoDispatchEnabled)
+        bool autoDispatchEnabled,
+        bool unavailable)
     {
+        _cases = cases;
         Pool = pool;
         _profiles = profiles;
         _activeOrders = activeOrders;
@@ -37,6 +42,7 @@ public sealed class DispatchContext
         _continuityByHost = continuityByHost;
         UnhandledSeverities = unhandledSeverities;
         AutoDispatchEnabled = autoDispatchEnabled;
+        Unavailable = unavailable;
     }
 
     public DispatchCandidatePool Pool { get; }
@@ -44,6 +50,18 @@ public sealed class DispatchContext
     public IReadOnlySet<IssueSeverity> UnhandledSeverities { get; }
 
     public bool AutoDispatchEnabled { get; }
+
+    /// <summary>
+    /// 派工脈絡建立失敗時的狀態（見 <see cref="CreateUnavailable"/>）：本趟一律不派工，
+    /// 決策第一步就略過並計數，不查任何資料——派工是分析的附加步驟，不可以因為它讀不到資料就讓整趟分析失敗。
+    /// </summary>
+    public bool Unavailable { get; }
+
+    /// <summary>
+    /// 三路並行共用同一份脈絡時的互斥鎖：決策、建單、寫成員必須在同一把鎖內完成，
+    /// 否則兩路同時對同人同問題各建一張單、負載增量也會互相覆蓋。
+    /// </summary>
+    public object Gate { get; } = new();
 
     /// <summary>
     /// 靜音區間，鍵同 <see cref="IssueProfile.KeyOf"/>。本段恆為空字典（之後由靜音功能填入）；
@@ -95,14 +113,49 @@ public sealed class DispatchContext
                 byIssue[key] = (c.ClosedAt.Value, c.HandlerId.Value);
         }
 
-        return new DispatchContext(pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
-            settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled);
+        return new DispatchContext(cases, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
+            settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false);
     }
+
+    /// <summary>
+    /// 錯誤處理用：<see cref="Build"/> 擲例外（例如問題檔案 blob 內容損毀）時，以此脈絡讓本趟分析照常完成、只是不派工。
+    /// 決策遇到它一律回 <see cref="WorkOrderDispatcher.SkipUnavailable"/>，不會觸碰任何資料來源。
+    /// </summary>
+    public static DispatchContext CreateUnavailable(IIssueCaseStore cases) =>
+        new(cases,
+            new DispatchCandidatePool { ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0 },
+            new Dictionary<(string SourceUpper, int EventId), IssueProfile>(),
+            new Dictionary<(string SourceKey, int EventId), List<WorkOrder>>(),
+            new Dictionary<long, (int ActiveMembers, int ActiveWorkOrders)>(),
+            new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, Dictionary<(string SourceKey, int EventId), (DateTime ClosedAt, long HandlerId)>>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<IssueSeverity>(), autoDispatchEnabled: false, unavailable: true);
 
     /// <summary>紀錄日落在該問題任一靜音區間（含首尾）</summary>
     public bool IsMuted(string source, int eventId, DateTime recordDate) =>
         MuteIntervals.TryGetValue(IssueProfile.KeyOf(source, eventId), out var intervals)
         && intervals.Any(i => recordDate >= i.From && recordDate <= i.To);
+
+    /// <summary>
+    /// 「不再打擾」：該主機該鍵建立最晚的那件案件被以 wont_fix／false_positive／known_noise 結案
+    /// ——處理的人已判定這個問題不值得處理，問題再出現不該再派出去（resolved 除外：修好後再出現是新事件）。
+    /// 逐主機延遲載入：第一次查某主機時讀該主機全部案件並快取，同主機後續查詢不再打資料庫。
+    /// </summary>
+    public bool IsDismissed(string hostName, string issueKey)
+    {
+        if (!_dismissedByHost.TryGetValue(hostName, out var keys))
+        {
+            keys = _cases.GetMany(new[] { hostName })
+                .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
+                .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
+                .Where(c => c.Status is IssueHandlingStatuses.WontFix
+                    or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
+                .Select(c => c.IssueKey)
+                .ToHashSet(StringComparer.Ordinal);
+            _dismissedByHost[hostName] = keys;
+        }
+        return keys.Contains(issueKey);
+    }
 
     /// <summary>登記一張進行中單（真的建單後，或試跑時的負數 id 虛擬單）</summary>
     public void RegisterOrder(WorkOrder order)

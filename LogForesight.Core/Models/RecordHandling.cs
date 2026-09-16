@@ -164,4 +164,10 @@ public static class HandlingActions
     /// 批次排程依問題檔案的負責人自動建立案件並指派（逐日一列，actor＝系統）。
     /// </summary>
     public const string OwnerAutoAssign = "owner_auto_assign";
+
+    /// <summary>夜間派工依負載自動派給派工池成員並建立案件（逐日一列，actor＝系統）</summary>
+    public const string AutoDispatch = "auto_dispatch";
+
+    /// <summary>夜間派工把新主機續掛進可續掛的交辦單並建立案件（逐日一列，actor＝系統）</summary>
+    public const string WorkOrderAttach = "work_order_attach";
 }

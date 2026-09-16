@@ -68,6 +68,9 @@ public class PrtgDailyPipelineTests : IDisposable
             _backend.RecordStore(),
             new HostStore(_backend.Blob("hosts")),
             new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var dispatch = NightlyDispatchFakes.Create(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
+            new HostStore(_backend.Blob("hosts")), new IssueOwnerStore(_backend.Blob("issue_owners")), caseCoordinator);
 
         var recorder = new BatchRunRecorder(
             new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
@@ -76,7 +79,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var ctx = new AnalysisRunContext(
             new RunRequest(), new AppSettings(), new RetentionOptions(), console, ct,
             new EventLogService(), caseCoordinator, _backend.RiskyEventStore(), recorder,
-            new OrchestratorResult(), UseAi: false, progress, registry);
+            new OrchestratorResult(), UseAi: false, progress, registry, dispatch);
 
         return (ctx, console, progress, registry);
     }

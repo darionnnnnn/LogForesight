@@ -491,4 +491,112 @@ public class WorkOrderDispatcherTests
         Assert.Empty(ctx.ChosenFor(Source, EventId));
         Assert.Empty(ctx.SkipCounts);
     }
+
+    // ── 閘門 4：不再打擾 ────────────────────────────────────────────────
+
+    private void ClosedCase(string hostName, string status, DateTime createdAt) =>
+        _cases.Save(new IssueCase
+        {
+            CaseId = "closed" + (++_caseSeq), HostName = hostName, IssueKey = IssueKey, HandlerId = 9,
+            Status = status, ClosedAt = createdAt.AddDays(1), CreatedAt = createdAt
+        });
+
+    [Fact]
+    public void 閘門4_最新一件以不處理結案_略過()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        ClosedCase("SRV-01", IssueHandlingStatuses.WontFix, DateTime.Today.AddDays(-5));
+
+        AssertSkip(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), WorkOrderDispatcher.SkipDismissed);
+    }
+
+    [Fact]
+    public void 閘門4_不處理之後又有較新的resolved_不略過()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        ClosedCase("SRV-01", IssueHandlingStatuses.WontFix, DateTime.Today.AddDays(-5));
+        ClosedCase("SRV-01", IssueHandlingStatuses.Resolved, DateTime.Today.AddDays(-2));
+
+        AssertCreate(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), 1, WorkOrderOrigins.AutoDispatch);
+    }
+
+    [Fact]
+    public void 閘門4_續掛單也受不再打擾約束()
+    {
+        Order(9);
+        ClosedCase("SRV-01", IssueHandlingStatuses.FalsePositive, DateTime.Today.AddDays(-1));
+
+        AssertSkip(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), WorkOrderDispatcher.SkipDismissed);
+    }
+
+    [Fact]
+    public void IsDismissed_同主機第二次查詢不再讀案件()
+    {
+        ClosedCase("SRV-01", IssueHandlingStatuses.WontFix, DateTime.Today.AddDays(-1));
+        var counting = new CountingIssueCaseStore(_cases);
+        var ctx = DispatchContext.Build(Pool(), _owners, _orders, counting, _noise, _settings, DateTime.Today);
+        counting.GetManyCalls = 0;
+
+        Assert.True(ctx.IsDismissed("SRV-01", IssueKey));
+        Assert.True(ctx.IsDismissed("srv-01", IssueKey));
+        Assert.False(ctx.IsDismissed("SRV-01", "other"));
+        Assert.Equal(1, counting.GetManyCalls);
+
+        Assert.False(ctx.IsDismissed("SRV-02", IssueKey));
+        Assert.Equal(2, counting.GetManyCalls);
+    }
+
+    [Fact]
+    public void Step_各分支填入命中步驟()
+    {
+        Order(9);
+        Assert.Equal(WorkOrderDispatcher.StepAttach, WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today).Step);
+    }
+
+    /// <summary>
+    /// 派工脈絡建立失敗時（例如問題檔案 blob 損毀）夜間分析改用不可用脈絡：任何問題都略過並計為 unavailable，
+    /// 而且完全不讀資料——閘門 4 的「不再打擾」會逐主機讀案件，若排在不可用判斷之前，資料來源故障時一樣會擲例外。
+    /// </summary>
+    [Fact]
+    public void 派工脈絡不可用_一律略過且不讀任何資料()
+    {
+        var counting = new CountingIssueCaseStore(new FakeIssueCaseStore());
+        var ctx = DispatchContext.CreateUnavailable(counting);
+
+        var decision = WorkOrderDispatcher.Decide(ctx, Host(), Issue(), DateTime.Today);
+
+        AssertSkip(decision, WorkOrderDispatcher.SkipUnavailable);
+        Assert.Equal(0, counting.GetManyCalls);
+        Assert.False(ctx.AutoDispatchEnabled);
+    }
+
+    /// <summary>計數 GetMany 呼叫次數的案件 store 包裝，其餘委派</summary>
+    private sealed class CountingIssueCaseStore : IIssueCaseStore
+    {
+        private readonly IIssueCaseStore _inner;
+        public CountingIssueCaseStore(IIssueCaseStore inner) => _inner = inner;
+        public int GetManyCalls { get; set; }
+
+        public List<IssueCase> GetMany(IEnumerable<string> hostNames)
+        {
+            GetManyCalls++;
+            return _inner.GetMany(hostNames);
+        }
+
+        public IssueCase? GetOpen(string hostName, string issueKey) => _inner.GetOpen(hostName, issueKey);
+        public List<IssueCase> GetOpenForHost(string hostName) => _inner.GetOpenForHost(hostName);
+        public List<IssueCase> GetOpenByHandler(long userId) => _inner.GetOpenByHandler(userId);
+        public List<IssueCase> GetByHandler(long userId) => _inner.GetByHandler(userId);
+        public List<IssueCase> GetResolvedSince(DateTime since) => _inner.GetResolvedSince(since);
+        public IssueCase? Get(string caseId) => _inner.Get(caseId);
+        public void Save(IssueCase issueCase) => _inner.Save(issueCase);
+        public void SaveMany(IEnumerable<IssueCase> cases) => _inner.SaveMany(cases);
+        public List<IssueCase> GetOpenByIssue(string source, int eventId) => _inner.GetOpenByIssue(source, eventId);
+        public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId) => _inner.GetOpenMany(hostNames, source, eventId);
+        public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) => _inner.GetByWorkOrder(workOrderId, skip, take);
+        public int CountByWorkOrder(long workOrderId) => _inner.CountByWorkOrder(workOrderId);
+        public List<IssueCase> GetDaySyncPending(int take) => _inner.GetDaySyncPending(take);
+        public int CountDaySyncPending() => _inner.CountDaySyncPending();
+        public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent) => _inner.ClearDaySyncPendingIfUnchanged(caseId, intent);
+    }
 }

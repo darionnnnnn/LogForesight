@@ -75,11 +75,14 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
             _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var dispatch = NightlyDispatchFakes.Create(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(), _hosts,
+            new IssueOwnerStore(_backend.Blob("issue_owners")), caseCoordinator);
         var console = new RecordingRunConsole(_console);
 
         return new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
-            _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
+            _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }
@@ -1234,6 +1237,9 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
             _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var dispatch = NightlyDispatchFakes.Create(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(), _hosts,
+            new IssueOwnerStore(_backend.Blob("issue_owners")), caseCoordinator);
         var console = new RecordingRunConsole(_console);
 
         var sentinel = AddSentinel();
@@ -1241,7 +1247,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
 
         var customPipeline = new NetiqPipelineService(
             _backend, new NetiqOptions { BackfillDays = 1 }, _sentinels, _hosts, new EventLogService(),
-            _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
+            _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: false, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client),
             permissionMappings: mappings);

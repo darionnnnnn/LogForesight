@@ -207,7 +207,7 @@ public static class HostDayPostProcessor
     }
 
     public static void AttachCase(
-        IssueCaseCoordinator caseCoordinator, string hostName, DateTime date,
+        IssueCaseCoordinator caseCoordinator, NightlyDispatch dispatch, string hostName, DateTime date,
         List<LogIssueSignature> topIssues, string logContext = "")
     {
         try
@@ -215,10 +215,13 @@ public static class HostDayPostProcessor
             var attach = caseCoordinator.AttachNewDay(hostName, date, topIssues, DateTime.Now);
             if (attach.AttachedCount > 0)
                 Log.Info("{Context}{Date:yyyy-MM-dd} 案件掛接：掛入 {Count} 個問題", logContext, date, attach.AttachedCount);
+
+            // 掛接剩下的問題交給夜間派工（負責人規則、續掛、自動派工）
+            dispatch.DispatchDay(hostName, date, attach.Unassigned, DateTime.Now);
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 案件掛接失敗（不影響分析結果，下次執行冪等補掛）", logContext, date);
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 案件掛接或派工失敗（不影響分析結果，下次執行冪等補掛）", logContext, date);
         }
     }
 

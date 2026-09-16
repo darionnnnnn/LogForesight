@@ -71,11 +71,14 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
             _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var dispatch = NightlyDispatchFakes.Create(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(), _hosts,
+            new IssueOwnerStore(_backend.Blob("issue_owners")), caseCoordinator);
         var console = new RecordingRunConsole(consoleLines ?? new List<string>());
 
         return new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
-            _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
+            _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: riskyEventStore, rawEventRetentionDays: 14, useAi: true, progress: progress,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }

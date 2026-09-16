@@ -37,6 +37,8 @@ internal static class HandlingTextHelpers
         HandlingActions.Assign => "指派處理人",
         HandlingActions.AutoAssign => "自動帶入處理人",
         HandlingActions.OwnerAutoAssign => "依問題檔案自動派送",
+        HandlingActions.AutoDispatch => "系統自動派工",
+        HandlingActions.WorkOrderAttach => "交辦單續掛",
         HandlingActions.FleetApply => "套用機房結論",
         HandlingActions.StatusChange => "變更狀態",
         HandlingActions.NoteUpdate => "更新說明",
@@ -45,6 +47,7 @@ internal static class HandlingTextHelpers
         HandlingActions.CaseAssign => "建立案件",
         HandlingActions.CaseSync => "案件同步",
         HandlingActions.CaseAttach => "排程掛接案件",
+        HandlingActions.CaseReassign => "改派案件處理人",
         _ => action
     };
 

@@ -60,7 +60,7 @@ public class WorkOrderCoordinatorTests
         {
             Orders = new FakeWorkOrderStore(Cases);
             var caseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, HandlingLog, Records, Hosts, IssueProfiles);
-            Coordinator = new WorkOrderCoordinator(Orders, Cases, caseCoordinator, HandlingLog, Hosts);
+            Coordinator = new WorkOrderCoordinator(Orders, Cases, IssueHandlings, caseCoordinator, HandlingLog, Hosts);
         }
 
         public void AddHostDays(string host, params DateTime[] dates)

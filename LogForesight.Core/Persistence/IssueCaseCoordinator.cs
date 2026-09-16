@@ -6,8 +6,11 @@ public readonly record struct CaseBuildResult(bool Created, string? CaseId, long
 /// <summary>狀態同步結果：Applied=false 代表該問題目前沒有進行中案件，呼叫端應走既有的單日寫入</summary>
 public readonly record struct CaseSyncResult(bool Applied, int SyncedDayCount, bool CaseClosed);
 
-/// <summary>批次掛接結果：供 runRecorder / log 顯示掛接了幾個問題</summary>
-public readonly record struct CaseAttachResult(int AttachedCount);
+/// <summary>
+/// 批次掛接結果：AttachedCount 供 runRecorder / log 顯示掛接了幾個問題；
+/// Unassigned 為本次結束後當日仍無標記、也無進行中案件的問題，交給夜間派工
+/// </summary>
+public readonly record struct CaseAttachResult(int AttachedCount, IReadOnlyList<LogIssueSignature> Unassigned);
 
 /// <summary>批次逐日寫入的送出結果：Inline=false 代表已存意圖交給背景，Rows 為（冪等跳過後的）目標列數</summary>
 public readonly record struct CaseDaySubmitResult(bool Inline, int Rows, int PendingCases);
@@ -197,43 +200,27 @@ public class IssueCaseCoordinator
     ///      <see cref="IssueProfile.AutoApply"/>＝true：自動套用該結論，記
     ///      <see cref="HandlingActions.FleetApply"/>——這正是機房結論存在的主要情境
     ///      （多數問題從沒建過案件，不會走到分支 2）。
-    ///   4. 沒有進行中案件也沒有機房結論，但問題檔案有負責人：自動建立案件並指派給第一位負責人，
-    ///      記 <see cref="HandlingActions.OwnerAutoAssign"/>。
-    /// 只掛進行中案件／有 AutoApply 結論／有負責人的問題（已結案案件見 <see cref="SyncStatus"/> 的重現語意），
+    /// 其餘問題回傳在 <see cref="CaseAttachResult.Unassigned"/>，由呼叫端交給夜間派工（NightlyDispatch：
+    /// 負責人規則、續掛、自動派工皆走交辦單）。
+    /// 只掛進行中案件／有 AutoApply 結論的問題（已結案案件見 <see cref="SyncStatus"/> 的重現語意），
     /// 失敗由呼叫端決定是否吞掉（不擋分析主流程）。
     /// </summary>
     public CaseAttachResult AttachNewDay(string hostName, DateTime date, IReadOnlyCollection<LogIssueSignature> issues, DateTime occurredAt)
     {
-        if (issues.Count == 0) return new CaseAttachResult(0);
+        if (issues.Count == 0) return new CaseAttachResult(0, Array.Empty<LogIssueSignature>());
 
         var openCases = _cases.GetOpenForHost(hostName);
         var casesByIssueKey = openCases.ToDictionary(c => c.IssueKey, StringComparer.Ordinal);
 
-        // 自動建案的「不再打擾」集合：同主機同問題最近一筆案件被人以 wont_fix／false_positive／
-        // known_noise 結案時，代表負責人已判定這個問題不值得處理——隔天問題再出現不該再開一件
-        // 新案件把它復活（resolved 除外：真正修好後再出現是新的事件，該再交辦一次）。
-        // 只在有負責人 profile 時才需要這份資料，避免每主機日多讀一次全部案件。
-        HashSet<string>? dismissedIssueKeys = null;
         var existingForDay = _issueHandlings.GetForDay(hostName, date)
             .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
 
-        // fleet 結論與問題負責人索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
-        // 不是逐問題查）。索引涵蓋有 AutoApply 結論或有負責人的檔案
+        // fleet 結論索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
+        // 不是逐問題查）。負責人派工改由交辦單派工（NightlyDispatch）處理，這裡只收 AutoApply 結論
         var profilesByKey = _issueProfiles.GetAll()
-            .Where(p => (p.AutoApply && p.ConclusionStatus != null) || p.OwnerUserIds.Count > 0)
+            .Where(p => p.AutoApply && p.ConclusionStatus != null)
             .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
             .ToDictionary(g => g.Key, g => g.First());
-
-        if (profilesByKey.Values.Any(p => p.OwnerUserIds.Count > 0))
-        {
-            dismissedIssueKeys = _cases.GetMany(new[] { hostName })
-                .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
-                .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
-                .Where(c => c.Status is IssueHandlingStatuses.WontFix
-                    or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
-                .Select(c => c.IssueKey)
-                .ToHashSet(StringComparer.Ordinal);
-        }
 
         var toSave = new List<IssueHandling>();
         var casesToSave = new List<IssueCase>();
@@ -292,44 +279,23 @@ public class IssueCaseCoordinator
                     Action = HandlingActions.FleetApply, CreatedAt = occurredAt
                 });
                 existingForDay[key] = toSave[^1];
-                continue;
-            }
-
-            if (profile.OwnerUserIds.Count > 0)
-            {
-                if (dismissedIssueKeys != null && dismissedIssueKeys.Contains(key)) continue;
-
-                var caseId = Guid.NewGuid().ToString("n");
-                const string status = IssueHandlingStatuses.InProgress;
-                const string autoNote = "系統依問題檔案自動派送";
-
-                toSave.Add(new IssueHandling
-                {
-                    HostName = hostName, Date = date, IssueKey = key, Status = status,
-                    Note = autoNote, DueDate = null, CaseId = caseId,
-                    ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
-                });
-
-                _handlingLog.AppendLog(new RecordHandlingLog
-                {
-                    HostName = hostName, Date = date, Status = status, IssueKey = key,
-                    IssueLabel = issue.SourceEventLabel, Note = autoNote,
-                    ActorId = null, ActorAccount = string.Empty,
-                    Action = HandlingActions.OwnerAutoAssign, CreatedAt = occurredAt
-                });
-
-                casesToSave.Add(CreateOpenCase(
-                    caseId, hostName, key, issue.SourceEventLabel,
-                    profile.OwnerUserIds[0], autoNote, null,
-                    date.Date, date.Date,
-                    occurredAt, string.Empty));
-                existingForDay[key] = toSave[^1];
             }
         }
 
         _issueHandlings.SaveMany(toSave);
         _cases.SaveMany(casesToSave);
-        return new CaseAttachResult(toSave.Count);
+
+        // 仍沒有當日列、也沒有進行中案件的問題交給派工（依問題鍵去重、保持輸入順序）
+        var unassigned = new List<LogIssueSignature>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var issue in issues)
+        {
+            var key = IssueSignatureKey.For(issue);
+            if (!seen.Add(key) || existingForDay.ContainsKey(key) || casesByIssueKey.ContainsKey(key)) continue;
+            unassigned.Add(issue);
+        }
+
+        return new CaseAttachResult(toSave.Count, unassigned);
     }
 
     /// <summary>
