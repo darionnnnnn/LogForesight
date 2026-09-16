@@ -219,7 +219,8 @@
 | 階段 | 內容 | 主要檔案（白名單在規格檔） | 前置 |
 |---|---|---|---|
 | A-1 | 交辦單模型＋store＋schema＋回填＋保留 | `WorkOrder`／`WorkOrderEvent`（新）／`IWorkOrderStore`＋EF（新）／`IssueCase`／`LfDbContext`／`SchemaUpgrader`／回填器（新）／保留清理 | — |
-| A-2 | 交辦單協調：建、併、追加、改派、拆、取消、代為結案、結案推導、每趟快照 | `IssueCaseCoordinator`／`WorkOrderCoordinator`（新）／`IIssueAggregateQuery`（候選日批次查） | A-1 |
+| A-2a | 批次合格日查詢（事實表）、逐日寫入函式（指派／同步／取消三模式、冪等）、就地／背景分流與待同步意圖、背景同步服務 | `IAnalysisRecordQuery`＋EF＋兩個替身／`IssueCaseCoordinator`（只換合格日來源、新增批次寫入）／`IssueCase`＋案件 store／`SchemaUpgrader`／背景服務（新） | A-1 |
+| A-2b | 交辦單協調：建、併、追加、改派、拆、取消、代為結案、結案推導、回覆時間、每趟快照 | `WorkOrderCoordinator`（新）／`IssueCaseCoordinator`（結案推導掛鉤） | A-2a |
 | A-3 | 可見範圍下沉＋派工策略＋旗標欄位 | `HostVisibilityResolver`（搬）／`WorkOrderDispatcher`（新）／`UserGroup`／`WebUser`／`SystemSettings` | A-1 |
 | A-4 | 掛接新優先序 ⓪～⑥＋閘門＋趟末摘要 | `IssueCaseCoordinator.AttachNewDay`／`HostDayPostProcessor`／`AnalysisOrchestrator` | A-2、A-3 |
 | C-1 | 建單／追加／改派／拆單／取消／代為結案 API；日層級指派改走交辦單；舊端點退役 | `WorkOrdersController`（新）／`WorkOrderCommandService`（新）／`IssueHandlingCommandService`／`DayHandlingCommandService`／`AuditEntry`／`AuditQueryService` | A-4 |
@@ -736,6 +737,17 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | A-1 | impl-low | 兩輪通過（4332 綠／略過 6，總 4338，+39） | Claude 獨立重跑建置與全套；白名單、CRLF／BOM 核對；自做突變（成員計數改逐單查詢→「50 張單只發一次 SQL」轉紅，還原 cmp 相同）；查證處理歷程唯一寫入點一律帶 `created_at` | 第一輪規格錯誤三處由執行端依事實調整並接受：處理歷程是 `lf_log_lines` 的 JSON 行（無 `lf_record_handling_log` 表）、整併器由 store 取連線工廠、案件表兩支既有索引 EF 與升級器名稱本來就不同（既有 DB 可能重複一份，收尾記 BACKLOG）。第一輪驗收退回三項：案件存檔會把整併寫入的 `work_order_id` 蓋回 null（改為模型為 null 時不覆寫）、整併每組三次提交無原子性（改單一交易）、`LastReplyAt` 從 seq 0 全掃處理歷程（改以 `created_at` 索引定位起點、只計案件建立之後的回覆）；三項各有測試與突變 |
+| A-2a | impl-low | 執行中 | — | — |
+
+### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| 既有 `BuildCase`／`SyncStatus`／`ReassignCase` 改成「改案件＋呼叫同步函式」的薄包裝，同步函式「有變動才寫歷程、連跑兩次零寫入」 | 現行 `SyncStatus` 每次呼叫都把每個合格日寫一列並記一筆歷程（狀態沒變也寫），觸發日與其他日的歷程動作不同；`BuildCase` 觸發日記 `case_assign`。改成「有變動才寫」會改變既有歷程筆數，91 個處理測試與 17 個協調器測試的斷言會被迫改寫 | **既有四個方法的行為完全不動**，只把「找候選日」換成共用的批次查詢（單主機＝批次大小 1）；新增的批次逐日寫入函式只給交辦單操作與背景作業用。同一條合格日規則仍只有一份 |
+| 冪等＝「連跑兩次第二次零寫入」 | 批次寫入沒有跨 store 交易（逐日列、歷程、案件分屬不同 store）；中斷後重跑會重複寫歷程 | 冪等判準改為「該日列已等於目標且 `UpdatedAt` 等於本次意圖的 `OccurredAt`」→ 跳過該日的列與歷程；同一次意圖重跑不重複，不同次意圖照常寫 |
+| 候選日以 `_records.Query` 反序列化整台主機全部紀錄 | 3000 台一次交辦＝十幾萬份 `ContentJson` 反序列化；`lf_top_issues` 有 `event_key` 欄可組回五段簽章，PRTG 追加也同步寫入 | `IAnalysisRecordQuery` 新增批次候選日方法：EF 走 `lf_top_issues`（主機分批、C# 組鍵以 Ordinal 比對，同現行規則），兩個測試替身由記憶體紀錄實作；墓碑別名沿用 `HostIdentity.Expand` |
+| 待同步只有 `DaySyncPending` 旗標 | 背景作業要知道「寫成什麼狀態、誰、何時、哪種模式」 | 案件加 `day_sync_intent`（JSON，可空）；待同步期間使用者再操作同一案件時新意圖覆蓋舊意圖（案件層狀態以最新為準；被覆蓋那次的逐日歷程不寫，操作本身已在稽核紀錄） |
+| A-2 一段 | 同步函式與交辦單協調是兩個獨立機制，合在一段超過「每階段 1～3 個機制」 | 拆 A-2a／A-2b |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
