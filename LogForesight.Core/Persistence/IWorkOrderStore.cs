@@ -16,6 +16,9 @@ public interface IWorkOrderStore
 
     List<WorkOrder> GetActiveByHandler(long handlerId);
 
+    /// <summary>全部進行中（closed_at IS NULL）的單；派工脈絡一趟執行建一次索引用</summary>
+    List<WorkOrder> GetAllActive();
+
     /// <summary>新增並回傳新 id（同時回填到 <paramref name="order"/>）</summary>
     long Insert(WorkOrder order);
 

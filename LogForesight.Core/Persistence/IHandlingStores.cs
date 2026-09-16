@@ -91,6 +91,9 @@ public interface IIssueCaseStore
     /// </summary>
     List<IssueCase> GetByHandler(long userId);
 
+    /// <summary>結案時間 &gt;= <paramref name="since"/> 且狀態為 resolved 的案件（派工延續性用）</summary>
+    List<IssueCase> GetResolvedSince(DateTime since);
+
     IssueCase? Get(string caseId);
 
     void Save(IssueCase issueCase);

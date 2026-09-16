@@ -547,4 +547,76 @@ public class HandlingStoreContractTests : IDisposable
         Assert.True(logs[1].LogId > logs[0].LogId);
         Assert.True(logs[2].LogId > logs[1].LogId);
     }
+
+    // ── 派工脈絡用：GetResolvedSince／NoiseMarkStore.GetAll／旗標舊資料相容 ──────────
+
+    private static void SeedResolvedSinceCases(IIssueCaseStore store, DateTime since)
+    {
+        var inRange = NewCase("in", "SRV-01", "k1", 1);
+        inRange.Status = IssueHandlingStatuses.Resolved;
+        inRange.ClosedAt = since;
+        store.Save(inRange);
+
+        var tooOld = NewCase("old", "SRV-01", "k2", 1);
+        tooOld.Status = IssueHandlingStatuses.Resolved;
+        tooOld.ClosedAt = since.AddSeconds(-1);
+        store.Save(tooOld);
+
+        var otherStatus = NewCase("other", "SRV-01", "k3", 1);
+        otherStatus.Status = IssueHandlingStatuses.Escalated;
+        otherStatus.ClosedAt = since.AddDays(1);
+        store.Save(otherStatus);
+
+        store.Save(NewCase("open", "SRV-01", "k4", 1));
+    }
+
+    [Fact]
+    public void 案件_GetResolvedSince只收resolved且結案時間在期間內()
+    {
+        var since = DateTime.Today.AddDays(-30);
+        var store = Cases();
+        SeedResolvedSinceCases(store, since);
+
+        Assert.Equal(new[] { "in" }, store.GetResolvedSince(since).Select(c => c.CaseId));
+    }
+
+    [Fact]
+    public void 案件_GetResolvedSince替身語意同EF版()
+    {
+        var since = DateTime.Today.AddDays(-30);
+        var store = new FakeIssueCaseStore();
+        SeedResolvedSinceCases(store, since);
+
+        Assert.Equal(new[] { "in" }, store.GetResolvedSince(since).Select(c => c.CaseId));
+    }
+
+    [Fact]
+    public void 已知雜訊_GetAll回全部記憶()
+    {
+        var store = new NoiseMarkStore(_fx.Blob("noise_marks"));
+        store.Save(new NoiseMark { HostName = "SRV-01", IssueKey = "k1" });
+        store.Save(new NoiseMark { HostName = "SRV-02", IssueKey = "k2" });
+
+        var all = store.GetAll().Select(m => (m.HostName, m.IssueKey)).OrderBy(x => x.HostName).ToList();
+
+        Assert.Equal(new[] { ("SRV-01", "k1"), ("SRV-02", "k2") }, all);
+    }
+
+    [Fact]
+    public void 舊使用者blob缺DispatchPaused反序列化為false()
+    {
+        _fx.Blob("users").Mutate(_ => ("[{\"UserId\":1,\"Account\":\"a\",\"Active\":true}]", 0));
+
+        var user = Assert.Single(new UserStore(_fx.Blob("users")).GetAll());
+        Assert.False(user.DispatchPaused);
+    }
+
+    [Fact]
+    public void 舊群組blob缺DispatchPool反序列化為false()
+    {
+        _fx.Blob("user_groups").Mutate(_ => ("[{\"GroupId\":1,\"GroupName\":\"dept\",\"Role\":\"User\",\"Active\":true}]", 0));
+
+        var group = Assert.Single(new UserGroupStore(_fx.Blob("user_groups")).GetAll());
+        Assert.False(group.DispatchPool);
+    }
 }

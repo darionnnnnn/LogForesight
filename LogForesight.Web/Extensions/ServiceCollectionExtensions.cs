@@ -356,6 +356,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MailIssueDigest>();
         services.AddSingleton<MailNotificationService>();
 
+        // 派工候選人快照：Singleton，相依全是 Singleton store（能力／可見範圍規則留在 Web，Core 只吃快照）
+        services.AddSingleton<IDispatchCandidateSource, DispatchCandidateSource>();
+
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊
         // 為單例並讓 IHostedService 直接引用同一個實例——ScheduleController 需要呼叫它的

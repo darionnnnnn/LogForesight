@@ -81,6 +81,16 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             .ToList();
     }
 
+    public List<IssueCase> GetResolvedSince(DateTime since)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.ClosedAt != null && c.ClosedAt >= since && c.Status == IssueHandlingStatuses.Resolved)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
     public IssueCase? Get(string caseId)
     {
         using var ctx = _contextFactory();

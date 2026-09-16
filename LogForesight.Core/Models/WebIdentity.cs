@@ -53,6 +53,13 @@ public class WebUser
     /// 寫入點只有 <see cref="IUserStore.TouchLogin"/> 一處。
     /// </summary>
     public DateTime? LastLoginAt { get; set; }
+
+    /// <summary>
+    /// 暫停接單：true＝派工決策不再把新的問題派給此人（負責人規則與自動派工皆跳過），
+    /// 既有交辦單不受影響。舊資料缺欄反序列化為 false。
+    /// 消費端：<c>WorkOrderDispatcher</c>（經 Web 端候選人快照帶入）。
+    /// </summary>
+    public bool DispatchPaused { get; set; }
 }
 
 /// <summary>
@@ -75,4 +82,11 @@ public class UserGroup
     public bool Builtin { get; set; }
 
     public bool Active { get; set; } = true;
+
+    /// <summary>
+    /// 派工池：true＝此群組（啟用中時）的成員是夜間自動派工的候選人。
+    /// 舊資料缺欄反序列化為 false。
+    /// 消費端：<c>WorkOrderDispatcher</c>（經 Web 端候選人快照帶入）。
+    /// </summary>
+    public bool DispatchPool { get; set; }
 }

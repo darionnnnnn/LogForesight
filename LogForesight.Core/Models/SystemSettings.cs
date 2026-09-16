@@ -338,6 +338,12 @@ public class SystemSettings
     public string? UpdatedByAccount { get; set; }
 
     /// <summary>
+    /// 夜間自動派工總開關：關閉時派工決策到「自動派工」步驟即略過（續掛既有單與負責人規則不受影響）。
+    /// 預設關閉。消費端：<c>WorkOrderDispatcher</c>。
+    /// </summary>
+    public bool AutoDispatchEnabled { get; set; }
+
+    /// <summary>
     /// <see cref="UnhandledSeverities"/> 解析成 <see cref="IssueSeverity"/> 集合，供
     /// <c>DayHandlingDerivation.Derive</c> 與問題明細的預設不處理判定共用。無法解析的字串（設定損毀）
     /// 靜默略過，不讓整個未處理計算因為一個壞字串而掛掉。

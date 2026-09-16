@@ -328,6 +328,10 @@ internal class FakeIssueCaseStore : IIssueCaseStore
 
     public List<IssueCase> GetByHandler(long userId) => _items.Where(c => c.HandlerId == userId).ToList();
 
+    /// <summary>同 EF 版：結案時間 &gt;= since 且狀態為 resolved</summary>
+    public List<IssueCase> GetResolvedSince(DateTime since) =>
+        _items.Where(c => c.ClosedAt != null && c.ClosedAt >= since && c.Status == IssueHandlingStatuses.Resolved).ToList();
+
     public List<IssueCase> GetOpenForHost(string hostName) =>
         _items.Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && c.ClosedAt == null).ToList();
 
@@ -425,6 +429,8 @@ internal class FakeNoiseMarkStore : INoiseMarkStore
 
     public NoiseMark? Get(string hostName, string issueKey) =>
         _items.FirstOrDefault(m => Same(m, hostName, issueKey));
+
+    public List<NoiseMark> GetAll() => _items.ToList();
 
     public void Save(NoiseMark mark)
     {

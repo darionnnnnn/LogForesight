@@ -47,6 +47,9 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     public List<WorkOrder> GetActiveByHandler(long handlerId) =>
         _orders.Where(o => o.HandlerId == handlerId && o.ClosedAt == null).Select(Clone).ToList();
 
+    public List<WorkOrder> GetAllActive() =>
+        _orders.Where(o => o.ClosedAt == null).Select(Clone).ToList();
+
     public long Insert(WorkOrder order)
     {
         var hook = BeforeNextInsert;

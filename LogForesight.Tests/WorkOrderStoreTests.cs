@@ -365,4 +365,35 @@ public class WorkOrderStoreTests : IDisposable
         Assert.Equal(1, _counter.Readers);
         Assert.Equal(20, ids.Count);
     }
+
+    // ── 派工脈絡用：GetAllActive ─────────────────────────────────────────
+
+    [Fact]
+    public void GetAllActive只回進行中單_含多問題單()
+    {
+        var store = Store();
+        var a = store.Insert(NewOrder(1));
+        var b = store.Insert(NewOrder(2, source: null, eventId: null));
+        var closed = NewOrder(3, "Other", 1);
+        store.Insert(closed);
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+
+        var ids = store.GetAllActive().Select(o => o.WorkOrderId).OrderBy(x => x).ToList();
+
+        Assert.Equal(new[] { a, b }.OrderBy(x => x), ids);
+    }
+
+    [Fact]
+    public void GetAllActive替身語意同EF版()
+    {
+        var store = new FakeWorkOrderStore(new FakeIssueCaseStore());
+        var a = store.Insert(NewOrder(1));
+        var closed = NewOrder(3, "Other", 1);
+        store.Insert(closed);
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+
+        Assert.Equal(new[] { a }, store.GetAllActive().Select(o => o.WorkOrderId));
+    }
 }

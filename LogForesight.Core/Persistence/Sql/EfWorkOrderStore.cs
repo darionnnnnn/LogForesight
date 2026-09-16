@@ -88,6 +88,16 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             .ToList();
     }
 
+    public List<WorkOrder> GetAllActive()
+    {
+        using var ctx = _contextFactory();
+        return ctx.WorkOrders.AsNoTracking()
+            .Where(w => w.ClosedAt == null)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
     public long Insert(WorkOrder order)
     {
         order.UpdatedAt = DateTime.Now;

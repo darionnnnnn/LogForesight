@@ -13,6 +13,9 @@ public interface INoiseMarkStore
 
     NoiseMark? Get(string hostName, string issueKey);
 
+    /// <summary>全部記憶（blob 一次讀）；派工脈絡一趟執行建一次索引用</summary>
+    List<NoiseMark> GetAll();
+
     void Save(NoiseMark mark);
 
     /// <summary>「調回未處理」且使用者選擇刪除記憶時呼叫；之後同簽章不再自動判讀成雜訊</summary>
@@ -28,6 +31,8 @@ public class NoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
 
     public NoiseMark? Get(string hostName, string issueKey) =>
         Read().FirstOrDefault(m => Same(m, hostName, issueKey));
+
+    public List<NoiseMark> GetAll() => Read();
 
     public void Save(NoiseMark mark)
     {
