@@ -739,6 +739,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | A-1 | impl-low | 兩輪通過（4332 綠／略過 6，總 4338，+39） | Claude 獨立重跑建置與全套；白名單、CRLF／BOM 核對；自做突變（成員計數改逐單查詢→「50 張單只發一次 SQL」轉紅，還原 cmp 相同）；查證處理歷程唯一寫入點一律帶 `created_at` | 第一輪規格錯誤三處由執行端依事實調整並接受：處理歷程是 `lf_log_lines` 的 JSON 行（無 `lf_record_handling_log` 表）、整併器由 store 取連線工廠、案件表兩支既有索引 EF 與升級器名稱本來就不同（既有 DB 可能重複一份，收尾記 BACKLOG）。第一輪驗收退回三項：案件存檔會把整併寫入的 `work_order_id` 蓋回 null（改為模型為 null 時不覆寫）、整併每組三次提交無原子性（改單一交易）、`LastReplyAt` 從 seq 0 全掃處理歷程（改以 `created_at` 索引定位起點、只計案件建立之後的回覆）；三項各有測試與突變 |
 | A-2a | impl-low | 兩輪通過（4354 綠／略過 6，總 4360，+22） | Claude 獨立重跑建置與全套；白名單、CRLF／BOM 以位元組核對；自做突變（冪等判準拿掉「UpdatedAt 等於本次 OccurredAt」→「冪等_同一意圖重送不重寫_換OccurredAt照常寫」轉紅，還原 cmp 相同）；查證 PruneDetails 只清 ContentJson、事實表列保留 | 既有四個方法行為不動、既有測試檔零改動。**口徑決定**：候選日改走事實表後，詳情已清除的日子會進候選日——接受，因為依問題視角／儀表板／待辦的 SQL 聚合本來就算這些日子，舊寫法建案時跳過它們，讓儀表板上永遠掛未處理。第一輪退回：取消模式只查案件連結日期範圍，範圍外但屬於本案件的列會漏（改依 case_id 批次精確查 `GetByCases`）。第二輪執行端以「介面預設實作擲例外」避開白名單外私有替身——不接受，Claude 親改：拿掉預設實作、`RerunDateFinderTests` 私有替身補一個回空的方法。建置出現的 CS8629 警告在 `CalibrationServiceTests.cs:1190`，為第 46 輪既有，本輪未碰 |
 | A-2b | impl-low | 一輪通過（4385 綠／略過 6，總 4391，+31） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；確認 EF 真實 SQLite 上部分唯一索引衝突擲 `DbUpdateException`（並發建單退路成立）；自做突變（範圍聯集不併入來單群組→聯集 Theory 兩組轉紅，還原 cmp 相同） | 執行端兩處合理偏離接受：主機存在性以一次 `GetAll` 驗（逐成員 `FindByName` 會線性增長）；多加「成員 IssueKey 必須解析回單的來源與 EventId」檢查。Claude 親改一行：結案事件的操作者帳號由空字串改為 `AuditActions.SystemAccount`，與整併器寫入的系統事件一致。留意：`MembersInto` 先寫新案件逐日列、後存改連／改派案件，中間失敗沒有測試（不會產生零成員單） |
+| A-3 | impl-low | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
@@ -757,6 +758,14 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | 任一成員重開→交辦單重開並記 `reopened_by_member` | 全專案沒有把 `IssueCase.ClosedAt` 清回 null 的路徑，案件結案後不會重開；且重開會撞「同人同問題一張進行中單」的部分唯一索引 | 不做重開推導，刪除該事件常數 |
 | `SyncStatus`／`ReassignCase` 結束時呼叫交辦單結案推導 | 案件協調器若依賴交辦單協調器會循環相依；改其建構子牽動 8 個測試建構點 | 交辦單協調器自己的操作當場重算；詳情頁逐筆標記造成的「全成員結案」由背景同步服務每輪掃描補上（單句 SQL 找「進行中但無進行中成員」的單）。回覆時間（`LastReplyAt`）在詳情頁逐筆標記時的更新移到 D-1 的 Web 端處理 |
 | 改派逐案呼叫 `ReassignCase` | 每案一次 `GetOpen`，3000 台線性查詢 | 批次改派私有方法，逐案語意等同 `ReassignCase`（同樣記一筆 `case_reassign` 歷程），案件一次 `SaveMany` |
+
+### A-3 設計修正（寫規格時，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| 定案 12：`HostVisibilityResolver` 下沉到 Core | 規則內判斷「看得到全部主機」依賴 Web 的 `RoleCapabilityMap`／`Capability`；搬到 Core 要連能力列舉一起搬，牽動全站 `[Permission]` 標註。派工另需「具處理能力」判斷，也是 Web 規則（`UserCapabilityResolver`） | **規則留在 Web**。Core 定義 `IDispatchCandidateSource`，Web 實作：每趟執行前以既有規則算出候選人快照（具 Handle 者、是否在池、是否暫停、池成員各自可見主機），當資料交給 Core。`AnalysisOrchestrator` 沒有自訂建構子且測試不直接建構，A-4 以 DI 注入零測試牽動。規則仍只有一份；CLAUDE.md 的新紅線改寫為「Core 不得複製可見範圍或能力規則」 |
+| 派工閘門、④⑤⑥ 由 A-4 在掛接流程內逐層判斷 | 同一套判斷還要給 C-2 待派試跑用 | 全部決策收進純函式 `WorkOrderDispatcher.Decide`（不改脈絡），夜間流程與試跑共用；本趟增量由呼叫端 `Commit`／`RegisterOrder` |
+| ⑤ 負責人要看得到主機 | 問題負責人的可見範圍規則本來就包含「出現過該問題的主機」 | ⑤ 不檢查可見主機、不要求在池，只排除停用、無處理能力、暫停接單者；全部不可用時落到 ⑥ |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
