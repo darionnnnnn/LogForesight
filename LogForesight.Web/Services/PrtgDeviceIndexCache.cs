@@ -38,7 +38,7 @@ public sealed class PrtgDeviceIndex
     }
 
     /// <summary>裝置台數（建索引時的來源列數；診斷與測試用）</summary>
-    public int DeviceCount => _byObjid.Count;
+    internal int DeviceCount => _byObjid.Count;
 
     /// <summary>依 objid 取裝置；不存在回 null</summary>
     public PrtgDeviceRow? ByObjid(long objid) =>

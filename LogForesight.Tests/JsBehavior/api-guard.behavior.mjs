@@ -1,7 +1,7 @@
 /**
  * core/api.js 的 GET 逾時（B7 C1）與 core/ui.js guardLoad 失敗狀態重試鈕（B7 C2）的行為測試。
  *
- * 由 FrontendB7BehaviorTests 以 `node api-guard.behavior.mjs <案例名>` 逐案執行；
+ * 由 ApiTimeoutBehaviorTests 以 `node api-guard.behavior.mjs <案例名>` 逐案執行；
  * 成功時印出 `PASS <案例名>` 並以 0 結束，失敗時印出原因並以 1 結束。
  */
 

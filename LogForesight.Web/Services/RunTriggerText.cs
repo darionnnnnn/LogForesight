@@ -6,7 +6,7 @@ namespace LogForesight.Web.Services;
 /// 「誰觸發的」文字（<c>manual:帳號</c>／<c>schedule</c>／其他內部觸發字串轉成中文）。
 ///
 /// 抽成共用 helper 而不是每個呼叫端各寫一份：排程頁狀態與全站執行中告示講的是同一趟執行，
-/// 兩邊文字若不一致，使用者會以為是兩件不同的事（回饋四十五輪批次A3，C1）。
+/// 兩邊文字若不一致，使用者會以為是兩件不同的事（回饋四十五輪批次A3）。
 /// </summary>
 public static class RunTriggerText
 {

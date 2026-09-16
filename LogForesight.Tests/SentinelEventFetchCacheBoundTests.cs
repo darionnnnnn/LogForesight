@@ -25,14 +25,23 @@ public sealed class SentinelEventFetchCacheBoundTests : IDisposable
         // 開關要開，否則在寫入快取之前就回 null（那是另外三道防線，見 SentinelEventFetchServiceTests）
         _optionsStore.Update(o => o.ChatLiveFetchEnabled = true);
         _service = new SentinelEventFetchService(new FakeNetiqServerCatalog(Array.Empty<string>()), _optionsStore);
-        SentinelEventFetchService.ClearCache();
+        CacheField.Clear();
     }
 
     public void Dispose()
     {
-        SentinelEventFetchService.ClearCache();
+        CacheField.Clear();
         _fixture.Dispose();
     }
+
+    /// <summary>
+    /// 正式碼不提供清空／計數入口（那是會改全域狀態的測試後門，同 AutoFetcher AF-12 拔掉的那型）；
+    /// 測試以反射直接碰 static 欄位，同一個 collection 內序列化執行。
+    /// </summary>
+    private static ConcurrentDictionary<string, (DateTime Expiry, LiveEventFetchResult? Result)> CacheField =>
+        (ConcurrentDictionary<string, (DateTime Expiry, LiveEventFetchResult? Result)>)typeof(SentinelEventFetchService)
+            .GetField("Cache", BindingFlags.Static | BindingFlags.NonPublic)!
+            .GetValue(null)!;
 
     private static WebHost Host() => new() { HostName = "SRV-A", NetiqServer = "S1", IpAddress = "10.0.0.1" };
 
@@ -58,9 +67,9 @@ public sealed class SentinelEventFetchCacheBoundTests : IDisposable
 
         await FillAsync(max + 50);
 
-        Assert.True(SentinelEventFetchService.CacheEntryCount <= max,
-            $"快取條目數 {SentinelEventFetchService.CacheEntryCount} 超過上限 {max}");
-        Assert.True(SentinelEventFetchService.CacheEntryCount < max + 50,
+        Assert.True(CacheField.Count <= max,
+            $"快取條目數 {CacheField.Count} 超過上限 {max}");
+        Assert.True(CacheField.Count < max + 50,
             "快取沒有被清理，仍隨查詢次數單調成長");
     }
 
@@ -69,7 +78,7 @@ public sealed class SentinelEventFetchCacheBoundTests : IDisposable
     {
         await FillAsync(5);
 
-        Assert.Equal(5, SentinelEventFetchService.CacheEntryCount);
+        Assert.Equal(5, CacheField.Count);
     }
 
     [Fact]
@@ -78,12 +87,7 @@ public sealed class SentinelEventFetchCacheBoundTests : IDisposable
         var before = DateTime.UtcNow;
         await FillAsync(1);
 
-        var cache = (ConcurrentDictionary<string, (DateTime Expiry, LiveEventFetchResult? Result)>)
-            typeof(SentinelEventFetchService)
-                .GetField("Cache", BindingFlags.Static | BindingFlags.NonPublic)!
-                .GetValue(null)!;
-
-        var entry = Assert.Single(cache);
+        var entry = Assert.Single(CacheField);
         var ttl = entry.Value.Expiry - before;
         Assert.InRange(ttl.TotalMinutes, 9.9, 10.1);
     }

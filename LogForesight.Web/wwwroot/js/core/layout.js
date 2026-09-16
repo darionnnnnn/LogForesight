@@ -423,9 +423,10 @@ async function refreshRunActivity() {
 
     renderRunActivity(activity);
 
-    // 保存最後一次狀態：事件只有「發生的當下」在監聽的人收得到，而頁面模組是另一支
-    // module、註冊監聽的時機不保證早於第一次輪詢。晚註冊的人讀不到值就會停在初值，
-    // 最長要等一輪輪詢才校正——期間畫面顯示的是錯的。
+    // 保存最後一次狀態：事件只有「發生的當下」在監聽的人收得到。頁面模組雖與本檔同為
+    // deferred module、在第一次回應前就註冊好監聽（所以正常動線靠事件就對），
+    // 但**之後才載入**的模組（動態 import、面板延後初始化）錯過了那次事件、又要等下一輪
+    // 輪詢才校正——它們讀這個值就不必停在初值。
     window.lfRunActivity = activity;
     window.dispatchEvent(new CustomEvent(RUN_ACTIVITY_EVENT, { detail: activity }));
 

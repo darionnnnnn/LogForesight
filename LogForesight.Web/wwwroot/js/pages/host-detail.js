@@ -37,7 +37,8 @@ let localAnalysisEnabled = true;
 // 「排程執行中」，兩件事都不成立。
 const RUN_ACTIVITY_EVENT = 'lf:run-activity';
 
-/** layout.js 每次輪詢都會更新 window.lfRunActivity；這裡取初值，避免在第一次事件之前停在錯的狀態 */
+/** 初值取 layout.js 保存的最後狀態（本模組與 layout 同為 deferred module，正常載入時這裡還是 undefined、
+ *  狀態靠下方的事件監聽補上；只有本模組比第一次輪詢回應更晚才載入時，這個初值才派得上用場） */
 let schedulerRunning = window.lfRunActivity?.isFetchRun === true;
 
 async function load() {

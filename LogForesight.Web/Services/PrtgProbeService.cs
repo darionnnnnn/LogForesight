@@ -114,9 +114,13 @@ public class PrtgProbeService
         };
     }
 
-    public bool TryStart(out string? error)
+    /// <param name="error">拒絕原因；成功時為 null。</param>
+    /// <param name="isConflict">true＝被互斥擋下（回填執行中／探測已在執行中），呼叫端該回 409；
+    /// false＝設定不齊，該回 400。與回填、結構同步的 TryStart 同一套。</param>
+    public bool TryStart(out string? error, out bool isConflict)
     {
         error = null;
+        isConflict = false;
         var s = _settings.Get();
 
         if (string.IsNullOrWhiteSpace(s.PrtgUrl))
@@ -134,12 +138,14 @@ public class PrtgProbeService
         if (_backfillState.Snapshot().IsRunning)
         {
             error = "回填執行中，請稍後再試。";
+            isConflict = true;
             return false;
         }
 
         if (!_state.TryBegin())
         {
             error = "探測已在執行中。";
+            isConflict = true;
             return false;
         }
 

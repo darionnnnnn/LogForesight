@@ -507,7 +507,7 @@ function renderStats(container, detail) {
         { label: '分析天數', value: detail.daysAnalyzed },
         // AI 未設定時這欄多半是「0（失敗 0）」的雜訊；歷史上真的呼叫過 AI 的執行紀錄仍如實顯示
         // （docs/archive/FEEDBACK-7-PLAN.md）
-        ...(aiAvailable || detail.aiCalls > 0
+        ...(aiAvailable === true || detail.aiCalls > 0
             ? [{ label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` }]
             : []),
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
@@ -618,7 +618,7 @@ let canMaintainSchedule = false;
 let aiAvailable = null;
 let lastAiScheduleStatus = null;
 /**
- * 取數排程是否執行中（回饋四十五輪 A2/C1）。AI 卡的兩顆啟動鈕要在取數執行中隱藏，
+ * 取數排程是否執行中（回饋四十五輪批次A2）。AI 卡的兩顆啟動鈕要在取數執行中隱藏，
  * 而取數與 AI 兩份狀態同在 `refreshScheduleStatus` 取得、取數先套用，因此存下來給 AI 卡讀，
  * 不另打 API。
  * **null＝尚未得知**（還沒取得或那支請求失敗）：未知時不隱藏——隱藏表達的是「暫時互斥」，
@@ -631,7 +631,7 @@ let localAnalysisEnabled = true;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
 const aiRerunModalEl = document.getElementById('schedule-ai-rerun-modal');
 const aiRerunModal = aiRerunModalEl ? new bootstrap.Modal(aiRerunModalEl) : null;
-/** 強制重新分析 modal 是否開啟中，以及開啟期間是否已有別的 AI 執行開始（回饋四十五輪 A2/C6）。 */
+/** 強制重新分析 modal 是否開啟中，以及開啟期間是否已有別的 AI 執行開始（回饋四十五輪批次A2）。 */
 let aiRerunModalOpen = false;
 let aiRerunModalBlocked = false;
 aiRerunModalEl?.addEventListener('show.bs.modal', () => {
@@ -734,7 +734,7 @@ function applyScheduleOptions(options) {
     if (aiNextTriggerEl) {
         // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
         // 與 ai-status 那條路徑同一套判斷，否則載入瞬間會先閃「隨時可跑」再被改成「未設定」。
-        if (!aiAvailable) {
+        if (aiAvailable === false) {
             aiNextTriggerEl.textContent = 'AI 服務未設定';
         } else if (options.nextAiTriggerTime) {
             aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
@@ -1049,7 +1049,7 @@ function applyAiScheduleStatus(status) {
     }
 
     // 同取數卡：執行中只留「停止」，閒置只留兩顆啟動鈕（見 docs/WEB-SPEC.md §9.10）
-    // 兩顆啟動鈕的隱藏條件是三個因子的 OR（回饋四十五輪 A2/C1、C2）：
+    // 兩顆啟動鈕的隱藏條件是三個因子的 OR（回饋四十五輪批次A2）：
     //   1) AI 自己執行中　2) 取數排程執行中（按了會被後端 409）　3) AI 服務未設定（按了只會空跑）
     // 取數狀態未知（null）時不算執行中，故用 `=== true`。
     if (canMaintainSchedule) {
@@ -1085,7 +1085,7 @@ function applyAiScheduleStatus(status) {
 }
 
 /**
- * AI 卡按鈕列的說明（回饋四十五輪 A2/C3）：兩顆啟動鈕被藏起來時，那一列不能只剩空白——
+ * AI 卡按鈕列的說明（回饋四十五輪批次A2）：兩顆啟動鈕被藏起來時，那一列不能只剩空白——
  * 使用者會以為功能消失。說明元素放在按鈕列容器內，也讓三張卡靠 `.lf-run-actions`
  * 的 `margin-top:auto` 撐出的等高不會因為整列變空而塌掉。
  * 兩條原因互斥、只顯示一條：未設定優先（那是要先解決的前提），其次才是取數執行中。
@@ -1111,7 +1111,7 @@ function renderAiActionsHint(fetchRunning) {
 }
 
 /**
- * 強制重新分析 modal 的即時防護與文案（回饋四十五輪 A2/C6）。
+ * 強制重新分析 modal 的即時防護與文案（回饋四十五輪批次A2）。
  * 後端在 AI 已執行中時會先優雅停止當前執行再整批重標重跑；而 modal 開著時狀態輪詢
  * 不會關掉它，於是 3 秒窗口內仍可能按下確認、把別人剛啟動的執行砍掉。
  * 因此：modal 開啟期間偵測到 AI 由「非執行中」變成「執行中」就停用確認鈕，並說明要關閉後重確認。
@@ -1147,7 +1147,7 @@ function renderAiRerunModal(status) {
  * PRTG 模組總開關的目前值。完工文字要靠它分辨「沒開」與「開了但沒抓到」，
  * 而那個判斷發生在狀態輪詢裡（每 3 秒一次），不能每次都重打設定 API。
  * **null＝尚未從設定得知**：狀態輪詢與設定查詢是並行發出的，狀態可能先回來。
- * 判斷一律只認明確的 `true`（回饋四十五輪 A2/C4）：`null` 與 `false` 都視為未啟用。
+ * 判斷一律只認明確的 `true`（回饋四十五輪批次A2）：`null` 與 `false` 都視為未啟用。
  * 原本寫成 `=== false` 時，設定還沒回來的空窗期會讓「同步結構與對應」與「開始回填」
  * 被輪詢設成可按，點擊時的第二道檢查也擋不住，請求會真的送出去。
  */
@@ -1473,7 +1473,7 @@ document.getElementById('schedule-stop')?.addEventListener('click', async () => 
     });
     if (!confirmed) return;
 
-    // 防連點（回饋四十五輪 A2/C5）：第二下會打到已無執行中的後端而吐紅字
+    // 防連點（回饋四十五輪批次A2）：第二下會打到已無執行中的後端而吐紅字
     const stopBtn = document.getElementById('schedule-stop');
     const restore = withBusy(stopBtn, '停止中');
     try {
@@ -1510,7 +1510,7 @@ document.getElementById('schedule-ai-stop')?.addEventListener('click', async () 
     });
     if (!confirmed) return;
 
-    // 防連點（回饋四十五輪 A2/C5）：同取數卡的停止鈕
+    // 防連點（回饋四十五輪批次A2）：同取數卡的停止鈕
     const aiStopBtn = document.getElementById('schedule-ai-stop');
     const restore = withBusy(aiStopBtn, '停止中');
     try {

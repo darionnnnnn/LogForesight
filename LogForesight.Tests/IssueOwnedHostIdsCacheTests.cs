@@ -1,4 +1,6 @@
-﻿using LogForesight.Web.Auth;
+﻿using Microsoft.Extensions.DependencyInjection;
+using LogForesight.Web.Extensions;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
 using Xunit;
@@ -12,6 +14,24 @@ namespace LogForesight.Tests;
 /// 不得跨使用者命中、指派變更（版本戳推進）後要立刻重算、保留天數改了窗口要跟著變、
 /// 沒注入快取時行為與引入前完全相同。
 /// </summary>
+public class IssueOwnedHostIdsCacheRegistrationTests
+{
+    /// <summary>
+    /// 快取是 VisibilityService 的可選相依：沒被註冊時不會編譯錯、測試也不會紅，
+    /// 只是每個請求安靜地退回那支跨保留期的聚合查詢——正是這輪要修的問題。
+    /// 與 PrtgDeviceIndexCache 同一道守門。
+    /// </summary>
+    [Fact]
+    public void 註冊守門_快取以Singleton註冊於DI()
+    {
+        var services = new ServiceCollection();
+        services.AddLogForesightServices();
+
+        var descriptor = Assert.Single(services, d => d.ServiceType == typeof(IssueOwnedHostIdsCache));
+        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+    }
+}
+
 public class IssueOwnedHostIdsCacheTests
 {
     private readonly FakeUserStore _users = new();

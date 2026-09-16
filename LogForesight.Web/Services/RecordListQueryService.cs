@@ -201,7 +201,7 @@ public class RecordListQueryService
     /// <summary>缺省回望天數：與主機詳情頁的天數上限同值（DashboardController 的
     /// <c>Math.Clamp(days, 7, 90)</c>）——那裡是行內字面值、沒有具名常數可共用，
     /// 這裡是全站第一個具名來源，日後兩邊要一起調。</summary>
-    public const int DefaultLookbackDays = 90;
+    internal const int DefaultLookbackDays = 90;
 
     /// <summary>
     /// 「下一筆未處理」捷徑（回饋四十五輪 B2）：回答「目前這筆之後該去哪一筆」，

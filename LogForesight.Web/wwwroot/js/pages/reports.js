@@ -162,7 +162,8 @@ async function loadReport() {
     const compare = document.getElementById('report-compare').value;
 
     const [data, displaySettings] = await Promise.all([
-        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`),
+        // 報表允許 366 天區間、非「全部」範圍走記憶體推導，大站台會超過預設 60 秒
+        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`, { timeoutMs: 180000 }),
         getDisplaySettings()
     ]);
     currentData = data;

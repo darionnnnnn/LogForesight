@@ -416,7 +416,8 @@ async function search() {
     renderActiveConditions(filters);
     document.getElementById('ai-summary').replaceChildren();   // 篩選變了，舊的 AI 歸納作廢
     renderLoading(listContainer, 6);
-    lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`);
+    // 帶處理狀態篩選時是整個保留期的記憶體推導，大站台會超過預設 60 秒
+    lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`, { timeoutMs: 120000 });
     render();
 }
 

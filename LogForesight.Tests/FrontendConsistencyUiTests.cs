@@ -9,7 +9,7 @@ namespace LogForesight.Tests;
 /// 這裡刻意不對「整個檔案」做 Assert.Contains——大型頁面檔案裡同一段字串到處都有，
 /// 整檔斷言等於沒有斷言。每條都先把目標函式主體切出來（並確認切到非空），再對主體斷言。
 /// </summary>
-public class FrontendA4CleanupUiTests
+public class FrontendConsistencyUiTests
 {
     private static string FindRepoRoot()
     {
@@ -258,8 +258,10 @@ public class FrontendA4CleanupUiTests
         var fn = ExtractBody(api, @"export async function getAiAvailable\(\)");
         Assert.Contains("/api/ai/status", fn);
         Assert.Contains("aiAvailableCache", fn);
-        // 取不到一律視為不可用
-        Assert.Contains("return false;", fn);
+        // 取不到回 null＝還不知道：只做真值判斷的呼叫端仍當不可用，但排程頁比對明確的 false，
+        // 暫時性網路失敗才不會被畫成「AI 服務未設定」
+        Assert.Contains("return null;", fn);
+        Assert.DoesNotContain("return false;", fn);
     }
 
     [Fact]

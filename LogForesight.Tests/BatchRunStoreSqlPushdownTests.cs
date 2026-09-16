@@ -352,6 +352,43 @@ public class BatchRunStoreSqlPushdownTests : IDisposable
         Assert.Equal("SRV-01", found!.HostName);
     }
 
+    /// <summary>
+    /// 執行紀錄是 append-only，「結束」列帶的是開始時配到的 RunId。取數與 AI 排程並行時附加順序可能是
+    /// 「開始 A → 開始 B → 結束 B → 結束 A」，尾端那一列是較早的 A——續號若只看尾端第一筆可解析的列，
+    /// 下一趟就會配出與 B 相同的號。
+    /// </summary>
+    [Fact]
+    public void 續號_並行執行交錯結束後不與既有RunId撞號()
+    {
+        var seed = NewBatchRunStore();
+        var a = Run("SRV-A", DateTime.Now);
+        var b = Run("SRV-B", DateTime.Now);
+        var idA = seed.StartRun(a);
+        var idB = seed.StartRun(b);
+        b.FinishedAt = DateTime.Now; seed.FinishRun(b);
+        a.FinishedAt = DateTime.Now; seed.FinishRun(a);   // 尾端列的 RunId 是較早的 A
+
+        var next = NewBatchRunStore().StartRun(Run("SRV-C", DateTime.Now));
+
+        Assert.True(next > idB, $"新配的 {next} 必須大於已存在的最大 RunId {idB}");
+        Assert.NotEqual(idA, next);
+    }
+
+    /// <summary>RunId 單調遞增：查詢的號碼比窗口內最大的還大，代表不存在，不必為它整份讀回。</summary>
+    [Fact]
+    public void GetRun對窗口內不存在的runId不做全分區讀取()
+    {
+        var store = NewBatchRunStore();
+        var last = store.StartRun(Run("SRV-01", DateTime.Now));
+        _recorder.Clear();
+
+        Assert.Null(store.GetRun(last + 100));
+
+        var reads = _recorder.LineReads().Where(c => c.Parameters.Contains("batch_runs")).ToList();
+        Assert.Single(reads);                       // 只有窗口那一趟
+        Assert.Contains("created_at", reads[0].Sql); // 且是帶日期下界的窄化查詢
+    }
+
     [Fact]
     public void GetLogs對超出保留窗口的舊執行仍查得到()
     {

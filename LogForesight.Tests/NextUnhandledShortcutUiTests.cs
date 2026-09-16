@@ -10,7 +10,7 @@ namespace LogForesight.Tests;
 /// 同一段字串到處都有，整檔斷言等於沒有斷言。唯一的例外是「零命中」這種否定斷言，
 /// 那本來就該對整份檔案做。
 /// </summary>
-public class FrontendB2ShortcutUiTests
+public class NextUnhandledShortcutUiTests
 {
     private static string FindRepoRoot()
     {

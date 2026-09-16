@@ -256,6 +256,47 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
     }
 
+    // ── 環境探測：與回填、結構同步同一套分岔（體檢輪補上，文件 §7.2 早已把探測列進 409 那一類） ──
+
+    [Fact]
+    public void 探測啟動_回填執行中回409()
+    {
+        EnablePrtgWithMirror();
+        var backfillState = new PrtgBackfillRunState();
+        Assert.True(backfillState.TryBeginRun(out _));
+        var controller = CreateProbeController(backfillState);
+
+        var ex = Assert.Throws<DomainException>(() => controller.StartPrtgProbe());
+
+        Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
+        Assert.Contains("回填執行中", ex.Message); // 訊息文字不變
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 探測啟動_未設定連線位址維持400()
+    {
+        var controller = CreateProbeController(new PrtgBackfillRunState());
+
+        var ex = Assert.Throws<DomainException>(() => controller.StartPrtgProbe());
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("連線位址", ex.Message);
+    }
+
+    private SettingsController CreateProbeController(PrtgBackfillRunState backfillState)
+    {
+        var probe = new PrtgProbeService(_settingsStore, new PrtgProbeRunState(), backfillState);
+        var controller = new SettingsController(
+            new StubSystemSettingsService(),
+            new AiUsageStore(_backend.Blob("ai_usage")),
+            _audit,
+            prtgProbe: probe,
+            backend: _backend);
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        return controller;
+    }
+
     private void EnablePrtgWithMirror()
     {
         _settingsStore.Update(s =>

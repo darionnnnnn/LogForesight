@@ -1,6 +1,6 @@
 ﻿# 回饋第 45 輪規劃：畫面狀態一致性與資料載入效能
 
-> 狀態：實作與終檢完成，待使用者實測後併 dev
+> 狀態：全案完成已併 dev（體檢輪修正見文末）
 > 基準：dev@47e43b6（3955 綠，略過 6）
 > 來源：整體體檢——(1) 執行期狀態與畫面控制項不一致（例：取數執行中 AI 啟動鈕仍可按）；
 > (2) 各功能頁在資料量大時的載入效能與快取缺口。評估過程另抓到的 bug 一併納入。
@@ -137,26 +137,26 @@
    - ~~`LatestOccurrences` 的 `source_name` 下推到 SQL（B13）~~ **本輪放棄**（實作前核對改判，
      理由見下方「本輪推翻的規劃定案」第 3 點）：SQL 端要比對大小寫就得用 `UPPER()`，
      而兩個資料庫後端的語意不同，粗篩會靜默漏列。維持 BACKLOG。
-3. **`JsonBlobSingleton` 加版本探測快取**（B4）：與 `JsonBlobCollection(cached:true)` 同一機制（每次 `Get` 先探測版本，版本相同回快取物件的**深副本或不可變快照**，不同才重讀）；
+3. **`JsonBlobSingleton` 加版本探測快取**（B3）：與 `JsonBlobCollection(cached:true)` 同一機制（每次 `Get` 先探測版本，版本相同回快取物件的**深副本或不可變快照**，不同才重讀）；
    `SystemSettingsStore` 開啟。
    **快取的是原始內容與版本、命中時仍各自反序列化出新物件**：單一物件型 store 的呼叫端會做讀→改→寫，
    `SystemSettingsService` 內已有註解明講它假設「每次 `Get()` 都是不同執行個體」，共用實例會讓前後快照變成同一個物件。
    **`AiCacheStore` 本輪不開**（規劃時定為要開，實作期改判）：它的內容是 AI 產出的整包文字（可能很大）
    且每次 `Put` 都推進版本讓快取立刻失效，效益不明而記憶體風險明確。
    回傳必須是副本：既有註解假設「每次 `Get()` 都是不同物件」（`SystemSettingsService.cs:320`），快取共用同一實例會讓讀→改→寫的 `before` 快照被汙染。
-4. **`SummaryCache` 失效白名單**（B5）：中介軟體改為「非 GET 且路徑**不在**白名單」才 `Bump()`；白名單**只列明確不改分析資料的端點**。
+4. **`SummaryCache` 失效白名單**（B3）：中介軟體改為「非 GET 且路徑**不在**白名單」才 `Bump()`；白名單**只列明確不改分析資料的端點**。
    實際落地的四個是 `auth/login`、`auth/logout`、`help/ask`、`ai/chat`——規劃時列的
    `display-settings` 與「認證換發」在程式碼中沒有對應的非 GET 端點（前者只有 GET），
    `ai/interpret-issue` 本身是 GET 不需要列。其餘（含所有處理狀態、規則、設定、排程寫入）照舊推進。
-5. **可見範圍跨請求快取**（B6）：`VisibilityService` 的可見主機集合改為跨請求快取，鍵＝userId＋`DataVersionStamp.Current`＋保留天數，TTL **30 秒、上限 64**
+5. **可見範圍跨請求快取**（B4）：`VisibilityService` 的可見主機集合改為跨請求快取，鍵＝userId＋`DataVersionStamp.Current`＋保留天數，TTL **30 秒、上限 64**
    （規劃暫定 60／256，實作時改為與專案內同族快取一致——自創數字會讓它成為唯一的異類）；
    版本戳一推進即失效，授權變更不延遲超過一次寫入。ViewAll 短路徑不變。
-6. **PRTG**（B7）：`SchemaUpgrader` 補 `lf_prtg_values(period_start)` 與 `lf_prtg_state_changes(changed_at)` 兩條索引（兩後端）；
+6. **PRTG**（B5）：`SchemaUpgrader` 補 `lf_prtg_values(period_start)` 與 `lf_prtg_state_changes(changed_at)` 兩條索引（兩後端）；
    主機詳情 PRTG 頁籤改依 hostId 查對應（store 新增依主機取最新對應的方法）；衝突清單的 device 索引改跨請求快取（鍵＝版本戳，TTL 30 秒）。
    **升級注意**：大表首次建索引會拖長站台啟動（SQLite）或鎖表（SQL Server），寫進 DB-SPEC 升級注意事項；不在夜間排程窗口內升級。
-7. **慢查詢可觀測**（B8）：`EfPrtgStore`／`EfJsonLogStore`／`PermissionChangeStore` 補 `_performance?.Record` 埋點；
+7. **慢查詢可觀測**（B6）：`EfPrtgStore`／`EfJsonLogStore`／`PermissionChangeStore` 補 `_performance?.Record` 埋點；
    `SqlPerformanceMonitor` 改記「最慢前 10 支（operation、次數、最大耗時、最近時間）」；健康頁對應顯示表格。
-8. **前端逾時與 loading**（B9）：`core/api.js` **只對 GET** 加逾時（AbortController，預設 60 秒，可由呼叫端覆寫）；POST／PUT／DELETE 一律不逾時。
+8. **前端逾時與 loading**（B7）：`core/api.js` **只對 GET** 加逾時（AbortController，預設 60 秒，可由呼叫端覆寫）；POST／PUT／DELETE 一律不逾時。
    逾時時 toast 文案「查詢逾時，請縮小範圍或稍後重試」並擲 `ApiError('timeout')`；`guardLoad` 遇 timeout 在容器內顯示錯誤與「重試」鈕。
    五頁補 `renderLoading`／`guardLoad`。逾時是止血不是效能修正：B1～B7 各有量化驗收。
 9. **bug 修正**：校準 residual 快取寫入時一併更新自己的時間戳（與 `AssessStatus` 分開的 `_cachedResidualAt`）；`permission-changes` pageSize 走 `Paging.Normalize`；`SentinelEventFetchService.Cache` 加條目上限（暫定 512，超過整批清）。
@@ -236,13 +236,13 @@
 | B5 PRTG 索引與全表載入 | impl-low | 全綠 4078（+16） | 索引存在與欄位正確（pragma 斷言）、升級冪等、對應表不再整表讀取（SQL 計數）各有測試；Claude 另做一次突變（移除 DI 註冊）轉紅 | 規劃白名單寫的 `IPrtgStore.cs` 不存在（該 store 是 sealed 類別、全站直接依賴具體型別），只在實作檔加方法 |
 | B6 慢查詢可觀測 | impl-low | 全綠 4091（+13） | 三個 store 埋點、前十支排序、同名累加、鎖只在門檻之後各有測試；Claude 另做一次突變（未達門檻也進鎖）轉紅 | 設定頁沒有「系統健康」頁籤（規劃假設有），慢查詢清單動態掛在資料保留面板的既有健康診斷讀取點旁；資訊架構上不理想，另記 BACKLOG。PRTG 批次寫入側仍無埋點（規格限定只埋查詢方法），另記 BACKLOG |
 | B6 體檢 | Claude | 全綠 4091（連跑三次） | 全套連跑三次無偶發 | B6 大量新增埋點後，全套測試開始偶發兩條紅。追出三個根因且都在正式碼：附掛／卸除 NLog target 直接讀改寫全域設定且無互斥、target 名稱只用 RunId、scope 屬性存的也是 RunId。取數與 AI 排程本來就能並行，兩個 recorder 同時活著時先掛的那一趟會被抹掉且靜默。改為逐實例識別碼加全域設定互斥 |
-| 終檢（程式碼＋文件） | scan-low ×2，修正由 Claude | 全綠 4122（+3） | 兩個獨立掃描各審全 diff；Claude 對新守門做突變（AI 分支誤標為取數）轉紅 | 程式碼面抓到四類必修並全數修正：告示 `isRunning` 是聯集卻被當互斥判斷用（AI 單獨執行時誤停用主機更新、文案也不成立）、訂閱式狀態沒有初始值、`aiAvailable` 初值把「還不知道」畫成「已知是關的」、PRTG 判斷漏改第七個寫入點、未捕捉的 rejection 還有六處。文件面抓到本輪承諾的六處同步只做了一處，已補齊；另更正兩處已過時的待辦敘述 |
 | B7 前端等待與三缺陷 | impl-low | 全綠 4119（+28） | GET 逾時與 POST 反例、重試鈕與 404 反例、殘差快取反例、快取上限各有測試；Claude 另做一次突變（逾時套到所有方法）轉紅 | 首版讓 `dotnet test` 依賴機器上有 node，Claude 驗收時要求改為偵測不到即略過（同規模壓測慣例）——專案至今無 node 依賴，環境造成的紅會讓「全綠」失去意義。另查出權限異動的分頁上限後端早已正規化，規劃前提不成立，改為守門測試 |
+| 終檢（程式碼＋文件） | scan-low ×2，修正由 Claude | 全綠 4122（+3） | 兩個獨立掃描各審全 diff；Claude 對新守門做突變（AI 分支誤標為取數）轉紅 | 程式碼面抓到四類必修並全數修正：告示 `isRunning` 是聯集卻被當互斥判斷用（AI 單獨執行時誤停用主機更新、文案也不成立）、訂閱式狀態沒有初始值、`aiAvailable` 初值把「還不知道」畫成「已知是關的」、PRTG 判斷漏改第七個寫入點、未捕捉的 rejection 還有六處。文件面抓到本輪承諾的六處同步只做了一處，已補齊；另更正兩處已過時的待辦敘述 |
 
 ## 體檢交接
 
-- **全量測試**：`dotnet test` 全綠，**4122 通過／4128 總計**（略過 6，仍是既有的規模壓測）。
-  基線 dev@47e43b6 為 3955 通過／3961 總計，本輪淨增 **167** 題，既有測試零刪除。
+- **全量測試**：`dotnet test` 全綠，**4128 通過／4134 總計**（略過 6，仍是既有的規模壓測；體檢輪後）。
+  基線 dev@47e43b6 為 3955 通過／3961 總計，本輪淨增 **173** 題，既有測試零刪除。
 - **穩定性**：B6 完成後全套出現偶發紅（兩條執行紀錄 scope 測試），追出的三個根因都在正式碼且
   與並行執行有關，已修正並連跑三次全綠；B7 完成後再連跑兩次全綠。
 - **新增的環境相依**：前端行為測試需要 node，偵測不到時**略過**而非失敗。在沒有 node 的機器上
@@ -253,6 +253,57 @@
 - **升級注意**：PRTG 兩張大表首次建立索引會拖長站台啟動（SQLite）或在 SQL Server 端鎖表，
   不要在夜間排程窗口內升級（已寫進 DB-SPEC）。
 
+## 體檢輪修正（換模型：實作 Opus 5 → 體檢 Fable 5.1）
+
+體檢對象 `47e43b6..HEAD`（含終檢後的手改 commit），三個 Opus low 掃描（獵 bug／文件稽核／架構契合）
+加 Fable 親做規劃比對與四個手改 commit 逐行讀。逐條：哪裡、症狀、怎麼修、迴歸測試。
+
+1. **`BatchRunStore` 續號會配出重複 RunId（本輪新引入，高）**：`ProbeLastId` 取尾端第一筆可解析的列，
+   但這張表 append-only、「結束」列帶的是開始時配到的 RunId；取數與 AI 並行時附加順序可能是
+   「開始 100 → 開始 101 → 結束 101 → 結束 100」，尾端是 100，下次啟動配出 101 與既有撞號。
+   修：尾端 N 行全部解析取 **Max**，N 由 10 提到 32（同時活著的執行數 × 2 再加損毀容忍）。
+   測試：`續號_並行執行交錯結束後不與既有RunId撞號`。
+2. **`GetRun` 查無此執行時每次整份讀回（中）**：窗口內找不到就全撈，等於任何不存在／已清除的 runId
+   （舊書籤、手改網址）都付一次本輪要消滅的整表掃描。修：RunId 單調遞增，只有「小於窗口內最小 RunId」
+   或窗口為空時才全撈。測試：`GetRun對窗口內不存在的runId不做全分區讀取`。
+3. **全站 GET 60 秒逾時沒有任何呼叫端覆寫（中高）**：校準判定（同輪自己寫「動輒數十秒」）、報表匯總、
+   帶處理狀態篩選的記錄查詢，大站台會從「慢但會回來」變成「一定失敗」。修：三處帶 `timeoutMs`
+   （300／180／120 秒），WEB-SPEC §8.6 6b 補「已知會超過的由呼叫端覆寫」。
+4. **`getAiAvailable()` 失敗回 `false`（Fable 親抓）**：終檢把 `aiAvailable` 改三態後，暫時性網路失敗
+   仍會被畫成「AI 服務未設定」並附設定頁連結。修：失敗回 `null`（未知）且不快取；只做真值判斷的
+   呼叫端行為不變。測試：`FrontendConsistencyUiTests` 的 `getAiAvailable` 斷言改為 `return null`。
+5. **`runs.js` 兩處仍以真值判斷三態的 `aiAvailable`**（`renderStats`、`applyScheduleOptions` 的背景窗口列）
+   ——「同判定只改一半」型。修：改 `=== true`／`=== false`。
+6. **`/api/run-activity` 的 `TriggerText` 把觸發者姓名開放給所有登入者**，與端點自述「不含觸發來源」矛盾。
+   修：只在具 DevMonitor／Maintain 時填，其餘 null，告示照常顯示執行中；類別註解與 §8.6 6a 同步。
+   測試：`一般使用者拿不到觸發者_告示仍照常顯示執行中`。
+7. **環境探測啟動的互斥仍回 400**：§7.2 已把探測列進 409 那一類，實作沒跟上。修：`PrtgProbeService.TryStart`
+   比照回填加 `out bool isConflict`，controller 分岔。測試：`探測啟動_回填執行中回409`／`未設定連線位址維持400`。
+8. **正式碼上的測試後門**：`SentinelEventFetchService.ClearCache()`／`CacheEntryCount` 會改全域 static 狀態，
+   與 AutoFetcher AF-12 拔掉的同型。修：移除，測試改反射碰 `Cache` 欄位（同 collection 內序列化）。
+   `RecordListQueryService.DefaultLookbackDays`、`PrtgDeviceIndex.DeviceCount` 由 public 降 internal。
+9. **可選相依沒有註冊守門**：`IssueOwnedHostIdsCache` 未註冊時不會編譯錯也不會紅，只是每個請求靜默退回
+   慢路徑。修：補 DI 守門測試（同 `PrtgDeviceIndexCache` 那條）。
+10. **`BatchRunRecorder` 建構式的 XML 文件被新欄位切開**（那段「必須在涵蓋整趟執行的方法本體內建構」的
+    警語不再掛在建構式上）。修：`ScopeKey`／`_scopeToken` 搬回欄位區。
+11. **`window.lfRunActivity` 的註解與實際效果不符**：頁面模組與 layout 同為 deferred module，正常載入時
+    監聽早於第一次回應，靠事件就對；保存值只對更晚才載入的模組有用。修：兩處註解講準確，機制保留。
+12. **文件**：§8.6 6a 補「面板型一次性查詢例外」與「觸發者只給維運角色」、告示文案照實寫「分析進行中」；
+    §9.4 改引用 `isFetchRun`；DB-SPEC 錯字；BACKLOG 四處過程敘事改現況句；CLAUDE.md 基線更新並新增三條
+    「不要做」（NLog target 逐實例識別＋互斥、`isRunning` 是聯集不可當互斥判斷、快取鍵要涵蓋授權維度）。
+13. **測試檔名帶批次代號**（`FrontendA4CleanupUiTests` 等四個）在 PLAN 歸檔後失去指涉，既有測試檔無此慣例。
+    修：改為主題命名（`FrontendConsistencyUiTests`／`NextUnhandledShortcutUiTests`／`ApiTimeoutBehaviorTests`／
+    `FrontendWaitingStateUiTests`）；正式碼註解裡指向規格檔內部編號（`A2/C6` 這類）的 9 處改為批次代號。
+
+**看過但不動（記 BACKLOG 或留註）**：六個快取類別的 `GetOrAdd` 近乎逐字重複（約 60 行）——
+收斂成泛型基底要同時吸收「共用實例 vs 副本」「有無版本維度」「整批清 vs 不清」三個軸，會把各類別
+註解裡明講的取捨壓成建構參數，改動面大於省下的行數；`NextUnhandledSequenceCache.KeyOf` 把整個可見主機
+集合 join 成字串（6000 台約 40KB）在熱路徑上不免費，可改雜湊；三個新快取都沒有 stampede 保護
+（版本戳失效是全站同步的，冷啟動 N 個請求各算一次）；`config.RemoveTarget` 是否連帶移除 `LoggingRule`
+未驗證（非本輪引入）。
+
+測試：全套 4128 通過／4134 總計（略過 6），較實作輪收官的 4122 淨增 6。
+
 ## 本輪推翻的規劃定案（實作期核對後改判，理由見各批次「定案」段與執行紀錄）
 
 1. 執行紀錄改常駐記憶體投影 → 改為日期下推（store 在同一行程有兩個實例）。
@@ -261,6 +312,7 @@
    會靜默漏資料，違反專案「不假設兩個後端行為一致」的紅線）；維持 BACKLOG。
 4. 權限異動分頁上限「後端未正規化」的前提不成立（早已正規化），改為守門測試。
 5. 設定頁「系統健康」頁籤不存在，慢查詢清單改掛在既有的健康診斷讀取點旁。
-6. 權限異動分頁上限「後端未正規化」的前提不成立（早已正規化），改為守門測試。
-7. 主機詳情的停用條件原寫「排程執行中」，終檢時改為只看取數——AI 分析排程單獨在跑時
+6. 主機詳情的停用條件原寫「排程執行中」，終檢時改為只看取數——AI 分析排程單獨在跑時
    後端並不擋這個動作，用聯集會停用一個其實可用的功能並顯示不成立的理由。
+7. 告示的觸發者原定「所有頁面都看得到」，體檢時改為只給 DevMonitor／Maintain——端點本來就自述
+   不含觸發來源，一般使用者不需要知道是哪位管理者按的。

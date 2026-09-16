@@ -148,8 +148,14 @@ public class BatchRunStore
     /// 只看最後一行時，那一行剛好損毀就會讓續號從 0 重來、與既有紀錄重號；
     /// 損毀通常是連續的一小段，回看 10 行足以跨過去，而這仍是索引 (log_key, seq)
     /// 的同一次反向 seek，成本與讀一行幾乎相同——不值得為此退回全表掃描。
+    ///
+    /// **為什麼要取這 N 行裡的最大值、不能只取最後一筆可解析的**：執行紀錄是 append-only，
+    /// 「結束」列帶的是該趟**開始時**配到的 RunId。取數與 AI 排程可以並行，附加順序可能是
+    /// 「開始 100 → 開始 101 → 結束 101 → 結束 100」，尾端那一列的 RunId 是 100；只取它會把
+    /// 下一趟配成 101，與既有的 101 撞號——撞號後兩趟執行被合併成一筆、診斷行整批錯掛。
+    /// 32 行足以涵蓋「同時活著的執行數 × 2」再加上一段損毀容忍。
     /// </summary>
-    private const int IdProbeLines = 10;
+    private const int IdProbeLines = 32;
 
     /// <summary>
     /// SQL 端依**附加時間**窄化時往前多放的緩衝天數。
@@ -187,19 +193,23 @@ public class BatchRunStore
     }
 
     /// <summary>
-    /// 續號起點＝**最後一筆解析得出來的** id。由新到舊逐行嘗試，第一個成功的就是起點；
-    /// 全部失敗才回 0 並記 Warn——那代表尾端整段損毀，值得被看見而不是安靜地重號。
+    /// 續號起點＝尾端 N 行裡**解析得出來的最大** id（理由見 <see cref="IdProbeLines"/>）。
+    /// 全部無法解析才回 0 並記 Warn——那代表尾端整段損毀，值得被看見而不是安靜地重號。
     /// </summary>
     private static long ProbeLastId<T>(EfJsonLogStore store, Func<T, long> idOf, string what) where T : class
     {
         var lines = store.ReadLastLines(IdProbeLines);
         if (lines.Count == 0) return 0;
 
+        long? max = null;
         foreach (var line in lines)
         {
             var parsed = JsonLogParser.Parse<T>(new[] { line }, LfJsonOptions.Compact);
-            if (parsed.Count > 0) return idOf(parsed[0]);
+            if (parsed.Count == 0) continue;
+            var id = idOf(parsed[0]);
+            if (max == null || id > max) max = id;
         }
+        if (max != null) return max.Value;
 
         Log.Warn("[BatchRunStore] {What}最後 {Count} 行都無法解析，續號自 0 起算——可能與既有紀錄重號。",
             what, lines.Count);
@@ -259,14 +269,25 @@ public class BatchRunStore
 
     /// <summary>
     /// 單筆執行。RunId 在 JSON 內容裡、不是資料表欄位，無法直接下推 SQL——
-    /// 改以保留期窗口窄化候選集後在記憶體比對；窗口內找不到才退回全撈
-    /// （保留天數被調得比出廠預設更長時的舊列），對外行為不變。
+    /// 改以保留期窗口窄化候選集後在記憶體比對。
+    ///
+    /// 退回全撈只在**這個 runId 有可能存在於窗口之外**時發生：RunId 單調遞增，
+    /// 若它小於窗口內最小的 RunId，代表是保留天數被調得比出廠預設更長時的舊列，值得全撈一次；
+    /// 若它落在窗口內的 RunId 範圍之間卻沒找到（已被清除、或根本不存在——舊書籤、手改網址），
+    /// 全撈也不會找到，只是把本輪要消滅的整份讀取變成每次查無此執行都付一次。
+    /// 窗口內完全沒有列時無從判斷（可能是保留期拉長後長期未執行的站台），維持全撈一次。
     /// </summary>
     public BatchRun? GetRun(long runId)
     {
         var from = DateTime.Today.AddDays(-RunLookupWindowDays - AppendTimeBufferDays);
-        var hit = LatestPerRun(ReadRunLinesFrom(from)).FirstOrDefault(r => r.RunId == runId);
-        return hit ?? LatestPerRun(ReadAllRunLines()).FirstOrDefault(r => r.RunId == runId);
+        var window = LatestPerRun(ReadRunLinesFrom(from));
+        var hit = window.FirstOrDefault(r => r.RunId == runId);
+        if (hit != null) return hit;
+
+        var mayBeOlderThanWindow = window.Count == 0 || runId < window.Min(r => r.RunId);
+        return mayBeOlderThanWindow
+            ? LatestPerRun(ReadAllRunLines()).FirstOrDefault(r => r.RunId == runId)
+            : null;
     }
 
     /// <summary>

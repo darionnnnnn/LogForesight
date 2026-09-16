@@ -102,12 +102,6 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         }
     }
 
-    /// <summary>快取現有條目數（測試用；正式路徑不消費）</summary>
-    internal static int CacheEntryCount => Cache.Count;
-
-    /// <summary>清空快取（測試用；正式路徑靠 TTL 與條目上限）</summary>
-    internal static void ClearCache() => Cache.Clear();
-
     private async Task<LiveEventFetchResult?> FetchInternalAsync(WebHost host, DateTime date, string source, int eventId, CancellationToken ct)
     {
         var server = _catalog.GetServer(host.NetiqServer);

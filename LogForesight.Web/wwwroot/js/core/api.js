@@ -183,7 +183,10 @@ export async function getAiAvailable() {
             const status = await api.get('/api/ai/status', { silent: true });
             aiAvailableCache = !!status?.available;
         } catch {
-            return false;
+            // null＝還不知道：暫時性失敗不等於「未設定」。只做真值判斷的呼叫端把 null 當不可用
+            // （與過去行為相同）；排程頁比對的是明確的 false，網路偶發失敗才不會被畫成
+            // 「AI 服務未設定」還附上設定頁連結。失敗不快取，下一次呼叫會再問一次。
+            return null;
         }
     }
     return aiAvailableCache;

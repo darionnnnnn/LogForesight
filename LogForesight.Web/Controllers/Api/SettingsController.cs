@@ -140,8 +140,13 @@ public class SettingsController : ControllerBase
         if (_prtgProbe == null)
             throw DomainException.Validation("PRTG 探測服務未啟用。");
 
-        if (!_prtgProbe.TryStart(out var error))
-            throw DomainException.Validation(error ?? "無法啟動 PRTG 探測。");
+        if (!_prtgProbe.TryStart(out var error, out var isConflict))
+        {
+            // 與回填、結構同步同一套：被另一個執行擋下是 409，設定不齊是 400（§7.2）
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動 PRTG 探測。");
+        }
 
         _audit.Record(
             action: AuditActions.PrtgProbeRun,

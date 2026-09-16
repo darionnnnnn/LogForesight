@@ -19,7 +19,7 @@ namespace LogForesight.Tests;
 /// 偵測不到 node 時顯示為略過而不是紅（環境造成的假警報會讓「全綠」失去意義）；
 /// 但 node 在而案例失敗時仍然要紅。
 /// </summary>
-public class FrontendB7BehaviorTests
+public class ApiTimeoutBehaviorTests
 {
     private static string FindRepoRoot()
     {

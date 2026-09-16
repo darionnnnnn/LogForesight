@@ -29,6 +29,16 @@ public class BatchRunRecorder : IDisposable
     private bool _finished;
     private IDisposable? _scope;
 
+    /// <summary>
+    /// scope 屬性鍵。值是**這個 recorder 實例**的識別碼，不是 RunId——RunId 由各自的
+    /// store 配號，兩個獨立 store（例如測試裡各自的資料庫、或日後多後端並存）會配出同一個號，
+    /// 那時 target 就會把別人那一趟的事件當成自己的收進來。識別碼逐實例產生，不會碰撞。
+    /// </summary>
+    private const string ScopeKey = "lf_run_scope";
+
+    /// <summary>這個 recorder 實例的識別碼（見 <see cref="ScopeKey"/>）</summary>
+    private readonly string _scopeToken = Guid.NewGuid().ToString("N");
+
     /// <param name="ct">執行用的取消權杖（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
     /// <see cref="OperationCanceledException"/> 會在 using 範圍結束時經 <see cref="Dispose"/> 回填——
     /// 這裡收下權杖，讓 Dispose 分得出「使用者停止」（記「已停止」）與「異常中斷」（exit 1）。
@@ -48,16 +58,6 @@ public class BatchRunRecorder : IDisposable
     /// 若日後把建構搬進一個被 <c>await</c> 的輔助 async 方法，scope 會在該方法返回時就消失，
     /// 整趟執行的 Warn 全部靜默丟失且沒有任何訊號。
     /// </remarks>
-    /// <summary>
-    /// scope 屬性鍵。值是**這個 recorder 實例**的識別碼，不是 RunId——RunId 由各自的
-    /// store 配號，兩個獨立 store（例如測試裡各自的資料庫、或日後多後端並存）會配出同一個號，
-    /// 那時 target 就會把別人那一趟的事件當成自己的收進來。識別碼逐實例產生，不會碰撞。
-    /// </summary>
-    private const string ScopeKey = "lf_run_scope";
-
-    /// <summary>這個 recorder 實例的識別碼（見 <see cref="ScopeKey"/>）</summary>
-    private readonly string _scopeToken = Guid.NewGuid().ToString("N");
-
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
         CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null)
     {

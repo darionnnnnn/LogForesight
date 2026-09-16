@@ -262,7 +262,8 @@ async function runAssessment() {
 
     try {
         await guardLoad([hintEl, ...metricEls], async () => {
-            const data = await api.get(`/api/admin/calibration/status`);
+            // 四項重查詢動輒數十秒，預設 60 秒會把它打成逾時
+            const data = await api.get(`/api/admin/calibration/status`, { timeoutMs: 300000 });
             renderAssessment(data);
             toast('校準指標評估計算完成', 'success');
         });

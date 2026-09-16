@@ -468,7 +468,7 @@ lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 ```
 
 `lf_prtg_values (period_start)` 與 `lf_prtg_state_changes (changed_at)` 是單欄索引，**不是**上面兩個
-複合索引的重覆：複合索引的前導欄是 `sensor_objid`，而鏡像頁摘要的 `Max(period_start)`／
+複合索引的重複：複合索引的前導欄是 `sensor_objid`，而鏡像頁摘要的 `Max(period_start)`／
 `Max(changed_at)`、校準與風險判定的區間取數都不帶 sensor 條件，吃不到前導欄、只能全表掃描。
 代價誠實寫在這裡：這兩張表是夜間批次大量寫入，各多一個索引就多一份寫入維護成本；
 取捨是「夜間批次多付一點、白天使用者查詢快很多」。

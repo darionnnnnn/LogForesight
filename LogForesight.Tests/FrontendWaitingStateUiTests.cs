@@ -10,7 +10,7 @@ namespace LogForesight.Tests;
 /// 大型頁面檔案裡 `guardLoad`／`renderLoading` 到處都有，整檔斷言等於沒有斷言：
 /// 每條都先把目標函式主體切出來（並確認切到非空），再對主體斷言。
 /// </summary>
-public class FrontendB7WaitingUiTests
+public class FrontendWaitingStateUiTests
 {
     private static string FindRepoRoot()
     {
