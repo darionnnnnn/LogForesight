@@ -262,7 +262,7 @@
 - `WorkOrder` 欄位：`WorkOrderId`（bigint 自增）、`SourceName`／`EventId`（可空）、`IssueLabel`（≤200）、`HandlerId`（非空）、`Origin`（`manual`／`owner_rule`／`auto_dispatch`／`backfill`／`day_assign`）、`ScopeKind`、`ScopeGroupIds`（JSON 或逗號清單，執行端定）、`AutoAttach`、`Note`（≤1000）、`DueDate`、`CreatedById`／`CreatedByAccount`／`CreatedAt`、`LastAppendedAt`、`LastReplyAt`、`ClosedAt`／`ClosedReason`、`UpdatedAt`（併發權杖）。
 - `WorkOrderEvent`：`EventId`、`WorkOrderId`、`Action`（`created`／`appended`／`merged_in`／`reassigned`／`split_out`／`split_in`／`cancelled`／`admin_closed`／`closed`／`reopened_by_member`）、`ActorId`／`ActorAccount`（系統 null）、`MemberDelta`、`Note`（≤1000）、`CreatedAt`。
 - `IssueCase.WorkOrderId`（可空）；`IssueCase.SourceName`／`EventId`（反正規化，定案 31；`Save` 時由 `IssueKey` 解析寫入，解析失敗者兩欄留 null 且不參與依問題查）；`IssueCase.DaySyncPending`（bit，定案 32／44）；`IssueCase.Cancelled`（bit，取消交辦的案件標記，供同步函式決定「日子回到明確 open」）。
-- 表：`lf_work_orders`（索引 `(handler_id, closed_at)`、`(source_name, event_id, closed_at)`、**部分唯一** `(handler_id, source_name, event_id) WHERE closed_at IS NULL`，SQL Server filtered index／SQLite partial index 各一份 DDL）、`lf_work_order_events`（`(work_order_id, created_at)`）、`lf_issue_cases.work_order_id`＋`(work_order_id, closed_at)`、`lf_issue_cases.source_name`（nvarchar，可空）／`event_id`（int，可空）＋`(source_name, event_id, closed_at)`、`lf_issue_cases.day_sync_pending`＋索引 `(day_sync_pending)`（作業撿件）、`lf_issue_cases.cancelled`、`lf_user_groups.dispatch_pool`、`lf_users.dispatch_paused`（bit 預設 0）。所有字串寫入前依 `HasMaxLength` 截斷。
+- 表：`lf_work_orders`（含 `source_key` 大寫正規化欄；索引 `(handler_id, closed_at)`、`(source_key, event_id, closed_at)`、**部分唯一** `(handler_id, source_key, event_id) WHERE closed_at IS NULL AND source_key IS NOT NULL`，兩後端同一份 DDL 字串）、`lf_work_order_events`（`(work_order_id, created_at)`）、`lf_issue_cases.work_order_id`＋`(work_order_id, closed_at)`、`lf_issue_cases.source_name`／`source_key`（nvarchar，可空；解析失敗寫 `source_key=''`）／`event_id`（int，可空）＋`(source_key, event_id, closed_at)`、`lf_issue_cases.day_sync_pending`＋索引 `(day_sync_pending)`（作業撿件）、`lf_issue_cases.cancelled`（bit 預設 0）。派工池與暫停接單是 blob 模型屬性、無 DDL（A-3）。所有字串寫入前依 `HasMaxLength` 截斷。
 - `IWorkOrderStore`／`IIssueCaseStore` 新增：`GetOpenByIssue(source, eventId)`（走新索引）、`GetOpenMany(hostNames, source, eventId)`。
 - `IWorkOrderStore`：`Get(id)`、`GetActiveByHandler(userId, page, filter)`、`GetActiveByIssue(source, eventId)`、`GetActiveFor(handlerId, source, eventId)`、`GetMembers(id, page, statusFilter)`、`CountMembers(id)`→（進行中／已結案／逾期／上報）、`LoadBoard(userIds?)`→每人（進行中單數、成員數、未回覆單數、逾期成員數、近 7 日結案數、最舊未結日）**一句 SQL**、`Save`／`SaveMany`、`AppendEvent`／`ListEvents(id)`、`PruneClosedBefore(date)`。
 - 回填（兩段，皆冪等、皆分批）：(1) `source_name IS NULL` 的案件分批 1000 讀 `issue_key` 解析後集合式 UPDATE（全部案件含已結案）；(2) `work_order_id IS NULL AND closed_at IS NULL` 的案件依（處理人, source, eventId）分組，每組建一單（`Origin=backfill`、`ScopeKind=Hosts`、`AutoAttach=false`、`CreatedAt`＝該組最早 `CreatedAt`、`LastReplyAt`＝該組案件最近一次由處理人本人寫入的歷程時間或 null、事件 `created` 一筆 `MemberDelta=N`），案件 `work_order_id` 以每組一句 UPDATE（IN id 清單分批 1000）寫入（定案 42）。啟動 log 記「解析 N／建單 M／成員 K／未連結 J」。
@@ -477,7 +477,7 @@
 ## 十一、文件（Claude 親寫）
 
 - WEB-SPEC：§7.1（派工池、暫停接單、可見範圍規則在 Core、交辦單授權）；§8.6a 名詞表；§9.1 我的交辦卡；§9.2 交辦／涵蓋欄／靜音／回覆；§9.3 真表修矛盾、徽章、靜音徽章、日層級指派走交辦單；§9.4a 全面改寫；新 §9.4b `/work-orders`＋`/work-orders/{id}`；§9.6 靜音註腳；§9.7 抑制段決策表連結；§9.8／9.8a 旗標；§9.9b 設定；§9.9c 說明書三條動線（S2／S3／S5）；§10.1／10.2 新表與 store；§11 稽核動作；`AttachNewDay` 七層＋閘門。
-- DB-SPEC：新表與新欄（含部分唯一索引兩後端寫法）；補 `lf_issue_cases` 欄位定義；**移除 `lf_user_host_map`**；容量估算與保留加交辦單；§A 原則改寫。
+- DB-SPEC：新表與新欄（含部分唯一索引的 NULL 排除理由）；補 `lf_issue_cases` 欄位定義；**移除 `lf_user_host_map`**；容量估算與保留加交辦單；§A 原則改寫。
 - RULES-SPEC：決策表。DETECTION-SPEC：靜音在分析側＋快照欄位。
 - BACKLOG：移除三條、新增六條（第二版所列）。
 - CLAUDE.md：測試基線（自 4293 起算）；「不要做」加兩條（不複製可見範圍規則；不建沒有交辦單的進行中案件）。
@@ -717,11 +717,25 @@
 | `lf_top_issues` | 第 46 輪未加欄；第五版定案本來就不加欄，無衝突 |
 | 測試基線 | 4293（略過 6） |
 
+### A-1 規格撰寫時的事實修正（2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| `lf_user_groups.dispatch_pool`、`lf_users.dispatch_paused` 以 DDL 加欄 | 使用者與群組是 JSON blob 集合（`UserStore`／`UserGroupStore : JsonBlobCollection`），不是資料表 | 兩個旗標是 blob 模型屬性，無 DDL；移到 A-3，DB-SPEC 不寫這兩欄 |
+| 部分唯一索引 `(handler_id, source_name, event_id) WHERE closed_at IS NULL`，兩後端各寫 DDL | SQL Server 唯一索引把 NULL 視為相等、SQLite 視為相異；多問題單（問題欄 null）在兩後端行為分岔 | 過濾條件改 `closed_at IS NULL AND source_key IS NOT NULL`；`CREATE UNIQUE INDEX … WHERE …` 兩後端同一份字串 |
+| 以 `source_name` 比對與建索引 | SQLite `=` 分大小寫、SQL Server 預設不分；`lf_issue_first_seen` 已有 `source_key`（大寫正規化）慣例 | 交辦單與案件表都加 `source_key` 欄，比對與索引一律用它；`source_name` 只供顯示 |
+| 回填「啟動時在 `SchemaUpgrader` 後執行」 | 啟動路徑受 Windows 服務 30 秒逾時限制；既有大量搬移一律「啟動判定、背景服務搬」（`TopIssueBackfillHostedService`） | 回填改背景 hosted service；整併完成前存在沒有 `work_order_id` 的進行中案件，**後續階段必須容忍 `WorkOrderId == null`**（查詢與推導不得假設非空） |
+| 解析失敗的 `issue_key` 留 null | null 同時代表「尚未回填」，每次啟動會被重撈 | 解析失敗寫 `source_key=''`，查詢與分組把空字串視同不可依問題查 |
+| `IWorkOrderStore.GetActiveByHandler(page, filter)`、`GetMembers(page, status)`、`LoadBoard` 含逾期與近 7 日結案 | 分頁與篩選形狀取決於 C-2 的 DTO；逾期定義尚未落地 | A-1 只提供不分頁的依處理人清單、成員分頁（無狀態篩選）、看板四欄；篩選、逾期、近 7 日結案在 C-2 補 |
+| `lf_issue_cases` 只加 `work_order_id`／`source_name`／`event_id` | A-2 的同步作業需要 `day_sync_pending`、`cancelled` | 兩欄併入 A-1 的 DDL，一次升級 |
+
+A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契約逐條對照完成：模型兩類＋案件五欄、兩張表＋案件六欄＋七個索引、升級器（含部分唯一索引 helper）、案件 store 三個新查詢、交辦單 store 十個方法、兩階段背景整併、保留清理、三個新測試檔＋既有合約測試追加，全部進規格且各自有驗收條目。
+
 ## 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （尚未開工） | | | | |
+| A-1 | impl-low | 執行中 | — | — |
 
 ## 體檢交接
 
