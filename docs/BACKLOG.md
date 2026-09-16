@@ -422,7 +422,8 @@
 
 ## PRTG 整合遞延
 
-現況：鏡像層＋數值快照與兩種取數策略＋人工主機對應＋**狀態變更型規則（分析層第一階）**＋跨後端資料搬運
+現況：鏡像層＋數值快照與兩種取數策略＋人工主機對應＋**狀態變更型規則（分類覆寫、同裝置合併、跨日升級、抑制）**＋
+**跨來源佐證三模式**＋未回報主機 PRTG 提示＋跨後端資料搬運
 （見 docs/PRTG-SPEC.md）。以下是明確不做／待條件成熟的項目，多數要等值型規則的數值基線
 累積足夠才有辦法設計。
 
@@ -455,24 +456,31 @@
   （第一階）已完成並接上 `lf_top_issues` 全鏈；值型規則要看數值趨勢與基線偏移，
   依賴實際累積的 hourly 數值。觸發條件：`/admin/calibration` 校準頁四項判定達「可用」
   （PRTG-SPEC §11，含累積量判斷與匯出檔），必要時再以 §10 搬運原始 hourly。
-- **sensor 的人工分類 UI**（分類的是 sensor 的語意類別，與「device 對主機」的對應是兩件事）：
-  **依 type 對照表的自動分類已完成**（`category_source = auto`，只填 null 絕不覆蓋）。
-  仍未做的是**人工指定分類的畫面**；欄位與「不被同步洗掉」的契約都已就緒，可直接接手。
-  觸發條件：自動對照表覆蓋率不足、且有人工調整的實際需求。
+- **sensor 的逐顆人工分類 UI**（分類的是 sensor 的語意類別，與「device 對主機」的對應是兩件事）：
+  依 type 的自動分類與管理者可填的 **type 分類補充對照**已完成（PRTG-SPEC §2、§7）。
+  仍未做的是**逐顆 sensor 指定分類的畫面**；欄位與「非 auto 不被洗掉」的契約都已就緒，可直接接手。
+  觸發條件：同一 type 底下需要不同分類（補充對照以 type 為單位做不到）。
+- **內建 `hardware` 分類對照條目**（觸發條件：取得實機環境探測的「Sensor Type 分布」清單）：
+  `hardware` 分類與兩條 hardware 規則、儲存故障佐證模式都已就緒，但內建對照表沒有任何 hardware type，
+  未設補充對照的環境這幾條不會命中。拿到清單後把溫度／風扇／電源／RAID 類 type 加進 `PrtgSensorTypeCategoryMap`。
+- **校準結果到位後的四項加強**（觸發條件：校準四項達「可用」，PRTG-SPEC §11）：(1) 值型規則第一階（下一條）；
+  (2) 狀態規則門檻校準，含 availability down 30 分、hardware warning 120 分兩個暫定值；
+  (3) 跨日升級與長期 Down 常數（`PrtgRuleCatalog` 的四個 `CrossDay*`／`Escalate*`／`ChronicDownDays`）以規則命中分佈校準；
+  (4) 儲存佐證改以數值趨勢（可用空間外推耗盡）為依據，提前到 warning 之前。
+- **PRTG 失聯台數跟著鏡像失效**（觸發條件：使用者回報儀表板數字與主機清單對不上）：儀表板的 `SilentHostsPrtgDownCount`
+  在整包摘要快取內，PRTG 鏡像寫入不推進版本戳，最多落後一個 TTL。要即時就讓結構同步寫入時 bump `DataVersionStamp`。
+- **PRTG 分類規則的抑制預覽精確化**（觸發條件：管理者反映分類規則的預覽數字偏高）：`lf_top_issues` 沒有規則 Id／分類欄，
+  預覽只能依代碼計數。要精確得在子表加 `rule_id` 欄（DDL＋`SchemaUpgrader`）。
 - **規則維護頁的「prtg」平台**：**狀態變更型（第一階）已完成**（四條規則、門檻可調、可停用，
   見 docs/PRTG-SPEC.md §9）。仍遞延的是**值型規則**（趨勢、基線偏移）——需要數值基線，
   累積量判斷與匯出見 PRTG-SPEC §11（原始 hourly 另走 §10）。**不會**新增「PRTG+NetIQ」合併平台——合併發生在主機層，
   規則各自歸屬自己的來源。
 
-- **跨來源關聯規則**（例如 Windows 磁碟錯誤事件 ＋ 同主機 PRTG disk sensor 趨勢下降 →
-  提升嚴重度）：屬於**關聯層**而不是規則表——關聯層的組合模式本來就是程式碼邏輯、不搬進
-  rules.json（見 `CorrelationAnalyzer` 與 docs/RULES-SPEC.md 語意邊界），因此與上一條
-  「不新增合併規則平台」的定案不衝突。前置有兩項：(a) `EfPrtgStore` 需要「按 hostId＋日期
-  取數值／狀態變更」的查詢方法（現行是全域批次撈、事後歸戶，方向相反）；(b) PRTG 規則評估
-  需移到分析之前，或為 `LogAnalysisService` 開一條 PRTG 訊號入口（該類別目前對 PRTG 零認識），
-  且必須「取不到就靜默跳過」才不破壞 PRTG 的失敗隔離。
-  **只用狀態變更型的既有四條 finding 就能做，不需要值型規則的數值基線**——
-  這片區域其餘項目綁在校準頁四項達「可用」，這一條不受該前提限制。
+- **跨來源關聯：數值趨勢型**（例如 Windows 磁碟錯誤事件 ＋ 同主機 PRTG disk sensor 可用空間持續下降）：
+  以 finding 為依據的同日佐證三模式已完成（追加時判定，PRTG-SPEC §9「跨來源佐證」），
+  不需要把 PRTG 評估搬到分析之前。仍遞延的是以**數值趨勢**為依據的佐證，綁在校準四項達「可用」。
+- **跨來源佐證不回溯既有紀錄**（觸發條件：使用者要求舊日期補上佐證）：佐證只在有新 finding 追加時判定，
+  重跑同一天若 finding 早已追加（`EventKey` 去重後無新增）不會補判。要補得在追加路徑對「無新增」也跑一次判定。
 - **排程作業頁前端拆檔**：`runs.js` 約 1600 行同時承載三個報表頁籤、三張狀態卡與輪詢計時、
   排程設定表單與兩個 modal；拆成 `runs.js`／`runs-status.js`／`runs-schedule.js`／`runs-prtg-backfill.js`
   要處理 17 個模組層共享狀態與輪詢生命週期的歸屬，屬獨立一輪的重構。版面骨架已重排，
@@ -523,15 +531,6 @@
 - **`PrtgFinding.Magnitude` 刻意不落 `Count`**（已定位，非缺陷）：整日 Down 會是 1440，
   用它填 `Count` 會讓 PRTG finding 在問題排行的「次數」維度壓過所有真實事件計數。
   它的用途是規則測試、`Detail` 文案與校準數值匯出的門檻分佈統計（PRTG-SPEC §11）。
-- **PRTG 種子規則的長文說明沒有被讀**：`KnownIssueSeed` 的四條 PRTG 規則填了
-  `PlainExplanation`／`Impact`／`LikelyCauses`／`NextSteps`（驗證器強制非空），
-  但 `PrtgFindingMapper` 用的是 `PrtgRuleCatalog` 裡的一句話 `KnownIssue`。
-  兩者並非重複（一句話用於問題簽章、長文用於規則維護頁），但長文目前沒有顯示入口。
-  （分類／嚴重度／`ElevatesDayRisk`／預設門檻的三份手抄已收斂到 `PrtgRuleCatalog`，
-  並有守門測試斷言 mapper 與種子一致。）
-- **抑制影響面預覽把平台二分為 linux／非 linux**：`RuleAdminService.PreviewSuppression` 以 `isLinux` 分路，
-  `prtg` 規則落到 Windows 分支用 EventIds 比對，命中數恆為 0。預覽只是提示用，不影響抑制本身生效；
-  規則頁補 prtg 抑制入口時一併改成三向分路。
 - **`PrtgDataPackage.FromDate`／`ToDate` 只寫不讀**：匯入端不校驗區間，屬輕度冗餘。
 - **匯出不能選資料類別**：規劃原本允許只匯出某幾張表，實作是固定全類別。
   實際檔案過大時再加。

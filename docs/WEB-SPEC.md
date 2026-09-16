@@ -906,7 +906,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **未回報主機是頂部 KPI 卡列的一張計數卡**：兩千台規模下逐台列出可能數百筆，
   改為計數（`SilentHostsCount`）＋下鑽到主機頁的 `/admin/hosts?status=silent`
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
-  0 台時照常顯示 0（secondary 色），不換成空狀態插圖；「沒回報 ≠ 沒問題」放卡片 tooltip。
+  0 台時照常顯示 0（secondary 色），不換成空狀態插圖；「沒回報 ≠ 沒問題」放卡片 tooltip，
+  PRTG 啟用且其中有 PRTG 顯示失聯的主機時改為「沒回報 ≠ 沒問題；其中 N 台 PRTG 顯示失聯」（`SilentHostsPrtgDownCount`，判定見 docs/PRTG-SPEC.md §9）。
   空出的右下角由「依群組風險概況」補位，與高風險主機 6／6 分欄。
 - **依群組風險概況**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
@@ -1579,6 +1580,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **雙平台三分頁**（詳見 [LINUX-RULES.md](LINUX-RULES.md)「Web UI」段）：頁內分頁由「規則｜告警抑制」
   改為 **「Windows規則｜Linux規則｜告警抑制」**。兩個規則分頁共用同一套清單／篩選／排序／計數元件，
   只差 `Platform` 過濾；搜尋 placeholder 依平台調整（Windows「來源、Event ID」／Linux「program、訊息關鍵字」）。
+  另有 PRTG 平台（chip），比對區塊為規則代碼、門檻與「sensor 分類」下拉（「全部分類」＋六個分類；代碼選沉默裝置時停用並清空），
+  列表門檻欄與卡片在有分類時加「（分類名稱）」。
   編輯彈窗的**比對欄位區塊依平台切換**（Windows：來源比對＋Event ID＋全部事件；Linux：Program 比對＋
   正規化事件名＋訊息子字串），類別／嚴重度／門檻／重大／知識庫／啟用完全共用。新增規則的平台由所在分頁
   決定且建立後不可變更（`Platform` 與 `Origin` 同屬身分欄位）。告警抑制分頁加「平台」欄與篩選，
@@ -1591,7 +1594,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **Group／Site 抑制的影響面預覽**：
   範圍選 Group／Site 時送出前先打 `GET api/rules/{id}/suppression-preview?scope=&hostGroupId=`，
   以確認對話框顯示「此抑制將影響 N 台主機；過去 14 天該規則在這些主機上共命中 M 次」
-  （Linux 規則附「同來源程式合計」註記）再送出；預覽呼叫失敗不擋抑制流程（api.js 已 toast
+  （Linux 規則附「同來源程式合計」註記；PRTG 規則依 EventKey 前綴計數，分類規則為同代碼上限值，見 docs/PRTG-SPEC.md §9）再送出；預覽呼叫失敗不擋抑制流程（api.js 已 toast
   顯示錯誤，只是少了規模資訊）。範圍切到 Site 時「生效天數」欄空白會自動帶 30（可清空改回永久）。
 - **內建規則升級**：
   庫內種子版本落後內建種子時頁頂顯示橫幅「內建規則有更新 vX→vY」→「預覽差異」modal 逐條列
@@ -1660,7 +1663,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 主機清單**為伺服器端分頁＋搜尋＋篩選**：`GET api/admin/hosts` 改參數化
   （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/**dir**/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
-  IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
+  IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天，唯一判定 `HostAdminService.IsSilent`）。
+  未回報主機的狀態徽章另加一顆 PRTG 現況（`HostDto.PrtgHint`／`PrtgHintStale`：主機失聯／主機在線，問題在日誌取數端／無資料／無 PRTG 對應，過期加註），只算本頁，語意見 docs/PRTG-SPEC.md §9。
 - **批次改群組**：清單首欄勾選＋表頭全選，勾選跨頁／跨篩選保留
   （前端 `Map<hostId, hostDto>`，翻頁不清空，僅「清除選取」與套用成功清空）；已併入其他主機的列
   不給勾選。工具列「批次設定群組」開 modal：列出已勾主機＋現有群組徽章、模式單選（加入＝聯集、
@@ -2218,7 +2222,8 @@ PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 d
   「估算規模」鈕呼叫 `prtg-fetch-scope/estimate` 顯示該模式一晚要抓幾個 sensor、超過門檻提醒但不擋存（快照估算行——目標數、每日列數、保留期總列數——**只設一次**且放在 `triggered` 早退之前，否則 `triggered` 模式看不到快照估算），
   選「關閉」時整顆藏起來且後端對 `scope=off` 回失敗——不會取數就沒有規模可估）、
   **取數策略下拉**（緊接首欄之後；`PrtgFetchStrategy` 保守／激進，語意見 docs/PRTG-SPEC.md §3b；旁附 popover 說明兩者差異與每日 PRTG 負擔；選到激進時顯示 `text-warning` 提醒：先用保守觀察快照耗時與失敗數、看到快照間隔被自動拉長就切回保守）、
-  忽略 SSL、逾時（說明文字建議激進或回填時設 120 以上）、併發（1～8，說明文字建議保守 2／激進 4）、回填天數、保留天數、sensor type 白名單，
+  忽略 SSL、逾時（說明文字建議激進或回填時設 120 以上）、併發（1～8，說明文字建議保守 2／激進 4）、回填天數、保留天數、sensor type 白名單、
+  **sensor type 分類補充對照**（多行 `type=分類`，popover 說明合法分類、下次結構同步生效、會影響資源守門偵測；語意見 docs/PRTG-SPEC.md §2、§7），
   **資源守門不在這一頁**——它同時節制 NetIQ 取數與 PRTG 擷取兩路，設定在
   「設定 > 資源守門」頁籤（§9.9b），此處只留一行指路連結。
   連線與擷取參數**各自一顆儲存鈕**，都走同一個專屬端點但**只送自己頁籤的欄位**

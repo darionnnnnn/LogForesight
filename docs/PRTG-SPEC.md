@@ -3,8 +3,8 @@
 PRTG 是環境內既有的監控系統，提供**連續的數值時序**（sensor 每隔數分鐘量測一次）。
 LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的第二種訊號來源。
 
-本文件描述**現況**：資料表、擷取、主機對應、設定與操作介面。分析層（特徵計算、弱訊號、
-訊號合成、敘述化）尚未實作，見 `docs/BACKLOG.md`。
+本文件描述**現況**：資料表、擷取、主機對應、設定與操作介面、狀態變更型規則與跨來源佐證。
+值型分析（特徵計算、基線偏移、趨勢外推）尚未實作，見 `docs/BACKLOG.md`。
 
 ## 1. 定位與邊界
 
@@ -14,8 +14,8 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
   日後的分析會同時看兩種訊號；沒有對應時就只有 NetIQ。這個分岔發生在主機層，
   **不存在「PRTG+NetIQ」的合併規則平台**——規則各自歸屬自己的來源。
   合成發生在**主機日的結論層**：PRTG finding 進當日 `lf_top_issues`、單向上調日風險、
-  並以獨立區塊進 AI prompt（見 §9）。跨來源的複合規則（例如磁碟事件＋PRTG 磁碟 sensor 趨勢）
-  屬於關聯層，見 `docs/BACKLOG.md`。
+  並以獨立區塊進 AI prompt（見 §9）。同一主機日事件日誌與 PRTG 同時示警的**跨來源佐證**在追加時判定、
+  寫進紀錄的關聯欄位（§9）；以數值趨勢為依據的佐證屬於值型分析，見 `docs/BACKLOG.md`。
 - **模組可完整停用**：`PrtgEnabled` 預設關閉，關閉時夜間擷取與歷史回填完全短路、不建立任何連線。
   唯一的例外是環境探測（見 §6）——它的用途正是在啟用之前先摸清環境，因此只要求位址與認證資訊。
 
@@ -40,10 +40,13 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 - 清理一律依 `created_at`（不是事件時間）並走 `BatchedPrune`，理由同 `lf_reports`：
   重跑舊日期時依事件時間清會讓剛補出來的資料立刻消失。
 - `lf_prtg_sensors.category` / `category_source` 是 sensor 語意分類欄位。
-  每日結構同步後會依 type 對照表**自動填入**未分類者（`category_source` 為 `auto`，
-  分類值見 `PrtgSensorCategories`：traffic／disk／cpu／memory）；對照表沒有的 type 維持 null。
-  **自動填入只填 null，絕不覆蓋既有值**，且**每日結構同步本身絕不寫這兩欄**——
-  人工指定的分類不能被同步或自動分類洗掉。
+  每日結構同步後依 type 對照**自動分類**（`category_source` 為 `auto`，分類值見 `PrtgSensorCategories`：
+  traffic／disk／cpu／memory／availability／hardware）。對照＝設定 `PrtgSensorTypeCategoryOverrides`（§7）優先、
+  再查內建表（`PrtgSensorTypeCategoryMap`，含 `Ping`→availability；`hardware` 尚無內建條目，待實機 type 清單補上）。
+  自動分類的候選是 **category 為 null 或來源為 auto** 的列：對照改了會重新套用，type 被移出兩張表時清回 null；
+  **來源不是 auto 的非 null 分類永不動**（讀取與寫入前各判一次），且**每日結構同步本身絕不寫這兩欄**——
+  人工指定的分類不能被同步或自動分類洗掉。分類的消費端：規則挑選與同裝置合併（§9）、跨來源佐證（§9）、
+  未回報主機提示（§9）、資源守門自動偵測（§12）。
 
 ### 資料品質旗標（`PrtgDataQuality`）
 
@@ -77,14 +80,14 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 只有取消訊號會穿透。
 
 PRTG 路徑的執行順序是：**結構與狀態變更同步 → 主機對應（§4）→ 規則評估（§9）→
-發佈 finding 登錄簿並補追加已落地的主機日 → 觸發式數值取數**。順序不可任意調動，理由見各節。
+跨日標註、抑制標記 → 發佈 finding 登錄簿並補追加已落地的主機日 → 觸發式數值取數**。順序不可任意調動，理由見各節。
 
 finding 的追加**不等取數**：追加的前提是「該主機當日紀錄已落地」，不是「取數完成」。
 分析與 PRTG 並行，紀錄是一台一台寫進去的，所以追加分兩條路——規則評估完成時已落地的
 由 PRTG 路徑掃一次補上，之後才落地的由兩條分析寫入路徑在紀錄剛寫完時就地併入。
 時機、順序與登錄簿細節見 §9。
 
-**回望多日**：排程作業頁「立即執行」指定回望 N 天、且範圍是全部主機時，PRTG 路徑處理昨天往前 N 天（與本機／NetIQ 同一個回望值與保留期上限；指定主機更新與夜間排程只處理昨天）。結構同步與狀態變更只做**一次**；主機對應只重算**最新一天**，較舊的日子沿用「該日或之前最近一日」的既有對應（往回 31 天，常數 `PrtgTriggeredValueFetcher.HostMapLookbackDays`）——拿今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一模一樣；該日之前沒有任何對應時，那一天的 finding 不歸戶並在執行輸出寫明。規則評估、finding 發佈與補追加**逐日**進行；沉默規則（`silent`）只評估最新一天——它依 sensor 現況判定，對過去日評估是把今天的沉默套到過去。觸發式數值取數依策略逐日做（§3a 取數範圍、§3b 策略）。每日結果存進 `BatchRun.PrtgDays`（日期、結局、finding 數、歸戶主機數、有無對應、觸發主機、目標與失敗 sensor），執行總表依資料日期取用（docs/WEB-SPEC.md §9.10）。
+**回望多日**：排程作業頁「立即執行」指定回望 N 天、且範圍是全部主機時，PRTG 路徑處理昨天往前 N 天（與本機／NetIQ 同一個回望值與保留期上限；指定主機更新與夜間排程只處理昨天）。結構同步與狀態變更只做**一次**；主機對應只重算**最新一天**，較舊的日子沿用「該日或之前最近一日」的既有對應（往回 31 天，常數 `PrtgTriggeredValueFetcher.HostMapLookbackDays`）——拿今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一模一樣；該日之前沒有任何對應時，那一天的 finding 不歸戶並在執行輸出寫明。規則評估分兩段：**先逐日評估全部日期並映射成簽章**，再逐日做跨日標註、抑制標記、發佈與補追加——跨日判定需要「本趟較舊日期」的結果，而逐日迴圈由近到遠，單段迴圈會少算（§9 跨日）。沉默規則（`silent`）只評估最新一天——它依 sensor 現況判定，對過去日評估是把今天的沉默套到過去。觸發式數值取數依策略逐日做（§3a 取數範圍、§3b 策略）。每日結果存進 `BatchRun.PrtgDays`（日期、結局、finding 數、歸戶主機數、有無對應、觸發主機、目標與失敗 sensor），執行總表依資料日期取用（docs/WEB-SPEC.md §9.10）。
 
 每日擷取的階段各自獨立 try/catch，任一階段失敗其餘照跑（歷史回填只跑階段 3、4，見 §5）：
 
@@ -525,7 +528,8 @@ passhash 等價於密碼（拿到就能用），因此**儲存等級比照密碼
 | `PrtgFetchConcurrency` | 2 | 對 PRTG 的併發上限（1~8）。建議保守 2、激進 4 |
 | `PrtgBackfillDays` | 30 | 歷史回填天數（1~365） |
 | `PrtgRetentionDays` | 180 | 鏡像資料保留天數（下限、上限與收斂規則見 `docs/DB-SPEC.md` 保留策略） |
-| `PrtgSensorTypeWhitelist` | 8 種分析型 type | 要擷取數值的 sensor type（一行一個，不分大小寫）。**留空＝不限制**。預設不含 Ping（量大且雜訊高，需要時自行加入） |
+| `PrtgSensorTypeWhitelist` | 8 種分析型 type | 要擷取**數值**的 sensor type（一行一個，不分大小寫）。**留空＝不限制**。預設不含 Ping（數值量大且雜訊高）。**只管數值取數與快照，不影響規則評估的母體**（§9） |
+| `PrtgSensorTypeCategoryOverrides` | 空 | sensor type 分類補充對照（一行一個 `type=分類`，不分大小寫；分類為 traffic／disk／cpu／memory／availability／hardware）。優先於內建對照，下次結構同步後生效（§2）。存檔以 `PrtgSensorTypeCategoryMap.ParseOverrides` 驗證，錯誤列出行號與合法分類；分類值一律存小寫。**會連帶改變資源守門自動偵測**（§12） |
 | `PrtgValueFetchScope` | `triggered` | 數值取數的主機範圍：`triggered`／`all-mapped`／`triggered-plus-list`（§3a）。`all-mapped` 要求白名單非空。畫面上與 `PrtgEnabled` 併成同一個四選一下拉，「關閉」不是合法值、只代表 `PrtgEnabled=false` |
 | `PrtgValueFetchExtraHosts` | 空 | `triggered-plus-list` 模式額外納入的主機名稱（一行一個，不分大小寫） |
 | `PrtgFetchStrategy` | `conservative` | 取數策略：`conservative`／`aggressive`（§3b）。決定快照間隔與夜間是否逐顆查詢歷史值 |
@@ -595,7 +599,8 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET prtg-fetch-scope/estimate?scope=` | 取數範圍的規模估算（§3a）：回該模式涵蓋的主機／device／sensor 數，另回快照目標數、每日列數、保留期總列數與警告（§3b） |
 | `GET prtg-export`、`POST prtg-import` | 鏡像資料匯出／匯入（§10） |
 
-主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor）；
+主機明細的 PRTG 區塊另走 `GET /api/host-detail/{hostId}/prtg`（回該主機對應的 device 與其 sensor；device 帶名稱、sensor 帶 PRTG 原始狀態與分類，
+畫面狀態欄依前綴上色並顯示原字串，外部字串一律 `textContent`）；
 它不經 `RecordDetailQueryService`，**可見性檢查在 controller 自己做**（同表其他端點是在 service 內做），
 不可見的主機回 404（與全站慣例一致：不洩漏主機存在與否）。
 
@@ -605,19 +610,48 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 ## 9. 規則第一階（狀態變更型）
 
 分析層的第一步，只用**狀態變更**這份既有資料（夜間單次 API 呼叫即取得，成本低），
-不需要數值基線。四條規則逐 sensor／device 判定，門檻與啟用狀態存在規則維護頁的 `prtg` 平台：
+不需要數值基線。規則存在規則維護頁的 `prtg` 平台，**規則庫是執行期唯一的真相**：
+門檻、分類、嚴重度、「重大」旗標、描述與知識庫全部取自命中的那條規則（`PrtgRuleCatalog` 只提供 seed 預設值）。
 
-| 規則代碼 | 語意 | 預設門檻 | 分類／嚴重度 |
-|---|---|---|---|
-| `down` | sensor 進入 Down 且日終未恢復 | 持續 ≥ 60 分鐘 | Service／High（**提升日風險**） |
-| `flapping` | 一日內 Down↔Up 反覆 | ≥ 5 次往返 | Service／Medium |
-| `warning` | Warning 狀態累計 | ≥ 4 小時 | Resource／Medium |
-| `silent` | device 底下全部未暫停 sensor 皆 Unknown 或無狀態 | 整日 | Service／Medium |
+### 內建規則（seed v7）
+
+| Id | 代碼 | 適用分類 | 分類／嚴重度／重大 | 預設門檻 | 對日風險 |
+|---|---|---|---|---|---|
+| `builtin-prtg-down` | down | 全部 | Service／High／否 | 60 分 | 中 |
+| `builtin-prtg-down-availability` | down | availability | Service／High／**是** | 30 分 | 高 |
+| `builtin-prtg-down-hardware` | down | hardware | Hardware／High／否 | 60 分 | 中 |
+| `builtin-prtg-flapping` | flapping | 全部 | Service／Medium／否 | 5 次往返 | 不變 |
+| `builtin-prtg-warning` | warning | 全部 | Resource／Medium／否 | 240 分 | 不變 |
+| `builtin-prtg-warning-disk` | warning | disk | Storage／High／否 | 240 分 | 中 |
+| `builtin-prtg-warning-hardware` | warning | hardware | Hardware／High／否 | 120 分 | 中 |
+| `builtin-prtg-silent` | silent | （不可指定） | Service／Medium／否 | 整日 | 不變 |
+
+語意：`down`＝進入 Down 且日終未恢復、持續達門檻；`flapping`＝一日內 Down↔Up 往返達門檻；
+`warning`＝Warning 累計達門檻；`silent`＝device 底下全部未暫停 sensor 皆 Unknown 或無狀態。
+availability 的 30 分與 hardware warning 的 120 分是**暫定值**，待校準（§11）。
+描述文字不嵌門檻數字——管理者改門檻後數字就會說謊，門檻由規則頁另列。
+
+### 規則怎麼挑、母體是誰
+
+- **母體＝全部未暫停 sensor**（`GetSensorStatuses`），**不受取數白名單限制**。白名單是為數值量體設計的、
+  預設不含 Ping，綁在規則上會讓最直接的失聯訊號永遠抓不到；狀態變更本來就全量抓，放寬不增加 PRTG 負擔。
+  silent 的分母因此也是 device 底下全部未暫停 sensor。
+- **依分類挑規則**（`PrtgRuleEvaluator` 內唯一一份）：規則欄位 `PrtgSensorCategory`（null＝全部分類）。
+  逐 sensor、逐代碼挑：分類相符（不分大小寫）的規則優先，沒有才用不限分類的規則；候選多條取 Id 字典序最小，
+  並對每個「代碼＋分類」組合在執行輸出警告一次；沒有候選就不評估。sensor 分類為 null 只會挑到不限分類的規則。
+  silent 只用不限分類的規則（`RuleValidator` 禁止 silent 指定分類，也禁止非 prtg 規則填這欄）。
+- **同裝置合併**：device 當日有 availability 分類 sensor 的 `down` 時，同裝置**非** availability sensor 的
+  `down`／`flapping` 不另外發出，筆數附在 objid 最小那筆 availability down 的 Detail
+  （「同裝置另有 N 顆 sensor 同時 Down 或震盪（已合併）」）。warning、silent 與 availability 自己的 finding 不受影響；
+  沒有 availability down 的 device 不合併。分類尚未算出（null）的 sensor 不能當合併主筆。
+- **已於 PRTG 確認**：`Down (Acknowledged)` 仍算 Down（持續時間、往返照算），但 finding 標記已確認、
+  **不帶「重大」旗標**、Detail 尾端加「已於 PRTG 確認」——PRTG 操作者已接手的事不再每天判高風險日。
+  `Down (Partial)` 不算確認。判定收斂在 `PrtgSensorStatuses.IsAcknowledged`。
 
 判定細節（皆為踩過的坑，改動前先讀）：
 
 - **狀態字串是 PRTG 原值、未正規化**，會出現 `Down (Acknowledged)`／`Down (Partial)` 等變體，
-  因此一律**前綴比對且不分大小寫**，判定收斂在 `PrtgSensorStatuses` 的四個方法。
+  因此一律**前綴比對且不分大小寫**，判定收斂在 `PrtgSensorStatuses`。
 - **`prev_status` 恆為 null 不可依賴**：持續時長與往返次數只能靠同一 sensor 依時間排序的相鄰列推導。
 - 每日擷取只保留當天的狀態變更，因此 **`down` 與 `warning` 都必須回查前一日的最後一筆**
   取得當日零時的起始狀態；持續時間**自當日零時起算**（不是從前一日進入的時點）。
@@ -625,27 +659,98 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 - `silent` 的判定來源是 `lf_prtg_sensors.status`（結構同步的現況值），**不是狀態變更表**——
   健康的 sensor 本來就整天零筆變更，用變更表判定會讓全機房每天都被判為沉默。
   device 底下沒有未暫停 sensor 時不算沉默。
-- 規則只看**白名單內**的 sensor（§7），與數值取數同一個母體。
-- **既有部署升級後規則庫裡還沒有這四條規則**——它們是內建種子（seed v6），要到規則維護頁的升級橫幅
-  套用內建規則更新才會出現。在那之前夜間批次會輸出「規則庫尚無啟用中的 PRTG 規則」並跳過評估，
-  **不會靜默產生零 finding**。新增內建規則時必須遞增 `KnownIssueSeed.Version`，否則橫幅不會出現。
+- **既有部署升級後要到規則維護頁的升級橫幅套用內建規則更新**才會拿到 seed v7 的規則。
+  規則庫沒有任何啟用中的 PRTG 規則時，夜間批次輸出「規則庫尚無啟用中的 PRTG 規則」並跳過評估，
+  **不會靜默產生零 finding**。新增或修改內建規則時必須遞增 `KnownIssueSeed.Version`，否則橫幅不會出現；
+  seed 比對（`RuleImportPlanner.ContentEqualExceptEnabled`）涵蓋全部內容欄位，由反射測試守住。
+
+### 跨日標註、升級與長期 Down
+
+PRTG 規則是單日判定，跨日語意在 PRTG 路徑自己補（`PrtgCrossDay`，不進 `TrendAnalyzer`——
+`ChannelCoverage.WasRead` 對 PRTG 頻道會讓它永遠停在暖身期）。以 **EventKey 為單位、不限主機**
+（同一顆 sensor 換了對應主機仍算同一顆），看當日之前 14 天：
+
+- 歷史＝`lf_top_issues` 的命中日期（`GetPrtgFindingHitDates`，EventKey 每批最多 500 個，避開 SQL Server 參數上限）
+  ∪ 本趟較舊日期的已歸戶 finding。**本趟有評估的日期只認本趟結果**——重跑時資料庫裡那幾天是上一趟寫的，
+  門檻或規則改過後可能已不成立。
+- `N`＝14 日內含當日的命中次數，`M`＝含當日往回連續命中的天數。`N ≥ 2` 時 Detail 加「近 14 日第 N 次，連續第 M 日」；首次不加字。
+- **升級**：`M ≥ 3` 或 `N ≥ 3` 時嚴重度升一級（封頂 High，不動「重大」旗標）——持續三天的 disk warning 因此會拉「中」。
+- **長期 Down**：`down` 且 `M ≥ 14` 視為沒人移除的死 sensor——關掉「重大」、嚴重度封頂 Medium（**不再拉日風險**）、
+  Detail 加「已連續 M 日，建議在 PRTG 暫停該 sensor 或建立抑制」，且不做上一條升級。
+- 常數在 `PrtgRuleCatalog`（`CrossDayWindowDays`／`EscalateConsecutiveDays`／`EscalateHitsInWindow`／`ChronicDownDays`），暫定待校準。
+- 查詢失敗只印警告、改用本趟資料判定，照常發佈。
+
+### 抑制
+
+規則型（RuleId）與簽章型（`IssueSignatureKey`）抑制對 PRTG finding 生效：PRTG 路徑在**發佈登錄簿之前**
+依該主機（名稱＋群組）的有效抑制標記 `Suppressed`，與事件層共用 `SuppressionFilter.MarkSuppressed`，
+兩條追加路徑拿到的都是已標記簽章。被抑制的 finding **仍追加**（抑制是不吵、不拉風險，不是不存在），
+不進 AI prompt 的 PRTG 段。案件掛接與郵件摘要對已抑制問題的處理與事件層相同（兩者皆不另外過濾）。
+
+規則頁的抑制影響面預覽對 prtg 規則依 EventKey 前綴 `prtg:{代碼}:` 在目標主機上計數。
+`lf_top_issues` 沒有規則 Id 與分類欄，**分類規則的預覽數字是「同代碼全部分類」的上限**。
 
 ### finding 如何進入既有全鏈
 
 命中的 finding 映射成問題簽章寫入當日該主機的 `lf_top_issues`，
 處理狀態、問題排行、郵件通知因此自動涵蓋它，**不另建 finding 表與獨立 UI**：
 
-- `LogName` / `Source` 皆為 `PRTG`、`EventId = 0`、`EventKey = prtg:{規則代碼}:{objid}`
-  （同 Linux 規則的「EventId=0 ＋ EventKey」模式）。
-- **`EventKey` 不得含 `|`**：處理狀態鍵 `IssueSignatureKey` 以 `|` 分段解析，
-  含 `|` 會讓 finding 靜默脫離處理狀態鏈。長度上限 255。
-- 分類與嚴重度由 PRTG 專屬對照表給定，**不走 `KnownIssueCatalog` 的 Classify**——
-  它只認 windows／linux 平台，PRTG 走它會讓 `EventKey` 被清空、finding 降成 Other。
+- `LogName` 為 `PRTG`、`Source` 為 `PRTG:{規則代碼}`、`EventId = 0`、`EventKey = prtg:{規則代碼}:{objid}`。
+  **判定「是不是 PRTG finding」一律看 `LogName`**（`PrtgFindingMapper.IsPrtg`）；`Source` 帶代碼讓問題排行
+  依規則分列（聚合鍵是 `(Source, EventId)`，全部塞 `PRTG` 會讓所有規則、所有 sensor 塌成一列），
+  規則代碼由 `PrtgFindingMapper.TryGetRuleCode` 解出。
+- `RuleId`＝命中規則的 Id，詳情頁的知識庫面板據此反查；問題排行與紀錄清單的白話說明依 `Source` 解出代碼找規則
+  （恰一條用它；多條只認 `builtin-prtg-{代碼}`；都沒有回 null，不猜）。
+- `SampleMessages[0]`＝Detail：帶 device 名稱、sensor 名稱、type 與量值（名稱查不到時以 objid 代替），
+  跨日標註與合併筆數附在尾端。簽章另帶 `PrtgSensorCategory`（device 層的 silent 為 null），供跨來源佐證使用。
+- `Magnitude`（分鐘數／往返次數）**不寫進 `Count`**（恆 1）——整日 Down 是 1440，會在排行的次數維度壓過真實事件。
+- **`EventKey` 不得含 `|`**：處理狀態鍵 `IssueSignatureKey` 以 `|` 分段解析。長度上限 255。
+- 分類與嚴重度取自規則物件，**不走 `KnownIssueCatalog.Classify`**——它只認 windows／linux 平台，PRTG 走它會讓 `EventKey` 被清空。
 - **只對「當天已有分析紀錄」的主機追加**：硬造一筆只有 PRTG finding 的紀錄會讓
   「未回報主機」「覆蓋缺口」等既有統計失真。沒被分析涵蓋的主機，其 finding 留待隔日。
 - 詳情已被保留期精簡（`detail_pruned`）的紀錄不追加，避免把精簡後的殘骸寫回。
-- 追加依 `EventKey` 去重，同一天重跑不產生重複。
-- **命中主機會回饋觸發式取數的佇列**（§3a）——這是「PRTG 規則驅動加強取數」的閉環。只在激進策略成立；保守策略夜間不逐顆查詢（§3b），命中主機的數值來自快照。
+- 追加依 `EventKey` 去重，同一天重跑不產生重複；**既有 finding 不回寫**（重跑同日不會更新舊 finding 的 Detail 或 RuleId）。
+- **命中主機會回饋觸發式取數的佇列**（§3a）——只在激進策略成立；保守策略夜間不逐顆查詢（§3b），命中主機的數值來自快照。
+
+每日執行輸出一行計數：「finding N 筆（其中已抑制 a、已於 PRTG 確認 b、已合併 c、跨日升級 d、長期 Down e 筆）」，
+補追加階段另計跨來源佐證筆數——每道降噪各吃掉多少要看得出來。
+
+### 跨來源佐證
+
+同一主機日事件日誌與 PRTG 兩個獨立來源同時示警時，在 PRTG finding **追加時**判定（`PrtgCorroboration`，
+兩條追加路徑共用），寫進紀錄既有的 `CorrelationAlerts`／`CorrelationAlertRefs`，走既有的關聯抑制
+（`RuleSuppression.TargetType=Correlation`）與「重大」語意。**不把 PRTG 評估搬到分析之前**，失敗隔離與並行不變。
+
+| PatternId | 事件側 | PRTG 側（未抑制） | 風險 |
+|---|---|---|---|
+| `prtg-storage-corroborated` | 儲存 I/O 訊號（與【儲存連鎖】同一組判定） | hardware 分類的 warning 或 down | 高（重大） |
+| `prtg-capacity-corroborated` | `srv` 2013（磁碟空間即將不足） | disk 分類的 warning | 中 |
+| `prtg-outage-corroborated` | 非預期關機（Kernel-Power 41／EventLog 6008，同【儲存→當機】判定） | availability 分類的 down 或 flapping | 中 |
+
+- **刻意配對**：磁碟 I/O 錯誤（硬體在壞）配硬體健康 sensor、空間不足配磁碟可用空間 sensor。
+  「I/O 錯誤＋空間快滿」是兩件不相干的事，不當雙重確認。
+- 事件側與 PRTG 側都只看未抑制的簽章；已於 PRTG 確認的 finding 仍參與。
+- 冪等：同 PatternId 已存在（含已抑制清單）就不再加。模式被抑制時文字進 `SuppressedCorrelationAlerts`、不影響風險。
+- 資料列 `HasCorrelation` 同步更新；風險只升不降，由低升為非低時比照下節標記待補 AI。
+- 只在有新 finding 追加時判定——既有紀錄不回溯，重跑同一天若 finding 早已追加也不補判。
+- `hardware` 內建對照尚無條目，環境未設補充對照時儲存故障模式自然不命中（不另警告）。
+
+### 未回報主機的 PRTG 提示
+
+主機清單的「未回報」主機（判定唯一一份：`HostAdminService.IsSilent`，儀表板計數卡共用）依鏡像標出 PRTG 現況，
+只讀鏡像、不打 PRTG，PRTG 未啟用時不算：
+
+| 值 | 判定（該主機 `ok` 對應的全部 device、未暫停 sensor 合併看） | 畫面文字 |
+|---|---|---|
+| `down` | 有 availability 分類 sensor 時只看它們：任一 Down；沒有 availability 時任一 Down | PRTG：主機失聯 |
+| `unknown` | 同上範圍全部 Unknown 或無狀態（含一顆都沒有） | PRTG：無資料 |
+| `up` | 其餘 | PRTG：主機在線，問題在日誌取數端 |
+| `no-map` | 沒有 `ok` 對應 | 無 PRTG 對應 |
+
+- 措辭只陳述事實：PRTG 的 Up 只證明主機在線，未回報原因可能在 NetIQ、本機代理或主機對應。
+- 鏡像結構同步時間超過 2 天（或從未同步）時文字加「（鏡像過期）」。
+- 清單只算本頁、sensor 狀態一次查回（device 每批最多 500 個）；儀表板計數卡的提示改為
+  「沒回報 ≠ 沒問題；其中 N 台 PRTG 顯示失聯」。儀表板數字在整包摘要快取內，PRTG 鏡像寫入不推進版本戳，**最多落後一個快取 TTL**。
 
 ### finding 對日風險與 AI 的影響
 
@@ -653,9 +758,9 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 | finding | 風險 |
 |---|---|
-| 任一未被抑制且帶 `ElevatesDayRisk`（目前只有 `down`） | 高 |
-| 任一未被抑制且嚴重度為 High | 中 |
-| 其餘（`flapping`／`warning`／`silent` 皆為 Medium） | 不改變 |
+| 任一未被抑制且帶 `ElevatesDayRisk`（seed v7 只有 availability 的 down；已於 PRTG 確認與長期 Down 不帶） | 高 |
+| 任一未被抑制且嚴重度為 High（含跨日升級後的） | 中 |
+| 其餘 | 不改變 |
 
 - **只升不降**：一律取 `RiskLevels.MoreSevere(既有, PRTG 推導)`。PRTG 是輔助訊號、看不到事件層的
   證據，絕不用它壓低既有等級。**AI 回寫也是只升不降**：AI 撿到紀錄的時點與 PRTG 追加可能交錯，
@@ -666,9 +771,10 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
   內容被無謂重跑。深析報告由 AI 補寫時依既有機制重建，不另做。
 - **既有紀錄不回溯**：升級後既有紀錄維持原風險，下次追加（重跑或次日）才生效。一次性回填會讓
   歷史風險日突然變多，管理者無從分辨是新問題還是舊資料被重算。
-- AI prompt 另有獨立的【PRTG 監控訊號】區塊，**只餵已判定的 finding、不餵原始數值**
+- AI prompt 另有獨立的【PRTG 監控訊號】區塊，**只餵已判定、未抑制的 finding、不餵原始數值**，每列「[嚴重度] 規則描述：Detail」
   （原始數值的解讀屬於特徵計算層，見 `docs/BACKLOG.md`；AI 只把已確定的結論翻成白話）。
   finding 不混進事件清單——它們的 `EventId` 恆為 0，混在一起會被當成一筆讀不出意義的事件。
+  體檢（DETECTION-SPEC 體檢節）同樣把窗口內的 PRTG finding 抽成獨立段，依 EventKey 逐 sensor 列「窗口內 N 天命中」，最多 20 行。
 
 ### 追加時機與 finding 登錄簿
 
@@ -683,6 +789,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 - **登錄簿按日期保存，追加時比對**：兩條寫入路徑都在**逐日迴圈**裡呼叫；PRTG 逐日評估並逐日發佈，某日沒有發佈時該日一律拿到空清單。
   少了這道比對，回補多天缺漏日時每一天都會被掛上同一批 finding，且 `EventKey`
   （`prtg:{規則代碼}:{objid}`）不含日期、去重完全生效，重跑也不會自癒。
+- **發佈時一併帶上每台主機的關聯抑制集合**（`SuppressedPatternIdsFor`），兩條追加路徑做跨來源佐證時用同一份，記憶體與資料庫才不會分岔。
 - **資料庫端不寫時記憶體端也不改**：查無該主機當日列、或詳情已被保留期精簡時，
   資料庫整段早退——記憶體那份跟著早退，否則呼叫端用來組執行摘要的風險等級會與資料庫分岔。
 
@@ -781,7 +888,10 @@ PRTG 維護頁因此提供跨後端的資料通道：
   (a) 近 56 天每規則每日命中數（依 `lf_top_issues` 的 EventKey 前綴分組：該表沒有 rule_id 欄，
   且 PRTG finding 的 EventId 恆為 0，既有聚合會讓四條規則塌成一格）；
   (b) **以最低門檻（Down 1 分鐘／flap 1 次／Warning 1 分鐘）逐日重新評估**得到的每 sensor-日
-  magnitude 樣本，以及各規則的 P50／P90／P99 摘要；(c) 四條規則的門檻現值。
+  magnitude 樣本，以及各規則代碼的 P50／P90／P99 摘要；(c) 規則庫全部 PRTG 規則的門檻現值（`CurrentRules`，帶 `SensorCategory`）。
+  (b) 用三條與規則庫無關的合成規則評估（升級後尚未套用 seed、或管理者停用某條時分佈仍算得出來），
+  母體與夜間規則評估相同（全部未暫停 sensor），且**不做同裝置合併**（分佈要看每顆 sensor 自己的量值）；
+  摘要裡的「現值」取不限分類那條規則，分類規則的門檻看 `CurrentRules` 逐條對照。
   (b) 是校準的主要依據——現行門檻下的命中數只回答「照目前設定會報幾次」，要決定門檻該設多少
   必須看底層分佈（有多少 sensor-日的 Down 持續 30 分鐘、多少持續 120 分鐘）。門檻取 1 而不是 0：
   flap 與 warning 的判定是 `>=`，設 0 會讓當日零事件的 sensor 也算命中。
@@ -818,6 +928,7 @@ PRTG 維護頁因此提供跨後端的資料通道：
 3. PRTG 主機另有 fallback：位址對不到 device、或 `PrtgUrl` 根本解析不出 host 時，改找底下有 `corehealth` type sensor 的 device
    ——PRTG 的 Core Health sensor 只掛在 core server 自己身上。
 4. 取命中 device 底下**未暫停**且 `category` 為 `cpu`／`memory` 的 sensor；PRTG 主機另加 corehealth。
+   分類來自自動分類（§2），**`PrtgSensorTypeCategoryOverrides` 改了會連帶改變這裡的偵測結果**。
 
 **一個 sensor 都找不到時回空清單並警告，不擲例外。**
 

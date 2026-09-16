@@ -77,7 +77,7 @@
 | `Scope` | 生效範圍，此版本只接受 `"all"`，為未來多主機/群組規則卡位（見下） |
 | `MatchAllEventIds` | 顯式宣告「不看 EventIds，來源命中就算」，取代舊版「EventIds 空陣列＝全比對」的隱含語意 |
 | `MatchFilter` | 為未來「同規則同主機下只關閉部分比對範圍」卡位，此版本必須為 `null` |
-| `Platform` | `windows`（預設）／`linux`，決定用哪組比對欄位（見下） |
+| `Platform` | `windows`（預設）／`linux`／`prtg`，決定用哪組比對欄位（見下；prtg 的比對欄位是 `PrtgRuleCode`／`PrtgThreshold`／`PrtgSensorCategory`，語意見 docs/PRTG-SPEC.md §9） |
 
 ### 雙平台（docs/LINUX-RULES.md）
 

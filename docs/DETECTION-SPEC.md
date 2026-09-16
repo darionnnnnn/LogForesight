@@ -50,6 +50,12 @@
 | 【崩潰循環→資源耗盡】 | 服務高頻異常終止（≥100 次）＋資源耗盡（2004）同日 | 崩潰重啟循環正在拖垮整機 |
 | 【時間偏移→驗證失敗】 | 時間同步失敗＋登入失敗同日 | 時鐘偏移造成的假性攻擊訊號（仍需排除真攻擊） |
 | 【密碼噴灑】 | 同一來源對 ≥10 個相異帳號登入失敗，且每帳號 ≤3 次 | 刻意避開帳號鎖定門檻的噴灑特徵；Windows（4625/4771）與 Linux 認證失敗簽章共用同一判定，單次最多回報 5 個來源 |
+| 【儲存故障雙重確認】※PRTG | 儲存 I/O 訊號＋同日 PRTG 硬體健康 sensor Warning／Down | 兩個獨立來源一致，硬體故障可信度高（重大） |
+| 【磁碟容量雙重確認】※PRTG | srv 2013 磁碟空間即將不足＋同日 PRTG 磁碟可用空間 sensor Warning | 空間耗盡的兩方證據 |
+| 【失聯獲 PRTG 證實】※PRTG | 非預期關機（41/6008）＋同日 PRTG 連通性 sensor Down／震盪 | 排除日誌誤報 |
+
+※PRTG 三個模式**不在 `CorrelationAnalyzer` 內**：它們在 PRTG finding 追加進當日紀錄時由 `PrtgCorroboration` 判定
+（事件側沿用本表【儲存連鎖】與【儲存→當機】的同一組判定），配對規則與抑制語意見 docs/PRTG-SPEC.md §9「跨來源佐證」。
 
 ※ 以「4625 大量登入失敗」為錨點的四個模式，錨點判定收斂在
 `CorrelationAnalyzer.IsBruteForceAnchor`：除次數 ≥10 外還要求 `LogName=Security`、
@@ -59,7 +65,7 @@
 執行輸出以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
 
 **`PatternId`**（`Analysis/CorrelationPatternIds.cs`）：上表 17 列共 18 個模式 Id（【防護遭關閉→惡意程式】一列含同日與跨日兩個 Id；【密碼噴灑】跨平台共用）
-＋ Linux 面 2 個模式（SSH 破解得手／不確定，見 docs/LINUX-RULES.md）合計 20 個模式，各自有
+＋ Linux 面 2 個模式（SSH 破解得手／不確定，見 docs/LINUX-RULES.md）＋ PRTG 跨來源佐證 3 個模式，合計 23 個模式，各自有
 穩定不隨文字說明變動的 Id 常數。用途是**關聯模式抑制**的比對鍵（`RuleSuppression.TargetType=
 Correlation`，見 docs/RULES-SPEC.md「抑制目標四型」）——過去關聯訊號只能整層 log 分析器一起
 開關，沒有針對單一模式的抑制路徑；`CorrelationFinding.PatternId` 現在是 `public required
@@ -289,6 +295,8 @@ docs/archive/HISTORY.md #1）。
 **PRTG finding 會單向上調日風險**：PRTG 規則命中的 finding 追加進當日紀錄時，
 依同一套語意推導出一個等級並取 `MoreSevere`——只升不降，因為 PRTG 是輔助訊號、
 看不到事件層的證據。風險依據記為 `prtg:{規則代碼}`；由低升為非低時會標記待補 AI 判讀。
+seed v7 起只有連通性分類的 down 帶「重大」；已於 PRTG 確認、長期 Down 與被抑制的 finding 不拉日風險，
+重複或連續出現的 finding 嚴重度升一級。
 細節與對照表見 docs/PRTG-SPEC.md §9。
 
 ### 監控的危險訊號清單
@@ -548,7 +556,8 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
   （`WeeklyCheckupResult.Completed = false`），讓下次執行的補跑機制重試，而不是把這一期的
   體檢額度用掉。
 - **輸入塑形**：不是把窗口內歷史原樣塞給模型——程式先彙整成「每個問題簽章一行、含期內逐日
-  次數」，依嚴重度取前 40 行，控制 prompt 在小模型可負擔的範圍內；同時帶入上次體檢結論，
+  次數」，依嚴重度取前 40 行，控制 prompt 在小模型可負擔的範圍內；PRTG finding 不混進事件列，
+  另成【PRTG 監控訊號】段（依 EventKey 逐 sensor 一行、窗口內命中天數與最近明細、排除已抑制、最多 20 行）；同時帶入上次體檢結論，
   讓模型知道「上次說要觀察的那件事後來如何」。
 - **輸出**：結論寫入當日歷史紀錄的 `WeeklyCheckup` 欄位；**有發現才**產生報告全文
   （`lf_reports`，種類 `weekly_checkup`，掛在體檢基準日），無累積性異常的期間不產生報告。
