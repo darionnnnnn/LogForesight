@@ -22,7 +22,9 @@ public class PrtgFindingsRegistryTests : IDisposable
 
     private static LogIssueSignature Finding(long sensorObjid, string code = "down")
     {
-        var rule = SeedRules.TryGetValue($"builtin-prtg-{code}", out var r)
+        // down 取連通性分類規則：seed v7 起只有它帶「重大」旗標，本檔的風險上調測試要的是會拉「高」的那條
+        var ruleId = code == "down" ? "builtin-prtg-down-availability" : $"builtin-prtg-{code}";
+        var rule = SeedRules.TryGetValue(ruleId, out var r)
             ? r
             : new KnownIssueRule { Id = $"test-{code}", PrtgRuleCode = code, Description = "Test" };
         return PrtgFindingMapper.ToSignature(new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60, rule), DateTime.Today);

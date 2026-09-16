@@ -33,7 +33,8 @@ public class PrtgFindingMapperTests
         // down
         Assert.Equal(IssueCategory.Service, downSig.Category);
         Assert.Equal(IssueSeverity.High, downSig.Severity);
-        Assert.True(downSig.ElevatesDayRisk);
+        // seed v7：不限分類的 down 不再是「重大」，只有連通性分類的 down 會拉高日風險
+        Assert.False(downSig.ElevatesDayRisk);
         Assert.Equal(downRule.Description, downSig.KnownIssue);
         Assert.Equal("builtin-prtg-down", downSig.RuleId);
         Assert.Equal("PRTG:down", downSig.Source);

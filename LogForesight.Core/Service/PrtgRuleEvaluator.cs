@@ -65,22 +65,57 @@ public static class PrtgRuleEvaluator
     {
         var findings = new List<PrtgFinding>();
         var duplicateWarnings = new List<string>();
-        var activeRules = new Dictionary<string, KnownIssueRule>(StringComparer.OrdinalIgnoreCase);
 
-        var ruleGroups = rules
+        var sensorCategories = sensorStatuses
+            .GroupBy(s => s.Objid)
+            .ToDictionary(g => g.Key, g => g.First().Category);
+
+        // 同「代碼＋適用分類」有多條規則：挑選時一律取 Id 字典序最小，這裡每組警告一次。
+        // 刻意在評估前對整份規則清單判定，而不是等某顆 sensor 用到才警告——規則庫設定有歧義這件事
+        // 與當天有沒有 sensor 狀態變更無關，沒有變更的日子也要看得到。
+        var duplicateGroups = rules
             .Where(r => !string.IsNullOrWhiteSpace(r.PrtgRuleCode))
-            .GroupBy(r => r.PrtgRuleCode!, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var group in ruleGroups)
+            .GroupBy(r => (Code: r.PrtgRuleCode!.ToLowerInvariant(), Category: r.PrtgSensorCategory == null ? null : r.PrtgSensorCategory.ToLowerInvariant()))
+            .Where(g => g.Count() > 1)
+            .OrderBy(g => g.Key.Code, StringComparer.Ordinal)
+            .ThenBy(g => g.Key.Category, StringComparer.Ordinal);
+        foreach (var group in duplicateGroups)
         {
-            var sorted = group.OrderBy(r => r.Id, StringComparer.Ordinal).ToList();
-            var selected = sorted[0];
-            activeRules[group.Key] = selected;
+            var selectedId = group.OrderBy(r => r.Id, StringComparer.Ordinal).First().Id;
+            // 不限分類沿用既有文字（pipeline 與其測試依此比對），分類規則才標出分類
+            var label = group.Key.Category == null ? "" : $"（分類 {group.Key.Category}）";
+            duplicateWarnings.Add($"規則代碼 {group.Key.Code}{label} 有多條啟用規則，採用 {selectedId}");
+        }
 
-            if (sorted.Count > 1)
+        // 依分類挑規則（規則挑選的唯一實作）：分類相符者（不分大小寫）優先，沒有相符者才用不限分類
+        // （PrtgSensorCategory == null）的規則；候選多條取 Id 字典序最小；沒有候選回傳 null＝不評估。
+        // sensor 分類為 null 時只會挑到不限分類的規則。結果依「代碼＋分類」快取，逐 sensor 呼叫不重掃規則清單。
+        var selectionCache = new Dictionary<(string Code, string? Category), KnownIssueRule?>();
+        KnownIssueRule? SelectRule(string code, string? sensorCategory)
+        {
+            var categoryKey = sensorCategory == null ? null : sensorCategory.ToLowerInvariant();
+            if (selectionCache.TryGetValue((code, categoryKey), out var cached))
             {
-                duplicateWarnings.Add($"規則代碼 {group.Key} 有多條啟用規則，採用 {selected.Id}");
+                return cached;
             }
+
+            var sameCode = rules
+                .Where(r => string.Equals(r.PrtgRuleCode, code, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var candidates = categoryKey == null
+                ? new List<KnownIssueRule>()
+                : sameCode.Where(r => string.Equals(r.PrtgSensorCategory, categoryKey, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (candidates.Count == 0)
+            {
+                candidates = sameCode.Where(r => r.PrtgSensorCategory == null).ToList();
+            }
+
+            var selected = candidates.Count == 0
+                ? null
+                : candidates.OrderBy(r => r.Id, StringComparer.Ordinal).First();
+
+            selectionCache[(code, categoryKey)] = selected;
+            return selected;
         }
 
         var dayStart = day.Date;
@@ -116,9 +151,10 @@ public static class PrtgRuleEvaluator
             }
 
             var allSensorChanges = group.OrderBy(c => c.ChangedAt).ToList();
+            var sensorCategory = sensorCategories.TryGetValue(sensorObjid, out var knownCategory) ? knownCategory : null;
 
             // 1. 持續 Down（RuleDown）
-            if (activeRules.TryGetValue(RuleDown, out var downRule))
+            if (SelectRule(RuleDown, sensorCategory) is { } downRule)
             {
                 var relevantChanges = allSensorChanges.Where(c => c.ChangedAt < dayEnd).ToList();
                 if (relevantChanges.Count > 0)
@@ -160,7 +196,7 @@ public static class PrtgRuleEvaluator
                 .ToList();
 
             // 2. flapping（RuleFlapping）
-            if (activeRules.TryGetValue(RuleFlapping, out var flapRule))
+            if (SelectRule(RuleFlapping, sensorCategory) is { } flapRule)
             {
                 var flapCount = 0;
                 var inDown = false;
@@ -199,7 +235,7 @@ public static class PrtgRuleEvaluator
             }
 
             // 3. 持續 Warning（RuleWarning）
-            if (activeRules.TryGetValue(RuleWarning, out var warnRule))
+            if (SelectRule(RuleWarning, sensorCategory) is { } warnRule)
             {
                 var warningMinutes = 0;
                 var priorChanges = allSensorChanges.Where(c => c.ChangedAt < dayStart).ToList();
@@ -254,7 +290,8 @@ public static class PrtgRuleEvaluator
 
         // 4. 沉默 device（RuleSilent）
         // 沉默的依據是 sensor 目前狀態，不是狀態變更；對過去日評估等於把今天的沉默套到過去，是假訊號。
-        if (includeSilent && activeRules.TryGetValue(RuleSilent, out var silentRule))
+        // silent 以 device 為單位，只用不限分類的規則（傳入 null 分類即只會挑到 PrtgSensorCategory == null 者）
+        if (includeSilent && SelectRule(RuleSilent, null) is { } silentRule)
         {
             var deviceGroups = sensorStatuses.GroupBy(s => s.DeviceObjid);
             foreach (var group in deviceGroups)
@@ -281,9 +318,6 @@ public static class PrtgRuleEvaluator
             }
         }
 
-        var sensorCategories = sensorStatuses
-            .GroupBy(s => s.Objid)
-            .ToDictionary(g => g.Key, g => g.First().Category);
         var mergedCount = FoldByDevice(findings, sensorCategories);
 
         var orderedFindings = findings

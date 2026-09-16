@@ -201,13 +201,13 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為6()
+    public void 種子版本為7()
     {
-        Assert.Equal(6, KnownIssueSeed.Version);
+        Assert.Equal(7, KnownIssueSeed.Version);
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共4條_總計96條()
+    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共8條_總計100條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
@@ -216,8 +216,8 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.Equal(64, windows.Count);
         Assert.Equal(28, linux.Count);
-        Assert.Equal(4, prtg.Count);
-        Assert.Equal(96, rules.Count);
+        Assert.Equal(8, prtg.Count);
+        Assert.Equal(100, rules.Count);
     }
 
     [Fact]
@@ -475,19 +475,19 @@ public class KnownIssueCatalogTests : IDisposable
             .ToList();
 
     [Fact]
-    public void 種子含四條PRTG規則且全部通過RuleValidator()
+    public void 種子含八條PRTG規則且全部通過RuleValidator()
     {
         var rules = KnownIssueSeed.CreateRules();
         var prtgRules = rules.Where(r => r.Platform == "prtg").ToList();
 
-        Assert.Equal(4, prtgRules.Count);
+        Assert.Equal(8, prtgRules.Count);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-down" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && r.PrtgThreshold == 60);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-flapping" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && r.PrtgThreshold == 5);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-warning" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleWarning && r.PrtgThreshold == 240);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-silent" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent && r.PrtgThreshold == 0);
 
         var outcome = RuleValidator.Validate(prtgRules);
-        Assert.Equal(4, outcome.ValidRules.Count);
+        Assert.Equal(8, outcome.ValidRules.Count);
         Assert.Empty(outcome.SkippedRules);
         Assert.Empty(outcome.ShadowWarnings);
     }
@@ -607,5 +607,59 @@ public class KnownIssueCatalogTests : IDisposable
             Category = IssueCategory.Security, Severity = IssueSeverity.High, Description = "SSH2", PlainExplanation = "SSH2 白話"
         });
         Assert.Null(KnownIssueCatalog.PlainExplanationFor(rules, "sshd", 0));   // 兩條命中同 program：不給說明
+    }
+
+    // ── seed v7：依 sensor 分類覆寫 ──────────────────────────────────
+
+    [Fact]
+    public void 種子全部規則通過RuleValidator()
+    {
+        var rules = KnownIssueSeed.CreateRules();
+
+        var outcome = RuleValidator.Validate(rules);
+
+        Assert.Empty(outcome.SkippedRules);
+        Assert.Equal(rules.Count, outcome.ValidRules.Count);
+    }
+
+    [Fact]
+    public void 種子v7_不限分類的down不再列為重大()
+    {
+        var down = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+
+        Assert.False(down.ElevatesDayRisk);
+        Assert.Null(down.PrtgSensorCategory);
+    }
+
+    [Theory]
+    [InlineData("builtin-prtg-down-availability", PrtgRuleEvaluator.RuleDown, PrtgSensorCategories.Availability, IssueCategory.Service, true, 30)]
+    [InlineData("builtin-prtg-down-hardware", PrtgRuleEvaluator.RuleDown, PrtgSensorCategories.Hardware, IssueCategory.Hardware, false, 60)]
+    [InlineData("builtin-prtg-warning-disk", PrtgRuleEvaluator.RuleWarning, PrtgSensorCategories.Disk, IssueCategory.Storage, false, 240)]
+    [InlineData("builtin-prtg-warning-hardware", PrtgRuleEvaluator.RuleWarning, PrtgSensorCategories.Hardware, IssueCategory.Hardware, false, 120)]
+    public void 種子v7_四條分類規則內容符合規格(string id, string code, string sensorCategory, IssueCategory category, bool elevates, int threshold)
+    {
+        var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == id);
+
+        Assert.Equal("builtin", rule.Origin);
+        Assert.True(rule.Enabled);
+        Assert.Equal("all", rule.Scope);
+        Assert.Equal("prtg", rule.Platform);
+        Assert.Equal(code, rule.PrtgRuleCode);
+        Assert.Equal(sensorCategory, rule.PrtgSensorCategory);
+        Assert.Equal(category, rule.Category);
+        Assert.Equal(IssueSeverity.High, rule.Severity);
+        Assert.Equal(elevates, rule.ElevatesDayRisk);
+        Assert.Equal(threshold, rule.PrtgThreshold);
+        Assert.Equal(3, rule.LikelyCauses.Length);
+        Assert.Equal(3, rule.NextSteps.Length);
+    }
+
+    [Fact]
+    public void 種子v7_PRTG規則Description不含門檻數字()
+    {
+        var prtgRules = KnownIssueSeed.CreateRules().Where(r => r.Platform == "prtg").ToList();
+
+        Assert.NotEmpty(prtgRules);
+        Assert.All(prtgRules, r => Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(@"\d"), r.Description));
     }
 }

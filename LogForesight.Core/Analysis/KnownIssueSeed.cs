@@ -24,8 +24,11 @@ public static class KnownIssueSeed
     /// 記錄檔清除 104、電腦帳號異動 4741/4743、網域群組異動 4727/4730/4754/4758、網域信任/Kerberos原則 4713/4865-4867、
     /// DSRM 密碼嘗試 4794、NTFS 延遲寫入 137、BSOD 1001、MSSQL I/O 錯誤 823-825、ESENT 損毀 467/474、
     /// App Hang 1002）與 7 條 Linux 規則（磁碟耗盡、唯讀重掛、mdadm 降級、網卡中斷、crontab 編輯、
-    /// fail2ban 封鎖、rsyslog 掉訊息），總計 92 條（Windows 64、Linux 28）。</summary>
-    public const int Version = 6;
+    /// fail2ban 封鎖、rsyslog 掉訊息），總計 92 條（Windows 64、Linux 28）。
+    /// v7（依 sensor 分類覆寫）：新增四條帶 PrtgSensorCategory 的 PRTG 分類規則（down-availability、down-hardware、
+    /// warning-disk、warning-hardware）；不限分類的 builtin-prtg-down 取消「重大」旗標（改由 availability 分類規則承擔）；
+    /// 既有 PRTG 規則 Description 移除門檻數字（門檻可調，寫死在文字裡會與實際值不符）。</summary>
+    public const int Version = 7;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -1082,7 +1085,7 @@ public static class KnownIssueSeed
         new() { Id = "builtin-prtg-down", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
                 PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleDown).DefaultThreshold,
                 Category = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleDown).Category, Severity = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleDown).Severity, ElevatesDayRisk = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleDown).ElevatesDayRisk,
-                Description = "PRTG 監控 sensor 持續 Down 達門檻（預設 60 分鐘），服務或主機可能失聯",
+                Description = "PRTG 監控 sensor 持續 Down 達門檻，服務或主機可能失聯",
                 PlainExplanation = "PRTG 監控系統偵測到該 sensor 持續處於 Down 狀態且時間超過設定門檻，代表受監控的服務或主機可能已經停止運作或網路中斷。",
                 Impact = "受監控的關鍵服務無法提供正常功能，影響業務運作，若為核心系統可能導致服務中斷。",
                 LikelyCauses = new[] { "受監控的應用程式或服務程序已終止或崩潰", "主機網路斷線或防火牆封鎖監控探針連線", "伺服器作業系統當機或未預期關機" },
@@ -1090,7 +1093,7 @@ public static class KnownIssueSeed
         new() { Id = "builtin-prtg-flapping", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
                 PrtgRuleCode = PrtgRuleEvaluator.RuleFlapping, PrtgThreshold = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleFlapping).DefaultThreshold,
                 Category = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleFlapping).Category, Severity = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleFlapping).Severity, ElevatesDayRisk = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleFlapping).ElevatesDayRisk,
-                Description = "PRTG 監控 sensor 狀態頻繁震盪（預設當日往返 ≥5 次），網路不穩或服務反覆重啟",
+                Description = "PRTG 監控 sensor 狀態頻繁震盪，網路不穩或服務反覆重啟",
                 PlainExplanation = "PRTG 監控系統偵測到該 sensor 當日在 Down 與 Up 狀態間反覆切換達門檻次數，代表系統處於極不穩定的邊緣狀態。",
                 Impact = "服務品質低落、連線間歇性中斷，可能演變成完全無法連線，並引發告警疲勞。",
                 LikelyCauses = new[] { "網路線路品質不良、封包遺失率高或有間歇性路由震盪", "服務程序因記憶體洩漏或逾時反覆崩潰並被守護程序重啟", "伺服器負載過高導致監控探針回應逾時" },
@@ -1098,7 +1101,7 @@ public static class KnownIssueSeed
         new() { Id = "builtin-prtg-warning", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
                 PrtgRuleCode = PrtgRuleEvaluator.RuleWarning, PrtgThreshold = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleWarning).DefaultThreshold,
                 Category = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleWarning).Category, Severity = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleWarning).Severity, ElevatesDayRisk = PrtgRuleCatalog.GetRule(PrtgRuleEvaluator.RuleWarning).ElevatesDayRisk,
-                Description = "PRTG 監控 sensor 長時間 Warning（預設累計 ≥240 分鐘），資源可能即將耗盡",
+                Description = "PRTG 監控 sensor 長時間 Warning，資源可能即將耗盡",
                 PlainExplanation = "PRTG 監控系統偵測到該 sensor 累計處於 Warning 狀態時間超過門檻，代表系統資源或效能指標長期處於危險邊緣。",
                 Impact = "系統效能下降、回應變慢，若資源持續耗盡將轉為 Down 狀態導致服務中斷。",
                 LikelyCauses = new[] { "磁碟空間、CPU 使用率或記憶體使用量接近警戒上限", "應用程式回應時間變長或處理佇列堆積", "監控 threshold 設定過緊或基準值需校正" },
@@ -1111,5 +1114,38 @@ public static class KnownIssueSeed
                 Impact = "維運團隊無法得知該主機與服務的實際運作狀態，發生故障時將無法及時發出告警。",
                 LikelyCauses = new[] { "PRTG 探針（Probe）與目標裝置間的連線中斷或憑證過期", "SNMP / WMI / SSH 存取授權失效或通訊協定設定錯誤", "目標主機關機或 IP 變更導致探針無法探測" },
                 NextSteps = new[] { "檢查 PRTG Probe 伺服器狀態與探針連線日誌", "確認目標裝置的 SNMP/WMI 連線帳密與存取權限是否有效", "確認目標裝置是否在線且 IP 位址正確" } },
+        // ── PRTG 分類規則（PrtgSensorCategory 非 null，同代碼分類相符時優先於上面不限分類的規則）──
+        new() { Id = "builtin-prtg-down-availability", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 30, PrtgSensorCategory = PrtgSensorCategories.Availability,
+                Category = IssueCategory.Service, Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Description = "PRTG 連通性 sensor 持續 Down，主機可能已失聯",
+                PlainExplanation = "PRTG 對這台主機的連通性檢查（如 Ping）持續失敗，代表主機可能已關機、當機或網路中斷，受它影響的所有服務都可能無法使用。",
+                Impact = "主機上的所有服務同時中斷；若主機仍在運作但網路不通，事件日誌可能照常寫入卻無人能連線。",
+                LikelyCauses = new[] { "主機當機、藍屏或非預期關機", "網路線路、交換器埠或防火牆規則異動", "主機 IP 變更而 PRTG 未更新" },
+                NextSteps = new[] { "從主控台或遠端管理介面（iLO／iDRAC）確認主機是否開機", "同網段其他主機是否也失聯，排除網路設備問題", "確認主機 IP 與 PRTG 設定一致" } },
+        new() { Id = "builtin-prtg-down-hardware", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60, PrtgSensorCategory = PrtgSensorCategories.Hardware,
+                Category = IssueCategory.Hardware, Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "PRTG 硬體健康 sensor 持續 Down",
+                PlainExplanation = "PRTG 回報這台主機的硬體健康指標（如溫度、風扇、電源、RAID）已進入故障狀態，這通常是硬體即將或已經損壞的直接證據。",
+                Impact = "硬體故障可能在沒有預警的情況下導致主機停機或資料毀損。",
+                LikelyCauses = new[] { "風扇或電源供應器故障", "RAID 成員磁碟損壞或陣列降級", "機房溫度過高或散熱不良" },
+                NextSteps = new[] { "登入硬體管理介面確認故障元件", "RAID 降級時先確認備份再更換磁碟", "聯繫原廠保固或安排備品" } },
+        new() { Id = "builtin-prtg-warning-disk", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleWarning, PrtgThreshold = 240, PrtgSensorCategory = PrtgSensorCategories.Disk,
+                Category = IssueCategory.Storage, Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "PRTG 磁碟可用空間 sensor 長時間 Warning",
+                PlainExplanation = "PRTG 回報這台主機的磁碟可用空間長時間低於警戒值，空間用盡時服務寫入會失敗、資料庫與日誌可能停擺。",
+                Impact = "磁碟寫滿會讓應用程式、資料庫、更新與事件日誌寫入失敗，往往以看似無關的服務異常出現。",
+                LikelyCauses = new[] { "日誌或暫存檔持續累積未清理", "備份或傾印檔留在本機", "資料正常成長但容量規劃未跟上" },
+                NextSteps = new[] { "找出近期成長最快的目錄並清理暫存與舊日誌", "確認備份檔是否應移出本機", "評估擴充磁碟或搬移資料" } },
+        new() { Id = "builtin-prtg-warning-hardware", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleWarning, PrtgThreshold = 120, PrtgSensorCategory = PrtgSensorCategories.Hardware,
+                Category = IssueCategory.Hardware, Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "PRTG 硬體健康 sensor 長時間 Warning",
+                PlainExplanation = "PRTG 回報這台主機的硬體健康指標（如溫度、風扇轉速、電源備援）長時間處於警告範圍，是硬體故障的前兆。",
+                Impact = "硬體在警告狀態下持續運作可能加速劣化，最終導致非預期停機。",
+                LikelyCauses = new[] { "散熱不良或機房溫度偏高", "風扇轉速下降或單一電源失效", "RAID 背景重建或預測性故障警告" },
+                NextSteps = new[] { "登入硬體管理介面確認是哪個元件告警", "檢查機房溫度與機櫃氣流", "安排維護窗口更換預警元件" } },
     };
 }

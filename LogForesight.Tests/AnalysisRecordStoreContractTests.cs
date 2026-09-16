@@ -21,7 +21,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private static readonly KnownIssueRule SeedDownRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+    private static readonly KnownIssueRule SeedDownRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down-availability");
     private static readonly KnownIssueRule SeedWarnRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-warning");
 
     private static DailyAnalysisRecord Record(DateTime date, string risk = "低") => new()

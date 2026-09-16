@@ -189,7 +189,8 @@ public sealed record CalibrationPrtgRuleThresholdInfo(
     string Category,
     string Severity,
     bool ElevatesDayRisk,
-    string Description);
+    string Description,
+    string? SensorCategory);
 
 /// <summary>
 /// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）
@@ -603,7 +604,8 @@ public sealed class CalibrationService
                 r.Category.ToString(),
                 r.Severity.ToString(),
                 r.ElevatesDayRisk,
-                r.Description
+                r.Description,
+                r.PrtgSensorCategory
             ))
             .ToList();
 
@@ -1473,8 +1475,12 @@ public sealed class CalibrationService
             }
         }
 
-        var thresholdByRule = currentRules.ToDictionary(
-            r => r.RuleCode, r => r.Threshold, StringComparer.OrdinalIgnoreCase);
+        // 同一代碼可有「不限分類」與多條分類規則；分佈是全部 sensor 的量值，對照的現值取不限分類那條
+        // （沒有不限分類規則的代碼現值記 0）。分類規則的門檻完整列在 CurrentRules，供逐分類對照。
+        var thresholdByRule = currentRules
+            .Where(r => r.SensorCategory == null)
+            .GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Threshold, StringComparer.OrdinalIgnoreCase);
 
         var summaries = samples
             .GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase)

@@ -123,6 +123,11 @@ public class KnownIssueRule
     /// 承載不了分鐘數，也沒有「未達即不成立」的語意。</summary>
     public int PrtgThreshold { get; init; }
 
+    /// <summary>PRTG 規則適用的 sensor 語意分類（見 <see cref="PrtgSensorCategories"/>）；null＝不限分類。
+    /// 同一代碼可同時有不限分類的規則與分類規則，評估時分類相符者優先（見 PrtgRuleEvaluator）。
+    /// silent 規則與非 prtg 規則恆為 null（由 RuleValidator 把關）。</summary>
+    public string? PrtgSensorCategory { get; init; }
+
     public IssueCategory Category { get; init; }
 
     /// <summary>
@@ -200,6 +205,7 @@ public class KnownIssueRule
         MessagePatterns = MessagePatterns,
         PrtgRuleCode = PrtgRuleCode,
         PrtgThreshold = PrtgThreshold,
+        PrtgSensorCategory = PrtgSensorCategory,
         Category = Category,
         Severity = Severity,
         ElevatesDayRisk = ElevatesDayRisk,

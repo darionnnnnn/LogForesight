@@ -30,6 +30,8 @@ public class RuleDto
     // ── PRTG 專用比對欄位 ─────────────────────────────────────────────
     public string? PrtgRuleCode { get; set; }
     public int PrtgThreshold { get; set; }
+    /// <summary>PRTG 規則適用的 sensor 分類；null＝不限分類</summary>
+    public string? PrtgSensorCategory { get; set; }
 
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
@@ -101,6 +103,8 @@ public class SaveRuleRequest
 
     public string? PrtgRuleCode { get; set; }
     public int PrtgThreshold { get; set; }
+    /// <summary>PRTG 規則適用的 sensor 分類；null＝不限分類</summary>
+    public string? PrtgSensorCategory { get; set; }
 
     [Required]
     public string Category { get; set; } = string.Empty;

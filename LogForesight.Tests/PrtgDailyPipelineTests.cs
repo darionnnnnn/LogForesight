@@ -955,7 +955,7 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
-    public async Task Group範圍規則型抑制當主機不在群組時不抑制且日風險升至高()
+    public async Task Group範圍規則型抑制當主機不在群組時不抑制且日風險上調()
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -1039,8 +1039,9 @@ public class PrtgDailyPipelineTests : IDisposable
         var downSig = Assert.Single(findings);
         Assert.False(downSig.Suppressed);
 
+        // 磁碟 sensor 的 down 走不限分類規則（seed v7 非重大、嚴重度高）→ 日風險上調到「中」
         var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.Equal(RiskLevels.Medium, record.RiskLevel);
         Assert.Equal("prtg:down", record.RiskBasis);
     }
 

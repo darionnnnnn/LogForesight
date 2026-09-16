@@ -722,6 +722,9 @@ public class RuleAdminService
                 : Array.Empty<string>(),
             PrtgRuleCode = platform == "prtg" ? request.PrtgRuleCode?.Trim() : null,
             PrtgThreshold = platform == "prtg" ? request.PrtgThreshold : 0,
+            // 去空白後空字串視為不限分類（null）；合法值由 RuleValidator 以 PrtgSensorCategories.IsValid 把關
+            PrtgSensorCategory = platform == "prtg" && !string.IsNullOrWhiteSpace(request.PrtgSensorCategory)
+                ? request.PrtgSensorCategory.Trim().ToLowerInvariant() : null,
             Category = category,
             Severity = severity,
             ElevatesDayRisk = request.ElevatesDayRisk,
@@ -755,6 +758,7 @@ public class RuleAdminService
             MessagePatterns = source.MessagePatterns,
             PrtgRuleCode = source.PrtgRuleCode,
             PrtgThreshold = source.PrtgThreshold,
+            PrtgSensorCategory = source.PrtgSensorCategory,
             Category = source.Category,
             Severity = source.Severity,
             ElevatesDayRisk = source.ElevatesDayRisk,
@@ -786,6 +790,7 @@ public class RuleAdminService
         Compare("訊息子字串", string.Join(" / ", current.MessagePatterns), string.Join(" / ", seed.MessagePatterns));
         Compare("PRTG 規則代碼", current.PrtgRuleCode ?? "", seed.PrtgRuleCode ?? "");
         Compare("PRTG 門檻", current.PrtgThreshold.ToString(), seed.PrtgThreshold.ToString());
+        Compare("PRTG 適用分類", current.PrtgSensorCategory ?? "", seed.PrtgSensorCategory ?? "");
         Compare("類別", current.Category.ToString(), seed.Category.ToString());
         Compare("嚴重度", current.Severity.ToString(), seed.Severity.ToString());
         Compare("命中即列為高風險日", current.ElevatesDayRisk.ToString(), seed.ElevatesDayRisk.ToString());
@@ -837,6 +842,7 @@ public class RuleAdminService
             MessagePatterns = rule.MessagePatterns.ToList(),
             PrtgRuleCode = rule.PrtgRuleCode,
             PrtgThreshold = rule.PrtgThreshold,
+            PrtgSensorCategory = rule.PrtgSensorCategory,
             Category = rule.Category.ToString(),
             Severity = rule.Severity.ToString(),
             ElevatesDayRisk = rule.ElevatesDayRisk,

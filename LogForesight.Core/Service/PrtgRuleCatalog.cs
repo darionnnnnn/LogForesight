@@ -26,7 +26,7 @@ public static class PrtgRuleCatalog
         [PrtgRuleEvaluator.RuleDown] = new(
             IssueCategory.Service,
             IssueSeverity.High,
-            true,
+            false,
             "監控 sensor 持續無回應，可能是服務或主機失聯",
             DefaultDownMinutes),
 

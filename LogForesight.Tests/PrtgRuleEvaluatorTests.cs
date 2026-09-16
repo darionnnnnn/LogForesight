@@ -713,4 +713,155 @@ public class PrtgRuleEvaluatorTests
 
         Assert.DoesNotContain(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleSilent);
     }
+
+    // ── 依 sensor 分類挑規則 ─────────────────────────────────────────
+
+    private static KnownIssueRule SeedRule(string id) => DefaultRules.Single(r => r.Id == id);
+
+    [Fact]
+    public void 分類規則優先_availability用分類門檻30_traffic退回全域門檻60_分類null只挑全域規則()
+    {
+        var rules = new List<KnownIssueRule> { SeedRule("builtin-prtg-down"), SeedRule("builtin-prtg-down-availability") };
+        var changes = new List<PrtgStateChangeRow>
+        {
+            // 101 availability：23:20 進 Down，40 分鐘（>= 30）
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 23, 20, 0), Status = "Down" },
+            // 102 traffic：23:20 進 Down，40 分鐘（< 全域 60）
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 23, 20, 0), Status = "Down" },
+            // 103 分類 null：22:30 進 Down，90 分鐘（>= 全域 60）
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 22, 30, 0), Status = "Down" },
+            // 104 分類 null：23:20 進 Down，40 分鐘——若誤挑到 availability 規則（門檻 30）就會命中
+            new() { SensorObjid = 104, ChangedAt = new DateTime(2026, 8, 30, 23, 20, 0), Status = "Down" },
+        };
+        // 各放不同 device，避免同裝置折疊干擾
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 2, [103] = 3, [104] = 4 };
+        var statuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Down", "Ping", PrtgSensorCategories.Availability),
+            new(102, 2, "Down", "SNMP Traffic", PrtgSensorCategories.Traffic),
+            new(103, 3, "Down", "Custom", null),
+            new(104, 4, "Down", "Custom", null),
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, statuses, rules, EmptySensorNames, EmptyDeviceNames, includeSilent: false);
+
+        var availability = Assert.Single(findings, f => f.SensorObjid == 101);
+        Assert.Equal("builtin-prtg-down-availability", availability.Rule.Id);
+        Assert.Equal(40, availability.Magnitude);
+        Assert.DoesNotContain(findings, f => f.SensorObjid == 102);
+        var global = Assert.Single(findings, f => f.SensorObjid == 103);
+        Assert.Equal("builtin-prtg-down", global.Rule.Id);
+        Assert.DoesNotContain(findings, f => f.SensorObjid == 104);
+        Assert.Equal(2, findings.Count);
+        Assert.Empty(findings.DuplicateRuleWarnings);
+    }
+
+    [Fact]
+    public void 分類比對不分大小寫_且只有分類規則時其他分類sensor不評估()
+    {
+        var rules = new List<KnownIssueRule> { SeedRule("builtin-prtg-down-availability") };
+        var changes = new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 20, 0, 0), Status = "Down" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 20, 0, 0), Status = "Down" },
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 2 };
+        var statuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Down", "Ping", "AVAILABILITY"),
+            new(102, 2, "Down", "Disk Free", PrtgSensorCategories.Disk),
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, statuses, rules, EmptySensorNames, EmptyDeviceNames, includeSilent: false);
+
+        var f = Assert.Single(findings);
+        Assert.Equal(101, f.SensorObjid);
+        Assert.Equal("builtin-prtg-down-availability", f.Rule.Id);
+    }
+
+    [Fact]
+    public void 同代碼同分類兩條自訂規則_取Id小者_警告每趟只一筆且標出分類()
+    {
+        KnownIssueRule Custom(string id, int threshold) => new()
+        {
+            Id = id, Origin = "custom", Platform = "prtg", PrtgRuleCode = PrtgRuleEvaluator.RuleWarning,
+            PrtgThreshold = threshold, PrtgSensorCategory = PrtgSensorCategories.Disk,
+            Severity = IssueSeverity.High, Description = id
+        };
+        var rules = new List<KnownIssueRule> { Custom("custom-z-disk", 1000), Custom("custom-a-disk", 60) };
+        var changes = new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 22, 0, 0), Status = "Warning" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 22, 0, 0), Status = "Warning" },
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 2 };
+        var statuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Warning", "Disk Free", PrtgSensorCategories.Disk),
+            new(102, 2, "Warning", "Disk Free", "Disk"),
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, statuses, rules, EmptySensorNames, EmptyDeviceNames, includeSilent: false);
+
+        Assert.Equal(2, findings.Count);
+        Assert.All(findings, f => Assert.Equal("custom-a-disk", f.Rule.Id));
+        var warning = Assert.Single(findings.DuplicateRuleWarnings);
+        Assert.Contains("custom-a-disk", warning);
+        Assert.Contains(PrtgSensorCategories.Disk, warning);
+    }
+
+    [Fact]
+    public void silent只用不限分類的規則_只有分類silent規則時不產生沉默finding()
+    {
+        var categorized = new KnownIssueRule
+        {
+            Id = "custom-silent-hw", Origin = "custom", Platform = "prtg", PrtgRuleCode = PrtgRuleEvaluator.RuleSilent,
+            PrtgSensorCategory = PrtgSensorCategories.Hardware, Description = "x"
+        };
+        var statuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Unknown", "IPMI", PrtgSensorCategories.Hardware),
+        };
+
+        var onlyCategorized = PrtgRuleEvaluator.Evaluate(
+            _day, new List<PrtgStateChangeRow>(), new Dictionary<long, long> { [101] = 1 }, statuses,
+            new List<KnownIssueRule> { categorized }, EmptySensorNames, EmptyDeviceNames);
+        Assert.Empty(onlyCategorized);
+
+        var withGlobal = PrtgRuleEvaluator.Evaluate(
+            _day, new List<PrtgStateChangeRow>(), new Dictionary<long, long> { [101] = 1 }, statuses,
+            new List<KnownIssueRule> { categorized, SeedRule("builtin-prtg-silent") }, EmptySensorNames, EmptyDeviceNames);
+        var silent = Assert.Single(withGlobal);
+        Assert.Equal("builtin-prtg-silent", silent.Rule.Id);
+    }
+
+    [Fact]
+    public void 種子預設規則下_hardware的warning用分類門檻120_disk用分類規則()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            // 21:30 起 Warning 150 分鐘：hardware 門檻 120 命中；全域 240 不會命中
+            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 21, 30, 0), Status = "Warning" },
+            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 21, 30, 0), Status = "Warning" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 21, 30, 0), Status = "Warning" },
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 2, [103] = 3 };
+        var statuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Warning", "IPMI", PrtgSensorCategories.Hardware),
+            new(102, 2, "Warning", "Disk Free", PrtgSensorCategories.Disk),
+            new(103, 3, "Warning", "CPU Load", PrtgSensorCategories.Cpu),
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, statuses, DefaultRules, EmptySensorNames, EmptyDeviceNames, includeSilent: false);
+
+        var f = Assert.Single(findings);
+        Assert.Equal(101, f.SensorObjid);
+        Assert.Equal("builtin-prtg-warning-hardware", f.Rule.Id);
+        Assert.Empty(findings.DuplicateRuleWarnings);
+    }
 }
