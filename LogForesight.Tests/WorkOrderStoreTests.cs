@@ -325,4 +325,44 @@ public class WorkOrderStoreTests : IDisposable
         Assert.Equal(512, got.IssueLabel.Length);
         Assert.Equal(1000, got.Note!.Length);
     }
+
+    [Fact]
+    public void FindActiveWithoutActiveMembers_零成員與成員全結案的進行中單才列出_依id升冪()
+    {
+        var store = Store();
+        var empty = store.Insert(NewOrder(1, "A", 1));
+        var allClosed = store.Insert(NewOrder(1, "B", 2));
+        AddCase("b1", allClosed, IssueHandlingStatuses.Resolved, DateTime.Now);
+        var hasActive = store.Insert(NewOrder(1, "C", 3));
+        AddCase("c1", hasActive, IssueHandlingStatuses.Resolved, DateTime.Now);
+        AddCase("c2", hasActive, IssueHandlingStatuses.InProgress, null);
+        var closedOrder = NewOrder(1, "D", 4);
+        closedOrder.ClosedAt = DateTime.Now;
+        closedOrder.ClosedReason = WorkOrderCloseReasons.AllClosed;
+        store.Insert(closedOrder);
+        // 別張單的進行中案件不能讓這張單被排除
+        var another = store.Insert(NewOrder(2, "A", 1));
+        AddCase("x1", another, IssueHandlingStatuses.InProgress, null);
+
+        Assert.Equal(new List<long> { empty, allClosed }, store.FindActiveWithoutActiveMembers(10));
+        Assert.Equal(new List<long> { empty }, store.FindActiveWithoutActiveMembers(1));
+    }
+
+    [Fact]
+    public void FindActiveWithoutActiveMembers只發一次SQL()
+    {
+        var store = Store();
+        for (var i = 0; i < 20; i++)
+        {
+            var id = store.Insert(NewOrder(1, "S" + i, i));
+            AddCase("c" + i, id, IssueHandlingStatuses.Resolved, DateTime.Now);
+        }
+
+        var counting = CountingStore();
+        _counter.Readers = 0;
+        var ids = counting.FindActiveWithoutActiveMembers(200);
+
+        Assert.Equal(1, _counter.Readers);
+        Assert.Equal(20, ids.Count);
+    }
 }

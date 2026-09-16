@@ -206,6 +206,20 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return BuildLoadBoardQuery(ctx).ToList();
     }
 
+    public List<long> FindActiveWithoutActiveMembers(int take)
+    {
+        using var ctx = _contextFactory();
+
+        // 單句 SQL：NOT EXISTS 關聯子查詢，不先撈單再逐張數成員
+        return ctx.WorkOrders.AsNoTracking()
+            .Where(w => w.ClosedAt == null
+                        && !ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null))
+            .OrderBy(w => w.WorkOrderId)
+            .Select(w => w.WorkOrderId)
+            .Take(take)
+            .ToList();
+    }
+
     /// <summary>負載看板的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
     internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx) =>
         ctx.WorkOrders.AsNoTracking()

@@ -8,6 +8,9 @@ namespace LogForesight.Web.Services;
 ///
 /// 有待同步案件時一批接一批跑，整輪清空後才 Bump 一次資料版本（逐批 Bump 會讓儀表板快取反覆失效）；
 /// 沒有待同步時每隔一段時間輪詢。單批例外只記 log、稍後重試，不讓背景例外把行程帶走。
+///
+/// 每一輪處理完待同步後接著跑交辦單結案掃描（<see cref="WorkOrderCoordinator.SweepClosures"/>）：
+/// 詳情頁逐筆標記不經過交辦單協調器，成員因此全結案的單靠這裡補結案；有結案時與同步共用同一次 Bump。
 /// </summary>
 public class CaseDaySyncHostedService : BackgroundService
 {
@@ -22,12 +25,17 @@ public class CaseDaySyncHostedService : BackgroundService
     /// <summary>每批處理的案件數（暫定）</summary>
     private const int BatchSize = 200;
 
+    /// <summary>每輪結案掃描的交辦單數（暫定）</summary>
+    private const int SweepTake = 200;
+
     private readonly IssueCaseCoordinator _coordinator;
+    private readonly WorkOrderCoordinator _workOrders;
     private readonly DataVersionStamp _dataVersion;
 
-    public CaseDaySyncHostedService(IssueCaseCoordinator coordinator, DataVersionStamp dataVersion)
+    public CaseDaySyncHostedService(IssueCaseCoordinator coordinator, WorkOrderCoordinator workOrders, DataVersionStamp dataVersion)
     {
         _coordinator = coordinator;
+        _workOrders = workOrders;
         _dataVersion = dataVersion;
     }
 
@@ -46,6 +54,9 @@ public class CaseDaySyncHostedService : BackgroundService
                     await Task.Run(() =>
                     {
                         while (!stoppingToken.IsCancellationRequested && _coordinator.ApplyPendingCaseDays(BatchSize) > 0)
+                            processedAny = true;
+
+                        if (!stoppingToken.IsCancellationRequested && _workOrders.SweepClosures(SweepTake, DateTime.Now) > 0)
                             processedAny = true;
                     }, stoppingToken);
                 }

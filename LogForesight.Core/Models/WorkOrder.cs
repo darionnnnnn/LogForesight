@@ -121,7 +121,6 @@ public static class WorkOrderEventActions
     public const string Cancelled = "cancelled";
     public const string AdminClosed = "admin_closed";
     public const string Closed = "closed";
-    public const string ReopenedByMember = "reopened_by_member";
 }
 
 /// <summary>單張交辦單的成員案件計數</summary>

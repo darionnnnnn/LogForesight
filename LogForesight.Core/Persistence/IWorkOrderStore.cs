@@ -37,6 +37,12 @@ public interface IWorkOrderStore
     /// <summary>一次查詢取得每位有進行中交辦單的處理人負載</summary>
     List<HandlerLoad> LoadBoard();
 
+    /// <summary>
+    /// 進行中、但底下已沒有任何進行中案件的單（含零成員），依 work_order_id 升冪取前 <paramref name="take"/> 筆。
+    /// 單句 SQL；供背景結案掃描補上「成員在交辦單以外的路徑全結案」的單。
+    /// </summary>
+    List<long> FindActiveWithoutActiveMembers(int take);
+
     /// <summary>刪除結案早於保留期的交辦單與其事件，回傳刪除的單數</summary>
     int PruneClosed(int retentionDays);
 }

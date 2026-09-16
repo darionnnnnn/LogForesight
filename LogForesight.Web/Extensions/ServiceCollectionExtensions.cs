@@ -59,6 +59,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
         services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
         services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
+        services.AddSingleton<IWorkOrderStore>(sp => sp.GetRequiredService<StorageBackend>().WorkOrderStore());
 
         // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
@@ -328,6 +329,9 @@ public static class ServiceCollectionExtensions
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();
+
+        // 交辦單協調器：相依的 store 與 IssueCaseCoordinator 皆為 Singleton，本身沒有請求範圍狀態
+        services.AddSingleton<WorkOrderCoordinator>();
 
         // 處理狀態（原 HandlingService，依關注點拆為日層級／問題層級／查詢三個服務，
         // 共用 HandlingProgressCalculator 推導進度）
