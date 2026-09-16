@@ -164,8 +164,11 @@ public class HostDetailController : ControllerBase
             }
         }
 
-        var mapRows = store.GetLatestHostMap();
-        if (mapRows.Count == 0)
+        // 只查這一台主機的對應列（回饋四十五輪 B5）：原本是把「最近一次對應」整張表
+        // （數千列起跳）讀回記憶體再 Where 出一台主機的那幾列。語意不變——
+        // MapDate 仍是「最近一次有對應資料的日期」，該日存在但這台沒有對應列時照樣回傳日期。
+        var (mapDate, targetRows) = store.GetLatestHostMapForHost(hostId);
+        if (mapDate == null)
         {
             return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto
             {
@@ -173,9 +176,6 @@ public class HostDetailController : ControllerBase
                 ExcludedIp = excludedIp
             });
         }
-
-        var targetRows = mapRows.Where(r => r.HostId == hostId).ToList();
-        var mapDate = mapRows.FirstOrDefault()?.MapDate;
 
         var devices = new List<HostPrtgDeviceDto>();
         foreach (var r in targetRows)

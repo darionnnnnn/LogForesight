@@ -299,6 +299,10 @@ public static class ServiceCollectionExtensions
         // 問題負責人可見範圍的跨請求快取（回饋四十五輪 B4）：Singleton 才跨得了請求，
         // 由 Scoped 的 VisibilityService 以可選相依取用；鍵含版本戳，授權變更不必等 TTL。
         services.AddSingleton<IssueOwnedHostIdsCache>();
+        // PRTG 裝置索引的跨請求快取（回饋四十五輪 B5）：Singleton 才跨得了請求
+        // ——它要吸收的正是衝突清單「每翻一頁重讀裝置全表」的成本；
+        // 刻意不綁版本戳（鏡像由夜間批次直接寫 DB，版本戳不會推進），新鮮度由 TTL 負責。
+        services.AddSingleton<PrtgDeviceIndexCache>();
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依

@@ -462,10 +462,20 @@ lf_prtg_ip_excludes: PK(ip) — IP 排除清單（該 IP 底下的 device 不做
 
 lf_prtg_devices:      (ip)
 lf_prtg_sensors:      (device_objid)；(sensor_type)
-lf_prtg_state_changes: (sensor_objid, changed_at)；(created_at)
-lf_prtg_values:       UNIQUE(sensor_objid, period_start)；(created_at)
+lf_prtg_state_changes: (sensor_objid, changed_at)；(created_at)；(changed_at) — 不帶 sensor 條件的時間區間查詢
+lf_prtg_values:       UNIQUE(sensor_objid, period_start)；(created_at)；(period_start) — 同上
 lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 ```
+
+`lf_prtg_values (period_start)` 與 `lf_prtg_state_changes (changed_at)` 是單欄索引，**不是**上面兩個
+複合索引的重覆：複合索引的前導欄是 `sensor_objid`，而鏡像頁摘要的 `Max(period_start)`／
+`Max(changed_at)`、校準與風險判定的區間取數都不帶 sensor 條件，吃不到前導欄、只能全表掃描。
+代價誠實寫在這裡：這兩張表是夜間批次大量寫入，各多一個索引就多一份寫入維護成本；
+取捨是「夜間批次多付一點、白天使用者查詢快很多」。
+
+> **升級注意事項**：這兩張表是全站資料量最大的一塊（數十萬列起跳），首次升級建立這兩個索引
+> 會拖長站台啟動時間（SQLite）或在 SQL Server 端鎖表。**不要在夜間排程窗口內升級**，
+> 否則建索引與批次寫入會互相卡住。
 
 ### 刪除指定主機日（舊日重新分析用）
 

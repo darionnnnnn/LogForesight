@@ -668,6 +668,45 @@ public sealed class EfPrtgStore
     public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30) =>
         GetLatestHostMapWithDate(maxLookbackDays).Rows;
 
+    /// <summary>
+    /// 取得回看窗內最近一個有對應資料的日期，以及該日**指定主機**的對應列（唯讀查詢）。
+    /// 語意與 <see cref="GetLatestHostMapWithDate"/> 完全相同（同一個「最近一次對應」的日期），
+    /// 差別只在第二趟查詢多了 host_id 條件——主機詳情的 PRTG 頁籤只需要一台主機的那幾列，
+    /// 沒有理由把整日的對應表（數千列起跳）全部讀回記憶體再過濾（回饋四十五輪 B5）。
+    ///
+    /// **該日存在但這台主機沒有對應列時，MapDate 照樣回傳那個日期**（與整表版本的行為一致：
+    /// 畫面上顯示的是「對應資料的日期」，不是「這台主機有對應的日期」）；
+    /// 窗內完全沒有資料時才回傳 (null, 空清單)。
+    /// </summary>
+    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapForHost(
+        long hostId, int maxLookbackDays = 30, DateTime? anchor = null)
+    {
+        if (maxLookbackDays <= 0)
+        {
+            return (null, new List<PrtgHostMapRow>());
+        }
+
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
+
+        using var ctx = _contextFactory();
+        var latestDate = ctx.PrtgHostMaps
+            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
+            .Max(m => (DateTime?)m.MapDate);
+
+        if (latestDate == null)
+        {
+            return (null, new List<PrtgHostMapRow>());
+        }
+
+        var rows = ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == latestDate.Value && m.HostId == hostId)
+            .ToList();
+
+        return (latestDate.Value, rows);
+    }
+
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
     public List<PrtgManualMapRow> GetManualMaps()
     {
