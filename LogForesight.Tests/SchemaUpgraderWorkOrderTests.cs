@@ -127,6 +127,35 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
+    public void Upgrade補上day_sync_intent欄_重跑冪等()
+    {
+        using (var ctx = _fx.NewContext())
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN day_sync_intent");
+        using (var ctx = _fx.NewContext())
+            Assert.DoesNotContain("day_sync_intent", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext())
+            Assert.Single(Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"), n => n == "day_sync_intent");
+
+        using (var ctx = _fx.NewContext())
+            Assert.Null(Record.Exception(() => SchemaUpgrader.Upgrade(ctx)));
+        using var check = _fx.NewContext();
+        Assert.Single(Query(check, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"), n => n == "day_sync_intent");
+
+        // 升級後的欄位可讀寫
+        var store = new EfIssueCaseStore(_fx.NewContext);
+        store.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = "SRV-01", IssueKey = "System|Disk|153|2", IssueLabel = "Disk 153",
+            Status = IssueHandlingStatuses.InProgress, CreatedAt = DateTime.Now, UpdatedAt = DateTime.Now,
+            DaySyncPending = true,
+            DaySyncIntent = new CaseDayIntent { Mode = CaseDayModes.Cancel, Status = IssueHandlingStatuses.Open, OccurredAt = DateTime.Today }
+        });
+        Assert.Equal(CaseDayModes.Cancel, store.Get("c1")!.DaySyncIntent!.Mode);
+    }
+
+    [Fact]
     public void SqlServer的DDL常數含source_key與部分唯一索引過濾條件()
     {
         Assert.Contains("CREATE TABLE lf_work_orders", SchemaUpgrader.SqlServerCreateWorkOrders);

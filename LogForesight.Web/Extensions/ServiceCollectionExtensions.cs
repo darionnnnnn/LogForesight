@@ -409,6 +409,8 @@ public static class ServiceCollectionExtensions
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
         services.AddHostedService<WorkOrderBackfillHostedService>();
+        // 案件逐日同步：列數超過就地門檻的案件意圖由背景分批展開
+        services.AddHostedService<CaseDaySyncHostedService>();
         services.AddSingleton<IssueFirstSeenSeedHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<IssueFirstSeenSeedHostedService>());
 

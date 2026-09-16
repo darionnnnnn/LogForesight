@@ -360,6 +360,114 @@ public class HandlingStoreContractTests : IDisposable
 
     // ── 日層級快照 ──────────────────────────────────────────────────────────
 
+    private static CaseDayIntent DayIntent(string note) => new()
+    {
+        Mode = CaseDayModes.Sync, Status = IssueHandlingStatuses.Observing, Note = note,
+        DueDate = new DateTime(2026, 9, 30), Clearing = false, ActorId = 7, ActorAccount = "acc",
+        OccurredAt = new DateTime(2026, 9, 17, 10, 30, 0), TriggerDate = new DateTime(2026, 9, 16)
+    };
+
+    [Fact]
+    public void 案件_逐日同步意圖JSON往返()
+    {
+        var store = Cases();
+        var c = NewCase("c1", "SRV-01", "System|Disk|153|2", 1);
+        c.DaySyncPending = true;
+        c.DaySyncIntent = DayIntent("中文備註");
+        store.Save(c);
+
+        var got = store.Get("c1")!;
+        Assert.True(got.DaySyncPending);
+        var intent = got.DaySyncIntent!;
+        Assert.Equal(CaseDayModes.Sync, intent.Mode);
+        Assert.Equal(IssueHandlingStatuses.Observing, intent.Status);
+        Assert.Equal("中文備註", intent.Note);
+        Assert.Equal(new DateTime(2026, 9, 30), intent.DueDate);
+        Assert.False(intent.Clearing);
+        Assert.Equal(7, intent.ActorId);
+        Assert.Equal("acc", intent.ActorAccount);
+        Assert.Equal(new DateTime(2026, 9, 17, 10, 30, 0), intent.OccurredAt);
+        Assert.Equal(new DateTime(2026, 9, 16), intent.TriggerDate);
+
+        // SaveMany 同樣寫入；清成 null 也要寫回
+        got.DaySyncPending = false;
+        got.DaySyncIntent = null;
+        store.SaveMany(new[] { got });
+        Assert.Null(store.Get("c1")!.DaySyncIntent);
+    }
+
+    [Fact]
+    public void 案件_GetDaySyncPending依更新時間與案件編號排序_take與Count()
+    {
+        var store = Cases();
+        var t = new DateTime(2026, 9, 17, 8, 0, 0);
+        IssueCase Pending(string id, DateTime updatedAt, bool pending)
+        {
+            var c = NewCase(id, "SRV-" + id, "System|Disk|153|2", 1);
+            c.UpdatedAt = updatedAt;
+            c.DaySyncPending = pending;
+            c.DaySyncIntent = pending ? DayIntent(id) : null;
+            return c;
+        }
+        store.SaveMany(new[]
+        {
+            Pending("c3", t.AddMinutes(1), true),
+            Pending("c2", t, true),
+            Pending("c1", t, true),
+            Pending("c0", t.AddMinutes(-5), false)
+        });
+
+        Assert.Equal(new[] { "c1", "c2" }, store.GetDaySyncPending(2).Select(c => c.CaseId));
+        Assert.Equal(new[] { "c1", "c2", "c3" }, store.GetDaySyncPending(10).Select(c => c.CaseId));
+        Assert.Equal(3, store.CountDaySyncPending());
+    }
+
+    [Fact]
+    public void 案件_ClearDaySyncPendingIfUnchanged_相同意圖才清()
+    {
+        var store = Cases();
+        var c = NewCase("c1", "SRV-01", "System|Disk|153|2", 1);
+        c.DaySyncPending = true;
+        c.DaySyncIntent = DayIntent("B");
+        store.Save(c);
+
+        Assert.False(store.ClearDaySyncPendingIfUnchanged("c1", DayIntent("A")));
+        var still = store.Get("c1")!;
+        Assert.True(still.DaySyncPending);
+        Assert.Equal("B", still.DaySyncIntent!.Note);
+
+        Assert.True(store.ClearDaySyncPendingIfUnchanged("c1", DayIntent("B")));
+        var cleared = store.Get("c1")!;
+        Assert.False(cleared.DaySyncPending);
+        Assert.Null(cleared.DaySyncIntent);
+        Assert.Equal(c.UpdatedAt, cleared.UpdatedAt);   // 背景清旗標不動樂觀鎖欄位
+
+        Assert.False(store.ClearDaySyncPendingIfUnchanged("c1", DayIntent("B")));
+    }
+
+    [Fact]
+    public void 問題狀態_GetByCases依案件id精確查_跨批()
+    {
+        var store = Issues();
+        var rows = new List<IssueHandling>();
+        for (var i = 0; i < 520; i++)
+        {
+            var h = Handling("SRV-" + i, DateTime.Today.AddDays(-i % 30), "k1", "in_progress");
+            h.CaseId = "c" + i;
+            rows.Add(h);
+        }
+        var orphan = Handling("SRV-X", DateTime.Today, "k1", "in_progress");
+        rows.Add(orphan);
+        store.SaveMany(rows);
+
+        var ids = Enumerable.Range(0, 510).Select(i => "c" + i).ToList();
+        var got = store.GetByCases(ids);
+
+        Assert.Equal(510, got.Count);
+        Assert.Equal(ids.OrderBy(x => x, StringComparer.Ordinal), got.Select(g => g.CaseId!).OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Empty(store.GetByCases(Array.Empty<string>()));
+    }
+
     [Fact]
     public void 日狀態_快照與歷程往返()
     {

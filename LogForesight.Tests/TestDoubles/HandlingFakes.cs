@@ -206,6 +206,20 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     int IAnalysisRecordQuery.CountPendingAi() => _records.Count(r => r.AiPending);
 
+    /// <summary>批次候選日：主機比對沿用上方 Query，逐筆 TopIssues 以 IssueSignatureKey.For 組鍵（語意同 EF 實作）</summary>
+    List<IssueDayHit> IAnalysisRecordQuery.IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys)
+    {
+        if (hosts.Count == 0 || issueKeys.Count == 0) return new List<IssueDayHit>();
+        var keys = issueKeys.ToHashSet(StringComparer.Ordinal);
+        return ((IAnalysisRecordQuery)this).Query(new RecordQueryFilter { Hosts = hosts })
+            .SelectMany(r => r.TopIssues
+                .Select(IssueSignatureKey.For)
+                .Where(keys.Contains)
+                .Select(key => new IssueDayHit(r.HostId, key, r.Date.Date)))
+            .Distinct()
+            .ToList();
+    }
+
     /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
     int IAnalysisRecordQuery.MarkAllForAiRerun()
     {
@@ -264,6 +278,12 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
 
     public List<IssueHandling> GetByCase(string caseId) =>
         _items.Where(h => h.CaseId == caseId).ToList();
+
+    public List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds)
+    {
+        var ids = caseIds.ToHashSet(StringComparer.Ordinal);
+        return _items.Where(h => h.CaseId != null && ids.Contains(h.CaseId)).ToList();
+    }
 
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });
 
@@ -351,6 +371,7 @@ internal class FakeIssueCaseStore : IIssueCaseStore
         existing.WorkOrderId = issueCase.WorkOrderId;
         existing.DaySyncPending = issueCase.DaySyncPending;
         existing.Cancelled = issueCase.Cancelled;
+        existing.DaySyncIntent = issueCase.DaySyncIntent;
     }
 
     private static bool SameIssue(IssueCase c, string source, int eventId) =>
@@ -373,6 +394,26 @@ internal class FakeIssueCaseStore : IIssueCaseStore
             .Skip(skip).Take(take).ToList();
 
     public int CountByWorkOrder(long workOrderId) => _items.Count(c => c.WorkOrderId == workOrderId);
+
+    /// <summary>同 EF 版：旗標為真者依 UpdatedAt、CaseId 升冪取前 take 筆</summary>
+    public List<IssueCase> GetDaySyncPending(int take) =>
+        _items.Where(c => c.DaySyncPending)
+            .OrderBy(c => c.UpdatedAt)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Take(take).ToList();
+
+    public int CountDaySyncPending() => _items.Count(c => c.DaySyncPending);
+
+    /// <summary>同 EF 版：存的意圖序列化字串與傳入者相等才清</summary>
+    public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent)
+    {
+        var existing = _items.FirstOrDefault(c => c.CaseId == caseId);
+        if (existing == null || existing.DaySyncIntent == null) return false;
+        if (EfIssueCaseStore.SerializeIntent(existing.DaySyncIntent) != EfIssueCaseStore.SerializeIntent(intent)) return false;
+        existing.DaySyncPending = false;
+        existing.DaySyncIntent = null;
+        return true;
+    }
 }
 
 internal class FakeNoiseMarkStore : INoiseMarkStore

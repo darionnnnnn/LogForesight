@@ -120,4 +120,15 @@ public interface IAnalysisRecordQuery
     /// 待補判定一律以欄位為事實來源（見批次C）。
     /// </summary>
     int MarkAllForAiRerun();
+
+    /// <summary>
+    /// 批次候選日：一次查多台主機 × 多個問題鍵（<see cref="IssueSignatureKey.For(LogIssueSignature)"/>）
+    /// 出現過的日子。主機比對語意同 <see cref="Query"/> 的 <see cref="RecordQueryFilter.Hosts"/>；
+    /// 結果以（主機, 鍵, 日）去重，<see cref="IssueDayHit.HostId"/> 是紀錄自帶的主機 id。
+    /// hosts 或 issueKeys 為空回空清單。
+    /// </summary>
+    List<IssueDayHit> IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys);
 }
+
+/// <summary>批次候選日查詢的一筆命中：某主機某天出現某問題鍵（Date 只含日期部分）</summary>
+public sealed record IssueDayHit(long HostId, string IssueKey, DateTime Date);

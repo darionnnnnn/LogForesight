@@ -290,6 +290,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.DaySyncPending).HasColumnName("day_sync_pending");
             e.Property(x => x.Cancelled).HasColumnName("cancelled");
+            e.Property(x => x.DaySyncIntent).HasColumnName("day_sync_intent");
             e.HasIndex(x => new { x.WorkOrderId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_work_order_closed");
             e.HasIndex(x => new { x.SourceKey, x.EventId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_issue_closed");
             e.HasIndex(x => x.DaySyncPending).HasDatabaseName("IX_lf_issue_cases_day_sync_pending");
@@ -773,6 +774,9 @@ public class IssueCaseRow
     public int? EventId { get; set; }
     public bool DaySyncPending { get; set; }
     public bool Cancelled { get; set; }
+
+    /// <summary>待背景同步的逐日寫入意圖（CaseDayIntent 的 JSON）；null＝無待同步</summary>
+    public string? DaySyncIntent { get; set; }
 }
 
 /// <summary>交辦單的一列。↔ lf_work_orders</summary>

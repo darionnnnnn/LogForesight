@@ -452,6 +452,20 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
         foreach (var r in targets) r.AiPending = true;
         return targets.Count;
     }
+
+    /// <summary>批次候選日：主機比對沿用 Query，逐筆 TopIssues 以 IssueSignatureKey.For 組鍵（語意同 EF 實作）</summary>
+    public List<IssueDayHit> IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys)
+    {
+        if (hosts.Count == 0 || issueKeys.Count == 0) return new List<IssueDayHit>();
+        var keys = issueKeys.ToHashSet(StringComparer.Ordinal);
+        return Query(new RecordQueryFilter { Hosts = hosts })
+            .SelectMany(r => r.TopIssues
+                .Select(IssueSignatureKey.For)
+                .Where(keys.Contains)
+                .Select(key => new IssueDayHit(r.HostId, key, r.Date.Date)))
+            .Distinct()
+            .ToList();
+    }
 }
 
 /// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的

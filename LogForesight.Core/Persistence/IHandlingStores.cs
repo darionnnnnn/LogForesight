@@ -46,6 +46,11 @@ public interface IIssueHandlingStore
     /// <summary>某案件展開寫入的全部逐日列（案件同步展開時定位既有列用，docs/archive/FEEDBACK-4-PLAN.md §0.5）</summary>
     List<IssueHandling> GetByCase(string caseId);
 
+    /// <summary>
+    /// 多個案件展開寫入的全部逐日列（批次取消用，依 case_id 精確查、store 內分批）。
+    /// </summary>
+    List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds);
+
     /// <summary>寫入／更新單一問題的狀態；status 為 null／空字串代表清除該問題的標記（回到未處理）</summary>
     void Save(IssueHandling handling);
 
@@ -108,5 +113,16 @@ public interface IIssueCaseStore
     List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take);
 
     int CountByWorkOrder(long workOrderId);
+
+    /// <summary>待背景逐日同步的案件（day_sync_pending = 1），依 updated_at、case_id 升冪取前 take 筆</summary>
+    List<IssueCase> GetDaySyncPending(int take);
+
+    int CountDaySyncPending();
+
+    /// <summary>
+    /// 背景寫完逐日列後清旗標：只在案件上存的意圖仍等於 <paramref name="intent"/>（序列化字串相同）時
+    /// 清除旗標與意圖，回傳是否清到。期間使用者送了新意圖就不清，留給下一批依新意圖重寫。
+    /// </summary>
+    bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent);
 }
 

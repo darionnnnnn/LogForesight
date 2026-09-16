@@ -72,6 +72,9 @@ public class IssueCase
     /// <summary>逐日 <see cref="IssueHandling"/> 列尚待背景同步（後續階段使用）</summary>
     public bool DaySyncPending { get; set; }
 
+    /// <summary>待背景同步的逐日寫入意圖；<see cref="DaySyncPending"/> 為 false 時為 null</summary>
+    public CaseDayIntent? DaySyncIntent { get; set; }
+
     /// <summary>因取消交辦而關閉的案件</summary>
     public bool Cancelled { get; set; }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -179,6 +180,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         // 呼叫端手上若是整併前讀到的舊模型（WorkOrderId=null），整欄覆寫會把連結靜默抹掉
         if (issueCase.WorkOrderId != null) row.WorkOrderId = issueCase.WorkOrderId;
         row.DaySyncPending = issueCase.DaySyncPending;
+        row.DaySyncIntent = issueCase.DaySyncIntent == null ? null : SerializeIntent(issueCase.DaySyncIntent);
         row.Cancelled = issueCase.Cancelled;
 
         if (row.SourceKey != null) return;
@@ -241,6 +243,41 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     {
         using var ctx = _contextFactory();
         return ctx.IssueCases.Count(c => c.WorkOrderId == workOrderId);
+    }
+
+    public List<IssueCase> GetDaySyncPending(int take)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.DaySyncPending)
+            .OrderBy(c => c.UpdatedAt)
+            .ThenBy(c => c.CaseId)
+            .Take(take)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
+    public int CountDaySyncPending()
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.Count(c => c.DaySyncPending);
+    }
+
+    /// <summary>
+    /// 單句條件式更新：WHERE case_id 與 day_sync_intent 都相符才清，讀與寫之間沒有空窗——
+    /// 先讀再比再寫的話，使用者在中間送出的新意圖會被這一趟清掉。刻意不動 updated_at（樂觀鎖欄位）：
+    /// 這是背景維護，不該讓使用者手上的案件因此撞 409。
+    /// </summary>
+    public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent)
+    {
+        var json = SerializeIntent(intent);
+        using var ctx = _contextFactory();
+        return ctx.IssueCases
+            .Where(c => c.CaseId == caseId && c.DaySyncIntent == json)
+            .ExecuteUpdate(s => s
+                .SetProperty(c => c.DaySyncPending, false)
+                .SetProperty(c => c.DaySyncIntent, (string?)null)) == 1;
     }
 
     /// <summary>樂觀鎖衝突轉語意例外（D3）：訊息帶「哪一件案件」，讓 Web 層對應成 409</summary>
@@ -308,6 +345,12 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         SourceName = row.SourceName,
         EventId = row.EventId,
         DaySyncPending = row.DaySyncPending,
+        DaySyncIntent = row.DaySyncIntent == null
+            ? null
+            : JsonSerializer.Deserialize<CaseDayIntent>(row.DaySyncIntent, LfJsonOptions.Compact),
         Cancelled = row.Cancelled
     };
+
+    /// <summary>意圖的序列化單點：寫入與「未變更才清」的比對必須用同一份選項，否則字串永遠不相等</summary>
+    internal static string SerializeIntent(CaseDayIntent intent) => JsonSerializer.Serialize(intent, LfJsonOptions.Compact);
 }
