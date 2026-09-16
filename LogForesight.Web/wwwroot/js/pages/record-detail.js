@@ -150,28 +150,26 @@ async function onBatchSaved(result) {
 
 /**
  * 「下一筆未處理」捷徑：處理完一天後不必手動返回清單再自己找下一筆。
- * 沿用問題查詢的緊急程度排序（未結案的高＋中風險日），跳到目前這筆之後的下一筆。
- * 目前這筆已不在未處理清單（剛結案）時，跳到清單第一筆；全部處理完則按鈕不顯示。
+ * 「下一筆是哪一筆」全由後端決定（/api/records/next-unhandled，沿用問題查詢的緊急程度排序
+ * 與未結案的高＋中風險日條件）——前端拿到什麼就連到什麼，不再把整份清單拉回來自己找。
+ * 沒有下一筆（全部處理完／已是最後一筆）時後端回 null，按鈕不顯示。
+ *
+ * 刻意在主要內容載入完成之後才發出、而且不被 await：這條捷徑走的是記錄查詢的慢路徑，
+ * 串在主載入流程裡會讓整頁陪它一起等。取不到就不顯示捷徑，不打斷詳情頁。
  */
 async function setupNextUnhandled() {
     const button = document.getElementById('next-unhandled');
     if (!button) return;
 
-    let items;
+    let next;
     try {
-        const result = await api.get(
-            `/api/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&pageSize=200`,
+        next = await api.get(
+            `/api/records/next-unhandled?hostId=${encodeURIComponent(hostId)}&date=${encodeURIComponent(date)}`,
             { silent: true });
-        items = result.items;
     } catch {
         return;   // 取不到就不顯示捷徑，不打斷詳情頁
     }
 
-    if (!items || items.length === 0) return;
-
-    const currentIndex = items.findIndex(r => r.hostId === hostId && r.date === date);
-    // 目前這筆還在未處理清單 → 取它之後的下一筆；已不在（剛結案）→ 取第一筆
-    const next = currentIndex >= 0 ? items[currentIndex + 1] : items[0];
     if (!next) return;   // 這是最後一筆未處理
 
     button.href = appUrl(`/records/${next.hostId}/${next.date}`);

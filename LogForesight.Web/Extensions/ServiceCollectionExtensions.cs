@@ -293,6 +293,9 @@ public static class ServiceCollectionExtensions
         // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
         services.AddSingleton<DataVersionStamp>();
         services.AddSingleton<SummaryCache>();
+        // 「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）：同樣是 Singleton
+        // ——它要吸收的正是「每次進詳情頁、每次批次儲存後」的重複詢問，跨請求才有意義。
+        services.AddSingleton<NextUnhandledSequenceCache>();
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依

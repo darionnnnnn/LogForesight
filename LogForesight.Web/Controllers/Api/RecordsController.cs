@@ -159,6 +159,17 @@ public class RecordsController : ControllerBase
         };
     }
 
+    /// <summary>
+    /// 「下一筆未處理」捷徑（回饋四十五輪 B2）：回傳下一筆的主機與日期，沒有下一筆時回 null
+    /// ——呼叫端要的只是一個連結，不需要整份清單 DTO（改版前是把 200 筆完整清單拉到前端自己找）。
+    ///
+    /// 授權：<see cref="RecordListQueryService.FindNextUnhandled"/> 自己解析可見範圍
+    /// （不因為「內部呼叫既有服務」就假設已經擋過），可見範圍為空時回 null。
+    /// </summary>
+    [HttpGet("next-unhandled")]
+    public ApiResponse<NextUnhandledDto?> NextUnhandled([FromQuery] long hostId, [FromQuery] string? date) =>
+        ApiResponse<NextUnhandledDto?>.Ok(_list.FindNextUnhandled(hostId, ParseRequiredDate(date)));
+
     [HttpGet("{hostId:long}/{date}")]
     public ApiResponse<RecordDetailDto> GetDetail(long hostId, string date) =>
         ApiResponse<RecordDetailDto>.Ok(_detail.GetDetail(hostId, ParseRequiredDate(date)));

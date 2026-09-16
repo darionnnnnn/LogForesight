@@ -23,6 +23,11 @@ public class RecordListQueryService
     private readonly OccurrenceStatusResolver _statusResolver;
     private readonly IUserDisplayNameService _displayNameService;
 
+    /// <summary>「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）。
+    /// 刻意是**必填**參數：漏注入就會變成每個請求各自重算慢路徑，而那正是這次要修的問題，
+    /// 不能讓它以「可選相依」的形式安靜失效。</summary>
+    private readonly NextUnhandledSequenceCache _nextUnhandledCache;
+
     /// <summary>問題負責人（回饋十八輪批次F）：「依問題」視角順帶顯示負責人 badge，
     /// 讓「這個問題歸誰」在主視角一眼可見。可為 null——測試組裝不注入時該欄位維持空清單。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
@@ -41,6 +46,7 @@ public class RecordListQueryService
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
         IUserDisplayNameService displayNameService,
+        NextUnhandledSequenceCache nextUnhandledCache,
         IIssueOwnerStore? issueOwners = null,
         IKnownIssueRuleStore? rules = null)
     {
@@ -56,6 +62,7 @@ public class RecordListQueryService
         _aggregates = aggregates;
         _statusResolver = statusResolver;
         _displayNameService = displayNameService;
+        _nextUnhandledCache = nextUnhandledCache;
         _issueOwners = issueOwners;
         _rules = rules;
     }
@@ -73,6 +80,16 @@ public class RecordListQueryService
         // 整批撈回（回饋十九輪批次E3，只帶輕量欄位，不是整份 ContentJson）。
         var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true || request.Unassigned;
 
+        // 缺省日期下界（回饋四十五輪 B2）：呼叫端沒帶起始日期時，原本的起點是「不限」
+        // ——等於每次都掃整個保留期。只在**沒有處理狀態類篩選**的路徑收斂成
+        // 昨天往前 <see cref="DefaultLookbackDays"/> 天；帶處理狀態／逾期／未指派篩選時
+        // 一律維持整個保留期：那條路徑是依「狀態」找案子，把窗口切掉會讓一件開了幾個月
+        // 還沒結的案子從結果裡消失，那是使用者的待辦不見了，比查詢慢更嚴重。
+        if (!needsHandlingFilter && filter.From == null)
+        {
+            filter.From = DefaultLookbackStart();
+        }
+
         if (!needsHandlingFilter)
         {
             var paged = _repository.QueryPage(filter, page, pageSize, request.SortKey, request.Ascending);
@@ -82,16 +99,15 @@ public class RecordListQueryService
             var pageOpenCases = LoadOpenCases(paged.Items, pageLookup);
             var pageUnhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
-            DayHandlingDerivation.DayProgress PageProgress(DailyAnalysisRecord r) =>
-                DeriveProgress(r, pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
+            var pageProgress = MemoizedProgress(pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
 
             bool PageIsOverdue(DailyAnalysisRecord r) =>
-                ComputeIsOverdue(r, pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
+                ComputeIsOverdue(r, pageHandlings, pageIssueHandlings, pageLookup, pageProgress);
 
             return new PagedResult<RecordListItemDto>
             {
                 Items = paged.Items
-                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), PageProgress(r), PageIsOverdue(r), pageOpenCases))
+                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), pageProgress(r), PageIsOverdue(r), pageOpenCases))
                     .ToList(),
                 Page = page,
                 PageSize = pageSize,
@@ -114,20 +130,21 @@ public class RecordListQueryService
         var issueHandlings = LoadIssueHandlings(records, lookup);
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
-        DayHandlingDerivation.DayProgress Progress(DailyAnalysisRecord r) =>
-            DeriveProgress(r, handlings, issueHandlings, lookup, unhandledSeverities);
+        // 每筆只推導一次（回饋四十五輪 B2）：同一筆紀錄的處理狀態原本在「篩選」與「投影」
+        // 各算一次、逾期判定裡再算一次。改以紀錄物件（參考相等）為鍵記憶化，結果不變。
+        var progress = MemoizedProgress(handlings, issueHandlings, lookup, unhandledSeverities);
 
         // 逾期＝日層級 DueDate 過期且未結案，或任一問題層級「處理中」的 DueDate 過期
         // （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）
         bool IsOverdue(DailyAnalysisRecord r) =>
-            ComputeIsOverdue(r, handlings, issueHandlings, lookup, unhandledSeverities);
+            ComputeIsOverdue(r, handlings, issueHandlings, lookup, progress);
 
         if (request.Statuses is { Count: > 0 })
         {
             // 對外三態篩選（#12）：畫面上的「已處理」chip 要涵蓋全部結案類
             // （不處理/誤報/已知雜訊…），不能只比對到原始的 resolved
             var wanted = request.Statuses.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            records = records.Where(r => wanted.Contains(HandlingStatuses.ExternalOf(Progress(r).DayStatus))).ToList();
+            records = records.Where(r => wanted.Contains(HandlingStatuses.ExternalOf(progress(r).DayStatus))).ToList();
         }
 
         if (request.Overdue == true)
@@ -167,12 +184,76 @@ public class RecordListQueryService
         return new PagedResult<RecordListItemDto>
         {
             Items = pageItems
-                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r), IsOverdue(r), openCases))
+                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), progress(r), IsOverdue(r), openCases))
                 .ToList(),
             Page = page,
             PageSize = pageSize,
             Total = ordered.Count
         };
+    }
+
+    /// <summary>
+    /// 記錄查詢在呼叫端沒指定起始日期、且沒有處理狀態類篩選時的缺省下界（回饋四十五輪 B2）：
+    /// 昨天（分析錨點，分析永遠只產到昨天）往前 <see cref="DefaultLookbackDays"/> 天。
+    /// </summary>
+    private static DateTime DefaultLookbackStart() => DateTime.Today.AddDays(-1).AddDays(-DefaultLookbackDays);
+
+    /// <summary>缺省回望天數：與主機詳情頁的天數上限同值（DashboardController 的
+    /// <c>Math.Clamp(days, 7, 90)</c>）——那裡是行內字面值、沒有具名常數可共用，
+    /// 這裡是全站第一個具名來源，日後兩邊要一起調。</summary>
+    public const int DefaultLookbackDays = 90;
+
+    /// <summary>
+    /// 「下一筆未處理」捷徑（回饋四十五輪 B2）：回答「目前這筆之後該去哪一筆」，
+    /// 只回主機與日期兩個欄位——呼叫端要的只是一個連結，不需要整份清單 DTO。
+    ///
+    /// 語意與改版前前端自己算的那一版完全相同：以「未結案（open／in_progress）的高＋中風險日」
+    /// 依現行預設排序取前 <see cref="NextUnhandledScanSize"/> 筆，找出目前這筆的位置取它的下一筆；
+    /// 目前這筆不在清單裡（例如剛結案）取第一筆；已是最後一筆時沒有下一筆。
+    ///
+    /// **窗口＝保留期，不得縮短**：這條捷徑是依處理狀態找案子而不是依日期，把窗口縮成近 N 天，
+    /// 一件開了幾個月還沒結的案子就會從捷徑裡消失。效能由 <see cref="NextUnhandledSequenceCache"/> 吸收。
+    ///
+    /// 授權：可見範圍由 <see cref="IVisibilityService"/> 自己解析（不因為「內部呼叫既有服務」
+    /// 就假設已經擋過），可見集合為空時直接回 null；同一份可見集合也是快取鍵的一部分。
+    /// </summary>
+    public NextUnhandledDto? FindNextUnhandled(long hostId, DateTime date)
+    {
+        var sequence = UnhandledSequence();
+        if (sequence.Count == 0) return null;
+
+        var key = date.ToString("yyyy-MM-dd");
+        var index = sequence.FindIndex(x => x.HostId == hostId && x.Date == key);
+
+        // 不在清單裡（剛結案／本來就不是未處理的高中風險日）→ 第一筆；否則取下一筆
+        if (index < 0) return ToNextUnhandled(sequence[0]);
+        return index + 1 < sequence.Count ? ToNextUnhandled(sequence[index + 1]) : null;
+    }
+
+    /// <summary>改版前前端送的 <c>pageSize=200</c>——沿用同一個掃描上限，捷徑語意才與改版前完全一致</summary>
+    public const int NextUnhandledScanSize = 200;
+
+    private static NextUnhandledDto ToNextUnhandled((long HostId, string Date) item) =>
+        new() { HostId = item.HostId, Date = item.Date };
+
+    /// <summary>捷徑清單的輕量序列（只有 hostId 與 date），跨請求快取；未命中時走一次慢路徑。</summary>
+    private List<(long HostId, string Date)> UnhandledSequence()
+    {
+        var visibleHostIds = _visibility.GetVisibleHostIds();
+        if (visibleHostIds.Count == 0) return new List<(long, string)>();
+
+        var key = NextUnhandledSequenceCache.KeyOf(
+            visibleHostIds.ToList(),
+            ResolveVisibleSeverities()?.Select(s => s.ToString()).ToList(),
+            ResolveVisibleDayRiskLevels()?.ToList());
+
+        return _nextUnhandledCache.GetOrAdd(key, () => Search(new RecordSearchRequest
+        {
+            Statuses = new List<string> { HandlingStatuses.Open, HandlingStatuses.InProgress },
+            RiskLevels = new List<string> { RiskLevels.High, RiskLevels.Medium },
+            Page = 1,
+            PageSize = NextUnhandledScanSize
+        }).Items.Select(i => (i.HostId, i.Date)).ToList());
     }
 
     /// <summary>
@@ -676,6 +757,32 @@ public class RecordListQueryService
         return _issueHandlings.GetMany(hostNames, records.Min(r => r.Date), records.Max(r => r.Date));
     }
 
+    /// <summary>本服務實例至今真正推導過幾次日狀態（回饋四十五輪 B2）。
+    /// 記憶化是效能契約，沒有可觀測手段就無法守住——internal 僅供測試觀察
+    /// （LogForesight.Web 已對 LogForesight.Tests 開放 InternalsVisibleTo），正式碼不消費它。</summary>
+    internal int ProgressDerivationCount { get; private set; }
+
+    /// <summary>
+    /// 以紀錄物件為鍵的日狀態記憶化（回饋四十五輪 B2）：<see cref="DailyAnalysisRecord"/> 沒有覆寫
+    /// Equals，字典預設就是參考相等——同一批撈回的紀錄物件在篩選／排序／投影之間一路是同一個實例。
+    /// 行為與直接呼叫 <see cref="DeriveProgress"/> 完全相同，只是同一筆不再算第二次。
+    /// </summary>
+    private Func<DailyAnalysisRecord, DayHandlingDerivation.DayProgress> MemoizedProgress(
+        List<RecordHandling> dayHandlings,
+        List<IssueHandling> issueHandlings,
+        HostLookup lookup,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
+    {
+        var memo = new Dictionary<DailyAnalysisRecord, DayHandlingDerivation.DayProgress>();
+        return record =>
+        {
+            if (memo.TryGetValue(record, out var cached)) return cached;
+            var derived = DeriveProgress(record, dayHandlings, issueHandlings, lookup, unhandledSeverities);
+            memo[record] = derived;
+            return derived;
+        };
+    }
+
     /// <summary>單筆紀錄的日狀態推導（方案 B）：日層級狀態 + 當日問題層級標記，走 DayHandlingDerivation 單點規則</summary>
     private DayHandlingDerivation.DayProgress DeriveProgress(
         DailyAnalysisRecord record,
@@ -684,6 +791,8 @@ public class RecordListQueryService
         HostLookup lookup,
         IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
+        ProgressDerivationCount++;
+
         var dayStatus = FindHandling(dayHandlings, lookup, record)?.Status;
         var forDay = IssueHandlingsFor(record, issueHandlings, lookup);
 
@@ -695,17 +804,17 @@ public class RecordListQueryService
     /// （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）。
     /// Search 的分頁快速路徑與完整路徑各自傳入自己那份 handlings/issueHandlings，共用同一份判定。
     /// </summary>
-    private bool ComputeIsOverdue(
+    private static bool ComputeIsOverdue(
         DailyAnalysisRecord record,
         List<RecordHandling> handlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
-        IReadOnlySet<IssueSeverity> unhandledSeverities)
+        Func<DailyAnalysisRecord, DayHandlingDerivation.DayProgress> progress)
     {
         var handling = FindHandling(handlings, lookup, record);
         var dayOverdue = handling?.DueDate.HasValue == true &&
                          handling.DueDate.Value.Date < DateTime.Today &&
-                         DeriveProgress(record, handlings, issueHandlings, lookup, unhandledSeverities).IsUnresolved;
+                         progress(record).IsUnresolved;
         return dayOverdue ||
                DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(record, issueHandlings, lookup), DateTime.Today);
     }
@@ -927,4 +1036,14 @@ public class RecordListQueryService
         _ => status
     };
 
+}
+
+/// <summary>「下一筆未處理」捷徑的目標（回饋四十五輪 B2）：只有組連結需要的兩個欄位。
+/// 沒有下一筆時整個回應是 null，呼叫端據此不顯示捷徑。</summary>
+public class NextUnhandledDto
+{
+    public long HostId { get; set; }
+
+    /// <summary>yyyy-MM-dd</summary>
+    public string Date { get; set; } = string.Empty;
 }
