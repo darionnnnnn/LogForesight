@@ -134,7 +134,9 @@
      結果走跨請求快取（鍵＝資料版本戳＋可見主機集合＋可見嚴重度，TTL 30 秒；是否直接複用 `ActionableSnapshotCache` 標**暫定**，執行端依實作事實決定），只回傳下一筆的 hostId／date。
      前端在主載入完成後**非阻塞**打；失敗不顯示捷徑（現行行為）。
    - `/api/records` **無狀態篩選**路徑：`from` 缺省改為「昨天往前 90 天」（與主機詳情 clamp 同源常數）；**有狀態篩選**路徑維持全保留期，但 `Progress(r)` 每筆只算一次（先算再篩再投影）。
-   - `LatestOccurrences` 的 `source_name` 下推到 SQL（B13）。
+   - ~~`LatestOccurrences` 的 `source_name` 下推到 SQL（B13）~~ **本輪放棄**（實作前核對改判，
+     理由見下方「本輪推翻的規劃定案」第 3 點）：SQL 端要比對大小寫就得用 `UPPER()`，
+     而兩個資料庫後端的語意不同，粗篩會靜默漏列。維持 BACKLOG。
 3. **`JsonBlobSingleton` 加版本探測快取**（B4）：與 `JsonBlobCollection(cached:true)` 同一機制（每次 `Get` 先探測版本，版本相同回快取物件的**深副本或不可變快照**，不同才重讀）；
    `SystemSettingsStore` 開啟。
    **快取的是原始內容與版本、命中時仍各自反序列化出新物件**：單一物件型 store 的呼叫端會做讀→改→寫，
@@ -142,9 +144,12 @@
    **`AiCacheStore` 本輪不開**（規劃時定為要開，實作期改判）：它的內容是 AI 產出的整包文字（可能很大）
    且每次 `Put` 都推進版本讓快取立刻失效，效益不明而記憶體風險明確。
    回傳必須是副本：既有註解假設「每次 `Get()` 都是不同物件」（`SystemSettingsService.cs:320`），快取共用同一實例會讓讀→改→寫的 `before` 快照被汙染。
-4. **`SummaryCache` 失效白名單**（B5）：中介軟體改為「非 GET 且路徑**不在**白名單」才 `Bump()`；白名單**只列明確不改分析資料的端點**：
-   `display-settings`、`auth/*`、`help/ask`、`ai/interpret-issue`（讀取型）。其餘（含所有處理狀態、規則、設定、排程寫入）照舊推進。
-5. **可見範圍跨請求快取**（B6）：`VisibilityService` 的可見主機集合改為跨請求快取，鍵＝userId＋`DataVersionStamp.Current`，TTL 60 秒，上限 256 筆整批清；
+4. **`SummaryCache` 失效白名單**（B5）：中介軟體改為「非 GET 且路徑**不在**白名單」才 `Bump()`；白名單**只列明確不改分析資料的端點**。
+   實際落地的四個是 `auth/login`、`auth/logout`、`help/ask`、`ai/chat`——規劃時列的
+   `display-settings` 與「認證換發」在程式碼中沒有對應的非 GET 端點（前者只有 GET），
+   `ai/interpret-issue` 本身是 GET 不需要列。其餘（含所有處理狀態、規則、設定、排程寫入）照舊推進。
+5. **可見範圍跨請求快取**（B6）：`VisibilityService` 的可見主機集合改為跨請求快取，鍵＝userId＋`DataVersionStamp.Current`＋保留天數，TTL **30 秒、上限 64**
+   （規劃暫定 60／256，實作時改為與專案內同族快取一致——自創數字會讓它成為唯一的異類）；
    版本戳一推進即失效，授權變更不延遲超過一次寫入。ViewAll 短路徑不變。
 6. **PRTG**（B7）：`SchemaUpgrader` 補 `lf_prtg_values(period_start)` 與 `lf_prtg_state_changes(changed_at)` 兩條索引（兩後端）；
    主機詳情 PRTG 頁籤改依 hostId 查對應（store 新增依主機取最新對應的方法）；衝突清單的 device 索引改跨請求快取（鍵＝版本戳，TTL 30 秒）。
@@ -167,7 +172,11 @@
 7. `SqlPerformanceMonitor.cs`＋三個 store 埋點＋`HealthService`／`settings.js` 健康頁籤。
 8. `core/api.js`、`core/ui.js`（guardLoad timeout 分支）、五頁 loading。
 9. `CalibrationService.cs`、`PermissionChangeStore.cs`／`PermissionChangeService.cs`、`SentinelEventFetchService.cs`。
-10. 文件：DB-SPEC（索引＋升級注意）、WEB-SPEC §9.10（執行紀錄資料路徑）、§9.3（捷徑端點）、§8.6（逾時與 loading 規範）、§9.9b（健康頁慢查詢表）、PRTG-SPEC（校準快取）、BACKLOG（移除已修項：`LatestOccurrences`、衝突清單 device 索引；保留仍未修項）。
+10. 文件：DB-SPEC（索引＋升級注意）、§9.2／§9.3（捷徑端點與日期下界）、§8.6（逾時與 loading 規範）、
+    §9.9b（健康頁慢查詢表）、BACKLOG（更正已過時的敘述；`LatestOccurrences` 條目**保留**並補上本輪放棄下推的理由）。
+    **核對後判定不需要改的兩處**：§9.10「執行紀錄資料路徑」——B1 是純內部實作（查詢下推），
+    不改變畫面行為，而 §9.10 本來就不描述資料層實作；PRTG-SPEC「校準快取」——文件寫的
+    「判定結果在行程內快取 10 分鐘」本來就是預期行為，本輪修的是讓實作真的符合它，描述不必動。
 
 ### 測試／驗收
 
