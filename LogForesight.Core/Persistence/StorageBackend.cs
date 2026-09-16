@@ -182,7 +182,7 @@ public class StorageBackend
     public EfJsonBlobStore Blob(string key) => new(_dbFactory, key, Performance);
 
     /// <summary>store 的底層 append-only 逐行資料（lf_log_lines，key 為鍵）</summary>
-    public EfJsonLogStore LogStore(string key) => new(_dbFactory, key);
+    public EfJsonLogStore LogStore(string key) => new(_dbFactory, key, Performance);
 
     /// <summary>EF 分析紀錄 store。ownerHost 由批次傳入（缺日判定與趨勢基準只看這台主機自己的
     /// 紀錄），Web 查詢端不傳（維持不分主機）</summary>
@@ -203,14 +203,14 @@ public class StorageBackend
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
     /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
-    public PermissionChangeStore PermissionChanges() => new(_dbFactory);
+    public PermissionChangeStore PermissionChanges() => new(_dbFactory, Performance);
 
     /// <summary>報告全文 store（↔ lf_reports）：同時是 <see cref="IReportSink"/> 與
     /// <see cref="IReportReader"/> 的實作</summary>
     public EfReportStore ReportStore() => new(_dbFactory);
 
     /// <summary>PRTG 鏡像資料 store（↔ lf_prtg_* 五張表）</summary>
-    public EfPrtgStore PrtgStore() => new(_dbFactory);
+    public EfPrtgStore PrtgStore() => new(_dbFactory, Performance);
 
     /// <summary>校準狀態判定與數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A）。
     /// 相依的三個 store／查詢由呼叫端持有——本類別只提供資料庫連線工廠。</summary>

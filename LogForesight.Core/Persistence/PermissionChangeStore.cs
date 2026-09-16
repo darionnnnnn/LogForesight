@@ -31,9 +31,17 @@ public class PermissionChangeStore
 {
     private readonly Func<LfDbContext> _contextFactory;
 
-    public PermissionChangeStore(Func<LfDbContext> contextFactory)
+    /// <summary>
+    /// 慢操作監控（可選相依，與 <see cref="Sql.EfAnalysisRecordStore"/> 等 store 同一套）。
+    /// 權限異動是多條件組合＋分頁排序下推的查詢，一台吵雜的 DC 一天可達數萬則——
+    /// 過去一個埋點都沒有，慢的時候健康頁上看不到任何線索（回饋四十五輪 B6）。
+    /// </summary>
+    private readonly SqlPerformanceMonitor? _performance;
+
+    public PermissionChangeStore(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null)
     {
         _contextFactory = contextFactory;
+        _performance = performance;
     }
 
     /// <summary>單次 SaveChanges 的列數上限（回饋三十四輪 A4）：一台吵雜的 DC 一天可達數萬則，
@@ -181,6 +189,7 @@ public class PermissionChangeStore
     /// <summary>某去重鍵是否已有列（供彙總列判斷「這天先前已看過完整的例行同步」使用）。</summary>
     public bool ExistsByDedupeKey(string dedupeKey)
     {
+        using var __perf = _performance.Measure("permchange:ExistsByDedupeKey");
         using var ctx = _contextFactory();
         return ctx.PermissionChanges.AsNoTracking().Any(r => r.DedupeKey == dedupeKey);
     }
@@ -222,6 +231,7 @@ public class PermissionChangeStore
     /// <summary>多條件篩選、排序與分頁查詢（全部條件下推 SQL）</summary>
     public PagedResult<PermissionChangeRecord> Query(PermissionChangeQueryFilter filter)
     {
+        using var __perf = _performance.Measure("permchange:Query");
         if (filter.HostNames != null && filter.HostNames.Count == 0)
         {
             return new PagedResult<PermissionChangeRecord>
@@ -268,6 +278,7 @@ public class PermissionChangeStore
     /// <summary>依篩選條件查詢符合的 ChangeId 清單（含總符合筆數與上限截斷）</summary>
     public (List<string> Ids, int Total) QueryIds(PermissionChangeQueryFilter filter, int maxCount)
     {
+        using var __perf = _performance.Measure("permchange:QueryIds");
         if (filter.HostNames != null && filter.HostNames.Count == 0)
         {
             return (new List<string>(), 0);
@@ -384,6 +395,7 @@ public class PermissionChangeStore
     /// <summary>單列查詢</summary>
     public PermissionChangeRecord? Get(string changeId)
     {
+        using var __perf = _performance.Measure("permchange:Get");
         if (string.IsNullOrWhiteSpace(changeId)) return null;
 
         using var ctx = _contextFactory();
@@ -396,6 +408,7 @@ public class PermissionChangeStore
     /// <summary>批次查詢多筆異動紀錄</summary>
     public List<PermissionChangeRecord> GetByChangeIds(IEnumerable<string> changeIds)
     {
+        using var __perf = _performance.Measure("permchange:GetByChangeIds");
         var ids = changeIds.Distinct().ToList();
         if (ids.Count == 0) return new List<PermissionChangeRecord>();
 
@@ -410,6 +423,7 @@ public class PermissionChangeStore
     /// <summary>取得指定異動的確認狀態清單</summary>
     public List<PermissionChangeConfirmation> GetConfirmations(IEnumerable<string> changeIds)
     {
+        using var __perf = _performance.Measure("permchange:GetConfirmations");
         var ids = changeIds.Distinct().ToList();
         if (ids.Count == 0) return new List<PermissionChangeConfirmation>();
 
@@ -449,6 +463,7 @@ public class PermissionChangeStore
     /// <param name="toInclusive">迄（含）——呼叫端以本批紀錄的最早／最晚偵測時間為界</param>
     public virtual HashSet<string> GetDedupeKeysForHost(string hostName, DateTime from, DateTime toInclusive)
     {
+        using var __perf = _performance.Measure("permchange:GetDedupeKeysForHost");
         var hostKey = HostNameKey.Of(hostName);
         using var ctx = _contextFactory();
 
@@ -509,6 +524,7 @@ public class PermissionChangeStore
     /// <summary>待確認筆數（SQL COUNT 下推）</summary>
     public int CountPending(IReadOnlyCollection<string>? hostNames)
     {
+        using var __perf = _performance.Measure("permchange:CountPending");
         if (hostNames != null && hostNames.Count == 0)
             return 0;
 

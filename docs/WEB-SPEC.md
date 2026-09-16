@@ -2011,6 +2011,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （not_started／running／completed／skipped／failed）、`IssueFirstSeenSeedFailures`、
      `IssueFirstSeenSeedError`；連續失敗達 3 次即視為 degraded（見 DB-SPEC 首見日段）。
 
+     **資料層慢查詢（`TopSlowOperations`）**：除了總操作數／慢操作數／門檻（2000ms）與單一最慢值，
+     `/api/health/detail` 另外帶出**最慢的前 10 支**操作，每支含操作名稱（`分類:方法名`，
+     例如 `prtg:GetValues`、`log:audit:ReadPage`、`permchange:Query`）、達到門檻的次數、
+     最大耗時與最近一次發生時間，依最大耗時由大到小；只有單一最慢值時，
+     管理者知道「最慢 7 秒」卻不知道是哪幾支慢、各慢幾次，無從決定要去看哪一頁。
+     埋點涵蓋紀錄查詢、問題彙總、處理狀態、blob、PRTG 鏡像、行式日誌（稽核／執行紀錄）
+     與權限異動這幾個 store 的對外查詢方法。設定頁「資料保留」面板顯示這份清單，
+     **清單為空時顯示「尚無慢查詢」**而不是一張空表。
+
      **信件內容廣泛化**：明細行移除 `Headline`／`RiskBasis`
      （判定依據），只留主機、日期、風險等級、錯誤／警告數量——不揭露具體錯誤內容。
 

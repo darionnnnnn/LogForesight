@@ -15,6 +15,22 @@ public class HealthDto
     public bool StorageOk { get; set; }
 }
 
+/// <summary>單一慢操作的累計（最慢前幾支之一）</summary>
+public class SlowOperationDto
+{
+    /// <summary>操作名稱（<c>分類:方法名</c>，例如 <c>prtg:GetValues</c>）</summary>
+    public string Operation { get; set; } = string.Empty;
+
+    /// <summary>達到門檻的次數</summary>
+    public long Count { get; set; }
+
+    /// <summary>最大耗時（毫秒）</summary>
+    public long MaxMs { get; set; }
+
+    /// <summary>最近一次達到門檻的時間</summary>
+    public DateTime LastAt { get; set; }
+}
+
 /// <summary>維運診斷用的完整健康資訊（需 <c>Maintain</c>）</summary>
 public class HealthDetailDto : HealthDto
 {
@@ -29,6 +45,13 @@ public class HealthDetailDto : HealthDto
     public long SlowestMs { get; set; }
     public string SlowestOperation { get; set; } = string.Empty;
     public DateTime? LastSlowAt { get; set; }
+
+    /// <summary>
+    /// 最慢的前幾支操作，依最大耗時由大到小（回饋四十五輪 B6）。
+    /// 只有「最慢的那一筆」時，管理者知道「最慢 7 秒」卻不知道是哪幾支慢、各慢幾次；
+    /// 這份清單才足以決定要去看哪一頁。沒有任何慢操作時是空清單（不是 null）。
+    /// </summary>
+    public List<SlowOperationDto> TopSlowOperations { get; set; } = new();
 
     // ── 分析執行狀態（E1：夜間分析與 Web 同行程，要看得出現在是不是正在跑）──
 

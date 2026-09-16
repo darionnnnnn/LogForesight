@@ -15,12 +15,20 @@ public sealed class EfPrtgStore
 
     private readonly Func<LfDbContext> _contextFactory;
 
+    /// <summary>
+    /// 慢操作監控（可選相依，與 <see cref="EfAnalysisRecordStore"/> 等 store 同一套）。
+    /// PRTG 鏡像是最容易變慢的一區（數值表隨感測器數×小時數成長），
+    /// 過去一個埋點都沒有，慢的時候健康頁上看不到任何線索（回饋四十五輪 B6）。
+    /// </summary>
+    private readonly SqlPerformanceMonitor? _performance;
+
     /// <summary>單次 SaveChanges 的批次上限</summary>
     private const int UpsertBatchSize = 500;
 
-    public EfPrtgStore(Func<LfDbContext> contextFactory)
+    public EfPrtgStore(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null)
     {
         _contextFactory = contextFactory;
+        _performance = performance;
     }
 
     /// <summary>
@@ -534,6 +542,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<PrtgDeviceRow> GetAllDevices()
     {
+        using var __perf = _performance.Measure("prtg:GetAllDevices");
         using var ctx = _contextFactory();
         return ctx.PrtgDevices.AsNoTracking().ToList();
     }
@@ -543,6 +552,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<PrtgSensorRow> GetAllSensors()
     {
+        using var __perf = _performance.Measure("prtg:GetAllSensors");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors.AsNoTracking().ToList();
     }
@@ -550,6 +560,7 @@ public sealed class EfPrtgStore
     /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>
     public List<PrtgValueRow> GetValues(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetValues");
         using var ctx = _contextFactory();
         return ctx.PrtgValues
             .AsNoTracking()
@@ -565,6 +576,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<(long Objid, bool Paused)> GetSensorTargets()
     {
+        using var __perf = _performance.Measure("prtg:GetSensorTargets");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors.AsNoTracking()
             .Select(s => new { s.Objid, s.Paused })
@@ -579,6 +591,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<PrtgStateChangeRow> GetStateChanges(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetStateChanges");
         using var ctx = _contextFactory();
         return ctx.PrtgStateChanges
             .AsNoTracking()
@@ -591,6 +604,7 @@ public sealed class EfPrtgStore
     /// <summary>取得未暫停 sensor 的現況狀態（判定沉默 device 用）：objid、device、status、type。</summary>
     public List<(long Objid, long DeviceObjid, string? Status, string SensorType)> GetSensorStatuses()
     {
+        using var __perf = _performance.Measure("prtg:GetSensorStatuses");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors
             .AsNoTracking()
@@ -606,6 +620,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<PrtgHostMapRow> GetHostMapForDate(DateTime mapDate)
     {
+        using var __perf = _performance.Measure("prtg:GetHostMapForDate");
         using var ctx = _contextFactory();
         var targetDate = mapDate.Date;
         return ctx.PrtgHostMaps
@@ -617,6 +632,7 @@ public sealed class EfPrtgStore
     /// <summary>取得指定 device 上的全部 sensor（主機明細顯示用）。</summary>
     public List<PrtgSensorRow> GetSensorsByDevice(long deviceObjid)
     {
+        using var __perf = _performance.Measure("prtg:GetSensorsByDevice");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors
             .AsNoTracking()
@@ -636,6 +652,7 @@ public sealed class EfPrtgStore
     public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapWithDate(
         int maxLookbackDays = 30, DateTime? anchor = null)
     {
+        using var __perf = _performance.Measure("prtg:GetLatestHostMapWithDate");
         if (maxLookbackDays <= 0)
         {
             return (null, new List<PrtgHostMapRow>());
@@ -681,6 +698,7 @@ public sealed class EfPrtgStore
     public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapForHost(
         long hostId, int maxLookbackDays = 30, DateTime? anchor = null)
     {
+        using var __perf = _performance.Measure("prtg:GetLatestHostMapForHost");
         if (maxLookbackDays <= 0)
         {
             return (null, new List<PrtgHostMapRow>());
@@ -710,6 +728,7 @@ public sealed class EfPrtgStore
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
     public List<PrtgManualMapRow> GetManualMaps()
     {
+        using var __perf = _performance.Measure("prtg:GetManualMaps");
         using var ctx = _contextFactory();
         return ctx.PrtgManualMaps.AsNoTracking().ToList();
     }
@@ -752,6 +771,7 @@ public sealed class EfPrtgStore
     /// <summary>讀取全部 IP 排除清單</summary>
     public List<PrtgIpExcludeRow> GetIpExcludes()
     {
+        using var __perf = _performance.Measure("prtg:GetIpExcludes");
         using var ctx = _contextFactory();
         return ctx.PrtgIpExcludes.AsNoTracking().ToList();
     }
@@ -822,6 +842,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public PrtgMirrorSummary GetMirrorSummary()
     {
+        using var __perf = _performance.Measure("prtg:GetMirrorSummary");
         using var ctx = _contextFactory();
 
         var deviceCount = ctx.PrtgDevices.Count();
@@ -847,6 +868,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public PrtgWhitelistCoverage GetWhitelistCoverage(IReadOnlyCollection<string>? whitelist, DateTime? mapDate)
     {
+        using var __perf = _performance.Measure("prtg:GetWhitelistCoverage");
         if (whitelist == null || whitelist.Count == 0)
         {
             return new PrtgWhitelistCoverage(0, 0);
@@ -890,6 +912,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<long> GetValueFetchTargets(IReadOnlyCollection<string>? whitelist, IReadOnlyCollection<long> deviceObjids)
     {
+        using var __perf = _performance.Measure("prtg:GetValueFetchTargets");
         if (deviceObjids == null || deviceObjids.Count == 0)
         {
             return new List<long>();
@@ -925,6 +948,7 @@ public sealed class EfPrtgStore
     /// <param name="toExclusive">結束時間（不含）</param>
     public List<PrtgSensorValueCoverage> GetValueCoverageSummary(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetValueCoverageSummary");
         using var ctx = _contextFactory();
         return ctx.PrtgValues
             .AsNoTracking()
@@ -991,6 +1015,7 @@ public sealed class EfPrtgStore
     /// <param name="toExclusive">結束時間（不含）</param>
     public List<PrtgDailyValueAggregation> GetDailyValueAggregations(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetDailyValueAggregations");
         using var ctx = _contextFactory();
         return ctx.PrtgValues
             .AsNoTracking()
@@ -1063,6 +1088,7 @@ public sealed class EfPrtgStore
     /// <param name="toExclusive">結束時間（不含）</param>
     public List<PrtgDailyValueMagnitude> GetDailyValueMagnitudes(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetDailyValueMagnitudes");
         using var ctx = _contextFactory();
         return ctx.PrtgValues
             .AsNoTracking()
@@ -1120,6 +1146,7 @@ public sealed class EfPrtgStore
     /// <param name="toExclusive">結束時間（不含）</param>
     public PrtgStateChangeCoverageSummary GetStateChangeCoverageSummary(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetStateChangeCoverageSummary");
         using var ctx = _contextFactory();
         var summary = ctx.PrtgStateChanges
             .AsNoTracking()
@@ -1150,6 +1177,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public List<PrtgTypeHourlyProfile> GetUsableHourlyProfileByType(DateTime fromInclusive, DateTime toExclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetUsableHourlyProfileByType");
         using var ctx = _contextFactory();
         return BuildUsableHourlyProfileQuery(
             ctx.PrtgValues.AsNoTracking(),
@@ -1184,6 +1212,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public PrtgSampledCoverage GetSampledCoverageSince(DateTime fromInclusive)
     {
+        using var __perf = _performance.Measure("prtg:GetSampledCoverageSince");
         using var ctx = _contextFactory();
         var result = ctx.PrtgValues
             .AsNoTracking()
