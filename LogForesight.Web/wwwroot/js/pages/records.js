@@ -11,7 +11,7 @@
  * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
-import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
@@ -103,12 +103,7 @@ function syncRiskChipSemantics() {
  * 自動呼叫會塞爆 AI 佇列）。只在明細視角、且 AI 可用時顯示按鈕。
  */
 async function initAiSummary() {
-    try {
-        const status = await api.get('/api/ai/status', { silent: true });
-        aiAvailable = !!status?.available;
-    } catch {
-        aiAvailable = false;
-    }
+    aiAvailable = await getAiAvailable();
     updateAiSummaryButton();
 
     document.getElementById('btn-ai-summary').addEventListener('click', async () => {

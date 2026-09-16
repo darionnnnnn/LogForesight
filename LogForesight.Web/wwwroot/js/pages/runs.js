@@ -5,11 +5,11 @@
  * 而「沒有紀錄」看起來跟「一切正常」一模一樣。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability } from '../core/api.js';
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, renderSpinner
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
@@ -663,12 +663,12 @@ async function loadSchedule() {
     }
 
     const statusPromise = refreshScheduleStatus();
-    const [options, aiStatus, settings] = await Promise.all([
+    const [options, aiReady, settings] = await Promise.all([
         api.get('/api/admin/schedule/options'),
-        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        getAiAvailable(),
         api.get('/api/admin/settings', { silent: true }).catch(() => null)
     ]);
-    aiAvailable = !!aiStatus?.available;
+    aiAvailable = aiReady;
     document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
     if (lastAiScheduleStatus) applyAiScheduleStatus(lastAiScheduleStatus);
 
@@ -1356,6 +1356,8 @@ function bindPrtgSync() {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
             toast('已開始同步結構與對應', 'success');
             await refreshPrtgSyncStatus();
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }
@@ -1368,6 +1370,8 @@ function bindPrtgSync() {
             await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
             toast('已送出停止要求，進行中的查詢會被中斷', 'success');
             await refreshPrtgSyncStatus();
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }
@@ -1572,7 +1576,6 @@ function updateRerunModeUI() {
             warningEl.textContent = '';
         }
     } else {
-        if (daysWrap) daysWrap.hidden = false;
         if (warningEl) {
             warningEl.className = `alert alert-${config.variant} py-2 px-3 mb-3`;
             warningEl.textContent = config.consequence;
@@ -1734,15 +1737,6 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
 
 let prtgBackfillPollTimer = null;
 
-function setPrtgBackfillSpinnerText(container, text) {
-    if (!container.querySelector('.spinner-border')) {
-        renderSpinner(container, text);
-        return;
-    }
-    const label = container.querySelector('span:last-child');
-    if (label) label.textContent = text;
-}
-
 function renderPrtgBackfillStatus(status) {
     const outputEl = document.getElementById('prtg-backfill-output');
     const copyButton = document.getElementById('prtg-backfill-copy');
@@ -1798,7 +1792,7 @@ function renderPrtgBackfillStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setPrtgBackfillSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 

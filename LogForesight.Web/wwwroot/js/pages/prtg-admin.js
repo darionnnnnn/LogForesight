@@ -6,7 +6,7 @@ import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
-    bindTabs, toast, withBusy, renderSpinner, confirmAction,
+    bindTabs, toast, withBusy, setSpinnerText, confirmAction,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
     collectLines, numberOr
 } from '../core/ui.js';
@@ -956,16 +956,6 @@ function bindPrtgMirror() {
 
 let prtgProbePollTimer = null;
 
-/** 輪詢更新時只換文字節點、不重建 spinner（避免每次輪詢動畫重置閃爍） */
-function setPrtgProbeSpinnerText(container, text) {
-    if (!container.querySelector('.spinner-border')) {
-        renderSpinner(container, text);
-        return;
-    }
-    const label = container.querySelector('span:last-child');
-    if (label) label.textContent = text;
-}
-
 function renderPrtgProbeStatus(status) {
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
@@ -983,7 +973,7 @@ function renderPrtgProbeStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setPrtgProbeSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
@@ -1213,6 +1203,8 @@ function bindStructureSync() {
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
             toast('已開始同步結構與對應', 'success');
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
         } finally {
             restore();
         }
@@ -1227,6 +1219,8 @@ function bindStructureSync() {
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
             toast('已送出停止要求，進行中的查詢會被中斷', 'success');
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
         } finally {
             restore();
         }

@@ -6,7 +6,7 @@
  * 會變成千行檔案，而精靈本身是完整獨立的一段流程（掃描→勾選→分組→匯入）。
  */
 
-import { api } from '../core/api.js';
+import { api, getAiAvailable } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
@@ -220,9 +220,9 @@ sentinelForm.addEventListener('submit', async event => {
 // ── 連線與節流參數 ───────────────────────────────────────────────────────────
 
 async function loadOptions() {
-    const [options, aiStatus] = await Promise.all([
+    const [options, aiReady] = await Promise.all([
         api.get('/api/admin/netiq/options'),
-        api.get('/api/ai/status', { silent: true }).catch(() => null)
+        getAiAvailable()
     ]);
     document.getElementById('opt-query-delay').value = options.queryDelayMs;
     document.getElementById('opt-page-size').value = options.pageSize;
@@ -236,7 +236,7 @@ async function loadOptions() {
     document.getElementById('opt-chat-live-fetch').checked = options.chatLiveFetchEnabled;
     // 這個選項只服務「詢問 AI」對話的 fallback 路徑，AI 未設定時整條路徑無意義，隱藏但保留值
     // （docs/archive/FEEDBACK-7-PLAN.md）
-    document.getElementById('opt-chat-live-fetch-wrap').classList.toggle('d-none', !aiStatus?.available);
+    document.getElementById('opt-chat-live-fetch-wrap').classList.toggle('d-none', !aiReady);
 
     // 離線示範資料開關（§13）：僅非 Production 顯示（canUseOfflineDemo）；開啟時亮警示徽章
     document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;

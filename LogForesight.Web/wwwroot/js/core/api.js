@@ -135,3 +135,25 @@ export async function getDisplaySettings() {
     }
     return displaySettingsCache;
 }
+
+/**
+ * AI 是否可用（回饋第 45 輪 A4）：原本 runs／records／record-detail／dashboard／netiq 五個
+ * 頁面各自打一次 /api/ai/status、各存一份旗標，同一次頁面載入重複請求且錯誤處理各寫各的。
+ * 收斂到這裡，比照 getCurrentUser／getDisplaySettings 的模組快取模式。
+ *
+ * 取不到一律視為不可用（與收斂前各頁行為一致）：AI 是加值功能，寧可少顯示一顆按鈕，
+ * 也不要讓使用者按下去才發現後端根本沒設定。失敗不寫入快取——同一頁之後還有機會取到。
+ */
+let aiAvailableCache = null;
+
+export async function getAiAvailable() {
+    if (aiAvailableCache === null) {
+        try {
+            const status = await api.get('/api/ai/status', { silent: true });
+            aiAvailableCache = !!status?.available;
+        } catch {
+            return false;
+        }
+    }
+    return aiAvailableCache;
+}

@@ -6,7 +6,7 @@
  * 所有數字皆可下鑽（§8.4）。
  */
 
-import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
@@ -57,13 +57,7 @@ async function loadAiFocus() {
     container.replaceChildren();
 
     // AI 未設定時直接不打 today-focus（避免每次進儀表板都白發一次請求，docs/archive/FEEDBACK-7-PLAN.md）
-    let status;
-    try {
-        status = await api.get('/api/ai/status', { silent: true });
-    } catch {
-        return;
-    }
-    if (!status?.available) return;
+    if (!await getAiAvailable()) return;
 
     let focus;
     try {

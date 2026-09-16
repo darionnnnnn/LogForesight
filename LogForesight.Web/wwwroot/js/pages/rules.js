@@ -598,10 +598,18 @@ function splitLines(text) {
 }
 
 document.getElementById('rule-validate').addEventListener('click', async () => {
-    const result = await api.post('/api/rules/validate', collectRule());
-    showValidation(result);
+    // 驗證要打後端，慢的時候可以連點送出多次請求（同檔其他長時間動作都有 withBusy，這裡原本漏了）
+    const restore = withBusy(document.getElementById('rule-validate'), '驗證中');
+    try {
+        const result = await api.post('/api/rules/validate', collectRule());
+        showValidation(result);
 
-    if (result.isValid && result.warnings.length === 0) toast('這條規則通過驗證', 'success');
+        if (result.isValid && result.warnings.length === 0) toast('這條規則通過驗證', 'success');
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
 });
 
 function showValidation(result) {

@@ -6,7 +6,7 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
@@ -94,10 +94,10 @@ async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
     selectedIssueKeys.clear();
 
-    const [detail, user, aiStatus, displaySettings] = await Promise.all([
+    const [detail, user, aiReady, displaySettings] = await Promise.all([
         api.get(`/api/records/${hostId}/${date}`),
         getCurrentUser(),
-        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        getAiAvailable(),
         getDisplaySettings()
     ]);
     // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/archive/HISTORY.md S1）：
@@ -108,7 +108,7 @@ async function load() {
     // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
     // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
     currentUserId = user.userId;
-    aiAvailable = !!aiStatus?.available;
+    aiAvailable = aiReady;
 
     const allowed = allowedSeverities();
     if (activeSeverities === null) {
@@ -1960,13 +1960,14 @@ function aiInterpretPanel(issue) {
                 output.classList.add('text-muted');
             } else {
                 renderAiText(output, result.text, { badge: 'AI 判讀', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
+                // 只有真的拿到判讀結果才鎖：逾時或回空時鎖死，使用者只能重整整頁才能再試一次
+                button.disabled = true;
             }
         } catch {
             output.textContent = 'AI 目前無法判讀這個問題。';
             output.classList.add('text-muted');
         } finally {
             restore();
-            button.disabled = true;   // 判讀過就不重複呼叫
         }
     });
 

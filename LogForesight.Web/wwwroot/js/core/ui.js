@@ -976,6 +976,20 @@ export function renderSpinner(container, text = '載入中…') {
 }
 
 /**
+ * 更新既有 spinner 的文字（回饋第 45 輪 A4）：runs.js 的回填與 prtg-admin.js 的探測原本各
+ * 自有一份逐行相同的實作。輪詢中只換文字節點、不重建 spinner，避免每次輪詢動畫從頭重置
+ * 而閃爍；容器內還沒有 spinner 時（第一次）才走 renderSpinner 整塊重畫。
+ */
+export function setSpinnerText(container, text) {
+    if (!container.querySelector('.spinner-border')) {
+        renderSpinner(container, text);
+        return;
+    }
+    const label = container.querySelector('span:last-child');
+    if (label) label.textContent = text;
+}
+
+/**
  * 勾選清單（users.js/groups.js/hosts.js 原本各自手刻一份幾乎相同的 form-check 清單）：
  * items: [{ id, label, checked }]。id 屬性組成 `${container.id}-${item.id}`，
  * 供同一清單內 label 的 htmlFor 配對；清單為空時顯示 emptyHint 取代整份清單。
