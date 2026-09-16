@@ -307,4 +307,27 @@ public class FrontendConsistencyUiTests
 
         Assert.Empty(offenders);
     }
+
+    [Fact]
+    public void D3_主機頁狀態徽章涵蓋四種PRTG提示()
+    {
+        var js = ReadJs("pages", "hosts.js");
+        Assert.Contains("host.prtgHint", js);
+        Assert.Contains("host.prtgHintStale", js);
+        Assert.Contains("case 'down': text = 'PRTG：主機失聯'; variant = 'danger'", js);
+        Assert.Contains("case 'up': text = 'PRTG：主機在線，問題在日誌取數端'; variant = 'warning'", js);
+        Assert.Contains("case 'unknown': text = 'PRTG：無資料'; variant = 'secondary'", js);
+        Assert.Contains("case 'no-map': text = '無 PRTG 對應'; variant = 'secondary'", js);
+        Assert.Contains("（鏡像過期）", js);
+        Assert.Contains("prtgHintBadge(host)", js);
+    }
+
+    [Fact]
+    public void D3_儀表板未回報卡依PRTG失聯數切換提示()
+    {
+        var js = ReadJs("pages", "dashboard.js");
+        Assert.Contains("data.silentHostsPrtgDownCount > 0", js);
+        Assert.Contains("台 PRTG 顯示失聯", js);
+        Assert.Contains("'沒回報 ≠ 沒問題'", js);
+    }
 }

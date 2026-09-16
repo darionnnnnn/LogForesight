@@ -243,7 +243,9 @@ function renderKpi(data, user, displaySettings) {
         label: '未回報主機',
         value: data.silentHostsCount,
         variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
-        hint: '沒回報 ≠ 沒問題',
+        hint: data.silentHostsPrtgDownCount > 0
+            ? `沒回報 ≠ 沒問題；其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台 PRTG 顯示失聯`
+            : '沒回報 ≠ 沒問題',
         url: '/admin/hosts?status=silent'
     });
 
