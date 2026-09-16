@@ -117,6 +117,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         row.LastLinkedDate = issueCase.LastLinkedDate;
         row.ClosedAt = issueCase.ClosedAt;
         row.UpdatedAt = issueCase.UpdatedAt;
+        ApplyMemberColumns(issueCase, row);
 
         SaveWithConflictTranslation(ctx);
     }
@@ -161,9 +162,85 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             row.LastLinkedDate = issueCase.LastLinkedDate;
             row.ClosedAt = issueCase.ClosedAt;
             row.UpdatedAt = issueCase.UpdatedAt;
+            ApplyMemberColumns(issueCase, row);
         }
 
         SaveWithConflictTranslation(ctx);
+    }
+
+    /// <summary>
+    /// 交辦單相關欄位的寫入。source_name／source_key／event_id 一律由 issue_key 算出，呼叫端不填：
+    /// issue_key 建案後不變，所以只在尚未解析（source_key 為 null）時算；解析失敗三欄維持 null，
+    /// 交給背景整併標成 ''（見 <see cref="WorkOrderBackfiller"/>）。
+    /// </summary>
+    private static void ApplyMemberColumns(IssueCase issueCase, IssueCaseRow row)
+    {
+        // 連結後只會換成另一張單、永遠不會變回 null：背景整併以 ExecuteUpdate 寫入連結且刻意不動 updated_at，
+        // 呼叫端手上若是整併前讀到的舊模型（WorkOrderId=null），整欄覆寫會把連結靜默抹掉
+        if (issueCase.WorkOrderId != null) row.WorkOrderId = issueCase.WorkOrderId;
+        row.DaySyncPending = issueCase.DaySyncPending;
+        row.Cancelled = issueCase.Cancelled;
+
+        if (row.SourceKey != null) return;
+        var parsed = EfWorkOrderStore.ParseIssueColumns(row.IssueKey);
+        if (parsed == null) return;
+
+        row.SourceName = parsed.Value.SourceName;
+        row.SourceKey = parsed.Value.SourceKey;
+        row.EventId = parsed.Value.EventId;
+    }
+
+    /// <summary>主機清單分批查詢的批次大小：避免 IN 清單過長（SQL Server 參數上限 2100）</summary>
+    private const int HostBatchSize = 500;
+
+    public List<IssueCase> GetOpenByIssue(string source, int eventId)
+    {
+        var key = EfWorkOrderStore.SourceKeyOf(source);
+
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.SourceKey == key && c.EventId == eventId && c.ClosedAt == null)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
+    public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId)
+    {
+        var sourceKey = EfWorkOrderStore.SourceKeyOf(source);
+        var keys = hostNames.Select(HostNameKey.Of).Distinct().ToList();
+        var result = new List<IssueCase>();
+        if (keys.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in keys.Chunk(HostBatchSize))
+        {
+            result.AddRange(ctx.IssueCases.AsNoTracking()
+                .Where(c => batch.Contains(c.HostNameKey) && c.SourceKey == sourceKey && c.EventId == eventId && c.ClosedAt == null)
+                .ToList()
+                .Select(ToModel));
+        }
+        return result;
+    }
+
+    public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.WorkOrderId == workOrderId)
+            .OrderBy(c => c.HostNameKey)
+            .ThenBy(c => c.CaseId)
+            .Skip(skip)
+            .Take(take)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
+    public int CountByWorkOrder(long workOrderId)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.Count(c => c.WorkOrderId == workOrderId);
     }
 
     /// <summary>樂觀鎖衝突轉語意例外（D3）：訊息帶「哪一件案件」，讓 Web 層對應成 409</summary>
@@ -226,6 +303,11 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         ClosedAt = row.ClosedAt,
         CreatedAt = row.CreatedAt,
         CreatedByAccount = row.CreatedByAccount,
-        UpdatedAt = row.UpdatedAt
+        UpdatedAt = row.UpdatedAt,
+        WorkOrderId = row.WorkOrderId,
+        SourceName = row.SourceName,
+        EventId = row.EventId,
+        DaySyncPending = row.DaySyncPending,
+        Cancelled = row.Cancelled
     };
 }

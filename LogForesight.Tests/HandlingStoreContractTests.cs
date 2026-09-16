@@ -236,6 +236,128 @@ public class HandlingStoreContractTests : IDisposable
         Assert.NotNull(store.Get("c2"));
     }
 
+    [Fact]
+    public void 案件_SourceName與EventId由IssueKey自動算出_四段與五段鍵()
+    {
+        var store = Cases();
+        var four = NewCase("c4", "SRV-01", "System|Disk|153|2", 1);
+        four.SourceName = "呼叫端亂填";
+        four.EventId = 999;
+        store.Save(four);
+        store.SaveMany(new[] { NewCase("c5", "SRV-02", "auth|sshd|0|4|ssh-bruteforce", 1), NewCase("bad", "SRV-03", "abc", 1) });
+
+        var got4 = store.Get("c4")!;
+        Assert.Equal("Disk", got4.SourceName);
+        Assert.Equal(153, got4.EventId);
+        var got5 = store.Get("c5")!;
+        Assert.Equal("sshd", got5.SourceName);
+        Assert.Equal(0, got5.EventId);
+        var bad = store.Get("bad")!;
+        Assert.Null(bad.SourceName);
+        Assert.Null(bad.EventId);
+    }
+
+    [Fact]
+    public void 案件_交辦單欄位往返()
+    {
+        var store = Cases();
+        var c = NewCase("c1", "SRV-01", "System|Disk|153|2", 1);
+        c.WorkOrderId = 12;
+        c.DaySyncPending = true;
+        store.Save(c);
+
+        c.Cancelled = true;
+        c.DaySyncPending = false;
+        store.Save(c);
+
+        var got = store.Get("c1")!;
+        Assert.Equal(12, got.WorkOrderId);
+        Assert.False(got.DaySyncPending);
+        Assert.True(got.Cancelled);
+    }
+
+    /// <summary>不變式：連結後只會換成另一張單，永遠不會變回 null（背景整併寫連結時刻意不動 updated_at，沒有併發衝突可擋）</summary>
+    [Fact]
+    public void 案件_舊模型存檔不抹掉整併寫入的交辦單連結()
+    {
+        var store = Cases();
+        var stale = NewCase("c1", "SRV-01", "System|Disk|153|2", 1);
+        store.Save(stale);
+
+        using (var ctx = _fx.NewContext())
+        {
+            Microsoft.EntityFrameworkCore.RelationalQueryableExtensions.ExecuteUpdate(
+                ctx.IssueCases.Where(c => c.CaseId == "c1"),
+                s => s.SetProperty(c => c.WorkOrderId, (long?)77));
+        }
+
+        stale.Status = IssueHandlingStatuses.Resolved;
+        Assert.Null(stale.WorkOrderId);
+        store.Save(stale);
+
+        var got = store.Get("c1")!;
+        Assert.Equal(77, got.WorkOrderId);
+        Assert.Equal(IssueHandlingStatuses.Resolved, got.Status);
+    }
+
+    [Fact]
+    public void 案件_GetOpenByIssue大小寫不敏感且只回進行中()
+    {
+        var store = Cases();
+        store.Save(NewCase("c1", "SRV-01", "System|Disk|153|2", 1));
+        store.Save(NewCase("c2", "SRV-02", "Application|disk|153|1", 2));
+        var closed = NewCase("c3", "SRV-03", "System|Disk|153|2", 1);
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+        store.Save(NewCase("c4", "SRV-04", "System|Disk|154|2", 1));
+
+        var open = store.GetOpenByIssue("DISK", 153);
+
+        Assert.Equal(new[] { "c1", "c2" }, open.Select(x => x.CaseId).OrderBy(x => x));
+    }
+
+    [Fact]
+    public void 案件_GetOpenMany只回指定主機與問題的進行中案件()
+    {
+        var store = Cases();
+        store.Save(NewCase("c1", "SRV-01", "System|Disk|153|2", 1));
+        store.Save(NewCase("c2", "SRV-02", "System|Disk|153|2", 1));   // 主機不在清單
+        store.Save(NewCase("c3", "SRV-01", "System|DCOM|10016|1", 1)); // 問題不同
+        var closed = NewCase("c4", "SRV-03", "System|Disk|153|2", 1);
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+        store.Save(NewCase("c5", "SRV-04", "System|Disk|153|2", 1));
+
+        var result = store.GetOpenMany(new[] { "srv-01", "SRV-03", "Srv-04" }, "disk", 153);
+
+        Assert.Equal(new[] { "c1", "c5" }, result.Select(x => x.CaseId).OrderBy(x => x));
+    }
+
+    [Fact]
+    public void 案件_GetByWorkOrder分頁與CountByWorkOrder()
+    {
+        var store = Cases();
+        for (var i = 0; i < 5; i++)
+        {
+            var c = NewCase("c" + i, "SRV-0" + i, "System|Disk|153|2", 1);
+            c.WorkOrderId = 7;
+            if (i == 4) c.ClosedAt = DateTime.Now;   // 已結案成員也算
+            store.Save(c);
+        }
+        var other = NewCase("x", "SRV-09", "System|Disk|153|2", 1);
+        other.WorkOrderId = 8;
+        store.Save(other);
+
+        var page1 = store.GetByWorkOrder(7, 0, 3);
+        var page2 = store.GetByWorkOrder(7, 3, 3);
+
+        Assert.Equal(5, store.CountByWorkOrder(7));
+        Assert.Equal(3, page1.Count);
+        Assert.Equal(2, page2.Count);
+        Assert.Equal(5, page1.Concat(page2).Select(x => x.CaseId).Distinct().Count());
+        Assert.Equal(0, store.CountByWorkOrder(99));
+    }
+
     // ── 日層級快照 ──────────────────────────────────────────────────────────
 
     [Fact]

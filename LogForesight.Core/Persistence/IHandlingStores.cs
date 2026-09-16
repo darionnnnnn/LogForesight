@@ -97,5 +97,16 @@ public interface IIssueCaseStore
     /// 與 <see cref="IIssueHandlingStore.SaveMany"/> 同一個理由存在。
     /// </summary>
     void SaveMany(IEnumerable<IssueCase> cases);
+
+    /// <summary>某問題的全部進行中案件（source 不分大小寫，比對正規化的 source_key）</summary>
+    List<IssueCase> GetOpenByIssue(string source, int eventId);
+
+    /// <summary>指定主機集合中某問題的進行中案件（主機以 host_name_key 比對，分批查）</summary>
+    List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId);
+
+    /// <summary>某交辦單的成員案件（分頁，含已結案）</summary>
+    List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take);
+
+    int CountByWorkOrder(long workOrderId);
 }
 

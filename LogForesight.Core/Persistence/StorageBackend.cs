@@ -200,6 +200,9 @@ public class StorageBackend
 
     public EfIssueCaseStore IssueCaseStore() => new(_dbFactory);
 
+    /// <summary>交辦單 store（↔ lf_work_orders ＋ lf_work_order_events）</summary>
+    public EfWorkOrderStore WorkOrderStore() => new(_dbFactory);
+
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
     /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>

@@ -735,7 +735,14 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| A-1 | impl-low | 執行中 | — | — |
+| A-1 | impl-low | 兩輪通過（4332 綠／略過 6，總 4338，+39） | Claude 獨立重跑建置與全套；白名單、CRLF／BOM 核對；自做突變（成員計數改逐單查詢→「50 張單只發一次 SQL」轉紅，還原 cmp 相同）；查證處理歷程唯一寫入點一律帶 `created_at` | 第一輪規格錯誤三處由執行端依事實調整並接受：處理歷程是 `lf_log_lines` 的 JSON 行（無 `lf_record_handling_log` 表）、整併器由 store 取連線工廠、案件表兩支既有索引 EF 與升級器名稱本來就不同（既有 DB 可能重複一份，收尾記 BACKLOG）。第一輪驗收退回三項：案件存檔會把整併寫入的 `work_order_id` 蓋回 null（改為模型為 null 時不覆寫）、整併每組三次提交無原子性（改單一交易）、`LastReplyAt` 從 seq 0 全掃處理歷程（改以 `created_at` 索引定位起點、只計案件建立之後的回覆）；三項各有測試與突變 |
+
+**A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
+- `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
+- 整併完成前存在 `WorkOrderId == null` 的進行中案件；案件存檔只在模型有值時寫 `work_order_id`（連結只會換單、不會變回 null）。
+- 整併器留有 `internal` 測試鉤子 `BeforeEventWriteForTest` 與 `ScannedLogLines`，體檢時確認沒有正式碼呼叫端。
+- `LoadBoard` 的進行中成員數用關聯子查詢，只驗過兩後端翻譯得出 SQL，未在 SQL Server 實跑；C-2 若擴充看板要一併看執行計畫。
+- 交易內 `ExecuteUpdate` 只在 SQLite 驗過回滾。
 
 ## 體檢交接
 

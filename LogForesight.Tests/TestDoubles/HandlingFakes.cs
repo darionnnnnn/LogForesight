@@ -331,7 +331,15 @@ internal class FakeIssueCaseStore : IIssueCaseStore
     public void Save(IssueCase issueCase)
     {
         var existing = _items.FirstOrDefault(c => c.CaseId == issueCase.CaseId);
-        if (existing == null) { _items.Add(issueCase); return; }
+        if (existing == null)
+        {
+            // 同 EF 版：SourceName／EventId 由 IssueKey 算出，不採呼叫端填的值
+            var parsed = IssueSignatureKey.TryParseSignature(issueCase.IssueKey);
+            issueCase.SourceName = parsed?.Source;
+            issueCase.EventId = parsed?.EventId;
+            _items.Add(issueCase);
+            return;
+        }
         existing.Status = issueCase.Status;
         existing.HandlerId = issueCase.HandlerId;
         existing.Note = issueCase.Note;
@@ -340,7 +348,31 @@ internal class FakeIssueCaseStore : IIssueCaseStore
         existing.LastLinkedDate = issueCase.LastLinkedDate;
         existing.ClosedAt = issueCase.ClosedAt;
         existing.UpdatedAt = issueCase.UpdatedAt;
+        existing.WorkOrderId = issueCase.WorkOrderId;
+        existing.DaySyncPending = issueCase.DaySyncPending;
+        existing.Cancelled = issueCase.Cancelled;
     }
+
+    private static bool SameIssue(IssueCase c, string source, int eventId) =>
+        c.SourceName != null && c.EventId == eventId &&
+        c.SourceName.ToUpperInvariant() == source.ToUpperInvariant();
+
+    public List<IssueCase> GetOpenByIssue(string source, int eventId) =>
+        _items.Where(c => c.ClosedAt == null && SameIssue(c, source, eventId)).ToList();
+
+    public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId)
+    {
+        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _items.Where(c => names.Contains(c.HostName) && c.ClosedAt == null && SameIssue(c, source, eventId)).ToList();
+    }
+
+    public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) =>
+        _items.Where(c => c.WorkOrderId == workOrderId)
+            .OrderBy(c => c.HostName.ToUpperInvariant(), StringComparer.Ordinal)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Skip(skip).Take(take).ToList();
+
+    public int CountByWorkOrder(long workOrderId) => _items.Count(c => c.WorkOrderId == workOrderId);
 }
 
 internal class FakeNoiseMarkStore : INoiseMarkStore

@@ -65,6 +65,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIssueAggregateQuery>(sp =>
             sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(sp.GetRequiredService<IHostStore>()));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
+        services.AddSingleton(sp => new WorkOrderBackfiller(sp.GetRequiredService<StorageBackend>().WorkOrderStore()));
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<AiUsageStore>(sp =>
@@ -407,6 +408,7 @@ public static class ServiceCollectionExtensions
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
+        services.AddHostedService<WorkOrderBackfillHostedService>();
         services.AddSingleton<IssueFirstSeenSeedHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<IssueFirstSeenSeedHostedService>());
 

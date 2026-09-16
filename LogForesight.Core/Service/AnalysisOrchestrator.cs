@@ -530,11 +530,12 @@ public class AnalysisOrchestrator
                 var recordHandlingStore = backend.RecordHandlingStore();
                 var dayHandlingPruned = recordHandlingStore.Prune(retention.RetentionDays);
                 var casePruned = backend.IssueCaseStore().Prune(retention.RetentionDays);
+                var workOrderPruned = backend.WorkOrderStore().PruneClosed(retention.RetentionDays);
 
-                var handlingPruned = issueHandlingPruned + dayHandlingPruned + casePruned;
+                var handlingPruned = issueHandlingPruned + dayHandlingPruned + casePruned + workOrderPruned;
                 if (handlingPruned > 0)
                     console.WriteLine($"已清除 {handlingPruned} 筆超過 {retention.RetentionDays} 天的處理狀態" +
-                                      $"（問題 {issueHandlingPruned}／日 {dayHandlingPruned}／已結案 {casePruned}）。");
+                                      $"（問題 {issueHandlingPruned}／日 {dayHandlingPruned}／已結案 {casePruned}／交辦單 {workOrderPruned}）。");
 
                 var handlingLogPruned = recordHandlingStore.PruneLogs(retention.AuditRetentionDays);
                 if (handlingLogPruned > 0)
