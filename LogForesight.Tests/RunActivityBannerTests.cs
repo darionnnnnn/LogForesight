@@ -215,7 +215,7 @@ public class RunActivityBannerUiTests
         Assert.Contains("lf:run-activity", js);
         Assert.Contains("window.addEventListener(RUN_ACTIVITY_EVENT", js);
 
-        var body = FunctionBody(js, "function applyRunActivityState()", "function ensureRunActivityNote(");
+        var body = FunctionBody(js, "function applyRunActivityState()", "function ensureRunActivityNotes(");
 
         Assert.Contains("disabled = schedulerRunning", body);
         Assert.Contains("host-update-submit", body);
@@ -223,7 +223,17 @@ public class RunActivityBannerUiTests
         // 用 disabled 加說明，不是把按鈕藏起來（藏起來會被當成權限被拿掉）
         Assert.DoesNotContain("style.display", body);
 
-        var note = FunctionBody(js, "function ensureRunActivityNote()", "window.addEventListener(RUN_ACTIVITY_EVENT");
-        Assert.Contains("排程執行中", note);
+        // 說明文字抽成常數由兩處共用，函式內引用它
+        Assert.Contains("RUN_BUSY_NOTE_TEXT = '排程執行中", js);
+
+        var note = FunctionBody(js, "function ensureRunActivityNotes()", "window.addEventListener(RUN_ACTIVITY_EVENT");
+        Assert.Contains("RUN_BUSY_NOTE_TEXT", note);
+
+        // 說明必須有**按鈕旁**那一份：頁面上那顆按鈕被停用後 modal 就打不開，
+        // 說明只放在 modal 裡等於看不到，使用者面對的仍是一顆沒有理由的灰按鈕。
+        Assert.Contains("host-update-open", note);
+        Assert.Contains("parentElement", note);
+        // 以及 modal 內那一份（modal 已開著時排程才開始，灰掉的是送出鈕）
+        Assert.Contains("modal-body", note);
     }
 }
