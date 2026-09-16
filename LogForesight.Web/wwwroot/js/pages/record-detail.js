@@ -298,10 +298,14 @@ function renderHeader(detail) {
 
     const stats = document.createElement('div');
     stats.className = 'd-flex gap-4 mt-3 pt-3 border-top small text-muted';
-    stats.innerHTML =
-        `<span>錯誤 <strong>${formatNumber(detail.errorCount)}</strong></span>` +
-        `<span>警告 <strong>${formatNumber(detail.warningCount)}</strong></span>` +
-        `<span>稽核事件 <strong>${formatNumber(detail.auditEventCount)}</strong></span>`;
+    for (const [label, value] of [['錯誤', detail.errorCount], ['警告', detail.warningCount], ['稽核事件', detail.auditEventCount]]) {
+        const span = document.createElement('span');
+        span.append(`${label} `);
+        const strong = document.createElement('strong');
+        strong.textContent = formatNumber(value);
+        span.appendChild(strong);
+        stats.appendChild(span);
+    }
     body.appendChild(stats);
 
     if (detail.hostRoleDesc) {

@@ -50,12 +50,11 @@
 | 【崩潰循環→資源耗盡】 | 服務高頻異常終止（≥100 次）＋資源耗盡（2004）同日 | 崩潰重啟循環正在拖垮整機 |
 | 【時間偏移→驗證失敗】 | 時間同步失敗＋登入失敗同日 | 時鐘偏移造成的假性攻擊訊號（仍需排除真攻擊） |
 | 【密碼噴灑】 | 同一來源對 ≥10 個相異帳號登入失敗，且每帳號 ≤3 次 | 刻意避開帳號鎖定門檻的噴灑特徵；Windows（4625/4771）與 Linux 認證失敗簽章共用同一判定，單次最多回報 5 個來源 |
-| 【儲存故障雙重確認】※PRTG | 儲存 I/O 訊號＋同日 PRTG 硬體健康 sensor Warning／Down | 兩個獨立來源一致，硬體故障可信度高（重大） |
-| 【磁碟容量雙重確認】※PRTG | srv 2013 磁碟空間即將不足＋同日 PRTG 磁碟可用空間 sensor Warning | 空間耗盡的兩方證據 |
-| 【失聯獲 PRTG 證實】※PRTG | 非預期關機（41/6008）＋同日 PRTG 連通性 sensor Down／震盪 | 排除日誌誤報 |
+| 【儲存故障雙重確認】※PRTG | 見 docs/PRTG-SPEC.md §9「跨來源佐證」 | 事件日誌與 PRTG 兩個獨立來源一致，硬體故障可信度高（重大） |
+| 【磁碟容量雙重確認】※PRTG | 同上 | 空間耗盡的兩方證據 |
+| 【失聯獲 PRTG 證實】※PRTG | 同上 | 排除日誌誤報 |
 
-※PRTG 三個模式**不在 `CorrelationAnalyzer` 內**：它們在 PRTG finding 追加進當日紀錄時由 `PrtgCorroboration` 判定
-（事件側沿用本表【儲存連鎖】與【儲存→當機】的同一組判定），配對規則與抑制語意見 docs/PRTG-SPEC.md §9「跨來源佐證」。
+※PRTG 三個模式不在 `CorrelationAnalyzer` 內，由 `PrtgCorroboration` 在 PRTG finding 追加時判定（事件側沿用本表【儲存連鎖】與【儲存→當機】的同一組判定）。
 
 ※ 以「4625 大量登入失敗」為錨點的四個模式，錨點判定收斂在
 `CorrelationAnalyzer.IsBruteForceAnchor`：除次數 ≥10 外還要求 `LogName=Security`、
@@ -295,9 +294,7 @@ docs/archive/HISTORY.md #1）。
 **PRTG finding 會單向上調日風險**：PRTG 規則命中的 finding 追加進當日紀錄時，
 依同一套語意推導出一個等級並取 `MoreSevere`——只升不降，因為 PRTG 是輔助訊號、
 看不到事件層的證據。風險依據記為 `prtg:{規則代碼}`；由低升為非低時會標記待補 AI 判讀。
-內建規則中只有連通性分類的 down 帶「重大」；已於 PRTG 確認的 finding 不帶「重大」（不會拉到高），
-長期 Down 與被抑制的 finding 不拉日風險；重複或連續出現的 finding 嚴重度升一級。
-細節與對照表見 docs/PRTG-SPEC.md §9。
+哪些 finding 帶「重大」、哪些降噪後不拉風險，見 docs/PRTG-SPEC.md §9。
 
 ### 監控的危險訊號清單
 

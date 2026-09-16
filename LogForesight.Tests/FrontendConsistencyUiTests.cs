@@ -297,12 +297,12 @@ public class FrontendConsistencyUiTests
         var pagesDir = JsDir("pages");
         Assert.True(Directory.Exists(pagesDir), $"找不到目錄: {pagesDir}");
 
-        var pattern = new Regex(@"innerHTML\s*=\s*`[^`]*\$\{");
+        // 整檔比對（不逐行）：跨行樣板字串也要抓；涵蓋 +=、outerHTML 與 insertAdjacentHTML
+        var pattern = new Regex(@"((inner|outer)HTML\s*\+?=\s*|insertAdjacentHTML\s*\([^`]*)`[^`]*\$\{", RegexOptions.Singleline);
         var offenders = Directory.GetFiles(pagesDir, "*.js", SearchOption.AllDirectories)
-            .SelectMany(f => File.ReadAllLines(f)
-                .Select((line, i) => (file: Path.GetFileName(f), no: i + 1, line))
-                .Where(x => pattern.IsMatch(x.line)))
-            .Select(x => $"{x.file}:{x.no}")
+            .Select(f => (file: Path.GetFileName(f), text: File.ReadAllText(f)))
+            .Where(x => pattern.IsMatch(x.text))
+            .Select(x => x.file)
             .ToList();
 
         Assert.Empty(offenders);

@@ -233,6 +233,9 @@ internal static class PrtgDailyPipeline
             // 第一段（由近到遠）：主機對應、評估、映射成簽章、歸戶。不發佈、不追加。
             for (var i = 0; i < days.Count; i++)
             {
+                // 逐日評估是整條路徑最耗時的段落（每天一次狀態變更查詢），進度在這裡報；第二段只發佈與追加，不再重報
+                ct.ThrowIfCancellationRequested();
+                progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
                 var state = dayStates[day] = new PrtgDayState();
                 var plan = planned[day] = new PrtgPlannedDay();
@@ -297,7 +300,8 @@ internal static class PrtgDailyPipeline
                     state.AttributedHosts = findingsByHost.Count;
 
                     plan.FindingsByHost = findingsByHost;
-                    plan.FindingCount = findings.Count;
+                    // 折疊前總數：被合併掉的不在 findings 裡，「其中已合併 c 筆」才會是 N 的子集
+                    plan.FindingCount = findings.Count + findings.MergedCount;
                     plan.AcknowledgedCount = findings.Count(f => f.Acknowledged);
                     plan.MergedCount = findings.MergedCount;
                 }
@@ -343,7 +347,6 @@ internal static class PrtgDailyPipeline
             // 第二段（由近到遠）：跨日標註 → 抑制標記 → 發佈 → 補追加與案件掛接
             for (var i = 0; i < days.Count; i++)
             {
-                progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
                 var plan = planned[day];
 

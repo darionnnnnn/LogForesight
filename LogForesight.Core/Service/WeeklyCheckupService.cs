@@ -293,7 +293,7 @@ internal class WeeklyCheckupService
                 PrtgFindingMapper.TryGetRuleCode(latest.Issue.Source, out var code);
                 var detail = latest.Issue.SampleMessages.FirstOrDefault() ?? string.Empty;
                 return (Severity: severity, Days: days,
-                    Line: $"- [{severity}] {latest.Issue.KnownIssue}：窗口內 {days} 天（{code}），最近一次：{detail}");
+                    Line: $"- [{severity}] {(string.IsNullOrWhiteSpace(latest.Issue.KnownIssue) ? $"PRTG 規則 {code}" : latest.Issue.KnownIssue)}：窗口內 {days} 天（{code}），最近一次：{detail}");
             })
             .OrderByDescending(x => x.Severity)
             .ThenByDescending(x => x.Days)

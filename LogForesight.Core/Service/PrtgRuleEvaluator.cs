@@ -142,10 +142,11 @@ public static class PrtgRuleEvaluator
                 ? name
                 : sId.ToString();
 
-        string GetSensorType(long sId) =>
+        // type 查不到時省略括號（退回 objid 會被讀成 type）；名稱查不到退回 objid 則合理，位置本身就是識別
+        string SensorLabel(long sId) =>
             sensorTypes.TryGetValue(sId, out var type) && !string.IsNullOrWhiteSpace(type)
-                ? type
-                : sId.ToString();
+                ? $"{GetSensorName(sId)}（{type}）"
+                : GetSensorName(sId);
 
         // 1~3: 針對各 sensor 的狀態變更判定
         var sensorGroups = changes.GroupBy(c => c.SensorObjid);
@@ -183,7 +184,7 @@ public static class PrtgRuleEvaluator
                         {
                             var ack = PrtgSensorStatuses.IsAcknowledged(lastChange.Status);
                             var ackSuffix = ack ? "，已於 PRTG 確認" : "";
-                            var detail = $"[{GetDeviceName(deviceObjid)}] {GetSensorName(sensorObjid)}（{GetSensorType(sensorObjid)}）持續 Down 達 {durationMinutes} 分鐘（自 {enteredDownAt:yyyy-MM-dd HH:mm:ss} 起）{ackSuffix}";
+                            var detail = $"[{GetDeviceName(deviceObjid)}] {SensorLabel(sensorObjid)}持續 Down 達 {durationMinutes} 分鐘（自 {enteredDownAt:yyyy-MM-dd HH:mm:ss} 起）{ackSuffix}";
                             findings.Add(new PrtgFinding(
                                 deviceObjid,
                                 sensorObjid,
@@ -229,7 +230,7 @@ public static class PrtgRuleEvaluator
 
                 if (flapCount >= flapRule.PrtgThreshold)
                 {
-                    var detail = $"[{GetDeviceName(deviceObjid)}] {GetSensorName(sensorObjid)}（{GetSensorType(sensorObjid)}）狀態頻繁震盪，當日 Down → Up 往返達 {flapCount} 次";
+                    var detail = $"[{GetDeviceName(deviceObjid)}] {SensorLabel(sensorObjid)}狀態頻繁震盪，當日 Down → Up 往返達 {flapCount} 次";
                     findings.Add(new PrtgFinding(
                         deviceObjid,
                         sensorObjid,
@@ -282,7 +283,7 @@ public static class PrtgRuleEvaluator
 
                 if (warningMinutes >= warnRule.PrtgThreshold)
                 {
-                    var detail = $"[{GetDeviceName(deviceObjid)}] {GetSensorName(sensorObjid)}（{GetSensorType(sensorObjid)}）持續 Warning 累計達 {warningMinutes} 分鐘";
+                    var detail = $"[{GetDeviceName(deviceObjid)}] {SensorLabel(sensorObjid)}持續 Warning 累計達 {warningMinutes} 分鐘";
                     findings.Add(new PrtgFinding(
                         deviceObjid,
                         sensorObjid,

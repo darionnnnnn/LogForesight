@@ -57,7 +57,8 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - 不要把偵測邏輯/規劃內容寫回 README（README 只留定位、結構、部署、操作）。
 - 不要拆 WEB-SPEC（會斷開大量 §編號交叉引用）。
-- 不要新增沒有消費端的設定欄位。
+- 不要新增沒有消費端的設定欄位。同一條紅線的變體：畫面可編輯的欄位（規則的分類／嚴重度／重大旗標）
+  不得在執行路徑被靜態常數表取代——設定存得進去、行為不跟著走，與「有設定無行為」是同一件事。
 - 不要讓 AI 產出被當成 HTML 解析（前端一律 `textContent`／走 `markdown-lite` 唯一出口）。外部系統字串（PRTG sensor／device 名稱等）
   同理：`wwwroot/js/pages` 不得以含插值的樣板字串指派 `innerHTML`（`FrontendConsistencyUiTests` 守門）。
 - 不要在前端寫死 `/` 開頭的路徑：連結組裝與轉址走 `core/paths.js` 的 `appUrl()`、路由比對走

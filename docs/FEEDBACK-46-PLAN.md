@@ -1,6 +1,6 @@
 # 回饋第 46 輪規劃：讓 PRTG 規則真正發揮作用
 
-> 狀態：實作輪完成、終檢處理完，待換模型體檢與收尾（分支 feature/feedback-46，未併 dev）
+> 狀態：全案完成已併 dev（體檢方 Fable 5.1；實作方 agy＋Opus 5）
 > 基準：dev@45b14d7（4128 綠，略過 6）
 > 來源：重新檢視 PRTG 規則的規劃——四條狀態變更規則已能產出 finding，但 finding 進入全鏈後接不上知識庫、抑制、趨勢、關聯與畫面，PRTG 的加入尚未發揮它該有的價值。
 > 執行方式：`agy`（`gemini-3.8-flash-high`），使用者 2026-09-16 指定；規劃由 Fable 5.1、實作輪由 Opus 5 接手。subagent 核對走 `scan-low`（本輪已派過一次，沿用）。
@@ -302,6 +302,21 @@
 - **待使用者決定**：AI prompt 的事件清單不排除已抑制事件、PRTG 段排除（事件層行為變更，本輪未動）。
 - **待使用者提供**：環境探測「Sensor Type 分布」清單（補內建 hardware 對照）；校準結果（批次 E）。
 - **UI 設計方案**：B-4、D-3 使用者未答覆是否套用 `ui-ux-pro-max`，依 Claude 建議不套，只沿用既有元件與樣式。
+
+## 體檢輪修正（Fable 5.1，2026-09-17）
+
+規劃比對（Claude 親做，27 條定案逐條有實作證據）抓到 4 條驗收情境缺測，兩個 scan-low（opus low）分掃程式碼與文件抓到 8 條程式面、12 條文件面：
+
+- **缺測補齊**：詳情頁 PRTG finding 知識庫面板（`HostDetailIssueSummaryTests`，替身原本無規則庫）、Ping 端到端走連通性規則判「高」／traffic 走不限分類判「中」（`PrtgDailyPipelineTests`）、跨月連續天數（`PrtgCrossDayTests`）、跨日查詢雙後端翻譯（`EfIssueAggregateQuery` 抽出 `BuildPrtgHitDatesQuery`，比照小時曲線的既有慣例）。突變「反查用錯鍵」「連續計算不跨月」各 1 紅。
+- **升級缺口（中）**：`Source` 改為 `PRTG:{代碼}` 讓舊 PRTG 問題的處理狀態與簽章型抑制（鍵含 Source）不延續，升級清單沒寫——PRTG-SPEC 與 README 補明；規則型抑制不受影響（反而從失效變生效）。
+- **執行輸出口徑**：「finding N 筆（其中已合併 c）」的 N 是折疊後數，c 不是 N 的子集——`FindingCount` 改記折疊前總數，文件註明。
+- **逐日進度**：兩段式後進度回報在第二段，回望多日時第一段（真正耗時）畫面卡在 0／N——回報搬回第一段，並在第一段迴圈開頭補取消檢查。
+- **體檢 prompt**：`KnownIssue` 為空時印出「[High] ：…」——退回「PRTG 規則 {代碼}」，與分析 prompt 同口徑。
+- **守門放寬**：`innerHTML` 插值守門原本逐行、只認 `=`——改整檔 Singleline、涵蓋 `+=`／`outerHTML`／`insertAdjacentHTML`；放寬後抓到 `record-detail.js` 一處跨行插值（統計數字），改 DOM 建法。
+- **小修**：`SystemSettingsService` 兩個 `<summary>` 錯位；`PrtgRuleEvaluator` sensor type 查不到時退回 objid 會被讀成 type，改為省略括號。
+- **文件普查**：DETECTION-SPEC 三個 PRTG 模式與風險段改指路（原與 PRTG-SPEC 重複）；PRTG-SPEC §11 過時理由（EventId 塌成一格）、「四條」改「四個規則代碼」、hardware 說明只留一處；RULES-SPEC「雙平台」改「多平台」補 prtg 欄位與驗證、欄位數；BACKLOG 兩條交叉指向修正；README 補「PRTG 規則行為變更」；CLAUDE.md 加「畫面可編輯欄位不得被靜態常數表取代」；三處舊敘事字眼（本輪／原本／本輪體檢）清掉。
+- **判定不修**：A1「規則庫無 PRTG 規則時用 catalog 保底」未實作（實作為跳過評估並印訊息，升級未套 seed 時舊四條仍在規則庫照跑；靜默套用程式內建規則反而讓管理者以為規則庫有東西）；B7 探測輸出只顯示內建分類（文件已寫明）；升級注意不抄進 CLAUDE.md（入口地圖不放升級清單）。
+- 全量測試：見終檢輪。
 
 ## 執行紀錄
 

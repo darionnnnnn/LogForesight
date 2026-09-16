@@ -1094,9 +1094,6 @@ public class SystemSettingsService : ISystemSettingsService
     }
 
     /// <summary>
-    /// PRTG 取數策略的驗證（docs/PRTG-SPEC.md §3b）。
-    /// </summary>
-    /// <summary>
     /// sensor type 語意分類補充對照表：解析與合法性判定一律走 <see cref="PrtgSensorTypeCategoryMap.ParseOverrides"/>，
     /// 有任何錯誤就擋下存檔（訊息串接前 5 條錯誤）。
     /// </summary>
@@ -1108,6 +1105,9 @@ public class SystemSettingsService : ISystemSettingsService
                 "sensor 分類補充對照表有誤：" + string.Join("；", errors.Take(5)));
     }
 
+    /// <summary>
+    /// PRTG 取數策略的驗證（docs/PRTG-SPEC.md §3b）。
+    /// </summary>
     private static void ValidatePrtgFetchStrategy(string? strategy)
     {
         if (strategy == null) return;

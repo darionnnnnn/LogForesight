@@ -463,10 +463,10 @@
 - **內建 `hardware` 分類對照條目**（觸發條件：取得實機環境探測的「Sensor Type 分布」清單）：
   `hardware` 分類與兩條 hardware 規則、儲存故障佐證模式都已就緒，但內建對照表沒有任何 hardware type，
   未設補充對照的環境這幾條不會命中。拿到清單後把溫度／風扇／電源／RAID 類 type 加進 `PrtgSensorTypeCategoryMap`。
-- **校準結果到位後的四項加強**（觸發條件：校準四項達「可用」，PRTG-SPEC §11）：(1) 值型規則第一階（下一條）；
+- **校準結果到位後的四項加強**（觸發條件：校準四項達「可用」，PRTG-SPEC §11）：(1) 上方「值型規則第一階」；
   (2) 狀態規則門檻校準，含 availability down 30 分、hardware warning 120 分兩個暫定值；
   (3) 跨日升級與長期 Down 常數（`PrtgRuleCatalog` 的四個 `CrossDay*`／`Escalate*`／`ChronicDownDays`）以規則命中分佈校準；
-  (4) 儲存佐證改以數值趨勢（可用空間外推耗盡）為依據，提前到 warning 之前。
+  (4) 下方「跨來源關聯：數值趨勢型」。
 - **PRTG 失聯台數跟著鏡像失效**（觸發條件：使用者回報儀表板數字與主機清單對不上）：儀表板的 `SilentHostsPrtgDownCount`
   在整包摘要快取內，PRTG 鏡像寫入不推進版本戳，最多落後一個 TTL。要即時就讓結構同步寫入時 bump `DataVersionStamp`。
 - **主機清單的 PRTG 提示每頁讀整張最新對應表**（觸發條件：主機清單翻頁實測變慢）：`HostAdminService.ComputeSilentPrtgHints`
