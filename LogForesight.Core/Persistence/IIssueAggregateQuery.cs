@@ -217,7 +217,7 @@ public interface IIssueAggregateQuery
     /// <summary>
     /// PRTG 規則命中分組查詢（docs/archive/FEEDBACK-37-PLAN.md 批次A，校準數值匯出用）。
     /// 依 (規則代碼, 日期) 分組，回傳期間內的命中筆數與相異存活主機數。
-    /// 僅納入 Source == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
+    /// 僅納入 LogName == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
     /// </summary>
     /// <param name="hostIds">目標存活主機集合；null＝不篩主機（校準匯出用），空集合＝零結果。</param>
     List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
