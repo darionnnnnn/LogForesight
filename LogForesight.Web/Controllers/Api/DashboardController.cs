@@ -48,11 +48,19 @@ public class RunActivityController : ControllerBase
 {
     private readonly SchedulerRunState _runState;
     private readonly AiAnalysisRunState _aiRunState;
+    private readonly IUserStore _users;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
-    public RunActivityController(SchedulerRunState runState, AiAnalysisRunState aiRunState)
+    public RunActivityController(
+        SchedulerRunState runState,
+        AiAnalysisRunState aiRunState,
+        IUserStore users,
+        IUserDisplayNameService userDisplayNames)
     {
         _runState = runState;
         _aiRunState = aiRunState;
+        _users = users;
+        _userDisplayNames = userDisplayNames;
     }
 
     [HttpGet]
@@ -76,7 +84,12 @@ public class RunActivityController : ControllerBase
                     "local" => "天",
                     "netiq" => "台",
                     _ => null
-                }
+                },
+                // 誰觸發的：與排程頁共用 RunTriggerText，兩邊對同一個 Trigger 值算出相同文字。
+                // 沒在跑時不講（閒置沒有「觸發者」可言）。
+                TriggerText = _runState.IsRunning
+                    ? RunTriggerText.Of(_runState.Trigger, _userDisplayNames, _users)
+                    : null
             });
         }
 
@@ -88,7 +101,10 @@ public class RunActivityController : ControllerBase
             IsRunning = ai.IsRunning,
             Done = ai.ProgressDone,
             Total = ai.ProgressTotal,
-            UnitText = ai.IsRunning ? "件" : null
+            UnitText = ai.IsRunning ? "件" : null,
+            TriggerText = ai.IsRunning
+                ? RunTriggerText.Of(ai.Trigger, _userDisplayNames, _users)
+                : null
         });
     }
 }

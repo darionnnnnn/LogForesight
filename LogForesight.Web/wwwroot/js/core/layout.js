@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
-import { formatUserName } from './format.js';
+import { formatUserName, formatNumber } from './format.js';
 import { initBrandAlign } from './brand-align.js';
 
 /**
@@ -82,6 +82,7 @@ async function init() {
     bindLogout();
     initHelpPopovers();
     renderSetupReturnBanner();
+    refreshRunActivity();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）
 
     if (user.needsAdminSetup) {
         const { toast } = await import('./ui.js');
@@ -389,6 +390,75 @@ function renderSetupReturnBanner() {
     actions.appendChild(dismiss);
 
     banner.appendChild(actions);
+}
+
+// ── 全站執行中告示（回饋四十五輪批次A3）──────────────────────────────────────
+
+/**
+ * 告示的廣播事件名。頁面模組（例如主機詳情要停用「指定主機更新」）訂閱這個事件即可，
+ * 不必各自輪詢 /api/run-activity——多一個輪詢就是多一份在慢的時候打站台的負擔。
+ * 訂閱端的 event.detail 是整個 activity 物件（沒在跑或取不到時為 null）。
+ */
+const RUN_ACTIVITY_EVENT = 'lf:run-activity';
+
+/**
+ * 執行中告示（原 dashboard.js，回饋四十五輪批次A3 搬到共用版型）。
+ *
+ * 分析與網站跑在同一個行程，一跑就是數小時，期間**整站**回應變慢——只有儀表板看得到
+ * 原因等於沒有配套：使用者可能正停在問題查詢或報表頁，看到的只是「這頁壞了」。
+ *
+ * 自我重新排程而不是固定 setInterval：下一次的間隔要看這一次的狀態（執行中 30 秒、
+ * 閒置 60 秒）。閒置只降頻、**不停掉**——停掉的話停在同一頁不動的使用者永遠等不到
+ * 下一次執行的告示（原儀表板版本會停，是因為當時只有那一頁在看）。
+ */
+async function refreshRunActivity() {
+    let activity = null;
+    try {
+        activity = await api.get('/api/run-activity', { silent: true });
+    } catch {
+        // 純加值資訊，失敗就當作沒在跑，畫面上不留錯誤訊息；
+        // 刻意不做任何停掉輪詢的事——偶發失敗不代表執行結束。
+        activity = null;
+    }
+
+    renderRunActivity(activity);
+    window.dispatchEvent(new CustomEvent(RUN_ACTIVITY_EVENT, { detail: activity }));
+
+    setTimeout(refreshRunActivity, activity?.isRunning ? 30000 : 60000);
+}
+
+/** 告示的畫面：執行中才有內容，其餘一律清空（容器不帶 margin/padding，清空即零高度） */
+function renderRunActivity(activity) {
+    const container = document.getElementById('lf-run-activity-banner');
+    if (!container) return;
+
+    if (!activity?.isRunning) {
+        container.replaceChildren();
+        return;
+    }
+
+    const bar = document.createElement('div');
+    bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2 mb-3';
+    bar.setAttribute('role', 'status');       // 進行中狀態用 status（polite），不是 alert——
+    bar.setAttribute('aria-live', 'polite');  // 這不是需要打斷讀屏的緊急訊息
+
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner-border spinner-border-sm flex-shrink-0';
+    spinner.setAttribute('aria-hidden', 'true');
+    bar.appendChild(spinner);
+
+    // 有分母才講「第 N/M」——total=0 代表還在掃描/清理階段，這時報進度是假的
+    const progressText = activity.total > 0
+        ? `分析進行中（第 ${formatNumber(activity.done)}／${formatNumber(activity.total)} ${activity.unitText || ''}）`
+        : '分析進行中';
+    // 觸發者只有後端給得出來時才講（排程自動跑時是「排程」，有人按的話是那個人）
+    const triggerText = activity.triggerText ? `，由${activity.triggerText}觸發` : '';
+
+    const text = document.createElement('span');
+    text.textContent = `${progressText}${triggerText}，畫面回應可能較慢。資料仍是完整的，分析完成後會自動恢復。`;
+    bar.appendChild(text);
+
+    container.replaceChildren(bar);
 }
 
 initFontScale();

@@ -29,6 +29,11 @@ const LEGEND = [
 // 按鈕點下去只會打到後端的 400（ScheduleController 的 host 分支已擋），不如直接不顯示。
 let localAnalysisEnabled = true;
 
+// 排程執行中就不能再觸發這台主機的更新（後端會回 409）。狀態來自 layout.js 的全站告示輪詢，
+// 這裡只訂閱、不自己打 /api/run-activity（事件名與 core/layout.js 的 RUN_ACTIVITY_EVENT 相同）。
+const RUN_ACTIVITY_EVENT = 'lf:run-activity';
+let schedulerRunning = false;
+
 async function load() {
     renderLoading(document.getElementById('host-timeline'), 2);
     renderLoading(document.getElementById('host-issues'), 3);
@@ -75,8 +80,10 @@ function renderHeader(detail) {
         updateButton.type = 'button';
         updateButton.className = 'btn btn-sm btn-outline-primary lf-no-print';
         updateButton.textContent = '指定主機更新';
+        updateButton.id = 'host-update-open';
         updateButton.addEventListener('click', () => openHostUpdateModal(detail));
         titleRow.appendChild(updateButton);
+        applyRunActivityState();   // 重新渲染後補上目前狀態（按鈕是每次 load() 重建的）
     }
 
     body.appendChild(titleRow);
@@ -526,6 +533,43 @@ function openHostUpdateModal(detail) {
     );
     hostUpdateModal.show();
 }
+
+/**
+ * 排程執行中時停用「指定主機更新」，並在按鈕旁與表單內說明原因。
+ *
+ * 用 disabled 加說明而不是隱藏按鈕：按鈕消失會讓使用者以為自己的權限被拿掉了，
+ * 「暫時不能按」與「你不能按」是兩件事，畫面上必須分得出來。
+ */
+function applyRunActivityState() {
+    for (const id of ['host-update-open', 'host-update-submit']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = schedulerRunning;
+    }
+
+    const note = ensureRunActivityNote();
+    if (note) note.classList.toggle('d-none', !schedulerRunning);
+}
+
+/** 說明文字元素（HostDetail.cshtml 沒有這一行，第一次需要時就地補上） */
+function ensureRunActivityNote() {
+    const form = document.getElementById('host-update-form');
+    if (!form) return null;
+
+    let note = document.getElementById('host-update-busy-note');
+    if (!note) {
+        note = document.createElement('div');
+        note.id = 'host-update-busy-note';
+        note.className = 'small text-muted mt-2 d-none';
+        note.textContent = '排程執行中，結束後可用。';
+        form.querySelector('.modal-body')?.appendChild(note);
+    }
+    return note;
+}
+
+window.addEventListener(RUN_ACTIVITY_EVENT, event => {
+    schedulerRunning = event.detail?.isRunning === true;
+    applyRunActivityState();
+});
 
 document.getElementById('host-update-form').addEventListener('submit', async event => {
     event.preventDefault();

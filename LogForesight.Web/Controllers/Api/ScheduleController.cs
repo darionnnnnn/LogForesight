@@ -386,14 +386,9 @@ public class ScheduleController : ControllerBase
         _ => scope
     };
 
-    private string TriggerText(string? trigger) => trigger switch
-    {
-        null => "閒置",
-        "schedule" => "排程",
-        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
-            $"手動（{_userDisplayNames.OfAccount(_users, trigger["manual:".Length..])}）",
-        _ => trigger
-    };
+    /// <summary>觸發者文字：與 /api/run-activity 共用同一份判定（回饋四十五輪批次A3）</summary>
+    private string TriggerText(string? trigger) =>
+        RunTriggerText.Of(trigger, _userDisplayNames, _users);
 
     private static string RerunModeText(RerunMode mode) => mode switch
     {

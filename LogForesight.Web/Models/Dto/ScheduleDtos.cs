@@ -131,6 +131,12 @@ public class RunActivityDto
 
     /// <summary>進度的量詞（「台」／「天」）——由後端依階段決定，前端不猜</summary>
     public string? UnitText { get; set; }
+
+    /// <summary>
+    /// 這一趟是誰觸發的（「排程」／「手動（某人）」），未執行時為 null。
+    /// 文字由 <see cref="LogForesight.Web.Services.RunTriggerText"/> 產生，與排程頁共用同一份判定。
+    /// </summary>
+    public string? TriggerText { get; set; }
 }
 
 /// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，複用

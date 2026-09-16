@@ -57,6 +57,11 @@
                layout.js 依 ?from=setup 判斷是否要顯示，內容純前端組裝 *@
             <div id="lf-setup-return-banner" class="d-none lf-no-print"></div>
 
+            @* 全站執行中告示（回饋四十五輪批次A3）：分析與網站同一個行程，執行期間整站變慢，
+               告示放在共用版型讓每一頁都看得到原因。內容由 layout.js 輪詢 /api/run-activity 組裝；
+               閒置時容器完全空著（不帶 margin/padding），零高度不佔位。 *@
+            <div id="lf-run-activity-banner" class="lf-no-print"></div>
+
             <main class="lf-content">
                 @RenderBody()
             </main>
