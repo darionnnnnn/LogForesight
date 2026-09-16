@@ -353,7 +353,8 @@ public class CalibrationServiceTests : IDisposable
                     RecordId = dr.RecordId,
                     HostId = 1,
                     RecordDate = anchor,
-                    SourceName = "PRTG",
+                    LogName = "PRTG",
+                    SourceName = "PRTG:down",
                     EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
@@ -409,7 +410,8 @@ public class CalibrationServiceTests : IDisposable
                     RecordId = dr.RecordId,
                     HostId = 1,
                     RecordDate = anchor.AddDays(-i % 30),
-                    SourceName = "PRTG",
+                    LogName = "PRTG",
+                    SourceName = "PRTG:down",
                     EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
@@ -491,7 +493,7 @@ public class CalibrationServiceTests : IDisposable
                 ctx.TopIssues.Add(new TopIssueRow
                 {
                     RecordId = dr.RecordId, HostId = 1, RecordDate = anchor.AddDays(-i),
-                    SourceName = "PRTG", EventId = 0,
+                    LogName = "PRTG", SourceName = "PRTG:down", EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{2000 + i}",
                     Category = "Service", SeverityRank = 2
                 });
@@ -501,7 +503,7 @@ public class CalibrationServiceTests : IDisposable
                 ctx.TopIssues.Add(new TopIssueRow
                 {
                     RecordId = dr.RecordId, HostId = 1, RecordDate = anchor.AddDays(-i % 30),
-                    SourceName = "PRTG", EventId = 0,
+                    LogName = "PRTG", SourceName = "PRTG:flapping", EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleFlapping}:{3000 + i}",
                     Category = "Service", SeverityRank = 3
                 });
@@ -555,7 +557,8 @@ public class CalibrationServiceTests : IDisposable
                     RecordId = dr.RecordId,
                     HostId = 1,
                     RecordDate = anchor.AddDays(-i % 56),
-                    SourceName = "PRTG",
+                    LogName = "PRTG",
+                    SourceName = "PRTG:down",
                     EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",

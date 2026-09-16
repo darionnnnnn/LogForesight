@@ -191,42 +191,22 @@ internal static class PrtgDailyPipeline
                 .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && r.Enabled)
                 .ToList();
 
-            var enabledRuleCodes = prtgRules
-                .Where(r => !string.IsNullOrEmpty(r.PrtgRuleCode))
-                .Select(r => r.PrtgRuleCode!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var rulesAvailable = enabledRuleCodes.Count > 0;
+            var rulesAvailable = prtgRules.Any(r => !string.IsNullOrEmpty(r.PrtgRuleCode));
             if (!rulesAvailable)
             {
                 prtgConsole.WriteLine("規則庫尚無啟用中的 PRTG 規則（升級後請至「規則維護」頁套用內建規則更新），本次略過規則評估。");
             }
 
-            var downMinutes = PrtgRuleCatalog.DefaultDownMinutes;
-            var flapCount = PrtgRuleCatalog.DefaultFlapCount;
-            var warningMinutes = PrtgRuleCatalog.DefaultWarningMinutes;
-
-            foreach (var rule in prtgRules)
-            {
-                if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase))
-                {
-                    downMinutes = rule.PrtgThreshold;
-                }
-                else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase))
-                {
-                    flapCount = rule.PrtgThreshold;
-                }
-                else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase))
-                {
-                    warningMinutes = rule.PrtgThreshold;
-                }
-            }
-
-            var thresholds = new PrtgRuleThresholds(downMinutes, flapCount, warningMinutes);
-
             var prtgStore = backend.PrtgStore();
             var whitelist = new HashSet<string>(systemSettings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
             var allSensors = prtgStore.GetSensorStatuses();
+            var sensorNames = allSensors
+                .GroupBy(s => s.Objid)
+                .ToDictionary(g => g.Key, g => g.First().SensorName);
+            var deviceNames = prtgStore.GetAllDevices()
+                .GroupBy(d => d.Objid)
+                .ToDictionary(g => g.Key, g => g.First().Name);
+
             var filteredSensors = whitelist.Count == 0
                 ? allSensors
                 : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
@@ -237,8 +217,9 @@ internal static class PrtgDailyPipeline
                 .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
 
             var sensorStatuses = filteredSensors
-                .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+                .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType))
                 .ToList();
+            var reportedDuplicateRuleWarnings = new HashSet<string>();
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，不硬造（docs/PRTG-SPEC.md §5）。
             // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。
@@ -280,8 +261,15 @@ internal static class PrtgDailyPipeline
                     var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
 
                     var findings = PrtgRuleEvaluator.Evaluate(
-                        day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes,
-                        includeSilent: day == newest);
+                        day, changes, sensorToDevice, sensorStatuses, prtgRules,
+                        sensorNames, deviceNames, includeSilent: day == newest);
+                    foreach (var warning in findings.DuplicateRuleWarnings)
+                    {
+                        if (reportedDuplicateRuleWarnings.Add(warning))
+                        {
+                            prtgConsole.WriteLine(warning);
+                        }
+                    }
                     state.Findings = findings.Count;
 
                     if (!state.MapAvailable)

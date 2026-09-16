@@ -176,7 +176,7 @@ internal class AnalysisPromptBuilder
         // 它們不是 Windows／Linux 事件，EventId 恆為 0，混在事件列表裡會被當成一筆奇怪的事件。
         // 這裡只餵**已由規則確定性判定過的 finding**，不餵原始數值——原始數值的解讀屬於
         // 特徵計算層（見 docs/BACKLOG.md），AI 只負責把已確定的結論翻成白話。
-        var prtgFindings = issues.Where(i => i.Source == PrtgFindingMapper.PrtgSource).ToList();
+        var prtgFindings = issues.Where(i => PrtgFindingMapper.IsPrtg(i)).ToList();
         if (prtgFindings.Count > 0)
         {
             sb.AppendLine();
@@ -191,8 +191,8 @@ internal class AnalysisPromptBuilder
             }
         }
 
-        var flagged = issues.Where(i => i.KnownIssue != null && i.Source != PrtgFindingMapper.PrtgSource).ToList();
-        var others = issues.Where(i => i.KnownIssue == null && i.Source != PrtgFindingMapper.PrtgSource).ToList();
+        var flagged = issues.Where(i => i.KnownIssue != null && !PrtgFindingMapper.IsPrtg(i)).ToList();
+        var others = issues.Where(i => i.KnownIssue == null && !PrtgFindingMapper.IsPrtg(i)).ToList();
 
         if (flagged.Count > 0)
         {

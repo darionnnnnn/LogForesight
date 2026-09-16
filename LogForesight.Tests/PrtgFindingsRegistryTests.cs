@@ -18,8 +18,15 @@ public class PrtgFindingsRegistryTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private static LogIssueSignature Finding(long sensorObjid, string code = "down") =>
-        PrtgFindingMapper.ToSignature(new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60), DateTime.Today);
+    private static readonly Dictionary<string, KnownIssueRule> SeedRules = KnownIssueSeed.CreateRules().ToDictionary(r => r.Id);
+
+    private static LogIssueSignature Finding(long sensorObjid, string code = "down")
+    {
+        var rule = SeedRules.TryGetValue($"builtin-prtg-{code}", out var r)
+            ? r
+            : new KnownIssueRule { Id = $"test-{code}", PrtgRuleCode = code, Description = "Test" };
+        return PrtgFindingMapper.ToSignature(new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60, rule), DateTime.Today);
+    }
 
     private static IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> ByHost(
         long hostId, params LogIssueSignature[] findings) =>

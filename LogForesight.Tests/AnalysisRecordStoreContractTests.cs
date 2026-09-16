@@ -21,6 +21,9 @@ public class AnalysisRecordStoreContractTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    private static readonly KnownIssueRule SeedDownRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+    private static readonly KnownIssueRule SeedWarnRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-warning");
+
     private static DailyAnalysisRecord Record(DateTime date, string risk = "低") => new()
     {
         Date = date,
@@ -685,7 +688,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
             TopIssues = new List<LogIssueSignature>()
         });
 
-        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
         var sig = PrtgFindingMapper.ToSignature(finding, date);
 
         var result = store.AttachPrtgFindings(hostId, date, new[] { sig });
@@ -703,14 +706,14 @@ public class AnalysisRecordStoreContractTests : IDisposable
         // 斷言 lf_top_issues 子列真的有寫入真表
         using var ctx = _fx.NewContext();
         var topIssueRow = Assert.Single(ctx.TopIssues.Where(t => t.HostId == hostId));
-        Assert.Equal("PRTG", topIssueRow.SourceName);
+        Assert.Equal("PRTG:down", topIssueRow.SourceName);
         Assert.Equal("PRTG", topIssueRow.LogName);
         Assert.Equal(0, topIssueRow.EventId);
         Assert.Equal("Service", topIssueRow.Category);
         Assert.Equal((int)IssueSeverity.High, topIssueRow.SeverityRank);
         Assert.True(topIssueRow.ElevatesDayRisk);
         Assert.Equal("prtg:down:2001", topIssueRow.EventKey);
-        Assert.Equal("監控 sensor 持續無回應，可能是服務或主機失聯", topIssueRow.KnownIssue);
+        Assert.Equal(SeedDownRule.Description, topIssueRow.KnownIssue);
         Assert.Equal(date.Date, topIssueRow.RecordDate);
     }
 
@@ -719,7 +722,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
     {
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var date = DateTime.Today;
-        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
         var sig = PrtgFindingMapper.ToSignature(finding, date);
 
         var result = store.AttachPrtgFindings(999, date, new[] { sig });
@@ -746,8 +749,8 @@ public class AnalysisRecordStoreContractTests : IDisposable
             TopIssues = new List<LogIssueSignature>()
         });
 
-        var finding1 = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
-        var finding2 = new PrtgFinding(1001, 2002, "warning", "Sensor warning", 250);
+        var finding1 = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
+        var finding2 = new PrtgFinding(1001, 2002, "warning", "Sensor warning", 250, SeedWarnRule);
         var sig1 = PrtgFindingMapper.ToSignature(finding1, date);
         var sig2 = PrtgFindingMapper.ToSignature(finding2, date);
 
@@ -798,7 +801,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
             ctx.SaveChanges();
         }
 
-        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
         var sig = PrtgFindingMapper.ToSignature(finding, date);
 
         var result = store.AttachPrtgFindings(hostId, date, new[] { sig });

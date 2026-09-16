@@ -1443,14 +1443,24 @@ public sealed class CalibrationService
             .GroupBy(s => s.Objid)
             .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
         var sensorStatuses = filteredSensors
-            .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType))
             .ToList();
 
         // 最低門檻：任何有事件的 sensor-日都納入，得到的是全量分佈
-        var minimumThresholds = new PrtgRuleThresholds(DownMinutes: 1, FlapCount: 1, WarningMinutes: 1);
-        var allRuleCodes = new HashSet<string>(
-            new[] { PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping, PrtgRuleEvaluator.RuleWarning },
-            StringComparer.OrdinalIgnoreCase);
+        // silent 不納入：它的判定來源是 sensor 現況（非變更表），逐日重放會讓
+        // 每一天都拿到「今天的現況」而全部相同，那不是分佈、是同一個數字複製 N 份
+        // 與規則庫無關：升級後尚未套用內建規則、或管理者停用某條規則時，分佈仍要算得出來
+        var calibrationRules = new[] { PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping, PrtgRuleEvaluator.RuleWarning }
+            .Select(code => new KnownIssueRule
+            {
+                Id = $"calibration-{code}",
+                Platform = "prtg",
+                Enabled = true,
+                PrtgRuleCode = code,
+                PrtgThreshold = 1
+            })
+            .ToList();
+        var emptyNames = new Dictionary<long, string>();
 
         for (var day = from.Date; day <= toInclusive.Date; day = day.AddDays(1))
         {
@@ -1458,10 +1468,8 @@ public sealed class CalibrationService
             var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
             if (changes.Count == 0) continue;
 
-            // silent 不納入：它的判定來源是 sensor 現況（非變更表），逐日重放會讓
-            // 每一天都拿到「今天的現況」而全部相同，那不是分佈、是同一個數字複製 N 份
             var findings = PrtgRuleEvaluator.Evaluate(
-                day, changes, sensorToDevice, sensorStatuses, minimumThresholds, allRuleCodes);
+                day, changes, sensorToDevice, sensorStatuses, calibrationRules, emptyNames, emptyNames, includeSilent: false);
 
             foreach (var f in findings)
             {

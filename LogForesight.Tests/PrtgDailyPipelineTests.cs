@@ -832,4 +832,40 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Equal(3, dateRangeReports[3].Done);
         Assert.Equal(3, dateRangeReports[3].Total);
     }
+
+    [Fact]
+    public async Task 評估同代碼多條規則時在Console輸出警告()
+    {
+        var rules = KnownIssueSeed.CreateRules().ToList();
+        rules.Add(new KnownIssueRule
+        {
+            Id = "a-custom-down",
+            Platform = "prtg",
+            PrtgRuleCode = "down",
+            PrtgThreshold = 60,
+            Enabled = true,
+            Severity = IssueSeverity.Critical,
+            ElevatesDayRisk = true,
+            Description = "Custom duplicate down rule"
+        });
+        KnownIssueCatalog.Initialize(rules);
+
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+
+        var (ctx, console, _, _) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+
+        Assert.Contains(console.Lines, l => l.Contains("規則代碼 down 有多條啟用規則，採用 a-custom-down"));
+    }
 }
+

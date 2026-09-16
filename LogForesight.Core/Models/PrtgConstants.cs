@@ -16,6 +16,10 @@ public static class PrtgSensorStatuses
     public static bool IsDown(string? status) =>
         status != null && status.StartsWith(Down, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>是否為已於 PRTG 確認的 Down 狀態（IsDown 成立且含 "(Acknowledged)"，不分大小寫）</summary>
+    public static bool IsAcknowledged(string? status) =>
+        IsDown(status) && status!.Contains("(Acknowledged)", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>是否為 Up 狀態</summary>
     public static bool IsUp(string? status) =>
         status != null && status.StartsWith(Up, StringComparison.OrdinalIgnoreCase);

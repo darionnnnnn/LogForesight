@@ -14,9 +14,17 @@ public class AnalysisPromptBuilderPrtgTests
 {
     private const string PrtgSectionTitle = "【PRTG 監控訊號】";
 
-    private static LogIssueSignature PrtgFinding(long sensorObjid = 2001, string code = "down") =>
-        PrtgFindingMapper.ToSignature(
-            new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60), DateTime.Today);
+    private static readonly Dictionary<string, KnownIssueRule> SeedRules =
+        KnownIssueSeed.CreateRules().ToDictionary(r => r.Id);
+
+    private static LogIssueSignature PrtgFinding(long sensorObjid = 2001, string code = "down")
+    {
+        var rule = SeedRules.TryGetValue($"builtin-prtg-{code}", out var r)
+            ? r
+            : new KnownIssueRule { Id = $"test-{code}", PrtgRuleCode = code, Description = "測試說明" };
+        return PrtgFindingMapper.ToSignature(
+            new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60, rule), DateTime.Today);
+    }
 
     private static LogIssueSignature WindowsIssue() => new()
     {
@@ -44,7 +52,7 @@ public class AnalysisPromptBuilderPrtgTests
 
         Assert.Contains(PrtgSectionTitle, prompt);
         // 規則的白話說明要出現，讓 AI 讀得懂這個訊號代表什麼
-        Assert.Contains("監控 sensor 持續無回應", prompt);
+        Assert.Contains("PRTG 監控 sensor 持續 Down 達門檻", prompt);
     }
 
     [Fact]
