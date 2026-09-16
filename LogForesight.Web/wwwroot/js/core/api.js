@@ -11,6 +11,14 @@ import { appUrl, appPath } from './paths.js';
 const CSRF_HEADER = 'X-Requested-By';
 const CSRF_VALUE = 'LogForesight';
 
+/**
+ * GET 的預設逾時（毫秒）。慢端點沒有逾時時，骨架列會無限停在畫面上，
+ * 使用者分不出「還在算」與「已經壞了」——逾時是為了讓等待有盡頭。
+ * 呼叫端可用 `{ timeoutMs: 120000 }` 覆寫（例如已知很慢的匯總查詢）。
+ */
+const GET_TIMEOUT_MS = 60000;
+
+
 /** API 回傳的業務錯誤。message 是後端組好的中文，可直接顯示 */
 export class ApiError extends Error {
     constructor(code, message, status) {
@@ -44,15 +52,38 @@ async function request(method, url, body, options = {}) {
         }
     }
 
+    // **只有 GET 加逾時，POST／PUT／DELETE 一律不加**：測試連線、估算規模、套用匯入這類
+    // 長時間寫入操作若在客戶端中止，伺服器仍會繼續做完——使用者看到失敗後再按一次，
+    // 就是重複執行（重複匯入、重複套用）。讀取沒有這個副作用，中止是安全的。
+    let timedOut = false;
+    let timeoutTimer = null;
+    if (method === 'GET') {
+        const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+            ? options.timeoutMs
+            : GET_TIMEOUT_MS;
+        const controller = new AbortController();
+        init.signal = controller.signal;
+        timeoutTimer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    }
+
     let response;
     try {
         response = await fetch(appUrl(url), init);
     } catch (networkError) {
+        // 逾時與網路層失敗要分得開：前者該縮小查詢範圍，後者該看網路或站台是否還活著
+        if (timedOut) {
+            const message = '查詢逾時，請縮小查詢範圍（例如時間區間）或稍後再試。';
+            if (options.silent !== true) toast(message, 'danger');
+            throw new ApiError('timeout', message, 0);
+        }
         // 網路層失敗（站台重啟、連線中斷）與業務錯誤是不同的情況，訊息要說得出差別，
         // 否則使用者只會看到「失敗」而不知道該重試還是該找人
         const message = '無法連線到伺服器，請確認網路狀態後重試。';
         if (options.silent !== true) toast(message, 'danger');
         throw new ApiError('network_error', message, 0);
+    } finally {
+        // 收到回應就停錶：計時器若在讀 body 的期間觸發，會把已經在傳的回應串流中止掉
+        if (timeoutTimer !== null) clearTimeout(timeoutTimer);
     }
 
     // 401：登入逾期或帳號已停用 → 導回登入頁，並記住原本要去的位置

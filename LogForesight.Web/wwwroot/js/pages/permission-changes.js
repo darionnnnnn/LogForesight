@@ -37,6 +37,13 @@ const resetBtn = document.getElementById('btn-reset-filters');
 
 let currentStatus = 'pending';
 let currentPage = 1;
+/**
+ * 每頁筆數上限，與後端 Paging.Normalize 的預設上限同值（回饋第 45 輪 B7）。
+ * 網址參數的 pageSize 過去只檢查「大於 0」，`?pageSize=100000` 就會要求後端一次吐回
+ * 全部資料；後端會夾到上限，前端不夾就變成畫面顯示的筆數與實際拿到的對不上。
+ */
+const MAX_PAGE_SIZE = 200;
+
 let pageSize = loadPageSize('permissionChanges');
 let sort = { key: 'detectedAt', dir: 'desc' };
 let lastResult = null;
@@ -148,7 +155,7 @@ function initFiltersFromUrlOrStorage() {
         }
         if (params.has('pageSize')) {
             const ps = parseInt(params.get('pageSize'), 10);
-            if (ps > 0) pageSize = ps;
+            if (ps > 0) pageSize = Math.min(ps, MAX_PAGE_SIZE);
         }
     } else {
         const stored = loadStoredFilters();

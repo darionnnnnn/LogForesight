@@ -326,6 +326,11 @@ public sealed class CalibrationService
     private static List<CalibrationResidualCandidateRow>? _cachedResidualRows;
     private static (DateTime Anchor, int RetentionDays) _cachedResidualKey;
 
+    /// <summary>殘差候選列快取自己的時間戳。**不可以共用 <c>_cachedAt</c>**（那是整體判定
+    /// 摘要的）：共用的話，沒先算過整體摘要時 _cachedAt 恆為 default，殘差快取永遠不命中；
+    /// 反過來剛算過整體摘要時，十分鐘前算的殘差資料會被判成新鮮。</summary>
+    private static DateTime _cachedResidualAt;
+
     /// <summary>判定快取存活時間：四項判定是重查詢（含逐筆反序列化），
     /// 而累積量以「天」為單位變動，十分鐘內重複計算不會得到不同結論。
     /// 匯出時會再取一次判定摘要，這個快取讓同一次匯出不必重跑整組查詢。</summary>
@@ -385,6 +390,7 @@ public sealed class CalibrationService
             _cachedAt = default;
             _cachedResidualRows = null;
             _cachedResidualKey = default;
+            _cachedResidualAt = default;
         }
     }
 
@@ -1217,7 +1223,7 @@ public sealed class CalibrationService
         var key = (anchor.Date, rawEventRetentionDays);
         lock (CacheLock)
         {
-            if (_cachedResidualRows != null && _cachedResidualKey == key && DateTime.Now - _cachedAt < CacheTtl)
+            if (_cachedResidualRows != null && _cachedResidualKey == key && DateTime.Now - _cachedResidualAt < CacheTtl)
             {
                 return _cachedResidualRows;
             }
@@ -1229,6 +1235,7 @@ public sealed class CalibrationService
         {
             _cachedResidualRows = rows;
             _cachedResidualKey = key;
+            _cachedResidualAt = DateTime.Now;
         }
 
         return rows;

@@ -41,6 +41,12 @@ public class SentinelEventFetchService : ISentinelEventFetcher
     private static readonly ConcurrentDictionary<string, (DateTime Expiry, LiveEventFetchResult? Result)> Cache = new();
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
+    /// <summary>條目上限：鍵含主機＋日期＋來源＋EventId，組合無限，過期條目又沒有任何人會來清——
+    /// 不設上限就是慢速記憶體洩漏（站台是長時間執行的服務）。超過就整批清掉，比照
+    /// <see cref="SummaryCache"/> 的既有慣例：這是加值層快取，全部重算的代價只是下一次多打一次
+    /// Sentinel，不值得為了逐條淘汰再背一份 LRU 結構。</summary>
+    private const int MaxCacheEntries = 512;
+
     /// <summary>取數本身的硬逾時——對話整體 60 秒，取數不能吃掉大半（docs/archive/FEEDBACK-4-PLAN.md §5 D4）</summary>
     private const int FetchTimeoutSeconds = 15;
 
@@ -81,6 +87,7 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         try
         {
             var result = await FetchInternalAsync(host, date, source, eventId, ct);
+            if (Cache.Count >= MaxCacheEntries) Cache.Clear();
             Cache[cacheKey] = (DateTime.UtcNow.Add(CacheTtl), result);
             return result;
         }
@@ -94,6 +101,12 @@ public class SentinelEventFetchService : ISentinelEventFetcher
             Gate.Release();
         }
     }
+
+    /// <summary>快取現有條目數（測試用；正式路徑不消費）</summary>
+    internal static int CacheEntryCount => Cache.Count;
+
+    /// <summary>清空快取（測試用；正式路徑靠 TTL 與條目上限）</summary>
+    internal static void ClearCache() => Cache.Clear();
 
     private async Task<LiveEventFetchResult?> FetchInternalAsync(WebHost host, DateTime date, string source, int eventId, CancellationToken ct)
     {

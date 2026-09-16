@@ -885,6 +885,10 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
  *
  * 用法：把整段載入流程包起來，失敗時把骨架列換成可理解的失敗狀態。
  * containers 可給單一容器或容器陣列（一頁多塊骨架時全部一起收掉）。
+ *
+ * 失敗狀態附「重試」鈕（回饋第 45 輪 B7）：載入失敗的下一步過去只有「請重新整理頁面」，
+ * 而整頁重載會丟掉使用者已經設好的篩選條件。重試只重跑同一段載入流程，先回到骨架狀態
+ * 再跑——否則按下去畫面毫無變化，使用者無從判斷有沒有反應。
  */
 export async function guardLoad(containers, fn, { backLink } = {}) {
     try {
@@ -913,6 +917,9 @@ export async function guardLoad(containers, fn, { backLink } = {}) {
             if (index === 0) {
                 renderEmpty(container, state);
                 if (notFound && backLink) container.appendChild(backLinkNode(backLink));
+                // 404 不給重試鈕：這筆資料不存在，重試永遠不會成功，只會讓人按第二次才死心。
+                // 逾時與一般失敗則相反——那多半是暫時的，重試是最合理的下一步。
+                if (!notFound) container.appendChild(retryNode(containers, fn, { backLink }));
             } else {
                 container.replaceChildren();
             }
@@ -922,6 +929,24 @@ export async function guardLoad(containers, fn, { backLink } = {}) {
         console.error('[load]', error);
         return undefined;
     }
+}
+
+/**
+ * 可重試失敗狀態底下的「重試」鈕：按下先把所有容器換回骨架列（立即的視覺回饋），
+ * 再重跑同一段載入流程——重跑一樣走 guardLoad，因此重試再失敗仍會得到可重試的狀態。
+ */
+function retryNode(containers, fn, options) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mt-3';
+    wrap.appendChild(button('重試', {
+        variant: 'outline-primary',
+        icon: 'arrow-counterclockwise',
+        onClick: () => {
+            [containers].flat().filter(Boolean).forEach(container => renderLoading(container));
+            guardLoad(containers, fn, options);
+        }
+    }));
+    return wrap;
 }
 
 /** 404 空狀態底下的「返回清單」出口——錯誤狀態一定要給得出下一步（優先序 8 Error Recovery） */

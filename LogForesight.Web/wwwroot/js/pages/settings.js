@@ -4,7 +4,10 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines } from '../core/ui.js';
+import {
+    toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
+    guardLoad, renderSpinner
+} from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
@@ -50,7 +53,18 @@ const DAY_RISK_LEVELS = ['高', '中', '低'];
 
 let current = null;
 
+/**
+ * 載入指示掛在「最後更新」那行（回饋第 45 輪 B7）：本頁是一整片表單，不能拿骨架列
+ * 把表單節點換掉（renderLoading 會 replaceChildren，表單連同已綁的事件都會消失），
+ * 因此用行內 spinner；失敗時同一個容器換成可重試的失敗狀態。
+ */
 async function load() {
+    const statusEl = document.getElementById('settings-updated');
+    renderSpinner(statusEl, '載入設定中…');
+    await guardLoad(statusEl, loadSettings);
+}
+
+async function loadSettings() {
     current = await api.get('/api/admin/settings');
     renderSeverityChecks(current.unhandledSeverities);
     renderDisplayModeButtons(current.severityDisplayMode);

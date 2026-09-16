@@ -6,7 +6,7 @@ import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
-    bindTabs, toast, withBusy, setSpinnerText, confirmAction,
+    bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
     collectLines, numberOr
 } from '../core/ui.js';
@@ -154,7 +154,17 @@ function renderUpdatedAt(settings) {
         (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
 }
 
+/**
+ * 載入指示掛在「最後更新」那行（回饋第 45 輪 B7）：與 settings.js 同一個理由——
+ * 這區塊是表單，骨架列會把表單節點整片換掉，只能用行內 spinner。
+ */
 async function loadSettings() {
+    const statusEl = document.getElementById('prtg-config-updated');
+    if (statusEl) renderSpinner(statusEl, '載入設定中…');
+    await guardLoad(statusEl, loadPrtgSettings);
+}
+
+async function loadPrtgSettings() {
     const settings = await api.get('/api/admin/settings');
     historyRetentionDays = settings.retentionDays;
     renderPrtgFields(settings);
