@@ -227,6 +227,8 @@ internal static class PrtgDailyPipeline
                 ? prtgStore.GetHostMapForDate(newest)
                 : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
 
+            var allSuppressions = new SuppressionStore(backend.Blob("suppressions")).LoadAll();
+
             // 逐日迴圈（days 的順序，由近到遠）
             for (var i = 0; i < days.Count; i++)
             {
@@ -296,6 +298,17 @@ internal static class PrtgDailyPipeline
                         }
                         state.AttributedHosts = findingsByHost.Count;
 
+                        var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
+                        var suppressedCount = 0;
+                        foreach (var (hostId, hostFindings) in findingsByHost)
+                        {
+                            var (hostName, hostGroupIds) = hostsById.TryGetValue(hostId, out var webHost)
+                                ? (webHost.HostName, (IReadOnlyCollection<long>)webHost.GroupIds)
+                                : (string.Empty, (IReadOnlyCollection<long>)Array.Empty<long>());
+                            var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, hostName, hostGroupIds, DateTime.Now);
+                            suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions);
+                        }
+
                         prtgFindings.Publish(day, findingsByHost.ToDictionary(
                             kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value));
 
@@ -304,8 +317,7 @@ internal static class PrtgDailyPipeline
                             var involvedHosts = findingsByHost.Count;
                             var appendedHosts = 0;
                             var pendingHosts = 0;
-
-                            var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
+                            var acknowledgedCount = findings.Count(f => f.Acknowledged);
 
                             foreach (var (hostId, hostFindings) in findingsByHost)
                             {
@@ -320,7 +332,7 @@ internal static class PrtgDailyPipeline
                                 else pendingHosts++;
                             }
 
-                            var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {findings.Count} 筆、涉及主機 {involvedHosts} 台、" +
+                            var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {findings.Count} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {acknowledgedCount} 筆）、涉及主機 {involvedHosts} 台、" +
                                           $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
                             prtgConsole.WriteLine(summary);
                             runRecorder.Milestone(summary);

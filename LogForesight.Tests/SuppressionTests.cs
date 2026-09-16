@@ -423,6 +423,48 @@ public class SuppressionTests
         Assert.Contains(alerts, a => a.Contains("頻率上升"));
     }
 
+    [Fact]
+    public void MarkSuppressed套用規則型與簽章型抑制並回傳標記筆數()
+    {
+        var sigKey = IssueSignatureKey.For("System", "Service Control Manager", 7034, System.Diagnostics.EventLogEntryType.Error);
+
+        var activeSuppressions = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Rule, RuleId = "rule-disk" },
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = sigKey }
+        };
+
+        var issueRule = Sig("System", "disk", 153, 5, IssueSeverity.High);
+        issueRule.RuleId = "rule-disk";
+
+        var issueSig = Sig("System", "Service Control Manager", 7034, 1, IssueSeverity.High);
+        issueSig.RuleId = null;
+
+        var issueUnrelated = Sig("Application", "MyApp", 1000, 2, IssueSeverity.High);
+        issueUnrelated.RuleId = "other-rule";
+
+        var marked = SuppressionFilter.MarkSuppressed(
+            new[] { issueRule, issueSig, issueUnrelated },
+            activeSuppressions);
+
+        Assert.Equal(2, marked);
+        Assert.True(issueRule.Suppressed);
+        Assert.True(issueSig.Suppressed);
+        Assert.False(issueUnrelated.Suppressed);
+    }
+
+    [Fact]
+    public void MarkSuppressed無生效抑制時回傳0且不修改簽章()
+    {
+        var issue = Sig("System", "disk", 153, 5, IssueSeverity.High);
+        issue.RuleId = "rule-disk";
+
+        var marked = SuppressionFilter.MarkSuppressed(new[] { issue }, new List<RuleSuppression>());
+
+        Assert.Equal(0, marked);
+        Assert.False(issue.Suppressed);
+    }
+
     // Sig(...) 已搬到 TestDoubles\TestData.cs（與 TrendAnalyzerTests 原本逐字相同，已合併；
     // CorrelationAnalyzerTests 原本多帶的 keyDetails 參數也一併合併進共用版本）。
 

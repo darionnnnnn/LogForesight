@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
@@ -16,6 +18,35 @@ internal static class SuppressionFilter
     public static List<RuleSuppression> ActiveForHost(
         List<RuleSuppression> all, string host, IReadOnlyCollection<long> hostGroupIds, DateTime now) =>
         all.Where(s => IsForHost(s, host, hostGroupIds) && !IsExpired(s, now)).ToList();
+
+    /// <summary>
+    /// 對問題簽章套用生效中的抑制清單（規則型與簽章型），命中者標記 Suppressed = true。
+    /// 回傳標記筆數。
+    /// </summary>
+    public static int MarkSuppressed(IEnumerable<LogIssueSignature> issues, List<RuleSuppression> activeSuppressions)
+    {
+        if (activeSuppressions.Count == 0) return 0;
+
+        var suppressedRuleIds = ToRuleIdSet(activeSuppressions);
+        var suppressedSignatureKeys = ToSignatureKeySet(activeSuppressions);
+        var count = 0;
+
+        foreach (var issue in issues)
+        {
+            bool ruleSuppressed = issue.RuleId != null && suppressedRuleIds.Contains(issue.RuleId);
+            // 物件版重載（含 EventKey 第五段）：與 IssueDto.IssueKey／前端建立簽章抑制時
+            // 送出的鍵一致，四參數版在 Linux「同 program 命中不同規則」時會漏掉區分段，
+            // 導致抑制鍵對不上、簽章抑制對這類問題永遠不生效
+            bool signatureSuppressed = suppressedSignatureKeys.Contains(IssueSignatureKey.For(issue));
+            if (ruleSuppressed || signatureSuppressed)
+            {
+                issue.Suppressed = true;
+                count++;
+            }
+        }
+
+        return count;
+    }
 
     /// <summary>把抑制項目投影成規則 Id 集合供快速比對。RuleId 的比對一律不分大小寫，
     /// 這個規則只在這裡定義一次，呼叫端不需要自己記得挑對 StringComparer。

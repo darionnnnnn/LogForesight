@@ -867,5 +867,265 @@ public class PrtgDailyPipelineTests : IDisposable
 
         Assert.Contains(console.Lines, l => l.Contains("規則代碼 down 有多條啟用規則，採用 a-custom-down"));
     }
+
+    [Fact]
+    public async Task Site範圍規則型抑制使PRTG發佈簽章Suppressed且追加後不拉高日風險()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>();
+        });
+
+        var day = DateTime.Today.AddDays(-1);
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-TEST", Ip = "192.168.1.101" } }, now);
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Disk", SensorType = "SNMP Disk Free", Status = "Down" } }, now);
+
+        prtgStore.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow
+            {
+                MapDate = day,
+                DeviceObjid = 1,
+                HostId = host.HostId,
+                HostName = "SRV-TEST",
+                MapStatus = PrtgMapStatus.Ok,
+                CreatedAt = DateTime.Now
+            }
+        });
+
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow
+            {
+                SensorObjid = 2001,
+                ChangedAt = day.Date.AddHours(2),
+                Status = "Down"
+            }
+        });
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day,
+            HostId = host.HostId,
+            Host = host.HostName,
+            RiskLevel = RiskLevels.Low,
+            RiskBasis = "baseline"
+        });
+
+        var suppressionStore = new SuppressionStore(_backend.Blob("suppressions"));
+        suppressionStore.SaveAll(new List<RuleSuppression>
+        {
+            new()
+            {
+                RuleId = "builtin-prtg-down",
+                Scope = SuppressionScopes.Site,
+                Reason = "測試抑制"
+            }
+        });
+
+        var (ctx, console, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        var findings = registry.For(host.HostId, day);
+        var downSig = Assert.Single(findings);
+        Assert.Equal("builtin-prtg-down", downSig.RuleId);
+        Assert.True(downSig.Suppressed);
+
+        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+        Assert.Contains(record.TopIssues, i => i.EventKey == "prtg:down:2001");
+        Assert.Equal(RiskLevels.Low, record.RiskLevel);
+        Assert.DoesNotContain("prtg:down", record.RiskBasis ?? string.Empty);
+        Assert.Contains(console.Lines, l => l.Contains("已抑制 1 筆"));
+    }
+
+    [Fact]
+    public async Task Group範圍規則型抑制當主機不在群組時不抑制且日風險升至高()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>();
+        });
+
+        var day = DateTime.Today.AddDays(-1);
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost
+        {
+            HostName = "SRV-TEST",
+            Active = true,
+            IpAddress = "192.168.1.101",
+            GroupIds = new List<long> { 101 }
+        });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-TEST", Ip = "192.168.1.101" } }, now);
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Disk", SensorType = "SNMP Disk Free", Status = "Down" } }, now);
+
+        prtgStore.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow
+            {
+                MapDate = day,
+                DeviceObjid = 1,
+                HostId = host.HostId,
+                HostName = "SRV-TEST",
+                MapStatus = PrtgMapStatus.Ok,
+                CreatedAt = DateTime.Now
+            }
+        });
+
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow
+            {
+                SensorObjid = 2001,
+                ChangedAt = day.Date.AddHours(2),
+                Status = "Down"
+            }
+        });
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day,
+            HostId = host.HostId,
+            Host = host.HostName,
+            RiskLevel = RiskLevels.Low,
+            RiskBasis = "baseline"
+        });
+
+        var suppressionStore = new SuppressionStore(_backend.Blob("suppressions"));
+        suppressionStore.SaveAll(new List<RuleSuppression>
+        {
+            new()
+            {
+                RuleId = "builtin-prtg-down",
+                Scope = SuppressionScopes.Group,
+                HostGroupId = 999,
+                Reason = "群組 999 抑制"
+            }
+        });
+
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        var findings = registry.For(host.HostId, day);
+        var downSig = Assert.Single(findings);
+        Assert.False(downSig.Suppressed);
+
+        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.Equal("prtg:down", record.RiskBasis);
+    }
+
+    [Fact]
+    public async Task 簽章型抑制只抑制該sensor同規則另一sensor不受影響()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>();
+        });
+
+        var day = DateTime.Today.AddDays(-1);
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-TEST", Ip = "192.168.1.101" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Disk C", SensorType = "SNMP Disk Free", Status = "Down" },
+            new PrtgSensorRow { Objid = 2002, DeviceObjid = 1, Name = "Disk D", SensorType = "SNMP Disk Free", Status = "Down" }
+        }, now);
+
+        prtgStore.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow
+            {
+                MapDate = day,
+                DeviceObjid = 1,
+                HostId = host.HostId,
+                HostName = "SRV-TEST",
+                MapStatus = PrtgMapStatus.Ok,
+                CreatedAt = DateTime.Now
+            }
+        });
+
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(2), Status = "Down" },
+            new PrtgStateChangeRow { SensorObjid = 2002, ChangedAt = day.Date.AddHours(2), Status = "Down" }
+        });
+
+        var targetSig = new LogIssueSignature
+        {
+            LogName = PrtgFindingMapper.PrtgLogName,
+            Source = "PRTG:down",
+            EventId = 0,
+            EntryType = System.Diagnostics.EventLogEntryType.Warning,
+            EventKey = "prtg:down:2001"
+        };
+        var targetKey = IssueSignatureKey.For(targetSig);
+
+        var suppressionStore = new SuppressionStore(_backend.Blob("suppressions"));
+        suppressionStore.SaveAll(new List<RuleSuppression>
+        {
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Signature,
+                SignatureKey = targetKey,
+                Scope = SuppressionScopes.Site,
+                Reason = "僅抑制 sensor 2001"
+            }
+        });
+
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        var findings = registry.For(host.HostId, day);
+        Assert.Equal(2, findings.Count);
+        var sig2001 = findings.Single(f => f.EventKey == "prtg:down:2001");
+        var sig2002 = findings.Single(f => f.EventKey == "prtg:down:2002");
+
+        Assert.True(sig2001.Suppressed);
+        Assert.False(sig2002.Suppressed);
+    }
 }
 

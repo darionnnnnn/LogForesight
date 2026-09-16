@@ -291,3 +291,4 @@
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | A-1 | agy（gemini-3.8-flash-high） | 通過（809→816，含合約測試類別 846 綠） | grep 驗收、三個突變（已確認不拉風險、已確認判定、同代碼取 Id 最小）皆紅 | (1) 校準端改成只用「已啟用」規則並手抄一份規則複製：升級後未套 seed 時校準分佈變空、B-3 加欄位必漏抄——Claude 改為三條與規則庫無關的最低門檻合成規則；(2) 四檔被改成 LF、`EfIssueAggregateQuery.cs` BOM 被剝——已還原；(3) 驗收 grep `PrtgRuleThresholds` 撞到校準服務同名無關屬性、`"prtg-` 撞到檔名字串，是規格寫太寬，型別與舊 RuleId 實際零殘留；(4) `PrtgFinding.Acknowledged` 帶預設值（規格禁可選參數），影響僅測試建構，暫留 |
+| A-2 | agy（gemini-3.8-flash-high） | 通過（66→71；相關類別 90 綠） | grep 驗收全過；突變「pipeline 不呼叫 MarkSuppressed」→ 2 紅（Group 非成員那條本應綠） | 下游事實：案件掛接（`IssueCaseCoordinator.AttachNewDay`）與郵件摘要對事件層的已抑制問題本來就不過濾，PRTG 與之一致，未另寫分支；執行輸出「已抑制」無獨立測試，由 Site 範圍測試間接涵蓋 |
