@@ -199,7 +199,8 @@ internal static class PrtgDailyPipeline
             }
 
             var prtgStore = backend.PrtgStore();
-            var whitelist = new HashSet<string>(systemSettings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            // 規則評估母體＝全部未暫停 sensor：取數白名單是為數值取數量體設計的（預設不含 Ping），
+            // 拿來過濾規則母體會讓主機失聯（Ping Down）永遠命中不了；狀態變更本來就全量抓，放寬不增加 PRTG 負擔。
             var allSensors = prtgStore.GetSensorStatuses();
             var sensorNames = allSensors
                 .GroupBy(s => s.Objid)
@@ -208,17 +209,12 @@ internal static class PrtgDailyPipeline
                 .GroupBy(d => d.Objid)
                 .ToDictionary(g => g.Key, g => g.First().Name);
 
-            var filteredSensors = whitelist.Count == 0
-                ? allSensors
-                : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
-
-            var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
-            var sensorToDevice = filteredSensors
+            var sensorToDevice = allSensors
                 .GroupBy(s => s.Objid)
                 .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
 
-            var sensorStatuses = filteredSensors
-                .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType))
+            var sensorStatuses = allSensors
+                .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category))
                 .ToList();
             var reportedDuplicateRuleWarnings = new HashSet<string>();
 
@@ -260,8 +256,7 @@ internal static class PrtgDailyPipeline
                         continue;
                     }
 
-                    var allChanges = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
-                    var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
+                    var changes = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
 
                     var findings = PrtgRuleEvaluator.Evaluate(
                         day, changes, sensorToDevice, sensorStatuses, prtgRules,
@@ -333,7 +328,7 @@ internal static class PrtgDailyPipeline
                                 else pendingHosts++;
                             }
 
-                            var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {findings.Count} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {acknowledgedCount} 筆）、涉及主機 {involvedHosts} 台、" +
+                            var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {findings.Count} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {acknowledgedCount} 筆、已合併 {findings.MergedCount} 筆）、涉及主機 {involvedHosts} 台、" +
                                           $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
                             prtgConsole.WriteLine(summary);
                             runRecorder.Milestone(summary);

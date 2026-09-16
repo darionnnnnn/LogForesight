@@ -617,17 +617,17 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
-    /// <summary>取得未暫停 sensor 的現況狀態（判定沉默 device 用）：objid、device、status、type、name。</summary>
-    public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName)> GetSensorStatuses()
+    /// <summary>取得未暫停 sensor 的現況狀態（規則評估用）：objid、device、status、type、name、category。</summary>
+    public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> GetSensorStatuses()
     {
         using var __perf = _performance.Measure("prtg:GetSensorStatuses");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors
             .AsNoTracking()
             .Where(s => !s.Paused)
-            .Select(s => new { s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Name })
+            .Select(s => new { s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Name, s.Category })
             .ToList()
-            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Name))
+            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Name, s.Category))
             .ToList();
     }
 

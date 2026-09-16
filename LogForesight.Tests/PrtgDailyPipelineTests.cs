@@ -1127,5 +1127,107 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.True(sig2001.Suppressed);
         Assert.False(sig2002.Suppressed);
     }
-}
 
+    private void EnableConservativePrtgWithDefaultWhitelist()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>(SystemSettings.DefaultPrtgSensorTypeWhitelist);
+        });
+    }
+
+    private void MapDeviceToHost(DateTime day, long deviceObjid, WebHost host)
+    {
+        _backend.PrtgStore().ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow
+            {
+                MapDate = day,
+                DeviceObjid = deviceObjid,
+                HostId = host.HostId,
+                HostName = host.HostName,
+                MapStatus = PrtgMapStatus.Ok,
+                CreatedAt = DateTime.Now
+            }
+        });
+    }
+
+    [Fact]
+    public async Task 預設白名單不含Ping_PingDown仍進規則評估產生Down()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        Assert.DoesNotContain(SystemSettings.DefaultPrtgSensorTypeWhitelist,
+            t => string.Equals(t, "Ping", StringComparison.OrdinalIgnoreCase));
+
+        var today = DateTime.Today;
+        var day = today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-PING", Active = true, IpAddress = "192.168.1.111" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-PING", Ip = "192.168.1.111" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Ping", SensorType = "Ping", Status = "Down", Category = PrtgSensorCategories.Availability }
+        }, now);
+        // 22:30 進入 Down，持續到午夜 90 分鐘（預設門檻 60）
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(22).AddMinutes(30), Status = "Down" }
+        });
+        MapDeviceToHost(day, 1, host);
+
+        var (ctx, _, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { today, day }, Task.CompletedTask, guard: null);
+
+        Assert.Contains(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+    }
+
+    [Fact]
+    public async Task 同裝置PingDown時TrafficDown被合併_執行輸出含已合併筆數()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var today = DateTime.Today;
+        var day = today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-FOLD", Active = true, IpAddress = "192.168.1.112" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-FOLD", Ip = "192.168.1.112" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Ping", SensorType = "Ping", Status = "Down", Category = PrtgSensorCategories.Availability },
+            new PrtgSensorRow { Objid = 2002, DeviceObjid = 1, Name = "Port 1", SensorType = "SNMP Traffic 64bit", Status = "Down", Category = PrtgSensorCategories.Traffic },
+            new PrtgSensorRow { Objid = 2003, DeviceObjid = 1, Name = "Port 2", SensorType = "SNMP Traffic 64bit", Status = "Down", Category = PrtgSensorCategories.Traffic }
+        }, now);
+        var downAt = day.Date.AddHours(22).AddMinutes(30);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = downAt, Status = "Down" },
+            new PrtgStateChangeRow { SensorObjid = 2002, ChangedAt = downAt, Status = "Down" },
+            new PrtgStateChangeRow { SensorObjid = 2003, ChangedAt = downAt, Status = "Down" }
+        });
+        MapDeviceToHost(day, 1, host);
+
+        var (ctx, console, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { today, day }, Task.CompletedTask, guard: null);
+
+        var signatures = registry.For(host.HostId, day);
+        Assert.Contains(signatures, f => f.EventKey == "prtg:down:2001");
+        Assert.DoesNotContain(signatures, f => f.EventKey == "prtg:down:2002" || f.EventKey == "prtg:down:2003");
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("已合併 2 筆"));
+    }
+}

@@ -607,7 +607,7 @@ public sealed class CalibrationService
             ))
             .ToList();
 
-        var (magnitudeSamples, magnitudeSummaries) = BuildRuleMagnitudeDistribution(ruleFrom, anchorDate, settings, prtgRules);
+        var (magnitudeSamples, magnitudeSummaries) = BuildRuleMagnitudeDistribution(ruleFrom, anchorDate, prtgRules);
 
         var ruleDataset = new CalibrationRuleThresholdDataset
         {
@@ -1414,24 +1414,19 @@ public sealed class CalibrationService
     /// 多少持續 120 分鐘。門檻設 1（不是 0）：flap 與 warning 的判定是 `>=`，
     /// 設 0 會讓「當日零事件」的 sensor 也被算成命中，分母整個爛掉。
     ///
-    /// sensor 母體與夜間批次一致（白名單過濾），且比照 PRTG-SPEC §9 回查前一日的變更
+    /// sensor 母體與夜間批次的規則評估一致（全部未暫停 sensor，不受取數白名單限制），
+    /// 且不做同裝置折疊（分佈要看每顆 sensor 自己的量值）；比照 PRTG-SPEC §9 回查前一日的變更
     /// ——`down` 與 `warning` 要靠前一日最後一筆推導當日零時的起始狀態。
     /// </summary>
     private (List<CalibrationRuleMagnitudeRow> Samples, List<CalibrationRuleMagnitudeSummary> Summaries)
         BuildRuleMagnitudeDistribution(
             DateTime from,
             DateTime toInclusive,
-            SystemSettings settings,
             List<CalibrationPrtgRuleThresholdInfo> currentRules)
     {
         var samples = new List<CalibrationRuleMagnitudeRow>();
 
-        var whitelist = new HashSet<string>(
-            settings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
-        var allSensors = _prtgStore.GetSensorStatuses();
-        var filteredSensors = whitelist.Count == 0
-            ? allSensors
-            : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
+        var filteredSensors = _prtgStore.GetSensorStatuses();
 
         if (filteredSensors.Count == 0)
         {
@@ -1443,7 +1438,8 @@ public sealed class CalibrationService
             .GroupBy(s => s.Objid)
             .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
         var sensorStatuses = filteredSensors
-            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType))
+            // 分類刻意給 null：評估器的同裝置折疊只看 availability 分類，給 null 就不折疊
+            .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, null))
             .ToList();
 
         // 最低門檻：任何有事件的 sensor-日都納入，得到的是全量分佈

@@ -19,15 +19,27 @@ public sealed record PrtgFinding(
     KnownIssueRule Rule,
     bool Acknowledged = false);
 
-/// <summary>PRTG 規則評估結果，附帶同代碼多條啟用規則之警告清單</summary>
+/// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>
+public sealed record PrtgSensorStatusInput(
+    long Objid,
+    long DeviceObjid,
+    string? Status,
+    string SensorType,
+    string? Category);
+
+/// <summary>PRTG 規則評估結果，附帶同代碼多條啟用規則之警告清單與同裝置折疊筆數</summary>
 public sealed class PrtgEvaluationResult : List<PrtgFinding>
 {
     public IReadOnlyList<string> DuplicateRuleWarnings { get; }
 
-    public PrtgEvaluationResult(IEnumerable<PrtgFinding> findings, IReadOnlyList<string> duplicateRuleWarnings)
+    /// <summary>同裝置折疊時被合併掉（不回傳）的 down／flapping finding 總筆數</summary>
+    public int MergedCount { get; }
+
+    public PrtgEvaluationResult(IEnumerable<PrtgFinding> findings, IReadOnlyList<string> duplicateRuleWarnings, int mergedCount)
         : base(findings)
     {
         DuplicateRuleWarnings = duplicateRuleWarnings;
+        MergedCount = mergedCount;
     }
 }
 
@@ -45,7 +57,7 @@ public static class PrtgRuleEvaluator
         DateTime day,
         IReadOnlyList<PrtgStateChangeRow> changes,
         IReadOnlyDictionary<long, long> sensorToDevice,
-        IReadOnlyList<(long Objid, long DeviceObjid, string? Status, string SensorType)> sensorStatuses,
+        IReadOnlyList<PrtgSensorStatusInput> sensorStatuses,
         IReadOnlyList<KnownIssueRule> rules,
         IReadOnlyDictionary<long, string> sensorNames,
         IReadOnlyDictionary<long, string> deviceNames,
@@ -269,12 +281,60 @@ public static class PrtgRuleEvaluator
             }
         }
 
+        var sensorCategories = sensorStatuses
+            .GroupBy(s => s.Objid)
+            .ToDictionary(g => g.Key, g => g.First().Category);
+        var mergedCount = FoldByDevice(findings, sensorCategories);
+
         var orderedFindings = findings
             .OrderBy(f => f.DeviceObjid)
             .ThenBy(f => f.RuleCode)
             .ThenBy(f => f.SensorObjid ?? 0)
             .ToList();
 
-        return new PrtgEvaluationResult(orderedFindings, duplicateWarnings);
+        return new PrtgEvaluationResult(orderedFindings, duplicateWarnings, mergedCount);
+    }
+
+    /// <summary>
+    /// 同裝置折疊：device 當日有 availability 分類 sensor 的 down 時，主機失聯會讓同裝置其他 sensor
+    /// 一起 Down 或震盪，這些 finding 併入 objid 最小的那筆 availability down 的 Detail，不另外回傳。
+    /// warning、silent 與 availability 自己的 finding 不受影響；沒有 availability down 的 device 不折疊。
+    /// 就地修改 <paramref name="findings"/>，回傳被合併掉的總筆數。
+    /// </summary>
+    private static int FoldByDevice(List<PrtgFinding> findings, IReadOnlyDictionary<long, string?> sensorCategories)
+    {
+        bool IsAvailability(long? sensorObjid) =>
+            sensorObjid.HasValue
+            && sensorCategories.TryGetValue(sensorObjid.Value, out var category)
+            && string.Equals(category, PrtgSensorCategories.Availability, StringComparison.OrdinalIgnoreCase);
+
+        var mergedTotal = 0;
+        var deviceIds = findings.Select(f => f.DeviceObjid).Distinct().ToList();
+        foreach (var deviceObjid in deviceIds)
+        {
+            var anchor = findings
+                .Where(f => f.DeviceObjid == deviceObjid
+                            && string.Equals(f.RuleCode, RuleDown, StringComparison.OrdinalIgnoreCase)
+                            && IsAvailability(f.SensorObjid))
+                .OrderBy(f => f.SensorObjid!.Value)
+                .FirstOrDefault();
+            if (anchor is null)
+            {
+                continue;
+            }
+
+            var removed = findings.RemoveAll(f => f.DeviceObjid == deviceObjid
+                && (string.Equals(f.RuleCode, RuleDown, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(f.RuleCode, RuleFlapping, StringComparison.OrdinalIgnoreCase))
+                && !IsAvailability(f.SensorObjid));
+            if (removed > 0)
+            {
+                var index = findings.IndexOf(anchor);
+                findings[index] = anchor with { Detail = $"{anchor.Detail}；同裝置另有 {removed} 顆 sensor 同時 Down 或震盪（已合併）" };
+                mergedTotal += removed;
+            }
+        }
+
+        return mergedTotal;
     }
 }

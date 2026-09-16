@@ -13,8 +13,8 @@ public class PrtgRuleEvaluatorTests
         KnownIssueSeed.CreateRules().Where(r => r.Platform == "prtg").ToList();
     private static readonly IReadOnlyDictionary<long, string> EmptySensorNames = new Dictionary<long, string>();
     private static readonly IReadOnlyDictionary<long, string> EmptyDeviceNames = new Dictionary<long, string>();
-    private static readonly IReadOnlyList<(long Objid, long DeviceObjid, string? Status, string SensorType)> EmptyStatuses =
-        Array.Empty<(long, long, string?, string)>();
+    private static readonly IReadOnlyList<PrtgSensorStatusInput> EmptyStatuses =
+        Array.Empty<PrtgSensorStatusInput>();
 
     private static KnownIssueRule CloneRuleWithThreshold(KnownIssueRule r, int threshold) => new()
     {
@@ -214,16 +214,16 @@ public class PrtgRuleEvaluatorTests
     [Fact]
     public void 沉默Device_全部未暫停sensor皆Unknown成立_其中一個為Up不成立()
     {
-        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status, string SensorType)>
+        var sensorStatuses = new List<PrtgSensorStatusInput>
         {
             // Device 1: 全部未暫停 sensor 皆為 Unknown 或空值 -> 成立
-            (101, 1, "Unknown", "ping"),
-            (102, 1, "", "ping"),
-            (103, 1, null, "ping"),
+            new(101, 1, "Unknown", "ping", null),
+            new(102, 1, "", "ping", null),
+            new(103, 1, null, "ping", null),
 
             // Device 2: 其中一個 sensor 為 Up -> 不成立
-            (201, 2, "Unknown", "ping"),
-            (202, 2, "Up", "ping")
+            new(201, 2, "Unknown", "ping", null),
+            new(202, 2, "Up", "ping", null)
         };
 
         var findings = PrtgRuleEvaluator.Evaluate(
@@ -261,7 +261,7 @@ public class PrtgRuleEvaluatorTests
         };
 
         // sensorStatuses 完全沒有 Device 3（即 Device 3 沒有未暫停 sensor）
-        var sensorStatuses = Array.Empty<(long Objid, long DeviceObjid, string? Status, string SensorType)>();
+        var sensorStatuses = Array.Empty<PrtgSensorStatusInput>();
 
         var findings = PrtgRuleEvaluator.Evaluate(
             _day, changes, sensorToDevice, sensorStatuses, DefaultRules, EmptySensorNames, EmptyDeviceNames);
@@ -304,9 +304,9 @@ public class PrtgRuleEvaluatorTests
             [103] = 1
         };
 
-        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status, string SensorType)>
+        var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            (201, 2, "Unknown", "ping") // 觸發 Silent (device 2)
+            new(201, 2, "Unknown", "ping", null) // 觸發 Silent (device 2)
         };
 
         var downOnlyRules = DefaultRules
@@ -402,40 +402,6 @@ public class PrtgRuleEvaluatorTests
     }
 
     [Fact]
-    public void 白名單過濾生效_非白名單type的sensor不產生finding()
-    {
-        // 模擬 orchestrator 白名單過濾邏輯：
-        // sensor 101: SNMP Disk Free (白名單內), 發生 Down
-        // sensor 102: ping (非白名單), 發生 Down
-        var allSensors = new List<(long Objid, long DeviceObjid, string? Status, string SensorType)>
-        {
-            (101, 1, "Down", "SNMP Disk Free"),
-            (102, 1, "Down", "ping")
-        };
-
-        var whitelist = new HashSet<string>(new[] { "SNMP Disk Free" }, StringComparer.OrdinalIgnoreCase);
-        var filteredSensors = whitelist.Count == 0 ? allSensors : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
-        var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
-
-        var allChanges = new List<PrtgStateChangeRow>
-        {
-            new() { SensorObjid = 101, ChangedAt = new DateTime(2026, 8, 30, 20, 0, 0), Status = "Down" },
-            new() { SensorObjid = 102, ChangedAt = new DateTime(2026, 8, 30, 20, 0, 0), Status = "Down" }
-        };
-
-        var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
-        var sensorToDevice = filteredSensors.GroupBy(s => s.Objid).ToDictionary(g => g.Key, g => g.First().DeviceObjid);
-        var sensorStatuses = filteredSensors;
-
-        var findings = PrtgRuleEvaluator.Evaluate(
-            _day, changes, sensorToDevice, sensorStatuses, DefaultRules, EmptySensorNames, EmptyDeviceNames);
-
-        Assert.Single(findings);
-        Assert.Equal(101, findings[0].SensorObjid);
-        Assert.DoesNotContain(findings, f => f.SensorObjid == 102);
-    }
-
-    [Fact]
     public void Evaluate_includeSilent控制是否評估沉默Device()
     {
         var changes = new List<PrtgStateChangeRow>
@@ -449,9 +415,9 @@ public class PrtgRuleEvaluatorTests
             [101] = 1
         };
 
-        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status, string SensorType)>
+        var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            (201, 2, "Unknown", "ping") // Device 2 全 Unknown -> 觸發 Silent
+            new(201, 2, "Unknown", "ping", null) // Device 2 全 Unknown -> 觸發 Silent
         };
 
         // includeSilent: true (預設)
@@ -480,9 +446,9 @@ public class PrtgRuleEvaluatorTests
         };
 
         var sensorToDevice = new Dictionary<long, long> { [101] = 1 };
-        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status, string SensorType)>
+        var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            (101, 1, "Down", "SNMP Traffic")
+            new(101, 1, "Down", "SNMP Traffic", null)
         };
         var sensorNames = new Dictionary<long, string> { [101] = "Port 1" };
         var deviceNames = new Dictionary<long, string> { [1] = "Core Switch" };
@@ -561,9 +527,9 @@ public class PrtgRuleEvaluatorTests
         var sensorToDevice = new Dictionary<long, long> { [101] = 1 };
 
         // 字典完整情境
-        var sensorStatuses = new List<(long Objid, long DeviceObjid, string? Status, string SensorType)>
+        var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            (101, 1, "Down", "SNMP Traffic")
+            new(101, 1, "Down", "SNMP Traffic", null)
         };
         var sensorNames = new Dictionary<long, string> { [101] = "Core Sensor" };
         var deviceNames = new Dictionary<long, string> { [1] = "Gateway Switch" };
@@ -584,5 +550,167 @@ public class PrtgRuleEvaluatorTests
         Assert.Contains("[1]", findingsEmpty[0].Detail);
         Assert.Contains("101", findingsEmpty[0].Detail);
         Assert.DoesNotContain("Gateway Switch", findingsEmpty[0].Detail);
+    }
+
+    private static PrtgStateChangeRow DownAt2230(long sensorObjid) =>
+        new() { SensorObjid = sensorObjid, ChangedAt = new DateTime(2026, 8, 30, 22, 30, 0), Status = "Down" };
+
+    [Fact]
+    public void 同裝置折疊_PingDown加兩顆TrafficDown與DiskWarning_回傳Ping的Down與Warning()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            DownAt2230(101),
+            DownAt2230(102),
+            DownAt2230(103),
+            // disk：整日 Warning（自前一日起）
+            new() { SensorObjid = 104, ChangedAt = new DateTime(2026, 8, 29, 12, 0, 0), Status = "Warning" }
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 1, [103] = 1, [104] = 1 };
+        var sensorStatuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Down", "Ping", PrtgSensorCategories.Availability.ToUpperInvariant()),
+            new(102, 1, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
+            new(103, 1, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
+            new(104, 1, "Warning", "SNMP Disk Free", PrtgSensorCategories.Disk)
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, sensorStatuses, DefaultRules, EmptySensorNames, EmptyDeviceNames);
+
+        Assert.Equal(2, findings.Count);
+        var down = Assert.Single(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleDown);
+        Assert.Equal(101, down.SensorObjid);
+        Assert.EndsWith("；同裝置另有 2 顆 sensor 同時 Down 或震盪（已合併）", down.Detail);
+        var warning = Assert.Single(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleWarning);
+        Assert.Equal(104, warning.SensorObjid);
+        Assert.Equal(2, findings.MergedCount);
+    }
+
+    [Fact]
+    public void 同裝置折疊_無availability的sensor_兩顆TrafficDown照常回傳兩筆()
+    {
+        var changes = new List<PrtgStateChangeRow> { DownAt2230(102), DownAt2230(103) };
+        var sensorToDevice = new Dictionary<long, long> { [102] = 1, [103] = 1 };
+        var sensorStatuses = new List<PrtgSensorStatusInput>
+        {
+            new(102, 1, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
+            new(103, 1, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic)
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, sensorStatuses, DefaultRules, EmptySensorNames, EmptyDeviceNames);
+
+        Assert.Equal(2, findings.Count(f => f.RuleCode == PrtgRuleEvaluator.RuleDown));
+        Assert.DoesNotContain(findings, f => f.Detail.Contains("已合併"));
+        Assert.Equal(0, findings.MergedCount);
+    }
+
+    [Fact]
+    public void 同裝置折疊_只折疊有availabilityDown的device_另一device的TrafficDown不受影響()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            DownAt2230(101), DownAt2230(102),
+            DownAt2230(201)
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 1, [201] = 2 };
+        var sensorStatuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Down", "Ping", PrtgSensorCategories.Availability),
+            new(102, 1, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
+            new(201, 2, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic)
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, sensorStatuses, DefaultRules, EmptySensorNames, EmptyDeviceNames);
+
+        Assert.Contains(findings, f => f.DeviceObjid == 1 && f.SensorObjid == 101 && f.Detail.Contains("另有 1 顆"));
+        Assert.DoesNotContain(findings, f => f.SensorObjid == 102);
+        var b = Assert.Single(findings, f => f.DeviceObjid == 2);
+        Assert.Equal(201, b.SensorObjid);
+        Assert.DoesNotContain("已合併", b.Detail);
+        Assert.Equal(1, findings.MergedCount);
+    }
+
+    [Fact]
+    public void 同裝置折疊_availability的sensor未Down時_同裝置震盪與Down照常回傳()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            DownAt2230(102),
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 1, 0, 0), Status = "Down" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 1, 5, 0), Status = "Up" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 2, 0, 0), Status = "Down" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 2, 5, 0), Status = "Up" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 3, 0, 0), Status = "Down" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 3, 5, 0), Status = "Up" }
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [102] = 1, [103] = 1 };
+        var sensorStatuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Up", "Ping", PrtgSensorCategories.Availability),
+            new(102, 1, "Down", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
+            new(103, 1, "Up", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic)
+        };
+        var rules = DefaultRules
+            .Select(r => r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping ? CloneRuleWithThreshold(r, 3) : r)
+            .ToList();
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, sensorStatuses, rules, EmptySensorNames, EmptyDeviceNames);
+
+        Assert.Contains(findings, f => f.SensorObjid == 102 && f.RuleCode == PrtgRuleEvaluator.RuleDown);
+        Assert.Contains(findings, f => f.SensorObjid == 103 && f.RuleCode == PrtgRuleEvaluator.RuleFlapping);
+        Assert.Equal(0, findings.MergedCount);
+    }
+
+    [Fact]
+    public void 同裝置折疊_availabilityDown時同裝置震盪也合併()
+    {
+        var changes = new List<PrtgStateChangeRow>
+        {
+            DownAt2230(101),
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 1, 0, 0), Status = "Down" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 1, 5, 0), Status = "Up" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 2, 0, 0), Status = "Down" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 2, 5, 0), Status = "Up" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 3, 0, 0), Status = "Down" },
+            new() { SensorObjid = 103, ChangedAt = new DateTime(2026, 8, 30, 3, 5, 0), Status = "Up" }
+        };
+        var sensorToDevice = new Dictionary<long, long> { [101] = 1, [103] = 1 };
+        var sensorStatuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Down", "Ping", PrtgSensorCategories.Availability),
+            new(103, 1, "Up", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic)
+        };
+        var rules = DefaultRules
+            .Select(r => r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping ? CloneRuleWithThreshold(r, 3) : r)
+            .ToList();
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, changes, sensorToDevice, sensorStatuses, rules, EmptySensorNames, EmptyDeviceNames);
+
+        var only = Assert.Single(findings);
+        Assert.Equal(101, only.SensorObjid);
+        Assert.Contains("另有 1 顆", only.Detail);
+        Assert.Equal(1, findings.MergedCount);
+    }
+
+    [Fact]
+    public void 沉默Device_PingUp其餘Unknown_不算沉默()
+    {
+        var sensorStatuses = new List<PrtgSensorStatusInput>
+        {
+            new(101, 1, "Up", "Ping", PrtgSensorCategories.Availability),
+            new(102, 1, "Unknown", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
+            new(103, 1, null, "SNMP Disk Free", PrtgSensorCategories.Disk)
+        };
+
+        var findings = PrtgRuleEvaluator.Evaluate(
+            _day, Array.Empty<PrtgStateChangeRow>(), new Dictionary<long, long>(),
+            sensorStatuses, DefaultRules, EmptySensorNames, EmptyDeviceNames);
+
+        Assert.DoesNotContain(findings, f => f.RuleCode == PrtgRuleEvaluator.RuleSilent);
     }
 }
