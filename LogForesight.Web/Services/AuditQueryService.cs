@@ -50,6 +50,12 @@ public class AuditQueryService
         [AuditActions.HandlingStatus] = "變更處理狀態",
         [AuditActions.HandlingNote] = "更新處理說明",
         [AuditActions.IssueBulkClose] = "統一標記問題",
+        [AuditActions.WorkOrderCreate] = "交辦",
+        [AuditActions.WorkOrderAppend] = "交辦單追加主機",
+        [AuditActions.WorkOrderReassign] = "交辦單改派",
+        [AuditActions.WorkOrderSplit] = "交辦單拆分",
+        [AuditActions.WorkOrderCancel] = "取消交辦",
+        [AuditActions.WorkOrderAdminClose] = "代為結案",
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",
         [AuditActions.PermConfirmSuspicious] = "標記權限異動可疑",

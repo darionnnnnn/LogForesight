@@ -82,6 +82,14 @@ public static class AuditActions
     /// </summary>
     public const string IssueBulkClose = "issue_bulk_close";
 
+    // 交辦單命令（交辦單 API）
+    public const string WorkOrderCreate = "work_order_create";
+    public const string WorkOrderAppend = "work_order_append";
+    public const string WorkOrderReassign = "work_order_reassign";
+    public const string WorkOrderSplit = "work_order_split";
+    public const string WorkOrderCancel = "work_order_cancel";
+    public const string WorkOrderAdminClose = "work_order_admin_close";
+
     // 權限異動確認
     public const string PermConfirmAuthorized = "perm_confirm_authorized";
     public const string PermConfirmSuspicious = "perm_confirm_suspicious";

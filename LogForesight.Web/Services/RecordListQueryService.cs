@@ -373,14 +373,15 @@ public class RecordListQueryService
         //
         // 這裡繞過 _repository.Query 的 ApplyVisibility，改直接呼叫 SQL 聚合查詢，
         // 所以可見範圍要自己算好再傳下去——空集合＝零結果，與既有的授權語意一致。
-        var hostIds = ResolveVisibleHostIds(request);
-        var (from, to) = ResolveDateRange(request);
-        var visibleSeverities = ResolveVisibleSeverities();
+        var scope = ResolveIssueScope(request);
+        var hostIds = scope.HostIds;
+        var (from, to) = (scope.From, scope.To);
+        var visibleSeverities = scope.VisibleSeverities;
 
         // 母體＝全站「日風險等級顯示」設定允許的主機日（**不是**畫面上的 chip——在依問題視角
         // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
         // 卡片數字才等於下鑽進來的筆數
-        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
+        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
@@ -429,7 +430,7 @@ public class RecordListQueryService
         // 處理狀態的候選集只到「篩選後留下的問題 × 可見主機」這一層（不是問題 × 主機 × 天數），
         // 與 OccurrenceStatusResolver 共用批次D 已驗證過的骨架（IssueHandlingRollupQuery 同款）
         var issues = aggregates.Select(a => (a.Source, a.EventId)).ToList();
-        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
+        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
         var resolved = _statusResolver.Resolve(occurrences, from, to);
 
         // 依 (Source,EventId) 分桶——完整簽章鍵可能帶 Linux 的 EventKey 尾段（5 段），
@@ -502,6 +503,17 @@ public class RecordListQueryService
             .Count();
 
         return WithDistinctHosts(Paginate(groups, request), distinctHostCount);
+    }
+
+    /// <summary>
+    /// 依問題視角的範圍解析（可見主機∩主機／群組篩選、期間、嚴重度可見性、日風險等級母體）。
+    /// 公開給交辦單建單（<see cref="WorkOrderCommandService"/>）共用：建單的主機母體必須與
+    /// 依問題視角該問題那一列的主機數同一口徑，所以兩邊只能經過這一份解析。
+    /// </summary>
+    public IssueScope ResolveIssueScope(RecordSearchRequest request)
+    {
+        var (from, to) = ResolveDateRange(request);
+        return new IssueScope(ResolveVisibleHostIds(request), from, to, ResolveVisibleSeverities(), ResolveVisibleDayRiskLevels());
     }
 
     /// <summary>依問題視角的分頁結果沿用共用 Paginate，再附上去重主機總數</summary>
@@ -1047,3 +1059,11 @@ public class NextUnhandledDto
     /// <summary>yyyy-MM-dd</summary>
     public string Date { get; set; } = string.Empty;
 }
+
+/// <summary>依問題視角的範圍（<see cref="RecordListQueryService.ResolveIssueScope"/>）</summary>
+public sealed record IssueScope(
+    IReadOnlyCollection<long> HostIds,
+    DateTime From,
+    DateTime To,
+    IReadOnlySet<IssueSeverity>? VisibleSeverities,
+    IReadOnlySet<string>? DayRiskLevels);

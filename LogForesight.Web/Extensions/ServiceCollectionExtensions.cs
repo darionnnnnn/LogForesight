@@ -338,6 +338,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<HandlingProgressCalculator>();
         services.AddScoped<DayHandlingCommandService>();
         services.AddScoped<IssueHandlingCommandService>();
+
+        // 交辦單命令 API：依篩選建單／追加／改派／拆單／取消／代為結案（經 RecordListQueryService 共用範圍解析）
+        services.AddScoped<WorkOrderCommandService>();
         services.AddScoped<HandlingHistoryQueryService>();
 
         services.AddScoped<PermissionChangeService>();
