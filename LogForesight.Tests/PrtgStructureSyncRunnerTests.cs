@@ -88,7 +88,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(StructureResponder);
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console);
+            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
             var today = new DateTime(2026, 9, 9);
 
             var status = await PrtgStructureSyncRunner.RunAsync(
@@ -128,7 +128,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(_ => throw new HttpRequestException("PRTG 連不上"));
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console);
+            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
@@ -159,7 +159,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(StructureResponder);
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console);
+            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),

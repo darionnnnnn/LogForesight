@@ -2705,4 +2705,107 @@ public class SystemSettingsServiceTests : IDisposable
                                           r.ErrorMessage!.Contains("必須介於 1~8"));
         }
     }
+
+    [Fact]
+    public void Update_分類補充表含不合法分類_擲DomainException且不落地()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgSensorTypeCategoryOverrides = new List<string> { "foo=bogus" };
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("foo=bogus", ex.Message);
+        Assert.Contains("availability", ex.Message);
+        Assert.Empty(_store.Get().PrtgSensorTypeCategoryOverrides);
+    }
+
+    [Fact]
+    public void UpdatePrtg_分類補充表含不合法分類_擲DomainException且不落地()
+    {
+        var service = Create();
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgSensorTypeCategoryOverrides = new List<string> { "foo=bogus" }
+        }));
+        Assert.Contains("foo=bogus", ex.Message);
+        Assert.Empty(_store.Get().PrtgSensorTypeCategoryOverrides);
+    }
+
+    [Fact]
+    public void 分類補充表_錯誤訊息最多串接前5條()
+    {
+        var service = Create();
+        var lines = Enumerable.Range(1, 7).Select(i => $"t{i}=bad{i}").ToList();
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgSensorTypeCategoryOverrides = lines
+        }));
+        Assert.Contains("t5=bad5", ex.Message);
+        Assert.DoesNotContain("t6=bad6", ex.Message);
+    }
+
+    [Fact]
+    public void Update_分類補充表合法值_存入後讀回一致()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PrtgSensorTypeCategoryOverrides = new List<string> { "  Custom Fan=hardware ", "", "Ping=availability" };
+
+        var saved = service.Update(request);
+
+        var expected = new[] { "Custom Fan=hardware", "Ping=availability" };
+        Assert.Equal(expected, saved.PrtgSensorTypeCategoryOverrides);
+        Assert.Equal(expected, service.Get().PrtgSensorTypeCategoryOverrides);
+        Assert.Equal(expected, _store.Get().PrtgSensorTypeCategoryOverrides);
+    }
+
+    [Fact]
+    public void UpdatePrtg_分類補充表合法值_存入後讀回一致()
+    {
+        var service = Create();
+
+        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgSensorTypeCategoryOverrides = new List<string> { "SNMP CPU Load=hardware" }
+        });
+
+        Assert.Equal(new[] { "SNMP CPU Load=hardware" }, saved.PrtgSensorTypeCategoryOverrides);
+        Assert.Equal(new[] { "SNMP CPU Load=hardware" }, service.Get().PrtgSensorTypeCategoryOverrides);
+    }
+
+    [Fact]
+    public void 分類補充表_兩條儲存路徑不送該欄時沿用舊值()
+    {
+        var service = Create();
+        _store.Update(s => s.PrtgSensorTypeCategoryOverrides = new List<string> { "Custom=disk" });
+
+        var request = ValidRequest();
+        Assert.Null(request.PrtgSensorTypeCategoryOverrides);
+        service.Update(request);
+        Assert.Equal(new[] { "Custom=disk" }, _store.Get().PrtgSensorTypeCategoryOverrides);
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false });
+        Assert.Equal(new[] { "Custom=disk" }, _store.Get().PrtgSensorTypeCategoryOverrides);
+    }
+
+    [Fact]
+    public void 分類補充表_儲存稽核前後字串包含該欄()
+    {
+        var audit = new RecordingAuditService();
+        var service = new SystemSettingsService(_store, FakeCurrentUser.WithCapabilities(), audit, new FakeUserStore(),
+            new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
+                _mailRecords, new FakeHandlingStore(),
+                new MailNotifyStateStore(_fx.Blob("mail_state_cat_overrides"))), new FakeReportUsageQuery());
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgSensorTypeCategoryOverrides = new List<string> { "Custom=disk" }
+        });
+
+        Assert.Contains(audit.Entries, e => (e.DetailJson ?? "").Contains("PrtgSensorTypeCategoryOverrides") &&
+                                          (e.DetailJson ?? "").Contains("Custom"));
+    }
 }

@@ -78,7 +78,8 @@ internal static class PrtgDailyPipeline
 
             using var client = PrtgClientFactory.Create(systemSettings);
 
-            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole, guard);
+            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole,
+                PrtgSensorTypeCategoryMap.ParseOverrides(systemSettings.PrtgSensorTypeCategoryOverrides).Map, guard);
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";

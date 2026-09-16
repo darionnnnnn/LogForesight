@@ -407,6 +407,10 @@ public class SystemSettings
     /// 空白代表不限制。</summary>
     public List<string> PrtgSensorTypeWhitelist { get; set; } = new(DefaultPrtgSensorTypeWhitelist);
 
+    /// <summary>sensor type 語意分類補充對照表（一行一筆「type=分類」，不分大小寫）。
+    /// 優先於內建對照表；結構同步後依此重算自動分類，人工指定的分類不受影響。預設空清單。</summary>
+    public List<string> PrtgSensorTypeCategoryOverrides { get; set; } = new();
+
     /// <summary>白名單出廠預設：實機探測確認的分析型 type（涵蓋約 79% 的 sensor）。
     /// 刻意不含 Ping（雜訊高且量大），需要時由使用者自行加入。</summary>
     public static readonly string[] DefaultPrtgSensorTypeWhitelist =

@@ -573,7 +573,7 @@ public class EfPrtgStoreTests : IDisposable
             new() { Objid = 105, DeviceObjid = 1, Name = "Linux Mem", SensorType = "snmp linux meminfo", Paused = false } // 測試不分大小寫
         }, now);
 
-        var count = store.ApplyAutoCategories();
+        var count = store.ApplyAutoCategories(new Dictionary<string, string>());
         Assert.Equal(5, count);
 
         using var ctx = _fx.NewContext();
@@ -633,7 +633,7 @@ public class EfPrtgStoreTests : IDisposable
             ctx.SaveChanges();
         }
 
-        var count = store.ApplyAutoCategories();
+        var count = store.ApplyAutoCategories(new Dictionary<string, string>());
         Assert.Equal(1, count); // 只更新 202
 
         using (var ctx = _fx.NewContext())
@@ -656,12 +656,12 @@ public class EfPrtgStoreTests : IDisposable
 
         store.UpsertSensors(new List<PrtgSensorRow>
         {
-            new() { Objid = 301, DeviceObjid = 1, Name = "Ping Sensor", SensorType = "ping", Paused = false },
+            new() { Objid = 301, DeviceObjid = 1, Name = "DNS Sensor", SensorType = "dns", Paused = false },
             new() { Objid = 302, DeviceObjid = 1, Name = "HTTP Sensor", SensorType = "http", Paused = false },
             new() { Objid = 303, DeviceObjid = 1, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false }
         }, now);
 
-        var count = store.ApplyAutoCategories();
+        var count = store.ApplyAutoCategories(new Dictionary<string, string>());
         Assert.Equal(1, count); // 只有 303 命中
 
         using var ctx = _fx.NewContext();
@@ -1701,5 +1701,124 @@ public class EfPrtgStoreTests : IDisposable
 
         Assert.Equal(2, result.SensorCount);
         Assert.Equal(75.0, result.AverageCoverage);
+    }
+
+    private static Dictionary<string, string> Overrides(params string[] lines) =>
+        PrtgSensorTypeCategoryMap.ParseOverrides(lines).Map;
+
+    private void SeedSensor(long objid, string sensorType, string? category, string? source)
+    {
+        var now = DateTime.Now;
+        using var ctx = _fx.NewContext();
+        ctx.PrtgSensors.Add(new PrtgSensorRow
+        {
+            Objid = objid,
+            DeviceObjid = 1,
+            Name = $"Sensor {objid}",
+            SensorType = sensorType,
+            Category = category,
+            CategorySource = source,
+            Paused = false,
+            SyncedAt = now,
+            CreatedAt = now
+        });
+        ctx.SaveChanges();
+    }
+
+    private PrtgSensorRow ReadSensor(long objid)
+    {
+        using var ctx = _fx.NewContext();
+        return ctx.PrtgSensors.AsNoTracking().Single(s => s.Objid == objid);
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_null列依補充表填入()
+    {
+        var store = CreateStore();
+        SeedSensor(401, "Custom Fan", null, null);
+
+        var count = store.ApplyAutoCategories(Overrides("custom fan=hardware"));
+
+        Assert.Equal(1, count);
+        var row = ReadSensor(401);
+        Assert.Equal(PrtgSensorCategories.Hardware, row.Category);
+        Assert.Equal(PrtgCategorySources.Auto, row.CategorySource);
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_auto列在補充表改分類後被改寫_再跑一次不重寫()
+    {
+        var store = CreateStore();
+        SeedSensor(402, "Custom Probe", null, null);
+
+        Assert.Equal(1, store.ApplyAutoCategories(Overrides("Custom Probe=disk")));
+        Assert.Equal(PrtgSensorCategories.Disk, ReadSensor(402).Category);
+
+        Assert.Equal(1, store.ApplyAutoCategories(Overrides("Custom Probe=memory")));
+        var row = ReadSensor(402);
+        Assert.Equal(PrtgSensorCategories.Memory, row.Category);
+        Assert.Equal(PrtgCategorySources.Auto, row.CategorySource);
+
+        // 與現值相同不寫
+        Assert.Equal(0, store.ApplyAutoCategories(Overrides("Custom Probe=memory")));
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_auto列type從兩張表移除後分類清為null()
+    {
+        var store = CreateStore();
+        SeedSensor(403, "Custom Gone", PrtgSensorCategories.Cpu, PrtgCategorySources.Auto);
+
+        var count = store.ApplyAutoCategories(new Dictionary<string, string>());
+
+        Assert.Equal(1, count);
+        var row = ReadSensor(403);
+        Assert.Null(row.Category);
+        Assert.Null(row.CategorySource);
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_manual列不受任何補充表影響()
+    {
+        var store = CreateStore();
+        SeedSensor(404, "SNMP CPU Load", PrtgSensorCategories.Disk, "manual");
+        SeedSensor(405, "Custom Manual", PrtgSensorCategories.Traffic, "manual");
+
+        Assert.Equal(0, store.ApplyAutoCategories(Overrides("SNMP CPU Load=hardware", "Custom Manual=memory")));
+        Assert.Equal(0, store.ApplyAutoCategories(new Dictionary<string, string>()));
+
+        var r404 = ReadSensor(404);
+        Assert.Equal(PrtgSensorCategories.Disk, r404.Category);
+        Assert.Equal("manual", r404.CategorySource);
+        var r405 = ReadSensor(405);
+        Assert.Equal(PrtgSensorCategories.Traffic, r405.Category);
+        Assert.Equal("manual", r405.CategorySource);
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_Ping無補充表時得availability()
+    {
+        var store = CreateStore();
+        SeedSensor(406, "Ping", null, null);
+
+        Assert.Equal(1, store.ApplyAutoCategories(new Dictionary<string, string>()));
+        var row = ReadSensor(406);
+        Assert.Equal(PrtgSensorCategories.Availability, row.Category);
+        Assert.Equal(PrtgCategorySources.Auto, row.CategorySource);
+    }
+
+    [Fact]
+    public void ApplyAutoCategories_補充表把SNMPCPULoad改成hardware時覆寫內建()
+    {
+        var store = CreateStore();
+        SeedSensor(407, "SNMP CPU Load", null, null);
+        SeedSensor(408, "SNMP CPU Load", PrtgSensorCategories.Cpu, PrtgCategorySources.Auto);
+
+        var count = store.ApplyAutoCategories(Overrides("SNMP CPU Load=hardware"));
+
+        Assert.Equal(2, count);
+        Assert.Equal(PrtgSensorCategories.Hardware, ReadSensor(407).Category);
+        Assert.Equal(PrtgSensorCategories.Hardware, ReadSensor(408).Category);
+        Assert.Equal(PrtgCategorySources.Auto, ReadSensor(408).CategorySource);
     }
 }

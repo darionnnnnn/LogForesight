@@ -210,6 +210,9 @@ public class SystemSettingsService : ISystemSettingsService
             effectivePrtgSensorTypeWhitelist: request.PrtgSensorTypeWhitelist ?? before.PrtgSensorTypeWhitelist,
             effectivePrtgFetchStrategy: request.PrtgFetchStrategy ?? before.PrtgFetchStrategy);
 
+        if (request.PrtgSensorTypeCategoryOverrides != null)
+            ValidatePrtgSensorTypeCategoryOverrides(request.PrtgSensorTypeCategoryOverrides);
+
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
             throw DomainException.Validation("啟用 AD 驗證時，請至少輸入一台 AD 伺服器。");
@@ -426,6 +429,7 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
             if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
             if (request.PrtgSensorTypeWhitelist != null) s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgSensorTypeCategoryOverrides != null) s.PrtgSensorTypeCategoryOverrides = NormalizeLines(request.PrtgSensorTypeCategoryOverrides);
             if (request.PrtgValueFetchScope != null) s.PrtgValueFetchScope = request.PrtgValueFetchScope;
             if (request.PrtgFetchStrategy != null) s.PrtgFetchStrategy = request.PrtgFetchStrategy;
             if (request.PrtgValueFetchExtraHosts != null) s.PrtgValueFetchExtraHosts = NormalizeLines(request.PrtgValueFetchExtraHosts);
@@ -492,6 +496,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgResourceGuardStrikes,
                     before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
+                    PrtgSensorTypeCategoryOverrides = string.Join(", ", before.PrtgSensorTypeCategoryOverrides),
                     before.PrtgValueFetchScope,
                     before.PrtgFetchStrategy,
                     PrtgValueFetchExtraHosts = string.Join(", ", before.PrtgValueFetchExtraHosts),
@@ -524,6 +529,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgResourceGuardStrikes,
                     saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
+                    PrtgSensorTypeCategoryOverrides = string.Join(", ", saved.PrtgSensorTypeCategoryOverrides),
                     saved.PrtgValueFetchScope,
                     saved.PrtgFetchStrategy,
                     PrtgValueFetchExtraHosts = string.Join(", ", saved.PrtgValueFetchExtraHosts),
@@ -590,6 +596,9 @@ public class SystemSettingsService : ISystemSettingsService
             effectivePrtgSensorTypeWhitelist: request.PrtgSensorTypeWhitelist ?? before.PrtgSensorTypeWhitelist,
             effectivePrtgFetchStrategy: request.PrtgFetchStrategy ?? before.PrtgFetchStrategy);
 
+        if (request.PrtgSensorTypeCategoryOverrides != null)
+            ValidatePrtgSensorTypeCategoryOverrides(request.PrtgSensorTypeCategoryOverrides);
+
         var saved = _store.Update(s =>
         {
             if (request.PrtgUrl != null) s.PrtgUrl = request.PrtgUrl.Trim();
@@ -607,6 +616,8 @@ public class SystemSettingsService : ISystemSettingsService
             if (request.PrtgRetentionDays.HasValue) s.PrtgRetentionDays = request.PrtgRetentionDays.Value;
             if (request.PrtgSensorTypeWhitelist != null)
                 s.PrtgSensorTypeWhitelist = NormalizeLines(request.PrtgSensorTypeWhitelist);
+            if (request.PrtgSensorTypeCategoryOverrides != null)
+                s.PrtgSensorTypeCategoryOverrides = NormalizeLines(request.PrtgSensorTypeCategoryOverrides);
             if (request.PrtgValueFetchScope != null)
                 s.PrtgValueFetchScope = request.PrtgValueFetchScope;
             if (request.PrtgFetchStrategy != null)
@@ -651,6 +662,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgResourceGuardStrikes,
                     before.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
+                    PrtgSensorTypeCategoryOverrides = string.Join(", ", before.PrtgSensorTypeCategoryOverrides),
                     before.PrtgValueFetchScope,
                     before.PrtgFetchStrategy,
                     before.PrtgEnabled,
@@ -678,6 +690,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgResourceGuardStrikes,
                     saved.PrtgResourceGuardMaxPauseMinutes,
                     PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
+                    PrtgSensorTypeCategoryOverrides = string.Join(", ", saved.PrtgSensorTypeCategoryOverrides),
                     saved.PrtgValueFetchScope,
                     saved.PrtgFetchStrategy,
                     saved.PrtgEnabled,
@@ -1083,6 +1096,18 @@ public class SystemSettingsService : ISystemSettingsService
     /// <summary>
     /// PRTG 取數策略的驗證（docs/PRTG-SPEC.md §3b）。
     /// </summary>
+    /// <summary>
+    /// sensor type 語意分類補充對照表：解析與合法性判定一律走 <see cref="PrtgSensorTypeCategoryMap.ParseOverrides"/>，
+    /// 有任何錯誤就擋下存檔（訊息串接前 5 條錯誤）。
+    /// </summary>
+    private static void ValidatePrtgSensorTypeCategoryOverrides(List<string> lines)
+    {
+        var (_, errors) = PrtgSensorTypeCategoryMap.ParseOverrides(lines);
+        if (errors.Count > 0)
+            throw DomainException.Validation(
+                "sensor 分類補充對照表有誤：" + string.Join("；", errors.Take(5)));
+    }
+
     private static void ValidatePrtgFetchStrategy(string? strategy)
     {
         if (strategy == null) return;
@@ -1335,6 +1360,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgBackfillDays = s.PrtgBackfillDays,
         PrtgRetentionDays = s.PrtgRetentionDays,
         PrtgSensorTypeWhitelist = s.PrtgSensorTypeWhitelist,
+        PrtgSensorTypeCategoryOverrides = s.PrtgSensorTypeCategoryOverrides,
         PrtgValueFetchScope = s.PrtgValueFetchScope,
         PrtgFetchStrategy = s.PrtgFetchStrategy,
         PrtgValueFetchExtraHosts = s.PrtgValueFetchExtraHosts,
