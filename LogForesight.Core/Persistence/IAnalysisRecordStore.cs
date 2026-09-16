@@ -86,7 +86,9 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// 已被保留期精簡（<c>detail_pruned</c>）時不追加並回 false——硬造一筆只有 PRTG finding
     /// 的紀錄會讓「未回報主機」「覆蓋缺口」等既有統計失真。
     /// </summary>
+    /// <param name="suppressedPatternIds">該主機生效中的關聯抑制模式 Id，供跨來源佐證（<c>PrtgCorroboration</c>）判定；沒有就傳空集合。</param>
+    /// <param name="corroboratedCount">這次追加新增的未抑制跨來源佐證筆數（未追加時為 0），供執行輸出統計。</param>
     /// <param name="aiConfigured">AI 是否已設定：風險由低升為非低時據此決定要不要標記待補 AI 判讀。</param>
     bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
-        bool aiConfigured = false);
+        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured = false);
 }

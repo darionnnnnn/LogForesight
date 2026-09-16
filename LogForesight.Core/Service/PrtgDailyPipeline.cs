@@ -351,7 +351,7 @@ internal static class PrtgDailyPipeline
                 {
                     if (plan.FindingsByHost == null)
                     {
-                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
                         continue;
                     }
 
@@ -380,6 +380,7 @@ internal static class PrtgDailyPipeline
 
                     var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
                     var suppressedCount = 0;
+                    var suppressedPatternIdsByHost = new Dictionary<long, IReadOnlySet<string>>();
                     foreach (var (hostId, hostFindings) in findingsByHost)
                     {
                         var (hostName, hostGroupIds) = hostsById.TryGetValue(hostId, out var webHost)
@@ -387,31 +388,37 @@ internal static class PrtgDailyPipeline
                             : (string.Empty, (IReadOnlyCollection<long>)Array.Empty<long>());
                         var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, hostName, hostGroupIds, DateTime.Now);
                         suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions);
+                        // 跨來源佐證的關聯抑制與 finding 抑制用同一份有效抑制，兩條追加路徑從登錄簿取用
+                        suppressedPatternIdsByHost[hostId] = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
                     }
 
                     prtgFindings.Publish(day, findingsByHost.ToDictionary(
-                        kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value));
+                        kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value), suppressedPatternIdsByHost);
 
                     try
                     {
                         var involvedHosts = findingsByHost.Count;
                         var appendedHosts = 0;
                         var pendingHosts = 0;
+                        var corroboratedCount = 0;
 
                         foreach (var (hostId, hostFindings) in findingsByHost)
                         {
                             var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
                             var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
 
-                            if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings, useAi)))
+                            var hostCorroborated = 0;
+                            if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AttachPrtgFindings(
+                                    hostId, day, hostFindings, prtgFindings.SuppressedPatternIdsFor(hostId, day), out hostCorroborated, useAi)))
                             {
                                 appendedHosts++;
+                                corroboratedCount += hostCorroborated;
                                 HostDayPostProcessor.AttachCase(caseCoordinator, hostName, day, hostFindings.ToList(), "[PRTG] ");
                             }
                             else pendingHosts++;
                         }
 
-                        var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆）、涉及主機 {involvedHosts} 台、" +
+                        var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
                                       $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
                         prtgConsole.WriteLine(summary);
                         runRecorder.Milestone(summary);
@@ -436,7 +443,7 @@ internal static class PrtgDailyPipeline
                     prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
                     if (!prtgFindings.IsPublished(day))
                     {
-                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
                     }
                 }
             }
@@ -556,7 +563,7 @@ internal static class PrtgDailyPipeline
             {
                 if (!prtgFindings.IsPublished(day))
                 {
-                    prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                    prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
                     anyBackfilled = true;
                 }
             }

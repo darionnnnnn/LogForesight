@@ -1407,4 +1407,114 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
         Assert.Contains(console.Lines, l => l.Contains("長期 Down 1 筆"));
     }
+
+    /// <summary>
+    /// 端到端：評估帶出 sensor 分類 → 映射進簽章 → 補追加時與事件日誌的非預期關機佐證，
+    /// 執行輸出計入「跨來源佐證（補追加階段）」。
+    /// </summary>
+    [Fact]
+    public async Task 補追加時事件日誌非預期關機與PingDown佐證_寫入關聯欄位並計入執行輸出()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-OUTAGE", Active = true, IpAddress = "192.168.1.123" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-OUTAGE", Ip = "192.168.1.123" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Ping", SensorType = "Ping", Status = "Down", Category = PrtgSensorCategories.Availability }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(22).AddMinutes(30), Status = "Down" }
+        });
+        MapDeviceToHost(day, 1, host);
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new() { LogName = "System", Source = "Microsoft-Windows-Kernel-Power", EventId = 41, Count = 1 }
+            }
+        });
+
+        var (ctx, console, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        Assert.Equal(PrtgSensorCategories.Availability, sig.PrtgSensorCategory);
+
+        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+        Assert.Equal(CorrelationPatternIds.PrtgOutageCorroborated, Assert.Single(record.CorrelationAlertRefs).PatternId);
+        Assert.StartsWith("【失聯獲 PRTG 證實】", Assert.Single(record.CorrelationAlerts));
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("跨來源佐證（補追加階段）1 筆"));
+    }
+
+    /// <summary>
+    /// 關聯抑制（TargetType=Correlation）在 PRTG 路徑發佈時一併算進登錄簿：
+    /// 佐證模式被抑制時只進已抑制清單、不進關聯告警、不計入執行輸出。
+    /// </summary>
+    [Fact]
+    public async Task 佐證模式被關聯抑制時登錄簿帶出集合且補追加只進已抑制清單()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-OUTAGE2", Active = true, IpAddress = "192.168.1.124" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-OUTAGE2", Ip = "192.168.1.124" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Ping", SensorType = "Ping", Status = "Down", Category = PrtgSensorCategories.Availability }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(22).AddMinutes(30), Status = "Down" }
+        });
+        MapDeviceToHost(day, 1, host);
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new() { LogName = "System", Source = "Microsoft-Windows-Kernel-Power", EventId = 41, Count = 1 }
+            }
+        });
+
+        new SuppressionStore(_backend.Blob("suppressions")).SaveAll(new List<RuleSuppression>
+        {
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Correlation,
+                CorrelationPatternId = CorrelationPatternIds.PrtgOutageCorroborated,
+                Scope = SuppressionScopes.Site,
+                Reason = "機房例行斷電演練"
+            }
+        });
+
+        var (ctx, console, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        Assert.Contains(CorrelationPatternIds.PrtgOutageCorroborated, registry.SuppressedPatternIdsFor(host.HostId, day));
+
+        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+        Assert.Empty(record.CorrelationAlerts);
+        Assert.StartsWith("【失聯獲 PRTG 證實】", Assert.Single(record.SuppressedCorrelationAlerts));
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("跨來源佐證（補追加階段）0 筆"));
+    }
 }

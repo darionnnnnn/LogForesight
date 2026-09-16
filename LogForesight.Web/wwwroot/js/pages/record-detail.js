@@ -1554,7 +1554,10 @@ const CORRELATION_PATTERN_HINTS = {
     'xday-av-off-malware': '觸發條件：昨日防護被關閉，今日偵測到惡意程式。',
     'xday-brute-rdp': '觸發條件：昨日大量登入失敗的來源 IP，今日以遠端桌面成功登入同一 IP。',
     'linux-ssh-brute-success': '觸發條件：同日大量 SSH 登入失敗後，相同帳號或來源 IP 出現成功登入。',
-    'linux-ssh-brute-uncertain': '觸發條件：同日大量 SSH 登入失敗與成功登入同時存在，但部分事件無法解析帳號／IP。'
+    'linux-ssh-brute-uncertain': '觸發條件：同日大量 SSH 登入失敗與成功登入同時存在，但部分事件無法解析帳號／IP。',
+    'prtg-storage-corroborated': '觸發條件：事件日誌的磁碟 I/O 錯誤（磁碟／NTFS／控制器），加上 PRTG 硬體健康 sensor 同日 Warning 或 Down。',
+    'prtg-capacity-corroborated': '觸發條件：事件日誌的磁碟空間即將不足（srv 2013），加上 PRTG 磁碟可用空間 sensor 同日 Warning。',
+    'prtg-outage-corroborated': '觸發條件：事件日誌的非預期關機（Kernel-Power 41／EventLog 6008），加上 PRTG 連通性 sensor 同日 Down 或震盪。'
 };
 
 const TREND_BASIS_HINT = '「可靠歷史」＝排除資料不完整日與該頻道未讀取日的歷史。' +

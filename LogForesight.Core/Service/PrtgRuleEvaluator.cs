@@ -17,7 +17,14 @@ public sealed record PrtgFinding(
     string Detail,
     int Magnitude,
     KnownIssueRule Rule,
-    bool Acknowledged = false);
+    bool Acknowledged = false)
+{
+    /// <summary>
+    /// 觸發這筆 finding 的 sensor 語意分類（評估時已知，見 <see cref="PrtgSensorCategories"/>）。
+    /// device 層（silent）與分類未知的 sensor 為 null。映射成簽章時寫進 <c>LogIssueSignature.PrtgSensorCategory</c>。
+    /// </summary>
+    public string? SensorCategory { get; init; }
+}
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>
 public sealed record PrtgSensorStatusInput(
@@ -184,7 +191,7 @@ public static class PrtgRuleEvaluator
                                 detail,
                                 durationMinutes,
                                 downRule,
-                                ack));
+                                ack) { SensorCategory = sensorCategory });
                         }
                     }
                 }
@@ -230,7 +237,7 @@ public static class PrtgRuleEvaluator
                         detail,
                         flapCount,
                         flapRule,
-                        false));
+                        false) { SensorCategory = sensorCategory });
                 }
             }
 
@@ -283,7 +290,7 @@ public static class PrtgRuleEvaluator
                         detail,
                         warningMinutes,
                         warnRule,
-                        false));
+                        false) { SensorCategory = sensorCategory });
                 }
             }
         }

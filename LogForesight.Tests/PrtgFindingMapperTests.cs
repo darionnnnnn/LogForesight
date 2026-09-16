@@ -222,4 +222,17 @@ public class PrtgFindingMapperTests
         };
         Assert.False(PrtgFindingMapper.IsPrtg(nonPrtg));
     }
+
+    [Fact]
+    public void ToSignature_帶出sensor分類_device層silent為null()
+    {
+        var sensorFinding = new PrtgFinding(1001, 2001, "warning", "Disk warning", 300, SeedRules["builtin-prtg-warning-disk"])
+        {
+            SensorCategory = PrtgSensorCategories.Disk
+        };
+        var deviceFinding = new PrtgFinding(1002, null, "silent", "Device silent", 1, SeedRules["builtin-prtg-silent"]);
+
+        Assert.Equal(PrtgSensorCategories.Disk, PrtgFindingMapper.ToSignature(sensorFinding, TestDay).PrtgSensorCategory);
+        Assert.Null(PrtgFindingMapper.ToSignature(deviceFinding, TestDay).PrtgSensorCategory);
+    }
 }

@@ -249,8 +249,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 找不到該主機當日紀錄時回傳 false，不建立新紀錄。
     /// </summary>
     public bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
-        bool aiConfigured = false)
+        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured = false)
     {
+        corroboratedCount = 0;
         if (findings == null || findings.Count == 0) return false;
 
         using var probe = _contextFactory();
@@ -258,6 +259,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         var appended = false;
         var appendedCount = 0;
+        var corroborated = 0;
         strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
@@ -318,6 +320,26 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 }
             }
 
+            // 跨來源佐證（事件日誌 × PRTG 同日示警）：寫進關聯欄位，風險同樣只升不降，判準與上面一致
+            var corroboration = PrtgCorroboration.Apply(record, suppressedPatternIds);
+            corroborated = corroboration.Added;
+            if (corroboration.RiskLevel != null)
+            {
+                var corroboratedRisk = RiskLevels.MoreSevere(record.RiskLevel, corroboration.RiskLevel);
+                if (corroboratedRisk != record.RiskLevel)
+                {
+                    record.RiskLevel = corroboratedRisk;
+                    record.RiskBasis = corroboration.RiskBasis;
+                    row.RiskLevel = corroboratedRisk;
+                    if (aiConfigured && !record.AiAnalyzed && !record.DetailPruned)
+                    {
+                        record.AiPending = true;
+                        row.AiPending = true;
+                    }
+                }
+            }
+            row.HasCorrelation = record.CorrelationAlerts.Count > 0;
+
             row.ContentJson = JsonSerializer.Serialize(record);
 
             var existingDbKeys = ctx.TopIssues
@@ -338,6 +360,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             appended = true;
             appendedCount = toAdd.Count;
         });
+
+        if (appended) corroboratedCount = corroborated;
 
         if (appended)
         {
