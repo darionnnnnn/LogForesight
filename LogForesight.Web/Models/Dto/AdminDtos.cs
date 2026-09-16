@@ -310,6 +310,15 @@ public class HostDto
     /// </summary>
     public string? RemapWarning { get; set; }
 
+    /// <summary>
+    /// 未回報主機的 PRTG 現況提示：no-map | down | unknown | up（PrtgPresenceHint 常數）。
+    /// 非未回報主機、或 PRTG 未啟用時為 null。
+    /// </summary>
+    public string? PrtgHint { get; set; }
+
+    /// <summary>PRTG 結構鏡像從未同步或超過 2 天沒同步——提示可能已過時</summary>
+    public bool PrtgHintStale { get; set; }
+
 }
 
 /// <summary>主機簡易選項（指派下拉用，不分頁）</summary>

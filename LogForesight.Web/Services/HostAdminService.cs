@@ -1,6 +1,7 @@
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -44,6 +45,7 @@ public class HostAdminService
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly EfPrtgStore _prtgStore;
+    private readonly ISystemSettingsStore _settings;
 
     /// <summary>未回報定義與儀表板「未回報主機」計數卡同一套規則（§5.4 D-4），兩邊數字才不會對不上</summary>
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
@@ -56,6 +58,67 @@ public class HostAdminService
     /// </summary>
     public static readonly TimeSpan NewHostGracePeriod = TimeSpan.FromHours(24);
 
+    /// <summary>PRTG 結構鏡像超過這個時間沒同步，提示就標為可能過時</summary>
+    private static readonly TimeSpan PrtgHintStaleAfter = TimeSpan.FromDays(2);
+
+    /// <summary>
+    /// 「未回報」全站唯一判定（主機頁 silent 篩選與儀表板計數卡共用）：
+    /// 啟用中的主機，從未回報者建立超過 <see cref="NewHostGracePeriod"/>、
+    /// 回報過者最後回報超過 <see cref="SilentCutoff"/>。
+    /// </summary>
+    public static bool IsSilent(WebHost h, DateTime now) =>
+        h.Active && (h.LastReportAt == null
+            ? now - h.CreatedAt > NewHostGracePeriod
+            : now - h.LastReportAt.Value > SilentCutoff);
+
+    /// <summary>
+    /// 對 <paramref name="hosts"/> 中未回報的主機計算 PRTG 現況提示（主機頁與儀表板共用的唯一一份）。
+    /// 呼叫端負責先確認 PRTG 已啟用。回傳的 Hints 只含未回報主機：
+    /// 有 ok 對應者依其全部 device 的未暫停 sensor 合併判定，無 ok 對應者為 <see cref="PrtgPresenceHint.NoMap"/>。
+    /// sensor 狀態只查一次資料庫（不逐台查）。
+    /// </summary>
+    public static (Dictionary<long, string> Hints, bool Stale) ComputeSilentPrtgHints(
+        EfPrtgStore prtgStore, IEnumerable<WebHost> hosts, DateTime now)
+    {
+        var silentIds = hosts.Where(h => IsSilent(h, now)).Select(h => h.HostId).Distinct().ToList();
+        var hints = new Dictionary<long, string>();
+        if (silentIds.Count == 0)
+        {
+            return (hints, false);
+        }
+
+        var silentSet = silentIds.ToHashSet();
+        var devicesByHost = prtgStore.GetLatestHostMap()
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && silentSet.Contains(m.HostId.Value))
+            .GroupBy(m => m.HostId!.Value)
+            .ToDictionary(g => g.Key, g => g.Select(m => m.DeviceObjid).Distinct().ToList());
+
+        var sensorsByDevice = devicesByHost.Count == 0
+            ? new Dictionary<long, List<(string? Status, string? Category)>>()
+            : prtgStore.GetSensorStatesForDevices(devicesByHost.Values.SelectMany(d => d).Distinct().ToList())
+                .GroupBy(s => s.DeviceObjid)
+                .ToDictionary(g => g.Key, g => g.Select(s => (s.Status, s.Category)).ToList());
+
+        foreach (var hostId in silentIds)
+        {
+            if (!devicesByHost.TryGetValue(hostId, out var devices))
+            {
+                hints[hostId] = PrtgPresenceHint.NoMap;
+                continue;
+            }
+
+            var sensors = devices
+                .Where(sensorsByDevice.ContainsKey)
+                .SelectMany(d => sensorsByDevice[d])
+                .ToList();
+            hints[hostId] = PrtgPresenceHint.Classify(sensors);
+        }
+
+        var syncedAt = prtgStore.GetLatestStructureSyncedAt();
+        var stale = syncedAt == null || now - syncedAt.Value > PrtgHintStaleAfter;
+        return (hints, stale);
+    }
+
     public HostAdminService(
         IHostStore hosts,
         IHostGroupStore hostGroups,
@@ -65,8 +128,10 @@ public class HostAdminService
         IAuditService audit,
         IUserDisplayNameService userDisplayNames,
         EfPrtgStore prtgStore,
-        IPrtgHostMapRefresher mapRefresher)
+        IPrtgHostMapRefresher mapRefresher,
+        ISystemSettingsStore settings)
     {
+        _settings = settings;
         _mapRefresher = mapRefresher;
         _hosts = hosts;
         _hostGroups = hostGroups;
@@ -88,10 +153,26 @@ public class HostAdminService
         var all = SortHosts(FilterHosts(request), request).ToList();
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
+        var pageHosts = all.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        var items = pageHosts.Select(h => HostDtoMapper.ToDto(h, groups, users, _userDisplayNames)).ToList();
+
+        // 未回報主機的 PRTG 現況提示：只算本頁，PRTG 未啟用時整段不算（PrtgHint 維持 null）
+        if (_settings.Get().PrtgEnabled)
+        {
+            var hints = ComputeSilentPrtgHints(_prtgStore, pageHosts, DateTime.Now);
+            foreach (var dto in items)
+            {
+                if (hints.Hints.TryGetValue(dto.HostId, out var hint))
+                {
+                    dto.PrtgHint = hint;
+                    dto.PrtgHintStale = hints.Stale;
+                }
+            }
+        }
+
         return new PagedResult<HostDto>
         {
-            Items = all.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(h => HostDtoMapper.ToDto(h, groups, users, _userDisplayNames)).ToList(),
+            Items = items,
             Page = page,
             PageSize = pageSize,
             Total = all.Count
@@ -196,9 +277,7 @@ public class HostAdminService
                 "local" => filtered.Where(h => h.Source == "local" && h.Active),
                 "netiq" => filtered.Where(h => h.Source == "netiq" && h.Active),
                 "pending" => filtered.Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null && h.SentinelId == null),
-                "silent" => filtered.Where(h => h.Active && (h.LastReportAt == null
-                    ? DateTime.Now - h.CreatedAt > NewHostGracePeriod
-                    : DateTime.Now - h.LastReportAt.Value > SilentCutoff)),
+                "silent" => filtered.Where(h => IsSilent(h, DateTime.Now)),
                 "ungrouped" => filtered.Where(h => h.Active && h.MergedInto == null && h.GroupIds.Count == 0),
                 "inactive" => filtered.Where(h => !h.Active),
                 _ => filtered

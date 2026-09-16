@@ -311,7 +311,8 @@ public class PrtgHostMapEndpointTests : IDisposable
             _audit,
             new UserDisplayNameService(new FakeSystemSettingsStore()),
             _backend.PrtgStore(),
-            new PrtgHostMapRefresher(new FakeSystemSettingsStore(), _backend));
+            new PrtgHostMapRefresher(new FakeSystemSettingsStore(), _backend),
+            new FakeSystemSettingsStore());
 
         var list = service.GetAllActiveHostOptions();
 

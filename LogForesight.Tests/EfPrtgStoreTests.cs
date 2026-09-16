@@ -1821,4 +1821,46 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(PrtgSensorCategories.Hardware, ReadSensor(408).Category);
         Assert.Equal(PrtgCategorySources.Auto, ReadSensor(408).CategorySource);
     }
+
+    [Fact]
+    public void GetSensorStatesForDevices_600個device分批查_結果正確且排除暫停()
+    {
+        var store = CreateStore();
+        var syncedAt = new DateTime(2026, 9, 1, 8, 0, 0);
+        var sensors = new List<PrtgSensorRow>();
+        for (var i = 0; i < 600; i++)
+        {
+            var device = 10_000L + i;
+            sensors.Add(new() { Objid = 100_000 + i, DeviceObjid = device, Name = "Ping", SensorType = "ping", Status = "Up", Category = PrtgSensorCategories.Availability });
+            // 每台再掛一顆暫停的，確認被排除
+            sensors.Add(new() { Objid = 200_000 + i, DeviceObjid = device, Name = "Paused", SensorType = "ping", Status = "Paused", Paused = true });
+        }
+        // 清單外的 device 不應被帶出
+        sensors.Add(new() { Objid = 300_000, DeviceObjid = 99_999, Name = "Other", SensorType = "ping", Status = "Down" });
+        store.UpsertSensors(sensors, syncedAt);
+
+        var ids = Enumerable.Range(0, 600).Select(i => 10_000L + i).ToList();
+        var result = store.GetSensorStatesForDevices(ids);
+
+        Assert.Equal(600, result.Count);
+        Assert.Equal(ids.ToHashSet(), result.Select(r => r.DeviceObjid).ToHashSet());
+        Assert.All(result, r => Assert.Equal("Up", r.Status));
+        Assert.All(result, r => Assert.Equal(PrtgSensorCategories.Availability, r.Category));
+        // 第 501 個以後（第二批）確實有查到
+        Assert.Contains(result, r => r.DeviceObjid == 10_599);
+    }
+
+    [Fact]
+    public void GetLatestStructureSyncedAt_空表為null_有資料取最大值()
+    {
+        var store = CreateStore();
+        Assert.Null(store.GetLatestStructureSyncedAt());
+
+        var t1 = new DateTime(2026, 9, 1, 8, 0, 0);
+        var t2 = new DateTime(2026, 9, 3, 8, 0, 0);
+        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 1, DeviceObjid = 1, Name = "A", SensorType = "ping" } }, t1);
+        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 2, DeviceObjid = 1, Name = "B", SensorType = "ping" } }, t2);
+
+        Assert.Equal(t2, store.GetLatestStructureSyncedAt());
+    }
 }

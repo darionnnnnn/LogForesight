@@ -573,6 +573,43 @@ public sealed class EfPrtgStore
         return ctx.PrtgSensors.AsNoTracking().ToList();
     }
 
+    /// <summary>單次 IN 查詢的 device objid 上限（SQL Server 參數上限 2100，留足餘裕）</summary>
+    private const int DeviceQueryBatchSize = 500;
+
+    /// <summary>
+    /// 取得指定 device 底下**未暫停** sensor 的現況狀態與分類（唯讀查詢，未回報主機的 PRTG 提示用）。
+    /// device 清單每 <see cref="DeviceQueryBatchSize"/> 個分一批查，避免撞 SQL Server 參數上限。
+    /// </summary>
+    public List<(long DeviceObjid, string? Status, string? Category)> GetSensorStatesForDevices(
+        IReadOnlyCollection<long> deviceObjids)
+    {
+        using var __perf = _performance.Measure("prtg:GetSensorStatesForDevices");
+        var result = new List<(long DeviceObjid, string? Status, string? Category)>();
+        var ids = deviceObjids.Distinct().ToList();
+
+        for (var offset = 0; offset < ids.Count; offset += DeviceQueryBatchSize)
+        {
+            var batch = ids.GetRange(offset, Math.Min(DeviceQueryBatchSize, ids.Count - offset));
+            using var ctx = _contextFactory();
+            var rows = ctx.PrtgSensors
+                .AsNoTracking()
+                .Where(s => batch.Contains(s.DeviceObjid) && !s.Paused)
+                .Select(s => new { s.DeviceObjid, s.Status, s.Category })
+                .ToList();
+            result.AddRange(rows.Select(r => (r.DeviceObjid, r.Status, r.Category)));
+        }
+
+        return result;
+    }
+
+    /// <summary>sensor 結構鏡像最近一次同步時間（lf_prtg_sensors.synced_at 最大值）；表為空時回 null。</summary>
+    public DateTime? GetLatestStructureSyncedAt()
+    {
+        using var __perf = _performance.Measure("prtg:GetLatestStructureSyncedAt");
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.Max(s => (DateTime?)s.SyncedAt);
+    }
+
     /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>
     public List<PrtgValueRow> GetValues(DateTime fromInclusive, DateTime toExclusive)
     {
