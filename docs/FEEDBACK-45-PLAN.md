@@ -118,12 +118,17 @@
 
 ### 定案
 
-1. **執行紀錄 store 改常駐記憶體投影**（B1）：`BatchRunStore` 是 Singleton、單一寫入者、append-only。
-   啟動時只用 `created_at` 下推載入保留期內的執行列（`lf_log_lines` 的 run 分區），之後 `Register`／`Finish` 同步追加到投影、`Prune` 同步移除；
-   `GetRecentRuns`／`GetRun`／`LatestPerRun`／最後 id 全部改讀投影。
-   **log 行不常駐**：`GetLogs(runId)` 以該次執行的起迄時間（結束時間缺省＝現在）為 `created_at` 窗口讀，再依 runId 過濾；
-   `GetRecentErrors` 以天數窗口讀。`EfJsonLogStore` 新增帶時間下界／區間的讀取方法，走既有 `(log_key, created_at)` 索引。
-   不選「每次查詢日期下推」：詳情與最後 id 無法靠日期收掉，且 runId 不在欄位裡。
+1. **執行紀錄查詢下推到 SQL**（B1）：`GetRecentRuns`／`GetRecentErrors` 改用 `EfJsonLogStore` 既有的
+   `ReadLines(from, to)` 帶日期下界讀取（走既有 `(log_key, created_at)` 索引），cutoff 再往前放寬一天緩衝
+   （附加時間與業務時間不同源，跨午夜會漏）；記憶體端的業務時間過濾全部保留，因為底層對
+   `created_at` 為 null 的既存列一律視為在範圍內，SQL 窄化不保證精確。
+   建構式算最後 id 改用既有的 `ReadLastLines(n)`（索引反向 seek，該方法的註解已寫明它就是為此而生），
+   往回多讀幾行以免最後一行損毀導致重號。`GetRun`／`GetLogs` 以保留期或該次執行的起迄時間為窗口讀取後
+   再依 runId 比對（runId 在 JSON 內、不是資料表欄位，無法 SQL 過濾）。
+   **推翻原定案「改常駐記憶體投影」**（實作期核對發現）：`BatchRunStore` 在同一個 Web 行程裡有**兩個實例**
+   ——DI 的 Singleton（頁面查詢用）與 `AnalysisOrchestrator` 執行分析時自己 `new` 的那一個（寫入用，
+   見 `AnalysisOrchestrator.cs:204`）。兩者寫同一張表卻各自持有狀態，做成投影會讓頁面永遠看不到
+   排程剛寫入的執行紀錄。要走投影就得先讓兩邊共用同一個實例，那是另一個層級的改動，本輪不做。
 2. **records 慢路徑**（B2）：
    - 「下一筆未處理」捷徑改走**新端點** `GET /api/records/next-unhandled?hostId&date`：資料來源沿用既有處理狀態推導，窗口＝保留期（**不藏老案子**），
      結果走跨請求快取（鍵＝資料版本戳＋可見主機集合＋可見嚴重度，TTL 30 秒；是否直接複用 `ActionableSnapshotCache` 標**暫定**，執行端依實作事實決定），只回傳下一筆的 hostId／date。
@@ -131,7 +136,11 @@
    - `/api/records` **無狀態篩選**路徑：`from` 缺省改為「昨天往前 90 天」（與主機詳情 clamp 同源常數）；**有狀態篩選**路徑維持全保留期，但 `Progress(r)` 每筆只算一次（先算再篩再投影）。
    - `LatestOccurrences` 的 `source_name` 下推到 SQL（B13）。
 3. **`JsonBlobSingleton` 加版本探測快取**（B4）：與 `JsonBlobCollection(cached:true)` 同一機制（每次 `Get` 先探測版本，版本相同回快取物件的**深副本或不可變快照**，不同才重讀）；
-   `SystemSettingsStore` 開啟；`AiCacheStore` 開啟 collection 快取。
+   `SystemSettingsStore` 開啟。
+   **快取的是原始內容與版本、命中時仍各自反序列化出新物件**：單一物件型 store 的呼叫端會做讀→改→寫，
+   `SystemSettingsService` 內已有註解明講它假設「每次 `Get()` 都是不同執行個體」，共用實例會讓前後快照變成同一個物件。
+   **`AiCacheStore` 本輪不開**（規劃時定為要開，實作期改判）：它的內容是 AI 產出的整包文字（可能很大）
+   且每次 `Put` 都推進版本讓快取立刻失效，效益不明而記憶體風險明確。
    回傳必須是副本：既有註解假設「每次 `Get()` 都是不同物件」（`SystemSettingsService.cs:320`），快取共用同一實例會讓讀→改→寫的 `before` 快照被汙染。
 4. **`SummaryCache` 失效白名單**（B5）：中介軟體改為「非 GET 且路徑**不在**白名單」才 `Bump()`；白名單**只列明確不改分析資料的端點**：
    `display-settings`、`auth/*`、`help/ask`、`ai/interpret-issue`（讀取型）。其餘（含所有處理狀態、規則、設定、排程寫入）照舊推進。
@@ -151,7 +160,7 @@
 
 1. `LogForesight.Core/Persistence/Sql/EfJsonLogStore.cs`：時間下界／區間讀取。`BatchRunStore.cs`：記憶體投影＋窗口讀 log。
 2. `LogForesight.Web/Controllers/Api/RecordsController.cs`＋`RecordListQueryService.cs`：`next-unhandled` 端點、缺省 from 常數、`Progress` 單次計算；`EfIssueAggregateQuery.cs`：`LatestOccurrences` 下推。`record-detail.js`：捷徑改端點與非阻塞。
-3. `JsonBlobSingleton.cs`：版本探測快取＋副本回傳；`SystemSettingsStore`、`AiCacheStore` 開啟。
+3. `JsonBlobSingleton.cs`：版本探測快取＋每次回傳新物件；`SystemSettingsStore` 開啟。
 4. `Program.cs`：白名單。
 5. `VisibilityService.cs`：跨請求快取（新 `VisibilityCache` 單例，Scoped 服務先查它）。
 6. `SchemaUpgrader.cs`＋`EfPrtgStore.cs`＋`DashboardController.cs`（host-detail prtg）＋`SettingsController.cs`（衝突清單索引快取）。
@@ -205,7 +214,9 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （尚未開始） | | | | |
+| A1 後端守門與狀態碼 | impl-low | 全綠 3967（+12） | 契約四條各有測試；Claude 另做兩次突變（停用取數守門、翻轉互斥旗標）皆轉紅 | 執行端把「回填已在執行中」也歸為互斥回 409（規格只列三項），理由是與結構同步的參照實作一致，採納 |
+| A2 排程頁顯示規則 | impl-low | 全綠 3973（+6） | 三因子隱藏、說明列、六處旗標、停止鈕、modal 防護各有結構斷言；Claude 另做兩次突變皆轉紅 | Claude 驗收時誤用 `git checkout` 還原突變，洗掉尚未提交的 `runs.js`；由執行端以同一支腳本重跑產出位元組相同的檔案復原。往後突變一律先複製備份再改 |
+| A3 全站執行中告示 | impl-low | 全綠 3986（+19） | 觸發者文字兩端一致、取數優先、輪詢間隔與不停掉、儀表板零命中、主機詳情訂閱各有測試；Claude 另做兩次突變皆轉紅 | 三處偏離皆採納：兩顆按鈕都停用並補 id、說明元素改由 JS 建立（cshtml 不在白名單）、事件名用字面量不跨檔 import（`asp-append-version` 會讓 layout 模組被執行第二次）。`RunMonitorService` 第三份觸發者文字對 null 回「工作排程器」是歷史紀錄語意，與即時狀態的「閒置」不同，刻意不收斂 |
 
 ## 體檢交接
 
