@@ -35,7 +35,7 @@
 
 ### 作業總覽（委派輪）
 
-- **執行端**：`agy`（`gemini-3.8-flash-high`），整輪一種；階段規格抄成 `.gemini-tasks/task-46-<階段>.md`（已在 `.git/info/exclude`），執行端不看本文件。Claude 每段獨立驗收，不採信摘要。
+- **執行端**：A-1、A-2 為 `agy`（`gemini-3.8-flash-high`）；**自 A-3 起改 `impl-low`（Opus 5＋low effort），使用者 2026-09-16 指定，不換回**。A-3 的 agy 執行中途停止，半套改動收在 stash「agy A3 中止時的半套改動」不採用；階段規格抄成 `.gemini-tasks/task-46-<階段>.md`（已在 `.git/info/exclude`），執行端不看本文件。Claude 每段獨立驗收，不採信摘要。
 - **不依賴外部清單的部分先做**：環境探測的 type 名單與校準結果後續補上。依賴它們的只有 B-3 的「內建 `hardware` 對照條目」與 E；其餘全部先做（`hardware` 分類常數、補充對照表、依分類規則、儲存故障佐證模式都不需要名單，測試直接種分類）。
 - **UI 階段排最後**（B-4、D-3），設計方案待使用者答覆後才開工。
 
