@@ -197,18 +197,14 @@ try
 
     // 資料版本戳（回饋三十五輪批次F）：任何成功的非 GET 請求都推進一次，讓儀表板／報表的
     // 整包快取失效。刻意做成單一咽喉而不是在每個寫入服務裡各 bump 一次——後者只要新增
-    // 端點時忘記加就會顯示過期資料，而這裡新端點自動涵蓋。代價是不影響那兩頁的寫入
-    // （例如改自己的偏好）也會讓快取失效，方向是偏向新鮮，可接受。
+    // 端點時忘記加就會顯示過期資料，而這裡新端點自動涵蓋。
+    // 回饋四十五輪 B3：加上失效白名單（見 DataVersionStampPolicy）——仍是**排除法**，
+    // 新端點依舊預設推進，單一咽喉的性質不變。
     app.Use(async (context, next) =>
     {
         await next();
 
-        if (!HttpMethods.IsGet(context.Request.Method) &&
-            !HttpMethods.IsHead(context.Request.Method) &&
-            context.Response.StatusCode < 400)
-        {
-            context.RequestServices.GetRequiredService<DataVersionStamp>().Bump();
-        }
+        DataVersionStampPolicy.BumpIfNeeded(context);
     });
 
     app.MapControllers();
@@ -230,4 +226,57 @@ catch (Exception ex)
 finally
 {
     LogManager.Shutdown();
+}
+
+
+/// <summary>
+/// 資料版本戳的推進判定（回饋四十五輪 B3）。
+///
+/// 原本「任何成功的非 GET 請求都推進」讓「登出」「問 AI」這種完全不影響分析資料的請求
+/// 也把儀表板／報表的整包快取整批清掉，多人使用時幾乎恆為 cold。
+///
+/// 這裡採**排除法**：白名單外的非 GET 一律推進，所以**新端點仍自動涵蓋**，
+/// 單一咽喉的設計理由（不必在每個寫入服務裡各記得 bump 一次）不受影響。
+/// 方向性的取捨也不變：白名單漏列一個端點只是快取多失效一次（等同改動前的現狀），
+/// 多列一個卻是使用者看到過期資料——**有疑慮就不要放進來**。
+/// </summary>
+public static class DataVersionStampPolicy
+{
+    /// <summary>
+    /// 不改變分析資料的非 GET 端點。逐條理由：
+    /// <list type="bullet">
+    /// <item><c>/api/auth/login</c>、<c>/api/auth/logout</c>：只動登入 cookie 與稽核，
+    /// 不寫任何 records／handling／案件資料。</item>
+    /// <item><c>/api/help/ask</c>：操作說明書的 AI 提問，純讀取＋呼叫外部模型。</item>
+    /// <item><c>/api/ai/chat</c>：詳情頁 AI 判讀對話，不持久化（授權與 context 複用讀取路徑）。</item>
+    /// </list>
+    /// 註：顯示偏好設定（<c>/api/settings/display</c>）目前只有 GET，沒有非 GET 端點可列；
+    /// 管理端的設定寫入（<c>/api/admin/settings</c>）會改變顯示範圍與分析口徑，**不列入**。
+    /// </summary>
+    private static readonly HashSet<string> Whitelist = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/help/ask",
+        "/api/ai/chat"
+    };
+
+    /// <summary>中介軟體本體：判定成立才推進版本戳。判定與動作寫在一起，
+    /// 測試才驗得到真正跑在管線裡的那條路徑（而不是另抄一份判定）。</summary>
+    public static void BumpIfNeeded(HttpContext context)
+    {
+        if (!ShouldBump(context)) return;
+        context.RequestServices.GetRequiredService<DataVersionStamp>().Bump();
+    }
+
+    /// <summary>成功的非 GET／非 HEAD 請求，且路徑不在白名單時才推進版本戳</summary>
+    public static bool ShouldBump(HttpContext context)
+    {
+        if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+            return false;
+        if (context.Response.StatusCode >= 400) return false;
+
+        var path = context.Request.Path.Value;
+        return path == null || !Whitelist.Contains(path.TrimEnd('/'));
+    }
 }
