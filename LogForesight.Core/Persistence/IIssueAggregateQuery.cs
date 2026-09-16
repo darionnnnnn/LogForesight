@@ -219,7 +219,8 @@ public interface IIssueAggregateQuery
     /// 依 (規則代碼, 日期) 分組，回傳期間內的命中筆數與相異存活主機數。
     /// 僅納入 Source == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
     /// </summary>
-    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to);
+    /// <param name="hostIds">目標存活主機集合；null＝不篩主機（校準匯出用），空集合＝零結果。</param>
+    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
 
     /// <summary>
     /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次

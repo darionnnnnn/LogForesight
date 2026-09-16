@@ -1019,8 +1019,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return trend;
     }
 
-    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to)
+    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
     {
+        if (hostIds != null && hostIds.Count == 0) return new List<PrtgRuleHitAggregate>();
+
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
@@ -1029,10 +1031,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
 
         // SQL 端過濾來源與日期範圍（不得先撈全表）
-        var rows = ctx.TopIssues.AsNoTracking()
+        var q = ctx.TopIssues.AsNoTracking()
             // 不用 ToUpper：寫入端固定是 PrtgFindingMapper.PrtgLogName，而 UPPER
             // 會讓 SQL Server 端的索引無法 seek
-            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.LogName == PrtgFindingMapper.PrtgLogName)
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.LogName == PrtgFindingMapper.PrtgLogName);
+
+        if (hostIds != null)
+        {
+            // 呼叫端傳的是存活主機 id，展開回別名 id 再於 SQL 端篩（同 Aggregate）
+            var expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        }
+
+        var rows = q
             .Select(x => new
             {
                 x.RecordDate,

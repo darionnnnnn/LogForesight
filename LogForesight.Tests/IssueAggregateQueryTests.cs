@@ -640,7 +640,7 @@ public class IssueAggregateQueryTests : IDisposable
             PrtgIssue("prtg:down:2"),
             PrtgIssue("prtg:flapping:1"));
 
-        var result = Query().AggregatePrtgRuleHits(d0, d0);
+        var result = Query().AggregatePrtgRuleHits(d0, d0, null);
 
         Assert.Equal(2, result.Count);
         var down = result.Single(r => r.RuleCode == "down");
@@ -661,7 +661,7 @@ public class IssueAggregateQueryTests : IDisposable
             Issue("System", 100, eventKey: "prtg:down:9"),
             PrtgIssue("prtg:down:1"));
 
-        var result = Query().AggregatePrtgRuleHits(d0, d0);
+        var result = Query().AggregatePrtgRuleHits(d0, d0, null);
 
         var down = Assert.Single(result);
         Assert.Equal("down", down.RuleCode);
@@ -674,7 +674,7 @@ public class IssueAggregateQueryTests : IDisposable
         var d0 = new DateTime(2026, 8, 1);
         Add(1, "A", d0, PrtgIssue("prtg"));
 
-        var result = Query().AggregatePrtgRuleHits(d0, d0);
+        var result = Query().AggregatePrtgRuleHits(d0, d0, null);
 
         var other = Assert.Single(result);
         Assert.Equal("其他", other.RuleCode);
@@ -691,7 +691,7 @@ public class IssueAggregateQueryTests : IDisposable
         Add(1, "A", d0, PrtgIssue("prtg:down:1"));
         Add(2, "B", d0, PrtgIssue("prtg:down:2"));
 
-        var resultMultiHost = Query().AggregatePrtgRuleHits(d0, d0);
+        var resultMultiHost = Query().AggregatePrtgRuleHits(d0, d0, null);
         var downMulti = Assert.Single(resultMultiHost);
         Assert.Equal(2, downMulti.HitCount);
         Assert.Equal(2, downMulti.HostCount);
@@ -702,7 +702,7 @@ public class IssueAggregateQueryTests : IDisposable
             PrtgIssue("prtg:down:1"),
             PrtgIssue("prtg:down:2"));
 
-        var resultSingleHost = Query().AggregatePrtgRuleHits(d1, d1);
+        var resultSingleHost = Query().AggregatePrtgRuleHits(d1, d1, null);
         var downSingle = Assert.Single(resultSingleHost);
         Assert.Equal(2, downSingle.HitCount);
         Assert.Equal(1, downSingle.HostCount);

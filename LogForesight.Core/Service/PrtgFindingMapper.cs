@@ -18,6 +18,23 @@ public static class PrtgFindingMapper
         signature != null && string.Equals(signature.LogName, PrtgLogName, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// 從簽章 Source（<c>PRTG:{規則代碼}</c>，前綴不分大小寫）解出規則代碼。
+    /// 前綴不符或代碼為空白時回 false。白話說明與 prompt 共用這一份解析，不各寫字串切割。
+    /// </summary>
+    public static bool TryGetRuleCode(string? source, out string code)
+    {
+        code = string.Empty;
+        const string prefix = PrtgLogName + ":";
+        if (source == null || !source.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var candidate = source.Substring(prefix.Length).Trim();
+        if (candidate.Length == 0) return false;
+
+        code = candidate;
+        return true;
+    }
+
+    /// <summary>
     /// 一組 PRTG finding 推導出的日風險等級（docs/PRTG-SPEC.md §9）。
     /// 判定與 <c>LogAnalysisService.ComputeRuleBasedRisk</c> 的 issues 部分同語意：
     /// 任一未被抑制的 finding 帶 <c>ElevatesDayRisk</c> → 高；任一為 High → 中；否則低。

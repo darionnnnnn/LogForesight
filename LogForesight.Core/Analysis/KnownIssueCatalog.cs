@@ -1,4 +1,5 @@
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Analysis;
 
@@ -350,10 +351,34 @@ public static class KnownIssueCatalog
     /// </summary>
     public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
+        if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
+        {
+            var prtgRule = FindPrtgRuleByCode(rules, prtgCode);
+            return string.IsNullOrWhiteSpace(prtgRule?.PlainExplanation) ? null : prtgRule.PlainExplanation;
+        }
+
         var rule = eventId == 0
             ? FindLinuxRuleByProgram(rules, source)
             : FindRule(rules, source, eventId);
         return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    /// <summary>
+    /// 依 PRTG 規則代碼找啟用中的 prtg 規則：恰一條就是它；多條時只認 Id 為
+    /// <c>builtin-prtg-{代碼}</c> 的那條，沒有就回 null（不猜是哪一條自訂規則）。
+    /// </summary>
+    private static KnownIssueRule? FindPrtgRuleByCode(IReadOnlyList<KnownIssueRule> rules, string code)
+    {
+        var candidates = rules
+            .Where(r => r.Enabled &&
+                        string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(r.PrtgRuleCode, code, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (candidates.Count == 1) return candidates[0];
+
+        var builtinId = $"builtin-prtg-{code}";
+        return candidates.FirstOrDefault(r => string.Equals(r.Id, builtinId, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

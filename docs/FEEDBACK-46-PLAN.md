@@ -284,6 +284,7 @@
   - PRTG 逐日迴圈由近到遠，回望多日時較舊日期尚未評估，跨日計數會少算。C-1 改為兩段式：先評估全部日期，再逐日標註、標記抑制、發佈。
   - 規格事實：B-1 需要 B-2 的 availability 分類，順序改為 B-2 → B-1 → B-3。
   - 「未回報」判定在 `HostAdminService` 與 `DashboardService` 各寫一份，D-2 收斂成一份。
+- **待議（實作中發現，收尾時與使用者確認）**：AI prompt 的事件清單不排除已抑制事件（`AnalysisPromptBuilder` 無任何 `Suppressed` 判斷），PRTG 段則排除——建議事件清單一併排除或加註「已抑制」，屬事件層行為變更，未在本輪擅自改動。
 - DETECTION-SPEC「五層偵測」表：規則層與關聯層各補一句 PRTG 來源（規則層：PRTG 規則庫的 prtg 平台；關聯層：追加時的三個佐證模式），收尾時同步。
 
 ## 執行紀錄
@@ -292,3 +293,4 @@
 |---|---|---|---|---|
 | A-1 | agy（gemini-3.8-flash-high） | 通過（809→816，含合約測試類別 846 綠） | grep 驗收、三個突變（已確認不拉風險、已確認判定、同代碼取 Id 最小）皆紅 | (1) 校準端改成只用「已啟用」規則並手抄一份規則複製：升級後未套 seed 時校準分佈變空、B-3 加欄位必漏抄——Claude 改為三條與規則庫無關的最低門檻合成規則；(2) 四檔被改成 LF、`EfIssueAggregateQuery.cs` BOM 被剝——已還原；(3) 驗收 grep `PrtgRuleThresholds` 撞到校準服務同名無關屬性、`"prtg-` 撞到檔名字串，是規格寫太寬，型別與舊 RuleId 實際零殘留；(4) `PrtgFinding.Acknowledged` 帶預設值（規格禁可選參數），影響僅測試建構，暫留 |
 | A-2 | agy（gemini-3.8-flash-high） | 通過（66→71；相關類別 90 綠） | grep 驗收全過；突變「pipeline 不呼叫 MarkSuppressed」→ 2 紅（Group 非成員那條本應綠） | 下游事實：案件掛接（`IssueCaseCoordinator.AttachNewDay`）與郵件摘要對事件層的已抑制問題本來就不過濾，PRTG 與之一致，未另寫分支；執行輸出「已抑制」無獨立測試，由 Site 範圍測試間接涵蓋 |
+| A-3 | impl-low（Opus 5 low） | 通過（365→377；全套 4152 綠） | grep 驗收全過；突變「白話說明拿掉 PRTG 分路」→ 4 紅、「預覽不篩主機」→ 1 紅 | (1) 規格寫「比照事件層對 Suppressed 的既有處理」是錯的事實：prompt 的事件清單**不**排除已抑制事件；PRTG 段依規格排除，兩段不一致，列入待議；(2) PRTG 預覽計數是 `lf_top_issues` 筆數（Count 恆 1），該表無 rule_id／分類欄，B-3 分類規則的預覽會是「同代碼全部分類」的上限值，列入 B-3 文件說明；(3) `LfDbContext` 同句註解共 3 處一併修正 |

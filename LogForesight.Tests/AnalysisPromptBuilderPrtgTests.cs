@@ -89,4 +89,69 @@ public class AnalysisPromptBuilderPrtgTests
         Assert.Contains("狀態頻繁震盪", prompt);
         Assert.DoesNotContain("PRTG/", prompt);
     }
+
+    private static LogIssueSignature DownFindingWithDetail(string detail, long sensorObjid = 3001)
+    {
+        var finding = PrtgFindingMapper.ToSignature(
+            new PrtgFinding(1001, sensorObjid, "down", detail, 60, SeedRules["builtin-prtg-down"]), DateTime.Today);
+        return finding;
+    }
+
+    [Fact]
+    public void PRTG列同時印出規則描述與Detail量值()
+    {
+        var prompt = Build(DownFindingWithDetail("裝置 DB01／sensor Ping 持續 Down 達 720 分鐘"));
+
+        var line = prompt.Split('\n').Single(l => l.Contains("達 720 分鐘"));
+        Assert.Contains(SeedRules["builtin-prtg-down"].Description, line);
+        Assert.Contains($"{SeedRules["builtin-prtg-down"].Description}：裝置 DB01", line);
+    }
+
+    [Fact]
+    public void PRTG規則描述為空時只印Detail()
+    {
+        var finding = DownFindingWithDetail("sensor CPU 達 95%");
+        finding.KnownIssue = null;
+
+        var prompt = Build(finding);
+
+        Assert.Contains("] sensor CPU 達 95%", prompt);
+        Assert.DoesNotContain("：sensor CPU", prompt);
+    }
+
+    [Fact]
+    public void PRTG_Detail為空時只印規則描述()
+    {
+        var finding = DownFindingWithDetail(string.Empty);
+        var description = SeedRules["builtin-prtg-down"].Description;
+
+        var prompt = Build(finding);
+
+        Assert.Contains($"] {description}", prompt);
+        Assert.DoesNotContain($"{description}：", prompt);
+    }
+
+    [Fact]
+    public void 已抑制的PRTG_finding不印()
+    {
+        var kept = DownFindingWithDetail("保留的 sensor 達 720 分鐘", 3001);
+        var suppressed = DownFindingWithDetail("被抑制的 sensor 達 999 分鐘", 3002);
+        suppressed.Suppressed = true;
+
+        var prompt = Build(kept, suppressed);
+
+        Assert.Contains("保留的 sensor 達 720 分鐘", prompt);
+        Assert.DoesNotContain("被抑制的 sensor", prompt);
+    }
+
+    [Fact]
+    public void PRTG_finding全部被抑制時不留空標題()
+    {
+        var suppressed = DownFindingWithDetail("被抑制的 sensor 達 999 分鐘");
+        suppressed.Suppressed = true;
+
+        var prompt = Build(WindowsIssue(), suppressed);
+
+        Assert.DoesNotContain(PrtgSectionTitle, prompt);
+    }
 }

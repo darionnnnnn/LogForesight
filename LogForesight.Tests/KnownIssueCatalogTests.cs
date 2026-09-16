@@ -523,4 +523,89 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(PrtgRuleEvaluator.RuleDown, cloned.PrtgRuleCode);
         Assert.Equal(120, cloned.PrtgThreshold);
     }
+
+    // ── PlainExplanationFor：PRTG 簽章（task-46-A3）─────────────────────────────
+
+    private static KnownIssueRule CustomPrtgDown() => new()
+    {
+        Id = "custom-prtg-down", Origin = "custom", Enabled = true, Scope = "all", Platform = "prtg",
+        PrtgRuleCode = "down", Category = IssueCategory.Other, Severity = IssueSeverity.High,
+        Description = "自訂 Down 規則", PlainExplanation = "自訂規則的白話說明"
+    };
+
+    [Fact]
+    public void PlainExplanationFor_PRTG來源回對應規則代碼的builtin白話()
+    {
+        var rules = KnownIssueSeed.CreateRules();
+        var builtin = rules.Single(r => r.Id == "builtin-prtg-down");
+
+        Assert.Equal(builtin.PlainExplanation, KnownIssueCatalog.PlainExplanationFor(rules, "PRTG:down", 0));
+        Assert.Equal(builtin.PlainExplanation, KnownIssueCatalog.PlainExplanationFor(rules, "prtg:down", 0));
+    }
+
+    [Fact]
+    public void PlainExplanationFor_PRTG同代碼多條規則時取builtin那條()
+    {
+        var rules = KnownIssueSeed.CreateRules();
+        var builtin = rules.Single(r => r.Id == "builtin-prtg-down");
+        rules.Add(CustomPrtgDown());
+
+        Assert.Equal(builtin.PlainExplanation, KnownIssueCatalog.PlainExplanationFor(rules, "PRTG:down", 0));
+    }
+
+    [Fact]
+    public void PlainExplanationFor_PRTG同代碼只剩自訂規則時回自訂白話()
+    {
+        var rules = new List<KnownIssueRule> { CustomPrtgDown() };
+
+        Assert.Equal("自訂規則的白話說明", KnownIssueCatalog.PlainExplanationFor(rules, "PRTG:down", 0));
+    }
+
+    [Fact]
+    public void PlainExplanationFor_PRTG同代碼多條且無builtin時不猜()
+    {
+        var other = CustomPrtgDown();
+        var rules = new List<KnownIssueRule>
+        {
+            CustomPrtgDown(),
+            new()
+            {
+                Id = "custom-prtg-down-2", Origin = "custom", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = "down", Category = other.Category, Severity = other.Severity,
+                Description = "另一條", PlainExplanation = "另一條的白話"
+            }
+        };
+
+        Assert.Null(KnownIssueCatalog.PlainExplanationFor(rules, "PRTG:down", 0));
+    }
+
+    [Fact]
+    public void PlainExplanationFor_PRTG未知代碼回null()
+    {
+        Assert.Null(KnownIssueCatalog.PlainExplanationFor(KnownIssueSeed.CreateRules(), "PRTG:nosuch", 0));
+    }
+
+    [Fact]
+    public void PlainExplanationFor_Linux以program比對的既有行為不變()
+    {
+        var rules = new List<KnownIssueRule>
+        {
+            new()
+            {
+                Id = "custom-linux-a", Origin = "custom", Enabled = true, Platform = "linux", ProgramPattern = "sshd",
+                Category = IssueCategory.Security, Severity = IssueSeverity.High, Description = "SSH", PlainExplanation = "SSH 白話"
+            },
+            CustomPrtgDown()
+        };
+
+        Assert.Equal("SSH 白話", KnownIssueCatalog.PlainExplanationFor(rules, "sshd", 0));
+        Assert.Null(KnownIssueCatalog.PlainExplanationFor(rules, "httpd", 0));
+
+        rules.Add(new KnownIssueRule
+        {
+            Id = "custom-linux-b", Origin = "custom", Enabled = true, Platform = "linux", ProgramPattern = "sshd",
+            Category = IssueCategory.Security, Severity = IssueSeverity.High, Description = "SSH2", PlainExplanation = "SSH2 白話"
+        });
+        Assert.Null(KnownIssueCatalog.PlainExplanationFor(rules, "sshd", 0));   // 兩條命中同 program：不給說明
+    }
 }

@@ -176,7 +176,10 @@ internal class AnalysisPromptBuilder
         // 它們不是 Windows／Linux 事件，EventId 恆為 0，混在事件列表裡會被當成一筆奇怪的事件。
         // 這裡只餵**已由規則確定性判定過的 finding**，不餵原始數值——原始數值的解讀屬於
         // 特徵計算層（見 docs/BACKLOG.md），AI 只負責把已確定的結論翻成白話。
-        var prtgFindings = issues.Where(i => PrtgFindingMapper.IsPrtg(i)).ToList();
+        // Detail（SampleMessages[0]）是評估器寫好的判定敘述（device／sensor 名稱與量值），
+        // 跟規則描述一起印，AI 才說得出「哪一顆 sensor、達多少」。
+        // 已抑制的 finding 不印：維護者已明確表示不想再被這個訊號打擾，餵給 AI 會讓白話結論又把它講回來。
+        var prtgFindings = issues.Where(i => PrtgFindingMapper.IsPrtg(i) && !i.Suppressed).ToList();
         if (prtgFindings.Count > 0)
         {
             sb.AppendLine();
@@ -184,10 +187,19 @@ internal class AnalysisPromptBuilder
                           "與上述事件日誌互為佐證）");
             foreach (var f in prtgFindings)
             {
-                var detail = !string.IsNullOrWhiteSpace(f.KnownIssue)
-                    ? f.KnownIssue
-                    : f.SampleMessages.FirstOrDefault() ?? f.EventKey;
-                sb.AppendLine($"- [{f.Severity}] {detail}");
+                var description = f.KnownIssue;
+                var detail = f.SampleMessages.FirstOrDefault();
+                string text;
+                if (!string.IsNullOrWhiteSpace(description) && !string.IsNullOrWhiteSpace(detail))
+                    text = $"{description}：{detail}";
+                else if (!string.IsNullOrWhiteSpace(description))
+                    text = description;
+                else if (!string.IsNullOrWhiteSpace(detail))
+                    text = detail;
+                else
+                    // 兩者皆空時至少說出是哪條規則，不印 EventKey 裡的 objid
+                    text = PrtgFindingMapper.TryGetRuleCode(f.Source, out var code) ? $"PRTG 規則 {code}" : f.EventKey;
+                sb.AppendLine($"- [{f.Severity}] {text}");
             }
         }
 
