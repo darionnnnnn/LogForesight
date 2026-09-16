@@ -24,6 +24,7 @@ internal class WeeklyCheckupService
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private const int MaxSignatureLines = 40;
+    private const int MaxPrtgLines = 20;
     private const int MaxLastConclusionChars = 300;
     private const int MaxOutputTokens = 1536;
 
@@ -205,6 +206,23 @@ internal class WeeklyCheckupService
             }
         }
 
+        // PRTG finding 自成一段（比照 AnalysisPromptBuilder）：Count 恆 1、EventId 恆 0，混在事件列裡
+        // 讀不出意義，且同一規則跨 sensor 會被合成一列——這裡依 EventKey（規則代碼＋objid）逐 sensor 列出
+        var prtgLines = BuildPrtgLines(window);
+        if (prtgLines.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("【PRTG 監控訊號】（既有監控系統的量測結果，由程式依規則確定性判定，與上述事件日誌互為佐證）");
+            foreach (var line in prtgLines.Take(MaxPrtgLines))
+            {
+                sb.AppendLine(line);
+            }
+            if (prtgLines.Count > MaxPrtgLines)
+            {
+                sb.AppendLine($"另有 {prtgLines.Count - MaxPrtgLines} 項 PRTG 訊號未列出");
+            }
+        }
+
         sb.AppendLine();
         sb.AppendLine("請只回傳一個 JSON 物件（不要 markdown 圍欄、不要任何其他文字），結構如下：");
         sb.AppendLine("""
@@ -226,7 +244,8 @@ internal class WeeklyCheckupService
 
         foreach (var day in window)
         {
-            foreach (var issue in day.TopIssues)
+            // PRTG finding 另成一段（見 BuildPrtgLines），不混進事件簽章列
+            foreach (var issue in day.TopIssues.Where(i => !PrtgFindingMapper.IsPrtg(i)))
             {
                 var key = (issue.LogName, issue.Source, issue.EventId);
                 if (!bySignature.TryGetValue(key, out var entry))
@@ -252,6 +271,33 @@ internal class WeeklyCheckupService
                 var known = kv.Value.KnownIssue != null ? $"：{kv.Value.KnownIssue}" : "";
                 return $"[{kv.Value.Severity}] {kv.Key.Source} EventId {kv.Key.EventId} 期內逐日：{string.Join(",", dailyCounts)}{trendNote}{known}";
             })
+            .ToList();
+    }
+
+    /// <summary>
+    /// 窗口內未抑制的 PRTG finding 依 EventKey 分組，每組一行：最高嚴重度、規則描述、命中天數、
+    /// 規則代碼與最近一天的明細。排序＝最高嚴重度降冪、再依命中天數降冪。
+    /// </summary>
+    private static List<string> BuildPrtgLines(List<DailyAnalysisRecord> window)
+    {
+        return window
+            .SelectMany(d => d.TopIssues
+                .Where(i => PrtgFindingMapper.IsPrtg(i) && !i.Suppressed)
+                .Select(i => (d.Date, Issue: i)))
+            .GroupBy(x => x.Issue.EventKey, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.Date).First();
+                var severity = g.Max(x => x.Issue.Severity);
+                var days = g.Select(x => x.Date.Date).Distinct().Count();
+                PrtgFindingMapper.TryGetRuleCode(latest.Issue.Source, out var code);
+                var detail = latest.Issue.SampleMessages.FirstOrDefault() ?? string.Empty;
+                return (Severity: severity, Days: days,
+                    Line: $"- [{severity}] {latest.Issue.KnownIssue}：窗口內 {days} 天（{code}），最近一次：{detail}");
+            })
+            .OrderByDescending(x => x.Severity)
+            .ThenByDescending(x => x.Days)
+            .Select(x => x.Line)
             .ToList();
     }
 
