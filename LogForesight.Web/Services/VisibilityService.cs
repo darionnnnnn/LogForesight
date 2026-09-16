@@ -107,6 +107,11 @@ public class VisibilityService : IVisibilityService
     private readonly IIssueAggregateQuery? _issueAggregates;
     private readonly ISystemSettingsStore _settings;
 
+    /// <summary>問題負責人那條路徑的跨請求快取（回饋四十五輪 B4）：可為 null——沒注入時
+    /// 直接算、不快取，行為與未引入快取前完全相同（既有測試大量直接 new 本類別，
+    /// 不能讓組裝差異把它們帶到另一條路徑上）。</summary>
+    private readonly IssueOwnedHostIdsCache? _issueOwnedCache;
+
     // 每請求快取：一次請求內可能被多個 Service 呼叫（查詢＋計數＋明細），
     // Scoped 生命週期下重複解析同一份資料是白費工
     private IReadOnlySet<long>? _cached;
@@ -121,7 +126,8 @@ public class VisibilityService : IVisibilityService
         IIssueCaseStore cases,
         ISystemSettingsStore settings,
         IIssueOwnerStore? issueOwners = null,
-        IIssueAggregateQuery? issueAggregates = null)
+        IIssueAggregateQuery? issueAggregates = null,
+        IssueOwnedHostIdsCache? issueOwnedCache = null)
     {
         _currentUser = currentUser;
         _users = users;
@@ -132,6 +138,22 @@ public class VisibilityService : IVisibilityService
         _settings = settings;
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
+        _issueOwnedCache = issueOwnedCache;
+    }
+
+    /// <summary>
+    /// 問題負責人可見的主機（第四條授權路徑）：有注入跨請求快取就走快取，沒有就直接算。
+    /// 只有這一條走快取——其餘三條是記憶體集合運算，成本低、沒必要為它們擴大授權快取的面積。
+    /// 回傳的集合已是副本（快取層回副本、resolver 本來就每次新建），呼叫端可安全 UnionWith。
+    /// </summary>
+    private IReadOnlySet<long> ResolveIssueOwnedHostIds(long userId, int retentionDays)
+    {
+        IReadOnlySet<long> Compute() => HostVisibilityResolver.GetIssueOwnedHostIds(
+            _hosts, _issueOwners!, _users, _issueAggregates!, userId, retentionDays);
+
+        return _issueOwnedCache == null
+            ? Compute()
+            : _issueOwnedCache.GetOrAdd(userId, retentionDays, Compute);
     }
 
     public IReadOnlySet<long> GetVisibleHostIds()
@@ -190,8 +212,7 @@ public class VisibilityService : IVisibilityService
         if (_issueOwners != null && _issueAggregates != null)
         {
             var retentionDays = _settings.Get().RetentionDays;
-            visible.UnionWith(HostVisibilityResolver.GetIssueOwnedHostIds(
-                _hosts, _issueOwners, _users, _issueAggregates, user.UserId, retentionDays));
+            visible.UnionWith(ResolveIssueOwnedHostIds(user.UserId, retentionDays));
         }
 
         _cached = visible;

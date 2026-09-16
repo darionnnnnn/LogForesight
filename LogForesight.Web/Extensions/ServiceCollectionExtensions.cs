@@ -296,6 +296,9 @@ public static class ServiceCollectionExtensions
         // 「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）：同樣是 Singleton
         // ——它要吸收的正是「每次進詳情頁、每次批次儲存後」的重複詢問，跨請求才有意義。
         services.AddSingleton<NextUnhandledSequenceCache>();
+        // 問題負責人可見範圍的跨請求快取（回饋四十五輪 B4）：Singleton 才跨得了請求，
+        // 由 Scoped 的 VisibilityService 以可選相依取用；鍵含版本戳，授權變更不必等 TTL。
+        services.AddSingleton<IssueOwnedHostIdsCache>();
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
