@@ -276,9 +276,14 @@ public class BatchRunStore
     /// 若它落在窗口內的 RunId 範圍之間卻沒找到（已被清除、或根本不存在——舊書籤、手改網址），
     /// 全撈也不會找到，只是把本輪要消滅的整份讀取變成每次查無此執行都付一次。
     /// 窗口內完全沒有列時無從判斷（可能是保留期拉長後長期未執行的站台），維持全撈一次。
+    /// 這條規則倚賴 RunId 單調遞增；唯一的例外是尾端整段損毀讓 <see cref="ProbeLastId{T}"/> 回 0
+    /// 重新續號（那時已記 Warn），此後號碼較大的舊執行會被判成不存在——那是資料已損毀的後果，
+    /// 不值得為它讓每次查無此執行都付整份讀取。RunId 從 1 起算，非正數直接視為不存在。
     /// </summary>
     public BatchRun? GetRun(long runId)
     {
+        if (runId <= 0) return null;
+
         var from = DateTime.Today.AddDays(-RunLookupWindowDays - AppendTimeBufferDays);
         var window = LatestPerRun(ReadRunLinesFrom(from));
         var hit = window.FirstOrDefault(r => r.RunId == runId);

@@ -123,11 +123,6 @@ public class RunActivityBannerTests : IDisposable
         Assert.Contains("愛麗絲", activity.TriggerText!);
     }
 
-    /// <summary>
-    /// 告示的 IsRunning 是「取數或 AI 任一在跑」的聯集，但互斥判斷不能用聯集：
-    /// 主機更新只在取數執行中才會被後端擋下，AI 單獨在跑時那個動作是允許的。
-    /// 少了這條守門，畫面會在 AI 分析期間停用「指定主機更新」並說「取數執行中」，兩件事都不成立。
-    /// </summary>
     /// <summary>觸發者姓名是維運資訊：端點對所有登入者開放，但誰按的只給 DevMonitor／Maintain 看。</summary>
     [Fact]
     public void 一般使用者拿不到觸發者_告示仍照常顯示執行中()
@@ -142,6 +137,11 @@ public class RunActivityBannerTests : IDisposable
         Assert.Null(activity.TriggerText);
     }
 
+    /// <summary>
+    /// 告示的 IsRunning 是「取數或 AI 任一在跑」的聯集，但互斥判斷不能用聯集：
+    /// 主機更新只在取數執行中才會被後端擋下，AI 單獨在跑時那個動作是允許的。
+    /// 少了這條守門，畫面會在 AI 分析期間停用「指定主機更新」並說「取數執行中」，兩件事都不成立。
+    /// </summary>
     [Fact]
     public void 只有AI在執行時不算取數執行()
     {

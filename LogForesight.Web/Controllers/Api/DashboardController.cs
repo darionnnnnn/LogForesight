@@ -1,10 +1,10 @@
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
-using LogForesight.Web.Auth;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 using static LogForesight.Web.Controllers.Api.QueryStringParsing;

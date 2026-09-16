@@ -293,7 +293,7 @@
     「不要做」（NLog target 逐實例識別＋互斥、`isRunning` 是聯集不可當互斥判斷、快取鍵要涵蓋授權維度）。
 13. **測試檔名帶批次代號**（`FrontendA4CleanupUiTests` 等四個）在 PLAN 歸檔後失去指涉，既有測試檔無此慣例。
     修：改為主題命名（`FrontendConsistencyUiTests`／`NextUnhandledShortcutUiTests`／`ApiTimeoutBehaviorTests`／
-    `FrontendWaitingStateUiTests`）；正式碼註解裡指向規格檔內部編號（`A2/C6` 這類）的 9 處改為批次代號。
+    `FrontendWaitingStateUiTests`）；正式碼註解裡指向規格檔內部編號（`A2/C6` 這類）的 8 處改為批次代號。
 
 **看過但不動（記 BACKLOG 或留註）**：六個快取類別的 `GetOrAdd` 近乎逐字重複（約 60 行）——
 收斂成泛型基底要同時吸收「共用實例 vs 副本」「有無版本維度」「整批清 vs 不清」三個軸，會把各類別
@@ -303,6 +303,23 @@
 未驗證（非本輪引入）。
 
 測試：全套 4128 通過／4134 總計（略過 6），較實作輪收官的 4122 淨增 6。
+
+## 終檢輪（併 dev 後）
+
+獨立掃描（Opus low）審體檢輪 commit `f0d0218`，六條皆已修：
+1. `core/api.js` 上方 summary 仍寫「取不到一律視為不可用」，與新的三態實作矛盾——改寫成三態敘述。
+2. 兩處新插入的測試把既有的 XML summary「偷走」（`RunActivityBannerTests`、`IssueOwnedHostIdsCacheTests`），
+   正是體檢輪自己修過的那型——summary 搬回原成員。
+3. `GetRun` 對非正數 runId 仍會走全撈——前置 `runId <= 0` 回 null，並把「單調遞增」前提與續號回 0 的例外寫進註解。
+4. `applyScheduleOptions` 在 AI 狀態未知時落到最樂觀的「窗口內，隨時可跑」——未知時顯示「—」。
+5. PLAN 自述「9 處」改批次代號，實際 8 處——改實數。
+6. `DashboardController` 的 using 排序——對齊。
+
+查過無發現：`ICurrentUser` DI 已註冊且唯一手動建構點已跟上；`PrtgProbeService.TryStart` 呼叫點齊；
+反射型別與正式碼欄位逐字相同；`getAiAvailable` 回 null 的五個消費端都是真值判斷；六條新測試在對應 bug 存在時都會紅。
+
+併 dev 後全套第一次跑出一條偶發失敗（4127／4134），重跑兩次皆 4128 綠，未抓到名稱；
+本輪已把執行紀錄 NLog target 的三個並行根因修掉，若再出現請先看是不是 `BatchRunRecorderScopeTests`。
 
 ## 本輪推翻的規劃定案（實作期核對後改判，理由見各批次「定案」段與執行紀錄）
 

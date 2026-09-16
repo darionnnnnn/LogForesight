@@ -7,13 +7,6 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>
-/// 問題負責人可見範圍的跨請求快取（回饋四十五輪 B4）。
-///
-/// 這層快取坐在授權邊界上，所以測試的重心不是「有沒有變快」，而是**不能算錯**：
-/// 不得跨使用者命中、指派變更（版本戳推進）後要立刻重算、保留天數改了窗口要跟著變、
-/// 沒注入快取時行為與引入前完全相同。
-/// </summary>
 public class IssueOwnedHostIdsCacheRegistrationTests
 {
     /// <summary>
@@ -32,6 +25,13 @@ public class IssueOwnedHostIdsCacheRegistrationTests
     }
 }
 
+/// <summary>
+/// 問題負責人可見範圍的跨請求快取（回饋四十五輪 B4）。
+///
+/// 這層快取坐在授權邊界上，所以測試的重心不是「有沒有變快」，而是**不能算錯**：
+/// 不得跨使用者命中、指派變更（版本戳推進）後要立刻重算、保留天數改了窗口要跟著變、
+/// 沒注入快取時行為與引入前完全相同。
+/// </summary>
 public class IssueOwnedHostIdsCacheTests
 {
     private readonly FakeUserStore _users = new();

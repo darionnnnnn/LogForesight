@@ -736,6 +736,8 @@ function applyScheduleOptions(options) {
         // 與 ai-status 那條路徑同一套判斷，否則載入瞬間會先閃「隨時可跑」再被改成「未設定」。
         if (aiAvailable === false) {
             aiNextTriggerEl.textContent = 'AI 服務未設定';
+        } else if (aiAvailable === null) {
+            aiNextTriggerEl.textContent = '—';   // 還不知道 AI 設定狀態，不落到最樂觀的那句
         } else if (options.nextAiTriggerTime) {
             aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
         } else {
