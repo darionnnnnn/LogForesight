@@ -907,7 +907,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   改為計數（`SilentHostsCount`）＋下鑽到主機頁的 `/admin/hosts?status=silent`
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
   0 台時照常顯示 0（secondary 色），不換成空狀態插圖；「沒回報 ≠ 沒問題」放卡片 tooltip，
-  PRTG 啟用且其中有 PRTG 顯示失聯的主機時改為「沒回報 ≠ 沒問題；其中 N 台 PRTG 顯示失聯」（`SilentHostsPrtgDownCount`，判定見 docs/PRTG-SPEC.md §9）。
+  PRTG 啟用且其中有 PRTG 顯示失聯的主機時顯示為「沒回報 ≠ 沒問題；其中 N 台 PRTG 顯示失聯」（`SilentHostsPrtgDownCount`，判定見 docs/PRTG-SPEC.md §9）。
   空出的右下角由「依群組風險概況」補位，與高風險主機 6／6 分欄。
 - **依群組風險概況**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。

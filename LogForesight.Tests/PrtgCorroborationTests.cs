@@ -207,6 +207,20 @@ public class PrtgCorroborationTests
     }
 
     [Fact]
+    public void 取消抑制後重跑_佐證補進關聯告警並移出已抑制清單()
+    {
+        var record = Record(Event("disk", 153), Prtg(PrtgRuleEvaluator.RuleWarning, PrtgSensorCategories.Hardware));
+        var suppressed = new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated };
+
+        PrtgCorroboration.Apply(record, suppressed);
+        var result = PrtgCorroboration.Apply(record, NoSuppression);
+
+        Assert.Equal(1, result.Added);
+        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(record.CorrelationAlerts));
+        Assert.Empty(record.SuppressedCorrelationAlerts);
+    }
+
+    [Fact]
     public void PRTG簽章已抑制時不參與()
     {
         var record = Record(Event("disk", 153), Prtg(PrtgRuleEvaluator.RuleWarning, PrtgSensorCategories.Hardware, suppressed: true));

@@ -403,7 +403,8 @@ PRTG 維護頁的唯讀探測工具，背景執行、前端輪詢狀態。產出
 
 1. PRTG 版本
 2. device 與 sensor 總數
-3. **sensor type 分布**（依數量排序，含 unit 樣本，以及累積覆蓋 50/80/90/95% 各需幾個 type）
+3. **sensor type 分布**（依數量排序，含 unit 樣本與**內建分類**——只查內建對照、不含補充對照，未分類者提示到維護頁補充對照指定；
+   以及累積覆蓋 50/80/90/95% 各需幾個 type）
 4. 相依性（dependency）設定的使用比例；整份回應無法解析（不是 JSON、或根不是物件）時印出回應長度與開頭 200 字
 5. 群組樹概要
 6. **IP 覆蓋概要**：有幾個 device 設了 IPv4（判定與主機對應同一份純語法層，IP 帶 port 算 IP）、幾個是 DNS 名稱、
@@ -644,9 +645,9 @@ availability 的 30 分與 hardware warning 的 120 分是**暫定值**，待校
   `down`／`flapping` 不另外發出，筆數附在 objid 最小那筆 availability down 的 Detail
   （「同裝置另有 N 顆 sensor 同時 Down 或震盪（已合併）」）。warning、silent 與 availability 自己的 finding 不受影響；
   沒有 availability down 的 device 不合併。分類尚未算出（null）的 sensor 不能當合併主筆。
-- **已於 PRTG 確認**：`Down (Acknowledged)` 仍算 Down（持續時間、往返照算），但 finding 標記已確認、
-  **不帶「重大」旗標**、Detail 尾端加「已於 PRTG 確認」——PRTG 操作者已接手的事不再每天判高風險日。
-  `Down (Partial)` 不算確認。判定收斂在 `PrtgSensorStatuses.IsAcknowledged`。
+- **已於 PRTG 確認**：`Down (Acknowledged)` 仍算 Down（持續時間、往返照算）。**只有 `down` finding** 依「進入 Down 區段的最後一筆狀態」
+  標記已確認：**不帶「重大」旗標**（嚴重度不變，High 仍拉「中」）、判定敘述之後加「已於 PRTG 確認」——PRTG 操作者已接手的事不判高風險日。
+  `flapping` 照算往返但不標確認；`Down (Partial)` 不算確認。判定收斂在 `PrtgSensorStatuses.IsAcknowledged`。
 
 判定細節（皆為踩過的坑，改動前先讀）：
 
@@ -664,18 +665,29 @@ availability 的 30 分與 hardware warning 的 120 分是**暫定值**，待校
   **不會靜默產生零 finding**。新增或修改內建規則時必須遞增 `KnownIssueSeed.Version`，否則橫幅不會出現；
   seed 比對（`RuleImportPlanner.ContentEqualExceptEnabled`）涵蓋全部內容欄位，由反射測試守住。
 
+### 升級後的行為差異（部署前告知使用者）
+
+- **必須到規則維護頁套用內建規則更新**才有分類規則；未套用前舊的四條規則照跑，分類覆寫、availability 合併與「連通性 down 才重大」都不生效。
+  管理者修改過的內建規則不會被自動覆蓋（需勾選才覆蓋），調過的門檻不會被洗掉。
+- 一般 `down`（不限分類）只把日風險拉到「中」，只有連通性分類的 down 拉到「高」。
+- Ping 等不在取數白名單內的 sensor 開始參與規則評估；同裝置失聯時其他 sensor 的 down／flapping 合併為一筆。
+- 已於 PRTG 確認的 down 不帶「重大」；連續 14 日以上的 down 不拉日風險；重複或連續出現的 finding 嚴重度升一級。
+- 既有對 `builtin-prtg-*` 建立的抑制**開始生效**。
+- 既有紀錄不回寫：舊 finding 的 `RuleId` 是舊格式（`prtg-{代碼}`）、`Source` 是 `PRTG`，詳情頁掛不出知識庫、
+  問題排行會多一列舊格式的「PRTG」，重跑該日才換成新值，其餘隨保留期消失。
+
 ### 跨日標註、升級與長期 Down
 
 PRTG 規則是單日判定，跨日語意在 PRTG 路徑自己補（`PrtgCrossDay`，不進 `TrendAnalyzer`——
 `ChannelCoverage.WasRead` 對 PRTG 頻道會讓它永遠停在暖身期）。以 **EventKey 為單位、不限主機**
-（同一顆 sensor 換了對應主機仍算同一顆），看當日之前 14 天：
+（同一顆 sensor 換了對應主機仍算同一顆），看當日之前 14 天加上當日：
 
 - 歷史＝`lf_top_issues` 的命中日期（`GetPrtgFindingHitDates`，EventKey 每批最多 500 個，避開 SQL Server 參數上限）
   ∪ 本趟較舊日期的已歸戶 finding。**本趟有評估的日期只認本趟結果**——重跑時資料庫裡那幾天是上一趟寫的，
   門檻或規則改過後可能已不成立。
-- `N`＝14 日內含當日的命中次數，`M`＝含當日往回連續命中的天數。`N ≥ 2` 時 Detail 加「近 14 日第 N 次，連續第 M 日」；首次不加字。
+- `N`＝當日之前 14 天的命中次數加上當日這一次，`M`＝含當日往回連續命中的天數。`N ≥ 2` 時 Detail 加「近 14 日第 N 次，連續第 M 日」；首次不加字。
 - **升級**：`M ≥ 3` 或 `N ≥ 3` 時嚴重度升一級（封頂 High，不動「重大」旗標）——持續三天的 disk warning 因此會拉「中」。
-- **長期 Down**：`down` 且 `M ≥ 14` 視為沒人移除的死 sensor——關掉「重大」、嚴重度封頂 Medium（**不再拉日風險**）、
+- **長期 Down**：`down` 且 `M ≥ 14` 視為沒人移除的死 sensor——關掉「重大」、嚴重度封頂 Medium（**不拉日風險**）、
   Detail 加「已連續 M 日，建議在 PRTG 暫停該 sensor 或建立抑制」，且不做上一條升級。
 - 常數在 `PrtgRuleCatalog`（`CrossDayWindowDays`／`EscalateConsecutiveDays`／`EscalateHitsInWindow`／`ChronicDownDays`），暫定待校準。
 - 查詢失敗只印警告、改用本趟資料判定，照常發佈。
@@ -700,7 +712,7 @@ PRTG 規則是單日判定，跨日語意在 PRTG 路徑自己補（`PrtgCrossDa
   依規則分列（聚合鍵是 `(Source, EventId)`，全部塞 `PRTG` 會讓所有規則、所有 sensor 塌成一列），
   規則代碼由 `PrtgFindingMapper.TryGetRuleCode` 解出。
 - `RuleId`＝命中規則的 Id，詳情頁的知識庫面板據此反查；問題排行與紀錄清單的白話說明依 `Source` 解出代碼找規則
-  （恰一條用它；多條只認 `builtin-prtg-{代碼}`；都沒有回 null，不猜）。
+  （恰一條用它；多條時取不限分類那條；不限分類的也有多條時只認 `builtin-prtg-{代碼}`；都沒有回 null，不猜）。
 - `SampleMessages[0]`＝Detail：帶 device 名稱、sensor 名稱、type 與量值（名稱查不到時以 objid 代替），
   跨日標註與合併筆數附在尾端。簽章另帶 `PrtgSensorCategory`（device 層的 silent 為 null），供跨來源佐證使用。
 - `Magnitude`（分鐘數／往返次數）**不寫進 `Count`**（恆 1）——整日 Down 是 1440，會在排行的次數維度壓過真實事件。
@@ -730,7 +742,8 @@ PRTG 規則是單日判定，跨日語意在 PRTG 路徑自己補（`PrtgCrossDa
 - **刻意配對**：磁碟 I/O 錯誤（硬體在壞）配硬體健康 sensor、空間不足配磁碟可用空間 sensor。
   「I/O 錯誤＋空間快滿」是兩件不相干的事，不當雙重確認。
 - 事件側與 PRTG 側都只看未抑制的簽章；已於 PRTG 確認的 finding 仍參與。
-- 冪等：同 PatternId 已存在（含已抑制清單）就不再加。模式被抑制時文字進 `SuppressedCorrelationAlerts`、不影響風險。
+- 冪等：同 PatternId 已在 `CorrelationAlertRefs` 就不加；模式被抑制時文字進 `SuppressedCorrelationAlerts`（同前綴已在就不重複）、不影響風險。
+  抑制取消後重跑，佐證補進關聯告警並從已抑制清單移除——「曾被抑制」不等於「已存在」。
 - 資料列 `HasCorrelation` 同步更新；風險只升不降，由低升為非低時比照下節標記待補 AI。
 - 只在有新 finding 追加時判定——既有紀錄不回溯，重跑同一天若 finding 早已追加也不補判。
 - `hardware` 內建對照尚無條目，環境未設補充對照時儲存故障模式自然不命中（不另警告）。
@@ -749,7 +762,7 @@ PRTG 規則是單日判定，跨日語意在 PRTG 路徑自己補（`PrtgCrossDa
 
 - 措辭只陳述事實：PRTG 的 Up 只證明主機在線，未回報原因可能在 NetIQ、本機代理或主機對應。
 - 鏡像結構同步時間超過 2 天（或從未同步）時文字加「（鏡像過期）」。
-- 清單只算本頁、sensor 狀態一次查回（device 每批最多 500 個）；儀表板計數卡的提示改為
+- 清單只算本頁、sensor 狀態一次查回（device 每批最多 500 個）；儀表板計數卡的提示顯示為
   「沒回報 ≠ 沒問題；其中 N 台 PRTG 顯示失聯」。儀表板數字在整包摘要快取內，PRTG 鏡像寫入不推進版本戳，**最多落後一個快取 TTL**。
 
 ### finding 對日風險與 AI 的影響

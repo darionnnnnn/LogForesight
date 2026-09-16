@@ -446,7 +446,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.ThresholdsJson).HasColumnName("thresholds_json");
             e.Property(x => x.DependencyObjid).HasColumnName("dependency_objid");
             e.Property(x => x.Paused).HasColumnName("paused");
-            // Category / CategorySource 是 sensor 語意分類欄位，每日結構同步後依 type 對照表自動填入 null 者（category_source=auto），人工值不覆蓋。
+            // Category / CategorySource 是 sensor 語意分類欄位：每日結構同步後依補充對照＋內建對照重算 null 或來源為 auto 的列（category_source=auto），來源非 auto 的人工值不覆蓋（docs/PRTG-SPEC.md §2）。
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(64);
             e.Property(x => x.CategorySource).HasColumnName("category_source").HasMaxLength(16);
             e.Property(x => x.SyncedAt).HasColumnName("synced_at");

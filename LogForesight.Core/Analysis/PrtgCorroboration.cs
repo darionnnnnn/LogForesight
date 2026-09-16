@@ -85,17 +85,19 @@ public static class PrtgCorroboration
         var added = new List<Hit>();
         foreach (var hit in hits)
         {
-            // 冪等：已加過（未抑制進 Refs、或被抑制進已抑制清單）就不再加
-            var alreadyPresent =
-                record.CorrelationAlertRefs.Any(r => string.Equals(r.PatternId, hit.PatternId, StringComparison.Ordinal)) ||
-                record.SuppressedCorrelationAlerts.Any(t => t.StartsWith(hit.Prefix, StringComparison.Ordinal));
-            if (alreadyPresent) continue;
+            // 冪等：未抑制的已進 Refs 就不再加。已抑制清單另外去重——
+            // 不能把「曾被抑制」當成「已存在」，否則取消抑制後重跑，這個佐證永遠補不回來
+            if (record.CorrelationAlertRefs.Any(r => string.Equals(r.PatternId, hit.PatternId, StringComparison.Ordinal))) continue;
 
             if (suppressedPatternIds.Contains(hit.PatternId))
             {
-                record.SuppressedCorrelationAlerts.Add(hit.Text);
+                if (!record.SuppressedCorrelationAlerts.Any(t => t.StartsWith(hit.Prefix, StringComparison.Ordinal)))
+                    record.SuppressedCorrelationAlerts.Add(hit.Text);
                 continue;
             }
+
+            // 抑制已取消：先前留在已抑制清單的同一模式移除，避免同一件事兩邊都有
+            record.SuppressedCorrelationAlerts.RemoveAll(t => t.StartsWith(hit.Prefix, StringComparison.Ordinal));
 
             record.CorrelationAlerts.Add(hit.Text);
             record.CorrelationAlertRefs.Add(new CorrelationAlertRef { Text = hit.Text, PatternId = hit.PatternId });

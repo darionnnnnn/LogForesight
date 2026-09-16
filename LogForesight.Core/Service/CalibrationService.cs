@@ -591,7 +591,7 @@ public sealed class CalibrationService
             StatisticsBasis: "每感測器與每 type 的分位數、平均與標準差以「可用列的每日平均值」為樣本（非每小時值）；HourlyCurve 為各小時段可用列的平均值；可用列＝ok，或 coverage ≥ SampledMinCoverage 的 sampled；流量類（IsVolumeNormalized）的 sampled 值為估算的小時量。"
         );
 
-        // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 目前四條規則門檻現值
+        // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 規則庫全部 PRTG 規則的門檻現值（含適用分類）
         var ruleFrom = anchorDate.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
         var ruleHits = _issueQuery.AggregatePrtgRuleHits(ruleFrom, anchorDate, null);
 

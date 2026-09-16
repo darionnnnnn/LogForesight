@@ -370,8 +370,9 @@ public static class KnownIssueCatalog
     }
 
     /// <summary>
-    /// 依 PRTG 規則代碼找啟用中的 prtg 規則：恰一條就是它；多條時只認 Id 為
-    /// <c>builtin-prtg-{代碼}</c> 的那條，沒有就回 null（不猜是哪一條自訂規則）。
+    /// 依 PRTG 規則代碼找啟用中的 prtg 規則：恰一條就是它；多條時取不限分類（<c>PrtgSensorCategory</c> 為 null）的那條——
+    /// 聚合層跨 sensor 合成一列，說明要講代碼的通用語意，不是某個分類的；不限分類的也有多條時只認
+    /// <c>builtin-prtg-{代碼}</c>，沒有就回 null（不猜是哪一條自訂規則）。
     /// </summary>
     private static KnownIssueRule? FindPrtgRuleByCode(IReadOnlyList<KnownIssueRule> rules, string code)
     {
@@ -383,8 +384,11 @@ public static class KnownIssueCatalog
 
         if (candidates.Count == 1) return candidates[0];
 
+        var uncategorized = candidates.Where(r => r.PrtgSensorCategory == null).ToList();
+        if (uncategorized.Count == 1) return uncategorized[0];
+
         var builtinId = $"builtin-prtg-{code}";
-        return candidates.FirstOrDefault(r => string.Equals(r.Id, builtinId, StringComparison.OrdinalIgnoreCase));
+        return uncategorized.FirstOrDefault(r => string.Equals(r.Id, builtinId, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

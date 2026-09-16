@@ -580,6 +580,15 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     [Fact]
+    public void PlainExplanationFor_PRTG自訂不限分類規則加分類規則時取不限分類那條()
+    {
+        var seedAvailability = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down-availability");
+        var rules = new List<KnownIssueRule> { CustomPrtgDown(), seedAvailability };
+
+        Assert.Equal("自訂規則的白話說明", KnownIssueCatalog.PlainExplanationFor(rules, "PRTG:down", 0));
+    }
+
+    [Fact]
     public void PlainExplanationFor_PRTG未知代碼回null()
     {
         Assert.Null(KnownIssueCatalog.PlainExplanationFor(KnownIssueSeed.CreateRules(), "PRTG:nosuch", 0));
