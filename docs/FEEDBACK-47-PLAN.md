@@ -740,6 +740,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | A-2a | impl-low | 兩輪通過（4354 綠／略過 6，總 4360，+22） | Claude 獨立重跑建置與全套；白名單、CRLF／BOM 以位元組核對；自做突變（冪等判準拿掉「UpdatedAt 等於本次 OccurredAt」→「冪等_同一意圖重送不重寫_換OccurredAt照常寫」轉紅，還原 cmp 相同）；查證 PruneDetails 只清 ContentJson、事實表列保留 | 既有四個方法行為不動、既有測試檔零改動。**口徑決定**：候選日改走事實表後，詳情已清除的日子會進候選日——接受，因為依問題視角／儀表板／待辦的 SQL 聚合本來就算這些日子，舊寫法建案時跳過它們，讓儀表板上永遠掛未處理。第一輪退回：取消模式只查案件連結日期範圍，範圍外但屬於本案件的列會漏（改依 case_id 批次精確查 `GetByCases`）。第二輪執行端以「介面預設實作擲例外」避開白名單外私有替身——不接受，Claude 親改：拿掉預設實作、`RerunDateFinderTests` 私有替身補一個回空的方法。建置出現的 CS8629 警告在 `CalibrationServiceTests.cs:1190`，為第 46 輪既有，本輪未碰 |
 | A-2b | impl-low | 一輪通過（4385 綠／略過 6，總 4391，+31） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；確認 EF 真實 SQLite 上部分唯一索引衝突擲 `DbUpdateException`（並發建單退路成立）；自做突變（範圍聯集不併入來單群組→聯集 Theory 兩組轉紅，還原 cmp 相同） | 執行端兩處合理偏離接受：主機存在性以一次 `GetAll` 驗（逐成員 `FindByName` 會線性增長）；多加「成員 IssueKey 必須解析回單的來源與 EventId」檢查。Claude 親改一行：結案事件的操作者帳號由空字串改為 `AuditActions.SystemAccount`，與整併器寫入的系統事件一致。留意：`MembersInto` 先寫新案件逐日列、後存改連／改派案件，中間失敗沒有測試（不會產生零成員單） |
 | A-3 | impl-low | 一輪通過（4433 綠／略過 6，總 4439，+48） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；確認候選人來源內部建的能力解析器有帶入問題檔案相依；自做突變（拿掉問題檔案相依）→**原 6 條測試全數存活**，證實缺口 | Claude 親補一條「只有問題負責人身分也收入」測試，突變後轉紅、還原 cmp 相同——沒有這條，能力解析漏帶問題檔案時所有純問題負責人會靜默消失於候選外，⑤ 派不出去。執行端三處偏離接受：靜音區間字典鍵改用 `IssueProfile.KeyOf` 回傳的 tuple（規格自相矛盾，B-1 沿用 tuple）；能力解析器在 DI 是 Scoped，候選人來源（Singleton）以同一批 Singleton store 內部建一份（規則未複製）；多問題單 `RegisterOrder` 不進索引但計單數。留意：`GetResolvedSince` 走 `closed_at`＋`status` 無前導索引，每趟一次掃案件表，放量後若慢再加索引 |
+| A-4 | impl-low | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
@@ -766,6 +767,16 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | 定案 12：`HostVisibilityResolver` 下沉到 Core | 規則內判斷「看得到全部主機」依賴 Web 的 `RoleCapabilityMap`／`Capability`；搬到 Core 要連能力列舉一起搬，牽動全站 `[Permission]` 標註。派工另需「具處理能力」判斷，也是 Web 規則（`UserCapabilityResolver`） | **規則留在 Web**。Core 定義 `IDispatchCandidateSource`，Web 實作：每趟執行前以既有規則算出候選人快照（具 Handle 者、是否在池、是否暫停、池成員各自可見主機），當資料交給 Core。`AnalysisOrchestrator` 沒有自訂建構子且測試不直接建構，A-4 以 DI 注入零測試牽動。規則仍只有一份；CLAUDE.md 的新紅線改寫為「Core 不得複製可見範圍或能力規則」 |
 | 派工閘門、④⑤⑥ 由 A-4 在掛接流程內逐層判斷 | 同一套判斷還要給 C-2 待派試跑用 | 全部決策收進純函式 `WorkOrderDispatcher.Decide`（不改脈絡），夜間流程與試跑共用；本趟增量由呼叫端 `Commit`／`RegisterOrder` |
 | ⑤ 負責人要看得到主機 | 問題負責人的可見範圍規則本來就包含「出現過該問題的主機」 | ⑤ 不檢查可見主機、不要求在池，只排除停用、無處理能力、暫停接單者；全部不可用時落到 ⑥ |
+
+### A-4 設計修正（寫規格時，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| ⓪ 靜音排在 ① 之前，靜音日連既有案件都不掛 | 靜音日由推導視同已有結論；②③ 掛入既有案件或套機房結論不會讓它回到待辦，擋掉反而讓案件 `LastLinkedDate` 停滯 | ⓪ 只擋新派工（④⑤⑥），②③ 不受影響 |
+| 每個執行單位各建一份派工脈絡 | 本機、NetIQ、PRTG 三路**並行**共用同一個 `AnalysisRunContext`；各建一份會讓兩路同時為同一人同一問題建單、負載各算各的 | 一趟一份 `NightlyDispatch`，三路共用，決策＋建單＋寫入整段在脈絡鎖內；鎖以「替身在寫入時斷言鎖已持有」驗證，不用壓力測試 |
+| 夜間派工寫稽核 `work_order_auto_attach`／`work_order_auto_dispatch` | 稽核在 Web，Core 的夜間流程沒有稽核寫入端 | 夜間留痕改為交辦單事件：建單時 `created`、趟末每張有新增的單一筆 `appended`（`MemberDelta`＝本趟台數）；執行紀錄一行摘要 |
+| 夜間建的負責人單「續掛」 | 自動派工的處理人不一定看得到全部主機，範圍續掛會掛到他看不到的主機 | 夜間建的單一律 `Hosts`＋不續掛；同問題新主機由 ⑤／⑥ 的「該人已有此問題進行中單→掛入」接上 |
+| 「不再打擾」只在負責人建案 | 原規則寫在 `AttachNewDay` 內 | 搬成派工閘門 `gate_dismissed`，對續掛、負責人、自動派工一律適用；逐主機延遲載入一次 |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
