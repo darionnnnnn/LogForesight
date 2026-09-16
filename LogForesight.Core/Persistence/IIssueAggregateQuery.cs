@@ -246,6 +246,8 @@ public interface IIssueAggregateQuery
 /// <summary>
 /// PRTG 規則命中的分組聚合結果（A2）
 /// </summary>
+public sealed record PrtgHitDateRow(string EventKey, DateTime RecordDate);
+
 public sealed record PrtgRuleHitAggregate(string RuleCode, DateTime Date, int HitCount, int HostCount);
 
 public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);

@@ -1185,12 +1185,60 @@ public class PrtgDailyPipelineTests : IDisposable
         });
         MapDeviceToHost(day, 1, host);
 
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
+        });
+
         var (ctx, _, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
             new[] { today, day }, Task.CompletedTask, guard: null);
 
-        Assert.Contains(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        // 連通性分類 → 挑到 availability 規則（門檻 30、重大）→ 日風險「高」
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
+        Assert.Equal(RiskLevels.High, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
+    }
+
+    [Fact]
+    public async Task 非連通性sensorDown_走不限分類規則_日風險只到中()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TRAFFIC", Active = true, IpAddress = "192.168.1.112" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-TRAFFIC", Ip = "192.168.1.112" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Traffic", SensorType = "SNMP Traffic 64bit", Status = "Down", Category = PrtgSensorCategories.Traffic }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(22).AddMinutes(30), Status = "Down" }
+        });
+        MapDeviceToHost(day, 1, host);
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
+        });
+
+        var (ctx, _, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        Assert.Equal("builtin-prtg-down", sig.RuleId);
+        Assert.False(sig.ElevatesDayRisk);
+        Assert.Equal(RiskLevels.Medium, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
     }
 
     [Fact]

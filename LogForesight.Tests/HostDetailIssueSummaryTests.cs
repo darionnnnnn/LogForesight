@@ -39,7 +39,8 @@ public class HostDetailIssueSummaryTests : IDisposable
             _issueHandlingStore,
             _caseStore,
             new FakeNoiseMarkStore(),
-            new FakeRuleStore(),
+            // 詳情頁的知識庫面板依 RuleId 反查規則庫，替身要帶內建種子才查得到
+            new FakeRuleStore { Content = new RuleFileContent { Rules = KnownIssueSeed.CreateRules() } },
             FakeCurrentUser.WithCapabilities(),
             _settingsStore);
     }
@@ -256,5 +257,23 @@ public class HostDetailIssueSummaryTests : IDisposable
         var result = _service.GetHostIssueOccurrences(host.HostId, "disk", 153, days: 30);
 
         Assert.Empty(result.Occurrences);
+    }
+
+    /// <summary>PRTG finding 的 RuleId 是規則庫 Id，詳情頁據此反查得到知識庫面板（規劃 A1 驗收）。</summary>
+    [Fact]
+    public void 詳情頁_PRTG_finding依RuleId掛出知識庫面板()
+    {
+        var host = AddHost("HOST-PRTG");
+        var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down-availability");
+        var finding = PrtgFindingMapper.ToSignature(
+            new PrtgFinding(1, 2001, PrtgRuleEvaluator.RuleDown, "[HOST-PRTG] Ping（Ping）持續 Down 達 90 分鐘", 90, rule), DateTime.Today);
+        AddRecord(host, DateTime.Today, "高", finding);
+
+        var detail = _service.GetDetail(host.HostId, DateTime.Today);
+
+        var issue = Assert.Single(detail.TopIssues);
+        Assert.NotNull(issue.Guidance);
+        Assert.Equal(rule.PlainExplanation, issue.Guidance!.Explanation);
+        Assert.Equal(rule.NextSteps, issue.Guidance.NextSteps);
     }
 }

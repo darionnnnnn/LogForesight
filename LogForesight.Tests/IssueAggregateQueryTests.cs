@@ -766,4 +766,23 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(2, recorder.TopIssueReads);
         Assert.Equal(new[] { "prtg:down:0", "prtg:down:599" }, result.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void GetPrtgFindingHitDates_兩個後端都翻譯得出來且在SQL端篩選(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var sql = EfIssueAggregateQuery.BuildPrtgHitDatesQuery(
+            ctx.TopIssues, new[] { "prtg:down:1", "prtg:warning:2" }, new DateTime(2026, 8, 1), new DateTime(2026, 8, 15)).ToQueryString();
+
+        Assert.Contains("DISTINCT", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PRTG", sql);
+        Assert.Contains("IN (", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("client", sql, StringComparison.OrdinalIgnoreCase);
+    }
 }

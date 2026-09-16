@@ -1076,6 +1076,17 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>EventKey 清單每批上限：SQL Server 單一語句參數上限 2100，留足餘裕。</summary>
     internal const int PrtgHitDateBatchSize = 500;
 
+    /// <summary>跨日命中日期的單批查詢：SQL 端過濾來源、鍵與日期並取相異組合，不得撈整表回記憶體再篩。
+    /// 抽成 builder 讓兩個後端的翻譯各有測試守住（SQL Server 的 IN 展開與日期比較）。</summary>
+    internal static IQueryable<PrtgHitDateRow> BuildPrtgHitDatesQuery(
+        IQueryable<TopIssueRow> topIssues, IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive) =>
+        topIssues
+            .Where(x => x.LogName == PrtgFindingMapper.PrtgLogName
+                        && x.RecordDate >= fromInclusive && x.RecordDate < toExclusive
+                        && eventKeys.Contains(x.EventKey))
+            .Select(x => new PrtgHitDateRow(x.EventKey, x.RecordDate))
+            .Distinct();
+
     public Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
         IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive)
     {
@@ -1090,14 +1101,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
         foreach (var batch in keys.Chunk(PrtgHitDateBatchSize))
         {
-            // SQL 端過濾來源、鍵與日期並取相異組合，不得撈整表回記憶體再篩
-            var rows = ctx.TopIssues.AsNoTracking()
-                .Where(x => x.LogName == PrtgFindingMapper.PrtgLogName
-                            && x.RecordDate >= f && x.RecordDate < t
-                            && batch.Contains(x.EventKey))
-                .Select(x => new { x.EventKey, x.RecordDate })
-                .Distinct()
-                .ToList();
+            var rows = BuildPrtgHitDatesQuery(ctx.TopIssues.AsNoTracking(), batch, f, t).ToList();
 
             foreach (var row in rows)
             {

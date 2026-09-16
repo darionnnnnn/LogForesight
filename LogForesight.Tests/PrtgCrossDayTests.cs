@@ -171,4 +171,20 @@ public class PrtgCrossDayTests
         Assert.Equal(IssueSeverity.Medium, b.Severity);
         Assert.Equal("原始說明", b.SampleMessages[0]);
     }
+
+    [Fact]
+    public void 連續天數跨月計算正確()
+    {
+        var day = new DateTime(2026, 10, 2);
+        var sig = Sig("warning", IssueSeverity.Medium);
+        var hits = new Dictionary<string, HashSet<DateTime>>
+        {
+            [sig.EventKey] = new() { new DateTime(2026, 9, 30), new DateTime(2026, 10, 1) }
+        };
+
+        var (escalated, _) = PrtgCrossDay.Apply(new[] { sig }, hits, day);
+
+        Assert.Equal(1, escalated);
+        Assert.EndsWith("近 14 日第 3 次，連續第 3 日", sig.SampleMessages[0]);
+    }
 }
