@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { toast, withBusy, icon } from '../core/ui.js';
+import { toast, withBusy, icon, guardLoad, renderLoading } from '../core/ui.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
 /** 沒有指定圖示的章節（理論上不會發生，manifest 十四章都已配置）退回這個通用圖示 */
@@ -17,7 +17,19 @@ let chapters = [];
 let chapterById = new Map();
 let currentId = null;
 
+/**
+ * 目錄與內容兩塊都是空的 div（回饋第 45 輪 B7）：manifest 還沒回來之前整頁空白，
+ * 看起來像手冊沒有內容而不是還在載入。兩塊一起放骨架列，失敗時一起收掉。
+ */
 async function load() {
+    const navEl = document.getElementById('help-chapter-nav');
+    const contentEl = document.getElementById('help-chapter-content');
+    renderLoading(navEl, 6);
+    renderLoading(contentEl, 5);
+    await guardLoad([contentEl, navEl], loadManual);
+}
+
+async function loadManual() {
     const manual = await api.get('/api/help/manual');
     chapters = manual.chapters;
     chapterById = new Map(chapters.map(c => [c.id, c]));

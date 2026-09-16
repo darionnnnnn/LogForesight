@@ -200,6 +200,13 @@ internal static class SchemaUpgrader
             "IX_lf_prtg_state_ch_sensor", "sensor_objid, changed_at");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
             "IX_lf_prtg_state_ch_created", "created_at");
+        // changed_at 單欄索引（回饋四十五輪 B5）：狀態變更的查詢主力是「某個時間區間內的全部變更」
+        // （鏡像頁摘要的 Max(changed_at)、風險判定取區間），前導欄是 sensor_objid 的既有複合索引
+        // 對這種查詢用不上，只能全表掃描。
+        // 寫入成本誠實交代：這張表是夜間批次大量寫入，多一個索引就多一份維護成本；
+        // 取捨是「夜間批次多付一點、白天使用者查詢快很多」。
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
+            "IX_lf_prtg_state_ch_changed", "changed_at");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
             isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
@@ -207,6 +214,12 @@ internal static class SchemaUpgrader
             "IX_lf_prtg_values_uniq", "sensor_objid, period_start", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_created", "created_at");
+        // period_start 單欄索引（回饋四十五輪 B5）：數值查詢一律以時間區間為條件
+        // （鏡像頁摘要的 Max(period_start)、校準與風險的區間取數），而既有 UNIQUE 索引的前導欄
+        // 是 sensor_objid，不帶 sensor 條件的區間查詢完全吃不到它。
+        // 寫入成本同上：這是全站資料量最大的一張表、夜間批次整批寫，索引維護成本換白天查詢速度。
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
+            "IX_lf_prtg_values_period", "period_start");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_host_map",
             isSqlite ? SqliteCreatePrtgHostMap : SqlServerCreatePrtgHostMap);

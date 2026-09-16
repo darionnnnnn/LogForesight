@@ -15,7 +15,10 @@ public interface ISystemSettingsStore
 /// <summary><see cref="ISystemSettingsStore"/> 的實作，共用邏輯見 <see cref="JsonBlobSingleton{T}"/>。</summary>
 public class SystemSettingsStore : JsonBlobSingleton<SystemSettings>, ISystemSettingsStore
 {
-    public SystemSettingsStore(EfJsonBlobStore blob) : base(blob) { }
+    /// <summary>開啟版本探測快取：全站設定在單一請求內會被讀取數十次，
+    /// 而它的寫入頻率極低。<see cref="JsonBlobSingleton{T}"/> 的快取只省「讀內容」那一趟，
+    /// 每次 Get 仍反序列化出新物件，讀→改→寫的呼叫端（SystemSettingsService）不受影響。</summary>
+    public SystemSettingsStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
     protected override void Touch(SystemSettings value) => value.UpdatedAt = DateTime.Now;
 

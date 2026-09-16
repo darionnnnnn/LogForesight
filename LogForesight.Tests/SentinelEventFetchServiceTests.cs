@@ -9,6 +9,7 @@ namespace LogForesight.Tests;
 /// IpAddress）、Sentinel 設定查無資料。實際的 Sentinel HTTP 查詢行為由
 /// <see cref="SentinelClient"/> 自己的測試（SentinelClientTests）覆蓋，這裡不重複。
 /// </summary>
+[Collection("SentinelLiveFetchCacheState")]
 public class SentinelEventFetchServiceTests : IDisposable
 {
     private readonly EfSqliteFixture _fixture = new();

@@ -6,7 +6,7 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
@@ -94,10 +94,10 @@ async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
     selectedIssueKeys.clear();
 
-    const [detail, user, aiStatus, displaySettings] = await Promise.all([
+    const [detail, user, aiReady, displaySettings] = await Promise.all([
         api.get(`/api/records/${hostId}/${date}`),
         getCurrentUser(),
-        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        getAiAvailable(),
         getDisplaySettings()
     ]);
     // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/archive/HISTORY.md S1）：
@@ -108,7 +108,7 @@ async function load() {
     // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
     // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
     currentUserId = user.userId;
-    aiAvailable = !!aiStatus?.available;
+    aiAvailable = aiReady;
 
     const allowed = allowedSeverities();
     if (activeSeverities === null) {
@@ -150,28 +150,26 @@ async function onBatchSaved(result) {
 
 /**
  * 「下一筆未處理」捷徑：處理完一天後不必手動返回清單再自己找下一筆。
- * 沿用問題查詢的緊急程度排序（未結案的高＋中風險日），跳到目前這筆之後的下一筆。
- * 目前這筆已不在未處理清單（剛結案）時，跳到清單第一筆；全部處理完則按鈕不顯示。
+ * 「下一筆是哪一筆」全由後端決定（/api/records/next-unhandled，沿用問題查詢的緊急程度排序
+ * 與未結案的高＋中風險日條件）——前端拿到什麼就連到什麼，不再把整份清單拉回來自己找。
+ * 沒有下一筆（全部處理完／已是最後一筆）時後端回 null，按鈕不顯示。
+ *
+ * 刻意在主要內容載入完成之後才發出、而且不被 await：這條捷徑走的是記錄查詢的慢路徑，
+ * 串在主載入流程裡會讓整頁陪它一起等。取不到就不顯示捷徑，不打斷詳情頁。
  */
 async function setupNextUnhandled() {
     const button = document.getElementById('next-unhandled');
     if (!button) return;
 
-    let items;
+    let next;
     try {
-        const result = await api.get(
-            `/api/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&pageSize=200`,
+        next = await api.get(
+            `/api/records/next-unhandled?hostId=${encodeURIComponent(hostId)}&date=${encodeURIComponent(date)}`,
             { silent: true });
-        items = result.items;
     } catch {
         return;   // 取不到就不顯示捷徑，不打斷詳情頁
     }
 
-    if (!items || items.length === 0) return;
-
-    const currentIndex = items.findIndex(r => r.hostId === hostId && r.date === date);
-    // 目前這筆還在未處理清單 → 取它之後的下一筆；已不在（剛結案）→ 取第一筆
-    const next = currentIndex >= 0 ? items[currentIndex + 1] : items[0];
     if (!next) return;   // 這是最後一筆未處理
 
     button.href = appUrl(`/records/${next.hostId}/${next.date}`);
@@ -416,6 +414,8 @@ function priorHandlingTrigger(issue) {
                 body: issueHistoryBody(history),
                 size: 'modal-lg'
             });
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }
@@ -1960,13 +1960,14 @@ function aiInterpretPanel(issue) {
                 output.classList.add('text-muted');
             } else {
                 renderAiText(output, result.text, { badge: 'AI 判讀', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
+                // 只有真的拿到判讀結果才鎖：逾時或回空時鎖死，使用者只能重整整頁才能再試一次
+                button.disabled = true;
             }
         } catch {
             output.textContent = 'AI 目前無法判讀這個問題。';
             output.classList.add('text-muted');
         } finally {
             restore();
-            button.disabled = true;   // 判讀過就不重複呼叫
         }
     });
 

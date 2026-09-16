@@ -4,7 +4,10 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines } from '../core/ui.js';
+import {
+    toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
+    guardLoad, renderSpinner
+} from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
@@ -50,7 +53,18 @@ const DAY_RISK_LEVELS = ['高', '中', '低'];
 
 let current = null;
 
+/**
+ * 載入指示掛在「最後更新」那行（回饋第 45 輪 B7）：本頁是一整片表單，不能拿骨架列
+ * 把表單節點換掉（renderLoading 會 replaceChildren，表單連同已綁的事件都會消失），
+ * 因此用行內 spinner；失敗時同一個容器換成可重試的失敗狀態。
+ */
 async function load() {
+    const statusEl = document.getElementById('settings-updated');
+    renderSpinner(statusEl, '載入設定中…');
+    await guardLoad(statusEl, loadSettings);
+}
+
+async function loadSettings() {
     current = await api.get('/api/admin/settings');
     renderSeverityChecks(current.unhandledSeverities);
     renderDisplayModeButtons(current.severityDisplayMode);
@@ -545,6 +559,9 @@ function renderMailFields(settings) {
     document.getElementById('mail-suspended-recipients-list').textContent = suspended.join('、');
 }
 
+/** 慢查詢清單的長度上限，與後端 SqlPerformanceMonitor.TopSlowCapacity 同值 */
+const SLOW_QUERY_TOP_N = 10;
+
 /** 一行一位、去除空白行——與後端 SystemSettingsService.NormalizeLines 對齊的寬鬆解析 */
 function collectMailRecipients() {
     return collectLines('mail-recipients');
@@ -561,6 +578,10 @@ async function loadBackfillStatus() {
     const el = document.getElementById('backfill-status');
     try {
         const detail = await api.get('/api/health/detail', { silent: true });
+
+        // 同一次 /api/health/detail 也帶著資料層慢查詢清單，順手渲染（不必為它多打一次）
+        renderSlowQueries(detail.topSlowOperations);
+
         if (!detail.backfillInProgress) return;
 
         el.textContent = `問題聚合欄背景回填進行中（${detail.backfillDone} / ${detail.backfillTotal}）——` +
@@ -569,6 +590,90 @@ async function loadBackfillStatus() {
     } catch {
         // 靜默：見函式註解
     }
+}
+
+/**
+ * 慢查詢區塊的容器。頁面骨架裡沒有這個節點（它是純維運資訊，不佔靜態版面），
+ * 第一次要顯示時才建在「資料保留」面板的回填狀態之後——那裡已經是 /api/health/detail
+ * 的既有讀取點，維運資訊集中在同一處比另開一頁好找。
+ */
+function resolveSlowQueryHost() {
+    const existing = document.getElementById('slow-query-status');
+    if (existing) return existing;
+
+    const anchorEl = document.getElementById('backfill-status');
+    if (!anchorEl) return null;
+
+    const host = document.createElement('div');
+    host.id = 'slow-query-status';
+    host.className = 'alert alert-secondary';
+    host.setAttribute('role', 'status');
+    anchorEl.insertAdjacentElement('afterend', host);
+    return host;
+}
+
+/** 慢查詢區塊的文字（清單為空時顯示這一句，而不是一張空表） */
+export const SLOW_QUERY_EMPTY_TEXT = '尚無慢查詢';
+
+/**
+ * 資料層慢查詢：最慢的前幾支操作（回饋四十五輪 B6）。
+ * 只有「最慢的那一筆」時，管理者知道「最慢 7 秒」卻不知道是哪幾支慢、各慢幾次，
+ * 沒辦法決定要去看哪一頁；這裡列出名稱、次數、最大耗時與最近一次發生時間。
+ * **清單為空時顯示「尚無慢查詢」**，不是一張只有表頭的空表——空表會讓人以為載入失敗。
+ */
+export function renderSlowQueries(items, host = resolveSlowQueryHost()) {
+    if (!host) return null;
+
+    host.replaceChildren();
+    host.classList.remove('d-none');
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold mb-2';
+    title.textContent = `資料層慢查詢（最慢 ${SLOW_QUERY_TOP_N} 支）`;
+    host.appendChild(title);
+
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'text-muted';
+        empty.dataset.slowQueryEmpty = '1';
+        empty.textContent = SLOW_QUERY_EMPTY_TEXT;
+        host.appendChild(empty);
+        return host;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm mb-0';
+    table.id = 'slow-query-table';
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const text of ['操作', '次數', '最大耗時', '最近一次']) {
+        const th = document.createElement('th');
+        th.textContent = text;
+        headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (const item of list) {
+        const tr = document.createElement('tr');
+        for (const text of [
+            item.operation ?? '',
+            formatNumber(item.count ?? 0),
+            `${formatNumber(item.maxMs ?? 0)} ms`,
+            item.lastAt ? formatDateTime(item.lastAt) : ''
+        ]) {
+            const td = document.createElement('td');
+            td.textContent = text;
+            tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    host.appendChild(table);
+    return host;
 }
 
 /**

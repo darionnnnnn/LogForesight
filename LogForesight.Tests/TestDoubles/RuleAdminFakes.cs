@@ -81,9 +81,14 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public (IReadOnlyCollection<(string Source, int EventId)> Issues, DateTime From, DateTime To)? LastHostIdsForCall { get; private set; }
 
+    /// <summary>HostIdsFor 累計呼叫次數（回饋四十五輪 B4）：供測試斷言問題負責人可見範圍的
+    /// 跨請求快取真的擋掉了第二次聚合查詢。</summary>
+    public int HostIdsForCallCount { get; private set; }
+
     public HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
     {
         LastHostIdsForCall = (issues, from, to);
+        HostIdsForCallCount++;
         return HostIdsForResult;
     }
 

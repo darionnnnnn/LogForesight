@@ -32,6 +32,7 @@ public class SettingsController : ControllerBase
     private readonly StorageBackend? _backend;
     private readonly IHostStore? _hosts;
     private readonly PrtgSnapshotHostedService? _snapshot;
+    private readonly PrtgDeviceIndexCache? _deviceIndexCache;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -43,7 +44,8 @@ public class SettingsController : ControllerBase
         IPrtgHostMapRefresher? mapRefresher = null,
         StorageBackend? backend = null,
         IHostStore? hosts = null,
-        PrtgSnapshotHostedService? snapshot = null)
+        PrtgSnapshotHostedService? snapshot = null,
+        PrtgDeviceIndexCache? deviceIndexCache = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -55,6 +57,7 @@ public class SettingsController : ControllerBase
         _mapRefresher = mapRefresher;
         _backend = backend;
         _snapshot = snapshot;
+        _deviceIndexCache = deviceIndexCache;
     }
 
     [HttpGet]
@@ -137,8 +140,13 @@ public class SettingsController : ControllerBase
         if (_prtgProbe == null)
             throw DomainException.Validation("PRTG 探測服務未啟用。");
 
-        if (!_prtgProbe.TryStart(out var error))
-            throw DomainException.Validation(error ?? "無法啟動 PRTG 探測。");
+        if (!_prtgProbe.TryStart(out var error, out var isConflict))
+        {
+            // 與回填、結構同步同一套：被另一個執行擋下是 409，設定不齊是 400（§7.2）
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動 PRTG 探測。");
+        }
 
         _audit.Record(
             action: AuditActions.PrtgProbeRun,
@@ -162,8 +170,14 @@ public class SettingsController : ControllerBase
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
 
-        if (!_prtgBackfill.TryStart(out var error))
-            throw DomainException.Validation(error ?? "無法啟動 PRTG 歷史回填。");
+        if (!_prtgBackfill.TryStart(out var error, out var isConflict))
+        {
+            // 被互斥擋下（探測／取數／結構同步／回填自己在跑）是狀態衝突，回 409；
+            // 設定或前提不齊仍是 400。與結構同步端點同一套分支。
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動 PRTG 歷史回填。");
+        }
 
         _audit.Record(
             action: AuditActions.PrtgBackfillRun,
@@ -652,21 +666,13 @@ public class SettingsController : ControllerBase
             .Take(normPageSize)
             .ToList();
 
-        var allDevices = store.GetAllDevices();
-        var devicesByObjid = allDevices.ToDictionary(d => d.Objid);
-
-        var devicesByNormIp = new Dictionary<string, List<PrtgDeviceRow>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in allDevices)
-        {
-            var normIp = PrtgHostMapper.NormalizeIp(d.Ip);
-            if (normIp == null) continue;
-            if (!devicesByNormIp.TryGetValue(normIp, out var list))
-            {
-                list = new List<PrtgDeviceRow>();
-                devicesByNormIp[normIp] = list;
-            }
-            list.Add(d);
-        }
+        // 裝置索引（objid → 裝置、正規化 IP → 同 IP 裝置）改走短 TTL 的跨請求快取
+        // （回饋四十五輪 B5）：原本每翻一頁都把裝置全表讀回來重建一次索引，
+        // 而裝置表是結構鏡像、一天只在夜間同步時變一次。
+        // 沒注入快取時（單元測試直接 new controller）退回「當場建一份」，行為完全相同。
+        var deviceIndex = _deviceIndexCache != null
+            ? _deviceIndexCache.GetOrAdd(PrtgDeviceIndexCache.GlobalKey, () => store.GetAllDevices())
+            : new PrtgDeviceIndex(store.GetAllDevices());
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
         var activeHosts = hostStore.GetAll()
@@ -689,22 +695,18 @@ public class SettingsController : ControllerBase
         var items = new List<PrtgConflictItemDto>(pagedRows.Count);
         foreach (var row in pagedRows)
         {
-            devicesByObjid.TryGetValue(row.DeviceObjid, out var device);
+            var device = deviceIndex.ByObjid(row.DeviceObjid);
             var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
 
-            List<PrtgDeviceRow>? sameDevices = null;
-            if (normIp != null)
-            {
-                devicesByNormIp.TryGetValue(normIp, out sameDevices);
-            }
+            var sameDevices = deviceIndex.ByNormIp(normIp);
 
-            var isMultiDevice = sameDevices != null && sameDevices.Count > 1;
+            var isMultiDevice = sameDevices.Count > 1;
             var conflictKind = isMultiDevice ? "multi-device" : "multi-host";
 
             List<PrtgConflictDeviceDto> sameIpDevices;
             if (isMultiDevice)
             {
-                sameIpDevices = sameDevices!
+                sameIpDevices = sameDevices
                     .Select(d => new PrtgConflictDeviceDto
                     {
                         Objid = d.Objid,

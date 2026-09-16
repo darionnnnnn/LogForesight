@@ -368,9 +368,12 @@ public class RunsPageUiTests
         Assert.Contains("runNowButton?.classList.toggle('d-none', status.isRunning)", js);
         Assert.Contains("stopButton?.classList.toggle('d-none', !status.canStop)", js);
 
-        // AI 卡：兩顆啟動鈕改為隱藏，不再只是 disabled
-        Assert.Contains("document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', status.isRunning)", js);
-        Assert.Contains("document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', status.isRunning)", js);
+        // AI 卡：兩顆啟動鈕改為隱藏，不再只是 disabled。
+        // 回饋四十五輪 A2/C1、C2 後隱藏條件擴充成三因子的 OR（`hideAiStart`），條件本身的斷言
+        // 在 AI卡啟動鈕隱藏條件含三個因子；這裡守的是「用 d-none 而非 disabled」。
+        Assert.Contains("document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', hideAiStart)", js);
+        Assert.Contains("document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', hideAiStart)", js);
+        Assert.Contains("hideAiStart = status.isRunning ||", js);
         Assert.DoesNotContain("runNowBtn.disabled = status.isRunning", js);
         Assert.DoesNotContain("forceBtn.disabled = status.isRunning", js);
     }
@@ -391,11 +394,12 @@ public class RunsPageUiTests
         Assert.Contains("prtg-disabled-hint", js);
 
         // 兩處輪詢各自也要看模組開關，否則會把閘打開
-        Assert.Contains("status.isRunning || prtgModuleEnabled === false", js);
-        Assert.Contains("startButton.disabled = prtgModuleEnabled === false", js);
+        // 回饋四十五輪 A2/C4：三態收緊成只認明確 true（null 未知一律視為未啟用）
+        Assert.Contains("status.isRunning || prtgModuleEnabled !== true", js);
+        Assert.Contains("startButton.disabled = prtgModuleEnabled !== true", js);
 
         // 立即執行前的提醒：只在「連線已設定但未啟用」時問，沒設定 PRTG 的站台不該每次被問
-        Assert.Contains("prtgModuleEnabled === false && prtgConnectionConfigured", js);
+        Assert.Contains("prtgModuleEnabled !== true && prtgConnectionConfigured", js);
         Assert.Contains("hasPrtgConnection", js);
     }
 
@@ -446,6 +450,223 @@ public class RunsPageUiTests
         Assert.Contains("已送出停止，回填會在目前這一步結束後停下", js);
         // 權限守門：同步與回填兩顆停止鈕的輪詢切換都要看 canMaintainSchedule
         Assert.Equal(2, CountOccurrences(js, "cancelBtn && canMaintainSchedule"));
+    }
+
+    // ── 回饋四十五輪 A2：排程作業頁按鈕顯示規則與防護 ───────────────────────────
+    // 以下測試一律「先擷取目標函式／容器主體再斷言」：全檔 Assert.Contains 只要檔案任一角落
+    // 出現過就通過，偵測不到「條件寫在錯的函式裡」。
+
+    /// <summary>
+    /// 從 `宣告token` 起，以大括號配對擷取該函式（或事件處理）的主體。
+    /// 字串／樣板字面值裡的大括號會干擾配對，這裡只需粗略範圍，故忽略字串內容但排除註解行不必要。
+    /// </summary>
+    private static string ExtractBlock(string js, string declToken)
+    {
+        var start = js.IndexOf(declToken, StringComparison.Ordinal);
+        if (start < 0) return string.Empty;
+
+        var open = js.IndexOf('{', start);
+        if (open < 0) return string.Empty;
+
+        var depth = 0;
+        for (var i = open; i < js.Length; i++)
+        {
+            if (js[i] == '{') depth++;
+            else if (js[i] == '}')
+            {
+                depth--;
+                if (depth == 0) return js[start..(i + 1)];
+            }
+        }
+        return string.Empty;
+    }
+
+    /// <summary>擷取包住 <paramref name="innerMarker"/> 的最內層 &lt;div ...&gt;…&lt;/div&gt; 容器片段。</summary>
+    private static string ExtractDivContaining(string html, string innerMarker, string openMarker)
+    {
+        var inner = html.IndexOf(innerMarker, StringComparison.Ordinal);
+        if (inner < 0) return string.Empty;
+
+        var start = html.LastIndexOf(openMarker, inner, StringComparison.Ordinal);
+        if (start < 0) return string.Empty;
+
+        var depth = 0;
+        var i = start;
+        while (i < html.Length)
+        {
+            var nextOpen = html.IndexOf("<div", i, StringComparison.Ordinal);
+            var nextClose = html.IndexOf("</div>", i, StringComparison.Ordinal);
+            if (nextClose < 0) return string.Empty;
+
+            if (nextOpen >= 0 && nextOpen < nextClose)
+            {
+                depth++;
+                i = nextOpen + 4;
+            }
+            else
+            {
+                depth--;
+                if (depth == 0) return html[start..(nextClose + 6)];
+                i = nextClose + 6;
+            }
+        }
+        return string.Empty;
+    }
+
+    private static string ReadRunsJs() =>
+        File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+    private static string ReadRunsCshtml() =>
+        File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+
+    /// <summary>C1＋C2：AI 卡兩顆啟動鈕的隱藏條件＝AI 自己執行中 ∪ 取數執行中 ∪ AI 未設定。</summary>
+    [Fact]
+    public void AI卡啟動鈕隱藏條件含三個因子()
+    {
+        var js = ReadRunsJs();
+        var body = ExtractBlock(js, "function applyAiScheduleStatus(");
+        Assert.False(string.IsNullOrWhiteSpace(body), "擷取不到 applyAiScheduleStatus 主體");
+
+        // 三個因子都要在同一個 OR 運算式裡。AI 可用性是三態：null＝還沒問到，
+        // 此時**不得**隱藏（把「還不知道」畫成「已知是關的」），所以比對的是明確的 false。
+        Assert.Contains("status.isRunning || fetchRunning || aiAvailable === false", body);
+        Assert.DoesNotContain("|| !aiAvailable", body);
+        // 取數狀態未知（null）時不算執行中——只認明確 true
+        Assert.Contains("fetchScheduleRunning === true", body);
+        // 兩顆啟動鈕都吃這個結果
+        Assert.Contains("getElementById('schedule-ai-run-now')?.classList.toggle('d-none', hideAiStart)", body);
+        Assert.Contains("getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', hideAiStart)", body);
+
+        // 取數狀態由取數卡的渲染寫入，不另打 API
+        var fetchBody = ExtractBlock(js, "function applyScheduleStatus(");
+        Assert.False(string.IsNullOrWhiteSpace(fetchBody), "擷取不到 applyScheduleStatus 主體");
+        Assert.Contains("fetchScheduleRunning = status.isRunning;", fetchBody);
+    }
+
+    /// <summary>C3：說明元素在 AI 卡按鈕列容器內，且由 runs.js 的說明渲染函式負責。</summary>
+    [Fact]
+    public void AI卡按鈕列內有說明元素且由渲染函式驅動()
+    {
+        var cshtml = ReadRunsCshtml();
+        var actions = ExtractDivContaining(
+            cshtml, "id=\"schedule-ai-force-rerun\"",
+            "<div class=\"d-flex flex-wrap align-items-center gap-2 lf-run-actions\" data-maintain-only>");
+        Assert.False(string.IsNullOrWhiteSpace(actions), "擷取不到 AI 卡的 .lf-run-actions 容器");
+        Assert.Contains("id=\"schedule-ai-run-now\"", actions);
+        Assert.Contains("id=\"schedule-ai-actions-hint\"", actions);
+        // 連結不得寫死 / 開頭
+        Assert.Contains("@Url.Content(\"~/admin/settings\")", actions);
+        Assert.DoesNotContain("href=\"/", actions);
+        Assert.DoesNotContain("style=", actions);
+
+        var js = ReadRunsJs();
+        var hintBody = ExtractBlock(js, "function renderAiActionsHint(");
+        Assert.False(string.IsNullOrWhiteSpace(hintBody), "擷取不到 renderAiActionsHint 主體");
+        Assert.Contains("schedule-ai-actions-hint", hintBody);
+        // 說明列同樣只在「明確知道未設定」時出現，未知時不顯示
+        Assert.Contains("aiAvailable === false", hintBody);
+        Assert.DoesNotContain("if (!aiAvailable)", hintBody);
+        Assert.Contains("fetchRunning", hintBody);
+        Assert.Contains("AI 服務未設定", hintBody);
+        Assert.Contains("取數執行中", hintBody);
+
+        // 說明由 AI 卡渲染時一起套用
+        var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
+        Assert.Contains("renderAiActionsHint(fetchRunning)", aiBody);
+    }
+
+    /// <summary>C5：兩顆停止鈕的 click 處理各自有 withBusy 防連點。</summary>
+    [Fact]
+    public void 兩顆停止鈕的click處理都有withBusy()
+    {
+        var js = ReadRunsJs();
+
+        var stopBody = ExtractBlock(js, "document.getElementById('schedule-stop')?.addEventListener('click'");
+        Assert.False(string.IsNullOrWhiteSpace(stopBody), "擷取不到 schedule-stop 的 click 處理");
+        Assert.Contains("withBusy(", stopBody);
+        Assert.Contains("restore()", stopBody);
+
+        var aiStopBody = ExtractBlock(js, "document.getElementById('schedule-ai-stop')?.addEventListener('click'");
+        Assert.False(string.IsNullOrWhiteSpace(aiStopBody), "擷取不到 schedule-ai-stop 的 click 處理");
+        Assert.Contains("withBusy(", aiStopBody);
+        Assert.Contains("restore()", aiStopBody);
+    }
+
+    /// <summary>
+    /// C4：PRTG 啟用旗標三態收緊——只認明確 true。
+    /// 改動前有 7 個判斷點（6 個 `=== false` ＋ 1 個 `=== true`），本輪把那 6 個改成 `!== true`，
+    /// 判斷點總數維持 7。
+    /// </summary>
+    [Fact]
+    public void PRTG啟用旗標判斷只認true()
+    {
+        var js = ReadRunsJs();
+
+        Assert.Equal(0, CountOccurrences(js, "prtgModuleEnabled === false"));
+        Assert.Equal(6, CountOccurrences(js, "prtgModuleEnabled !== true"));
+        Assert.Equal(1, CountOccurrences(js, "prtgModuleEnabled === true"));
+
+        // 判斷點總數（不含宣告與 renderPrtgModuleState 的指派）
+        var judgements = System.Text.RegularExpressions.Regex.Matches(
+            js, @"prtgModuleEnabled\s*(===|!==)\s*(true|false)").Count;
+        Assert.Equal(7, judgements);
+
+        // 輪詢寫入點與點擊時的第二道檢查都要改到
+        var syncPoll = ExtractBlock(js, "async function refreshPrtgSyncStatus(");
+        Assert.False(string.IsNullOrWhiteSpace(syncPoll), "擷取不到 refreshPrtgSyncStatus 主體");
+        Assert.Contains("prtgModuleEnabled !== true", syncPoll);
+
+        var syncBind = ExtractBlock(js, "function bindPrtgSync(");
+        Assert.False(string.IsNullOrWhiteSpace(syncBind), "擷取不到 bindPrtgSync 主體");
+        Assert.Contains("prtgModuleEnabled !== true", syncBind);
+
+        var backfillBind = ExtractBlock(js, "function bindPrtgBackfill(");
+        Assert.False(string.IsNullOrWhiteSpace(backfillBind), "擷取不到 bindPrtgBackfill 主體");
+        Assert.Contains("prtgModuleEnabled !== true", backfillBind);
+    }
+
+    /// <summary>C6：強制重跑 modal 在窗口內有新執行開始時停用確認鈕，且文案帶出觸發者。</summary>
+    [Fact]
+    public void 強制重跑modal有防護與觸發者文案()
+    {
+        var js = ReadRunsJs();
+        var body = ExtractBlock(js, "function renderAiRerunModal(");
+        Assert.False(string.IsNullOrWhiteSpace(body), "擷取不到 renderAiRerunModal 主體");
+
+        // 「非執行中 → 執行中」的轉折才封鎖，且只在 modal 開著時
+        Assert.Contains("aiRerunModalOpen", body);
+        Assert.Contains("!wasAiScheduleRunning", body);
+        Assert.Contains("confirmBtn.disabled = blocked", body);
+        Assert.Contains("schedule-ai-rerun-blocked", body);
+        // 帶出觸發者，AI 沒在跑時不顯示
+        Assert.Contains("triggerText", body);
+        Assert.Contains("status.isRunning", body);
+
+        // 關閉 modal 後恢復可用
+        var hidden = ExtractBlock(js, "aiRerunModalEl?.addEventListener('hidden.bs.modal'");
+        Assert.False(string.IsNullOrWhiteSpace(hidden), "擷取不到 modal 關閉處理");
+        Assert.Contains("confirmBtn.disabled = false", hidden);
+
+        // AI 狀態輪詢每一輪都要套用
+        var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
+        Assert.Contains("renderAiRerunModal(status)", aiBody);
+
+        var cshtml = ReadRunsCshtml();
+        Assert.Contains("id=\"schedule-ai-rerun-current\"", cshtml);
+        Assert.Contains("id=\"schedule-ai-rerun-blocked\"", cshtml);
+    }
+
+    /// <summary>本輪新增的頂層函式各只定義一次（同名重複定義會無聲覆蓋前者）。</summary>
+    [Fact]
+    public void 本輪新增的頂層函式各只定義一次()
+    {
+        var js = ReadRunsJs();
+        foreach (var name in new[] { "renderAiActionsHint", "renderAiRerunModal" })
+        {
+            var count = System.Text.RegularExpressions.Regex.Matches(
+                js, $@"^function {name}\s*\(", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
+            Assert.True(count == 1, $"{name} 應只定義一次，實得 {count}");
+        }
     }
 
     private static int CountOccurrences(string haystack, string needle)

@@ -15,7 +15,7 @@
 
 import { api, getDisplaySettings } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { statCard, toast } from '../core/ui.js';
+import { statCard, toast, guardLoad, renderLoading } from '../core/ui.js';
 import {
     formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, analysisAnchorLocal,
     issueBaselineText, toLocalDateString
@@ -131,6 +131,11 @@ function renderChartPickerBody() {
 // 處理狀態顯示範圍（§5）：單選，存 URL（可分享）；不入 localStorage——報表以「全部」為誠實預設
 let currentScope = new URLSearchParams(location.search).get('handlingScope') || 'all';
 
+/**
+ * 區間檢查先做、再放骨架列（回饋第 45 輪 B7）：這頁的 summary 是全站最慢的查詢之一，
+ * 過去按下查詢到資料回來之間畫面完全沒有變化，使用者只能猜有沒有按到。
+ * 檢查不過是直接 return，順序反了會留下一片永遠不會被換掉的骨架列。
+ */
 async function load() {
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
@@ -145,10 +150,20 @@ async function load() {
         }
     }
 
+    const kpiContainer = document.getElementById('report-kpi');
+    renderLoading(kpiContainer, 4);
+    await guardLoad(kpiContainer, loadReport);
+}
+
+/** 實際的取數與渲染；失敗與重試由 load() 的 guardLoad 負責 */
+async function loadReport() {
+    const from = document.getElementById('report-from').value;
+    const to = document.getElementById('report-to').value;
     const compare = document.getElementById('report-compare').value;
 
     const [data, displaySettings] = await Promise.all([
-        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`),
+        // 報表允許 366 天區間、非「全部」範圍走記憶體推導，大站台會超過預設 60 秒
+        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`, { timeoutMs: 180000 }),
         getDisplaySettings()
     ]);
     currentData = data;

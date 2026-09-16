@@ -4,6 +4,7 @@ using LogForesight.Core.Service;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 using static LogForesight.Web.Controllers.Api.QueryStringParsing;
@@ -36,8 +37,9 @@ public class DashboardController : ControllerBase
 /// <summary>
 /// 執行中告示（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：**任何登入者**都讀得到，
 /// 刻意不掛 <c>[Permission]</c>——分析與站台跑在同一個行程，變慢的是所有人的畫面，
-/// 只讓維運看得到原因等於沒有配套。回傳只有「在不在跑、跑到哪」，不含排程設定、
-/// 觸發來源與上次成敗（那些在 <c>/api/admin/schedule/status</c>，維運視角）。
+/// 只讓維運看得到原因等於沒有配套。回傳只有「在不在跑、跑到哪」，不含排程設定與上次成敗
+/// （那些在 <c>/api/admin/schedule/status</c>，維運視角）；**觸發者**（誰按的）只對具
+/// DevMonitor 或 Maintain 的使用者填，一般使用者拿到 null——告示對他們仍照常出現，只是不講是誰。
 ///
 /// 路由刻意不放在 <c>api/admin/</c> 底下：那個前綴在本專案是「需要管理權限」的訊號，
 /// 一般使用者讀得到的東西擺進去，只會讓下一個人誤判這支的權限範圍。
@@ -48,12 +50,26 @@ public class RunActivityController : ControllerBase
 {
     private readonly SchedulerRunState _runState;
     private readonly AiAnalysisRunState _aiRunState;
+    private readonly IUserStore _users;
+    private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly ICurrentUser _currentUser;
 
-    public RunActivityController(SchedulerRunState runState, AiAnalysisRunState aiRunState)
+    public RunActivityController(
+        SchedulerRunState runState,
+        AiAnalysisRunState aiRunState,
+        IUserStore users,
+        IUserDisplayNameService userDisplayNames,
+        ICurrentUser currentUser)
     {
         _runState = runState;
         _aiRunState = aiRunState;
+        _users = users;
+        _userDisplayNames = userDisplayNames;
+        _currentUser = currentUser;
     }
+
+    /// <summary>觸發者姓名屬維運資訊：與 <c>/api/admin/schedule/status</c> 同一道門檻，其餘角色為 null</summary>
+    private bool CanSeeTrigger => _currentUser.Has(Capability.DevMonitor) || _currentUser.Has(Capability.Maintain);
 
     [HttpGet]
     public ApiResponse<RunActivityDto> Get()
@@ -76,7 +92,14 @@ public class RunActivityController : ControllerBase
                     "local" => "天",
                     "netiq" => "台",
                     _ => null
-                }
+                },
+                // 誰觸發的：與排程頁共用 RunTriggerText，兩邊對同一個 Trigger 值算出相同文字。
+                // 沒在跑時不講（閒置沒有「觸發者」可言）。
+                TriggerText = _runState.IsRunning && CanSeeTrigger
+                    ? RunTriggerText.Of(_runState.Trigger, _userDisplayNames, _users)
+                    : null,
+                // 取數分支：互斥判斷要分得出「取數在跑」與「只有 AI 在跑」（見 DTO 註解）
+                IsFetchRun = _runState.IsRunning
             });
         }
 
@@ -88,7 +111,12 @@ public class RunActivityController : ControllerBase
             IsRunning = ai.IsRunning,
             Done = ai.ProgressDone,
             Total = ai.ProgressTotal,
-            UnitText = ai.IsRunning ? "件" : null
+            UnitText = ai.IsRunning ? "件" : null,
+            TriggerText = ai.IsRunning && CanSeeTrigger
+                ? RunTriggerText.Of(ai.Trigger, _userDisplayNames, _users)
+                : null,
+            // AI 分支：取數此時必定閒置（上面的分支沒進來），主機更新不該被擋
+            IsFetchRun = false
         });
     }
 }
@@ -148,8 +176,11 @@ public class HostDetailController : ControllerBase
             }
         }
 
-        var mapRows = store.GetLatestHostMap();
-        if (mapRows.Count == 0)
+        // 只查這一台主機的對應列（回饋四十五輪 B5）：原本是把「最近一次對應」整張表
+        // （數千列起跳）讀回記憶體再 Where 出一台主機的那幾列。語意不變——
+        // MapDate 仍是「最近一次有對應資料的日期」，該日存在但這台沒有對應列時照樣回傳日期。
+        var (mapDate, targetRows) = store.GetLatestHostMapForHost(hostId);
+        if (mapDate == null)
         {
             return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto
             {
@@ -157,9 +188,6 @@ public class HostDetailController : ControllerBase
                 ExcludedIp = excludedIp
             });
         }
-
-        var targetRows = mapRows.Where(r => r.HostId == hostId).ToList();
-        var mapDate = mapRows.FirstOrDefault()?.MapDate;
 
         var devices = new List<HostPrtgDeviceDto>();
         foreach (var r in targetRows)

@@ -930,7 +930,8 @@ public class PrtgBackfillRunnerTests : IDisposable
         h.AddMap(PrtgMapStatus.Ok); // 有對應：確認擋下它的是取數閘門而不是對應閘門
         Assert.True(h.Scheduler.TryBeginRun("manual", out _));
 
-        Assert.False(h.Service.TryStart(out var error));
+        Assert.False(h.Service.TryStart(out var error, out var isConflict));
+        Assert.True(isConflict); // 互斥類：呼叫端會回 409
         Assert.StartsWith("取數執行中（已 0 分鐘），回填會與它同時查詢同一台 PRTG。", error);
         Assert.Contains("停止執行", error);
         Assert.False(h.Service.GetStatus().IsRunning);
@@ -943,7 +944,8 @@ public class PrtgBackfillRunnerTests : IDisposable
         h.AddMap(PrtgMapStatus.Ok);
         Assert.True(h.SyncState.TryBegin());
 
-        Assert.False(h.Service.TryStart(out var error));
+        Assert.False(h.Service.TryStart(out var error, out var isConflict));
+        Assert.True(isConflict); // 互斥類：呼叫端會回 409
         Assert.StartsWith("「同步結構與對應」執行中（已 0 分鐘），請等它完成", error);
         Assert.False(h.Service.GetStatus().IsRunning);
     }
@@ -955,7 +957,8 @@ public class PrtgBackfillRunnerTests : IDisposable
         // 只有「查無主機」的對應列不算數
         h.AddMap(PrtgMapStatus.Unmatched);
 
-        Assert.False(h.Service.TryStart(out var error));
+        Assert.False(h.Service.TryStart(out var error, out var isConflict));
+        Assert.False(isConflict); // 前提類：呼叫端會回 400
         Assert.Equal(
             $"近 {SystemSettings.DefaultPrtgBackfillDays + PrtgTriggeredValueFetcher.HostMapLookbackDays} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。",
             error);

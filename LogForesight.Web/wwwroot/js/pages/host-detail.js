@@ -29,6 +29,18 @@ const LEGEND = [
 // 按鈕點下去只會打到後端的 400（ScheduleController 的 host 分支已擋），不如直接不顯示。
 let localAnalysisEnabled = true;
 
+// 取數排程執行中就不能再觸發這台主機的更新（後端會擋）。狀態來自 layout.js 的全站告示輪詢，
+// 這裡只訂閱、不自己打 /api/run-activity（事件名與 core/layout.js 的 RUN_ACTIVITY_EVENT 相同）。
+//
+// **只看取數、不看聯集**：告示的 isRunning 是「取數或 AI 任一在跑」，但後端只在取數執行中
+// 擋主機更新，AI 單獨在跑時這個動作是允許的——用聯集會在 AI 分析期間停用按鈕並說
+// 「排程執行中」，兩件事都不成立。
+const RUN_ACTIVITY_EVENT = 'lf:run-activity';
+
+/** 初值取 layout.js 保存的最後狀態（本模組與 layout 同為 deferred module，正常載入時這裡還是 undefined、
+ *  狀態靠下方的事件監聽補上；只有本模組比第一次輪詢回應更晚才載入時，這個初值才派得上用場） */
+let schedulerRunning = window.lfRunActivity?.isFetchRun === true;
+
 async function load() {
     renderLoading(document.getElementById('host-timeline'), 2);
     renderLoading(document.getElementById('host-issues'), 3);
@@ -75,8 +87,10 @@ function renderHeader(detail) {
         updateButton.type = 'button';
         updateButton.className = 'btn btn-sm btn-outline-primary lf-no-print';
         updateButton.textContent = '指定主機更新';
+        updateButton.id = 'host-update-open';
         updateButton.addEventListener('click', () => openHostUpdateModal(detail));
         titleRow.appendChild(updateButton);
+        applyRunActivityState();   // 重新渲染後補上目前狀態（按鈕是每次 load() 重建的）
     }
 
     body.appendChild(titleRow);
@@ -526,6 +540,73 @@ function openHostUpdateModal(detail) {
     );
     hostUpdateModal.show();
 }
+
+/** 取數執行中的說明文字（兩處共用同一句） */
+const RUN_BUSY_NOTE_TEXT = '取數執行中，結束後可用。';
+
+/**
+ * 排程執行中時停用「指定主機更新」，並在**按鈕旁**與**表單內**各說明一次原因。
+ *
+ * 用 disabled 加說明而不是隱藏按鈕：按鈕消失會讓使用者以為自己的權限被拿掉了，
+ * 「暫時不能按」與「你不能按」是兩件事，畫面上必須分得出來。
+ *
+ * **兩處都要有**：頁面上那顆按鈕被停用後 modal 就打不開了，說明只放在 modal 裡等於看不到，
+ * 使用者面對的仍是一顆沒有理由的灰按鈕；而 modal 已經開著時排程才開始的話，
+ * 灰掉的是 modal 內的送出鈕，那時要解釋的是它。
+ */
+function applyRunActivityState() {
+    for (const id of ['host-update-open', 'host-update-submit']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = schedulerRunning;
+    }
+
+    for (const note of ensureRunActivityNotes()) {
+        note.classList.toggle('d-none', !schedulerRunning);
+    }
+}
+
+/** 說明文字元素（HostDetail.cshtml 沒有這兩行，第一次需要時就地補上） */
+function ensureRunActivityNotes() {
+    const notes = [];
+
+    // 按鈕旁：解釋頁面上那顆「指定主機更新」為什麼是灰的。按鈕每次 load() 重建，
+    // 說明也跟著掛回同一個容器，所以這裡以按鈕的父容器為準而不是快取節點。
+    const openButton = document.getElementById('host-update-open');
+    if (openButton?.parentElement) {
+        let inlineNote = document.getElementById('host-update-busy-note-inline');
+        if (!inlineNote || inlineNote.parentElement !== openButton.parentElement) {
+            inlineNote?.remove();
+            inlineNote = document.createElement('span');
+            inlineNote.id = 'host-update-busy-note-inline';
+            inlineNote.className = 'small text-muted d-none';
+            inlineNote.textContent = RUN_BUSY_NOTE_TEXT;
+            openButton.parentElement.appendChild(inlineNote);
+        }
+        notes.push(inlineNote);
+    }
+
+    // 表單內：解釋 modal 開著時送出鈕為什麼是灰的
+    const form = document.getElementById('host-update-form');
+    const modalBody = form?.querySelector('.modal-body');
+    if (modalBody) {
+        let note = document.getElementById('host-update-busy-note');
+        if (!note) {
+            note = document.createElement('div');
+            note.id = 'host-update-busy-note';
+            note.className = 'small text-muted mt-2 d-none';
+            note.textContent = RUN_BUSY_NOTE_TEXT;
+            modalBody.appendChild(note);
+        }
+        notes.push(note);
+    }
+
+    return notes;
+}
+
+window.addEventListener(RUN_ACTIVITY_EVENT, event => {
+    schedulerRunning = event.detail?.isFetchRun === true;
+    applyRunActivityState();
+});
 
 document.getElementById('host-update-form').addEventListener('submit', async event => {
     event.preventDefault();

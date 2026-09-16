@@ -73,7 +73,8 @@ internal sealed class ScaleServices
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
-            settingsService, Visibility, aggregates, statusResolver, displayNames);
+            settingsService, Visibility, aggregates, statusResolver, displayNames,
+            new NextUnhandledSequenceCache(new DataVersionStamp()));
 
         var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);

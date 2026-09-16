@@ -6,7 +6,7 @@ import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
-    bindTabs, toast, withBusy, renderSpinner, confirmAction,
+    bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
     collectLines, numberOr
 } from '../core/ui.js';
@@ -154,7 +154,17 @@ function renderUpdatedAt(settings) {
         (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
 }
 
+/**
+ * 載入指示掛在「最後更新」那行（回饋第 45 輪 B7）：與 settings.js 同一個理由——
+ * 這區塊是表單，骨架列會把表單節點整片換掉，只能用行內 spinner。
+ */
 async function loadSettings() {
+    const statusEl = document.getElementById('prtg-config-updated');
+    if (statusEl) renderSpinner(statusEl, '載入設定中…');
+    await guardLoad(statusEl, loadPrtgSettings);
+}
+
+async function loadPrtgSettings() {
     const settings = await api.get('/api/admin/settings');
     historyRetentionDays = settings.retentionDays;
     renderPrtgFields(settings);
@@ -946,6 +956,8 @@ function bindPrtgMirror() {
                 refreshIpExcludes()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }
@@ -955,16 +967,6 @@ function bindPrtgMirror() {
 // ── PRTG API 探測（批次B-4，比照 NetIQ 診斷實作）─────────────────────────
 
 let prtgProbePollTimer = null;
-
-/** 輪詢更新時只換文字節點、不重建 spinner（避免每次輪詢動畫重置閃爍） */
-function setPrtgProbeSpinnerText(container, text) {
-    if (!container.querySelector('.spinner-border')) {
-        renderSpinner(container, text);
-        return;
-    }
-    const label = container.querySelector('span:last-child');
-    if (label) label.textContent = text;
-}
 
 function renderPrtgProbeStatus(status) {
     const outputEl = document.getElementById('prtg-probe-output');
@@ -983,7 +985,7 @@ function renderPrtgProbeStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setPrtgProbeSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
@@ -1213,6 +1215,8 @@ function bindStructureSync() {
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
             toast('已開始同步結構與對應', 'success');
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
         } finally {
             restore();
         }
@@ -1227,6 +1231,8 @@ function bindStructureSync() {
         try {
             await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
             toast('已送出停止要求，進行中的查詢會被中斷', 'success');
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
         } finally {
             restore();
         }

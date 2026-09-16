@@ -14,10 +14,17 @@ public sealed class EfJsonLogStore
     private readonly string _key;
     private readonly object _lock = new();
 
-    public EfJsonLogStore(Func<LfDbContext> contextFactory, string key)
+    /// <summary>
+    /// 慢操作監控（可選相依，與 <see cref="EfJsonBlobStore"/> 同一套）。
+    /// 稽核與執行紀錄是千萬列級的表，整份讀回或分頁掃描慢起來沒有任何線索可看（回饋四十五輪 B6）。
+    /// </summary>
+    private readonly SqlPerformanceMonitor? _performance;
+
+    public EfJsonLogStore(Func<LfDbContext> contextFactory, string key, SqlPerformanceMonitor? performance = null)
     {
         _contextFactory = contextFactory;
         _key = key;
+        _performance = performance;
     }
 
     public string Location => $"db:{_key}";
@@ -25,6 +32,7 @@ public sealed class EfJsonLogStore
     /// <summary>全部行，依附加順序</summary>
     public IReadOnlyList<string> ReadLines()
     {
+        using var __perf = _performance.Measure($"log:{_key}:ReadLines");
         using var ctx = _contextFactory();
         return ctx.LogLines.AsNoTracking()
             .Where(l => l.LogKey == _key)
@@ -47,6 +55,7 @@ public sealed class EfJsonLogStore
     /// </summary>
     public IReadOnlyList<string> ReadLastLines(int count)
     {
+        using var __perf = _performance.Measure($"log:{_key}:ReadLastLines");
         using var ctx = _contextFactory();
         return ctx.LogLines.AsNoTracking()
             .Where(l => l.LogKey == _key)
@@ -121,6 +130,7 @@ public sealed class EfJsonLogStore
     /// </summary>
     public IReadOnlyList<string> ReadLines(DateTime? from, DateTime? to)
     {
+        using var __perf = _performance.Measure($"log:{_key}:ReadLinesByDate");
         using var ctx = _contextFactory();
         return ApplyDateRange(ctx.LogLines.AsNoTracking().Where(l => l.LogKey == _key), from, to)
             .OrderBy(l => l.Seq)
@@ -136,6 +146,7 @@ public sealed class EfJsonLogStore
     /// </summary>
     public (IReadOnlyList<string> Items, int Total) ReadPage(int skip, int take, bool ascending = false)
     {
+        using var __perf = _performance.Measure($"log:{_key}:ReadPage");
         using var ctx = _contextFactory();
         var q = ctx.LogLines.AsNoTracking().Where(l => l.LogKey == _key);
 

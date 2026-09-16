@@ -34,17 +34,24 @@ internal class RecordQueryServiceFacade
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
         IIssueOwnerStore? issueOwners = null,
-        ISystemSettingsService? settingsService = null)
+        ISystemSettingsService? settingsService = null,
+        NextUnhandledSequenceCache? nextUnhandledCache = null)
     {
         _list = new RecordListQueryService(
             repository, hosts, users, handlings, issueHandlings, cases, settings,
             settingsService ?? new FakeSystemSettingsService(), visibility, aggregates, statusResolver,
-            new UserDisplayNameService(settings), issueOwners, rules);
+            new UserDisplayNameService(settings),
+            nextUnhandledCache ?? new NextUnhandledSequenceCache(new DataVersionStamp()),
+            issueOwners, rules);
         _detail = new RecordDetailQueryService(
             repository, reports, hosts, users, hostGroups, visibility, issueHandlings, cases, noiseMarks, rules, currentUser, settings);
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request) => _list.Search(request);
+    public NextUnhandledDto? FindNextUnhandled(long hostId, DateTime date) => _list.FindNextUnhandled(hostId, date);
+
+    /// <summary>C5 的可觀測手段：底層服務至今真正推導過幾次日狀態</summary>
+    public int ProgressDerivationCount => _list.ProgressDerivationCount;
     public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request) => _list.SearchByHost(request);
     public PagedResult<RecordDateGroupDto> SearchByDate(RecordSearchRequest request) => _list.SearchByDate(request);
     public IssueSearchResultDto SearchByIssue(RecordSearchRequest request) => _list.SearchByIssue(request);

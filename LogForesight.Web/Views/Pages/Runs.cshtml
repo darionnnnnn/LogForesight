@@ -97,6 +97,11 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-ai-run-now">立即補跑 AI</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-ai-stop">停止</button>
                 <button type="button" class="btn btn-sm btn-outline-warning" id="schedule-ai-force-rerun">強制重新分析</button>
+                @* 啟動鈕被互斥條件藏起來時，這一列不能只剩空白（也避免卡片高度塌掉）：說明為什麼不能按 *@
+                <div class="small text-warning d-none" id="schedule-ai-actions-hint">
+                    <span id="schedule-ai-actions-hint-text"></span>
+                    <a class="d-none" id="schedule-ai-actions-hint-link" href="@Url.Content("~/admin/settings")">前往系統設定</a>
+                </div>
             </div>
         </div>
     </section>
@@ -398,6 +403,8 @@
                 <div class="alert alert-warning py-2 px-3 mb-3" role="alert">
                     會把全部既有 AI 結論標記為待重跑（低風險日不受影響），舊結果在被覆蓋前仍可查看。適用於規則更新後。
                 </div>
+                <p class="small text-warning mb-2 d-none" id="schedule-ai-rerun-current"></p>
+                <p class="small text-danger mb-2 d-none" id="schedule-ai-rerun-blocked">已有新的 AI 執行開始，為避免誤中斷，請關閉本視窗後重新確認。</p>
                 <p class="small text-muted mb-0">確定要將全部既有 AI 結論標記為待重跑並立即開始執行嗎？</p>
             </div>
             <div class="modal-footer">

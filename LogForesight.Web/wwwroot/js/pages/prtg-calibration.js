@@ -4,10 +4,16 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { toast, withBusy } from '../core/ui.js';
+import { toast, withBusy, guardLoad, renderLoading, renderSpinner } from '../core/ui.js';
 import { formatNumber } from '../core/format.js';
 
 let latestStatusData = null;
+
+/** 四張校準卡的鍵；載入指示與失敗收斂都要逐張處理，不能只管其中一張 */
+const CARD_KEYS = [
+    'prtg-value-baseline', 'prtg-rule-thresholds',
+    'triggered-fetch-magnitude', 'residual-credential-thresholds'
+];
 
 function getBadgeClass(status) {
     switch (status) {
@@ -237,16 +243,30 @@ function renderAssessment(data) {
     updateExportButtonState();
 }
 
+/**
+ * 判定查詢是四項重查詢（含逐筆反序列化），動輒數十秒（回饋第 45 輪 B7）：
+ * 過去只有按鈕忙碌樣式，四張卡停在「尚未執行判定查詢」不動，看起來像沒反應。
+ * 四張卡先放骨架列，狀態那行放 spinner；失敗時由 guardLoad 收成可重試的狀態
+ * （錯誤 toast 由 api.js 統一發，這裡不再自己發一次）。
+ */
 async function runAssessment() {
     const calcBtn = document.getElementById('calibration-calc-btn');
+    const hintEl = document.getElementById('calibration-status-hint');
+    const metricEls = CARD_KEYS
+        .map(key => document.getElementById(`metrics-${key}`))
+        .filter(Boolean);
     const restore = withBusy(calcBtn, '計算中…');
 
+    if (hintEl) renderSpinner(hintEl, '判定查詢執行中…');
+    metricEls.forEach(el => renderLoading(el, 3));
+
     try {
-        const data = await api.get(`/api/admin/calibration/status`);
-        renderAssessment(data);
-        toast('校準指標評估計算完成', 'success');
-    } catch (error) {
-        toast(error?.message || '計算失敗，請稍後再試。', 'danger');
+        await guardLoad([hintEl, ...metricEls], async () => {
+            // 四項重查詢動輒數十秒，預設 60 秒會把它打成逾時
+            const data = await api.get(`/api/admin/calibration/status`, { timeoutMs: 300000 });
+            renderAssessment(data);
+            toast('校準指標評估計算完成', 'success');
+        });
     } finally {
         restore();
     }

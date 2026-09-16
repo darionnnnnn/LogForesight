@@ -88,6 +88,17 @@ public class HealthService
             SlowestMs = performance.SlowestMs,
             SlowestOperation = performance.SlowestOperation,
             LastSlowAt = performance.LastSlowAt,
+
+            // 最慢前幾支（回饋四十五輪 B6）：單一最慢值無法回答「要去看哪一頁」
+            TopSlowOperations = performance.TopSlowOperations
+                .Select(o => new SlowOperationDto
+                {
+                    Operation = o.Operation,
+                    Count = o.Count,
+                    MaxMs = o.MaxMs,
+                    LastAt = o.LastAt
+                })
+                .ToList(),
             AnalysisRunning = _runState.IsRunning,
             AnalysisTrigger = _runState.Trigger,
             AnalysisStartedAt = _runState.StartedAt,

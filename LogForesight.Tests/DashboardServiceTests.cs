@@ -308,7 +308,8 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
-            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore));
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
+            new NextUnhandledSequenceCache(new DataVersionStamp()));
 
         var issueResult = listService.SearchByIssue(new RecordSearchRequest
         {
@@ -358,7 +359,8 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
-            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore));
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
+            new NextUnhandledSequenceCache(new DataVersionStamp()));
 
         var issueResult = listService.SearchByIssue(new RecordSearchRequest
         {
@@ -403,7 +405,8 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
-            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore));
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
+            new NextUnhandledSequenceCache(new DataVersionStamp()));
 
         var issueResult = listService.SearchByIssue(new RecordSearchRequest
         {

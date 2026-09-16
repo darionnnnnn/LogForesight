@@ -5,11 +5,11 @@
  * 而「沒有紀錄」看起來跟「一切正常」一模一樣。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability } from '../core/api.js';
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, renderSpinner
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
@@ -507,7 +507,7 @@ function renderStats(container, detail) {
         { label: '分析天數', value: detail.daysAnalyzed },
         // AI 未設定時這欄多半是「0（失敗 0）」的雜訊；歷史上真的呼叫過 AI 的執行紀錄仍如實顯示
         // （docs/archive/FEEDBACK-7-PLAN.md）
-        ...(aiAvailable || detail.aiCalls > 0
+        ...(aiAvailable === true || detail.aiCalls > 0
             ? [{ label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` }]
             : []),
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
@@ -612,13 +612,42 @@ let canMaintainSchedule = false;
 // AI 未設定時「AI 診斷傾印」開關與徽章整組隱藏（docs/archive/FEEDBACK-7-PLAN.md）：這是除錯用的手動
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
 // 只是不顯示——避免隱藏期間存檔把設定意外歸零。
-let aiAvailable = false;
+// 三態（回饋第 45 輪終檢）：null＝還沒問到。初值用 false 的話，狀態卡可能在 AI 狀態回來之前
+// 先把兩顆啟動鈕藏起來並顯示「AI 服務未設定」——把「還不知道」畫成「已知是關的」，
+// 與同頁 prtgModuleEnabled 的三態原則同一個理由。
+let aiAvailable = null;
 let lastAiScheduleStatus = null;
+/**
+ * 取數排程是否執行中（回饋四十五輪批次A2）。AI 卡的兩顆啟動鈕要在取數執行中隱藏，
+ * 而取數與 AI 兩份狀態同在 `refreshScheduleStatus` 取得、取數先套用，因此存下來給 AI 卡讀，
+ * 不另打 API。
+ * **null＝尚未得知**（還沒取得或那支請求失敗）：未知時不隱藏——隱藏表達的是「暫時互斥」，
+ * 未知就藏會讓人以為功能不見了；後端的 409 才是最後防線。
+ * 這與 PRTG 的 `prtgModuleEnabled`（未知視同未啟用）刻意相反：那裡擋的是「功能未啟用」。
+ */
+let fetchScheduleRunning = null;
 // 分析本機主機開關（回饋十八輪批次D）：影響「立即執行」modal 的「全部主機」描述文字。
 let localAnalysisEnabled = true;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
 const aiRerunModalEl = document.getElementById('schedule-ai-rerun-modal');
 const aiRerunModal = aiRerunModalEl ? new bootstrap.Modal(aiRerunModalEl) : null;
+/** 強制重新分析 modal 是否開啟中，以及開啟期間是否已有別的 AI 執行開始（回饋四十五輪批次A2）。 */
+let aiRerunModalOpen = false;
+let aiRerunModalBlocked = false;
+aiRerunModalEl?.addEventListener('show.bs.modal', () => {
+    aiRerunModalOpen = true;
+    aiRerunModalBlocked = false;
+    // 開啟當下先依最後一次狀態把文案與防護套好，不必等下一輪輪詢
+    if (lastAiScheduleStatus) renderAiRerunModal(lastAiScheduleStatus);
+});
+aiRerunModalEl?.addEventListener('hidden.bs.modal', () => {
+    // 關閉即解除封鎖：使用者重新確認一次，代表他知道現在有執行在跑
+    aiRerunModalOpen = false;
+    aiRerunModalBlocked = false;
+    const confirmBtn = document.getElementById('schedule-ai-rerun-confirm');
+    if (confirmBtn) confirmBtn.disabled = false;
+    document.getElementById('schedule-ai-rerun-blocked')?.classList.add('d-none');
+});
 
 async function loadSchedule() {
     const user = await getCurrentUser();
@@ -637,13 +666,13 @@ async function loadSchedule() {
     }
 
     const statusPromise = refreshScheduleStatus();
-    const [options, aiStatus, settings] = await Promise.all([
+    const [options, aiReady, settings] = await Promise.all([
         api.get('/api/admin/schedule/options'),
-        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        getAiAvailable(),
         api.get('/api/admin/settings', { silent: true }).catch(() => null)
     ]);
-    aiAvailable = !!aiStatus?.available;
-    document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
+    aiAvailable = aiReady;
+    document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', aiAvailable !== true);
     if (lastAiScheduleStatus) applyAiScheduleStatus(lastAiScheduleStatus);
 
     applyScheduleOptions(options);
@@ -671,7 +700,7 @@ function applyScheduleOptions(options) {
     scheduleAiWindows = (options.aiWindows && options.aiWindows.length > 0 ? options.aiWindows : [{ start: '00:00', end: '23:59' }]).map(w => ({ ...w }));
     document.getElementById('schedule-enabled').checked = options.enabled;
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
-    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || !aiAvailable);
+    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || aiAvailable !== true);
     document.getElementById('schedule-local-analysis').checked = options.localAnalysisEnabled;
     localAnalysisEnabled = options.localAnalysisEnabled;
     const scopeAllLabel = document.getElementById('run-now-scope-all-label');
@@ -705,7 +734,7 @@ function applyScheduleOptions(options) {
     if (aiNextTriggerEl) {
         // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
         // 與 ai-status 那條路徑同一套判斷，否則載入瞬間會先閃「隨時可跑」再被改成「未設定」。
-        if (!aiAvailable) {
+        if (aiAvailable === false) {
             aiNextTriggerEl.textContent = 'AI 服務未設定';
         } else if (options.nextAiTriggerTime) {
             aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
@@ -878,6 +907,7 @@ function stopElapsedTicker(elementId = 'schedule-elapsed') {
 }
 
 function applyScheduleStatus(status) {
+    fetchScheduleRunning = status.isRunning;
 
     const pausedBadge = document.getElementById('schedule-paused-badge');
     if (pausedBadge) {
@@ -1019,17 +1049,26 @@ function applyAiScheduleStatus(status) {
     }
 
     // 同取數卡：執行中只留「停止」，閒置只留兩顆啟動鈕（見 docs/WEB-SPEC.md §9.10）
+    // 兩顆啟動鈕的隱藏條件是三個因子的 OR（回饋四十五輪批次A2）：
+    //   1) AI 自己執行中　2) 取數排程執行中（按了會被後端 409）　3) AI 服務未設定（按了只會空跑）
+    // 取數狀態未知（null）時不算執行中，故用 `=== true`。
     if (canMaintainSchedule) {
+        const fetchRunning = fetchScheduleRunning === true;
+        // aiAvailable 為 null（還沒問到）時不隱藏：未知不等於未設定
+        const hideAiStart = status.isRunning || fetchRunning || aiAvailable === false;
         document.getElementById('schedule-ai-stop')?.classList.toggle('d-none', !status.canStop);
-        document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', status.isRunning);
-        document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', status.isRunning);
+        document.getElementById('schedule-ai-run-now')?.classList.toggle('d-none', hideAiStart);
+        document.getElementById('schedule-ai-force-rerun')?.classList.toggle('d-none', hideAiStart);
+        renderAiActionsHint(fetchRunning);
     }
+
+    renderAiRerunModal(status);
 
     const nextTriggerEl = document.getElementById('schedule-ai-next-trigger');
     if (nextTriggerEl) {
         // AI 一律啟用；這一列說的是「積壓什麼時候會被背景消化」。
         // 已在窗口內時後端回 null，代表現在就會跑。
-        if (!aiAvailable) {
+        if (aiAvailable === false) {
             nextTriggerEl.textContent = 'AI 服務未設定';
         } else if (status.nextTriggerTime) {
             nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
@@ -1045,13 +1084,72 @@ function applyAiScheduleStatus(status) {
     wasAiScheduleRunning = status.isRunning;
 }
 
+/**
+ * AI 卡按鈕列的說明（回饋四十五輪批次A2）：兩顆啟動鈕被藏起來時，那一列不能只剩空白——
+ * 使用者會以為功能消失。說明元素放在按鈕列容器內，也讓三張卡靠 `.lf-run-actions`
+ * 的 `margin-top:auto` 撐出的等高不會因為整列變空而塌掉。
+ * 兩條原因互斥、只顯示一條：未設定優先（那是要先解決的前提），其次才是取數執行中。
+ */
+function renderAiActionsHint(fetchRunning) {
+    const el = document.getElementById('schedule-ai-actions-hint');
+    if (!el) return;
+    const textEl = document.getElementById('schedule-ai-actions-hint-text');
+    const linkEl = document.getElementById('schedule-ai-actions-hint-link');
+
+    let text = '';
+    let showLink = false;
+    if (aiAvailable === false) {
+        text = 'AI 服務未設定，請先到系統設定完成設定：';
+        showLink = true;
+    } else if (fetchRunning) {
+        text = '取數執行中，AI 會自動跟隨取數進度判讀；結束後可手動補跑。';
+    }
+
+    if (textEl) textEl.textContent = text;
+    linkEl?.classList.toggle('d-none', !showLink);
+    el.classList.toggle('d-none', text === '');
+}
+
+/**
+ * 強制重新分析 modal 的即時防護與文案（回饋四十五輪批次A2）。
+ * 後端在 AI 已執行中時會先優雅停止當前執行再整批重標重跑；而 modal 開著時狀態輪詢
+ * 不會關掉它，於是 3 秒窗口內仍可能按下確認、把別人剛啟動的執行砍掉。
+ * 因此：modal 開啟期間偵測到 AI 由「非執行中」變成「執行中」就停用確認鈕，並說明要關閉後重確認。
+ * `wasAiScheduleRunning` 在 applyAiScheduleStatus 尾端才更新，這裡讀到的仍是上一輪的值。
+ */
+function renderAiRerunModal(status) {
+    const currentEl = document.getElementById('schedule-ai-rerun-current');
+    if (currentEl) {
+        // 帶出觸發者：使用者要知道自己會中斷的是誰的執行。AI 沒在跑就不顯示這一句。
+        if (status.isRunning) {
+            currentEl.textContent =
+                `目前由${status.triggerText ?? '手動'}觸發的 AI 執行將被停止後重新開始。`;
+            currentEl.classList.remove('d-none');
+        } else {
+            currentEl.textContent = '';
+            currentEl.classList.add('d-none');
+        }
+    }
+
+    if (aiRerunModalOpen && status.isRunning && !wasAiScheduleRunning) {
+        aiRerunModalBlocked = true;
+    }
+
+    const blocked = aiRerunModalOpen && aiRerunModalBlocked;
+    const confirmBtn = document.getElementById('schedule-ai-rerun-confirm');
+    if (confirmBtn) confirmBtn.disabled = blocked;
+    document.getElementById('schedule-ai-rerun-blocked')?.classList.toggle('d-none', !blocked);
+}
+
 // 取數執行進度軌：本機、NetIQ、PRTG（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）。
 // 放模組層而非函式內：狀態卡執行中每 3 秒重繪一次，對照表是常數，不必每次重建。
 /**
  * PRTG 模組總開關的目前值。完工文字要靠它分辨「沒開」與「開了但沒抓到」，
  * 而那個判斷發生在狀態輪詢裡（每 3 秒一次），不能每次都重打設定 API。
- * **null＝尚未從設定得知**：狀態輪詢與設定查詢是並行發出的，狀態可能先回來；
- * 這時不能把「還不知道」畫成「未啟用」。
+ * **null＝尚未從設定得知**：狀態輪詢與設定查詢是並行發出的，狀態可能先回來。
+ * 判斷一律只認明確的 `true`（回饋四十五輪批次A2）：`null` 與 `false` 都視為未啟用。
+ * 原本寫成 `=== false` 時，設定還沒回來的空窗期會讓「同步結構與對應」與「開始回填」
+ * 被輪詢設成可按，點擊時的第二道檢查也擋不住，請求會真的送出去。
  */
 let prtgModuleEnabled = null;
 /** PRTG 連線是否已設定（位址＋認證齊備）。立即執行的提醒條件之一。 */
@@ -1164,7 +1262,7 @@ function renderScheduleProgress(status) {
         // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
         // 三種情形要分得開：模組沒開、開了但什麼都沒抓到、抓到了。
         // 全部混成「已完成」的話，使用者看不出該去開總開關還是該去查對應。
-        if (prtgModuleEnabled === false) {
+        if (prtgModuleEnabled !== true) {
             prtgCustomLabel = 'PRTG 擷取　未啟用';
         } else if (status.prtgProgressTotal > 0) {
             prtgCustomLabel = `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`;
@@ -1227,7 +1325,7 @@ async function refreshPrtgSyncStatus() {
 
         const btn = document.getElementById('prtg-sync-start');
         // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
-        if (btn) btn.disabled = status.isRunning || prtgModuleEnabled === false;
+        if (btn) btn.disabled = status.isRunning || prtgModuleEnabled !== true;
 
         // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
         // 這裡會動 d-none，而 data-maintain-only 的隱藏也是靠 d-none——沒有 Maintain 時
@@ -1253,7 +1351,7 @@ function bindPrtgSync() {
     const btn = document.getElementById('prtg-sync-start');
     btn?.addEventListener('click', async () => {
         // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
-        if (prtgModuleEnabled === false) {
+        if (prtgModuleEnabled !== true) {
             toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
             return;
         }
@@ -1262,6 +1360,8 @@ function bindPrtgSync() {
             await api.post('/api/admin/settings/prtg-structure-sync/start', {});
             toast('已開始同步結構與對應', 'success');
             await refreshPrtgSyncStatus();
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }
@@ -1274,6 +1374,8 @@ function bindPrtgSync() {
             await api.post('/api/admin/settings/prtg-structure-sync/cancel', {});
             toast('已送出停止要求，進行中的查詢會被中斷', 'success');
             await refreshPrtgSyncStatus();
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }
@@ -1292,10 +1394,11 @@ function renderPrtgModuleState(enabled, scope) {
 
     // 未啟用時同步與回填一定被後端拒絕（PrtgStructureSyncService／PrtgBackfillService），
     // 讓兩顆鈕灰掉並指出開關在哪，比按下去看紅字有用。
-    document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled);
+    document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled === true);
     for (const id of ['prtg-sync-start', 'prtg-backfill-start']) {
         const btn = document.getElementById(id);
-        if (btn) btn.disabled = !enabled;
+        // 與同檔其餘六處一致：只認明確的啟用，其他一律當未啟用（回饋第 45 輪終檢補上的第七處）
+        if (btn) btn.disabled = enabled !== true;
     }
 }
 
@@ -1370,12 +1473,17 @@ document.getElementById('schedule-stop')?.addEventListener('click', async () => 
     });
     if (!confirmed) return;
 
+    // 防連點（回饋四十五輪批次A2）：第二下會打到已無執行中的後端而吐紅字
+    const stopBtn = document.getElementById('schedule-stop');
+    const restore = withBusy(stopBtn, '停止中');
     try {
         await api.post('/api/admin/schedule/cancel', {});
         toast('已送出停止要求', 'success');
         await refreshScheduleStatus();
     } catch {
         // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
     }
 });
 
@@ -1402,12 +1510,17 @@ document.getElementById('schedule-ai-stop')?.addEventListener('click', async () 
     });
     if (!confirmed) return;
 
+    // 防連點（回饋四十五輪批次A2）：同取數卡的停止鈕
+    const aiStopBtn = document.getElementById('schedule-ai-stop');
+    const restore = withBusy(aiStopBtn, '停止中');
     try {
         await api.post('/api/admin/schedule/ai-cancel', {});
         toast('已送出停止 AI 分析要求', 'success');
         await refreshScheduleStatus();
     } catch {
         // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
     }
 });
 
@@ -1468,7 +1581,6 @@ function updateRerunModeUI() {
             warningEl.textContent = '';
         }
     } else {
-        if (daysWrap) daysWrap.hidden = false;
         if (warningEl) {
             warningEl.className = `alert alert-${config.variant} py-2 px-3 mb-3`;
             warningEl.textContent = config.consequence;
@@ -1579,7 +1691,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
 
     // 「連線填好了卻忘了開擷取」是最常見的踩雷，執行前提醒一次。
     // 完全沒設定 PRTG 的站台不提醒——每次手動執行都被問一次只會讓人麻痺。
-    if (prtgModuleEnabled === false && prtgConnectionConfigured) {
+    if (prtgModuleEnabled !== true && prtgConnectionConfigured) {
         const goOn = await confirmAction({
             title: 'PRTG 尚未啟用',
             message: '這次執行不會做 PRTG 擷取（連線已設定，但擷取未啟用）。\n'
@@ -1629,15 +1741,6 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
 
 
 let prtgBackfillPollTimer = null;
-
-function setPrtgBackfillSpinnerText(container, text) {
-    if (!container.querySelector('.spinner-border')) {
-        renderSpinner(container, text);
-        return;
-    }
-    const label = container.querySelector('span:last-child');
-    if (label) label.textContent = text;
-}
 
 function renderPrtgBackfillStatus(status) {
     const outputEl = document.getElementById('prtg-backfill-output');
@@ -1694,12 +1797,12 @@ function renderPrtgBackfillStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setPrtgBackfillSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
     // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
-    startButton.disabled = prtgModuleEnabled === false;
+    startButton.disabled = prtgModuleEnabled !== true;
     if (!status.completedAt) {
         statusEl.textContent = '';
         return;
@@ -1741,7 +1844,7 @@ function bindPrtgBackfill() {
 
     startButton?.addEventListener('click', async () => {
         // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
-        if (prtgModuleEnabled === false) {
+        if (prtgModuleEnabled !== true) {
             toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
             return;
         }
@@ -1772,6 +1875,8 @@ function bindPrtgBackfill() {
             await api.post('/api/admin/settings/prtg-backfill/cancel', {});
             toast('已送出停止，回填會在目前這一步結束後停下', 'success');
             await refreshPrtgBackfillStatus();
+        } catch {
+            // 錯誤已由 api.js 顯示
         } finally {
             restore();
         }

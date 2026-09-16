@@ -131,6 +131,23 @@ public class RunActivityDto
 
     /// <summary>進度的量詞（「台」／「天」）——由後端依階段決定，前端不猜</summary>
     public string? UnitText { get; set; }
+
+    /// <summary>
+    /// 這一趟是誰觸發的（「排程」／「手動（某人）」），未執行時為 null。
+    /// 文字由 <see cref="LogForesight.Web.Services.RunTriggerText"/> 產生，與排程頁共用同一份判定。
+    /// </summary>
+    public string? TriggerText { get; set; }
+
+    /// <summary>
+    /// 執行中的是不是**取數排程**（true＝取數，false＝只有 AI 分析排程在跑）。
+    ///
+    /// 這支端點的 <see cref="IsRunning"/> 是「取數或 AI 任一在跑」的聯集，因為告示只要講
+    /// 「系統正忙、畫面會變慢」。但**互斥判斷不能用聯集**：主機更新只在取數執行中才會被後端擋下
+    /// （`SchedulerRunState.IsRunning`），AI 單獨在跑時那個動作是允許的。
+    /// 少了這個欄位，畫面會在 AI 分析期間把「指定主機更新」停用並說「排程執行中」，兩件事都不成立。
+    /// 未執行時為 false。
+    /// </summary>
+    public bool IsFetchRun { get; set; }
 }
 
 /// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，複用

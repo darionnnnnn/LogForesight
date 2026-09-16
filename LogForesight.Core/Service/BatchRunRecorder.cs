@@ -29,6 +29,16 @@ public class BatchRunRecorder : IDisposable
     private bool _finished;
     private IDisposable? _scope;
 
+    /// <summary>
+    /// scope 屬性鍵。值是**這個 recorder 實例**的識別碼，不是 RunId——RunId 由各自的
+    /// store 配號，兩個獨立 store（例如測試裡各自的資料庫、或日後多後端並存）會配出同一個號，
+    /// 那時 target 就會把別人那一趟的事件當成自己的收進來。識別碼逐實例產生，不會碰撞。
+    /// </summary>
+    private const string ScopeKey = "lf_run_scope";
+
+    /// <summary>這個 recorder 實例的識別碼（見 <see cref="ScopeKey"/>）</summary>
+    private readonly string _scopeToken = Guid.NewGuid().ToString("N");
+
     /// <param name="ct">執行用的取消權杖（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
     /// <see cref="OperationCanceledException"/> 會在 using 範圍結束時經 <see cref="Dispose"/> 回填——
     /// 這裡收下權杖，讓 Dispose 分得出「使用者停止」（記「已停止」）與「異常中斷」（exit 1）。
@@ -71,9 +81,9 @@ public class BatchRunRecorder : IDisposable
 
             // 掛上 NLog target：Warn 以上自動流入執行紀錄，不需要在 codebase 各處加呼叫。
             // 完整診斷仍在 logs\logforesight.log，這裡只收「一眼確認有沒有問題」需要的部分
-            _target = new BatchRunNLogTarget(_store, _run.RunId, OnLogRecorded);
+            _target = new BatchRunNLogTarget(_store, _run.RunId, _scopeToken, OnLogRecorded);
             _target.Attach();
-            _scope = ScopeContext.PushProperty("lf_run_id", _run.RunId);
+            _scope = ScopeContext.PushProperty(ScopeKey, _scopeToken);
         }
         catch (Exception ex)
         {
@@ -258,45 +268,63 @@ public class BatchRunRecorder : IDisposable
     /// </summary>
     private class BatchRunNLogTarget : TargetWithLayout
     {
+        /// <summary>保護 <see cref="LogManager.Configuration"/> 這份全域設定的讀改寫（見 <see cref="Attach"/>）</summary>
+        private static readonly object ConfigLock = new();
+
         private readonly BatchRunStore _store;
         private readonly long _runId;
+        private readonly string _scopeToken;
         private readonly Action<string, string> _onRecorded;
 
-        public BatchRunNLogTarget(BatchRunStore store, long runId, Action<string, string> onRecorded)
+        public BatchRunNLogTarget(BatchRunStore store, long runId, string scopeToken, Action<string, string> onRecorded)
         {
             _store = store;
             _runId = runId;
+            _scopeToken = scopeToken;
             _onRecorded = onRecorded;
-            Name = $"batchrun_{runId}";
+            // target 名稱要逐實例唯一：RunId 由各自的 store 配號，兩個獨立 store 會配出同一個號，
+            // 同名 target 會在附掛時互相取代，先掛的那一趟從此收不到任何事件。
+            Name = $"batchrun_{runId}_{scopeToken}";
         }
 
         public void Attach()
         {
-            var config = LogManager.Configuration;
-            if (config == null) return;
+            // 全域設定的讀改寫要互斥：取數排程與 AI 排程可以並行（AI 跟隨取數），
+            // 兩趟執行各有自己的 recorder，附掛與卸除動的都是 LogManager.Configuration
+            // 這一份全域物件。不互斥的話兩邊的 AddTarget/RemoveTarget 與 ReconfigExistingLoggers
+            // 會交錯，先掛的那一趟可能被後來者的重設抹掉，從此收不到任何事件——
+            // 而那個失敗是靜默的：執行紀錄只會顯示「這趟沒有任何警告」。
+            lock (ConfigLock)
+            {
+                var config = LogManager.Configuration;
+                if (config == null) return;
 
-            config.AddTarget(this);
-            config.AddRule(LogLevel.Warn, LogLevel.Fatal, this);
-            LogManager.ReconfigExistingLoggers();
+                config.AddTarget(this);
+                config.AddRule(LogLevel.Warn, LogLevel.Fatal, this);
+                LogManager.ReconfigExistingLoggers();
+            }
         }
 
         public void Detach()
         {
-            var config = LogManager.Configuration;
-            if (config == null) return;
+            lock (ConfigLock)
+            {
+                var config = LogManager.Configuration;
+                if (config == null) return;
 
-            config.RemoveTarget(Name);
-            LogManager.ReconfigExistingLoggers();
+                config.RemoveTarget(Name);
+                LogManager.ReconfigExistingLoggers();
+            }
         }
 
         protected override void Write(LogEventInfo logEvent)
         {
             // 只收這一趟執行自己非同步流程內的事件：target 是全行程 Warn~Fatal 規則，
             // 不過濾的話夜間批次會把前景頁面的慢 SQL、互動 AI 逾時、AI 排程失敗全記成自己的問題。
-            if (!ScopeContext.TryGetProperty("lf_run_id", out var v))
+            if (!ScopeContext.TryGetProperty(ScopeKey, out var v))
                 return;
 
-            if (!(v is long runId ? runId == _runId : (long.TryParse(v?.ToString(), out var parsed) && parsed == _runId)))
+            if (v?.ToString() != _scopeToken)
                 return;
 
             try
