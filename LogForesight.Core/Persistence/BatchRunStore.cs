@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using NLog;
 
 namespace LogForesight.Core.Persistence;
 
@@ -140,6 +141,34 @@ public class BatchRunLog
 /// </summary>
 public class BatchRunStore
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 續號探測的回看行數（docs/archive/SCALE-ISSUE-FIRST-PLAN.md N4）。
+    /// 只看最後一行時，那一行剛好損毀就會讓續號從 0 重來、與既有紀錄重號；
+    /// 損毀通常是連續的一小段，回看 10 行足以跨過去，而這仍是索引 (log_key, seq)
+    /// 的同一次反向 seek，成本與讀一行幾乎相同——不值得為此退回全表掃描。
+    /// </summary>
+    private const int IdProbeLines = 10;
+
+    /// <summary>
+    /// SQL 端依**附加時間**窄化時往前多放的緩衝天數。
+    /// 附加時間（寫入 DB 的那一刻）與業務時間（<see cref="BatchRun.StartedAt"/>／
+    /// <see cref="BatchRunLog.LoggedAt"/>）不是同一個東西：跨午夜執行、時鐘誤差、
+    /// 或先寫「開始」列再回填的情境，都會出現「業務時間在範圍內、附加時間略早於 cutoff」的列。
+    /// 多放一天讓這些列留在候選集裡，精確判斷仍由記憶體端的業務時間過濾負責。
+    /// </summary>
+    private const int AppendTimeBufferDays = 1;
+
+    /// <summary>
+    /// 單筆執行查詢（<see cref="GetRun"/>）的預設回看窗口：沿用執行紀錄保留天數的出廠預設
+    /// （<see cref="SystemSettings.DefaultRunLogRetentionDays"/>）——保留期以外的列本來就會被
+    /// <see cref="Prune"/> 清掉。這個 store 建構時拿不到系統設定（建構式簽章為寫入端共用），
+    /// 因此保留天數被調得比預設更長時，窗口內找不到就退回全撈（見 <see cref="GetRun"/>），
+    /// 對外行為與改動前完全一致。
+    /// </summary>
+    private const int RunLookupWindowDays = SystemSettings.DefaultRunLogRetentionDays;
+
     private readonly EfJsonLogStore _runs;
     private readonly EfJsonLogStore _logs;
     private readonly object _lock = new();
@@ -151,8 +180,30 @@ public class BatchRunStore
         _runs = runs;
         _logs = logs;
 
-        _lastRunId = ReadAllRunLines().Select(r => r.RunId).DefaultIfEmpty(0).Max();
-        _lastLogId = ReadAllLogs().Select(l => l.LogId).DefaultIfEmpty(0).Max();
+        // 續號起點以反向 seek 取得，不再整份讀回——這裡是 Singleton store 的建構式，
+        // 全撈等於站台啟動時同步讀十萬列並逐行解析。
+        _lastRunId = ProbeLastId<BatchRun>(_runs, r => r.RunId, "執行紀錄");
+        _lastLogId = ProbeLastId<BatchRunLog>(_logs, l => l.LogId, "執行診斷紀錄");
+    }
+
+    /// <summary>
+    /// 續號起點＝**最後一筆解析得出來的** id。由新到舊逐行嘗試，第一個成功的就是起點；
+    /// 全部失敗才回 0 並記 Warn——那代表尾端整段損毀，值得被看見而不是安靜地重號。
+    /// </summary>
+    private static long ProbeLastId<T>(EfJsonLogStore store, Func<T, long> idOf, string what) where T : class
+    {
+        var lines = store.ReadLastLines(IdProbeLines);
+        if (lines.Count == 0) return 0;
+
+        foreach (var line in lines)
+        {
+            var parsed = JsonLogParser.Parse<T>(new[] { line }, LfJsonOptions.Compact);
+            if (parsed.Count > 0) return idOf(parsed[0]);
+        }
+
+        Log.Warn("[BatchRunStore] {What}最後 {Count} 行都無法解析，續號自 0 起算——可能與既有紀錄重號。",
+            what, lines.Count);
+        return 0;
     }
 
     /// <summary>啟動時登記，回傳配發的 RunId</summary>
@@ -190,7 +241,11 @@ public class BatchRunStore
     public List<BatchRun> GetRecentRuns(int days, IReadOnlyCollection<string>? hostNames)
     {
         var cutoff = DateTime.Today.AddDays(-days + 1);
-        var runs = LatestPerRun().Where(r => r.StartedAt.Date >= cutoff);
+
+        // SQL 端先以附加時間窄化（含緩衝，不保證精確：CreatedAt 為 null 的既存列一律留下），
+        // 業務時間的精確判斷仍在記憶體端做，不可因為「SQL 已經篩過」就拿掉。
+        var runs = LatestPerRun(ReadRunLinesFrom(cutoff.AddDays(-AppendTimeBufferDays)))
+            .Where(r => r.StartedAt.Date >= cutoff);
 
         // hostNames 為 null = 不限；空集合 = 查不到（與其他查詢介面同一語意）
         if (hostNames != null)
@@ -202,17 +257,54 @@ public class BatchRunStore
         return runs.OrderByDescending(r => r.StartedAt).ToList();
     }
 
-    public BatchRun? GetRun(long runId) => LatestPerRun().FirstOrDefault(r => r.RunId == runId);
+    /// <summary>
+    /// 單筆執行。RunId 在 JSON 內容裡、不是資料表欄位，無法直接下推 SQL——
+    /// 改以保留期窗口窄化候選集後在記憶體比對；窗口內找不到才退回全撈
+    /// （保留天數被調得比出廠預設更長時的舊列），對外行為不變。
+    /// </summary>
+    public BatchRun? GetRun(long runId)
+    {
+        var from = DateTime.Today.AddDays(-RunLookupWindowDays - AppendTimeBufferDays);
+        var hit = LatestPerRun(ReadRunLinesFrom(from)).FirstOrDefault(r => r.RunId == runId);
+        return hit ?? LatestPerRun(ReadAllRunLines()).FirstOrDefault(r => r.RunId == runId);
+    }
 
-    public List<BatchRunLog> GetLogs(long runId) =>
-        ReadAllLogs().Where(l => l.RunId == runId).OrderBy(l => l.LogId).ToList();
+    /// <summary>
+    /// 單次執行的診斷紀錄。先取得該執行的時間範圍，再以該範圍（前後各留緩衝）窄化 log 分區。
+    /// 找不到該執行時與改動前同樣是空清單；**執行中**的執行（FinishedAt 為 null）上界取現在時間，
+    /// 不會因為沒有結束時間就回空。
+    ///
+    /// **窄化的結果就是最終結果，沒有「撈不到就全撈」的退路**，依據是：診斷行的業務時間與附加時間
+    /// 同源——<see cref="AppendLog"/> 把 <see cref="BatchRunLog.LoggedAt"/> 設為寫入當下，
+    /// 底層 <c>AppendLine</c> 寫的附加時間也是寫入當下，兩者相差毫秒級；而診斷行必然寫在該次執行
+    /// 進行中，因此一定落在 [StartedAt-緩衝, (FinishedAt ?? 現在)+緩衝] 裡。
+    /// 退路唯一會被觸發的情境反而是「這趟執行一行診斷都沒有」（NLog target 只收 Warn 以上，
+    /// 乾淨執行本來就是零行）——那是最常見的情況，留著退路等於把全撈變成常態路徑。
+    /// 升級前寫入、沒有附加時間的既存列也不會漏：底層對這種列一律視為在範圍內。
+    /// 這個前提由測試釘住（有診斷行的執行必須只靠窄化就取得全部的行）。
+    /// </summary>
+    public List<BatchRunLog> GetLogs(long runId)
+    {
+        var run = GetRun(runId);
+        if (run == null) return new List<BatchRunLog>();
+
+        var from = run.StartedAt.AddDays(-AppendTimeBufferDays);
+        var until = run.FinishedAt ?? DateTime.Now;
+        if (until < run.StartedAt) until = run.StartedAt;
+
+        return SelectLogs(ReadLogs(from, until.AddDays(AppendTimeBufferDays)), runId);
+    }
+
+    private static List<BatchRunLog> SelectLogs(IEnumerable<BatchRunLog> logs, long runId) =>
+        logs.Where(l => l.RunId == runId).OrderBy(l => l.LogId).ToList();
 
     /// <summary>近 N 天的 Error/Fatal 紀錄（異常彙總）</summary>
     public List<BatchRunLog> GetRecentErrors(int days)
     {
         var cutoff = DateTime.Today.AddDays(-days + 1);
 
-        return ReadAllLogs()
+        // 與 GetRecentRuns 同一套：SQL 端粗篩（含緩衝），業務時間與 Level 的判斷仍在記憶體端
+        return ReadLogs(cutoff.AddDays(-AppendTimeBufferDays), null)
             .Where(l => l.LoggedAt.Date >= cutoff && l.Level is "Error" or "Fatal")
             .OrderByDescending(l => l.LoggedAt)
             .ToList();
@@ -230,8 +322,8 @@ public class BatchRunStore
     }
 
     /// <summary>同一 RunId 取最後一列——「結束」那一列會覆蓋先前的「開始」</summary>
-    private List<BatchRun> LatestPerRun() =>
-        ReadAllRunLines()
+    private static List<BatchRun> LatestPerRun(IEnumerable<BatchRun> lines) =>
+        lines
             .GroupBy(r => r.RunId)
             .Select(g => g.Last())
             .ToList();
@@ -241,5 +333,13 @@ public class BatchRunStore
 
     private List<BatchRun> ReadAllRunLines() => JsonLogParser.Parse<BatchRun>(_runs.ReadLines(), LfJsonOptions.Compact);
 
+    /// <summary>附加時間不早於 from 的執行紀錄行（SQL 端窄化，不保證精確）</summary>
+    private List<BatchRun> ReadRunLinesFrom(DateTime from) =>
+        JsonLogParser.Parse<BatchRun>(_runs.ReadLines(from, null), LfJsonOptions.Compact);
+
     private List<BatchRunLog> ReadAllLogs() => JsonLogParser.Parse<BatchRunLog>(_logs.ReadLines(), LfJsonOptions.Compact);
+
+    /// <summary>附加時間落在範圍內的診斷紀錄行（SQL 端窄化，不保證精確）</summary>
+    private List<BatchRunLog> ReadLogs(DateTime? from, DateTime? to) =>
+        JsonLogParser.Parse<BatchRunLog>(_logs.ReadLines(from, to), LfJsonOptions.Compact);
 }
