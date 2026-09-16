@@ -145,6 +145,9 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds) => new();
 
+    public Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
+        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive) => new();
+
     public DayTodoAggregate AggregateDayTodo(
         DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,

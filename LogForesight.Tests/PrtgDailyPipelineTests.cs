@@ -1231,4 +1231,180 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.DoesNotContain(signatures, f => f.EventKey == "prtg:down:2002" || f.EventKey == "prtg:down:2003");
         Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("已合併 2 筆"));
     }
+
+    /// <summary>
+    /// 兩段式的核心：回望 3 天、同一 sensor 三天都 Warning、資料庫沒有任何歷史。
+    /// 最新一天處理的當下，較舊兩天還沒寫進資料庫，只靠第一段保存的本趟簽章才數得到第 3 次。
+    /// </summary>
+    [Fact]
+    public async Task 多日回望同sensor連續Warning_最新日跨日標註並升級且就緒只送一次()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var day1 = DateTime.Today.AddDays(-1);
+        var day2 = DateTime.Today.AddDays(-2);
+        var day3 = DateTime.Today.AddDays(-3);
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-WARN", Active = true, IpAddress = "192.168.1.121" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-WARN", Ip = "192.168.1.121" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "CPU", SensorType = "WMI CPU Load", Status = "Warning" }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day3.Date.AddMinutes(30), Status = "Warning" },
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day2.Date.AddMinutes(30), Status = "Warning" },
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day1.Date.AddMinutes(30), Status = "Warning" }
+        });
+        MapDeviceToHost(day3, 1, host);
+        MapDeviceToHost(day2, 1, host);
+        MapDeviceToHost(day1, 1, host);
+
+        var (ctx, console, progress, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day1, day2, day3 }, Task.CompletedTask, guard: null);
+
+        var newestSig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001");
+        Assert.Contains("第 3 次，連續第 3 日", newestSig.SampleMessages[0]);
+        Assert.Equal(IssueSeverity.High, newestSig.Severity);
+
+        var middleSig = Assert.Single(registry.For(host.HostId, day2), f => f.EventKey == "prtg:warning:2001");
+        Assert.Contains("第 2 次，連續第 2 日", middleSig.SampleMessages[0]);
+        Assert.Equal(IssueSeverity.Medium, middleSig.Severity);
+
+        var oldestSig = Assert.Single(registry.For(host.HostId, day3), f => f.EventKey == "prtg:warning:2001");
+        Assert.DoesNotContain("近 14 日", oldestSig.SampleMessages[0]);
+
+        Assert.Equal(1, progress.Phases.Count(p => p == RunPhases.PrtgFindingsReady));
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day1:yyyy-MM-dd}）") && l.Contains("跨日升級 1 筆、長期 Down 0 筆"));
+    }
+
+    /// <summary>
+    /// 重跑時本趟重評的日期只認本趟結果：資料庫裡前一天留有上一趟寫入的 warning（這一趟那天已不成立），
+    /// 不得被算成歷史，最新一天不應出現「第 2 次」。
+    /// </summary>
+    [Fact]
+    public async Task 回望重跑時本趟重評日期不採用資料庫的舊命中()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var day1 = DateTime.Today.AddDays(-1);
+        var day2 = DateTime.Today.AddDays(-2);
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-RERUN", Active = true, IpAddress = "192.168.1.123" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-RERUN", Ip = "192.168.1.123" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "CPU", SensorType = "WMI CPU Load", Status = "Warning" }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day2.Date.AddMinutes(10), Status = "Up" },
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day1.Date.AddMinutes(30), Status = "Warning" }
+        });
+        MapDeviceToHost(day2, 1, host);
+        MapDeviceToHost(day1, 1, host);
+
+        // 上一趟在 day2 留下的 warning（門檻或狀態改過後這一趟已不成立）
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day2, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:warning", EventId = 0,
+                    EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:warning:2001",
+                    Count = 1, Severity = IssueSeverity.Medium
+                }
+            }
+        });
+
+        var (ctx, _, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day1, day2 }, Task.CompletedTask, guard: null);
+
+        Assert.Empty(registry.For(host.HostId, day2));
+        var sig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001");
+        Assert.DoesNotContain("近 14 日", sig.SampleMessages[0]);
+    }
+
+    /// <summary>
+    /// 長期 Down 不再拉高日風險：資料庫已有連續 13 天的 down（重大規則 availability），
+    /// 當日第 14 天的 finding 不帶重大旗標，執行輸出計入長期 Down。
+    /// </summary>
+    [Fact]
+    public async Task 資料庫已有連續13日Down_當日視為長期Down不拉高日風險()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-DEAD", Active = true, IpAddress = "192.168.1.122" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-DEAD", Ip = "192.168.1.122" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Ping", SensorType = "Ping", Status = "Down", Category = PrtgSensorCategories.Availability }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(1), Status = "Down" }
+        });
+        MapDeviceToHost(day, 1, host);
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        for (var n = 1; n <= 13; n++)
+        {
+            hostRecordStore.Append(new DailyAnalysisRecord
+            {
+                Date = day.AddDays(-n),
+                HostId = host.HostId,
+                Host = host.HostName,
+                RiskLevel = RiskLevels.High,
+                TopIssues = new List<LogIssueSignature>
+                {
+                    new()
+                    {
+                        LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:down", EventId = 0,
+                        EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:down:2001",
+                        Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = true
+                    }
+                }
+            });
+        }
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
+        });
+
+        var (ctx, console, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { day }, Task.CompletedTask, guard: null);
+
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
+        Assert.False(sig.ElevatesDayRisk);
+        Assert.Contains("已連續 14 日，建議在 PRTG 暫停該 sensor 或建立抑制", sig.SampleMessages[0]);
+
+        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+        // 長期 Down 關掉重大旗標且嚴重度封頂「中」→ 不再拉日風險，維持原本的「低」
+        Assert.Equal(RiskLevels.Low, record.RiskLevel);
+        Assert.Contains(console.Lines, l => l.Contains("長期 Down 1 筆"));
+    }
 }

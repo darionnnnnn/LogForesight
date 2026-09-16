@@ -1073,6 +1073,50 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    /// <summary>EventKey 清單每批上限：SQL Server 單一語句參數上限 2100，留足餘裕。</summary>
+    internal const int PrtgHitDateBatchSize = 500;
+
+    public Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
+        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive)
+    {
+        var result = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);
+        var keys = eventKeys.Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0 || fromInclusive >= toExclusive) return result;
+
+        var sw = Stopwatch.StartNew();
+        var f = fromInclusive.Date;
+        var t = toExclusive.Date;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in keys.Chunk(PrtgHitDateBatchSize))
+        {
+            // SQL 端過濾來源、鍵與日期並取相異組合，不得撈整表回記憶體再篩
+            var rows = ctx.TopIssues.AsNoTracking()
+                .Where(x => x.LogName == PrtgFindingMapper.PrtgLogName
+                            && x.RecordDate >= f && x.RecordDate < t
+                            && batch.Contains(x.EventKey))
+                .Select(x => new { x.EventKey, x.RecordDate })
+                .Distinct()
+                .ToList();
+
+            foreach (var row in rows)
+            {
+                if (!result.TryGetValue(row.EventKey, out var dates))
+                {
+                    dates = new HashSet<DateTime>();
+                    result[row.EventKey] = dates;
+                }
+                dates.Add(row.RecordDate.Date);
+            }
+        }
+
+        Log.Debug("[SQL] IssueAggregate.GetPrtgFindingHitDates（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，鍵 {Keys} 個）→ {Count} 鍵、{Ms}ms",
+            f, t, keys.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:GetPrtgFindingHitDates", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
     private static string ExtractPrtgRuleCode(string? eventKey)
     {
         if (string.IsNullOrEmpty(eventKey)) return "其他";

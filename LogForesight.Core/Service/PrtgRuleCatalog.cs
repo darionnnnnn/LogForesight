@@ -21,6 +21,15 @@ public static class PrtgRuleCatalog
     public const int DefaultWarningMinutes = 240;
     public const int DefaultSilentThreshold = 0;
 
+    /// <summary>跨日判定回望窗口（日，不含當日）</summary>
+    public const int CrossDayWindowDays = 14;
+    /// <summary>連續出現達此日數（含當日）即升一級嚴重度</summary>
+    public const int EscalateConsecutiveDays = 3;
+    /// <summary>窗口內命中次數（含當日）達此數即升一級嚴重度</summary>
+    public const int EscalateHitsInWindow = 3;
+    /// <summary>down 連續達此日數視為長期 Down（沒人移除的死 sensor），不再拉高日風險</summary>
+    public const int ChronicDownDays = 14;
+
     private static readonly Dictionary<string, PrtgRuleInfo> Rules = new(StringComparer.Ordinal)
     {
         [PrtgRuleEvaluator.RuleDown] = new(

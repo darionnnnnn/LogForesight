@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -706,5 +707,63 @@ public class IssueAggregateQueryTests : IDisposable
         var downSingle = Assert.Single(resultSingleHost);
         Assert.Equal(2, downSingle.HitCount);
         Assert.Equal(1, downSingle.HostCount);
+    }
+
+    /// <summary>記錄執行過的 lf_top_issues 讀取語句，驗證分批查詢次數。</summary>
+    private sealed class TopIssueReadRecorder : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public int TopIssueReads { get; private set; }
+
+        public override Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> ReaderExecuting(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result)
+        {
+            if (command.CommandText.Contains("lf_top_issues")) TopIssueReads++;
+            return base.ReaderExecuting(command, eventData, result);
+        }
+    }
+
+    [Fact]
+    public void GetPrtgFindingHitDates_不限主機只取PRTG列與區間內相異日期()
+    {
+        var d0 = new DateTime(2026, 8, 10);
+        Add(1, "A", d0.AddDays(-1), PrtgIssue("prtg:warning:7"));
+        Add(2, "B", d0.AddDays(-2), PrtgIssue("prtg:warning:7"));          // 換了對應主機仍是同一顆
+        Add(3, "C", d0.AddDays(-2), PrtgIssue("prtg:warning:7"));          // 同日重複只算一次
+        Add(1, "A", d0.AddDays(-15), PrtgIssue("prtg:warning:7"));         // 區間外
+        Add(1, "A", d0, PrtgIssue("prtg:warning:7"));                       // toExclusive 不含
+        Add(1, "A", d0.AddDays(-3), Issue("disk", 0, logName: "System", eventKey: "prtg:warning:7")); // 非 PRTG 列
+        Add(1, "A", d0.AddDays(-4), Issue("disk", 0, logName: "System", eventKey: "prtg:down:9"));    // 非 PRTG 列
+        Add(1, "A", d0.AddDays(-1), PrtgIssue("prtg:down:8"));              // 不在清單內
+
+        var result = Query().GetPrtgFindingHitDates(
+            new[] { "prtg:warning:7", "prtg:down:9" }, d0.AddDays(-14), d0);
+
+        var only = Assert.Single(result);
+        Assert.Equal("prtg:warning:7", only.Key);
+        Assert.Equal(new[] { d0.AddDays(-2), d0.AddDays(-1) }, only.Value.OrderBy(d => d));
+    }
+
+    [Fact]
+    public void GetPrtgFindingHitDates_600個鍵分兩批查詢()
+    {
+        var d0 = new DateTime(2026, 8, 10);
+        Add(1, "A", d0.AddDays(-1), PrtgIssue("prtg:down:0"), PrtgIssue("prtg:down:599"));
+
+        var recorder = new TopIssueReadRecorder();
+        using var probe = _fx.NewContext();
+        var connection = Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.GetDbConnection(probe.Database);
+        var query = new EfIssueAggregateQuery(() => new LfDbContext(
+            new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<LfDbContext>()
+                .UseSqlite(connection)
+                .AddInterceptors(recorder)
+                .Options), _hosts);
+
+        var keys = Enumerable.Range(0, 600).Select(i => $"prtg:down:{i}").ToList();
+        var result = query.GetPrtgFindingHitDates(keys, d0.AddDays(-14), d0);
+
+        Assert.Equal(2, recorder.TopIssueReads);
+        Assert.Equal(new[] { "prtg:down:0", "prtg:down:599" }, result.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 }

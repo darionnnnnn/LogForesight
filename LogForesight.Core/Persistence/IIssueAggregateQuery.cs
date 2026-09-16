@@ -223,6 +223,15 @@ public interface IIssueAggregateQuery
     List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
 
     /// <summary>
+    /// PRTG finding 跨日命中日期（docs/PRTG-SPEC.md 跨日判定）：回傳每個 EventKey 在
+    /// <c>[fromInclusive, toExclusive)</c> 內出現過的相異日期。只取 <c>LogName == "PRTG"</c> 的列，
+    /// **不限主機**——同一顆 sensor 換了對應主機仍是同一顆。EventKey 清單分批查詢（每批最多 500 個），
+    /// 查不到的鍵不會出現在結果裡。
+    /// </summary>
+    Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
+        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive);
+
+    /// <summary>
     /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次
     /// <see cref="AggregateReportKpi"/> 逐欄位相同；預設實作就是那樣呼叫兩次
     /// （測試替身自動取得等值行為），EF 實作覆寫成合併查詢收斂資料庫往返。
