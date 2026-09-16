@@ -926,4 +926,66 @@ public class PrtgAdminPageUiTests
         Assert.Contains("夜間取數", js);
         Assert.Contains("尚未同步", js);
     }
+
+    [Fact]
+    public void Prtg維護頁有sensorType分類補充對照且讀與送都接上()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        Assert.Contains("id=\"prtg-sensor-type-category-overrides\"", cshtml);
+        Assert.Contains("sensor type 分類補充對照", cshtml);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+        Assert.Contains("(settings.prtgSensorTypeCategoryOverrides ?? []).join('\\n')", js);
+        Assert.Contains("prtgSensorTypeCategoryOverrides: collectLines('prtg-sensor-type-category-overrides')", js);
+    }
+
+    [Fact]
+    public void 規則頁PRTG區塊有sensor分類下拉且送出與silent鎖定()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Rules.cshtml"));
+        Assert.Contains("id=\"rule-prtg-sensor-category\"", cshtml);
+        var thresholdIdx = cshtml.IndexOf("id=\"rule-match-prtg-threshold\"", StringComparison.Ordinal);
+        var categoryIdx = cshtml.IndexOf("id=\"rule-match-prtg-sensor-category\" data-platform-block=\"prtg\"", StringComparison.Ordinal);
+        Assert.True(thresholdIdx >= 0 && categoryIdx > thresholdIdx, "分類區塊應在門檻值區塊之後且屬於 prtg 平台區塊");
+        foreach (var value in new[] { "traffic", "disk", "cpu", "memory", "availability", "hardware" })
+            Assert.Contains($"<option value=\"{value}\">", cshtml);
+        Assert.Contains("<option value=\"\">全部分類</option>", cshtml);
+
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "rules.js"));
+        Assert.Contains("prtgSensorCategory: platform === 'prtg' ? (document.getElementById('rule-prtg-sensor-category').value || null) : null", js);
+        Assert.Contains("document.getElementById('rule-prtg-sensor-category').value = rule?.prtgSensorCategory ?? '';", js);
+        Assert.Contains("document.getElementById('rule-prtg-code').addEventListener('change', applyPrtgSensorCategoryLock);", js);
+        Assert.Matches(@"isSilent\)\s*select\.value = '';\s*select\.disabled = isSilent;", js);
+    }
+
+    [Fact]
+    public void 主機頁PRTG表格以textContent逐格建立且狀態依前綴判定()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "host-detail.js"));
+        Assert.DoesNotContain("tr.innerHTML", js);
+        Assert.DoesNotContain(">正常</span>", js);
+        Assert.Contains("function prtgSensorStatusBadge(sensor)", js);
+        Assert.Contains("startsWith('down')", js);
+        Assert.Contains("startsWith('warning')", js);
+        Assert.Contains("startsWith('up')", js);
+        Assert.Contains("'未知'", js);
+        Assert.Contains("device.name", js);
+    }
+
+    [Fact]
+    public void 規則頁PRTG列表門檻欄與卡片在有分類時加顯示文字後綴()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "rules.js"));
+
+        // 門檻欄（表格）與卡片（matchCell）都要接上同一個後綴函式
+        Assert.Contains("'分'}${prtgSensorCategorySuffix(r)}`)", js);
+        Assert.Contains("threshold.textContent += prtgSensorCategorySuffix(rule);", js);
+        Assert.Contains("return `（${PRTG_SENSOR_CATEGORY_LABELS[category] ?? category}）`;", js);
+        foreach (var pair in new[] { "traffic: '流量'", "disk: '磁碟空間'", "cpu: 'CPU'", "memory: '記憶體'", "availability: '連通性'", "hardware: '硬體健康'" })
+            Assert.Contains(pair, js);
+    }
 }

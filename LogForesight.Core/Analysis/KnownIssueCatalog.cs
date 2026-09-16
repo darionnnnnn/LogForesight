@@ -1,4 +1,5 @@
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Analysis;
 
@@ -122,6 +123,11 @@ public class KnownIssueRule
     /// 承載不了分鐘數，也沒有「未達即不成立」的語意。</summary>
     public int PrtgThreshold { get; init; }
 
+    /// <summary>PRTG 規則適用的 sensor 語意分類（見 <see cref="PrtgSensorCategories"/>）；null＝不限分類。
+    /// 同一代碼可同時有不限分類的規則與分類規則，評估時分類相符者優先（見 PrtgRuleEvaluator）。
+    /// silent 規則與非 prtg 規則恆為 null（由 RuleValidator 把關）。</summary>
+    public string? PrtgSensorCategory { get; init; }
+
     public IssueCategory Category { get; init; }
 
     /// <summary>
@@ -199,6 +205,7 @@ public class KnownIssueRule
         MessagePatterns = MessagePatterns,
         PrtgRuleCode = PrtgRuleCode,
         PrtgThreshold = PrtgThreshold,
+        PrtgSensorCategory = PrtgSensorCategory,
         Category = Category,
         Severity = Severity,
         ElevatesDayRisk = ElevatesDayRisk,
@@ -350,10 +357,38 @@ public static class KnownIssueCatalog
     /// </summary>
     public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
+        if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
+        {
+            var prtgRule = FindPrtgRuleByCode(rules, prtgCode);
+            return string.IsNullOrWhiteSpace(prtgRule?.PlainExplanation) ? null : prtgRule.PlainExplanation;
+        }
+
         var rule = eventId == 0
             ? FindLinuxRuleByProgram(rules, source)
             : FindRule(rules, source, eventId);
         return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    /// <summary>
+    /// 依 PRTG 規則代碼找啟用中的 prtg 規則：恰一條就是它；多條時取不限分類（<c>PrtgSensorCategory</c> 為 null）的那條——
+    /// 聚合層跨 sensor 合成一列，說明要講代碼的通用語意，不是某個分類的；不限分類的也有多條時只認
+    /// <c>builtin-prtg-{代碼}</c>，沒有就回 null（不猜是哪一條自訂規則）。
+    /// </summary>
+    private static KnownIssueRule? FindPrtgRuleByCode(IReadOnlyList<KnownIssueRule> rules, string code)
+    {
+        var candidates = rules
+            .Where(r => r.Enabled &&
+                        string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(r.PrtgRuleCode, code, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (candidates.Count == 1) return candidates[0];
+
+        var uncategorized = candidates.Where(r => r.PrtgSensorCategory == null).ToList();
+        if (uncategorized.Count == 1) return uncategorized[0];
+
+        var builtinId = $"builtin-prtg-{code}";
+        return uncategorized.FirstOrDefault(r => string.Equals(r.Id, builtinId, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

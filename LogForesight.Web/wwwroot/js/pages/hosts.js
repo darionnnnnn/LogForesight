@@ -471,7 +471,25 @@ function statusBadges(host) {
         }
     }
 
+    // PRTG 提示：後端只對未回報主機給值；措辭只陳述 PRTG 看到的事實，不替使用者下診斷
+    const prtg = prtgHintBadge(host);
+    if (prtg) badges.push(prtg);
+
     return badges;
+}
+
+function prtgHintBadge(host) {
+    let text;
+    let variant;
+    switch (host.prtgHint) {
+        case 'down': text = 'PRTG：主機失聯'; variant = 'danger'; break;
+        case 'up': text = 'PRTG：主機在線，問題在日誌取數端'; variant = 'warning'; break;
+        case 'unknown': text = 'PRTG：無資料'; variant = 'secondary'; break;
+        case 'no-map': text = '無 PRTG 對應'; variant = 'secondary'; break;
+        default: return null;
+    }
+    if (host.prtgHintStale) text += '（鏡像過期）';
+    return badge(text, variant);
 }
 
 /** 分級徽章（回饋十九輪批次G）：核心用醒目色引起注意，一般不特別強調，測試用中性色 */

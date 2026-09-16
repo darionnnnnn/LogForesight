@@ -57,6 +57,9 @@ public class DashboardDto
     /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
     public int SilentHostsCount { get; set; }
 
+    /// <summary>可見未回報主機中 PRTG 現況提示為 down 的台數（PRTG 未啟用時為 0）</summary>
+    public int SilentHostsPrtgDownCount { get; set; }
+
     /// <summary>依主機群組的風險概況（§5.4 D-4）：兩千台規模下「先看部門、再下鑽」是主要動線</summary>
     public List<DashboardGroupRiskDto> GroupRisk { get; set; } = new();
 }

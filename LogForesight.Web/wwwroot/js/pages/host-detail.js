@@ -662,6 +662,26 @@ async function loadPrtgMapping() {
     }
 }
 
+// PRTG sensor 狀態徽章：暫停優先；其餘依狀態字串前綴（不分大小寫）判定色系，
+// 文字顯示原字串（保留「Down (Acknowledged)」這類括號變體），空值顯示「未知」。
+function prtgSensorStatusBadge(sensor) {
+    if (sensor.paused) return { text: '已暫停', variant: 'secondary' };
+    const raw = (sensor.status ?? '').trim();
+    if (!raw) return { text: '未知', variant: 'secondary' };
+    const lower = raw.toLowerCase();
+    if (lower.startsWith('down')) return { text: raw, variant: 'danger' };
+    if (lower.startsWith('warning')) return { text: raw, variant: 'warning' };
+    if (lower.startsWith('up')) return { text: raw, variant: 'success' };
+    return { text: raw, variant: 'secondary' };
+}
+
+function badge(text, variant) {
+    const el = document.createElement('span');
+    el.className = `lf-badge lf-badge--${variant}`;
+    el.textContent = text;
+    return el;
+}
+
 function renderPrtgDevices(container, data) {
     container.replaceChildren();
 
@@ -681,7 +701,9 @@ function renderPrtgDevices(container, data) {
 
         const devTitle = document.createElement('div');
         devTitle.className = 'fw-semibold';
-        devTitle.textContent = `PRTG Device: ${device.deviceObjid}${device.ip ? ` (${device.ip})` : ''}`;
+        devTitle.textContent = device.name
+            ? `${device.name}（objid ${device.deviceObjid}${device.ip ? `，${device.ip}` : ''}）`
+            : `PRTG Device: ${device.deviceObjid}${device.ip ? ` (${device.ip})` : ''}`;
 
         const devMeta = document.createElement('div');
         devMeta.className = 'small text-muted';
@@ -706,10 +728,22 @@ function renderPrtgDevices(container, data) {
             const tbody = document.createElement('tbody');
             for (const s of device.sensors) {
                 const tr = document.createElement('tr');
-                const badgeHtml = s.paused
-                    ? '<span class="badge text-bg-secondary">已暫停</span>'
-                    : '<span class="badge text-bg-success">正常</span>';
-                tr.innerHTML = `<td class="font-monospace">${s.objid}</td><td>${s.name}</td><td>${s.sensorType || '-'}</td><td>${s.category || '-'}</td><td>${badgeHtml}</td>`;
+                const status = prtgSensorStatusBadge(s);
+                const cells = [
+                    [String(s.objid), 'font-monospace'],
+                    [s.name ?? '', ''],
+                    [s.sensorType || '-', ''],
+                    [s.category || '—', '']
+                ];
+                for (const [text, className] of cells) {
+                    const td = document.createElement('td');
+                    if (className) td.className = className;
+                    td.textContent = text;
+                    tr.appendChild(td);
+                }
+                const statusTd = document.createElement('td');
+                statusTd.appendChild(badge(status.text, status.variant));
+                tr.appendChild(statusTd);
                 tbody.appendChild(tr);
             }
             table.appendChild(tbody);

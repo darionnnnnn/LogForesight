@@ -67,6 +67,38 @@ internal static class CorrelationAnalyzer
         issue.Source.Contains("Security-Auditing", StringComparison.OrdinalIgnoreCase) &&
         issue.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 與 <see cref="Detect"/> 內 Find 同語意的單一比對：Source 包含 <paramref name="sourcePattern"/>（不分大小寫）
+    /// 且 EventId 在 <paramref name="ids"/> 內（ids 為空時不限）的第一筆。
+    /// </summary>
+    private static LogIssueSignature? FindIn(IEnumerable<LogIssueSignature> issues, string sourcePattern, params int[] ids) =>
+        issues.FirstOrDefault(i =>
+            i.Source.Contains(sourcePattern, StringComparison.OrdinalIgnoreCase) &&
+            (ids.Length == 0 || ids.Contains(i.EventId)));
+
+    /// <summary>
+    /// 儲存層訊號（磁碟 I/O、NTFS、控制器 129），依磁碟 → NTFS → 控制器順序各取第一筆。
+    /// 儲存訊號的唯一判定：同日關聯（儲存連鎖／儲存→當機）與 PRTG 跨來源佐證共用。
+    /// </summary>
+    internal static List<LogIssueSignature> StorageSignals(IReadOnlyList<LogIssueSignature> issues)
+    {
+        return new[]
+        {
+            FindIn(issues, "disk", DiskErrorIds),
+            FindIn(issues, "Ntfs", NtfsErrorIds),
+            FindIn(issues, "stor", 129)
+        }.Where(s => s != null).Cast<LogIssueSignature>().ToList();
+    }
+
+    /// <summary>
+    /// 非預期關機（Kernel-Power 41，沒有時退回 EventLog 6008）。
+    /// 非預期關機的唯一判定：同日關聯與 PRTG 跨來源佐證共用。
+    /// </summary>
+    internal static LogIssueSignature? UnexpectedShutdown(IReadOnlyList<LogIssueSignature> issues)
+    {
+        return FindIn(issues, "Kernel-Power", 41) ?? FindIn(issues, "EventLog", 6008);
+    }
+
     public static List<CorrelationFinding> Detect(List<LogIssueSignature> issues,
         List<DailyAnalysisRecord> history, DateTime targetDate, SuccessfulLogonMatch? successfulLogonMatch = null)
     {
@@ -194,12 +226,7 @@ internal static class CorrelationAnalyzer
 
         // ── 儲存/硬體：故障連鎖（同日）─────────────────────────────────
 
-        var storageSignals = new[]
-        {
-            Find("disk", DiskErrorIds),
-            Find("Ntfs", NtfsErrorIds),
-            Find("stor", 129)
-        }.Where(s => s != null).Cast<LogIssueSignature>().ToList();
+        var storageSignals = StorageSignals(issues);
 
         if (storageSignals.Count >= 2)
         {
@@ -212,7 +239,7 @@ internal static class CorrelationAnalyzer
             });
         }
 
-        var unexpectedShutdown = Find("Kernel-Power", 41) ?? Find("EventLog", 6008);
+        var unexpectedShutdown = UnexpectedShutdown(issues);
         if (storageSignals.Count > 0 && unexpectedShutdown != null)
         {
             findings.Add(new CorrelationFinding

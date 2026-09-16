@@ -310,7 +310,8 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         }
 
         var prtgStore = _backend.PrtgStore();
-        var fetchService = new PrtgFetchService(client, prtgStore, console);
+        var fetchService = new PrtgFetchService(client, prtgStore, console,
+            PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
         var concurrency = s.PrtgFetchConcurrency;
 
         _ = Task.Run(async () =>

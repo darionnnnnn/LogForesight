@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -20,6 +22,7 @@ public class DashboardService
     private readonly ISystemSettingsService _systemSettings;
 
     private readonly SummaryCache _summaryCache;
+    private readonly EfPrtgStore _prtgStore;
 
     public DashboardService(
         IVisibilityService visibility,
@@ -33,8 +36,10 @@ public class DashboardService
         IIssueAggregateQuery aggregates,
         IssueTodoQuery issueTodo,
         ISystemSettingsService systemSettings,
-        SummaryCache summaryCache)
+        SummaryCache summaryCache,
+        EfPrtgStore prtgStore)
     {
+        _prtgStore = prtgStore;
         _visibility = visibility;
         _audit = audit;
         _currentUser = currentUser;
@@ -119,6 +124,7 @@ public class DashboardService
         // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
         (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();
         BuildSilentHosts(dto, visibleHosts);
+        BuildSilentHostsPrtgDown(dto, visibleHosts);
 
         // 可行動快照對全站可見範圍**只解析一次**（回饋十九輪批次I 體檢修正）：KPI 卡與逐群組的
         // UnhandledCount 都從同一份解析結果各自彙總——原本逐群組各自呼叫 IssueTodoQuery.Build，
@@ -179,12 +185,24 @@ public class DashboardService
     /// </summary>
     private static void BuildSilentHosts(DashboardDto dto, List<WebHost> visibleHosts)
     {
-        var cutoff = DateTime.Now.AddDays(-2);
-        var graceCutoff = DateTime.Now - HostAdminService.NewHostGracePeriod;
+        var now = DateTime.Now;
+        dto.SilentHostsCount = visibleHosts.Count(h => HostAdminService.IsSilent(h, now));
+    }
 
-        dto.SilentHostsCount = visibleHosts
-            .Count(h => h.Active &&
-                        (h.LastReportAt == null ? h.CreatedAt < graceCutoff : h.LastReportAt < cutoff));
+    /// <summary>
+    /// 未回報主機中 PRTG 現況為 down 的台數——與主機頁的提示走同一份計算
+    /// （<see cref="HostAdminService.ComputeSilentPrtgHints"/>）。PRTG 未啟用時為 0。
+    /// </summary>
+    private void BuildSilentHostsPrtgDown(DashboardDto dto, List<WebHost> visibleHosts)
+    {
+        if (!_settings.Get().PrtgEnabled)
+        {
+            dto.SilentHostsPrtgDownCount = 0;
+            return;
+        }
+
+        var hints = HostAdminService.ComputeSilentPrtgHints(_prtgStore, visibleHosts, DateTime.Now);
+        dto.SilentHostsPrtgDownCount = hints.Hints.Values.Count(v => v == PrtgPresenceHint.Down);
     }
 
     /// <summary>

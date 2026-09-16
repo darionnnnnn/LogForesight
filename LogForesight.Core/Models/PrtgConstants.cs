@@ -16,6 +16,10 @@ public static class PrtgSensorStatuses
     public static bool IsDown(string? status) =>
         status != null && status.StartsWith(Down, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>是否為已於 PRTG 確認的 Down 狀態（IsDown 成立且含 "(Acknowledged)"，不分大小寫）</summary>
+    public static bool IsAcknowledged(string? status) =>
+        IsDown(status) && status!.Contains("(Acknowledged)", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>是否為 Up 狀態</summary>
     public static bool IsUp(string? status) =>
         status != null && status.StartsWith(Up, StringComparison.OrdinalIgnoreCase);
@@ -83,6 +87,16 @@ public static class PrtgSensorCategories
     public const string Disk = "disk";
     public const string Cpu = "cpu";
     public const string Memory = "memory";
+    public const string Availability = "availability";
+    public const string Hardware = "hardware";
+
+    /// <summary>全部合法分類值（供錯誤訊息列出）。</summary>
+    public static readonly IReadOnlyList<string> All =
+        new[] { Traffic, Disk, Cpu, Memory, Availability, Hardware };
+
+    /// <summary>判斷是否為合法分類值（不分大小寫）。全站唯一的分類合法值判定。</summary>
+    public static bool IsValid(string? category) =>
+        category != null && All.Contains(category, StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>分類來源（lf_prtg_sensors.category_source），欄長上限 16。</summary>
@@ -107,7 +121,62 @@ public static class PrtgSensorTypeCategoryMap
             ["SNMP CPU Load"] = PrtgSensorCategories.Cpu,
             ["SNMP Memory"] = PrtgSensorCategories.Memory,
             ["SNMP Linux Meminfo"] = PrtgSensorCategories.Memory,
+            ["Ping"] = PrtgSensorCategories.Availability,
         };
+
+    /// <summary>
+    /// 解析 sensor type 分類。補充對照表優先，再查內建表，都沒有回 null。
+    /// </summary>
+    public static string? Resolve(string? sensorType, IReadOnlyDictionary<string, string> overrides)
+    {
+        if (sensorType == null) return null;
+        if (overrides.TryGetValue(sensorType, out var fromOverride)) return fromOverride;
+        return Map.TryGetValue(sensorType, out var builtIn) ? builtIn : null;
+    }
+
+    /// <summary>
+    /// 解析補充對照表設定（一行一筆「type=分類」）。全站唯一的解析與驗證實作。
+    /// 空白行略過；同 type 重複時後者覆蓋前者。回傳的 Map 不分大小寫，分類值一律轉小寫；
+    /// 錯誤行不進 Map，錯誤訊息格式「第 N 行「原文」：原因」。
+    /// </summary>
+    public static (Dictionary<string, string> Map, List<string> Errors) ParseOverrides(IEnumerable<string>? lines)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var errors = new List<string>();
+        if (lines == null) return (map, errors);
+
+        var validList = string.Join("、", PrtgSensorCategories.All);
+        var lineNo = 0;
+        foreach (var raw in lines)
+        {
+            lineNo++;
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var eq = raw.IndexOf('=');
+            if (eq < 0)
+            {
+                errors.Add($"第 {lineNo} 行「{raw}」：缺少「=」，格式應為「type=分類」，分類可用 {validList}");
+                continue;
+            }
+
+            var type = raw[..eq].Trim();
+            var category = raw[(eq + 1)..].Trim();
+            if (type.Length == 0)
+            {
+                errors.Add($"第 {lineNo} 行「{raw}」：「=」左邊的 sensor type 不可空白，分類可用 {validList}");
+                continue;
+            }
+            if (!PrtgSensorCategories.IsValid(category))
+            {
+                errors.Add($"第 {lineNo} 行「{raw}」：分類「{category}」不合法，可用 {validList}");
+                continue;
+            }
+
+            map[type] = category.ToLowerInvariant();
+        }
+
+        return (map, errors);
+    }
 }
 
 /// <summary>

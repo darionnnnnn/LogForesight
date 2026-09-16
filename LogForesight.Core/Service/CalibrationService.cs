@@ -189,7 +189,8 @@ public sealed record CalibrationPrtgRuleThresholdInfo(
     string Category,
     string Severity,
     bool ElevatesDayRisk,
-    string Description);
+    string Description,
+    string? SensorCategory);
 
 /// <summary>
 /// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）
@@ -590,9 +591,9 @@ public sealed class CalibrationService
             StatisticsBasis: "每感測器與每 type 的分位數、平均與標準差以「可用列的每日平均值」為樣本（非每小時值）；HourlyCurve 為各小時段可用列的平均值；可用列＝ok，或 coverage ≥ SampledMinCoverage 的 sampled；流量類（IsVolumeNormalized）的 sampled 值為估算的小時量。"
         );
 
-        // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 目前四條規則門檻現值
+        // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 規則庫全部 PRTG 規則的門檻現值（含適用分類）
         var ruleFrom = anchorDate.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
-        var ruleHits = _issueQuery.AggregatePrtgRuleHits(ruleFrom, anchorDate);
+        var ruleHits = _issueQuery.AggregatePrtgRuleHits(ruleFrom, anchorDate, null);
 
         var allRules = KnownIssueCatalog.ResolveRules(_ruleStore);
         var prtgRules = allRules
@@ -603,11 +604,12 @@ public sealed class CalibrationService
                 r.Category.ToString(),
                 r.Severity.ToString(),
                 r.ElevatesDayRisk,
-                r.Description
+                r.Description,
+                r.PrtgSensorCategory
             ))
             .ToList();
 
-        var (magnitudeSamples, magnitudeSummaries) = BuildRuleMagnitudeDistribution(ruleFrom, anchorDate, settings, prtgRules);
+        var (magnitudeSamples, magnitudeSummaries) = BuildRuleMagnitudeDistribution(ruleFrom, anchorDate, prtgRules);
 
         var ruleDataset = new CalibrationRuleThresholdDataset
         {
@@ -885,7 +887,7 @@ public sealed class CalibrationService
         var stateSummary = _prtgStore.GetStateChangeCoverageSummary(from, toExclusive);
         var distinctDates = stateSummary.DistinctDates;
 
-        var ruleHits = _issueQuery.AggregatePrtgRuleHits(from, anchor.Date);
+        var ruleHits = _issueQuery.AggregatePrtgRuleHits(from, anchor.Date, null);
         var totalHits = ruleHits.Sum(h => h.HitCount);
 
         // 逐規則的 sensor-日數：門檻校準是逐規則進行的，四條加總會讓「down 只有 3 筆但
@@ -1414,24 +1416,19 @@ public sealed class CalibrationService
     /// 多少持續 120 分鐘。門檻設 1（不是 0）：flap 與 warning 的判定是 `>=`，
     /// 設 0 會讓「當日零事件」的 sensor 也被算成命中，分母整個爛掉。
     ///
-    /// sensor 母體與夜間批次一致（白名單過濾），且比照 PRTG-SPEC §9 回查前一日的變更
+    /// sensor 母體與夜間批次的規則評估一致（全部未暫停 sensor，不受取數白名單限制），
+    /// 且不做同裝置折疊（分佈要看每顆 sensor 自己的量值）；比照 PRTG-SPEC §9 回查前一日的變更
     /// ——`down` 與 `warning` 要靠前一日最後一筆推導當日零時的起始狀態。
     /// </summary>
     private (List<CalibrationRuleMagnitudeRow> Samples, List<CalibrationRuleMagnitudeSummary> Summaries)
         BuildRuleMagnitudeDistribution(
             DateTime from,
             DateTime toInclusive,
-            SystemSettings settings,
             List<CalibrationPrtgRuleThresholdInfo> currentRules)
     {
         var samples = new List<CalibrationRuleMagnitudeRow>();
 
-        var whitelist = new HashSet<string>(
-            settings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
-        var allSensors = _prtgStore.GetSensorStatuses();
-        var filteredSensors = whitelist.Count == 0
-            ? allSensors
-            : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
+        var filteredSensors = _prtgStore.GetSensorStatuses();
 
         if (filteredSensors.Count == 0)
         {
@@ -1443,14 +1440,25 @@ public sealed class CalibrationService
             .GroupBy(s => s.Objid)
             .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
         var sensorStatuses = filteredSensors
-            .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+            // 分類刻意給 null：評估器的同裝置折疊只看 availability 分類，給 null 就不折疊
+            .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, null))
             .ToList();
 
         // 最低門檻：任何有事件的 sensor-日都納入，得到的是全量分佈
-        var minimumThresholds = new PrtgRuleThresholds(DownMinutes: 1, FlapCount: 1, WarningMinutes: 1);
-        var allRuleCodes = new HashSet<string>(
-            new[] { PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping, PrtgRuleEvaluator.RuleWarning },
-            StringComparer.OrdinalIgnoreCase);
+        // silent 不納入：它的判定來源是 sensor 現況（非變更表），逐日重放會讓
+        // 每一天都拿到「今天的現況」而全部相同，那不是分佈、是同一個數字複製 N 份
+        // 與規則庫無關：升級後尚未套用內建規則、或管理者停用某條規則時，分佈仍要算得出來
+        var calibrationRules = new[] { PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping, PrtgRuleEvaluator.RuleWarning }
+            .Select(code => new KnownIssueRule
+            {
+                Id = $"calibration-{code}",
+                Platform = "prtg",
+                Enabled = true,
+                PrtgRuleCode = code,
+                PrtgThreshold = 1
+            })
+            .ToList();
+        var emptyNames = new Dictionary<long, string>();
 
         for (var day = from.Date; day <= toInclusive.Date; day = day.AddDays(1))
         {
@@ -1458,10 +1466,8 @@ public sealed class CalibrationService
             var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
             if (changes.Count == 0) continue;
 
-            // silent 不納入：它的判定來源是 sensor 現況（非變更表），逐日重放會讓
-            // 每一天都拿到「今天的現況」而全部相同，那不是分佈、是同一個數字複製 N 份
             var findings = PrtgRuleEvaluator.Evaluate(
-                day, changes, sensorToDevice, sensorStatuses, minimumThresholds, allRuleCodes);
+                day, changes, sensorToDevice, sensorStatuses, calibrationRules, emptyNames, emptyNames, includeSilent: false);
 
             foreach (var f in findings)
             {
@@ -1469,8 +1475,12 @@ public sealed class CalibrationService
             }
         }
 
-        var thresholdByRule = currentRules.ToDictionary(
-            r => r.RuleCode, r => r.Threshold, StringComparer.OrdinalIgnoreCase);
+        // 同一代碼可有「不限分類」與多條分類規則；分佈是全部 sensor 的量值，對照的現值取不限分類那條
+        // （沒有不限分類規則的代碼現值記 0）。分類規則的門檻完整列在 CurrentRules，供逐分類對照。
+        var thresholdByRule = currentRules
+            .Where(r => r.SensorCategory == null)
+            .GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Threshold, StringComparer.OrdinalIgnoreCase);
 
         var summaries = samples
             .GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase)

@@ -107,7 +107,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -162,7 +162,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 跑第一次
@@ -208,7 +208,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -259,7 +259,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -305,7 +305,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -351,7 +351,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -399,7 +399,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -436,7 +436,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 斷言不擲出例外
@@ -488,7 +488,7 @@ public class PrtgFetchServiceTests : IDisposable
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 限制併發數為 1
@@ -534,7 +534,7 @@ public class PrtgFetchServiceTests : IDisposable
         };
 
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
-        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None);
 
@@ -581,7 +581,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
@@ -611,7 +611,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var store = CreateStore();
-        var service = new PrtgFetchService(client, store, new TestConsole());
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
 
         var task = service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
         var finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10)));
@@ -642,7 +642,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
@@ -684,7 +684,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var store = CreateStore();
-        var service = new PrtgFetchService(client, store, new TestConsole());
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(day, 1, CancellationToken.None);
 
@@ -754,7 +754,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, _) = CreateHistClient(histJson);
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, CreateStore(), console);
+        var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
         var result = await service.FetchDayAsync(new DateTime(2026, 9, 10), 1, CancellationToken.None);
         using var ctx = _fx.NewContext();
         var rows = await ctx.PrtgValues.OrderBy(v => v.PeriodStart).ToListAsync();
@@ -976,7 +976,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
@@ -1010,7 +1010,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
@@ -1045,7 +1045,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
@@ -1073,7 +1073,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
 
@@ -1103,7 +1103,7 @@ public class PrtgFetchServiceTests : IDisposable
         }, syncedAt);
 
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, syncStructure: false);
 
@@ -1126,7 +1126,7 @@ public class PrtgFetchServiceTests : IDisposable
         var (client, handler) = CreateClient(_ => JsonResponse("{}"));
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, syncStructure: false);
 
@@ -1139,9 +1139,10 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task FetchDayAsync_每日擷取後自動填入感測器語意分類()
     {
         var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":2,\"sensors\":[" +
+        var senJson = "{\"treesize\":3,\"sensors\":[" +
             "{\"objid\":201,\"parentid\":101,\"sensor\":\"Free Space C:\",\"type\":\"SNMP Disk Free\",\"status\":\"Up\",\"paused\":false}," +
-            "{\"objid\":202,\"parentid\":101,\"sensor\":\"Ping\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}" +
+            "{\"objid\":202,\"parentid\":101,\"sensor\":\"HTTP\",\"type\":\"http\",\"status\":\"Up\",\"paused\":false}," +
+            "{\"objid\":203,\"parentid\":101,\"sensor\":\"Fan\",\"type\":\"Custom Fan\",\"status\":\"Up\",\"paused\":false}" +
             "]}";
         var msgJson = "{\"treesize\":0,\"messages\":[]}";
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
@@ -1152,7 +1153,7 @@ public class PrtgFetchServiceTests : IDisposable
             if (url.Contains("content=devices"))
                 return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
             if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":2,\"sensors\":[]}");
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":3,\"sensors\":[]}");
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
@@ -1162,13 +1163,15 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        // 建構端傳入的補充表必須真的流到分類重算（203 只在補充表裡）
+        var overrides = PrtgSensorTypeCategoryMap.ParseOverrides(new[] { "Custom Fan=hardware" }).Map;
+        var service = new PrtgFetchService(client, store, console, overrides);
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 1, CancellationToken.None);
 
         Assert.Equal(0, result.Failures);
-        Assert.Equal(2, result.Sensors);
+        Assert.Equal(3, result.Sensors);
 
         using var ctx = _fx.NewContext();
         var s201 = await ctx.PrtgSensors.SingleAsync(s => s.Objid == 201);
@@ -1179,7 +1182,11 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Null(s202.Category);
         Assert.Null(s202.CategorySource);
 
-        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 已自動填入 1 個感測器的語意分類。"));
+        var s203 = await ctx.PrtgSensors.SingleAsync(s => s.Objid == 203);
+        Assert.Equal(PrtgSensorCategories.Hardware, s203.Category);
+        Assert.Equal(PrtgCategorySources.Auto, s203.CategorySource);
+
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 已更新 2 個感測器的語意分類。"));
     }
 
     [Fact]
@@ -1205,7 +1212,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 1, CancellationToken.None, syncStructure: true, fetchValues: false);
@@ -1249,7 +1256,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 指定 501，未指定 502 與 503
@@ -1280,7 +1287,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
         var sensors = new long[] { 101, 102, 103, 104, 105, 106 };
 
@@ -1344,7 +1351,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var reports = new List<(string Stage, int Done, int Total)>();
@@ -1395,7 +1402,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var reports = new List<(string Stage, int Done, int Total)>();
-        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
             syncStructure: true, fetchValues: false,
@@ -1442,7 +1449,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
         await service.FetchDayAsync(DateTime.Today.AddDays(-daysAgo), 2, CancellationToken.None,
             syncStructure: true, fetchValues: false);
 
@@ -1476,7 +1483,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
         await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-daysAgo), DateTime.Today, CancellationToken.None);
 
         var messageUrl = Assert.Single(messageUrls);
@@ -1505,7 +1512,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var service = new PrtgFetchService(client, CreateStore(), new TestConsole());
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
         await service.FetchDayAsync(DateTime.Today.AddDays(-400), 2, CancellationToken.None,
             syncStructure: true, fetchValues: false);
 
@@ -1574,7 +1581,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
 
@@ -1633,7 +1640,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
 
@@ -1677,7 +1684,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
 
@@ -1721,7 +1728,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
 
@@ -1754,7 +1761,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
 
@@ -1793,7 +1800,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         // 第一次執行：新增 2 筆
         var res1 = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
@@ -1833,7 +1840,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, console);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, syncStructure: true, fetchValues: false);
 

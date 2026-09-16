@@ -217,9 +217,19 @@ public interface IIssueAggregateQuery
     /// <summary>
     /// PRTG 規則命中分組查詢（docs/archive/FEEDBACK-37-PLAN.md 批次A，校準數值匯出用）。
     /// 依 (規則代碼, 日期) 分組，回傳期間內的命中筆數與相異存活主機數。
-    /// 僅納入 Source == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
+    /// 僅納入 LogName == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
     /// </summary>
-    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to);
+    /// <param name="hostIds">目標存活主機集合；null＝不篩主機（校準匯出用），空集合＝零結果。</param>
+    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
+    /// PRTG finding 跨日命中日期（docs/PRTG-SPEC.md 跨日判定）：回傳每個 EventKey 在
+    /// <c>[fromInclusive, toExclusive)</c> 內出現過的相異日期。只取 <c>LogName == "PRTG"</c> 的列，
+    /// **不限主機**——同一顆 sensor 換了對應主機仍是同一顆。EventKey 清單分批查詢（每批最多 500 個），
+    /// 查不到的鍵不會出現在結果裡。
+    /// </summary>
+    Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
+        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive);
 
     /// <summary>
     /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次
@@ -236,6 +246,8 @@ public interface IIssueAggregateQuery
 /// <summary>
 /// PRTG 規則命中的分組聚合結果（A2）
 /// </summary>
+public sealed record PrtgHitDateRow(string EventKey, DateTime RecordDate);
+
 public sealed record PrtgRuleHitAggregate(string RuleCode, DateTime Date, int HitCount, int HostCount);
 
 public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);

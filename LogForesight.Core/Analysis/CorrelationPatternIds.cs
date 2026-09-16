@@ -40,13 +40,19 @@ public static class CorrelationPatternIds
     public const string LinuxSshBruteSuccess = "linux-ssh-brute-success";
     public const string LinuxSshBruteUncertain = "linux-ssh-brute-uncertain";
 
+    // ── PRTG 跨來源佐證（同一主機日，追加 PRTG finding 時判定，見 PrtgCorroboration）──
+    public const string PrtgStorageCorroborated = "prtg-storage-corroborated";
+    public const string PrtgCapacityCorroborated = "prtg-capacity-corroborated";
+    public const string PrtgOutageCorroborated = "prtg-outage-corroborated";
+
     public static readonly string[] All =
     {
         IntrusionChain, BruteSuccess, Persistence, AuditTamper, PrivImplant,
         AvOffMalware, MalwarePersistence, StorageChain, StorageCrash, HwUnstable,
         CrashServiceFail, CrashLoopResource, TimeSkewAuth, PasswordSpray,
         XdayIntrusion, XdayStorage, XdayAvOffMalware, XdayBruteRdp,
-        LinuxSshBruteSuccess, LinuxSshBruteUncertain
+        LinuxSshBruteSuccess, LinuxSshBruteUncertain,
+        PrtgStorageCorroborated, PrtgCapacityCorroborated, PrtgOutageCorroborated
     };
 
     public static bool IsValid(string patternId) => All.Contains(patternId);

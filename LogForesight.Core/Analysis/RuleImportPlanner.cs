@@ -157,6 +157,9 @@ public static class RuleImportPlanner
         a.ProgramPattern == b.ProgramPattern &&
         a.EventNamePattern == b.EventNamePattern &&
         a.MessagePatterns.SequenceEqual(b.MessagePatterns) &&
+        a.PrtgRuleCode == b.PrtgRuleCode &&
+        a.PrtgThreshold == b.PrtgThreshold &&
+        a.PrtgSensorCategory == b.PrtgSensorCategory &&
         a.Category == b.Category &&
         a.Severity == b.Severity &&
         a.ElevatesDayRisk == b.ElevatesDayRisk &&

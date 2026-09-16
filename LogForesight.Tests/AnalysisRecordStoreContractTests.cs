@@ -21,6 +21,11 @@ public class AnalysisRecordStoreContractTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    private static readonly KnownIssueRule SeedDownRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down-availability");
+    private static readonly KnownIssueRule SeedWarnRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-warning");
+    private static readonly KnownIssueRule SeedHardwareWarnRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-warning-hardware");
+    private static readonly IReadOnlySet<string> NoPatternIds = new HashSet<string>();
+
     private static DailyAnalysisRecord Record(DateTime date, string risk = "低") => new()
     {
         Date = date,
@@ -685,10 +690,10 @@ public class AnalysisRecordStoreContractTests : IDisposable
             TopIssues = new List<LogIssueSignature>()
         });
 
-        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
         var sig = PrtgFindingMapper.ToSignature(finding, date);
 
-        var result = store.AttachPrtgFindings(hostId, date, new[] { sig });
+        var result = store.AttachPrtgFindings(hostId, date, new[] { sig }, NoPatternIds, out _);
         Assert.True(result);
 
         // 斷言 ContentJson 內部的 TopIssues 有追加
@@ -703,14 +708,14 @@ public class AnalysisRecordStoreContractTests : IDisposable
         // 斷言 lf_top_issues 子列真的有寫入真表
         using var ctx = _fx.NewContext();
         var topIssueRow = Assert.Single(ctx.TopIssues.Where(t => t.HostId == hostId));
-        Assert.Equal("PRTG", topIssueRow.SourceName);
+        Assert.Equal("PRTG:down", topIssueRow.SourceName);
         Assert.Equal("PRTG", topIssueRow.LogName);
         Assert.Equal(0, topIssueRow.EventId);
         Assert.Equal("Service", topIssueRow.Category);
         Assert.Equal((int)IssueSeverity.High, topIssueRow.SeverityRank);
         Assert.True(topIssueRow.ElevatesDayRisk);
         Assert.Equal("prtg:down:2001", topIssueRow.EventKey);
-        Assert.Equal("監控 sensor 持續無回應，可能是服務或主機失聯", topIssueRow.KnownIssue);
+        Assert.Equal(SeedDownRule.Description, topIssueRow.KnownIssue);
         Assert.Equal(date.Date, topIssueRow.RecordDate);
     }
 
@@ -719,10 +724,10 @@ public class AnalysisRecordStoreContractTests : IDisposable
     {
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var date = DateTime.Today;
-        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
         var sig = PrtgFindingMapper.ToSignature(finding, date);
 
-        var result = store.AttachPrtgFindings(999, date, new[] { sig });
+        var result = store.AttachPrtgFindings(999, date, new[] { sig }, NoPatternIds, out _);
         Assert.False(result);
 
         using var ctx = _fx.NewContext();
@@ -746,12 +751,12 @@ public class AnalysisRecordStoreContractTests : IDisposable
             TopIssues = new List<LogIssueSignature>()
         });
 
-        var finding1 = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
-        var finding2 = new PrtgFinding(1001, 2002, "warning", "Sensor warning", 250);
+        var finding1 = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
+        var finding2 = new PrtgFinding(1001, 2002, "warning", "Sensor warning", 250, SeedWarnRule);
         var sig1 = PrtgFindingMapper.ToSignature(finding1, date);
         var sig2 = PrtgFindingMapper.ToSignature(finding2, date);
 
-        var firstResult = store.AttachPrtgFindings(hostId, date, new[] { sig1, sig2 });
+        var firstResult = store.AttachPrtgFindings(hostId, date, new[] { sig1, sig2 }, NoPatternIds, out _);
         Assert.True(firstResult);
 
         using (var ctx = _fx.NewContext())
@@ -760,7 +765,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
         }
 
         // 第二次追加相同的 findings：回傳 false 且子列數維持 2
-        var secondResult = store.AttachPrtgFindings(hostId, date, new[] { sig1, sig2 });
+        var secondResult = store.AttachPrtgFindings(hostId, date, new[] { sig1, sig2 }, NoPatternIds, out _);
         Assert.False(secondResult);
 
         using (var ctx = _fx.NewContext())
@@ -798,10 +803,10 @@ public class AnalysisRecordStoreContractTests : IDisposable
             ctx.SaveChanges();
         }
 
-        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60);
+        var finding = new PrtgFinding(1001, 2001, "down", "Sensor down", 60, SeedDownRule);
         var sig = PrtgFindingMapper.ToSignature(finding, date);
 
-        var result = store.AttachPrtgFindings(hostId, date, new[] { sig });
+        var result = store.AttachPrtgFindings(hostId, date, new[] { sig }, NoPatternIds, out _);
         Assert.False(result);
 
         using (var ctx = _fx.NewContext())
@@ -810,5 +815,66 @@ public class AnalysisRecordStoreContractTests : IDisposable
             Assert.True(row.DetailPruned);
             Assert.Equal(originalContentJson, row.ContentJson);
         }
+    }
+
+    private LogIssueSignature SeedDiskErrorDayWithHardwareWarning(IAnalysisRecordStore store, long hostId, DateTime date)
+    {
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = hostId, Host = "SRV-TEST", Date = date, RiskLevel = "低",
+            TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 4 } }
+        });
+        var finding = new PrtgFinding(1001, 2001, "warning", "[SRV-TEST] RAID Warning", 180, SeedHardwareWarnRule)
+        {
+            SensorCategory = PrtgSensorCategories.Hardware
+        };
+        return PrtgFindingMapper.ToSignature(finding, date);
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_跨來源佐證寫入關聯欄位_資料列HasCorrelation與高風險()
+    {
+        var store = CreateStore();
+        var date = DateTime.Today;
+        var sig = SeedDiskErrorDayWithHardwareWarning(store, 101, date);
+
+        var result = store.AttachPrtgFindings(101, date, new[] { sig }, NoPatternIds, out var corroborated);
+
+        Assert.True(result);
+        Assert.Equal(1, corroborated);
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        var text = Assert.Single(read.CorrelationAlerts);
+        Assert.StartsWith("【儲存故障雙重確認】", text);
+        Assert.Contains("disk#153", text);
+        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, Assert.Single(read.CorrelationAlertRefs).PatternId);
+        Assert.Equal("高", read.RiskLevel);
+        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, read.RiskBasis);
+        Assert.Equal(PrtgSensorCategories.Hardware, read.TopIssues.Single(i => i.EventKey == "prtg:warning:2001").PrtgSensorCategory);
+
+        using var ctx = _fx.NewContext();
+        var row = ctx.DailyRecords.Single(r => r.HostId == 101 && r.RecordDate == date.Date);
+        Assert.True(row.HasCorrelation);
+        Assert.Equal("高", row.RiskLevel);
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_佐證模式被抑制時只進已抑制清單且HasCorrelation為false()
+    {
+        var store = CreateStore();
+        var date = DateTime.Today;
+        var sig = SeedDiskErrorDayWithHardwareWarning(store, 101, date);
+        var suppressed = new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated };
+
+        var result = store.AttachPrtgFindings(101, date, new[] { sig }, suppressed, out var corroborated);
+
+        Assert.True(result);
+        Assert.Equal(0, corroborated);
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Empty(read.CorrelationAlerts);
+        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(read.SuppressedCorrelationAlerts));
+        Assert.NotEqual("高", read.RiskLevel);
+
+        using var ctx = _fx.NewContext();
+        Assert.False(ctx.DailyRecords.Single(r => r.HostId == 101 && r.RecordDate == date.Date).HasCorrelation);
     }
 }

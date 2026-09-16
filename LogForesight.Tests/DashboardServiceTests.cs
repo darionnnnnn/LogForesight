@@ -1,4 +1,6 @@
 using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -57,7 +59,8 @@ public class DashboardServiceTests : IDisposable
 
         _service = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
-            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()));
+            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
+            new EfPrtgStore(_fixture.NewContext));
         // 兩頁一致的對照組：報表走同一組 store 與聚合
         _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()));
     }
@@ -463,5 +466,30 @@ public class DashboardServiceTests : IDisposable
         var group = Assert.Single(summary.GroupRisk);
         Assert.Equal(1, group.UnhandledCount);
         Assert.Equal(summary.IssueTodo.OpenIssueCount, group.UnhandledCount);
+    }
+
+    [Fact]
+    public void GetSummary_未回報主機中PRTG為down的台數()
+    {
+        HostAdminServiceTests.SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fixture.NewContext), DateTime.Now);
+        _settingsStore.Update(s => s.PrtgEnabled = true);
+
+        var summary = _service.GetSummary(7);
+
+        Assert.Equal(1, summary.SilentHostsPrtgDownCount);
+        // 三台最後回報在 5 天前、一台 1 小時前：未回報判定收斂成一份後計數不變
+        Assert.Equal(3, summary.SilentHostsCount);
+    }
+
+    [Fact]
+    public void GetSummary_PRTG未啟用_down台數為0()
+    {
+        HostAdminServiceTests.SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fixture.NewContext), DateTime.Now);
+        _settingsStore.Update(s => s.PrtgEnabled = false);
+
+        var summary = _service.GetSummary(7);
+
+        Assert.Equal(0, summary.SilentHostsPrtgDownCount);
+        Assert.Equal(3, summary.SilentHostsCount);
     }
 }

@@ -162,7 +162,8 @@ public static class HostDayPostProcessor
 
             // 與 PRTG 路徑的補追加對同一主機日序列化（見 PrtgFindingsRegistry.AttachExclusive）。
             var attachedNow = registry.AttachExclusive(hostId, record.Date,
-                () => store.AttachPrtgFindings(hostId, record.Date, added, aiConfigured));
+                () => store.AttachPrtgFindings(hostId, record.Date, added,
+                    registry.SuppressedPatternIdsFor(hostId, record.Date), out _, aiConfigured));
 
             // **先看資料庫端做了沒**：查無該主機當日列、或詳情已被保留期精簡（detail_pruned）時
             // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
@@ -179,6 +180,19 @@ public static class HostDayPostProcessor
                 record.RiskLevel = elevated;
                 record.RiskBasis = PrtgFindingMapper.RiskBasisFrom(added);
                 if (aiConfigured && !record.AiAnalyzed && !record.DetailPruned) record.AiPending = true;
+            }
+
+            // 跨來源佐證：與資料庫端（EfAnalysisRecordStore.AttachPrtgFindings）同一份判定，記憶體與資料庫一致
+            var corroboration = PrtgCorroboration.Apply(record, registry.SuppressedPatternIdsFor(hostId, record.Date));
+            if (corroboration.RiskLevel != null)
+            {
+                var corroboratedRisk = RiskLevels.MoreSevere(record.RiskLevel, corroboration.RiskLevel);
+                if (corroboratedRisk != record.RiskLevel)
+                {
+                    record.RiskLevel = corroboratedRisk;
+                    record.RiskBasis = corroboration.RiskBasis;
+                    if (aiConfigured && !record.AiAnalyzed && !record.DetailPruned) record.AiPending = true;
+                }
             }
 
             Log.Info("{Context}{Date:yyyy-MM-dd} 主機 id={HostId} 併入 {Count} 項 PRTG finding",

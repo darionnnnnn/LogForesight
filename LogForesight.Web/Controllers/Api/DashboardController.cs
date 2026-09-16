@@ -189,6 +189,9 @@ public class HostDetailController : ControllerBase
             });
         }
 
+        // device 名稱一次查回（不逐 device 查）
+        var deviceNames = store.GetDeviceNamesByObjids(targetRows.Select(r => r.DeviceObjid).Distinct().ToList());
+
         var devices = new List<HostPrtgDeviceDto>();
         foreach (var r in targetRows)
         {
@@ -199,12 +202,14 @@ public class HostDetailController : ControllerBase
                     Name = s.Name,
                     SensorType = s.SensorType,
                     Category = s.Category,
-                    Paused = s.Paused
+                    Paused = s.Paused,
+                    Status = s.Status
                 }).ToList();
 
             devices.Add(new HostPrtgDeviceDto
             {
                 DeviceObjid = r.DeviceObjid,
+                Name = deviceNames.TryGetValue(r.DeviceObjid, out var deviceName) ? deviceName : null,
                 Ip = r.Ip,
                 MapStatus = r.MapStatus,
                 Note = r.Note,

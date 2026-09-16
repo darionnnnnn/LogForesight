@@ -67,7 +67,7 @@
 
 ## 規則模型
 
-`KnownIssueRule`（`Analysis/KnownIssueCatalog.cs`）新增六個管理欄位：
+`KnownIssueRule`（`Analysis/KnownIssueCatalog.cs`）的管理欄位：
 
 | 欄位 | 用途 |
 |---|---|
@@ -77,15 +77,17 @@
 | `Scope` | 生效範圍，此版本只接受 `"all"`，為未來多主機/群組規則卡位（見下） |
 | `MatchAllEventIds` | 顯式宣告「不看 EventIds，來源命中就算」，取代舊版「EventIds 空陣列＝全比對」的隱含語意 |
 | `MatchFilter` | 為未來「同規則同主機下只關閉部分比對範圍」卡位，此版本必須為 `null` |
-| `Platform` | `windows`（預設）／`linux`，決定用哪組比對欄位（見下） |
+| `Platform` | `windows`（預設）／`linux`／`prtg`，決定用哪組比對欄位（見下；prtg 的比對欄位是 `PrtgRuleCode`／`PrtgThreshold`／`PrtgSensorCategory`，語意見 docs/PRTG-SPEC.md §9） |
 
-### 雙平台（docs/LINUX-RULES.md）
+### 多平台（docs/LINUX-RULES.md、docs/PRTG-SPEC.md §9）
 
 Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位與三個 Linux 專用比對欄位
-（`ProgramPattern`／`EventNamePattern`／`MessagePatterns`），**共用同一份規則儲存與同一套抑制、
-匯入、驗證、Web CRUD 機制**——不分兩套 store。兩個平台的比對欄位互斥（Windows 規則不可填 Linux
-欄位，反之亦然），由 `RuleValidator` 平台條件式驗證把關；`FindRule`／`FindLinuxRule` 依平台分路，
-遮蔽偵測也按平台分區（Windows 規則永遠不會遮蔽 Linux 規則）。完整語意見該文件 §1。
+（`ProgramPattern`／`EventNamePattern`／`MessagePatterns`）；PRTG 規則另有三個專用欄位
+（`PrtgRuleCode`／`PrtgThreshold`／`PrtgSensorCategory`）。三個平台**共用同一份規則儲存與同一套抑制、
+匯入、驗證、Web CRUD 機制**——不分多套 store。各平台的比對欄位互斥（一個平台的規則不可填另一平台的欄位），
+由 `RuleValidator` 平台條件式驗證把關（prtg 另驗代碼合法、門檻依代碼、`silent` 不可填分類）；
+`FindRule`／`FindLinuxRule` 依平台分路，PRTG 規則不走 `Classify` 而由 `PrtgRuleEvaluator` 依 sensor 分類挑選；
+遮蔽偵測按平台分區（一個平台的規則永遠不會遮蔽另一平台）。完整語意見各該文件。
 
 一個容易踩的點：`ProgramPattern` 沿用 `SourcePattern` 的子字串比對語意，所以 program 名稱有包含
 關係時（`"sudo"` 包含 `"su"`）順序有意義，具體的必須排在泛用的前面。

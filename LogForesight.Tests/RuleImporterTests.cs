@@ -185,7 +185,8 @@ public class RuleImporterTests
             ProgramPattern = "sshd", EventNamePattern = "AUTH_FAIL", MessagePatterns = new[] { "Failed password" },
             Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
             Description = "新", CountThreshold = 7, PlainExplanation = "新p", Impact = "新i",
-            LikelyCauses = new[] { "新c" }, NextSteps = new[] { "新s" }
+            LikelyCauses = new[] { "新c" }, NextSteps = new[] { "新s" },
+            PrtgRuleCode = "down", PrtgThreshold = 45, PrtgSensorCategory = "disk"
         };
 
         var plan = RuleImportPlanner.BuildPlan(
@@ -201,6 +202,17 @@ public class RuleImporterTests
 
             var fromSeed = property.GetValue(seed);
             var fromUpdated = property.GetValue(updated);
+
+            // 兩條規則在這個欄位必須真的不同，否則漏抄也會「剛好相等」而通過（新增欄位時要在上面補不同值）。
+            // 例外：Id／Origin 必須相同才會走覆蓋路徑；Scope／MatchFilter／EventIds 沿用既有測試資料的相同值。
+            var fromExisting = property.GetValue(existing);
+            var sameAsExisting = fromSeed is System.Collections.IEnumerable seedSeq and not string
+                ? seedSeq.Cast<object>().SequenceEqual(((System.Collections.IEnumerable)fromExisting!).Cast<object>())
+                : Equals(fromSeed, fromExisting);
+            if (sameAsExisting && property.Name is not (nameof(KnownIssueRule.Id) or nameof(KnownIssueRule.Origin) or nameof(KnownIssueRule.Scope) or nameof(KnownIssueRule.MatchFilter) or nameof(KnownIssueRule.EventIds)))
+            {
+                Assert.Fail($"測試資料的欄位 {property.Name} 兩邊相同，無法驗出漏抄——請給 existing 與 seed 不同值");
+            }
 
             if (fromSeed is System.Collections.IEnumerable seedItems and not string)
             {
@@ -388,5 +400,83 @@ public class RuleImporterTests
         var rNew = plan.ResultingRules.First(r => r.Id == "b-new");
         Assert.Equal("全新規則", rNew.Description);
     }
-}
 
+    // ── ContentEqualExceptEnabled 欄位涵蓋 ───────────────────────────
+
+    private static KnownIssueRule PrtgBuiltin(int threshold = 60, string? sensorCategory = null) => new()
+    {
+        Id = "builtin-prtg-x", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+        PrtgRuleCode = "down", PrtgThreshold = threshold, PrtgSensorCategory = sensorCategory,
+        Category = IssueCategory.Service, Severity = IssueSeverity.High, Description = "d",
+        PlainExplanation = "p", Impact = "i", LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+    };
+
+    [Fact]
+    public void PRTG規則只差門檻時判定為UpdatedBuiltin()
+    {
+        var plan = RuleImportPlanner.BuildPlan(
+            new List<KnownIssueRule> { PrtgBuiltin(threshold: 60) }, new List<KnownIssueRule> { PrtgBuiltin(threshold: 30) }, overwriteBuiltin: false);
+
+        Assert.Equal(RuleImportAction.UpdatedBuiltin, Assert.Single(plan.Items).Action);
+        Assert.Equal(30, Assert.Single(plan.ResultingRules).PrtgThreshold);
+    }
+
+    /// <summary>
+    /// 比對函式的欄位涵蓋率（反射逐欄）：對 KnownIssueRule 每個可讀屬性，建兩條只差該屬性的規則，
+    /// BuildPlan 必須回報 UpdatedBuiltin。新增欄位卻沒同步 ContentEqualExceptEnabled 時這裡會紅。
+    /// 排除清單與理由：
+    /// - Id：BuildPlan 以 Id 配對，Id 不同就是「新增」而非內容比對；
+    /// - Enabled：刻意不列入內容（停用 builtin 是操作決定，匯入保留使用者選擇）；
+    /// - ModifiedBy：決定分流（改過的 builtin 走 SkippedModifiedBuiltin），不是內容；
+    /// - ModifiedAt：修改追蹤欄，不是內容。
+    /// </summary>
+    [Fact]
+    public void 除Id與Enabled與修改追蹤外任一欄位不同都判定為UpdatedBuiltin()
+    {
+        var exemptions = new HashSet<string>
+        {
+            nameof(KnownIssueRule.Id), nameof(KnownIssueRule.Enabled),
+            nameof(KnownIssueRule.ModifiedBy), nameof(KnownIssueRule.ModifiedAt)
+        };
+
+        // 基準本身兩條相同時必須是 SkippedUnchanged，否則下面的 UpdatedBuiltin 斷言沒有意義
+        var baseline = RuleImportPlanner.BuildPlan(
+            new List<KnownIssueRule> { PrtgBuiltin(sensorCategory: "disk") }, new List<KnownIssueRule> { PrtgBuiltin(sensorCategory: "disk") }, overwriteBuiltin: false);
+        Assert.Equal(RuleImportAction.SkippedUnchanged, Assert.Single(baseline.Items).Action);
+
+        var checkedCount = 0;
+        foreach (var property in typeof(KnownIssueRule).GetProperties().Where(p => p.CanRead && p.GetIndexParameters().Length == 0))
+        {
+            if (exemptions.Contains(property.Name)) continue;
+
+            var existing = PrtgBuiltin(sensorCategory: "disk");
+            var seed = PrtgBuiltin(sensorCategory: "disk");
+            Assert.True(property.CanWrite, $"欄位 {property.Name} 無法寫入，請調整此測試");
+            property.SetValue(seed, DifferentValue(property.PropertyType, property.GetValue(seed)));
+
+            var plan = RuleImportPlanner.BuildPlan(
+                new List<KnownIssueRule> { existing }, new List<KnownIssueRule> { seed }, overwriteBuiltin: false);
+
+            Assert.True(Assert.Single(plan.Items).Action == RuleImportAction.UpdatedBuiltin,
+                $"欄位 {property.Name} 不同卻未判定為 UpdatedBuiltin——請同步 RuleImportPlanner.ContentEqualExceptEnabled");
+            checkedCount++;
+        }
+
+        Assert.True(checkedCount >= 20, $"只檢查了 {checkedCount} 個欄位，反射列舉可能失效");
+    }
+
+    private static object DifferentValue(Type type, object? current)
+    {
+        if (type == typeof(string)) return (current as string) + "變";
+        if (type == typeof(int)) return (int)current! + 1;
+        if (type == typeof(bool)) return !(bool)current!;
+        if (type.IsEnum)
+        {
+            var values = Enum.GetValues(type).Cast<object>();
+            return values.First(v => !v.Equals(current));
+        }
+        if (type == typeof(int[])) return ((int[])current!).Append(99999).ToArray();
+        if (type == typeof(string[])) return ((string[])current!).Append("變").ToArray();
+        throw new InvalidOperationException($"未支援的欄位型別 {type}，請在測試補上差異值產生方式");
+    }
+}

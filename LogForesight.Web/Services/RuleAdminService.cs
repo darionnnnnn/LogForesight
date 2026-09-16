@@ -382,17 +382,31 @@ public class RuleAdminService
 
         var hostIds = targetHosts.Select(h => h.HostId).ToList();
         var isLinux = string.Equals(rule.Platform, "linux", StringComparison.OrdinalIgnoreCase);
-        var aggregates = _issueAggregateQuery.Aggregate(
-            DateTime.Today.AddDays(-SuppressionPreviewWindowDays), DateTime.Today, hostIds);
+        var isPrtg = string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase);
+        var windowFrom = DateTime.Today.AddDays(-SuppressionPreviewWindowDays);
+        long hitCount;
 
-        var hitCount = isLinux
-            ? aggregates
+        if (isPrtg)
+        {
+            // PRTG 規則沒有 SourcePattern／ProgramPattern，改依 EventKey 的 prtg:{代碼}: 前綴計數
+            // （每筆 finding 一列 lf_top_issues，Count 恆為 1，筆數即命中數）；主機篩選在 SQL 端做。
+            hitCount = _issueAggregateQuery.AggregatePrtgRuleHits(windowFrom, DateTime.Today, hostIds)
+                .Where(h => string.Equals(h.RuleCode, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase))
+                .Sum(h => (long)h.HitCount);
+        }
+        else if (isLinux)
+        {
+            hitCount = _issueAggregateQuery.Aggregate(windowFrom, DateTime.Today, hostIds)
                 .Where(a => a.Source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase))
-                .Sum(a => a.TotalCount)
-            : aggregates
+                .Sum(a => a.TotalCount);
+        }
+        else
+        {
+            hitCount = _issueAggregateQuery.Aggregate(windowFrom, DateTime.Today, hostIds)
                 .Where(a => a.Source.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase) &&
                             (rule.MatchAllEventIds || rule.EventIds.Contains(a.EventId)))
                 .Sum(a => a.TotalCount);
+        }
 
         return new SuppressionPreviewDto
         {
@@ -708,6 +722,9 @@ public class RuleAdminService
                 : Array.Empty<string>(),
             PrtgRuleCode = platform == "prtg" ? request.PrtgRuleCode?.Trim() : null,
             PrtgThreshold = platform == "prtg" ? request.PrtgThreshold : 0,
+            // 去空白後空字串視為不限分類（null）；合法值由 RuleValidator 以 PrtgSensorCategories.IsValid 把關
+            PrtgSensorCategory = platform == "prtg" && !string.IsNullOrWhiteSpace(request.PrtgSensorCategory)
+                ? request.PrtgSensorCategory.Trim().ToLowerInvariant() : null,
             Category = category,
             Severity = severity,
             ElevatesDayRisk = request.ElevatesDayRisk,
@@ -741,6 +758,7 @@ public class RuleAdminService
             MessagePatterns = source.MessagePatterns,
             PrtgRuleCode = source.PrtgRuleCode,
             PrtgThreshold = source.PrtgThreshold,
+            PrtgSensorCategory = source.PrtgSensorCategory,
             Category = source.Category,
             Severity = source.Severity,
             ElevatesDayRisk = source.ElevatesDayRisk,
@@ -772,6 +790,7 @@ public class RuleAdminService
         Compare("訊息子字串", string.Join(" / ", current.MessagePatterns), string.Join(" / ", seed.MessagePatterns));
         Compare("PRTG 規則代碼", current.PrtgRuleCode ?? "", seed.PrtgRuleCode ?? "");
         Compare("PRTG 門檻", current.PrtgThreshold.ToString(), seed.PrtgThreshold.ToString());
+        Compare("PRTG 適用分類", current.PrtgSensorCategory ?? "", seed.PrtgSensorCategory ?? "");
         Compare("類別", current.Category.ToString(), seed.Category.ToString());
         Compare("嚴重度", current.Severity.ToString(), seed.Severity.ToString());
         Compare("命中即列為高風險日", current.ElevatesDayRisk.ToString(), seed.ElevatesDayRisk.ToString());
@@ -823,6 +842,7 @@ public class RuleAdminService
             MessagePatterns = rule.MessagePatterns.ToList(),
             PrtgRuleCode = rule.PrtgRuleCode,
             PrtgThreshold = rule.PrtgThreshold,
+            PrtgSensorCategory = rule.PrtgSensorCategory,
             Category = rule.Category.ToString(),
             Severity = rule.Severity.ToString(),
             ElevatesDayRisk = rule.ElevatesDayRisk,

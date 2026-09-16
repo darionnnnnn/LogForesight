@@ -202,6 +202,22 @@
                             </button>
                             <input type="number" class="form-control" id="rule-prtg-threshold" min="0" value="0" />
                         </div>
+                        <div class="col-md-6" id="rule-match-prtg-sensor-category" data-platform-block="prtg">
+                            <label for="rule-prtg-sensor-category" class="form-label">sensor 分類</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="指定後只套用在該分類的 sensor，且優先於『全部分類』的同代碼規則。沉默裝置（silent）規則不可指定。分類來自 PRTG 維護頁的 type 對照。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                            </button>
+                            <select class="form-select" id="rule-prtg-sensor-category">
+                                <option value="">全部分類</option>
+                                <option value="traffic">流量 traffic</option>
+                                <option value="disk">磁碟空間 disk</option>
+                                <option value="cpu">CPU cpu</option>
+                                <option value="memory">記憶體 memory</option>
+                                <option value="availability">連通性 availability</option>
+                                <option value="hardware">硬體健康 hardware</option>
+                            </select>
+                        </div>
 
                         <div class="col-md-3">
                             <label for="rule-category" class="form-label">類別</label>

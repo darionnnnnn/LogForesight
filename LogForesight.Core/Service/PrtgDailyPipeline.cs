@@ -78,7 +78,8 @@ internal static class PrtgDailyPipeline
 
             using var client = PrtgClientFactory.Create(systemSettings);
 
-            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole, guard);
+            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole,
+                PrtgSensorTypeCategoryMap.ParseOverrides(systemSettings.PrtgSensorTypeCategoryOverrides).Map, guard);
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";
@@ -191,54 +192,31 @@ internal static class PrtgDailyPipeline
                 .Where(r => string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && r.Enabled)
                 .ToList();
 
-            var enabledRuleCodes = prtgRules
-                .Where(r => !string.IsNullOrEmpty(r.PrtgRuleCode))
-                .Select(r => r.PrtgRuleCode!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var rulesAvailable = enabledRuleCodes.Count > 0;
+            var rulesAvailable = prtgRules.Any(r => !string.IsNullOrEmpty(r.PrtgRuleCode));
             if (!rulesAvailable)
             {
                 prtgConsole.WriteLine("規則庫尚無啟用中的 PRTG 規則（升級後請至「規則維護」頁套用內建規則更新），本次略過規則評估。");
             }
 
-            var downMinutes = PrtgRuleCatalog.DefaultDownMinutes;
-            var flapCount = PrtgRuleCatalog.DefaultFlapCount;
-            var warningMinutes = PrtgRuleCatalog.DefaultWarningMinutes;
-
-            foreach (var rule in prtgRules)
-            {
-                if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase))
-                {
-                    downMinutes = rule.PrtgThreshold;
-                }
-                else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase))
-                {
-                    flapCount = rule.PrtgThreshold;
-                }
-                else if (string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase))
-                {
-                    warningMinutes = rule.PrtgThreshold;
-                }
-            }
-
-            var thresholds = new PrtgRuleThresholds(downMinutes, flapCount, warningMinutes);
-
             var prtgStore = backend.PrtgStore();
-            var whitelist = new HashSet<string>(systemSettings.PrtgSensorTypeWhitelist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            // 規則評估母體＝全部未暫停 sensor：取數白名單是為數值取數量體設計的（預設不含 Ping），
+            // 拿來過濾規則母體會讓主機失聯（Ping Down）永遠命中不了；狀態變更本來就全量抓，放寬不增加 PRTG 負擔。
             var allSensors = prtgStore.GetSensorStatuses();
-            var filteredSensors = whitelist.Count == 0
-                ? allSensors
-                : allSensors.Where(s => whitelist.Contains(s.SensorType)).ToList();
+            var sensorNames = allSensors
+                .GroupBy(s => s.Objid)
+                .ToDictionary(g => g.Key, g => g.First().SensorName);
+            var deviceNames = prtgStore.GetAllDevices()
+                .GroupBy(d => d.Objid)
+                .ToDictionary(g => g.Key, g => g.First().Name);
 
-            var allowedSensorObjids = filteredSensors.Select(s => s.Objid).ToHashSet();
-            var sensorToDevice = filteredSensors
+            var sensorToDevice = allSensors
                 .GroupBy(s => s.Objid)
                 .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
 
-            var sensorStatuses = filteredSensors
-                .Select(s => (s.Objid, s.DeviceObjid, s.Status))
+            var sensorStatuses = allSensors
+                .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category))
                 .ToList();
+            var reportedDuplicateRuleWarnings = new HashSet<string>();
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，不硬造（docs/PRTG-SPEC.md §5）。
             // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。
@@ -246,12 +224,21 @@ internal static class PrtgDailyPipeline
                 ? prtgStore.GetHostMapForDate(newest)
                 : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
 
-            // 逐日迴圈（days 的順序，由近到遠）
+            var allSuppressions = new SuppressionStore(backend.Blob("suppressions")).LoadAll();
+
+            // 兩段式：處理最新一天的當下，較舊日期的 finding 還沒評估也還沒寫進資料庫，
+            // 跨日判定只查資料庫會少算。所以先對全部日期評估並歸戶（不發佈），再逐日標註、抑制、發佈、追加。
+            var planned = new Dictionary<DateTime, PrtgPlannedDay>();
+
+            // 第一段（由近到遠）：主機對應、評估、映射成簽章、歸戶。不發佈、不追加。
             for (var i = 0; i < days.Count; i++)
             {
+                // 逐日評估是整條路徑最耗時的段落（每天一次狀態變更查詢），進度在這裡報；第二段只發佈與追加，不再重報
+                ct.ThrowIfCancellationRequested();
                 progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
                 var state = dayStates[day] = new PrtgDayState();
+                var plan = planned[day] = new PrtgPlannedDay();
                 if (days.Count > 1)
                 {
                     prtgConsole.WriteLine($"第 {i + 1}／{days.Count} 天（{day:yyyy-MM-dd}）");
@@ -272,80 +259,181 @@ internal static class PrtgDailyPipeline
                     // 規則庫沒有 PRTG 規則：該日照樣發佈空結果（「算不出東西」與「還沒算完」要分得出來）
                     if (!rulesAvailable)
                     {
-                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
                         continue;
                     }
 
-                    var allChanges = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
-                    var changes = allChanges.Where(c => allowedSensorObjids.Contains(c.SensorObjid)).ToList();
+                    var changes = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
 
                     var findings = PrtgRuleEvaluator.Evaluate(
-                        day, changes, sensorToDevice, sensorStatuses, thresholds, enabledRuleCodes,
-                        includeSilent: day == newest);
+                        day, changes, sensorToDevice, sensorStatuses, prtgRules,
+                        sensorNames, deviceNames, includeSilent: day == newest);
+                    foreach (var warning in findings.DuplicateRuleWarnings)
+                    {
+                        if (reportedDuplicateRuleWarnings.Add(warning))
+                        {
+                            prtgConsole.WriteLine(warning);
+                        }
+                    }
                     state.Findings = findings.Count;
 
                     if (!state.MapAvailable)
                     {
                         // 用今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一樣（docs/PRTG-SPEC.md §5「回填不做主機對應」同一條線）。
                         prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶");
-                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                        continue;
                     }
-                    else
+
+                    var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
+                    foreach (var finding in findings)
                     {
-                        var findingsByHost = new Dictionary<long, List<LogIssueSignature>>();
-                        foreach (var finding in findings)
+                        if (deviceToHost.TryGetValue(finding.DeviceObjid, out var hostId))
                         {
-                            if (deviceToHost.TryGetValue(finding.DeviceObjid, out var hostId))
+                            if (!findingsByHost.TryGetValue(hostId, out var hostFindings))
                             {
-                                if (!findingsByHost.TryGetValue(hostId, out var hostFindings))
-                                {
-                                    hostFindings = new List<LogIssueSignature>();
-                                    findingsByHost[hostId] = hostFindings;
-                                }
-                                hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
-                                state.TriggerHosts.Add(hostId);
+                                hostFindings = new List<LogIssueSignature>();
+                                findingsByHost[hostId] = hostFindings;
                             }
+                            hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
+                            state.TriggerHosts.Add(hostId);
                         }
-                        state.AttributedHosts = findingsByHost.Count;
+                    }
+                    state.AttributedHosts = findingsByHost.Count;
 
-                        prtgFindings.Publish(day, findingsByHost.ToDictionary(
-                            kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value));
+                    plan.FindingsByHost = findingsByHost;
+                    // 折疊前總數：被合併掉的不在 findings 裡，「其中已合併 c 筆」才會是 N 的子集
+                    plan.FindingCount = findings.Count + findings.MergedCount;
+                    plan.AcknowledgedCount = findings.Count(f => f.Acknowledged);
+                    plan.MergedCount = findings.MergedCount;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    plan.FindingsByHost = null;
+                    Log.Error(ex, "PRTG 規則評估失敗，不影響分析成果");
+                    prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
+                }
+            }
 
-                        try
+            // 跨日歷史：本趟全部日期的 EventKey 合併後一次查詢（查詢內部依 500 分批），各日再切自己的窗口。
+            // 查詢失敗只影響標註與升級，不影響發佈與追加。
+            var dbHitDates = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);
+            var allEventKeys = planned.Values
+                .Where(p => p.FindingsByHost != null)
+                .SelectMany(p => p.FindingsByHost!.Values.SelectMany(list => list))
+                .Select(s => s.EventKey)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (allEventKeys.Count > 0)
+            {
+                try
+                {
+                    dbHitDates = backend.IssueAggregateQuery(hostStore).GetPrtgFindingHitDates(
+                        allEventKeys, oldest.AddDays(-PrtgRuleCatalog.CrossDayWindowDays), newest);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "PRTG 跨日歷史查詢失敗，本趟只以本趟日期判定跨日");
+                    prtgConsole.WriteLine($"  ⚠ PRTG 跨日歷史查詢失敗：{ex.Message}（本趟只以本趟日期判定跨日）");
+                }
+            }
+
+            // 第二段（由近到遠）：跨日標註 → 抑制標記 → 發佈 → 補追加與案件掛接
+            for (var i = 0; i < days.Count; i++)
+            {
+                var day = days[i].Date;
+                var plan = planned[day];
+
+                try
+                {
+                    if (plan.FindingsByHost == null)
+                    {
+                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
+                        continue;
+                    }
+
+                    var findingsByHost = plan.FindingsByHost;
+                    var daySignatures = findingsByHost.Values.SelectMany(list => list).ToList();
+
+                    // 歷史＝資料庫命中 ∪ 本趟較舊日期的已歸戶簽章。本趟有評估的日期只認本趟結果：
+                    // 重跑時資料庫裡那幾天是上一趟寫的，門檻或規則改過後可能已不成立，混進來會把舊命中算成歷史。
+                    var history = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);
+                    foreach (var key in daySignatures.Select(s => s.EventKey).Distinct(StringComparer.Ordinal))
+                    {
+                        history[key] = dbHitDates.TryGetValue(key, out var dates)
+                            ? new HashSet<DateTime>(dates.Where(d => !(planned.TryGetValue(d.Date, out var p) && p.FindingsByHost != null)))
+                            : new HashSet<DateTime>();
+                    }
+                    foreach (var (otherDay, otherPlan) in planned)
+                    {
+                        if (otherDay >= day || otherPlan.FindingsByHost == null) continue;
+                        foreach (var sig in otherPlan.FindingsByHost.Values.SelectMany(list => list))
                         {
-                            var involvedHosts = findingsByHost.Count;
-                            var appendedHosts = 0;
-                            var pendingHosts = 0;
+                            if (history.TryGetValue(sig.EventKey, out var dates)) dates.Add(otherDay);
+                        }
+                    }
 
-                            var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
+                    var (escalatedCount, chronicCount) = PrtgCrossDay.Apply(daySignatures, history, day);
 
-                            foreach (var (hostId, hostFindings) in findingsByHost)
+                    var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
+                    var suppressedCount = 0;
+                    var suppressedPatternIdsByHost = new Dictionary<long, IReadOnlySet<string>>();
+                    foreach (var (hostId, hostFindings) in findingsByHost)
+                    {
+                        var (hostName, hostGroupIds) = hostsById.TryGetValue(hostId, out var webHost)
+                            ? (webHost.HostName, (IReadOnlyCollection<long>)webHost.GroupIds)
+                            : (string.Empty, (IReadOnlyCollection<long>)Array.Empty<long>());
+                        var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, hostName, hostGroupIds, DateTime.Now);
+                        suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions);
+                        // 跨來源佐證的關聯抑制與 finding 抑制用同一份有效抑制，兩條追加路徑從登錄簿取用
+                        suppressedPatternIdsByHost[hostId] = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
+                    }
+
+                    prtgFindings.Publish(day, findingsByHost.ToDictionary(
+                        kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value), suppressedPatternIdsByHost);
+
+                    try
+                    {
+                        var involvedHosts = findingsByHost.Count;
+                        var appendedHosts = 0;
+                        var pendingHosts = 0;
+                        var corroboratedCount = 0;
+
+                        foreach (var (hostId, hostFindings) in findingsByHost)
+                        {
+                            var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
+                            var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
+
+                            var hostCorroborated = 0;
+                            if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AttachPrtgFindings(
+                                    hostId, day, hostFindings, prtgFindings.SuppressedPatternIdsFor(hostId, day), out hostCorroborated, useAi)))
                             {
-                                var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
-                                var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
-
-                                if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings, useAi)))
-                                {
-                                    appendedHosts++;
-                                    HostDayPostProcessor.AttachCase(caseCoordinator, hostName, day, hostFindings.ToList(), "[PRTG] ");
-                                }
-                                else pendingHosts++;
+                                appendedHosts++;
+                                corroboratedCount += hostCorroborated;
+                                HostDayPostProcessor.AttachCase(caseCoordinator, hostName, day, hostFindings.ToList(), "[PRTG] ");
                             }
+                            else pendingHosts++;
+                        }
 
-                            var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {findings.Count} 筆、涉及主機 {involvedHosts} 台、" +
-                                          $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
-                            prtgConsole.WriteLine(summary);
-                            runRecorder.Milestone(summary);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error(ex, "PRTG finding 補追加失敗，不影響分析成果");
-                            prtgConsole.WriteLine("  ✗ PRTG finding 補追加失敗：" + ex.Message);
-                        }
+                        var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
+                                      $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
+                        prtgConsole.WriteLine(summary);
+                        runRecorder.Milestone(summary);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "PRTG finding 補追加失敗，不影響分析成果");
+                        prtgConsole.WriteLine("  ✗ PRTG finding 補追加失敗：" + ex.Message);
                     }
                 }
                 catch (OperationCanceledException)
@@ -358,7 +446,7 @@ internal static class PrtgDailyPipeline
                     prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
                     if (!prtgFindings.IsPublished(day))
                     {
-                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                        prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
                     }
                 }
             }
@@ -478,7 +566,7 @@ internal static class PrtgDailyPipeline
             {
                 if (!prtgFindings.IsPublished(day))
                 {
-                    prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+                    prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
                     anyBackfilled = true;
                 }
             }
@@ -531,6 +619,18 @@ internal static class PrtgDailyPipeline
                 totalTriggerHosts,
                 totalTargetSensors);
         }
+    }
+
+    /// <summary>
+    /// 第一段留給第二段的逐日結果。<see cref="FindingsByHost"/> 為 null＝該日發佈空結果
+    /// （規則庫沒有 PRTG 規則、無主機對應可用、評估失敗）。
+    /// </summary>
+    private sealed class PrtgPlannedDay
+    {
+        public Dictionary<long, List<LogIssueSignature>>? FindingsByHost;
+        public int FindingCount;
+        public int AcknowledgedCount;
+        public int MergedCount;
     }
 
     /// <summary>某一天在這趟裡累計出來的結果，最後寫成 <see cref="PrtgDayStat"/>。</summary>

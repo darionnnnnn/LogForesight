@@ -161,27 +161,28 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// 依 type 對照表自動填入尚未分類的 sensor（category 為 null 者）。
-    /// 回傳實際填入的筆數。人工指定的分類（category 非 null）一律不動。
+    /// 依補充對照表＋內建對照表（<see cref="PrtgSensorTypeCategoryMap.Resolve"/>）重算自動分類。
+    /// 候選列＝category 為 null 或 category_source 為 auto；目標分類與現值相同不寫，
+    /// 不同則寫入並標 auto；auto 列的 type 已不在任何對照表時把分類與來源清回 null。
+    /// 人工指定的分類（來源非 auto 且 category 非 null）永不動。回傳實際改動列數。
     /// </summary>
-    public int ApplyAutoCategories()
+    public int ApplyAutoCategories(IReadOnlyDictionary<string, string> overrides)
     {
-        List<(long Objid, string Category)> toUpdate;
+        List<(long Objid, string? Category)> toUpdate;
         using (var ctx = _contextFactory())
         {
             var candidates = ctx.PrtgSensors
                 .AsNoTracking()
-                .Where(s => s.Category == null)
-                .Select(s => new { s.Objid, s.SensorType })
+                .Where(s => s.Category == null || s.CategorySource == PrtgCategorySources.Auto)
+                .Select(s => new { s.Objid, s.SensorType, s.Category, s.CategorySource })
                 .ToList();
 
-            toUpdate = new List<(long Objid, string Category)>();
+            toUpdate = new List<(long Objid, string? Category)>();
             foreach (var item in candidates)
             {
-                if (PrtgSensorTypeCategoryMap.Map.TryGetValue(item.SensorType, out var cat))
-                {
-                    toUpdate.Add((item.Objid, cat));
-                }
+                var target = PrtgSensorTypeCategoryMap.Resolve(item.SensorType, overrides);
+                if (NeedsCategoryChange(item.Category, item.CategorySource, target))
+                    toUpdate.Add((item.Objid, target));
             }
         }
 
@@ -191,20 +192,35 @@ public sealed class EfPrtgStore
         {
             var map = batch.ToDictionary(x => x.Objid, x => x.Category);
             var ids = batch.Select(x => x.Objid).ToList();
-            var rows = ctx.PrtgSensors.Where(s => ids.Contains(s.Objid) && s.Category == null).ToList();
+            // 寫入前重取並再判一次：讀取後到寫入前若被人工改成非 auto，不可覆蓋
+            var rows = ctx.PrtgSensors
+                .Where(s => ids.Contains(s.Objid) &&
+                            (s.Category == null || s.CategorySource == PrtgCategorySources.Auto))
+                .ToList();
 
+            var changed = 0;
             foreach (var row in rows)
             {
-                if (map.TryGetValue(row.Objid, out var category))
-                {
-                    row.Category = category;
-                    row.CategorySource = PrtgCategorySources.Auto;
-                }
+                var target = map[row.Objid];
+                if (!NeedsCategoryChange(row.Category, row.CategorySource, target)) continue;
+
+                row.Category = target;
+                row.CategorySource = target == null ? null : PrtgCategorySources.Auto;
+                changed++;
             }
 
             ctx.SaveChanges();
-            return rows.Count;
+            return changed;
         });
+    }
+
+    /// <summary>候選列（category null 或來源 auto）是否需要改寫成目標分類。</summary>
+    private static bool NeedsCategoryChange(string? current, string? source, string? target)
+    {
+        if (target == null)
+            return current != null; // 候選列中 category 非 null 者必為 auto 列（type 被移出對照表）
+        return !string.Equals(current, target, StringComparison.Ordinal) ||
+               source != PrtgCategorySources.Auto;
     }
 
     /// <summary>
@@ -548,6 +564,21 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 依 objid 集合取得 PRTG 裝置名稱（唯讀查詢，單次查詢；對不到的 objid 不在結果內）。
+    /// </summary>
+    public Dictionary<long, string> GetDeviceNamesByObjids(IReadOnlyCollection<long> objids)
+    {
+        using var __perf = _performance.Measure("prtg:GetDeviceNamesByObjids");
+        if (objids.Count == 0) return new Dictionary<long, string>();
+        using var ctx = _contextFactory();
+        return ctx.PrtgDevices
+            .AsNoTracking()
+            .Where(d => objids.Contains(d.Objid))
+            .Select(d => new { d.Objid, d.Name })
+            .ToDictionary(d => d.Objid, d => d.Name);
+    }
+
+    /// <summary>
     /// 取得所有 PRTG 感測器鏡像清單（唯讀查詢）。
     /// </summary>
     public List<PrtgSensorRow> GetAllSensors()
@@ -555,6 +586,43 @@ public sealed class EfPrtgStore
         using var __perf = _performance.Measure("prtg:GetAllSensors");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors.AsNoTracking().ToList();
+    }
+
+    /// <summary>單次 IN 查詢的 device objid 上限（SQL Server 參數上限 2100，留足餘裕）</summary>
+    private const int DeviceQueryBatchSize = 500;
+
+    /// <summary>
+    /// 取得指定 device 底下**未暫停** sensor 的現況狀態與分類（唯讀查詢，未回報主機的 PRTG 提示用）。
+    /// device 清單每 <see cref="DeviceQueryBatchSize"/> 個分一批查，避免撞 SQL Server 參數上限。
+    /// </summary>
+    public List<(long DeviceObjid, string? Status, string? Category)> GetSensorStatesForDevices(
+        IReadOnlyCollection<long> deviceObjids)
+    {
+        using var __perf = _performance.Measure("prtg:GetSensorStatesForDevices");
+        var result = new List<(long DeviceObjid, string? Status, string? Category)>();
+        var ids = deviceObjids.Distinct().ToList();
+
+        for (var offset = 0; offset < ids.Count; offset += DeviceQueryBatchSize)
+        {
+            var batch = ids.GetRange(offset, Math.Min(DeviceQueryBatchSize, ids.Count - offset));
+            using var ctx = _contextFactory();
+            var rows = ctx.PrtgSensors
+                .AsNoTracking()
+                .Where(s => batch.Contains(s.DeviceObjid) && !s.Paused)
+                .Select(s => new { s.DeviceObjid, s.Status, s.Category })
+                .ToList();
+            result.AddRange(rows.Select(r => (r.DeviceObjid, r.Status, r.Category)));
+        }
+
+        return result;
+    }
+
+    /// <summary>sensor 結構鏡像最近一次同步時間（lf_prtg_sensors.synced_at 最大值）；表為空時回 null。</summary>
+    public DateTime? GetLatestStructureSyncedAt()
+    {
+        using var __perf = _performance.Measure("prtg:GetLatestStructureSyncedAt");
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.Max(s => (DateTime?)s.SyncedAt);
     }
 
     /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>
@@ -601,17 +669,17 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
-    /// <summary>取得未暫停 sensor 的現況狀態（判定沉默 device 用）：objid、device、status、type。</summary>
-    public List<(long Objid, long DeviceObjid, string? Status, string SensorType)> GetSensorStatuses()
+    /// <summary>取得未暫停 sensor 的現況狀態（規則評估用）：objid、device、status、type、name、category。</summary>
+    public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> GetSensorStatuses()
     {
         using var __perf = _performance.Measure("prtg:GetSensorStatuses");
         using var ctx = _contextFactory();
         return ctx.PrtgSensors
             .AsNoTracking()
             .Where(s => !s.Paused)
-            .Select(s => new { s.Objid, s.DeviceObjid, s.Status, s.SensorType })
+            .Select(s => new { s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Name, s.Category })
             .ToList()
-            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType))
+            .Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Name, s.Category))
             .ToList();
     }
 

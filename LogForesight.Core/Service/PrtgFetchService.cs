@@ -42,12 +42,20 @@ public sealed class PrtgFetchService
     private readonly EfPrtgStore _store;
     private readonly IRunConsole _console;
     private readonly PrtgResourceGuard? _guard;
+    private readonly IReadOnlyDictionary<string, string> _categoryOverrides;
 
-    public PrtgFetchService(PrtgClient client, EfPrtgStore store, IRunConsole console, PrtgResourceGuard? guard = null)
+    /// <param name="categoryOverrides">
+    /// sensor type 語意分類補充對照表，由建構端以
+    /// <see cref="PrtgSensorTypeCategoryMap.ParseOverrides"/> 自目前設定解析出的 Map 傳入
+    /// （錯誤行已被略過；設定層存檔時已擋，這裡只防禦舊資料）。
+    /// </param>
+    public PrtgFetchService(PrtgClient client, EfPrtgStore store, IRunConsole console,
+        IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null)
     {
         _client = client;
         _store = store;
         _console = console;
+        _categoryOverrides = categoryOverrides;
         _guard = guard;
     }
 
@@ -154,12 +162,12 @@ public sealed class PrtgFetchService
                 _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
             }
 
-            // 語意分類自動填入：只填未分類者，人工指定的分類不會被洗掉
+            // 語意分類重算：未分類與自動分類的列依對照表更新，人工指定的分類不會被洗掉
             try
             {
-                var categorized = _store.ApplyAutoCategories();
+                var categorized = _store.ApplyAutoCategories(_categoryOverrides);
                 if (categorized > 0)
-                    _console.WriteLine($"[階段 2/4] 已自動填入 {categorized} 個感測器的語意分類。");
+                    _console.WriteLine($"[階段 2/4] 已更新 {categorized} 個感測器的語意分類。");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)

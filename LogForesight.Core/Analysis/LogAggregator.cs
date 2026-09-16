@@ -128,6 +128,13 @@ public class LogIssueSignature
     /// （通知、風險升級），偵測與紀錄照常，見 docs/RULES-SPEC.md 的語意邊界</summary>
     public bool Suppressed { get; set; }
 
+    /// <summary>
+    /// PRTG 簽章的 sensor 語意分類（見 <c>PrtgSensorCategories</c>），由 <c>PrtgFindingMapper.ToSignature</c> 帶入，
+    /// 供跨來源佐證（<see cref="PrtgCorroboration"/>）判定 sensor 類型。非 PRTG 簽章、device 層 finding（silent）、
+    /// 分類未知的 sensor，以及加入這個欄位之前寫入的舊紀錄一律為 null。
+    /// </summary>
+    public string? PrtgSensorCategory { get; set; }
+
     // 以下由 TrendAnalyzer.Apply 填入（與歷史紀錄比對後的頻率趨勢）
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public IssueTrend Trend { get; set; } = IssueTrend.Unknown;

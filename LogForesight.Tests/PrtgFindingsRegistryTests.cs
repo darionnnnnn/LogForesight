@@ -18,8 +18,19 @@ public class PrtgFindingsRegistryTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private static LogIssueSignature Finding(long sensorObjid, string code = "down") =>
-        PrtgFindingMapper.ToSignature(new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60), DateTime.Today);
+    private static readonly Dictionary<string, KnownIssueRule> SeedRules = KnownIssueSeed.CreateRules().ToDictionary(r => r.Id);
+    private static readonly IReadOnlyDictionary<long, IReadOnlySet<string>> NoSuppressions = new Dictionary<long, IReadOnlySet<string>>();
+    private static readonly IReadOnlySet<string> NoPatternIds = new HashSet<string>();
+
+    private static LogIssueSignature Finding(long sensorObjid, string code = "down")
+    {
+        // down 取連通性分類規則：seed v7 起只有它帶「重大」旗標，本檔的風險上調測試要的是會拉「高」的那條
+        var ruleId = code == "down" ? "builtin-prtg-down-availability" : $"builtin-prtg-{code}";
+        var rule = SeedRules.TryGetValue(ruleId, out var r)
+            ? r
+            : new KnownIssueRule { Id = $"test-{code}", PrtgRuleCode = code, Description = "Test" };
+        return PrtgFindingMapper.ToSignature(new PrtgFinding(1001, sensorObjid, code, "Sensor down", 60, rule), DateTime.Today);
+    }
 
     private static IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> ByHost(
         long hostId, params LogIssueSignature[] findings) =>
@@ -27,7 +38,7 @@ public class PrtgFindingsRegistryTests : IDisposable
 
     /// <summary>發佈今天這批 finding（多數測試的目標日就是今天）。</summary>
     private static void PublishToday(PrtgFindingsRegistry registry, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> byHost) =>
-        registry.Publish(DateTime.Today, byHost);
+        registry.Publish(DateTime.Today, byHost, NoSuppressions);
 
     [Fact]
     public void 未發佈時未就緒且查詢回空清單()
@@ -44,7 +55,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         // 「算不出東西」與「還沒算完」必須分得出來：PRTG 停用、規則評估失敗、
         // 規則庫尚無 PRTG 規則都會發佈空集合，AI 分析排程據此立刻放行。
         var registry = new PrtgFindingsRegistry();
-        registry.Publish(DateTime.Today, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+        registry.Publish(DateTime.Today, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), NoSuppressions);
 
         Assert.True(registry.IsReady);
         Assert.Empty(registry.For(101, DateTime.Today));
@@ -302,7 +313,7 @@ public class PrtgFindingsRegistryTests : IDisposable
     public void 登錄簿只對發佈的那一天回傳finding()
     {
         var registry = new PrtgFindingsRegistry();
-        registry.Publish(DateTime.Today, ByHost(101, Finding(2001)));
+        registry.Publish(DateTime.Today, ByHost(101, Finding(2001)), NoSuppressions);
 
         Assert.Single(registry.For(101, DateTime.Today));
         Assert.Empty(registry.For(101, DateTime.Today.AddDays(-1)));
@@ -326,7 +337,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         store.Append(record);
 
         var registry = new PrtgFindingsRegistry();
-        registry.Publish(DateTime.Today, ByHost(101, Finding(2001)));   // 只評估了今天
+        registry.Publish(DateTime.Today, ByHost(101, Finding(2001)), NoSuppressions);   // 只評估了今天
 
         var added = HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
 
@@ -359,7 +370,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.True(store.PruneDetails(detailRetentionDays: 5) > 0);
 
         var registry = new PrtgFindingsRegistry();
-        registry.Publish(oldDay, ByHost(101, Finding(2001)));
+        registry.Publish(oldDay, ByHost(101, Finding(2001)), NoSuppressions);
 
         var added = HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
 
@@ -403,8 +414,8 @@ public class PrtgFindingsRegistryTests : IDisposable
         var day2 = DateTime.Today.AddDays(-1);
         var day3 = DateTime.Today;
 
-        registry.Publish(day1, ByHost(101, Finding(2001)));
-        registry.Publish(day2, ByHost(102, Finding(2002, "flapping")));
+        registry.Publish(day1, ByHost(101, Finding(2001)), NoSuppressions);
+        registry.Publish(day2, ByHost(102, Finding(2002, "flapping")), NoSuppressions);
 
         Assert.Single(registry.For(101, day1));
         Assert.Empty(registry.For(102, day1));
@@ -423,10 +434,10 @@ public class PrtgFindingsRegistryTests : IDisposable
         var registry = new PrtgFindingsRegistry();
         var day1 = DateTime.Today.AddDays(-1);
 
-        registry.Publish(day1, ByHost(101, Finding(2001)));
+        registry.Publish(day1, ByHost(101, Finding(2001)), NoSuppressions);
         Assert.Equal("prtg:down:2001", Assert.Single(registry.For(101, day1)).EventKey);
 
-        registry.Publish(day1, ByHost(101, Finding(2002, "flapping")));
+        registry.Publish(day1, ByHost(101, Finding(2002, "flapping")), NoSuppressions);
         Assert.Equal("prtg:flapping:2002", Assert.Single(registry.For(101, day1)).EventKey);
     }
     // ── 體檢輪：並行競態與 AI 回寫 ─────────────────────────────────
@@ -494,7 +505,7 @@ public class PrtgFindingsRegistryTests : IDisposable
 
         // 模擬補追加路徑先走（同 PrtgDailyPipeline 的呼叫形狀）
         Assert.True(registry.AttachExclusive(101, DateTime.Today,
-            () => store.AttachPrtgFindings(101, DateTime.Today, findings[101], aiConfigured: true)));
+            () => store.AttachPrtgFindings(101, DateTime.Today, findings[101], NoPatternIds, out _, aiConfigured: true)));
         Assert.True(registry.WasAttached(101, DateTime.Today));
 
         // 寫入路徑隨後對「未含 finding 的記憶體紀錄」呼叫
@@ -517,5 +528,85 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.True(registry.WasAttached(101, DateTime.Today));
         Assert.False(registry.WasAttached(101, DateTime.Today.AddDays(-1)));
         Assert.False(registry.WasAttached(102, DateTime.Today));
+    }
+
+    // ── 跨來源佐證（PrtgCorroboration）──────────────────────────────────────
+
+    private static LogIssueSignature HardwareWarning(long sensorObjid) =>
+        PrtgFindingMapper.ToSignature(
+            new PrtgFinding(1001, sensorObjid, "warning", "[SRV] RAID Warning", 180, SeedRules["builtin-prtg-warning-hardware"])
+            { SensorCategory = PrtgSensorCategories.Hardware },
+            DateTime.Today);
+
+    [Fact]
+    public void SuppressedPatternIdsFor_依主機與日期取回發佈時的集合_未發佈或無此主機回空集合()
+    {
+        var registry = new PrtgFindingsRegistry();
+        var ids = new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated };
+        registry.Publish(DateTime.Today, ByHost(101, Finding(2001)),
+            new Dictionary<long, IReadOnlySet<string>> { [101] = ids });
+
+        Assert.Contains(CorrelationPatternIds.PrtgStorageCorroborated, registry.SuppressedPatternIdsFor(101, DateTime.Today));
+        Assert.Empty(registry.SuppressedPatternIdsFor(102, DateTime.Today));
+        Assert.Empty(registry.SuppressedPatternIdsFor(101, DateTime.Today.AddDays(-1)));
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_跨來源佐證記憶體與資料庫一致()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = DateTime.Today, RiskLevel = RiskLevels.Low, AiAnalyzed = false,
+            TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 2 } }
+        };
+        store.Append(record);
+
+        var registry = new PrtgFindingsRegistry();
+        PublishToday(registry, ByHost(101, HardwareWarning(2001)));
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
+        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
+        Assert.True(record.AiPending);
+        var memoryRef = Assert.Single(record.CorrelationAlertRefs);
+        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, memoryRef.PatternId);
+
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+        Assert.Equal(record.CorrelationAlerts, persisted.CorrelationAlerts);
+        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, Assert.Single(persisted.CorrelationAlertRefs).PatternId);
+        using var ctx = _fx.NewContext();
+        Assert.True(ctx.DailyRecords.Single(r => r.HostId == 101).HasCorrelation);
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_登錄簿的關聯抑制集合兩邊都生效()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = DateTime.Today, RiskLevel = RiskLevels.Low, AiAnalyzed = false,
+            TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 2 } }
+        };
+        store.Append(record);
+
+        var registry = new PrtgFindingsRegistry();
+        registry.Publish(DateTime.Today, ByHost(101, HardwareWarning(2001)),
+            new Dictionary<long, IReadOnlySet<string>> { [101] = new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated } });
+
+        HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
+
+        Assert.Empty(record.CorrelationAlerts);
+        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(record.SuppressedCorrelationAlerts));
+        Assert.NotEqual(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
+
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Empty(persisted.CorrelationAlerts);
+        Assert.Single(persisted.SuppressedCorrelationAlerts);
+        Assert.NotEqual(RiskLevels.High, persisted.RiskLevel);
+        using var ctx = _fx.NewContext();
+        Assert.False(ctx.DailyRecords.Single(r => r.HostId == 101).HasCorrelation);
     }
 }

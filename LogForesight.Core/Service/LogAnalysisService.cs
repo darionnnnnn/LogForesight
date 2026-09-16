@@ -199,23 +199,7 @@ public class LogAnalysisService
         // 不看有沒有命中規則——同一個 issue 也可能同時被 Rule 與 Signature 兩種抑制命中，兩者是
         // 「或」的關係，任一命中即算抑制。
         var activeSuppressions = SuppressionFilter.ActiveForHost(LoadSuppressions(), _host, _hostGroupIds, DateTime.Now);
-        if (activeSuppressions.Count > 0)
-        {
-            var suppressedRuleIds = SuppressionFilter.ToRuleIdSet(activeSuppressions);
-            var suppressedSignatureKeys = SuppressionFilter.ToSignatureKeySet(activeSuppressions);
-            foreach (var issue in issues)
-            {
-                bool ruleSuppressed = issue.RuleId != null && suppressedRuleIds.Contains(issue.RuleId);
-                // 物件版重載（含 EventKey 第五段）：與 IssueDto.IssueKey／前端建立簽章抑制時
-                // 送出的鍵一致，四參數版在 Linux「同 program 命中不同規則」時會漏掉區分段，
-                // 導致抑制鍵對不上、簽章抑制對這類問題永遠不生效
-                bool signatureSuppressed = suppressedSignatureKeys.Contains(IssueSignatureKey.For(issue));
-                if (ruleSuppressed || signatureSuppressed)
-                {
-                    issue.Suppressed = true;
-                }
-            }
-        }
+        SuppressionFilter.MarkSuppressed(issues, activeSuppressions);
 
         // EntryType 0 是 classic API 讀到的 Critical 等級事件（如 Kernel-Power 41），計入錯誤
         var errorCount = logs.Count(l => l.EntryType == EventLogEntryType.Error || (int)l.EntryType == 0);

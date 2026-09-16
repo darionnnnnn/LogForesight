@@ -290,4 +290,44 @@ public class FrontendConsistencyUiTests
         Assert.Contains("getAiAvailable", ExtractImportList(js, "../core/api.js"));
         Assert.Contains("getAiAvailable(", js);
     }
+
+    [Fact]
+    public void C7_Pages底下不得以含插值的樣板字串指派innerHTML()
+    {
+        var pagesDir = JsDir("pages");
+        Assert.True(Directory.Exists(pagesDir), $"找不到目錄: {pagesDir}");
+
+        // 整檔比對（不逐行）：跨行樣板字串也要抓；涵蓋 +=、outerHTML 與 insertAdjacentHTML
+        var pattern = new Regex(@"((inner|outer)HTML\s*\+?=\s*|insertAdjacentHTML\s*\([^`]*)`[^`]*\$\{", RegexOptions.Singleline);
+        var offenders = Directory.GetFiles(pagesDir, "*.js", SearchOption.AllDirectories)
+            .Select(f => (file: Path.GetFileName(f), text: File.ReadAllText(f)))
+            .Where(x => pattern.IsMatch(x.text))
+            .Select(x => x.file)
+            .ToList();
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void D3_主機頁狀態徽章涵蓋四種PRTG提示()
+    {
+        var js = ReadJs("pages", "hosts.js");
+        Assert.Contains("host.prtgHint", js);
+        Assert.Contains("host.prtgHintStale", js);
+        Assert.Contains("case 'down': text = 'PRTG：主機失聯'; variant = 'danger'", js);
+        Assert.Contains("case 'up': text = 'PRTG：主機在線，問題在日誌取數端'; variant = 'warning'", js);
+        Assert.Contains("case 'unknown': text = 'PRTG：無資料'; variant = 'secondary'", js);
+        Assert.Contains("case 'no-map': text = '無 PRTG 對應'; variant = 'secondary'", js);
+        Assert.Contains("（鏡像過期）", js);
+        Assert.Contains("prtgHintBadge(host)", js);
+    }
+
+    [Fact]
+    public void D3_儀表板未回報卡依PRTG失聯數切換提示()
+    {
+        var js = ReadJs("pages", "dashboard.js");
+        Assert.Contains("data.silentHostsPrtgDownCount > 0", js);
+        Assert.Contains("台 PRTG 顯示失聯", js);
+        Assert.Contains("'沒回報 ≠ 沒問題'", js);
+    }
 }

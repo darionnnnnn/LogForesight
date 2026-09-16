@@ -85,6 +85,10 @@ public static class RuleValidator
         {
             return platformReason;
         }
+        if (rule.Platform != "prtg" && rule.PrtgSensorCategory != null)
+        {
+            return "PrtgSensorCategory 僅 prtg 規則可填，其他平台必須為空";
+        }
 
         if (rule.CountThreshold < 1)
         {
@@ -248,6 +252,18 @@ public static class RuleValidator
         if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent && rule.PrtgThreshold != 0)
         {
             return $"PrtgThreshold 必須為 0（{PrtgRuleEvaluator.RuleSilent} 規則不使用門檻）";
+        }
+
+        if (rule.PrtgSensorCategory != null)
+        {
+            if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent)
+            {
+                return $"PrtgSensorCategory 必須為空（{PrtgRuleEvaluator.RuleSilent} 規則以 device 為單位，不分 sensor 分類）";
+            }
+            if (!PrtgSensorCategories.IsValid(rule.PrtgSensorCategory))
+            {
+                return $"PrtgSensorCategory 必須為空或 {string.Join("、", PrtgSensorCategories.All)} 之一，實際為「{rule.PrtgSensorCategory}」";
+            }
         }
 
         return null;

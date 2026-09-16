@@ -159,6 +159,9 @@ public class SystemSettingsDto
     public int PrtgRetentionDays { get; set; }
     public List<string> PrtgSensorTypeWhitelist { get; set; } = new();
 
+    /// <summary>sensor type 語意分類補充對照表（一行一筆「type=分類」）</summary>
+    public List<string> PrtgSensorTypeCategoryOverrides { get; set; } = new();
+
     /// <summary>數值取數的主機範圍（triggered／all-mapped／triggered-plus-list）</summary>
     public string PrtgValueFetchScope { get; set; } = LogForesight.Core.Service.PrtgValueFetchScope.Triggered;
 
@@ -448,6 +451,9 @@ public class UpdateSystemSettingsRequest
 
     public List<string>? PrtgSensorTypeWhitelist { get; set; }
 
+    /// <summary>sensor type 語意分類補充對照表（一行一筆「type=分類」）。null＝本次請求未提供（沿用既有值）。</summary>
+    public List<string>? PrtgSensorTypeCategoryOverrides { get; set; }
+
     /// <summary>數值取數的主機範圍。可空，有送才更新</summary>
     public string? PrtgValueFetchScope { get; set; }
 
@@ -546,6 +552,9 @@ public class UpdatePrtgSettingsRequest
 
     /// <summary>null＝本次請求未提供（沿用既有值）。空清單＝明確清空（不限制 sensor type）。</summary>
     public List<string>? PrtgSensorTypeWhitelist { get; set; }
+
+    /// <summary>sensor type 語意分類補充對照表（一行一筆「type=分類」）。null＝本次請求未提供（沿用既有值）。</summary>
+    public List<string>? PrtgSensorTypeCategoryOverrides { get; set; }
 
     /// <summary>數值取數的主機範圍。可空，有送才更新</summary>
     public string? PrtgValueFetchScope { get; set; }

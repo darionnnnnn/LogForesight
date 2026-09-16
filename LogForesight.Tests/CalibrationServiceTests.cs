@@ -353,7 +353,8 @@ public class CalibrationServiceTests : IDisposable
                     RecordId = dr.RecordId,
                     HostId = 1,
                     RecordDate = anchor,
-                    SourceName = "PRTG",
+                    LogName = "PRTG",
+                    SourceName = "PRTG:down",
                     EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
@@ -409,7 +410,8 @@ public class CalibrationServiceTests : IDisposable
                     RecordId = dr.RecordId,
                     HostId = 1,
                     RecordDate = anchor.AddDays(-i % 30),
-                    SourceName = "PRTG",
+                    LogName = "PRTG",
+                    SourceName = "PRTG:down",
                     EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
@@ -491,7 +493,7 @@ public class CalibrationServiceTests : IDisposable
                 ctx.TopIssues.Add(new TopIssueRow
                 {
                     RecordId = dr.RecordId, HostId = 1, RecordDate = anchor.AddDays(-i),
-                    SourceName = "PRTG", EventId = 0,
+                    LogName = "PRTG", SourceName = "PRTG:down", EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{2000 + i}",
                     Category = "Service", SeverityRank = 2
                 });
@@ -501,7 +503,7 @@ public class CalibrationServiceTests : IDisposable
                 ctx.TopIssues.Add(new TopIssueRow
                 {
                     RecordId = dr.RecordId, HostId = 1, RecordDate = anchor.AddDays(-i % 30),
-                    SourceName = "PRTG", EventId = 0,
+                    LogName = "PRTG", SourceName = "PRTG:flapping", EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleFlapping}:{3000 + i}",
                     Category = "Service", SeverityRank = 3
                 });
@@ -555,7 +557,8 @@ public class CalibrationServiceTests : IDisposable
                     RecordId = dr.RecordId,
                     HostId = 1,
                     RecordDate = anchor.AddDays(-i % 56),
-                    SourceName = "PRTG",
+                    LogName = "PRTG",
+                    SourceName = "PRTG:down",
                     EventId = 0,
                     EventKey = $"prtg:{PrtgRuleEvaluator.RuleDown}:{1000 + i}",
                     Category = "Service",
@@ -1152,6 +1155,42 @@ public class CalibrationServiceTests : IDisposable
     }
 
     /// <summary>
+    /// 規則門檻分佈的 sensor 母體要與夜間規則評估一致：不受取數白名單限制（Ping 預設不在白名單），
+    /// 且不做同裝置折疊——Ping Down 時同裝置 traffic 的 Down 在正式判定會被合併，
+    /// 但校準要看的是每顆 sensor 自己的量值，兩顆都要留在分佈裡。
+    /// </summary>
+    [Fact]
+    public void BuildExportPackage_規則門檻分佈不受取數白名單限制且不做同裝置折疊()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+        var store = new EfPrtgStore(_fx.NewContext);
+        var now = DateTime.Now;
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 20, SensorType = "Ping", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 20, SensorType = "SNMP Traffic 64bit", Paused = false }
+        }, now);
+        // Ping 自動分類為 availability——若校準把分類傳進評估器，2002 會被折疊掉
+        store.ApplyAutoCategories(new Dictionary<string, string>());
+
+        store.AppendStateChanges(new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 2001, ChangedAt = anchor.AddHours(8), Status = "Down", Quality = "Good" },
+            new() { SensorObjid = 2002, ChangedAt = anchor.AddHours(8), Status = "Down", Quality = "Good" }
+        });
+
+        var package = CreateService().BuildExportPackage(anchor);
+
+        var downSensors = package.RuleThresholds.MagnitudeSamples
+            .Where(r => r.RuleCode == PrtgRuleEvaluator.RuleDown)
+            .Select(r => r.SensorObjid)
+            .OrderBy(x => x)
+            .ToList();
+        Assert.Equal(new long[] { 2001, 2002 }, downSensors.Select(x => (long)x).ToArray());
+    }
+
+    /// <summary>
     /// IsMatch 要能為 true：條件 4（跨日重現）需要 history，若匯出端不撈歷史紀錄，
     /// 這一欄會整欄恆為 false，下一輪拿它校準會得到「現行門檻命中率 0%」的錯誤結論。
     /// </summary>
@@ -1363,9 +1402,11 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal("SNMP Disk Free", vb.SensorType);
         Assert.Equal(55.0, vb.AvgValue);
 
-        // 規則門檻資料集（包含 4 條預設規則門檻現值）
+        // 規則門檻資料集（包含 8 條預設規則門檻現值：4 條不限分類＋4 條分類規則，seed v7）
         Assert.NotNull(package.RuleThresholds);
-        Assert.Equal(4, package.RuleThresholds.CurrentRules.Count);
+        Assert.Equal(8, package.RuleThresholds.CurrentRules.Count);
+        Assert.Equal(4, package.RuleThresholds.CurrentRules.Count(r => r.SensorCategory == null));
+        Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "down" && r.SensorCategory == "availability" && r.Threshold == 30);
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "down");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "flapping");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "warning");

@@ -30,6 +30,8 @@ public sealed class PrtgFindingsRegistry
 
     private readonly object _lock = new();
     private readonly Dictionary<DateTime, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>>> _byDate = new();
+    private readonly Dictionary<DateTime, IReadOnlyDictionary<long, IReadOnlySet<string>>> _suppressedPatternIdsByDate = new();
+    private static readonly IReadOnlySet<string> NoPatternIds = new HashSet<string>();
 
     /// <summary>PRTG finding 是否已發佈（至少一天已發佈即為 true，維持現有呼叫端與測試語意）。</summary>
     public bool IsReady
@@ -59,11 +61,29 @@ public sealed class PrtgFindingsRegistry
     /// 且 EventKey（`prtg:{code}:{objid}`）不含日期、去重完全生效，重跑也不會自癒。
     /// </param>
     /// <param name="findingsByHost">該日各主機命中的 finding 清單。</param>
-    public void Publish(DateTime day, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> findingsByHost)
+    /// <param name="suppressedPatternIdsByHost">
+    /// 各主機生效中的關聯抑制模式 Id（<c>SuppressionFilter.ToCorrelationPatternIdSet</c>），
+    /// 兩條追加路徑做跨來源佐證（<see cref="PrtgCorroboration"/>）時取用。沒有 finding 的發佈傳空字典。
+    /// </param>
+    public void Publish(DateTime day, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>> findingsByHost,
+        IReadOnlyDictionary<long, IReadOnlySet<string>> suppressedPatternIdsByHost)
     {
         lock (_lock)
         {
             _byDate[day.Date] = findingsByHost;
+            _suppressedPatternIdsByDate[day.Date] = suppressedPatternIdsByHost;
+        }
+    }
+
+    /// <summary>
+    /// 取得某主機**該日**發佈時生效中的關聯抑制模式 Id。該日尚未發佈、或發佈時沒有這台主機時回空集合。
+    /// </summary>
+    public IReadOnlySet<string> SuppressedPatternIdsFor(long hostId, DateTime date)
+    {
+        lock (_lock)
+        {
+            if (!_suppressedPatternIdsByDate.TryGetValue(date.Date, out var hostMap)) return NoPatternIds;
+            return hostMap.TryGetValue(hostId, out var ids) ? ids : NoPatternIds;
         }
     }
 
@@ -111,7 +131,8 @@ public sealed class PrtgFindingsRegistry
     {
         var registry = new PrtgFindingsRegistry();
         // 空集合對任何日期都回空清單，所以這裡的日期不影響行為
-        registry.Publish(DateTime.Today, new Dictionary<long, IReadOnlyList<LogIssueSignature>>());
+        registry.Publish(DateTime.Today, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(),
+            new Dictionary<long, IReadOnlySet<string>>());
         return registry;
     }
 }

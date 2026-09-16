@@ -1019,8 +1019,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return trend;
     }
 
-    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to)
+    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
     {
+        if (hostIds != null && hostIds.Count == 0) return new List<PrtgRuleHitAggregate>();
+
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
@@ -1029,10 +1031,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
 
         // SQL 端過濾來源與日期範圍（不得先撈全表）
-        var rows = ctx.TopIssues.AsNoTracking()
-            // 不用 ToUpper：寫入端固定是 PrtgFindingMapper.PrtgSource，而 UPPER(source_name)
+        var q = ctx.TopIssues.AsNoTracking()
+            // 不用 ToUpper：寫入端固定是 PrtgFindingMapper.PrtgLogName，而 UPPER
             // 會讓 SQL Server 端的索引無法 seek
-            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.SourceName == PrtgFindingMapper.PrtgSource)
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.LogName == PrtgFindingMapper.PrtgLogName);
+
+        if (hostIds != null)
+        {
+            // 呼叫端傳的是存活主機 id，展開回別名 id 再於 SQL 端篩（同 Aggregate）
+            var expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        }
+
+        var rows = q
             .Select(x => new
             {
                 x.RecordDate,
@@ -1058,6 +1069,54 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         Log.Debug("[SQL] IssueAggregate.AggregatePrtgRuleHits（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
             f, t, result.Count, sw.ElapsedMilliseconds);
         _performance?.Record("issues:AggregatePrtgRuleHits", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    /// <summary>EventKey 清單每批上限：SQL Server 單一語句參數上限 2100，留足餘裕。</summary>
+    internal const int PrtgHitDateBatchSize = 500;
+
+    /// <summary>跨日命中日期的單批查詢：SQL 端過濾來源、鍵與日期並取相異組合，不得撈整表回記憶體再篩。
+    /// 抽成 builder 讓兩個後端的翻譯各有測試守住（SQL Server 的 IN 展開與日期比較）。</summary>
+    internal static IQueryable<PrtgHitDateRow> BuildPrtgHitDatesQuery(
+        IQueryable<TopIssueRow> topIssues, IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive) =>
+        topIssues
+            .Where(x => x.LogName == PrtgFindingMapper.PrtgLogName
+                        && x.RecordDate >= fromInclusive && x.RecordDate < toExclusive
+                        && eventKeys.Contains(x.EventKey))
+            .Select(x => new PrtgHitDateRow(x.EventKey, x.RecordDate))
+            .Distinct();
+
+    public Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
+        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive)
+    {
+        var result = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);
+        var keys = eventKeys.Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0 || fromInclusive >= toExclusive) return result;
+
+        var sw = Stopwatch.StartNew();
+        var f = fromInclusive.Date;
+        var t = toExclusive.Date;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in keys.Chunk(PrtgHitDateBatchSize))
+        {
+            var rows = BuildPrtgHitDatesQuery(ctx.TopIssues.AsNoTracking(), batch, f, t).ToList();
+
+            foreach (var row in rows)
+            {
+                if (!result.TryGetValue(row.EventKey, out var dates))
+                {
+                    dates = new HashSet<DateTime>();
+                    result[row.EventKey] = dates;
+                }
+                dates.Add(row.RecordDate.Date);
+            }
+        }
+
+        Log.Debug("[SQL] IssueAggregate.GetPrtgFindingHitDates（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，鍵 {Keys} 個）→ {Count} 鍵、{Ms}ms",
+            f, t, keys.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:GetPrtgFindingHitDates", sw.ElapsedMilliseconds);
 
         return result;
     }

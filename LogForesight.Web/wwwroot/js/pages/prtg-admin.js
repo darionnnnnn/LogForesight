@@ -119,6 +119,8 @@ function renderPrtgFields(settings) {
     document.getElementById('prtg-retention-days').value = settings.prtgRetentionDays ?? 180;
     document.getElementById('prtg-sensor-type-whitelist').value =
         (settings.prtgSensorTypeWhitelist ?? []).join('\n');
+    document.getElementById('prtg-sensor-type-category-overrides').value =
+        (settings.prtgSensorTypeCategoryOverrides ?? []).join('\n');
 
 
     prtgEnabled = Boolean(settings.prtgEnabled);
@@ -401,6 +403,7 @@ function bindParamsForm() {
                 prtgBackfillDays: backfillDays,
                 prtgRetentionDays: prtgRetentionDays,
                 prtgSensorTypeWhitelist: collectLines('prtg-sensor-type-whitelist'),
+                prtgSensorTypeCategoryOverrides: collectLines('prtg-sensor-type-category-overrides'),
                 prtgValueFetchExtraHosts: collectLines('prtg-value-fetch-extra-hosts'),
                 // 關閉時整個鍵不送：範圍留著原值，下次重新啟用不必再選一次
                 ...(enabled ? { prtgValueFetchScope: scopeValue } : {})

@@ -852,6 +852,70 @@ public class RuleAdminServiceTests
         Assert.True(preview.ApproximateForLinux);
     }
 
+    // ── PreviewSuppression：PRTG 規則分路（task-46-A3）─────────────────────────────
+
+    private static KnownIssueRule PrtgDownRule() =>
+        KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+
+    private static LogIssueSignature PrtgTopIssue(string eventKey) => new()
+    {
+        LogName = "PRTG",
+        Source = eventKey.StartsWith("prtg:flapping", StringComparison.Ordinal) ? "PRTG:flapping" : "PRTG:down",
+        EventId = 0,
+        EntryType = System.Diagnostics.EventLogEntryType.Warning,
+        EventKey = eventKey,
+        Category = IssueCategory.Other,
+        Severity = IssueSeverity.High,
+        Count = 1
+    };
+
+    /// <summary>
+    /// PRTG 規則沒有 SourcePattern：過去落進 Windows 分支以空字串比對、命中數恆為 0。
+    /// 改依 EventKey 的 prtg:{代碼}: 前綴計數，且只算目標主機集合上的列（真 SQLite 驗 SQL 端主機篩選）。
+    /// </summary>
+    [Fact]
+    public void PreviewSuppression_PRTG規則依EventKey前綴計數且只算目標主機()
+    {
+        using var fx = new EfSqliteFixture();
+        var records = new EfAnalysisRecordStore(fx.NewContext, "test");
+        var query = new EfIssueAggregateQuery(fx.NewContext, _hosts);
+
+        var rule = PrtgDownRule();
+        _rules.Content.Rules.Add(rule);
+
+        var group = _hostGroups.Upsert(new HostGroup { GroupName = "PRTG 群組" });
+        var h1 = _hosts.Upsert(new WebHost { HostName = "P1", Active = true, GroupIds = new List<long> { group.GroupId } });
+        var h2 = _hosts.Upsert(new WebHost { HostName = "P2", Active = true, GroupIds = new List<long> { group.GroupId } });
+        var h3 = _hosts.Upsert(new WebHost { HostName = "P3", Active = true });
+
+        var day = DateTime.Today.AddDays(-1);
+        records.Append(new DailyAnalysisRecord
+        {
+            HostId = h1.HostId, Host = "P1", Date = day, RiskLevel = RiskLevels.Low,
+            TopIssues = new List<LogIssueSignature> { PrtgTopIssue("prtg:down:1"), PrtgTopIssue("prtg:flapping:9") }
+        });
+        records.Append(new DailyAnalysisRecord
+        {
+            HostId = h2.HostId, Host = "P2", Date = day, RiskLevel = RiskLevels.Low,
+            TopIssues = new List<LogIssueSignature> { PrtgTopIssue("prtg:down:2") }
+        });
+        records.Append(new DailyAnalysisRecord
+        {
+            HostId = h3.HostId, Host = "P3", Date = day, RiskLevel = RiskLevels.Low,
+            TopIssues = new List<LogIssueSignature> { PrtgTopIssue("prtg:down:3") }
+        });
+
+        var service = new RuleAdminService(_rules, _seeds, _suppressions, _users,
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _hostGroups, _hosts, query);
+
+        var site = service.PreviewSuppression(rule.Id, SuppressionScopes.Site, null);
+        var grouped = service.PreviewSuppression(rule.Id, SuppressionScopes.Group, group.GroupId);
+
+        Assert.Equal(3, site.RecentHitCount);      // flapping:9 不算進 down
+        Assert.Equal(2, grouped.RecentHitCount);   // P3 不在群組內
+        Assert.False(site.ApproximateForLinux);
+    }
+
     // ── MatchOrder：比對順序可見化（回饋十五輪 B-1）─────────────────────────────
 
     private static KnownIssueRule LinuxRuleFixture(string id, bool enabled = true) => new()
@@ -929,6 +993,84 @@ public class RuleAdminServiceTests
 
         Assert.Equal(2, rules.Single(r => r.Id == "custom-disabled").MatchOrder);
         Assert.Equal(3, rules.Single(r => r.Id == "custom-third").MatchOrder);
+    }
+
+    // ── PRTG 適用分類 ────────────────────────────────────────────────
+
+    private static SaveRuleRequest PrtgRequest(string id, string? sensorCategory) => new()
+    {
+        Id = id,
+        Enabled = true,
+        Platform = "prtg",
+        PrtgRuleCode = "down",
+        PrtgThreshold = 45,
+        PrtgSensorCategory = sensorCategory,
+        Category = "Hardware",
+        Severity = "High",
+        Description = "硬體 sensor Down",
+        CountThreshold = 1,
+        PlainExplanation = "硬體故障",
+        Impact = "主機可能停機",
+        LikelyCauses = new List<string> { "風扇故障" },
+        NextSteps = new List<string> { "檢查硬體" }
+    };
+
+    [Fact]
+    public void PRTG規則_建立帶分類後讀回分類一致且去空白()
+    {
+        var service = Create();
+
+        var dto = service.SaveRule(PrtgRequest("custom-prtg-hw", "  hardware "));
+
+        Assert.Equal("hardware", dto.PrtgSensorCategory);
+        var stored = _rules.Content.Rules.Single(r => r.Id == "custom-prtg-hw");
+        Assert.Equal("hardware", stored.PrtgSensorCategory);
+        Assert.Equal("hardware", service.GetRules().Single(r => r.Id == "custom-prtg-hw").PrtgSensorCategory);
+    }
+
+    [Fact]
+    public void PRTG規則_分類空白視為不限分類_非PRTG規則一律存null()
+    {
+        var service = Create();
+
+        service.SaveRule(PrtgRequest("custom-prtg-any", "   "));
+        var windows = ValidRequest("custom-win");
+        windows.PrtgSensorCategory = "hardware";
+        service.SaveRule(windows);
+
+        Assert.Null(_rules.Content.Rules.Single(r => r.Id == "custom-prtg-any").PrtgSensorCategory);
+        Assert.Null(_rules.Content.Rules.Single(r => r.Id == "custom-win").PrtgSensorCategory);
+    }
+
+    [Fact]
+    public void PRTG規則_不合法分類拒絕儲存()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().SaveRule(PrtgRequest("custom-prtg-bad", "bogus")));
+
+        Assert.Contains("PrtgSensorCategory", ex.Message);
+    }
+
+    [Fact]
+    public void 回復預設_預覽差異含PRTG適用分類()
+    {
+        var seedRule = new KnownIssueRule
+        {
+            Id = "builtin-prtg-down-hardware", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+            PrtgRuleCode = "down", PrtgThreshold = 45, PrtgSensorCategory = "hardware",
+            Category = IssueCategory.Hardware, Severity = IssueSeverity.High, Description = "硬體 sensor Down",
+            CountThreshold = 1, PlainExplanation = "硬體故障", Impact = "主機可能停機",
+            LikelyCauses = new[] { "風扇故障" }, NextSteps = new[] { "檢查硬體" }
+        };
+        _rules.Content.Rules.Add(seedRule);
+        _seeds.Sync(_rules.Content.Rules.ToList(), seedVersion: 1);
+        var service = Create();
+        service.SaveRule(PrtgRequest("builtin-prtg-down-hardware", "availability"));
+
+        var preview = service.PreviewRestore("builtin-prtg-down-hardware");
+
+        var diff = Assert.Single(preview.Differences, d => d.Field == "PRTG 適用分類");
+        Assert.Equal("availability", diff.Current);
+        Assert.Equal("hardware", diff.Seed);
     }
 }
 

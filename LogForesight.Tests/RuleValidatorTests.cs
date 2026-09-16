@@ -468,7 +468,8 @@ public class RuleValidatorTests
         string plainExplanation = "explanation",
         string impact = "impact",
         string[]? likelyCauses = null,
-        string[]? nextSteps = null) => new()
+        string[]? nextSteps = null,
+        string? prtgSensorCategory = null) => new()
         {
             Id = id,
             Origin = origin,
@@ -477,6 +478,7 @@ public class RuleValidatorTests
             Platform = "prtg",
             PrtgRuleCode = prtgRuleCode,
             PrtgThreshold = prtgThreshold,
+            PrtgSensorCategory = prtgSensorCategory,
             Category = category,
             Severity = severity,
             Description = description,
@@ -596,5 +598,63 @@ public class RuleValidatorTests
             Assert.Single(outcome.SkippedRules);
             Assert.Contains("專用欄位", outcome.SkippedRules[0].Reason);
         }
+    }
+
+    // ── PrtgSensorCategory ───────────────────────────────────────────
+
+    [Fact]
+    public void PRTG規則_適用分類為null或合法分類時通過()
+    {
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule>
+        {
+            PrtgRule(id: "custom-null"),
+            PrtgRule(id: "custom-hw", prtgSensorCategory: PrtgSensorCategories.Hardware),
+            PrtgRule(id: "custom-avail-upper", prtgSensorCategory: "Availability"),
+        });
+
+        Assert.Equal(3, outcome.ValidRules.Count);
+        Assert.Empty(outcome.SkippedRules);
+    }
+
+    [Fact]
+    public void PRTG規則_適用分類不合法時不合格()
+    {
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { PrtgRule(prtgSensorCategory: "bogus") });
+
+        Assert.Empty(outcome.ValidRules);
+        var skipped = Assert.Single(outcome.SkippedRules);
+        Assert.Contains("PrtgSensorCategory", skipped.Reason);
+    }
+
+    [Fact]
+    public void PRTG規則_silent帶適用分類時不合格()
+    {
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule>
+        {
+            PrtgRule(prtgRuleCode: PrtgRuleEvaluator.RuleSilent, prtgThreshold: 0, prtgSensorCategory: PrtgSensorCategories.Hardware)
+        });
+
+        Assert.Empty(outcome.ValidRules);
+        var skipped = Assert.Single(outcome.SkippedRules);
+        Assert.Contains("PrtgSensorCategory", skipped.Reason);
+    }
+
+    [Fact]
+    public void 非PRTG規則帶適用分類時不合格()
+    {
+        var windows = new KnownIssueRule
+        {
+            Id = "custom-win-cat", Origin = "custom", Platform = "windows", SourcePattern = "TestSource", EventIds = new[] { 1 },
+            Category = IssueCategory.Other, Severity = IssueSeverity.Medium, Description = "desc", CountThreshold = 1,
+            PlainExplanation = "explanation", Impact = "impact", LikelyCauses = new[] { "cause" }, NextSteps = new[] { "step" },
+            PrtgSensorCategory = PrtgSensorCategories.Hardware
+        };
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { windows, Rule(id: "custom-win-ok") });
+
+        var valid = Assert.Single(outcome.ValidRules);
+        Assert.Equal("custom-win-ok", valid.Id);
+        var skipped = Assert.Single(outcome.SkippedRules);
+        Assert.Contains("PrtgSensorCategory", skipped.Reason);
     }
 }

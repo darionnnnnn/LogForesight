@@ -1,5 +1,7 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -45,7 +47,8 @@ public class HostAdminServiceTests : IDisposable
         _audit,
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         new EfPrtgStore(_fx.NewContext),
-        _mapRefresher);
+        _mapRefresher,
+        new FakeSystemSettingsStore());
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -56,7 +59,8 @@ public class HostAdminServiceTests : IDisposable
         _audit,
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
-        _mapRefresher);
+        _mapRefresher,
+        new FakeSystemSettingsStore());
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -694,5 +698,131 @@ public class HostAdminServiceTests : IDisposable
         });
 
         Assert.Null(dto.RemapWarning);
+    }
+
+    // ── 未回報主機的 PRTG 現況提示 ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 三台未回報（Ping Down＋traffic Up／Ping Up＋traffic Down／無 ok 對應）＋一台正常回報
+    /// （對應到 Ping Down 的 device，用來證明非未回報主機不算提示）。
+    /// </summary>
+    internal static (WebHost Down, WebHost Up, WebHost NoMap, WebHost Normal) SeedSilentPrtgScenario(
+        IHostStore hosts, EfPrtgStore seedStore, DateTime syncedAt)
+    {
+        var now = DateTime.Now;
+        var down = hosts.Upsert(new WebHost { HostName = "SILENT-DOWN", Active = true, CreatedAt = now.AddDays(-30), LastReportAt = now.AddDays(-5) });
+        var up = hosts.Upsert(new WebHost { HostName = "SILENT-UP", Active = true, CreatedAt = now.AddDays(-30), LastReportAt = now.AddDays(-5) });
+        var noMap = hosts.Upsert(new WebHost { HostName = "SILENT-NOMAP", Active = true, CreatedAt = now.AddDays(-30), LastReportAt = now.AddDays(-5) });
+        var normal = hosts.Upsert(new WebHost { HostName = "NORMAL", Active = true, CreatedAt = now.AddDays(-30), LastReportAt = now.AddHours(-1) });
+
+        seedStore.ReplaceHostMapForDate(now.Date, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 2001, HostId = down.HostId, HostName = down.HostName, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 2002, HostId = up.HostId, HostName = up.HostName, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 2003, HostId = noMap.HostId, HostName = noMap.HostName, MapStatus = PrtgMapStatus.Conflict },
+            new() { DeviceObjid = 2004, HostId = normal.HostId, HostName = normal.HostName, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        seedStore.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1, DeviceObjid = 2001, Name = "Ping", SensorType = "ping", Status = "Down", Category = PrtgSensorCategories.Availability },
+            new() { Objid = 2, DeviceObjid = 2001, Name = "Traffic", SensorType = "snmptraffic", Status = "Up", Category = PrtgSensorCategories.Traffic },
+            new() { Objid = 3, DeviceObjid = 2002, Name = "Ping", SensorType = "ping", Status = "Up", Category = PrtgSensorCategories.Availability },
+            new() { Objid = 4, DeviceObjid = 2002, Name = "Traffic", SensorType = "snmptraffic", Status = "Down", Category = PrtgSensorCategories.Traffic },
+            new() { Objid = 5, DeviceObjid = 2004, Name = "Ping", SensorType = "ping", Status = "Down", Category = PrtgSensorCategories.Availability }
+        }, syncedAt);
+
+        return (down, up, noMap, normal);
+    }
+
+    private HostAdminService CreateWithPrtgAndSettings(EfPrtgStore prtgStore, FakeSystemSettingsStore settings) => new(
+        _hosts,
+        _groups,
+        new FakeUserStore(),
+        new FakeNetiqServerCatalog("SENTINEL-A"),
+        new FakeNetiqHostServiceForAdmin(),
+        _audit,
+        new UserDisplayNameService(new FakeSystemSettingsStore()),
+        prtgStore,
+        _mapRefresher,
+        settings);
+
+    [Fact]
+    public void GetHosts_未回報主機PRTG提示_down_up_nomap與正常主機null_sensor只查一次()
+    {
+        var (down, up, noMap, normal) = SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fx.NewContext), DateTime.Now);
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => s.PrtgEnabled = true);
+        // 門檻 0：每次量測都記一筆，拿操作次數當呼叫計數（EfPrtgStore 是 sealed，無法做替身）
+        var monitor = new SqlPerformanceMonitor(thresholdMs: 0);
+
+        var result = CreateWithPrtgAndSettings(new EfPrtgStore(_fx.NewContext, monitor), settings)
+            .GetHosts(new HostSearchRequest { PageSize = 50 });
+        var byId = result.Items.ToDictionary(h => h.HostId);
+
+        Assert.Equal(PrtgPresenceHint.Down, byId[down.HostId].PrtgHint);
+        Assert.Equal(PrtgPresenceHint.Up, byId[up.HostId].PrtgHint);
+        Assert.Equal(PrtgPresenceHint.NoMap, byId[noMap.HostId].PrtgHint);
+        Assert.Null(byId[normal.HostId].PrtgHint);
+        Assert.False(byId[down.HostId].PrtgHintStale);
+
+        var calls = monitor.Snapshot().TopSlowOperations
+            .Single(o => o.Operation == "prtg:GetSensorStatesForDevices");
+        Assert.Equal(1, calls.Count);
+    }
+
+    [Fact]
+    public void GetHosts_PRTG同步時間3天前_提示標為過時()
+    {
+        var (down, _, noMap, _) = SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fx.NewContext), DateTime.Now.AddDays(-3));
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => s.PrtgEnabled = true);
+
+        var byId = CreateWithPrtgAndSettings(new EfPrtgStore(_fx.NewContext), settings)
+            .GetHosts(new HostSearchRequest { PageSize = 50 }).Items.ToDictionary(h => h.HostId);
+
+        Assert.Equal(PrtgPresenceHint.Down, byId[down.HostId].PrtgHint);
+        Assert.True(byId[down.HostId].PrtgHintStale);
+        Assert.True(byId[noMap.HostId].PrtgHintStale);
+    }
+
+    [Fact]
+    public void GetHosts_PRTG未啟用_提示全部為null()
+    {
+        SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fx.NewContext), DateTime.Now);
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => s.PrtgEnabled = false);
+
+        var items = CreateWithPrtgAndSettings(new EfPrtgStore(_fx.NewContext), settings)
+            .GetHosts(new HostSearchRequest { PageSize = 50 }).Items;
+
+        Assert.Equal(4, items.Count);
+        Assert.All(items, h => Assert.Null(h.PrtgHint));
+        Assert.All(items, h => Assert.False(h.PrtgHintStale));
+    }
+
+    [Fact]
+    public void GetHosts_一台主機多個device_sensor合併判定()
+    {
+        var now = DateTime.Now;
+        var seed = new EfPrtgStore(_fx.NewContext);
+        var host = _hosts.Upsert(new WebHost { HostName = "MULTI", Active = true, CreatedAt = now.AddDays(-30), LastReportAt = now.AddDays(-5) });
+        seed.ReplaceHostMapForDate(now.Date, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 3001, HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 3002, HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok }
+        });
+        seed.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 11, DeviceObjid = 3001, Name = "Traffic", SensorType = "snmptraffic", Status = "Up", Category = PrtgSensorCategories.Traffic },
+            new() { Objid = 12, DeviceObjid = 3002, Name = "Ping", SensorType = "ping", Status = "Down", Category = PrtgSensorCategories.Availability }
+        }, now);
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => s.PrtgEnabled = true);
+
+        var dto = Assert.Single(CreateWithPrtgAndSettings(new EfPrtgStore(_fx.NewContext), settings)
+            .GetHosts(new HostSearchRequest()).Items);
+
+        Assert.Equal(PrtgPresenceHint.Down, dto.PrtgHint);
     }
 }

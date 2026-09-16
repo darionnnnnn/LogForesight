@@ -127,8 +127,11 @@ public static class PrtgProbeRunner
             {
                 var pct = totalValid > 0 ? (g.Count * 100.0 / totalValid) : 0.0;
                 var unitsStr = g.Units.Count > 0 ? string.Join(", ", g.Units) : "無";
-                console.WriteLine($"       {g.Type} | {g.Count} | {pct:F1}% | unit 樣本：{unitsStr}");
+                // 只看內建表：探測常在設定補充對照表之前執行
+                var builtInCategory = PrtgSensorTypeCategoryMap.Map.TryGetValue(g.Type, out var cat) ? cat : "未分類";
+                console.WriteLine($"       {g.Type} | {g.Count} | {pct:F1}% | unit 樣本：{unitsStr} | 內建分類：{builtInCategory}");
             }
+            console.WriteLine("     未分類的 type 可在 PRTG 維護頁『sensor type 分類補充對照』指定。");
 
             // 累積百分比門檻：50% / 80% / 90% / 95%
             var thresholds = new[] { 50, 80, 90, 95 };
