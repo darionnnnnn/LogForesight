@@ -1,0 +1,728 @@
+# 回饋第 47 輪規劃：交辦單——大量主機下的派工、處理與靜音模式
+
+> 狀態：實作中（分支 `feature/feedback-47`，2026-09-17 自 dev@d8e431b 開出）
+> 基準：dev@d8e431b（第 46 輪已併入並歸檔；4293 綠、略過 6）
+> 來源：使用者回饋——主機量大後「管理員逐一派工、使用者逐台回覆」難以維運；管理員一直派同樣的問題很累、不知道大家負擔重不重；需要能把某個問題靜音一段時間。
+> 執行方式：**`impl-low`（Opus 5＋low effort）**，整輪不換；使用者 2026-09-16 同意沿用。subagent 核對走 `scan-low`（本輪已派三次，沿用）。
+> UI 三段（C-3、D-2、B-3）：兩個全新頁面（交辦總覽、交辦單詳情）**建議套用 `ui-ux-pro-max`**，既有頁面的 modal 與欄位改版沿用現有設計系統（`docs/DESIGN-SYSTEM.md`）；使用者尚未明確答覆，**各 UI 段開工前再確認一次**，未確認前不開工。
+> 版本：第二版依四角度複審補強；第三版補名詞表、端到端操作劇本、各階段契約要點、風險與回滾；第四版以 4000 台情境逐步模擬，落為定案 31～42、劇本 S8／S9、規模表與壓測四案例；第五版再檢視解法，三處換成更根本的做法（靜音區間、案件日同步作業、缺口＝派工試跑，定案 32／34／36／43／44，第十三節末）；第六版逐共用點 grep 呼叫端做既有功能影響矩陣（第十四節，定案 45～47）。定案 10、22 的敘述以定案 34 為準。
+
+## 〇、名詞表（同步進 WEB-SPEC §8.6a）
+
+| 名詞 | 英文識別 | 定義 |
+|---|---|---|
+| 交辦單 | work order | 一個問題 × 一組主機 × 一位處理人 × 說明／期限；派工、通知、檢視、回覆的單位 |
+| 成員 | member | 交辦單下的一個（主機, 問題）案件；`IssueCase.WorkOrderId` 指回單 |
+| 進行中／已結案／上報中／暫停／未回覆 | active／closed／escalated／paused／unreplied | 交辦單的推導狀態（不落盤為主狀態；`ClosedAt` 只是快取） |
+| 範圍 | scope | 建單時記錄的主機條件：全站（`All`）／主機群組集合（`Groups`）／指定主機（`Hosts`） |
+| 續掛 | auto-attach | 進行中交辦單在夜間掛接時自動納入範圍內新出現的同問題主機 |
+| 派工池 | dispatch pool | 使用者群組旗標；池成員可被自動派工選中 |
+| 暫停接單 | dispatch paused | 使用者旗標；自動派工與看板候選排除 |
+| 派工閘門 | dispatch gate | ④⑤⑥ 共用的三道排除：已抑制、已知雜訊記憶、嚴重度不列入未處理計算 |
+| 待派 | gap | 期間內出現、通過閘門、未靜音、卻沒有任何進行中案件的（問題→主機） |
+| 代為結案 | admin close | admin 以自己名義把整張單結案 |
+| 取消交辦 | cancel | 收回派錯的單：關案件、同步寫入的日子回到明確未處理 |
+| 靜音 | mute | 問題檔案層級、有期限的「不吵、不顯示、不進待辦」 |
+| 靜音區間 | mute interval | 問題檔案上的（起日, 迄日, 原因, 操作者）清單；某日某問題是否靜音只看紀錄日是否落在區間內 |
+| 案件日同步作業 | case day sync worker | 背景把案件狀態展開到它涵蓋的逐日列；小量就地完成、大量分批 |
+
+## 一、核對結果（規劃前事實）
+
+| 項 | 判定 | 證據 |
+|---|---|---|
+| 工作單位＝「一台主機 × 一個問題」的案件；沒有「一個問題跨 N 台」的實體 | ❌ 根因 | `IssueCase.cs:13-26`；`IIssueCaseStore`（`IHandlingStores.cs:68-100`）無依問題跨主機查、無分頁；`lf_issue_cases` 無 IssueKey 前導索引（`LfDbContext.cs:276-277`） |
+| 依問題視角「指派」預覽硬切 200 台、剩餘無續做入口、主機清單由前端送回、無規模守門 | ❌ | `IssueHandlingCommandService.cs:402-403,682`；`records.js:1416-1422`；bulk-close 有 5000 守門（:810）、bulk-assign 沒有 |
+| 處理人「回覆處理狀態」＝自己名下該問題**全部**進行中案件、全有全無；無法部分回覆 | ❌ | `IssueHandlingCommandService.cs:592-606`；`issue-status-reply.js:104-110`（payload 無 hostIds） |
+| 處理人得知有工作的唯一管道是側欄徽章；儀表板無「我的工作」視角；無派工通知 | ❌ | `dashboard.js:222-237`（待辦卡是全站口徑）；`MailNotificationService.cs` 只有執行摘要／週報／escalation |
+| 工作沒有邊界：昨天被交辦 100 台、今晚自動建案變 120 台，分不出哪些是新的 | ❌ | 工作頁分組在前端（`handler-detail.js:155-185`），資料是「目前進行中案件」的即時集合 |
+| 問題檔案負責人已會夜間自動建案（每主機一件、只給第一位負責人）；**不看 `Suppressed`、不看嚴重度、不看已知雜訊記憶** | ⚠️ 已有但有缺口 | `IssueCaseCoordinator.cs:270-322` |
+| 日層級指派直接 `BuildCase`，不經任何單 | ⚠️ | `DayHandlingCommandService`（`PUT …/handling/assign`） |
+| 案件沒有「取消／解除指派」操作，只有改派 | ⚠️ | `IssueCaseCoordinator.cs` 四個公開方法；Web 端 grep `CancelCase`／`Unassign` 零命中 |
+| 抑制已有到期（`ExpiresAt`）、全站範圍（`Site`）、簽章目標；到期只是不再生效不自動刪 | ✅ 可搭 | `RuleSuppression.cs:120-121`；`SuppressionFilter.cs:20,79-81` |
+| `lf_top_issues` 沒有 suppressed 欄；抑制中的問題仍進依問題視角與儀表板聚合；日狀態推導只看嚴重度、**不排除 `Suppressed`** | ⚠️ | `LfDbContext.cs:573-600`；`EfIssueAggregateQuery.cs` 零 `Suppressed` 命中；`DayHandlingDerivation.cs:37` |
+| 「不處理（預設）」「已知雜訊（自動）」是**讀取時推導**、不落盤 | ✅ 先例 | WEB-SPEC §9.3-2、§9.3-3 |
+| 可見範圍規則 `HostVisibilityResolver` 是 Web 的靜態純函式，參數全是 Core store | ✅ 可下沉 | `HostVisibilityResolver.cs:15-90`；`IIdentityStores.cs:45`；`IHostStores.cs:114,131` |
+| 夜間掛接在 Core 自建 coordinator，不經 Web DI | ✅ 事實 | `AnalysisOrchestrator.cs:343-349` |
+| 群組是授權範圍單位＋角色載體，沒有「可被派工」語意 | ✅ 事實 | WEB-SPEC §7.1:433-437；`WebIdentity.cs:62-78` |
+| 使用者有 `Email` 欄位；郵件已有逐收件人路由與 admin 群組解析 | ✅ 可用 | `WebIdentity.cs:37`；`MailNotificationService.cs:248-256,448` |
+| 頁面慣例：`PagesController` 一個 action 回 View、`Views/Pages/*.cshtml` 只載入 `~/js/pages/*.js` 模組；nav `requires` 已支援陣列（任一）；CSV＝前端序列化當前頁（§8.6-7）；稽核對照表 `AuditQueryService.ActionNames` | ✅ 慣例 | `PagesController.cs:46,106`；`HandlerDetail.cshtml:36`；`layout.js:110`；`records.js:1863`；`AuditQueryService.cs:41` |
+| 規模疑慮 15 處（每請求把使用者全部案件建字典、工作頁 N+1、側欄徽章每頁打整份 workload、建案逐台掃全歷史、preview／plan 逐台查案件） | ⚠️ | `VisibilityService.cs:252`；`HandlingHistoryQueryService.cs:364-422`；`layout.js:212`；`IssueCaseCoordinator.cs:400-408`；`IssueHandlingCommandService.cs:383,861-867` |
+
+順手抓到（本輪一併處理）：
+
+| 項 | 判定 | 證據 |
+|---|---|---|
+| WEB-SPEC §9.3 說案件存 blob，§10.2 說是真表——同檔矛盾，真表是現況 | ❌ 文件 | WEB-SPEC.md:1161-1162 vs :2632-2653 |
+| DB-SPEC 仍定義 `lf_user_host_map` 且查詢對應表建立在它上；WEB-SPEC §10.1 已明寫移除、程式碼零引用；DB-SPEC 也缺 `lf_issue_cases` 欄位定義 | ❌ 文件 | DB-SPEC.md:78-85,452,587；WEB-SPEC.md:2621 |
+| BACKLOG「常設自動指派規則（乙）」說問題檔案只做了自動結論那一半；實際 `OwnerAutoAssign` 就是自動指派 | ❌ 文件過時 | BACKLOG.md:104-121 vs `IssueCaseCoordinator.cs:313` |
+| 問題檔案多位負責人只有第一位拿到案件 | ⚠️ 行為 | `IssueCaseCoordinator.cs:318` |
+| 統一標記的「之後自動套用」呼叫 `SetConclusion` 繞過 `Maintain`（BACKLOG 3-10） | ⚠️ 授權 | `IssueHandlingCommandService.cs:767-770` |
+| bulk-assign 沒有對應 bulk-close 的規模守門 | ⚠️ | `IssueHandlingCommandService.cs:810` 只用於 BulkClose |
+
+## 二、方向與定案
+
+### 根因
+
+系統的工作單位太細。每一個批次功能（批次指派、統一標記、一次回覆、工作頁依問題分組）都是在「每主機一件」的粒度上用迴圈與前端分組硬撐；主機量一大就露出 200 台預覽上限、全有全無回覆、沒有邊界、沒有通知、admin 每天重複派同一種問題。
+
+### 定案總表
+
+| # | 定案 | 不選的方案與理由 |
+|---|---|---|
+| 1 | 新增**交辦單**一層。既有案件不廢除，改為交辦單的**成員**。逐日 `IssueHandling` 投影、跨日同步、儀表板、報表零改動 | 不做「第三套狀態機」：交辦單**不存自己的狀態**。推翻 DB-SPEC「更細的追蹤應接公司工單系統而非在此重造」——那條原則寫在單機時期，本專案的處理鏈已是唯一事實來源，接外部工單只會多一份漂移 |
+| 2 | 資料模型允許「多問題單」（問題欄可為 null），**本輪 UI 只從依問題視角建單（單一問題）**；主機詳情頁多問題打包列 BACKLOG | 一開始鎖單一問題日後要改鍵；現在只是欄位可空 |
+| 3 | 派工端**後端依篩選條件解析主機集合**，前端不再送主機清單；取消 200 台預覽上限；不設成員數上限（寫入量由定案 32 的同步作業吸收），預覽誠實顯示台數與預估主機日 | 維持前端送清單會撐爆 payload、永遠有續做問題 |
+| 4 | 群組分攤＝**一位處理人一張單**（依現有負載或平均輪流，沿用既有兩種確定性分攤） | — |
+| 5 | 處理端：「我的交辦」以交辦單為列；展開看成員（分頁）；**部分回覆＝勾選成員後回覆**（預設全選） | modal 內逐台例外：與勾選同義、驗證難寫 |
+| 6 | 交辦單記錄**範圍**＋「續掛」旗標（預設開；範圍為指定主機時不提供）。夜間掛接時範圍內新主機自動加入並標「新增 N 台」 | — |
+| 7 | 問題檔案負責人自動建案改走交辦單：每位負責人此問題一張**系統交辦單**、續掛；多位負責人依負載最輕者（同分依帳號序） | 每位負責人都建案違反「同主機同問題只由一人處理」 |
+| 8 | **自動派工池**：使用者群組加「派工池」旗標；系統設定加「自動派工」開關（預設關）。通過閘門、未被涵蓋的新（主機,問題）→ 派給「啟用、未暫停接單、池群組成員、看得到此主機」中負載最輕者；同趟同問題只建一張單；無候選＝進待派 | 池＝全部有 Handle 者會派到看不到的主機。負載口徑固定為「進行中交辦單成員數」，同分比進行中單數、再比帳號序——不做可設定加權 |
+| 9 | **交辦總覽頁**（`/work-orders`）四頁籤：進行中／負載看板／待派／靜音中；「立即派工」把策略套到目前待派 | — |
+| 10 | **靜音**掛在問題檔案：靜音區間（起日、迄日、原因、操作者，定案 34）；1／7／30／90／180 天＋自訂 1～365（暫定）。分析側以紀錄日查區間標 `Suppressed`；讀取側全部聚合入口排除＋註腳；處理側讀取時推導、交辦單推導為暫停；到期自動恢復、可提前解除 | 落盤改寫會寫上萬列歷程、提前解除無法還原 |
+| 11 | 派工通知走郵件：建單／改派各一封給新處理人、改派時舊處理人一封「已移交」；續掛與自動派工**每趟每人一封**；開關 `MailNotifyWorkOrders` | — |
+| 12 | `HostVisibilityResolver` **下沉到 Core**，Web 端呼叫同一份 | 由 Web 注入策略要穿三層；規則只依賴 Core 資料 |
+| 13 | 既有 open 案件升級時回填成交辦單（依處理人×問題、origin=backfill、範圍＝指定主機、不續掛），冪等 | — |
+| 14 | 舊端點 `bulk-assign`／`bulk-status`／`handler-candidates` **退役**；`bulk-close`（統一標記）保留 | — |
+| 15 | 規模修正：案件授與按需查、工作頁 SQL 聚合、側欄輕量計數、建案候選日一次查、preview／plan 一次查 | — |
+| 16 | **兩條不變式**：(a) 進行中案件必屬一張交辦單——日層級指派也走交辦單（併入或建 `day_assign` 單）；(b) 同（處理人, 問題）同時**最多一張**進行中單（部分唯一索引）——交辦給已有單的人＝追加成員，範圍取聯集（`All` > `Groups` 聯集 > `Hosts`） | 允許多張：動線被自己切碎 |
+| 17 | **派工閘門**（④⑤⑥ 共用，**使用者已同意**）：跳過 `Suppressed`、有 `NoiseMark` 的（主機,簽章）、嚴重度不在 `UnhandledSeverities`。⑤ 加閘門是既有行為變更：不列入未處理計算的問題本來就是「預設不處理」，派給人等於製造假工作 | — |
+| 18 | **取消交辦**（`Assign`）：關單（`cancelled`）、成員案件關閉、案件同步寫入（`CaseId`＝該案件）且非結案類的日子改回明確 `open`（逐日 `issue_status_cleared` 歷程）、使用者自己標的日子不動；稽核 `work_order_cancel` | 只留改派不是可販售軟體的行為 |
+| 19 | **代為結案**（`Assign`＋`Handle`）：整張單以 admin 名義結案（結案四態、原因必填），逐案走 `SyncStatus`；稽核 `work_order_admin_close` | — |
+| 20 | **未回覆指標**：`LastReplyAt`；清單與看板有「未回覆」篩選與天數；案件狀態語意不改 | 改成指派後 open 直到認領牽動全站三態口徑（BACKLOG） |
+| 21 | 使用者「**暫停接單**」旗標（使用者維護頁）：候選排除、既有單保留並在看板標示 | — |
+| 22 | 靜音的「到期後」語意（實作以定案 34 的區間為準）：靜音期間的日子到期後仍已有結論（紀錄日在區間內）；靜音前的未處理紀錄到期後回來（暫停不是結案），modal 明講 | 只靠「目前是否靜音」推導會讓到期日整批回待辦 |
+| 23 | 保留：已結案交辦單與事件隨已結案案件同保留期；進行中永不清理 | — |
+| 24 | 授權：交辦單可看者＝處理人本人、`Assign`、`ViewAll`（成員依**檢視者**可見範圍過濾）；其他 403（逐單檢查）。總覽頁 `Assign` 或 `ViewAll` 可看、寫入 `Assign`；立即派工與開關 `Maintain`；回覆 `Handle` 且限本人 | — |
+| 25 | **「讓告警安靜」決策表**進 RULES-SPEC 與 UI 說明：抑制／靜音／機房結論／已知雜訊／觀察 | 六種機制沒有一張表使用者會用錯 |
+| 26 | **多張單一次回覆**（自己的單） | — |
+| 27 | **交辦單詳情頁** `/work-orders/{id}`：標頭、成員表（分頁、狀態篩選、**前端複製 CSV 當前頁**，沿用 §8.6-7）、時間軸 | 後端 CSV 端點：不符全站慣例 |
+| 28 | 可觀測：趟末執行紀錄一行摘要；週報靜音段；體檢到期提醒 | — |
+| 29 | 併發：交辦單 `UpdatedAt` 併發權杖；衝突樂觀重試一次，仍衝突記警告下趟補掛 | — |
+| 30 | 規模：建單同步；`LF_SCALE_BENCH` 壓測；超 30 秒改背景作業（BACKLOG 卡位） | — |
+| 31 | **案件表反正規化** `lf_issue_cases.source_name`／`event_id`（自 `issue_key` 解析）＋索引 `(source_name, event_id, closed_at)`；啟動時分批回填（C# 解析，以 NULL 為未回填標記，冪等）。衝突查詢、涵蓋欄、缺口 NOT EXISTS、依問題查案件全靠它 | 用 `issue_key LIKE`：無索引，4000 台下每次交辦與每頁涵蓋欄都是全表掃 |
+| 32 | **案件日同步作業**（第五版取代「期間上限」）：把「讓案件涵蓋的逐日 `IssueHandling` 列與案件狀態一致」抽成一個冪等函式 `ReconcileCaseDays(案件)`；建案／回覆／取消／代為結案／改派一律**只同步改案件本身**並標 `DaySyncPending`，逐日列的展開由背景作業分批完成（先例：`TopIssueBackfiller`）。預估逐日寫入 ≤ 門檻（暫定 5000 列）時就地呼叫同一函式做完（既有測試量級全在門檻內、行為逐位不變），超過才進背景，畫面標「逐日同步中 N 台」。回溯窗口只剩兩種：夜間 ④⑤⑥ `DaysOnly(當日)`（不回溯，避免普遍性問題每晚十幾萬列）；人工交辦與日層級指派 `AllHistory`（由作業補齊）。**不設成員數與主機日上限**，預覽只誠實顯示「N 台／預估 M 主機日」 | 期間上限：只是把寫入量推到回覆時（`SyncStatus` 本來就展開全部歷史合格日，750 台 × 100 天回覆必逾時），且期間外舊日子在儀表板掛「未處理」直到有人回覆 |
+| 33 | **同趟派工規則**：同問題同趟「**同處理人**一張單」（可見範圍分割下同一問題自然分成每部門一張）；新主機優先掛給本趟已為此問題選中且看得到該主機的處理人（同時多位取負載最輕）；候選須具 `Handle`（主管群組不可能被選中）；**延續性偏好**：最近 30 天（暫定）內處理過此主機此問題且已結案（`resolved`）的處理人若仍是候選則優先 | 「同趟同問題一張單」：部門成員看不到別部門主機，規則本身走不通 |
+| 34 | **靜音區間**（第五版取代「分析時快照」）：問題檔案存 `Mutes: [{From, To, Reason, ById, ByAccount, At}]` 為唯一事實來源；「某日某問題靜音」＝該**紀錄日**落在任一區間；目前靜音中＝今天落在區間。分析側以紀錄日查區間標 `Suppressed`（重新分析永遠同答案）；SQL 端推導與聚合只組「與查詢期間重疊的區間」為排除條件（通常 0～5 個）；記憶體端同一判定；提前解除＝迄日截到昨天（起日＝今天則刪除區間），歷史區間留存供詳情頁顯示「靜音 9/16～12/14（王小明：原因）」。**`lf_top_issues` 不加欄、紀錄 JSON 不加欄** | 快照三處各存一份（JSON、欄位、問題檔案）；依執行時間判定讓重新分析舊日子語意飄；A-4／B-1 各加一欄互相耦合 |
+| 35 | `NoiseMark` 全集進每趟快照（blob 一趟讀一次），不逐主機日讀 | — |
+| 36 | 同步作業的批次形狀：每批 N 個案件（暫定 200）**一次**查全部主機的合格日、`SaveMany` 一次寫；就地路徑與背景路徑共用同一批次函式 | 逐案 `SyncStatus` 各掃一次主機歷史：750 台＝750 次查詢 |
+| 37 | 回填設 `LastReplyAt`＝該組案件最近一次由處理人本人寫入的歷程時間（無則 null 並顯示「整併前無回覆紀錄」） | 全部 null：整批舊工作顯示「未回覆」誤導 |
+| 38 | 靜音 modal 顯示「既有 N 張進行中交辦單（M 台）」並二選一：**暫停、到期恢復**（預設）或**代為結案為「不處理」**（原因同靜音原因，走定案 19 批次）；解除靜音時暫停的單恢復並在總覽以「自靜音恢復」篩選出現 | 只有暫停：90 天後三個月前的舊單回到隊列 |
+| 39 | 待派清單每列附「無候選原因」：無池群組／無池成員看得到這些主機（列群組）／候選全部暫停接單；admin 據此修授權矩陣或加人 | — |
+| 40 | 清單頁的成員計數、狀態彙總、依問題視角涵蓋欄：**頁內一次 GROUP BY**（以頁上的單號或問題集合為 IN 條件），不逐列 | — |
+| 41 | 負載口徑「進行中成員數」標**暫定**；看板同時顯示成員數與單數；口徑改動只在 `WorkOrderDispatcher` 一處 | — |
+| 42 | 回填改集合式：案件 `work_order_id` 以每組一句 UPDATE（IN 案件 id 清單，分批 1000）寫入，不逐筆追蹤；既有案件 `DaySyncPending=false`（歷史已由當時的 `BuildCase` 掛好） | — |
+| 43 | **缺口＝派工試跑**（第五版取代 SQL 缺口查詢）：SQL 只取主機層級候選列（期間內出現、嚴重度在集合、不在目前靜音區間、NOT EXISTS 進行中案件；暫定上限 20000 列，超過要求縮小期間），記憶體用 `WorkOrderDispatcher` 試跑模式（不落盤）套閘門（含現行抑制與 `NoiseMark`）、可見範圍、選人→依問題分組回：主機數、建議處理人、無候選原因。畫面數字＝按「立即派工」會發生的事，**不需要「建單時再套閘門」註腳**；`lf_top_issues` 不加 `suppressed` 欄 | SQL 做缺口：`NoiseMark` 是 blob 套不進 SQL、現行抑制要看主機群組也套不進，只能加註腳；且要在 `lf_top_issues` 加欄 |
+| 45 | **`Suppressed` 在 AI prompt 與郵件路由的一致化**（既有行為變更，理由同定案 17）：`AnalysisPromptBuilder` 目前只對 PRTG finding 過濾 `Suppressed`，Windows／Linux 被抑制或靜音的問題仍進 AI 敘事；`MailNotificationService` 的問題負責人路由也不看 `Suppressed`。改為兩處一律排除 `Suppressed` 問題——「不吵」包含 AI 白話總覽與負責人通知。報告 txt 的「已抑制」段維持列出（證據層），反查原因加靜音區間第三條路 | 不改：靜音了的問題仍會出現在 AI 總覽標題與負責人信件裡，使用者會認為靜音沒生效 |
+| 46 | **快照的作用域**：每個會呼叫 `AttachNewDay` 的執行單位各建一份 `DispatchContext`（每日分析、PRTG 每日路徑、觸發式取數）——PRTG 路徑本來就走 `HostDayPostProcessor.AttachCase`，PRTG finding 因此同樣進閘門、續掛與自動派工，靜音以 (Source, 0) 鍵命中 | — |
+| 47 | **`IssueExclusion` 沒有預設值**：`IIssueAggregateQuery` 每個呼叫端必須明寫 `IssueExclusion.None` 或帶靜音；套用清單見第十四節（授權／校準／規則命中統計／問題檔案選擇器／詳情頁基準一律 `None`） | 有預設值：新呼叫端會默默不排除或默默排除，兩種都查不出來 |
+| 44 | 同步作業的可觀測與復原：`DaySyncPending` 是唯一狀態（重啟後續跑、任意順序皆可，函式冪等）；作業有工作時每 5 秒（暫定）跑一批；交辦單詳情顯示「逐日同步中 N/M 台」；執行紀錄頁（§9.10）不新增頁籤，只在活動告示顯示「案件逐日同步：待處理 N 件」 | — |
+
+## 三、端到端操作劇本（驗收用；收尾時逐條走一遍）
+
+每條劇本寫「角色／起點／步驟／預期／點擊數」。點擊數是設計目標，執行端不必精算，但劇本走不通就是缺口。
+
+**S1 首次啟用（admin，一次性）**
+1. 升級後啟動：schema 補齊、既有 open 案件回填成交辦單，啟動 log 記「回填 N 單／M 成員／未連結 K」。
+2. 群組與授權頁：把「網管一組」「網管二組」勾為派工池（2 次點擊）。
+3. 設定頁：開「自動派工」、確認「交辦單郵件」開（2 次）。
+4. 問題檔案頁：既有負責人規則不動；預期今晚起負責人問題走系統交辦單。
+預期：沒有任何舊資料消失；我的交辦頁對每個處理人顯示回填後的單（origin 標「系統整併」）。
+
+**S2 admin 手動交辦一個問題到 300 台（依問題視角）**
+1. 問題查詢（預設依問題視角）→ 找到「DCOM 10016」列，涵蓋欄顯示「0/300 台有交辦單」。
+2. 點「交辦」→ modal 顯示「影響 300 台（依目前篩選 9/09～9/16）；閘門排除 12 台（已抑制 10、已知雜訊 2）；他人進行中 0」。
+3. 選「使用者群組：網管一組（依現有負載）」→ 分攤預覽「甲 96／乙 96／丙 96」（288 台）；可展開清單分頁看主機；勾「續掛新主機」（預設勾）。
+4. 送出 → toast「已建立 3 張交辦單（288 台）；閘門排除 12 台」；三位處理人各收一封信；涵蓋欄變「288/300」。
+點擊數：4～5。第 301 台明天出現→夜間自動掛進負載最輕者的那張單，趟末彙總信。
+
+**S3 處理人一次回覆＋部分例外（甲）**
+1. 登入→側欄「我的交辦」徽章「1 單／96 台」；儀表板「我的交辦」卡同數字。
+2. 我的交辦→一列「DCOM 10016｜96 台｜未回覆 1 天｜期限 9/23」。
+3. 展開→成員表 96 列（分頁 50）；表頭全選→取消勾 5 台→「回覆」→已處理＋說明→送出 → toast「已更新 91 台、共 273 天」。
+4. 勾那 5 台→「回覆」→處理中＋說明「待換硬碟」＋期限 → 送出。
+5. 詳情頁時間軸出現兩筆回覆彙總；未回覆指標消失。
+點擊數：約 9。
+
+**S4 自動派工日常（無人操作）**
+1. 夜間分析發現「Ntfs 55」在 40 台新出現；無交辦單、無負責人；閘門通過；自動派工開。
+2. 策略選負載最輕的丁（池成員、看得到那 40 台中的 38 台；2 台落在丁看不到的群組→候選改為看得到的人，若無→待派）。
+3. 建一張 `auto_dispatch` 單給丁（38 台）；2 台進待派。
+4. 執行紀錄一行「自動派工：建 1 單／續掛 0 台／待派 2 組／閘門略過 7」；丁收一封彙總信。
+5. 隔天 admin 開交辦總覽→「待派」頁籤看到那 2 台與建議處理人→一鍵建單。
+
+**S5 靜音一個問題三個月（admin）**
+1. 依問題視角「Schannel 36887」列→「靜音」→選「3 個月」＋原因「等憑證汰換專案」→ modal 三句提示 → 送出。
+2. 立即：依問題視角不再列它、註腳「另有 1 個問題靜音中」；儀表板卡數字同步減少；有此問題的 2 張交辦單在處理人頁不列、註腳「另有 1 張暫停」；總覽「靜音中」頁籤列出（到期 12/15、原因、設定者）。
+3. 今晚起分析：該問題 `Suppressed`＋快照，不拉日風險、不進即時告警；不建單不續掛。
+4. 週報「靜音中問題」段列出它。
+5. 12/16 起：問題再出現走正常派工；靜音期間的日子不回待辦；9/16 以前的未處理日子回到待辦（modal 當時已講）。
+6. 提前解除：總覽靜音中頁籤「解除」→ 一切回到解除前狀態，寫一列稽核。
+
+**S6 派錯了（admin）**
+1. 交辦總覽→那張單→「取消交辦」→原因→確認。
+2. 成員案件關閉、由案件同步寫入的處理中日子回到明確未處理、處理人自己回覆過已處理的日子不動；單標「已取消」；稽核一列；處理人收「已取消」信（併入改派信件型別）。
+
+**S7 處理人離職（admin）**
+1. 使用者頁停用帳號。
+2. 交辦總覽→篩「處理人已停用」→逐單「改派」或「代為結案」；自動派工永不再選他。
+
+**S8 admin 每日巡檢（目標 10 分鐘內）**
+1. 交辦總覽→「待派」頁籤：昨晚 3 組待派，各附原因（2 組「無池成員看得到：待歸屬群組」、1 組「候選全部暫停接單」）→修矩陣或直接一鍵建單。
+2. 「負載看板」：15 人各進行中單數／成員數／未回覆／逾期；甲 3 單 2100 台未回覆 4 天→點進去看。
+3. 「進行中」篩「上報中」：2 張→改派或代為結案。
+4. 儀表板重點問題卡：涵蓋率低的問題→依問題視角「交辦」。
+
+**S9 修好又復發**
+1. 乙把「Ntfs 55」40 台全回覆已處理→單結案。
+2. 10 天後同問題在其中 30 台復發：② 無進行中案件、④ 無進行中單、⑤ 無負責人、⑥ 延續性偏好→乙仍是候選→建新單給乙（不是負載最輕的別人）；乙收信「復發：Ntfs 55（30 台）」，詳情頁「先前處理」可見上次怎麼解的。
+
+### 4000 台情境放大檢視（規模假設與每步的量）
+
+假設：4000 台（4 個部門群組各約 1000 台）、每晚 4000 主機日、每主機日 5 個重點問題（2 萬個問題評估）、全站約 500 種問題、派工池 15 人分屬 4 個部門群組、`UnhandledSeverities`＝高＋中、普遍性問題 2500 台級。
+
+| 步驟 | 量 | 形狀要求（契約） |
+|---|---|---|
+| 升級回填 | 進行中案件 5k～10k 件→20～50 張單 | 集合式 UPDATE 分批（定案 42）；`source_name`／`event_id` 回填全部案件（含已結案，10 萬列級）分批 1000、以 NULL 為未回填標記（定案 31） |
+| 夜間快照 | 15 人可見集合（各 ≤4000 id）、進行中單 50～500、負載 15 列、問題檔案、NoiseMark 全集 | 一趟各算一次（定案 35）；2 萬個問題評估全是字典查找 |
+| 夜間建案（普遍性問題 3000 台） | 每部門一張單、各約 750 成員；當日 3000 列 `IssueHandling`＋3000 列歷程 | 只掛當日（定案 32）；同處理人一張單（定案 33）；與現行負責人建案量級相同 |
+| 人工交辦 3000 台（歷史 60 天） | 同步段：3000 案件＋3000 列觸發日；背景：18 萬主機日＋18 萬歷程分 15 批 | 同步 < 5 秒；背景每批一次合格日查詢（定案 32、36）；預覽顯示「3000 台／預估 180000 主機日、背景同步」 |
+| 衝突／涵蓋／缺口查詢 | 案件表 10 萬列級 | 走 `(source_name, event_id, closed_at)` 索引（定案 31）；缺口 NOT EXISTS 需 host_id↔host_name 對應（比照 `DeriveDayHandling` 既有 join 寫法） |
+| 處理人回覆 750 台 | 5k 列＋5k 歷程 | `SyncStatusMany` 一次查候選日（定案 36） |
+| 多單回覆 4 單 3000 台 | 2 萬列級 | 同上 |
+| 靜音一個 2500 台問題 | 寫問題檔案 1 次；每次聚合多 0～5 個區間條件 | 區間單一來源（定案 34）；既有單 N 張二選一（定案 38） |
+| 處理人回覆 750 台（各 60 天歷史） | 同步段 750 案件；4.5 萬列逐日展開進背景 | 分流（定案 32）；畫面「逐日同步中」 |
+| 取消 750 台單 | 750 案件標 `Cancelled`＋關閉；日子回 open 進背景 | 同上 |
+| 缺口試跑（7 天） | 候選列數千、記憶體決策 | 上限 20000 列（定案 43） |
+| 清單頁 | 50 張單／頁、成員 50／頁 | 頁內一次 GROUP BY（定案 40） |
+| 側欄徽章 | 每次換頁 | 單一聚合（D-1） |
+| 郵件 | 每趟每人 ≤1 封；建單 1 封列前 20 台 | — |
+
+## 四、批次總覽
+
+| 批次 | 內容 | 規模 | 相依 | 順序 |
+|---|---|---|---|---|
+| A | 交辦單核心（Core）：模型／store／schema／回填、協調、可見範圍下沉、派工策略、掛接新優先序 | 大 | 無 | 1 |
+| C | 派工端（admin）：建單與五個單操作、總覽 API 與頁、詳情頁、設定與旗標 | 大 | A | 2 |
+| D | 處理端（handler）：我的交辦改版、部分回覆、多單回覆、儀表板卡、徽章、輕量計數 | 中 | A、C-1 | 3 |
+| B | 靜音：欄位、分析側抑制與快照、讀取側排除、推導、UI、決策表 | 中 | A、D-1 | 4 |
+| E | 通知：郵件三型、週報靜音段 | 小 | A、C、B-1 | 5 |
+| F | 規模修正與壓測 | 小 | A | 6 |
+| 文件 | 見第十節 | 文件 | 全部 | 7 |
+
+### 作業總覽（委派輪）
+
+- **執行端**：`impl-low`，整輪不換。階段規格抄成 `.gemini-tasks/task-47-<階段>.md`（已在 `.git/info/exclude`），執行端不看本文件；規格送出前把該段「契約要點」與「驗收」逐條對照打勾；Claude 每段獨立驗收，不採信摘要。
+- **UI 三段**排各作業最後；開工前確認 `ui-ux-pro-max`。
+- **粒度**：每階段 1～3 個機制、實作與測試同段；「暫定」數值執行端可依事實推翻並在執行紀錄寫理由。
+- **委派期間 Claude 不動 repo**；突變還原只用檔案備份。
+
+| 階段 | 內容 | 主要檔案（白名單在規格檔） | 前置 |
+|---|---|---|---|
+| A-1 | 交辦單模型＋store＋schema＋回填＋保留 | `WorkOrder`／`WorkOrderEvent`（新）／`IWorkOrderStore`＋EF（新）／`IssueCase`／`LfDbContext`／`SchemaUpgrader`／回填器（新）／保留清理 | — |
+| A-2 | 交辦單協調：建、併、追加、改派、拆、取消、代為結案、結案推導、每趟快照 | `IssueCaseCoordinator`／`WorkOrderCoordinator`（新）／`IIssueAggregateQuery`（候選日批次查） | A-1 |
+| A-3 | 可見範圍下沉＋派工策略＋旗標欄位 | `HostVisibilityResolver`（搬）／`WorkOrderDispatcher`（新）／`UserGroup`／`WebUser`／`SystemSettings` | A-1 |
+| A-4 | 掛接新優先序 ⓪～⑥＋閘門＋趟末摘要 | `IssueCaseCoordinator.AttachNewDay`／`HostDayPostProcessor`／`AnalysisOrchestrator` | A-2、A-3 |
+| C-1 | 建單／追加／改派／拆單／取消／代為結案 API；日層級指派改走交辦單；舊端點退役 | `WorkOrdersController`（新）／`WorkOrderCommandService`（新）／`IssueHandlingCommandService`／`DayHandlingCommandService`／`AuditEntry`／`AuditQueryService` | A-4 |
+| C-2 | 總覽 API：清單、詳情、成員、時間軸、看板、待派、立即派工、逐單授權 | `WorkOrderQueryService`（新）／`EfWorkOrderStore`／`WorkOrdersController` | C-1 |
+| C-3 | 前端：交辦 modal 與涵蓋欄、總覽頁、詳情頁、nav | `records.js`／`work-orders.js`（新）／`work-order-detail.js`（新）／`WorkOrders.cshtml`／`WorkOrderDetail.cshtml`（新）／`PagesController`／`layout.js` | C-2（UI） |
+| C-4 | 設定頁「自動派工」段、群組頁「派工池」、使用者頁「暫停接單」、郵件開關 | `settings.js`／`groups.js`／`users.js`／`AdminDtos`／`GroupAdminService`／`UserAdminService`／`SettingsDto` | A-3 |
+| D-1 | 我的交辦 API（SQL 聚合）、單回覆、多單回覆、輕量計數；舊 bulk-status 退役 | `HandlingHistoryQueryService`／`WorkOrderQueryService`／`WorkOrderReplyController`（新）／`HandlersController` | C-1 |
+| D-2 | 前端：我的交辦頁、回覆 modal、儀表板卡、詳情頁徽章、側欄徽章 | `handler-detail.js`／`issue-status-reply.js`／`dashboard.js`／`record-detail.js`／`layout.js` | D-1（UI） |
+| B-1 | 靜音區間＋分析側抑制（依紀錄日）＋設定／解除 API＋稽核＋`Maintain` 修正 | `IssueProfile`／`SuppressionFilter`／`LogAnalysisService`／`IssueOwnerAdminService`／`IssueOwnersController` | A-1 |
+| B-2 | 讀取側排除、推導、rollup、暫停推導、郵件 digest | `IIssueAggregateQuery`＋EF／`DayHandlingDerivation`／`IssueHandlingRollupQuery`／`RecordDetailQueryService`／`MailIssueDigest`／`WorkOrderQueryService` | B-1、D-1 |
+| B-3 | 前端：靜音入口三處、總覽靜音頁籤、註腳、徽章、決策表說明 | `records.js`／`issue-owners.js`／`work-orders.js`／`dashboard.js`／`record-detail.js`／`reports.js`／`rules.js`（抑制段一行連結） | B-2（UI） |
+| E-1 | 郵件三型＋趟末彙總＋週報靜音段＋開關 | `MailNotificationService`／`WorkOrderCommandService`／`AnalysisOrchestrator` | C-1、A-4、B-1 |
+| F-1 | 案件授與按需查、preview／plan 一次查、壓測 | `VisibilityService`／`EfIssueCaseStore`／`IssueHandlingCommandService`／`Scale/` | A-1 |
+| 文件 | 第十節 | Claude 親寫 | 全部 |
+
+## 五、作業 A：交辦單核心（Core）
+
+### 現況與核對結果
+
+- 案件鍵＝（主機, 問題簽章），store 五個查詢全無分頁、無依問題跨主機查（`IHandlingStores.cs:68-100`）。
+- `BuildCase` 逐主機呼叫、每次 `FindCandidateDays` 掃該主機全歷史（`IssueCaseCoordinator.cs:62-99,400-408`）。
+- `AttachNewDay` 四層優先序，每主機日 `GetAll()` 讀整份問題檔案 blob（:240-243）；負責人建案無閘門。
+- `HostVisibilityResolver` 四個靜態方法參數全是 Core store（`HostVisibilityResolver.cs:17-90`）。
+- schema 升級走 `SchemaUpgrader` 冪等 DDL，新 DB 由 `EnsureCreated` 建（`SchemaUpgrader.cs:17-`）。
+- 「調回未處理」有 clearing 路徑（`issue_status_cleared`，WEB-SPEC §9.3-9）。
+
+### 定案
+
+定案 1、2、6、7、8、12、13、16、17、18、19、20、21、23、29、30。補充：
+
+- **推導狀態**：進行中＝有任一成員 `ClosedAt == null`；已結案＝成員全部結案（`ClosedAt` 落盤為快取、`ClosedReason`：`all_closed`／`moved`／`cancelled`／`admin_closed`）；上報中＝任一成員 `escalated`；暫停＝問題靜音中；未回覆＝`LastReplyAt == null`。零成員的單不可存在。
+- **一單一人**：改派＝整張單換人（成員逐一 `ReassignCase`）；目標已有同問題進行中單→併入、原單 `moved`。拆單＝勾選成員移到另一人（同併入規則）。
+- **範圍**：`ScopeKind` `All`／`Groups`／`Hosts`；`AutoAttach`（`Hosts` 時恆 false）。續掛判定：問題相同、單進行中、`AutoAttach`、主機在範圍內、無進行中案件、通過閘門。多張命中取最近建立者。
+- **每趟快照**（`DispatchContext`）：問題檔案索引（含靜音集合）、進行中交辦單索引（依問題）、負載快照（含本趟已分派）、候選人池（啟用∧未暫停∧池群組∧各自可見主機集合，**一趟算一次**）、本趟建立的單、閘門略過計數。
+- 舊資料：回填只處理進行中案件，依（處理人, Source, EventId）分組；`HandlerId` 空者不回填、啟動 log 記數。
+
+### 契約要點（供階段規格抄錄）
+
+**A-1**
+- `WorkOrder` 欄位：`WorkOrderId`（bigint 自增）、`SourceName`／`EventId`（可空）、`IssueLabel`（≤200）、`HandlerId`（非空）、`Origin`（`manual`／`owner_rule`／`auto_dispatch`／`backfill`／`day_assign`）、`ScopeKind`、`ScopeGroupIds`（JSON 或逗號清單，執行端定）、`AutoAttach`、`Note`（≤1000）、`DueDate`、`CreatedById`／`CreatedByAccount`／`CreatedAt`、`LastAppendedAt`、`LastReplyAt`、`ClosedAt`／`ClosedReason`、`UpdatedAt`（併發權杖）。
+- `WorkOrderEvent`：`EventId`、`WorkOrderId`、`Action`（`created`／`appended`／`merged_in`／`reassigned`／`split_out`／`split_in`／`cancelled`／`admin_closed`／`closed`／`reopened_by_member`）、`ActorId`／`ActorAccount`（系統 null）、`MemberDelta`、`Note`（≤1000）、`CreatedAt`。
+- `IssueCase.WorkOrderId`（可空）；`IssueCase.SourceName`／`EventId`（反正規化，定案 31；`Save` 時由 `IssueKey` 解析寫入，解析失敗者兩欄留 null 且不參與依問題查）；`IssueCase.DaySyncPending`（bit，定案 32／44）；`IssueCase.Cancelled`（bit，取消交辦的案件標記，供同步函式決定「日子回到明確 open」）。
+- 表：`lf_work_orders`（索引 `(handler_id, closed_at)`、`(source_name, event_id, closed_at)`、**部分唯一** `(handler_id, source_name, event_id) WHERE closed_at IS NULL`，SQL Server filtered index／SQLite partial index 各一份 DDL）、`lf_work_order_events`（`(work_order_id, created_at)`）、`lf_issue_cases.work_order_id`＋`(work_order_id, closed_at)`、`lf_issue_cases.source_name`（nvarchar，可空）／`event_id`（int，可空）＋`(source_name, event_id, closed_at)`、`lf_issue_cases.day_sync_pending`＋索引 `(day_sync_pending)`（作業撿件）、`lf_issue_cases.cancelled`、`lf_user_groups.dispatch_pool`、`lf_users.dispatch_paused`（bit 預設 0）。所有字串寫入前依 `HasMaxLength` 截斷。
+- `IWorkOrderStore`／`IIssueCaseStore` 新增：`GetOpenByIssue(source, eventId)`（走新索引）、`GetOpenMany(hostNames, source, eventId)`。
+- `IWorkOrderStore`：`Get(id)`、`GetActiveByHandler(userId, page, filter)`、`GetActiveByIssue(source, eventId)`、`GetActiveFor(handlerId, source, eventId)`、`GetMembers(id, page, statusFilter)`、`CountMembers(id)`→（進行中／已結案／逾期／上報）、`LoadBoard(userIds?)`→每人（進行中單數、成員數、未回覆單數、逾期成員數、近 7 日結案數、最舊未結日）**一句 SQL**、`Save`／`SaveMany`、`AppendEvent`／`ListEvents(id)`、`PruneClosedBefore(date)`。
+- 回填（兩段，皆冪等、皆分批）：(1) `source_name IS NULL` 的案件分批 1000 讀 `issue_key` 解析後集合式 UPDATE（全部案件含已結案）；(2) `work_order_id IS NULL AND closed_at IS NULL` 的案件依（處理人, source, eventId）分組，每組建一單（`Origin=backfill`、`ScopeKind=Hosts`、`AutoAttach=false`、`CreatedAt`＝該組最早 `CreatedAt`、`LastReplyAt`＝該組案件最近一次由處理人本人寫入的歷程時間或 null、事件 `created` 一筆 `MemberDelta=N`），案件 `work_order_id` 以每組一句 UPDATE（IN id 清單分批 1000）寫入（定案 42）。啟動 log 記「解析 N／建單 M／成員 K／未連結 J」。
+- 保留：`PruneClosedBefore(今天−RetentionDays)` 併入既有保留路徑，事件隨單刪；進行中永不刪。
+
+**A-2**
+- **同步函式**（定案 32）`ReconcileCaseDays(案件批次, 時間戳)`：對每個案件取合格日（規則逐字沿用現行 `ResolveEligibleDays`：該日此問題無標記、或標記非結案且無 `CaseId`、或屬同案件；一批案件的合格日**一次**查），讓每個合格日的 `IssueHandling` 列等於案件現狀（`Status`／`Note`／`DueDate`／`CaseId`），有變動才寫一列歷程（動作沿用 `case_assign`／`case_sync`／`case_attach`；`Cancelled` 案件→非結案類且 `CaseId`＝此案件的日子寫明確 `open`＋`issue_status_cleared`）；完成後清 `DaySyncPending`。冪等：連跑兩次第二次零寫入。
+- `WorkOrderCoordinator`（Core）：`Create(問題, 主機清單, 處理人, 範圍, 續掛, 說明, 期限, Origin, 操作者, 時間戳, 窗口)`→`WorkOrder`＋建案結果；**窗口**：`DaysOnly(當日)`（夜間，就地寫當日一列、不標 pending）／`AllHistory`（人工交辦與日層級指派：先寫觸發日一列讓畫面立即有反應，標 pending 交作業）；`SaveMany` 分批（暫定每批 5000 列）；`Append(單, 主機清單, …)`；`MergeInto(來源單, 目標單)`；`Reassign(單, 新處理人, …)`；`Split(單, 成員案件清單, 新處理人, …)`；`Cancel(單, 原因, …)`；`AdminClose(單, 結案狀態, 原因, …)`；`RecomputeClosure(單)`（冪等）；`TouchReply(單, 時間戳)`。
+- `IssueCaseCoordinator.SyncStatus`／`ReassignCase` 結束時呼叫 `RecomputeClosure`（與 `TouchReply` 由呼叫端決定是否為回覆）。
+- **就地／背景分流**（定案 32、36、44）：任何改案件狀態的操作（建案、回覆、多單回覆、取消、代為結案、改派）先改案件列並估算逐日寫入量（案件數 × 各主機合格日數，由同一次合格日查詢得知）；≤ 門檻（暫定 5000 列）就地呼叫 `ReconcileCaseDays` 做完，回應含 `{ synced: true }`；否則標 pending、回應 `{ synced: false, pendingCases: N }`。背景 `CaseDaySyncWorker`（掛在既有 `SchedulerHostedService` 迴圈，先例 `TopIssueBackfiller`）有 pending 時每 5 秒（暫定）撿一批 200 件呼叫同一函式。
+- 既有 `IssueCaseCoordinator.BuildCase`／`SyncStatus`／`ReassignCase` 改為「改案件＋呼叫同步函式」的薄包裝，公開簽章與回傳不變，既有 119 個案件與處理測試**不改斷言**必須綠（這是同步函式語意逐位沿用的守門）。
+- `/api/run-activity` 回應加 `caseDaySyncPending`（int）；`SchedulerRunState` 只加欄位，`isRunning`／`isFetchRun` 語意不動。
+- `AttachNewDay` ② 掛入既有案件：仍就地寫當日一列（不經作業）。
+- 取消語意：成員案件 `ClosedAt`＝現在；`IssueHandling` 列 `CaseId`＝該案件且狀態非結案類→寫明確 `open`＋`issue_status_cleared` 歷程（同一時間戳）；其餘不動。
+- 併發：`Save` 遇併發衝突→重讀重算一次；再衝突→擲 `DomainException`（Web 端回 409 訊息「資料剛被更新，請重試」；夜間端記警告不中斷）。
+
+**A-3**
+- `HostVisibilityResolver` 搬到 Core（純函式簽章不變），Web 端以 using 轉向或薄轉呼叫；**不得留兩份**。
+- `WorkOrderDispatcher.Decide(主機, 問題, 嚴重度, suppressed, hasNoiseMark, ctx)`→`Skip(gate_suppressed|gate_noise|gate_severity|muted|no_candidate|disabled)`／`AttachTo(單)`／`CreateFor(處理人, origin)`。候選＝啟用∧未暫停∧池群組成員∧具 `Handle`∧看得到此主機。選人順序（定案 33）：(1) 本趟已為此問題選中且看得到此主機的處理人（多位取負載最輕）；(2) 延續性偏好——最近 30 天（暫定）內此主機此問題最後一張已結案（`resolved`）單的處理人若仍是候選；(3) 負載最輕。負載（暫定）＝進行中單的進行中成員數（快照＋本趟）；決勝：成員數→單數→帳號序（Ordinal 不分大小寫）。`ctx` 內含 `NoiseMark` 全集（定案 35）。
+- `UserGroup.DispatchPool`（builtin admin 群組不可為 true，儲存層驗證；群組 `Active=false` 時其成員不是候選）、`WebUser.DispatchPaused`、`SystemSettings.AutoDispatchEnabled`（預設 false；開啟但無池群組時儲存允許、設定頁顯示警告、夜間記一則 warn）。
+- `INoiseMarkStore.GetAll()`（blob 一次讀）供快照；`DispatchContext` 由每個執行單位自建（定案 46）。
+
+**A-4**
+- 優先序：⓪ 紀錄日落在靜音區間→略過；① 既有標記／既有處理→略過；② 進行中案件→掛入；③ `AutoApply` 結論→`FleetApply`；閘門不過→略過並計數；④ 續掛；⑤ 負責人；⑥ 自動派工；無候選→待派計數。④⑤⑥ 建案一律 `DaysOnly(當日)`（定案 32，不回溯、不標 pending）。
+- 靜音區間集合由每趟快照供給（B-1 前為空集合）。
+- 趟末：`Log.Info` 一行「自動派工：建 N 單／續掛 M 台／待派 K 組／閘門略過 J（抑制 a／雜訊 b／嚴重度 c）」；`DispatchContext` 摘要交給 E-1 寄信。
+- 稽核：`work_order_auto_attach`／`work_order_auto_dispatch` 每趟每單一列。
+
+### 測試／驗收
+
+- store 合約：分頁、依問題、依（處理人,問題）、負載聚合單一查詢（查詢計數替身）；部分唯一索引兩後端皆驗（SQLite 測試＋SQL Server DDL 字串靜態斷言含 `WHERE`）。
+- 升級冪等：重跑無 DDL；欄位清單斷言（兩張新表＋四個新欄）。
+- 回填：兩人 × 兩問題 × 各三台→四單、12 成員；重跑零新增；已結案不動；`HandlerId` 空者不連結且 log 有計數。
+- 批次建案：300 台候選日查詢次數恆 1；**突變**：改回逐台後必須紅。
+- 同步函式：冪等（連跑兩次第二次零寫入）；`Cancelled` 案件→日子回明確 `open` 有歷程、自標日子不動；就地／背景分流門檻（門檻＋1 列→回 `synced=false` 且 pending 標記；背景撿件後結果與就地逐位相同）；重啟續跑（pending 未清者下次撿到）；**突變**：把「自標日子不動」的條件拿掉必須紅。
+- 既有 `IssueCaseCoordinatorTests`／`HandlingServiceTests` 不改斷言全綠（薄包裝守門）。
+- 結案推導：全結→結案；成員重開→重開＋事件；移空→`moved`；取消→案件關、同步日子變明確 `open` 有歷程、自標日子不動（反例）；代為結案→逐案 `SyncStatus`、原因進歷程。
+- 併入：三組範圍聯集；事件 `merged_in`。
+- 策略：候選四條件各一反例；決勝**突變**（對調單數與帳號序必須紅）；無候選→`Skip`；`disabled`→`Skip`。
+- 閘門：三組各證明 ④⑤⑥ 都不建案；⑤ 案例名稱標明「既有行為變更」。
+- 優先序：每層一組「只命中此層」；④ 先於 ⑤；同趟同問題兩台→同一張新單；負載快照含本趟。
+- 併發：兩個協調器對同單同時 `Append`→其中一方重試成功、成員數正確。
+- 可見範圍下沉：Web 端 grep 零第二份；`CaseGrantVisibilityTests` 綠。
+- 全量綠。
+
+## 六、作業 C：派工端（admin）
+
+### 現況與核對結果
+
+- 指派 modal 三支並行載入、預覽 200 台硬切、前端組 `hostIds`（`records.js:1357-1422,1708-1720`）。
+- `handler-candidates` 逐成員撈案件數（`IssueHandlingCommandService.cs:558-575`）。
+- 日層級指派直接 `BuildCase`（`DayHandlingCommandService`）。
+- 統一標記保留其 `Assign`＋`Handle` 疊加授權（WEB-SPEC §9.2）。
+- 稽核動作常數在 `AuditEntry.cs`；對照表 `AuditQueryService.ActionNames`。
+- 頁面：`PagesController` action＋`Views/Pages/*.cshtml`＋`~/js/pages/*.js`；nav `requires` 支援陣列。
+
+### 定案
+
+定案 3、4、9、14、16、18、19、24、27。補充見契約要點。
+
+### 契約要點
+
+**C-1（命令）**
+- `POST api/work-orders/preview` 與 `POST api/work-orders`（同一 request 形狀）：`{ source, eventId, from, to, groupIds?, hostIds?, excludeHostIds?, assignment: { mode: single|group, handlerId?, groupId?, split: byLoad|roundRobin }, reassignConflicts, note, dueDate, autoAttach, scopeKind }`。解析：可見範圍內、期間內出現該問題、`Aggregate` 母體同依問題視角（`riskLevels` 同值）；扣 `excludeHostIds`；過閘門（排除者計數＋原因）。
+- 預覽回：`{ affected, gateExcluded: {suppressed, noise, severity}, conflicts: [{handlerName, count}], mergeInto: [{handlerName, workOrderId}], allocation: [{handlerId, count}], hosts: 分頁 100, overLimit: bool }`。預覽與落盤共用計畫函式。
+- 落盤回：`{ created: [{workOrderId, handlerId, memberCount}], merged: [...], skippedConflicts, reassigned, gateExcluded, warnings: [無檢視權／無 Handle 沿用] }`。
+- 窗口＝`AllHistory`（定案 32）：觸發日就地寫一列，其餘合格日由同步作業補齊；預覽回 `{ hosts, estimatedHostDays, inline: bool }`，畫面顯示「N 台／預估 M 主機日」，`inline=false` 時提示「送出後逐日同步在背景完成，儀表板數字會在數分鐘內更新」。**不設成員數與主機日上限**；唯一防呆：解析結果為 0 台→拒絕建單。
+- 單操作：`POST /{id}/append { hostIds }`、`/reassign { handlerId }`、`/split { caseIds, handlerId }`、`/cancel { reason }`（必填）、`/admin-close { status（結案四態）, reason }`（必填）。授權：前四者 `Assign`；`admin-close` 為 `Assign`＋`Handle` 疊加（獨立 controller，理由同統一標記）。
+- 日層級指派（`PUT …/handling/assign`）改呼叫協調器：該處理人此問題有進行中單→`Append`（origin 不變），否則 `Create(Origin=day_assign, ScopeKind=Hosts)`；回應多帶 `workOrderId`；既有「不搶走／`reassign=true`」語意不變。
+- 退役：`PreviewIssueCaseAssign`／`BulkAssignIssueCase`／`GetHandlerCandidates` 與對應端點；`records.js` 最小改接（送同樣的篩選條件到新端點，畫面改版留 C-3）。
+- 稽核：`work_order_create`／`_append`／`_reassign`／`_split`／`_cancel`／`_admin_close`／`_auto_dispatch_run`，`targetKind="work_order"`、`targetId=單號`；`ActionNames` 同 commit 補中文。
+
+**C-2（查詢）**
+- `GET api/work-orders?handlerId&source&eventId&groupId&status=active|escalated|overdue|unreplied|paused|closed&handlerInactive&sort&page&pageSize`（預設 `active`，pageSize ≤100）。列：單號、問題、白話說明、處理人（顯示名稱(帳號)、停用／暫停徽章）、成員數與狀態彙總、逾期台數、未回覆天數、期限、來源、建立時間、最近新增、暫停旗標。
+- `GET api/work-orders/{id}`（標頭）、`/members?page&status`（每頁 ≤200；成員：主機、群組、最近出現、天數、狀態、期限、逾期、連結）、`/timeline`（事件＋回覆彙總：回覆自 `RecordHandlingLog` 依「同操作者＋同時間戳」分組，含台數／天數／狀態／說明）。
+- `GET api/work-orders/load-board?groupId`：每處理人一列（含停用、暫停標示）；`groupId` 篩池群組或指定群組。
+- `GET api/work-orders/gaps?from&to&page`（預設昨天往前 7 天；定案 43 試跑）：SQL 取主機層級候選列（期間內出現、嚴重度在集合、不在目前靜音區間、NOT EXISTS 進行中案件——走定案 31 索引；host_id↔host_name 對應比照 `DeriveDayHandling` 既有寫法；上限暫定 20000 列，超過回 `tooLarge` 要求縮小期間），記憶體以 `WorkOrderDispatcher` 試跑模式逐列決策（閘門含現行抑制與 `NoiseMark`、可見範圍、選人），依問題分組回：主機數、閘門排除數、建議處理人（可能多位，依部門分割）、**無候選原因**（定案 39：`no_pool`／`no_visibility`（列出無人看得到的主機群組）／`all_paused`）。`POST api/work-orders/auto-dispatch` 走**同一個試跑再落盤**，兩者數字必相等（同口徑測試）。
+- 清單頁的成員計數與狀態彙總：以頁上單號集合一次 GROUP BY（定案 40）；依問題視角涵蓋欄同法以頁上問題集合一次查。
+- `POST api/work-orders/auto-dispatch { from, to }`（`Maintain`）：以一份快照對缺口逐問題套策略；回 `{ created: [{handlerId, count, workOrderIds}], unassigned: [{source, eventId, hostCount}] }`；稽核一列。
+- 逐單授權單點函式：處理人本人／`Assign`／`ViewAll` 三者之一；成員依檢視者可見範圍過濾並回 `hiddenMemberCount`；否則 403（不是 404——單存在但無權）。
+
+**C-3（前端）**
+- 依問題視角：涵蓋欄「N/M 台」＋處理人 chip（連單）；動作鈕「交辦」／「統一標記」／「回覆」（自己有此問題進行中單時）；交辦 modal：計數與閘門摘要、分攤模式、併入提示、可展開分頁清單、衝突改派勾選、守門訊息、續掛勾選（範圍為指定主機時隱藏）。
+- `/work-orders` 四頁籤；`/work-orders/{id}` 詳情（標頭、成員表含狀態篩選與「複製 CSV」、時間軸、admin 動作鈕）；nav「監控作業」加「交辦總覽」（`requires: ['Assign','ViewAll']`）。
+- 全部連結走 `appUrl()`；不寫死路徑。
+
+**C-4**
+- 設定頁「自動派工」段：開關＋固定說明文字（候選條件、負載口徑、閘門三條）＋無池群組警告；郵件段 `MailNotifyWorkOrders`。
+- 群組頁使用者群組頁籤「派工池」勾選（admin builtin 不可勾，前後端皆擋）；使用者頁「暫停接單」勾選（`Maintain`）。
+
+### 測試／驗收
+
+- 解析母體＝依問題視角 `Aggregate` 同口徑；`excludeHostIds`；閘門計數；上限＋1 零寫入；預覽＝落盤（**突變**：計畫函式在預覽路徑多跳一台必須紅）。
+- 分攤：`byLoad` 用看板同一份聚合；每人一單；已有單併入；預覽分配＝落盤分配。
+- 日層級指派：既有 `HandlingServiceTests` 指派案例綠，且案件有 `WorkOrderId`；不變式 16a 守門測試（任一路徑建出的進行中案件 `WorkOrderId` 非空）。
+- 五個單操作：成員／歷程／事件／稽核斷言。
+- 授權：三種可看者各一正例；其他 403；`ViewAll` 成員過濾＋`hiddenMemberCount`。
+- 缺口：靜音／有案件／閘門不過各一反例；建議處理人＝策略。
+- 立即派工：無候選回待派；同問題多台同一人一單。
+- 稽核七個動作反射守門有中文。
+- 舊端點 grep 前後端零命中；`BulkScaleGateTests` 改對交辦單守門。
+- 全量綠。
+
+## 七、作業 D：處理端（handler）
+
+### 現況與核對結果
+
+- workload 全量、N+1（`HandlingHistoryQueryService.cs:329-440`）；側欄徽章每頁打整份（`layout.js:212-213`）。
+- 回覆 modal 三欄無主機清單；bulk-status 逐案無上限。
+- 詳情頁案件徽章 `CaseHandlerAccount`；儀表板無個人視角。
+
+### 定案
+
+定案 5、11（前端）、15（工作頁與徽章）、20、24、26、27。
+
+### 契約要點
+
+**D-1**
+- `GET api/handlers/{userId}/work-orders?page&pageSize&status=active|escalated|overdue|unreplied|closed&source&eventId&groupId&sort`（重用 C-2 清單服務，固定 `handlerId`）；KPI `{ activeWorkOrders, activeMembers, overdueMembers, unrepliedWorkOrders }`；「被指派的風險日」表維持既有端點。
+- `POST api/work-orders/{id}/reply { caseIds?[], status, note, dueDate }`：`caseIds` 空＝全部進行中成員；值域同既有回覆 modal（`in_progress`／`observing`／`escalated`／結案四態／`open`）；必填規則沿用（wont_fix 說明、escalated 原因、observing 日期）；授權 `Handle` 且單的處理人＝自己，否則 403（admin 亦然）；逐案 `SyncStatus`＋`TouchReply`＋`RecomputeClosure`；回 `{ workOrders: 1, hosts: N, days: M }`。
+- `POST api/work-orders/reply-many { workOrderIds[], status, note, dueDate }`：全部須為自己的進行中單，否則整筆 403 零寫入；套用到各單全部進行中成員；回 `{ workOrders, hosts, days }`。
+- `GET api/handlers/me/badge` → `{ activeWorkOrders, activeMembers, overdueMembers, unrepliedWorkOrders }` 單一聚合；`layout.js` 徽章改打它。
+- 退役 `bulk-status` 與 `IssueCaseStatusController`。
+
+**D-2**
+- 使用者詳細頁（§9.8a）「被指派歷程」加「所屬交辦單」欄（有值才顯示，連單）；`layout.js` 活動告示加「案件逐日同步：待處理 N 件」（讀 `run-activity` 新欄，不碰 `isRunning`）。
+- 我的交辦頁：KPI 四格；篩選列（狀態／問題／群組）；交辦單表（列：問題、成員數與彙總、逾期、未回覆、期限、最近新增、來源徽章「系統整併／負責人規則／自動派工」）；多選勾選＋「回覆選取的單」；展開成員（分頁 50、狀態篩選、勾選、「回覆」、「去處理」、主機頁連結）；「依主機」次要頁籤（成員平鋪）；「被指派的風險日」維持；底部註腳「另有 N 張暫停」。
+- 回覆 modal（`issue-status-reply.js`）：對象文字「本單 96 台中的 5 台」或「3 張單共 240 台」；欄位不變。
+- 儀表板卡「我的交辦」（有 `Handle`）：進行中單／逾期／未回覆→連我的交辦。
+- 詳情頁問題列徽章：有單→「單號＋處理人」連單；無單→舊徽章。
+
+### 測試／驗收
+
+- 清單分頁與篩選；查詢次數不隨單數增長。
+- 部分回覆：勾 3 台→只 3 台；別人的單 403 零寫入（**突變**：拿掉檢查必須紅）；全結→單結案；`LastReplyAt` 更新。
+- 多單回覆：含別人的單→整筆 403 零寫入。
+- 徽章＝KPI 同口徑。
+- 舊端點 grep 零命中；全量綠。
+
+## 八、作業 B：靜音
+
+### 現況與核對結果
+
+- `IssueProfile` 已有負責人與結論（`IssueProfile.cs:30-67`）；管理頁與 service 有稽核。
+- `SuppressionFilter.MarkSuppressed` 純函式（`SuppressionFilter.cs:27-49`）；`Suppressed` 不拉日風險、不進趨勢／AI（`LogAnalysisService.cs:948-954`、`AnalysisOrchestrator.cs:1133`）。
+- `IssueProfile` 為 blob（`issue_owners`），加清單欄位不需 DDL；`lf_blobs.version` 可供快取失效判定。
+- `IIssueAggregateQuery` 17 個方法無排除參數；`DayHandlingDerivation.Derive` 不看 `Suppressed`；`IssueHandlingRollupQuery.ExcludeConcluded` 決定重點問題與排行的「已有結論」。
+- 詳情頁已有 `HiddenIssueCount` 誠實註腳。
+
+### 定案
+
+定案 10、22、25、28。
+
+### 契約要點
+
+**B-1**
+- `IssueProfile.Mutes`：`List<MuteInterval { From, To, Reason（≤500，必填）, ById, ByAccount, At }>`（定案 34）；區間不重疊（新設定時若今天已在區間內＝延長：改該區間 `To`，另記稽核）；「目前靜音中」＝今天落在任一區間；「某紀錄日靜音」＝該日落在任一區間。舊 blob 缺欄＝空清單。
+- `PUT api/issue-owners/{source}/{eventId}/mute { days（1～365）| until, reason, existingOrders: pause|close }`（`Maintain`；不存在的問題檔案自動建立空檔案再設）；`DELETE …/mute`（提前解除＝目前區間 `To`＝昨天，`From`＝今天則刪除）；到期日＝今天＋days−1。稽核 `issue_mute`（note 含區間與原因）／`issue_unmute`。
+- `SuppressionFilter.MarkSuppressed(issues, activeSuppressions, muteIntervals, recordDate)`：`muteIntervals`＝(Source,EventId)→區間清單（OrdinalIgnoreCase）；**紀錄日**落在區間→`Suppressed=true`；集合由每趟快照供給。不寫任何快照欄位。
+- 靜音區間快取：問題檔案 blob 以 `lf_blobs.version` 為鍵做跨請求快取（內容與使用者無關，註解明講），聚合查詢每次取用不重讀 blob。
+- `Maintain` 修正：`SetConclusion`／`SetMute`／`ClearMute` 服務層檢查能力，不足擲授權例外整筆拒絕；既有 `HandlingServiceTests` 的 `AutoApply` 案例改以含 `Maintain` 的使用者呼叫，另補「無 `Maintain` 被拒且零寫入」。
+- 定案 45：`AnalysisPromptBuilder` 對全部問題排除 `Suppressed`（不只 PRTG）；`RiskReportService` 「已抑制」段反查原因加靜音區間（顯示「靜音至 yyyy-MM-dd：原因」）。
+
+**B-2**
+- `IssueExclusion { CurrentlyMuted: (Source,EventId) 集合, MuteIntervals: 與查詢期間重疊的區間清單 }` 傳入 **`IIssueAggregateQuery` 全部方法**（反射守門：每個方法簽章含此型別參數，或介面改為統一 `IssueQueryFilter` 物件——擇一，守門測試必在）。兩種用法：**列表／卡片／排行**用 `CurrentlyMuted` 整個問題排除並回 `MutedIssueCount`；**待辦／逾期推導**（`DeriveDayHandling`、`AggregateDayTodo`）用「目前靜音中 或 紀錄日落在區間」視同已有結論——SQL 端把重疊區間組成 `(source, event_id, record_date BETWEEN)` 排除條件。
+- 推導單點 `IsMuted(source, eventId, recordDate, snapshot)`：記憶體路徑（`DayHandlingDerivation.Derive`）與 SQL 路徑同一規則——兩條路徑同口徑測試（同一組資料兩邊算出的待辦數相等，且含「區間內的舊日子」「區間外的舊日子」「到期後的新日子」三型資料）。靜音問題視同已有結論（不計未處理、不計逾期）；`IssueHandlingRollupQuery.ExcludeConcluded` 同；`ToIssueDto` 給該日命中的區間（`MuteFrom`／`MuteTo`／`MuteReason`／`MutedByAccount`）；`WorkOrderQueryService` 以問題檔案快取推導暫停並在處理人清單排除＋`pausedCount`；`MailIssueDigest` 套排除。
+- 靜音與 `AutoApply` 同時存在：靜音期間不套結論（⓪ 在 ③ 前）。
+
+**B-3**
+- 靜音 modal（依問題視角列內、問題檔案頁、總覽靜音頁籤解除）：時長六鈕＋自訂天數、原因必填、三句常駐提示（新資料不進待辦與告警；靜音前未處理到期後回來、永久結案用統一標記；群組範圍用抑制）；**既有進行中交辦單處置**（定案 38）：顯示「N 張單／M 台」＋單選「暫停，到期恢復」（預設）／「代為結案為不處理」（需 `Assign`＋`Handle`，原因同靜音原因）；`PUT …/mute` 多帶 `existingOrders: pause|close`。解除靜音後暫停的單恢復，總覽「進行中」多一個「自靜音恢復」篩選（`ResumedFromMuteAt` 推導自問題檔案的解除時間或到期日，不落盤）。
+- 註腳位置：依問題視角、儀表板重點問題卡、報表排行、我的交辦（暫停）；詳情頁收合區徽章「靜音至 yyyy-MM-dd」tooltip 含原因與設定者。
+- 決策表：設定頁與規則頁抑制段各一段短說明＋連到說明書。
+
+### 測試／驗收
+
+- 邊界：今天靜音 1 天→今天靜音中、明天不是；區間迄日＝昨天→不靜音；`days=0`／366→驗證拒絕；靜音中再設→延長同一區間不新增；區間不重疊（反例：跨區間的日子只命中一個）。
+- 分析側：紀錄日在區間→`Suppressed`、日風險不拉抬；區間外不標；重新分析區間外的舊日子（在靜音期間執行）不標；**突變**：改以執行時間判定必須紅（上述第三例會翻）。
+- 區間推導：靜音期間的日子到期後仍已有結論；靜音前未處理日子到期後回待辦；提前解除當天起恢復、解除前的日子仍已有結論（三組正反例）。
+- 讀取側：反射守門；依問題視角不列且計數正確；儀表板卡＝下鑽（同口徑）；digest 與排行不含；缺口不含。
+- 推導：不進待辦、不算逾期；解除前後逐日列逐位相同。
+- 交辦單：暫停不列、`pausedCount` 正確、總覽頁籤列出；到期恢復。
+- 掛接：⓪ 不建單不續掛；靜音＋`AutoApply`→不套結論。
+- 授權：非 `Maintain` 三個入口皆拒絕零寫入；稽核對照守門延伸。
+
+## 九、作業 E：通知
+
+### 契約要點
+
+- `NotifyWorkOrderAsync(kind: created|reassigned|transferred|cancelled, 單, 收件人)`：主旨「[LogForesight] 交辦：{問題}（{N} 台）」／「…已移交」／「…已取消」；內容：單號、問題與白話說明、主機數（前 20 台列名）、說明、期限、詳情頁連結（站台基底路徑設定）。改派：新處理人 `created`、舊處理人 `transferred`。
+- `NotifyWorkOrderDigestAsync(趟末摘要)`：每位處理人一封，列本趟新建單與續掛台數；無內容不寄。
+- 週報：加「靜音中問題」段（問題、到期日、原因、設定者）；為零不出現。
+- 開關：`MailEnabled` 且 `MailNotifyWorkOrders`；收件人無 email→warn 一則不擲例外。
+- 定案 45：問題負責人路由（`ResolvePerRecipient` 的 TopIssues 比對）排除 `Suppressed` 問題——靜音或抑制中的問題不觸發負責人通知。
+
+### 測試／驗收
+
+- 建單一封；改派兩封內容不同；取消一封；續掛每趟每人一封（兩單合併）；開關關閉零寄送；無 email 不擲例外；週報靜音段存在／為零不出現。
+- 負責人路由：某日只有被抑制／靜音的問題命中負責人規則→該負責人不在收件人；同日另有未抑制問題命中→仍收（兩組）。
+
+## 十、作業 F：規模修正
+
+### 契約要點
+
+- `VisibilityService`：`IsCaseGrantOnly(hostId)`／`GetIssueKeyRestriction(hostId)` 按需查（`EXISTS`／依主機查該使用者案件問題鍵），請求內以主機為鍵快取；`HandlingHistoryQueryService` 改用「該使用者案件涵蓋的主機 id 集合」單一查詢。語意不變。
+- `GetOpenMany(hostNames, issueKey)`；`close-preview`／`PlanBulkClose` 改用。
+- `LF_SCALE_BENCH`：「4000 台人工交辦建單同步段（目標 < 5 秒）與背景展開 4000 台 × 60 天（記錄總耗時與每批耗時）」「4000 主機日夜間掛接含自動派工（與現行掛接耗時差 < 20%）」「750 成員回覆同步段（< 3 秒）」「2000 缺口試跑（< 5 秒）」四案例（預設略過），輸出耗時寫進體檢交接。
+
+### 測試／驗收
+
+- `CaseGrantVisibilityTests` 綠不改斷言；查詢次數不隨案件數／主機數增長；壓測受 `LF_SCALE_BENCH` 守門。
+
+## 十一、文件（Claude 親寫）
+
+- WEB-SPEC：§7.1（派工池、暫停接單、可見範圍規則在 Core、交辦單授權）；§8.6a 名詞表；§9.1 我的交辦卡；§9.2 交辦／涵蓋欄／靜音／回覆；§9.3 真表修矛盾、徽章、靜音徽章、日層級指派走交辦單；§9.4a 全面改寫；新 §9.4b `/work-orders`＋`/work-orders/{id}`；§9.6 靜音註腳；§9.7 抑制段決策表連結；§9.8／9.8a 旗標；§9.9b 設定；§9.9c 說明書三條動線（S2／S3／S5）；§10.1／10.2 新表與 store；§11 稽核動作；`AttachNewDay` 七層＋閘門。
+- DB-SPEC：新表與新欄（含部分唯一索引兩後端寫法）；補 `lf_issue_cases` 欄位定義；**移除 `lf_user_host_map`**；容量估算與保留加交辦單；§A 原則改寫。
+- RULES-SPEC：決策表。DETECTION-SPEC：靜音在分析側＋快照欄位。
+- BACKLOG：移除三條、新增六條（第二版所列）。
+- CLAUDE.md：測試基線（自 4293 起算）；「不要做」加兩條（不複製可見範圍規則；不建沒有交辦單的進行中案件）。
+- 操作說明書嵌入資源 `LogForesight.Web/HelpContent/03-issues.md`、`04-record-detail.md`、`05-handling.md` 與對應 `.ai.md`：指派／回覆處理狀態段落改寫為交辦單動線（S2／S3／S5／S6），Claude 親寫；屬編譯資源，改動進 commit。
+- 定稿前掃敘事字眼。
+
+## 十二、風險與回滾
+
+| 風險 | 緩解 | 回滾 |
+|---|---|---|
+| schema 升級在正式 SQL Server 失敗（部分唯一索引語法） | DDL 兩後端各寫、A-1 以 SQL Server DDL 字串靜態斷言；升級在測試 DB 先跑 | 全部 DDL 為**新增**（表／欄／索引），舊版程式碼可直接回退執行、忽略新欄 |
+| 回填把不該合併的案件合併 | 只依（處理人, Source, EventId）分組、只處理進行中、冪等；啟動 log 有計數 | 新欄 `work_order_id` 清空＋刪新表即回到舊狀態（文件寫明 SQL） |
+| 負責人閘門讓某些原本會建案的問題不再建案 | 定案 17 使用者已同意；趟末摘要有閘門略過計數；BACKLOG 記觸發條件 | 設定面無開關（刻意）；要恢復舊行為＝解除抑制／調整 `UnhandledSeverities` |
+| 自動派工把工作派錯人 | 預設關；池由 admin 圈定；候選必須看得到主機；取消交辦可收回；趟末彙總信 | 關開關即停；取消交辦 |
+| 靜音變盲區 | 上限 365、總覽頁籤、週報段、體檢提醒、到期自動回來 | 提前解除 |
+| 建單／回覆同步逾時 | 就地／背景分流（定案 32、36、44）：同步請求只寫案件與觸發日，逐日展開超門檻進背景 | 作業可停（`DaySyncPending` 留著下次續跑） |
+| 逐日列與案件短暫不一致（背景未跑完） | 畫面「逐日同步中 N 台」、活動告示待處理件數、作業每 5 秒撿件 | — |
+| 靜音到期 SQL 與記憶體推導分岔 | 靜音區間單一事實來源（定案 34）＋兩路徑同口徑測試 | 區間存 blob，可直接編輯 |
+| 啟動回填 10 萬列案件解析太慢 | 分批 1000、NULL 標記可中斷續跑、只在有未回填列時執行 | 中斷後下次啟動續跑 |
+| 普遍性問題把一個人壓垮 | 可見範圍分割天然按部門分單；看板同時顯示成員數與單數；口徑一處可改（定案 41） | 改派／拆單 |
+| 舊端點退役讓快取的前端 JS 打 404 | `asp-append-version` 已對模組加版本戳（`HandlerDetail.cshtml:36`） | — |
+
+## 明確不做（本輪定案）
+
+- IssueKey 大小寫比對統一（BACKLOG 3-13）。
+- MTTA／MTTR 與「指派後為 open 直到認領」（BACKLOG 3-8；本輪只加未回覆指標）。
+- 靜音的主機群組範圍（群組範圍用既有抑制）。
+- 多問題交辦單的 UI 入口（以多單回覆補位）。
+- 交辦單處理人變更歷史查詢。
+- 站內即時通知。
+- 負載加權、個人容量上限。
+- 建單背景作業化（先同步＋壓測）。
+- 後端 CSV 匯出端點（沿用前端複製當前頁）。
+
+## 十三、複審記錄
+
+### 第二版四角度補強
+
+| 角度 | 發現 | 處置 |
+|---|---|---|
+| 程式面 | 日層級指派建出無單案件 | 定案 16a＋C-1＋守門測試 |
+| 程式面 | 同人同問題多張單 | 定案 16b |
+| 程式面 | 夜間建案無閘門 | 定案 17 |
+| 程式面 | 推導不看 `Suppressed`，到期整批回待辦 | 定案 22 |
+| 程式面 | 並行寫同單 | 定案 29 |
+| 程式面 | 已結案單無保留 | 定案 23 |
+| 程式面 | 單號可列舉無授權 | 定案 24 |
+| 尖銳使用者 | 派錯怎麼收回 | 定案 18 |
+| 尖銳使用者 | 六種安靜機制 | 定案 25 |
+| 尖銳使用者 | 靜音＝盲區 | 上限＋頁籤＋週報＋體檢 |
+| 尖銳使用者 | 到期舊的回不回來沒講 | 定案 22 三句 |
+| 尖銳使用者 | 同性質一次處理沒落地 | 定案 26 |
+| 尖銳使用者 | 我的交辦沒篩選／匯出／詳情 | 定案 27＋D-1 |
+| 管理者 | 昨晚派了什麼 | 定案 28 |
+| 管理者 | 休假／離職 | 定案 21＋19 |
+| 管理者 | 派出去沒人動 | 定案 20 |
+| 管理者 | 改派舊人不知情 | 定案 11 |
+| 管理者（manager） | ViewAll 看不到看板 | 定案 24 |
+| 整體 | 靜音放哪 | 問題檔案；決策表 |
+| 整體 | 「未指派」chip 與缺口 | chip 不動；涵蓋欄＋缺口頁籤 |
+| 整體 | 說明書未更新 | 文件批次 |
+
+### 與既有功能的衝突／重複核對
+
+| 既有功能 | 關係 | 處置 |
+|---|---|---|
+| 依問題視角「指派」 | 被「交辦」取代 | 退役 |
+| 「回覆處理狀態」 | 被單回覆／多單回覆取代 | 退役 |
+| 統一標記 | 互補（無案件主機的批量結論） | 保留；`AutoApply` 補 `Maintain` |
+| 負責人自動建案 | 改走交辦單＋閘門 | 定案 7、17 |
+| 機房結論 `AutoApply` | 同鍵；靜音期間優先 | ⓪ 在 ③ 前 |
+| 規則抑制 | 靜音重用其分析側標記；範圍不同 | 決策表；兩張清單不合併 |
+| `NoiseMark` | 閘門讀它 | 定案 17 |
+| 觀察中 | 案件層級不動 | 回覆值域維持 |
+| 案件授與 | 語意不變 | F-1 改查法 |
+| 工作頁「依主機」 | 保留為次要頁籤 | D-2 |
+| 「被指派的風險日」 | 不動 | — |
+| 「下一筆未處理」 | 不動；靜音經推導不列 | — |
+| 報表 `unassigned` scope | 不動 | — |
+| 側欄徽章 | 改輕量端點 | D-1 |
+| 郵件 escalation | 保留 | — |
+| CSV 慣例（前端複製當前頁） | 沿用 | 定案 27 修正 |
+
+### 規劃完成後複檢（第三版）
+
+- **與既有行為的衝突**：(1) 「同主機同問題只由一人處理」維持；(2) 案件授與語意不變；(3) `ExternalOf` 不改；(4) 統一標記授權不變、`AutoApply` 加 `Maintain`；(5) `AttachNewDay` ①②③ 不變、⓪ 前插、閘門與 ④⑤⑥ 後插，⑤ 行為變更已同意；(6) 聚合入口一起改；(7) 日層級指派對使用者只多單號徽章；(8) 403 與 404 分清楚（單存在無權＝403）。
+- **批次之間**：⓪ 在 B-1 前集合為空；D-2 註腳在 B-2 前條件式；C-1 最小改接與 C-3 改版順序固定；C-2 的成員／時間軸端點形狀在 C-2 定案後 D 不得再改；E-1 依賴 A-4 的趟末摘要與 B-1 的靜音集合，介面在各自段定案。
+- **四個坑**：什麼算一個——負載＝進行中單的進行中成員數；零候選→待派；閘門略過有計數；`hiddenMemberCount` 誠實回報。破壞性判準——回填條件與反例；取消交辦只清 `CaseId`＝該案件且非結案類的日子（反例：自標日子、已結案日子）。單向閘門——靜音有期限＋提前解除；派工閘門不提供強制派（治本）。移除類——三個舊端點呼叫端各一檔在白名單；`BuildCase` 呼叫端兩檔在 C-1 白名單；`GetCaseGrants` 兩個消費端在 F-1 白名單。
+- **既有資料路徑**：DDL 全部新增型、可回退；舊 blob 缺 `Mutes`＝空清單；既有案件回填時 `DaySyncPending=false`、`Cancelled=false`。
+- 複檢結論：第三版新增名詞表、劇本 S1～S7、契約要點、風險與回滾、CSV 慣例修正；其餘無新增事項。
+
+### 4000 台流程模擬（第四版）
+
+逐步放大檢視 S1～S9 在 4000 台下的資料量與查詢形狀（表見第三節末），抓到 6 個會出事的點與 6 個要補的細節，落為定案 31～42：
+
+| 發現 | 嚴重度 | 定案 |
+|---|---|---|
+| 靜音狀態只在記憶體推導，SQL 端待辦推導看不到，到期後儀表板與詳情頁分岔 | 高 | 34（第五版改為區間） |
+| 人工交辦回溯全歷史：3000 台 × 60 天＝36 萬列同步寫入 | 高 | 32 |
+| 案件表無 (source, event) 索引，衝突／涵蓋／缺口全表掃 | 高 | 31 |
+| 「同趟同問題一張單」在可見範圍分割下走不通 | 中 | 33 |
+| 夜間建案若回溯歷史＝3000 次主機歷史掃描 | 中 | 32 |
+| `SyncStatus` 逐案掃主機歷史，750 台回覆＝750 次查詢 | 中 | 36 |
+| `NoiseMark` blob 逐主機日讀 | 中 | 35 |
+| 回填逐筆 EF 更新、`LastReplyAt` 全空 | 低 | 42、37 |
+| 靜音 90 天後舊單回隊列 | 低 | 38 |
+| 待派沒有原因、admin 不知道去修矩陣還是加人 | 低 | 39 |
+| 清單逐列計數 | 低 | 40 |
+| 修好復發派給別人 | 低 | 33 延續性偏好 |
+
+- 複檢結論（第四版）：新增定案 31～42、劇本 S8／S9、規模表、壓測四案例。
+
+### 第五版：解法再檢視（三處換更根本的做法）
+
+| 原解法 | 問題 | 換成 | 定案 |
+|---|---|---|---|
+| 靜音「分析時快照」寫在 JSON 與 `lf_top_issues` | 同一事實三處各一份；依執行時間判定讓重新分析舊日子語意飄；A-4／B-1 各加一欄耦合 | **靜音區間**存問題檔案，唯一來源；一律以紀錄日判定；`lf_top_issues` 與 JSON 皆不加欄 | 34 |
+| 人工交辦「只掛篩選期間」＋主機日上限 5 萬 | 只是把寫入量推到回覆時（`SyncStatus` 展開全部歷史合格日）；期間外舊日子掛「未處理」直到有人回覆 | **案件日同步作業**：一個冪等同步函式，小量就地、大量背景；所有改案件的操作都只同步改案件；不設上限 | 32、36、44 |
+| 缺口在 SQL 做＋註腳「建單時再套閘門」 | `NoiseMark` 與現行抑制套不進 SQL；要在 `lf_top_issues` 加 `suppressed` 欄 | **缺口＝派工試跑**：SQL 取主機層級候選列，記憶體跑同一個策略的乾跑；數字即結果 | 43 |
+
+- 連帶調整：名詞表「靜音快照」→「靜音區間」＋「案件日同步作業」；`IssueCase` 加 `DaySyncPending`／`Cancelled`；既有 `BuildCase`／`SyncStatus`／`ReassignCase` 改薄包裝且既有測試不改斷言；壓測改量同步段與背景段；風險表對應更新；靜音 modal 的 `existingOrders` 參數併入 mute 端點。
+- **批次之間（第五版）**：同步函式與作業在 A-2；B-1 不再碰 `lf_top_issues`；`EfAnalysisRecordStore` 本輪只在 F-1 的查詢改法碰到，與第 46 輪 PRTG 追加路徑不重疊，但基準仍以第 46 輪併入後的 dev 為準。
+- 複檢結論（第五版）：三處換解法、連帶調整如上。
+
+### 第六版：既有功能影響核對（第十四節）
+
+逐共用點 grep 全部呼叫端後新增：定案 45（AI prompt 與負責人路由排除 `Suppressed`，既有行為變更）、46（快照作用域含 PRTG 路徑）、47（`IssueExclusion` 無預設值＋套用清單）；補 `INoiseMarkStore.GetAll`、`run-activity` 新欄、使用者詳細頁交辦單欄、`HelpContent` 嵌入資源改寫、`HandlingServiceTests` 的 `AutoApply` 案例加 `Maintain`、`lf-bulk-assign-hosts` CSS 共用不可刪、`ReportService.FilterByScope` 記憶體路徑套靜音、`WeeklyCheckup` 靜音到期段。
+- 複檢結論（第六版）：新增如上；其餘無新增事項。
+
+## 十四、既有功能影響矩陣（第六版：逐共用點 grep 呼叫端後定案）
+
+每個「本輪會改到的共用點」列出全部呼叫端，逐一判定：**跟著調**（納入哪一段）／**明寫不套**／**不受影響**。
+
+### 14.1 `IIssueAggregateQuery`（加 `IssueExclusion` 參數，定案 47）
+
+| 呼叫端 | 用途 | 處置 |
+|---|---|---|
+| `DashboardService`（`Aggregate`／`AggregateByCategory`／`AggregateByHost`／`AggregateReportKpi`） | 儀表板卡與下鑽 | 套靜音（B-2） |
+| `RecordListQueryService`（`Aggregate`／`LatestOccurrences`／`AggregateByDate`／`AggregateByHost`／`DailyHostCounts`／`FirstSeenFor`） | 四個視角 | 套靜音（B-2）；`FirstSeenFor` 為問題級首見日，套與不套結果相同，明寫 `None` |
+| `ReportService`（`AggregateByCategory`／`AggregateByHost`／`AggregateReportTrend`／`AggregateReportKpiPair`；另 `FilterByScope` 記憶體路徑） | 報表 | 套靜音（B-2），**含記憶體路徑 `FilterByScope`**（BACKLOG 3-9 那條） |
+| `IssueRankingBuilder`（`Aggregate`／`HostIdsByIssue`／`DailyHostCounts`／`FirstSeenFor`） | 重點問題／排行 | 套靜音（B-2） |
+| `MailIssueDigest`（`Aggregate`／`ActionableOccurrences`） | 郵件排行 | 套靜音（B-2） |
+| `IssueHandlingRollupQuery`（`LatestOccurrences`）、`IssueTodoQuery`（`ActionableOccurrences`）、`HandlingHistoryQueryService`（`AggregateDayTodo`） | 待辦／已有結論 | 套靜音（B-2，含區間） |
+| `HostVisibilityResolver.HostIdsFor` | 問題負責人可見範圍 | **`None`**：靜音不縮權限 |
+| `RuleAdminService.Aggregate`（抑制預覽命中數）、`AggregatePrtgRuleHits`（規則頁，第 46 輪起帶 `hostIds`）、`CalibrationService.AggregatePrtgRuleHits` | 規則命中統計／校準 | **`None`**：命中統計要看全量 |
+| `PrtgDailyPipeline.GetPrtgFindingHitDates`（第 46 輪新增，PRTG 跨日判定） | 偵測層 | **`None`**：靜音不影響偵測 |
+| `DeriveDayHandling`（目前無外部呼叫端，供 SQL 端日狀態推導） | 日狀態 | 套靜音（含區間），維持介面一致 |
+| `IssueOwnerAdminService.Aggregate`（近期問題選擇器） | 問題檔案頁挑問題 | **`None`**：靜音中的問題要能被選到才能解除 |
+| `RecordDetailQueryService.Aggregate`（vs 基準） | 詳情頁問題級基準 | **`None`**：靜音問題在收合區仍顯示基準 |
+| `LogAnalysisService`（`LogAggregator.Aggregate`） | 同名不同物，非本介面 | 不受影響 |
+
+### 14.2 `SuppressionFilter.MarkSuppressed`（加靜音區間與紀錄日）
+
+| 呼叫端 | 處置 |
+|---|---|
+| `LogAnalysisService.cs:202`、`:567`（第二個套用點，執行端確認用途後一併帶入） | 跟著調（B-1） |
+| `PrtgDailyPipeline.cs:393`（PRTG finding，第 46 輪共用套用函式；`AttachCase` 在 :419） | 跟著調（B-1）；PRTG 靜音鍵 (Source, 0)。跨日升級 `PrtgCrossDay.Apply`（:382）在抑制標記之前，屬偵測層不受靜音影響；跨來源佐證 `PrtgCorroboration.Apply` 已排除 `Suppressed`（`PrtgCorroboration.cs:41,44`），靜音經標記自然生效 |
+| `WeeklyCheckupService.cs:148`（只用 `ActiveForHost` 列到期抑制） | 加「7 天內到期的靜音區間仍在發生」段（B-2） |
+| `RuleAdminService.PreviewSuppression` | 不呼叫 `MarkSuppressed`，不受影響 |
+
+### 14.3 `DayHandlingDerivation.Derive`／`HasOverdueIssue`（加靜音判定）
+
+| 呼叫端 | 處置 |
+|---|---|
+| `HandlingHistoryQueryService`（:159 待辦、:294／:312 工作頁、:422 風險日表） | 跟著調（B-2） |
+| `HandlingProgressCalculator`（詳情頁進度） | 跟著調（B-2） |
+| `RecordListQueryService`（:799 狀態、:819 逾期） | 跟著調（B-2） |
+
+### 14.4 `HostVisibilityResolver`（搬到 Core）
+
+| 呼叫端 | 處置 |
+|---|---|
+| `VisibilityService`（四處）、`MailNotificationService.cs:391`（Singleton 直接呼叫）、`IssueOwnedHostIdsCache`（註解引用） | 改 using（A-3）；簽章不變；`IssueOwnedHostIdsCache` 快取鍵含問題檔案版本，靜音編輯會使其失效，無害 |
+
+### 14.5 退役端點的呼叫端
+
+| 端點 | 呼叫端 | 處置 |
+|---|---|---|
+| `issue-cases/preview`、`handler-candidates`、`bulk-assign` | `records.js:1377,1625,1708` | C-1 最小改接、C-3 改版 |
+| `bulk-status` | `issue-status-reply.js:104`（`handler-detail.js` 與 `records.js` 共用此 modal） | D-1／D-2 |
+| — | `hosts.js:756` 與 `records.js:1521` 共用 CSS 類 `lf-bulk-assign-hosts`（主機頁批次群組 modal 也用） | **不可刪該 CSS**；C-3 白名單註明 |
+| — | `HandlingServiceTests`（bulk-assign／bulk-status 案例）、`BulkScaleGateTests` | 改寫為交辦單版（C-1／D-1）；基線測試數會變，收官記錄差異 |
+
+### 14.6 `IssueCase` 的其他消費端（新增欄位與不變式）
+
+| 呼叫端 | 用途 | 處置 |
+|---|---|---|
+| `OccurrenceStatusResolver`（`GetMany` 開案字典） | 待辦／rollup 共用骨架 | 不受影響（欄位新增型） |
+| `UserAdminService.cs:140`（`GetByHandler` 被指派歷程） | 使用者詳細頁 | 不受影響；D-2 順手加「所屬交辦單」欄（單號連結，有值才顯示） |
+| `RecordListQueryService.cs:271`（處理人欄）、`RecordDetailQueryService`（:81／:103／:262 徽章與先前處理） | 清單／詳情 | 不受影響；徽章改交辦單在 D-2 |
+| `HandlingProgressCalculator` | 進度 | 不受影響 |
+| `HandlingBlobMigrator`（blob→表一次性遷移建案件列） | 舊部署升級 | 不改；它建出的列若無新欄值，由 A-1 啟動回填補齊（回填條件以 NULL 判定，順序天然正確） |
+| `ScaleDataSet`（壓測資料） | F-1 | 補新欄值以便壓測真實 |
+
+### 14.7 夜間鏈路
+
+| 點 | 處置 |
+|---|---|
+| `AnalysisOrchestrator.cs:917-925`：`AttachPrtgFindings` → `AttachCase` → `ReplaceRiskyEvents` 順序 | 不改順序；PRTG finding 已在 `AttachCase` 之前追加，會進派工 |
+| `PrtgDailyPipeline.cs:419` 也呼叫 `AttachCase` | 定案 46：各執行單位自建快照 |
+| `INoiseMarkStore` 只有 `GetForHost`／`Get`／`Save`／`Delete` | A-3 加 `GetAll()`（blob 一次讀）供快照 |
+| `IdentityService.cs:201`（setup 建 builtin 群組）、`GroupAdminService.cs:78`（Upsert） | 前者 `DispatchPool` 預設 false 不改；後者 DTO 對應（C-4） |
+
+### 14.8 AI／郵件／報告
+
+| 點 | 現況 | 處置 |
+|---|---|---|
+| `AnalysisPromptBuilder.cs:182` 只過濾 PRTG 的 `Suppressed` | Windows／Linux 抑制與靜音問題仍進 AI 敘事 | 定案 45（B-1） |
+| `MailNotificationService.cs:523` 問題負責人路由不看 `Suppressed` | 靜音問題仍通知負責人 | 定案 45（E-1） |
+| `RiskReportService.cs:435` 「已抑制」段反查原因兩條路 | 靜音問題會列在此段但反查不到原因 | 加靜音區間第三條路（B-1） |
+
+### 14.9 測試守門與說明書
+
+| 點 | 處置 |
+|---|---|
+| `AuditQueryServiceTests.cs:81-84` 反射比對 `AuditActions` 全部常數有中文 | 新稽核動作必補對照，否則紅——契約已要求 |
+| 沒有 `SystemSettings` 屬性覆蓋的反射守門 | C-4 新設定要自己補設定頁與 DTO 往返測試 |
+| `HandlingServiceTests.cs:1269` 以 `Create(Assign, Handle)` 呼叫 `BulkCloseIssue(AutoApply=true)` | B-1 加 `Maintain` 後此測試必紅——**改測試加 `Maintain`**，並補一條「無 `Maintain` 被拒」 |
+| `HelpContent/03-issues.md`、`04-record-detail.md`、`05-handling.md` 與各自 `.ai.md`（嵌入資源，AI 問答也讀） | 提到指派／回覆處理狀態的段落改寫為交辦單動線（文件批次，Claude 親寫；**是編譯進組件的資源，改動要進 commit 且在該段白名單**） |
+| `/api/run-activity` 回應形狀 | A-2 加 `caseDaySyncPending` 欄；`layout.js` 活動告示顯示（D-2）；**不得**影響 `isRunning`／`isFetchRun`（CLAUDE.md 紅線） |
+
+### 14.10 明確不受影響
+
+統一標記 `bulk-close` 的路徑與期間語意；「下一筆未處理」（`NextUnhandledSequenceCache`，走待辦推導自然吸收靜音）；「未指派」chip 與報表 `unassigned` scope（`HandlingScopes.Unassigned` 看 `openCasesDict`）；案件授與語意；主機合併墓碑（案件以主機名為鍵）；權限異動檢核；規則維護頁的抑制清單；NetIQ／PRTG 取數；設定精靈。
+
+### 開工前重驗（第 46 輪併入後，2026-09-17）
+
+| 項 | 結果 |
+|---|---|
+| 案件協調器、案件 store、派工命令服務、郵件服務、可見範圍規則、schema 升級器 | 第 46 輪未改動，規劃引用仍成立 |
+| `SuppressionFilter.MarkSuppressed` | 第 46 輪抽成共用函式，呼叫端為 `LogAnalysisService:202`、`PrtgDailyPipeline:393`，與定案 34 相容 |
+| `AnalysisPromptBuilder` | 仍只對 PRTG 過濾 `Suppressed`（:182），定案 45 仍成立 |
+| PRTG 跨來源佐證 | 已排除 `Suppressed`，靜音經標記自然不拉風險 |
+| PRTG 跨日升級 | 在抑制標記之前、屬偵測層，不受靜音影響 |
+| `IIssueAggregateQuery` | 15→17 個方法（新增 `GetPrtgFindingHitDates`、`AggregatePrtgRuleHits` 加 `hostIds`）；矩陣已補，兩者皆 `None` |
+| `WeeklyCheckupService` | 第 46 輪新增 PRTG 段（排除 `Suppressed`）；B-2 的靜音到期段併在同檔，執行端避開既有 PRTG 段 |
+| `lf_top_issues` | 第 46 輪未加欄；第五版定案本來就不加欄，無衝突 |
+| 測試基線 | 4293（略過 6） |
+
+## 執行紀錄
+
+| 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
+|---|---|---|---|---|
+| （尚未開工） | | | | |
+
+## 體檢交接
+
+（實作輪收官時填：全量測試總數、全綠與否、與基線 4128 的差、壓測數字、未竟事項。）
