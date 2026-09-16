@@ -201,6 +201,16 @@
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
                 </div>
 
+                <div class="mb-3">
+                    <label for="prtg-sensor-type-category-overrides" class="form-label">sensor type 分類補充對照</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="一行一個『type=分類』，不分大小寫。分類可填 traffic、disk、cpu、memory、availability、hardware。這裡優先於內建對照，下次結構同步後生效，並會重新套用在先前自動分類的 sensor 上。注意：資源守門的自動偵測依 cpu／memory 分類挑 sensor，改動會影響偵測結果。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                    <textarea class="form-control lf-mono" id="prtg-sensor-type-category-overrides" rows="4"
+                              placeholder="SNMP Dell PowerEdge System Health=hardware"></textarea>
+                </div>
+
                 <div class="mb-3 d-none" id="prtg-value-fetch-extra-hosts-group">
                     <label for="prtg-value-fetch-extra-hosts" class="form-label">額外納入的主機名稱</label>
                     <textarea class="form-control lf-mono" id="prtg-value-fetch-extra-hosts" rows="4"

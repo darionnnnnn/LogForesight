@@ -215,4 +215,39 @@ public class HostDetailPrtgScopedQueryTests : IDisposable
         // 與整表版本的日期語意一致
         Assert.Equal(store.GetLatestHostMapWithDate(30).MapDate, mapDate);
     }
+
+    [Fact]
+    public void Sensor帶狀態且Device帶名稱_名稱一次查回()
+    {
+        SeedMap();
+        using (var ctx = NewContext())
+        {
+            ctx.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = 2002, DeviceObjid = 1001, Name = "CPU", SensorType = "SNMP CPU Load",
+                Category = "cpu", Paused = false, Status = "Down (Acknowledged)",
+                SyncedAt = DateTime.Today, CreatedAt = DateTime.Today
+            });
+            var ping = ctx.PrtgSensors.Single(s => s.Objid == 2001);
+            ping.Status = "Up";
+            ctx.SaveChanges();
+        }
+        var controller = CreateController(visibleHostId: 10);
+
+        _sql.Clear();
+        var dto = controller.Prtg(10).Data!;
+
+        var first = dto.Devices.Single(d => d.DeviceObjid == 1001);
+        Assert.Equal("SW-A", first.Name);
+        Assert.Equal("Up", first.Sensors.Single(s => s.Objid == 2001).Status);
+        Assert.Equal("Down (Acknowledged)", first.Sensors.Single(s => s.Objid == 2002).Status);
+
+        // 1002 在裝置鏡像表裡沒有列：名稱為 null（前端維持原標題格式）
+        Assert.Null(dto.Devices.Single(d => d.DeviceObjid == 1002).Name);
+
+        // 兩台 device 只查一次裝置表，不逐 device 查
+        var deviceQueries = _sql.Count(s => s.Contains("lf_prtg_device", StringComparison.OrdinalIgnoreCase)
+                                            && !s.Contains("lf_prtg_sensor", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, deviceQueries);
+    }
 }

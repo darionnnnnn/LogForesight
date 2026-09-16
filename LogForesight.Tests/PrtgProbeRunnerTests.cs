@@ -1375,4 +1375,26 @@ public class PrtgProbeRunnerTests
         Assert.Contains(stub.RequestedUrls, u => u.Contains("filter_drel=today") && u.Contains("start=0") && u.Contains("count=5"));
         Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("filter_drel=today") && !u.Contains("start=0") && u.Contains("count=5"));
     }
+
+    [Fact]
+    public async Task RunAsync_Type分布明細附內建分類與補充對照指引()
+    {
+        var rows = @"{""sensors"": [
+            {""objid"": 1, ""type"": ""Ping"", ""status"": ""Up"", ""parentid"": 1},
+            {""objid"": 2, ""type"": ""Ping"", ""status"": ""Up"", ""parentid"": 1},
+            {""objid"": 3, ""type"": ""HTTP Advanced"", ""status"": ""Up"", ""parentid"": 1}
+        ]}";
+        var stub = BuildPerfStub(rows);
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("Ping | 2 |") && l.EndsWith("| 內建分類：availability"));
+        Assert.Contains(console.Lines, l => l.Contains("HTTP Advanced | 1 |") && l.EndsWith("| 內建分類：未分類"));
+
+        var hintIdx = console.Lines.FindIndex(l => l.Contains("未分類的 type 可在 PRTG 維護頁『sensor type 分類補充對照』指定。"));
+        var lastDetailIdx = console.Lines.FindLastIndex(l => l.Contains("| 內建分類："));
+        Assert.True(hintIdx > lastDetailIdx, "指引行應在 Type 分布明細之後");
+    }
 }

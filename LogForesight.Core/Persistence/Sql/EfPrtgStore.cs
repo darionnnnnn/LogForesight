@@ -564,6 +564,21 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 依 objid 集合取得 PRTG 裝置名稱（唯讀查詢，單次查詢；對不到的 objid 不在結果內）。
+    /// </summary>
+    public Dictionary<long, string> GetDeviceNamesByObjids(IReadOnlyCollection<long> objids)
+    {
+        using var __perf = _performance.Measure("prtg:GetDeviceNamesByObjids");
+        if (objids.Count == 0) return new Dictionary<long, string>();
+        using var ctx = _contextFactory();
+        return ctx.PrtgDevices
+            .AsNoTracking()
+            .Where(d => objids.Contains(d.Objid))
+            .Select(d => new { d.Objid, d.Name })
+            .ToDictionary(d => d.Objid, d => d.Name);
+    }
+
+    /// <summary>
     /// 取得所有 PRTG 感測器鏡像清單（唯讀查詢）。
     /// </summary>
     public List<PrtgSensorRow> GetAllSensors()

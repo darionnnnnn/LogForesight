@@ -290,4 +290,21 @@ public class FrontendConsistencyUiTests
         Assert.Contains("getAiAvailable", ExtractImportList(js, "../core/api.js"));
         Assert.Contains("getAiAvailable(", js);
     }
+
+    [Fact]
+    public void C7_Pages底下不得以含插值的樣板字串指派innerHTML()
+    {
+        var pagesDir = JsDir("pages");
+        Assert.True(Directory.Exists(pagesDir), $"找不到目錄: {pagesDir}");
+
+        var pattern = new Regex(@"innerHTML\s*=\s*`[^`]*\$\{");
+        var offenders = Directory.GetFiles(pagesDir, "*.js", SearchOption.AllDirectories)
+            .SelectMany(f => File.ReadAllLines(f)
+                .Select((line, i) => (file: Path.GetFileName(f), no: i + 1, line))
+                .Where(x => pattern.IsMatch(x.line)))
+            .Select(x => $"{x.file}:{x.no}")
+            .ToList();
+
+        Assert.Empty(offenders);
+    }
 }

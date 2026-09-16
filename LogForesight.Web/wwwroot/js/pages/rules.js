@@ -227,7 +227,7 @@ const RULE_COLUMNS = [
         title: '門檻', className: 'text-end', sortKey: 'threshold', sortDefaultDir: 'desc',
         sortValue: r => r.platform === 'prtg' ? r.prtgThreshold : r.countThreshold,
         render: r => r.platform === 'prtg'
-            ? (r.prtgRuleCode === 'silent' ? '-' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}`)
+            ? (r.prtgRuleCode === 'silent' ? '-' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}${prtgSensorCategorySuffix(r)}`)
             : String(r.countThreshold)
     },
     { title: '狀態', render: r => statusCell(r) },
@@ -327,6 +327,30 @@ function ruleCell(rule) {
     return wrap;
 }
 
+// PRTG sensor 分類的顯示文字（與 Rules.cshtml 的 rule-prtg-sensor-category 選項一致）。
+const PRTG_SENSOR_CATEGORY_LABELS = {
+    traffic: '流量',
+    disk: '磁碟空間',
+    cpu: 'CPU',
+    memory: '記憶體',
+    availability: '連通性',
+    hardware: '硬體健康'
+};
+
+function prtgSensorCategorySuffix(rule) {
+    const category = rule.prtgSensorCategory;
+    if (!category) return '';
+    return `（${PRTG_SENSOR_CATEGORY_LABELS[category] ?? category}）`;
+}
+
+// silent 規則不可指定分類：代碼選 silent 時鎖住下拉並清成「全部分類」。
+function applyPrtgSensorCategoryLock() {
+    const select = document.getElementById('rule-prtg-sensor-category');
+    const isSilent = document.getElementById('rule-prtg-code').value === 'silent';
+    if (isSilent) select.value = '';
+    select.disabled = isSilent;
+}
+
 function matchCell(rule) {
     const wrap = document.createElement('div');
 
@@ -345,6 +369,7 @@ function matchCell(rule) {
         } else {
             threshold.textContent = `門檻：${rule.prtgThreshold} 分鐘`;
         }
+        threshold.textContent += prtgSensorCategorySuffix(rule);
         wrap.appendChild(threshold);
         return wrap;
     }
@@ -524,6 +549,8 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
     document.getElementById('rule-message-patterns').value = rule?.messagePatterns.join('\n') ?? '';
     document.getElementById('rule-prtg-code').value = rule?.prtgRuleCode ?? 'down';
     document.getElementById('rule-prtg-threshold').value = rule?.prtgThreshold ?? (platform === 'prtg' ? 60 : 0);
+    document.getElementById('rule-prtg-sensor-category').value = rule?.prtgSensorCategory ?? '';
+    applyPrtgSensorCategoryLock();
     document.getElementById('rule-category').value = rule?.category ?? 'Other';
     document.getElementById('rule-severity').value = rule?.severity ?? 'Medium';
     document.getElementById('rule-elevates-day-risk').checked = rule?.elevatesDayRisk ?? false;
@@ -581,6 +608,7 @@ function collectRule() {
         messagePatterns: splitLines(document.getElementById('rule-message-patterns').value),
         prtgRuleCode: platform === 'prtg' ? document.getElementById('rule-prtg-code').value : null,
         prtgThreshold: platform === 'prtg' ? (Number(document.getElementById('rule-prtg-threshold').value) || 0) : 0,
+        prtgSensorCategory: platform === 'prtg' ? (document.getElementById('rule-prtg-sensor-category').value || null) : null,
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
         elevatesDayRisk: document.getElementById('rule-elevates-day-risk').checked,
@@ -596,6 +624,8 @@ function collectRule() {
 function splitLines(text) {
     return text.split('\n').map(s => s.trim()).filter(Boolean);
 }
+
+document.getElementById('rule-prtg-code').addEventListener('change', applyPrtgSensorCategoryLock);
 
 document.getElementById('rule-validate').addEventListener('click', async () => {
     // 驗證要打後端，慢的時候可以連點送出多次請求（同檔其他長時間動作都有 withBusy，這裡原本漏了）

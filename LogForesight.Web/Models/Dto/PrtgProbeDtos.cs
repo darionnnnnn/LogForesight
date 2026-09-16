@@ -177,6 +177,8 @@ public class HostPrtgMappingDto
 public class HostPrtgDeviceDto
 {
     public long DeviceObjid { get; set; }
+    /// <summary>PRTG 裝置名稱；鏡像表對不到時為 null</summary>
+    public string? Name { get; set; }
     public string? Ip { get; set; }
     public string? MapStatus { get; set; }
     public string? Note { get; set; }
@@ -191,6 +193,8 @@ public class HostPrtgSensorDto
     public string SensorType { get; set; } = string.Empty;
     public string? Category { get; set; }
     public bool Paused { get; set; }
+    /// <summary>PRTG sensor 狀態字串（例如 Up、Down、Down (Acknowledged)）</summary>
+    public string? Status { get; set; }
 }
 
 /// <summary>PRTG 資源守門受監看感測器預覽項目</summary>
