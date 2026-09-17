@@ -131,6 +131,7 @@ function renderActiveTable(data) {
     const columns = [
         {
             title: '單號',
+            className: 'text-nowrap',
             render: r => {
                 const a = document.createElement('a');
                 a.href = appUrl('/work-orders/' + r.workOrderId);
@@ -165,6 +166,7 @@ function renderActiveTable(data) {
                 const wrap = document.createElement('div');
                 const counts = r.counts || {};
                 const main = document.createElement('div');
+                main.className = 'text-nowrap';
                 main.textContent = `${counts.active ?? 0}／${counts.total ?? 0} 台`;
                 wrap.appendChild(main);
 
@@ -199,11 +201,12 @@ function renderActiveTable(data) {
         },
         {
             title: '未回覆',
-            className: 'text-end',
+            className: 'text-end text-nowrap',
             render: r => (r.unrepliedDays == null ? '—' : `${r.unrepliedDays} 天`)
         },
         {
             title: '期限',
+            className: 'text-nowrap',
             render: r => (r.dueDate ? formatDate(r.dueDate) : '—')
         },
         {
@@ -212,6 +215,7 @@ function renderActiveTable(data) {
         },
         {
             title: '建立',
+            className: 'text-nowrap',
             render: r => formatDateTime(r.createdAt)
         },
         {
