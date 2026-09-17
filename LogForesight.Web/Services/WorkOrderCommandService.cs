@@ -97,7 +97,8 @@ public class WorkOrderCommandService
             .ToList();
 
         // 期間內主機日：與依問題視角同一個範圍、同一個彙總（該問題那一列的 DayCount）
-        var aggregate = _aggregates.Aggregate(plan.Scope.From, plan.Scope.To, plan.Scope.HostIds,
+        // 靜音不排除（不用 Scope.Exclusion）：派工決策以紀錄日判定靜音，已在派工脈絡處理
+        var aggregate = _aggregates.Aggregate(IssueExclusion.None, plan.Scope.From, plan.Scope.To, plan.Scope.HostIds,
                 plan.Scope.VisibleSeverities, plan.Scope.DayRiskLevels)
             .FirstOrDefault(a => a.EventId == plan.EventId && string.Equals(a.Source, plan.Source, StringComparison.OrdinalIgnoreCase));
 
@@ -529,8 +530,9 @@ public class WorkOrderCommandService
     /// </summary>
     private List<ResolvedHost> ResolveMembers(string source, int eventId, IssueScope scope, IReadOnlySet<long> excludeHostIds)
     {
+        // 靜音不排除（不用 scope.Exclusion）：派工決策以紀錄日判定靜音，已在派工脈絡處理
         var occurrences = _aggregates.LatestOccurrences(
-            new[] { (source, eventId) }, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
+            IssueExclusion.None, new[] { (source, eventId) }, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
         if (occurrences.Count == 0) return new List<ResolvedHost>();
 
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);

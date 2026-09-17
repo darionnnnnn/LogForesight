@@ -1932,7 +1932,7 @@ public class HandlingServiceTests : IDisposable
         var service = new IssueHandlingCommandService(
             _handlings, _issueHandlings, _cases, _caseCoordinator, coordinator, _noiseMarks, _repository, _hosts, _users,
             new AlwaysVisibleService(_hosts), currentUser, _audit,
-            new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings),
+            new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings, new FixedIssueExclusionSource(IssueExclusion.None)),
             new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
             new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator),
             displayNames);

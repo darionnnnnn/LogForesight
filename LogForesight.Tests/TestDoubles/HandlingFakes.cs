@@ -42,7 +42,7 @@ internal class HandlingServiceFacade
         LogForesight.Web.Services.Mail.MailNotificationService? mail = null,
         IIssueAggregateQuery? issueAggregates = null)
     {
-        var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
+        var progress = new HandlingProgressCalculator(issueStore, store, cases, settings, new FixedIssueExclusionSource(IssueExclusion.None));
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         var displayNames = new UserDisplayNameService(settings);
@@ -59,7 +59,7 @@ internal class HandlingServiceFacade
             issueOwnerAdmin, displayNames, mail);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery(),
-            displayNames);
+            displayNames, new FixedIssueExclusionSource(IssueExclusion.None));
     }
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);

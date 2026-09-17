@@ -333,8 +333,9 @@ internal static class PrtgDailyPipeline
             {
                 try
                 {
+                    // 靜音不排除：跨日判定是分析側事實（sensor 連續幾天命中），不是讀取側的顯示
                     dbHitDates = backend.IssueAggregateQuery(hostStore).GetPrtgFindingHitDates(
-                        allEventKeys, oldest.AddDays(-PrtgRuleCatalog.CrossDayWindowDays), newest);
+                        IssueExclusion.None, allEventKeys, oldest.AddDays(-PrtgRuleCatalog.CrossDayWindowDays), newest);
                 }
                 catch (OperationCanceledException)
                 {

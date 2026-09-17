@@ -412,9 +412,9 @@ public class UserDisplayNameServiceTests
             new AlwaysVisibleService(hosts),
             _settingsStore,
             new FakeRecordRepository(hosts),
-            new HandlingProgressCalculator(new FakeIssueHandlingStore(), new FakeHandlingStore(), new FakeIssueCaseStore(), _settingsStore),
+            new HandlingProgressCalculator(new FakeIssueHandlingStore(), new FakeHandlingStore(), new FakeIssueCaseStore(), _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None)),
             new FakeIssueAggregateQuery(),
-            displayNameService);
+            displayNameService, new FixedIssueExclusionSource(IssueExclusion.None));
 
         var workload = service.GetHandlerWorkload(user.UserId, false);
 
@@ -467,7 +467,7 @@ public class UserDisplayNameServiceTests
         var caseStore = new FakeIssueCaseStore();
         var repository = new FakeRecordRepository(hosts);
         var coordinator = new IssueCaseCoordinator(caseStore, issueStore, recordStore, repository, hosts, new FakeIssueOwnerStore());
-        var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore);
+        var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
         var capabilities = new UserCapabilityResolver(new FakeUserGroupStore(), hosts);
         return new DayHandlingCommandService(
             recordStore,
@@ -498,7 +498,7 @@ public class UserDisplayNameServiceTests
         var issueStore = new FakeIssueHandlingStore();
         var recordStore = new FakeHandlingStore();
         var coordinator = new IssueCaseCoordinator(caseStore, issueStore, recordStore, repository, hosts, new FakeIssueOwnerStore());
-        var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore);
+        var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
         var capabilities = new UserCapabilityResolver(new FakeUserGroupStore(), hosts);
         var workOrderStore = new FakeWorkOrderStore(caseStore);
         var workOrders = new WorkOrderCoordinator(workOrderStore, caseStore, issueStore, coordinator, recordStore, hosts);

@@ -58,7 +58,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
 
         _query = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore, severity,
-            visibility, _aggregates, statusResolver, _displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()));
+            visibility, _aggregates, statusResolver, _displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
         _caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
         _coordinator = new WorkOrderCoordinator(_orderStore, _caseStore, _issueHandlingStore, _caseCoordinator, _handlingStore, _hosts);

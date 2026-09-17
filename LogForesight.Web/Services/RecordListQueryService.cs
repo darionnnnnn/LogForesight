@@ -28,6 +28,9 @@ public class RecordListQueryService
     /// 不能讓它以「可選相依」的形式安靜失效。</summary>
     private readonly NextUnhandledSequenceCache _nextUnhandledCache;
 
+    /// <summary>讀取側靜音排除條件（回饋第 47 輪批次 B-2a）：每個公開方法只取一次，傳給該次全部查詢。</summary>
+    private readonly IIssueExclusionSource _exclusions;
+
     /// <summary>問題負責人（回饋十八輪批次F）：「依問題」視角順帶顯示負責人 badge，
     /// 讓「這個問題歸誰」在主視角一眼可見。可為 null——測試組裝不注入時該欄位維持空清單。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
@@ -47,6 +50,7 @@ public class RecordListQueryService
         OccurrenceStatusResolver statusResolver,
         IUserDisplayNameService displayNameService,
         NextUnhandledSequenceCache nextUnhandledCache,
+        IIssueExclusionSource exclusions,
         IIssueOwnerStore? issueOwners = null,
         IKnownIssueRuleStore? rules = null)
     {
@@ -63,6 +67,7 @@ public class RecordListQueryService
         _statusResolver = statusResolver;
         _displayNameService = displayNameService;
         _nextUnhandledCache = nextUnhandledCache;
+        _exclusions = exclusions;
         _issueOwners = issueOwners;
         _rules = rules;
     }
@@ -71,6 +76,8 @@ public class RecordListQueryService
     {
         var filter = BuildFilter(request);
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
+        // 靜音排除條件本次只取一次，兩條路徑的日狀態推導與逾期判定共用
+        var exclusion = _exclusions.Current();
 
         // Statuses／Overdue／Unassigned 篩選依賴處理狀態（lf_record_handling／lf_issue_handling／
         // lf_issue_cases 三張表 join 出來的推導結果），必須先算出候選集裡**每一筆**的日狀態才能篩選
@@ -99,10 +106,10 @@ public class RecordListQueryService
             var pageOpenCases = LoadOpenCases(paged.Items, pageLookup);
             var pageUnhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
-            var pageProgress = MemoizedProgress(pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
+            var pageProgress = MemoizedProgress(pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities, exclusion);
 
             bool PageIsOverdue(DailyAnalysisRecord r) =>
-                ComputeIsOverdue(r, pageHandlings, pageIssueHandlings, pageLookup, pageProgress);
+                ComputeIsOverdue(r, pageHandlings, pageIssueHandlings, pageLookup, pageProgress, exclusion);
 
             return new PagedResult<RecordListItemDto>
             {
@@ -132,12 +139,12 @@ public class RecordListQueryService
 
         // 每筆只推導一次（回饋四十五輪 B2）：同一筆紀錄的處理狀態原本在「篩選」與「投影」
         // 各算一次、逾期判定裡再算一次。改以紀錄物件（參考相等）為鍵記憶化，結果不變。
-        var progress = MemoizedProgress(handlings, issueHandlings, lookup, unhandledSeverities);
+        var progress = MemoizedProgress(handlings, issueHandlings, lookup, unhandledSeverities, exclusion);
 
         // 逾期＝日層級 DueDate 過期且未結案，或任一問題層級「處理中」的 DueDate 過期
         // （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）
         bool IsOverdue(DailyAnalysisRecord r) =>
-            ComputeIsOverdue(r, handlings, issueHandlings, lookup, progress);
+            ComputeIsOverdue(r, handlings, issueHandlings, lookup, progress, exclusion);
 
         if (request.Statuses is { Count: > 0 })
         {
@@ -282,7 +289,7 @@ public class RecordListQueryService
         var visibleSeverities = ResolveVisibleSeverities();
 
         var aggregates = _aggregates.AggregateByHost(
-            from, to, hostIds, riskLevels, categories, request.EventId, request.Source, minSeverity, visibleSeverities);
+            _exclusions.Current(), from, to, hostIds, riskLevels, categories, request.EventId, request.Source, minSeverity, visibleSeverities);
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
 
         var groups = aggregates
@@ -329,7 +336,7 @@ public class RecordListQueryService
         var visibleSeverities = ResolveVisibleSeverities();
 
         var aggregates = _aggregates.AggregateByDate(
-            from, to, hostIds, riskLevels, categories, request.EventId, request.Source, minSeverity, visibleSeverities);
+            _exclusions.Current(), from, to, hostIds, riskLevels, categories, request.EventId, request.Source, minSeverity, visibleSeverities);
 
         var groups = aggregates
             .Select(a => new RecordDateGroupDto
@@ -377,11 +384,13 @@ public class RecordListQueryService
         var hostIds = scope.HostIds;
         var (from, to) = (scope.From, scope.To);
         var visibleSeverities = scope.VisibleSeverities;
+        // 靜音排除條件隨範圍解析取一次（scope.Exclusion），本方法全部聚合共用
+        var exclusion = scope.Exclusion;
 
         // 母體＝全站「日風險等級顯示」設定允許的主機日（**不是**畫面上的 chip——在依問題視角
         // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
         // 卡片數字才等於下鑽進來的筆數
-        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
+        var aggregates = _aggregates.Aggregate(exclusion, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
@@ -430,7 +439,7 @@ public class RecordListQueryService
         // 處理狀態的候選集只到「篩選後留下的問題 × 可見主機」這一層（不是問題 × 主機 × 天數），
         // 與 OccurrenceStatusResolver 共用批次D 已驗證過的骨架（IssueHandlingRollupQuery 同款）
         var issues = aggregates.Select(a => (a.Source, a.EventId)).ToList();
-        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
+        var occurrences = _aggregates.LatestOccurrences(exclusion, issues, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
         var resolved = _statusResolver.Resolve(occurrences, from, to);
 
         // 依 (Source,EventId) 分桶——完整簽章鍵可能帶 Linux 的 EventKey 尾段（5 段），
@@ -446,8 +455,9 @@ public class RecordListQueryService
         // 兩頁的「vs 基準」數字必然一致；只對本頁篩選後留下的問題查，不是整份表
         var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
         var baselines = IssueBaselineCalculator.Compute(
-            _aggregates.DailyHostCounts(issues, baselineFrom, baselineTo, hostIds));
-        var fleetFirstSeen = _aggregates.FirstSeenFor(issues);
+            _aggregates.DailyHostCounts(exclusion, issues, baselineFrom, baselineTo, hostIds));
+        // 靜音不排除：機房首見日是跨主機的機房級事實，與顯示決定無關
+        var fleetFirstSeen = _aggregates.FirstSeenFor(IssueExclusion.None, issues);
 
         // 規則白話說明：以篩選後留下的問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
         var rules = KnownIssueCatalog.ResolveRules(_rules);
@@ -509,11 +519,13 @@ public class RecordListQueryService
     /// 依問題視角的範圍解析（可見主機∩主機／群組篩選、期間、嚴重度可見性、日風險等級母體）。
     /// 公開給交辦單建單（<see cref="WorkOrderCommandService"/>）共用：建單的主機母體必須與
     /// 依問題視角該問題那一列的主機數同一口徑，所以兩邊只能經過這一份解析。
+    /// 範圍一併帶上本次取得的靜音排除條件（<see cref="IssueScope.Exclusion"/>）；交辦單路徑刻意不用它（見該處註解）。
     /// </summary>
     public IssueScope ResolveIssueScope(RecordSearchRequest request)
     {
         var (from, to) = ResolveDateRange(request);
-        return new IssueScope(ResolveVisibleHostIds(request), from, to, ResolveVisibleSeverities(), ResolveVisibleDayRiskLevels());
+        return new IssueScope(ResolveVisibleHostIds(request), from, to, ResolveVisibleSeverities(), ResolveVisibleDayRiskLevels(),
+            _exclusions.Current());
     }
 
     /// <summary>依問題視角的分頁結果沿用共用 Paginate，再附上去重主機總數</summary>
@@ -786,13 +798,14 @@ public class RecordListQueryService
         List<RecordHandling> dayHandlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
-        IReadOnlySet<IssueSeverity> unhandledSeverities)
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IssueExclusion exclusion)
     {
         var memo = new Dictionary<DailyAnalysisRecord, DayHandlingDerivation.DayProgress>();
         return record =>
         {
             if (memo.TryGetValue(record, out var cached)) return cached;
-            var derived = DeriveProgress(record, dayHandlings, issueHandlings, lookup, unhandledSeverities);
+            var derived = DeriveProgress(record, dayHandlings, issueHandlings, lookup, unhandledSeverities, exclusion);
             memo[record] = derived;
             return derived;
         };
@@ -804,14 +817,15 @@ public class RecordListQueryService
         List<RecordHandling> dayHandlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
-        IReadOnlySet<IssueSeverity> unhandledSeverities)
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IssueExclusion exclusion)
     {
         ProgressDerivationCount++;
 
         var dayStatus = FindHandling(dayHandlings, lookup, record)?.Status;
         var forDay = IssueHandlingsFor(record, issueHandlings, lookup);
 
-        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus, unhandledSeverities);
+        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus, unhandledSeverities, exclusion, record.Date);
     }
 
     /// <summary>
@@ -824,14 +838,15 @@ public class RecordListQueryService
         List<RecordHandling> handlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
-        Func<DailyAnalysisRecord, DayHandlingDerivation.DayProgress> progress)
+        Func<DailyAnalysisRecord, DayHandlingDerivation.DayProgress> progress,
+        IssueExclusion exclusion)
     {
         var handling = FindHandling(handlings, lookup, record);
         var dayOverdue = handling?.DueDate.HasValue == true &&
                          handling.DueDate.Value.Date < DateTime.Today &&
                          progress(record).IsUnresolved;
         return dayOverdue ||
-               DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(record, issueHandlings, lookup), DateTime.Today);
+               DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(record, issueHandlings, lookup), DateTime.Today, exclusion, record.Date);
     }
 
     /// <summary>該紀錄當日的問題層級標記（以現行主機名稱為鍵，同 HostNameOf 的合併語意）</summary>
@@ -873,7 +888,7 @@ public class RecordListQueryService
         // 母體＝全站「日風險等級顯示」設定允許的主機日（**不是**畫面上的 chip——在依問題視角
         // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
         // 卡片數字才等於下鑽進來的筆數
-        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
+        var aggregates = _aggregates.Aggregate(_exclusions.Current(), from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
@@ -1069,4 +1084,5 @@ public sealed record IssueScope(
     DateTime From,
     DateTime To,
     IReadOnlySet<IssueSeverity>? VisibleSeverities,
-    IReadOnlySet<string>? DayRiskLevels);
+    IReadOnlySet<string>? DayRiskLevels,
+    IssueExclusion Exclusion);

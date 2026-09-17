@@ -77,7 +77,7 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         // 主機 3 在第 2 天出現 DISK 153
         Add(3, "Host3", d0.AddDays(2), Issue("DISK", 153, count: 4));
 
-        var result = Query().AggregateByCategory(d0, d0.AddDays(5), null, null);
+        var result = Query().AggregateByCategory(IssueExclusion.None, d0, d0.AddDays(5), null, null);
 
         var storage = Assert.Single(result);
         Assert.Equal(IssueCategory.Storage.ToString(), storage.Category);
@@ -107,7 +107,7 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         Add(1, "Host1", d0.AddDays(1),
             Issue("disk", 153, count: 3, severity: IssueSeverity.High));
 
-        var result = Query().AggregateByCategory(d0, d0.AddDays(5), null, null);
+        var result = Query().AggregateByCategory(IssueExclusion.None, d0, d0.AddDays(5), null, null);
 
         var storage = Assert.Single(result);
         Assert.Equal(IssueCategory.Storage.ToString(), storage.Category);
@@ -135,7 +135,7 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         Add(2, "Host2", d0, Issue("disk", 154, severity: IssueSeverity.Low));
 
         var visibleSeverities = new HashSet<IssueSeverity> { IssueSeverity.High };
-        var result = Query().AggregateByCategory(d0, d0, null, visibleSeverities);
+        var result = Query().AggregateByCategory(IssueExclusion.None, d0, d0, null, visibleSeverities);
 
         var storage = Assert.Single(result);
         Assert.Equal(1, storage.IssueTypeCount);
@@ -197,10 +197,10 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         var query = Query();
         var visibleDayRisks = new HashSet<string> { RiskLevels.High, RiskLevels.Medium };
 
-        var card = query.AggregateByCategory(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks)
+        var card = query.AggregateByCategory(IssueExclusion.None, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks)
             .Single(c => c.Category == IssueCategory.Other.ToString());
 
-        var listed = query.Aggregate(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks)
+        var listed = query.Aggregate(IssueExclusion.None, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks)
             .Where(a => a.Category == IssueCategory.Other.ToString())
             .ToList();
 
@@ -224,8 +224,8 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         var visibleDayRisks = new HashSet<string> { RiskLevels.High, RiskLevels.Medium };
         var issues = new[] { ("noisy", 111) };
 
-        var occ = query.LatestOccurrences(issues, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks);
-        var listed = query.Aggregate(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks).Single();
+        var occ = query.LatestOccurrences(IssueExclusion.None, issues, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks);
+        var listed = query.Aggregate(IssueExclusion.None, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks).Single();
 
         Assert.Equal(listed.HostCount, occ.Select(o => o.HostId).Distinct().Count());
         Assert.Equal(1, listed.HostCount);
@@ -248,8 +248,8 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         var from = d0.AddDays(-1);
         var to = d0.AddDays(2);
 
-        var cards = query.AggregateByCategory(from, to, null, null, null);
-        var listed = query.Aggregate(from, to, null);
+        var cards = query.AggregateByCategory(IssueExclusion.None, from, to, null, null, null);
+        var listed = query.Aggregate(IssueExclusion.None, from, to, null);
 
         // 只會出現在一張卡上，且與依問題視角的歸類一致
         var canonical = listed.Single(a => a.Source.Equals("auth", StringComparison.OrdinalIgnoreCase)).Category;

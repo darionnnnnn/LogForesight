@@ -21,18 +21,21 @@ public class IssueTodoQuery
 
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
+    private readonly IIssueExclusionSource _exclusions;
     private readonly ActionableSnapshotCache? _cache;
 
     public IssueTodoQuery(IIssueAggregateQuery aggregates, OccurrenceStatusResolver statusResolver,
-        ActionableSnapshotCache? cache = null)
+        IIssueExclusionSource exclusions, ActionableSnapshotCache? cache = null)
     {
         _aggregates = aggregates;
         _statusResolver = statusResolver;
+        _exclusions = exclusions;
         _cache = cache;
     }
 
+    /// <summary>單次彙總：本次呼叫取一次靜音排除條件（靜音問題不進待辦）。</summary>
     public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, IReadOnlySet<string>? riskLevels = null) =>
-        Aggregate(ResolveActionable(from, to, visibleHostIds, riskLevels));
+        Aggregate(ResolveActionable(_exclusions.Current(), from, to, visibleHostIds, riskLevels, null));
 
     /// <summary>
     /// 解析一次、彙總多次（回饋十九輪批次I 體檢修正）：儀表板的全站 KPI 與逐群組的
@@ -42,17 +45,19 @@ public class IssueTodoQuery
     /// <c>IssueHandlingRollupQuery</c> 註解裡點名要避免的那種 N+1。呼叫端改為：
     /// 對全站可見範圍解析一次，再用 <see cref="Aggregate"/> 對各群組的主機子集各自彙總。
     /// </summary>
+    /// <param name="exclusion">呼叫端同一次請求取得的靜音排除條件（儀表板與同頁其他查詢共用一份）</param>
     public List<ResolvedOccurrence> ResolveActionable(
+        IssueExclusion exclusion,
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
-        IReadOnlySet<string>? riskLevels = null,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+        IReadOnlySet<string>? riskLevels,
+        IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
         // 跨請求快取（回饋三十六輪批次B）：這支是問題彙總家族唯一沒有查詢層快取的，
         // 啟動期版本戳推進打掉 SummaryCache 後會在幾秒內被整套重算——理由詳見 ActionableSnapshotCache
         var cacheKey = _cache == null
             ? null
             : ActionableSnapshotCache.KeyOf(from, to, visibleHostIds, riskLevels,
-                visibleSeverities?.Select(s => s.ToString()).ToList());
+                visibleSeverities?.Select(s => s.ToString()).ToList(), exclusion.CacheToken);
         if (cacheKey != null)
         {
             var hit = _cache!.TryGet(cacheKey);
@@ -60,7 +65,7 @@ public class IssueTodoQuery
         }
 
         var occurrences = _aggregates.ActionableOccurrences(
-            from, to, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
+            exclusion, from, to, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
         var resolved = occurrences.Count == 0
             ? new List<ResolvedOccurrence>()
             : _statusResolver.Resolve(occurrences, from, to);

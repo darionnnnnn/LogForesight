@@ -75,7 +75,8 @@ internal static class HostVisibilityResolver
 
         var to = DateTime.Today;
         var from = to.AddDays(-(Math.Max(retentionDays, 1) - 1));
-        var hostIds = issueAggregates.HostIdsFor(owned, from, to);
+        // 靜音不排除：授權範圍不隨顯示決定變動——問題負責人對靜音中的問題仍要看得到主機，才能判斷何時解除
+        var hostIds = issueAggregates.HostIdsFor(IssueExclusion.None, owned, from, to);
         if (hostIds.Count == 0) return hostIds;
 
         // 停用主機排除（回饋十八輪體檢輪修正）：與 GetOwnedHostIds／GetGroupVisibleHostIds 同一條規則

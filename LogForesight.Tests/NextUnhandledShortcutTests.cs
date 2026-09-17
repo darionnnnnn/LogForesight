@@ -46,7 +46,7 @@ public class NextUnhandledShortcutTests : IDisposable
             new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
             new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),
             new UserDisplayNameService(_settingsStore),
-            _cache);
+            _cache, new FixedIssueExclusionSource(IssueExclusion.None));
 
     public void Dispose() => _fixture.Dispose();
 

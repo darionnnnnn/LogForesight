@@ -11,21 +11,31 @@ public class HandlingProgressCalculator
     private readonly IRecordHandlingStore _store;
     private readonly IIssueCaseStore _cases;
     private readonly ISystemSettingsStore _settings;
+    private readonly IIssueExclusionSource _exclusions;
 
     public HandlingProgressCalculator(
-        IIssueHandlingStore issueStore, IRecordHandlingStore store, IIssueCaseStore cases, ISystemSettingsStore settings)
+        IIssueHandlingStore issueStore, IRecordHandlingStore store, IIssueCaseStore cases, ISystemSettingsStore settings,
+        IIssueExclusionSource exclusions)
     {
         _issueStore = issueStore;
         _store = store;
         _cases = cases;
         _settings = settings;
+        _exclusions = exclusions;
     }
 
-    public DayHandlingDerivation.DayProgress ComputeProgress(WebHost host, DateTime date, DailyAnalysisRecord record)
+    /// <summary>單筆推導：本次呼叫取一次靜音排除條件。</summary>
+    public DayHandlingDerivation.DayProgress ComputeProgress(WebHost host, DateTime date, DailyAnalysisRecord record) =>
+        ComputeProgress(_exclusions.Current(), host, date, record);
+
+    /// <summary>呼叫端已在同一次請求取得靜音排除條件時用這個（逐筆迴圈不要每筆各取一次）。</summary>
+    public DayHandlingDerivation.DayProgress ComputeProgress(
+        IssueExclusion exclusion, WebHost host, DateTime date, DailyAnalysisRecord record)
     {
         var handlings = _issueStore.GetForDay(host.HostName, date);
         var dayLevel = _store.Get(host.HostName, date)?.Status;
-        return DayHandlingDerivation.Derive(record.TopIssues, handlings, dayLevel, _settings.Get().ParseUnhandledSeverities());
+        return DayHandlingDerivation.Derive(
+            record.TopIssues, handlings, dayLevel, _settings.Get().ParseUnhandledSeverities(), exclusion, date);
     }
 
     /// <summary>record 可能不存在（分析尚未跑過），沒有紀錄就沒有推導狀態可算</summary>

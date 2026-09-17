@@ -383,11 +383,13 @@ public class WorkOrderBoardService
             throw DomainException.Validation("起日不可晚於迄日。");
 
         var scope = _query.ResolveIssueScope(new RecordSearchRequest { From = periodFrom, To = periodTo });
-        var issues = _aggregates.Aggregate(scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels)
+        // 靜音不排除（不用 scope.Exclusion）：派工決策以紀錄日判定靜音，已在派工脈絡處理
+        var issues = _aggregates.Aggregate(IssueExclusion.None, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels)
             .Select(a => (a.Source, a.EventId))
             .ToList();
+        // 靜音不排除：理由同上
         var occurrences = _aggregates.LatestOccurrences(
-            issues, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
+            IssueExclusion.None, issues, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
         if (occurrences.Count > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>());
 
         var openKeys = _cases.GetOpenKeys().ToHashSet();

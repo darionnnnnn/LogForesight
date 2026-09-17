@@ -55,10 +55,10 @@ public class ReportPerformanceContractTests : IDisposable
         Add(a.HostId, "A", previousFrom, RiskLevels.Low, Issue("net", 9));
 
         var query = Query();
-        var expectedCurrent = query.AggregateReportKpi(from, to, null, null, null);
-        var expectedPrevious = query.AggregateReportKpi(previousFrom, previousTo, null, null, null);
+        var expectedCurrent = query.AggregateReportKpi(IssueExclusion.None, from, to, null, null, null);
+        var expectedPrevious = query.AggregateReportKpi(IssueExclusion.None, previousFrom, previousTo, null, null, null);
 
-        var (current, previous) = query.AggregateReportKpiPair(from, to, previousFrom, previousTo, null, null, null);
+        var (current, previous) = query.AggregateReportKpiPair(IssueExclusion.None, from, to, previousFrom, previousTo, null, null, null);
 
         Assert.Equal(expectedCurrent, current);
         Assert.Equal(expectedPrevious, previous);
@@ -79,10 +79,10 @@ public class ReportPerformanceContractTests : IDisposable
         Add(a.HostId, "A", new DateTime(2026, 2, 1), RiskLevels.High, Issue("disk", 7));   // 兩期之間
 
         var query = Query();
-        var expectedCurrent = query.AggregateReportKpi(from, to, null, null, null);
-        var expectedPrevious = query.AggregateReportKpi(previousFrom, previousTo, null, null, null);
+        var expectedCurrent = query.AggregateReportKpi(IssueExclusion.None, from, to, null, null, null);
+        var expectedPrevious = query.AggregateReportKpi(IssueExclusion.None, previousFrom, previousTo, null, null, null);
 
-        var (current, previous) = query.AggregateReportKpiPair(from, to, previousFrom, previousTo, null, null, null);
+        var (current, previous) = query.AggregateReportKpiPair(IssueExclusion.None, from, to, previousFrom, previousTo, null, null, null);
 
         Assert.Equal(expectedCurrent, current);
         Assert.Equal(expectedPrevious, previous);
@@ -106,7 +106,7 @@ public class ReportPerformanceContractTests : IDisposable
         Add(merged.HostId, "A", to, RiskLevels.High, Issue("disk", 7));
         Add(survivor.HostId, "B", to.AddDays(-1), RiskLevels.High, Issue("disk", 7));
 
-        var (current, _) = Query().AggregateReportKpiPair(from, to, previousFrom, previousTo, null, null, null);
+        var (current, _) = Query().AggregateReportKpiPair(IssueExclusion.None, from, to, previousFrom, previousTo, null, null, null);
 
         Assert.Equal(1, current.AffectedHosts);   // 不是 2
         Assert.Equal(2, current.HighRiskDays);    // 主機日數不受合併影響
@@ -121,7 +121,7 @@ public class ReportPerformanceContractTests : IDisposable
         Add(a.HostId, "A", to, RiskLevels.High, Issue("disk", 7));
 
         var (current, previous) = Query().AggregateReportKpiPair(
-            to.AddDays(-6), to, to.AddDays(-13), to.AddDays(-7), Array.Empty<long>(), null, null);
+            IssueExclusion.None, to.AddDays(-6), to, to.AddDays(-13), to.AddDays(-7), Array.Empty<long>(), null, null);
 
         Assert.Equal(new ReportKpiAggregate(0, 0, 0, 0, 0), current);
         Assert.Equal(new ReportKpiAggregate(0, 0, 0, 0, 0), previous);
@@ -165,11 +165,11 @@ public class ReportPerformanceContractTests : IDisposable
             : null;
 
         var query = Query();
-        var expectedCurrent = query.AggregateReportKpi(from, to, hostIds, riskLevels, severities);
-        var expectedPrevious = query.AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, severities);
+        var expectedCurrent = query.AggregateReportKpi(IssueExclusion.None, from, to, hostIds, riskLevels, severities);
+        var expectedPrevious = query.AggregateReportKpi(IssueExclusion.None, previousFrom, previousTo, hostIds, riskLevels, severities);
 
         var (current, previous) = query.AggregateReportKpiPair(
-            from, to, previousFrom, previousTo, hostIds, riskLevels, severities);
+            IssueExclusion.None, from, to, previousFrom, previousTo, hostIds, riskLevels, severities);
 
         Assert.Equal(expectedCurrent, current);
         Assert.Equal(expectedPrevious, previous);
@@ -178,7 +178,7 @@ public class ReportPerformanceContractTests : IDisposable
     // ── F4：問題排行快取 ────────────────────────────────────────────────────
 
     private IssueRankingBuilder BuilderWith(FakeIssueAggregateQuery aggregates, IssueRankingCache? cache) =>
-        new(aggregates, _hosts, cache: cache);
+        new(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None), cache: cache);
 
     /// <summary>
     /// 快取要在 Build 這一層真的生效——只測 Cache 物件本身等於在測一個字典加 TTL，
@@ -304,7 +304,7 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
         var cache = new IssueRankingCache(() => now);
-        var key = IssueRankingCache.KeyOf(new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), new long[] { 1, 2 }, 2);
+        var key = IssueRankingCache.KeyOf(new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), new long[] { 1, 2 }, 2, IssueExclusion.None.CacheToken);
 
         cache.Set(key, Ranking("disk"));
 
@@ -323,7 +323,7 @@ public class ReportPerformanceContractTests : IDisposable
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
         var clock = now;
         var cache = new IssueRankingCache(() => clock);
-        var key = IssueRankingCache.KeyOf(new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), null, 5);
+        var key = IssueRankingCache.KeyOf(new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), null, 5, IssueExclusion.None.CacheToken);
 
         cache.Set(key, Ranking("disk"));
         clock = now.AddSeconds(IssueRankingCache.TtlSeconds - 1);
@@ -340,16 +340,16 @@ public class ReportPerformanceContractTests : IDisposable
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
 
-        var keyA = IssueRankingCache.KeyOf(from, to, new long[] { 1, 2 }, 2);
-        var keyB = IssueRankingCache.KeyOf(from, to, new long[] { 1 }, 2);
-        var keyUnlimited = IssueRankingCache.KeyOf(from, to, null, 2);
+        var keyA = IssueRankingCache.KeyOf(from, to, new long[] { 1, 2 }, 2, IssueExclusion.None.CacheToken);
+        var keyB = IssueRankingCache.KeyOf(from, to, new long[] { 1 }, 2, IssueExclusion.None.CacheToken);
+        var keyUnlimited = IssueRankingCache.KeyOf(from, to, null, 2, IssueExclusion.None.CacheToken);
 
         Assert.NotEqual(keyA, keyB);
         Assert.NotEqual(keyA, keyUnlimited);
         Assert.NotEqual(keyB, keyUnlimited);
 
         // 同一集合不同順序視為同一鍵
-        Assert.Equal(keyA, IssueRankingCache.KeyOf(from, to, new long[] { 2, 1 }, 2));
+        Assert.Equal(keyA, IssueRankingCache.KeyOf(from, to, new long[] { 2, 1 }, 2, IssueExclusion.None.CacheToken));
     }
 
     [Fact]
@@ -357,10 +357,10 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
-        var baseKey = IssueRankingCache.KeyOf(from, to, null, 2);
+        var baseKey = IssueRankingCache.KeyOf(from, to, null, 2, IssueExclusion.None.CacheToken);
 
-        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from, to.AddDays(-1), null, 2));
-        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from.AddDays(-1), to, null, 2));
-        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from, to, null, 3));
+        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from, to.AddDays(-1), null, 2, IssueExclusion.None.CacheToken));
+        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from.AddDays(-1), to, null, 2, IssueExclusion.None.CacheToken));
+        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from, to, null, 3, IssueExclusion.None.CacheToken));
     }
 }

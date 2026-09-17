@@ -53,7 +53,7 @@ public class EscalatedStatusTests
 
         var progress = LogForesight.Web.Services.DayHandlingDerivation.Derive(
             new[] { issue }, new[] { handling }, dayLevelStatus: null,
-            unhandledSeverities: new HashSet<IssueSeverity> { IssueSeverity.High });
+            unhandledSeverities: new HashSet<IssueSeverity> { IssueSeverity.High }, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(HandlingStatuses.InProgress, progress.DayStatus);
         Assert.True(progress.IsUnresolved);

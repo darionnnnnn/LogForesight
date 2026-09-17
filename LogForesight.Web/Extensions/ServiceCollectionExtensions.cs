@@ -294,6 +294,11 @@ public static class ServiceCollectionExtensions
         // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
         // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
         services.AddSingleton<DataVersionStamp>();
+        // 讀取側靜音排除條件（回饋第 47 輪批次 B-2a）：以 (版本戳, 今天) 快取一份，全站共用（與使用者無關）
+        services.AddSingleton<IIssueExclusionSource>(sp => new IssueExclusionProvider(
+            sp.GetRequiredService<IIssueOwnerStore>(),
+            sp.GetRequiredService<DataVersionStamp>(),
+            () => DateTime.Today));
         services.AddSingleton<SummaryCache>();
         // 「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）：同樣是 Singleton
         // ——它要吸收的正是「每次進詳情頁、每次批次儲存後」的重複詢問，跨請求才有意義。

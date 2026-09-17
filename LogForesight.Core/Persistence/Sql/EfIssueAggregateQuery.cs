@@ -79,7 +79,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<IssueAggregate> Aggregate(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null)
     {
@@ -100,6 +100,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 讓它們以 0001-01-01 混進來會把 FirstSeen 拉到西元 1 年。
             // 回填未完成期間數字會偏低，由呼叫端誠實標示「統計中」（P4 的既定取捨）
             .Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        q = IssueExclusionSql.Apply(q, exclusion);
 
         // SiteHidden 模式（RecordRepository.ApplySeverityVisibility 的 SQL 端等價物）：
         // 這裡繞過 RecordRepository 的單一咽喉，隱藏的嚴重度要在這裡自己擋掉，
@@ -144,10 +145,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 主機數／主機日數／相異簽章各補一趟輕量查詢：主機數與主機日數需要先把 host_id
         // 解析成存活主機再去重（無法在 SQL 端表達合併鏈的 CASE 映射），相異簽章是字串集合，
         // 三者都無法併進同一句 GROUP BY，而且回傳量都遠小於原始列數
-        var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
-        var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
-        var signatures = DistinctSignatures(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
-        var latestCategories = LatestCategories(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var hostCounts = SurvivingHostCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
+        var hostDays = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
+        var signatures = DistinctSignatures(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var latestCategories = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
 
         var result = grouped.Select(g =>
         {
@@ -200,7 +201,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 就用原始 id 當自己的存活 id——不強求資料乾淨（同 <see cref="HostIdentityResolver"/> 慣例）。</summary>
     private static long Surviving(HostAliasIndex index, long hostId) => index.Surviving(hostId)?.HostId ?? hostId;
 
-    public HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
+    public HashSet<long> HostIdsFor(IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
     {
         if (issues.Count == 0) return new HashSet<long>();
 
@@ -218,7 +219,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // SQL 端先用 EventId 粗篩（高選擇度、可下推，Source 不分大小寫的精確比對留在記憶體），
         // 拉回的是相異三元組，數量遠小於原始列數
-        var rows = ctx.TopIssues.AsNoTracking()
+        var rows = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.HostId != 0 && eventIds.Contains(x.EventId))
             .Select(x => new { x.SourceName, x.EventId, x.HostId })
             .Distinct()
@@ -237,7 +238,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds)
     {
         var empty = new Dictionary<(string, int), HashSet<long>>();
@@ -254,7 +255,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         using var ctx = _contextFactory();
 
-        var q = ctx.TopIssues.AsNoTracking()
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.HostId != 0 && eventIds.Contains(x.EventId));
 
         if (hostIds != null)
@@ -282,7 +283,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<HostIssueOccurrence> LatestOccurrences(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null)
     {
@@ -300,7 +301,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         using var ctx = _contextFactory();
 
-        var q = ctx.TopIssues.AsNoTracking()
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
 
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
@@ -354,7 +355,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<IssueDailyHostCount> DailyHostCounts(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds)
     {
         if (issues.Count == 0) return new List<IssueDailyHostCount>();
@@ -370,7 +371,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         using var ctx = _contextFactory();
 
-        var q = ctx.TopIssues.AsNoTracking()
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
 
         if (hostIds != null)
@@ -411,8 +412,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
-        IReadOnlyCollection<(string Source, int EventId)> issues)
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues)
     {
+        // 機房首見日是跨主機、跨時間的機房級事實（lf_issue_first_seen，不讀 lf_top_issues），
+        // 靜音排除不作用在這裡；呼叫端一律明寫「不排除」
+        _ = exclusion;
         if (issues.Count == 0) return new Dictionary<(string, int), DateTime>();
 
         var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
@@ -431,7 +435,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<HostIssueOccurrence> ActionableOccurrences(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null)
     {
@@ -458,7 +462,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
 
         var q =
-            from ti in ctx.TopIssues.AsNoTracking()
+            from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
             join dr in recordsQuery on ti.RecordId equals dr.RecordId
             select ti;
 
@@ -521,10 +525,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     private sealed record DayHandlingRaw(
         long HostId, DateTime RecordDate, string? DayLevelStatus, long? DayHandlerId,
         int Total, int Closed, bool AnyInProgress, bool HasCaseHandler,
-        DateTime? DayDueDate, bool AnyOverdueIssue);
+        DateTime? DayDueDate, bool AnyOverdueIssue, int MutedCounted);
 
     private List<DayHandlingRaw> GetDayHandlingRaw(
-        LfDbContext ctx, DateTime f, DateTime t,
+        LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
         HashSet<long>? expandedHostIds, IReadOnlyCollection<long> excludedHostIds,
         List<int> unhandledRanks, DateTime todayForOverdue,
         IReadOnlySet<string>? riskLevels = null)
@@ -578,12 +582,23 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
 
         // 2. 「嚴重度落在 unhandledRanks 的問題數」以 SQL 端 GROUP BY RecordId 直接算出
-        var unhandledCounts = (from ti in ctx.TopIssues.AsNoTracking()
+        //    靜音列不計入（IssueExclusionSql.Apply）；另以 OnlyMuted 算「原本會被計入的靜音列」數，
+        //    供日狀態階梯判定「全部都靜音＝已有結論」——沒有任何區間時不查
+        var unhandledCounts = (from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
                                join dr in recordsQuery on ti.RecordId equals dr.RecordId
                                where unhandledRanks.Contains(ti.SeverityRank)
                                group ti by ti.RecordId into g
                                select new { RecordId = g.Key, Count = g.Count() })
                               .ToDictionary(x => x.RecordId, x => x.Count);
+
+        var mutedCounts = exclusion.IsEmpty
+            ? new Dictionary<long, int>()
+            : (from ti in IssueExclusionSql.OnlyMuted(ctx.TopIssues.AsNoTracking(), exclusion)
+               join dr in recordsQuery on ti.RecordId equals dr.RecordId
+               where unhandledRanks.Contains(ti.SeverityRank)
+               group ti by ti.RecordId into g
+               select new { RecordId = g.Key, Count = g.Count() })
+              .ToDictionary(x => x.RecordId, x => x.Count);
 
         // 3. 處理狀態列與案件列：只取這批主機日／主機對應的那些
         var hostNameKeys = hostDays.Select(x => x.HostNameKey).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -672,6 +687,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
             int total;
             int closed = 0;
+            int mutedCounted = 0;
             bool anyInProgress = false;
             bool anyCaseHandler = false;
             bool anyOverdueIssue = false;
@@ -679,6 +695,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             if (dayHandlings == null && hostOpenCases == null)
             {
                 total = unhandledCounts.GetValueOrDefault(hd.RecordId, 0);
+                mutedCounted = mutedCounts.GetValueOrDefault(hd.RecordId, 0);
             }
             else
             {
@@ -691,6 +708,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                         var ih = dayHandlings != null && dayHandlings.TryGetValue(issueKey, out var found) ? found : null;
                         bool hasHandling = ih != null;
                         bool isCounted = unhandledRanksSet.Contains(ti.SeverityRank) || hasHandling;
+
+                        // 靜音列（IssueExclusion.IsMuted，與 SQL 條件同一條規則）：不算 total／closed／
+                        // 處理中／逾期／案件處理人，只記「原本會被計入」的數量
+                        if (exclusion.IsMuted(ti.SourceName, ti.EventId, hd.RecordDate))
+                        {
+                            if (isCounted) mutedCounted++;
+                            continue;
+                        }
 
                         if (isCounted)
                         {
@@ -735,7 +760,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 anyInProgress,
                 anyCaseHandler,
                 hd.DayDueDate,
-                anyOverdueIssue
+                anyOverdueIssue,
+                mutedCounted
             ));
         }
 
@@ -747,7 +773,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<DayHandlingProjection> DeriveDayHandling(
-        DateTime from, DateTime to,
+        IssueExclusion exclusion, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds)
@@ -767,14 +793,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
         }
 
-        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, DateTime.MinValue);
+        var projected = GetDayHandlingRaw(ctx, exclusion, f, t, expandedHostIds, excludedHostIds, unhandledRanks, DateTime.MinValue);
 
         var result = projected.Select(x =>
         {
-            string status;
-            if (x.Total > 0 && x.Closed == x.Total) status = HandlingStatuses.Resolved;
-            else if (x.Closed > 0 || x.AnyInProgress) status = HandlingStatuses.InProgress;
-            else status = string.IsNullOrEmpty(x.DayLevelStatus) ? HandlingStatuses.Open : x.DayLevelStatus;
+            var status = DayStatusRule.Resolve(x.Total, x.Closed, x.AnyInProgress, x.MutedCounted, x.DayLevelStatus);
 
             return new DayHandlingProjection(
                 Surviving(aliasIndex, x.HostId),
@@ -792,7 +815,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public DayTodoAggregate AggregateDayTodo(
-        DateTime from, DateTime to,
+        IssueExclusion exclusion, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds,
@@ -814,7 +837,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
         }
 
-        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date, riskLevels);
+        var projected = GetDayHandlingRaw(ctx, exclusion, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date, riskLevels);
 
         int totalCount = 0;
         int openCount = 0;
@@ -826,10 +849,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         {
             totalCount++;
 
-            string status;
-            if (x.Total > 0 && x.Closed == x.Total) status = HandlingStatuses.Resolved;
-            else if (x.Closed > 0 || x.AnyInProgress) status = HandlingStatuses.InProgress;
-            else status = string.IsNullOrEmpty(x.DayLevelStatus) ? HandlingStatuses.Open : x.DayLevelStatus;
+            var status = DayStatusRule.Resolve(x.Total, x.Closed, x.AnyInProgress, x.MutedCounted, x.DayLevelStatus);
 
             var external = HandlingStatuses.ExternalOf(status);
             if (external == HandlingStatuses.Open) openCount++;
@@ -852,7 +872,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return new DayTodoAggregate(totalCount, openCount, inProgressCount, resolvedCount, overdueCount);
     }
 
-    public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    public ReportKpiAggregate AggregateReportKpi(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
         if (hostIds != null && hostIds.Count == 0) return new ReportKpiAggregate(0, 0, 0, 0, 0);
 
@@ -885,7 +905,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Distinct()
             .Count();
 
-        var qIssues = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
         if (hostIds != null)
         {
             var expanded = ExpandToAliasIds(aliasIndex, hostIds);
@@ -919,7 +939,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 由等值測試釘住。
     /// </summary>
     public (ReportKpiAggregate Current, ReportKpiAggregate Previous) AggregateReportKpiPair(
-        DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
+        IssueExclusion exclusion, DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
         if (hostIds != null && hostIds.Count == 0)
@@ -964,7 +984,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             if (expanded != null) qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
             if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
 
-            var qIssues = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
+            var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
             if (expanded != null) qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
             if (riskLevels != null)
             {
@@ -986,8 +1006,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return (current, previous);
     }
 
-    public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    public List<TrendAggregate> AggregateReportTrend(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
+        // 趨勢三欄（高／中風險日數、錯誤數）全部來自 lf_daily_records 的日層級欄位，不讀問題列，
+        // 靜音排除在這裡沒有作用對象（不重算日風險等級）；參數保留是介面契約（呼叫端明寫要不要套）
+        _ = exclusion;
         if (hostIds != null && hostIds.Count == 0) return new List<TrendAggregate>();
 
         var sw = Stopwatch.StartNew();
@@ -1023,7 +1046,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return trend;
     }
 
-    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
     {
         if (hostIds != null && hostIds.Count == 0) return new List<PrtgRuleHitAggregate>();
 
@@ -1035,7 +1058,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
 
         // SQL 端過濾來源與日期範圍（不得先撈全表）
-        var q = ctx.TopIssues.AsNoTracking()
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
             // 不用 ToUpper：寫入端固定是 PrtgFindingMapper.PrtgLogName，而 UPPER
             // 會讓 SQL Server 端的索引無法 seek
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.LogName == PrtgFindingMapper.PrtgLogName);
@@ -1092,7 +1115,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Distinct();
 
     public Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
-        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive)
+        IssueExclusion exclusion, IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive)
     {
         var result = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);
         var keys = eventKeys.Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
@@ -1105,7 +1128,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
         foreach (var batch in keys.Chunk(PrtgHitDateBatchSize))
         {
-            var rows = BuildPrtgHitDatesQuery(ctx.TopIssues.AsNoTracking(), batch, f, t).ToList();
+            var rows = BuildPrtgHitDatesQuery(IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion), batch, f, t).ToList();
 
             foreach (var row in rows)
             {
@@ -1137,7 +1160,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<CategoryAggregate> AggregateByCategory(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
         IReadOnlySet<string>? riskLevels = null)
     {
         if (hostIds != null && hostIds.Count == 0) return new List<CategoryAggregate>();
@@ -1149,7 +1172,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         using var ctx = _contextFactory();
 
-        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
         HashSet<long>? expandedHostIds = null;
         if (hostIds != null)
@@ -1189,7 +1212,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         //
         // 收斂方式必須與 Aggregate（依問題視角）**完全相同**：取該簽章最近一天的類別。
         // 兩邊用不同的收斂規則，等於卡片與下鑽各講一套。
-        var canonicalCategory = LatestCategories(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var canonicalCategory = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
 
         var result = riskItems
             .Select(x => new
@@ -1256,8 +1279,13 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    /// <summary>
+    /// 靜音排除的作用範圍：高／中／低風險主機數、關聯主機數、主機數來自 <c>lf_daily_records</c> 的日層級欄位，
+    /// **不重算**；排除只作用在問題列相關的部分——類別／EventId／Source／嚴重度篩選的 exists 子查詢
+    /// （<see cref="ApplyIssueExistsFilters"/>，靜音列撐不起「這天有符合的問題」）與風險類型清單（issuesQuery）。
+    /// </summary>
     public List<DateRiskAggregate> AggregateByDate(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null)
@@ -1273,7 +1301,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
 
         var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
-        var issuesQuery = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var issuesQuery = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
         HashSet<long>? expanded = null;
         if (hostIds != null)
@@ -1283,7 +1311,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             issuesQuery = issuesQuery.Where(x => expanded.Contains(x.HostId));
         }
         if (riskLevels != null) recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
-        recordsQuery = ApplyIssueExistsFilters(ctx, recordsQuery, categories, eventId, source, minSeverity);
+        recordsQuery = ApplyIssueExistsFilters(ctx, exclusion, recordsQuery, categories, eventId, source, minSeverity);
 
         // SiteHidden 模式：只影響風險類型 chips（issuesQuery），不動 recordsQuery——
         // 同 RecordRepository.ApplySeverityVisibility 只砍 TopIssues、不排除整筆紀錄／不動
@@ -1331,8 +1359,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    /// <summary>
+    /// 靜音排除的作用範圍同 <see cref="AggregateByDate"/>：風險日數、關聯日數、最新一天的風險等級與標題
+    /// 來自 <c>lf_daily_records</c>，不重算；排除只作用在問題篩選的 exists 子查詢與類別清單。
+    /// </summary>
     public List<HostRiskAggregate> AggregateByHost(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null)
@@ -1348,7 +1380,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         using var ctx = _contextFactory();
 
         var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
-        var issuesQuery = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var issuesQuery = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
         HashSet<long>? expanded = null;
         if (hostIds != null)
@@ -1358,7 +1390,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             issuesQuery = issuesQuery.Where(x => expanded.Contains(x.HostId));
         }
         if (riskLevels != null) recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
-        recordsQuery = ApplyIssueExistsFilters(ctx, recordsQuery, categories, eventId, source, minSeverity);
+        recordsQuery = ApplyIssueExistsFilters(ctx, exclusion, recordsQuery, categories, eventId, source, minSeverity);
         if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         // 1. 主聚合在 SQL 端：依 HostId 分組算天數與最新日期，拉回量受限於主機數而非紀錄數
@@ -1456,28 +1488,30 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 但條件邏輯逐位相同。
     /// </summary>
     private static IQueryable<DailyRecordRow> ApplyIssueExistsFilters(
-        LfDbContext ctx, IQueryable<DailyRecordRow> q,
+        LfDbContext ctx, IssueExclusion exclusion, IQueryable<DailyRecordRow> q,
         IReadOnlySet<IssueCategory>? categories, int? eventId, string? source, IssueSeverity? minSeverity)
     {
+        // exists 子查詢只看非靜音列：「這一天有沒有符合篩選的問題」不該被靜音問題撐起來
+        var topIssues = IssueExclusionSql.Apply(ctx.TopIssues, exclusion);
         if (categories is { Count: > 0 })
         {
             var names = categories.Select(c => c.ToString()).ToList();
-            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && names.Contains(t.Category)));
+            q = q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && names.Contains(t.Category)));
         }
         if (eventId.HasValue)
         {
             var id = eventId.Value;
-            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.EventId == id));
+            q = q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && t.EventId == id));
         }
         if (!string.IsNullOrWhiteSpace(source))
         {
             var src = source.ToUpperInvariant();
-            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == src));
+            q = q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == src));
         }
         if (minSeverity.HasValue)
         {
             var rank = (int)minSeverity.Value;
-            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SeverityRank >= rank));
+            q = q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && t.SeverityRank >= rank));
         }
         return q;
     }
@@ -1527,10 +1561,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
     /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
     private static Dictionary<(string, int), int> SurvivingHostCounts(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
+        LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
         HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)
     {
-        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
@@ -1547,10 +1581,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     /// <summary>主機日數＝相異 (存活主機, record_date) 組合數（同一台主機多天各算一次）</summary>
     private static Dictionary<(string, int), int> SurvivingHostDayCounts(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
+        LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
         HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)
     {
-        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
@@ -1576,10 +1610,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 遠小於逐主機日的列數，與其他三趟輕量查詢同一個作法。
     /// </summary>
     private static Dictionary<(string, int), string> LatestCategories(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<int>? visibleRanks = null, IReadOnlySet<string>? riskLevels = null)
     {
-        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {
@@ -1609,10 +1643,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 沒有它就答不出「這個問題是不是已經有結論」——§10.6 的前提。
     /// </summary>
     private static Dictionary<(string, int), IReadOnlyList<string>> DistinctSignatures(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<int>? visibleRanks = null, IReadOnlySet<string>? riskLevels = null)
     {
-        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {

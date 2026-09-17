@@ -54,7 +54,7 @@ public class BulkScaleGateTests : IDisposable
             workOrders,
             new FakeNoiseMarkStore(), repository, _hosts, _users, visibility,
             currentUser,
-            new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore),
+            new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None)),
             new LogForesight.Web.Auth.UserCapabilityResolver(groups, _hosts), issueOwnerAdmin, displayNames);
     }
 

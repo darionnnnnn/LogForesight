@@ -33,7 +33,7 @@ public class ReportServiceTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         _repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
-        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
 
         // 排行／風險類型分布自 P4 起走 SQL 端投影（lf_top_issues），與儀表板查詢共用同一份
         // EF fixture。實作，讓「排行只含可見主機」這類測試測得到下推路徑
@@ -41,11 +41,11 @@ public class ReportServiceTests : IDisposable
 
         _handling = new HandlingHistoryQueryService(
             _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates,
-            new UserDisplayNameService(_settingsStore));
+            new UserDisplayNameService(_settingsStore), new FixedIssueExclusionSource(IssueExclusion.None));
 
-        var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
+        var issueRanking = new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None));
 
-        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()));
+        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
     }
 
     public void Dispose() => _fixture.Dispose();

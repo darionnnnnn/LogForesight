@@ -59,17 +59,21 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     /// 可見範圍集合有沒有真的共用結果、沒有重複查詢」。</summary>
     public int AggregateCallCount { get; private set; }
 
+    /// <summary>最後一次 Aggregate 收到的靜音排除條件，供測試斷言呼叫端傳的是哪一份。</summary>
+    public IssueExclusion? LastAggregateExclusion { get; private set; }
+
     /// <summary>依 (from,to) 回傳不同結果（回饋十九輪批次H）：預設所有呼叫共用同一份
     /// <see cref="Result"/>，測試若要區分「本期」與「前期」聚合（如驗證新出現／擴散中判定）
     /// 才需要設這個委派——不設時維持既有的單一 Result 慣例，其餘既有測試不受影響。</summary>
     public Func<DateTime, DateTime, List<IssueAggregate>>? AggregateOverride { get; set; }
 
     public List<IssueAggregate> Aggregate(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null)
     {
         LastCall = (from, to, hostIds);
+        LastAggregateExclusion = exclusion;
         AggregateCallCount++;
         // 與真正的 EfIssueAggregateQuery 同一個既有慣例：空集合＝可見範圍為空，零結果
         if (hostIds != null && hostIds.Count == 0) return new List<IssueAggregate>();
@@ -85,7 +89,7 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     /// 跨請求快取真的擋掉了第二次聚合查詢。</summary>
     public int HostIdsForCallCount { get; private set; }
 
-    public HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
+    public HashSet<long> HostIdsFor(IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
     {
         LastHostIdsForCall = (issues, from, to);
         HostIdsForCallCount++;
@@ -93,63 +97,63 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<HostIssueOccurrence> LatestOccurrences(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null) => new();
 
     public List<CategoryAggregate> AggregateByCategory(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
         IReadOnlySet<string>? riskLevels = null) => new();
 
     public List<HostIssueOccurrence> ActionableOccurrencesResult { get; set; } = new();
 
     public List<HostIssueOccurrence> ActionableOccurrences(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null) =>
         ActionableOccurrencesResult;
 
     public List<DateRiskAggregate> AggregateByDate(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
 
     public List<HostRiskAggregate> AggregateByHost(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
 
     public List<IssueDailyHostCount> DailyHostCounts(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds) => new();
 
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
-        IReadOnlyCollection<(string Source, int EventId)> issues) => new();
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues) => new();
 
     public List<DayHandlingProjection> DeriveDayHandling(
-        DateTime from, DateTime to,
+        IssueExclusion exclusion, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds) => new();
 
     public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds) => new();
 
-    public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new(0, 0, 0, 0, 0);
+    public ReportKpiAggregate AggregateReportKpi(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new(0, 0, 0, 0, 0);
 
-    public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
+    public List<TrendAggregate> AggregateReportTrend(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
 
 
-    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds) => new();
+    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds) => new();
 
     public Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
-        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive) => new();
+        IssueExclusion exclusion, IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive) => new();
 
     public DayTodoAggregate AggregateDayTodo(
-        DateTime from, DateTime to,
+        IssueExclusion exclusion, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds,

@@ -42,6 +42,7 @@ internal class RecordQueryServiceFacade
             settingsService ?? new FakeSystemSettingsService(), visibility, aggregates, statusResolver,
             new UserDisplayNameService(settings),
             nextUnhandledCache ?? new NextUnhandledSequenceCache(new DataVersionStamp()),
+            new FixedIssueExclusionSource(IssueExclusion.None),
             issueOwners, rules);
         _detail = new RecordDetailQueryService(
             repository, reports, hosts, users, hostGroups, visibility, issueHandlings, cases, noiseMarks, rules, currentUser, settings);

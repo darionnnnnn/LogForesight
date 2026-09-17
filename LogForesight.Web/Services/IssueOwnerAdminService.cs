@@ -81,7 +81,8 @@ public class IssueOwnerAdminService
             .Select(r => IssueProfile.KeyOf(r.SourceName, r.EventId))
             .ToHashSet();
 
-        return _issueAggregates.Aggregate(from, to, null)
+        // 靜音不排除：靜音中的問題要選得到、看得到近況，才能解除
+        return _issueAggregates.Aggregate(IssueExclusion.None, from, to, null)
             .OrderByDescending(a => a.HostCount)
             .ThenBy(a => a.Source, StringComparer.OrdinalIgnoreCase)
             .Select(a =>
@@ -380,7 +381,8 @@ public class IssueOwnerAdminService
     {
         var to = DateTime.Today;
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
-        return _issueAggregates.Aggregate(from, to, null)
+        // 靜音不排除：靜音中的問題要選得到、看得到近況，才能解除
+        return _issueAggregates.Aggregate(IssueExclusion.None, from, to, null)
             .GroupBy(a => IssueProfile.KeyOf(a.Source, a.EventId))
             .ToDictionary(
                 g => g.Key,
