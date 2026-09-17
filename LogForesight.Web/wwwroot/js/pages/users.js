@@ -91,6 +91,16 @@ const USER_COLUMNS = [
         sortDefaultDir: 'desc',
         render: u => renderLastLogin(u.lastLoginAt)
     },
+    {
+        title: '接單',
+        renderHeader: () => {
+            const span = document.createElement('span');
+            span.textContent = '接單';
+            span.title = '暫停後，夜間自動派工不會再派新單給這個人；既有交辦單不受影響。';
+            return span;
+        },
+        render: u => renderDispatchPausedToggle(u)
+    },
     { title: '狀態', sortKey: 'active', sortValue: u => u.active ? 1 : 0, render: u => renderActiveBadge(u.active) },
     { title: '', className: 'text-end', render: u => renderEditButton(u) }
 ];
@@ -189,6 +199,42 @@ function renderLastLogin(lastLoginAt) {
         return span;
     }
     return formatDateTime(lastLoginAt);
+}
+
+function renderDispatchPausedToggle(user) {
+    const wrap = document.createElement('div');
+    wrap.className = 'form-check m-0';
+    wrap.title = '暫停後，夜間自動派工不會再派新單給這個人；既有交辦單不受影響。';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'form-check-input';
+    input.id = `dispatch-paused-${user.userId}`;
+    input.checked = !!user.dispatchPaused;
+    input.title = '暫停後，夜間自動派工不會再派新單給這個人；既有交辦單不受影響。';
+
+    const label = document.createElement('label');
+    label.className = 'form-check-label text-nowrap';
+    label.htmlFor = input.id;
+    label.textContent = '暫停接單';
+
+    input.addEventListener('change', async () => {
+        const next = input.checked;
+        input.disabled = true;
+        try {
+            await api.put(`/api/admin/users/${user.userId}/dispatch-paused`, { paused: next }, { silent: true });
+            user.dispatchPaused = next;
+            toast('已更新暫停接單設定');
+        } catch (error) {
+            input.checked = !next;
+            toast(error.message, 'danger');
+        } finally {
+            input.disabled = false;
+        }
+    });
+
+    wrap.append(input, label);
+    return wrap;
 }
 
 function renderActiveBadge(active) {

@@ -63,6 +63,18 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
             user.LastLoginAt = at;
         });
     }
+
+    /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
+    /// 這裡是它的唯一寫入點</summary>
+    public void SetDispatchPaused(long userId, bool paused)
+    {
+        Mutate(users =>
+        {
+            var user = users.FirstOrDefault(u => u.UserId == userId);
+            if (user == null) return;
+            user.DispatchPaused = paused;
+        });
+    }
 }
 
 /// <summary><see cref="IUserGroupStore"/> 的實作（blob key=user_groups，整份型）</summary>
@@ -97,6 +109,18 @@ public class UserGroupStore : JsonBlobCollection<UserGroup>, IUserGroupStore
             existing.Builtin = group.Builtin;
             existing.Active = group.Active;
             return existing;
+        });
+    }
+
+    /// <summary>只改派工池旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
+    /// 這裡是它的唯一寫入點</summary>
+    public void SetDispatchPool(long groupId, bool inPool)
+    {
+        Mutate(groups =>
+        {
+            var group = groups.FirstOrDefault(g => g.GroupId == groupId);
+            if (group == null) return;
+            group.DispatchPool = inPool;
         });
     }
 

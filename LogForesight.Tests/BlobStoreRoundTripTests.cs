@@ -175,6 +175,38 @@ public class BlobStoreRoundTripTests : IDisposable
         Assert.Equal(new DateTime(2026, 8, 5, 9, 0, 0), reread.LastLoginAt);
     }
 
+    [Fact]
+    public void 使用者_編輯不影響暫停接單旗標()
+    {
+        var original = Users().Upsert(new WebUser
+        {
+            Account = "DOMAIN\\bob",
+            DisplayName = "原名",
+            Active = true
+        });
+
+        // 驗證 SetDispatchPaused 寫入與讀回
+        Users().SetDispatchPaused(original.UserId, true);
+        var afterPause = Users().Get(original.UserId)!;
+        Assert.True(afterPause.DispatchPaused);
+
+        // 以 Upsert 改顯示名稱，重讀後旗標仍為 true
+        Users().Upsert(new WebUser
+        {
+            Account = "DOMAIN\\bob",
+            DisplayName = "新名",
+            Active = true
+        });
+
+        var reread = Users().Get(original.UserId)!;
+        Assert.Equal("新名", reread.DisplayName);
+        Assert.True(reread.DispatchPaused);
+
+        // 再驗證改回 false
+        Users().SetDispatchPaused(original.UserId, false);
+        Assert.False(Users().Get(original.UserId)!.DispatchPaused);
+    }
+
     private static void AssertUserFieldsMatch(WebUser expected, WebUser actual)
     {
         Assert.Equal(expected.Account, actual.Account);
@@ -213,6 +245,39 @@ public class BlobStoreRoundTripTests : IDisposable
         Assert.Equal(FullyPopulatedUserGroup().Role, reread.Role);
         Assert.Equal(FullyPopulatedUserGroup().Builtin, reread.Builtin);
         Assert.Equal(FullyPopulatedUserGroup().Active, reread.Active);
+    }
+
+    [Fact]
+    public void 使用者群組_編輯不影響派工池旗標()
+    {
+        var original = UserGroups().Upsert(new UserGroup
+        {
+            GroupName = "維運一組",
+            Role = UserRole.User,
+            Active = true
+        });
+
+        // 驗證 SetDispatchPool 寫入與讀回
+        UserGroups().SetDispatchPool(original.GroupId, true);
+        var afterSet = UserGroups().Get(original.GroupId)!;
+        Assert.True(afterSet.DispatchPool);
+
+        // 以 Upsert 改群組名稱，重讀後旗標仍為 true
+        UserGroups().Upsert(new UserGroup
+        {
+            GroupId = original.GroupId,
+            GroupName = "維運新組",
+            Role = UserRole.User,
+            Active = true
+        });
+
+        var reread = UserGroups().Get(original.GroupId)!;
+        Assert.Equal("維運新組", reread.GroupName);
+        Assert.True(reread.DispatchPool);
+
+        // 再驗證改回 false
+        UserGroups().SetDispatchPool(original.GroupId, false);
+        Assert.False(UserGroups().Get(original.GroupId)!.DispatchPool);
     }
 
     // ── HostGroupStore ──────────────────────────────────────────────────────

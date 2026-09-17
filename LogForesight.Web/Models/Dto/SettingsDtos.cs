@@ -132,6 +132,9 @@ public class SystemSettingsDto
     /// <summary>交辦單郵件：建立／改派／取消時通知處理人，並於夜間派工後寄每位處理人的摘要。需同時開啟 MailEnabled。</summary>
     public bool MailNotifyWorkOrders { get; set; }
 
+    /// <summary>夜間自動派工總開關：夜間分析後自動指派交辦單處理人</summary>
+    public bool AutoDispatchEnabled { get; set; }
+
     /// <summary>因連續寄送失敗達門檻而暫停寄送的收件人（回饋十七輪批次B-1）：
     /// 讓管理者看得到「為什麼這個人一直沒收到信」，通常代表地址打錯。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();
@@ -407,6 +410,8 @@ public class UpdateSystemSettingsRequest
     public bool MailDigestSkipEmpty { get; set; }
 
     public bool MailNotifyWorkOrders { get; set; }
+
+    public bool AutoDispatchEnabled { get; set; }
 
     // ── PRTG 監控系統設定（批次B-1）─────────────────────────────────────────
     /// <summary>PRTG 總開關。null＝本次請求未提供（沿用既有值）——設定頁搬家後不再送這個欄位，

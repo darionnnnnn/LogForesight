@@ -110,12 +110,14 @@ public static class AuditActions
     // 帳號/主機/群組
     public const string UserCreate = "user_create";
     public const string UserUpdate = "user_update";
+    public const string UserDispatchPaused = "user_dispatch_paused";
     public const string HostUpdate = "host_update";
     public const string HostMerge = "host_merge";
     public const string HostUnmerge = "host_unmerge";
     public const string GroupCreate = "group_create";
     public const string GroupUpdate = "group_update";
     public const string GroupDelete = "group_delete";
+    public const string GroupDispatchPool = "group_dispatch_pool";
     public const string AccessGrant = "access_grant";
     public const string AccessRevoke = "access_revoke";
 

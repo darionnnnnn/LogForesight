@@ -2808,4 +2808,29 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Contains(audit.Entries, e => (e.DetailJson ?? "").Contains("PrtgSensorTypeCategoryOverrides") &&
                                           (e.DetailJson ?? "").Contains("Custom"));
     }
+
+    [Fact]
+    public void AutoDispatchEnabled_讀寫往返()
+    {
+        var service = Create();
+
+        // 預設為 false
+        var initial = service.Get();
+        Assert.False(initial.AutoDispatchEnabled);
+
+        // 寫入 true
+        var req = ValidRequest();
+        req.AutoDispatchEnabled = true;
+        var updated = service.Update(req);
+        Assert.True(updated.AutoDispatchEnabled);
+
+        var reread = service.Get();
+        Assert.True(reread.AutoDispatchEnabled);
+
+        // 寫回 false
+        req.AutoDispatchEnabled = false;
+        var updatedAgain = service.Update(req);
+        Assert.False(updatedAgain.AutoDispatchEnabled);
+        Assert.False(service.Get().AutoDispatchEnabled);
+    }
 }

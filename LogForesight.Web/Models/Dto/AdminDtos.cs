@@ -24,6 +24,9 @@ public class UserDto
     /// 「這個人沒權限，可以不用管」。
     /// </summary>
     public int OwnedHostCount { get; set; }
+
+    /// <summary>暫停接單：夜間自動派工跳過此人</summary>
+    public bool DispatchPaused { get; set; }
 }
 
 /// <summary>
@@ -121,6 +124,11 @@ public class SetUserGroupsRequest
     public List<long> GroupIds { get; set; } = new();
 }
 
+public class SetUserDispatchPausedRequest
+{
+    public bool Paused { get; set; }
+}
+
 /// <summary>
 /// 一次新增多個帳號（docs/archive/HISTORY.md #7）。只填帳號＋所屬群組——顯示名稱與 Email
 /// 由伺服器端決定（顯示名稱＝帳號、Email 留空），前端多筆模式因此隱藏這兩個欄位。
@@ -160,6 +168,14 @@ public class UserGroupDto
     public bool Builtin { get; set; }
     public bool Active { get; set; }
     public int MemberCount { get; set; }
+
+    /// <summary>派工池：此群組的成員為夜間自動派工的候選人</summary>
+    public bool DispatchPool { get; set; }
+}
+
+public class SetGroupDispatchPoolRequest
+{
+    public bool InPool { get; set; }
 }
 
 public class SaveUserGroupRequest

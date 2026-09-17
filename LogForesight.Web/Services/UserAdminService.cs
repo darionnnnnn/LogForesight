@@ -318,6 +318,22 @@ public class UserAdminService
         GroupIds = user.GroupIds,
         GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName),
         LastLoginAt = user.LastLoginAt,
-        OwnedHostCount = ownedHostCount
+        OwnedHostCount = ownedHostCount,
+        DispatchPaused = user.DispatchPaused
     };
+
+    public void SetDispatchPaused(long userId, bool paused)
+    {
+        var user = _users.Get(userId)
+                   ?? throw DomainException.NotFound("找不到這個使用者，可能已被刪除。");
+
+        _users.SetDispatchPaused(userId, paused);
+
+        _audit.Record(
+            action: AuditActions.UserDispatchPaused,
+            summary: $"{user.Account}：{(paused ? "暫停接單" : "恢復接單")}",
+            targetKind: "user",
+            targetId: userId.ToString(),
+            detail: new { Paused = paused });
+    }
 }

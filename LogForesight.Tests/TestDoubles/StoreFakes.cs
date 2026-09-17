@@ -330,6 +330,12 @@ internal class FakeUserStore : IUserStore
         var user = Get(userId);
         if (user != null) user.LastLoginAt = at;
     }
+
+    public void SetDispatchPaused(long userId, bool paused)
+    {
+        var user = Get(userId);
+        if (user != null) user.DispatchPaused = paused;
+    }
 }
 
 internal class FakeUserGroupStore : IUserGroupStore
@@ -359,6 +365,12 @@ internal class FakeUserGroupStore : IUserGroupStore
         existing.Builtin = group.Builtin;
         existing.Active = group.Active;
         return existing;
+    }
+
+    public void SetDispatchPool(long groupId, bool inPool)
+    {
+        var group = Get(groupId);
+        if (group != null) group.DispatchPool = inPool;
     }
 
     public void Delete(long groupId) => _groups.RemoveAll(g => g.GroupId == groupId);

@@ -352,4 +352,96 @@ public class UserAdminServiceTests
 
         Assert.Equal(new DateTime(2026, 8, 5, 9, 30, 0), _users.Get(user.UserId)!.LastLoginAt);
     }
+
+    private GroupAdminService CreateGroupAdmin() => new(
+        _groups, _hostGroups, _access, _users, _hosts, _audit);
+
+    [Fact]
+    public void 設派工池_內建群組被拒且零寫入()
+    {
+        var group = _groups.Upsert(new UserGroup
+        {
+            GroupName = "admin",
+            Role = UserRole.Admin,
+            Builtin = true,
+            Active = true,
+            DispatchPool = false
+        });
+
+        var groupAdmin = CreateGroupAdmin();
+        var ex = Assert.Throws<DomainException>(() => groupAdmin.SetDispatchPool(group.GroupId, true));
+        Assert.Equal("系統內建群組不能設為派工池，請改用自建的維運群組。", ex.Message);
+
+        var reread = _groups.Get(group.GroupId)!;
+        Assert.False(reread.DispatchPool);
+        Assert.DoesNotContain(_audit.Entries, e => e.Action == AuditActions.GroupDispatchPool);
+    }
+
+    [Fact]
+    public void 設派工池_一般群組成功且寫稽核()
+    {
+        var group = _groups.Upsert(new UserGroup
+        {
+            GroupName = "維運一課",
+            Role = UserRole.User,
+            Builtin = false,
+            Active = true,
+            DispatchPool = false
+        });
+
+        var groupAdmin = CreateGroupAdmin();
+        groupAdmin.SetDispatchPool(group.GroupId, true);
+
+        var reread = _groups.Get(group.GroupId)!;
+        Assert.True(reread.DispatchPool);
+
+        var entry = Assert.Single(_audit.Entries, e => e.Action == AuditActions.GroupDispatchPool);
+        Assert.Equal("維運一課：設為派工池", entry.Summary);
+        Assert.Equal("group", entry.TargetKind);
+        Assert.Equal(group.GroupId.ToString(), entry.TargetId);
+
+        // 取消派工池
+        groupAdmin.SetDispatchPool(group.GroupId, false);
+        Assert.False(_groups.Get(group.GroupId)!.DispatchPool);
+        var entry2 = _audit.Entries.Last(e => e.Action == AuditActions.GroupDispatchPool);
+        Assert.Equal("維運一課：取消派工池", entry2.Summary);
+    }
+
+    [Fact]
+    public void 設暫停接單_成功且寫稽核()
+    {
+        var user = _users.Upsert(new WebUser
+        {
+            Account = "DOMAIN\\carol",
+            DisplayName = "卡蘿",
+            Active = true,
+            DispatchPaused = false
+        });
+
+        var service = Create();
+        service.SetDispatchPaused(user.UserId, true);
+
+        var reread = _users.Get(user.UserId)!;
+        Assert.True(reread.DispatchPaused);
+
+        var entry = Assert.Single(_audit.Entries, e => e.Action == AuditActions.UserDispatchPaused);
+        Assert.Equal("DOMAIN\\carol：暫停接單", entry.Summary);
+        Assert.Equal("user", entry.TargetKind);
+        Assert.Equal(user.UserId.ToString(), entry.TargetId);
+
+        // 恢復接單
+        service.SetDispatchPaused(user.UserId, false);
+        Assert.False(_users.Get(user.UserId)!.DispatchPaused);
+        var entry2 = _audit.Entries.Last(e => e.Action == AuditActions.UserDispatchPaused);
+        Assert.Equal("DOMAIN\\carol：恢復接單", entry2.Summary);
+    }
+
+    [Fact]
+    public void 設暫停接單_使用者不存在回NotFound()
+    {
+        var service = Create();
+        var ex = Assert.Throws<DomainException>(() => service.SetDispatchPaused(99999, true));
+        Assert.Equal("找不到這個使用者，可能已被刪除。", ex.Message);
+        Assert.DoesNotContain(_audit.Entries, e => e.Action == AuditActions.UserDispatchPaused);
+    }
 }

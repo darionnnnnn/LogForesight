@@ -73,12 +73,14 @@ public class AuditQueryService
 
         [AuditActions.UserCreate] = "新增使用者",
         [AuditActions.UserUpdate] = "更新使用者",
+        [AuditActions.UserDispatchPaused] = "設定暫停接單",
         [AuditActions.HostUpdate] = "更新主機",
         [AuditActions.HostMerge] = "合併主機",
         [AuditActions.HostUnmerge] = "解除主機合併",
         [AuditActions.GroupCreate] = "新增群組",
         [AuditActions.GroupUpdate] = "更新群組",
         [AuditActions.GroupDelete] = "刪除群組",
+        [AuditActions.GroupDispatchPool] = "設定派工池",
         [AuditActions.AccessGrant] = "授予存取權",
         [AuditActions.AccessRevoke] = "收回存取權",
 
