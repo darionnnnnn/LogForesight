@@ -375,7 +375,7 @@ internal class ScopedVisibility : IVisibilityService
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => _visible;
     public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => _visible;
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => _visible;
-    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
     public bool IsCaseGrantOnly(long hostId) => false;
     public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
     public List<WebHost> GetVisibleHosts() => new();

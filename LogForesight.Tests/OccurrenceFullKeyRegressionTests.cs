@@ -298,7 +298,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
         public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => GetVisibleHostIds();
         public List<WebHost> GetVisibleHosts() => _hosts.GetAll();
         public void EnsureVisible(long hostId) { }
-        public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
         public bool IsCaseGrantOnly(long hostId) => false;
         public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
     }

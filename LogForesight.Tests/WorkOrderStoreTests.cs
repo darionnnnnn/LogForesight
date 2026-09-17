@@ -550,6 +550,9 @@ public class WorkOrderStoreTests : IDisposable
         public List<IssueCase> GetMany(IEnumerable<string> hostNames) => throw new NotSupportedException();
         public List<IssueCase> GetOpenByHandler(long userId) => throw new NotSupportedException();
         public List<IssueCase> GetByHandler(long userId) => throw new NotSupportedException();
+        public bool HasCaseOnHost(long handlerId, string hostName) => throw new NotSupportedException();
+        public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) => throw new NotSupportedException();
+        public List<string> HostNamesWithCases(long handlerId) => throw new NotSupportedException();
         public List<IssueCase> GetResolvedSince(DateTime since) => throw new NotSupportedException();
         public IssueCase? Get(string caseId) => throw new NotSupportedException();
         public void SaveMany(IEnumerable<IssueCase> cases) => throw new NotSupportedException();

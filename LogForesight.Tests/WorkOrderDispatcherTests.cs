@@ -622,6 +622,9 @@ public class WorkOrderDispatcherTests
         public List<IssueCase> GetOpenForHost(string hostName) => _inner.GetOpenForHost(hostName);
         public List<IssueCase> GetOpenByHandler(long userId) => _inner.GetOpenByHandler(userId);
         public List<IssueCase> GetByHandler(long userId) => _inner.GetByHandler(userId);
+        public bool HasCaseOnHost(long handlerId, string hostName) => _inner.HasCaseOnHost(handlerId, hostName);
+        public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) => _inner.IssueKeysOnHost(handlerId, hostName);
+        public List<string> HostNamesWithCases(long handlerId) => _inner.HostNamesWithCases(handlerId);
         public List<IssueCase> GetResolvedSince(DateTime since) => _inner.GetResolvedSince(since);
         public IssueCase? Get(string caseId) => _inner.Get(caseId);
         public void Save(IssueCase issueCase) => _inner.Save(issueCase);

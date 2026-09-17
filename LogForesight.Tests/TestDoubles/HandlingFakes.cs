@@ -85,7 +85,7 @@ internal class RestrictedVisibleService : IVisibilityService
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => new HashSet<long>();
     public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => new HashSet<long>();
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => new HashSet<long>();
-    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
     public bool IsCaseGrantOnly(long hostId) => false;
     public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
     public List<WebHost> GetVisibleHosts() => new();
@@ -329,6 +329,20 @@ internal class FakeIssueCaseStore : IIssueCaseStore
             c.IssueKey == issueKey && c.ClosedAt == null);
 
     public List<IssueCase> GetByHandler(long userId) => _items.Where(c => c.HandlerId == userId).ToList();
+
+    public bool HasCaseOnHost(long handlerId, string hostName) =>
+        _items.Any(c => c.HandlerId == handlerId && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName));
+
+    public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) =>
+        _items.Where(c => c.HandlerId == handlerId && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName))
+            .Select(c => c.IssueKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+    public List<string> HostNamesWithCases(long handlerId) =>
+        _items.Where(c => c.HandlerId == handlerId)
+            .Select(c => c.HostName)
+            .Distinct()
+            .ToList();
 
     /// <summary>同 EF 版：結案時間 &gt;= since 且狀態為 resolved</summary>
     public List<IssueCase> GetResolvedSince(DateTime since) =>

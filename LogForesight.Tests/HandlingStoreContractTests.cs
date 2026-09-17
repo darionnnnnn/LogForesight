@@ -787,4 +787,89 @@ public class HandlingStoreContractTests : IDisposable
         Assert.Equal(1, store.GetOpenKeysCalls);
         Assert.Equal(new[] { ("SRV-01", "System|Disk|153|1"), ("SRV-02", "System|Ntfs|55|1") }, keys);
     }
+
+    [Fact]
+    public void 案件_HasCaseOnHost_含已結案且大小寫不敏感且排除他人()
+    {
+        var store = Cases();
+        store.Save(NewCase("c1", "SRV-01", "System|Disk|153|1", 42));
+
+        var closed = NewCase("c2", "SRV-02", "System|Ntfs|55|1", 42);
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+
+        store.Save(NewCase("c3", "SRV-03", "System|Disk|153|1", 99));
+
+        // 進行中、大小寫不同
+        Assert.True(store.HasCaseOnHost(42, "srv-01"));
+        Assert.True(store.HasCaseOnHost(42, "SRV-01"));
+
+        // 已結案
+        Assert.True(store.HasCaseOnHost(42, "srv-02"));
+        Assert.True(store.HasCaseOnHost(42, "SRV-02"));
+
+        // 他人的案件不算
+        Assert.False(store.HasCaseOnHost(42, "srv-03"));
+
+        // 不存在的主機
+        Assert.False(store.HasCaseOnHost(42, "NON-EXISTENT"));
+        // 查無案件的人
+        Assert.False(store.HasCaseOnHost(12345, "SRV-01"));
+    }
+
+    [Fact]
+    public void 案件_IssueKeysOnHost_含已結案且大小寫不敏感且排除他人()
+    {
+        var store = Cases();
+        store.Save(NewCase("c1", "SRV-01", "System|Disk|153|1", 42));
+
+        var closed = NewCase("c2", "srv-01", "System|Ntfs|55|1", 42);
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+
+        // 他人在同一台主機上的案件
+        store.Save(NewCase("c3", "SRV-01", "System|Cpu|100|1", 99));
+
+        // 大小寫不同主機名查詢，含進行中與已結案，排除他人
+        var keys = store.IssueKeysOnHost(42, "SrV-01");
+        Assert.Equal(2, keys.Count);
+        Assert.Contains("System|Disk|153|1", keys);
+        Assert.Contains("System|Ntfs|55|1", keys);
+        Assert.DoesNotContain("System|Cpu|100|1", keys);
+
+        // 他人查詢
+        var otherKeys = store.IssueKeysOnHost(99, "srv-01");
+        Assert.Equal(new[] { "System|Cpu|100|1" }, otherKeys);
+
+        // 查無案件主機
+        Assert.Empty(store.IssueKeysOnHost(42, "OTHER-HOST"));
+    }
+
+    [Fact]
+    public void 案件_HostNamesWithCases_含已結案且排除他人()
+    {
+        var store = Cases();
+        store.Save(NewCase("c1", "SRV-01", "System|Disk|153|1", 42));
+
+        var closed = NewCase("c2", "SRV-02", "System|Ntfs|55|1", 42);
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+
+        // 同主機第二筆，驗證 Distinct
+        store.Save(NewCase("c3", "SRV-01", "System|Ntfs|55|1", 42));
+
+        // 他人案件
+        store.Save(NewCase("c4", "SRV-03", "System|Disk|153|1", 99));
+
+        var hosts42 = store.HostNamesWithCases(42).OrderBy(h => h).ToList();
+        Assert.Equal(new[] { "SRV-01", "SRV-02" }, hosts42);
+
+        var hosts99 = store.HostNamesWithCases(99);
+        Assert.Equal(new[] { "SRV-03" }, hosts99);
+
+        Assert.Empty(store.HostNamesWithCases(12345));
+    }
 }

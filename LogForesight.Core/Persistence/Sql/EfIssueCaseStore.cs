@@ -81,6 +81,36 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             .ToList();
     }
 
+    public bool HasCaseOnHost(long handlerId, string hostName)
+    {
+        var key = HostNameKey.Of(hostName);
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Any(c => c.HandlerId == handlerId && c.HostNameKey == key);
+    }
+
+    public HashSet<string> IssueKeysOnHost(long handlerId, string hostName)
+    {
+        var key = HostNameKey.Of(hostName);
+        using var ctx = _contextFactory();
+        var keys = ctx.IssueCases.AsNoTracking()
+            .Where(c => c.HandlerId == handlerId && c.HostNameKey == key)
+            .Select(c => c.IssueKey)
+            .ToList();
+        return new HashSet<string>(keys, StringComparer.Ordinal);
+    }
+
+    public List<string> HostNamesWithCases(long handlerId)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.HandlerId == handlerId)
+            .Select(c => c.HostName)
+            .Distinct()
+            .OrderBy(h => h)
+            .ToList();
+    }
+
     public List<IssueCase> GetResolvedSince(DateTime since)
     {
         using var ctx = _contextFactory();

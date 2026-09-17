@@ -40,7 +40,7 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
         public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => throw new NotSupportedException("測試未使用此方法");
         public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => throw new NotSupportedException("測試未使用此方法");
         public List<WebHost> GetVisibleHosts() => new() { new WebHost { HostId = _visibleHostId, IpAddress = _ipAddress } };
-        public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => throw new NotSupportedException("測試未使用此方法");
+        public IReadOnlyList<string> GetCaseGrantHostNames() => throw new NotSupportedException("測試未使用此方法");
         public bool IsCaseGrantOnly(long hostId) => false;
         public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
         public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();

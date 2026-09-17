@@ -346,7 +346,7 @@ public class HandlingHistoryQueryService
         // （docs/archive/FEEDBACK-10-PLAN.md §7）：被交辦到授權範圍外的主機時，「我的交辦」
         // 若還是看不到那些案件，等於被指派了卻找不到工作在哪
         var visibleHostIds = _visibility.GetVisibleHostIds().ToHashSet();
-        foreach (var hostName in _visibility.GetCaseGrants().Keys)
+        foreach (var hostName in _visibility.GetCaseGrantHostNames())
         {
             var granted = _hosts.FindByName(hostName);
             if (granted != null) visibleHostIds.Add(granted.HostId);
