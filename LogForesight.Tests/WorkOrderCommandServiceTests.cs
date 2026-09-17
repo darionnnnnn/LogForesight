@@ -7,6 +7,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -34,6 +35,9 @@ public class WorkOrderCommandServiceTests : IDisposable
     private readonly ScopedVisibility _visibility;
     private readonly RecordingAuditService _audit = new();
     private readonly RecordListQueryService _query;
+    private readonly FakeRuleStore _ruleStore = new();
+    private readonly FakeSmtpMailSender _mailSender = new();
+    private readonly MailNotificationService _mail;
     private readonly WorkOrderCommandService _service;
     private readonly UserGroup _handlerRole;
 
@@ -57,10 +61,14 @@ public class WorkOrderCommandServiceTests : IDisposable
 
         _handlerRole = _userGroups.Upsert(new UserGroup { GroupName = "處理人", Role = UserRole.User, Active = true });
 
+        _mail = new MailNotificationService(
+            _settingsStore, _mailSender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), new FakeIssueOwnerStore());
+
         _service = new WorkOrderCommandService(
             _query, aggregates, coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, _visibility,
             new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            _audit, displayNames);
+            _audit, displayNames, _ruleStore, _mail);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -90,14 +98,14 @@ public class WorkOrderCommandServiceTests : IDisposable
         return host;
     }
 
-    private WebUser AddUser(string account, string displayName, bool active = true, bool paused = false, bool canHandle = true, long? groupId = null)
+    private WebUser AddUser(string account, string displayName, bool active = true, bool paused = false, bool canHandle = true, long? groupId = null, string? email = null)
     {
         var groups = new List<long>();
         if (canHandle) groups.Add(_handlerRole.GroupId);
         if (groupId.HasValue) groups.Add(groupId.Value);
         return _users.Upsert(new WebUser
         {
-            Account = account, DisplayName = displayName, Active = active, DispatchPaused = paused, GroupIds = groups
+            Account = account, DisplayName = displayName, Active = active, DispatchPaused = paused, GroupIds = groups, Email = email
         });
     }
 
@@ -663,6 +671,118 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Equal(WorkOrderCloseReasons.AdminClosed, _orderStore.Get(orderId)!.ClosedReason);
         Assert.All(MembersOf(orderId), c => Assert.Equal(IssueHandlingStatuses.Resolved, c.Status));
         Assert.Equal(orderId.ToString(), SingleAudit(AuditActions.WorkOrderAdminClose).TargetId);
+    }
+
+    // ── 郵件通知 ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Create_每張單寄一封給處理人且含主機數()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        _mailSender.Sent.Clear();
+
+        var team = AddTeam();
+        var alice = AddUser("alice", "愛麗絲", groupId: team.GroupId, email: "alice@test.local");
+        var bob = AddUser("bob", "鮑伯", groupId: team.GroupId, email: "bob@test.local");
+
+        AddHost("H1");
+        AddHost("H2");
+
+        var result = _service.Create(Group(team.GroupId, "roundRobin"));
+
+        Assert.Equal(2, result.Orders.Count);
+        Assert.Equal(2, _mailSender.Sent.Count);
+
+        var aliceMail = _mailSender.Sent.Single(s => s.Message.To.Contains("alice@test.local")).Message;
+        Assert.Contains("交辦", aliceMail.Subject);
+        Assert.Contains("主機數：1", aliceMail.Body);
+
+        var bobMail = _mailSender.Sent.Single(s => s.Message.To.Contains("bob@test.local")).Message;
+        Assert.Contains("交辦", bobMail.Subject);
+        Assert.Contains("主機數：1", bobMail.Body);
+    }
+
+    [Fact]
+    public void Create_處理人是操作者本人時不寄()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        // 操作者本人為處理人（FakeCurrentUser 預設 UserId = 999）
+        var me = AddUser("test-user", "本人", email: "me@test.local");
+        me.UserId = 999;
+
+        AddHost("H1");
+
+        var result = _service.Create(Single(me.UserId));
+
+        Assert.Single(result.Orders);
+        Assert.Empty(_mailSender.Sent);
+    }
+
+    [Fact]
+    public void Reassign_新處理人收交辦舊處理人收移交()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        var bob = AddUser("bob", "鮑伯", email: "bob@test.local");
+
+        AddHost("H1");
+        var created = _service.Create(Single(alice.UserId));
+        var orderId = Assert.Single(created.Orders).WorkOrderId;
+
+        _mailSender.Sent.Clear();
+
+        _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = bob.UserId });
+
+        Assert.Equal(2, _mailSender.Sent.Count);
+
+        var newHandlerMail = _mailSender.Sent.Single(s => s.Message.To.Contains("bob@test.local")).Message;
+        Assert.Contains("交辦", newHandlerMail.Subject);
+        Assert.DoesNotContain("交辦移交", newHandlerMail.Subject);
+
+        var oldHandlerMail = _mailSender.Sent.Single(s => s.Message.To.Contains("alice@test.local")).Message;
+        Assert.Contains("交辦移交", oldHandlerMail.Subject);
+    }
+
+    [Fact]
+    public void Cancel_處理人收取消通知且含原因()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        AddHost("H1");
+        var created = _service.Create(Single(alice.UserId));
+        var orderId = Assert.Single(created.Orders).WorkOrderId;
+
+        _mailSender.Sent.Clear();
+
+        _service.Cancel(orderId, new CancelWorkOrderRequest { Reason = "誤派工單取消" });
+
+        var sent = Assert.Single(_mailSender.Sent).Message;
+        Assert.Contains("alice@test.local", sent.To);
+        Assert.Contains("交辦取消", sent.Subject);
+        Assert.Contains("誤派工單取消", sent.Body);
+    }
+
+    [Fact]
+    public void AdminClose_不寄信()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        AddHost("H1");
+        var created = _service.Create(Single(alice.UserId));
+        var orderId = Assert.Single(created.Orders).WorkOrderId;
+
+        _mailSender.Sent.Clear();
+
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest
+        {
+            Status = IssueHandlingStatuses.Resolved,
+            Reason = "管理員代為結案"
+        });
+
+        Assert.Empty(_mailSender.Sent);
     }
 
     // ── 權限標註 ─────────────────────────────────────────────────────────────

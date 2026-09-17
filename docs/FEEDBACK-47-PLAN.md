@@ -752,7 +752,8 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | B-2b | impl-low | 一輪實作＋停下回報一條（守門測試寫死方法數 17，白名單外） | Claude 親改守門計數 17→18；獨立重建（1 個既有警告）與全套：4744 綠／略過 6，總 4751（+32），唯一失敗為下述既有不穩定測試；白名單與 BOM／CRLF／NUL 以位元組核對；自做突變兩個：處理人清單預設改 include→3 條轉紅；詳情頁紀錄日區間取法改恆假→1 條轉紅；還原皆逐位元組相同 | **抓到不穩定測試的名稱**（D-1、B-2a 兩次未留名）：`SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`——總預算 1 秒、第 3 個 job 時 `Thread.Sleep(1200)`，全套負載下第 1 段本身就逼近 1 秒而未完成任何段，警告字樣不出現；單跑 3/3 綠，本分支未改該檔。**收尾修**：預算判定改注入時鐘，不靠真實等待。接受：`CountCurrentlyMutedIssues` SQL 端以組合鍵字串 DISTINCT 計數；`PausedMode` 值域檢查併入既有 `WorkOrderQueries.Validate`；詳情服務走測試門面時固定傳空問題檔案替身（門面測試看不到靜音欄）；儀表板與報表的靜音計數不套嚴重度／日風險母體（與 `IssueRankingBuilder.Build` 同口徑）；`ResumedFromMuteAt` 只看迄日早於今天的區間。執行端疑慮「交辦單 `source_key` 截斷 255 而組合鍵不截」經查不成立：所有問題表 `source_name` 皆 255 上限、靜音問題檔案的來源取自同一批資料 |
 | E-1a | agy（gemini-3.8-flash-high） | 一輪通過（郵件測試 58 綠，+2） | Claude 核對 diff 只動白名單兩檔、位元組核對 BOM／CRLF／NUL；自做突變（拿掉 `!issue.Suppressed` 篩選）→兩條新測試轉紅，還原逐位元組相同 | 無偏離；全套留到 E-1 各段完成後一起跑 |
 | E-1b | agy（gemini-3.8-flash-high） | 一輪通過（郵件＋設定測試 213 綠，郵件 +5） | Claude 核對 diff 只動白名單五檔、位元組核對 BOM／CRLF／NUL；自做突變（通知方法拿掉 `MailNotifyWorkOrders` 判斷）→「開關關閉時不寄」轉紅，還原逐位元組相同 | Claude 親修一行：「…等 N 台」原以名單長度 >20 判定，呼叫端只傳部分名單時會漏註總數，改為 `HostCount > min(名單數, 20)`；`SystemSettingsServiceTests` 原本就沒有郵件欄位往返測試，未加（依規格） |
-| E-1c | agy（gemini-3.8-flash-high） | 執行中 | — | — |
+| E-1c | agy（gemini-3.8-flash-high） | 實作完成但**沒跑完驗收就結束**（stdout 停在「等測試結果」＋ terminating background task，無回報） | Claude 自跑建置、兩條計數（1／7）與篩選測試（63 綠，+5）；位元組核對；自做突變（拿掉「收件人是操作者本人不寄」）→「處理人是操作者本人時不寄」轉紅，還原逐位元組相同 | **agy 違反限制條款**：`NotifyHandler` 新增可選參數 `resolvedRules = null`＋`??` 回退（可選參數第六犯）→Claude 親改為必填、取消路徑傳入解析後規則；`WorkOrderBoardServiceTests` 實際未建構指令服務，未改 |
+| E-1d | agy（gemini-3.8-flash-high） | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
