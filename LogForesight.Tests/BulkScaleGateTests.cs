@@ -42,14 +42,16 @@ public class BulkScaleGateTests : IDisposable
         var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
         var currentUser = FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle);
         var displayNames = new UserDisplayNameService(_settingsStore);
-        var issueOwnerAdmin = new IssueOwnerAdminService(
-            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, new RecordingAuditService(), currentUser, displayNames);
-
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
+        var workOrderStore = new FakeWorkOrderStore(_caseStore);
+        var workOrders = new WorkOrderCoordinator(workOrderStore, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
+        var issueOwnerAdmin = new IssueOwnerAdminService(
+            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, new RecordingAuditService(), currentUser, displayNames,
+            workOrderStore, workOrders);
         return new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore,
             caseCoordinator,
-            new WorkOrderCoordinator(new FakeWorkOrderStore(_caseStore), _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts),
+            workOrders,
             new FakeNoiseMarkStore(), repository, _hosts, _users, visibility,
             currentUser,
             new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore),

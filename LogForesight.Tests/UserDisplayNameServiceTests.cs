@@ -500,14 +500,17 @@ public class UserDisplayNameServiceTests
         var coordinator = new IssueCaseCoordinator(caseStore, issueStore, recordStore, repository, hosts, new FakeIssueOwnerStore());
         var progress = new HandlingProgressCalculator(issueStore, recordStore, caseStore, settingsStore);
         var capabilities = new UserCapabilityResolver(new FakeUserGroupStore(), hosts);
+        var workOrderStore = new FakeWorkOrderStore(caseStore);
+        var workOrders = new WorkOrderCoordinator(workOrderStore, caseStore, issueStore, coordinator, recordStore, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
-            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), users, new RecordingAuditService(), currentUser, displayNameService);
+            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), users, new RecordingAuditService(), currentUser, displayNameService,
+            workOrderStore, workOrders);
         return new IssueHandlingCommandService(
             recordStore,
             issueStore,
             caseStore,
             coordinator,
-            new WorkOrderCoordinator(new FakeWorkOrderStore(caseStore), caseStore, issueStore, coordinator, recordStore, hosts),
+            workOrders,
             new FakeNoiseMarkStore(),
             repository,
             hosts,

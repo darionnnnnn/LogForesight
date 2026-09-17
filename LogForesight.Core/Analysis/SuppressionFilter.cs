@@ -14,18 +14,37 @@ namespace LogForesight.Core.Analysis;
 /// </summary>
 public static class SuppressionFilter
 {
-    /// <summary>本機、現在生效中的完整抑制項目（含 Reason，供報告/體檢顯示用）</summary>
+    /// <summary>本機、現在生效中的完整抑制項目（含 Reason，供報告/體檢顯示用）。
+    /// 一律排除 IssueMute：靜音以紀錄日判定，不是「現在生效中的抑制」。</summary>
     public static List<RuleSuppression> ActiveForHost(
         List<RuleSuppression> all, string host, IReadOnlyCollection<long> hostGroupIds, DateTime now) =>
-        all.Where(s => IsForHost(s, host, hostGroupIds) && !IsExpired(s, now)).ToList();
+        all.Where(s => !IsMute(s) && IsForHost(s, host, hostGroupIds) && !IsExpired(s, now)).ToList();
+
+    /// <summary>完整清單中的問題靜音項目（TargetType=IssueMute）</summary>
+    public static List<RuleSuppression> MutesOf(IEnumerable<RuleSuppression> all) =>
+        all.Where(IsMute).ToList();
+
+    /// <summary>靜音項目中，紀錄日 <paramref name="recordDate"/> 落在區間內的項目</summary>
+    public static List<RuleSuppression> MutesOn(IEnumerable<RuleSuppression> mutes, DateTime recordDate) =>
+        mutes.Where(m => IsMute(m) && MuteCoversDate(m, recordDate)).ToList();
+
+    /// <summary>靜音項目是否對 (source, eventId, recordDate) 生效：Source 不分大小寫、EventId 相等、紀錄日在區間內</summary>
+    public static bool MuteMatches(RuleSuppression mute, string source, int eventId, DateTime recordDate) =>
+        IsMute(mute) && mute.EventId == eventId &&
+        string.Equals(mute.SourceName, source, StringComparison.OrdinalIgnoreCase) &&
+        MuteCoversDate(mute, recordDate);
 
     /// <summary>
-    /// 對問題簽章套用生效中的抑制清單（規則型與簽章型），命中者標記 Suppressed = true。
-    /// 回傳標記筆數。
+    /// 對問題簽章套用抑制，命中者標記 Suppressed = true，回傳標記筆數。
+    /// 規則型與簽章型比對 <paramref name="activeSuppressions"/>；靜音比對 <paramref name="mutes"/>，
+    /// 以紀錄日 <paramref name="recordDate"/> 判定（不以執行時間）。
     /// </summary>
-    public static int MarkSuppressed(IEnumerable<LogIssueSignature> issues, List<RuleSuppression> activeSuppressions)
+    public static int MarkSuppressed(
+        IEnumerable<LogIssueSignature> issues, List<RuleSuppression> activeSuppressions,
+        List<RuleSuppression> mutes, DateTime recordDate)
     {
-        if (activeSuppressions.Count == 0) return 0;
+        var dayMutes = MutesOn(mutes, recordDate);
+        if (activeSuppressions.Count == 0 && dayMutes.Count == 0) return 0;
 
         var suppressedRuleIds = ToRuleIdSet(activeSuppressions);
         var suppressedSignatureKeys = ToSignatureKeySet(activeSuppressions);
@@ -38,7 +57,8 @@ public static class SuppressionFilter
             // 送出的鍵一致，四參數版在 Linux「同 program 命中不同規則」時會漏掉區分段，
             // 導致抑制鍵對不上、簽章抑制對這類問題永遠不生效
             bool signatureSuppressed = suppressedSignatureKeys.Contains(IssueSignatureKey.For(issue));
-            if (ruleSuppressed || signatureSuppressed)
+            bool muted = dayMutes.Any(m => MuteMatches(m, issue.Source, issue.EventId, recordDate));
+            if (ruleSuppressed || signatureSuppressed || muted)
             {
                 issue.Suppressed = true;
                 count++;
@@ -78,7 +98,7 @@ public static class SuppressionFilter
 
     public static List<RuleSuppression> ExpiredForHost(
         List<RuleSuppression> all, string host, IReadOnlyCollection<long> hostGroupIds, DateTime now) =>
-        all.Where(s => IsForHost(s, host, hostGroupIds) && IsExpired(s, now)).ToList();
+        all.Where(s => !IsMute(s) && IsForHost(s, host, hostGroupIds) && IsExpired(s, now)).ToList();
 
     /// <summary>
     /// 抑制項目的目標識別（TargetType＋對應欄位），供比對「兩筆抑制設定是否指向同一個目標」。
@@ -118,6 +138,12 @@ public static class SuppressionFilter
         // Host（含舊資料：Scope 欄位改版前不存在，反序列化預設值即 Host，語意與改版前逐位相同）
         _ => s.Host.Equals(host, StringComparison.OrdinalIgnoreCase)
     };
+
+    private static bool IsMute(RuleSuppression s) => s.TargetType == SuppressionTargetTypes.IssueMute;
+
+    /// <summary>區間缺值（資料不完整）視為不生效；日期判定走 <see cref="MuteInterval.Covers"/> 唯一一份規則</summary>
+    private static bool MuteCoversDate(RuleSuppression s, DateTime recordDate) =>
+        s.MuteFrom.HasValue && s.MuteTo.HasValue && MuteInterval.Covers(s.MuteFrom.Value, s.MuteTo.Value, recordDate);
 
     private static bool IsExpired(RuleSuppression s, DateTime now) =>
         s.ExpiresAt != null && s.ExpiresAt.Value <= now;

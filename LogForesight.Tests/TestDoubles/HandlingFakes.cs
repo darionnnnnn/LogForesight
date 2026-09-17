@@ -46,10 +46,11 @@ internal class HandlingServiceFacade
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         var displayNames = new UserDisplayNameService(settings);
+        var workOrderStore = new FakeWorkOrderStore(cases);
+        var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, store, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
-            audit, currentUser, displayNames);
-        var workOrders = new WorkOrderCoordinator(new FakeWorkOrderStore(cases), cases, issueStore, caseCoordinator, store, hosts);
+            audit, currentUser, displayNames, workOrderStore, workOrders);
         _day = new DayHandlingCommandService(
             store, issueStore, caseCoordinator, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
             displayNames, mail, issueOwners);

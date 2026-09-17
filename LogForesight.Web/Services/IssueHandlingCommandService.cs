@@ -779,6 +779,10 @@ public class IssueHandlingCommandService
         if (string.IsNullOrEmpty(note))
             throw DomainException.Validation("請填寫原因——統一標記是代全體下結論，理由要留在紀錄裡。");
 
+        // 勾「之後自動套用」會設定機房結論（需 Maintain）：檢查提前到任何寫入之前，
+        // 否則逐日標記寫完才在 SetConclusion 被擋，留下半套結果
+        if (request.AutoApply) _issueOwnerAdmin.EnsureMaintain();
+
         var plan = PlanBulkClose(request.Source, request.EventId, request.From, request.To);
         var targets = plan.Where(p => p.Row.SkipReason == null && p.Days.Count > 0).ToList();
         var skipped = plan.Where(p => p.Row.SkipReason != null).Select(p => p.Row).ToList();

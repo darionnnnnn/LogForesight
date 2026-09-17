@@ -64,7 +64,7 @@ public sealed class DispatchContext
     public object Gate { get; } = new();
 
     /// <summary>
-    /// 靜音區間，鍵同 <see cref="IssueProfile.KeyOf"/>。本段恆為空字典（之後由靜音功能填入）；
+    /// 靜音區間，鍵同 <see cref="IssueProfile.KeyOf"/>：<see cref="Build"/> 由問題檔案填入每個問題的全部區間；
     /// internal set 供測試手動塞區間。
     /// </summary>
     public IReadOnlyDictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>> MuteIntervals { get; internal set; }
@@ -80,8 +80,19 @@ public sealed class DispatchContext
         DispatchCandidatePool pool, IIssueOwnerStore issueOwners, IWorkOrderStore orders, IIssueCaseStore cases,
         INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now)
     {
+        var allProfiles = issueOwners.GetAll();
+
+        // 靜音區間：不限有負責人的問題；同鍵（大小寫折疊後）的區間合併
+        var muteIntervals = allProfiles
+            .Where(p => p.Mutes.Count > 0)
+            .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<(DateTime From, DateTime To)>)g.SelectMany(p => p.Mutes)
+                    .Select(m => (m.From.Date, m.To.Date)).ToList());
+
         // 同鍵防禦性取第一筆（同 IssueProfile.IndexByKey 的既有慣例）
-        var profiles = issueOwners.GetAll()
+        var profiles = allProfiles
             .Where(p => p.OwnerUserIds.Count > 0)
             .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
             .ToDictionary(g => g.Key, g => g.First());
@@ -114,7 +125,10 @@ public sealed class DispatchContext
         }
 
         return new DispatchContext(cases, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
-            settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false);
+            settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false)
+        {
+            MuteIntervals = muteIntervals
+        };
     }
 
     /// <summary>
@@ -134,7 +148,7 @@ public sealed class DispatchContext
     /// <summary>紀錄日落在該問題任一靜音區間（含首尾）</summary>
     public bool IsMuted(string source, int eventId, DateTime recordDate) =>
         MuteIntervals.TryGetValue(IssueProfile.KeyOf(source, eventId), out var intervals)
-        && intervals.Any(i => recordDate >= i.From && recordDate <= i.To);
+        && intervals.Any(i => MuteInterval.Covers(i.From, i.To, recordDate));
 
     /// <summary>
     /// 「不再打擾」：該主機該鍵建立最晚的那件案件被以 wont_fix／false_positive／known_noise 結案

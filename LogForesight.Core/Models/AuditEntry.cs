@@ -123,6 +123,10 @@ public static class AuditActions
     public const string IssueOwnerUpdate = "issue_owner_update";
     public const string IssueOwnerDelete = "issue_owner_delete";
 
+    // 問題靜音
+    public const string IssueMute = "issue_mute";
+    public const string IssueUnmute = "issue_unmute";
+
     // 匯入
     public const string ImportApply = "import_apply";
 

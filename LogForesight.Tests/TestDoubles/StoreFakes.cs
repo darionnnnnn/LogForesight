@@ -497,6 +497,8 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         existing.ConcludedByAccount = rule.ConcludedByAccount;
         existing.ConcludedAt = rule.ConcludedAt;
         existing.AutoApply = rule.AutoApply;
+        // 與正式 IssueOwnerStore.Upsert 逐欄複製保持一致（替身 Get 回傳同一個參考，漏欄缺陷要靠真實 store 的測試抓）
+        existing.Mutes = rule.Mutes;
         return existing;
     }
 

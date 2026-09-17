@@ -16,8 +16,18 @@ public class IssueOwnerAdminServiceTests
     private readonly FakeUserStore _users = new();
     private readonly RecordingAuditService _audit = new();
 
-    private IssueOwnerAdminService Create(string account = "DOMAIN\\admin") =>
-        new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account), new UserDisplayNameService(new FakeSystemSettingsStore()));
+    private IssueOwnerAdminService Create(string account = "DOMAIN\\admin")
+    {
+        var hosts = new FakeHostStore();
+        var cases = new FakeIssueCaseStore();
+        var issueStore = new FakeIssueHandlingStore();
+        var handlingStore = new FakeHandlingStore();
+        var caseCoordinator = new IssueCaseCoordinator(cases, issueStore, handlingStore, new FakeRecordRepository(hosts), hosts, _issueOwners);
+        var workOrderStore = new FakeWorkOrderStore(cases);
+        var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, handlingStore, hosts);
+        return new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account), new UserDisplayNameService(new FakeSystemSettingsStore()),
+            workOrderStore, workOrders);
+    }
 
     private WebUser AddUser(string account, string displayName) =>
         _users.Upsert(new WebUser { Account = account, DisplayName = displayName, Active = true });

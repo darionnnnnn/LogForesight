@@ -189,6 +189,27 @@ public class NightlyDispatchTests
         Assert.Equal(1, dispatch.FlushRun(DateTime.Now).SkipCounts[WorkOrderDispatcher.SkipSuppressed]);
     }
 
+    /// <summary>靜音區間由問題檔案經 DispatchContext.Build 填入：紀錄日在區間內→⓪ 略過，不建單；區間外照常派</summary>
+    [Fact]
+    public void 靜音中問題_Build由問題檔案填入區間_夜間派工略過()
+    {
+        AddHost("SRV-01");
+        _candidates.Add(new DispatchCandidate { UserId = 7, Account = "owner7", InPool = false });
+        var today = DateTime.Today;
+        _owners.Upsert(new IssueProfile
+        {
+            SourceName = Source, EventId = EventId, OwnerUserIds = new List<long> { 7 },
+            Mutes = new List<MuteInterval> { new() { From = today.AddDays(-1), To = today, Reason = "維護中", ByAccount = "admin" } }
+        });
+        var (dispatch, ctx) = Create();
+
+        Assert.True(ctx.IsMuted(Source, EventId, today));
+        Attach(dispatch, "SRV-01", today, Issue());
+
+        Assert.Empty(_orders.All);
+        Assert.Equal(1, dispatch.FlushRun(DateTime.Now).SkipCounts[WorkOrderDispatcher.SkipMuted]);
+    }
+
     [Fact]
     public void 鎖的不變式_建單事件更新都在Gate內()
     {

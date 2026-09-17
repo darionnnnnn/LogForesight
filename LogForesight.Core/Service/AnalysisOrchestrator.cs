@@ -198,7 +198,9 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "規則種子鏡像同步失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            var suppressionStore = new SuppressionStore(backend.Blob("suppressions"));
+            // 包裝層：LoadAll 附帶由問題檔案合成的靜音項目（到期提醒等「生效中抑制」判定由 SuppressionFilter 排除）
+            var suppressionStore = new MuteAwareSuppressionStore(
+                new SuppressionStore(backend.Blob("suppressions")), new IssueOwnerStore(backend.Blob("issue_owners")));
             var currentHost = Environment.MachineName;
             // 到期抑制的通知移到 hostStore.Touch 之後才印（回饋十三輪 F）：Group／Site 範圍的抑制
             // 判定需要知道本機的群組成員資格，那個資訊要等主機登記完成才拿得到，見下方。

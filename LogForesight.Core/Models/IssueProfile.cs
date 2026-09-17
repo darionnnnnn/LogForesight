@@ -67,6 +67,20 @@ public class IssueProfile
     public bool AutoApply { get; set; }
 
     /// <summary>
+    /// 靜音區間清單（唯一事實來源）：紀錄日落在任一區間內（含首尾）＝該日這個問題靜音。
+    /// 一律以紀錄日判定，不以執行時間判定。舊 blob 缺欄＝空清單。
+    /// </summary>
+    public List<MuteInterval> Mutes { get; set; } = new();
+
+    /// <summary>紀錄日 <paramref name="date"/> 是否落在任一靜音區間內（含首尾）</summary>
+    public static bool IsMutedOn(IssueProfile p, DateTime date) =>
+        p.Mutes.Any(m => MuteInterval.Covers(m.From, m.To, date));
+
+    /// <summary>今天所在的靜音區間；沒有則回 null</summary>
+    public static MuteInterval? CurrentMute(IssueProfile p, DateTime today) =>
+        p.Mutes.FirstOrDefault(m => MuteInterval.Covers(m.From, m.To, today));
+
+    /// <summary>
     /// (Source,EventId) 不分大小寫比對是否命中——單一事實來源（回饋十八輪體檢輪修正）：
     /// 原本 IssueOwnerStore、MailNotificationService、RecordListQueryService、
     /// DayHandlingCommandService 各自重寫一份幾乎相同的比對邏輯（且兩種寫法混用：
@@ -96,4 +110,29 @@ public class IssueProfile
     public static Dictionary<(string SourceUpper, int EventId), List<long>> IndexByKey(IEnumerable<IssueProfile> rules) =>
         rules.GroupBy(r => KeyOf(r.SourceName, r.EventId))
             .ToDictionary(g => g.Key, g => g.First().OwnerUserIds);
+}
+
+/// <summary>問題靜音區間（From／To 只取日期，含首尾）</summary>
+public class MuteInterval
+{
+    public DateTime From { get; set; }
+
+    public DateTime To { get; set; }
+
+    /// <summary>靜音原因（≤500 字）</summary>
+    public string Reason { get; set; } = string.Empty;
+
+    public long? ById { get; set; }
+
+    public string ByAccount { get; set; } = string.Empty;
+
+    /// <summary>設定（或最後一次延長）的時間</summary>
+    public DateTime At { get; set; }
+
+    /// <summary>
+    /// 靜音日期判定的唯一一份規則：<paramref name="date"/> 的日期落在 [from, to]（皆取日期、含首尾）。
+    /// 問題檔案 helper、合成抑制項目的比對、派工脈絡、報告反查一律呼叫這裡。
+    /// </summary>
+    public static bool Covers(DateTime from, DateTime to, DateTime date) =>
+        date.Date >= from.Date && date.Date <= to.Date;
 }

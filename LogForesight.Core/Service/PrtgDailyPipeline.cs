@@ -224,7 +224,10 @@ internal static class PrtgDailyPipeline
                 ? prtgStore.GetHostMapForDate(newest)
                 : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
 
-            var allSuppressions = new SuppressionStore(backend.Blob("suppressions")).LoadAll();
+            // 包裝層：合成問題靜音項目（以紀錄日 day 判定，見下方逐主機標記）
+            var allSuppressions = new MuteAwareSuppressionStore(
+                new SuppressionStore(backend.Blob("suppressions")), new IssueOwnerStore(backend.Blob("issue_owners"))).LoadAll();
+            var allMutes = SuppressionFilter.MutesOf(allSuppressions);
 
             // 兩段式：處理最新一天的當下，較舊日期的 finding 還沒評估也還沒寫進資料庫，
             // 跨日判定只查資料庫會少算。所以先對全部日期評估並歸戶（不發佈），再逐日標註、抑制、發佈、追加。
@@ -390,7 +393,7 @@ internal static class PrtgDailyPipeline
                             ? (webHost.HostName, (IReadOnlyCollection<long>)webHost.GroupIds)
                             : (string.Empty, (IReadOnlyCollection<long>)Array.Empty<long>());
                         var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, hostName, hostGroupIds, DateTime.Now);
-                        suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions);
+                        suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions, allMutes, day);
                         // 跨來源佐證的關聯抑制與 finding 抑制用同一份有效抑制，兩條追加路徑從登錄簿取用
                         suppressedPatternIdsByHost[hostId] = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
                     }

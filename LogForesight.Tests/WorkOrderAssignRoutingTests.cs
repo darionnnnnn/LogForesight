@@ -41,7 +41,7 @@ public class WorkOrderAssignRoutingTests
         var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
         var capabilities = new UserCapabilityResolver(new FakeUserGroupStore(), _hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
-            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, audit, currentUser, displayNames);
+            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, audit, currentUser, displayNames, _orderStore, workOrders);
 
         _issueService = new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore, caseCoordinator, workOrders, new FakeNoiseMarkStore(),

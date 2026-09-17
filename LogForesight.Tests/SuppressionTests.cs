@@ -445,7 +445,7 @@ public class SuppressionTests
 
         var marked = SuppressionFilter.MarkSuppressed(
             new[] { issueRule, issueSig, issueUnrelated },
-            activeSuppressions);
+            activeSuppressions, new List<RuleSuppression>(), DateTime.Today);
 
         Assert.Equal(2, marked);
         Assert.True(issueRule.Suppressed);
@@ -459,7 +459,7 @@ public class SuppressionTests
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.High);
         issue.RuleId = "rule-disk";
 
-        var marked = SuppressionFilter.MarkSuppressed(new[] { issue }, new List<RuleSuppression>());
+        var marked = SuppressionFilter.MarkSuppressed(new[] { issue }, new List<RuleSuppression>(), new List<RuleSuppression>(), DateTime.Today);
 
         Assert.Equal(0, marked);
         Assert.False(issue.Suppressed);

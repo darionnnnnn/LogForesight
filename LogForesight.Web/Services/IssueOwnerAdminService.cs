@@ -22,10 +22,21 @@ public class IssueOwnerAdminService
     private readonly IAuditService _audit;
     private readonly ICurrentUser _currentUser;
     private readonly IUserDisplayNameService _displayNameService;
+    private readonly IWorkOrderStore _workOrders;
+    private readonly WorkOrderCoordinator _workOrderCoordinator;
+
+    /// <summary>靜音天數上限（含自訂截止日距今天的上限）</summary>
+    public const int MaxMuteDays = 365;
+
+    public const int MaxMuteReasonLength = 500;
+
+    /// <summary>問題檔案 DTO 附帶的靜音歷程筆數（新到舊）</summary>
+    public const int MuteHistoryLimit = 10;
 
     public IssueOwnerAdminService(
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
-        ICurrentUser currentUser, IUserDisplayNameService displayNameService)
+        ICurrentUser currentUser, IUserDisplayNameService displayNameService,
+        IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator)
     {
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
@@ -33,6 +44,19 @@ public class IssueOwnerAdminService
         _audit = audit;
         _currentUser = currentUser;
         _displayNameService = displayNameService;
+        _workOrders = workOrders;
+        _workOrderCoordinator = workOrderCoordinator;
+    }
+
+    /// <summary>
+    /// Maintain 能力的服務層檢查（唯一一份）：Controller 的 [Permission] 之外，服務層也擋——
+    /// 統一標記勾「之後自動套用」會從別的入口呼叫 <see cref="SetConclusion"/>，只靠 Controller 擋不到。
+    /// 需要在寫入前提早檢查的呼叫端（<see cref="IssueHandlingCommandService.BulkCloseIssue"/>）也呼叫這裡。
+    /// </summary>
+    public void EnsureMaintain()
+    {
+        if (!_currentUser.Capabilities.Contains(Capability.Maintain))
+            throw DomainException.Forbidden("需要維護權限才能設定機房結論或靜音問題。");
     }
 
     public List<IssueOwnerDto> List()
@@ -107,7 +131,9 @@ public class IssueOwnerAdminService
             ConcludedById = before?.ConcludedById,
             ConcludedByAccount = before?.ConcludedByAccount,
             ConcludedAt = before?.ConcludedAt,
-            AutoApply = before?.AutoApply ?? false
+            AutoApply = before?.AutoApply ?? false,
+            // 靜音區間同理：編輯負責人不可洗掉既有靜音
+            Mutes = before?.Mutes ?? new List<MuteInterval>()
         });
 
         _audit.Record(
@@ -129,6 +155,7 @@ public class IssueOwnerAdminService
     /// </summary>
     public IssueOwnerDto SetConclusion(string source, int eventId, SetIssueConclusionRequest request)
     {
+        EnsureMaintain();
         var sourceName = source?.Trim() ?? "";
         if (sourceName.Length == 0) throw DomainException.Validation("請指定問題來源（Source）。");
         if (!IssueHandlingStatuses.IsClosed(request.Status))
@@ -170,6 +197,7 @@ public class IssueOwnerAdminService
     /// </summary>
     public IssueOwnerDto ClearConclusion(string source, int eventId)
     {
+        EnsureMaintain();
         var existing = _issueOwners.Get(source, eventId)
                         ?? throw DomainException.NotFound("找不到這筆問題檔案。");
 
@@ -188,6 +216,144 @@ public class IssueOwnerAdminService
             summary: $"解除問題「{source} {eventId}」的機房結論",
             targetKind: "issue_owner",
             targetId: $"{source}/{eventId}");
+
+        var usersById = _users.GetAll().ToDictionary(u => u.UserId);
+        return ToDto(saved, usersById, RecentAggregatesByKey());
+    }
+
+    /// <summary>
+    /// 靜音問題：<see cref="SetIssueMuteRequest.Days"/> 與 <see cref="SetIssueMuteRequest.Until"/> 恰給一個。
+    /// 區間 From＝今天、To＝今天＋Days−1 或 Until；今天已在某區間內→延長該區間（不新增），原因與操作者更新為本次。
+    /// 問題檔案不存在時建立（沒有負責人、沒有結論）。ExistingOrders="close" 需同時具 Assign 與 Handle，
+    /// 對進行中交辦單逐張以 wont_fix 代為結案；"pause"＝不動交辦單。
+    /// </summary>
+    public IssueOwnerDto SetMute(string source, int eventId, SetIssueMuteRequest request)
+    {
+        EnsureMaintain();
+
+        var sourceName = source?.Trim() ?? "";
+        if (sourceName.Length == 0) throw DomainException.Validation("請指定問題來源（Source）。");
+
+        var today = DateTime.Today;
+        if (request.Days.HasValue == request.Until.HasValue)
+            throw DomainException.Validation("請在「靜音天數」與「靜音至（日期）」之間擇一指定。");
+
+        DateTime to;
+        if (request.Days.HasValue)
+        {
+            if (request.Days.Value < 1 || request.Days.Value > MaxMuteDays)
+                throw DomainException.Validation($"靜音天數須介於 1～{MaxMuteDays} 天。");
+            to = today.AddDays(request.Days.Value - 1);
+        }
+        else
+        {
+            to = request.Until!.Value.Date;
+            if (to < today) throw DomainException.Validation("靜音截止日不可早於今天。");
+            if (to > today.AddDays(MaxMuteDays))
+                throw DomainException.Validation($"靜音截止日不可超過今天起 {MaxMuteDays} 天。");
+        }
+
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrEmpty(reason))
+            throw DomainException.Validation("請填寫靜音原因——暫停告警的理由要留在紀錄裡。");
+        if (reason.Length > MaxMuteReasonLength)
+            throw DomainException.Validation($"靜音原因長度不可超過 {MaxMuteReasonLength} 字元。");
+
+        bool closeOrders = request.ExistingOrders switch
+        {
+            "pause" => false,
+            "close" => true,
+            _ => throw DomainException.Validation("進行中交辦單的處置只接受「暫停」或「代為結案」。")
+        };
+
+        // 能力檢查一律在任何寫入之前：代為結案沒有權限時整筆不做
+        if (closeOrders && !(_currentUser.Capabilities.Contains(Capability.Assign) && _currentUser.Capabilities.Contains(Capability.Handle)))
+            throw DomainException.Forbidden("代為結案進行中的交辦單需要同時具備指派與處理權限。");
+
+        var now = DateTime.Now;
+        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
+        var existing = _issueOwners.Get(sourceName, eventId) ?? new IssueProfile { SourceName = sourceName, EventId = eventId };
+
+        var current = IssueProfile.CurrentMute(existing, today);
+        var extended = current != null;
+        var interval = new MuteInterval
+        {
+            From = current?.From.Date ?? today, To = to, Reason = reason,
+            ById = actorId, ByAccount = _currentUser.Account, At = now
+        };
+        // 重建清單再存回（不就地改讀出的物件清單，store 的快照不可修改）
+        var mutes = existing.Mutes.Where(m => !ReferenceEquals(m, current)).ToList();
+        mutes.Add(interval);
+        existing.Mutes = mutes;
+        existing.UpdatedByAccount = _currentUser.Account;
+
+        var saved = _issueOwners.Upsert(existing);
+
+        var closedCount = 0;
+        if (closeOrders)
+        {
+            var actor = new WorkOrderActor { ActorId = actorId, ActorAccount = _currentUser.Account, OccurredAt = now };
+            foreach (var order in _workOrders.GetActiveByIssue(sourceName, eventId))
+            {
+                _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor);
+                closedCount++;
+            }
+        }
+
+        _audit.Record(
+            action: AuditActions.IssueMute,
+            summary: $"靜音問題「{sourceName} {eventId}」：{interval.From:yyyy-MM-dd}～{interval.To:yyyy-MM-dd}" +
+                     (extended ? "（延長進行中的靜音）" : "") + $"，原因：{reason}" +
+                     (closeOrders ? $"，代為結案進行中交辦單 {closedCount} 張" : "，進行中交辦單不代為結案（暫停）"),
+            targetKind: "issue_owner",
+            targetId: $"{sourceName}/{eventId}",
+            detail: new
+            {
+                SourceName = sourceName, EventId = eventId, interval.From, interval.To, Reason = reason,
+                Extended = extended, request.ExistingOrders, ClosedWorkOrders = closedCount
+            });
+
+        var usersById = _users.GetAll().ToDictionary(u => u.UserId);
+        return ToDto(saved, usersById, RecentAggregatesByKey());
+    }
+
+    /// <summary>
+    /// 解除靜音：今天所在區間若今天才開始→刪除該區間，否則迄日改為昨天（保留已靜音過的日子）。
+    /// 沒有進行中的靜音→Validation。
+    /// </summary>
+    public IssueOwnerDto ClearMute(string source, int eventId)
+    {
+        EnsureMaintain();
+
+        var today = DateTime.Today;
+        var existing = _issueOwners.Get(source, eventId);
+        var current = existing == null ? null : IssueProfile.CurrentMute(existing, today);
+        if (existing == null || current == null)
+            throw DomainException.Validation("這個問題目前沒有進行中的靜音。");
+
+        var removed = current.From.Date == today;
+        var mutes = existing.Mutes.Where(m => !ReferenceEquals(m, current)).ToList();
+        if (!removed)
+        {
+            mutes.Add(new MuteInterval
+            {
+                From = current.From, To = today.AddDays(-1), Reason = current.Reason,
+                ById = current.ById, ByAccount = current.ByAccount, At = current.At
+            });
+        }
+        existing.Mutes = mutes;
+        existing.UpdatedByAccount = _currentUser.Account;
+
+        var saved = _issueOwners.Upsert(existing);
+
+        _audit.Record(
+            action: AuditActions.IssueUnmute,
+            summary: $"解除問題「{existing.SourceName} {existing.EventId}」的靜音" +
+                     (removed
+                         ? $"（原區間 {current.From:yyyy-MM-dd}～{current.To:yyyy-MM-dd} 今天才開始，整段刪除）"
+                         : $"（區間改為 {current.From:yyyy-MM-dd}～{today.AddDays(-1):yyyy-MM-dd}）"),
+            targetKind: "issue_owner",
+            targetId: $"{existing.SourceName}/{existing.EventId}");
 
         var usersById = _users.GetAll().ToDictionary(u => u.UserId);
         return ToDto(saved, usersById, RecentAggregatesByKey());
@@ -252,9 +418,20 @@ public class IssueOwnerAdminService
             ConcludedByDisplayName = string.IsNullOrEmpty(rule.ConcludedByAccount)
                 ? null
                 : _users.FindByAccount(rule.ConcludedByAccount)?.DisplayName,
-            AutoApply = rule.AutoApply
+            AutoApply = rule.AutoApply,
+            CurrentMute = IssueProfile.CurrentMute(rule, DateTime.Today) is { } current ? ToMuteDto(current) : null,
+            MuteHistory = rule.Mutes
+                .OrderByDescending(m => m.From).ThenByDescending(m => m.At)
+                .Take(MuteHistoryLimit)
+                .Select(ToMuteDto)
+                .ToList()
         };
     }
+
+    private static IssueMuteDto ToMuteDto(MuteInterval m) => new()
+    {
+        From = m.From, To = m.To, Reason = m.Reason, ByAccount = m.ByAccount
+    };
 
     /// <summary>
     /// 顯示用的問題標籤：Windows 顯示「{Source} ({EventId})」；Linux（EventId 恆為 0）只顯示「{Source}」，

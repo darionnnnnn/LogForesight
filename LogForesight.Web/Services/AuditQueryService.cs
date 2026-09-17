@@ -119,7 +119,10 @@ public class AuditQueryService
         [AuditActions.CalibrationExport] = "匯出校準數值",
 
         [AuditActions.IssueOwnerUpdate] = "設定問題負責人",
-        [AuditActions.IssueOwnerDelete] = "刪除問題負責人"
+        [AuditActions.IssueOwnerDelete] = "刪除問題負責人",
+
+        [AuditActions.IssueMute] = "靜音問題",
+        [AuditActions.IssueUnmute] = "解除靜音"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry, IReadOnlyDictionary<string, string> displayNameByAccount) => new()

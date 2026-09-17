@@ -80,11 +80,14 @@ internal sealed class ScaleServices
         var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);
 
-        var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames);
+        var workOrderStore = backend.WorkOrderStore();
+        var workOrders = new WorkOrderCoordinator(workOrderStore, Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts);
+        var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames,
+            workOrderStore, workOrders);
 
         IssueCommands = new IssueHandlingCommandService(
             recordHandling, IssueHandlings, Cases, CaseCoordinator,
-            new WorkOrderCoordinator(backend.WorkOrderStore(), Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts),
+            workOrders,
             noiseMarks, Repository,
             Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress,
             new UserCapabilityResolver(userGroups, Hosts), issueOwnerAdmin, displayNames);

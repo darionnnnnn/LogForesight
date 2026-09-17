@@ -1263,7 +1263,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(-3);
         _repository.AddRecord(_host.HostName, day, a);
 
-        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        Create(Capability.Assign, Capability.Handle, Capability.Maintain).BulkCloseIssue(new BulkCloseIssueRequest
         {
             Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知的雜訊來源",
             AutoApply = true
@@ -1274,6 +1274,27 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(IssueHandlingStatuses.KnownNoise, profile!.ConclusionStatus);
         Assert.Equal("已知的雜訊來源", profile.ConclusionNote);
         Assert.True(profile.AutoApply);
+    }
+
+    /// <summary>勾「之後自動套用」需要 Maintain：沒有時整筆 Forbidden，統一標記本身也不寫（檢查在任何寫入之前）</summary>
+    [Fact]
+    public void 統一標記_勾選自動套用但無Maintain_Forbidden且零寫入()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var ex = Assert.Throws<DomainException>(() => Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知的雜訊來源",
+            AutoApply = true
+        }));
+
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+        Assert.Null(_issueOwners.Get("disk", 153));
+        Assert.Empty(_issueHandlings.GetForDay(_host.HostName, day));
+        Assert.Empty(_handlings.GetLogs(_host.HostName, day));
+        Assert.Empty(_cases.GetMany(new[] { _host.HostName }));
     }
 
     /// <summary>不勾選時只處理既有日子，不建立／不動問題檔案的機房結論</summary>
@@ -1913,7 +1934,7 @@ public class HandlingServiceTests : IDisposable
             new AlwaysVisibleService(_hosts), currentUser, _audit,
             new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings),
             new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
-            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator),
             displayNames);
         return (service, orders, coordinator);
     }

@@ -48,9 +48,10 @@ internal class AnalysisPromptBuilder
     /// 2026-07-20 AI 角色轉換後限縮：規則已命中的尾巴不再掃描——靜態知識庫已涵蓋處置建議，
     /// 不需要 AI 逐項篩選；只有 Other 類（未命中規則）才是 AI 唯一還需要判讀新型態問題的地方
     /// （見 docs/archive/HISTORY.md），與 RiskReportService 深析限縮到 Other 類的原則一致。
+    /// 抑制或靜音中的問題不進前置掃描（與 BuildPrompt 的 others 排除口徑一致）。
     /// </summary>
     public static List<LogIssueSignature> GetTailIssues(List<LogIssueSignature> issues) =>
-        issues.Where(i => i.KnownIssue == null).Skip(MaxOthersInPrompt).ToList();
+        issues.Where(i => i.KnownIssue == null && !i.Suppressed).Skip(MaxOthersInPrompt).ToList();
 
     /// <summary>
     /// 前置掃描：分批請 AI 逐項篩選尾巴項目，只回報值得注意者。
@@ -203,8 +204,9 @@ internal class AnalysisPromptBuilder
             }
         }
 
-        var flagged = issues.Where(i => i.KnownIssue != null && !PrtgFindingMapper.IsPrtg(i)).ToList();
-        var others = issues.Where(i => i.KnownIssue == null && !PrtgFindingMapper.IsPrtg(i)).ToList();
+        // 抑制或靜音中的事件問題同樣不進 AI 敘事（理由同上方 PRTG finding）
+        var flagged = issues.Where(i => i.KnownIssue != null && !PrtgFindingMapper.IsPrtg(i) && !i.Suppressed).ToList();
+        var others = issues.Where(i => i.KnownIssue == null && !PrtgFindingMapper.IsPrtg(i) && !i.Suppressed).ToList();
 
         if (flagged.Count > 0)
         {
