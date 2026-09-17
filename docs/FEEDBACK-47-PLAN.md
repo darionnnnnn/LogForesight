@@ -746,6 +746,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | C-2a | impl-low | 中途停下回報一次＋使用者暫停後恢復，一輪通過（4559 綠／略過 6，總 4565，+61） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；恢復時先以位元組核對 14 個未提交檔（被 heredoc 腳本改過的兩個介面檔中文完整、三個半成品新檔由 LF 轉 CRLF）；自做突變（資料庫版逾期條件 `<` 改 `<=`）→「QueryOrders_EF與替身同資料結果一致(overdue)」轉紅，還原 cmp 相同＝雙跑比對守得住兩後端分岔 | 執行端中途因新介面方法要求白名單外測試替身補一行轉發而停下，放行 `WorkOrderDispatcherTests.cs` 一行。執行端自承兩次違規（`sed -i` 使檔案變 LF、heredoc 跑中文 python），已核對無損。接受：隱藏台數跟隨目前狀態篩選；限主機的成員查詢把「主機名＋案件編號」兩欄抓回記憶體排序（查詢次數不增）；已刪除操作者顯示「（已刪除）」；回覆事件的台數為本次回覆涉及數 |
 | C-2b | impl-low | 三輪通過（4599 綠／略過 6，總 4605，+40） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；自做突變（Windows 規則命中拿掉「全部事件編號」）→`KnownIssueCatalogRuleMayHitTests` 轉紅，還原 cmp 相同 | 第一輪驗收退回兩項：①立即派工不判定抑制會派出假工作（原規格列為已知限制，推翻）→抑制預覽的「規則可能命中」判定抽成唯一 `KnownIssueCatalog.RuleMayHit`，抑制預覽與試跑共用，試跑逐主機套生效中抑制（可能多擋、不會少擋）；②立即派工部分失敗不寫稽核→逐組吞下、`FailedGroups` 回報、最後一定寫稽核。第二輪執行端停下回報兩個阻礙並經決定：`SuppressionFilter` 由 internal 改 public（只改可見性）；PRTG 規則命中依 Source `PRTG:{代碼}`（`PrtgFindingMapper.TryGetRuleCode`）判定。**查證時發現跨段缺陷**：`LatestOccurrences`／`ActionableOccurrences` 分組不含 `event_key`、回傳四段鍵——既有的依問題視角／rollup／待辦／郵件摘要把已處理的 PRTG 與 Linux 命中規則問題算成未處理，C-1b 手動建單與 C-2b 試跑對這兩類問題建出錯的鍵（會重複派工）→ 另開 C-2c 修正。接受：`SuppressionFilter` 公開後其餘既有 public 方法一併可見；`RuleMayHit` 單元測試暫放 `WorkOrderBoardServiceTests.cs` 檔尾；關聯型與量能型抑制不作用在單一問題 |
 | C-2c | impl-low＋Claude | 一輪通過（4612 綠／略過 6，總 4618，+13） | 執行端先寫測試、在修改前版本跑出 8 條紅（錯誤訊息直接顯示少了第五段）再修；突變（分組拿掉 EventKey）7 條＋1 條轉紅；Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套、位元組核對換行、確認組五段鍵只剩 `IssueSignatureKey` 五參數多載一處 | **修掉的既有缺陷**：出現點查詢分組不含 `event_key`，依問題視角處理概況、重點問題與排行的已有結論、待辦、郵件摘要把已處理的 PRTG 與 Linux 命中規則問題算成未處理；C-1b 手動建單與 C-2b 試跑對這兩類問題建出四段鍵（案件對不上、會重複派工、同主機多顆 sensor 被併成一件）。執行端回報規格外第二份組鍵（`EfIssueAggregateQuery.IssueKeyFor`，規格限「只改兩個方法」未動）→ Claude 親改為呼叫單點。執行端指出使用端計數可能受影響 → Claude 查證：排行（`IssueRankingBuilder.LookupRollup`）與待辦（`IssueTodoQuery.Aggregate`）本來就是「任一筆未處理即未處理」；**依問題視角 `BuildIssueGroup` 取「每台主機最近出現那筆」，同主機兩顆 sensor 較晚的已處理會蓋掉較早的未處理** → Claude 親改為每台取最差狀態、處理人從全部出現點收集，補測試並以修改前版本確認轉紅 |
+| D-1 | impl-low | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
@@ -800,6 +801,14 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | C-2 一段 | 清單／詳情／成員／時間軸與看板／待派試跑／立即派工是兩組獨立機制 | 拆 C-2a（查詢）與 C-2b（看板、待派、立即派工） |
 | 待派試跑套全部派工閘門（含抑制） | 出現點查詢沒有規則 Id 與抑制範圍，無法在試跑判定抑制；重建簽章需要完整鍵解析（目前只有 Source／EventId） | 試跑不判定抑制，DTO 帶 `SuppressionNotEvaluated` 由畫面註明；補 `IssueSignatureKey.TryParseFull` 並以來回不變式測試守門；立即派工以設定複本強制開啟自動派工，不改存檔設定 |
 | 待派試跑直接呼叫派工決策 | 「不再打擾」閘門逐主機延遲查案件，4000 台＝4000 次查詢 | C-2b 在派工脈絡加批次預載 |
+
+### D-1 設計修正（寫規格時，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| D-1 退役 `bulk-status` | 唯一呼叫端是前端 `issue-status-reply.js`，屬 D-2 改版；改走協調器 `Reply` 會把觸發日歷程動作由 `issue_status` 變成 `case_sync`，牽動既有測試 | 本段不退役、寫入路徑不改，只在寫完後依交辦單分組呼叫 `RecordExternalReply`（回覆時間＋`replied` 事件）；退役留 D-2 |
+| 回覆時間只在交辦單回覆端點更新 | 處理人在風險日詳情逐筆標記同樣是在處理交辦的工作；只看回覆端點會讓「未回覆」指標誤報 | 詳情頁逐筆標記由處理人本人做時 `TouchReply`（只改時間、不寫事件，避免逐筆淹沒時間軸）；管理者代標不算 |
+| 處理人清單沿用查詢端清單 | 查詢端清單授權在 controller 層（Assign 或 ViewAll），處理人本人沒有這兩個能力 | 另開 `ListForHandler`／`HandlerSummary`：本人或 Assign／ViewAll 可看，組裝與查詢端共用 |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
