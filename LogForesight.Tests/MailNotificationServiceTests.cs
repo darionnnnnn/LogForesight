@@ -1246,6 +1246,127 @@ public class MailNotificationServiceTests : IDisposable
 
         Assert.Empty(_sender.Sent);
     }
+
+    // ── NotifyWorkOrderAsync：交辦單通知（task-47-E1b）───────────────────────
+
+    private static WorkOrderNotice MakeWorkOrderNotice(
+        string kind = WorkOrderNoticeKinds.Created,
+        long workOrderId = 101,
+        string issueLabel = "Schannel 36888",
+        string? plainExplanation = "TLS 握手失敗",
+        int hostCount = 2,
+        IReadOnlyList<string>? hostNames = null,
+        string? note = "請優先排查",
+        DateTime? dueDate = null,
+        string recipientAccount = "engineer1",
+        string? recipientEmail = "eng1@test.local",
+        string actorAccount = "lead1",
+        string? reason = null) =>
+        new(kind, workOrderId, issueLabel, plainExplanation, hostCount,
+            hostNames ?? new[] { "host-a", "host-b" }, note, dueDate,
+            recipientAccount, recipientEmail, actorAccount, reason);
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_建立通知寄給處理人且內容含單號主機數與期限()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var dueDate = DateTime.Today.AddDays(3);
+        var notice = MakeWorkOrderNotice(dueDate: dueDate);
+
+        await Create().NotifyWorkOrderAsync(notice);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "eng1@test.local" }, sent.Message.To);
+        Assert.Contains("交辦", sent.Message.Subject);
+        Assert.Contains("Schannel 36888（2 台）", sent.Message.Subject);
+        Assert.Contains("lead1 交辦了一張單給你：Schannel 36888", sent.Message.Body);
+        Assert.Contains("單號：101", sent.Message.Body);
+        Assert.Contains("說明：TLS 握手失敗", sent.Message.Body);
+        Assert.Contains("主機數：2", sent.Message.Body);
+        Assert.Contains("主機：host-a、host-b", sent.Message.Body);
+        Assert.Contains("交辦說明：請優先排查", sent.Message.Body);
+        Assert.Contains($"期限：{dueDate:yyyy-MM-dd}", sent.Message.Body);
+        Assert.Contains("請至站台的「交辦單」頁檢視單號 101。", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_超過20台只列前20台並註明總數()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var hostNames = Enumerable.Range(1, 25).Select(i => $"host-{i:D2}").ToList();
+        var notice = MakeWorkOrderNotice(hostCount: 25, hostNames: hostNames);
+
+        await Create().NotifyWorkOrderAsync(notice);
+
+        var sent = Assert.Single(_sender.Sent);
+        var first20 = string.Join("、", hostNames.Take(20));
+        Assert.Contains($"主機：{first20}…等 25 台", sent.Message.Body);
+        Assert.DoesNotContain("host-21", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_移交與取消的主旨類型不同()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var service = Create();
+
+        var transferNotice = MakeWorkOrderNotice(
+            kind: WorkOrderNoticeKinds.Transferred,
+            workOrderId: 201,
+            issueLabel: "Disk Full",
+            actorAccount: "admin1",
+            reason: "改由 DBA 處理");
+        var cancelNotice = MakeWorkOrderNotice(
+            kind: WorkOrderNoticeKinds.Cancelled,
+            workOrderId: 202,
+            issueLabel: "Memory Leak",
+            actorAccount: "admin2",
+            reason: "誤判已結案");
+
+        await service.NotifyWorkOrderAsync(transferNotice);
+        await service.NotifyWorkOrderAsync(cancelNotice);
+
+        Assert.Equal(2, _sender.Sent.Count);
+
+        var sentTransfer = _sender.Sent[0];
+        Assert.Contains("交辦移交", sentTransfer.Message.Subject);
+        Assert.Contains("Disk Full 已移交", sentTransfer.Message.Subject);
+        Assert.Contains("已由 admin1 移交給其他處理人", sentTransfer.Message.Body);
+        Assert.Contains("原因：改由 DBA 處理", sentTransfer.Message.Body);
+
+        var sentCancel = _sender.Sent[1];
+        Assert.Contains("交辦取消", sentCancel.Message.Subject);
+        Assert.Contains("Memory Leak 已取消", sentCancel.Message.Subject);
+        Assert.Contains("已由 admin2 取消，其中的主機已調回未處理", sentCancel.Message.Body);
+        Assert.Contains("原因：誤判已結案", sentCancel.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_開關關閉時不寄()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = false);
+        var notice = MakeWorkOrderNotice();
+
+        await Create().NotifyWorkOrderAsync(notice);
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_處理人沒有email時不寄也不拋例外()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var noticeEmpty = MakeWorkOrderNotice(recipientEmail: "");
+        var noticeWhitespace = MakeWorkOrderNotice(recipientEmail: "   ");
+        var noticeNull = MakeWorkOrderNotice(recipientEmail: null);
+
+        var service = Create();
+        await service.NotifyWorkOrderAsync(noticeEmpty);
+        await service.NotifyWorkOrderAsync(noticeWhitespace);
+        await service.NotifyWorkOrderAsync(noticeNull);
+
+        Assert.Empty(_sender.Sent);
+    }
 }
 
 /// <summary>MissingDateFinder 測試用最小 IAnalysisRecordReader：全空歷史，模擬「近 N 天都沒有

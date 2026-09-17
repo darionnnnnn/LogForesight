@@ -333,6 +333,9 @@ public class SystemSettings
     /// 「排程本身掛了」；使用者可主動關閉以減少噪音。</summary>
     public bool MailDigestSkipEmpty { get; set; }
 
+    /// <summary>交辦單郵件：建立／改派／取消時通知處理人，並於夜間派工後寄每位處理人的摘要。需同時開啟 MailEnabled。</summary>
+    public bool MailNotifyWorkOrders { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

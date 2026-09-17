@@ -281,6 +281,87 @@ public class MailNotificationService
         }
     }
 
+    /// <summary>
+    /// 交辦單通知：建立／改派／取消時通知處理人。
+    /// 內部 try/catch 到底：通知永遠不能弄掛交辦單操作本身。
+    /// </summary>
+    public async Task NotifyWorkOrderAsync(WorkOrderNotice notice, CancellationToken ct = default)
+    {
+        try
+        {
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return;
+
+            if (string.IsNullOrWhiteSpace(notice.RecipientEmail))
+            {
+                Log.Warn("[Mail] 交辦單通知略過：處理人 {Account} 沒有設定 email（單號 {Id}）。", notice.RecipientAccount, notice.WorkOrderId);
+                return;
+            }
+
+            var email = notice.RecipientEmail.Trim();
+            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+
+            var (type, summary) = notice.Kind switch
+            {
+                WorkOrderNoticeKinds.Transferred => ("交辦移交", $"{notice.IssueLabel} 已移交"),
+                WorkOrderNoticeKinds.Cancelled => ("交辦取消", $"{notice.IssueLabel} 已取消"),
+                _ => ("交辦", $"{notice.IssueLabel}（{notice.HostCount} 台）"),
+            };
+            var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, "-", type, summary);
+
+            var body = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
+
+            var firstLine = notice.Kind switch
+            {
+                WorkOrderNoticeKinds.Transferred => $"交辦單 {notice.WorkOrderId}「{notice.IssueLabel}」已由 {notice.ActorAccount} 移交給其他處理人，你不需再處理這張單中移出的主機。",
+                WorkOrderNoticeKinds.Cancelled => $"交辦單 {notice.WorkOrderId}「{notice.IssueLabel}」已由 {notice.ActorAccount} 取消，其中的主機已調回未處理。",
+                _ => $"{notice.ActorAccount} 交辦了一張單給你：{notice.IssueLabel}",
+            };
+            body.AppendLine(firstLine);
+            body.AppendLine();
+            body.AppendLine($"  單號：{notice.WorkOrderId}");
+            if (!string.IsNullOrWhiteSpace(notice.PlainExplanation))
+            {
+                body.AppendLine($"  說明：{notice.PlainExplanation}");
+            }
+            body.AppendLine($"  主機數：{notice.HostCount}");
+            if (notice.HostNames is { Count: > 0 })
+            {
+                var hostList = string.Join("、", notice.HostNames.Take(20));
+                // 以總台數判定：呼叫端可能只傳部分主機名，名單比總數少就要註明總數
+                if (notice.HostCount > Math.Min(notice.HostNames.Count, 20))
+                {
+                    body.AppendLine($"  主機：{hostList}…等 {notice.HostCount} 台");
+                }
+                else
+                {
+                    body.AppendLine($"  主機：{hostList}");
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(notice.Note))
+            {
+                body.AppendLine($"  交辦說明：{notice.Note}");
+            }
+            if (notice.DueDate.HasValue)
+            {
+                body.AppendLine($"  期限：{notice.DueDate.Value:yyyy-MM-dd}");
+            }
+            if (!string.IsNullOrWhiteSpace(notice.Reason))
+            {
+                body.AppendLine($"  原因：{notice.Reason}");
+            }
+            body.AppendLine();
+            body.AppendLine($"請至站台的「交辦單」頁檢視單號 {notice.WorkOrderId}。");
+
+            await SendSafeAsync(settings, new List<string> { email }, subject, body.ToString(), ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 交辦單通知處理失敗（不影響交辦單本身）");
+        }
+    }
+
     /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存），不落地任何狀態。</summary>
     public async Task SendTestAsync(SmtpConnectionSpec connection, string from, List<string> recipients,
         string subjectTemplate, string bodyIntro, CancellationToken ct = default)
@@ -992,3 +1073,15 @@ public class MailNotificationService
 /// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）。
 /// </summary>
 public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason);
+
+public static class WorkOrderNoticeKinds
+{
+    public const string Created = "created";
+    public const string Transferred = "transferred";
+    public const string Cancelled = "cancelled";
+}
+
+public sealed record WorkOrderNotice(
+    string Kind, long WorkOrderId, string IssueLabel, string? PlainExplanation,
+    int HostCount, IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate,
+    string RecipientAccount, string? RecipientEmail, string ActorAccount, string? Reason);
