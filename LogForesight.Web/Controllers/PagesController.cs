@@ -55,6 +55,14 @@ public class PagesController : Controller
     [Permission(Capability.Assign, Capability.ViewAll)]
     public IActionResult WorkOrders() => View();
 
+    /// <summary>交辦單詳情（回饋第 47 輪）：授權由 api/work-orders/{id} 逐單判定（處理人本人、Assign 或 ViewAll），頁面殼只要求登入</summary>
+    [HttpGet("/work-orders/{id:long}")]
+    public IActionResult WorkOrderDetail(long id)
+    {
+        ViewData["WorkOrderId"] = id;
+        return View();
+    }
+
     [HttpGet("/reports")]
     public IActionResult Reports() => View();
 
