@@ -194,9 +194,10 @@ function sectionStorageKey(label) {
 }
 
 /**
- * 側欄「我的交辦」的未結案數徽章（體檢 M7）。
+ * 側欄「我的交辦」的進行中徽章（體檢 M7）。
  *
- * 資料現成——`handlers/{id}/workload` 的 KPI 就是這個數字，不必新增端點。
+ * 資料來自單一聚合端點 `handlers/me/badge`（`HandlerSummaryDto`）——一次拿齊單數、台數、
+ * 逾期與未回覆，不必為了一顆徽章打多支 API。ServerAdmin 後端直接回全 0，這裡不另外判斷。
  * **失敗完全靜默**：徽章是加值資訊，載不到就不顯示；為了一個數字讓側欄出現錯誤提示
  * （或更糟：擋住選單渲染）是本末倒置。
  */
@@ -210,17 +211,19 @@ async function loadMyWorkBadge(user) {
     if (!hasCapability(user, 'Handle')) return;
 
     try {
-        const workload = await api.get(`/api/handlers/${user.userId}/workload`, { silent: true });
-        const count = (workload.openCaseCount ?? 0) + (workload.unresolvedDayCount ?? 0);
+        const summary = await api.get('/api/handlers/me/badge', { silent: true });
+        // 數字取「手上進行中的主機數」：一張單可能含多台，台數才是實際還有多少事要處理
+        const count = summary.activeMembers ?? 0;
         if (count <= 0) return;
 
         const badge = document.createElement('span');
         badge.className = 'lf-sidebar__badge';
         badge.textContent = String(count);
-        badge.title = `未結案：進行中案件 ${workload.openCaseCount} 件、未結案風險日 ${workload.unresolvedDayCount} 天`;
+        badge.title = `進行中交辦單 ${summary.activeWorkOrders ?? 0} 張、${count} 台；`
+            + `逾期 ${summary.overdueMembers ?? 0} 台、未回覆 ${summary.unrepliedWorkOrders ?? 0} 張`;
         link.appendChild(badge);
 
-        if (workload.overdueCount > 0) badge.classList.add('lf-sidebar__badge--overdue');
+        if ((summary.overdueMembers ?? 0) > 0) badge.classList.add('lf-sidebar__badge--overdue');
     } catch {
         // 靜默：見函式註解
     }
@@ -434,13 +437,39 @@ async function refreshRunActivity() {
     setTimeout(refreshRunActivity, activity?.isRunning ? 30000 : 60000);
 }
 
-/** 告示的畫面：執行中才有內容，其餘一律清空（容器不帶 margin/padding，清空即零高度） */
+/**
+ * 逐日同步待處理的告示條；沒有待處理時回 null。
+ *
+ * 這是與分析執行無關的背景工作，所以不掛 spinner、也不受執行狀態影響——沒有在執行時
+ * 一樣要看得到，否則使用者只會覺得「儀表板數字怎麼還沒變」。
+ */
+function caseDaySyncBar(activity) {
+    const pending = activity?.caseDaySyncPending ?? 0;
+    if (pending <= 0) return null;
+
+    const bar = document.createElement('div');
+    bar.className = 'alert alert-secondary d-flex align-items-center gap-2 py-2 mb-3';
+    bar.setAttribute('role', 'status');
+    bar.setAttribute('aria-live', 'polite');
+
+    const text = document.createElement('span');
+    text.textContent = `案件逐日同步：待處理 ${formatNumber(pending)} 件，背景處理中，儀表板與報表數字稍後會更新。`;
+    bar.appendChild(text);
+    return bar;
+}
+
+/**
+ * 告示的畫面：分析執行中一條、逐日同步待處理一條（兩條都在時分析那條在上），
+ * 兩者皆無則一律清空（容器不帶 margin/padding，清空即零高度）
+ */
 function renderRunActivity(activity) {
     const container = document.getElementById('lf-run-activity-banner');
     if (!container) return;
 
+    const syncBar = caseDaySyncBar(activity);
+
     if (!activity?.isRunning) {
-        container.replaceChildren();
+        container.replaceChildren(...(syncBar ? [syncBar] : []));
         return;
     }
 
@@ -465,7 +494,7 @@ function renderRunActivity(activity) {
     text.textContent = `${progressText}${triggerText}，畫面回應可能較慢。資料仍是完整的，分析完成後會自動恢復。`;
     bar.appendChild(text);
 
-    container.replaceChildren(bar);
+    container.replaceChildren(...(syncBar ? [bar, syncBar] : [bar]));
 }
 
 initFontScale();
