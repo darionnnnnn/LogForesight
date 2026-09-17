@@ -767,6 +767,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | C-3b | agy（gemini-3.8-flash-high） | 首次派工遇 Gemini 五小時額度用罄（零改動），重置後重派一輪寫完三檔；仍**沒跑完驗收就結束**（無回報） | Claude 自跑建置、`innerHTML`／寫死路徑 grep（零命中）、前端守門測試 37 綠；**瀏覽器實測（示範資料庫）**：標頭、成員表（60 台分兩頁）、時間軸、改派全程 POST→toast→重載正確，主控台零錯誤 | Claude 親修兩處顯示：①時間軸註記的狀態碼（`in_progress：…`）轉中文；②改派註記的 `2→3` 轉處理人名稱（缺使用者清單權限時回退顯示 id）。Core 不持有顯示文字，兩者都在前端對照 |
 | C-3c | agy（gemini-3.8-flash-high） | 一輪通過並完整回報（相關測試 135 綠，+3） | Claude 核對 diff（17 檔皆白名單內）、位元組核對；自做突變（已交辦計數過濾改 `> 1`）→ 1 條轉紅，還原逐位元組相同；**瀏覽器實測**：依問題視角「已交辦」欄出現、示範單 20／60 台數字正確、總覽頁 `?source=&eventId=` 篩選橫幅與狀態改「全部」皆正確 | Claude 親修分層：agy 為了讓 Web 取得 `source_key` 正規化規則，把 `EfWorkOrderStore.SourceKeyOf` 由 internal 改 public，等於讓查詢服務相依 SQL 實作類別 → 改為在模型層新增 `WorkOrderIssueKey.SourceKeyOf`（單一規則），EF store 委派並回復 internal |
 | C-3d | agy（gemini-3.8-flash-high） | 一輪寫完（records.js 單檔 +315／−272），仍**沒跑完驗收就結束**（無回報） | Claude 自跑建置、六條驗收 grep（舊端點 0 命中、新端點 2、`lf-bulk-assign-hosts` 保留、無 `innerHTML` 插值）、前端測試 43 綠；位元組核對；**瀏覽器實測**：交辦 modal 預覽（47 台／預估 77 主機日／分配「新建單」）、送出後清單重整且涵蓋欄變 47／47 台、modal 自動關閉 | 舊回應覆蓋防護有做（`previewRequestId`）。舊三個端點自此無前端呼叫端，退役在 C-3e |
+| C-3e | agy（gemini-3.8-flash-high） | 執行中 | — | — |
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
 | 規劃原寫法 | 實際事實 | 修正 |
