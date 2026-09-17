@@ -43,7 +43,7 @@ public interface IWorkOrderStore
     /// </summary>
     WorkOrderPage QueryOrders(WorkOrderQuery q);
 
-    /// <summary>一次查詢取得每位有進行中交辦單的處理人負載</summary>
+    /// <summary>一次查詢取得每位「有進行中交辦單或近 7 日有結案單」的處理人負載</summary>
     List<HandlerLoad> LoadBoard();
 
     /// <summary>

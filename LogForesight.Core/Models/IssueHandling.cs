@@ -83,10 +83,33 @@ public static class IssueSignatureKey
     /// </summary>
     public static (string Source, int EventId)? TryParseSignature(string? key)
     {
-        var parts = key?.Split('|');
-        if (parts is not { Length: 4 or 5 } || !int.TryParse(parts[2], out var eventId)) return null;
+        var parts = SplitKey(key);
+        return parts == null ? null : (parts[1], int.Parse(parts[2]));
+    }
 
-        return (parts[1], eventId);
+    /// <summary>
+    /// 完整反解：接受 4 段或 5 段，5 段時 EventKey＝第五段、4 段時為空字串；
+    /// 格式不符（段數不對、EventId 或 EntryType 不是整數）回 null。
+    /// 不變式：對任一簽章 s，以本方法組回的簽章再 <see cref="For(LogIssueSignature)"/> 必與原鍵逐字相同。
+    /// </summary>
+    public static (string LogName, string Source, int EventId, System.Diagnostics.EventLogEntryType EntryType, string EventKey)?
+        TryParseFull(string? key)
+    {
+        var parts = SplitKey(key);
+        if (parts == null || !int.TryParse(parts[3], out var entryType)) return null;
+
+        return (parts[0], parts[1], int.Parse(parts[2]), (System.Diagnostics.EventLogEntryType)entryType,
+            parts.Length == 5 ? parts[4] : string.Empty);
+    }
+
+    /// <summary>
+    /// 分段與段數／EventId 檢查的唯一一份。EntryType 段不在這裡檢查：
+    /// <see cref="TryParseSignature"/> 向來只看 Source 與 EventId，維持它對第四段的既有寬鬆行為。
+    /// </summary>
+    private static string[]? SplitKey(string? key)
+    {
+        var parts = key?.Split('|');
+        return parts is { Length: 4 or 5 } && int.TryParse(parts[2], out _) ? parts : null;
     }
 }
 

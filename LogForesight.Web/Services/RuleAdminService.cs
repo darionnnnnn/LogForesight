@@ -397,14 +397,13 @@ public class RuleAdminService
         else if (isLinux)
         {
             hitCount = _issueAggregateQuery.Aggregate(windowFrom, DateTime.Today, hostIds)
-                .Where(a => a.Source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase))
+                .Where(a => KnownIssueCatalog.RuleMayHit(rule, a.Source, a.EventId))
                 .Sum(a => a.TotalCount);
         }
         else
         {
             hitCount = _issueAggregateQuery.Aggregate(windowFrom, DateTime.Today, hostIds)
-                .Where(a => a.Source.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase) &&
-                            (rule.MatchAllEventIds || rule.EventIds.Contains(a.EventId)))
+                .Where(a => KnownIssueCatalog.RuleMayHit(rule, a.Source, a.EventId))
                 .Sum(a => a.TotalCount);
         }
 

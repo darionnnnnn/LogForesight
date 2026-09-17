@@ -547,6 +547,40 @@ public class WorkOrderDispatcherTests
     }
 
     [Fact]
+    public void PreloadDismissed_預載3台後IsDismissed不再查詢_未預載仍延遲查_結果與不預載相同()
+    {
+        ClosedCase("SRV-01", IssueHandlingStatuses.WontFix, DateTime.Today.AddDays(-1));
+        ClosedCase("srv-02", IssueHandlingStatuses.WontFix, DateTime.Today.AddDays(-5));
+        ClosedCase("SRV-02", IssueHandlingStatuses.Resolved, DateTime.Today.AddDays(-2));
+        ClosedCase("SRV-03", IssueHandlingStatuses.KnownNoise, DateTime.Today.AddDays(-3));
+        ClosedCase("SRV-04", IssueHandlingStatuses.FalsePositive, DateTime.Today.AddDays(-3));
+        var hosts = new[] { "SRV-01", "SRV-02", "SRV-03", "SRV-04", "SRV-05" };
+
+        var plain = DispatchContext.Build(Pool(), _owners, _orders, new CountingIssueCaseStore(_cases), _noise, _settings, DateTime.Today);
+        var expected = hosts.Select(h => plain.IsDismissed(h, IssueKey)).ToList();
+
+        var counting = new CountingIssueCaseStore(_cases);
+        var ctx = DispatchContext.Build(Pool(), _owners, _orders, counting, _noise, _settings, DateTime.Today);
+        counting.GetManyCalls = 0;
+
+        ctx.PreloadDismissed(new[] { "srv-01", "SRV-02", "SRV-03" });
+        Assert.Equal(1, counting.GetManyCalls);
+
+        counting.GetManyCalls = 0;
+        Assert.True(ctx.IsDismissed("SRV-01", IssueKey));
+        Assert.False(ctx.IsDismissed("SRV-02", IssueKey));
+        Assert.True(ctx.IsDismissed("srv-03", IssueKey));
+        Assert.Equal(0, counting.GetManyCalls);
+
+        Assert.True(ctx.IsDismissed("SRV-04", IssueKey));
+        Assert.False(ctx.IsDismissed("SRV-05", IssueKey));
+        Assert.Equal(2, counting.GetManyCalls);
+
+        Assert.Equal(expected, hosts.Select(h => ctx.IsDismissed(h, IssueKey)).ToList());
+        Assert.Equal(new[] { true, false, true, true, false }, expected);
+    }
+
+    [Fact]
     public void Step_各分支填入命中步驟()
     {
         Order(9);
@@ -584,6 +618,7 @@ public class WorkOrderDispatcherTests
         }
 
         public IssueCase? GetOpen(string hostName, string issueKey) => _inner.GetOpen(hostName, issueKey);
+        public List<(string HostNameKey, string IssueKey)> GetOpenKeys() => _inner.GetOpenKeys();
         public List<IssueCase> GetOpenForHost(string hostName) => _inner.GetOpenForHost(hostName);
         public List<IssueCase> GetOpenByHandler(long userId) => _inner.GetOpenByHandler(userId);
         public List<IssueCase> GetByHandler(long userId) => _inner.GetByHandler(userId);

@@ -352,3 +352,118 @@ public class WorkOrderEventDto
     public string? Note { get; set; }
     public DateTime CreatedAt { get; set; }
 }
+
+// ── 負載看板／待派清單／立即派工（/api/work-orders/load-board、gaps、auto-dispatch）───────
+
+public class LoadBoardDto
+{
+    public List<LoadBoardRowDto> Rows { get; set; } = new();
+}
+
+public class LoadBoardRowDto
+{
+    public long UserId { get; set; }
+
+    /// <summary>顯示名稱(帳號)；使用者已刪除為「（已刪除）」</summary>
+    public string Name { get; set; } = string.Empty;
+
+    public bool Active { get; set; }
+    public bool Paused { get; set; }
+    public bool InPool { get; set; }
+    public int ActiveWorkOrders { get; set; }
+    public int ActiveMembers { get; set; }
+    public int UnrepliedWorkOrders { get; set; }
+    public int OverdueMembers { get; set; }
+    public int ClosedLast7Days { get; set; }
+
+    /// <summary>沒有進行中單為 null</summary>
+    public DateTime? OldestActiveCreatedAt { get; set; }
+}
+
+public class GapsDto
+{
+    public List<GapRowDto> Rows { get; set; } = new();
+    public int Total { get; set; }
+    public int Page { get; set; }
+
+    /// <summary>出現點超過上限：不做試跑，請縮小期間</summary>
+    public bool TooLarge { get; set; }
+
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+}
+
+/// <summary>待派清單的一列＝一個問題（Source, EventId）</summary>
+public class GapRowDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+    public string? PlainExplanation { get; set; }
+
+    /// <summary>缺口主機數</summary>
+    public int GapHosts { get; set; }
+
+    /// <summary>閘門排除：原因（gate_suppressed／gate_noise／gate_severity／gate_dismissed／muted）→ 台數</summary>
+    public Dictionary<string, int> Excluded { get; set; } = new();
+
+    public List<GapSuggestionDto> Suggested { get; set; } = new();
+
+    public List<GapUnassignableDto> Unassignable { get; set; } = new();
+
+    /// <summary>no_visibility 主機所屬的主機群組名稱（去重、最多 10 個）</summary>
+    public List<string> UnseenHostGroups { get; set; } = new();
+}
+
+public class GapSuggestionDto
+{
+    public long HandlerId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Hosts { get; set; }
+
+    /// <summary>該人此問題目前沒有進行中單（立即派工會建新單）</summary>
+    public bool WillCreate { get; set; }
+}
+
+public class GapUnassignableDto
+{
+    /// <summary>no_pool／all_paused／no_visibility／disabled</summary>
+    public string Reason { get; set; } = string.Empty;
+
+    public int Hosts { get; set; }
+}
+
+public class AutoDispatchRequest
+{
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+}
+
+public class AutoDispatchResultDto
+{
+    public int CreatedOrders { get; set; }
+    public int MergedOrders { get; set; }
+    public int AssignedMembers { get; set; }
+    public List<AutoDispatchHandlerDto> PerHandler { get; set; } = new();
+    public List<GapUnassignableDto> Unassigned { get; set; } = new();
+    public int DaySyncPendingCases { get; set; }
+
+    /// <summary>建單擲例外的組（其餘組照常處理；全部失敗時仍回結果、不擲）</summary>
+    public List<AutoDispatchFailedGroupDto> FailedGroups { get; set; } = new();
+}
+
+public class AutoDispatchFailedGroupDto
+{
+    public long HandlerId { get; set; }
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public int Hosts { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
+public class AutoDispatchHandlerDto
+{
+    public long HandlerId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Hosts { get; set; }
+}

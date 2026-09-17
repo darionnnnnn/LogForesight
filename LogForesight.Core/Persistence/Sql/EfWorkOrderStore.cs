@@ -321,20 +321,32 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>負載看板的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
-    internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx) =>
-        ctx.WorkOrders.AsNoTracking()
-            .Where(w => w.ClosedAt == null)
+    internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx)
+    {
+        var today = DateTime.Today;
+        var closedSince = today.AddDays(-HandlerLoad.ClosedWindowDays);
+
+        // 母體＝進行中單＋近 7 日結案單，依處理人分組；進行中類計數以條件聚合、成員類以關聯子查詢併進同一句 SQL。
+        // 逾期條件與 WorkOrderQueries.IsOverdue 同義
+        return ctx.WorkOrders.AsNoTracking()
+            .Where(w => w.ClosedAt == null || w.ClosedAt >= closedSince)
             .GroupBy(w => w.HandlerId)
             .Select(g => new HandlerLoad
             {
                 HandlerId = g.Key,
-                ActiveWorkOrders = g.Count(),
-                UnrepliedWorkOrders = g.Count(w => w.LastReplyAt == null),
-                OldestActiveCreatedAt = g.Min(w => w.CreatedAt),
+                ActiveWorkOrders = g.Count(w => w.ClosedAt == null),
+                UnrepliedWorkOrders = g.Count(w => w.ClosedAt == null && w.LastReplyAt == null),
+                ClosedLast7Days = g.Count(w => w.ClosedAt != null),
+                OldestActiveCreatedAt = g.Min(w => w.ClosedAt == null ? (DateTime?)w.CreatedAt : null),
                 ActiveMembers = ctx.IssueCases.Count(c =>
                     c.ClosedAt == null &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key)),
+                OverdueMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                    && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key))
             });
+    }
 
     /// <summary>
     /// 清除結案早於保留期的交辦單與其事件（形狀比照 <see cref="EfIssueCaseStore.Prune(int)"/>）。

@@ -145,17 +145,43 @@ public sealed class DispatchContext
     {
         if (!_dismissedByHost.TryGetValue(hostName, out var keys))
         {
-            keys = _cases.GetMany(new[] { hostName })
-                .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
-                .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
-                .Where(c => c.Status is IssueHandlingStatuses.WontFix
-                    or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
-                .Select(c => c.IssueKey)
-                .ToHashSet(StringComparer.Ordinal);
+            keys = DismissedKeys(_cases.GetMany(new[] { hostName }));
             _dismissedByHost[hostName] = keys;
         }
         return keys.Contains(issueKey);
     }
+
+    /// <summary>
+    /// 批次預載「不再打擾」：一次讀這些主機的全部案件，填入 <see cref="IsDismissed"/> 的逐主機快取；
+    /// 之後對已預載主機的判斷不再查詢。沒有任何案件的主機也登記為空集合（同樣不再查）。
+    /// </summary>
+    public void PreloadDismissed(IReadOnlyCollection<string> hostNames)
+    {
+        var pending = hostNames
+            .Where(h => !_dismissedByHost.ContainsKey(h))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (pending.Count == 0) return;
+
+        var casesByHost = _cases.GetMany(pending)
+            .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        foreach (var hostName in pending)
+        {
+            _dismissedByHost[hostName] = DismissedKeys(
+                casesByHost.TryGetValue(hostName, out var cases) ? cases : new List<IssueCase>());
+        }
+    }
+
+    /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案者</summary>
+    private static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
+        casesOfHost
+            .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
+            .Where(c => c.Status is IssueHandlingStatuses.WontFix
+                or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
+            .Select(c => c.IssueKey)
+            .ToHashSet(StringComparer.Ordinal);
 
     /// <summary>登記一張進行中單（真的建單後，或試跑時的負數 id 虛擬單）</summary>
     public void RegisterOrder(WorkOrder order)

@@ -168,18 +168,34 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         };
     }
 
-    public List<HandlerLoad> LoadBoard() =>
-        _orders.Where(o => o.ClosedAt == null)
+    /// <summary>同 EF 版：母體＝進行中單＋近 7 日結案單，依處理人分組</summary>
+    public List<HandlerLoad> LoadBoard()
+    {
+        var today = DateTime.Today;
+        var closedSince = today.AddDays(-HandlerLoad.ClosedWindowDays);
+
+        return _orders.Where(o => o.ClosedAt == null || o.ClosedAt >= closedSince)
             .GroupBy(o => o.HandlerId)
-            .Select(g => new HandlerLoad
+            .Select(g =>
             {
-                HandlerId = g.Key,
-                ActiveWorkOrders = g.Count(),
-                UnrepliedWorkOrders = g.Count(o => o.LastReplyAt == null),
-                OldestActiveCreatedAt = g.Min(o => o.CreatedAt),
-                ActiveMembers = g.Sum(o => _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Count(c => c.ClosedAt == null))
+                var active = g.Where(o => o.ClosedAt == null).ToList();
+                var activeMembers = active
+                    .SelectMany(o => _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue))
+                    .Where(c => c.ClosedAt == null)
+                    .ToList();
+                return new HandlerLoad
+                {
+                    HandlerId = g.Key,
+                    ActiveWorkOrders = active.Count,
+                    UnrepliedWorkOrders = active.Count(o => o.LastReplyAt == null),
+                    ClosedLast7Days = g.Count(o => o.ClosedAt != null),
+                    OldestActiveCreatedAt = active.Count == 0 ? null : active.Min(o => o.CreatedAt),
+                    ActiveMembers = activeMembers.Count,
+                    OverdueMembers = activeMembers.Count(c => WorkOrderQueries.IsOverdue(c, today))
+                };
             })
             .ToList();
+    }
 
     public int PruneClosed(int retentionDays)
     {

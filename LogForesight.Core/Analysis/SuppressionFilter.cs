@@ -12,7 +12,7 @@ namespace LogForesight.Core.Analysis;
 /// 這個純函數類別不該依賴 store 去查——維持「呼叫端解析、這裡只做比對」的分工，
 /// <paramref name="hostGroupIds"/> 由呼叫端傳入這台主機目前所屬的群組 Id 集合。
 /// </summary>
-internal static class SuppressionFilter
+public static class SuppressionFilter
 {
     /// <summary>本機、現在生效中的完整抑制項目（含 Reason，供報告/體檢顯示用）</summary>
     public static List<RuleSuppression> ActiveForHost(

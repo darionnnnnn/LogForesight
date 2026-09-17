@@ -205,6 +205,19 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     /// <summary>主機清單分批查詢的批次大小：避免 IN 清單過長（SQL Server 參數上限 2100）</summary>
     private const int HostBatchSize = 500;
 
+    public List<(string HostNameKey, string IssueKey)> GetOpenKeys()
+    {
+        using var ctx = _contextFactory();
+
+        // 單句、只選兩欄：待派清單要扣掉「已有進行中案件」的全部缺口，不把整列案件拉回來
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.ClosedAt == null)
+            .Select(c => new { c.HostNameKey, c.IssueKey })
+            .AsEnumerable()
+            .Select(x => (x.HostNameKey, x.IssueKey))
+            .ToList();
+    }
+
     public List<IssueCase> GetOpenByIssue(string source, int eventId)
     {
         var key = EfWorkOrderStore.SourceKeyOf(source);

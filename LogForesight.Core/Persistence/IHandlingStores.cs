@@ -106,6 +106,9 @@ public interface IIssueCaseStore
     /// </summary>
     void SaveMany(IEnumerable<IssueCase> cases);
 
+    /// <summary>全部進行中案件的（host_name_key, issue_key）：單一查詢、只選這兩欄（待派清單扣除已有人處理的缺口用）</summary>
+    List<(string HostNameKey, string IssueKey)> GetOpenKeys();
+
     /// <summary>某問題的全部進行中案件（source 不分大小寫，比對正規化的 source_key）</summary>
     List<IssueCase> GetOpenByIssue(string source, int eventId);
 

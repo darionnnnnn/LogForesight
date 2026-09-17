@@ -251,9 +251,12 @@ public static class WorkOrderQueries
     }
 }
 
-/// <summary>處理人負載看板的一列（只列有進行中交辦單的處理人）</summary>
+/// <summary>處理人負載看板的一列（列有進行中交辦單、或近 <see cref="ClosedWindowDays"/> 日有結案單的處理人）</summary>
 public sealed class HandlerLoad
 {
+    /// <summary>「近期結案」的回看天數：結案時間 &gt;= 今天−7</summary>
+    public const int ClosedWindowDays = 7;
+
     public long HandlerId { get; init; }
 
     public int ActiveWorkOrders { get; init; }
@@ -264,5 +267,12 @@ public sealed class HandlerLoad
     /// <summary>進行中且從未回覆（last_reply_at IS NULL）的單數</summary>
     public int UnrepliedWorkOrders { get; init; }
 
-    public DateTime OldestActiveCreatedAt { get; init; }
+    /// <summary>其進行中單底下逾期的成員數（判準同 <see cref="WorkOrderQueries.IsOverdue"/>）</summary>
+    public int OverdueMembers { get; init; }
+
+    /// <summary>結案時間 &gt;= 今天−7 的單數（不分結案原因）</summary>
+    public int ClosedLast7Days { get; init; }
+
+    /// <summary>最早一張進行中單的建立時間；沒有進行中單為 null</summary>
+    public DateTime? OldestActiveCreatedAt { get; init; }
 }

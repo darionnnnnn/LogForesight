@@ -345,6 +345,15 @@ internal class FakeIssueCaseStore : IIssueCaseStore
     public List<IssueCase> GetOpenByHandler(long userId) =>
         _items.Where(c => c.HandlerId == userId && c.ClosedAt == null).ToList();
 
+    public int GetOpenKeysCalls { get; private set; }
+
+    /// <summary>同 EF 版：全部進行中案件的（host_name_key, issue_key）</summary>
+    public List<(string HostNameKey, string IssueKey)> GetOpenKeys()
+    {
+        GetOpenKeysCalls++;
+        return _items.Where(c => c.ClosedAt == null).Select(c => (HostNameKey.Of(c.HostName), c.IssueKey)).ToList();
+    }
+
     public IssueCase? Get(string caseId) => _items.FirstOrDefault(c => c.CaseId == caseId);
 
     /// <summary>批次入口與逐筆同語意——假實作沒有「整份讀改寫」的成本，行為一致即可</summary>

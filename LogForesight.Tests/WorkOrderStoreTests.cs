@@ -545,6 +545,7 @@ public class WorkOrderStoreTests : IDisposable
         public EfIssueCaseStoreWithSuffix(Func<LfDbContext> factory, string suffix) { _inner = new EfIssueCaseStore(factory); _suffix = suffix; }
         public void Save(IssueCase issueCase) { issueCase.CaseId += _suffix; _inner.Save(issueCase); }
         public IssueCase? GetOpen(string hostName, string issueKey) => throw new NotSupportedException();
+        public List<(string HostNameKey, string IssueKey)> GetOpenKeys() => throw new NotSupportedException();
         public List<IssueCase> GetOpenForHost(string hostName) => throw new NotSupportedException();
         public List<IssueCase> GetMany(IEnumerable<string> hostNames) => throw new NotSupportedException();
         public List<IssueCase> GetOpenByHandler(long userId) => throw new NotSupportedException();
@@ -610,5 +611,65 @@ public class WorkOrderStoreTests : IDisposable
         _counter.Readers = 0;
         store.CountMembers(new long[] { 1, 2, 3 });
         return _counter.Readers;
+    }
+
+    [Fact]
+    public void LoadBoard擴充欄位_逾期與近7日結案_EF與替身一致_單一查詢()
+    {
+        var today = DateTime.Today;
+        var efCases = new EfIssueCaseStore(_fx.NewContext);
+        var ef = CountingStore();
+        var fakeCases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(fakeCases);
+        var boards = new List<Dictionary<long, HandlerLoad>>();
+
+        foreach (var (orders, cases) in new (IWorkOrderStore, IIssueCaseStore)[] { (ef, efCases), (fake, fakeCases) })
+        {
+            // 處理人 1：一張進行中單（2 件逾期、1 件期限今天、1 件 escalated 過期不算）＋一張 3 天前結案
+            var active = NewOrder(1, "A", 1); active.CreatedAt = new DateTime(2026, 8, 3);
+            var activeId = orders.Insert(active);
+            var recent = NewOrder(1, "B", 2); recent.ClosedAt = today.AddDays(-3);
+            orders.Insert(recent);
+            // 處理人 2：只有近 7 日結案單（今天−7 算、今天−8 不算）
+            var edge = NewOrder(2, "A", 1); edge.ClosedAt = today.AddDays(-7);
+            orders.Insert(edge);
+            var old = NewOrder(2, "B", 2); old.ClosedAt = today.AddDays(-8);
+            orders.Insert(old);
+            // 處理人 3：只有 8 天前結案單→不列
+            var gone = NewOrder(3, "A", 1); gone.ClosedAt = today.AddDays(-8).AddHours(-1);
+            orders.Insert(gone);
+
+            void M(string caseId, string status, DateTime? due) =>
+                cases.Save(new IssueCase
+                {
+                    CaseId = caseId, HostName = caseId, IssueKey = "System|A|1|2", IssueLabel = "A 1",
+                    Status = status, HandlerId = 1, DueDate = due, FirstLinkedDate = Base, LastLinkedDate = Base,
+                    CreatedAt = Base, CreatedByAccount = "admin", UpdatedAt = Base, WorkOrderId = activeId
+                });
+            M("m1", IssueHandlingStatuses.InProgress, today.AddDays(-1));
+            M("m2", IssueHandlingStatuses.Observing, today.AddDays(-3));
+            M("m3", IssueHandlingStatuses.InProgress, today);
+            M("m4", IssueHandlingStatuses.Escalated, today.AddDays(-5));
+
+            _counter.Readers = 0;
+            boards.Add(orders.LoadBoard().ToDictionary(l => l.HandlerId));
+            if (ReferenceEquals(orders, ef)) Assert.Equal(1, _counter.Readers);
+        }
+
+        foreach (var board in boards)
+        {
+            Assert.Equal(new long[] { 1, 2 }, board.Keys.OrderBy(k => k));
+            Assert.Equal(1, board[1].ActiveWorkOrders);
+            Assert.Equal(4, board[1].ActiveMembers);
+            Assert.Equal(2, board[1].OverdueMembers);
+            Assert.Equal(1, board[1].ClosedLast7Days);
+            Assert.Equal(1, board[1].UnrepliedWorkOrders);
+            Assert.Equal(new DateTime(2026, 8, 3), board[1].OldestActiveCreatedAt);
+            Assert.Equal(0, board[2].ActiveWorkOrders);
+            Assert.Equal(0, board[2].ActiveMembers);
+            Assert.Equal(0, board[2].UnrepliedWorkOrders);
+            Assert.Equal(1, board[2].ClosedLast7Days);
+            Assert.Null(board[2].OldestActiveCreatedAt);
+        }
     }
 }

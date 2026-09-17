@@ -751,4 +751,40 @@ public class HandlingStoreContractTests : IDisposable
         Assert.Equal(smallAll, Run(null));
         Assert.Equal(smallHosts, Run(hostKeys));
     }
+
+    private static void SeedOpenKeys(IIssueCaseStore store)
+    {
+        store.Save(NewCase("o1", "srv-01", "System|Disk|153|1", 1));
+        store.Save(NewCase("o2", "SRV-02", "System|Ntfs|55|1", 2));
+        var closed = NewCase("o3", "SRV-03", "System|Disk|153|1", 1);
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+    }
+
+    [Fact]
+    public void 案件_GetOpenKeys_EF只回進行中且單一查詢()
+    {
+        var counter = new ReaderCounter();
+        var store = CountingCases(counter);
+        SeedOpenKeys(store);
+
+        counter.Readers = 0;
+        var keys = store.GetOpenKeys().OrderBy(k => k.HostNameKey).ToList();
+
+        Assert.Equal(1, counter.Readers);
+        Assert.Equal(new[] { ("SRV-01", "System|Disk|153|1"), ("SRV-02", "System|Ntfs|55|1") }, keys);
+    }
+
+    [Fact]
+    public void 案件_GetOpenKeys_替身只回進行中且單一呼叫()
+    {
+        var store = new FakeIssueCaseStore();
+        SeedOpenKeys(store);
+
+        var keys = store.GetOpenKeys().OrderBy(k => k.HostNameKey).ToList();
+
+        Assert.Equal(1, store.GetOpenKeysCalls);
+        Assert.Equal(new[] { ("SRV-01", "System|Disk|153|1"), ("SRV-02", "System|Ntfs|55|1") }, keys);
+    }
 }
