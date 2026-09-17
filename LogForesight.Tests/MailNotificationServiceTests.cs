@@ -1367,6 +1367,204 @@ public class MailNotificationServiceTests : IDisposable
 
         Assert.Empty(_sender.Sent);
     }
+
+    // ── NotifyWorkOrderDigestAsync：夜間交辦摘要信（task-47-E1e）─────────────
+
+    [Fact]
+    public async Task NotifyWorkOrderDigestAsync_每位處理人一封且列出各自的單()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
+        _users.Upsert(new WebUser { UserId = 2, Account = "eng2", Email = "eng2@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
+                    new(102, CreatedThisRun: false, AddedMembers: 5, IssueLabel: "DCOM 10016"),
+                },
+                [2] = new List<NightlyDispatchOrderLine>
+                {
+                    new(201, CreatedThisRun: true, AddedMembers: 2, IssueLabel: "Schannel 36888"),
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        Assert.Equal(2, _sender.Sent.Count);
+
+        var sent1 = _sender.Sent[0];
+        Assert.Equal(new[] { "eng1@test.local" }, sent1.Message.To);
+        Assert.Contains("交辦摘要", sent1.Message.Subject);
+        Assert.Contains("新交辦 1 張、新增 8 台", sent1.Message.Subject);
+        Assert.Contains("昨夜的分析替你派了以下交辦單：", sent1.Message.Body);
+        Assert.Contains("單號 101：disk 153（新建，3 台）", sent1.Message.Body);
+        Assert.Contains("單號 102：DCOM 10016（新增 5 台）", sent1.Message.Body);
+        Assert.Contains("請至站台的「交辦單」頁檢視。", sent1.Message.Body);
+        Assert.DoesNotContain("201", sent1.Message.Body);
+        Assert.DoesNotContain("Schannel", sent1.Message.Body);
+
+        var sent2 = _sender.Sent[1];
+        Assert.Equal(new[] { "eng2@test.local" }, sent2.Message.To);
+        Assert.Contains("交辦摘要", sent2.Message.Subject);
+        Assert.Contains("新交辦 1 張、新增 2 台", sent2.Message.Subject);
+        Assert.Contains("昨夜的分析替你派了以下交辦單：", sent2.Message.Body);
+        Assert.Contains("單號 201：Schannel 36888（新建，2 台）", sent2.Message.Body);
+        Assert.Contains("請至站台的「交辦單」頁檢視。", sent2.Message.Body);
+        Assert.DoesNotContain("101", sent2.Message.Body);
+        Assert.DoesNotContain("102", sent2.Message.Body);
+        Assert.DoesNotContain("disk 153", sent2.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderDigestAsync_開關關閉時不寄()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = false);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderDigestAsync_處理人沒有email時略過其他人照寄()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "", Active = true });
+        _users.Upsert(new WebUser { UserId = 2, Account = "eng2", Email = "eng2@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
+                },
+                [2] = new List<NightlyDispatchOrderLine>
+                {
+                    new(201, CreatedThisRun: true, AddedMembers: 2, IssueLabel: "Schannel 36888"),
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "eng2@test.local" }, sent.Message.To);
+        Assert.Contains("單號 201：Schannel 36888（新建，2 台）", sent.Message.Body);
+        Assert.DoesNotContain("101", sent.Message.Body);
+    }
+
+    // ── 週報靜音中問題段（task-47-E1e）─────────────────────────────────────
+
+    [Fact]
+    public async Task 週報_有目前靜音中的問題時附靜音段()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var now = new DateTime(2026, 8, 10, 9, 0, 0);
+        EnableMail(s =>
+        {
+            s.MailWeeklyEnabled = true;
+            s.MailWeeklyDayOfWeek = now.DayOfWeek.ToString();
+            s.MailWeeklyTime = "08:00";
+        });
+        var to = now.Date.AddDays(-1);
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host1.HostId, "host1", to, RiskLevels.High));
+
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "disk",
+            EventId = 153,
+            Mutes = new List<MuteInterval>
+            {
+                new()
+                {
+                    From = now.Date.AddDays(-2),
+                    To = now.Date.AddDays(5),
+                    Reason = "更換硬碟",
+                    ByAccount = "alice"
+                }
+            }
+        });
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "DCOM",
+            EventId = 10016,
+            Mutes = new List<MuteInterval>
+            {
+                new()
+                {
+                    From = now.Date.AddDays(-10),
+                    To = now.Date.AddDays(-1),
+                    Reason = "已排查完畢",
+                    ByAccount = "bob"
+                }
+            }
+        });
+
+        await Create().CheckAndSendDailyWeeklyAsync(now);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("目前靜音中的問題（共 1 個，到期後恢復告警）：", sent.Message.Body);
+        Assert.Contains($"disk/153：靜音至 {now.Date.AddDays(5):yyyy-MM-dd}｜原因：更換硬碟｜設定者：alice", sent.Message.Body);
+        Assert.DoesNotContain("DCOM/10016", sent.Message.Body);
+        Assert.DoesNotContain("已排查完畢", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task 週報_沒有靜音中的問題時不出現靜音段()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var now = new DateTime(2026, 8, 10, 9, 0, 0);
+        EnableMail(s =>
+        {
+            s.MailWeeklyEnabled = true;
+            s.MailWeeklyDayOfWeek = now.DayOfWeek.ToString();
+            s.MailWeeklyTime = "08:00";
+        });
+        var to = now.Date.AddDays(-1);
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host1.HostId, "host1", to, RiskLevels.High));
+
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "DCOM",
+            EventId = 10016,
+            Mutes = new List<MuteInterval>
+            {
+                new()
+                {
+                    From = now.Date.AddDays(-10),
+                    To = now.Date.AddDays(-1),
+                    Reason = "已過期",
+                    ByAccount = "bob"
+                }
+            }
+        });
+
+        await Create().CheckAndSendDailyWeeklyAsync(now);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.DoesNotContain("目前靜音中的問題", sent.Message.Body);
+    }
 }
 
 /// <summary>MissingDateFinder 測試用最小 IAnalysisRecordReader：全空歷史，模擬「近 N 天都沒有

@@ -362,6 +362,62 @@ public class MailNotificationService
         }
     }
 
+    /// <summary>
+    /// 夜間交辦摘要信（回饋第 47 輪 E-1）：每位處理人一封，列出昨夜為其新建或續掛的交辦單。
+    /// 內部 try/catch 到底：通知永遠不能弄掛分析流程。
+    /// </summary>
+    public async Task NotifyWorkOrderDigestAsync(NightlyDispatchSummary summary, CancellationToken ct = default)
+    {
+        try
+        {
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled || !settings.MailNotifyWorkOrders || summary.PerHandler.Count == 0) return;
+
+            var users = _users.GetAll().ToDictionary(u => u.UserId);
+            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+
+            foreach (var (userId, orders) in summary.PerHandler.OrderBy(kv => kv.Key))
+            {
+                if (!users.TryGetValue(userId, out var user) || !user.Active)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(user.Email))
+                {
+                    Log.Warn("[Mail] 交辦摘要略過：處理人 {Account} 沒有設定 email。", user.Account);
+                    continue;
+                }
+
+                var email = user.Email.Trim();
+                var createdCount = orders.Count(o => o.CreatedThisRun);
+                var addedCount = orders.Sum(o => o.AddedMembers);
+                var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, "-", "交辦摘要", $"新交辦 {createdCount} 張、新增 {addedCount} 台");
+
+                var body = new StringBuilder();
+                if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
+
+                body.AppendLine("昨夜的分析替你派了以下交辦單：");
+                body.AppendLine();
+                foreach (var order in orders.OrderBy(o => o.WorkOrderId))
+                {
+                    var line = order.CreatedThisRun
+                        ? $"  單號 {order.WorkOrderId}：{order.IssueLabel}（新建，{order.AddedMembers} 台）"
+                        : $"  單號 {order.WorkOrderId}：{order.IssueLabel}（新增 {order.AddedMembers} 台）";
+                    body.AppendLine(line);
+                }
+                body.AppendLine();
+                body.AppendLine("請至站台的「交辦單」頁檢視。");
+
+                await SendSafeAsync(settings, new List<string> { email }, subject, body.ToString(), ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 交辦摘要通知處理失敗（不影響分析結果）");
+        }
+    }
+
     /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存），不落地任何狀態。</summary>
     public async Task SendTestAsync(SmtpConnectionSpec connection, string from, List<string> recipients,
         string subjectTemplate, string bodyIntro, CancellationToken ct = default)
@@ -1003,12 +1059,35 @@ public class MailNotificationService
                 : $"目前未處理（含處理中）的風險日共 {unresolved.Count} 筆，請至站台的問題查詢頁檢視。";
         }
 
+        // 週報附目前靜音中的問題（回饋第 47 輪 E-1）：不限窗口——「目前靜音中」是當下狀態。
+        // 這是全站資訊，不受可見範圍過濾（同 unresolvedLine 的既有取捨，所有收件人一律看得到）。
+        // _issueOwners 為既有可選相依，null 表示測試未注入或未啟用。
+        string? mutedSection = null;
+        if (isWeekly && _issueOwners != null)
+        {
+            var muted = _issueOwners.GetAll()
+                .Select(p => (Profile: p, Mute: IssueProfile.CurrentMute(p, now.Date)))
+                .Where(x => x.Mute != null)
+                .OrderBy(x => x.Profile.SourceName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Profile.EventId)
+                .ToList();
+
+            if (muted.Count > 0)
+            {
+                var lines = new List<string> { $"目前靜音中的問題（共 {muted.Count} 個，到期後恢復告警）：" };
+                lines.AddRange(muted.Select(x =>
+                    $"  {x.Profile.SourceName}/{x.Profile.EventId}：靜音至 {x.Mute!.To:yyyy-MM-dd}｜原因：{x.Mute.Reason}｜設定者：{x.Mute.ByAccount}"));
+                mutedSection = string.Join(Environment.NewLine, lines);
+            }
+        }
+
         var issueRowsCache = new Dictionary<string, List<MailIssueRow>>();
         (string Subject, string Body) BuildMessage(RecipientView view)
         {
             var issueRows = BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds);
             var body = new StringBuilder(BuildDigestBody(settings, windowText, issueRows));
             if (unresolvedLine != null) body.AppendLine().AppendLine(unresolvedLine);
+            if (mutedSection != null) body.AppendLine().AppendLine(mutedSection);
             return (subject, body.ToString());
         }
 

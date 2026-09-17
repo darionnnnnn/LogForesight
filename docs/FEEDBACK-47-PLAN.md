@@ -754,7 +754,8 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | E-1b | agy（gemini-3.8-flash-high） | 一輪通過（郵件＋設定測試 213 綠，郵件 +5） | Claude 核對 diff 只動白名單五檔、位元組核對 BOM／CRLF／NUL；自做突變（通知方法拿掉 `MailNotifyWorkOrders` 判斷）→「開關關閉時不寄」轉紅，還原逐位元組相同 | Claude 親修一行：「…等 N 台」原以名單長度 >20 判定，呼叫端只傳部分名單時會漏註總數，改為 `HostCount > min(名單數, 20)`；`SystemSettingsServiceTests` 原本就沒有郵件欄位往返測試，未加（依規格） |
 | E-1c | agy（gemini-3.8-flash-high） | 實作完成但**沒跑完驗收就結束**（stdout 停在「等測試結果」＋ terminating background task，無回報） | Claude 自跑建置、兩條計數（1／7）與篩選測試（63 綠，+5）；位元組核對；自做突變（拿掉「收件人是操作者本人不寄」）→「處理人是操作者本人時不寄」轉紅，還原逐位元組相同 | **agy 違反限制條款**：`NotifyHandler` 新增可選參數 `resolvedRules = null`＋`??` 回退（可選參數第六犯）→Claude 親改為必填、取消路徑傳入解析後規則；`WorkOrderBoardServiceTests` 實際未建構指令服務，未改 |
 | E-1d | agy（gemini-3.8-flash-high） | 一輪通過並完整回報（夜間派工測試 9 綠，+1；提示詞加「驗收逐條跑完等結果出來再結束」後沒再中途結束） | Claude 核對 diff 只動白名單三檔、位元組核對；自做突變（掛入既有單的名稱查詢改恆走回退值）→「彙總列帶問題名稱」轉紅，還原逐位元組相同 | 無偏離；`OrchestratorResult.DispatchSummary` 指派只以 grep 驗證（排程端寄信在 E-1e 以測試覆蓋郵件方法） |
-| E-1e | agy（gemini-3.8-flash-high） | 執行中 | — | — |
+| E-1e | agy（gemini-3.8-flash-high） | 一輪通過並完整回報（郵件＋排程測試 168 綠，+5） | Claude 核對 diff 只動白名單三檔、位元組核對；自做突變（週報「目前靜音中」判定日提前 30 天）→ 1 條轉紅，還原逐位元組相同；**E-1 全段完成後獨立重建（1 個既有警告）與全套：4763 綠／略過 6，總 4769（+18），零失敗** | Claude 親改：註解內的執行端標記「task-47-E1e」改為專案慣例「回饋第 47 輪 E-1」。**收尾清理**：前幾段測試檔仍有 `task-47-*` 註解標記（`HandlingServiceTests`、`HandlingStoreContractTests`、`IssueMuteTests` 等），收尾統一改寫。規劃原分 E-1d 夜間摘要／E-1e 週報，實際 E-1d 做 Core 彙總、E-1e 做摘要信＋排程接線＋週報靜音段 |
+| F-1a | agy（gemini-3.8-flash-high） | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
