@@ -747,6 +747,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | C-2b | impl-low | 三輪通過（4599 綠／略過 6，總 4605，+40） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；自做突變（Windows 規則命中拿掉「全部事件編號」）→`KnownIssueCatalogRuleMayHitTests` 轉紅，還原 cmp 相同 | 第一輪驗收退回兩項：①立即派工不判定抑制會派出假工作（原規格列為已知限制，推翻）→抑制預覽的「規則可能命中」判定抽成唯一 `KnownIssueCatalog.RuleMayHit`，抑制預覽與試跑共用，試跑逐主機套生效中抑制（可能多擋、不會少擋）；②立即派工部分失敗不寫稽核→逐組吞下、`FailedGroups` 回報、最後一定寫稽核。第二輪執行端停下回報兩個阻礙並經決定：`SuppressionFilter` 由 internal 改 public（只改可見性）；PRTG 規則命中依 Source `PRTG:{代碼}`（`PrtgFindingMapper.TryGetRuleCode`）判定。**查證時發現跨段缺陷**：`LatestOccurrences`／`ActionableOccurrences` 分組不含 `event_key`、回傳四段鍵——既有的依問題視角／rollup／待辦／郵件摘要把已處理的 PRTG 與 Linux 命中規則問題算成未處理，C-1b 手動建單與 C-2b 試跑對這兩類問題建出錯的鍵（會重複派工）→ 另開 C-2c 修正。接受：`SuppressionFilter` 公開後其餘既有 public 方法一併可見；`RuleMayHit` 單元測試暫放 `WorkOrderBoardServiceTests.cs` 檔尾；關聯型與量能型抑制不作用在單一問題 |
 | C-2c | impl-low＋Claude | 一輪通過（4612 綠／略過 6，總 4618，+13） | 執行端先寫測試、在修改前版本跑出 8 條紅（錯誤訊息直接顯示少了第五段）再修；突變（分組拿掉 EventKey）7 條＋1 條轉紅；Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套、位元組核對換行、確認組五段鍵只剩 `IssueSignatureKey` 五參數多載一處 | **修掉的既有缺陷**：出現點查詢分組不含 `event_key`，依問題視角處理概況、重點問題與排行的已有結論、待辦、郵件摘要把已處理的 PRTG 與 Linux 命中規則問題算成未處理；C-1b 手動建單與 C-2b 試跑對這兩類問題建出四段鍵（案件對不上、會重複派工、同主機多顆 sensor 被併成一件）。執行端回報規格外第二份組鍵（`EfIssueAggregateQuery.IssueKeyFor`，規格限「只改兩個方法」未動）→ Claude 親改為呼叫單點。執行端指出使用端計數可能受影響 → Claude 查證：排行（`IssueRankingBuilder.LookupRollup`）與待辦（`IssueTodoQuery.Aggregate`）本來就是「任一筆未處理即未處理」；**依問題視角 `BuildIssueGroup` 取「每台主機最近出現那筆」，同主機兩顆 sensor 較晚的已處理會蓋掉較早的未處理** → Claude 親改為每台取最差狀態、處理人從全部出現點收集，補測試並以修改前版本確認轉紅 |
 | D-1 | impl-low | 一輪通過（4640 綠／略過 6，總 4646，+28） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；自做突變（依問題回覆處理狀態拿掉補記交辦單回覆）→「依問題回覆處理狀態_每張涉及的單各一筆replied事件」轉紅，還原 cmp 相同。**未解事項**：突變還原並完整重建後的第一次全套出現 1 條失敗（名稱未留下），接著連續三次全套全綠、無法重現——收尾體檢要留意不穩定測試（嫌疑：本輪新增、依 `DateTime.Now`／今天判定的測試） | 接受：新回覆服務的郵件相依改為必要參數（不沿用舊服務的可選參數，依限制條款）；`RunActivityBannerTests.cs`（白名單外）只改建構；依問題回覆處理狀態現在當場推導交辦單結案（原本等背景掃描）。留意：`ApplyIssueStatus` 為判斷是否為處理人回覆，每次多查一次進行中案件，統一標記逐筆迴圈（上限 5000 主機日）查詢量因此翻倍——若放量後統一標記變慢，改由 `SyncStatus` 結果帶回案件的處理人與單號 |
+| B-1 | impl-low | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
@@ -809,6 +810,13 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | D-1 退役 `bulk-status` | 唯一呼叫端是前端 `issue-status-reply.js`，屬 D-2 改版；改走協調器 `Reply` 會把觸發日歷程動作由 `issue_status` 變成 `case_sync`，牽動既有測試 | 本段不退役、寫入路徑不改，只在寫完後依交辦單分組呼叫 `RecordExternalReply`（回覆時間＋`replied` 事件）；退役留 D-2 |
 | 回覆時間只在交辦單回覆端點更新 | 處理人在風險日詳情逐筆標記同樣是在處理交辦的工作；只看回覆端點會讓「未回覆」指標誤報 | 詳情頁逐筆標記由處理人本人做時 `TouchReply`（只改時間、不寫事件，避免逐筆淹沒時間軸）；管理者代標不算 |
 | 處理人清單沿用查詢端清單 | 查詢端清單授權在 controller 層（Assign 或 ViewAll），處理人本人沒有這兩個能力 | 另開 `ListForHandler`／`HandlerSummary`：本人或 Assign／ViewAll 可看，組裝與查詢端共用 |
+
+### B-1 設計修正（寫規格時，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| `SuppressionFilter.MarkSuppressed` 增加靜音區間參數，各分析入口各自讀問題檔案傳入 | 抑制清單來自四個分析入口（本機、NetIQ 快照、PRTG、AI 補寫），`LogAnalysisService` 沒有問題檔案相依、測試建構點十餘處；報告「已抑制」段的原因反查也只看抑制清單 | 靜音以記憶體合成的抑制型別 `IssueMute` 呈現：包裝層 `MuteAwareSuppressionStore` 讀取時合成、寫入時濾除，只包三個分析入口，規則頁用的 store 不包；`ActiveForHost` 等「現在生效中」的篩選排除它（體檢、到期提醒不會把過去區間當生效中）；`MarkSuppressed` 另收合成項目與紀錄日判定 |
+| 靜音 modal 的「代為結案」 | 代為結案需 Assign＋Handle，靜音 API 只掛 Maintain | `ExistingOrders=close` 時服務層另檢查 Assign＋Handle，不足整筆 Forbidden 零寫入 |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
