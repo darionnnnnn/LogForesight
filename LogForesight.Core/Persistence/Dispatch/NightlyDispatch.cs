@@ -15,7 +15,7 @@ public sealed class NightlyDispatchSummary
 }
 
 /// <summary>夜間派工彙總的一張單</summary>
-public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers);
+public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers, string IssueLabel);
 
 /// <summary>
 /// 夜間派工：一趟執行一個實例，本機、NetIQ、PRTG 三路並行共用。每個主機日在掛接（①②③）之後，
@@ -36,6 +36,7 @@ public sealed class NightlyDispatch
     // 本趟累計（皆在 _ctx.Gate 內讀寫）
     private readonly Dictionary<long, int> _addedByOrder = new();
     private readonly Dictionary<long, long> _handlerByOrder = new();
+    private readonly Dictionary<long, string> _labelByOrder = new();
     private readonly HashSet<long> _createdOrders = new();
 
     public NightlyDispatch(WorkOrderCoordinator coordinator, DispatchContext ctx, IHostStore hosts)
@@ -76,6 +77,7 @@ public sealed class NightlyDispatch
                             _ctx.RegisterOrder(order);
                         if (created) _createdOrders.Add(order.WorkOrderId);
                         _handlerByOrder[order.WorkOrderId] = order.HandlerId;
+                        _labelByOrder[order.WorkOrderId] = order.IssueLabel;
 
                         decision = new DispatchDecision
                         {
@@ -92,10 +94,17 @@ public sealed class NightlyDispatch
 
             _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
 
-            foreach (var (_, workOrderId, handlerId, _) in members)
+            foreach (var (issue, workOrderId, handlerId, _) in members)
             {
                 _addedByOrder[workOrderId] = _addedByOrder.GetValueOrDefault(workOrderId) + 1;
                 _handlerByOrder[workOrderId] = handlerId;
+                if (!_labelByOrder.ContainsKey(workOrderId))
+                {
+                    var existing = _ctx.ActiveOrdersFor(issue.Source, issue.EventId).FirstOrDefault(o => o.WorkOrderId == workOrderId);
+                    _labelByOrder[workOrderId] = existing != null && !string.IsNullOrEmpty(existing.IssueLabel)
+                        ? existing.IssueLabel
+                        : $"{issue.Source}/{issue.EventId}";
+                }
             }
         }
     }
@@ -114,7 +123,7 @@ public sealed class NightlyDispatch
                     g => g.Key,
                     g => (IReadOnlyList<NightlyDispatchOrderLine>)g
                         .OrderBy(p => p.Key)
-                        .Select(p => new NightlyDispatchOrderLine(p.Key, _createdOrders.Contains(p.Key), _addedByOrder.GetValueOrDefault(p.Key)))
+                        .Select(p => new NightlyDispatchOrderLine(p.Key, _createdOrders.Contains(p.Key), _addedByOrder.GetValueOrDefault(p.Key), _labelByOrder[p.Key]))
                         .ToList());
 
             var summary = new NightlyDispatchSummary
@@ -128,6 +137,7 @@ public sealed class NightlyDispatch
             _addedByOrder.Clear();
             _handlerByOrder.Clear();
             _createdOrders.Clear();
+            _labelByOrder.Clear();
             return summary;
         }
     }

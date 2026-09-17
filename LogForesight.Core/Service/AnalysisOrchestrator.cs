@@ -69,6 +69,9 @@ public class OrchestratorResult
     public List<LocalDaySummary> LocalResults { get; set; } = new();
     public NetiqPipelineResult? NetiqResult { get; set; }
     public TimeSpan Elapsed { get; set; }
+
+    /// <summary>本趟夜間派工彙總；派工收尾失敗時為 null。供排程端寄交辦摘要信。</summary>
+    public NightlyDispatchSummary? DispatchSummary { get; set; }
 }
 
 /// <summary>
@@ -710,6 +713,7 @@ public class AnalysisOrchestrator
                 try
                 {
                     var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
+                    runCtx.Result.DispatchSummary = dispatchSummary;
                     Log.Info("派工：建 {CreatedOrders} 單／掛入 {AttachedMembers} 台／略過 {SkipCounts}",
                         dispatchSummary.CreatedOrders, dispatchSummary.AttachedMembers,
                         dispatchSummary.SkipCounts.Count == 0

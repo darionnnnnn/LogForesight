@@ -251,6 +251,48 @@ public class NightlyDispatchTests
         Assert.Equal(1, summary.AttachedMembers);
     }
 
+    [Fact]
+    public void FlushRun_彙總列帶問題名稱_新建單與掛入既有單都有()
+    {
+        AddHost("SRV-01", 5);
+        var existingOrder = new WorkOrder
+        {
+            SourceName = Source, EventId = EventId, IssueLabel = "Disk 153 既有單", HandlerId = 11,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Groups,
+            ScopeGroupIds = new List<long> { 5 }, AutoAttach = true,
+            CreatedAt = DateTime.Today.AddDays(-3)
+        };
+        var existingId = _orders.Insert(existingOrder);
+
+        const string newSource = "Service";
+        const int newEventId = 7031;
+        _candidates.Add(new DispatchCandidate { UserId = 7, Account = "owner7", InPool = false });
+        _owners.Upsert(new IssueProfile { SourceName = newSource, EventId = newEventId, OwnerUserIds = new List<long> { 7 } });
+
+        var (dispatch, _) = Create();
+        var today = DateTime.Today;
+
+        var existingIssue = Issue();
+        var newIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = newSource, EventId = newEventId,
+            EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+
+        Attach(dispatch, "SRV-01", today, existingIssue, newIssue);
+
+        var summary = dispatch.FlushRun(DateTime.Now);
+
+        var existingLine = Assert.Single(summary.PerHandler[11]);
+        Assert.False(existingLine.CreatedThisRun);
+        Assert.Equal(existingOrder.IssueLabel, existingLine.IssueLabel);
+
+        var createdLine = Assert.Single(summary.PerHandler[7]);
+        Assert.True(createdLine.CreatedThisRun);
+        var createdOrder = _orders.All.Single(o => o.WorkOrderId != existingId);
+        Assert.Equal(createdOrder.IssueLabel, createdLine.IssueLabel);
+    }
+
     /// <summary>寫入交辦單時斷言呼叫端持有派工脈絡的鎖</summary>
     private sealed class GateAssertingWorkOrderStore : FakeWorkOrderStore
     {
