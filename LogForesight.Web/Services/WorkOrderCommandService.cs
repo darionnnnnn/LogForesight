@@ -107,15 +107,15 @@ public class WorkOrderCommandService
 
         // 期間內主機日：與依問題視角同一個範圍、同一個彙總（該問題那一列的 DayCount）
         // 靜音不排除（不用 Scope.Exclusion）：派工決策以紀錄日判定靜音，已在派工脈絡處理
-        var aggregate = _aggregates.Aggregate(IssueExclusion.None, plan.Scope.From, plan.Scope.To, plan.Scope.HostIds,
-                plan.Scope.VisibleSeverities, plan.Scope.DayRiskLevels)
-            .FirstOrDefault(a => a.EventId == plan.EventId && string.Equals(a.Source, plan.Source, StringComparison.OrdinalIgnoreCase));
+        // 只查單一問題，不對期間內全部問題做彙總
+        var estimatedHostDays = _aggregates.IssueHostDayCount(IssueExclusion.None, plan.Source, plan.EventId, plan.Scope.From, plan.Scope.To,
+            plan.Scope.HostIds, plan.Scope.VisibleSeverities, plan.Scope.DayRiskLevels);
 
         return new WorkOrderPreviewDto
         {
             AffectedHosts = plan.Hosts.Count(h => h.Resolved.Members.Count > 0),
             AffectedMembers = plan.Hosts.Sum(h => h.Resolved.Members.Count),
-            EstimatedHostDays = aggregate == null ? 0 : aggregate.DayCount,
+            EstimatedHostDays = estimatedHostDays,
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
             ManuallyExcludedHosts = plan.ManuallyExcludedHosts,
             PausedMembersExcluded = plan.PausedMembersExcluded,

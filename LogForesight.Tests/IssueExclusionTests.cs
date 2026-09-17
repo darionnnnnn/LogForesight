@@ -241,7 +241,7 @@ public class IssueExclusionTests : IDisposable
     {
         var methods = typeof(IIssueAggregateQuery).GetMethods();
 
-        Assert.Equal(18, methods.Length);   // 17 個抽象方法＋預設介面方法 AggregateReportKpiPair
+        Assert.Equal(19, methods.Length);   // 18 個抽象方法＋預設介面方法 AggregateReportKpiPair
         foreach (var method in methods)
         {
             var exclusionParams = method.GetParameters().Where(p => p.ParameterType == typeof(IssueExclusion)).ToList();

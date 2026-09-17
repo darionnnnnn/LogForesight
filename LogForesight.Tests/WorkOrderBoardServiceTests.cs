@@ -363,9 +363,23 @@ public class WorkOrderBoardServiceTests : IDisposable
 
         Assert.True(dto.TooLarge);
         Assert.Empty(dto.Rows);
-        Assert.Equal(0, _caseStore.GetOpenKeysCalls);
+        // 上限算的是尚未派出的出現點：必須先查進行中案件排除後才判定（已派出的不佔額度）
+        Assert.Equal(1, _caseStore.GetOpenKeysCalls);
         Assert.Throws<DomainException>(() => Service(maxOccurrences: 1).RunAutoDispatch(null, null));
         Assert.Equal(2, Service(maxOccurrences: 2).GetGaps(null, null, 1).Rows.Single().GapHosts);
+    }
+
+    [Fact]
+    public void 待派_已有進行中案件的出現點不佔上限()
+    {
+        AddHost("HOST-A");
+        AddHost("HOST-B");
+        OpenCase("HOST-A", Disk(), 99);
+
+        var dto = Service(maxOccurrences: 1).GetGaps(null, null, 1);
+
+        Assert.False(dto.TooLarge);
+        Assert.True(dto.Total > 0);
     }
 
     [Fact]

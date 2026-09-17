@@ -91,6 +91,17 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         return MutedIssueCountResult;
     }
 
+    /// <summary>IssueHostDayCount 要回傳的數字；空集合主機仍回 0。</summary>
+    public int IssueHostDayCountResult { get; set; }
+
+    public int IssueHostDayCount(
+        IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
+    {
+        if (hostIds != null && hostIds.Count == 0) return 0;
+        return IssueHostDayCountResult;
+    }
+
     /// <summary>回饋十八輪批次F：測試直接塞好要回傳的主機集合，不需要真的連 SQL。</summary>
     public HashSet<long> HostIdsForResult { get; set; } = new();
 

@@ -240,7 +240,7 @@ public class WorkOrderBoardService
     {
         var trial = RunTrial(from, to);
         if (trial.TooLarge)
-            throw DomainException.Validation($"期間內的問題出現點超過 {_maxOccurrences} 筆，請縮小期間後再派工。");
+            throw DomainException.Validation($"期間內尚未派出的問題出現點超過 {_maxOccurrences} 筆，請縮小期間後再派工。");
 
         var actor = new WorkOrderActor
         {
@@ -370,7 +370,7 @@ public class WorkOrderBoardService
     // ── 試跑（待派清單與立即派工共用的唯一一份）──────────────────────────────
 
     /// <summary>
-    /// 1. 範圍（檢視者可見範圍）→ 期間內全部問題 → 出現點；超過上限回 TooLarge。
+    /// 1. 範圍 → 期間內全部問題 → 出現點 → 排除已有進行中案件 → 超過上限回 TooLarge（上限算尚未派出的出現點，已派出的不佔額度）。
     /// 2. 扣掉已有進行中案件的（主機, 簽章）＝缺口。
     /// 3. 候選人快照＋設定複本（開啟自動派工）建派工脈絡，一次預載全部缺口主機的「不再打擾」。
     /// 4. 缺口依（主機名不分大小寫、簽章）排序逐一決策；建單決策以負數單號登記虛擬單，後續同人同問題才會掛進去。
@@ -390,7 +390,6 @@ public class WorkOrderBoardService
         // 靜音不排除：理由同上
         var occurrences = _aggregates.LatestOccurrences(
             IssueExclusion.None, issues, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
-        if (occurrences.Count > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>());
 
         var openKeys = _cases.GetOpenKeys().ToHashSet();
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
@@ -402,6 +401,8 @@ public class WorkOrderBoardService
             .OrderBy(x => x.Host.HostName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.Occurrence.IssueKey, StringComparer.Ordinal)
             .ToList();
+
+        if (candidates.Count > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>());
 
         var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settings.Get()))!;
         settings.AutoDispatchEnabled = true;

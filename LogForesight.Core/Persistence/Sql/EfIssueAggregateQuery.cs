@@ -147,7 +147,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 解析成存活主機再去重（無法在 SQL 端表達合併鏈的 CASE 映射），相異簽章是字串集合，
         // 三者都無法併進同一句 GROUP BY，而且回傳量都遠小於原始列數
         var hostCounts = SurvivingHostCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
-        var hostDays = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
+        var hostDays = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, null);
         var signatures = DistinctSignatures(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
         var latestCategories = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
 
@@ -204,6 +204,26 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         _performance?.Record("issues:CountCurrentlyMuted", sw.ElapsedMilliseconds);
         return count;
+    }
+
+    public int IssueHostDayCount(
+        IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
+    {
+        if (hostIds != null && hostIds.Count == 0) return 0;
+
+        var f = from.Date;
+        var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
+        var aliasIndex = AliasIndex();
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
+
+        using var ctx = _contextFactory();
+        var sourceUpper = source.ToUpperInvariant();
+        var counts = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, (sourceUpper, eventId));
+
+        return counts.TryGetValue((sourceUpper, eventId), out var count) ? count : 0;
     }
 
     /// <summary>
@@ -1637,9 +1657,15 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>主機日數＝相異 (存活主機, record_date) 組合數（同一台主機多天各算一次）</summary>
     private static Dictionary<(string, int), int> SurvivingHostDayCounts(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
-        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)
+        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
+        (string SourceUpper, int EventId)? onlyIssue)
     {
         var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        if (onlyIssue != null)
+        {
+            var (src, id) = onlyIssue.Value;
+            q = q.Where(x => x.EventId == id && x.SourceName.ToUpper() == src);
+        }
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));

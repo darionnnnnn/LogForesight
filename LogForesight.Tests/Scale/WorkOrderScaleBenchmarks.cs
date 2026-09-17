@@ -219,6 +219,6 @@ public class WorkOrderScaleBenchmarks
         var elapsedMs = sw.ElapsedMilliseconds;
 
         var targetGaps = elapsedMs < 5000 ? "達標" : "未達標";
-        _out.WriteLine($"[缺口試跑] 耗時：{elapsedMs:N0} ms（目標 < 5,000 ms，{targetGaps}），缺口筆數：{gapsDto.Total:N0} 筆");
+        _out.WriteLine($"[缺口試跑] 耗時：{elapsedMs:N0} ms（目標 < 5,000 ms，{targetGaps}），缺口筆數：{gapsDto.Total:N0} 筆，TooLarge={gapsDto.TooLarge}");
     }
 }

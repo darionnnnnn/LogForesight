@@ -89,6 +89,10 @@ public interface IIssueAggregateQuery
         IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
 
+    /// <summary>單一問題在期間內的主機日數（存活主機去重）；篩選與 Aggregate 相同，結果等於 Aggregate 該問題列的 DayCount</summary>
+    int IssueHostDayCount(IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
+
     /// <summary>
     /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
     /// （回饋十八輪批次F，問題負責人的授權路徑用）。Source 比對不分大小寫；

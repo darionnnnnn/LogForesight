@@ -1209,4 +1209,53 @@ public class IssueAggregateQueryTests : IDisposable
         var result = Query().Aggregate(exclusion, queryFrom, queryTo, null);
         Assert.NotNull(result);
     }
+
+    [Fact]
+    public void IssueHostDayCount_等於Aggregate該問題的DayCount()
+    {
+        var survivor = _hosts.Upsert(new WebHost { HostName = "B" });
+        var tombstone = _hosts.Upsert(new WebHost { HostName = "A", MergedInto = survivor.HostId, Active = false });
+        var otherHost = _hosts.Upsert(new WebHost { HostName = "C" });
+
+        var d0 = new DateTime(2026, 8, 1);
+        var d1 = d0.AddDays(1);
+        var d2 = d0.AddDays(2);
+
+        // 目標問題：disk 153，涵蓋墓碑主機 A (High/高風險日)、存活主機 B (High/高風險日)、主機 C (Medium/中風險日)
+        Add(tombstone.HostId, "A", d0, RiskLevels.High, Issue("disk", 153, severity: IssueSeverity.High));
+        Add(survivor.HostId, "B", d1, RiskLevels.High, Issue("disk", 153, severity: IssueSeverity.High));
+        Add(otherHost.HostId, "C", d2, RiskLevels.Medium, Issue("disk", 153, severity: IssueSeverity.Medium));
+
+        // 另一問題：net 99，驗證不影響結果
+        Add(tombstone.HostId, "A", d0, RiskLevels.High, Issue("net", 99, severity: IssueSeverity.High));
+        Add(otherHost.HostId, "C", d1, RiskLevels.High, Issue("net", 99, severity: IssueSeverity.High));
+
+        // 1. 基本比對（不帶額外篩選）：涵蓋墓碑主機合併
+        var fullAgg = Query().Aggregate(IssueExclusion.None, d0, d2, null);
+        var expectedFull = fullAgg.Single(a => a.EventId == 153 && a.Source == "disk").DayCount;
+        var actualFull = Query().IssueHostDayCount(IssueExclusion.None, "disk", 153, d0, d2, null, null, null);
+        Assert.Equal(expectedFull, actualFull);
+
+        // 2. 涵蓋嚴重度可見性（visibleSeverities 只看 High，Medium 應被排除）
+        var highOnly = new HashSet<IssueSeverity> { IssueSeverity.High };
+        var sevAgg = Query().Aggregate(IssueExclusion.None, d0, d2, null, highOnly, null);
+        var expectedSev = sevAgg.Single(a => a.EventId == 153 && a.Source == "disk").DayCount;
+        var actualSev = Query().IssueHostDayCount(IssueExclusion.None, "disk", 153, d0, d2, null, highOnly, null);
+        Assert.Equal(expectedSev, actualSev);
+
+        // 3. 涵蓋日風險等級（riskLevels 只看 High，Medium 風險日應被排除）
+        var highRisk = new HashSet<string> { RiskLevels.High };
+        var riskAgg = Query().Aggregate(IssueExclusion.None, d0, d2, null, null, highRisk);
+        var expectedRisk = riskAgg.Single(a => a.EventId == 153 && a.Source == "disk").DayCount;
+        var actualRisk = Query().IssueHostDayCount(IssueExclusion.None, "disk", 153, d0, d2, null, null, highRisk);
+        Assert.Equal(expectedRisk, actualRisk);
+
+        // 4. 查無問題回 0
+        var notFound = Query().IssueHostDayCount(IssueExclusion.None, "nonexistent", 9999, d0, d2, null, null, null);
+        Assert.Equal(0, notFound);
+
+        // 5. 空主機集合回 0
+        var emptyHosts = Query().IssueHostDayCount(IssueExclusion.None, "disk", 153, d0, d2, Array.Empty<long>(), null, null);
+        Assert.Equal(0, emptyHosts);
+    }
 }
