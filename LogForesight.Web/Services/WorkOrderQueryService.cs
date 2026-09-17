@@ -28,6 +28,10 @@ public class WorkOrderQueryService
     private readonly IVisibilityService _visibility;
     private readonly ICurrentUser _currentUser;
     private readonly IUserDisplayNameService _displayNames;
+    private readonly IIssueExclusionSource _exclusions;
+
+    /// <summary>「靜音到期恢復」的回看天數：最近一個已結束區間的迄日落在 [今天−7, 今天−1]</summary>
+    private const int ResumedWindowDays = 7;
 
     public WorkOrderQueryService(
         IWorkOrderStore orders,
@@ -38,7 +42,8 @@ public class WorkOrderQueryService
         IKnownIssueRuleStore rules,
         IVisibilityService visibility,
         ICurrentUser currentUser,
-        IUserDisplayNameService displayNames)
+        IUserDisplayNameService displayNames,
+        IIssueExclusionSource exclusions)
     {
         _orders = orders;
         _cases = cases;
@@ -49,22 +54,23 @@ public class WorkOrderQueryService
         _visibility = visibility;
         _currentUser = currentUser;
         _displayNames = displayNames;
+        _exclusions = exclusions;
     }
 
     // ── 清單 ────────────────────────────────────────────────────────────────
 
     /// <summary>清單（能力由 controller 標註把關）</summary>
-    public WorkOrderListDto List(WorkOrderListRequest req) => QueryList(req);
+    public WorkOrderListDto List(WorkOrderListRequest req) => QueryList(req, WorkOrderQueries.PausedInclude, _exclusions.Current());
 
     /// <summary>
     /// 某處理人的交辦清單：本人，或具 Assign／ViewAll 才看得到；處理人條件固定為 userId（忽略請求帶的值），
-    /// 查詢與組裝同 <see cref="List"/>。
+    /// 查詢與組裝同 <see cref="List"/>。暫停單預設排除（請求明確帶 <c>only</c>／<c>include</c> 時依請求）。
     /// </summary>
     public WorkOrderListDto ListForHandler(long userId, WorkOrderListRequest req)
     {
         AuthorizeHandlerView(userId);
         req.HandlerId = userId;
-        return QueryList(req);
+        return QueryList(req, WorkOrderQueries.PausedExclude, _exclusions.Current());
     }
 
     /// <summary>某處理人的進行中摘要；授權同 <see cref="ListForHandler"/></summary>
@@ -83,11 +89,12 @@ public class WorkOrderQueryService
 
     private HandlerSummaryDto SummaryOf(long userId)
     {
-        var s = _orders.HandlerSummary(userId);
+        var s = _orders.HandlerSummary(userId, _exclusions.Current().CurrentlyMutedCompositeKeys);
         return new HandlerSummaryDto
         {
             ActiveWorkOrders = s.ActiveWorkOrders, ActiveMembers = s.ActiveMembers,
-            OverdueMembers = s.OverdueMembers, UnrepliedWorkOrders = s.UnrepliedWorkOrders
+            OverdueMembers = s.OverdueMembers, UnrepliedWorkOrders = s.UnrepliedWorkOrders,
+            PausedWorkOrders = s.PausedWorkOrders
         };
     }
 
@@ -100,12 +107,15 @@ public class WorkOrderQueryService
     }
 
     /// <summary>清單查詢與組裝的唯一一份：交辦單一次、本頁計數一次、使用者一次</summary>
-    private WorkOrderListDto QueryList(WorkOrderListRequest req)
+    private WorkOrderListDto QueryList(WorkOrderListRequest req, string defaultPausedMode, IssueExclusion exclusion)
     {
         if (!WorkOrderQueries.OrderStatuses.Contains(req.Status))
             throw DomainException.Validation($"不支援的狀態篩選「{req.Status}」。");
         if (!WorkOrderQueries.Sorts.Contains(req.Sort))
             throw DomainException.Validation($"不支援的排序「{req.Sort}」。");
+        var pausedMode = string.IsNullOrWhiteSpace(req.Paused) ? defaultPausedMode : req.Paused.Trim();
+        if (!WorkOrderQueries.PausedModes.Contains(pausedMode))
+            throw DomainException.Validation($"不支援的暫停篩選「{req.Paused}」。");
 
         var page = Math.Max(1, req.Page);
         var pageSize = req.PageSize < 1 ? DefaultPageSize : Math.Min(req.PageSize, WorkOrderQueries.MaxOrderPageSize);
@@ -127,7 +137,10 @@ public class WorkOrderQueryService
             Status = req.Status,
             Sort = req.Sort,
             Page = page,
-            PageSize = pageSize
+            PageSize = pageSize,
+            PausedKeys = exclusion.CurrentlyMutedCompositeKeys,
+            PausedMode = pausedMode,
+            OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null
         });
 
         var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList());
@@ -135,7 +148,7 @@ public class WorkOrderQueryService
 
         return new WorkOrderListDto
         {
-            Items = result.Items.Select(o => FillRow(new WorkOrderRowDto(), o, users, counts, rules)).ToList(),
+            Items = result.Items.Select(o => FillRow(new WorkOrderRowDto(), o, users, counts, rules, exclusion)).ToList(),
             Total = result.Total,
             Page = page,
             PageSize = pageSize
@@ -152,7 +165,7 @@ public class WorkOrderQueryService
         var rules = KnownIssueCatalog.ResolveRules(_rules);
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
 
-        var dto = FillRow(new WorkOrderDetailDto(), order, users, counts, rules);
+        var dto = FillRow(new WorkOrderDetailDto(), order, users, counts, rules, _exclusions.Current());
         dto.Note = order.Note;
         dto.CreatedByAccount = order.CreatedByAccount;
         dto.ScopeGroups = order.ScopeGroupIds.Select(gid => new WorkOrderScopeGroupDto
@@ -260,7 +273,7 @@ public class WorkOrderQueryService
     }
 
     private T FillRow<T>(T dto, WorkOrder o, Dictionary<long, WebUser> users,
-        Dictionary<long, WorkOrderMemberCounts> counts, List<KnownIssueRule> rules) where T : WorkOrderRowDto
+        Dictionary<long, WorkOrderMemberCounts> counts, List<KnownIssueRule> rules, IssueExclusion exclusion) where T : WorkOrderRowDto
     {
         users.TryGetValue(o.HandlerId, out var handler);
         var c = counts.TryGetValue(o.WorkOrderId, out var found) ? found : new WorkOrderMemberCounts();
@@ -293,8 +306,45 @@ public class WorkOrderQueryService
             : null;
         dto.ClosedAt = o.ClosedAt;
         dto.ClosedReason = o.ClosedReason;
+
+        dto.Paused = IsPaused(o, exclusion);
+        if (o.ClosedAt == null && o.SourceName != null && o.EventId != null)
+        {
+            var spans = SpansOf(exclusion, o.SourceName, o.EventId.Value);
+            if (dto.Paused)
+                dto.MutedUntil = spans.FirstOrDefault(s => MuteInterval.Covers(s.From, s.To, exclusion.Today))?.To.ToString("yyyy-MM-dd");
+            else
+                dto.ResumedFromMuteAt = ResumedAt(spans, exclusion.Today)?.ToString("yyyy-MM-dd");
+        }
         return dto;
     }
+
+    /// <summary>暫停判定的唯一一份：進行中、問題欄非 null，且問題目前靜音中（SQL 端對應 <c>WorkOrderQuery.PausedKeys</c>）</summary>
+    private static bool IsPaused(WorkOrder o, IssueExclusion exclusion) =>
+        o.ClosedAt == null && o.SourceName != null && o.EventId != null
+        && exclusion.IsCurrentlyMuted(o.SourceName, o.EventId.Value);
+
+    private static List<MuteSpan> SpansOf(IssueExclusion exclusion, string source, int eventId)
+    {
+        var key = source.ToUpperInvariant();
+        return exclusion.Spans.Where(s => s.EventId == eventId && s.SourceKey == key).ToList();
+    }
+
+    /// <summary>最近一個已結束區間的迄日落在 [今天−7, 今天−1] 時回傳迄日＋1 天；呼叫端須先確認問題不在目前靜音中</summary>
+    private static DateTime? ResumedAt(IEnumerable<MuteSpan> spans, DateTime today)
+    {
+        var ended = spans.Where(s => s.To.Date < today.Date).Select(s => (DateTime?)s.To.Date).Max();
+        if (ended == null || ended.Value < today.Date.AddDays(-ResumedWindowDays)) return null;
+        return ended.Value.AddDays(1);
+    }
+
+    /// <summary>「靜音到期、近 7 日恢復」的問題組合鍵（供 <c>WorkOrderQuery.OnlyKeys</c> 在 SQL 端篩選）</summary>
+    private static List<string> ResumedFromMuteKeys(IssueExclusion exclusion) =>
+        exclusion.Spans
+            .GroupBy(s => (s.SourceKey, s.EventId))
+            .Where(g => !exclusion.CurrentlyMuted.Contains(g.Key) && ResumedAt(g, exclusion.Today) != null)
+            .Select(g => IssueExclusion.CompositeKey(g.Key.SourceKey, g.Key.EventId))
+            .ToList();
 
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
         users.TryGetValue(userId, out var user) ? _displayNames.WithAccount(user.DisplayName, user.Account) : DeletedName;

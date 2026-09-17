@@ -710,9 +710,9 @@ public class WorkOrderStoreTests : IDisposable
             M("s6", otherId, IssueHandlingStatuses.InProgress, today.AddDays(-2));  // 別人的單不計
 
             _counter.Readers = 0;
-            var mine = orders.HandlerSummary(1);
+            var mine = orders.HandlerSummary(1, Array.Empty<string>());
             if (ReferenceEquals(orders, ef)) Assert.Equal(1, _counter.Readers);
-            results.Add((mine, orders.HandlerSummary(77)));
+            results.Add((mine, orders.HandlerSummary(77, Array.Empty<string>())));
         }
 
         foreach (var (mine, nobody) in results)
@@ -738,9 +738,115 @@ public class WorkOrderStoreTests : IDisposable
         else builder.UseSqlite("Data Source=:memory:");
         using var ctx = new LfDbContext(builder.Options);
 
-        var sql = EfWorkOrderStore.BuildHandlerSummaryQuery(ctx, 1).ToQueryString();
+        var sql = EfWorkOrderStore.BuildHandlerSummaryQuery(ctx, 1, new[] { "DISK#153" }).ToQueryString();
 
         Assert.Contains("GROUP BY", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("lf_issue_cases", sql);
+    }
+
+    // ── 暫停單（task-47-B2b）：EF 與替身同資料雙跑 ─────────────────────────────
+
+    private static readonly string[] DiskPaused = { IssueExclusion.CompositeKey("Disk", 153) };
+
+    [Fact]
+    public void HandlerSummary_暫停單不計入四個數字與成員_另計PausedWorkOrders_EF與替身一致()
+    {
+        var today = DateTime.Today;
+        var efCases = new EfIssueCaseStore(_fx.NewContext);
+        var ef = Store();
+        var fakeCases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(fakeCases);
+
+        foreach (var (orders, cases) in new (IWorkOrderStore, IIssueCaseStore)[] { (ef, efCases), (fake, fakeCases) })
+        {
+            var paused = orders.Insert(NewOrder(1, "Disk", 153));             // 暫停、未回覆
+            var normal = NewOrder(1, "Net", 99); normal.LastReplyAt = Base;
+            var normalId = orders.Insert(normal);
+            var multi = orders.Insert(NewOrder(1, null, null));                // 問題欄 null：永不暫停、未回覆
+
+            void M(string caseId, long orderId, string status, DateTime? due = null) =>
+                cases.Save(new IssueCase
+                {
+                    CaseId = caseId, HostName = caseId, IssueKey = "System|Disk|153|2", IssueLabel = "Disk 153",
+                    Status = status, HandlerId = 1, DueDate = due, FirstLinkedDate = Base, LastLinkedDate = Base,
+                    CreatedAt = Base, CreatedByAccount = "admin", UpdatedAt = Base, WorkOrderId = orderId
+                });
+            M("p1", paused, IssueHandlingStatuses.InProgress, today.AddDays(-1));   // 暫停單底下的逾期成員不計
+            M("p2", paused, IssueHandlingStatuses.Open);
+            M("n1", normalId, IssueHandlingStatuses.Open);
+            M("m1", multi, IssueHandlingStatuses.Observing, today.AddDays(-1));
+
+            var summary = orders.HandlerSummary(1, DiskPaused);
+            Assert.Equal(2, summary.ActiveWorkOrders);
+            Assert.Equal(1, summary.UnrepliedWorkOrders);
+            Assert.Equal(2, summary.ActiveMembers);
+            Assert.Equal(1, summary.OverdueMembers);
+            Assert.Equal(1, summary.PausedWorkOrders);
+
+            var unpaused = orders.HandlerSummary(1, Array.Empty<string>());
+            Assert.Equal(3, unpaused.ActiveWorkOrders);
+            Assert.Equal(4, unpaused.ActiveMembers);
+            Assert.Equal(2, unpaused.OverdueMembers);
+            Assert.Equal(0, unpaused.PausedWorkOrders);
+        }
+    }
+
+    [Fact]
+    public void QueryOrders_暫停篩選與限定鍵_分頁總數_EF與替身一致()
+    {
+        var ef = Store();
+        var fake = new FakeWorkOrderStore(new FakeIssueCaseStore());
+
+        foreach (var orders in new IWorkOrderStore[] { ef, fake })
+        {
+            long Add(string label, long handler, string? source, int? eventId, DateTime? closed = null)
+            {
+                var o = NewOrder(handler, source, eventId);
+                o.IssueLabel = label;
+                o.ClosedAt = closed;
+                return orders.Insert(o);
+            }
+            Add("P", 1, "disk", 153);
+            Add("N", 1, "Net", 99);
+            Add("M", 1, null, null);
+            Add("C", 2, "Disk", 153, closed: DateTime.Today);   // 已結案的單永不暫停
+
+            List<string> L(WorkOrderQuery q) => Labels(orders, q).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+            Assert.Equal(new[] { "C", "M", "N" }, L(new WorkOrderQuery { Status = "all", PausedKeys = DiskPaused, PausedMode = WorkOrderQueries.PausedExclude }));
+            Assert.Equal(new[] { "P" }, L(new WorkOrderQuery { Status = "all", PausedKeys = DiskPaused, PausedMode = WorkOrderQueries.PausedOnly }));
+            Assert.Equal(new[] { "C", "M", "N", "P" }, L(new WorkOrderQuery { Status = "all", PausedKeys = DiskPaused, PausedMode = WorkOrderQueries.PausedInclude }));
+            Assert.Equal(new[] { "C", "M", "N", "P" }, L(new WorkOrderQuery { Status = "all", PausedKeys = null, PausedMode = WorkOrderQueries.PausedOnly }));
+            Assert.Equal(new[] { "N" }, L(new WorkOrderQuery { Status = "all", OnlyKeys = new[] { IssueExclusion.CompositeKey("net", 99) } }));
+            Assert.Equal(new[] { "P" }, L(new WorkOrderQuery { Status = "all", OnlyKeys = DiskPaused }));
+            Assert.Empty(L(new WorkOrderQuery { Status = "all", OnlyKeys = Array.Empty<string>() }));
+
+            var page = orders.QueryOrders(new WorkOrderQuery
+            {
+                Status = "active", PausedKeys = DiskPaused, PausedMode = WorkOrderQueries.PausedExclude, Page = 1, PageSize = 1
+            });
+            Assert.Single(page.Items);
+            Assert.Equal(2, page.Total);
+
+            Assert.Throws<ArgumentException>(() => orders.QueryOrders(new WorkOrderQuery { PausedMode = "bogus" }));
+        }
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void QueryOrders暫停與限定鍵兩後端都翻譯得出來(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        foreach (var mode in new[] { WorkOrderQueries.PausedExclude, WorkOrderQueries.PausedOnly })
+        {
+            var sql = EfWorkOrderStore.BuildOrderFilterQuery(ctx,
+                new WorkOrderQuery { Status = "all", PausedKeys = DiskPaused, PausedMode = mode, OnlyKeys = DiskPaused }, DateTime.Today).ToQueryString();
+            Assert.Contains("source_key", sql);
+        }
     }
 }

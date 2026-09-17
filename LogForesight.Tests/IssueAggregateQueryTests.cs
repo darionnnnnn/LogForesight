@@ -1088,4 +1088,91 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Contains("SRC299#299", onlyMuted);
         Assert.Equal(ctx.TopIssues.ToQueryString(), IssueExclusionSql.Apply(ctx.TopIssues, IssueExclusion.None).ToQueryString());
     }
+
+    // ── CountCurrentlyMutedIssues（批次 B-2b）─────────────────────────────
+
+    [Fact]
+    public void CountCurrentlyMutedIssues_目前靜音中兩個問題_只算期間內有列的()
+    {
+        SeedMuteScenario();
+        var exclusion = IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "cron", EventId = 7, Mutes = { new MuteInterval { From = new DateTime(2026, 8, 25), To = new DateTime(2026, 9, 10) } } },
+            new IssueProfile { SourceName = "ghost", EventId = 1, Mutes = { new MuteInterval { From = new DateTime(2026, 8, 25), To = new DateTime(2026, 9, 10) } } }
+        }, MuteToday);
+
+        Assert.Equal(2, exclusion.CurrentlyMuted.Count);
+        // cron/7 有兩列（CRON 與 cron 大小寫不同）仍只算一個問題；ghost/1 期間內沒有列不算
+        Assert.Equal(1, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null, null, null));
+    }
+
+    [Fact]
+    public void CountCurrentlyMutedIssues_已到期區間的問題不算()
+    {
+        var exclusion = SeedMuteScenario();
+
+        // 8/3～8/20 期間只有已到期的 disk/153 列（目前靜音中的 cron 在 8/2 與 8/26）
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(exclusion, new DateTime(2026, 8, 3), new DateTime(2026, 8, 20), null, null, null));
+        Assert.Contains(Query().Aggregate(IssueExclusion.None, new DateTime(2026, 8, 3), new DateTime(2026, 8, 20), null),
+            a => a.EventId == 153);
+        Assert.Equal(1, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null, null, null));
+    }
+
+    [Fact]
+    public void CountCurrentlyMutedIssues_不可見主機的列不算_空集合回0()
+    {
+        var exclusion = SeedMuteScenario();
+
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, new long[] { 1, 3, 4 }, null, null));
+        Assert.Equal(1, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, new long[] { 2 }, null, null));
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, Array.Empty<long>(), null, null));
+    }
+
+    [Fact]
+    public void CountCurrentlyMutedIssues_嚴重度與日風險等級母體同Aggregate()
+    {
+        var exclusion = SeedMuteScenario();
+
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null, new HashSet<IssueSeverity> { IssueSeverity.Low }, null));
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null, null, new HashSet<string> { RiskLevels.Low }));
+        Assert.Equal(1, Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null,
+            new HashSet<IssueSeverity> { IssueSeverity.High }, new HashSet<string> { RiskLevels.High }));
+    }
+
+    [Fact]
+    public void CountCurrentlyMutedIssues_沒有目前靜音中的問題回0()
+    {
+        SeedMuteScenario();
+        var expiredOnly = IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "disk", EventId = 153, Mutes = { new MuteInterval { From = new DateTime(2026, 8, 5), To = new DateTime(2026, 8, 10) } } }
+        }, MuteToday);
+
+        Assert.Empty(expiredOnly.CurrentlyMuted);
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(expiredOnly, MuteFrom, MuteTo, null, null, null));
+        Assert.Equal(0, Query().CountCurrentlyMutedIssues(IssueExclusion.None, MuteFrom, MuteTo, null, null, null));
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void CountCurrentlyMutedIssues_兩個後端都翻譯得出來(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var exclusion = IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "cron", EventId = 7, Mutes = { new MuteInterval { From = new DateTime(2026, 8, 25), To = new DateTime(2026, 9, 10) } } }
+        }, MuteToday);
+
+        var sql = EfIssueAggregateQuery.BuildCurrentlyMutedIssueKeysQuery(
+            ctx, exclusion, MuteFrom, MuteTo, new HashSet<long> { 1, 2 }, new HashSet<int> { 2, 3 }, new HashSet<string> { RiskLevels.High }).ToQueryString();
+
+        Assert.Contains("DISTINCT", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UPPER", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CRON#7", sql);
+    }
 }

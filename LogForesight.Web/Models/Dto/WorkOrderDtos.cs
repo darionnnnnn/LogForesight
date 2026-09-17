@@ -239,6 +239,15 @@ public class WorkOrderListRequest
 
     /// <summary>預設 20，上限 100</summary>
     public int PageSize { get; set; } = 20;
+
+    /// <summary>
+    /// 暫停單（問題目前靜音中）篩選：<c>include</c>／<c>exclude</c>／<c>only</c>；
+    /// 空白依入口預設（處理人清單 exclude、總覽 include）
+    /// </summary>
+    public string Paused { get; set; } = string.Empty;
+
+    /// <summary>true＝只列「靜音到期、近 7 日內恢復」問題的進行中單（見 <see cref="WorkOrderRowDto.ResumedFromMuteAt"/>）</summary>
+    public bool ResumedFromMute { get; set; }
 }
 
 public class WorkOrderCountsDto
@@ -282,6 +291,17 @@ public class WorkOrderRowDto
 
     public DateTime? ClosedAt { get; set; }
     public string? ClosedReason { get; set; }
+
+    /// <summary>進行中且問題目前靜音中（不落盤，每次查詢推導）；問題欄為 null 的單恆為 false</summary>
+    public bool Paused { get; set; }
+
+    /// <summary>暫停時＝今天所在靜音區間的迄日（yyyy-MM-dd）；否則 null</summary>
+    public string? MutedUntil { get; set; }
+
+    /// <summary>
+    /// 進行中、問題不在目前靜音中，且最近一個已結束區間的迄日落在 [今天−7, 今天−1] 時＝迄日＋1 天（yyyy-MM-dd）；否則 null
+    /// </summary>
+    public string? ResumedFromMuteAt { get; set; }
 }
 
 public class WorkOrderListDto
@@ -515,4 +535,7 @@ public class HandlerSummaryDto
     public int ActiveMembers { get; set; }
     public int OverdueMembers { get; set; }
     public int UnrepliedWorkOrders { get; set; }
+
+    /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
+    public int PausedWorkOrders { get; set; }
 }

@@ -83,6 +83,22 @@ public sealed class IssueExclusion
     /// </summary>
     public string CacheToken { get; }
 
+    /// <summary>組合鍵分隔字元；SQL 端組字串時引用這個常數，不另寫字面值。</summary>
+    public const string CompositeKeySeparator = "#";
+
+    /// <summary>
+    /// 問題組合鍵的唯一一份：「大寫來源#事件編號」（事件編號以 InvariantCulture 格式化）。
+    /// SQL 端的 <c>UPPER(source) + '#' + event_id</c> 與它逐字相同。
+    /// </summary>
+    public static string CompositeKey(string source, int eventId) =>
+        source.ToUpperInvariant() + CompositeKeySeparator + eventId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>目前靜音中問題的組合鍵（見 <see cref="CompositeKey"/>）。</summary>
+    public IReadOnlyCollection<string> CurrentlyMutedCompositeKeys =>
+        _currentlyMutedCompositeKeys ??= CurrentlyMuted.Select(k => CompositeKey(k.SourceKey, k.EventId)).ToHashSet(StringComparer.Ordinal);
+
+    private IReadOnlyCollection<string>? _currentlyMutedCompositeKeys;
+
     public bool IsCurrentlyMuted(string source, int eventId) =>
         !IsEmpty && CurrentlyMuted.Contains((source.ToUpperInvariant(), eventId));
 

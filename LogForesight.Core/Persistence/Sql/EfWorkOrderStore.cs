@@ -266,6 +266,23 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             query = query.Where(w => w.EventId == eventId);
         }
 
+        // 暫停（問題目前靜音中）：組合鍵與 IssueExclusion.CompositeKey 同規則，source_key 已是大寫欄
+        if (q.PausedKeys != null && q.PausedMode != WorkOrderQueries.PausedInclude)
+        {
+            var pausedKeys = q.PausedKeys.Distinct().ToList();
+            query = q.PausedMode == WorkOrderQueries.PausedOnly
+                ? query.Where(w => w.ClosedAt == null && w.SourceKey != null && w.EventId != null
+                                   && pausedKeys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString()))
+                : query.Where(w => w.ClosedAt != null || w.SourceKey == null || w.EventId == null
+                                   || !pausedKeys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString()));
+        }
+        if (q.OnlyKeys != null)
+        {
+            var onlyKeys = q.OnlyKeys.Distinct().ToList();
+            query = query.Where(w => w.ClosedAt == null && w.SourceKey != null && w.EventId != null
+                                     && onlyKeys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString()));
+        }
+
         return q.Status switch
         {
             WorkOrderQueries.StatusActive => query.Where(w => w.ClosedAt == null),
@@ -298,6 +315,11 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             .ThenByDescending(w => w.WorkOrderId)
     };
 
+    /// <remarks>
+    /// **刻意不排除暫停單**（問題目前靜音中的進行中單）：暫停單的主機仍在處理人名下，靜音到期即恢復，
+    /// 負載若在靜音期間瞬間歸零、到期又跳回，看板與自動派工的負載計算都會跟著抖動；
+    /// 而派工 ⓪ 已不會為靜音問題建單，不會因此多派。
+    /// </remarks>
     public List<HandlerLoad> LoadBoard()
     {
         using var ctx = _contextFactory();
@@ -306,34 +328,47 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return BuildLoadBoardQuery(ctx).ToList();
     }
 
-    public WorkOrderHandlerSummary HandlerSummary(long handlerId)
+    public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys)
     {
         using var ctx = _contextFactory();
 
         // 單一查詢：沒有進行中單時分組為空，回全 0
-        return BuildHandlerSummaryQuery(ctx, handlerId).FirstOrDefault() ?? new WorkOrderHandlerSummary();
+        return BuildHandlerSummaryQuery(ctx, handlerId, pausedKeys).FirstOrDefault() ?? new WorkOrderHandlerSummary();
     }
 
-    /// <summary>處理人摘要的查詢本體（抽出供兩後端 SQL 翻譯測試）；形狀同 <see cref="BuildLoadBoardQuery"/></summary>
-    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId)
+    /// <summary>
+    /// 處理人摘要的查詢本體（抽出供兩後端 SQL 翻譯測試）；形狀同 <see cref="BuildLoadBoardQuery"/>。
+    /// 暫停單（組合鍵在 <paramref name="pausedKeys"/> 內）不計入四個既有數字，含成員子查詢。
+    /// </summary>
+    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId, IReadOnlyCollection<string> pausedKeys)
     {
         var today = DateTime.Today;
+        var keys = pausedKeys.Distinct().ToList();
 
-        // 逾期條件與 WorkOrderQueries.IsOverdue 同義
+        // 逾期條件與 WorkOrderQueries.IsOverdue 同義。
+        // 「非暫停」寫成 source_key 或 event_id 為 null、或組合鍵不在集合內——先擋 null，NOT IN 才不會遇到 NULL 語意
         return ctx.WorkOrders.AsNoTracking()
             .Where(w => w.HandlerId == handlerId && w.ClosedAt == null)
             .GroupBy(w => w.HandlerId)
             .Select(g => new WorkOrderHandlerSummary
             {
-                ActiveWorkOrders = g.Count(),
-                UnrepliedWorkOrders = g.Count(w => w.LastReplyAt == null),
+                ActiveWorkOrders = g.Count(w => w.SourceKey == null || w.EventId == null
+                    || !keys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString())),
+                UnrepliedWorkOrders = g.Count(w => w.LastReplyAt == null && (w.SourceKey == null || w.EventId == null
+                    || !keys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString()))),
+                PausedWorkOrders = g.Count(w => w.SourceKey != null && w.EventId != null
+                    && keys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString())),
                 ActiveMembers = ctx.IssueCases.Count(c =>
                     c.ClosedAt == null &&
-                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key)),
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
                 OverdueMembers = ctx.IssueCases.Count(c =>
                     c.ClosedAt == null && c.DueDate != null && c.DueDate < today
                     && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
-                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key))
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString()))))
             });
     }
 

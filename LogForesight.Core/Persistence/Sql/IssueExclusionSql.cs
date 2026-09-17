@@ -48,20 +48,42 @@ public static class IssueExclusionSql
         return q.Where(Build(exclusion, negate: false));
     }
 
-    /// <summary>記憶體端的組合鍵，與 SQL 端 <c>UPPER(source) + '#' + event_id</c> 逐字相同。</summary>
-    private static string CompositeKey(string sourceKey, int eventId) =>
-        sourceKey + "#" + eventId.ToString(CultureInfo.InvariantCulture);
+    /// <summary>
+    /// 只留「目前靜音中」問題的列：組合鍵 IN，不看日期。
+    /// <see cref="IssueExclusion.CurrentlyMuted"/> 為空時回傳恆假的查詢。
+    /// </summary>
+    public static IQueryable<TopIssueRow> OnlyCurrentlyMuted(IQueryable<TopIssueRow> q, IssueExclusion exclusion)
+    {
+        if (exclusion.CurrentlyMuted.Count == 0) return q.Where(_ => false);
+        var x = Expression.Parameter(typeof(TopIssueRow), "x");
+        var eventId = Expression.Property(x, nameof(TopIssueRow.EventId));
+        var eventIds = exclusion.CurrentlyMuted.Select(k => k.EventId).Distinct().OrderBy(id => id).ToArray();
+        var keys = CurrentKeys(exclusion);
+        var body = Expression.AndAlso(
+            Expression.Call(IntContains, Expression.Constant(eventIds), eventId),
+            Expression.Call(StringContains, Expression.Constant(keys), Composite(x, eventId)));
+        return q.Where(Expression.Lambda<Func<TopIssueRow, bool>>(body, x));
+    }
+
+    /// <summary>記憶體端的組合鍵：唯一一份在 <see cref="IssueExclusion.CompositeKey"/>。</summary>
+    private static string CompositeKey(string sourceKey, int eventId) => IssueExclusion.CompositeKey(sourceKey, eventId);
+
+    private static string[] CurrentKeys(IssueExclusion exclusion) =>
+        exclusion.CurrentlyMutedCompositeKeys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+
+    private static Expression Composite(ParameterExpression x, Expression eventId) =>
+        Expression.Add(
+            Expression.Add(
+                Expression.Call(Expression.Property(x, nameof(TopIssueRow.SourceName)), ToUpperMethod),
+                Expression.Constant(IssueExclusion.CompositeKeySeparator), ConcatMethod),
+            Expression.Call(eventId, IntToStringMethod), ConcatMethod);
 
     private static Expression<Func<TopIssueRow, bool>> Build(IssueExclusion exclusion, bool negate)
     {
         var x = Expression.Parameter(typeof(TopIssueRow), "x");
         var eventId = Expression.Property(x, nameof(TopIssueRow.EventId));
         var recordDate = Expression.Property(x, nameof(TopIssueRow.RecordDate));
-        var composite = Expression.Add(
-            Expression.Add(
-                Expression.Call(Expression.Property(x, nameof(TopIssueRow.SourceName)), ToUpperMethod),
-                Expression.Constant("#"), ConcatMethod),
-            Expression.Call(eventId, IntToStringMethod), ConcatMethod);
+        var composite = Composite(x, eventId);
 
         var eventIds = exclusion.Spans.Select(s => s.EventId).Distinct().OrderBy(id => id).ToArray();
         Expression muted = Expression.Call(IntContains, Expression.Constant(eventIds), eventId);
@@ -69,10 +91,7 @@ public static class IssueExclusionSql
         Expression? keyOrSpan = null;
 
         // 目前靜音中：整個問題排除，不看日期
-        var currentKeys = exclusion.CurrentlyMuted
-            .Select(k => CompositeKey(k.SourceKey, k.EventId))
-            .OrderBy(k => k, StringComparer.Ordinal)
-            .ToArray();
+        var currentKeys = CurrentKeys(exclusion);
         if (currentKeys.Length > 0)
             keyOrSpan = Expression.Call(StringContains, Expression.Constant(currentKeys), composite);
 

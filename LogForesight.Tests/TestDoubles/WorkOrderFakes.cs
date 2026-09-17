@@ -130,6 +130,11 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         if (q.HandlerIds != null) query = query.Where(o => q.HandlerIds.Contains(o.HandlerId));
         if (q.Source != null) query = query.Where(o => o.SourceName != null && o.SourceName.ToUpperInvariant() == q.Source.ToUpperInvariant());
         if (q.EventId != null) query = query.Where(o => o.EventId == q.EventId);
+        if (q.PausedKeys != null && q.PausedMode == WorkOrderQueries.PausedOnly)
+            query = query.Where(o => KeyIn(o, q.PausedKeys));
+        else if (q.PausedKeys != null && q.PausedMode == WorkOrderQueries.PausedExclude)
+            query = query.Where(o => !KeyIn(o, q.PausedKeys));
+        if (q.OnlyKeys != null) query = query.Where(o => KeyIn(o, q.OnlyKeys));
 
         List<IssueCase> ActiveMembers(WorkOrder o) =>
             _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Where(c => c.ClosedAt == null).ToList();
@@ -197,11 +202,17 @@ internal class FakeWorkOrderStore : IWorkOrderStore
             .ToList();
     }
 
-    /// <summary>同 EF 版：只算該處理人的進行中單；沒有進行中單回全 0</summary>
-    public WorkOrderHandlerSummary HandlerSummary(long handlerId)
+    /// <summary>進行中、問題欄非 null 且組合鍵在集合內（同 EF 版的暫停／限定鍵條件）</summary>
+    private static bool KeyIn(WorkOrder o, IReadOnlyCollection<string> keys) =>
+        o.ClosedAt == null && o.SourceName != null && o.EventId != null
+        && keys.Contains(IssueExclusion.CompositeKey(o.SourceName, o.EventId.Value));
+
+    /// <summary>同 EF 版：只算該處理人的進行中單（排除暫停單）；沒有進行中單回全 0</summary>
+    public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys)
     {
         var today = DateTime.Today;
-        var active = _orders.Where(o => o.HandlerId == handlerId && o.ClosedAt == null).ToList();
+        var all = _orders.Where(o => o.HandlerId == handlerId && o.ClosedAt == null).ToList();
+        var active = all.Where(o => !KeyIn(o, pausedKeys)).ToList();
         var members = active
             .SelectMany(o => _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue))
             .Where(c => c.ClosedAt == null)
@@ -211,7 +222,8 @@ internal class FakeWorkOrderStore : IWorkOrderStore
             ActiveWorkOrders = active.Count,
             UnrepliedWorkOrders = active.Count(o => o.LastReplyAt == null),
             ActiveMembers = members.Count,
-            OverdueMembers = members.Count(c => WorkOrderQueries.IsOverdue(c, today))
+            OverdueMembers = members.Count(c => WorkOrderQueries.IsOverdue(c, today)),
+            PausedWorkOrders = all.Count - active.Count
         };
     }
 

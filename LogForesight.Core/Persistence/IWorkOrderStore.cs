@@ -49,8 +49,10 @@ public interface IWorkOrderStore
     /// <summary>
     /// 單一處理人的進行中摘要（我的交辦清單與側欄徽章）：單一查詢；沒有進行中單回全 0。
     /// 逾期判準同 <see cref="WorkOrderQueries.IsOverdue"/>。
+    /// 四個既有數字（含成員子查詢）一律排除暫停單（組合鍵在 <paramref name="pausedKeys"/> 內的進行中單），
+    /// 暫停單另計於 <see cref="WorkOrderHandlerSummary.PausedWorkOrders"/>。
     /// </summary>
-    WorkOrderHandlerSummary HandlerSummary(long handlerId);
+    WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys);
 
     /// <summary>
     /// 進行中、但底下已沒有任何進行中案件的單（含零成員），依 work_order_id 升冪取前 <paramref name="take"/> 筆。

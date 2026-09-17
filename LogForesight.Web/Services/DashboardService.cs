@@ -126,6 +126,8 @@ public class DashboardService
         var (openIssues, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
         dto.TopIssues = openIssues.Take(5).ToList();
         dto.ConcludedTopIssueCount = concludedCount;
+        // 「N 個靜音中的問題未列出」：與重點問題排行同一段期間與可見主機（排行不套嚴重度／日風險等級母體）
+        dto.MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, anchor, visibleHostIds, null, null);
 
         // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
         (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();

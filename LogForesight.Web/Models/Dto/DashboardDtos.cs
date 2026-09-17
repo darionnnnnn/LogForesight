@@ -40,6 +40,9 @@ public class DashboardDto
     /// （§10.6：不讓已結案的問題佔用重點清單版面，但卡底要誠實說出來，不是悄悄少了幾筆）</summary>
     public int ConcludedTopIssueCount { get; set; }
 
+    /// <summary>目前靜音中、與重點問題同一段期間與可見主機下有出現但未列出的相異問題數</summary>
+    public int MutedIssueCount { get; set; }
+
     /// <summary>
     /// 問題統計是否還在背景整理（回填或搬移中，docs/archive/SCALE-FIX-PLAN-2026-08-06.md G2）。
     ///
@@ -271,6 +274,9 @@ public class ReportSummaryDto
     /// <summary>本期問題排行中「全部主機都已有結論」而未列入 <see cref="IssueRanking"/> 的筆數
     /// （§10.6，與 <see cref="DashboardDto.ConcludedTopIssueCount"/> 同一件事）</summary>
     public int ConcludedIssueCount { get; set; }
+
+    /// <summary>目前靜音中、與問題排行同一段期間與可見主機下有出現但未列出的相異問題數</summary>
+    public int MutedIssueCount { get; set; }
 
     /// <summary>問題統計是否還在背景整理——與 <see cref="DashboardDto.IssueStatsPending"/> 同一件事</summary>
     public bool IssueStatsPending { get; set; }

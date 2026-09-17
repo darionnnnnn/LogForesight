@@ -391,6 +391,8 @@ public class RecordListQueryService
         // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
         // 卡片數字才等於下鑽進來的筆數
         var aggregates = _aggregates.Aggregate(exclusion, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
+        // 「N 個靜音中的問題未列出」：與上方主查詢同一組期間／可見主機／嚴重度／日風險等級母體
+        var mutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
@@ -423,7 +425,7 @@ public class RecordListQueryService
             aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
         }
 
-        if (aggregates.Count == 0) return WithDistinctHosts(Paginate(new List<IssueGroupDto>(), request), 0);
+        if (aggregates.Count == 0) return WithDistinctHosts(Paginate(new List<IssueGroupDto>(), request), 0, mutedIssueCount);
 
         // 密度的分母＝查詢期間天數。篩選未指定日期時退回候選問題本身的跨度——
         // 「2/90 天」的意義完全取決於分母是什麼，不能讓它變成一個沒有定義的數字
@@ -512,7 +514,7 @@ public class RecordListQueryService
             .Distinct()
             .Count();
 
-        return WithDistinctHosts(Paginate(groups, request), distinctHostCount);
+        return WithDistinctHosts(Paginate(groups, request), distinctHostCount, mutedIssueCount);
     }
 
     /// <summary>
@@ -529,14 +531,15 @@ public class RecordListQueryService
     }
 
     /// <summary>依問題視角的分頁結果沿用共用 Paginate，再附上去重主機總數</summary>
-    private static IssueSearchResultDto WithDistinctHosts(PagedResult<IssueGroupDto> paged, int distinctHostCount) =>
+    private static IssueSearchResultDto WithDistinctHosts(PagedResult<IssueGroupDto> paged, int distinctHostCount, int mutedIssueCount) =>
         new()
         {
             Items = paged.Items,
             Page = paged.Page,
             PageSize = paged.PageSize,
             Total = paged.Total,
-            DistinctHostCount = distinctHostCount
+            DistinctHostCount = distinctHostCount,
+            MutedIssueCount = mutedIssueCount
         };
 
     private static int SeverityRank(string severity) =>

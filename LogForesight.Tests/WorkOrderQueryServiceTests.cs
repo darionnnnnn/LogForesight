@@ -28,6 +28,8 @@ public class WorkOrderQueryServiceTests
     private readonly FakeWorkOrderStore _orders;
     private readonly FakeSystemSettingsStore _settings = new();
     private readonly WorkOrderCoordinator _coordinator;
+    /// <summary>靜音排除來源：暫停相關測試於呼叫 Service() 前替換</summary>
+    private FixedIssueExclusionSource _exclusionSource = new(IssueExclusion.None);
 
     private readonly WebUser _alice;
     private readonly WebUser _bob;
@@ -46,7 +48,7 @@ public class WorkOrderQueryServiceTests
 
     private WorkOrderQueryService Service(ICurrentUser user, params long[] visibleHostIds) => new(
         _orders, _cases, _users, _hosts, _hostGroups, new FakeRuleStore(), new ScopedVisibility(visibleHostIds), user,
-        new UserDisplayNameService(_settings));
+        new UserDisplayNameService(_settings), _exclusionSource);
 
     private static ICurrentUser As(long userId, params Capability[] caps) => FakeCurrentUser.ForUser(userId, caps);
 
@@ -464,5 +466,193 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(0, badge.ActiveMembers);
         Assert.Equal(0, badge.OverdueMembers);
         Assert.Equal(0, badge.UnrepliedWorkOrders);
+    }
+
+    // ── 暫停單（task-47-B2b）──────────────────────────────────────────────────
+
+    /// <summary>以今天為基準設定靜音：每筆 (來源, 事件編號, 起日, 迄日)</summary>
+    private void Mute(params (string Source, int EventId, DateTime From, DateTime To)[] mutes) =>
+        _exclusionSource = new FixedIssueExclusionSource(IssueExclusion.From(
+            mutes.GroupBy(m => (m.Source, m.EventId)).Select(g => new IssueProfile
+            {
+                SourceName = g.Key.Source, EventId = g.Key.EventId,
+                Mutes = g.Select(m => new MuteInterval { From = m.From, To = m.To }).ToList()
+            }).ToList(),
+            DateTime.Today));
+
+    private static readonly DateTime Today = DateTime.Today;
+
+    [Fact]
+    public void 處理人清單預設排除暫停單_HandlerSummary另計PausedWorkOrders()
+    {
+        var paused = AddOrder(_alice.UserId);
+        var normal = AddOrder(_alice.UserId, source: "net", eventId: 99);
+        Mute((Source, EventId, Today.AddDays(-1), Today.AddDays(3)));
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var list = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest());
+        var summary = svc.HandlerSummary(_alice.UserId);
+        var badge = svc.MyBadge();
+
+        Assert.Equal(new[] { normal }, Ids(list));
+        Assert.Equal(1, list.Total);
+        Assert.Equal(1, summary.ActiveWorkOrders);
+        Assert.Equal(1, summary.PausedWorkOrders);
+        Assert.Equal(1, badge.PausedWorkOrders);
+        Assert.Equal(1, badge.ActiveWorkOrders);
+        Assert.NotEqual(paused, normal);
+    }
+
+    [Fact]
+    public void HandlerSummary四個數字排除暫停單的成員()
+    {
+        var paused = AddOrder(_alice.UserId);
+        var normal = AddOrder(_alice.UserId, source: "net", eventId: 99, replied: Today);
+        AddMember(paused, "H1", IssueHandlingStatuses.InProgress, due: Today.AddDays(-1));
+        AddMember(paused, "H2", IssueHandlingStatuses.Open);
+        AddMember(normal, "H3", IssueHandlingStatuses.Open);
+        Mute((Source, EventId, Today, Today));
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var s = svc.HandlerSummary(_alice.UserId);
+
+        Assert.Equal(1, s.ActiveWorkOrders);
+        Assert.Equal(1, s.ActiveMembers);
+        Assert.Equal(0, s.OverdueMembers);
+        Assert.Equal(0, s.UnrepliedWorkOrders);
+        Assert.Equal(1, s.PausedWorkOrders);
+    }
+
+    [Fact]
+    public void 處理人清單Paused_only只列暫停單_include全列()
+    {
+        var paused = AddOrder(_alice.UserId);
+        var normal = AddOrder(_alice.UserId, source: "net", eventId: 99);
+        Mute((Source, EventId, Today.AddDays(-1), Today.AddDays(3)));
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var only = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { Paused = "only" });
+        var include = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { Paused = "include" });
+
+        Assert.Equal(new[] { paused }, Ids(only));
+        Assert.True(only.Items.Single().Paused);
+        Assert.Equal(new[] { normal, paused }.OrderBy(x => x), Ids(include).OrderBy(x => x));
+    }
+
+    [Fact]
+    public void 總覽預設列出暫停單_Paused與MutedUntil正確()
+    {
+        var paused = AddOrder(_alice.UserId);
+        var normal = AddOrder(_bob.UserId, source: "net", eventId: 99);
+        Mute((Source, EventId, Today.AddDays(-1), Today.AddDays(3)));
+        var svc = Service(As(_stranger.UserId, Capability.ViewAll));
+
+        var list = svc.List(new WorkOrderListRequest());
+        var pausedRow = list.Items.Single(i => i.WorkOrderId == paused);
+        var normalRow = list.Items.Single(i => i.WorkOrderId == normal);
+
+        Assert.Equal(2, list.Total);
+        Assert.True(pausedRow.Paused);
+        Assert.Equal(Today.AddDays(3).ToString("yyyy-MM-dd"), pausedRow.MutedUntil);
+        Assert.False(normalRow.Paused);
+        Assert.Null(normalRow.MutedUntil);
+        // 詳情 DTO 繼承列 DTO，同樣帶出
+        var detail = svc.Get(paused);
+        Assert.True(detail.Paused);
+        Assert.Equal(pausedRow.MutedUntil, detail.MutedUntil);
+    }
+
+    [Fact]
+    public void ResumedFromMute_到期昨天列出_8天前不列_目前又靜音中不列_已結案不列()
+    {
+        var yesterday = AddOrder(_alice.UserId);                                            // disk/153 迄日昨天
+        var longAgo = AddOrder(_alice.UserId, source: "net", eventId: 99);                  // 迄日 8 天前
+        var mutedAgain = AddOrder(_alice.UserId, source: "cron", eventId: 7);               // 曾到期、目前又靜音
+        AddOrder(_bob.UserId, closed: Today.AddDays(-1));                                    // 同問題但已結案
+        Mute((Source, EventId, Today.AddDays(-5), Today.AddDays(-1)),
+             ("net", 99, Today.AddDays(-12), Today.AddDays(-8)),
+             ("cron", 7, Today.AddDays(-6), Today.AddDays(-2)),
+             ("cron", 7, Today, Today.AddDays(2)));
+        var svc = Service(As(_stranger.UserId, Capability.ViewAll));
+
+        var resumed = svc.List(new WorkOrderListRequest { ResumedFromMute = true, Status = "all" });
+        var all = svc.List(new WorkOrderListRequest { Status = "all" });
+
+        Assert.Equal(new[] { yesterday }, Ids(resumed));
+        Assert.Equal(1, resumed.Total);
+        Assert.Equal(Today.ToString("yyyy-MM-dd"), resumed.Items.Single().ResumedFromMuteAt);
+        Assert.Null(all.Items.Single(i => i.WorkOrderId == longAgo).ResumedFromMuteAt);
+        Assert.Null(all.Items.Single(i => i.WorkOrderId == mutedAgain).ResumedFromMuteAt);
+        Assert.True(all.Items.Single(i => i.WorkOrderId == mutedAgain).Paused);
+    }
+
+    [Fact]
+    public void ResumedFromMute_迄日7天前仍列出_分頁總數正確()
+    {
+        var a = AddOrder(_alice.UserId);
+        var b = AddOrder(_bob.UserId);
+        var c = AddOrder(_stranger.UserId);
+        AddOrder(_alice.UserId, source: "net", eventId: 99);
+        Mute((Source, EventId, Today.AddDays(-9), Today.AddDays(-7)));
+        var svc = Service(As(_stranger.UserId, Capability.ViewAll));
+
+        var page1 = svc.List(new WorkOrderListRequest { ResumedFromMute = true, PageSize = 2, Page = 1 });
+        var page2 = svc.List(new WorkOrderListRequest { ResumedFromMute = true, PageSize = 2, Page = 2 });
+
+        Assert.Equal(3, page1.Total);
+        Assert.Equal(2, page1.Items.Count);
+        Assert.Single(page2.Items);
+        Assert.Equal(new[] { a, b, c }.OrderBy(x => x), Ids(page1).Concat(Ids(page2)).OrderBy(x => x));
+        Assert.All(page1.Items, i => Assert.Equal(Today.AddDays(-6).ToString("yyyy-MM-dd"), i.ResumedFromMuteAt));
+    }
+
+    [Fact]
+    public void 處理人清單排除暫停單後分頁總數正確()
+    {
+        AddOrder(_alice.UserId);
+        AddOrder(_alice.UserId, source: "net", eventId: 99);
+        AddOrder(_alice.UserId, source: "cron", eventId: 7);
+        Mute((Source, EventId, Today, Today.AddDays(1)));
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var page = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { PageSize = 1 });
+
+        Assert.Equal(2, page.Total);
+        Assert.Single(page.Items);
+        Assert.False(page.Items.Single().Paused);
+    }
+
+    [Fact]
+    public void 問題欄為null的單不受暫停影響()
+    {
+        var multi = _orders.Insert(new WorkOrder
+        {
+            SourceName = null, EventId = null, IssueLabel = "多問題", HandlerId = _alice.UserId,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "admin",
+            CreatedAt = Today.AddHours(-1)
+        });
+        AddOrder(_alice.UserId);
+        Mute((Source, EventId, Today, Today.AddDays(1)));
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var list = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest());
+        var only = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { Paused = "only" });
+
+        Assert.Equal(new[] { multi }, Ids(list));
+        Assert.False(list.Items.Single().Paused);
+        Assert.Null(list.Items.Single().MutedUntil);
+        Assert.DoesNotContain(multi, Ids(only));
+        Assert.Equal(1, svc.HandlerSummary(_alice.UserId).ActiveWorkOrders);
+    }
+
+    [Fact]
+    public void Paused值域外回Validation()
+    {
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed,
+            Assert.Throws<DomainException>(() => svc.List(new WorkOrderListRequest { Paused = "bogus" })).Code);
+        Assert.Equal(ApiErrorCodes.ValidationFailed,
+            Assert.Throws<DomainException>(() => svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { Paused = "bogus" })).Code);
     }
 }

@@ -41,7 +41,9 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
             new FakeNoiseMarkStore(),
             new FakeRuleStore(),
             FakeCurrentUser.WithCapabilities(),
-            new FakeSystemSettingsStore());
+            new FakeSystemSettingsStore(),
+            new FixedIssueExclusionSource(IssueExclusion.None),
+            new FakeIssueOwnerStore());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -524,5 +526,95 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
         var item = Assert.Single(issue.LoginFailureDetails!);
 
         Assert.Equal("原因不明", item.ReasonText);
+    }
+
+    // ── 詳情頁靜音資訊（批次 B-2b）─────────────────────────────────────────
+
+    private RecordDetailQueryService DetailWith(IssueExclusion exclusion, IIssueOwnerStore owners)
+    {
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
+        return new RecordDetailQueryService(
+            repository, new NullReportReader(), _hosts, _users, new FakeHostGroupStore(), visibility,
+            _issueHandlingStore, _caseStore, new FakeNoiseMarkStore(), new FakeRuleStore(),
+            FakeCurrentUser.WithCapabilities(), new FakeSystemSettingsStore(),
+            new FixedIssueExclusionSource(exclusion), owners);
+    }
+
+    private static MuteInterval Span(int fromDaysAgo, int toDaysAgo, string reason, string account) => new()
+    {
+        From = Today.AddDays(-fromDaysAgo), To = Today.AddDays(-toDaysAgo), Reason = reason, ByAccount = account
+    };
+
+    private static (IssueExclusion, FakeIssueOwnerStore) MuteSetup(params MuteInterval[] spans)
+    {
+        var owners = new FakeIssueOwnerStore();
+        owners.Upsert(new IssueProfile { SourceName = "DISK", EventId = EventId, Mutes = spans.ToList() });
+        return (IssueExclusion.From(owners.GetAll(), Today), owners);
+    }
+
+    [Fact]
+    public void 詳情靜音_紀錄日在已到期區間_帶該區間且IsMuted為true()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, Today.AddDays(-15));
+        var (exclusion, owners) = MuteSetup(Span(20, 10, "機房搬遷", "DOMAIN\\old"));
+
+        var issue = DetailWith(exclusion, owners).GetDetail(host.HostId, Today.AddDays(-15)).TopIssues.Single();
+
+        Assert.True(issue.IsMuted);
+        Assert.Equal(exclusion.IsMuted(Source, EventId, Today.AddDays(-15)), issue.IsMuted);
+        Assert.Equal(Today.AddDays(-20).ToString("yyyy-MM-dd"), issue.MuteFrom);
+        Assert.Equal(Today.AddDays(-10).ToString("yyyy-MM-dd"), issue.MuteTo);
+        Assert.Equal("機房搬遷", issue.MuteReason);
+        Assert.Equal("DOMAIN\\old", issue.MutedByAccount);
+    }
+
+    [Fact]
+    public void 詳情靜音_目前靜音中但紀錄日在區間前_帶今天所在區間()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, Today.AddDays(-5));
+        var (exclusion, owners) = MuteSetup(Span(20, 10, "舊", "DOMAIN\\old"), Span(2, -5, "等候廠商", "DOMAIN\\new"));
+
+        var issue = DetailWith(exclusion, owners).GetDetail(host.HostId, Today.AddDays(-5)).TopIssues.Single();
+
+        Assert.True(issue.IsMuted);
+        Assert.Equal(Today.AddDays(-2).ToString("yyyy-MM-dd"), issue.MuteFrom);
+        Assert.Equal(Today.AddDays(5).ToString("yyyy-MM-dd"), issue.MuteTo);
+        Assert.Equal("等候廠商", issue.MuteReason);
+        Assert.Equal("DOMAIN\\new", issue.MutedByAccount);
+    }
+
+    [Fact]
+    public void 詳情靜音_紀錄日不在區間且目前未靜音_全部null()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, Today.AddDays(-5));
+        var (exclusion, owners) = MuteSetup(Span(20, 10, "舊", "DOMAIN\\old"));
+
+        var issue = DetailWith(exclusion, owners).GetDetail(host.HostId, Today.AddDays(-5)).TopIssues.Single();
+
+        Assert.False(issue.IsMuted);
+        Assert.Equal(exclusion.IsMuted(Source, EventId, Today.AddDays(-5)), issue.IsMuted);
+        Assert.Null(issue.MuteFrom);
+        Assert.Null(issue.MuteTo);
+        Assert.Null(issue.MuteReason);
+        Assert.Null(issue.MutedByAccount);
+    }
+
+    [Fact]
+    public void 詳情靜音_無任何靜音_全部null()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, Today);
+
+        var issue = _service.GetDetail(host.HostId, Today).TopIssues.Single();
+
+        Assert.False(issue.IsMuted);
+        Assert.Null(issue.MuteFrom);
+        Assert.Null(issue.MuteTo);
+        Assert.Null(issue.MuteReason);
+        Assert.Null(issue.MutedByAccount);
     }
 }

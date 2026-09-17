@@ -144,10 +144,12 @@ internal class WeeklyCheckupService
         // 檔名沿用既有 "_週檢.txt" 慣例（docs/archive/HISTORY.md 已承諾「輸出不變」），內部語意雖已從
         // 固定星期改為 due-date 輪巡，但對外的檔案格式與既有部署/查閱習慣不需要跟著變動
         var fileName = $"{checkupDate:yyyy-MM-dd}_週檢.txt";
+        // 抑制設定只讀一次：生效中抑制段與靜音到期段共用同一份讀取結果；store 為 null 時兩段都略過
+        var allSuppressions = _suppressionStore != null ? _suppressionStore.LoadAll() : new List<RuleSuppression>();
         var activeSuppressions = _suppressionStore != null
-            ? SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), Environment.MachineName, _hostGroupIds, DateTime.Now)
+            ? SuppressionFilter.ActiveForHost(allSuppressions, Environment.MachineName, _hostGroupIds, DateTime.Now)
             : new List<RuleSuppression>();
-        var content = BuildReportText(checkupDate, window, outcome, activeSuppressions);
+        var content = BuildReportText(checkupDate, window, outcome, activeSuppressions, allSuppressions);
         outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup,
             host ?? new HostKey { HostName = Environment.MachineName }, fileName, content);
 
@@ -317,7 +319,7 @@ internal class WeeklyCheckupService
     }
 
     private static string BuildReportText(DateTime checkupDate, List<DailyAnalysisRecord> window, WeeklyCheckupResult outcome,
-        List<RuleSuppression> activeSuppressions)
+        List<RuleSuppression> activeSuppressions, List<RuleSuppression> allSuppressions)
     {
         var sb = new StringBuilder();
         sb.AppendLine("══════════════════════════════════════════════════════════");
@@ -378,7 +380,39 @@ internal class WeeklyCheckupService
             }
         }
 
+        AppendExpiringMutes(sb, checkupDate, window, allSuppressions);
+
         return sb.ToString();
+    }
+
+    /// <summary>靜音到期窗口：迄日落在 [體檢日, 體檢日＋此值]（含首尾，共 7 天）</summary>
+    private const int ExpiringMuteWindowDays = 6;
+
+    /// <summary>
+    /// 7 天內到期、且本期仍有發生的問題靜音：到期後告警會恢復，提醒先確認問題是否已排除。
+    /// 來源是合成的 <see cref="SuppressionTargetTypes.IssueMute"/> 抑制項目（已生效：起日不晚於體檢日）。
+    /// 沒有符合項目時不輸出段落。
+    /// </summary>
+    private static void AppendExpiringMutes(StringBuilder sb, DateTime checkupDate, List<DailyAnalysisRecord> window,
+        List<RuleSuppression> allSuppressions)
+    {
+        var day = checkupDate.Date;
+        var lines = allSuppressions
+            .Where(s => s.TargetType == SuppressionTargetTypes.IssueMute
+                        && s.SourceName != null && s.EventId != null && s.MuteFrom != null && s.MuteTo != null
+                        && s.MuteFrom.Value.Date <= day
+                        && s.MuteTo.Value.Date >= day && s.MuteTo.Value.Date <= day.AddDays(ExpiringMuteWindowDays))
+            .Select(s => (Mute: s, Count: window.SelectMany(d => d.TopIssues)
+                .Where(i => i.EventId == s.EventId && string.Equals(i.Source, s.SourceName, StringComparison.OrdinalIgnoreCase))
+                .Sum(i => i.Count)))
+            .Where(x => x.Count > 0)
+            .ToList();
+        if (lines.Count == 0) return;
+
+        sb.AppendLine();
+        sb.AppendLine("■ 7 天內到期的靜音（到期後恢復告警，請確認問題是否已排除）");
+        foreach (var (s, n) in lines)
+            sb.AppendLine($"  - {s.SourceName}/{s.EventId}：靜音至 {s.MuteTo:yyyy-MM-dd}，本期仍發生 {n} 次｜原因：{s.Reason}");
     }
 
     private class WeeklyCheckupAiResult

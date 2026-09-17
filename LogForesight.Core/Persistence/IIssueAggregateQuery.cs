@@ -81,6 +81,15 @@ public interface IIssueAggregateQuery
         IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
+    /// 「N 個靜音中的問題未列出」計數：<see cref="IssueExclusion.CurrentlyMuted"/> 裡，在期間內、
+    /// 可見主機、可見嚴重度、日風險等級母體下至少有一列的相異問題數。篩選與 <see cref="Aggregate"/> 同一套；
+    /// <paramref name="hostIds"/> 為空集合或沒有目前靜音中的問題時回 0。
+    /// </summary>
+    int CountCurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
+
+    /// <summary>
     /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
     /// （回饋十八輪批次F，問題負責人的授權路徑用）。Source 比對不分大小寫；
     /// EventId=0 的問題（未命中規則的 Windows 事件不會落地成 0，這裡單純防禦）不會誤配。

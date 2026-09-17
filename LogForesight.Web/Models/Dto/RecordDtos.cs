@@ -8,6 +8,9 @@ public class IssueSearchResultDto : PagedResult<IssueGroupDto>
 {
     /// <summary>期間內符合條件的問題所影響的相異存活主機去重計數（定義同風險類型卡的主機數）</summary>
     public int DistinctHostCount { get; set; }
+
+    /// <summary>目前靜音中、在同一組期間／可見範圍下有出現但未列出的相異問題數</summary>
+    public int MutedIssueCount { get; set; }
 }
 
 /// <summary>問題查詢的清單列</summary>
@@ -412,6 +415,21 @@ public class IssueDto
     /// 不帶內容，避免每個問題都攜帶一份可能用不到的歷史清單。
     /// </summary>
     public bool HasPriorHandling { get; set; }
+
+    /// <summary>這一列是否被靜音（與讀取側排除 <c>IssueExclusion.IsMuted(來源, 事件編號, 紀錄日)</c> 同一判定）</summary>
+    public bool IsMuted { get; set; }
+
+    /// <summary>顯示用的靜音區間起日（yyyy-MM-dd）：紀錄日所在區間優先，否則今天所在區間；都沒有為 null</summary>
+    public string? MuteFrom { get; set; }
+
+    /// <summary>顯示用的靜音區間迄日（yyyy-MM-dd），取法同 <see cref="MuteFrom"/></summary>
+    public string? MuteTo { get; set; }
+
+    /// <summary>該區間的靜音原因</summary>
+    public string? MuteReason { get; set; }
+
+    /// <summary>該區間的設定者帳號</summary>
+    public string? MutedByAccount { get; set; }
 
     /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。

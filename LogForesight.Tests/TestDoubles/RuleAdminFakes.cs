@@ -80,6 +80,17 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         return AggregateOverride?.Invoke(from, to) ?? Result;
     }
 
+    /// <summary>CountCurrentlyMutedIssues 要回傳的數字（批次 B-2b）；空集合主機仍回 0。</summary>
+    public int MutedIssueCountResult { get; set; }
+
+    public int CountCurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
+    {
+        if (hostIds != null && hostIds.Count == 0) return 0;
+        return MutedIssueCountResult;
+    }
+
     /// <summary>回饋十八輪批次F：測試直接塞好要回傳的主機集合，不需要真的連 SQL。</summary>
     public HashSet<long> HostIdsForResult { get; set; } = new();
 

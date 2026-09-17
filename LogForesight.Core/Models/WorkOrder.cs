@@ -175,6 +175,18 @@ public sealed class WorkOrderQuery
 
     /// <summary>1～100</summary>
     public int PageSize { get; init; } = 20;
+
+    /// <summary>
+    /// 目前靜音中問題的組合鍵（<c>IssueExclusion.CompositeKey</c>）：進行中、問題欄非 null 且鍵在集合內的單＝暫停。
+    /// null＝不判定（<see cref="PausedMode"/> 不生效）。
+    /// </summary>
+    public IReadOnlyCollection<string>? PausedKeys { get; init; }
+
+    /// <summary><see cref="WorkOrderQueries.PausedModes"/> 值域：include 不篩、exclude 排除暫停單、only 只列暫停單</summary>
+    public string PausedMode { get; init; } = WorkOrderQueries.PausedInclude;
+
+    /// <summary>非 null 時只列「進行中、問題欄非 null 且組合鍵在集合內」的單；空集合＝查無</summary>
+    public IReadOnlyCollection<string>? OnlyKeys { get; init; }
 }
 
 /// <summary>交辦單清單查詢結果</summary>
@@ -225,6 +237,12 @@ public static class WorkOrderQueries
 
     public static readonly string[] Sorts = { SortCreatedDesc, SortMembersDesc, SortUnrepliedOldest };
 
+    public const string PausedInclude = "include";
+    public const string PausedExclude = "exclude";
+    public const string PausedOnly = "only";
+
+    public static readonly string[] PausedModes = { PausedInclude, PausedExclude, PausedOnly };
+
     public const int MaxOrderPageSize = 100;
     public const int MaxMemberPageSize = 200;
 
@@ -238,6 +256,7 @@ public static class WorkOrderQueries
     {
         if (!OrderStatuses.Contains(q.Status)) throw new ArgumentException($"不支援的交辦單狀態篩選「{q.Status}」。", nameof(q));
         if (!Sorts.Contains(q.Sort)) throw new ArgumentException($"不支援的交辦單排序「{q.Sort}」。", nameof(q));
+        if (!PausedModes.Contains(q.PausedMode)) throw new ArgumentException($"不支援的暫停篩選「{q.PausedMode}」。", nameof(q));
         if (q.Page < 1 || q.PageSize < 1 || q.PageSize > MaxOrderPageSize)
             throw new ArgumentException("交辦單清單的頁碼或每頁筆數超出範圍。", nameof(q));
     }
@@ -265,6 +284,9 @@ public sealed class WorkOrderHandlerSummary
 
     /// <summary>進行中且從未回覆（last_reply_at IS NULL）的單數</summary>
     public int UnrepliedWorkOrders { get; init; }
+
+    /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
+    public int PausedWorkOrders { get; init; }
 }
 
 /// <summary>處理人負載看板的一列（列有進行中交辦單、或近 <see cref="ClosedWindowDays"/> 日有結案單的處理人）</summary>

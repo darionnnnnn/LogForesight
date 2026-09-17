@@ -492,4 +492,102 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(0, summary.SilentHostsPrtgDownCount);
         Assert.Equal(3, summary.SilentHostsCount);
     }
+
+    // ── 「N 個靜音中的問題未列出」（批次 B-2b）──────────────────────────────
+
+    /// <summary>以指定靜音排除條件組一套與建構子相同的服務（儀表板、報表、依問題視角）</summary>
+    private (DashboardService Dashboard, ReportService Reports, RecordListQueryService List) ServicesWith(IssueExclusion exclusion)
+    {
+        var source = new FixedIssueExclusionSource(exclusion);
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, source);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore), source);
+        var issueRanking = new IssueRankingBuilder(aggregates, _hosts, source);
+        var audit = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
+        var currentUser = FakeCurrentUser.WithCapabilities();
+        var permissionChanges = new PermissionChangeService(new PermissionChangeStore(_fixture.NewContext), _hosts, visibility, currentUser,
+            new RecordingAuditService(), _users, new NullReportReader(), new FakeSystemSettingsStore());
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var issueTodo = new IssueTodoQuery(aggregates, statusResolver, source);
+
+        var dashboard = new DashboardService(
+            visibility, audit, currentUser, handling, permissionChanges,
+            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
+            new EfPrtgStore(_fixture.NewContext), source);
+        var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates,
+            _severityVisibility, new SummaryCache(new DataVersionStamp()), source);
+        var list = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
+            new NextUnhandledSequenceCache(new DataVersionStamp()), source);
+        return (dashboard, reports, list);
+    }
+
+    /// <summary>一台主機、昨天一筆高風險紀錄：Auth/4625（未靜音）＋ Cron/7（目前靜音中，無已到期區間）</summary>
+    private IssueExclusion SeedCurrentlyMutedOnly()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var a = AddHost("HOST-A", 1);
+        var b = AddHost("HOST-B", 1);
+        LogIssueSignature Sig(string source, int eventId) => new()
+        {
+            LogName = "System", Source = source, EventId = eventId, EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Service, Severity = IssueSeverity.High, Count = 2
+        };
+        _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { Sig("Auth", 4625), Sig("Cron", 7) } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = b.HostId, Host = b.HostName, Date = Anchor.AddDays(-1), RiskLevel = RiskLevels.High, TopIssues = new() { Sig("CRON", 7) } });
+
+        return IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "cron", EventId = 7, Mutes = { new MuteInterval { From = Anchor.AddDays(-3), To = DateTime.Today.AddDays(5) } } }
+        }, DateTime.Today);
+    }
+
+    [Fact]
+    public void 依問題視角_MutedIssueCount與列出筆數互補()
+    {
+        var exclusion = SeedCurrentlyMutedOnly();
+        RecordSearchRequest Req() => new() { From = Anchor.AddDays(-6), To = Anchor };
+
+        var none = ServicesWith(IssueExclusion.None).List.SearchByIssue(Req());
+        var muted = ServicesWith(exclusion).List.SearchByIssue(Req());
+
+        Assert.Equal(2, none.Total);
+        Assert.Equal(0, none.MutedIssueCount);
+        Assert.Equal(1, muted.MutedIssueCount);
+        Assert.Equal(none.Total, muted.Total + muted.MutedIssueCount);
+        Assert.DoesNotContain(muted.Items, i => i.EventId == 7);
+    }
+
+    [Fact]
+    public void 儀表板_MutedIssueCount()
+    {
+        var exclusion = SeedCurrentlyMutedOnly();
+
+        var muted = ServicesWith(exclusion).Dashboard.GetSummary(7);
+        var none = ServicesWith(IssueExclusion.None).Dashboard.GetSummary(7);
+
+        Assert.Equal(1, muted.MutedIssueCount);
+        Assert.DoesNotContain(muted.TopIssues, i => i.EventId == 7);
+        Assert.Equal(0, none.MutedIssueCount);
+    }
+
+    [Fact]
+    public void 報表_MutedIssueCount()
+    {
+        var exclusion = SeedCurrentlyMutedOnly();
+
+        var muted = ServicesWith(exclusion).Reports.GetSummary(Anchor.AddDays(-6), Anchor);
+        var none = ServicesWith(IssueExclusion.None).Reports.GetSummary(Anchor.AddDays(-6), Anchor);
+        // 期間外（只含昨天以前 10～20 天）沒有列：不算
+        var outside = ServicesWith(exclusion).Reports.GetSummary(Anchor.AddDays(-20), Anchor.AddDays(-10));
+
+        Assert.Equal(1, muted.MutedIssueCount);
+        Assert.Equal(0, none.MutedIssueCount);
+        Assert.Equal(0, outside.MutedIssueCount);
+    }
 }

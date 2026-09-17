@@ -287,4 +287,99 @@ public class WeeklyCheckupServiceTests
         Assert.StartsWith("- [Medium] 規則描述-warning-24：窗口內 2 天", prtgLines[1]);
         Assert.Equal("另有 5 項 PRTG 訊號未列出", lines[header + 21]);
     }
+
+    // ── 7 天內到期的靜音段（批次 B-2b）─────────────────────────────────────
+
+    private const string ExpiringHeader = "■ 7 天內到期的靜音（到期後恢復告警，請確認問題是否已排除）";
+
+    private static RuleSuppression MuteItem(string source, int eventId, DateTime from, DateTime to, string reason) => new()
+    {
+        TargetType = SuppressionTargetTypes.IssueMute, Scope = SuppressionScopes.Site,
+        SourceName = source, EventId = eventId, MuteFrom = from, MuteTo = to, Reason = reason
+    };
+
+    private static List<DailyAnalysisRecord> DiskWindow() => new()
+    {
+        new() { Date = DateTime.Today.AddDays(-2), RiskLevel = "高", TopIssues = new() { new() { LogName = "System", Source = "Disk", EventId = 7, Count = 3, Severity = IssueSeverity.High } } },
+        new() { Date = DateTime.Today.AddDays(-1), RiskLevel = "高", TopIssues = new() { new() { LogName = "System", Source = "DISK", EventId = 7, Count = 2, Severity = IssueSeverity.High } } }
+    };
+
+    private static async Task<string> CaptureReport(List<DailyAnalysisRecord> window, params RuleSuppression[] suppressions)
+    {
+        var ai = new FakeAiService { NextContent = """{"conclusion":"測試結論"}""" };
+        var store = new FakeSuppressionStore();
+        store.SaveAll(suppressions.ToList());
+        var sink = new FakeReportSink();
+        var service = new WeeklyCheckupService(ai, new FakeReader(window), sink, store, Array.Empty<long>());
+
+        var outcome = await service.RunAsync(DateTime.Today, intervalDays: 7);
+
+        Assert.True(outcome.Completed);
+        Assert.Equal(1, store.LoadAllCallCount);   // 兩段共用同一次讀取
+        return sink.LastContent!;
+    }
+
+    [Fact]
+    public async Task 靜音到期段_7天內到期且本期有發生_列出次數()
+    {
+        var today = DateTime.Today;
+        var report = await CaptureReport(DiskWindow(),
+            MuteItem("Disk", 7, today.AddDays(-3), today.AddDays(6), "等候換碟"),
+            MuteItem("disk", 7, today.AddDays(-9), today, "當天到期"));
+
+        Assert.Contains(ExpiringHeader, report);
+        Assert.Contains($"  - Disk/7：靜音至 {today.AddDays(6):yyyy-MM-dd}，本期仍發生 5 次｜原因：等候換碟", report);
+        Assert.Contains($"  - disk/7：靜音至 {today:yyyy-MM-dd}，本期仍發生 5 次｜原因：當天到期", report);
+    }
+
+    [Fact]
+    public async Task 靜音到期段_到期日在8天後不列()
+    {
+        var today = DateTime.Today;
+        var report = await CaptureReport(DiskWindow(), MuteItem("Disk", 7, today.AddDays(-3), today.AddDays(7), "還早"));
+
+        Assert.DoesNotContain(ExpiringHeader, report);
+        Assert.DoesNotContain("還早", report);
+    }
+
+    [Fact]
+    public async Task 靜音到期段_本期沒發生不列_尚未開始不列()
+    {
+        var today = DateTime.Today;
+        var report = await CaptureReport(DiskWindow(),
+            MuteItem("Net", 99, today.AddDays(-3), today.AddDays(2), "沒發生"),
+            MuteItem("Disk", 7, today.AddDays(1), today.AddDays(3), "未開始"));
+
+        Assert.DoesNotContain(ExpiringHeader, report);
+    }
+
+    [Fact]
+    public async Task 靜音到期段_無任何靜音無段落()
+    {
+        var report = await CaptureReport(DiskWindow());
+
+        Assert.DoesNotContain(ExpiringHeader, report);
+        Assert.DoesNotContain("生效中的抑制設定", report);
+    }
+
+    [Fact]
+    public async Task 靜音到期段_既有抑制段輸出不變且放在其後()
+    {
+        var today = DateTime.Today;
+        var rule = new RuleSuppression { RuleId = "R-DISK", Scope = SuppressionScopes.Site, Reason = "維護中" };
+
+        var ruleOnly = await CaptureReport(DiskWindow(), rule);
+        var withMute = await CaptureReport(DiskWindow(), rule, MuteItem("Disk", 7, today.AddDays(-3), today.AddDays(2), "等候換碟"));
+
+        static string Section(string report)
+        {
+            var start = report.IndexOf("■ 生效中的抑制設定", StringComparison.Ordinal);
+            var end = report.IndexOf(ExpiringHeader, StringComparison.Ordinal);
+            return (end < 0 ? report[start..] : report[start..end]).TrimEnd();
+        }
+
+        Assert.Contains("  - R-DISK（永久）：本期共發生 0 次｜原因：維護中", ruleOnly);
+        Assert.Equal(Section(ruleOnly), Section(withMute));
+        Assert.True(withMute.IndexOf(ExpiringHeader, StringComparison.Ordinal) > withMute.IndexOf("■ 生效中的抑制設定", StringComparison.Ordinal));
+    }
 }

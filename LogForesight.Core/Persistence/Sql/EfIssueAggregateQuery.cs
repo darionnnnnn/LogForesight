@@ -183,6 +183,41 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public int CountCurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
+    {
+        if (hostIds != null && hostIds.Count == 0) return 0;
+        if (exclusion.CurrentlyMuted.Count == 0) return 0;
+
+        var sw = Stopwatch.StartNew();
+        var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(AliasIndex(), hostIds);
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+
+        using var ctx = _contextFactory();
+        var count = BuildCurrentlyMutedIssueKeysQuery(ctx, exclusion, from.Date, to.Date, expandedHostIds, visibleRanks, riskLevels).Count();
+
+        _performance?.Record("issues:CountCurrentlyMuted", sw.ElapsedMilliseconds);
+        return count;
+    }
+
+    /// <summary>
+    /// 目前靜音中、且在篩選母體下至少有一列的相異 (大寫來源, 事件編號)。
+    /// 篩選順序與 <see cref="Aggregate"/> 相同（期間 → 嚴重度 → 主機（已展開墓碑）→ 日風險等級），
+    /// 差別只在靜音條件換成 <see cref="IssueExclusionSql.OnlyCurrentlyMuted"/>。
+    /// </summary>
+    internal static IQueryable<string> BuildCurrentlyMutedIssueKeysQuery(
+        LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
+        IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels)
+    {
+        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        q = IssueExclusionSql.OnlyCurrentlyMuted(q, exclusion);
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
+        if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
+        return q.Select(x => x.SourceName.ToUpper() + IssueExclusion.CompositeKeySeparator + x.EventId.ToString()).Distinct();
+    }
+
     /// <summary>可見範圍（存活主機 id）展開回涵蓋的墓碑列 id；索引裡找不到的 id
     /// （理論上不會發生——可見範圍本來就是從主機清單算出來的）至少保留自己，不整台消失。</summary>
     private static HashSet<long> ExpandToAliasIds(HostAliasIndex index, IReadOnlyCollection<long> hostIds)

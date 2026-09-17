@@ -23,6 +23,8 @@ public class RecordDetailQueryService
     private readonly IKnownIssueRuleStore _rules;
     private readonly ICurrentUser _currentUser;
     private readonly ISystemSettingsStore _settings;
+    private readonly IIssueExclusionSource _exclusions;
+    private readonly IIssueOwnerStore _issueOwners;
 
     public RecordDetailQueryService(
         IRecordRepository repository,
@@ -36,7 +38,9 @@ public class RecordDetailQueryService
         INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        IIssueExclusionSource exclusions,
+        IIssueOwnerStore issueOwners)
     {
         _repository = repository;
         _reports = reports;
@@ -50,6 +54,8 @@ public class RecordDetailQueryService
         _rules = rules;
         _currentUser = currentUser;
         _settings = settings;
+        _exclusions = exclusions;
+        _issueOwners = issueOwners;
     }
 
     public RecordDetailDto GetDetail(long hostId, DateTime date)
@@ -127,6 +133,12 @@ public class RecordDetailQueryService
                 .ToList();
         }
 
+        // 靜音資訊：判定取 exclusion（與讀取側排除同一份），區間細節取問題檔案；整份詳情各讀一次
+        var exclusion = _exclusions.Current();
+        var profilesByKey = _issueOwners.GetAll()
+            .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
+            .ToDictionary(g => g.Key, g => g.First());
+
         return new RecordDetailDto
         {
             HostId = hostId,
@@ -150,7 +162,7 @@ public class RecordDetailQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, openCases, priorClosedIssueKeys)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => WithMute(ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, openCases, priorClosedIssueKeys), record.Date, exclusion, profilesByKey)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = caseGrantOnly ? new List<string>() : record.TrendAlerts,
             CorrelationAlerts = caseGrantOnly ? new List<string>() : record.CorrelationAlerts,
@@ -569,6 +581,29 @@ public class RecordDetailQueryService
         var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
 
         return (status, isDefaultUnhandled, noiseMark);
+    }
+
+    /// <summary>
+    /// 詳情頁問題列的靜音資訊。<see cref="IssueDto.IsMuted"/> 一律以 <see cref="IssueExclusion.IsMuted"/> 判定；
+    /// 顯示的區間依序取：紀錄日所在區間 → 今天（<see cref="IssueExclusion.Today"/>）所在區間 → 無。
+    /// 「取哪個區間」的規則只在這裡。
+    /// </summary>
+    private static IssueDto WithMute(
+        IssueDto dto, DateTime recordDate, IssueExclusion exclusion,
+        Dictionary<(string SourceUpper, int EventId), IssueProfile> profilesByKey)
+    {
+        dto.IsMuted = exclusion.IsMuted(dto.Source, dto.EventId, recordDate);
+        if (!profilesByKey.TryGetValue(IssueProfile.KeyOf(dto.Source, dto.EventId), out var profile)) return dto;
+
+        var span = profile.Mutes.FirstOrDefault(m => MuteInterval.Covers(m.From, m.To, recordDate))
+                   ?? IssueProfile.CurrentMute(profile, exclusion.Today);
+        if (span == null) return dto;
+
+        dto.MuteFrom = span.From.ToString("yyyy-MM-dd");
+        dto.MuteTo = span.To.ToString("yyyy-MM-dd");
+        dto.MuteReason = span.Reason;
+        dto.MutedByAccount = span.ByAccount;
+        return dto;
     }
 
     private static IssueDto ToIssueDto(

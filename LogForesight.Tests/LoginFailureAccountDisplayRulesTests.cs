@@ -37,7 +37,9 @@ public class LoginFailureAccountDisplayRulesTests : IDisposable
             new FakeNoiseMarkStore(),
             new FakeRuleStore(),
             FakeCurrentUser.WithCapabilities(),
-            _settings);
+            _settings,
+            new FixedIssueExclusionSource(IssueExclusion.None),
+            new FakeIssueOwnerStore());
     }
 
     public void Dispose()

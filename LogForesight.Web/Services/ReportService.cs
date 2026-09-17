@@ -175,6 +175,8 @@ public class ReportService
             RankedIssueCount = issueRanked.Count,
             IssueOthers = BuildIssueOthers(issueRanked),
             ConcludedIssueCount = concludedIssueCount,
+            // 「N 個靜音中的問題未列出」：與問題排行同一段期間與可見主機
+            MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, null, null),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,
