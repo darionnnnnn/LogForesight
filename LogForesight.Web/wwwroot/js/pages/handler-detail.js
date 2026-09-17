@@ -1,63 +1,105 @@
 ﻿/**
- * 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：點某個處理人的名字，看這個人目前
- * 被交辦哪些項目——進行中案件（跨日追蹤的問題）＋被指派的風險日（推導後未結案為主）。
+ * 處理人員工作頁 `/handlers/{userId}`：處理人的工作單位是**交辦單**（一張單＝一個問題 ×
+ * 一批主機），所以主體是交辦單清單；「依主機」的逐案件平鋪與「被指派的風險日」各自留一個頁籤。
  *
- * 授權：全登入角色可查看任何人，資料以**檢視者**的可見範圍過濾（後端 HandlingService.
- * GetHandlerWorkload），與全站查詢頁同一套模型，不新增能力——處理人名字本來就全站可見，
- * 此頁沒有洩漏新資訊。
- *
- * **視角（docs/archive/FEEDBACK-11-PLAN.md §7）**：進行中案件預設「依問題」——一列一個問題、
- * 展開看受影響主機；被交辦單一類型問題橫跨多台時可一次查閱、一次回覆。「依主機」
- * 是改版前的逐案件列表（一列＝一台主機×一個問題），chip 隨時切回。
- * 分組在前端做：workload 已帶回逐案件的 source／eventId，不必為了換個排版多打一支 API。
+ * 授權：全登入角色可查看任何人，資料以**檢視者**的可見範圍過濾（後端 WorkOrderQueryService／
+ * HandlingService.GetHandlerWorkload），與全站查詢頁同一套模型，不新增能力。
+ * 回覆只有「該單處理人本人且具 Handle」能做（後端 403 把關），前端據此顯示或隱藏按鈕——
+ * 見 canReply，回覆按鈕與勾選框都吃這個旗標。
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderTable, renderChips, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, formatUserName, riskBadge } from '../core/format.js';
-import { openIssueStatusReplyModal } from './issue-status-reply.js';
+import {
+    renderLoading,
+    renderTable,
+    renderPagination,
+    bindTabs,
+    statCard,
+    guardLoad,
+    loadPageSize,
+    savePageSize
+} from '../core/ui.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge } from '../core/format.js';
+import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult } from './issue-status-reply.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
 
+const kpiEl = document.getElementById('handler-kpi');
+const casesEl = document.getElementById('handler-cases');
+const daysEl = document.getElementById('handler-days');
+const ordersEl = document.getElementById('handler-wo-list');
+const ordersPagerEl = document.getElementById('handler-wo-pager');
+const ordersNoteEl = document.getElementById('handler-wo-note');
+const statusSelect = document.getElementById('handler-wo-status');
+const sortSelect = document.getElementById('handler-wo-sort');
+const pausedCheckbox = document.getElementById('handler-wo-paused');
+const replyOrdersBtn = document.getElementById('handler-wo-reply');
+
+// 來源名稱對照（同 work-orders.js）
+const ORIGIN_LABELS = {
+    manual: '人工交辦',
+    owner_rule: '負責人規則',
+    auto_dispatch: '自動派工',
+    backfill: '系統整併',
+    day_assign: '詳情頁指派'
+};
+
+// 成員狀態對照（同 work-order-detail.js）
+const MEMBER_STATUS_META = {
+    open: { label: '未處理', variant: 'danger' },
+    in_progress: { label: '處理中', variant: 'primary' },
+    observing: { label: '觀察中', variant: 'primary' },
+    escalated: { label: '無法處理（上報）', variant: 'warning' },
+    resolved: { label: '已處理', variant: 'success' },
+    wont_fix: { label: '不處理', variant: 'success' },
+    false_positive: { label: '誤報', variant: 'success' },
+    known_noise: { label: '已知雜訊', variant: 'success' }
+};
+
+const MEMBER_STATUS_OPTIONS = [
+    { value: 'active', label: '進行中' },
+    { value: 'escalated', label: '上報中' },
+    { value: 'overdue', label: '逾期' },
+    { value: 'closed', label: '已結案' },
+    { value: 'all', label: '全部' }
+];
+
+const MEMBER_PAGE_SIZE = 50;
+
 let includeResolvedDays = false;
-let caseView = 'issue';       // 'issue' | 'host'
 let currentUser = null;
-let latest = null;            // 最近一次的 workload 回應（切換視角時不重打 API）
+let canReply = false;              // 本人檢視自己的頁且具 Handle
+let summary = null;                // work-orders/summary
+let orderPage = 1;
+const selectedOrderIds = new Set();
+const orderRowsById = new Map();   // 目前這一頁的單，供「回覆選取的單」算台數
 
 async function load() {
-    renderLoading(document.getElementById('handler-kpi'), 1);
-    renderLoading(document.getElementById('handler-cases'), 3);
-    renderLoading(document.getElementById('handler-days'), 3);
+    renderLoading(kpiEl, 1);
+    renderLoading(ordersEl, 5);
+    renderLoading(casesEl, 3);
+    renderLoading(daysEl, 3);
+    selectedOrderIds.clear();
 
-    const [data, user] = await Promise.all([
-        api.get(`/api/handlers/${userId}/workload?includeResolvedDays=${includeResolvedDays}`),
-        currentUser ? Promise.resolve(currentUser) : getCurrentUser()
-    ]);
+    const user = currentUser ?? await getCurrentUser();
     currentUser = user;
-    latest = data;
+    canReply = user?.userId === userId && hasCapability(user, 'Handle');
+    replyOrdersBtn.classList.toggle('d-none', !canReply);
 
-    renderHeader(data);
-    renderKpi(data);
-    renderViewChips();
-    renderCases(data.cases);
-    renderDays(data.days);
-}
+    const [workload, summaryData] = await Promise.all([
+        api.get(`/api/handlers/${userId}/workload?includeResolvedDays=${includeResolvedDays}`),
+        api.get(`/api/handlers/${userId}/work-orders/summary`)
+    ]);
+    summary = summaryData;
 
-function renderViewChips() {
-    renderChips(document.getElementById('handler-view-chips'), {
-        items: [{ value: 'issue', label: '依問題' }, { value: 'host', label: '依主機' }],
-        attr: 'view',
-        activeValues: [caseView],
-        multi: false,
-        onToggle: value => {
-            // 單選 chip 再點一次會回傳空字串（取消選取）——視角沒有「都不選」這個狀態
-            caseView = value || caseView;
-            renderViewChips();
-            renderCases(latest.cases);
-        }
-    });
+    renderHeader(workload);
+    renderKpi(summaryData);
+    renderCases(workload.cases);
+    renderDays(workload.days);
+
+    await loadOrders();
 }
 
 function renderHeader(data) {
@@ -85,30 +127,450 @@ function renderHeader(data) {
 }
 
 function renderKpi(data) {
-    const container = document.getElementById('handler-kpi');
-    container.replaceChildren();
+    kpiEl.replaceChildren();
 
+    const overdue = data.overdueMembers ?? 0;
     const cards = [
-        { value: data.openCaseCount, label: '進行中案件' },
-        { value: data.unresolvedDayCount, label: '未結案風險日' },
-        { value: data.overdueCount, label: '逾期', variant: data.overdueCount > 0 ? 'danger' : 'secondary' }
+        { value: data.activeWorkOrders, label: '進行中單' },
+        { value: data.activeMembers, label: '進行中台數' },
+        { value: overdue, label: '逾期台數', variant: overdue > 0 ? 'danger' : 'secondary' },
+        { value: data.unrepliedWorkOrders, label: '未回覆單' }
     ];
 
     for (const c of cards) {
         const col = document.createElement('div');
-        col.className = 'col-4';
+        col.className = 'col-3';
         col.appendChild(statCard({ value: formatNumber(c.value), label: c.label, variant: c.variant }));
-        container.appendChild(col);
+        kpiEl.appendChild(col);
     }
 }
 
-function renderCases(cases) {
-    if (caseView === 'issue') {
-        renderCasesByIssue(cases);
-        return;
+// ── 交辦單頁籤 ─────────────────────────────────────────────────────────────
+
+async function loadOrders() {
+    renderLoading(ordersEl, 5);
+
+    const pageSize = loadPageSize('handler-work-orders');
+    const params = new URLSearchParams({
+        status: statusSelect.value,
+        sort: sortSelect.value,
+        page: String(orderPage),
+        pageSize: String(pageSize)
+    });
+    // 未勾選時不帶 paused：處理人視角的預設本來就是排除暫停單（後端決定）
+    if (pausedCheckbox.checked) params.set('paused', 'only');
+
+    const data = await api.get(`/api/handlers/${userId}/work-orders?${params}`);
+    renderOrders(data);
+}
+
+/** 問題欄（同 work-orders.js） */
+function renderIssueCell(issueLabelText, plainExplanationText) {
+    const wrap = document.createElement('div');
+    const main = document.createElement('div');
+    main.className = 'fw-bold';
+    main.textContent = issueLabelText || '';
+    wrap.appendChild(main);
+
+    if (plainExplanationText) {
+        const sub = document.createElement('div');
+        sub.className = 'text-muted small';
+        sub.textContent = plainExplanationText;
+        wrap.appendChild(sub);
+    }
+    return wrap;
+}
+
+function renderOrders(data) {
+    const rows = data.items || [];
+    orderRowsById.clear();
+    for (const row of rows) orderRowsById.set(row.workOrderId, row);
+    // 換頁／換篩選後，勾選中但已不在畫面上的單要跟著消失，否則按鈕數字對不上看得到的列
+    for (const id of [...selectedOrderIds]) {
+        if (!orderRowsById.has(id)) selectedOrderIds.delete(id);
     }
 
-    renderTable(document.getElementById('handler-cases'), {
+    const columns = [];
+
+    if (canReply) {
+        columns.push({
+            title: '',
+            className: 'text-center text-nowrap',
+            renderHeader: () => {
+                const chk = document.createElement('input');
+                chk.type = 'checkbox';
+                chk.className = 'form-check-input';
+                chk.title = '全選本頁交辦單';
+                chk.checked = rows.length > 0 && rows.every(r => selectedOrderIds.has(r.workOrderId));
+                chk.addEventListener('change', () => {
+                    for (const r of rows) {
+                        if (chk.checked) selectedOrderIds.add(r.workOrderId);
+                        else selectedOrderIds.delete(r.workOrderId);
+                    }
+                    for (const rc of ordersEl.querySelectorAll('.handler-wo-select')) {
+                        rc.checked = chk.checked;
+                    }
+                    updateReplyOrdersBtn();
+                });
+                return chk;
+            },
+            render: row => {
+                const chk = document.createElement('input');
+                chk.type = 'checkbox';
+                chk.className = 'form-check-input handler-wo-select';
+                chk.checked = selectedOrderIds.has(row.workOrderId);
+                chk.addEventListener('click', event => event.stopPropagation());
+                chk.addEventListener('change', () => {
+                    if (chk.checked) selectedOrderIds.add(row.workOrderId);
+                    else selectedOrderIds.delete(row.workOrderId);
+                    const selectAll = ordersEl.querySelector('thead input[type="checkbox"]');
+                    if (selectAll) {
+                        selectAll.checked = rows.length > 0 && rows.every(r => selectedOrderIds.has(r.workOrderId));
+                    }
+                    updateReplyOrdersBtn();
+                });
+                return chk;
+            }
+        });
+    }
+
+    columns.push(
+        {
+            title: '單號',
+            className: 'text-nowrap',
+            render: row => {
+                const a = document.createElement('a');
+                a.href = appUrl('/work-orders/' + row.workOrderId);
+                a.textContent = '#' + row.workOrderId;
+                return a;
+            }
+        },
+        {
+            title: '問題',
+            render: row => renderIssueCell(row.issueLabel, row.plainExplanation)
+        },
+        {
+            title: '成員',
+            render: row => {
+                const wrap = document.createElement('div');
+                const counts = row.counts || {};
+                const main = document.createElement('div');
+                main.className = 'text-nowrap';
+                main.textContent = `${counts.active ?? 0}／${counts.total ?? 0} 台`;
+                wrap.appendChild(main);
+
+                const parts = [];
+                if (counts.inProgress > 0) parts.push(`處理中 ${counts.inProgress}`);
+                if (counts.observing > 0) parts.push(`觀察 ${counts.observing}`);
+                if (counts.open > 0) parts.push(`未處理 ${counts.open}`);
+                if (counts.escalated > 0) parts.push(`上報 ${counts.escalated}`);
+                if (counts.daySyncPending > 0) parts.push(`逐日同步中 ${counts.daySyncPending}`);
+
+                if (parts.length > 0) {
+                    const sub = document.createElement('div');
+                    sub.className = 'text-muted small';
+                    sub.textContent = parts.join('、');
+                    wrap.appendChild(sub);
+                }
+                return wrap;
+            }
+        },
+        {
+            title: '逾期',
+            className: 'text-end text-nowrap',
+            render: row => {
+                const overdue = row.counts?.overdue ?? 0;
+                if (overdue > 0) return statusBadge(String(overdue), 'danger');
+                const span = document.createElement('span');
+                span.textContent = '0';
+                return span;
+            }
+        },
+        {
+            title: '未回覆',
+            className: 'text-end text-nowrap',
+            render: row => (row.unrepliedDays == null ? '—' : `${row.unrepliedDays} 天`)
+        },
+        {
+            title: '期限',
+            className: 'text-nowrap',
+            render: row => (row.dueDate ? formatDate(row.dueDate) : '—')
+        },
+        {
+            title: '來源',
+            render: row => statusBadge(ORIGIN_LABELS[row.origin] || row.origin || '未知', 'neutral')
+        },
+        {
+            title: '最近新增',
+            className: 'text-nowrap',
+            render: row => (row.lastAppendedAt ? formatDateTime(row.lastAppendedAt) : '—')
+        }
+    );
+
+    renderTable(ordersEl, {
+        columns,
+        rows,
+        // 成員清單要另打一支 API，用 lazy 的 onRowExpand（首次展開才取），不是 rowDetail
+        onRowExpand: (row, cell) => buildMemberPanel(row, cell),
+        empty: { title: '目前沒有符合條件的交辦單' }
+    });
+
+    renderPagination(ordersPagerEl, {
+        page: data.page,
+        totalPages: Math.ceil(data.total / data.pageSize),
+        pageSize: data.pageSize,
+        onPage: newPage => {
+            orderPage = newPage;
+            guardLoad(ordersEl, loadOrders);
+        },
+        onPageSize: newSize => {
+            savePageSize('handler-work-orders', newSize);
+            orderPage = 1;
+            guardLoad(ordersEl, loadOrders);
+        }
+    });
+
+    renderPausedNote();
+    updateReplyOrdersBtn();
+}
+
+function renderPausedNote() {
+    const paused = summary?.pausedWorkOrders ?? 0;
+    ordersNoteEl.textContent = paused > 0 ? `另有 ${paused} 張暫停（問題靜音中，到期自動恢復）` : '';
+    ordersNoteEl.classList.toggle('d-none', paused === 0);
+}
+
+function updateReplyOrdersBtn() {
+    replyOrdersBtn.classList.toggle('d-none', !canReply);
+    replyOrdersBtn.disabled = selectedOrderIds.size === 0;
+}
+
+replyOrdersBtn.addEventListener('click', () => {
+    if (selectedOrderIds.size === 0) return;
+
+    const workOrderIds = [...selectedOrderIds];
+    const hosts = workOrderIds.reduce((sum, id) => sum + (orderRowsById.get(id)?.counts?.active ?? 0), 0);
+
+    openWorkOrderReplyModal({
+        title: '回覆選取的交辦單',
+        targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
+        submit: async payload => {
+            const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
+            toastReplyManyResult(result);
+        },
+        onApplied: () => guardLoad([kpiEl, ordersEl, casesEl, daysEl], load)
+    });
+});
+
+/**
+ * 展開列：該單的成員（主機）清單，可勾選後只回覆選取的幾台。
+ * 勾選狀態是這一次展開的區域狀態——重新載入整頁時整張表重建，自然歸零。
+ */
+function buildMemberPanel(row, cell) {
+    const box = document.createElement('div');
+    box.className = 'p-2';
+
+    const bar = document.createElement('div');
+    bar.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
+
+    const statusLabel = document.createElement('label');
+    statusLabel.className = 'form-label mb-0 text-muted small text-nowrap';
+    statusLabel.textContent = '狀態';
+    const memberStatus = document.createElement('select');
+    memberStatus.className = 'form-select form-select-sm w-auto';
+    for (const option of MEMBER_STATUS_OPTIONS) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.label;
+        memberStatus.appendChild(el);
+    }
+    statusLabel.htmlFor = `handler-wo-member-status-${row.workOrderId}`;
+    memberStatus.id = statusLabel.htmlFor;
+    bar.append(statusLabel, memberStatus);
+
+    const replyHostsBtn = document.createElement('button');
+    replyHostsBtn.type = 'button';
+    replyHostsBtn.className = 'btn btn-sm btn-outline-primary ms-auto';
+    replyHostsBtn.textContent = '回覆選取的主機';
+    replyHostsBtn.disabled = true;
+    if (!canReply) replyHostsBtn.classList.add('d-none');
+    bar.appendChild(replyHostsBtn);
+
+    const tableBox = document.createElement('div');
+    const pagerBox = document.createElement('nav');
+    pagerBox.className = 'mt-2';
+    const noteEl = document.createElement('div');
+    noteEl.className = 'text-muted small mt-2 d-none';
+
+    box.append(bar, tableBox, pagerBox, noteEl);
+    cell.replaceChildren(box);
+
+    const selectedCaseIds = new Set();
+    let memberPage = 1;
+
+    const updateReplyHostsBtn = () => {
+        replyHostsBtn.disabled = selectedCaseIds.size === 0;
+    };
+
+    async function loadMembers() {
+        renderLoading(tableBox, 3);
+        const params = new URLSearchParams({
+            status: memberStatus.value,
+            page: String(memberPage),
+            pageSize: String(MEMBER_PAGE_SIZE)
+        });
+        const data = await api.get(`/api/work-orders/${row.workOrderId}/members?${params}`);
+        renderMembers(data);
+    }
+
+    function renderMembers(data) {
+        const items = data.items || [];
+        for (const id of [...selectedCaseIds]) {
+            if (!items.some(i => i.caseId === id)) selectedCaseIds.delete(id);
+        }
+
+        noteEl.textContent = data.hiddenMemberCount > 0
+            ? `另有 ${data.hiddenMemberCount} 台主機不在您的檢視範圍，未列出`
+            : '';
+        noteEl.classList.toggle('d-none', !(data.hiddenMemberCount > 0));
+
+        const columns = [];
+        if (canReply) {
+            columns.push({
+                title: '',
+                className: 'text-center text-nowrap',
+                renderHeader: () => {
+                    const chk = document.createElement('input');
+                    chk.type = 'checkbox';
+                    chk.className = 'form-check-input';
+                    chk.title = '全選本頁主機';
+                    const selectable = items.filter(i => !i.closedAt);
+                    chk.checked = selectable.length > 0 && selectable.every(i => selectedCaseIds.has(i.caseId));
+                    chk.disabled = selectable.length === 0;
+                    chk.addEventListener('change', () => {
+                        for (const item of selectable) {
+                            if (chk.checked) selectedCaseIds.add(item.caseId);
+                            else selectedCaseIds.delete(item.caseId);
+                        }
+                        for (const rc of tableBox.querySelectorAll('.handler-wo-member-select')) {
+                            rc.checked = chk.checked;
+                        }
+                        updateReplyHostsBtn();
+                    });
+                    return chk;
+                },
+                render: item => {
+                    if (item.closedAt) return document.createTextNode('');
+                    const chk = document.createElement('input');
+                    chk.type = 'checkbox';
+                    chk.className = 'form-check-input handler-wo-member-select';
+                    chk.checked = selectedCaseIds.has(item.caseId);
+                    chk.addEventListener('change', () => {
+                        if (chk.checked) selectedCaseIds.add(item.caseId);
+                        else selectedCaseIds.delete(item.caseId);
+                        const selectAll = tableBox.querySelector('thead input[type="checkbox"]');
+                        if (selectAll) {
+                            const selectable = items.filter(i => !i.closedAt);
+                            selectAll.checked = selectable.length > 0 && selectable.every(i => selectedCaseIds.has(i.caseId));
+                        }
+                        updateReplyHostsBtn();
+                    });
+                    return chk;
+                }
+            });
+        }
+
+        columns.push(
+            {
+                title: '主機',
+                render: item => {
+                    if (!item.hostId) {
+                        const span = document.createElement('span');
+                        span.textContent = item.hostName || '';
+                        return span;
+                    }
+                    const a = document.createElement('a');
+                    a.href = appUrl('/hosts/' + item.hostId);
+                    a.textContent = item.hostName || '';
+                    return a;
+                }
+            },
+            {
+                title: '狀態',
+                className: 'text-nowrap',
+                render: item => {
+                    const meta = MEMBER_STATUS_META[item.status] || { label: item.status || '未知', variant: 'neutral' };
+                    return statusBadge(meta.label, meta.variant);
+                }
+            },
+            {
+                title: '期限',
+                className: 'text-nowrap',
+                render: item => {
+                    const wrap = document.createElement('div');
+                    wrap.className = 'd-flex align-items-center gap-1 text-nowrap';
+                    const span = document.createElement('span');
+                    span.textContent = item.dueDate ? formatDate(item.dueDate) : '—';
+                    wrap.appendChild(span);
+                    if (item.overdue) wrap.appendChild(statusBadge('逾期', 'danger'));
+                    return wrap;
+                }
+            },
+            {
+                title: '期間',
+                className: 'text-nowrap',
+                render: item => `${formatDate(item.firstLinkedDate)} ~ ${formatDate(item.lastLinkedDate)}`
+            }
+        );
+
+        renderTable(tableBox, {
+            columns,
+            rows: items,
+            empty: { title: '沒有符合條件的成員' }
+        });
+
+        renderPagination(pagerBox, {
+            page: data.page,
+            totalPages: Math.ceil(data.total / data.pageSize),
+            onPage: newPage => {
+                memberPage = newPage;
+                guardLoad(tableBox, loadMembers);
+            }
+        });
+
+        updateReplyHostsBtn();
+    }
+
+    memberStatus.addEventListener('change', () => {
+        memberPage = 1;
+        selectedCaseIds.clear();
+        updateReplyHostsBtn();
+        guardLoad(tableBox, loadMembers);
+    });
+
+    replyHostsBtn.addEventListener('click', () => {
+        if (selectedCaseIds.size === 0) return;
+        const caseIds = [...selectedCaseIds];
+        const total = row.counts?.total ?? 0;
+
+        openWorkOrderReplyModal({
+            title: `回覆交辦單 #${row.workOrderId}`,
+            targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
+            submit: async payload => {
+                const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload });
+                toastReplyResult(result);
+            },
+            onApplied: () => guardLoad([kpiEl, ordersEl, casesEl, daysEl], load)
+        });
+    });
+
+    guardLoad(tableBox, loadMembers);
+}
+
+// ── 依主機頁籤（逐案件平鋪）───────────────────────────────────────────────
+
+function renderCases(cases) {
+    renderTable(casesEl, {
         columns: [
             { title: '主機', render: c => hostLink(c) },
             { title: '問題', render: c => c.issueLabel },
@@ -123,127 +585,10 @@ function renderCases(cases) {
     });
 }
 
-/**
- * 依問題視角（§7）：一列一個問題（Source＋EventId，與問題查詢 by-issue 同一把分組鍵），
- * 展開看受影響主機。看自己的工作頁時每列多一顆「回覆處理狀態」——一次套用到自己名下
- * 該問題的全部案件（共用 issue-status-reply.js，與問題查詢頁同一個 modal 與同一組必填規則）。
- */
-function renderCasesByIssue(cases) {
-    const groups = groupCasesByIssue(cases);
-    // 「是自己的頁面」還不夠，還要「動得了」（體檢 H2）：manager 被指派後進自己的工作頁，
-    // 過去看得到「回覆處理狀態」，按下去必定 403 並留下一筆 denied 稽核。
-    // 與 records.js 的依問題視角是同一條規則，兩處要一起改才不會又漏一個入口。
-    const isSelf = currentUser?.userId === userId && hasCapability(currentUser, 'Handle');
-
-    renderTable(document.getElementById('handler-cases'), {
-        columns: [
-            { title: '問題', render: g => g.issueLabel },
-            { title: '主機數', className: 'text-end', render: g => String(g.items.length) },
-            { title: '狀態', render: g => issueStatusSummary(g) },
-            { title: '涵蓋範圍', render: g => `${g.firstLinkedDate} ~ ${g.lastLinkedDate}` },
-            { title: '最近逾期', className: 'text-nowrap', render: g => issueOverdueCell(g) },
-            { title: '', className: 'text-end', render: g => (isSelf ? issueReplyButton(g) : '') }
-        ],
-        rows: groups,
-        // 展開看受影響主機（與問題查詢 by-issue 同一個手勢）；rowDetail 與 rowHref 互斥，
-        // 逐台的連結放在展開列裡
-        rowDetail: g => issueHostsTable(g),
-        empty: { title: '目前沒有進行中案件', hint: '被指派問題並建立案件後，會顯示在這裡。' }
-    });
-}
-
-function groupCasesByIssue(cases) {
-    const map = new Map();
-
-    for (const item of cases) {
-        // source/eventId 是自 IssueKey 反解的；萬一解析不出來（舊資料格式壞掉）就退回用
-        // issueLabel 當鍵，至少不會把不同問題混成一組
-        const key = item.source ? `${item.source}|${item.eventId}` : `label:${item.issueLabel}`;
-        let group = map.get(key);
-        if (!group) {
-            group = {
-                source: item.source,
-                eventId: item.eventId,
-                issueLabel: item.issueLabel,
-                items: [],
-                firstLinkedDate: item.firstLinkedDate,
-                lastLinkedDate: item.lastLinkedDate
-            };
-            map.set(key, group);
-        }
-
-        group.items.push(item);
-        if (item.firstLinkedDate < group.firstLinkedDate) group.firstLinkedDate = item.firstLinkedDate;
-        if (item.lastLinkedDate > group.lastLinkedDate) group.lastLinkedDate = item.lastLinkedDate;
-    }
-
-    // 逾期的問題排最前面，其次主機數多的（一次處理多台的效益最高），再來是最近出現
-    return [...map.values()].sort((a, b) =>
-        (b.items.some(i => i.isOverdue) - a.items.some(i => i.isOverdue)) ||
-        (b.items.length - a.items.length) ||
-        b.lastLinkedDate.localeCompare(a.lastLinkedDate));
-}
-
-/** 「N 台處理中／M 台觀察中」——同一個問題在不同主機上可能各自不同狀態 */
-function issueStatusSummary(group) {
-    const counts = new Map();
-    for (const item of group.items) {
-        counts.set(item.statusText, (counts.get(item.statusText) ?? 0) + 1);
-    }
-    return [...counts].map(([text, count]) => `${count} 台${text}`).join('／');
-}
-
-function issueOverdueCell(group) {
-    const overdue = group.items.filter(i => i.isOverdue);
-    if (overdue.length === 0) return '';
-
-    const span = document.createElement('span');
-    span.className = 'text-danger fw-semibold';
-    span.textContent = `${overdue.length} 台逾期`;
-    return span;
-}
-
-function issueHostsTable(group) {
-    const box = document.createElement('div');
-    renderTable(box, {
-        columns: [
-            { title: '主機', render: c => hostLink(c) },
-            { title: '狀態', render: c => statusText(c) },
-            { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
-            { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) },
-            { title: '', className: 'text-end', render: c => detailLink(c) }
-        ],
-        rows: [...group.items].sort((a, b) => (b.isOverdue - a.isOverdue) || a.hostName.localeCompare(b.hostName)),
-        empty: { title: '', hint: '' }
-    });
-    return box;
-}
-
-function detailLink(item) {
-    const link = document.createElement('a');
-    link.href = appUrl(`/records/${item.hostId}/${item.lastLinkedDate}`);
-    link.className = 'btn btn-sm btn-outline-primary';
-    link.textContent = '去處理';
-    return link;
-}
-
-function issueReplyButton(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary';
-    btn.textContent = '回覆處理狀態';
-    btn.title = '一次回覆這個問題在所有指派給您的主機上的處理狀態';
-    btn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openIssueStatusReplyModal(group, load);
-    });
-    return btn;
-}
+// ── 被指派的風險日頁籤 ─────────────────────────────────────────────────────
 
 function renderDays(days) {
-    const container = document.getElementById('handler-days');
-    renderTable(container, {
+    renderTable(daysEl, {
         columns: [
             { title: '日期', render: d => d.date },
             { title: '主機', render: d => hostLink(d) },
@@ -283,13 +628,22 @@ function hostLink(item) {
     return link;
 }
 
+// ── 事件綁定與初始化 ───────────────────────────────────────────────────────
+
+const onOrderFilterChange = () => {
+    orderPage = 1;
+    selectedOrderIds.clear();
+    guardLoad(ordersEl, loadOrders);
+};
+statusSelect.addEventListener('change', onOrderFilterChange);
+sortSelect.addEventListener('change', onOrderFilterChange);
+pausedCheckbox.addEventListener('change', onOrderFilterChange);
+
 document.getElementById('toggle-resolved-days').addEventListener('change', event => {
     includeResolvedDays = event.target.checked;
-    load();
+    guardLoad([kpiEl, ordersEl, casesEl, daysEl], load);
 });
 
-guardLoad([
-    document.getElementById('handler-kpi'),
-    document.getElementById('handler-cases'),
-    document.getElementById('handler-days')
-], load);
+bindTabs(document.getElementById('handler-tabs'));
+
+guardLoad([kpiEl, ordersEl, casesEl, daysEl], load);

@@ -7,28 +7,63 @@
 
     <div class="row g-3 mt-1" id="handler-kpi"></div>
 
-    @* §7（回饋第十一輪）：預設「依問題」——同一類問題被交辦到多台主機時，一次看完、
-       一次回覆才是主要動線；「依主機」是原本的逐案件列表，隨時可切回。 *@
+    @* 處理人的工作單位是交辦單：預設頁籤是「交辦單」；
+       「依主機」的逐案件平鋪與「被指派的風險日」各留一個頁籤。 *@
     <section class="lf-card mt-3">
-        <div class="lf-card__header">
-            <h2 class="lf-card__title">進行中案件</h2>
-            <div class="d-flex align-items-center gap-3">
-                <span class="text-muted small">跨日追蹤的問題案件，狀態會隨案件同步連動</span>
-                <div id="handler-view-chips" class="lf-toolbar__chips"></div>
-            </div>
-        </div>
-        <div class="lf-card__body p-0" id="handler-cases"></div>
-    </section>
+        <div class="lf-card__body">
+            <ul class="nav nav-tabs mb-3" id="handler-tabs">
+                <li class="nav-item"><button class="nav-link active" data-tab="orders" type="button">交辦單</button></li>
+                <li class="nav-item"><button class="nav-link" data-tab="hosts" type="button">依主機</button></li>
+                <li class="nav-item"><button class="nav-link" data-tab="days" type="button">被指派的風險日</button></li>
+            </ul>
 
-    <section class="lf-card mt-3">
-        <div class="lf-card__header">
-            <h2 class="lf-card__title">被指派的風險日</h2>
-            <div class="form-check form-switch lf-no-print">
-                <input class="form-check-input" type="checkbox" id="toggle-resolved-days">
-                <label class="form-check-label small text-muted" for="toggle-resolved-days">顯示近 30 天已結案</label>
+            <div data-panel="orders">
+                <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="handler-wo-status" class="form-label mb-0 text-muted small text-nowrap">狀態</label>
+                        <select id="handler-wo-status" class="form-select form-select-sm w-auto">
+                            <option value="active" selected>進行中</option>
+                            <option value="escalated">上報中</option>
+                            <option value="overdue">有逾期</option>
+                            <option value="unreplied">未回覆</option>
+                            <option value="closed">已結案</option>
+                            <option value="all">全部</option>
+                        </select>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="handler-wo-sort" class="form-label mb-0 text-muted small text-nowrap">排序</label>
+                        <select id="handler-wo-sort" class="form-select form-select-sm w-auto">
+                            <option value="created_desc" selected>最新建立</option>
+                            <option value="members_desc">成員最多</option>
+                            <option value="unreplied_oldest">最久未回覆</option>
+                        </select>
+                    </div>
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="handler-wo-paused">
+                        <label class="form-check-label small" for="handler-wo-paused">只看暫停的單</label>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary ms-auto d-none" id="handler-wo-reply" disabled>回覆選取的單</button>
+                </div>
+                <div id="handler-wo-list"></div>
+                <nav id="handler-wo-pager" class="mt-3"></nav>
+                <div id="handler-wo-note" class="text-muted small mt-2 d-none"></div>
+            </div>
+
+            <div data-panel="hosts" class="d-none">
+                <div class="text-muted small mb-2">跨日追蹤的問題案件，狀態會隨案件同步連動</div>
+                <div id="handler-cases"></div>
+            </div>
+
+            <div data-panel="days" class="d-none">
+                <div class="d-flex justify-content-end mb-2">
+                    <div class="form-check form-switch lf-no-print">
+                        <input class="form-check-input" type="checkbox" id="toggle-resolved-days">
+                        <label class="form-check-label small text-muted" for="toggle-resolved-days">顯示近 30 天已結案</label>
+                    </div>
+                </div>
+                <div id="handler-days"></div>
             </div>
         </div>
-        <div class="lf-card__body p-0" id="handler-days"></div>
     </section>
 </div>
 
