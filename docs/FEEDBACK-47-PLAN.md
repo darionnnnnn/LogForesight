@@ -757,6 +757,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | E-1e | agy（gemini-3.8-flash-high） | 一輪通過並完整回報（郵件＋排程測試 168 綠，+5） | Claude 核對 diff 只動白名單三檔、位元組核對；自做突變（週報「目前靜音中」判定日提前 30 天）→ 1 條轉紅，還原逐位元組相同；**E-1 全段完成後獨立重建（1 個既有警告）與全套：4763 綠／略過 6，總 4769（+18），零失敗** | Claude 親改：註解內的執行端標記「task-47-E1e」改為專案慣例「回饋第 47 輪 E-1」。**收尾清理**：前幾段測試檔仍有 `task-47-*` 註解標記（`HandlingServiceTests`、`HandlingStoreContractTests`、`IssueMuteTests` 等），收尾統一改寫。規劃原分 E-1d 夜間摘要／E-1e 週報，實際 E-1d 做 Core 彙總、E-1e 做摘要信＋排程接線＋週報靜音段 |
 | F-1a | agy（gemini-3.8-flash-high） | 一輪實作並完整回報（相關測試 429 綠） | Claude 核對 diff 只動白名單 17 檔；自做突變（EF `HasCaseOnHost` 加限進行中）→ store 契約「含已結案」轉紅，還原逐位元組相同；修正後相關測試 109 綠 | **agy 剝掉兩個測試檔的 UTF-8 BOM**（`VisibilityFakes.cs`、`VisibilityServiceTests.cs`）→Claude 補回；新測試斷言 `HostNamesWithCases` 回傳順序，但實作 `Distinct` 無排序（SQL 端順序不保證、潛在不穩定測試）→Claude 在 EF 實作加 `OrderBy`。語意核對：原以 `HostName` 不分大小寫分組，新方法以 `HostNameKey` 比對，等價 |
 | F-1b | agy（gemini-3.8-flash-high） | 正式碼與 4 條測試寫完後**因網路錯誤中斷**（「There was a network issue connecting to the server」），沒跑驗收 | Claude 自跑：建置 0 錯誤；`_cases.GetOpen(` 4→3、`IsCaseGrantOnly` 1→0、`ForRange(` 17 處；相關測試 232 綠；位元組核對；自做突變（`ForRange` 拿掉「目前靜音中的鍵一律保留」）→「只留期間內重疊區間且保留目前靜音中的鍵」轉紅，還原逐位元組相同 | 無偏離。弱點：SQL 測試只以 `IssueExclusionSql.Apply` 比對 narrow 前後字面值，`EfIssueAggregateQuery` 各方法有無呼叫 `ForRange` 靠 grep 計數守住 |
+| F-1c | agy（gemini-3.8-flash-high） | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
