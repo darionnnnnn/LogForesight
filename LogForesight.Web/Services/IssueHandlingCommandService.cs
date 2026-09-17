@@ -105,7 +105,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
@@ -155,7 +155,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
 
         // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了。
         // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
@@ -262,33 +262,6 @@ public class IssueHandlingCommandService
             $"此問題由 {name} 的案件處理中，無法直接變更狀態。如需接手，請由管理者改派處理人。");
     }
 
-    private static void ValidateIssueStatus(string status, DateTime? dueDate, bool clearing, string? note = null)
-    {
-        if (!clearing && !IssueHandlingStatuses.IsValid(status))
-            throw DomainException.Validation($"未知的問題處理狀態「{status}」。");
-
-        if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
-            throw DomainException.Validation("預計完成日不可早於今天。");
-
-        // 無法處理必填原因（回饋十八輪批次G）：admin 收到上報通知要看得出「為什麼處理不了」
-        // 才決定得了結案或改派——前端已標必填，這裡是防繞過的實際防線（同 wont_fix 的前端
-        // 必填慣例，但上報多了「別人要據此做決定」的分量，值得後端也擋）
-        if (status == IssueHandlingStatuses.Escalated && string.IsNullOrWhiteSpace(note))
-            throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
-
-        // 觀察中一定要有觀察至日期（docs/archive/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
-        // 前端固定送「今天 + N 天」（1~90 天），這裡防禦性驗證同一個範圍，不只信前端
-        if (status == IssueHandlingStatuses.Observing)
-        {
-            if (!dueDate.HasValue)
-                throw DomainException.Validation("標記為觀察中時必須指定觀察至日期。");
-            if (dueDate.Value.Date < DateTime.Today)
-                throw DomainException.Validation("觀察至日期不可早於今天。");
-            if (dueDate.Value.Date > DateTime.Today.AddDays(90))
-                throw DomainException.Validation("觀察至日期不可超過 90 天。");
-        }
-    }
-
     /// <summary>
     /// 寫入單一問題的處理狀態，並成對寫入處理歷程（不含稽核記錄——單筆與批次的稽核摘要不同，
     /// 由呼叫端各自記）。批次呼叫端逐一呼叫本方法，天然逐問題各留一列歷程（D4）。
@@ -305,10 +278,18 @@ public class IssueHandlingCommandService
         var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
         var trimmedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 
+        // 交辦單回覆時間：要在 SyncStatus 之前取案件（結案後 GetOpen 就取不到了）
+        var openCase = _cases.GetOpen(host.HostName, issueKey);
+
         var caseSync = _caseCoordinator.SyncStatus(
             host.HostName, issueKey, issueLabel, date,
             status, trimmedNote, dueDate, clearing,
             actorId, _currentUser.Account, occurredAt);
+
+        // 處理人本人標記才算回覆（管理者代標不算）；只推進回覆時間、不寫單的事件——
+        // 逐筆各寫一筆會淹沒時間軸。成員因此全結案的單由背景結案掃描補上
+        if (caseSync.Applied && openCase?.WorkOrderId is { } workOrderId && openCase.HandlerId == _currentUser.UserId)
+            _workOrders.TouchReply(workOrderId, occurredAt);
 
         if (!caseSync.Applied)
         {
@@ -653,7 +634,7 @@ public class IssueHandlingCommandService
     public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request)
     {
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
 
         if (_currentUser.UserId <= 0)
             throw DomainException.Validation("此帳號沒有可回覆的案件。");
@@ -696,6 +677,13 @@ public class IssueHandlingCommandService
             // SyncedDayCount 不含觸發日（見 Coordinator 的說明），這裡要的是「總共動到幾天」
             updatedDays += sync.SyncedDayCount + 1;
         }
+
+        // 寫入路徑維持逐案 SyncStatus（不改走協調器 Reply，觸發日的歷程動作碼才不變），
+        // 寫完後每張涉及的交辦單補記一筆回覆（無單的舊案件略過）
+        var replyActor = new WorkOrderActor { ActorId = actorId, ActorAccount = _currentUser.Account, OccurredAt = occurredAt };
+        var replyStatus = clearing ? IssueHandlingStatuses.Open : request.Status;
+        foreach (var group in targets.Where(c => c.WorkOrderId != null).GroupBy(c => c.WorkOrderId!.Value).OrderBy(g => g.Key))
+            _workOrders.RecordExternalReply(group.Key, replyActor, replyStatus, request.Note, group.Count());
 
         var hostNames = targets.Select(c => c.HostName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 

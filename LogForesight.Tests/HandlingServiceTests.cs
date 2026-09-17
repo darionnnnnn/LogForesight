@@ -1899,4 +1899,116 @@ public class HandlingServiceTests : IDisposable
         });
         Assert.Single(_mailSender.Sent);
     }
+
+    // ── 交辦單回覆時間同步（task-47-D1）────────────────────────────────────────
+
+    /// <summary>直接組 <see cref="IssueHandlingCommandService"/>，拿得到交辦單 store 以便斷言（門面內的 store 取不到）</summary>
+    private (IssueHandlingCommandService Service, FakeWorkOrderStore Orders, WorkOrderCoordinator Coordinator) CreateIssueServiceWithOrders(ICurrentUser currentUser)
+    {
+        var orders = new FakeWorkOrderStore(_cases);
+        var coordinator = new WorkOrderCoordinator(orders, _cases, _issueHandlings, _caseCoordinator, _handlings, _hosts);
+        var displayNames = new UserDisplayNameService(_settings);
+        var service = new IssueHandlingCommandService(
+            _handlings, _issueHandlings, _cases, _caseCoordinator, coordinator, _noiseMarks, _repository, _hosts, _users,
+            new AlwaysVisibleService(_hosts), currentUser, _audit,
+            new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings),
+            new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames),
+            displayNames);
+        return (service, orders, coordinator);
+    }
+
+    private static long CreateWorkOrder(WorkOrderCoordinator coordinator, long handlerId, LogIssueSignature issue, DateTime day, params string[] hosts) =>
+        coordinator.Create(new WorkOrderCreateRequest
+        {
+            Source = issue.Source, EventId = issue.EventId, IssueLabel = $"{issue.Source} {issue.EventId}", HandlerId = handlerId,
+            Members = hosts.Select(h => new WorkOrderMember
+            {
+                HostName = h, IssueKey = IssueSignatureKey.For(issue), IssueLabel = $"{issue.Source} {issue.EventId}", TriggerDate = day
+            }).ToList(),
+            Actor = new WorkOrderActor { ActorAccount = "boss", OccurredAt = DateTime.Now.AddHours(-1) }
+        }).WorkOrderId;
+
+    [Fact]
+    public void 詳情頁標記_處理人本人_所屬單LastReplyAt更新_事件數不變()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var (service, orders, coordinator) = CreateIssueServiceWithOrders(FakeCurrentUser.ForUser(_other.UserId, Capability.Handle));
+        var id = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName);
+        var eventsBefore = orders.ListEvents(id).Count;
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.InProgress, Note = "處理中"
+        });
+
+        Assert.NotNull(orders.Get(id)!.LastReplyAt);
+        Assert.Equal(eventsBefore, orders.ListEvents(id).Count);
+    }
+
+    [Fact]
+    public void 詳情頁標記_管理者代標非處理人_LastReplyAt不變()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var admin = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle, Capability.ViewAll);
+        var (service, orders, coordinator) = CreateIssueServiceWithOrders(admin);
+
+        // 有處理人的案件：管理者本來就被擋（改狀態要走改派），單不動
+        var owned = CreateWorkOrder(coordinator, _owner.UserId, a, day, _host.HostName);
+        Assert.Throws<DomainException>(() => service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.InProgress, Note = "代標"
+        }));
+        Assert.Null(orders.Get(owned)!.LastReplyAt);
+
+        // 案件在單上但沒有處理人（整併前舊資料）：標記會寫入，但標記的人不是處理人，不算回覆
+        var openCase = _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!;
+        openCase.HandlerId = null;
+        _cases.Save(openCase);
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.InProgress, Note = "代標"
+        });
+
+        Assert.Equal(IssueHandlingStatuses.InProgress, result.Status);
+        Assert.Equal(owned, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.WorkOrderId);
+        Assert.Null(orders.Get(owned)!.LastReplyAt);
+    }
+
+    [Fact]
+    public void 依問題回覆處理狀態_每張涉及的單各一筆replied事件()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        var b = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
+        var c = _hosts.Upsert(new WebHost { HostName = "SRV-C" });
+        foreach (var host in new[] { _host.HostName, b.HostName, c.HostName }) _repository.AddRecord(host, day, a);
+        var (service, orders, coordinator) = CreateIssueServiceWithOrders(FakeCurrentUser.ForUser(_other.UserId, Capability.Handle));
+
+        var first = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName, b.HostName, c.HostName);
+        // 第二張單：多問題單不受「同處理人同問題至多一張進行中」限制，把 SRV-C 的案件改連過去
+        var second = orders.Insert(new WorkOrder
+        {
+            IssueLabel = "多問題", HandlerId = _other.UserId, CreatedByAccount = "boss", CreatedAt = DateTime.Now.AddHours(-1)
+        });
+        var moved = _cases.GetByWorkOrder(first, 0, 10).Single(x => x.HostName == c.HostName);
+        moved.WorkOrderId = second;
+        _cases.Save(moved);
+
+        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.InProgress, Note = "處理中"
+        });
+
+        var firstReplies = orders.ListEvents(first).Where(e => e.Action == WorkOrderEventActions.Replied).ToList();
+        var secondReplies = orders.ListEvents(second).Where(e => e.Action == WorkOrderEventActions.Replied).ToList();
+        Assert.Equal("in_progress：處理中（2 台）", Assert.Single(firstReplies).Note);
+        Assert.Equal("in_progress：處理中（1 台）", Assert.Single(secondReplies).Note);
+        Assert.NotNull(orders.Get(first)!.LastReplyAt);
+        Assert.NotNull(orders.Get(second)!.LastReplyAt);
+    }
 }

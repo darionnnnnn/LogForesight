@@ -53,8 +53,54 @@ public class WorkOrderQueryService
 
     // ── 清單 ────────────────────────────────────────────────────────────────
 
-    /// <summary>清單（能力由 controller 標註把關）：交辦單一次、本頁計數一次、使用者一次</summary>
-    public WorkOrderListDto List(WorkOrderListRequest req)
+    /// <summary>清單（能力由 controller 標註把關）</summary>
+    public WorkOrderListDto List(WorkOrderListRequest req) => QueryList(req);
+
+    /// <summary>
+    /// 某處理人的交辦清單：本人，或具 Assign／ViewAll 才看得到；處理人條件固定為 userId（忽略請求帶的值），
+    /// 查詢與組裝同 <see cref="List"/>。
+    /// </summary>
+    public WorkOrderListDto ListForHandler(long userId, WorkOrderListRequest req)
+    {
+        AuthorizeHandlerView(userId);
+        req.HandlerId = userId;
+        return QueryList(req);
+    }
+
+    /// <summary>某處理人的進行中摘要；授權同 <see cref="ListForHandler"/></summary>
+    public HandlerSummaryDto HandlerSummary(long userId)
+    {
+        AuthorizeHandlerView(userId);
+        return SummaryOf(userId);
+    }
+
+    /// <summary>
+    /// 側欄徽章（目前使用者）：與 <see cref="HandlerSummary"/> 同一份 store 摘要。
+    /// ServerAdmin（UserId &lt;= 0）不會是任何單的處理人，回全 0、不擲。
+    /// </summary>
+    public HandlerSummaryDto MyBadge() =>
+        _currentUser.UserId <= 0 ? new HandlerSummaryDto() : SummaryOf(_currentUser.UserId);
+
+    private HandlerSummaryDto SummaryOf(long userId)
+    {
+        var s = _orders.HandlerSummary(userId);
+        return new HandlerSummaryDto
+        {
+            ActiveWorkOrders = s.ActiveWorkOrders, ActiveMembers = s.ActiveMembers,
+            OverdueMembers = s.OverdueMembers, UnrepliedWorkOrders = s.UnrepliedWorkOrders
+        };
+    }
+
+    /// <summary>處理人視角的授權：本人，或具 Assign／ViewAll；否則 403</summary>
+    private void AuthorizeHandlerView(long userId)
+    {
+        if (userId == _currentUser.UserId) return;
+        if (_currentUser.Has(Capability.Assign) || _currentUser.Has(Capability.ViewAll)) return;
+        throw DomainException.Forbidden("沒有檢視這位處理人交辦清單的權限。");
+    }
+
+    /// <summary>清單查詢與組裝的唯一一份：交辦單一次、本頁計數一次、使用者一次</summary>
+    private WorkOrderListDto QueryList(WorkOrderListRequest req)
     {
         if (!WorkOrderQueries.OrderStatuses.Contains(req.Status))
             throw DomainException.Validation($"不支援的狀態篩選「{req.Status}」。");

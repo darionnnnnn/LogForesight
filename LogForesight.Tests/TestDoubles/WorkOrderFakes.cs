@@ -197,6 +197,24 @@ internal class FakeWorkOrderStore : IWorkOrderStore
             .ToList();
     }
 
+    /// <summary>同 EF 版：只算該處理人的進行中單；沒有進行中單回全 0</summary>
+    public WorkOrderHandlerSummary HandlerSummary(long handlerId)
+    {
+        var today = DateTime.Today;
+        var active = _orders.Where(o => o.HandlerId == handlerId && o.ClosedAt == null).ToList();
+        var members = active
+            .SelectMany(o => _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue))
+            .Where(c => c.ClosedAt == null)
+            .ToList();
+        return new WorkOrderHandlerSummary
+        {
+            ActiveWorkOrders = active.Count,
+            UnrepliedWorkOrders = active.Count(o => o.LastReplyAt == null),
+            ActiveMembers = members.Count,
+            OverdueMembers = members.Count(c => WorkOrderQueries.IsOverdue(c, today))
+        };
+    }
+
     public int PruneClosed(int retentionDays)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);

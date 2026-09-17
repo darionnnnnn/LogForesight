@@ -391,4 +391,78 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(3, svc.Get(unreplied).UnrepliedDays);
         Assert.Null(svc.Get(replied).UnrepliedDays);
     }
+
+    // ── 處理人清單／摘要／徽章（task-47-D1）────────────────────────────────────
+
+    [Fact]
+    public void ListForHandler_本人可看_處理人固定為本人_忽略請求帶的HandlerId()
+    {
+        var mine = AddOrder(_alice.UserId, eventId: 1);
+        AddOrder(_bob.UserId, eventId: 2);
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var dto = svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { HandlerId = _bob.UserId });
+
+        Assert.Equal(new[] { mine }, Ids(dto));
+        Assert.Equal(1, dto.Total);
+    }
+
+    [Theory]
+    [InlineData(Capability.Assign)]
+    [InlineData(Capability.ViewAll)]
+    public void ListForHandler與HandlerSummary_Assign或ViewAll可看他人(Capability capability)
+    {
+        var bobs = AddOrder(_bob.UserId);
+        AddMember(bobs, "H1", IssueHandlingStatuses.InProgress);
+        var svc = Service(As(_stranger.UserId, capability));
+
+        Assert.Equal(new[] { bobs }, Ids(svc.ListForHandler(_bob.UserId, new WorkOrderListRequest())));
+        Assert.Equal(1, svc.HandlerSummary(_bob.UserId).ActiveMembers);
+    }
+
+    [Fact]
+    public void ListForHandler與HandlerSummary_他人無Assign或ViewAll_403()
+    {
+        AddOrder(_bob.UserId);
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        Assert.Equal(ApiErrorCodes.Forbidden,
+            Assert.Throws<DomainException>(() => svc.ListForHandler(_bob.UserId, new WorkOrderListRequest())).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.HandlerSummary(_bob.UserId)).Code);
+    }
+
+    [Fact]
+    public void MyBadge與HandlerSummary數字一致()
+    {
+        var a = AddOrder(_alice.UserId, eventId: 1);
+        var b = AddOrder(_alice.UserId, eventId: 2, replied: DateTime.Today);
+        AddMember(a, "H1", IssueHandlingStatuses.InProgress, due: DateTime.Today.AddDays(-1));
+        AddMember(a, "H2", IssueHandlingStatuses.Observing, due: DateTime.Today.AddDays(3));
+        AddMember(b, "H3", IssueHandlingStatuses.Escalated);
+        AddMember(b, "H4", IssueHandlingStatuses.Resolved, closed: DateTime.Today);
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        var badge = svc.MyBadge();
+        var summary = svc.HandlerSummary(_alice.UserId);
+
+        Assert.Equal(2, badge.ActiveWorkOrders);
+        Assert.Equal(3, badge.ActiveMembers);
+        Assert.Equal(1, badge.OverdueMembers);
+        Assert.Equal(1, badge.UnrepliedWorkOrders);
+        Assert.Equal(
+            (summary.ActiveWorkOrders, summary.ActiveMembers, summary.OverdueMembers, summary.UnrepliedWorkOrders),
+            (badge.ActiveWorkOrders, badge.ActiveMembers, badge.OverdueMembers, badge.UnrepliedWorkOrders));
+    }
+
+    [Fact]
+    public void MyBadge_ServerAdmin回全0不擲()
+    {
+        AddOrder(0);
+        var badge = Service(FakeCurrentUser.ServerAdmin()).MyBadge();
+
+        Assert.Equal(0, badge.ActiveWorkOrders);
+        Assert.Equal(0, badge.ActiveMembers);
+        Assert.Equal(0, badge.OverdueMembers);
+        Assert.Equal(0, badge.UnrepliedWorkOrders);
+    }
 }

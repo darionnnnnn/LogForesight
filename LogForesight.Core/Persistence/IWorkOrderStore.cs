@@ -47,6 +47,12 @@ public interface IWorkOrderStore
     List<HandlerLoad> LoadBoard();
 
     /// <summary>
+    /// 單一處理人的進行中摘要（我的交辦清單與側欄徽章）：單一查詢；沒有進行中單回全 0。
+    /// 逾期判準同 <see cref="WorkOrderQueries.IsOverdue"/>。
+    /// </summary>
+    WorkOrderHandlerSummary HandlerSummary(long handlerId);
+
+    /// <summary>
     /// 進行中、但底下已沒有任何進行中案件的單（含零成員），依 work_order_id 升冪取前 <paramref name="take"/> 筆。
     /// 單句 SQL；供背景結案掃描補上「成員在交辦單以外的路徑全結案」的單。
     /// </summary>

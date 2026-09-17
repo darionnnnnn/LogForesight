@@ -467,3 +467,52 @@ public class AutoDispatchHandlerDto
     public string Name { get; set; } = string.Empty;
     public int Hosts { get; set; }
 }
+
+// ── 處理人端：回覆／我的交辦清單摘要（/api/work-orders/{id}/reply、/api/handlers）──────
+
+/// <summary>單張交辦單回覆</summary>
+public class WorkOrderReplyRequest
+{
+    /// <summary>null 或空＝全部進行中成員</summary>
+    public List<string>? CaseIds { get; set; }
+
+    /// <summary>open＝清除（調回未處理）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+}
+
+public class WorkOrderReplyResultDto
+{
+    public long WorkOrderId { get; set; }
+    public int Cases { get; set; }
+    public bool WorkOrderClosed { get; set; }
+    public int DaySyncPendingCases { get; set; }
+}
+
+/// <summary>多張交辦單一次回覆（每張全部進行中成員）</summary>
+public class WorkOrderReplyManyRequest
+{
+    public List<long> WorkOrderIds { get; set; } = new();
+    public string Status { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+}
+
+public class WorkOrderReplyManyResultDto
+{
+    public int WorkOrders { get; set; }
+    public int Cases { get; set; }
+    public int ClosedWorkOrders { get; set; }
+    public int DaySyncPendingCases { get; set; }
+}
+
+/// <summary>處理人的進行中摘要（我的交辦清單頁首與側欄徽章共用）</summary>
+public class HandlerSummaryDto
+{
+    public int ActiveWorkOrders { get; set; }
+    public int ActiveMembers { get; set; }
+    public int OverdueMembers { get; set; }
+    public int UnrepliedWorkOrders { get; set; }
+}

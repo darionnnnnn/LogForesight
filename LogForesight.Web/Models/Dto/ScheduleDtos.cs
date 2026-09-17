@@ -148,6 +148,9 @@ public class RunActivityDto
     /// 未執行時為 false。
     /// </summary>
     public bool IsFetchRun { get; set; }
+
+    /// <summary>案件待背景逐日同步的件數（全站，與執行狀態無關；兩個分支都填）</summary>
+    public int CaseDaySyncPending { get; set; }
 }
 
 /// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，複用

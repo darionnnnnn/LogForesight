@@ -251,6 +251,22 @@ public static class WorkOrderQueries
     }
 }
 
+/// <summary>單一處理人的進行中摘要（IWorkOrderStore.HandlerSummary）</summary>
+public sealed class WorkOrderHandlerSummary
+{
+    /// <summary>進行中的單數</summary>
+    public int ActiveWorkOrders { get; init; }
+
+    /// <summary>其進行中單底下仍進行中的案件數</summary>
+    public int ActiveMembers { get; init; }
+
+    /// <summary>其進行中單底下逾期的成員數（判準同 <see cref="WorkOrderQueries.IsOverdue"/>）</summary>
+    public int OverdueMembers { get; init; }
+
+    /// <summary>進行中且從未回覆（last_reply_at IS NULL）的單數</summary>
+    public int UnrepliedWorkOrders { get; init; }
+}
+
 /// <summary>處理人負載看板的一列（列有進行中交辦單、或近 <see cref="ClosedWindowDays"/> 日有結案單的處理人）</summary>
 public sealed class HandlerLoad
 {

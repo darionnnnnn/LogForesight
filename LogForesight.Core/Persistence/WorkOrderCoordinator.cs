@@ -13,8 +13,9 @@ namespace LogForesight.Core.Persistence;
 ///     衝突時重讀重做一次，再衝突就讓例外往上拋（<see cref="UpdateOrder"/>）。
 ///   - 案件 store 的 Save 只在 WorkOrderId 非 null 時寫該欄：連結只會換單、不會清成 null。
 ///   - 整併完成前可能有 WorkOrderId == null 的進行中案件：一律當「無單」處理。
-///   - 詳情頁逐筆標記走 <see cref="IssueCaseCoordinator.SyncStatus"/>，不會通知這裡；
-///     成員因此全結案的單由 <see cref="SweepClosures"/>（背景掃描）補結案。
+///   - 詳情頁逐筆標記走 <see cref="IssueCaseCoordinator.SyncStatus"/>，只由呼叫端以 <see cref="TouchReply"/>
+///     推進回覆時間，不推導結案；成員因此全結案的單由 <see cref="SweepClosures"/>（背景掃描）補結案。
+///   - 授權（回覆只准該單處理人本人）不在這裡，由 Web 層負責。
 /// </summary>
 public class WorkOrderCoordinator
 {
@@ -604,14 +605,51 @@ public class WorkOrderCoordinator
             return true;
         });
         // 先寫回覆事件再推導結案：同一時間點的 closed 事件依事件序排在回覆之後
-        var replyNote = string.IsNullOrWhiteSpace(note)
-            ? $"{status}（{members.Count} 台）"
-            : $"{status}：{note}（{members.Count} 台）";
-        AppendEvent(workOrderId, WorkOrderEventActions.Replied, actor, 0, replyNote);
+        AppendEvent(workOrderId, WorkOrderEventActions.Replied, actor, 0, ReplyNoteOf(status, note, members.Count));
         var closed = RecomputeClosure(workOrderId, actor.OccurredAt);
 
         return new WorkOrderReplyResult { Cases = members.Count, WorkOrderClosed = closed, DaySync = daySync };
     }
+
+    /// <summary>
+    /// 記一筆「不經 <see cref="Reply"/> 寫入、但確實是處理人回覆」的回覆（例：依問題「回覆處理狀態」
+    /// 逐案走 <see cref="IssueCaseCoordinator.SyncStatus"/>）：推進 LastReplyAt、寫 replied 事件、推導結案。
+    /// 狀態寫入已由呼叫端完成，這裡不動成員。單不存在或已結案→直接回傳（不擲）。
+    /// </summary>
+    public void RecordExternalReply(long workOrderId, WorkOrderActor actor, string status, string? note, int caseCount)
+    {
+        if (!TryMarkReplied(workOrderId, actor.OccurredAt)) return;
+
+        // 先寫回覆事件再推導結案（同 Reply）
+        AppendEvent(workOrderId, WorkOrderEventActions.Replied, actor, 0, ReplyNoteOf(status, note, caseCount));
+        RecomputeClosure(workOrderId, actor.OccurredAt);
+    }
+
+    /// <summary>
+    /// 只推進 LastReplyAt、不寫事件：詳情頁逐筆標記用——逐筆各寫一筆事件會淹沒時間軸。
+    /// 單不存在或已結案→直接回傳（不擲）；成員因此全結案的單仍由 <see cref="SweepClosures"/> 補結案。
+    /// </summary>
+    public void TouchReply(long workOrderId, DateTime occurredAt) => TryMarkReplied(workOrderId, occurredAt);
+
+    /// <summary>推進 LastReplyAt（經併發重試）；單不存在或已結案回 false、不寫</summary>
+    private bool TryMarkReplied(long workOrderId, DateTime occurredAt)
+    {
+        var order = _orders.Get(workOrderId);
+        if (order == null || order.ClosedAt != null) return false;
+
+        return UpdateOrder(workOrderId, o =>
+        {
+            if (o.ClosedAt != null) return false;
+            o.LastReplyAt = occurredAt;
+            return true;
+        });
+    }
+
+    /// <summary>回覆事件說明的唯一一份（<see cref="Reply"/> 與 <see cref="RecordExternalReply"/> 共用）</summary>
+    private static string ReplyNoteOf(string status, string? note, int caseCount) =>
+        string.IsNullOrWhiteSpace(note)
+            ? $"{status}（{caseCount} 台）"
+            : $"{status}：{note}（{caseCount} 台）";
 
     /// <summary>
     /// 目標值規則的唯一一份（回覆與代為結案共用），與 <see cref="IssueCaseCoordinator.SyncStatus"/> 相同：

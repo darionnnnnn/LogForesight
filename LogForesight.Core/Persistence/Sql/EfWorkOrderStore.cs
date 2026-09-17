@@ -306,6 +306,37 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return BuildLoadBoardQuery(ctx).ToList();
     }
 
+    public WorkOrderHandlerSummary HandlerSummary(long handlerId)
+    {
+        using var ctx = _contextFactory();
+
+        // 單一查詢：沒有進行中單時分組為空，回全 0
+        return BuildHandlerSummaryQuery(ctx, handlerId).FirstOrDefault() ?? new WorkOrderHandlerSummary();
+    }
+
+    /// <summary>處理人摘要的查詢本體（抽出供兩後端 SQL 翻譯測試）；形狀同 <see cref="BuildLoadBoardQuery"/></summary>
+    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId)
+    {
+        var today = DateTime.Today;
+
+        // 逾期條件與 WorkOrderQueries.IsOverdue 同義
+        return ctx.WorkOrders.AsNoTracking()
+            .Where(w => w.HandlerId == handlerId && w.ClosedAt == null)
+            .GroupBy(w => w.HandlerId)
+            .Select(g => new WorkOrderHandlerSummary
+            {
+                ActiveWorkOrders = g.Count(),
+                UnrepliedWorkOrders = g.Count(w => w.LastReplyAt == null),
+                ActiveMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key)),
+                OverdueMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                    && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key))
+            });
+    }
+
     public List<long> FindActiveWithoutActiveMembers(int take)
     {
         using var ctx = _contextFactory();

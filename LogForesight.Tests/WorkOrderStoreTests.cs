@@ -672,4 +672,75 @@ public class WorkOrderStoreTests : IDisposable
             Assert.Null(board[2].OldestActiveCreatedAt);
         }
     }
+
+    // ── HandlerSummary（task-47-D1）──────────────────────────────────────────
+
+    [Fact]
+    public void HandlerSummary_EF與替身一致_單一查詢_無進行中單回全0()
+    {
+        var today = DateTime.Today;
+        var efCases = new EfIssueCaseStore(_fx.NewContext);
+        var ef = CountingStore();
+        var fakeCases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(fakeCases);
+        var results = new List<(WorkOrderHandlerSummary Mine, WorkOrderHandlerSummary Nobody)>();
+
+        foreach (var (orders, cases) in new (IWorkOrderStore, IIssueCaseStore)[] { (ef, efCases), (fake, fakeCases) })
+        {
+            // 處理人 1：兩張進行中（一張已回覆）＋一張已結案；處理人 2 一張進行中不算進 1
+            var a = NewOrder(1, "A", 1); a.LastReplyAt = Base;
+            var aId = orders.Insert(a);
+            var bId = orders.Insert(NewOrder(1, "B", 2));
+            var closed = NewOrder(1, "C", 3); closed.ClosedAt = today.AddDays(-1);
+            var closedId = orders.Insert(closed);
+            var otherId = orders.Insert(NewOrder(2, "A", 1));
+
+            void M(string caseId, long orderId, string status, DateTime? due = null, DateTime? closedAt = null) =>
+                cases.Save(new IssueCase
+                {
+                    CaseId = caseId, HostName = caseId, IssueKey = "System|A|1|2", IssueLabel = "A 1",
+                    Status = status, HandlerId = 1, DueDate = due, FirstLinkedDate = Base, LastLinkedDate = Base,
+                    CreatedAt = Base, CreatedByAccount = "admin", UpdatedAt = Base, ClosedAt = closedAt, WorkOrderId = orderId
+                });
+            M("s1", aId, IssueHandlingStatuses.InProgress, today.AddDays(-1));     // 逾期
+            M("s2", aId, IssueHandlingStatuses.Observing, today);                  // 期限今天不算逾期
+            M("s3", aId, IssueHandlingStatuses.Resolved, today.AddDays(-9), Base); // 已結案成員不計
+            M("s4", bId, IssueHandlingStatuses.Escalated, today.AddDays(-5));      // escalated 不算逾期
+            M("s5", closedId, IssueHandlingStatuses.InProgress, today.AddDays(-2)); // 已結案單底下不計
+            M("s6", otherId, IssueHandlingStatuses.InProgress, today.AddDays(-2));  // 別人的單不計
+
+            _counter.Readers = 0;
+            var mine = orders.HandlerSummary(1);
+            if (ReferenceEquals(orders, ef)) Assert.Equal(1, _counter.Readers);
+            results.Add((mine, orders.HandlerSummary(77)));
+        }
+
+        foreach (var (mine, nobody) in results)
+        {
+            Assert.Equal(2, mine.ActiveWorkOrders);
+            Assert.Equal(3, mine.ActiveMembers);
+            Assert.Equal(1, mine.OverdueMembers);
+            Assert.Equal(1, mine.UnrepliedWorkOrders);
+            Assert.Equal(0, nobody.ActiveWorkOrders);
+            Assert.Equal(0, nobody.ActiveMembers);
+            Assert.Equal(0, nobody.OverdueMembers);
+            Assert.Equal(0, nobody.UnrepliedWorkOrders);
+        }
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void HandlerSummary兩後端都翻譯成單一SQL(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var sql = EfWorkOrderStore.BuildHandlerSummaryQuery(ctx, 1).ToQueryString();
+
+        Assert.Contains("GROUP BY", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lf_issue_cases", sql);
+    }
 }
