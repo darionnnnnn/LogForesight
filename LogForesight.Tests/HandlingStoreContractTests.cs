@@ -548,6 +548,62 @@ public class HandlingStoreContractTests : IDisposable
         Assert.True(logs[2].LogId > logs[1].LogId);
     }
 
+    [Fact]
+    public void 歷程批次附加_續號接續既有且依序遞增()
+    {
+        var store = Days();
+        var date = DateTime.Today;
+
+        store.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "a1" });
+        store.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "a2" });
+        store.AppendLogs(new[]
+        {
+            new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "b1" },
+            new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "b2" },
+            new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "b3" }
+        });
+        store.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "c1" });
+
+        var logs = store.GetLogs("SRV-01", date);
+
+        Assert.Equal(6, logs.Count);
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5, 6 }, logs.Select(l => l.LogId));
+        Assert.Equal(new[] { "a1", "a2", "b1", "b2", "b3", "c1" }, logs.Select(l => l.Action));
+    }
+
+    [Fact]
+    public void 歷程批次附加_空清單不寫入()
+    {
+        var store = Days();
+        var date = DateTime.Today;
+
+        store.AppendLogs(Array.Empty<RecordHandlingLog>());
+
+        var logs = store.GetLogs("SRV-01", date);
+        Assert.Empty(logs);
+    }
+
+    [Fact]
+    public void 歷程批次附加_超過一批大小仍全數寫入且續號連續()
+    {
+        var store = Days();
+        var date = DateTime.Today;
+        const int count = 2500;
+        var batch = Enumerable.Range(1, count)
+            .Select(i => new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "act_" + i })
+            .ToList();
+
+        store.AppendLogs(batch);
+
+        var logs = store.GetLogs("SRV-01", date);
+        Assert.Equal(count, logs.Count);
+        for (var i = 0; i < count; i++)
+        {
+            Assert.Equal(i + 1, logs[i].LogId);
+            Assert.Equal("act_" + (i + 1), logs[i].Action);
+        }
+    }
+
     // ── 派工脈絡用：GetResolvedSince／NoiseMarkStore.GetAll／旗標舊資料相容 ──────────
 
     private static void SeedResolvedSinceCases(IIssueCaseStore store, DateTime since)

@@ -501,7 +501,7 @@ public class WorkOrderCoordinator
 
         _cases.SaveMany(cases);
         _issueHandlings.SaveMany(rows);
-        foreach (var log in logs) _handlingLog.AppendLog(log);
+        _handlingLog.AppendLogs(logs);
     }
 
     /// <summary>夜間派工一趟結束：對本趟有新增成員的單記一筆 appended 並推進 LastAppendedAt</summary>

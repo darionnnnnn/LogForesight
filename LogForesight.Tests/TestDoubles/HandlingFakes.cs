@@ -560,6 +560,14 @@ internal class FakeHandlingStore : IRecordHandlingStore
         _logs.Add(log);
     }
 
+    public void AppendLogs(IReadOnlyList<RecordHandlingLog> logs)
+    {
+        foreach (var log in logs)
+        {
+            ((IRecordHandlingStore)this).AppendLog(log);
+        }
+    }
+
     public List<RecordHandlingLog> GetLogs(string hostName, DateTime date) =>
         _logs.Where(l =>
                 string.Equals(l.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&

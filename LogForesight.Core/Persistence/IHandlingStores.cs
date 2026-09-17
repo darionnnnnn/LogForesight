@@ -26,6 +26,9 @@ public interface IRecordHandlingStore
 
     void AppendLog(RecordHandlingLog log);
 
+    /// <summary>批次附加歷程：續號規則同 AppendLog，整批只讀一次尾端續號</summary>
+    void AppendLogs(IReadOnlyList<RecordHandlingLog> logs);
+
     /// <summary>單一風險日的完整處理歷程，依時間先後排序</summary>
     List<RecordHandlingLog> GetLogs(string hostName, DateTime date);
 }

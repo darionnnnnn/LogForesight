@@ -126,11 +126,31 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
             // 夜間分析寫入多筆歷程後，Web 端的快取會落後，導致隔天 Web 端寫入時發生 LogId 重號。
             // ReadLastLogId() 只會讀取尾端幾行資料，成本與讀一行幾乎相同，不值得為了快取承擔重號風險。
             var next = ReadLastLogId() + 1;
-            log.LogId = next;
-            if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
-
-            _logStore.AppendLine(JsonSerializer.Serialize(log, LfJsonOptions.Compact));
+            _logStore.AppendLine(PrepareAndSerialize(log, next));
         }
+    }
+
+    public void AppendLogs(IReadOnlyList<RecordHandlingLog> logs)
+    {
+        if (logs.Count == 0) return;
+
+        lock (_logLock)
+        {
+            var next = ReadLastLogId() + 1;
+            var lines = new List<string>(logs.Count);
+            foreach (var log in logs)
+            {
+                lines.Add(PrepareAndSerialize(log, next++));
+            }
+            _logStore.AppendLines(lines);
+        }
+    }
+
+    private static string PrepareAndSerialize(RecordHandlingLog log, long logId)
+    {
+        log.LogId = logId;
+        if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
+        return JsonSerializer.Serialize(log, LfJsonOptions.Compact);
     }
 
     /// <summary>

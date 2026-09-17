@@ -726,7 +726,7 @@ public class IssueCaseCoordinator
     {
         var rows = plans.SelectMany(p => p.Rows).ToList();
         foreach (var batch in rows.Chunk(CaseDaySaveBatchSize)) _issueHandlings.SaveMany(batch);
-        foreach (var log in plans.SelectMany(p => p.Logs)) _handlingLog.AppendLog(log);
+        _handlingLog.AppendLogs(plans.SelectMany(p => p.Logs).ToList());
     }
 
     /// <summary>指派模式推進案件的 First/LastLinkedDate（原值與合格日取最小／最大），回傳是否有變</summary>
