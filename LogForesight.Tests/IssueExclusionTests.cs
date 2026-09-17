@@ -122,6 +122,56 @@ public class IssueExclusionTests : IDisposable
         Assert.Equal(HandlingStatuses.Resolved, DayStatusRule.Resolve(2, 2, false, 0, HandlingStatuses.Open));
     }
 
+    [Fact]
+    public void ForRange_只留期間內重疊區間且保留目前靜音中的鍵()
+    {
+        var queryFrom = new DateTime(2026, 8, 10);
+        var queryTo = new DateTime(2026, 8, 20);
+
+        // 三個鍵：目前靜音中但有一段舊區間在期間外、已到期且區間在期間內、已到期且區間在期間外
+        var key1 = Profile("cron", 7, (Today.AddDays(-2), Today.AddDays(5)), (new DateTime(2026, 7, 1), new DateTime(2026, 7, 10)));
+        var key2 = Profile("disk", 153, (new DateTime(2026, 8, 12), new DateTime(2026, 8, 15)));
+        var key3 = Profile("net", 1, (new DateTime(2026, 7, 1), new DateTime(2026, 7, 10)));
+
+        var original = IssueExclusion.From(new[] { key1, key2, key3 }, Today);
+        var narrowed = original.ForRange(queryFrom, queryTo);
+
+        // 斷言 Spans 內容：保留目前靜音中鍵的所有區間、以及與期間重疊的區間；期間外的已到期區間被排除
+        Assert.Contains(narrowed.Spans, s => s.SourceKey == "CRON" && s.EventId == 7 && s.From == new DateTime(2026, 7, 1));
+        Assert.Contains(narrowed.Spans, s => s.SourceKey == "CRON" && s.EventId == 7 && s.From == Today.AddDays(-2));
+        Assert.Contains(narrowed.Spans, s => s.SourceKey == "DISK" && s.EventId == 153 && s.From == new DateTime(2026, 8, 12));
+        Assert.DoesNotContain(narrowed.Spans, s => s.SourceKey == "NET");
+
+        // 斷言 CurrentlyMuted、CacheToken 不變
+        Assert.Equal(original.CurrentlyMuted, narrowed.CurrentlyMuted);
+        Assert.Equal(original.CacheToken, narrowed.CacheToken);
+        Assert.Equal(original.Today, narrowed.Today);
+        Assert.Same(IssueExclusion.None, IssueExclusion.None.ForRange(queryFrom, queryTo));
+    }
+
+    [Fact]
+    public void ForRange_期間內逐日IsMuted與原物件相同()
+    {
+        var queryFrom = new DateTime(2026, 8, 10);
+        var queryTo = new DateTime(2026, 8, 20);
+
+        var key1 = Profile("cron", 7, (Today.AddDays(-2), Today.AddDays(5)), (new DateTime(2026, 7, 1), new DateTime(2026, 7, 10)));
+        var key2 = Profile("disk", 153, (new DateTime(2026, 8, 12), new DateTime(2026, 8, 15)));
+        var key3 = Profile("net", 1, (new DateTime(2026, 7, 1), new DateTime(2026, 7, 10)));
+
+        var original = IssueExclusion.From(new[] { key1, key2, key3 }, Today);
+        var narrowed = original.ForRange(queryFrom, queryTo);
+
+        var keys = new[] { ("cron", 7), ("disk", 153), ("net", 1) };
+        for (var day = queryFrom.Date; day <= queryTo.Date; day = day.AddDays(1))
+        {
+            foreach (var (src, eventId) in keys)
+            {
+                Assert.Equal(original.IsMuted(src, eventId, day), narrowed.IsMuted(src, eventId, day));
+            }
+        }
+    }
+
     // ── 提供者 ──────────────────────────────────────────────
 
     private sealed class CountingOwnerStore : IIssueOwnerStore

@@ -1340,6 +1340,61 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(0, row.DayCount);
     }
 
+    [Fact]
+    public void 統一結案預覽_案件查詢一次不逐台()
+    {
+        // 3 台主機
+        var hostB = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
+        var hostC = _hosts.Upsert(new WebHost { HostName = "SRV-C" });
+
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+        _repository.AddRecord(hostB.HostName, day, a);
+        _repository.AddRecord(hostC.HostName, day, a);
+
+        // 1 台有別人的進行中案件（處理人＝OOO）
+        _cases.Save(new IssueCase
+        {
+            CaseId = "CASE-1",
+            HostName = _host.HostName,
+            IssueKey = IssueSignatureKey.For(a),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = _owner.UserId,
+            FirstLinkedDate = day,
+            LastLinkedDate = day
+        });
+
+        var countingCases = new CountingIssueCaseStore(_cases);
+        var coordinator = new IssueCaseCoordinator(countingCases, _issueHandlings, _handlings, _repository, _hosts, new FakeIssueOwnerStore());
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle);
+        var facade = new HandlingServiceFacade(
+            store: _handlings,
+            issueStore: _issueHandlings,
+            cases: countingCases,
+            caseCoordinator: coordinator,
+            noiseMarks: _noiseMarks,
+            repository: _repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: new AlwaysVisibleService(_hosts),
+            currentUser: currentUser,
+            audit: _audit,
+            settings: _settings,
+            groups: null,
+            issueOwners: _issueOwners);
+
+        var preview = facade.PreviewBulkClose("disk", 153, null, null);
+
+        Assert.Equal(0, countingCases.GetOpenCalls);
+        Assert.Equal(1, countingCases.GetOpenManyCalls);
+        Assert.Equal(3, preview.Hosts.Count);
+
+        var skipped = preview.Hosts.Single(h => string.Equals(h.HostName, _host.HostName, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(_owner.DisplayName, skipped.SkipReason);
+    }
+
     /// <summary>
     /// 無案件但有人標了處理中／觀察中：一併覆蓋（定案 6-3，admin 的統一標記為主），
     /// 且預覽要先講明會覆蓋幾天——按下去之前看得到。
@@ -2031,5 +2086,46 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal("in_progress：處理中（1 台）", Assert.Single(secondReplies).Note);
         Assert.NotNull(orders.Get(first)!.LastReplyAt);
         Assert.NotNull(orders.Get(second)!.LastReplyAt);
+    }
+
+    private sealed class CountingIssueCaseStore : IIssueCaseStore
+    {
+        private readonly FakeIssueCaseStore _inner;
+        public int GetOpenCalls { get; private set; }
+        public int GetOpenManyCalls { get; private set; }
+
+        public CountingIssueCaseStore(FakeIssueCaseStore inner) => _inner = inner;
+
+        public IssueCase? GetOpen(string hostName, string issueKey)
+        {
+            GetOpenCalls++;
+            return _inner.GetOpen(hostName, issueKey);
+        }
+
+        public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId)
+        {
+            GetOpenManyCalls++;
+            return _inner.GetOpenMany(hostNames, source, eventId);
+        }
+
+        public IssueCase? Get(string caseId) => _inner.Get(caseId);
+        public List<IssueCase> GetByHandler(long userId) => _inner.GetByHandler(userId);
+        public bool HasCaseOnHost(long handlerId, string hostName) => _inner.HasCaseOnHost(handlerId, hostName);
+        public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) => _inner.IssueKeysOnHost(handlerId, hostName);
+        public List<string> HostNamesWithCases(long handlerId) => _inner.HostNamesWithCases(handlerId);
+        public List<IssueCase> GetResolvedSince(DateTime since) => _inner.GetResolvedSince(since);
+        public List<IssueCase> GetOpenForHost(string hostName) => _inner.GetOpenForHost(hostName);
+        public List<IssueCase> GetMany(IEnumerable<string> hostNames) => _inner.GetMany(hostNames);
+        public List<IssueCase> GetOpenByHandler(long userId) => _inner.GetOpenByHandler(userId);
+        public List<(string HostNameKey, string IssueKey)> GetOpenKeys() => _inner.GetOpenKeys();
+        public void SaveMany(IEnumerable<IssueCase> cases) => _inner.SaveMany(cases);
+        public void Save(IssueCase issueCase) => _inner.Save(issueCase);
+        public List<IssueCase> GetOpenByIssue(string source, int eventId) => _inner.GetOpenByIssue(source, eventId);
+        public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) => _inner.GetByWorkOrder(workOrderId, skip, take);
+        public int CountByWorkOrder(long workOrderId) => _inner.CountByWorkOrder(workOrderId);
+        public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q) => _inner.QueryMembers(q);
+        public List<IssueCase> GetDaySyncPending(int take) => _inner.GetDaySyncPending(take);
+        public int CountDaySyncPending() => _inner.CountDaySyncPending();
+        public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent) => _inner.ClearDaySyncPendingIfUnchanged(caseId, intent);
     }
 }

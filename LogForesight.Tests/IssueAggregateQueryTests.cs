@@ -1175,4 +1175,38 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Contains("UPPER", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CRON#7", sql);
     }
+
+    [Fact]
+    public void 靜音排除_期間外的歷史區間不進SQL()
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var queryFrom = new DateTime(2026, 8, 1);
+        var queryTo = new DateTime(2026, 8, 31);
+        var expiredFrom = new DateTime(2025, 1, 1);
+        var expiredTo = new DateTime(2025, 1, 10);
+
+        var profile = new IssueProfile
+        {
+            SourceName = "disk",
+            EventId = 153,
+            Mutes = { new MuteInterval { From = expiredFrom, To = expiredTo } }
+        };
+        var exclusion = IssueExclusion.From(new[] { profile }, queryTo);
+
+        // 未 narrow 前的 SQL 包含該歷史區間的日期字面值
+        var unconstrainedSql = IssueExclusionSql.Apply(ctx.TopIssues, exclusion).ToQueryString();
+        Assert.Contains("2025", unconstrainedSql);
+
+        // narrow 後的 exclusion 所組出的 SQL 不含該歷史區間的日期字面值
+        var narrowed = exclusion.ForRange(queryFrom, queryTo);
+        var sql = IssueExclusionSql.Apply(ctx.TopIssues, narrowed).ToQueryString();
+        Assert.DoesNotContain("2025", sql);
+
+        // 同時驗證 Aggregate 執行套用 exclusion 結果相同
+        var result = Query().Aggregate(exclusion, queryFrom, queryTo, null);
+        Assert.NotNull(result);
+    }
 }

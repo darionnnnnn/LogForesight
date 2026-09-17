@@ -639,13 +639,11 @@ public class IssueHandlingCommandService
         if (_currentUser.UserId <= 0)
             throw DomainException.Validation("此帳號沒有可回覆的案件。");
 
-        // 可見範圍過濾照舊（案件授與也算——被交辦的人本來就看得到自己的案件）
-        var visibleHostIds = _visibility.GetVisibleHostIds();
+        // 自己的案件一律可回覆：案件授與的定義就是『在該主機有自己的案件』，對自己的案件恆成立，不逐台查授與（避免每台一次查詢）
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
 
         var targets = _cases.GetOpenByHandler(_currentUser.UserId)
-            .Where(c => hostsByName.TryGetValue(c.HostName, out var host) &&
-                        (visibleHostIds.Contains(host.HostId) || _visibility.IsCaseGrantOnly(host.HostId)) &&
+            .Where(c => hostsByName.ContainsKey(c.HostName) &&
                         MatchesSignature(c.IssueKey, request.Source, request.EventId))
             .ToList();
 
@@ -911,16 +909,19 @@ public class IssueHandlingCommandService
                       .ToDictionary(x => x.Key, x => x.Last().Status),
                 StringComparer.OrdinalIgnoreCase);
 
+        // 已有進行中案件＝有人接手（不論是誰，含 admin 自己）：整台略過（定案 6-1）。
+        // 同一個 Source+EventId 可能對應多個完整簽章，任一個有案件就算有人在處理這件事。
+        // 一次批次查詢，不逐台逐出現點查。
+        var ownersByHost = _cases.GetOpenMany(byHost.Keys, source, eventId)
+            .Where(c => c.HandlerId != null)
+            .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderBy(c => c.CaseId, StringComparer.Ordinal).First(), StringComparer.OrdinalIgnoreCase);
+
         foreach (var (host, occurrences) in byHost.Values.OrderBy(e => e.Host.HostName, StringComparer.OrdinalIgnoreCase))
         {
             var row = new IssueBulkCloseHostDto { HostId = host.HostId, HostName = host.HostName };
 
-            // 已有進行中案件＝有人接手（不論是誰，含 admin 自己）：整台略過（定案 6-1）。
-            // 同一個 Source+EventId 可能對應多個完整簽章，任一個有案件就算有人在處理這件事。
-            var owner = occurrences
-                .Select(o => _cases.GetOpen(host.HostName, IssueSignatureKey.For(o.Item2)))
-                .FirstOrDefault(c => c?.HandlerId != null);
-            if (owner != null)
+            if (ownersByHost.TryGetValue(host.HostName, out var owner))
             {
                 row.SkipReason = $"已由 {ResolveDisplayName(owner.HandlerId!.Value)} 的案件處理中";
                 plan.Add((host, new List<(DateTime, string, string)>(), row));

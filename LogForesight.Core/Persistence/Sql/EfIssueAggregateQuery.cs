@@ -90,6 +90,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
@@ -188,14 +189,18 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
     {
         if (hostIds != null && hostIds.Count == 0) return 0;
-        if (exclusion.CurrentlyMuted.Count == 0) return 0;
 
         var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
+        if (exclusion.CurrentlyMuted.Count == 0) return 0;
+
         var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(AliasIndex(), hostIds);
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
-        var count = BuildCurrentlyMutedIssueKeysQuery(ctx, exclusion, from.Date, to.Date, expandedHostIds, visibleRanks, riskLevels).Count();
+        var count = BuildCurrentlyMutedIssueKeysQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels).Count();
 
         _performance?.Record("issues:CountCurrentlyMuted", sw.ElapsedMilliseconds);
         return count;
@@ -243,6 +248,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         // 大小寫不分（同 EfAnalysisRecordStore.ApplyPushableFilters 的 Source 篩選理由：
         // provider collation 不保證一致，兩邊都正規化才與比對邏輯逐位一致）
         var wanted = issues
@@ -283,6 +289,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
 
         var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
@@ -328,6 +335,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
@@ -399,6 +407,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
 
         var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
@@ -479,6 +488,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
@@ -816,6 +826,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
 
@@ -860,6 +871,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
 
@@ -914,6 +926,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
@@ -988,6 +1001,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var t1 = to.Date;
         var f2 = previousFrom.Date;
         var t2 = previousTo.Date;
+        var currentExclusion = exclusion.ForRange(f1, t1);
+        var previousExclusion = exclusion.ForRange(f2, t2);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
         var expanded = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
@@ -1003,7 +1018,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Select(r => new { r.RecordDate, r.RiskLevel, r.DataIncomplete, r.SecurityLogAvailable, r.HostId })
             .ToList();
 
-        ReportKpiAggregate BuildPeriod(DateTime pf, DateTime pt)
+        ReportKpiAggregate BuildPeriod(DateTime pf, DateTime pt, IssueExclusion periodExclusion)
         {
             var rows = stats.Where(s => s.RecordDate >= pf && s.RecordDate <= pt).ToList();
             var highRiskDays = rows.Count(r => r.RiskLevel == RiskLevels.High);
@@ -1019,7 +1034,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             if (expanded != null) qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
             if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
 
-            var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
+            var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), periodExclusion).Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
             if (expanded != null) qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
             if (riskLevels != null)
             {
@@ -1031,8 +1046,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             return new ReportKpiAggregate(qIssues.Count(), highRiskDays, mediumRiskDays, affectedHosts, coverageGapDays);
         }
 
-        var current = BuildPeriod(f1, t1);
-        var previous = BuildPeriod(f2, t2);
+        var current = BuildPeriod(f1, t1, currentExclusion);
+        var previous = BuildPeriod(f2, t2, previousExclusion);
 
         Log.Debug("[SQL] IssueAggregate.AggregateReportKpiPair（{From:yyyy-MM-dd}~{To:yyyy-MM-dd} vs {PFrom:yyyy-MM-dd}~{PTo:yyyy-MM-dd}）→ {Ms}ms",
             f1, t1, f2, t2, sw.ElapsedMilliseconds);
@@ -1088,6 +1103,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
 
         using var ctx = _contextFactory();
@@ -1159,6 +1175,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = fromInclusive.Date;
         var t = toExclusive.Date;
+        exclusion = exclusion.ForRange(f, t);
 
         using var ctx = _contextFactory();
         foreach (var batch in keys.Chunk(PrtgHitDateBatchSize))
@@ -1203,6 +1220,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
 
         using var ctx = _contextFactory();
@@ -1330,6 +1348,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
@@ -1409,6 +1428,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 

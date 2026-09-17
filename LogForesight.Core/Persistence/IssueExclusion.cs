@@ -65,6 +65,27 @@ public sealed class IssueExclusion
         return new IssueExclusion(day, spans, current, byKey, token);
     }
 
+    /// <summary>
+    /// 依查詢期間限縮靜音區間：僅保留目前靜音中的鍵或與查詢期間重疊的區間，降低 SQL 端條件量。
+    /// </summary>
+    public IssueExclusion ForRange(DateTime from, DateTime to)
+    {
+        if (IsEmpty) return this;
+
+        var f = from.Date;
+        var t = to.Date;
+        var spans = Spans
+            .Where(s => CurrentlyMuted.Contains((s.SourceKey, s.EventId)) || (s.From <= t && s.To >= f))
+            .ToList();
+
+        var byKey = spans.Count == 0
+            ? NoSpans
+            : spans.GroupBy(s => (s.SourceKey, s.EventId))
+                   .ToDictionary(g => g.Key, g => (IReadOnlyList<MuteSpan>)g.ToList());
+
+        return new IssueExclusion(Today, spans, CurrentlyMuted, byKey, CacheToken);
+    }
+
     /// <summary>判定「目前靜音中」所用的今天（日期）。</summary>
     public DateTime Today { get; }
 
