@@ -50,6 +50,11 @@ public class PagesController : Controller
         return View();
     }
 
+    /// <summary>交辦總覽（回饋第 47 輪）：進行中交辦單、處理人負載、待派；資料由前端呼叫 api/work-orders 取得</summary>
+    [HttpGet("/work-orders")]
+    [Permission(Capability.Assign, Capability.ViewAll)]
+    public IActionResult WorkOrders() => View();
+
     [HttpGet("/reports")]
     public IActionResult Reports() => View();
 

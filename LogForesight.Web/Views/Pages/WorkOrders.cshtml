@@ -1,0 +1,83 @@
+﻿@{
+    ViewData["Title"] = "交辦總覽";
+}
+
+<section class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">交辦總覽</h2>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                    data-bs-content="以交辦單為單位管理：一張單＝一個問題 × 一批主機 × 一位處理人。『進行中』看每張單的進度；『負載看板』看每位處理人手上的量；『待派』列出期間內還沒有人處理的問題與建議處理人，可一鍵依自動派工規則建單。">
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+            </button>
+        </div>
+    </div>
+    <div class="lf-card__body">
+        <ul class="nav nav-tabs mb-3" id="wo-tabs">
+            <li class="nav-item"><button class="nav-link active" data-tab="active" type="button">進行中</button></li>
+            <li class="nav-item"><button class="nav-link" data-tab="load" type="button">負載看板</button></li>
+            <li class="nav-item"><button class="nav-link" data-tab="gaps" type="button">待派</button></li>
+        </ul>
+
+        <div data-panel="active">
+            <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="wo-status" class="form-label mb-0 text-muted small text-nowrap">狀態</label>
+                    <select id="wo-status" class="form-select form-select-sm w-auto">
+                        <option value="active" selected>進行中</option>
+                        <option value="escalated">上報中</option>
+                        <option value="overdue">有逾期</option>
+                        <option value="unreplied">未回覆</option>
+                        <option value="closed">已結案</option>
+                        <option value="all">全部</option>
+                    </select>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="wo-sort" class="form-label mb-0 text-muted small text-nowrap">排序</label>
+                    <select id="wo-sort" class="form-select form-select-sm w-auto">
+                        <option value="created_desc" selected>最新建立</option>
+                        <option value="members_desc">成員最多</option>
+                        <option value="unreplied_oldest">最久未回覆</option>
+                    </select>
+                </div>
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="wo-resumed">
+                    <label class="form-check-label small" for="wo-resumed">只看自靜音恢復</label>
+                </div>
+            </div>
+            <div id="wo-list"></div>
+            <nav id="wo-pager" class="mt-3"></nav>
+        </div>
+
+        <div data-panel="load" class="d-none">
+            <div id="wo-load"></div>
+        </div>
+
+        <div data-panel="gaps" class="d-none">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-1">
+                        <label for="wo-gaps-from" class="form-label mb-0 text-muted small text-nowrap">起</label>
+                        <input type="date" class="form-control form-control-sm" id="wo-gaps-from">
+                    </div>
+                    <span class="text-muted small">~</span>
+                    <div class="d-flex align-items-center gap-1">
+                        <label for="wo-gaps-to" class="form-label mb-0 text-muted small text-nowrap">訖</label>
+                        <input type="date" class="form-control form-control-sm" id="wo-gaps-to">
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="wo-gaps-query">查詢</button>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-sm btn-primary d-none" id="wo-auto-dispatch">立即派工</button>
+                </div>
+            </div>
+            <div id="wo-gaps-note" class="small text-muted mb-3"></div>
+            <div id="wo-gaps"></div>
+            <nav id="wo-gaps-pager" class="mt-3"></nav>
+        </div>
+    </div>
+</section>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/work-orders.js" asp-append-version="true"></script>
+}
