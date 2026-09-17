@@ -517,10 +517,12 @@ public class MailNotificationService
     /// <see cref="MailContext.IssueOwnersByKey"/>，命中的規則各自的負責人聯集去重；
     /// 有任何命中就回傳這個聯集（不落回主機負責人——「優先取代」不是「疊加」）；
     /// 全都沒命中才回傳 host.OwnerUserIds（既有行為）。
+    /// 被抑制（含靜音）的問題不參與問題負責人比對。
     /// </summary>
     private static IReadOnlyList<long> RecordOwnerIds(DailyAnalysisRecord record, WebHost host, MailContext ctx)
     {
         var issueOwnerIds = record.TopIssues
+            .Where(issue => !issue.Suppressed)
             .SelectMany(issue => ctx.IssueOwnersByKey.TryGetValue(
                 IssueProfile.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
             .Distinct()

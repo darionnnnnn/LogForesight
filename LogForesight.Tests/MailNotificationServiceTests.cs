@@ -466,6 +466,54 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
     }
 
+    /// <summary>命中問題負責人規則的問題若被抑制（含靜音），不觸發問題負責人路由，落回主機負責人。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_命中負責人規則的問題被抑制時不通知問題負責人而落回主機負責人()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+
+        var issue = Issue("disk", 153);
+        issue.Suppressed = true;
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: issue));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);   // 全域收件人 ops + 主機負責人 hostowner
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local" && s.Message.Body.Contains("host1"));
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local");
+    }
+
+    /// <summary>同日有多個問題命中負責人規則時，被抑制問題的負責人不收到，但未抑制問題的負責人仍正常收到，且不落回主機負責人。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_同日另有未抑制問題命中時問題負責人仍收到()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var ownerA = _users.Upsert(new WebUser { Account = "ownera", Email = "ownera@test.local", Active = true });
+        var ownerB = _users.Upsert(new WebUser { Account = "ownerb", Email = "ownerb@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { ownerA.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { ownerB.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+
+        var issueA = Issue("disk", 153);
+        issueA.Suppressed = true;
+        var issueB = Issue("network", 999);
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: new[] { issueA, issueB }));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);   // 全域收件人 ops + 問題負責人 ownerb
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "ownerb@test.local" && s.Message.Body.Contains("host1"));
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "ownera@test.local");
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
+    }
+
     /// <summary>同一批通知裡，不同主機日各自路由到不同對象——這是逐 record 的判定，不是全站開關。</summary>
     [Fact]
     public async Task NotifyAfterRunAsync_同批次不同主機日各自路由到不同對象()
