@@ -79,6 +79,32 @@ const EXCLUDED_LABELS = {
     gateDismissed: '不再打擾'
 };
 
+// URL 篩選參數（依問題篩選）
+const urlParams = new URLSearchParams(location.search);
+const filterSource = urlParams.get('source');
+const filterEventId = urlParams.get('eventId');
+const hasIssueFilter = Boolean(filterSource || filterEventId);
+
+if (hasIssueFilter) {
+    if (activeStatusSelect) {
+        activeStatusSelect.value = 'all';
+    }
+    const toolbar = activeStatusSelect?.closest('.d-flex');
+    if (toolbar && toolbar.parentElement) {
+        const hintRow = document.createElement('div');
+        hintRow.className = 'd-flex align-items-center gap-2 mb-2 small text-muted';
+        const labelSpan = document.createElement('span');
+        const parts = [filterSource, filterEventId].filter(x => x !== null && x !== '');
+        labelSpan.textContent = `篩選：${parts.join(' ')}`;
+        const clearLink = document.createElement('a');
+        clearLink.href = appUrl('/work-orders');
+        clearLink.textContent = '清除篩選';
+        hintRow.appendChild(labelSpan);
+        hintRow.appendChild(clearLink);
+        toolbar.parentElement.insertBefore(hintRow, toolbar);
+    }
+}
+
 // 狀態追蹤
 let currentUser = null;
 const loadedTabs = new Set();
@@ -121,6 +147,11 @@ async function loadActive() {
         pageSize: String(pageSize),
         resumedFromMute: String(resumed)
     });
+
+    if (hasIssueFilter) {
+        if (filterSource) params.set('source', filterSource);
+        if (filterEventId) params.set('eventId', filterEventId);
+    }
 
     const data = await api.get(`/api/work-orders?${params}`);
     renderActiveTable(data);

@@ -126,6 +126,9 @@ public class IssueGroupDto
     /// <summary>影響範圍：出現過這個問題的相異主機數</summary>
     public int HostCount { get; set; }
 
+    /// <summary>這個問題已在進行中交辦單內的主機數（分母是 HostCount）</summary>
+    public int AssignedHostCount { get; set; }
+
     /// <summary>出現過的主機日總數（同一台主機多天各算一次）</summary>
     public int DayCount { get; set; }
 

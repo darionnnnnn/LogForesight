@@ -216,6 +216,20 @@ public sealed class WorkOrderMemberQuery
 }
 
 /// <summary>交辦單查詢的值域與共用判準（EF 與替身共用同一份定義）</summary>
+/// <summary>
+/// 交辦單與案件的 <c>source_key</c> 正規化規則（唯一一份）：截到欄位上限再轉大寫。
+/// 放在模型層而不是 SQL 實作裡，是因為讀取端（依問題視角的已交辦計數）也要用同一把鑰匙比對，
+/// 不該為此相依到某個特定後端的類別。
+/// </summary>
+public static class WorkOrderIssueKey
+{
+    /// <summary>與 <c>lf_work_orders.source_key</c>／<c>lf_issue_cases.source_key</c> 欄位長度一致</summary>
+    public const int SourceMaxLength = 255;
+
+    public static string SourceKeyOf(string source) =>
+        (source.Length <= SourceMaxLength ? source : source[..SourceMaxLength]).ToUpperInvariant();
+}
+
 public static class WorkOrderQueries
 {
     public const string StatusActive = "active";

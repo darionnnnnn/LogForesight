@@ -28,6 +28,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly FakeIssueOwnerStore _issueOwners = new();
+    private readonly FakeWorkOrderStore _workOrders;
     private readonly RecordQueryServiceFacade _service;
     private readonly HandlingServiceFacade _handlingService;
 
@@ -38,6 +39,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     public RecordQueryServiceSearchTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
+        _workOrders = new FakeWorkOrderStore(_caseStore);
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
@@ -53,6 +55,7 @@ public class RecordQueryServiceSearchTests : IDisposable
             handlings: _handlingStore,
             issueHandlings: _issueHandlingStore,
             cases: _caseStore,
+            workOrders: _workOrders,
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.WithCapabilities(),
@@ -665,6 +668,74 @@ public class RecordQueryServiceSearchTests : IDisposable
         var group = Assert.Single(openOnly.Items);
         Assert.Equal("disk", group.Source);
         Assert.Equal("open", group.GroupStatus);
+    }
+
+    [Fact]
+    public void SearchByIssue_已交辦主機數_只計進行中交辦單成員主機數()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var c = AddHost("HOST-C");
+        var d = AddHost("HOST-D");
+
+        var disk = DiskIssue();
+        AddRecord(a, Yesterday, "高", issues: new[] { disk });
+        AddRecord(b, Yesterday, "高", issues: new[] { disk });
+        AddRecord(c, Yesterday, "高", issues: new[] { disk });
+
+        var net = new LogIssueSignature
+        {
+            LogName = "System", Source = "Network", EventId = 99,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.Medium
+        };
+        AddRecord(d, Yesterday, "中", issues: new[] { net });
+
+        var order = new WorkOrder
+        {
+            SourceName = "disk",
+            EventId = 153,
+            IssueLabel = "disk 153",
+            HandlerId = 1,
+            Origin = WorkOrderOrigins.Manual,
+            ScopeKind = WorkOrderScopes.Hosts,
+            CreatedAt = DateTime.Now
+        };
+        var orderId = _workOrders.Insert(order);
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-a",
+            HostName = a.HostName,
+            IssueKey = IssueSignatureKey.For(disk),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = 1,
+            WorkOrderId = orderId,
+            CreatedAt = Yesterday,
+            UpdatedAt = Yesterday
+        });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-b",
+            HostName = b.HostName,
+            IssueKey = IssueSignatureKey.For(disk),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = 1,
+            WorkOrderId = orderId,
+            CreatedAt = Yesterday,
+            UpdatedAt = Yesterday
+        });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var diskGroup = Assert.Single(result.Items, i => i.Source == "disk" && i.EventId == 153);
+        Assert.Equal(3, diskGroup.HostCount);
+        Assert.Equal(2, diskGroup.AssignedHostCount);
+
+        var netGroup = Assert.Single(result.Items, i => i.Source == "Network" && i.EventId == 99);
+        Assert.Equal(1, netGroup.HostCount);
+        Assert.Equal(0, netGroup.AssignedHostCount);
     }
 
     [Fact]

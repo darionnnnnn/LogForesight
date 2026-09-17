@@ -27,6 +27,7 @@ internal class RecordQueryServiceFacade
         IRecordHandlingStore handlings,
         IIssueHandlingStore issueHandlings,
         IIssueCaseStore cases,
+        IWorkOrderStore workOrders,
         INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser,
@@ -38,7 +39,7 @@ internal class RecordQueryServiceFacade
         NextUnhandledSequenceCache? nextUnhandledCache = null)
     {
         _list = new RecordListQueryService(
-            repository, hosts, users, handlings, issueHandlings, cases, settings,
+            repository, hosts, users, handlings, issueHandlings, cases, workOrders, settings,
             settingsService ?? new FakeSystemSettingsService(), visibility, aggregates, statusResolver,
             new UserDisplayNameService(settings),
             nextUnhandledCache ?? new NextUnhandledSequenceCache(new DataVersionStamp()),

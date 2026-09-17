@@ -82,15 +82,15 @@ internal sealed class ScaleServices
 
         Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
+        WorkOrderStore = backend.WorkOrderStore();
         RecordList = new RecordListQueryService(
-            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
+            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, WorkOrderStore, settingsStore,
             settingsService, Visibility, aggregates, statusResolver, displayNames,
             new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
         var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);
 
-        WorkOrderStore = backend.WorkOrderStore();
         WorkOrders = new WorkOrderCoordinator(WorkOrderStore, Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames,
             WorkOrderStore, WorkOrders);

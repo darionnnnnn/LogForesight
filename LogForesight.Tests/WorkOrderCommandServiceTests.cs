@@ -53,7 +53,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         var displayNames = new UserDisplayNameService(_settingsStore);
 
         _query = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore, severity,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _orderStore, _settingsStore, severity,
             _visibility, aggregates, statusResolver, displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());

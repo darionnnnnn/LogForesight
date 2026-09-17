@@ -37,6 +37,11 @@ public interface IWorkOrderStore
     /// <summary>一次查詢（GROUP BY work_order_id）取得多張單的成員計數；ids 為空回空字典</summary>
     Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds);
 
+    /// <summary>指定問題各自「已在進行中交辦單內」的主機數：以進行中案件（closed_at IS NULL）
+    /// 且已連到交辦單（work_order_id IS NOT NULL）計，主機以 host_name_key 去重。查無回 0（不放進字典）。</summary>
+    Dictionary<(string SourceKey, int EventId), int> CountAssignedHostsByIssue(
+        IReadOnlyCollection<(string Source, int EventId)> issues);
+
     /// <summary>
     /// 交辦單清單（篩選／排序／分頁）：狀態條件以 EXISTS 子查詢表達、不把成員拉回記憶體；
     /// 查詢次數固定（總數一次、本頁一次），不隨單數或成員數增長。條件不合法擲 ArgumentException。

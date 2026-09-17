@@ -120,6 +120,35 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         return result;
     }
 
+    public Dictionary<(string SourceKey, int EventId), int> CountAssignedHostsByIssue(
+        IReadOnlyCollection<(string Source, int EventId)> issues)
+    {
+        var result = new Dictionary<(string SourceKey, int EventId), int>();
+        if (issues.Count == 0) return result;
+
+        var normalized = issues
+            .Select(i => (SourceKey: EfWorkOrderStore.SourceKeyOf(i.Source), i.EventId))
+            .Distinct()
+            .ToList();
+
+        foreach (var (sourceKey, eventId) in normalized)
+        {
+            var openCases = _cases.GetOpenByIssue(sourceKey, eventId);
+            var count = openCases
+                .Where(c => c.WorkOrderId != null)
+                .Select(c => HostNameKey.Of(c.HostName))
+                .Distinct()
+                .Count();
+
+            if (count > 0)
+            {
+                result[(sourceKey, eventId)] = count;
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>同 EF 版：篩選、排序（同值依單號降冪）、分頁</summary>
     public WorkOrderPage QueryOrders(WorkOrderQuery q)
     {

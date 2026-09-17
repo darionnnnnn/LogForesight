@@ -730,7 +730,8 @@ function renderIssueView() {
             renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有案件或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。', '處理概況'),
             render: i => issueHandlingSummaryCell(i)
         },
-        { title: '處理人', render: i => issueHandlersCell(i) }
+        { title: '處理人', render: i => issueHandlersCell(i) },
+        { title: '已交辦', render: i => issueAssignedCell(i) }
     ];
 
     // 動作欄：admin 的「指派」與處理人自己的「回覆處理狀態」（§11）共用同一欄——
@@ -852,6 +853,47 @@ function issueHandlersCell(group) {
     if (handlers.length > 3) {
         wrap.appendChild(document.createTextNode(` 等 ${handlers.length} 人`));
     }
+    return wrap;
+}
+
+/**
+ * 已交辦欄：顯示該問題已在進行中交辦單內的主機數與總主機數。
+ * 零台時整格顯示灰字「未交辦」；有交辦時為連往總覽頁該問題篩選的連結。
+ */
+function issueAssignedCell(group) {
+    const assigned = group.assignedHostCount || 0;
+    const total = group.hostCount || 0;
+
+    if (assigned === 0) {
+        const span = document.createElement('span');
+        span.className = 'text-muted';
+        span.textContent = '未交辦';
+        return span;
+    }
+
+    const wrap = document.createElement('div');
+    const line1 = document.createElement('div');
+    line1.className = 'text-nowrap';
+
+    const params = new URLSearchParams({
+        source: group.source,
+        eventId: String(group.eventId)
+    });
+    const link = document.createElement('a');
+    link.href = `${appUrl('/work-orders')}?${params.toString()}`;
+    link.title = '檢視這個問題的交辦單';
+    link.textContent = `${assigned}／${total} 台`;
+    link.addEventListener('click', event => event.stopPropagation());
+    line1.appendChild(link);
+    wrap.appendChild(line1);
+
+    if (assigned < total) {
+        const line2 = document.createElement('div');
+        line2.className = 'small text-muted text-nowrap';
+        line2.textContent = `還有 ${total - assigned} 台未交辦`;
+        wrap.appendChild(line2);
+    }
+
     return wrap;
 }
 
