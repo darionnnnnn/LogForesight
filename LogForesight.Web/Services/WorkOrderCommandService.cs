@@ -532,14 +532,17 @@ public class WorkOrderCommandService
             allocations.Add(new PlannedAllocation(candidate, allocated, merge == null ? null : merge.WorkOrderId));
 
             var visible = _visibility.GetVisibleHostIdsFor(candidate.UserId);
+            // 名稱每位處理人算一次：顯示名稱規則每次都讀系統設定，逐台呼叫在 4000 台時要數秒
+            var candidateName = NameOf(candidate);
             noAccess.AddRange(allocated
                 .Where(h => !visible.Contains(h.Resolved.Host.HostId))
-                .Select(h => new AssigneeNoAccessDto { HostName = h.Resolved.Host.HostName, HandlerName = NameOf(candidate) }));
+                .Select(h => new AssigneeNoAccessDto { HostName = h.Resolved.Host.HostName, HandlerName = candidateName }));
 
             if (!_capabilities.Resolve(candidate).Contains(Capability.Handle))
                 cannotHandle.Add(new AssigneeCannotHandleDto { HandlerName = NameOf(candidate), HostCount = allocated.Count });
         }
 
+        var nameCache = new Dictionary<long, string>();
         return new CreatePlan
         {
             Source = source,
@@ -554,7 +557,10 @@ public class WorkOrderCommandService
             Conflicts = conflicts,
             NoAccess = noAccess,
             CannotHandle = cannotHandle,
-            NameOf = id => usersById.TryGetValue(id, out var u) ? NameOf(u) : NameFormat.OrDeleted(null, id)
+            // 依 id 記住已算過的名稱：略過主機清單逐台取原處理人名稱，顯示名稱規則每次都讀系統設定
+            NameOf = id => nameCache.TryGetValue(id, out var cached)
+                ? cached
+                : nameCache[id] = usersById.TryGetValue(id, out var u) ? NameOf(u) : NameFormat.OrDeleted(null, id)
         };
     }
 
