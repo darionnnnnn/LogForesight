@@ -748,6 +748,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | C-2c | impl-low＋Claude | 一輪通過（4612 綠／略過 6，總 4618，+13） | 執行端先寫測試、在修改前版本跑出 8 條紅（錯誤訊息直接顯示少了第五段）再修；突變（分組拿掉 EventKey）7 條＋1 條轉紅；Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套、位元組核對換行、確認組五段鍵只剩 `IssueSignatureKey` 五參數多載一處 | **修掉的既有缺陷**：出現點查詢分組不含 `event_key`，依問題視角處理概況、重點問題與排行的已有結論、待辦、郵件摘要把已處理的 PRTG 與 Linux 命中規則問題算成未處理；C-1b 手動建單與 C-2b 試跑對這兩類問題建出四段鍵（案件對不上、會重複派工、同主機多顆 sensor 被併成一件）。執行端回報規格外第二份組鍵（`EfIssueAggregateQuery.IssueKeyFor`，規格限「只改兩個方法」未動）→ Claude 親改為呼叫單點。執行端指出使用端計數可能受影響 → Claude 查證：排行（`IssueRankingBuilder.LookupRollup`）與待辦（`IssueTodoQuery.Aggregate`）本來就是「任一筆未處理即未處理」；**依問題視角 `BuildIssueGroup` 取「每台主機最近出現那筆」，同主機兩顆 sensor 較晚的已處理會蓋掉較早的未處理** → Claude 親改為每台取最差狀態、處理人從全部出現點收集，補測試並以修改前版本確認轉紅 |
 | D-1 | impl-low | 一輪通過（4640 綠／略過 6，總 4646，+28） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；白名單與 CRLF 以位元組核對；自做突變（依問題回覆處理狀態拿掉補記交辦單回覆）→「依問題回覆處理狀態_每張涉及的單各一筆replied事件」轉紅，還原 cmp 相同。**未解事項**：突變還原並完整重建後的第一次全套出現 1 條失敗（名稱未留下），接著連續三次全套全綠、無法重現——收尾體檢要留意不穩定測試（嫌疑：本輪新增、依 `DateTime.Now`／今天判定的測試） | 接受：新回覆服務的郵件相依改為必要參數（不沿用舊服務的可選參數，依限制條款）；`RunActivityBannerTests.cs`（白名單外）只改建構；依問題回覆處理狀態現在當場推導交辦單結案（原本等背景掃描）。留意：`ApplyIssueStatus` 為判斷是否為處理人回覆，每次多查一次進行中案件，統一標記逐筆迴圈（上限 5000 主機日）查詢量因此翻倍——若放量後統一標記變慢，改由 `SyncStatus` 結果帶回案件的處理人與單號 |
 | B-1 | impl-low | 開工前停下回報兩次＋一輪實作通過（4683 綠／略過 6，總 4689，+43） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；位元組核對換行；自做突變（`ActiveForHost` 不排除靜音）→「篩選_…不含IssueMute」轉紅，還原 cmp 相同 | **執行端開工前抓到的規格漏洞**：①問題檔案管理服務加相依會讓白名單外建構點編譯失敗（第一次用 `new 類別名(` 盤點漏掉兩處 target-typed `new(`，第二次補報）→放行共 7 個測試檔只改建構；②**`IssueOwnerStore.Upsert` 對已存在的問題檔案逐欄複製、沒有複製 `Mutes`——照原規格做，延長與解除靜音會顯示成功卻沒寫入**→放行補一行，並普查所有重建問題檔案後存回的呼叫點（只有 `IssueOwnerAdminService.Upsert` 需補，已補）。執行端突變時發現「當日無靜音即回傳」的判斷會擋掉原突變，改成真正生效的突變後 6 條轉紅；另自加兩個突變（Upsert 保留、統一標記提前檢查 Maintain）皆轉紅。Claude 親補：測試替身 `FakeIssueOwnerStore.Upsert` 也補複製 `Mutes`（替身 `Get` 回傳同一參考，漏欄缺陷仍靠三條真實 store 測試守住）。接受：`EnsureMaintain` 為 public（統一標記需在寫入前呼叫）；今天已在靜音中再設定＝重設迄日（可縮短，文件寫「重設迄日」）；靜音判定只比日期；AI 補寫以 backend 讀同一份問題檔案 blob；提示詞排除改三處（含前置掃描），全部靜音時仍不說「當日無事件」 |
+| B-2a | impl-low | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
@@ -817,6 +818,17 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 |---|---|---|
 | `SuppressionFilter.MarkSuppressed` 增加靜音區間參數，各分析入口各自讀問題檔案傳入 | 抑制清單來自四個分析入口（本機、NetIQ 快照、PRTG、AI 補寫），`LogAnalysisService` 沒有問題檔案相依、測試建構點十餘處；報告「已抑制」段的原因反查也只看抑制清單 | 靜音以記憶體合成的抑制型別 `IssueMute` 呈現：包裝層 `MuteAwareSuppressionStore` 讀取時合成、寫入時濾除，只包三個分析入口，規則頁用的 store 不包；`ActiveForHost` 等「現在生效中」的篩選排除它（體檢、到期提醒不會把過去區間當生效中）；`MarkSuppressed` 另收合成項目與紀錄日判定 |
 | 靜音 modal 的「代為結案」 | 代為結案需 Assign＋Handle，靜音 API 只掛 Maintain | `ExistingOrders=close` 時服務層另檢查 Assign＋Handle，不足整筆 Forbidden 零寫入 |
+
+### B-2 設計修正（寫規格時，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| 清單／卡片／排行只用「目前靜音中」整個問題排除；待辦／逾期另用「目前靜音中或紀錄日落在區間」 | 兩套判定要在 SQL 與記憶體各寫一份＝四份；到期後區間內的日子在清單出現、在待辦卻已有結論，兩個畫面對不起來 | **收斂成單一列判定**：某列（問題、紀錄日）靜音＝該問題目前靜音中 或 紀錄日落在其任一區間。清單與待辦同一條；記憶體 `IssueExclusion.IsMuted` 一份、SQL `IssueExclusionSql` 一份，以同口徑測試守住 |
+| 靜音問題「視同已有結論」 | 只把靜音列排出計數時，一天只有靜音問題會 total=0 → 落回日層級狀態 open，仍進待辦 | 日狀態階梯加一級：total=0 且有「原本會計入的靜音問題」→ resolved；階梯三份（SQL 兩處＋記憶體）收成 `DayStatusRule.Resolve` |
+| 參數加在介面全部方法 | 既有方法尾端多為可選參數，必填參數放不到最後 | `IssueExclusion exclusion` 一律放第一個參數；反射守門檢查型別存在且無預設值 |
+| 靜音區間快取以 `lf_blobs.version` 為鍵 | 問題檔案 store 每次讀 blob、沒有對外版本；靜音只經 HTTP 寫入，非 GET 皆推進 `DataVersionStamp` | Web `IssueExclusionProvider` 以（`DataVersionStamp`、今天）為鍵；`IssueExclusion.CacheToken` 併入儀表板、排行、待辦快照三個快取鍵（換日到期也失效） |
+| `AggregateByDate`／`AggregateByHost` 套靜音 | 日風險主機數來自 `lf_daily_records` 的分析當下風險等級，無法以查詢條件重算 | 排除只作用在問題列相關部分（類別／事件／來源／嚴重度篩選與類別清單）；靜音前被該問題拉高的日風險維持原值，與既有抑制同一取捨 |
+| B-2 一段 | 聚合介面 17 方法＋十餘呼叫端＋兩條推導＋註腳／詳情／暫停單／週報 | 拆 **B-2a**（排除參數、EF、兩條推導、提供者、呼叫端接線、快取鍵）與 **B-2b**（`MutedIssueCount` 註腳、詳情頁靜音資訊、交辦單暫停與 `pausedCount`、週報到期段） |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
