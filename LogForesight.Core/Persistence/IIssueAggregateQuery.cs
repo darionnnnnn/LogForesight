@@ -100,6 +100,7 @@ public interface IIssueAggregateQuery
     /// §10.6「排除已有結論的問題」的資料基礎）。這裡只回答「這個組合最後一次出現時長什麼樣子」——
     /// 「有沒有結論」由呼叫端另外查處理狀態／案件表判斷，兩件事分開才不會把 SQL 查詢與
     /// 處理狀態的業務規則（案件優先／觀察到期／預設嚴重度）綁在同一層。
+    /// <see cref="HostIssueOccurrence.IssueKey"/> 為完整簽章鍵（含 EventKey 第五段），與處理狀態、案件同一個鍵。
     /// </summary>
     /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
     List<HostIssueOccurrence> LatestOccurrences(
@@ -112,6 +113,7 @@ public interface IIssueAggregateQuery
     /// （回饋十九輪批次D，Todo 問題口徑用）。母體與 <c>HandlingHistoryQueryService.GetTodo</c>
     /// 的既有定義一致：日層級 RiskLevel 為高或中，不是問題自身嚴重度。
     /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
+    /// <see cref="HostIssueOccurrence.IssueKey"/> 為完整簽章鍵（含 EventKey 第五段），與處理狀態、案件同一個鍵。
     /// </summary>
     List<HostIssueOccurrence> ActionableOccurrences(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,

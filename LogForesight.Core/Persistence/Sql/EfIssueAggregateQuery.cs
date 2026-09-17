@@ -319,7 +319,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var rows = q
             .Select(x => new
             {
-                x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.RecordDate, x.SeverityRank, x.KnownIssue
+                x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue
             })
             .ToList()
             .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
@@ -327,8 +327,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var result = rows
             // host_id 先解析成存活主機再分組：合併前後兩個 id 在同一天或不同天各自出現過，
-            // 併起來取真正最近的一次，不是各自留一筆
-            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType))
+            // 併起來取真正最近的一次，不是各自留一筆。分組含 EventKey：IssueKey 是完整簽章鍵，
+            // 同主機同規則的兩顆 PRTG sensor（或 Linux 命中不同規則）是兩個出現點
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey))
             .Select(g =>
             {
                 var latest = g.OrderByDescending(x => x.RecordDate).ThenByDescending(x => x.SeverityRank).First();
@@ -336,7 +337,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 {
                     HostId = g.Key.SurvivingHostId,
                     IssueKey = IssueSignatureKey.For(
-                        g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType),
+                        g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
+                        g.Key.EventKey),
                     LastSeen = latest.RecordDate,
                     SeverityRank = latest.SeverityRank,
                     KnownIssue = latest.KnownIssue
@@ -471,7 +473,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 每個 (主機,問題) 的最近出現日與期間內最高嚴重度：SQL 端 GROUP BY 做完，
         // 拉回的量受限於相異 (主機,問題) 組合數，不是可行動日的原始問題列數
         var grouped = q
-            .GroupBy(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType })
+            .GroupBy(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey })
             .Select(g => new
             {
                 g.Key.HostId,
@@ -479,19 +481,21 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 g.Key.SourceName,
                 g.Key.EventId,
                 g.Key.EntryType,
+                g.Key.EventKey,
                 LastSeen = g.Max(x => x.RecordDate),
                 MaxSeverityRank = g.Max(x => x.SeverityRank)
             })
             .ToList();
 
         var result = grouped
-            // host_id 解析成存活主機再合併：同 LatestOccurrences 的既有規則
-            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType))
+            // host_id 解析成存活主機再合併：同 LatestOccurrences 的既有規則（分組同樣含 EventKey）
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey))
             .Select(g => new HostIssueOccurrence
             {
                 HostId = g.Key.SurvivingHostId,
                 IssueKey = IssueSignatureKey.For(
-                    g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType),
+                    g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
+                    g.Key.EventKey),
                 LastSeen = g.Max(x => x.LastSeen),
                 SeverityRank = g.Max(x => x.MaxSeverityRank)
             })
@@ -510,8 +514,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     private static string IssueKeyFor(string logName, string sourceName, int eventId, int entryType, string? eventKey)
     {
-        var baseKey = IssueSignatureKey.For(logName, sourceName, eventId, (System.Diagnostics.EventLogEntryType)entryType);
-        return string.IsNullOrEmpty(eventKey) ? baseKey : $"{baseKey}|{eventKey}";
+        // 組鍵單點（含 EventKey 第五段）只在 IssueSignatureKey 的五參數多載，這裡不另寫一份
+        return IssueSignatureKey.For(logName, sourceName, eventId, (System.Diagnostics.EventLogEntryType)entryType, eventKey ?? string.Empty);
     }
 
     private sealed record DayHandlingRaw(

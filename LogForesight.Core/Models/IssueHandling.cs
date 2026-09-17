@@ -56,25 +56,30 @@ public class IssueHandling
 /// </summary>
 public static class IssueSignatureKey
 {
+    /// <summary>
+    /// 四段鍵（LogName|Source|EventId|EntryType），不含 EventKey 第五段。供不需要區分規則／sensor 的
+    /// Source＋EventId 聚合使用；要和處理狀態、案件比對的完整鍵一律走
+    /// <see cref="For(string,string,int,System.Diagnostics.EventLogEntryType,string)"/>。
+    /// </summary>
     public static string For(string logName, string source, int eventId, System.Diagnostics.EventLogEntryType entryType) =>
         $"{logName}|{source}|{eventId}|{(int)entryType}";
 
     /// <summary>
-    /// Linux 簽章的第五段（docs/archive/FEEDBACK-12-PLAN.md §4.2）：<see cref="LogIssueSignature.EventKey"/>
-    /// 非空時附加尾段，用來把「同一個 program 命中不同規則」（如 sshd 底下的 ssh-bruteforce 與
-    /// ssh-accept）分成不同的處理狀態/案件鍵。Windows 事件與未命中規則的 Linux 事件
-    /// EventKey 恆空，這裡直接回傳既有的四段鍵，字串一字不變、零遷移。
-    ///
-    /// 只有這個多載會用到 EventKey——<see cref="For(string,string,int,System.Diagnostics.EventLogEntryType)"/>
-    /// 4 段版仍保留給 lf_top_issues 聚合查詢用（該表沒有存 EventKey 抽出欄，這是刻意不擴充
-    /// schema 的 v1 限制：Linux 的「依問題」跨日聚合會把同 program 的不同規則併成一組，
-    /// 待有真實 Linux 流量再評估要不要加欄位）。
+    /// 完整簽章鍵的唯一組法（docs/archive/FEEDBACK-12-PLAN.md §4.2）：<paramref name="eventKey"/>
+    /// 非空時附加第五段（Linux 命中規則時是規則 Id、PRTG finding 是 <c>prtg:代碼:objid</c>），用來把
+    /// 「同一個來源命中不同規則／不同 sensor」分成不同的處理狀態／案件鍵。Windows 事件與未命中規則的
+    /// Linux 事件 EventKey 為空字串，回傳四段鍵，字串一字不變。
+    /// 從 lf_top_issues 取列組鍵（event_key 欄）與從 <see cref="LogIssueSignature"/> 組鍵都走這裡。
     /// </summary>
-    public static string For(LogIssueSignature signature)
+    public static string For(string logName, string source, int eventId, System.Diagnostics.EventLogEntryType entryType, string eventKey)
     {
-        var baseKey = For(signature.LogName, signature.Source, signature.EventId, signature.EntryType);
-        return signature.EventKey.Length > 0 ? $"{baseKey}|{signature.EventKey}" : baseKey;
+        var baseKey = For(logName, source, eventId, entryType);
+        return eventKey.Length > 0 ? $"{baseKey}|{eventKey}" : baseKey;
     }
+
+    /// <summary>簽章的完整鍵，見 <see cref="For(string,string,int,System.Diagnostics.EventLogEntryType,string)"/></summary>
+    public static string For(LogIssueSignature signature) =>
+        For(signature.LogName, signature.Source, signature.EventId, signature.EntryType, signature.EventKey);
 
     /// <summary>
     /// 反解出 (Source, EventId)——「依問題」分組用的鍵（docs/archive/FEEDBACK-11-PLAN.md §7）。

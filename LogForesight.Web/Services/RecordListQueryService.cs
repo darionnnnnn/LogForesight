@@ -546,23 +546,26 @@ public class RecordListQueryService
         IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen,
         string? plainExplanation)
     {
-        // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照（Linux 的 EventKey 尾段被
-        // TryParseSignature 收斂掉了）——每台主機只看它自己最近一次出現的那筆，
-        // 與改版前「取該主機在群組內最新一筆紀錄」的既有語意相同
+        // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照：出現點是完整簽章鍵（含 EventKey 第五段），
+        // 同主機多顆 PRTG sensor、Linux 同程式命中不同規則各自一筆。每台主機取**最差狀態**
+        // （未處理 > 處理中 > 已處理，列舉順序即嚴重順序）——只要還有一筆未處理，這台就還沒處理完；
+        // 取「最近出現那筆」會讓晚出現且已處理的 sensor 把另一顆未處理的蓋掉。同狀態時取最近出現者
         var perHost = occurrences
             .GroupBy(o => o.Host.HostId)
-            .Select(g => g.OrderByDescending(o => o.Occurrence.LastSeen).First())
+            .Select(g => g.OrderBy(o => o.Status).ThenByDescending(o => o.Occurrence.LastSeen).First())
             .ToList();
 
         int unhandled = 0, processing = 0, resolvedCount = 0;
         var handlerIds = new HashSet<long>();
 
+        // 處理人仍留在 Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，
+        // 不是「沒人管」）——這一點與狀態判定分開處理，不受 IssueGroupStatusResolver 影響；
+        // 從全部出現點收集，同主機多顆 sensor 各自有案件時不漏掉處理人
+        foreach (var o in occurrences)
+            if (o.OpenCase?.HandlerId.HasValue == true) handlerIds.Add(o.OpenCase.HandlerId.Value);
+
         foreach (var occ in perHost)
         {
-            // 處理人仍留在 Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，
-            // 不是「沒人管」）——這一點與狀態判定分開處理，不受 IssueGroupStatusResolver 影響
-            if (occ.OpenCase?.HandlerId.HasValue == true) handlerIds.Add(occ.OpenCase.HandlerId.Value);
-
             switch (occ.Status)
             {
                 case HostIssueStatus.Open: unhandled++; break;

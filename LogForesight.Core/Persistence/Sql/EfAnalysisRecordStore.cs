@@ -960,7 +960,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
     /// <summary>
     /// 批次候選日（案件逐日同步用）：走 <c>lf_top_issues</c> 事實表，不反序列化紀錄。
-    /// EventId 在 SQL 端預篩，完整鍵在 C# 端以 <see cref="IssueSignatureKey.For(LogIssueSignature)"/>
+    /// EventId 在 SQL 端預篩，完整鍵在 C# 端以 <see cref="IssueSignatureKey.For(string,string,int,EventLogEntryType,string)"/>
     /// 同一個出口組回、Ordinal 比對。未回填的舊列（record_date = MinValue）不回傳。
     ///
     /// 主機比對照抄 <see cref="ApplyPushableFilters"/>＋<see cref="Query"/> 的 HostMatcher：
@@ -1014,14 +1014,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 var probe = new DailyAnalysisRecord { HostId = t.HostId, Host = t.LegacyHostName ?? string.Empty };
                 if (!matcher.Matches(probe)) continue;
 
-                var key = IssueSignatureKey.For(new LogIssueSignature
-                {
-                    LogName = t.LogName,
-                    Source = t.SourceName,
-                    EventId = t.EventId,
-                    EntryType = (EventLogEntryType)t.EntryType,
-                    EventKey = t.EventKey
-                });
+                var key = IssueSignatureKey.For(t.LogName, t.SourceName, t.EventId, (EventLogEntryType)t.EntryType, t.EventKey);
                 if (!keySet.Contains(key)) continue;
 
                 var hit = new IssueDayHit(t.HostId, key, t.RecordDate.Date);

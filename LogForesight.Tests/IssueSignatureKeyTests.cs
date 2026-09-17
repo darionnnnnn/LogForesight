@@ -80,4 +80,37 @@ public class IssueSignatureKeyTests
             Assert.Equal(key, rebuilt);
         }
     }
+
+    // ── 五參數多載（完整鍵的唯一組法）──────────────────────────────────────
+
+    [Fact]
+    public void 五參數多載_EventKey為空字串回四段()
+    {
+        Assert.Equal("System|disk|153|1", IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Error, string.Empty));
+    }
+
+    [Fact]
+    public void 五參數多載_EventKey非空回五段()
+    {
+        Assert.Equal("PRTG|PRTG:down|0|1|prtg:down:1234",
+            IssueSignatureKey.For("PRTG", "PRTG:down", 0, EventLogEntryType.Error, "prtg:down:1234"));
+    }
+
+    [Fact]
+    public void 簽章多載與五參數多載對同一組欄位逐字相同()
+    {
+        var signatures = new[]
+        {
+            new LogIssueSignature { LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error },
+            new LogIssueSignature { LogName = "Linux", Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Warning, EventKey = "builtin-linux-ssh-bruteforce" },
+            new LogIssueSignature { LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = EventLogEntryType.Error, EventKey = "prtg:down:1234" }
+        };
+
+        foreach (var s in signatures)
+        {
+            Assert.Equal(
+                IssueSignatureKey.For(s.LogName, s.Source, s.EventId, s.EntryType, s.EventKey),
+                IssueSignatureKey.For(s));
+        }
+    }
 }

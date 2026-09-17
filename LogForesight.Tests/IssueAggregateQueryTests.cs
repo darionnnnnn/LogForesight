@@ -785,4 +785,52 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Contains("IN (", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("client", sql, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ── 出現點完整簽章鍵（含 EventKey 第五段）───────────────────────────────
+
+    /// <summary>突變參考：LatestOccurrences 分組拿掉 EventKey 時這條轉紅（兩顆 sensor 併成一筆）</summary>
+    [Fact]
+    public void LatestOccurrences_同主機同PRTG規則兩顆sensor_各自一筆且鍵為完整鍵()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var s1 = PrtgIssue("prtg:down:1001");
+        var s2 = PrtgIssue("prtg:down:1002");
+        Add(1, "A", d0, s1, s2);
+
+        var result = Query().LatestOccurrences(new[] { ("PRTG", 0) }, d0, d0, null);
+
+        Assert.Equal(
+            new[] { IssueSignatureKey.For(s1), IssueSignatureKey.For(s2) }.OrderBy(k => k, StringComparer.Ordinal),
+            result.Select(o => o.IssueKey).OrderBy(k => k, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void LatestOccurrences_Linux命中規則為五段鍵_Windows鍵逐字不變()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var linux = Issue("sshd", 0, logName: "Linux", eventKey: "builtin-linux-ssh-bruteforce");
+        Add(1, "A", d0, linux, Issue("disk", 153));
+
+        var result = Query().LatestOccurrences(new[] { ("sshd", 0), ("disk", 153) }, d0, d0, null);
+
+        Assert.Equal("Linux|sshd|0|2|builtin-linux-ssh-bruteforce", Assert.Single(result, o => o.IssueKey.StartsWith("Linux|")).IssueKey);
+        Assert.Equal(IssueSignatureKey.For(linux), Assert.Single(result, o => o.IssueKey.StartsWith("Linux|")).IssueKey);
+        Assert.Equal("System|disk|153|2", Assert.Single(result, o => o.IssueKey.StartsWith("System|")).IssueKey);
+    }
+
+    /// <summary>突變參考：ActionableOccurrences 分組拿掉 EventKey 時這條轉紅</summary>
+    [Fact]
+    public void ActionableOccurrences_同主機同PRTG規則兩顆sensor_各自一筆且鍵為完整鍵()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var s1 = PrtgIssue("prtg:down:1001");
+        var s2 = PrtgIssue("prtg:down:1002");
+        Add(1, "A", d0, RiskLevels.High, s1, s2);
+
+        var result = Query().ActionableOccurrences(d0, d0, null);
+
+        Assert.Equal(
+            new[] { IssueSignatureKey.For(s1), IssueSignatureKey.For(s2) }.OrderBy(k => k, StringComparer.Ordinal),
+            result.Select(o => o.IssueKey).OrderBy(k => k, StringComparer.Ordinal));
+    }
 }
