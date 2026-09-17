@@ -24,7 +24,6 @@ public class DayHandlingCommandService
 {
     private readonly IRecordHandlingStore _store;
     private readonly IIssueHandlingStore _issueStore;
-    private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly WorkOrderCoordinator _workOrders;
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
@@ -48,7 +47,6 @@ public class DayHandlingCommandService
     public DayHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
-        IssueCaseCoordinator caseCoordinator,
         WorkOrderCoordinator workOrders,
         IRecordRepository repository,
         IHostStore hosts,
@@ -67,7 +65,6 @@ public class DayHandlingCommandService
         _issueOwners = issueOwners;
         _store = store;
         _issueStore = issueStore;
-        _caseCoordinator = caseCoordinator;
         _workOrders = workOrders;
         _repository = repository;
         _hosts = hosts;

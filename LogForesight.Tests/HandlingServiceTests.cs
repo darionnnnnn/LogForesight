@@ -157,7 +157,7 @@ public class HandlingServiceTests : IDisposable
     }
 
     /// <summary>
-    /// 回饋十三輪，體檢 H1 殘餘：批次指派（IssueHandlingCommandService.BulkAssignIssueCase）
+    /// 回饋十三輪，體檢 H1 殘餘：交辦單與批次指派
     /// 已有「對方沒有處理能力」的提示，日層級指派原本沒有——同一套「不擋、只提示」決策，
     /// 同一個 UserCapabilityResolver 事實來源（沒有群組、也不是任何主機負責人，兩條授權路徑都不成立）。
     /// </summary>

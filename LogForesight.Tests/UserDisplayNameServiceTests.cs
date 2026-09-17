@@ -472,7 +472,6 @@ public class UserDisplayNameServiceTests
         return new DayHandlingCommandService(
             recordStore,
             issueStore,
-            coordinator,
             new WorkOrderCoordinator(new FakeWorkOrderStore(caseStore), caseStore, issueStore, coordinator, recordStore, hosts),
             repository,
             hosts,

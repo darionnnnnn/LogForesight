@@ -63,50 +63,9 @@ public class HandlingController : ControllerBase
 }
 
 /// <summary>
-/// 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）：問題查詢「依問題」視角的指派入口，
-/// 全部端點都是 <c>Assign</c> 能力——同單日詳情的指派，只有 admin 能做。
-/// </summary>
-[ApiController]
-[Route("api/handling/issue-cases")]
-[Permission(Capability.Assign)]
-public class IssueCasesController : ControllerBase
-{
-    private readonly IssueHandlingCommandService _service;
-
-    public IssueCasesController(IssueHandlingCommandService service)
-    {
-        _service = service;
-    }
-
-    /// <summary>批次指派 modal 開啟時的受影響主機預覽（逐台清單有上限，總數另外誠實回報——體檢 M10）</summary>
-    [HttpGet("preview")]
-    public ApiResponse<IssueCaseAssignPreviewDto> Preview(
-        [FromQuery] string source, [FromQuery] int eventId,
-        [FromQuery] string? from, [FromQuery] string? to)
-    {
-        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
-        return ApiResponse<IssueCaseAssignPreviewDto>.Ok(
-            _service.PreviewIssueCaseAssign(source, eventId, parsedFrom, parsedTo));
-    }
-
-    [HttpPost("bulk-assign")]
-    public ApiResponse<BulkAssignIssueCaseResultDto> BulkAssign([FromBody] BulkAssignIssueCaseRequest request) =>
-        ApiResponse<BulkAssignIssueCaseResultDto>.Ok(_service.BulkAssignIssueCase(request));
-
-    /// <summary>群組指派時的候選處理人＋各自現有負載（docs/archive/FEEDBACK-10-PLAN.md §12）</summary>
-    [HttpGet("handler-candidates")]
-    public ApiResponse<List<HandlerCandidateDto>> HandlerCandidates([FromQuery] long groupId) =>
-        ApiResponse<List<HandlerCandidateDto>>.Ok(_service.GetHandlerCandidates(groupId));
-}
-
-/// <summary>
 /// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
 ///
-/// **刻意與 <see cref="IssueCasesController"/> 分開**，雖然路由前綴相同：那個類別掛的是
-/// 類別層 <c>Assign</c>，而 <c>[Permission]</c> 是 <c>AllowMultiple</c>——類別與方法上的
-/// 標註是「都要滿足」而不是「就近覆寫」。這支端點是**處理人回覆自己手上的案件**
-/// （user 角色有 Handle 沒有 Assign），寫在那個類別裡會被類別層的 Assign 擋掉。
-///
+/// 這支端點是**處理人回覆自己手上的案件**（user 角色有 Handle 沒有 Assign）。
 /// 對象限定「自己名下的進行中案件」由服務層強制，不靠端點能力區分。
 /// </summary>
 [ApiController]

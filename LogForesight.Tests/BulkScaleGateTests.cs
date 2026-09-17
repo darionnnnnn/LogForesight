@@ -1,7 +1,9 @@
-﻿using LogForesight.Web.Models;
+﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -56,6 +58,30 @@ public class BulkScaleGateTests : IDisposable
             currentUser,
             new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None)),
             new LogForesight.Web.Auth.UserCapabilityResolver(groups, _hosts), issueOwnerAdmin, displayNames);
+    }
+
+    private WorkOrderCommandService NewWorkOrderService(FakeUserGroupStore groups)
+    {
+        var visibility = new AlwaysVisibleService(_hosts);
+        var severity = new FakeSystemSettingsService();
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, severity);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var displayNames = new UserDisplayNameService(_settingsStore);
+        var workOrderStore = new FakeWorkOrderStore(_caseStore);
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
+        var coordinator = new WorkOrderCoordinator(workOrderStore, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
+        var query = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, workOrderStore, _settingsStore, severity,
+            visibility, aggregates, statusResolver, displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        var mail = new MailNotificationService(
+            _settingsStore, new FakeSmtpMailSender(), _hosts, _users, groups, new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), new FakeIssueOwnerStore());
+        return new WorkOrderCommandService(
+            query, aggregates, coordinator, workOrderStore, _caseStore, new FakeNoiseMarkStore(),
+            _hosts, _users, visibility, new UserCapabilityResolver(groups, _hosts),
+            FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
+            new RecordingAuditService(), displayNames, new FakeRuleStore(), mail);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -191,7 +217,7 @@ public class BulkScaleGateTests : IDisposable
     /// **不擋、只提示**——把工作知會給主管是合理用法。
     /// </summary>
     [Fact]
-    public void 批次指派_對方沒有處理能力時要回報但不擋()
+    public void 交辦單建立_對方沒有處理能力時要回報但不擋()
     {
         SeedHosts(2, days: 1);
         // manager 群組只有 ViewAll，沒有 Handle
@@ -203,17 +229,20 @@ public class BulkScaleGateTests : IDisposable
             GroupIds = new List<long> { managerGroup.GroupId }
         });
 
-        var service = NewService(groups);
-        var result = service.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
+        var result = NewWorkOrderService(groups).Create(new CreateWorkOrderRequest
         {
             Source = "DistributedCOM",
             EventId = 10016,
+            From = DateTime.Today.AddDays(-7),
+            To = DateTime.Today,
+            AssignMode = "single",
             HandlerId = manager.UserId,
+            ScopeKind = WorkOrderScopes.Hosts,
             HostIds = _hosts.GetAll().Select(h => h.HostId).ToList()
         });
 
         // 指派本身仍然成立（不擋）
-        Assert.Equal(2, result.Created);
+        Assert.Equal(2, result.Orders.Sum(o => o.NewCases));
         // 但要講：一個處理人只回報一次，帶上影響的主機數
         var warning = Assert.Single(result.AssigneeCannotHandle);
         Assert.Contains("王主管", warning.HandlerName);
@@ -222,7 +251,7 @@ public class BulkScaleGateTests : IDisposable
 
     /// <summary>有 Handle 的人不該被誤報——負責人隱含能力（§2b）也算數</summary>
     [Fact]
-    public void 批次指派_對方有處理能力時不回報()
+    public void 交辦單建立_對方有處理能力時不回報()
     {
         SeedHosts(1, days: 1);
         var groups = new FakeUserGroupStore();
@@ -233,28 +262,19 @@ public class BulkScaleGateTests : IDisposable
             GroupIds = new List<long> { userGroup.GroupId }
         });
 
-        var result = NewService(groups).BulkAssignIssueCase(new BulkAssignIssueCaseRequest
+        var result = NewWorkOrderService(groups).Create(new CreateWorkOrderRequest
         {
             Source = "DistributedCOM",
             EventId = 10016,
+            From = DateTime.Today.AddDays(-7),
+            To = DateTime.Today,
+            AssignMode = "single",
             HandlerId = handler.UserId,
+            ScopeKind = WorkOrderScopes.Hosts,
             HostIds = _hosts.GetAll().Select(h => h.HostId).ToList()
         });
 
-        Assert.Equal(1, result.Created);
+        Assert.Equal(1, result.Orders.Sum(o => o.NewCases));
         Assert.Empty(result.AssigneeCannotHandle);
-    }
-
-    [Fact]
-    public void 批次指派預覽_逐台清單有上限_但總數誠實回報()
-    {
-        var hostCount = IssueHandlingCommandService.PreviewHostLimit + 8;
-        SeedHosts(hostCount, days: 1);
-
-        var preview = _service.PreviewIssueCaseAssign("DistributedCOM", 10016, null, null);
-
-        Assert.Equal(IssueHandlingCommandService.PreviewHostLimit, preview.Hosts.Count);
-        Assert.True(preview.Truncated);
-        Assert.Equal(hostCount, preview.TotalHostCount);
     }
 }
