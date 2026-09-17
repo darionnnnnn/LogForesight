@@ -750,6 +750,7 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | B-1 | impl-low | 開工前停下回報兩次＋一輪實作通過（4683 綠／略過 6，總 4689，+43） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套；位元組核對換行；自做突變（`ActiveForHost` 不排除靜音）→「篩選_…不含IssueMute」轉紅，還原 cmp 相同 | **執行端開工前抓到的規格漏洞**：①問題檔案管理服務加相依會讓白名單外建構點編譯失敗（第一次用 `new 類別名(` 盤點漏掉兩處 target-typed `new(`，第二次補報）→放行共 7 個測試檔只改建構；②**`IssueOwnerStore.Upsert` 對已存在的問題檔案逐欄複製、沒有複製 `Mutes`——照原規格做，延長與解除靜音會顯示成功卻沒寫入**→放行補一行，並普查所有重建問題檔案後存回的呼叫點（只有 `IssueOwnerAdminService.Upsert` 需補，已補）。執行端突變時發現「當日無靜音即回傳」的判斷會擋掉原突變，改成真正生效的突變後 6 條轉紅；另自加兩個突變（Upsert 保留、統一標記提前檢查 Maintain）皆轉紅。Claude 親補：測試替身 `FakeIssueOwnerStore.Upsert` 也補複製 `Mutes`（替身 `Get` 回傳同一參考，漏欄缺陷仍靠三條真實 store 測試守住）。接受：`EnsureMaintain` 為 public（統一標記需在寫入前呼叫）；今天已在靜音中再設定＝重設迄日（可縮短，文件寫「重設迄日」）；靜音判定只比日期；AI 補寫以 backend 讀同一份問題檔案 blob；提示詞排除改三處（含前置掃描），全部靜音時仍不說「當日無事件」 |
 | B-2a | impl-low | 一輪通過（4713 綠／略過 6，總 4719，+30） | Claude 獨立重跑建置（`--no-incremental`，1 個既有警告）與全套（首跑即全綠）；52 檔位元組核對 BOM／CRLF；自做突變兩個：日狀態階梯拿掉「全部靜音→resolved」→3 條轉紅；記憶體逾期判定拿掉靜音過濾→SQL／記憶體同口徑測試轉紅；還原皆逐位元組相同 | **執行端推翻規格一處（接受）**：逐鍵 OR 平衡樹會被 EF 攤平成線性鏈，500 鍵時 SQLite 擲「Expression tree is too large (maximum depth 1000)」→改為 `event_id IN` 粗篩＋「大寫來源#事件」組合字串 IN（目前靜音中）＋依區間分組的單一 CASE（已到期區間），800 區間 SQLite 實跑、SQL Server 只驗翻譯。接受：`IssueRankingBuilder.Build`／`HandlingHistoryQueryService.GetTodo(ByRange)`／`HandlingProgressCalculator.ComputeProgress` 保留原簽章並自取一次 `Current()`（白名單外正式碼呼叫端不動），儀表板與報表走帶 exclusion 的版本以維持同一次請求一份；`IssueHandlingRollupQuery` 由呼叫端傳入不另加來源；`RecordDetailQueryService`／`DispatchCandidateSource` 不直接呼叫聚合方法故未改；報表整包快取鍵也加 token；`AggregateReportTrend` 與 `FirstSeenFor` 收參數但不作用（資料來自日紀錄／機房級事實）。**收尾留意**：①執行端首跑全套 1 條失敗未留名稱（第二次出現，D-1 後同型：重建後首跑），收尾要以完整輸出抓；②`NextUnhandledSequenceCache` 鍵無 token，換日最多殘留 30 秒；③SQL 與記憶體對「當日無對應問題列的處理狀態列」本來就不一致（既有，未碰）；④`IssueExclusion.Spans` 含全部歷史區間，久了粗篩清單變長——F-1 評估只帶與查詢期間重疊的區間；⑤排除條件在 SQL Server 大表上的效能未實測 |
 | B-2b | impl-low | 一輪實作＋停下回報一條（守門測試寫死方法數 17，白名單外） | Claude 親改守門計數 17→18；獨立重建（1 個既有警告）與全套：4744 綠／略過 6，總 4751（+32），唯一失敗為下述既有不穩定測試；白名單與 BOM／CRLF／NUL 以位元組核對；自做突變兩個：處理人清單預設改 include→3 條轉紅；詳情頁紀錄日區間取法改恆假→1 條轉紅；還原皆逐位元組相同 | **抓到不穩定測試的名稱**（D-1、B-2a 兩次未留名）：`SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`——總預算 1 秒、第 3 個 job 時 `Thread.Sleep(1200)`，全套負載下第 1 段本身就逼近 1 秒而未完成任何段，警告字樣不出現；單跑 3/3 綠，本分支未改該檔。**收尾修**：預算判定改注入時鐘，不靠真實等待。接受：`CountCurrentlyMutedIssues` SQL 端以組合鍵字串 DISTINCT 計數；`PausedMode` 值域檢查併入既有 `WorkOrderQueries.Validate`；詳情服務走測試門面時固定傳空問題檔案替身（門面測試看不到靜音欄）；儀表板與報表的靜音計數不套嚴重度／日風險母體（與 `IssueRankingBuilder.Build` 同口徑）；`ResumedFromMuteAt` 只看迄日早於今天的區間。執行端疑慮「交辦單 `source_key` 截斷 255 而組合鍵不截」經查不成立：所有問題表 `source_name` 皆 255 上限、靜音問題檔案的來源取自同一批資料 |
+| E-1a | agy（gemini-3.8-flash-high） | 執行中 | — | — |
 
 ### A-2 設計修正（讀完案件協調器全文後，2026-09-17）
 
@@ -840,6 +841,16 @@ A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契�
 | （未寫）負載看板是否排除暫停單 | 自動派工以負載挑人；暫停單到期即恢復 | **不排除**：負載不因靜音瞬間歸零再跳回；⓪ 已不為靜音問題建單 |
 | 「自靜音恢復」篩選，`ResumedFromMuteAt` 推導自解除時間或到期日 | 解除靜音會把區間 `To` 改成昨天，到期與提前解除在資料上同形 | 單一定義：問題不在目前靜音中，且最近一個已結束區間的 `To` 落在今天前 1～7 天 → `To+1`；篩選以鍵集合下推，分頁總數正確 |
 | 週報「7 天內到期的靜音區間仍在發生」 | 週報只拿到已包裝的抑制 store，合成項目已帶區間與原因 | 從同一次 `LoadAll()` 取 `IssueMute` 項目，不加新相依 |
+
+### E-1 設計修正（寫規格時，2026-09-17）
+
+| 規劃原寫法 | 實際事實 | 修正 |
+|---|---|---|
+| 內容含「詳情頁連結（站台基底路徑設定）」 | 系統設定沒有站台對外網址欄位；新增設定只為一條連結、且 IIS 子 Application 前綴也要另外處理 | 不加設定：內文最後一行「請至站台的『交辦單』頁檢視單號 N」（與既有上報通知同一寫法） |
+| 郵件服務組出完整交辦內容（問題白話說明、主機名） | `MailNotificationService` 沒有規則與案件 store 相依，建構點十餘處 | 呼叫端（交辦指令服務）組 `WorkOrderNotice`（含白話說明、前 20 台主機名、收件人 email），郵件服務只負責格式與寄送；建構子不變 |
+| 開關 `MailNotifyWorkOrders` | 既有郵件開關皆為選擇加入 | 預設 `false`；UI 在 C-4 |
+| 改派：新處理人 created、舊處理人 transferred | 操作者可能就是收件人（管理者派給自己） | 收件人是目前操作者時不寄 |
+| E-1 一段 | 本段起依使用者指示改委派 agy（Gemini），agy 規範一段 1～2 個機制 | 拆 **E-1a** 負責人路由排除抑制、**E-1b** 設定＋通知方法、**E-1c** 指令服務接線、**E-1d** 夜間摘要（趟末摘要經 `OrchestratorResult` 帶到排程端）、**E-1e** 週報靜音段 |
 
 **A-1 留給後續階段的事實**（寫 A-2 以後的規格時必須帶上）：
 - `EfWorkOrderStore.Save` 是整列覆寫＋`UpdatedAt` 併發檢查：協調層必須讀新值再改再存，不可拿舊物件只改部分欄位。
