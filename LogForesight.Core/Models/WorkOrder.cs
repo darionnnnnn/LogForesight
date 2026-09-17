@@ -121,6 +121,7 @@ public static class WorkOrderEventActions
     public const string Cancelled = "cancelled";
     public const string AdminClosed = "admin_closed";
     public const string Closed = "closed";
+    public const string Replied = "replied";
 }
 
 /// <summary>單張交辦單的成員案件計數</summary>
@@ -135,6 +136,119 @@ public sealed class WorkOrderMemberCounts
 
     /// <summary>進行中且狀態為 escalated</summary>
     public int Escalated { get; init; }
+
+    /// <summary>進行中且狀態為 in_progress</summary>
+    public int InProgress { get; init; }
+
+    /// <summary>進行中且狀態為 observing</summary>
+    public int Observing { get; init; }
+
+    /// <summary>進行中且狀態為 open</summary>
+    public int Open { get; init; }
+
+    /// <summary>進行中、期限早於今天、狀態為 in_progress 或 observing（<see cref="WorkOrderQueries.IsOverdue"/>）</summary>
+    public int Overdue { get; init; }
+
+    /// <summary>待背景逐日同步（day_sync_pending = 1，不分進行中與否）</summary>
+    public int DaySyncPending { get; init; }
+}
+
+/// <summary>交辦單清單查詢條件（IWorkOrderStore.QueryOrders）</summary>
+public sealed class WorkOrderQuery
+{
+    /// <summary>null＝不限處理人；空集合＝查無</summary>
+    public IReadOnlyCollection<long>? HandlerIds { get; init; }
+
+    /// <summary>null＝不限；不分大小寫</summary>
+    public string? Source { get; init; }
+
+    public int? EventId { get; init; }
+
+    /// <summary><see cref="WorkOrderQueries.OrderStatuses"/> 值域</summary>
+    public string Status { get; init; } = WorkOrderQueries.StatusActive;
+
+    /// <summary><see cref="WorkOrderQueries.Sorts"/> 值域</summary>
+    public string Sort { get; init; } = WorkOrderQueries.SortCreatedDesc;
+
+    /// <summary>1 起</summary>
+    public int Page { get; init; } = 1;
+
+    /// <summary>1～100</summary>
+    public int PageSize { get; init; } = 20;
+}
+
+/// <summary>交辦單清單查詢結果</summary>
+public sealed class WorkOrderPage
+{
+    public List<WorkOrder> Items { get; init; } = new();
+
+    public int Total { get; init; }
+}
+
+/// <summary>交辦單成員查詢條件（IIssueCaseStore.QueryMembers）</summary>
+public sealed class WorkOrderMemberQuery
+{
+    public long WorkOrderId { get; init; }
+
+    /// <summary><see cref="WorkOrderQueries.MemberStatuses"/> 值域</summary>
+    public string Status { get; init; } = WorkOrderQueries.StatusAll;
+
+    /// <summary>null＝不限；其餘以 host_name_key（大寫）比對</summary>
+    public IReadOnlyCollection<string>? HostNameKeys { get; init; }
+
+    /// <summary>1 起</summary>
+    public int Page { get; init; } = 1;
+
+    /// <summary>1～200</summary>
+    public int PageSize { get; init; } = 50;
+}
+
+/// <summary>交辦單查詢的值域與共用判準（EF 與替身共用同一份定義）</summary>
+public static class WorkOrderQueries
+{
+    public const string StatusActive = "active";
+    public const string StatusEscalated = "escalated";
+    public const string StatusOverdue = "overdue";
+    public const string StatusUnreplied = "unreplied";
+    public const string StatusClosed = "closed";
+    public const string StatusAll = "all";
+
+    public const string SortCreatedDesc = "created_desc";
+    public const string SortMembersDesc = "members_desc";
+    public const string SortUnrepliedOldest = "unreplied_oldest";
+
+    public static readonly string[] OrderStatuses =
+        { StatusActive, StatusEscalated, StatusOverdue, StatusUnreplied, StatusClosed, StatusAll };
+
+    public static readonly string[] MemberStatuses =
+        { StatusActive, StatusClosed, StatusEscalated, StatusOverdue, StatusAll };
+
+    public static readonly string[] Sorts = { SortCreatedDesc, SortMembersDesc, SortUnrepliedOldest };
+
+    public const int MaxOrderPageSize = 100;
+    public const int MaxMemberPageSize = 200;
+
+    /// <summary>成員逾期：進行中、期限非空且早於今天、狀態為 in_progress 或 observing</summary>
+    public static bool IsOverdue(IssueCase c, DateTime today) =>
+        c.ClosedAt == null && c.DueDate != null && c.DueDate.Value < today.Date
+        && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing);
+
+    /// <summary>清單條件檢查（store 入口共用；使用者輸入的友善訊息由 Web 層先擋）</summary>
+    public static void Validate(WorkOrderQuery q)
+    {
+        if (!OrderStatuses.Contains(q.Status)) throw new ArgumentException($"不支援的交辦單狀態篩選「{q.Status}」。", nameof(q));
+        if (!Sorts.Contains(q.Sort)) throw new ArgumentException($"不支援的交辦單排序「{q.Sort}」。", nameof(q));
+        if (q.Page < 1 || q.PageSize < 1 || q.PageSize > MaxOrderPageSize)
+            throw new ArgumentException("交辦單清單的頁碼或每頁筆數超出範圍。", nameof(q));
+    }
+
+    /// <summary>成員條件檢查（store 入口共用）</summary>
+    public static void Validate(WorkOrderMemberQuery q)
+    {
+        if (!MemberStatuses.Contains(q.Status)) throw new ArgumentException($"不支援的成員狀態篩選「{q.Status}」。", nameof(q));
+        if (q.Page < 1 || q.PageSize < 1 || q.PageSize > MaxMemberPageSize)
+            throw new ArgumentException("成員清單的頁碼或每頁筆數超出範圍。", nameof(q));
+    }
 }
 
 /// <summary>處理人負載看板的一列（只列有進行中交辦單的處理人）</summary>

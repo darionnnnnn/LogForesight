@@ -216,3 +216,139 @@ public class WorkOrderCloseResultDto
     public int ClosedCases { get; set; }
     public int DaySyncPendingCases { get; set; }
 }
+
+// ── 交辦單查詢 API（/api/work-orders GET）────────────────────────────────────
+
+/// <summary>清單請求（查詢字串綁定）</summary>
+public class WorkOrderListRequest
+{
+    public long? HandlerId { get; set; }
+    public string? Source { get; set; }
+    public int? EventId { get; set; }
+
+    /// <summary><c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c></summary>
+    public string Status { get; set; } = "active";
+
+    /// <summary>true＝只列處理人已停用的單</summary>
+    public bool HandlerInactive { get; set; }
+
+    /// <summary><c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c></summary>
+    public string Sort { get; set; } = "created_desc";
+
+    public int Page { get; set; } = 1;
+
+    /// <summary>預設 20，上限 100</summary>
+    public int PageSize { get; set; } = 20;
+}
+
+public class WorkOrderCountsDto
+{
+    public int Total { get; set; }
+    public int Active { get; set; }
+    public int Closed { get; set; }
+    public int InProgress { get; set; }
+    public int Observing { get; set; }
+    public int Open { get; set; }
+    public int Escalated { get; set; }
+    public int Overdue { get; set; }
+    public int DaySyncPending { get; set; }
+}
+
+public class WorkOrderRowDto
+{
+    public long WorkOrderId { get; set; }
+    public string? Source { get; set; }
+    public int? EventId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+    public string? PlainExplanation { get; set; }
+    public long HandlerId { get; set; }
+
+    /// <summary>顯示名稱(帳號)；使用者已刪除為「（已刪除）」</summary>
+    public string HandlerName { get; set; } = string.Empty;
+
+    public bool HandlerActive { get; set; }
+    public bool HandlerPaused { get; set; }
+    public string Origin { get; set; } = string.Empty;
+    public string ScopeKind { get; set; } = string.Empty;
+    public bool AutoAttach { get; set; }
+    public WorkOrderCountsDto Counts { get; set; } = new();
+    public DateTime? DueDate { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastAppendedAt { get; set; }
+    public DateTime? LastReplyAt { get; set; }
+
+    /// <summary>進行中且從未回覆時＝今天與建立日的日數差；其餘 null</summary>
+    public int? UnrepliedDays { get; set; }
+
+    public DateTime? ClosedAt { get; set; }
+    public string? ClosedReason { get; set; }
+}
+
+public class WorkOrderListDto
+{
+    public List<WorkOrderRowDto> Items { get; set; } = new();
+    public int Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+}
+
+public class WorkOrderScopeGroupDto
+{
+    public long GroupId { get; set; }
+
+    /// <summary>主機群組已刪除為「（已刪除）」</summary>
+    public string GroupName { get; set; } = string.Empty;
+}
+
+public class WorkOrderDetailDto : WorkOrderRowDto
+{
+    public string? Note { get; set; }
+    public string CreatedByAccount { get; set; } = string.Empty;
+    public List<WorkOrderScopeGroupDto> ScopeGroups { get; set; } = new();
+    public bool ViewerIsHandler { get; set; }
+    public bool ViewerCanAssign { get; set; }
+}
+
+public class WorkOrderMemberDto
+{
+    public string CaseId { get; set; } = string.Empty;
+
+    /// <summary>主機已不存在時 null</summary>
+    public long? HostId { get; set; }
+
+    public string HostName { get; set; } = string.Empty;
+    public string IssueKey { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public DateTime? DueDate { get; set; }
+    public bool Overdue { get; set; }
+    public DateTime FirstLinkedDate { get; set; }
+    public DateTime LastLinkedDate { get; set; }
+    public bool DaySyncPending { get; set; }
+    public bool Cancelled { get; set; }
+    public DateTime? ClosedAt { get; set; }
+}
+
+public class WorkOrderMemberPageDto
+{
+    public List<WorkOrderMemberDto> Items { get; set; } = new();
+    public int Total { get; set; }
+
+    /// <summary>因檢視者可見範圍而沒列出的成員數（沒過濾時為 0）</summary>
+    public int HiddenMemberCount { get; set; }
+
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+}
+
+public class WorkOrderEventDto
+{
+    public string Action { get; set; } = string.Empty;
+    public string ActionText { get; set; } = string.Empty;
+
+    /// <summary>有操作者時為顯示名稱(帳號)，系統動作為「系統」</summary>
+    public string ActorName { get; set; } = string.Empty;
+
+    public int MemberDelta { get; set; }
+    public string? Note { get; set; }
+    public DateTime CreatedAt { get; set; }
+}

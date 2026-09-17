@@ -37,6 +37,12 @@ public interface IWorkOrderStore
     /// <summary>一次查詢（GROUP BY work_order_id）取得多張單的成員計數；ids 為空回空字典</summary>
     Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds);
 
+    /// <summary>
+    /// 交辦單清單（篩選／排序／分頁）：狀態條件以 EXISTS 子查詢表達、不把成員拉回記憶體；
+    /// 查詢次數固定（總數一次、本頁一次），不隨單數或成員數增長。條件不合法擲 ArgumentException。
+    /// </summary>
+    WorkOrderPage QueryOrders(WorkOrderQuery q);
+
     /// <summary>一次查詢取得每位有進行中交辦單的處理人負載</summary>
     List<HandlerLoad> LoadBoard();
 

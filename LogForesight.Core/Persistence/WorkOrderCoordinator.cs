@@ -584,7 +584,7 @@ public class WorkOrderCoordinator
     /// <summary>
     /// 處理人回覆（2.8）：授權（只有處理人本人）由呼叫端負責，這裡只驗資料。
     /// caseIds 為 null 或空＝全部進行中成員；任一不屬於本單或已結案→整筆不做。
-    /// 回覆不寫交辦單事件（回覆彙總由逐日歷程提供）。
+    /// 成功後寫一筆 replied 事件（時間軸用；逐日明細仍由逐日歷程提供）。
     /// </summary>
     public WorkOrderReplyResult Reply(long workOrderId, IReadOnlyCollection<string>? caseIds, string status, string? note, DateTime? dueDate, WorkOrderActor actor)
     {
@@ -603,6 +603,11 @@ public class WorkOrderCoordinator
             o.LastReplyAt = actor.OccurredAt;
             return true;
         });
+        // 先寫回覆事件再推導結案：同一時間點的 closed 事件依事件序排在回覆之後
+        var replyNote = string.IsNullOrWhiteSpace(note)
+            ? $"{status}（{members.Count} 台）"
+            : $"{status}：{note}（{members.Count} 台）";
+        AppendEvent(workOrderId, WorkOrderEventActions.Replied, actor, 0, replyNote);
         var closed = RecomputeClosure(workOrderId, actor.OccurredAt);
 
         return new WorkOrderReplyResult { Cases = members.Count, WorkOrderClosed = closed, DaySync = daySync };

@@ -109,10 +109,63 @@ internal class FakeWorkOrderStore : IWorkOrderStore
                 Total = members.Count,
                 Active = active,
                 Closed = members.Count - active,
-                Escalated = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated)
+                Escalated = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
+                InProgress = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress),
+                Observing = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Observing),
+                Open = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Open),
+                Overdue = members.Count(c => WorkOrderQueries.IsOverdue(c, DateTime.Today)),
+                DaySyncPending = members.Count(c => c.DaySyncPending)
             };
         }
         return result;
+    }
+
+    /// <summary>同 EF 版：篩選、排序（同值依單號降冪）、分頁</summary>
+    public WorkOrderPage QueryOrders(WorkOrderQuery q)
+    {
+        WorkOrderQueries.Validate(q);
+        var today = DateTime.Today;
+
+        IEnumerable<WorkOrder> query = _orders;
+        if (q.HandlerIds != null) query = query.Where(o => q.HandlerIds.Contains(o.HandlerId));
+        if (q.Source != null) query = query.Where(o => o.SourceName != null && o.SourceName.ToUpperInvariant() == q.Source.ToUpperInvariant());
+        if (q.EventId != null) query = query.Where(o => o.EventId == q.EventId);
+
+        List<IssueCase> ActiveMembers(WorkOrder o) =>
+            _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Where(c => c.ClosedAt == null).ToList();
+
+        query = q.Status switch
+        {
+            WorkOrderQueries.StatusActive => query.Where(o => o.ClosedAt == null),
+            WorkOrderQueries.StatusEscalated => query.Where(o => o.ClosedAt == null
+                && ActiveMembers(o).Any(c => c.Status == IssueHandlingStatuses.Escalated)),
+            WorkOrderQueries.StatusOverdue => query.Where(o => o.ClosedAt == null
+                && ActiveMembers(o).Any(c => WorkOrderQueries.IsOverdue(c, today))),
+            WorkOrderQueries.StatusUnreplied => query.Where(o => o.ClosedAt == null && o.LastReplyAt == null),
+            WorkOrderQueries.StatusClosed => query.Where(o => o.ClosedAt != null),
+            _ => query
+        };
+
+        var filtered = query.ToList();
+        IEnumerable<WorkOrder> sorted = q.Sort switch
+        {
+            WorkOrderQueries.SortMembersDesc => filtered
+                .OrderByDescending(o => ActiveMembers(o).Count)
+                .ThenByDescending(o => o.WorkOrderId),
+            WorkOrderQueries.SortUnrepliedOldest => filtered
+                .OrderBy(o => o.LastReplyAt == null ? 0 : 1)
+                .ThenBy(o => o.CreatedAt)
+                .ThenByDescending(o => o.WorkOrderId),
+            _ => filtered
+                .OrderByDescending(o => o.CreatedAt)
+                .ThenByDescending(o => o.WorkOrderId)
+        };
+
+        return new WorkOrderPage
+        {
+            Items = sorted.Skip((q.Page - 1) * q.PageSize).Take(q.PageSize).Select(Clone).ToList(),
+            Total = filtered.Count
+        };
     }
 
     public List<HandlerLoad> LoadBoard() =>

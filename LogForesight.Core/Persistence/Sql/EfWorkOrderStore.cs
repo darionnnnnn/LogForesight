@@ -183,13 +183,20 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             Total = r.Total,
             Active = r.Active,
             Closed = r.Total - r.Active,
-            Escalated = r.Escalated
+            Escalated = r.Escalated,
+            InProgress = r.InProgress,
+            Observing = r.Observing,
+            Open = r.Open,
+            Overdue = r.Overdue,
+            DaySyncPending = r.DaySyncPending
         });
     }
 
     /// <summary>成員計數的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
-    internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids) =>
-        ctx.IssueCases.AsNoTracking()
+    internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids)
+    {
+        var today = DateTime.Today;
+        return ctx.IssueCases.AsNoTracking()
             .Where(c => c.WorkOrderId != null && ids.Contains(c.WorkOrderId.Value))
             .GroupBy(c => c.WorkOrderId!.Value)
             .Select(g => new MemberCountRow
@@ -197,8 +204,15 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                 WorkOrderId = g.Key,
                 Total = g.Count(),
                 Active = g.Count(c => c.ClosedAt == null),
-                Escalated = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated)
+                Escalated = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
+                InProgress = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress),
+                Observing = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Observing),
+                Open = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Open),
+                Overdue = g.Count(c => c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                                       && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing)),
+                DaySyncPending = g.Count(c => c.DaySyncPending)
             });
+    }
 
     internal sealed class MemberCountRow
     {
@@ -206,7 +220,83 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         public int Total { get; init; }
         public int Active { get; init; }
         public int Escalated { get; init; }
+        public int InProgress { get; init; }
+        public int Observing { get; init; }
+        public int Open { get; init; }
+        public int Overdue { get; init; }
+        public int DaySyncPending { get; init; }
     }
+
+    public WorkOrderPage QueryOrders(WorkOrderQuery q)
+    {
+        WorkOrderQueries.Validate(q);
+        using var ctx = _contextFactory();
+
+        var filtered = BuildOrderFilterQuery(ctx, q, DateTime.Today);
+        var total = filtered.Count();
+        var rows = ApplyOrderSort(ctx, filtered, q.Sort)
+            .Skip((q.Page - 1) * q.PageSize)
+            .Take(q.PageSize)
+            .ToList();
+
+        return new WorkOrderPage { Items = rows.Select(ToModel).ToList(), Total = total };
+    }
+
+    /// <summary>
+    /// 清單的篩選本體（抽出供 SQL 翻譯測試）：成員相關條件一律是關聯 EXISTS 子查詢，
+    /// 逾期判準與 <see cref="WorkOrderQueries.IsOverdue"/> 同義。
+    /// </summary>
+    internal static IQueryable<WorkOrderRow> BuildOrderFilterQuery(LfDbContext ctx, WorkOrderQuery q, DateTime today)
+    {
+        var query = ctx.WorkOrders.AsNoTracking();
+
+        if (q.HandlerIds != null)
+        {
+            var handlerIds = q.HandlerIds.Distinct().ToList();
+            query = query.Where(w => handlerIds.Contains(w.HandlerId));
+        }
+        if (q.Source != null)
+        {
+            var key = SourceKeyOf(q.Source);
+            query = query.Where(w => w.SourceKey == key);
+        }
+        if (q.EventId != null)
+        {
+            var eventId = q.EventId.Value;
+            query = query.Where(w => w.EventId == eventId);
+        }
+
+        return q.Status switch
+        {
+            WorkOrderQueries.StatusActive => query.Where(w => w.ClosedAt == null),
+            WorkOrderQueries.StatusEscalated => query.Where(w => w.ClosedAt == null
+                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null
+                                           && c.Status == IssueHandlingStatuses.Escalated)),
+            WorkOrderQueries.StatusOverdue => query.Where(w => w.ClosedAt == null
+                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null
+                                           && c.DueDate != null && c.DueDate < today
+                                           && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing))),
+            WorkOrderQueries.StatusUnreplied => query.Where(w => w.ClosedAt == null && w.LastReplyAt == null),
+            WorkOrderQueries.StatusClosed => query.Where(w => w.ClosedAt != null),
+            _ => query
+        };
+    }
+
+    /// <summary>排序：同值一律再依 work_order_id 降冪，分頁才穩定</summary>
+    private static IQueryable<WorkOrderRow> ApplyOrderSort(LfDbContext ctx, IQueryable<WorkOrderRow> query, string sort) => sort switch
+    {
+        WorkOrderQueries.SortMembersDesc => query
+            .OrderByDescending(w => ctx.IssueCases.Count(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null))
+            .ThenByDescending(w => w.WorkOrderId),
+        // 未回覆的單在前、依建立時間升冪；已回覆的排後（同樣依建立時間升冪）
+        WorkOrderQueries.SortUnrepliedOldest => query
+            .OrderBy(w => w.LastReplyAt == null ? 0 : 1)
+            .ThenBy(w => w.CreatedAt)
+            .ThenByDescending(w => w.WorkOrderId),
+        _ => query
+            .OrderByDescending(w => w.CreatedAt)
+            .ThenByDescending(w => w.WorkOrderId)
+    };
 
     public List<HandlerLoad> LoadBoard()
     {

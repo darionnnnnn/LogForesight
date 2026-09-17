@@ -255,6 +255,68 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         return ctx.IssueCases.Count(c => c.WorkOrderId == workOrderId);
     }
 
+    /// <summary>
+    /// 成員分頁查詢。不限主機時總數與本頁各一句 SQL；限定主機時主機名清單可能超過一批（500），
+    /// 分批 IN 無法在 SQL 端跨批分頁，所以各批只取（host_name_key, case_id）兩欄、在記憶體合併排序後，
+    /// 再以本頁 case_id（≤200）取整列——查詢次數＝批數＋1，隨主機名數而非成員數增長。
+    /// </summary>
+    public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q)
+    {
+        WorkOrderQueries.Validate(q);
+        var skip = (q.Page - 1) * q.PageSize;
+
+        using var ctx = _contextFactory();
+
+        if (q.HostNameKeys == null)
+        {
+            var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today);
+            var total = all.Count();
+            var rows = all.OrderBy(c => c.HostNameKey).ThenBy(c => c.CaseId).Skip(skip).Take(q.PageSize).ToList();
+            return (rows.Select(ToModel).ToList(), total);
+        }
+
+        var keys = q.HostNameKeys.Select(HostNameKey.Of).Distinct().ToList();
+        var matched = new List<(string HostNameKey, string CaseId)>();
+        foreach (var batch in keys.Chunk(HostBatchSize))
+        {
+            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today)
+                .Where(c => batch.Contains(c.HostNameKey))
+                .Select(c => new { c.HostNameKey, c.CaseId })
+                .ToList()
+                .Select(r => (r.HostNameKey, r.CaseId)));
+        }
+
+        var pageIds = matched
+            .OrderBy(m => m.HostNameKey, StringComparer.Ordinal)
+            .ThenBy(m => m.CaseId, StringComparer.Ordinal)
+            .Skip(skip)
+            .Take(q.PageSize)
+            .Select(m => m.CaseId)
+            .ToList();
+        if (pageIds.Count == 0) return (new List<IssueCase>(), matched.Count);
+
+        var byId = ctx.IssueCases.AsNoTracking()
+            .Where(c => pageIds.Contains(c.CaseId))
+            .ToList()
+            .ToDictionary(c => c.CaseId);
+        return (pageIds.Where(byId.ContainsKey).Select(id => ToModel(byId[id])).ToList(), matched.Count);
+    }
+
+    /// <summary>成員狀態篩選本體；逾期判準與 <see cref="WorkOrderQueries.IsOverdue"/> 同義</summary>
+    internal static IQueryable<IssueCaseRow> BuildMemberFilterQuery(LfDbContext ctx, long workOrderId, string status, DateTime today)
+    {
+        var query = ctx.IssueCases.AsNoTracking().Where(c => c.WorkOrderId == workOrderId);
+        return status switch
+        {
+            WorkOrderQueries.StatusActive => query.Where(c => c.ClosedAt == null),
+            WorkOrderQueries.StatusClosed => query.Where(c => c.ClosedAt != null),
+            WorkOrderQueries.StatusEscalated => query.Where(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
+            WorkOrderQueries.StatusOverdue => query.Where(c => c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing)),
+            _ => query
+        };
+    }
+
     public List<IssueCase> GetDaySyncPending(int take)
     {
         using var ctx = _contextFactory();

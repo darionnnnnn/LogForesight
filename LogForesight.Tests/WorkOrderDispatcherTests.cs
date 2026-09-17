@@ -595,6 +595,7 @@ public class WorkOrderDispatcherTests
         public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId) => _inner.GetOpenMany(hostNames, source, eventId);
         public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) => _inner.GetByWorkOrder(workOrderId, skip, take);
         public int CountByWorkOrder(long workOrderId) => _inner.CountByWorkOrder(workOrderId);
+        public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q) => _inner.QueryMembers(q);
         public List<IssueCase> GetDaySyncPending(int take) => _inner.GetDaySyncPending(take);
         public int CountDaySyncPending() => _inner.CountDaySyncPending();
         public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent) => _inner.ClearDaySyncPendingIfUnchanged(caseId, intent);

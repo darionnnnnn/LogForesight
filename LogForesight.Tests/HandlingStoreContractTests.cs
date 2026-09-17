@@ -619,4 +619,136 @@ public class HandlingStoreContractTests : IDisposable
         var group = Assert.Single(new UserGroupStore(_fx.Blob("user_groups")).GetAll());
         Assert.False(group.DispatchPool);
     }
+
+    // ── 案件 QueryMembers（task-47-C2a）──────────────────────────────────────
+
+    private sealed class ReaderCounter : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public int Readers { get; set; }
+
+        public override Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> ReaderExecuting(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result)
+        {
+            Readers++;
+            return base.ReaderExecuting(command, eventData, result);
+        }
+    }
+
+    private EfIssueCaseStore CountingCases(ReaderCounter counter)
+    {
+        using var probe = _fx.NewContext();
+        var connection = Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.GetDbConnection(probe.Database);
+        return new EfIssueCaseStore(() => new LfDbContext(
+            Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions
+                .UseSqlite(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<LfDbContext>(), connection)
+                .AddInterceptors(counter).Options));
+    }
+
+    /// <summary>單 7：SRV-00～SRV-(n-1)，每 5 台有一台已結案、每 7 台有一台 escalated、SRV-03 逾期；另有單 8 的一件</summary>
+    private static void SeedMembers(IIssueCaseStore store, int n)
+    {
+        for (var i = 0; i < n; i++)
+        {
+            var c = NewCase($"c{i:D4}", $"srv-{i:D2}", "System|Disk|153|2", 1);
+            c.WorkOrderId = 7;
+            if (i % 5 == 4) { c.Status = IssueHandlingStatuses.Resolved; c.ClosedAt = DateTime.Now; }
+            else if (i % 7 == 6) c.Status = IssueHandlingStatuses.Escalated;
+            if (i == 3) c.DueDate = DateTime.Today.AddDays(-1);
+            store.Save(c);
+        }
+        var other = NewCase("x", "SRV-01", "System|Disk|153|2", 1);
+        other.WorkOrderId = 8;
+        store.Save(other);
+    }
+
+    [Theory]
+    [InlineData("all", null, 1, 5)]
+    [InlineData("all", null, 3, 5)]
+    [InlineData("active", null, 1, 200)]
+    [InlineData("closed", null, 1, 200)]
+    [InlineData("escalated", null, 1, 200)]
+    [InlineData("overdue", null, 1, 200)]
+    [InlineData("all", "SRV-01,srv-02,Srv-10,SRV-99", 1, 2)]
+    [InlineData("all", "SRV-01,srv-02,Srv-10,SRV-99", 2, 2)]
+    [InlineData("active", "srv-04,srv-03,srv-06", 1, 200)]
+    public void 案件_QueryMembers_EF與替身同資料結果一致(string status, string? hosts, int page, int pageSize)
+    {
+        var ef = Cases();
+        SeedMembers(ef, 20);
+        var fake = new FakeIssueCaseStore();
+        SeedMembers(fake, 20);
+
+        var q = new WorkOrderMemberQuery
+        {
+            WorkOrderId = 7, Status = status, HostNameKeys = hosts?.Split(','), Page = page, PageSize = pageSize
+        };
+        var efResult = ef.QueryMembers(q);
+        var fakeResult = fake.QueryMembers(q);
+
+        Assert.Equal(fakeResult.Total, efResult.Total);
+        Assert.Equal(fakeResult.Items.Select(c => c.CaseId), efResult.Items.Select(c => c.CaseId));
+        Assert.NotEqual(0, efResult.Total);
+    }
+
+    [Fact]
+    public void 案件_QueryMembers_主機名過濾與分頁_排序依主機鍵與案件編號()
+    {
+        var store = Cases();
+        SeedMembers(store, 20);
+
+        var q = new WorkOrderMemberQuery { WorkOrderId = 7, Status = "all", HostNameKeys = new[] { "srv-10", "SRV-01", "srv-02", "nope" }, PageSize = 2 };
+        var p1 = store.QueryMembers(q);
+        var p2 = store.QueryMembers(new WorkOrderMemberQuery { WorkOrderId = 7, Status = "all", HostNameKeys = q.HostNameKeys, Page = 2, PageSize = 2 });
+
+        Assert.Equal(3, p1.Total);
+        Assert.Equal(new[] { "c0001", "c0002" }, p1.Items.Select(c => c.CaseId));
+        Assert.Equal(new[] { "c0010" }, p2.Items.Select(c => c.CaseId));
+        Assert.Equal(new[] { "c0003" }, store.QueryMembers(new WorkOrderMemberQuery { WorkOrderId = 7, Status = "overdue" }).Items.Select(c => c.CaseId));
+        Assert.Throws<ArgumentException>(() => store.QueryMembers(new WorkOrderMemberQuery { WorkOrderId = 7, PageSize = 201 }));
+    }
+
+    [Fact]
+    public void 案件_QueryMembers_超過一批主機名仍正確分頁()
+    {
+        var store = Cases();
+        SeedMembers(store, 30);
+        var keys = Enumerable.Range(0, 1200).Select(i => $"SRV-{i:D2}").Reverse().ToList();
+
+        var result = store.QueryMembers(new WorkOrderMemberQuery { WorkOrderId = 7, Status = "all", HostNameKeys = keys, Page = 2, PageSize = 10 });
+
+        Assert.Equal(30, result.Total);
+        Assert.Equal(Enumerable.Range(10, 10).Select(i => $"c{i:D4}"), result.Items.Select(c => c.CaseId));
+    }
+
+    [Fact]
+    public void 案件_QueryMembers_命令數不隨成員數增長()
+    {
+        var counter = new ReaderCounter();
+        var store = CountingCases(counter);
+        SeedMembers(store, 10);
+
+        int Run(IReadOnlyCollection<string>? keys)
+        {
+            counter.Readers = 0;
+            store.QueryMembers(new WorkOrderMemberQuery { WorkOrderId = 7, Status = "active", HostNameKeys = keys, PageSize = 200 });
+            return counter.Readers;
+        }
+
+        var hostKeys = Enumerable.Range(0, 400).Select(i => $"SRV-{i:D2}").ToList();
+        var smallAll = Run(null);
+        var smallHosts = Run(hostKeys);
+
+        for (var i = 10; i < 300; i++)
+        {
+            var c = NewCase($"c{i:D4}", $"srv-{i:D2}", "System|Disk|153|2", 1);
+            c.WorkOrderId = 7;
+            store.Save(c);
+        }
+
+        Assert.Equal(2, smallAll);
+        Assert.Equal(2, smallHosts);
+        Assert.Equal(smallAll, Run(null));
+        Assert.Equal(smallHosts, Run(hostKeys));
+    }
 }

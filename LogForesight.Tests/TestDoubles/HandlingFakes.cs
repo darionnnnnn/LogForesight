@@ -400,6 +400,30 @@ internal class FakeIssueCaseStore : IIssueCaseStore
 
     public int CountByWorkOrder(long workOrderId) => _items.Count(c => c.WorkOrderId == workOrderId);
 
+    /// <summary>同 EF 版：狀態與主機名（大寫鍵）篩選，依主機名大寫、CaseId 排序後分頁</summary>
+    public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q)
+    {
+        WorkOrderQueries.Validate(q);
+        var today = DateTime.Today;
+        var keys = q.HostNameKeys?.Select(HostNameKey.Of).ToHashSet(StringComparer.Ordinal);
+
+        var matched = _items.Where(c => c.WorkOrderId == q.WorkOrderId)
+            .Where(c => keys == null || keys.Contains(HostNameKey.Of(c.HostName)))
+            .Where(c => q.Status switch
+            {
+                WorkOrderQueries.StatusActive => c.ClosedAt == null,
+                WorkOrderQueries.StatusClosed => c.ClosedAt != null,
+                WorkOrderQueries.StatusEscalated => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated,
+                WorkOrderQueries.StatusOverdue => WorkOrderQueries.IsOverdue(c, today),
+                _ => true
+            })
+            .OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .ToList();
+
+        return (matched.Skip((q.Page - 1) * q.PageSize).Take(q.PageSize).ToList(), matched.Count);
+    }
+
     /// <summary>同 EF 版：旗標為真者依 UpdatedAt、CaseId 升冪取前 take 筆</summary>
     public List<IssueCase> GetDaySyncPending(int take) =>
         _items.Where(c => c.DaySyncPending)

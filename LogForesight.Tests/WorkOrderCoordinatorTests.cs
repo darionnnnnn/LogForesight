@@ -743,4 +743,28 @@ public class WorkOrderCoordinatorTests
         Assert.Throws<DbUpdateConcurrencyException>(() => w.Coordinator.Reassign(id, Bob, Actor()));
         Assert.Equal(Alice, w.Orders.Get(id)!.HandlerId);
     }
+
+    // ── Reply 事件（task-47-C2a）──────────────────────────────────────────────
+
+    [Fact]
+    public void Reply_寫replied事件_內容含狀態說明台數_排在結案事件之前()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1");
+
+        var t1 = T0.AddHours(1);
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "換硬碟中", null, Actor(t1));
+        var t2 = T0.AddHours(2);
+        w.Coordinator.Reply(id, null, IssueHandlingStatuses.Resolved, "  ", null, Actor(t2));
+
+        var replied = w.Orders.ListEvents(id).Where(e => e.Action == WorkOrderEventActions.Replied).ToList();
+        Assert.Equal(2, replied.Count);
+        Assert.Equal("in_progress：換硬碟中（1 台）", replied[0].Note);
+        Assert.Equal(9, replied[0].ActorId);
+        Assert.Equal("boss", replied[0].ActorAccount);
+        Assert.Equal(0, replied[0].MemberDelta);
+        Assert.Equal(t1, replied[0].CreatedAt);
+        Assert.Equal("resolved（3 台）", replied[1].Note);
+        Assert.Equal(new[] { WorkOrderEventActions.Replied, WorkOrderEventActions.Closed }, w.Events(id).TakeLast(2));
+    }
 }

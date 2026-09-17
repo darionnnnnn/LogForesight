@@ -396,4 +396,219 @@ public class WorkOrderStoreTests : IDisposable
 
         Assert.Equal(new[] { a }, store.GetAllActive().Select(o => o.WorkOrderId));
     }
+
+    // ── QueryOrders／擴充計數（task-47-C2a）：EF 與替身同資料雙跑 ───────────────
+
+    private static readonly DateTime Base = new(2026, 9, 1, 8, 0, 0);
+
+    /// <summary>
+    /// 同一份資料寫進任一組 store：
+    /// W1 escalated 成員、W2 逾期成員、W3 已回覆（無特殊成員）、W4 已結案、W5 成員最多且與 W6 同建立時間、
+    /// W6 未回覆、W7 期限今天（不算逾期）、W8 escalated 但已結案成員（不算）。
+    /// </summary>
+    private static void SeedOrders(IWorkOrderStore orders, IIssueCaseStore cases, int eventBase)
+    {
+        long Add(string label, long handler, string source, DateTime createdAt, DateTime? replied = null, DateTime? closed = null)
+        {
+            var o = new WorkOrder
+            {
+                SourceName = source, EventId = eventBase + int.Parse(label[1..]), IssueLabel = label, HandlerId = handler,
+                Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "admin",
+                CreatedAt = createdAt, LastReplyAt = replied, ClosedAt = closed
+            };
+            return orders.Insert(o);
+        }
+
+        void Member(long orderId, string caseId, string host, string status, DateTime? due = null, DateTime? closed = null)
+        {
+            cases.Save(new IssueCase
+            {
+                CaseId = caseId, HostName = host, IssueKey = "System|Disk|153|2", IssueLabel = "Disk 153",
+                Status = status, HandlerId = 1, DueDate = due, FirstLinkedDate = Base, LastLinkedDate = Base,
+                CreatedAt = Base, CreatedByAccount = "admin", UpdatedAt = Base, ClosedAt = closed, WorkOrderId = orderId
+            });
+        }
+
+        var today = DateTime.Today;
+        var w1 = Add("W1", 1, "Disk", Base.AddHours(1));
+        Member(w1, "w1a", "H1", IssueHandlingStatuses.Escalated);
+        var w2 = Add("W2", 1, "disk", Base.AddHours(2));
+        Member(w2, "w2a", "H2", IssueHandlingStatuses.InProgress, due: today.AddDays(-1));
+        var w3 = Add("W3", 2, "Disk", Base.AddHours(3), replied: Base.AddHours(4));
+        Member(w3, "w3a", "H3", IssueHandlingStatuses.Observing, due: today.AddDays(3));
+        var w4 = Add("W4", 2, "Disk", Base.AddHours(4), closed: Base.AddDays(1));
+        Member(w4, "w4a", "H4", IssueHandlingStatuses.Resolved, closed: Base.AddDays(1));
+        var w5 = Add("W5", 3, "Other", Base.AddHours(5));
+        Member(w5, "w5a", "H5", IssueHandlingStatuses.Open);
+        Member(w5, "w5b", "H6", IssueHandlingStatuses.Open);
+        Member(w5, "w5c", "H7", IssueHandlingStatuses.Open);
+        Add("W6", 3, "Disk", Base.AddHours(5));
+        var w7 = Add("W7", 1, "Disk", Base.AddHours(6), replied: Base.AddHours(7));
+        Member(w7, "w7a", "H8", IssueHandlingStatuses.InProgress, due: today);
+        var w8 = Add("W8", 1, "Disk", Base.AddHours(7));
+        Member(w8, "w8a", "H9", IssueHandlingStatuses.Escalated, closed: Base.AddDays(1));
+        Member(w8, "w8b", "H10", IssueHandlingStatuses.InProgress, due: today.AddDays(-2), closed: Base.AddDays(1));
+    }
+
+    private static List<string> Labels(IWorkOrderStore store, WorkOrderQuery q) =>
+        store.QueryOrders(q).Items.Select(o => o.IssueLabel).ToList();
+
+    public static IEnumerable<object[]> OrderQueries() => new[]
+    {
+        new object[] { "active", "created_desc", null!, null!, new[] { "W8", "W7", "W6", "W5", "W3", "W2", "W1" } },
+        new object[] { "escalated", "created_desc", null!, null!, new[] { "W1" } },
+        new object[] { "overdue", "created_desc", null!, null!, new[] { "W2" } },
+        new object[] { "unreplied", "created_desc", null!, null!, new[] { "W8", "W6", "W5", "W2", "W1" } },
+        new object[] { "closed", "created_desc", null!, null!, new[] { "W4" } },
+        new object[] { "all", "created_desc", null!, null!, new[] { "W8", "W7", "W6", "W5", "W4", "W3", "W2", "W1" } },
+        new object[] { "active", "members_desc", null!, null!, new[] { "W5", "W7", "W3", "W2", "W1", "W8", "W6" } },
+        new object[] { "all", "unreplied_oldest", null!, null!, new[] { "W1", "W2", "W4", "W6", "W5", "W8", "W3", "W7" } },
+        new object[] { "all", "created_desc", "DISK", null!, new[] { "W8", "W7", "W6", "W4", "W3", "W2", "W1" } },
+        new object[] { "all", "created_desc", null!, new long[] { 2, 3 }, new[] { "W6", "W5", "W4", "W3" } },
+        new object[] { "all", "created_desc", null!, Array.Empty<long>(), Array.Empty<string>() },
+    };
+
+    [Theory]
+    [MemberData(nameof(OrderQueries))]
+    public void QueryOrders_EF與替身同資料結果一致(string status, string sort, string? source, long[]? handlers, string[] expected)
+    {
+        var efCases = new EfIssueCaseStore(_fx.NewContext);
+        var ef = Store();
+        SeedOrders(ef, efCases, 0);
+        var fakeCases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(fakeCases);
+        SeedOrders(fake, fakeCases, 0);
+
+        var q = new WorkOrderQuery { Status = status, Sort = sort, Source = source, HandlerIds = handlers, Page = 1, PageSize = 100 };
+
+        Assert.Equal(expected, Labels(ef, q));
+        Assert.Equal(expected, Labels(fake, q));
+        Assert.Equal(expected.Length, ef.QueryOrders(q).Total);
+        Assert.Equal(expected.Length, fake.QueryOrders(q).Total);
+    }
+
+    [Fact]
+    public void QueryOrders_分頁穩定_同建立時間依單號降冪_Total為全部筆數()
+    {
+        var efCases = new EfIssueCaseStore(_fx.NewContext);
+        var ef = Store();
+        SeedOrders(ef, efCases, 0);
+        var fakeCases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(fakeCases);
+        SeedOrders(fake, fakeCases, 0);
+
+        foreach (var store in new IWorkOrderStore[] { ef, fake })
+        {
+            var pages = Enumerable.Range(1, 3)
+                .Select(p => store.QueryOrders(new WorkOrderQuery { Status = "all", Page = p, PageSize = 3 }))
+                .ToList();
+            Assert.All(pages, p => Assert.Equal(8, p.Total));
+            Assert.Equal(new[] { "W8", "W7", "W6", "W5", "W4", "W3", "W2", "W1" },
+                pages.SelectMany(p => p.Items).Select(o => o.IssueLabel));
+        }
+    }
+
+    [Fact]
+    public void QueryOrders_不合法條件擲ArgumentException()
+    {
+        var store = Store();
+        Assert.Throws<ArgumentException>(() => store.QueryOrders(new WorkOrderQuery { Status = "bogus" }));
+        Assert.Throws<ArgumentException>(() => store.QueryOrders(new WorkOrderQuery { Sort = "bogus" }));
+        Assert.Throws<ArgumentException>(() => store.QueryOrders(new WorkOrderQuery { PageSize = 101 }));
+    }
+
+    [Fact]
+    public void QueryOrders_命令數固定_不隨單數與成員數增長()
+    {
+        var store = CountingStore();
+        var cases = new EfIssueCaseStore(_fx.NewContext);
+        SeedOrders(store, cases, 0);
+
+        _counter.Readers = 0;
+        store.QueryOrders(new WorkOrderQuery { Status = "overdue", Sort = "members_desc", PageSize = 100 });
+        var small = _counter.Readers;
+
+        SeedOrders(store, new EfIssueCaseStoreWithSuffix(_fx.NewContext, "x"), 100);
+        SeedOrders(store, new EfIssueCaseStoreWithSuffix(_fx.NewContext, "y"), 200);
+        _counter.Readers = 0;
+        store.QueryOrders(new WorkOrderQuery { Status = "overdue", Sort = "members_desc", PageSize = 100 });
+
+        Assert.Equal(2, small);
+        Assert.Equal(small, _counter.Readers);
+    }
+
+    /// <summary>重複灌資料時讓案件編號不撞：委派 EF 版，只改寫 CaseId</summary>
+    private sealed class EfIssueCaseStoreWithSuffix : IIssueCaseStore
+    {
+        private readonly EfIssueCaseStore _inner;
+        private readonly string _suffix;
+        public EfIssueCaseStoreWithSuffix(Func<LfDbContext> factory, string suffix) { _inner = new EfIssueCaseStore(factory); _suffix = suffix; }
+        public void Save(IssueCase issueCase) { issueCase.CaseId += _suffix; _inner.Save(issueCase); }
+        public IssueCase? GetOpen(string hostName, string issueKey) => throw new NotSupportedException();
+        public List<IssueCase> GetOpenForHost(string hostName) => throw new NotSupportedException();
+        public List<IssueCase> GetMany(IEnumerable<string> hostNames) => throw new NotSupportedException();
+        public List<IssueCase> GetOpenByHandler(long userId) => throw new NotSupportedException();
+        public List<IssueCase> GetByHandler(long userId) => throw new NotSupportedException();
+        public List<IssueCase> GetResolvedSince(DateTime since) => throw new NotSupportedException();
+        public IssueCase? Get(string caseId) => throw new NotSupportedException();
+        public void SaveMany(IEnumerable<IssueCase> cases) => throw new NotSupportedException();
+        public List<IssueCase> GetOpenByIssue(string source, int eventId) => throw new NotSupportedException();
+        public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId) => throw new NotSupportedException();
+        public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) => throw new NotSupportedException();
+        public int CountByWorkOrder(long workOrderId) => throw new NotSupportedException();
+        public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q) => throw new NotSupportedException();
+        public List<IssueCase> GetDaySyncPending(int take) => throw new NotSupportedException();
+        public int CountDaySyncPending() => throw new NotSupportedException();
+        public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void CountMembers擴充欄位_EF與替身一致_單一查詢()
+    {
+        var today = DateTime.Today;
+        var efCases = new EfIssueCaseStore(_fx.NewContext);
+        var ef = CountingStore();
+        var fakeCases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(fakeCases);
+
+        foreach (var (orders, cases) in new (IWorkOrderStore, IIssueCaseStore)[] { (ef, efCases), (fake, fakeCases) })
+        {
+            var id = orders.Insert(NewOrder(1));
+            void M(string caseId, string status, DateTime? due = null, DateTime? closed = null, bool pending = false) =>
+                cases.Save(new IssueCase
+                {
+                    CaseId = caseId, HostName = caseId, IssueKey = "System|Disk|153|2", IssueLabel = "Disk 153",
+                    Status = status, HandlerId = 1, DueDate = due, FirstLinkedDate = Base, LastLinkedDate = Base,
+                    CreatedAt = Base, CreatedByAccount = "admin", UpdatedAt = Base, ClosedAt = closed,
+                    WorkOrderId = id, DaySyncPending = pending
+                });
+            M("a", IssueHandlingStatuses.InProgress, due: today.AddDays(-1));   // 逾期
+            M("b", IssueHandlingStatuses.InProgress, pending: true);
+            M("c", IssueHandlingStatuses.Observing, due: today);                // 期限今天不算逾期
+            M("d", IssueHandlingStatuses.Escalated, due: today.AddDays(-5));    // escalated 不算逾期
+            M("e", IssueHandlingStatuses.Open);
+            M("f", IssueHandlingStatuses.Resolved, due: today.AddDays(-9), closed: Base);
+
+            _counter.Readers = 0;
+            var c = orders.CountMembers(new[] { id })[id];
+
+            Assert.Equal(6, c.Total);
+            Assert.Equal(5, c.Active);
+            Assert.Equal(1, c.Closed);
+            Assert.Equal(2, c.InProgress);
+            Assert.Equal(1, c.Observing);
+            Assert.Equal(1, c.Open);
+            Assert.Equal(1, c.Escalated);
+            Assert.Equal(1, c.Overdue);
+            Assert.Equal(1, c.DaySyncPending);
+        }
+        Assert.Equal(1, CountOnce(ef));
+    }
+
+    private int CountOnce(IWorkOrderStore store)
+    {
+        _counter.Readers = 0;
+        store.CountMembers(new long[] { 1, 2, 3 });
+        return _counter.Readers;
+    }
 }

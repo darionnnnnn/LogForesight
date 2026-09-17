@@ -341,6 +341,8 @@ public static class ServiceCollectionExtensions
 
         // 交辦單命令 API：依篩選建單／追加／改派／拆單／取消／代為結案（經 RecordListQueryService 共用範圍解析）
         services.AddScoped<WorkOrderCommandService>();
+        // 交辦單查詢 API：清單／詳情／成員／時間軸（逐單授權在服務內）
+        services.AddScoped<WorkOrderQueryService>();
         services.AddScoped<HandlingHistoryQueryService>();
 
         services.AddScoped<PermissionChangeService>();

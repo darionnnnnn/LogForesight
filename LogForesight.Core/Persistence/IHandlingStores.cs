@@ -117,6 +117,12 @@ public interface IIssueCaseStore
 
     int CountByWorkOrder(long workOrderId);
 
+    /// <summary>
+    /// 某交辦單的成員（狀態與主機名篩選、分頁），依 host_name_key、case_id 排序。
+    /// 查詢次數不隨成員數增長；主機名清單依既有 500 一批分批比對。條件不合法擲 ArgumentException。
+    /// </summary>
+    (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q);
+
     /// <summary>待背景逐日同步的案件（day_sync_pending = 1），依 updated_at、case_id 升冪取前 take 筆</summary>
     List<IssueCase> GetDaySyncPending(int take);
 
