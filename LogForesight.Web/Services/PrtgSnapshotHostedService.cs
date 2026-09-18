@@ -102,6 +102,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// </summary>
     private readonly HashSet<long> _confirmedEmptyDevices = new();
 
+    /// <summary>
+    /// 守門覆寫清單中、向 PRTG 查所在裝置時回傳裡找不到的感測器 objid（只在記憶體）：不再每輪重查。
+    /// 清空時機與 <see cref="_confirmedEmptyDevices"/> 相同（結構同步寫過鏡像後）。
+    /// </summary>
+    private readonly HashSet<long> _overrideObjidsNotFound = new();
+
     /// <summary>上次看到的感測器鏡像 synced_at 最大值（已吸收補抓自身寫入的部分）。</summary>
     private DateTime? _seenStructureSyncedAt;
 
@@ -521,6 +527,13 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// <summary>
     /// 範圍補抓：找出取數範圍 S 內「鏡像一顆感測器都沒有」且未確認為空的裝置，逐台補抓感測器。
     /// 整段失敗只出聲，不進快照的退避計數、不影響本輪快照。
+    /// <para>
+    /// 另處理資源守門覆寫清單中「鏡像找不到」的感測器：鏡像只含範圍內裝置，而範圍的守門項只認得
+    /// 鏡像裡有的覆寫 objid——所在裝置不在主機主檔、位址又比對不到時兩邊互等，守門永遠讀不到分類而靜默失效。
+    /// 這裡先向 PRTG 查這些感測器的 parentid（所在裝置），把裝置併入待補清單（不要求在範圍內、
+    /// 即使鏡像已有該裝置其他感測器也補）。補抓後感測器進了鏡像，下一次 <see cref="PrtgScopeDevices.Compute"/>
+    /// 的守門項就會把該裝置納入範圍，之後由結構同步持續刷新、不會被「未刷新即刪除」清掉。
+    /// </para>
     /// </summary>
     private async Task BackfillScopeSensorsAsync(SystemSettings settings, CancellationToken ct)
     {
@@ -534,6 +547,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             if (latestSynced.HasValue && (!_seenStructureSyncedAt.HasValue || latestSynced.Value > _seenStructureSyncedAt.Value))
             {
                 _confirmedEmptyDevices.Clear();
+                _overrideObjidsNotFound.Clear();
             }
             _seenStructureSyncedAt = latestSynced;
 
@@ -541,17 +555,36 @@ public class PrtgSnapshotHostedService : BackgroundService
                 store, _hosts, new PrtgMirrorGuardSource(store), settings, _sentinels.GetAll(),
                 SilentConsole, _addressResolver);
 
-            var devicesWithSensors = store.GetAllSensors().Select(s => s.DeviceObjid).ToHashSet();
-            var pending = scope.DeviceObjids
+            var mirrorSensors = store.GetAllSensors();
+            var devicesWithSensors = mirrorSensors.Select(s => s.DeviceObjid).ToHashSet();
+            var scopePending = scope.DeviceObjids
                 .Where(id => !devicesWithSensors.Contains(id) && !_confirmedEmptyDevices.Contains(id))
-                .OrderBy(id => id)
-                .Take(MaxBackfillDevicesPerTick)
                 .ToList();
-            if (pending.Count == 0) return;
+
+            // 覆寫清單中鏡像沒有、也還沒確認查不到的感測器
+            var missingOverride = new List<long>();
+            if (settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0)
+            {
+                var mirrorObjids = mirrorSensors.Select(s => s.Objid).ToHashSet();
+                missingOverride = PrtgResourceGuardTargets.ParseOverrideObjids(settings.PrtgResourceGuardSensorObjids)
+                    .Where(id => !mirrorObjids.Contains(id) && !_overrideObjidsNotFound.Contains(id))
+                    .OrderBy(id => id)
+                    .ToList();
+            }
+            if (scopePending.Count == 0 && missingOverride.Count == 0) return;
 
             PrtgSensorBackfillResult result;
+            List<long> pending;
             using (var client = CreateClient(settings))
             {
+                var overrideDevices = await LookupOverrideDevicesAsync(client, missingOverride, ct);
+                // 守門覆寫清單的裝置排在前面：它們進不了鏡像時守門會靜默失效，不能被大批新進範圍的裝置擠到後面幾輪
+                pending = overrideDevices.Distinct().OrderBy(id => id)
+                    .Concat(scopePending.Where(id => !overrideDevices.Contains(id)).OrderBy(id => id))
+                    .Take(MaxBackfillDevicesPerTick)
+                    .ToList();
+                if (pending.Count == 0) return;
+
                 var fetch = new PrtgFetchService(client, store, SilentConsole,
                     PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
                 // 補抓寫入的列 SyncedAt 是當下時間（沿用 mapper），晚於任何已開始的結構同步起點，
@@ -578,6 +611,71 @@ public class PrtgSnapshotHostedService : BackgroundService
             // WriteOutput 的 Warn 會同時寫 Log.Warn
             WriteOutput($"[PRTG快照] 新進取數範圍裝置的感測器補抓失敗（不影響本輪快照）：{ex.Message}", LogLevel.Warn);
         }
+    }
+
+    /// <summary>
+    /// 向 PRTG 查覆寫清單感測器的所在裝置（parentid），每 <see cref="PrtgResourceGuardProbe.MaxBatchSize"/> 顆一批。
+    /// 回傳中找不到的 objid 記進「已查過找不到」。請求失敗只寫一行警告並回傳已查到的部分：
+    /// 不讓這段拖垮同一輪的範圍補抓（失敗的批次不記成找不到，下一輪再查）。
+    /// </summary>
+    private async Task<List<long>> LookupOverrideDevicesAsync(PrtgClient client, IReadOnlyList<long> objids, CancellationToken ct)
+    {
+        var devices = new List<long>();
+        if (objids.Count == 0) return devices;
+
+        try
+        {
+            for (var i = 0; i < objids.Count; i += PrtgResourceGuardProbe.MaxBatchSize)
+            {
+                ct.ThrowIfCancellationRequested();
+                var batch = objids.Skip(i).Take(PrtgResourceGuardProbe.MaxBatchSize).ToList();
+                var json = await client.GetJsonAsync(
+                    "api/table.json?content=sensors&columns=objid,parentid"
+                    + PrtgResourceGuardProbe.BuildObjidFilter(batch), ct);
+
+                var found = new HashSet<long>();
+                using (var doc = JsonDocument.Parse(json))
+                {
+                    var root = doc.RootElement;
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("sensors", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in arr.EnumerateArray())
+                        {
+                            var objid = ReadLong(el, "objid");
+                            var parent = ReadLong(el, "parentid");
+                            // 只認本批要求的 objid：PRTG 忽略 filter 時會回整站，不能把無關裝置拉進來
+                            if (!objid.HasValue || !parent.HasValue || !batch.Contains(objid.Value)) continue;
+                            found.Add(objid.Value);
+                            devices.Add(parent.Value);
+                        }
+                    }
+                }
+
+                foreach (var id in batch)
+                {
+                    if (!found.Contains(id)) _overrideObjidsNotFound.Add(id);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            WriteOutput($"[PRTG快照] 查詢守門覆寫清單感測器的所在裝置失敗（不影響本輪快照）：{ex.Message}", LogLevel.Warn);
+        }
+
+        return devices;
+    }
+
+    private static long? ReadLong(JsonElement el, string name)
+    {
+        if (!el.TryGetProperty(name, out var prop)) return null;
+        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var num)) return num;
+        if (prop.ValueKind == JsonValueKind.String && long.TryParse(prop.GetString(), out var str)) return str;
+        return null;
     }
 
     /// <summary>取數範圍與補抓過程的輸出在這條路徑上不需要（守門偵測警告不該洗進快照執行輸出）。</summary>

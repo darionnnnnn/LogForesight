@@ -163,12 +163,7 @@ public static class PrtgResourceGuardTargets
 
         if (settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0)
         {
-            var overrideIds = new HashSet<long>();
-            foreach (var item in settings.PrtgResourceGuardSensorObjids)
-            {
-                if (!string.IsNullOrWhiteSpace(item) && long.TryParse(item.Trim(), out var id))
-                    overrideIds.Add(id);
-            }
+            var overrideIds = ParseOverrideObjids(settings.PrtgResourceGuardSensorObjids);
             foreach (var sensor in allSensors)
             {
                 if (overrideIds.Contains(sensor.Objid))
@@ -177,6 +172,22 @@ public static class PrtgResourceGuardTargets
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 覆寫清單解析（不出聲版）：逐項 Trim 後 long.TryParse，空白與非數字略過。
+    /// 取數範圍的守門項與快照服務的範圍補抓共用這一份，兩邊對「清單裡有哪些 objid」的認定才不會分岔。
+    /// public 而非 internal：呼叫端在 Web 組件，Core 只對測試組件開 InternalsVisibleTo。
+    /// </summary>
+    public static HashSet<long> ParseOverrideObjids(IEnumerable<string> items)
+    {
+        var ids = new HashSet<long>();
+        foreach (var item in items)
+        {
+            if (!string.IsNullOrWhiteSpace(item) && long.TryParse(item.Trim(), out var id))
+                ids.Add(id);
+        }
+        return ids;
     }
 
     /// <summary>

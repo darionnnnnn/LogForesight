@@ -1035,6 +1035,139 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Contains(urls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=5050(&|$)"));
     }
 
+    // ── 守門覆寫清單的感測器不在鏡像：查所在裝置後補抓 ──
+
+    /// <summary>parentid 查詢：只要 objid,parentid 兩欄且帶 filter_objid（逐台補抓的欄位清單同樣以 objid,parentid 開頭，要排除）。</summary>
+    private static bool IsParentLookupUrl(string url) =>
+        url.Contains("columns=objid,parentid&") && url.Contains("filter_objid=");
+
+    private List<string> ParentLookupUrls() { lock (_stubHandler.RequestedUrls) return _stubHandler.RequestedUrls.Where(IsParentLookupUrl).ToList(); }
+
+    /// <summary>逐台補抓請求（排除 parentid 查詢本身）。</summary>
+    private List<string> DeviceBackfillUrls() { lock (_stubHandler.RequestedUrls) return _stubHandler.RequestedUrls.Where(u => IsBackfillUrl(u) && !IsParentLookupUrl(u)).ToList(); }
+
+    /// <summary>範圍內只有裝置 10、且鏡像已有它的感測器 101：範圍本身沒有待補，只剩覆寫清單這條路。</summary>
+    private void SetupScopeWithoutPending(params string[] overrideObjids)
+    {
+        SetupOkDevices(new long[] { 10 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now.AddMinutes(-30));
+        _settingsStore.Update(s => s.PrtgResourceGuardSensorObjids = overrideObjids.ToList());
+    }
+
+    [Fact]
+    public async Task 覆寫補抓_鏡像沒有的覆寫感測器_查到所在裝置後補抓並進入範圍()
+    {
+        SetupScopeWithoutPending("9001");
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsParentLookupUrl(url))
+            {
+                return Task.FromResult(FilterObjids(url).Contains(9001)
+                    ? JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":77}]}")
+                    : JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(url, @"[?&]id=77(&|$)"))
+            {
+                return Task.FromResult(url.Contains("start=0")
+                    ? JsonResponse("{\"treesize\":2,\"sensors\":[" +
+                                   "{\"objid\":9001,\"parentid\":77,\"sensor\":\"Core Health\",\"type\":\"corehealth\",\"status\":\"Up\",\"paused\":false}," +
+                                   "{\"objid\":9002,\"parentid\":77,\"sensor\":\"CPU\",\"type\":\"cpu\",\"status\":\"Up\",\"paused\":false}]}")
+                    : JsonResponse("{\"treesize\":2,\"sensors\":[]}"));
+            }
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var lookup = Assert.Single(ParentLookupUrls());
+        Assert.Equal(new long[] { 9001 }, FilterObjids(lookup));
+        Assert.Contains(DeviceBackfillUrls(), u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=77(&|$)"));
+        var store = _backend.PrtgStore();
+        var sensor = Assert.Single(store.GetAllSensors(), s => s.Objid == 9001);
+        Assert.Equal(77, sensor.DeviceObjid);
+
+        var settings = _settingsStore.Get();
+        var scope = PrtgScopeDevices.Compute(store, _hostStore, new PrtgMirrorGuardSource(store), settings,
+            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver());
+        Assert.Contains(77L, scope.DeviceObjids);
+    }
+
+    [Fact]
+    public async Task 覆寫補抓_待補超過上限時覆寫裝置優先()
+    {
+        // 範圍待補 60 台（objid 5001～5060），覆寫感測器所在裝置 99999 objid 最大：由小到大截 50 台時它會被擠掉，必須排在最前面
+        var devices = Enumerable.Range(1, 60).Select(i => (long)(5000 + i)).ToList();
+        SetupOkDevices(devices);
+        _settingsStore.Update(s => s.PrtgResourceGuardSensorObjids = new List<string> { "9001" });
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsParentLookupUrl(url))
+                return Task.FromResult(JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":99999}]}"));
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long>()));
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var urls = DeviceBackfillUrls();
+        Assert.Equal(PrtgSnapshotHostedService.MaxBackfillDevicesPerTick, urls.Count);
+        Assert.Contains(urls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=99999(&|$)"));
+        Assert.DoesNotContain(urls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=5050(&|$)"));
+    }
+
+    [Fact]
+    public async Task 覆寫補抓_覆寫感測器已在鏡像_零個parentid請求()
+    {
+        SetupScopeWithoutPending("101");
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Empty(ParentLookupUrls());
+        Assert.Empty(DeviceBackfillUrls());
+    }
+
+    [Fact]
+    public async Task 覆寫補抓_查不到的objid下一輪不再查_結構同步後再查()
+    {
+        SetupScopeWithoutPending("9001");
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsParentLookupUrl(url)) return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        await service.TickAsync();
+        Assert.Single(ParentLookupUrls());
+        Assert.Empty(DeviceBackfillUrls());
+
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Single(ParentLookupUrls());
+
+        // 結構同步寫過鏡像（裝置表 synced_at 最大值變新）→ 「已查過找不到」清空，再查一次
+        _backend.PrtgStore().UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 10, Name = "D" }
+        }, DateTime.Now.AddMinutes(5));
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Equal(2, ParentLookupUrls().Count);
+    }
+
     [Fact]
     public async Task 範圍補抓_擲例外_快照照常完成且退避計數不變()
     {
