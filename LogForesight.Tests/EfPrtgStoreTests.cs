@@ -1276,6 +1276,8 @@ public class EfPrtgStoreTests : IDisposable
             new() { SensorObjid = 5003, ChangedAt = new DateTime(2026, 8, 27, 18, 45, 0), Status = "Warning", Quality = "Good" },
         };
         store.AppendStateChanges(changes);
+        // 涵蓋摘要只計感測器鏡像中的 sensor
+        SeedMirrorSensors(store, 5001, 5002, 5003);
 
         var summary = store.GetStateChangeCoverageSummary(from, to);
 
@@ -1292,6 +1294,68 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(0, emptySummary.TotalCount);
         Assert.Null(emptySummary.EarliestChangedAt);
         Assert.Null(emptySummary.LatestChangedAt);
+    }
+
+    /// <summary>預放感測器鏡像列（裝置 1），供「只計鏡像中 sensor」的查詢使用。</summary>
+    private static void SeedMirrorSensors(EfPrtgStore store, params long[] objids)
+    {
+        store.UpsertSensors(objids.Select(id => new PrtgSensorRow
+        {
+            Objid = id,
+            DeviceObjid = 1,
+            Name = $"S-{id}",
+            SensorType = "ping"
+        }).ToList(), DateTime.Now);
+    }
+
+    [Fact]
+    public void GetStateChangeCoverageSummary_不在感測器鏡像中的sensor不計入()
+    {
+        var store = CreateStore();
+        store.AppendStateChanges(new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 7001, ChangedAt = new DateTime(2026, 8, 25, 8, 0, 0), Status = "Down", Quality = "Good" },
+            new() { SensorObjid = 7002, ChangedAt = new DateTime(2026, 8, 25, 9, 0, 0), Status = "Down", Quality = "Good" },
+            // 7099 不在鏡像（範圍外的舊列）
+            new() { SensorObjid = 7099, ChangedAt = new DateTime(2026, 8, 26, 10, 0, 0), Status = "Down", Quality = "Good" },
+        });
+        SeedMirrorSensors(store, 7001, 7002);
+
+        var summary = store.GetStateChangeCoverageSummary(new DateTime(2026, 8, 25), new DateTime(2026, 8, 28));
+
+        Assert.Equal(2, summary.TotalCount);
+        Assert.Equal(2, summary.DistinctSensors);
+        Assert.Equal(1, summary.DistinctDates);
+        Assert.Equal(new DateTime(2026, 8, 25, 9, 0, 0), summary.LatestChangedAt);
+    }
+
+    [Fact]
+    public void DeleteSensorsNotSyncedSince_只刪本趟沒刷新的感測器且不碰狀態變更()
+    {
+        var store = CreateStore();
+        var old = DateTime.Now.AddDays(-1);
+        var now = DateTime.Now;
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 8001, DeviceObjid = 1, Name = "Old-1", SensorType = "ping" },
+            new() { Objid = 8002, DeviceObjid = 2, Name = "Old-2", SensorType = "ping" },
+        }, old);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 8002, DeviceObjid = 2, Name = "New-2", SensorType = "ping" },
+            new() { Objid = 8003, DeviceObjid = 3, Name = "New-3", SensorType = "ping" },
+        }, now);
+        store.AppendStateChanges(new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 8001, ChangedAt = new DateTime(2026, 8, 25, 8, 0, 0), Status = "Down", Quality = "Good" },
+        });
+
+        var deleted = store.DeleteSensorsNotSyncedSince(now);
+
+        Assert.Equal(1, deleted);
+        using var ctx = _fx.NewContext();
+        Assert.Equal(new long[] { 8002, 8003 }, ctx.PrtgSensors.Select(s => s.Objid).OrderBy(id => id).ToArray());
+        Assert.Equal(1, ctx.PrtgStateChanges.Count());
     }
 
     [Fact]
@@ -1324,6 +1388,8 @@ public class EfPrtgStoreTests : IDisposable
             new() { SensorObjid = 6001, ChangedAt = new DateTime(2026, 9, 1, 0, 0, 0), Status = "Down", Quality = "Good" },
         };
         store.AppendStateChanges(changes);
+        // 狀態變更涵蓋摘要只計感測器鏡像中的 sensor
+        SeedMirrorSensors(store, 6001);
 
         // 1. GetValueCoverageSummary
         var cov = store.GetValueCoverageSummary(from, to);

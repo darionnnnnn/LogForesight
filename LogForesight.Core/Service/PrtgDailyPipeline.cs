@@ -214,8 +214,8 @@ internal static class PrtgDailyPipeline
             }
 
             var prtgStore = backend.PrtgStore();
-            // 規則評估母體＝全部未暫停 sensor：取數白名單是為數值取數量體設計的（預設不含 Ping），
-            // 拿來過濾規則母體會讓主機失聯（Ping Down）永遠命中不了；狀態變更本來就全量抓，放寬不增加 PRTG 負擔。
+            // 規則評估母體＝鏡像中的感測器＝取數範圍內裝置的未暫停感測器（感測器鏡像只同步範圍內裝置）。
+            // 取數白名單不參與：它是為數值取數量體設計的（預設不含 Ping），拿來過濾規則母體會讓主機失聯（Ping Down）永遠命中不了。
             var allSensors = prtgStore.GetSensorStatuses();
             var sensorNames = allSensors
                 .GroupBy(s => s.Objid)

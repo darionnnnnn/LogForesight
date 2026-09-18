@@ -582,6 +582,20 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 清除本趟感測器同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即取數範圍外或 PRTG 端已不存在的感測器，回傳刪除數。
+    /// 只動 <c>lf_prtg_sensors</c>；狀態變更、數值與快照表一律不碰（交給保留期）。
+    /// 刻意不做裝置那種「過半不刪」保險：縮圈到取數範圍後的第一趟本來就會刪掉九成以上，
+    /// 而感測器鏡像只是 PRTG 的複本、不掛人工資料，誤刪了下一趟同步即可重建。
+    /// 呼叫端必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
+    /// </summary>
+    public int DeleteSensorsNotSyncedSince(DateTime syncStartedAt)
+    {
+        using var __perf = _performance.Measure("prtg:DeleteStaleSensors");
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt).ExecuteDelete();
+    }
+
+    /// <summary>
     /// 取得所有 PRTG 裝置鏡像清單（唯讀查詢）。
     /// </summary>
     public List<PrtgDeviceRow> GetAllDevices()
@@ -1237,6 +1251,8 @@ public sealed class EfPrtgStore
     /// 取得指定期間內狀態變更的涵蓋摘要。
     /// 全程在 SQL 端聚合，統計相異日期數、相異 sensor 數、總筆數與最早／最晚變更時間。
     /// 無資料時回傳計數皆為 0、時間為 null 的摘要物件。
+    /// 只計 sensor 仍在感測器鏡像中的列：鏡像已縮到取數範圍內，範圍外的舊狀態變更要到保留期才消失，
+    /// 不排除的話新舊口徑會混在同一個數字裡。
     /// </summary>
     /// <param name="fromInclusive">起始時間（含）</param>
     /// <param name="toExclusive">結束時間（不含）</param>
@@ -1246,7 +1262,8 @@ public sealed class EfPrtgStore
         using var ctx = _contextFactory();
         var summary = ctx.PrtgStateChanges
             .AsNoTracking()
-            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive)
+            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive
+                && ctx.PrtgSensors.Any(s => s.Objid == r.SensorObjid))
             .GroupBy(_ => 1)
             .Select(g => new
             {

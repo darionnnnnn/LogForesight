@@ -38,6 +38,12 @@ public sealed class PrtgFetchService
     /// <summary>觸發式數值取數</summary>
     public const string PrtgTriggeredPhase = "prtg-triggered";
 
+    /// <summary>
+    /// 階段 2 逐台查詢感測器的裝置數上限：範圍內裝置數不超過它時逐台以 <c>id=</c> 查詢，超過時改一次全站分頁再以範圍過濾。
+    /// 暫定值：超過時逐台查詢的固定成本（每台一次往返）高於一次全站分頁。
+    /// </summary>
+    private const int PerDeviceSensorFetchLimit = 500;
+
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
     private readonly IRunConsole _console;
@@ -68,7 +74,8 @@ public sealed class PrtgFetchService
     /// <param name="scopeProvider">
     /// 取數範圍提供者（必填）。引數＝devicesRefreshed：本趟階段 1 執行了、沒有擲例外、已收斂且寫入裝置數大於 0 才為 true。
     /// syncStructure 為 true 時在階段 1 之後、階段 2 之前呼叫恰一次；為 false 時在階段 3 之前呼叫恰一次。
-    /// 呼叫端在這裡做主機對應（對應要用剛更新的裝置鏡像）並回傳範圍；本段取數行為仍為全站、不以範圍過濾。
+    /// 呼叫端在這裡做主機對應（對應要用剛更新的裝置鏡像）並回傳範圍。
+    /// 範圍用於縮圈取數：階段 2 只同步範圍內裝置的感測器（並清除範圍外的鏡像列），狀態變更階段的縮圈在後續實作。
     /// </param>
     /// <param name="syncStructure">
     /// 是否同步 device／sensor 結構（階段 1、2）。每日擷取為 true。
@@ -97,7 +104,7 @@ public sealed class PrtgFetchService
         var failures = 0;
         var sensorTargets = new List<(long Objid, bool Paused)>();
         var devicesRefreshed = false;
-        // 取數範圍：本段只取得、不過濾（後續段才用它縮圈）
+        // 取數範圍：階段 2 只同步範圍內裝置的感測器；null＝計算失敗（階段 2 略過、不清除）。狀態變更階段的縮圈在後續實作
         PrtgScopeResult? scope = null;
 
         void ResolveScope()
@@ -198,33 +205,93 @@ public sealed class PrtgFetchService
             // 主機對應要用剛更新的裝置鏡像，且範圍要在感測器同步之前就定下來
             ResolveScope();
 
-            // 階段 2：sensor 結構全量同步
-            try
+            // 階段 2：只同步取數範圍內裝置的感測器
+            // 本趟寫入的列 SyncedAt 都等於這個時間（逐台與全站模式共用）；早於它的列就是本趟沒被刷新到的感測器
+            var sensorsSyncStartedAt = DateTime.Now;
+            // 本趟感測器鏡像是否「完整刷新」——成立時「沒刷新到」才代表範圍外或 PRTG 端已刪除
+            var sensorsRefreshed = false;
+            var scopeDevices = scope?.DeviceObjids;
+            if (scopeDevices == null || scopeDevices.Count == 0)
             {
-                _console.WriteLine("[階段 2/4] 開始同步 PRTG 感測器結構鏡像...");
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var (outcome, targets) = await FetchSensorsAsync(ct, progress);
-                stopwatch.Stop();
-                sensorsCount = outcome.Written;
-                sensorTargets = targets;
-                _console.WriteLine($"[階段 2/4] 感測器結構同步完成，共寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, outcome)}。");
-                if (!outcome.Converged)
+                // 範圍計算失敗已在 ResolveScope 計過 failures，這裡不重複計；範圍為空則是設定面的結果，不算失敗
+                _console.WriteLine(scopeDevices == null
+                    ? "[階段 2/4] 取數範圍無法取得，略過感測器同步。"
+                    : "[階段 2/4] 取數範圍內沒有任何裝置，略過感測器同步。");
+            }
+            else
+            {
+                try
+                {
+                    _console.WriteLine("[階段 2/4] 開始同步 PRTG 感測器結構鏡像...");
+                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                    if (scopeDevices.Count <= PerDeviceSensorFetchLimit)
+                    {
+                        var (written, targets, failedDevices) = await FetchSensorsForDevicesAsync(
+                            scopeDevices.OrderBy(id => id).ToList(), concurrency, sensorsSyncStartedAt, ct, progress);
+                        stopwatch.Stop();
+                        sensorsCount = written;
+                        sensorTargets = targets;
+                        _console.WriteLine($"[階段 2/4] 感測器結構同步完成：範圍內 {scopeDevices.Count} 台裝置、寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, new StageOutcome(written, 0, true, null))}。");
+                        if (failedDevices.Count > 0)
+                        {
+                            failures++;
+                            var shown = string.Join("、", failedDevices.OrderBy(id => id).Take(5));
+                            var more = failedDevices.Count > 5 ? " 等" : "";
+                            _console.WriteLine($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
+                        }
+                        sensorsRefreshed = failedDevices.Count == 0 && sensorsCount > 0;
+                    }
+                    else
+                    {
+                        progress?.Invoke(PrtgSyncSensorsPhase, 0, 0);
+                        var (outcome, targets) = await FetchSensorsSiteWideAsync(scopeDevices, sensorsSyncStartedAt, ct);
+                        stopwatch.Stop();
+                        progress?.Invoke(PrtgSyncSensorsPhase, scopeDevices.Count, scopeDevices.Count);
+                        sensorsCount = outcome.Written;
+                        sensorTargets = targets;
+                        _console.WriteLine($"[階段 2/4] 感測器結構同步完成：範圍內 {scopeDevices.Count} 台裝置、寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, outcome)}。");
+                        if (!outcome.Converged)
+                        {
+                            failures++;
+                            _console.WriteLine($"[階段 2/4] ✗ {outcome.Error}已寫入 {sensorsCount} 個感測器，鏡像不完整。");
+                            // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
+                            // 數值表會安靜地少一大塊而看不出邊界在哪。
+                            _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
+                        }
+                        sensorsRefreshed = outcome.Converged && sensorsCount > 0;
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
                 {
                     failures++;
-                    _console.WriteLine($"[階段 2/4] ✗ {outcome.Error}已寫入 {sensorsCount} 個感測器，鏡像不完整。");
-                    // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
-                    // 數值表會安靜地少一大塊而看不出邊界在哪。
-                    _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
+                    _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+
+            // 清除本趟沒被刷新的感測器（範圍外的、PRTG 端已刪的）：只有範圍非空、階段 2 無例外、
+            // 全站模式已收斂／逐台模式零失敗、且有寫入時，「沒刷新到」才代表「不該留在鏡像」。
+            // 必須在語意分類重算之前，免得替即將刪除的列白做工。
+            if (sensorsRefreshed)
             {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                failures++;
-                _console.WriteLine($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
+                try
+                {
+                    var deleted = _store.DeleteSensorsNotSyncedSince(sensorsSyncStartedAt);
+                    if (deleted > 0)
+                        _console.WriteLine($"[階段 2/4] 已清除 {deleted} 個範圍外或 PRTG 端已不存在的感測器。");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failures++;
+                    _console.WriteLine($"[階段 2/4] 過期感測器清除失敗：{ex.Message}");
+                }
             }
 
             // 語意分類重算：未分類與自動分類的列依對照表更新，人工指定的分類不會被洗掉
@@ -371,56 +438,138 @@ public sealed class PrtgFetchService
         return StageOutcome.From(totalWritten, paged);
     }
 
-    /// <summary>階段 2：分頁抓取所有 sensors 並寫入鏡像表，同時收集未暫停名單供階段 4 使用</summary>
-    private async Task<(StageOutcome Outcome, List<(long Objid, bool Paused)> SensorTargets)> FetchSensorsAsync(
-        CancellationToken ct, Action<string, int, int>? progress = null)
+    /// <summary>
+    /// 階段 2（逐台模式，範圍內裝置數不超過 <see cref="PerDeviceSensorFetchLimit"/>）：
+    /// 逐台以 <c>id={裝置 objid}</c> 分頁抓取感測器並寫入鏡像表，同時收集名單供階段 4 使用。
+    /// 單台失敗（例外或分頁未收斂）只記入失敗清單、不影響其他台；取消照舊往外擲。
+    /// </summary>
+    /// <returns>寫入數、感測器名單（objid、是否暫停）、失敗的裝置 objid 清單</returns>
+    private async Task<(int Written, List<(long Objid, bool Paused)> Targets, List<long> FailedDevices)> FetchSensorsForDevicesAsync(
+        IReadOnlyList<long> deviceObjids, int concurrency, DateTime syncedAt, CancellationToken ct,
+        Action<string, int, int>? progress)
     {
-        var syncedAt = DateTime.Now;
+        var totalDevices = deviceObjids.Count;
+        progress?.Invoke(PrtgSyncSensorsPhase, 0, totalDevices);
+
+        var filter = deviceObjids.ToHashSet();
+        var maxConcurrency = Math.Max(concurrency, 1);
+        using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        // targets／failed／寫入在併發下共用同一把鎖（寫入本身也序列化，避免同一個 store 被並行 upsert）
+        var sync = new object();
+        var totalWritten = 0;
+        var targets = new List<(long Objid, bool Paused)>();
+        var failed = new List<long>();
+        var completed = 0;
+
+        var tasks = deviceObjids.Select(async deviceObjid =>
+        {
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                // 逐台不帶 phase／stageLabel：逐台印分頁進度會洗版，進度改由本方法以「台」回報
+                var paged = await FetchSensorPagesAsync($"id={deviceObjid}", filter, syncedAt,
+                    batch =>
+                    {
+                        lock (sync)
+                        {
+                            totalWritten += _store.UpsertSensors(batch, syncedAt);
+                            targets.AddRange(batch.Select(r => (r.Objid, r.Paused)));
+                        }
+                    },
+                    ct, stageLabel: null);
+                if (paged.Error != null)
+                {
+                    lock (sync) failed.Add(deviceObjid);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                lock (sync) failed.Add(deviceObjid);
+            }
+            finally
+            {
+                semaphore.Release();
+                var done = Interlocked.Increment(ref completed);
+                progress?.Invoke(PrtgSyncSensorsPhase, done, totalDevices);
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return (totalWritten, targets, failed);
+    }
+
+    /// <summary>
+    /// 階段 2（全站模式，範圍內裝置數超過 <see cref="PerDeviceSensorFetchLimit"/>）：
+    /// 一次全站分頁抓取感測器，mapper 只保留 <c>parentid</c> 在範圍內的列（範圍外不寫入、不進名單）。
+    /// 進度單位是「台」，列數不能當分子，所以不把 phase／progress 交給分頁器（每 N 頁一行的文字進度照舊）。
+    /// </summary>
+    private async Task<(StageOutcome Outcome, List<(long Objid, bool Paused)> SensorTargets)> FetchSensorsSiteWideAsync(
+        IReadOnlySet<long> scopeDevices, DateTime syncedAt, CancellationToken ct)
+    {
         var totalWritten = 0;
         var targets = new List<(long Objid, bool Paused)>();
 
-        var paged = await RunPagedStageAsync(() => FetchTablePagedAsync<PrtgSensorRow>(
-            content: "sensors",
-            columns: "objid,parentid,sensor,type,tags,unit,status,paused,dependency",
-            extraQuery: null,
-            mapper: el =>
-            {
-                var objid = GetLongProperty(el, "objid");
-                if (!objid.HasValue) return null;
-
-                var parentid = GetLongProperty(el, "parentid") ?? 0;
-                var paused = ParsePaused(el);
-                targets.Add((objid.Value, paused));
-
-                return new PrtgSensorRow
-                {
-                    Objid = objid.Value,
-                    DeviceObjid = parentid,
-                    // 截斷理由同 device mapper（上限對齊 LfDbContext）
-                    Name = Truncate(GetStringProperty(el, "sensor"), 255) ?? string.Empty,
-                    SensorType = Truncate(GetStringProperty(el, "type"), 128) ?? string.Empty,
-                    Tags = GetStringProperty(el, "tags"),
-                    Unit = Truncate(GetStringProperty(el, "unit"), 64),
-                    Status = Truncate(GetStringProperty(el, "status"), 64),
-                    ThresholdsJson = null,
-                    DependencyObjid = ParseDependency(el),
-                    Paused = paused,
-                    Category = null,
-                    CategorySource = null,
-                    SyncedAt = syncedAt,
-                    CreatedAt = syncedAt
-                };
-            },
-            onBatch: batch =>
+        var paged = await FetchSensorPagesAsync(null, scopeDevices, syncedAt,
+            batch =>
             {
                 totalWritten += _store.UpsertSensors(batch, syncedAt);
+                targets.AddRange(batch.Select(r => (r.Objid, r.Paused)));
             },
-            ct: ct,
-            phase: PrtgSyncSensorsPhase,
-            progress: progress,
-            stageLabel: "階段 2/4 感測器結構"));
+            ct, stageLabel: "階段 2/4 感測器結構");
 
         return (StageOutcome.From(totalWritten, paged), targets);
+    }
+
+    /// <summary>
+    /// 感測器表的分頁讀取（逐台與全站兩種取法唯一的呼叫點）：同一組欄位、同一個 mapper、同一個範圍過濾語意，
+    /// 兩種取法寫進鏡像的內容因此相同。
+    /// </summary>
+    private Task<PagedStageResult> FetchSensorPagesAsync(
+        string? extraQuery, IReadOnlySet<long> scopeDevices, DateTime syncedAt,
+        Action<IReadOnlyList<PrtgSensorRow>> onBatch, CancellationToken ct, string? stageLabel)
+        => RunPagedStageAsync(() => FetchTablePagedAsync<PrtgSensorRow>(
+            content: "sensors",
+            columns: "objid,parentid,sensor,type,tags,unit,status,paused,dependency",
+            extraQuery: extraQuery,
+            mapper: el => MapSensorRow(el, scopeDevices, syncedAt),
+            onBatch: onBatch,
+            ct: ct,
+            phase: null,
+            progress: null,
+            stageLabel: stageLabel));
+
+    /// <summary>sensors 表單列轉鏡像列（唯一一份 mapper）；parentid 不在取數範圍內的列回 null（不寫入）。</summary>
+    private static PrtgSensorRow? MapSensorRow(JsonElement el, IReadOnlySet<long> scopeDevices, DateTime syncedAt)
+    {
+        var objid = GetLongProperty(el, "objid");
+        if (!objid.HasValue) return null;
+
+        var parentid = GetLongProperty(el, "parentid") ?? 0;
+        if (!scopeDevices.Contains(parentid)) return null;
+
+        return new PrtgSensorRow
+        {
+            Objid = objid.Value,
+            DeviceObjid = parentid,
+            // 截斷理由同 device mapper（上限對齊 LfDbContext）
+            Name = Truncate(GetStringProperty(el, "sensor"), 255) ?? string.Empty,
+            SensorType = Truncate(GetStringProperty(el, "type"), 128) ?? string.Empty,
+            Tags = GetStringProperty(el, "tags"),
+            Unit = Truncate(GetStringProperty(el, "unit"), 64),
+            Status = Truncate(GetStringProperty(el, "status"), 64),
+            ThresholdsJson = null,
+            DependencyObjid = ParseDependency(el),
+            Paused = ParsePaused(el),
+            Category = null,
+            CategorySource = null,
+            SyncedAt = syncedAt,
+            CreatedAt = syncedAt
+        };
     }
 
     /// <summary>
