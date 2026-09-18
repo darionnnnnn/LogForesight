@@ -270,6 +270,21 @@ function renderClosedWork(history) {
     });
 }
 
+/**
+ * 所屬交辦單（task-47-D2c）：有單就給單號連結，沒有（舊案件未整併）顯示破折號。
+ * 整列本身是連到風險日詳情的連結，故單號連結要擋掉冒泡，不然點單號會跑去風險日。
+ */
+function workOrderCell(workOrderId) {
+    if (!workOrderId) return '—';
+
+    const link = document.createElement('a');
+    link.href = appUrl(`/work-orders/${workOrderId}`);
+    link.title = '檢視交辦單';
+    link.textContent = `#${workOrderId}`;
+    link.addEventListener('click', event => event.stopPropagation());
+    return link;
+}
+
 function renderAssignmentHistory(history) {
     renderTable(document.getElementById('user-assignment-history'), {
         columns: [
@@ -278,6 +293,7 @@ function renderAssignmentHistory(history) {
             { title: '主機', render: h => h.hostName },
             { title: '問題', render: h => h.issueLabel },
             { title: '目前狀態', render: h => historyStatusCell(h) },
+            { title: '所屬交辦單', className: 'text-nowrap', render: h => workOrderCell(h.workOrderId) },
             { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` }
         ],
         rows: history,

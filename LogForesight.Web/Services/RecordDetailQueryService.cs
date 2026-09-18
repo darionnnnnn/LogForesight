@@ -93,7 +93,7 @@ public class RecordDetailQueryService
                     // 「顯示名稱(帳號)」，同一次 Get 拿齊，不為了帳號再查一次
                     var handler = c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value) : null;
                     return (HandlerId: c.HandlerId, HandlerName: handler?.DisplayName, HandlerAccount: handler?.Account,
-                            c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd"));
+                            c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd"), c.WorkOrderId);
                 },
                 StringComparer.Ordinal);
 
@@ -613,14 +613,14 @@ public class RecordDetailQueryService
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         AccountDisplayRuleSet accountRules,
-        Dictionary<string, (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate)>? openCases = null,
+        Dictionary<string, (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate, long? WorkOrderId)>? openCases = null,
         HashSet<string>? priorClosedIssueKeys = null)
     {
         var key = IssueSignatureKey.For(issue);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
         var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
 
-        (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate)? openCase =
+        (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate, long? WorkOrderId)? openCase =
             openCases != null && openCases.TryGetValue(key, out var c) ? c : null;
 
         return new IssueDto
@@ -671,6 +671,7 @@ public class RecordDetailQueryService
             CaseHandlerAccount = openCase?.HandlerAccount,
             CaseStatus = openCase?.Status,
             CaseFirstLinkedDate = openCase?.FirstLinkedDate,
+            WorkOrderId = openCase?.WorkOrderId,
             HasPriorHandling = priorClosedIssueKeys?.Contains(key) ?? false
         };
     }

@@ -612,20 +612,6 @@ public class WorkOrderCoordinator
     }
 
     /// <summary>
-    /// 記一筆「不經 <see cref="Reply"/> 寫入、但確實是處理人回覆」的回覆（例：依問題「回覆處理狀態」
-    /// 逐案走 <see cref="IssueCaseCoordinator.SyncStatus"/>）：推進 LastReplyAt、寫 replied 事件、推導結案。
-    /// 狀態寫入已由呼叫端完成，這裡不動成員。單不存在或已結案→直接回傳（不擲）。
-    /// </summary>
-    public void RecordExternalReply(long workOrderId, WorkOrderActor actor, string status, string? note, int caseCount)
-    {
-        if (!TryMarkReplied(workOrderId, actor.OccurredAt)) return;
-
-        // 先寫回覆事件再推導結案（同 Reply）
-        AppendEvent(workOrderId, WorkOrderEventActions.Replied, actor, 0, ReplyNoteOf(status, note, caseCount));
-        RecomputeClosure(workOrderId, actor.OccurredAt);
-    }
-
-    /// <summary>
     /// 只推進 LastReplyAt、不寫事件：詳情頁逐筆標記用——逐筆各寫一筆事件會淹沒時間軸。
     /// 單不存在或已結案→直接回傳（不擲）；成員因此全結案的單仍由 <see cref="SweepClosures"/> 補結案。
     /// </summary>
@@ -645,7 +631,7 @@ public class WorkOrderCoordinator
         });
     }
 
-    /// <summary>回覆事件說明的唯一一份（<see cref="Reply"/> 與 <see cref="RecordExternalReply"/> 共用）</summary>
+    /// <summary>回覆事件說明的唯一一份（<see cref="Reply"/> 用）</summary>
     private static string ReplyNoteOf(string status, string? note, int caseCount) =>
         string.IsNullOrWhiteSpace(note)
             ? $"{status}（{caseCount} 台）"

@@ -267,6 +267,35 @@ public class UserAdminServiceTests
         Assert.Equal(_hosts.FindByName("SRV-B")!.HostId, history[0].HostId);
     }
 
+    /// <summary>
+    /// 被指派歷程要帶案件所屬交辦單（task-47-D2c），前端才組得出「所屬交辦單」欄的單號連結；
+    /// 尚未整併的舊案件沒有單，維持 null（畫面顯示破折號）。
+    /// </summary>
+    [Fact]
+    public void GetUserDetail_被指派歷程帶交辦單號_舊案件為null()
+    {
+        var user = SetupVisibilityFixture();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = "SRV-B", IssueKey = "App|disk|153|1", IssueLabel = "disk 153",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.InProgress, WorkOrderId = 88,
+            CreatedAt = new DateTime(2026, 8, 1), CreatedByAccount = "DOMAIN\\admin",
+            FirstLinkedDate = new DateTime(2026, 7, 28), LastLinkedDate = new DateTime(2026, 8, 1)
+        });
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c2", HostName = "SRV-B", IssueKey = "App|disk|7|1", IssueLabel = "disk 7",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.InProgress,
+            CreatedAt = new DateTime(2026, 7, 20), CreatedByAccount = "DOMAIN\\admin",
+            FirstLinkedDate = new DateTime(2026, 7, 18), LastLinkedDate = new DateTime(2026, 7, 24)
+        });
+
+        var history = Create().GetUserDetail(user.UserId).AssignmentHistory;
+
+        Assert.Equal(88, history.Single(h => h.CaseId == "c1").WorkOrderId);
+        Assert.Null(history.Single(h => h.CaseId == "c2").WorkOrderId);
+    }
+
     [Fact]
     public void GetUserDetail_查無此人_回404()
     {

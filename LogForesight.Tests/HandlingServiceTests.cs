@@ -1740,56 +1740,6 @@ public class HandlingServiceTests : IDisposable
         Assert.Contains(_handlings.GetLogs(_host.HostName, day), l => l.Action == HandlingActions.CaseReassign);
     }
 
-    /// <summary>§11：跨主機一次回覆——自己名下的全部進行中案件同步更新</summary>
-    [Fact]
-    public void 跨主機回覆_更新自己名下的全部案件()
-    {
-        var day = Today.AddDays(-44);
-        var a = Issue("disk", 153);
-        var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
-        _repository.AddRecord(_host.HostName, day, a);
-        _repository.AddRecord(second.HostName, day, a);
-
-        var service = Create(Capability.Assign, Capability.Handle);
-        service.Assign(_host.HostId, day, _other.UserId);     // 目前使用者
-        service.Assign(second.HostId, day, _other.UserId);
-
-        var result = service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
-        {
-            Source = "disk", EventId = 153,
-            Status = IssueHandlingStatuses.Resolved,
-            Note = "已更換硬碟"
-        });
-
-        Assert.Equal(2, result.UpdatedCaseCount);
-        Assert.Equal(new[] { "SRV-A", "SRV-B" }, result.HostNames);
-        // 結案類會讓案件本身結案（沿用 SyncStatus 既有語意）
-        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));
-        Assert.Null(_cases.GetOpen(second.HostName, IssueSignatureKey.For(a)));
-    }
-
-    /// <summary>§11：別人名下的案件不受影響——這是「回覆自己手上的工作」，不是代人回覆</summary>
-    [Fact]
-    public void 跨主機回覆_不動別人名下的案件()
-    {
-        var day = Today.AddDays(-45);
-        var a = Issue("disk", 153);
-        _repository.AddRecord(_host.HostName, day, a);
-
-        var service = Create(Capability.Assign, Capability.Handle);
-        service.Assign(_host.HostId, day, _owner.UserId);   // 指派給別人
-
-        var ex = Assert.Throws<DomainException>(() =>
-            service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
-            {
-                Source = "disk", EventId = 153,
-                Status = IssueHandlingStatuses.Resolved
-            }));
-
-        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
-        Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
-    }
-
     // ── 無法處理（escalated，回饋十八輪批次G）────────────────────────────────
 
     /// <summary>問題層級標無法處理必填原因——admin 要據此決定結案或改派，後端擋不只信前端</summary>
@@ -1945,33 +1895,32 @@ public class HandlingServiceTests : IDisposable
         Assert.DoesNotContain("2 個問題", second.Message.Body);
     }
 
-    /// <summary>跨主機一次回覆轉入無法處理寄一封；同一批案件已是無法處理時再回覆不重寄。</summary>
+    /// <summary>
+    /// 一張交辦單一次回覆轉入無法處理寄一封；同一張單全部成員都已是無法處理時再回覆不重寄。
+    /// 入口改走交辦單回覆（原本借已退役的跨主機端點驗，行為本身沒變）。
+    /// </summary>
     [Fact]
-    public void BulkSetIssueStatusByHandler_轉入無法處理通知一次_已上報再回覆不重寄()
+    public void 交辦單回覆_轉入無法處理通知一次_已上報再回覆不重寄()
     {
         var day = Today.AddDays(-3);
         var a = Issue("disk", 153);
         var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
         _repository.AddRecord(_host.HostName, day, a);
         _repository.AddRecord(second.HostName, day, a);
-        var mail = CreateMail();
-        var service = CreateWithMail(mail, Capability.Assign, Capability.Handle);
-        service.Assign(_host.HostId, day, _other.UserId);
-        service.Assign(second.HostId, day, _other.UserId);
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Handle);
+        var (_, orders, coordinator) = CreateIssueServiceWithOrders(currentUser);
+        var reply = new WorkOrderReplyService(coordinator, orders, _cases, currentUser, _audit, CreateMail());
+        var id = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName, second.HostName);
 
-        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        reply.Reply(id, new WorkOrderReplyRequest
         {
-            Source = "disk", EventId = 153,
-            Status = IssueHandlingStatuses.Escalated,
-            Note = "需要外部廠商"
+            Status = IssueHandlingStatuses.Escalated, Note = "需要外部廠商"
         });
         Assert.Single(_mailSender.Sent);
 
-        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        reply.Reply(id, new WorkOrderReplyRequest
         {
-            Source = "disk", EventId = 153,
-            Status = IssueHandlingStatuses.Escalated,
-            Note = "追加說明"
+            Status = IssueHandlingStatuses.Escalated, Note = "追加說明"
         });
         Assert.Single(_mailSender.Sent);
     }
@@ -2053,39 +2002,6 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(IssueHandlingStatuses.InProgress, result.Status);
         Assert.Equal(owned, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.WorkOrderId);
         Assert.Null(orders.Get(owned)!.LastReplyAt);
-    }
-
-    [Fact]
-    public void 依問題回覆處理狀態_每張涉及的單各一筆replied事件()
-    {
-        var day = Today.AddDays(-1);
-        var a = Issue("disk", 153);
-        var b = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
-        var c = _hosts.Upsert(new WebHost { HostName = "SRV-C" });
-        foreach (var host in new[] { _host.HostName, b.HostName, c.HostName }) _repository.AddRecord(host, day, a);
-        var (service, orders, coordinator) = CreateIssueServiceWithOrders(FakeCurrentUser.ForUser(_other.UserId, Capability.Handle));
-
-        var first = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName, b.HostName, c.HostName);
-        // 第二張單：多問題單不受「同處理人同問題至多一張進行中」限制，把 SRV-C 的案件改連過去
-        var second = orders.Insert(new WorkOrder
-        {
-            IssueLabel = "多問題", HandlerId = _other.UserId, CreatedByAccount = "boss", CreatedAt = DateTime.Now.AddHours(-1)
-        });
-        var moved = _cases.GetByWorkOrder(first, 0, 10).Single(x => x.HostName == c.HostName);
-        moved.WorkOrderId = second;
-        _cases.Save(moved);
-
-        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
-        {
-            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.InProgress, Note = "處理中"
-        });
-
-        var firstReplies = orders.ListEvents(first).Where(e => e.Action == WorkOrderEventActions.Replied).ToList();
-        var secondReplies = orders.ListEvents(second).Where(e => e.Action == WorkOrderEventActions.Replied).ToList();
-        Assert.Equal("in_progress：處理中（2 台）", Assert.Single(firstReplies).Note);
-        Assert.Equal("in_progress：處理中（1 台）", Assert.Single(secondReplies).Note);
-        Assert.NotNull(orders.Get(first)!.LastReplyAt);
-        Assert.NotNull(orders.Get(second)!.LastReplyAt);
     }
 
     private sealed class CountingIssueCaseStore : IIssueCaseStore

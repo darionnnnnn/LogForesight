@@ -768,53 +768,7 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(new[] { WorkOrderEventActions.Replied, WorkOrderEventActions.Closed }, w.Events(id).TakeLast(2));
     }
 
-    // ── RecordExternalReply／TouchReply（task-47-D1）───────────────────────────
-
-    [Fact]
-    public void RecordExternalReply_寫replied事件格式同Reply_更新LastReplyAt_成員仍進行中不結案()
-    {
-        var (w, id, _) = ThreeHostOrder();
-        var (w2, id2, _) = ThreeHostOrder();
-        var t1 = T0.AddHours(1);
-
-        w.Coordinator.RecordExternalReply(id, Actor(t1), IssueHandlingStatuses.InProgress, "換硬碟中", 2);
-        w2.Coordinator.Reply(id2, null, IssueHandlingStatuses.InProgress, "換硬碟中", null, Actor(t1));
-
-        var external = w.Orders.ListEvents(id).Single(e => e.Action == WorkOrderEventActions.Replied);
-        Assert.Equal("in_progress：換硬碟中（2 台）", external.Note);
-        Assert.Equal(9, external.ActorId);
-        Assert.Equal(t1, external.CreatedAt);
-        // 格式與 Reply 同一份：台數換成 3 就與 Reply 產生的說明逐字相同
-        var viaReply = w2.Orders.ListEvents(id2).Single(e => e.Action == WorkOrderEventActions.Replied);
-        Assert.Equal(external.Note!.Replace("（2 台）", "（3 台）"), viaReply.Note);
-
-        var order = w.Orders.Get(id)!;
-        Assert.Equal(t1, order.LastReplyAt);
-        Assert.Null(order.ClosedAt);
-
-        w.Coordinator.RecordExternalReply(id, Actor(t1.AddHours(1)), IssueHandlingStatuses.Resolved, "  ", 3);
-        Assert.Equal("resolved（3 台）", w.Orders.ListEvents(id).Last(e => e.Action == WorkOrderEventActions.Replied).Note);
-    }
-
-    [Fact]
-    public void RecordExternalReply_成員已全結案_推導結案且closed排在replied之後()
-    {
-        var (w, id, cases) = ThreeHostOrder();
-        var t1 = T0.AddHours(1);
-        foreach (var c in cases)
-        {
-            c.Status = IssueHandlingStatuses.Resolved;
-            c.ClosedAt = t1;
-            w.Cases.Save(c);
-        }
-
-        w.Coordinator.RecordExternalReply(id, Actor(t1), IssueHandlingStatuses.Resolved, "修好了", 3);
-
-        var order = w.Orders.Get(id)!;
-        Assert.Equal(t1, order.LastReplyAt);
-        Assert.Equal(WorkOrderCloseReasons.AllClosed, order.ClosedReason);
-        Assert.Equal(new[] { WorkOrderEventActions.Replied, WorkOrderEventActions.Closed }, w.Events(id).TakeLast(2));
-    }
+    // ── TouchReply（詳情頁逐筆標記推進回覆時間）───────────────────────────
 
     [Fact]
     public void TouchReply_只改LastReplyAt_不寫事件_不推導結案()
@@ -837,7 +791,7 @@ public class WorkOrderCoordinatorTests
     }
 
     [Fact]
-    public void RecordExternalReply與TouchReply_已結案或不存在的單_皆不動不擲()
+    public void TouchReply_已結案或不存在的單_不動不擲()
     {
         var (w, id, _) = ThreeHostOrder();
         w.Coordinator.Cancel(id, "不做了", Actor(T0.AddHours(1)));
@@ -845,9 +799,7 @@ public class WorkOrderCoordinatorTests
         var eventsBefore = w.Events(id);
         var savesBefore = w.Orders.SaveCalls;
 
-        w.Coordinator.RecordExternalReply(id, Actor(T0.AddHours(2)), IssueHandlingStatuses.Resolved, "x", 3);
         w.Coordinator.TouchReply(id, T0.AddHours(3));
-        w.Coordinator.RecordExternalReply(9999, Actor(T0.AddHours(2)), IssueHandlingStatuses.Resolved, "x", 1);
         w.Coordinator.TouchReply(9999, T0.AddHours(3));
 
         var after = w.Orders.Get(id)!;

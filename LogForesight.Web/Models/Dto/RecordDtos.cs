@@ -411,6 +411,9 @@ public class IssueDto
     public string? CaseStatus { get; set; }
     public string? CaseFirstLinkedDate { get; set; }
 
+    /// <summary>這個問題在本機的進行中案件所屬的交辦單；沒有案件或舊案件未整併時為 null</summary>
+    public long? WorkOrderId { get; set; }
+
     /// <summary>
     /// true＝這個問題簽章在本主機更早的日期有結案過的紀錄（逐日標記或已結案案件皆算）
     /// ——docs/archive/FEEDBACK-5-PLAN.md §4「之前處理過的問題再次發生」。前端據此顯示「先前處理」

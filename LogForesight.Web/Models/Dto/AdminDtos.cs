@@ -102,6 +102,9 @@ public class UserAssignmentHistoryDto
     /// <summary>案件涵蓋的風險日區間（首見～最近掛接）</summary>
     public string FirstLinkedDate { get; set; } = string.Empty;
     public string LastLinkedDate { get; set; } = string.Empty;
+
+    /// <summary>案件所屬交辦單；舊案件未整併時為 null</summary>
+    public long? WorkOrderId { get; set; }
 }
 
 public class SaveUserRequest

@@ -351,99 +351,6 @@ public class IssueHandlingCommandService
     }
 
 
-    /// <summary>
-    /// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
-    ///
-    /// 對象限定「**目前使用者名下**、這個問題的進行中案件」——這是處理人替自己手上的工作
-    /// 一次交代結果，不是管理者代人回覆（§8 的規則同樣適用：別人的案件不給動）。
-    /// admin 要換人掛名走 §9 的改派，不從這裡繞。
-    ///
-    /// 逐案走既有的 <c>SyncStatus</c>，案件跨日展開、歷程、結案語意全部沿用同一套規則——
-    /// 這裡只是「一次呼叫多台」，不是第二套狀態機。
-    /// </summary>
-    public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request)
-    {
-        var clearing = string.IsNullOrWhiteSpace(request.Status);
-        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
-
-        if (_currentUser.UserId <= 0)
-            throw DomainException.Validation("此帳號沒有可回覆的案件。");
-
-        // 自己的案件一律可回覆：案件授與的定義就是『在該主機有自己的案件』，對自己的案件恆成立，不逐台查授與（避免每台一次查詢）
-        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-
-        var targets = _cases.GetOpenByHandler(_currentUser.UserId)
-            .Where(c => hostsByName.ContainsKey(c.HostName) &&
-                        MatchesSignature(c.IssueKey, request.Source, request.EventId))
-            .ToList();
-
-        if (targets.Count == 0)
-            throw DomainException.Validation("找不到指派給您、且仍在進行中的這個問題。");
-
-        // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）：
-        // targets 是案件物件本身，SyncStatus 之後 openCase.Status 會被就地改寫成新值，
-        // 必須在迴圈開始前先讀一次舊狀態。只取「新」轉入的子集——信件的主機數也只算這些，
-        // 不把早已上報過的主機重複算進去（終檢輪修正，同批次回覆的理由）。
-        var newlyEscalatedHosts = targets
-            .Where(c => c.Status != IssueHandlingStatuses.Escalated)
-            .Select(c => c.HostName)
-            .ToList();
-
-        // 整批共用同一個時間戳：前端的處理歷程 timeline 靠「同操作者＋同時間戳」分組，
-        // 逐案取 DateTime.Now 的微小差異會讓一次操作在畫面上散成好幾筆
-        var occurredAt = DateTime.Now;
-        var actorId = (long?)_currentUser.UserId;
-        var updatedDays = 0;
-
-        foreach (var openCase in targets)
-        {
-            var sync = _caseCoordinator.SyncStatus(
-                openCase.HostName, openCase.IssueKey, openCase.IssueLabel, openCase.LastLinkedDate,
-                request.Status, request.Note, request.DueDate, clearing,
-                actorId, _currentUser.Account, occurredAt);
-
-            // SyncedDayCount 不含觸發日（見 Coordinator 的說明），這裡要的是「總共動到幾天」
-            updatedDays += sync.SyncedDayCount + 1;
-        }
-
-        // 寫入路徑維持逐案 SyncStatus（不改走協調器 Reply，觸發日的歷程動作碼才不變），
-        // 寫完後每張涉及的交辦單補記一筆回覆（無單的舊案件略過）
-        var replyActor = new WorkOrderActor { ActorId = actorId, ActorAccount = _currentUser.Account, OccurredAt = occurredAt };
-        var replyStatus = clearing ? IssueHandlingStatuses.Open : request.Status;
-        foreach (var group in targets.Where(c => c.WorkOrderId != null).GroupBy(c => c.WorkOrderId!.Value).OrderBy(g => g.Key))
-            _workOrders.RecordExternalReply(group.Key, replyActor, replyStatus, request.Note, group.Count());
-
-        var hostNames = targets.Select(c => c.HostName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
-
-        _audit.Record(
-            action: AuditActions.HandlingStatus,
-            summary: clearing
-                ? $"跨主機清除「{request.Source} {request.EventId}」的處理標記：{targets.Count} 台主機"
-                : $"跨主機將「{request.Source} {request.EventId}」標為「{HandlingTextHelpers.IssueStatusText(request.Status)}」：" +
-                  $"{targets.Count} 台主機、共 {updatedDays} 天",
-            targetKind: "issue_case",
-            targetId: $"{request.Source}/{request.EventId}",
-            detail: new { request.Source, request.EventId, request.Status, request.Note, request.DueDate, HostNames = hostNames });
-
-        // 跨主機一次回覆無法處理：一封信彙整（這正是「負責人回覆無法處理」的主要入口）。
-        // 主機標籤只算「新」轉入的那些（見上方 newlyEscalatedHosts 的說明），
-        // 不透過 NotifyEscalationIfNeeded 的 previousStatus 參數。
-        if (request.Status == IssueHandlingStatuses.Escalated && newlyEscalatedHosts.Count > 0 && _mail != null)
-        {
-            _ = _mail.NotifyEscalationAsync(new EscalationNotice(
-                $"{request.Source} {request.EventId}",
-                newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
-                _currentUser.Account, request.Note));
-        }
-
-        return new BulkIssueStatusResultDto
-        {
-            UpdatedCaseCount = targets.Count,
-            UpdatedDayCount = updatedDays,
-            HostNames = hostNames
-        };
-    }
-
     // ── 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）────────────────────────────────────
 
     /// <summary>
@@ -692,19 +599,6 @@ public class IssueHandlingCommandService
         }
 
         return plan;
-    }
-
-    /// <summary>
-    /// 問題簽章鍵（<c>LogName|Source|EventId|EntryType</c>）是否屬於這個 Source＋EventId。
-    /// 依問題視角以 Source＋EventId 分組，同組可能含多個完整簽章（不同 LogName／EntryType），
-    /// 這裡因此比對鍵的中間兩段而不是整串相等。
-    /// </summary>
-    private static bool MatchesSignature(string issueKey, string source, int eventId)
-    {
-        var parts = issueKey.Split('|');
-        return parts.Length >= 3 &&
-               string.Equals(parts[1], source, StringComparison.OrdinalIgnoreCase) &&
-               parts[2] == eventId.ToString();
     }
 
     private string ResolveDisplayName(long userId)

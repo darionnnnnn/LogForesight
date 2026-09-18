@@ -63,35 +63,12 @@ public class HandlingController : ControllerBase
 }
 
 /// <summary>
-/// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
-///
-/// 這支端點是**處理人回覆自己手上的案件**（user 角色有 Handle 沒有 Assign）。
-/// 對象限定「自己名下的進行中案件」由服務層強制，不靠端點能力區分。
-/// </summary>
-[ApiController]
-[Route("api/handling/issue-cases")]
-[Permission(Capability.Handle)]
-public class IssueCaseStatusController : ControllerBase
-{
-    private readonly IssueHandlingCommandService _service;
-
-    public IssueCaseStatusController(IssueHandlingCommandService service)
-    {
-        _service = service;
-    }
-
-    [HttpPost("bulk-status")]
-    public ApiResponse<BulkIssueStatusResultDto> BulkStatus([FromBody] BulkIssueStatusRequest request) =>
-        ApiResponse<BulkIssueStatusResultDto>.Ok(_service.BulkSetIssueStatusByHandler(request));
-}
-
-/// <summary>
 /// 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）：把一個問題在**尚未有人接手**的主機上一次標成結論。
 ///
 /// 能力＝<c>Assign</c> **且** <c>Handle</c>（兩個 <c>[Permission]</c> 標註疊加＝都要滿足，
 /// 同一個標註內的多個能力才是「任一」）。實務上只有 admin 兩者兼具，與需求「admin 使用者」
-/// 一致，不必為此開新能力。刻意獨立成一個 controller 而不是掛在上面兩個類別裡：
-/// 那兩個類別各自有自己的類別層能力，混進去會把對象搞混。
+/// 一致，不必為此開新能力。刻意獨立成一個 controller 而不是掛進上面的逐日處理類別：
+/// 那個類別有自己的類別層能力，混進去會把對象搞混。
 /// </summary>
 [ApiController]
 [Route("api/handling/issue-cases")]

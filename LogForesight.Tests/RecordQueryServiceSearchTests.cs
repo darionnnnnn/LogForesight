@@ -432,6 +432,35 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Null(dto.CaseFirstLinkedDate);
     }
 
+    /// <summary>
+    /// 案件所屬交辦單（task-47-D2c）：有單就帶單號給前端組單號連結；
+    /// 沒有案件時為 null（舊案件未整併也是 null，同一條路徑）。
+    /// </summary>
+    [Fact]
+    public void GetDetail_問題案件有交辦單時帶回單號_無案件時為null()
+    {
+        var host = AddHost("HOST-A");
+        var other = AddHost("HOST-B");
+        var issue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
+        AddRecord(other, Yesterday, "高", issues: new[] { issue });
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-wo", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, WorkOrderId = 77,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        Assert.Equal(77, _service.GetDetail(host.HostId, Yesterday).TopIssues.Single().WorkOrderId);
+        Assert.Null(_service.GetDetail(other.HostId, Yesterday).TopIssues.Single().WorkOrderId);
+    }
+
     // ── 依問題視角（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────────
 
     private static LogIssueSignature DiskIssue(IssueSeverity severity = IssueSeverity.High) => new()

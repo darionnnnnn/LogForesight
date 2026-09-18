@@ -10,7 +10,7 @@ namespace LogForesight.Web.Services;
 ///
 /// **只准該單處理人本人回覆，管理者也擋**：回覆是「處理人替自己手上的工作交代結果」，
 /// 管理者要改變成員狀態有正規路徑——代為結案或改派（會留下各自的事件與稽核），
-/// 不從這裡以處理人名義代答（同 <see cref="IssueHandlingCommandService.BulkSetIssueStatusByHandler"/> 的規則）。
+/// 不從這裡以處理人名義代答——全站同一條規則：回覆一律是處理人本人的名義。
 ///
 /// 多單回覆**先全部檢查再寫**：任一張不存在、不是本人、已結案，整筆擋下、零寫入——
 /// 逐張檢查逐張寫會讓使用者拿到「前幾張已回覆、後面失敗」的半套結果。
@@ -142,8 +142,8 @@ public class WorkOrderReplyService
         IssueStatusValidation.Validate(status, dueDate, clearing: status == IssueHandlingStatuses.Open, note);
 
     /// <summary>
-    /// 寫入前讀成員舊狀態，只算「新」轉入 escalated 的主機（原本就是 escalated 的不重複通知），
-    /// 比照 <see cref="IssueHandlingCommandService.BulkSetIssueStatusByHandler"/>。狀態不是 escalated 時不讀。
+    /// 寫入前讀成員舊狀態，只算「新」轉入 escalated 的主機（原本就是 escalated 的不重複通知）。
+    /// 狀態不是 escalated 時不讀——省掉與通知無關的成員分頁查詢。
     /// </summary>
     private List<string> NewlyEscalatedHosts(long workOrderId, IReadOnlyCollection<string>? caseIds, string status)
     {

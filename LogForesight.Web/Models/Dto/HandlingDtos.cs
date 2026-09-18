@@ -244,30 +244,8 @@ public class IssueTodoDto
 
 
 /// <summary>
-/// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
-/// 對象是**目前使用者名下**、這個問題的全部進行中案件——同一個硬體問題被指派到十台主機時，
-/// 處理人不必進十次詳情頁標十次一樣的狀態。
-/// </summary>
-public class BulkIssueStatusRequest
-{
-    [Required]
-    public string Source { get; set; } = string.Empty;
-
-    public int EventId { get; set; }
-
-    /// <summary>值域同問題層級狀態（含 observing）；空字串＝清除標記（調回未處理）</summary>
-    public string Status { get; set; } = string.Empty;
-
-    [StringLength(1000, ErrorMessage = "處理說明長度不可超過 1000 字元")]
-    public string? Note { get; set; }
-
-    /// <summary>處理中的預計完成日／觀察中的觀察至日期，其餘狀態忽略</summary>
-    public DateTime? DueDate { get; set; }
-}
-
-/// <summary>
 /// 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）：admin 直接把一個問題在**尚未有人接手**的主機上
-/// 標成結論。與 <see cref="BulkIssueStatusRequest"/>（處理人回覆自己名下的案件）刻意分開：
+/// 標成結論。與處理人回覆自己名下案件的交辦單回覆（<c>/api/work-orders/{id}/reply</c>）刻意分開：
 /// 對象不同（無案件的主機 vs 自己的案件）、值域不同（只收結案四態）、原因必填。
 /// </summary>
 public class BulkCloseIssueRequest
@@ -366,18 +344,6 @@ public class BulkCloseIssueResultDto
     public int EventId { get; set; }
     public string? From { get; set; }
     public string? To { get; set; }
-}
-
-public class BulkIssueStatusResultDto
-{
-    /// <summary>實際套用的案件數（＝主機數，同主機同問題只有一個進行中案件）</summary>
-    public int UpdatedCaseCount { get; set; }
-
-    /// <summary>連同案件涵蓋的其他日子一起更新的天數合計（含觸發日）</summary>
-    public int UpdatedDayCount { get; set; }
-
-    /// <summary>套用到的主機名稱（前端回報用）</summary>
-    public List<string> HostNames { get; set; } = new();
 }
 
 

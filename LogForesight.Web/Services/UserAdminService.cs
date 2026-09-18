@@ -152,7 +152,8 @@ public class UserAdminService
                 CreatedByAccount = c.CreatedByAccount,
                 ClosedAt = c.ClosedAt,
                 FirstLinkedDate = c.FirstLinkedDate.ToString("yyyy-MM-dd"),
-                LastLinkedDate = c.LastLinkedDate.ToString("yyyy-MM-dd")
+                LastLinkedDate = c.LastLinkedDate.ToString("yyyy-MM-dd"),
+                WorkOrderId = c.WorkOrderId
             })
             .ToList();
     }

@@ -389,6 +389,9 @@ function statusCell(issue, sectionIssues) {
     // 案件徽章（docs/archive/FEEDBACK-10-PLAN.md §6）：「誰在處理」是處理狀態資訊，放這一欄
     // 才和狀態文字、預計完成日在一起——原本掛在「問題」欄，跟問題本身的識別資訊混雜
     if (issue.caseHandlerName) wrap.appendChild(caseBadge(issue));
+    // 交辦單單號（task-47-D2c）：案件掛在哪張單上是「誰在處理」的下一個問題，
+    // 徽章旁附一個單號連結直接進交辦單詳情；沒有單（舊案件未整併）時整個不出現
+    if (issue.workOrderId) wrap.appendChild(workOrderBadge(issue.workOrderId));
     // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：canHandle 與否都顯示——唯讀角色
     // 同樣需要參考上次怎麼解的，不是只有能操作的人才看得到
     if (issue.hasPriorHandling) wrap.appendChild(priorHandlingTrigger(issue));
@@ -1444,6 +1447,20 @@ function caseBadge(issue) {
     badge.textContent = `${handlerText} ${statusText}`;
     badge.title = `案件處理人：${handlerText}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
     return badge;
+}
+
+/**
+ * 交辦單單號徽章（task-47-D2c）：點了進交辦單詳情。
+ * stopPropagation 同案件徽章——問題列自己有展開／點擊行為，不能被連結一起觸發。
+ */
+function workOrderBadge(workOrderId) {
+    const link = document.createElement('a');
+    link.className = 'lf-badge lf-badge--secondary d-inline-block mt-1';
+    link.href = appUrl(`/work-orders/${workOrderId}`);
+    link.title = '檢視交辦單';
+    link.textContent = `#${workOrderId}`;
+    link.addEventListener('click', event => event.stopPropagation());
+    return link;
 }
 
 /**
