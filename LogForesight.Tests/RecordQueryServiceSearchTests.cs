@@ -984,6 +984,26 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(2, result.DistinctHostCount);
     }
 
+    /// <summary>
+    /// 依問題端點的宣告回傳型別要是 <see cref="IssueSearchResultDto"/>：JSON 依宣告型別序列化，
+    /// 寫成父型別 <c>PagedResult</c> 會把去重主機數與靜音未列出數静默吊掉，
+    /// 而服務層測試（上一條）看不到——只有實際打 API 才發現。
+    /// </summary>
+    [Fact]
+    public void 依問題端點_序列化後仍帶去重主機數與靜音未列出數()
+    {
+        var method = typeof(LogForesight.Web.Controllers.Api.RecordsController)
+            .GetMethod(nameof(LogForesight.Web.Controllers.Api.RecordsController.ByIssue))!;
+        var payloadType = method.ReturnType.GetGenericArguments()[0];
+        Assert.Equal(typeof(IssueSearchResultDto), payloadType);
+
+        var dto = new IssueSearchResultDto { DistinctHostCount = 7, MutedIssueCount = 3 };
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            LogForesight.Web.Models.ApiResponse<object>.Ok(dto));
+        Assert.Contains("distinctHostCount", json, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mutedIssueCount", json, System.StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void SearchByIssue_命中規則帶得出白話說明_未命中為null()
     {

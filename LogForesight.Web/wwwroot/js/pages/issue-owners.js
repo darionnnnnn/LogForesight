@@ -13,6 +13,7 @@
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
 const listContainer = document.getElementById('issue-owner-list');
 const form = document.getElementById('issue-owner-form');
@@ -103,6 +104,11 @@ function renderList() {
                 }
             },
             {
+                title: '靜音',
+                className: 'text-nowrap',
+                render: r => muteCell(r)
+            },
+            {
                 title: '更新',
                 className: 'text-nowrap',
                 render: r => r.updatedAt
@@ -137,6 +143,61 @@ function renderMuted(text) {
     span.className = 'text-muted small';
     span.textContent = text;
     return span;
+}
+
+/**
+ * 靜音欄：沒有進行中的靜音就只有一顆「靜音」，靜音中則顯示迄日徽章與「延長」「解除」。
+ * modal 是共用元件（問題查詢的依問題視角走同一顆），這裡把 currentMute 照實傳進去，
+ * 讓它切成「延長」的版面並顯示目前區間。這一頁本來就要 Maintain 才進得來，不再判斷能力。
+ */
+function muteCell(rule) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-1';
+
+    const mute = rule.currentMute;
+    if (!mute) {
+        wrap.append(renderMuted('—'), button('靜音', { icon: 'bell-slash', onClick: () => openMute(rule) }));
+        return wrap;
+    }
+
+    const badge = document.createElement('span');
+    badge.className = 'badge text-bg-secondary';
+    badge.textContent = `靜音至 ${formatDateTime(mute.to).slice(0, 10)}`;
+    badge.title = `原因：${mute.reason ?? ''}｜設定者：${mute.byAccount ?? ''}`;
+    wrap.append(
+        badge,
+        button('延長', { onClick: () => openMute(rule) }),
+        button('解除', { variant: 'outline-danger', onClick: () => removeMute(rule) })
+    );
+    return wrap;
+}
+
+function openMute(rule) {
+    openIssueMuteModal({
+        source: rule.sourceName,
+        eventId: rule.eventId,
+        issueLabel: issueLabel(rule),
+        currentMute: rule.currentMute ?? null,
+        onApplied: load
+    });
+}
+
+async function removeMute(rule) {
+    const confirmed = await confirmAction({
+        title: '解除靜音',
+        message: '解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。',
+        confirmText: '解除',
+        confirmVariant: 'danger'
+    });
+    if (!confirmed) return;
+
+    try {
+        await clearIssueMute(rule.sourceName, rule.eventId);
+        toast('已解除靜音', 'success');
+        await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    }
 }
 
 // ── 新增／編輯 modal ─────────────────────────────────────────────────────

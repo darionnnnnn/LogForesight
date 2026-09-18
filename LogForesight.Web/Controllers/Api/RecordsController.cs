@@ -111,9 +111,13 @@ public class RecordsController : ControllerBase
             _list.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
     /// <summary>依問題彙總（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）。
-    /// §10：支援處理狀態（處理概況三態）與未指派過濾。</summary>
+    /// §10：支援處理狀態（處理概況三態）與未指派過濾。
+    ///
+    /// 回傳型別必須寫 <see cref="IssueSearchResultDto"/> 而不是父型別 <c>PagedResult</c>：
+    /// JSON 依**宣告型別**序列化，寫父型別會把子型別獨有的欄位（去重主機數、靜音未列出數）
+    /// 靜默吊掉——服務層回傳值正確、單元測試也綠，只有實際打 API 才看得出來。</summary>
     [HttpGet("by-issue")]
-    public ApiResponse<PagedResult<IssueGroupDto>> ByIssue(
+    public ApiResponse<IssueSearchResultDto> ByIssue(
         [FromQuery] string? hostIds,
         [FromQuery] string? groupIds,
         [FromQuery] string? from,
@@ -133,7 +137,7 @@ public class RecordsController : ControllerBase
         var request = BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize);
         request.Statuses = ParseStrings(statuses);
         request.Unassigned = unassigned == true;
-        return ApiResponse<PagedResult<IssueGroupDto>>.Ok(_list.SearchByIssue(request));
+        return ApiResponse<IssueSearchResultDto>.Ok(_list.SearchByIssue(request));
     }
 
     private static RecordSearchRequest BuildRequest(

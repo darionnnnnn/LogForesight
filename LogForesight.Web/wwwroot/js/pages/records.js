@@ -24,6 +24,7 @@ import {
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
+import { openIssueMuteModal } from './issue-mute-modal.js';
 import { bindRangeChips } from '../core/date-range.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
@@ -1113,6 +1114,7 @@ function issueActionsCell(group) {
         wrap.appendChild(issueBulkCloseButton(group));
     }
     if (hasCapability(currentUser, 'Assign')) wrap.appendChild(issueAssignButton(group));
+    if (hasCapability(currentUser, 'Maintain')) wrap.appendChild(issueMuteButton(group));
 
     return wrap.children.length > 0 ? wrap : '';
 }
@@ -1157,6 +1159,32 @@ function issueAssignButton(group) {
         event.preventDefault();
         event.stopPropagation();
         openWorkOrderModal(group);
+    });
+    return btn;
+}
+
+/**
+ * 靜音（B-3）：把這個問題在一段期間內完全噤聲，到期自動恢復。modal 是共用元件
+ * （問題檔案頁的「靜音／延長」走同一顆）。這裡沒有現成的 currentMute 可帶——
+ * 依問題視角的列不含靜音區間，傳 null 就是「新設定一段靜音」的版面；
+ * 後端在今天已靜音時本來就會延長，不會因此多出一段區間。
+ */
+function issueMuteButton(group) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary';
+    btn.textContent = '靜音';
+    btn.title = '暫時不看這個問題（到期自動恢復）';
+    btn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openIssueMuteModal({
+            source: group.source,
+            eventId: group.eventId,
+            issueLabel: `${group.source} (${group.eventId})`,
+            currentMute: null,
+            onApplied: search
+        });
     });
     return btn;
 }
