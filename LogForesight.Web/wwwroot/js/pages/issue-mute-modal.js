@@ -52,8 +52,9 @@ async function loadActiveOrders(source, eventId) {
     try {
         const data = await api.get(`/api/work-orders?${params}`, { silent: true });
         const items = data?.items ?? [];
+        // 張數取後端總數（同一問題一位處理人最多一張，實務上遠少於一頁）；台數加總本頁各單
         return {
-            orders: items.length,
+            orders: data.total,
             hosts: items.reduce((sum, r) => sum + (r.counts?.active ?? 0), 0)
         };
     } catch {

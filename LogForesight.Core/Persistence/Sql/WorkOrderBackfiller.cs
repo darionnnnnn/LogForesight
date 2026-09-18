@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using NLog;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -155,6 +156,11 @@ public sealed class WorkOrderBackfiller
 
         var lastReplies = ScanLastReplies(groups, cancellationToken);
 
+        // SQL Server 後端啟用了連線重試（EnableRetryOnFailure），自開交易必須包在執行策略裡，
+        // 否則 EF 直接擲 InvalidOperationException——SQLite 沒有重試策略，測試照樣全綠
+        IExecutionStrategy strategy;
+        using (var probe = _contextFactory()) strategy = probe.Database.CreateExecutionStrategy();
+
         int created = 0, merged = 0, members = 0;
         foreach (var group in groups)
         {
@@ -163,71 +169,77 @@ public sealed class WorkOrderBackfiller
             var first = group.First();
             var caseIds = group.Select(c => c.CaseId).ToList();
             var (handlerId, sourceKey, eventId) = group.Key;
+            var isMerge = false;
 
-            // 每組一個交易：單列、案件連結、事件列一起提交——中斷不會留下零成員的單或缺 created 事件的單
-            using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction();
-
-            var existingId = ctx.WorkOrders
-                .Where(w => w.HandlerId == handlerId && w.SourceKey == sourceKey && w.EventId == eventId && w.ClosedAt == null)
-                .Select(w => (long?)w.WorkOrderId)
-                .FirstOrDefault();
-
-            long workOrderId;
-            string action;
-            if (existingId != null)
+            // 每組一個交易：單列、案件連結、事件列一起提交——中斷不會留下零成員的單或缺 created 事件的單。
+            // 重試時整段重來（新的 context），所以判斷與寫入都在委派內
+            strategy.Execute(() =>
             {
-                workOrderId = existingId.Value;
-                action = WorkOrderEventActions.MergedIn;
-            }
-            else
-            {
-                var row = new WorkOrderRow();
-                EfWorkOrderStore.CopyToRow(new WorkOrder
+                using var ctx = _contextFactory();
+                using var tx = ctx.Database.BeginTransaction();
+
+                var existingId = ctx.WorkOrders
+                    .Where(w => w.HandlerId == handlerId && w.SourceKey == sourceKey && w.EventId == eventId && w.ClosedAt == null)
+                    .Select(w => (long?)w.WorkOrderId)
+                    .FirstOrDefault();
+
+                long workOrderId;
+                string action;
+                if (existingId != null)
                 {
-                    SourceName = first.SourceName,
-                    EventId = first.EventId,
-                    IssueLabel = first.IssueLabel,
-                    HandlerId = handlerId,
-                    Origin = WorkOrderOrigins.Backfill,
-                    ScopeKind = WorkOrderScopes.Hosts,
-                    ScopeGroupIds = new List<long>(),
-                    AutoAttach = false,
-                    CreatedById = null,
-                    CreatedByAccount = AuditActions.SystemAccount,
-                    CreatedAt = group.Min(c => c.CreatedAt),
-                    LastReplyAt = lastReplies.TryGetValue((handlerId, sourceKey, eventId), out var at) ? at : null,
-                    UpdatedAt = DateTime.Now
-                }, row);
-                ctx.WorkOrders.Add(row);
+                    workOrderId = existingId.Value;
+                    action = WorkOrderEventActions.MergedIn;
+                }
+                else
+                {
+                    var row = new WorkOrderRow();
+                    EfWorkOrderStore.CopyToRow(new WorkOrder
+                    {
+                        SourceName = first.SourceName,
+                        EventId = first.EventId,
+                        IssueLabel = first.IssueLabel,
+                        HandlerId = handlerId,
+                        Origin = WorkOrderOrigins.Backfill,
+                        ScopeKind = WorkOrderScopes.Hosts,
+                        ScopeGroupIds = new List<long>(),
+                        AutoAttach = false,
+                        CreatedById = null,
+                        CreatedByAccount = AuditActions.SystemAccount,
+                        CreatedAt = group.Min(c => c.CreatedAt),
+                        LastReplyAt = lastReplies.TryGetValue((handlerId, sourceKey, eventId), out var at) ? at : null,
+                        UpdatedAt = DateTime.Now
+                    }, row);
+                    ctx.WorkOrders.Add(row);
+                    ctx.SaveChanges();
+                    workOrderId = row.WorkOrderId;
+                    action = WorkOrderEventActions.Created;
+                }
+
+                foreach (var chunk in caseIds.Chunk(BatchSize))
+                {
+                    // work_order_id IS NULL 條件：與協調層並行時不覆蓋已被連結的案件；updated_at 不動
+                    ctx.IssueCases.Where(c => chunk.Contains(c.CaseId) && c.WorkOrderId == null)
+                        .ExecuteUpdate(s => s.SetProperty(c => c.WorkOrderId, (long?)workOrderId));
+                }
+
+                BeforeEventWriteForTest?.Invoke();
+
+                ctx.WorkOrderEvents.Add(new WorkOrderEventRow
+                {
+                    WorkOrderId = workOrderId,
+                    Action = action,
+                    ActorId = null,
+                    ActorAccount = AuditActions.SystemAccount,
+                    MemberDelta = caseIds.Count,
+                    Note = BackfillNote,
+                    CreatedAt = DateTime.Now
+                });
                 ctx.SaveChanges();
-                workOrderId = row.WorkOrderId;
-                action = WorkOrderEventActions.Created;
-            }
-
-            foreach (var chunk in caseIds.Chunk(BatchSize))
-            {
-                // work_order_id IS NULL 條件：與協調層並行時不覆蓋已被連結的案件；updated_at 不動
-                ctx.IssueCases.Where(c => chunk.Contains(c.CaseId) && c.WorkOrderId == null)
-                    .ExecuteUpdate(s => s.SetProperty(c => c.WorkOrderId, (long?)workOrderId));
-            }
-
-            BeforeEventWriteForTest?.Invoke();
-
-            ctx.WorkOrderEvents.Add(new WorkOrderEventRow
-            {
-                WorkOrderId = workOrderId,
-                Action = action,
-                ActorId = null,
-                ActorAccount = AuditActions.SystemAccount,
-                MemberDelta = caseIds.Count,
-                Note = BackfillNote,
-                CreatedAt = DateTime.Now
+                tx.Commit();
+                isMerge = existingId != null;
             });
-            ctx.SaveChanges();
-            tx.Commit();
 
-            if (existingId != null) merged++; else created++;
+            if (isMerge) merged++; else created++;
             members += caseIds.Count;
         }
 

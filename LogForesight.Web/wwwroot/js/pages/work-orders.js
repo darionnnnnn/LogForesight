@@ -35,6 +35,8 @@ const activeStatusSelect = document.getElementById('wo-status');
 const activeSortSelect = document.getElementById('wo-sort');
 const activeGroupSelect = document.getElementById('wo-group');
 const activeResumedCheckbox = document.getElementById('wo-resumed');
+// 處理人離職或停用後，要逐單改派或代為結案——這個篩選把那些單一次找出來
+const activeHandlerInactiveCheckbox = document.getElementById('wo-handler-inactive');
 const activeListContainer = document.getElementById('wo-list');
 const activePagerContainer = document.getElementById('wo-pager');
 
@@ -175,7 +177,11 @@ function renderIssueCell(issueLabelText, plainExplanationText) {
 
 // ── 進行中頁籤 ─────────────────────────────────────────────────────────────
 
+/** 進行中清單的請求序號：篩選連續改動時，慢回來的舊請求不可蓋掉新篩選的結果 */
+let activeLoadSeq = 0;
+
 async function loadActive() {
+    const seq = ++activeLoadSeq;
     renderLoading(activeListContainer, 5);
 
     const status = activeStatusSelect.value;
@@ -188,7 +194,8 @@ async function loadActive() {
         sort,
         page: String(activePage),
         pageSize: String(pageSize),
-        resumedFromMute: String(resumed)
+        resumedFromMute: String(resumed),
+        handlerInactive: String(activeHandlerInactiveCheckbox.checked)
     });
 
     if (hasUrlFilter) {
@@ -199,6 +206,7 @@ async function loadActive() {
     if (activeGroupSelect.value) params.set('groupId', activeGroupSelect.value);
 
     const data = await api.get(`/api/work-orders?${params}`);
+    if (seq !== activeLoadSeq) return;
     if (filterHandlerId) {
         updateFilterLabel(data?.items?.length > 0 ? data.items[0].handlerName : null);
     }
@@ -756,6 +764,7 @@ activeStatusSelect.addEventListener('change', onActiveFilterChange);
 activeSortSelect.addEventListener('change', onActiveFilterChange);
 activeGroupSelect.addEventListener('change', onActiveFilterChange);
 activeResumedCheckbox.addEventListener('change', onActiveFilterChange);
+activeHandlerInactiveCheckbox.addEventListener('change', onActiveFilterChange);
 
 // 待派查詢
 gapsQueryBtn.addEventListener('click', () => {

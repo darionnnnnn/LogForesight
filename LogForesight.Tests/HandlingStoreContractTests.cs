@@ -604,6 +604,28 @@ public class HandlingStoreContractTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// 尾端 LogId 不照順序（SQL Server 批次插入時 seq 不保證照清單順序配發）：續號要接在回看窗內的最大值之後，
+    /// 不能只看最後一行——最後一行是 3、實際最大是 5 時，取最後一行會發出 4、5 兩個重號。
+    /// </summary>
+    [Fact]
+    public void 歷程續號_尾端順序錯亂仍接最大值不重號()
+    {
+        var date = DateTime.Today;
+        var raw = _fx.LogStore("handling_log");
+        raw.AppendLines(new[] { 1L, 2L, 5L, 4L, 3L }
+            .Select(id => System.Text.Json.JsonSerializer.Serialize(
+                new RecordHandlingLog { LogId = id, HostName = "SRV-01", Date = date, Action = "seed" + id, CreatedAt = DateTime.Now },
+                LfJsonOptions.Compact))
+            .ToList());
+
+        var store = Days();
+        store.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "next" });
+
+        var next = store.GetLogs("SRV-01", date).Single(l => l.Action == "next");
+        Assert.Equal(6, next.LogId);
+    }
+
     // ── 派工脈絡用：GetResolvedSince／NoiseMarkStore.GetAll／旗標舊資料相容 ──────────
 
     private static void SeedResolvedSinceCases(IIssueCaseStore store, DateTime since)

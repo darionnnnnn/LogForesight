@@ -487,10 +487,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             // **先刪子表再刪主表，不依賴 FK cascade**：顯式刪除避免孤兒 top_issues 列。
             // 兩次刪除包在同一個交易裡——中斷在兩者之間會留下沒有主列的孤兒子列
             // （SQLite 有 cascade 掩護、SqlServer 不保證），重跑的取消語意也依賴「不留半日」。
-            using var tx = ctx.Database.BeginTransaction();
-            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
-            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
-            tx.Commit();
+            // 交易包在執行策略裡：SQL Server 後端啟用連線重試時，自開交易不包會直接擲例外。
+            var deleted = 0;
+            ctx.Database.CreateExecutionStrategy().Execute(() =>
+            {
+                using var tx = ctx.Database.BeginTransaction();
+                ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+                deleted = ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+                tx.Commit();
+            });
+            total += deleted;
         }
 
         if (total == 0)
