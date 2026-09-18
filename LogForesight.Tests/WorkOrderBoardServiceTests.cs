@@ -56,7 +56,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         _displayNames = new UserDisplayNameService(_settingsStore);
 
         _query = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _orderStore, _settingsStore, severity,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore, severity,
             visibility, _aggregates, statusResolver, _displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
@@ -253,6 +253,30 @@ public class WorkOrderBoardServiceTests : IDisposable
         Assert.Equal((h.UserId, 1, true), (suggestion.HandlerId, suggestion.Hosts, suggestion.WillCreate));
         Assert.Empty(row.Unassignable);
         Assert.Equal("disk 153", row.IssueLabel);
+    }
+
+    /// <summary>
+    /// 問題今天剛設靜音（區間＝今天～今天＋6），出現日是昨天、不在區間內：
+    /// 與單一列判定同口徑，仍視為靜音中——不建議派給任何人，缺口主機計入靜音排除。
+    /// </summary>
+    [Fact]
+    public void 待派_目前靜音中的問題不列入待派()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var host = AddHost("HOST-A");
+        Candidate(h, inPool: true, host.HostId);
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "disk", EventId = 153,
+            Mutes = new List<MuteInterval> { new() { From = DateTime.Today, To = DateTime.Today.AddDays(6), Reason = "維護中" } }
+        });
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        Assert.Empty(row.Suggested);
+        Assert.Empty(row.Unassignable);
+        Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipMuted]);
     }
 
     [Fact]

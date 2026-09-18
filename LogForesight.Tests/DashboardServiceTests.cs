@@ -310,7 +310,7 @@ public class DashboardServiceTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, new FakeWorkOrderStore(_caseStore), _settingsStore,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
             new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
@@ -361,7 +361,7 @@ public class DashboardServiceTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, new FakeWorkOrderStore(_caseStore), _settingsStore,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
             new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
@@ -407,7 +407,7 @@ public class DashboardServiceTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, new FakeWorkOrderStore(_caseStore), _settingsStore,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
             new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 
@@ -521,7 +521,7 @@ public class DashboardServiceTests : IDisposable
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates,
             _severityVisibility, new SummaryCache(new DataVersionStamp()), source);
         var list = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, new FakeWorkOrderStore(_caseStore), _settingsStore,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
             new NextUnhandledSequenceCache(new DataVersionStamp()), source);
         return (dashboard, reports, list);

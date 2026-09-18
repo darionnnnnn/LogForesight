@@ -16,7 +16,6 @@ public class RecordListQueryService
     private readonly IRecordHandlingStore _handlings;
     private readonly IIssueHandlingStore _issueHandlings;
     private readonly IIssueCaseStore _cases;
-    private readonly IWorkOrderStore _workOrders;
     private readonly ISystemSettingsStore _settings;
     private readonly ISystemSettingsService _settingsService;
     private readonly IVisibilityService _visibility;
@@ -44,7 +43,6 @@ public class RecordListQueryService
         IRecordHandlingStore handlings,
         IIssueHandlingStore issueHandlings,
         IIssueCaseStore cases,
-        IWorkOrderStore workOrders,
         ISystemSettingsStore settings,
         ISystemSettingsService settingsService,
         IVisibilityService visibility,
@@ -62,7 +60,6 @@ public class RecordListQueryService
         _handlings = handlings;
         _issueHandlings = issueHandlings;
         _cases = cases;
-        _workOrders = workOrders;
         _settings = settings;
         _settingsService = settingsService;
         _visibility = visibility;
@@ -495,15 +492,12 @@ public class RecordListQueryService
             .Count();
 
         var paged = Paginate(groups, request);
-        var pageIssues = paged.Items.Select(g => (g.Source, g.EventId)).ToList();
-        var assignedCounts = _workOrders.CountAssignedHostsByIssue(pageIssues);
         foreach (var item in paged.Items)
         {
-            var key = (WorkOrderIssueKey.SourceKeyOf(item.Source), item.EventId);
-            if (assignedCounts.TryGetValue(key, out var count))
-            {
-                item.AssignedHostCount = count;
-            }
+            // 已交辦＝檢視者範圍與查詢期間內、進行中案件已屬於交辦單的主機數——與分母（主機數）同一母體
+            item.AssignedHostCount = resolvedByIssue.TryGetValue((item.Source, item.EventId), out var occs)
+                ? occs.Where(r => r.OpenCase?.WorkOrderId != null).Select(r => r.Occurrence.HostId).Distinct().Count()
+                : 0;
         }
 
         return WithDistinctHosts(paged, distinctHostCount, mutedIssueCount);

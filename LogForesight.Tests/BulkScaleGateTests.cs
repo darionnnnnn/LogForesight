@@ -72,7 +72,7 @@ public class BulkScaleGateTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
         var coordinator = new WorkOrderCoordinator(workOrderStore, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
         var query = new RecordListQueryService(
-            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, workOrderStore, _settingsStore, severity,
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore, severity,
             visibility, aggregates, statusResolver, displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
         var mail = new MailNotificationService(
             _settingsStore, new FakeSmtpMailSender(), _hosts, _users, groups, new FakeGroupAccessStore(),

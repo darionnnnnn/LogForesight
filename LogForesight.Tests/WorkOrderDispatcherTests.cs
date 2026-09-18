@@ -137,6 +137,42 @@ public class WorkOrderDispatcherTests
     }
 
     [Fact]
+    public void 靜音_目前靜音中但紀錄日在區間外_不派工()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        var ctx = Build();
+        var today = new DateTime(2026, 9, 18);
+        ctx.MuteToday = today;
+        ctx.MuteIntervals = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>
+        {
+            [IssueProfile.KeyOf("disk", EventId)] = new List<(DateTime, DateTime)> { (today, today.AddDays(6)) }
+        };
+
+        AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), today.AddDays(-1)), WorkOrderDispatcher.SkipMuted);
+    }
+
+    [Fact]
+    public void 靜音_區間已結束且紀錄日在區間外_照常派工()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        var ctx = Build();
+        var today = new DateTime(2026, 9, 18);
+        ctx.MuteToday = today;
+        ctx.MuteIntervals = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>
+        {
+            [IssueProfile.KeyOf("disk", EventId)] = new List<(DateTime, DateTime)> { (today.AddDays(-10), today.AddDays(-5)) }
+        };
+
+        AssertCreate(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), today.AddDays(-1)), 1, WorkOrderOrigins.AutoDispatch);
+    }
+
+    [Fact]
+    public void Build以now的日期設定MuteToday()
+    {
+        Assert.Equal(new DateTime(2026, 9, 18), Build(new DateTime(2026, 9, 18, 23, 30, 0)).MuteToday);
+    }
+
+    [Fact]
     public void 本段靜音區間恆為空()
     {
         Assert.Empty(Build().MuteIntervals);

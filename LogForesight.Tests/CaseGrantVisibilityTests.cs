@@ -111,7 +111,6 @@ public class CaseGrantVisibilityTests : IDisposable
             handlings: _handlings,
             issueHandlings: _issueHandlings,
             cases: _cases,
-            workOrders: new FakeWorkOrderStore(_cases),
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.ForUser(_user.UserId, Capability.Handle),

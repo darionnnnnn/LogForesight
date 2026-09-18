@@ -70,6 +70,11 @@ public sealed class DispatchContext
     public IReadOnlyDictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>> MuteIntervals { get; internal set; }
         = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>();
 
+    /// <summary>
+    /// 判定「目前靜音中」用的今天：<see cref="Build"/> 以 now.Date 設定；internal set 供測試覆寫。
+    /// </summary>
+    public DateTime MuteToday { get; internal set; } = DateTime.Today;
+
     /// <summary>本趟以 <see cref="RegisterOrder"/> 登記的單</summary>
     public IReadOnlyList<WorkOrder> RegisteredOrders => _registeredOrders;
 
@@ -127,7 +132,8 @@ public sealed class DispatchContext
         return new DispatchContext(cases, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
             settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false)
         {
-            MuteIntervals = muteIntervals
+            MuteIntervals = muteIntervals,
+            MuteToday = now.Date
         };
     }
 
@@ -145,10 +151,14 @@ public sealed class DispatchContext
             new Dictionary<string, Dictionary<(string SourceKey, int EventId), (DateTime ClosedAt, long HandlerId)>>(StringComparer.OrdinalIgnoreCase),
             new HashSet<IssueSeverity>(), autoDispatchEnabled: false, unavailable: true);
 
-    /// <summary>紀錄日落在該問題任一靜音區間（含首尾）</summary>
+    /// <summary>
+    /// 問題目前靜音中（任一區間涵蓋 <see cref="MuteToday"/>），或紀錄日落在該問題任一靜音區間（皆含首尾）。
+    /// 與讀取側 IssueExclusion.IsMuted 同一條規則：今天剛設靜音時，夜間處理昨天的紀錄、
+    /// 或待派頁的立即派工，也不為正在靜音的問題建單。
+    /// </summary>
     public bool IsMuted(string source, int eventId, DateTime recordDate) =>
         MuteIntervals.TryGetValue(IssueProfile.KeyOf(source, eventId), out var intervals)
-        && intervals.Any(i => MuteInterval.Covers(i.From, i.To, recordDate));
+        && intervals.Any(i => MuteInterval.Covers(i.From, i.To, recordDate) || MuteInterval.Covers(i.From, i.To, MuteToday));
 
     /// <summary>
     /// 「不再打擾」：該主機該鍵建立最晚的那件案件被以 wont_fix／false_positive／known_noise 結案

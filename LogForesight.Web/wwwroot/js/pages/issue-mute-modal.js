@@ -205,6 +205,13 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
             section.appendChild(wrap);
         }
 
+        if (canClose) {
+            const closeNote = document.createElement('div');
+            closeNote.className = 'form-text';
+            closeNote.textContent = '代為結案：結案後這些主機之後再出現同一個問題不會自動派工（不再打擾），需要時請手動交辦';
+            section.appendChild(closeNote);
+        }
+
         if (!canClose) {
             const note = document.createElement('div');
             note.className = 'text-muted small';

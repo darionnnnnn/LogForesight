@@ -84,7 +84,7 @@ internal sealed class ScaleServices
 
         WorkOrderStore = backend.WorkOrderStore();
         RecordList = new RecordListQueryService(
-            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, WorkOrderStore, settingsStore,
+            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
             settingsService, Visibility, aggregates, statusResolver, displayNames,
             new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
 

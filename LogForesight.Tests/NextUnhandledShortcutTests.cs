@@ -41,7 +41,7 @@ public class NextUnhandledShortcutTests : IDisposable
     private RecordListQueryService NewService(IVisibilityService visibility) =>
         new(
             new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility),
-            _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, new FakeWorkOrderStore(_caseStore), _settingsStore,
+            _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility,
             new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
             new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),

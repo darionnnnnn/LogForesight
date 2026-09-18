@@ -192,50 +192,6 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         });
     }
 
-    public Dictionary<(string SourceKey, int EventId), int> CountAssignedHostsByIssue(
-        IReadOnlyCollection<(string Source, int EventId)> issues)
-    {
-        if (issues.Count == 0) return new Dictionary<(string SourceKey, int EventId), int>();
-
-        var normalized = issues
-            .Select(i => (SourceKey: SourceKeyOf(i.Source), i.EventId))
-            .Distinct()
-            .ToHashSet();
-
-        if (normalized.Count == 0) return new Dictionary<(string SourceKey, int EventId), int>();
-
-        var eventIds = normalized.Select(i => i.EventId).Distinct().ToList();
-        var matched = new List<(string SourceKey, int EventId, string HostNameKey)>();
-
-        using var ctx = _contextFactory();
-        foreach (var batch in eventIds.Chunk(500))
-        {
-            var rows = ctx.IssueCases.AsNoTracking()
-                .Where(c => c.ClosedAt == null && c.WorkOrderId != null && c.SourceKey != null && c.EventId != null
-                            && batch.Contains(c.EventId.Value))
-                .Select(c => new { c.SourceKey, EventId = c.EventId!.Value, c.HostNameKey })
-                .ToList();
-
-            foreach (var r in rows)
-            {
-                if (normalized.Contains((r.SourceKey!, r.EventId)))
-                {
-                    matched.Add((r.SourceKey!, r.EventId, r.HostNameKey));
-                }
-            }
-        }
-
-        return matched
-            .GroupBy(r => (r.SourceKey, r.EventId))
-            .Select(g => new
-            {
-                Key = g.Key,
-                Count = g.Select(r => HostNameKey.Of(r.HostNameKey)).Distinct().Count()
-            })
-            .Where(x => x.Count > 0)
-            .ToDictionary(x => x.Key, x => x.Count);
-    }
-
     /// <summary>成員計數的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
     internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids)
     {

@@ -55,7 +55,6 @@ public class RecordQueryServiceSearchTests : IDisposable
             handlings: _handlingStore,
             issueHandlings: _issueHandlingStore,
             cases: _caseStore,
-            workOrders: _workOrders,
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.WithCapabilities(),
@@ -767,6 +766,88 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(0, netGroup.AssignedHostCount);
     }
 
+    /// <summary>以指定可見範圍組裝的服務（其餘與建構子同一套 store）</summary>
+    private RecordQueryServiceFacade ServiceWithVisibility(IVisibilityService visibility) =>
+        new(
+            repository: new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility),
+            reports: new NullReportReader(),
+            hosts: _hosts,
+            users: _users,
+            hostGroups: new FakeHostGroupStore(),
+            visibility: visibility,
+            handlings: _handlingStore,
+            issueHandlings: _issueHandlingStore,
+            cases: _caseStore,
+            noiseMarks: new FakeNoiseMarkStore(),
+            rules: new FakeRuleStore(),
+            currentUser: FakeCurrentUser.WithCapabilities(),
+            settings: _settingsStore,
+            aggregates: new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
+            statusResolver: new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),
+            issueOwners: _issueOwners,
+            settingsService: _severityVisibility);
+
+    /// <summary>進行中且已屬於交辦單的案件</summary>
+    private void AssignedCase(WebHost host, LogIssueSignature issue, long workOrderId) =>
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = $"case-{host.HostName}",
+            HostName = host.HostName,
+            IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = 1,
+            WorkOrderId = workOrderId,
+            CreatedAt = Yesterday,
+            UpdatedAt = Yesterday
+        });
+
+    private long DiskOrder() => _workOrders.Insert(new WorkOrder
+    {
+        SourceName = "disk", EventId = 153, IssueLabel = "disk 153", HandlerId = 1,
+        Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
+    });
+
+    [Fact]
+    public void 已交辦_只數檢視者範圍內的主機()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var c = AddHost("HOST-C");
+        var disk = DiskIssue();
+        var orderId = DiskOrder();
+        foreach (var host in new[] { a, b, c })
+        {
+            AddRecord(host, Yesterday, "高", issues: new[] { disk });
+            AssignedCase(host, disk, orderId);
+        }
+
+        var result = ServiceWithVisibility(new ScopedVisibility(a.HostId)).SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(1, group.HostCount);
+        Assert.Equal(1, group.AssignedHostCount);
+    }
+
+    [Fact]
+    public void 已交辦_期間外的主機不計()
+    {
+        var inside = AddHost("HOST-IN");
+        var outside = AddHost("HOST-OUT");
+        var disk = DiskIssue();
+        var orderId = DiskOrder();
+        AddRecord(inside, Yesterday, "高", issues: new[] { disk });
+        AddRecord(outside, Yesterday.AddDays(-10), "高", issues: new[] { disk });
+        AssignedCase(inside, disk, orderId);
+        AssignedCase(outside, disk, orderId);
+
+        var result = _service.SearchByIssue(new RecordSearchRequest { From = Yesterday, To = Yesterday });
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(1, group.HostCount);
+        Assert.Equal(1, group.AssignedHostCount);
+    }
+
     [Fact]
     public void Search_未指派過濾_只留無有效處理人的風險日()
     {
@@ -866,7 +947,6 @@ public class RecordQueryServiceSearchTests : IDisposable
             handlings: _handlingStore,
             issueHandlings: _issueHandlingStore,
             cases: _caseStore,
-            workOrders: _workOrders,
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.WithCapabilities(),
