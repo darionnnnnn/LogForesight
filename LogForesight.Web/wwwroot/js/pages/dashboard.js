@@ -454,7 +454,7 @@ function renderConcludedNote(containerId, concludedCount, mutedCount) {
     // 蓋掉會讓這行文字貼齊卡片左緣（批次I 體檢修正）
     el.classList.remove('d-none');
     el.classList.add('small', 'text-muted');
-    // 靜音中的問題同樣不列入（規劃 15.3 (2)）；儀表板給所有角色看，不加連結
+    // 靜音中的問題同樣不列入（docs/archive/FEEDBACK-47-PLAN.md 15.3 (2)）；儀表板給所有角色看，不加連結
     if (c && m) el.textContent = `另有 ${c} 個問題已有結論、${m} 個靜音中（未列入）`;
     else if (c) el.textContent = `另有 ${c} 個問題已有結論（未列入）`;
     else el.textContent = `另有 ${m} 個問題靜音中（未列入）`;

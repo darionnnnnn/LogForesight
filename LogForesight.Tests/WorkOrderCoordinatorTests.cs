@@ -744,7 +744,7 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(Alice, w.Orders.Get(id)!.HandlerId);
     }
 
-    // ── Reply 事件（task-47-C2a）──────────────────────────────────────────────
+    // ── Reply 事件（回饋第 47 輪 C-2a）──────────────────────────────────────────────
 
     [Fact]
     public void Reply_寫replied事件_內容含狀態說明台數_排在結案事件之前()

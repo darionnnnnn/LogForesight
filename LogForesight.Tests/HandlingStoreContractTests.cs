@@ -676,7 +676,7 @@ public class HandlingStoreContractTests : IDisposable
         Assert.False(group.DispatchPool);
     }
 
-    // ── 案件 QueryMembers（task-47-C2a）──────────────────────────────────────
+    // ── 案件 QueryMembers（回饋第 47 輪 C-2a）──────────────────────────────────────
 
     private sealed class ReaderCounter : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
     {

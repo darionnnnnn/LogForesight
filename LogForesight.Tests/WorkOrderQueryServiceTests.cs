@@ -451,7 +451,7 @@ public class WorkOrderQueryServiceTests
         Assert.Null(svc.Get(replied).UnrepliedDays);
     }
 
-    // ── 處理人清單／摘要／徽章（task-47-D1）────────────────────────────────────
+    // ── 處理人清單／摘要／徽章（回饋第 47 輪 D-1）────────────────────────────────────
 
     [Fact]
     public void ListForHandler_本人可看_處理人固定為本人_忽略請求帶的HandlerId()
@@ -525,7 +525,7 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(0, badge.UnrepliedWorkOrders);
     }
 
-    // ── 暫停單（task-47-B2b）──────────────────────────────────────────────────
+    // ── 暫停單（回饋第 47 輪 B-2b）──────────────────────────────────────────────────
 
     /// <summary>以今天為基準設定靜音：每筆 (來源, 事件編號, 起日, 迄日)</summary>
     private void Mute(params (string Source, int EventId, DateTime From, DateTime To)[] mutes) =>

@@ -477,7 +477,7 @@ function render() {
         countText += `，共 ${lastResult.distinctHostCount} 台主機（去重）`;
     }
     const countNodes = [document.createTextNode(countText)];
-    // 靜音中的問題不列在依問題視角（規劃 15.3 (2)）：計數列尾端誠實說出少了幾個。
+    // 靜音中的問題不列在依問題視角（docs/archive/FEEDBACK-47-PLAN.md 15.3 (2)）：計數列尾端誠實說出少了幾個。
     // 查出零筆時更要說——期間內的問題若全被靜音，畫面只剩空清單，看起來像「沒有問題」
     const mutedIssueCount = lastResult.mutedIssueCount;
     if (currentView === 'issue' && Number.isInteger(mutedIssueCount) && mutedIssueCount > 0) {
@@ -848,7 +848,7 @@ function goHandleLink(record) {
 }
 
 /**
- * 依問題視角「處理人」欄：每個名字連到「這個問題、這個人」的交辦單（定案 49）。
+ * 依問題視角「處理人」欄：每個名字連到「這個問題、這個人」的交辦單（回饋第 47 輪定案 49）。
  * 超過 3 人時收斂成「第一人 等 N 人」——第一個名字仍是連結，收斂在前端做
  * 就是為了這個（伺服器端收斂成純文字，連結就斷了）。
  */

@@ -595,15 +595,6 @@
 兩者都要動 `IPrtgAddressResolver` 簽章。**觸發時機**：探測「IP 覆蓋概要」的 DNS 名稱台數破百、
 或同步結構與對應的執行紀錄顯示對應階段超過兩分鐘。
 
-## 偶發測試：Sentinel 多段預算用盡
-
-`SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外` 以
-`Thread.Sleep(1200)` 對抗 1 秒總預算，在全套高負載執行時偶發轉紅
-（單獨跑該類別穩定全綠）。失敗形態是警告集合為空，代表整趟掃描在預算內就結束，
-觸發條件（共用計數器在第三個 job 建立時睡眠）在平行掃描下不保證成立。
-**修法**：改成閘門式（`TaskCompletionSource` 保證預算確實逾期）而非加長睡眠。
-**觸發時機**：下次動到該測試檔，或它開始穩定失敗時。
-
 ## PRTG 衝突清單：型別與候選主機改由快照決定
 
 `GET prtg-host-map` 的 `conflictKind` 與 `candidateHosts` 用**當下**的 `lf_prtg_devices`／主機主檔推導，

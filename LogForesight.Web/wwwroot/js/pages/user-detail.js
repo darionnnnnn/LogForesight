@@ -271,7 +271,7 @@ function renderClosedWork(history) {
 }
 
 /**
- * 所屬交辦單（task-47-D2c）：有單就給單號連結，沒有（舊案件未整併）顯示破折號。
+ * 所屬交辦單（回饋第 47 輪 D-2c）：有單就給單號連結，沒有（舊案件未整併）顯示破折號。
  * 整列本身是連到風險日詳情的連結，故單號連結要擋掉冒泡，不然點單號會跑去風險日。
  */
 function workOrderCell(workOrderId) {

@@ -133,7 +133,7 @@ public class WorkOrderQueryService
         }
         if (req.GroupId.HasValue)
         {
-            // 定案 48：處理人屬於該使用者群組；群組不存在或無成員＝空集合＝查無
+            // 回饋第 47 輪定案 48：處理人屬於該使用者群組；群組不存在或無成員＝空集合＝查無
             var groupId = req.GroupId.Value;
             var members = users.Values.Where(u => u.GroupIds.Contains(groupId)).Select(u => u.UserId).ToHashSet();
             handlerIds = handlerIds == null ? members : handlerIds.Where(members.Contains).ToList();
@@ -165,7 +165,7 @@ public class WorkOrderQueryService
         };
     }
 
-    /// <summary>清單篩選用的使用者群組選項（定案 48）：只列啟用中群組，依名稱不分大小寫排序</summary>
+    /// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）：只列啟用中群組，依名稱不分大小寫排序</summary>
     public List<HandlerGroupOptionDto> ListHandlerGroups() =>
         _userGroups.GetAll()
             .Where(g => g.Active)

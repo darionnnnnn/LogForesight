@@ -1925,7 +1925,7 @@ public class HandlingServiceTests : IDisposable
         Assert.Single(_mailSender.Sent);
     }
 
-    // ── 交辦單回覆時間同步（task-47-D1）────────────────────────────────────────
+    // ── 交辦單回覆時間同步（回饋第 47 輪 D-1）────────────────────────────────────────
 
     /// <summary>直接組 <see cref="IssueHandlingCommandService"/>，拿得到交辦單 store 以便斷言（門面內的 store 取不到）</summary>
     private (IssueHandlingCommandService Service, FakeWorkOrderStore Orders, WorkOrderCoordinator Coordinator) CreateIssueServiceWithOrders(ICurrentUser currentUser)

@@ -10,7 +10,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 問題靜音（task-47-B1）：判定邊界、合成與包裝層、提示詞排除、派工脈絡、設定／解除 API、Maintain 服務層檢查。
+/// 問題靜音（回饋第 47 輪 B-1）：判定邊界、合成與包裝層、提示詞排除、派工脈絡、設定／解除 API、Maintain 服務層檢查。
 /// 分析側（LogAnalysisService／PRTG）的端到端測試分別在 LogAnalysisServiceSplitTests／PrtgDailyPipelineTests。
 /// </summary>
 public sealed class IssueMuteTests : IDisposable

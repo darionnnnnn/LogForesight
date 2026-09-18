@@ -129,7 +129,7 @@ function updateFilterLabel(handlerName) {
     filterLabelSpan.textContent = text;
 }
 
-/** 群組下拉選項（定案 48）：失敗靜默，下拉只剩「全部」 */
+/** 群組下拉選項（回饋第 47 輪定案 48）：失敗靜默，下拉只剩「全部」 */
 async function loadHandlerGroups() {
     let groups = [];
     try {
@@ -543,7 +543,7 @@ function renderGapsTable(data) {
 
 // ── 靜音中頁籤 ─────────────────────────────────────────────────────────────
 
-/** 暫停中交辦單張數只逐一查前幾個問題（規劃 15.3 (1)：問題數通常個位數） */
+/** 暫停中交辦單張數只逐一查前幾個問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (1)：問題數通常個位數） */
 const MUTED_PAUSED_LOOKUP_LIMIT = 20;
 
 /** init 先取的靜音中清單；第一次進頁籤直接用，之後重新載入才重打 API */

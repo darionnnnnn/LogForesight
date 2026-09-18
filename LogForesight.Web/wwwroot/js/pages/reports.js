@@ -613,7 +613,7 @@ function renderIssueRankMeta() {
         : '';
 
     // §10.6：全部主機都已有結論的問題不佔用排行版面，卡底同一行誠實說出排除了幾筆
-    // 靜音中的問題同樣不列入排行（規劃 15.3 (2)），同一行續接
+    // 靜音中的問題同樣不列入排行（docs/archive/FEEDBACK-47-PLAN.md 15.3 (2)），同一行續接
     const concludedCount = currentData.concludedIssueCount > 0 ? currentData.concludedIssueCount : 0;
     const mutedCount = currentData.mutedIssueCount > 0 ? currentData.mutedIssueCount : 0;
     const concludedNote = concludedCount && mutedCount

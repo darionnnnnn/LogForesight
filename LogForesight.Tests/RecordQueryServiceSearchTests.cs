@@ -433,7 +433,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// 案件所屬交辦單（task-47-D2c）：有單就帶單號給前端組單號連結；
+    /// 案件所屬交辦單（回饋第 47 輪 D-2c）：有單就帶單號給前端組單號連結；
     /// 沒有案件時為 null（舊案件未整併也是 null，同一條路徑）。
     /// </summary>
     [Fact]

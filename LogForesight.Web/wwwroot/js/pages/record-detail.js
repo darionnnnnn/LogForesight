@@ -389,7 +389,7 @@ function statusCell(issue, sectionIssues) {
     // 案件徽章（docs/archive/FEEDBACK-10-PLAN.md §6）：「誰在處理」是處理狀態資訊，放這一欄
     // 才和狀態文字、預計完成日在一起——原本掛在「問題」欄，跟問題本身的識別資訊混雜
     if (issue.caseHandlerName) wrap.appendChild(caseBadge(issue));
-    // 交辦單單號（task-47-D2c）：案件掛在哪張單上是「誰在處理」的下一個問題，
+    // 交辦單單號（回饋第 47 輪 D-2c）：案件掛在哪張單上是「誰在處理」的下一個問題，
     // 徽章旁附一個單號連結直接進交辦單詳情；沒有單（舊案件未整併）時整個不出現
     if (issue.workOrderId) wrap.appendChild(workOrderBadge(issue.workOrderId));
     // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：canHandle 與否都顯示——唯讀角色
@@ -1275,7 +1275,7 @@ function issueCell(issue) {
         wrap.appendChild(badge);
     }
 
-    // 靜音中的問題（規劃 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
+    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
     if (issue.isMuted && issue.muteTo) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';
@@ -1463,7 +1463,7 @@ function caseBadge(issue) {
 }
 
 /**
- * 交辦單單號徽章（task-47-D2c）：點了進交辦單詳情。
+ * 交辦單單號徽章（回饋第 47 輪 D-2c）：點了進交辦單詳情。
  * stopPropagation 同案件徽章——問題列自己有展開／點擊行為，不能被連結一起觸發。
  */
 function workOrderBadge(workOrderId) {

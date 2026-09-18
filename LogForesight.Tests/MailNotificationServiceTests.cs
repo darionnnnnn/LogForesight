@@ -1247,7 +1247,7 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
-    // ── NotifyWorkOrderAsync：交辦單通知（task-47-E1b）───────────────────────
+    // ── NotifyWorkOrderAsync：交辦單通知（回饋第 47 輪 E-1b）───────────────────────
 
     private static WorkOrderNotice MakeWorkOrderNotice(
         string kind = WorkOrderNoticeKinds.Created,
@@ -1368,7 +1368,7 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
-    // ── NotifyWorkOrderDigestAsync：夜間交辦摘要信（task-47-E1e）─────────────
+    // ── NotifyWorkOrderDigestAsync：夜間交辦摘要信（回饋第 47 輪 E-1e）─────────────
 
     [Fact]
     public async Task NotifyWorkOrderDigestAsync_每位處理人一封且列出各自的單()
@@ -1472,7 +1472,7 @@ public class MailNotificationServiceTests : IDisposable
         Assert.DoesNotContain("101", sent.Message.Body);
     }
 
-    // ── 週報靜音中問題段（task-47-E1e）─────────────────────────────────────
+    // ── 週報靜音中問題段（回饋第 47 輪 E-1e）─────────────────────────────────────
 
     [Fact]
     public async Task 週報_有目前靜音中的問題時附靜音段()

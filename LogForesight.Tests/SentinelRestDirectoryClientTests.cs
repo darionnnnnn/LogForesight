@@ -834,10 +834,13 @@ public class SentinelRestDirectoryClientTests
     /// <summary>
     /// 多段預算用盡回部分結果＋警告：模擬預算耗盡 → 不擲例外，回已完成段的主機，
     /// 且 warnings 含「已完成 N/M 段」字樣。
+    /// 逾期由手動時鐘在第 3 個 job 建立時觸發，不用真實等待：以前用 Thread.Sleep(1200) 對抗 1 秒預算，
+    /// 全套負載下計時器回呼晚到、剩下的空網段在回呼前就跑完，警告不出現而偶發失敗。
     /// </summary>
     [Fact]
     public async Task 多段預算用盡回部分結果與警告_不擲例外()
     {
+        var clock = new ManualTimeProvider();
         var handler = new ScriptedHandler
         {
             ScriptSelector = filter =>
@@ -848,20 +851,45 @@ public class SentinelRestDirectoryClientTests
             },
             OnJobCreated = jobCount =>
             {
-                // 完成第 1 段（2 個 job）後，於建立第 3 個 job 時等待讓 1 秒預算逾時
-                if (jobCount == 3)
-                {
-                    Thread.Sleep(1200);
-                }
+                // 完成第 1 段（2 個 job）後，於建立第 3 個 job 時讓總預算逾期
+                if (jobCount == 3) clock.FireAll();
             }
         };
 
-        var client = new SentinelRestDirectoryClient(Options(), handler, totalBudgetSeconds: 1);
+        var client = new SentinelRestDirectoryClient(Options(), handler, 1, clock);
         var result = await client.ListHostsAsync(Server(), "192.168", CancellationToken.None);
 
         Assert.Single(result.Hosts);
         Assert.Equal("192.168.0.10", result.Hosts[0].IpAddress);
         Assert.Contains(result.Warnings, w => w.Contains("已完成 1/256 段") && w.Contains("未掃描的網段"));
+    }
+
+    /// <summary>
+    /// 手動時鐘：記下每個計時器的回呼，<see cref="FireAll"/> 時一次觸發（視同到期），其餘時間永不到期。
+    /// </summary>
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private readonly List<(TimerCallback Callback, object? State)> _timers = new();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_timers) _timers.Add((callback, state));
+            return new NeverTimer();
+        }
+
+        public void FireAll()
+        {
+            List<(TimerCallback Callback, object? State)> due;
+            lock (_timers) due = _timers.ToList();
+            foreach (var (callback, state) in due) callback(state);
+        }
+
+        private sealed class NeverTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     /// <summary>

@@ -232,7 +232,7 @@ public class WorkOrderListRequest
     /// <summary>true＝只列處理人已停用的單</summary>
     public bool HandlerInactive { get; set; }
 
-    /// <summary>處理人所屬的使用者群組（定案 48：與負載看板同義）；null＝不限</summary>
+    /// <summary>處理人所屬的使用者群組（回饋第 47 輪定案 48：與負載看板同義）；null＝不限</summary>
     public long? GroupId { get; set; }
 
     /// <summary><c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c></summary>
@@ -253,7 +253,7 @@ public class WorkOrderListRequest
     public bool ResumedFromMute { get; set; }
 }
 
-/// <summary>清單篩選用的使用者群組選項（定案 48）</summary>
+/// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）</summary>
 public class HandlerGroupOptionDto
 {
     public long GroupId { get; set; }

@@ -397,7 +397,7 @@ public class WorkOrderStoreTests : IDisposable
         Assert.Equal(new[] { a }, store.GetAllActive().Select(o => o.WorkOrderId));
     }
 
-    // ── QueryOrders／擴充計數（task-47-C2a）：EF 與替身同資料雙跑 ───────────────
+    // ── QueryOrders／擴充計數（回饋第 47 輪 C-2a）：EF 與替身同資料雙跑 ───────────────
 
     private static readonly DateTime Base = new(2026, 9, 1, 8, 0, 0);
 
@@ -676,7 +676,7 @@ public class WorkOrderStoreTests : IDisposable
         }
     }
 
-    // ── HandlerSummary（task-47-D1）──────────────────────────────────────────
+    // ── HandlerSummary（回饋第 47 輪 D-1）──────────────────────────────────────────
 
     [Fact]
     public void HandlerSummary_EF與替身一致_單一查詢_無進行中單回全0()
@@ -747,7 +747,7 @@ public class WorkOrderStoreTests : IDisposable
         Assert.Contains("lf_issue_cases", sql);
     }
 
-    // ── 暫停單（task-47-B2b）：EF 與替身同資料雙跑 ─────────────────────────────
+    // ── 暫停單（回饋第 47 輪 B-2b）：EF 與替身同資料雙跑 ─────────────────────────────
 
     private static readonly string[] DiskPaused = { IssueExclusion.CompositeKey("Disk", 153) };
 
