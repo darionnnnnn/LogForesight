@@ -75,10 +75,14 @@ public static class WorkOrderDispatcher
 
         var activeOrders = ctx.ActiveOrdersFor(issue.Source, issue.EventId);
 
-        // ④ 續掛：可續掛且範圍涵蓋此主機的進行中單，取建立最晚者
+        // ④ 續掛：可續掛且範圍涵蓋此主機的進行中單，取處理人負載最輕者（進行中成員數→單數），
+        //    同分才取建立最晚者。群組分攤會產生同問題多張可續掛單，只取建立最晚者會把新主機全掛給同一人；
+        //    本趟決策經 Commit 累計負載，同一趟多台新主機會自然分散。
         var attachable = activeOrders
             .Where(o => o.AutoAttach && ScopeCovers(o, host))
-            .OrderByDescending(o => o.CreatedAt)
+            .OrderBy(o => ctx.LoadOf(o.HandlerId).ActiveMembers)
+            .ThenBy(o => ctx.LoadOf(o.HandlerId).ActiveWorkOrders)
+            .ThenByDescending(o => o.CreatedAt)
             .ThenByDescending(o => o.WorkOrderId)
             .FirstOrDefault();
         if (attachable != null)

@@ -297,6 +297,46 @@ public class WorkOrderDispatcherTests
         AssertAttach(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), larger, 9);
     }
 
+    [Fact]
+    public void 續掛_多張可續掛單取負載最輕者()
+    {
+        Load(1, members: 10, workOrders: 1);
+        Load(2, members: 2, workOrders: 1);
+        var lighter = Order(2, createdAt: DateTime.Today.AddDays(-2));
+        Order(1, createdAt: DateTime.Today.AddDays(-1));
+
+        // 較晚建立的是 A（負載 10）的單，但負載最輕者 B 優先
+        AssertAttach(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), lighter, 2);
+    }
+
+    [Fact]
+    public void 續掛_負載相同取建立最晚者()
+    {
+        Load(1, members: 3, workOrders: 1);
+        Load(2, members: 3, workOrders: 1);
+        Order(1, createdAt: DateTime.Today.AddDays(-2));
+        var newer = Order(2, createdAt: DateTime.Today.AddDays(-1));
+
+        AssertAttach(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), newer, 2);
+    }
+
+    [Fact]
+    public void 續掛_同一趟多台依累計負載分散()
+    {
+        var orderA = Order(1, createdAt: DateTime.Today.AddDays(-2));
+        var orderB = Order(2, createdAt: DateTime.Today.AddDays(-1));
+        var ctx = Build();
+
+        var first = WorkOrderDispatcher.Decide(ctx, Host(1, "SRV-01"), Issue(), DateTime.Today);
+        AssertAttach(first, orderB, 2);
+        ctx.Commit(first, Source, EventId);
+
+        // B 已累計一台，第二台改掛負載較輕的 A
+        var second = WorkOrderDispatcher.Decide(ctx, Host(2, "SRV-02"), Issue(), DateTime.Today);
+        AssertAttach(second, orderA, 1);
+        ctx.Commit(second, Source, EventId);
+    }
+
     // ── ⑤ 負責人選人 ───────────────────────────────────────────────────
 
     [Fact]

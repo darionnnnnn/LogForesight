@@ -174,11 +174,23 @@ function renderHeader(detail) {
     addHeaderField(grid, '來源', originWrap);
 
     // 範圍
-    const scopeText = detail.scopeKind === 'groups'
-        ? (detail.scopeGroups && detail.scopeGroups.length > 0
-            ? detail.scopeGroups.map(g => g.groupName).join('、')
-            : '指定群組')
-        : '指定主機';
+    const scopeKindLower = String(detail.scopeKind).toLowerCase();
+    let scopeText;
+    switch (scopeKindLower) {
+        case 'all':
+            scopeText = '全站';
+            break;
+        case 'groups':
+            scopeText = detail.scopeGroups && detail.scopeGroups.length > 0
+                ? detail.scopeGroups.map(g => g.groupName).join('、')
+                : '主機群組';
+            break;
+        default:
+            scopeText = '指定主機';
+    }
+    if (scopeKindLower !== 'hosts') {
+        scopeText += detail.autoAttach ? '（續掛：開）' : '（續掛：關）';
+    }
     addHeaderField(grid, '範圍', scopeText);
 
     // 成員

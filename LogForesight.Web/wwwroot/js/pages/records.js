@@ -1473,6 +1473,25 @@ async function loadWorkOrderForm(group, body) {
     renderWorkOrderForm(body, group, users, groups);
 }
 
+/** 交辦範圍由頁面篩選推導：有選主機→Hosts；否則有選主機群組→Groups；都沒有→All（payload 與畫面共用） */
+function workOrderScopeKind(filters) {
+    if (filters.hostIds.length > 0) return 'Hosts';
+    if (filters.groupIds.length > 0) return 'Groups';
+    return 'All';
+}
+
+function workOrderScopeText(scopeKind, filters) {
+    if (scopeKind === 'Hosts') return `指定主機（篩選列選的 ${formatNumber(filters.hostIds.length)} 台）`;
+    if (scopeKind === 'Groups') {
+        const names = filters.groupIds.map(id => {
+            const found = hostGroups.find(g => String(g.groupId) === String(id));
+            return found ? found.groupName : `群組 #${id}`;
+        });
+        return `主機群組：${names.join('、')}`;
+    }
+    return '全站（依目前篩選的期間）';
+}
+
 function renderWorkOrderForm(body, group, users, groups) {
     body.replaceChildren();
 
@@ -1571,6 +1590,43 @@ function renderWorkOrderForm(body, group, users, groups) {
         requestPreview(1);
     }
 
+    // 範圍：由頁面篩選推導（有選主機→Hosts；否則有選主機群組→Groups；都沒有→All），不另設選單
+    const scopeKind = workOrderScopeKind(filters);
+    const scopeWrap = document.createElement('div');
+    scopeWrap.className = 'mb-3';
+    const scopeLine = document.createElement('div');
+    scopeLine.className = 'small text-muted mb-1';
+    scopeLine.textContent = `範圍：${workOrderScopeText(scopeKind, filters)}`;
+    scopeWrap.appendChild(scopeLine);
+
+    const autoAttachLabel = document.createElement('label');
+    autoAttachLabel.className = 'form-check-label small d-flex align-items-center gap-1';
+    const autoAttachCheck = document.createElement('input');
+    autoAttachCheck.type = 'checkbox';
+    autoAttachCheck.className = 'form-check-input mt-0';
+    autoAttachCheck.checked = true;
+    autoAttachLabel.append(autoAttachCheck, document.createTextNode('續掛新主機'));
+    const autoAttachHelp = document.createElement('div');
+    autoAttachHelp.className = 'form-text';
+    if (scopeKind !== 'Hosts') {
+        scopeWrap.append(autoAttachLabel, autoAttachHelp);
+    }
+    form.appendChild(scopeWrap);
+
+    // 手動排除任一台主機時停用續掛並取消勾選；排除全部取消後恢復可用並回到預設勾選
+    function updateAutoAttachState() {
+        const hasExcluded = excludedHostIds.size > 0;
+        if (hasExcluded) {
+            autoAttachCheck.checked = false;
+            autoAttachHelp.textContent = '已手動排除主機時不提供續掛（被排除的主機之後再出現會被自動加回）。';
+        } else {
+            if (autoAttachCheck.disabled) autoAttachCheck.checked = true;
+            autoAttachHelp.textContent = '之後這個範圍內新出現此問題、還沒有人處理的主機，夜間自動加入這張單。';
+        }
+        autoAttachCheck.disabled = hasExcluded;
+    }
+    updateAutoAttachState();
+
     // 3. 說明（note，選填，textarea）與期限（dueDate，選填，input type="date"）
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label small text-muted';
@@ -1649,16 +1705,16 @@ function renderWorkOrderForm(body, group, users, groups) {
             eventId: group.eventId != null ? Number(group.eventId) : null,
             from: filters.from || null,
             to: filters.to || null,
-            hostIds: null,
-            groupIds: null,
+            hostIds: filters.hostIds.length > 0 ? filters.hostIds.map(Number) : null,
+            groupIds: filters.groupIds.length > 0 ? filters.groupIds.map(Number) : null,
             excludeHostIds: [...excludedHostIds],
             assignMode,
             handlerId: assignMode === 'single' ? (Number(handlerSelect.value) || null) : null,
             groupId: assignMode === 'group' ? (Number(groupSelect.value) || null) : null,
             splitMode: assignMode === 'group' ? splitSelect.value : null,
             reassignConflicts: Boolean(reassignCheck.checked),
-            scopeKind: 'Hosts',
-            autoAttach: false,
+            scopeKind,
+            autoAttach: scopeKind !== 'Hosts' && autoAttachCheck.checked && excludedHostIds.size === 0,
             note: noteInput.value.trim() || null,
             dueDate: dueInput.value || null,
             page
@@ -1779,6 +1835,7 @@ function renderWorkOrderForm(body, group, users, groups) {
                     } else {
                         excludedHostIds.add(host.hostId);
                     }
+                    updateAutoAttachState();
                     requestPreview(currentPage);
                 });
 
