@@ -74,15 +74,10 @@ lf_users
                                                   -- （詳見 docs/archive/FEEDBACK-11-PLAN.md §3；
                                                   --  JSON 後端缺欄容忍、零遷移。唯一寫入點
                                                   --  IUserStore.TouchLogin，刻意不走 Upsert）
-
-lf_user_host_map                                     -- 使用者負責哪些主機
-  user_id        bigint FK → lf_users
-  host_id        bigint FK → lf_hosts
-  granted_at     timestamp
-  PK (user_id, host_id)
 ```
 
-授權模型：一般使用者只能查 `lf_user_host_map` 有列的主機；`is_admin` 看全部。
+授權模型：可見主機由群組授權矩陣、主機負責人、問題負責人、案件授與四條路徑聯集決定
+（表與規則見 [WEB-SPEC.md](WEB-SPEC.md) §7.1、§10.1）；持有 `ViewAll` 能力者看全部。
 **授權過濾在查詢層強制**（所有 Web API 的查詢都先 join 授權表），AI 問答的 context 組裝也走
 同一條路——非管理員的問答不可能拿到別人主機的資料（見 AI 問答章節）。
 
@@ -449,7 +444,12 @@ lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_ke
                    -- 另有 created_at 欄：僅新增列時落、更新不覆寫，舊列為 NULL；
                    -- 目前無消費端，是 MTTA 成效指標（docs/BACKLOG.md）的資料基礎
 
-lf_issue_cases:    (host_name_key, issue_key, closed_at)；(handler_id, closed_at)
+lf_issue_cases:    (host_name_key, issue_key, closed_at)；(handler_id, closed_at)；
+                   (work_order_id, closed_at)；(source_key, event_id, closed_at) — 依問題查案件；
+                   (day_sync_pending) — 逐日同步作業撿件
+lf_work_orders:    (handler_id, closed_at)；(source_key, event_id, closed_at)；
+                   部分唯一 (handler_id, source_key, event_id) WHERE closed_at IS NULL AND source_key IS NOT NULL
+lf_work_order_events: (work_order_id, created_at)
 lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
 lf_deep_dive_analyses: (record_id)
 lf_record_alerts:  (record_id)
@@ -508,7 +508,7 @@ lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
-| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案） |
+| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／`lf_work_orders`（僅已結案，事件 `lf_work_order_events` 隨單刪；進行中的單永不清） |
 | `RawEventRetentionDays` | 120 | 原始事件內容：`lf_daily_records.content_json`（風險日詳情的原始樣本訊息，**只清內容、整列保留**）與 `lf_risky_events`（風險 log 暫存）——兩者刪的都是原始事件文字，舊版的 `DetailRetentionDays`／`RiskyEventRetentionDays` 兩鍵已合併，升級時自動取兩舊值較小者遷移 |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
@@ -566,7 +566,9 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | lf_top_issues（大宗） | × 平均 15 簽章 ≈ 1,100 萬列/年 | 120 天約 360 萬列（6000 台：1,080 萬） |
 | lf_issue_handling | 已標記的問題日，推估為 top_issues 的 10~30% | 120 天約 36~110 萬列（6000 台：110~320 萬） |
 | lf_record_handling | 每台每個處理過的日 ≤ 1 列 | 與 lf_daily_records 同量級以下 |
-| lf_issue_cases | 每台每個問題一案、跨日不重複 | 數萬列量級，遠小於上列 |
+| lf_issue_cases | 每台每個問題一案、跨日不重複 | 數萬列量級，含已結案可到 10 萬列級 |
+| lf_work_orders | 一個問題 × 一位處理人一張進行中單 | 進行中數十～數百張；已結案隨保留期，千～萬列級 |
+| lf_work_order_events | 每張單的建立、追加、改派、回覆等事件 | 單數的數倍到十數倍，萬～十萬列級 |
 | handling_log（保留 730 天） | 每次標記／指派一列，批次標記亦逐筆記錄 | **唯一以稽核年限成長的一張**，6000 台屬千萬列級 |
 | lf_record_categories/alerts | 各數百萬列/年 | 各 <1,000 萬列 |
 | lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 2GB/年 | ~4~5GB |
@@ -584,7 +586,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 
 | 情境 | 查詢路徑 |
 |---|---|
-| **主篩選**：我的主機＋日期區間＋風險層級 | `lf_user_host_map` → `lf_daily_records` WHERE host_id IN (...) AND record_date BETWEEN ... AND risk_level IN (...) |
+| **主篩選**：我的主機＋日期區間＋風險層級 | 可見主機集合（WEB-SPEC §7.1）→ `lf_daily_records` WHERE host_id IN (...) AND record_date BETWEEN ... AND risk_level IN (...) |
 | **主篩選**：＋風險類型 | 上式 join `lf_record_categories` WHERE category IN (...)（可再加 max_severity 條件） |
 | 我負責的主機現況總覽 | 每台 host 取 `lf_daily_records` 最新一筆（risk_level、summary、data_incomplete、uncovered 標記） |
 | **主管儀表板**：本日/本週各風險類型的數量與緊急程度 | `lf_record_categories` join `lf_daily_records`（日期範圍）GROUP BY category → issue_count 加總、max_severity 分布、涉及主機數 |
@@ -671,7 +673,7 @@ lf_record_handling                                   -- 風險日處理狀態（
                  -- 'open'(未處理) | 'in_progress'(處理中) | 'resolved'(已處理)
                  -- | 'wont_fix'(評估後決定不處理——說明寫在 note)
                  -- | 'false_positive'(誤報) | 'known_noise'(已知雜訊)
-  handler_id     bigint NULL FK → lf_users           -- 處理人員：可指派；未指派時可依 lf_user_host_map 自動帶入該主機負責人
+  handler_id     bigint NULL FK → lf_users           -- 處理人員：可指派；未指派時依問題負責人／主機負責人唯一者自動帶入（WEB-SPEC §7.1）
   due_date       date NULL                        -- 預計完成日（儀表板「逾期未處理」的依據）
   note           nvarchar(1000) NULL              -- 處理說明：為何不處理/已更換硬體等
   updated_at     timestamp NOT NULL
@@ -694,8 +696,80 @@ lf_record_handling_log                               -- 處理歷程（append-on
   （status IN ('open','in_progress') AND due_date < 今天）
 - `known_noise` 標記有第二層價值：累積起來就是 `KnownIssueCatalog` 規則表調校的
   待辦清單，有資料依據而不是憑印象
-- 粒度：以「風險日」為單位；更細的追蹤應接公司工單系統而非在此重造
+- 粒度：逐日狀態以「風險日」與「問題日」為單位（`lf_record_handling`／`lf_issue_handling`）；
+  跨日追蹤以**案件**（一台主機 × 一個問題）為單位，派工與回覆以**交辦單**（一個問題 × 一批主機 ×
+  一位處理人）為單位。本系統的處理鏈是處理狀態的唯一事實來源，不外接工單系統——外接只會多一份
+  會漂移的副本。逐日列仍是儀表板、報表與清單唯一的投影面，案件與交辦單都只是協調紀錄。
 - 索引：`lf_record_handling (status)`、`(due_date)`
+
+```
+lf_issue_cases                                       -- 問題案件：一台主機 × 一個問題的跨日處理歸屬
+  case_id            nvarchar(64) PK                 -- GUID 字串；逐日列 lf_issue_handling.case_id 回鏈
+  host_name          nvarchar(255) NOT NULL
+  host_name_key      nvarchar(255) NOT NULL          -- 主機名稱正規化鍵
+  issue_key          nvarchar(512) NOT NULL          -- 五段問題簽章
+  issue_label        nvarchar(512) NOT NULL          -- 「Source EventId」反正規化，規則改名不影響追責
+  status             nvarchar(30)  NOT NULL          -- 值域同問題層級狀態
+  handler_id         bigint NULL
+  note               text NULL
+  due_date           date NULL
+  first_linked_date  date NOT NULL
+  last_linked_date   date NOT NULL
+  closed_at          timestamp NULL                  -- null＝進行中；同主機同問題同時最多一件
+  created_at         timestamp NOT NULL
+  created_by_account nvarchar(255) NOT NULL
+  updated_at         timestamp NOT NULL              -- 併發權杖
+  work_order_id      bigint NULL                     -- 所屬交辦單；進行中案件必屬一張單（整併前的舊案件除外）
+  source_name        nvarchar(255) NULL              -- 自 issue_key 解析的反正規化欄，依問題查案件用
+  source_key         nvarchar(255) NULL              -- source_name 大寫；解析失敗寫空字串、不參與依問題查詢
+  event_id           int NULL
+  day_sync_pending   bool NOT NULL DEFAULT 0         -- 逐日列尚待背景同步
+  day_sync_intent    text NULL                       -- 待同步的意圖（狀態、操作者、時間、模式，JSON）
+  cancelled          bool NOT NULL DEFAULT 0         -- 因取消交辦而結案；同步時把案件寫出的非結案日子改回明確未處理
+
+lf_work_orders                                       -- 交辦單：一個問題 × 一批主機 × 一位處理人
+  work_order_id      bigint PK 自增
+  source_name        nvarchar(255) NULL              -- 問題欄可空＝保留多問題單的可能
+  source_key         nvarchar(255) NULL              -- source_name 大寫，比對一律用這欄
+  event_id           int NULL
+  issue_label        nvarchar(512) NOT NULL
+  handler_id         bigint NOT NULL
+  origin             nvarchar(30) NOT NULL           -- manual | owner_rule | auto_dispatch | backfill | day_assign
+  scope_kind         nvarchar(30) NOT NULL           -- All | Groups | Hosts
+  scope_group_ids    text NOT NULL                   -- 主機群組 id 清單（JSON）
+  auto_attach        bool NOT NULL                   -- 續掛；scope_kind=Hosts 時恆 false
+  note               nvarchar(1000) NULL
+  due_date           date NULL
+  created_by_id      bigint NULL                     -- 系統建立為 null
+  created_by_account nvarchar(255) NOT NULL
+  created_at         timestamp NOT NULL
+  last_appended_at   timestamp NULL                  -- 最近加入成員時間
+  last_reply_at      timestamp NULL                  -- 處理人最近回覆時間；null＝未回覆
+  closed_at          timestamp NULL                  -- 快取：全部成員結案時落盤
+  closed_reason      nvarchar(30) NULL               -- all_closed | moved | cancelled | admin_closed
+  updated_at         timestamp NOT NULL              -- 併發權杖
+
+lf_work_order_events                                 -- 交辦單事件（append-only，詳情頁時間軸）
+  event_id           bigint PK 自增
+  work_order_id      bigint NOT NULL
+  action             nvarchar(30) NOT NULL           -- created | appended | merged_in | reassigned | split_out |
+                                                     -- split_in | cancelled | admin_closed | closed | replied
+  actor_id           bigint NULL                     -- 系統事件為 null
+  actor_account      nvarchar(255) NOT NULL
+  member_delta       int NOT NULL                    -- 本次增減的成員台數
+  note               nvarchar(1000) NULL
+  created_at         timestamp NOT NULL
+```
+
+**部分唯一索引必須排除 NULL 問題欄**：「同一處理人同一問題最多一張進行中單」以
+`(handler_id, source_key, event_id) WHERE closed_at IS NULL AND source_key IS NOT NULL` 表達。
+少了 `source_key IS NOT NULL`，SQL Server 會把多張多問題單（問題欄皆 NULL）視為重複鍵擋下，
+SQLite 卻視 NULL 為相異照常寫入——兩後端行為分岔。兩後端共用同一份條件字串
+（`SchemaUpgrader.WorkOrderActiveIssueFilter`）。
+
+**升級回填**：既有案件由背景整併器分兩段補齊，皆冪等、分批 1000：先解析全部案件的
+`source_name`／`source_key`／`event_id`（以 NULL 為未回填標記），再把進行中案件依（處理人, 問題）
+分組建成 `origin=backfill` 的交辦單並一次寫回 `work_order_id`。處理人為空的案件不回填，啟動 log 記數。
 
 ### B. 主機識別與新舊資料綁定
 
