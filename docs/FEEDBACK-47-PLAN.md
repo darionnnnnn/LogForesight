@@ -732,6 +732,69 @@
 
 A-1 規格（`.gemini-tasks/task-47-A1.md`）與上列修正後的 PLAN A-1 契約逐條對照完成：模型兩類＋案件五欄、兩張表＋案件六欄＋七個索引、升級器（含部分唯一索引 helper）、案件 store 三個新查詢、交辦單 store 十個方法、兩階段背景整併、保留清理、三個新測試檔＋既有合約測試追加，全部進規格且各自有驗收條目。
 
+## 十五、比對補遺（2026-09-18 逐條比對規劃與實作後）
+
+逐條比對第四～十節契約與實作：A、C-1/2、D-1、E、F、B-1/B-2 全數落地；三處與規劃不同者皆為已記錄的推翻定案（可見範圍留 Web、夜間留痕改事件、不做重開）。另發現**兩個未記錄的漏項**，加上 B-3 尚未做的後半段，三者都有需要先定案的細節，補在此節；各自的規格檔由此抄錄。
+
+### 15.1 漏項一：交辦單清單的群組篩選（C-2 第 340 行、D-1 第 385 行、D-2 篩選列）
+
+**規劃寫法**：`GET api/work-orders?…&groupId`、`GET api/handlers/{userId}/work-orders?…&groupId`、我的交辦頁「篩選列（狀態／問題／群組）」。
+
+**核對事實**：
+- 規劃沒說 `groupId` 是使用者群組還是主機群組。負載看板的 `groupId` 已實作為**使用者群組**（篩池群組或指定群組）。
+- 交辦單有 `ScopeKind=Hosts` 時沒有主機群組可對應，要以主機群組篩需 join 成員→主機→群組；以使用者群組篩只需把群組成員的 `UserId` 集合交給既有的 `HandlerIds` 條件（`HandlerInactive` 已走同一條路）。
+- 使用者群組清單只有 `GET /api/admin/groups`（`Maintain`）；交辦總覽的使用者是 `Assign` 或 `ViewAll`，打不到。
+
+**定案 48**：
+- `groupId` ＝**使用者群組**（與負載看板同義），語意「處理人屬於該群組的單」。主機群組篩選不做（進 BACKLOG：需 join 成員，且 Hosts 範圍的單無群組可言）。
+- 只加在**總覽頁**（管理者看某部門的單）。我的交辦頁是單一處理人視角，群組篩選沒有意義，規劃 D-2 的「群組」一項**取消**；D-1 的 `handlers/{userId}/work-orders?groupId` 一併取消（服務共用同一份，參數不特別擋，但前端不提供）。
+- 群組選項來源：新增輕量端點 `GET /api/work-orders/handler-groups`（`Assign` 或 `ViewAll`），回啟用中的使用者群組 `{ groupId, groupName, dispatchPool }`。群組名稱對這兩種能力的使用者本來就可見（處理人頁、使用者名稱旁的群組標示），不是新的洩漏面。
+- 後端：`WorkOrderListRequest.GroupId`（`long?`）→ `WorkOrderQueryService.QueryList` 以群組成員 `UserId` 集合與既有 `HandlerIds` 取交集（群組無成員＝空集合＝查無）。
+- 前端：總覽頁「進行中」頁籤篩選列加「群組」下拉（全部／各群組，池群組名後加「（派工池）」）；網址參數 `groupId` 同 `source`／`eventId` 的作法可帶入。
+
+### 15.2 漏項二：依問題視角的處理人 chip 連單（C-3 第 349 行）
+
+**規劃寫法**：「涵蓋欄『N/M 台』＋處理人 chip（連單）」。
+
+**現況**：涵蓋欄已連到 `/work-orders?source=&eventId=`（該問題全部的單）；處理人 chip 沿用既有寫法連到處理人頁 `/handlers/{id}`。
+
+**定案 49**：chip 改連 `/work-orders?source=&eventId=&handlerId=`——「這個問題、這個人」的單，通常正好一張。總覽頁的網址參數解析補 `handlerId`（列表 API 本來就有這個參數），篩選橫幅寫「篩選：{問題}｜處理人 {名稱}」。處理人頁的入口仍在導覽與儀表板卡，不因此消失。
+
+### 15.3 B-3b 細節定案
+
+**(1) 總覽「靜音中」頁籤**
+- 資料來源只有 `GET /api/admin/issue-owners`（`Maintain`），不另開端點：頁籤**只在具 `Maintain` 時顯示**（解除靜音本來就要 `Maintain`，沒有這個能力的人看得到也做不了事）。
+- 列：問題（來源／事件 ID＋白話說明）、靜音至、剩餘天數、原因、設定者、設定時間、目前暫停的交辦單張數（以頁上問題集合一次打 `GET /api/work-orders?source=&eventId=&status=active&paused=only` 取 `total`；問題數通常個位數，逐問題一次可接受，超過 20 個改只顯示前 20 個並註明）、動作「延長」「解除」（沿用 B-3a 的 modal 與 `clearIssueMute`）。
+- 依「靜音至」升冪（最快到期在上）；為零時 `renderEmpty`「目前沒有靜音中的問題」。
+- 頁籤標題帶數字「靜音中（N）」。
+
+**(2) 「N 個靜音中的問題未列出」註腳**（定案 47 已把計數算好）
+- 依問題視角：計數列尾端追加「；另有 {mutedIssueCount} 個問題靜音中（未列出）」，為零不顯示；具 `Maintain` 時文字連到總覽靜音頁籤 `/work-orders#muted`。
+- 儀表板重點問題卡：卡片底部小字同文；`DashboardDto.MutedIssueCount`。
+- 報表問題排行：既有「另有 N 個問題已有結論（未列入）」註腳（`reports.js:616`）**同一行**續接「、{n} 個靜音中」，兩者都零時整行不顯示；`ReportSummaryDto.MutedIssueCount`。
+- 我的交辦頁：D-2a 已做「另有 N 張暫停（問題靜音中，到期自動恢復）」，不重做。
+
+**(3) 詳情頁收合區徽章**
+- `IssueDto.IsMuted` 為真時，問題列徽章「靜音至 {muteTo}」（`lf-badge--secondary`），`title`「原因：{muteReason}｜設定者：{mutedByAccount}」；靜音問題本來就在「已隱藏」那一側，徽章只在展開「顯示所有問題」時看得到，這是預期。
+
+**(4) 決策表（什麼情況用哪個工具）**
+- 內容（四列固定文字，兩頁同一份）：
+  - 靜音：「這個問題暫時不用看，到期自動恢復」→ 問題檔案／依問題視角的「靜音」；適用全機房、有期限。
+  - 抑制：「某些主機或群組的這個問題永遠不告警」→ 規則維護「告警抑制」；適用指定範圍、可設到期或永久。
+  - 統一標記：「這個問題在沒人接手的主機上一次下結論」→ 依問題視角「統一標記」；適用一次性、可勾自動套用。
+  - 不再打擾：「這台主機的這個問題已知，別再派工」→ 詳情頁問題列；適用單一主機。
+- 放置：規則頁「告警抑制」頁籤頂端一段收合式說明（`lf-hint`＋四列），設定頁「自動派工」段末尾同一段；兩處都附一行「完整說明見操作說明書」連到 `/help/manual#alert-tools`（操作說明書段落在文件階段補，錨點先定）。
+- 前端不複製文字兩份：抽到 `core/` 一個小模組 `alert-tools-table.js` 匯出 `renderAlertToolsTable(container)`，兩頁 import。
+
+### 15.4 分段
+
+| 段 | 內容 | 白名單重點 |
+|---|---|---|
+| G-1 | 15.1 群組篩選：DTO、服務交集、`handler-groups` 端點、總覽頁下拉與網址參數；15.2 chip 連單與 `handlerId` 橫幅 | `WorkOrderDtos`／`WorkOrderQueryService`／`WorkOrderQueryController`／`work-orders.js`／`WorkOrders.cshtml`／`records.js`／測試 |
+| B-3b | 15.3 (1)～(4) | `work-orders.js`／`WorkOrders.cshtml`／`records.js`／`dashboard.js`／`reports.js`／`record-detail.js`／`rules.js`／`Rules.cshtml`／`settings.js`／`Settings.cshtml`／新 `core/alert-tools-table.js` |
+
+執行紀錄續記於下表。
+
 ## 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
