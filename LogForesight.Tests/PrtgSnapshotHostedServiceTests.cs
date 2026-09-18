@@ -82,6 +82,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _backfill,
             _hostStore,
             new FakeSentinelStore(),
+            _probeState,
             _lifetime);
 
         service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
@@ -1011,6 +1012,29 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         Assert.Empty(BackfillUrls());
+    }
+
+    [Fact]
+    public async Task 範圍補抓_環境探測執行中_零補抓請求但快照照常()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long> { [10] = 101, [20] = 201 }));
+            return Task.FromResult(FilteredValues(url));
+        };
+        Assert.True(_probeState.TryBegin());
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Empty(BackfillUrls());
+
+        _probeState.EndRun(true);
+        service.Now = () => DateTime.Now.AddMinutes(20);
+        await service.TickAsync();
+        Assert.NotEmpty(BackfillUrls());
     }
 
     [Fact]

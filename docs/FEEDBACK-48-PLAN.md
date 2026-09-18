@@ -360,6 +360,8 @@ B-2 devices 過期列清除（獨立於縮圈，先做先驗）→ B-3 sensors �
 | 5 | B | FetchDayAsync 範圍提供者 `Func<CancellationToken, IReadOnlyCollection<long>>` | `Func<bool devicesRefreshed, PrtgScopeResult>` | 提供者要知道階段 1 是否成功才能決定重不重算對應；回傳計數供輸出 |
 | 6 | B | 回填直接用範圍集合 | `PrtgBackfillRunner.RunAsync` 新增必填 `scopeDeviceObjids`，由 `PrtgBackfillService` 以 `PrtgScopeDevices.Compute` 算好傳入；狀態變更進度回呼語意改為台數 | 回填的觸發式路徑直接呼叫狀態變更取數、不經 FetchDayAsync |
 | 7 | A | 範圍含守門裝置 | 另含守門**覆寫清單** sensor 所在裝置 | 覆寫的 sensor 若被清出鏡像，守門讀不到分類會靜默失效 |
+| 8 | B | 定案 2：夜間「階段 1 有失敗且裝置數為 0 時不重算對應」；驗收「夜間階段 1 失敗 → 不呼叫 mapper」 | **推翻**：夜間一律重算最新日對應；手動同步維持「沒取得裝置就不對應」 | 鏡像在同步失敗時不會縮小（只 upsert，刪除只在裝置階段完整成功後），拿既有鏡像重算是安全的；不重算會讓 PRTG 連不上那晚的 finding 歸不了戶（B-1 審查時發現，見執行紀錄） |
+| 9 | F | BACKLOG 新增「全新安裝時夜間守門找不到 corehealth，需人工存入覆寫清單」 | 不進 BACKLOG，改由 C-2 修掉：範圍補抓查出覆寫清單感測器的所在裝置並優先補抓；PRTG-SPEC §12 寫明全新安裝的操作 | 光存入覆寫清單不夠——那些感測器的裝置仍不在範圍、永遠進不了鏡像，守門讀不到分類 |
 
 ## 執行紀錄
 
@@ -378,12 +380,38 @@ B-2 devices 過期列清除（獨立於縮圈，先做先驗）→ B-3 sensors �
 
 ## 體檢交接
 
-- 全套：**4903 綠／略過 10（總計 4913）**，基線 4807 → +96。建置 0 錯誤；全量重建有一條基準既有警告 `CalibrationServiceTests.cs(1190,73) CS8629`（本輪未動該檔）。
+- 全套：**4904 綠／略過 10（總計 4914）**，基線 4807 → +97（含規劃比對後補的探測閘門測試）。建置 0 錯誤；全量重建有一條基準既有警告 `CalibrationServiceTests.cs(1190,73) CS8629`（本輪未動該檔）。
 - 委派：D 段起 agy 失敗改派 impl-low（Opus low），之後全程 impl-low；Claude 親做 E、F、C／C-2 的補修與全部驗收。
-- 規劃外新增：C-2（守門覆寫清單補抓）、`GetLatestStructureSyncedAt` 改取裝置表。
+- 規劃外新增：C-2（守門覆寫清單補抓）、`GetLatestStructureSyncedAt` 改取裝置表；規劃逐條比對後補：範圍補抓的探測閘門、README 長期 Down 升級注意（見文末「規劃逐條比對」）。
 - 體檢建議重點：
   1. 夜間 provider 的對應時機與 `BuildNightlySyncStatus` 的成功判定是否仍一致（對應移進 `FetchDayAsync` 內）。
   2. 感測器清除無保險：確認沒有任何路徑會讓範圍「錯誤地小但非空」（例如主機主檔暫時讀不到回空清單而不擲例外）。
   3. 快照服務每輪 `PrtgScopeDevices.Compute`（含守門位址 DNS）與 `GetAllSensors()` 的成本。
   4. `id=<裝置>` 是否含下層感測器訊息**未經實機驗證**：待使用者升級後跑探測 9d-5。
 - 待使用者實測：探測 9d-5 結論、第一趟同步的清除列數與各階段耗時、主機清單未回報提示、守門是否仍偵測到 PRTG core server。
+
+## 規劃逐條比對（實作完成後，Claude 親做）
+
+逐條對照「定案／改動／測試驗收／明確不做／升級注意／第二輪複檢」與程式碼、測試、文件。
+
+| 項目 | 結果 | 證據／處置 |
+|---|---|---|
+| A 定案 1～3（範圍組成、位址比對一份、空集合） | ✅ | `PrtgScopeDevices.cs`；`DetectGuardDevices` 由 `Resolve` 與 `ResolveDeviceObjids` 共用，`FindDevicesForHost(` 數與改動前相同；守門項不看 `PrtgResourceGuardEnabled` |
+| A 定案 4（數值目標集合口徑收斂） | ✅ | 快照 `PrtgSnapshotHostedService.cs:722`、估算 `SettingsController.cs:315`、校準 `CalibrationService.cs:416,704` 皆為 `GetLatestHostMapWithDate(30, 今天/錨點)`（設計修正 1） |
+| A 驗收「估算與校準顆數對同一份資料相等」 | ⚠️ 未寫成測試 | 三處改為同一支查詢後以 grep 驗同源；不另補（兩者的差異只剩白名單與暫停過濾，已共用 `GetValueFetchTargets`） |
+| B 定案 1～4（裝置全站、階段重排、逐台取感測器、過期清除） | ✅ | 夜間對應時機依設計修正 8；感測器清除前置條件依設計修正 2 |
+| B 定案 5（母體縮小、涵蓋摘要只計鏡像中感測器） | ✅ | `EfPrtgStore.GetStateChangeCoverageSummary` 加 `PrtgSensors.Any` 條件 |
+| B 定案 6～7（messages 逐台、守門、失敗明細、訊號線、未在鏡像計數） | ✅ | 失敗明細以 `GetDeviceNamesByObjids` 印「名稱(objid)」前 5 台；「未在鏡像」判準是整個鏡像而非該裝置底下（語意較寬，照常寫入，不影響資料） |
+| B 定案 8／改動 5（鏡像卡標籤、進度單位） | ✅ | `Prtg.cshtml:282`；`run-phases.js` 感測器與狀態變更皆為「台」 |
+| B 驗收「裝置清除後該台不再出現在重算對應」「兩台失敗明細」 | ⚠️ 部分 | 測試證明清除發生在範圍提供者之前（提供者看到的裝置數已扣除）、失敗明細測一台；不另補 |
+| C 定案 1～4（分批、缺顆、單批失敗、目標空不發請求） | ✅ | `FilteredSnapshotLimit=2000`、共用 `BuildObjidFilter` |
+| C 定案 5（範圍補抓） | ⚠️→✅ | **比對時發現缺一道閘門**：規劃寫「取數／同步／回填／探測任一在跑時不補」，實作漏了探測。已補：快照服務注入 `PrtgProbeRunState`，探測執行中不補抓（快照照常）；新測試＋突變「拿掉閘門」紅 |
+| D 定案 1～3 | ✅ | 9d-5 (a)～(e)、步驟 8 單一裝置、9d-4 保留、成本行 19 次 |
+| E 定案 1～5 | ✅ | 對照 8 條＋刻意不分類反例；prompt 已抑制兩段既有測試 `IssueMuteTests.cs:239-241` |
+| F 文件 | ✅ | BACKLOG 條目依設計修正 9 改由 C-2 處理 |
+| 明確不做 9 條 | ✅ | 階段 4 全量分支仍在（`PrtgFetchService.cs:142` 讀鏡像 targets，鏡像已是範圍內）；即時守門偵測未動；無新增設定鍵 |
+| 升級注意 5 條 | ⚠️→✅ | README 原缺「長期 Down 問題不再出現」，已補 |
+| 第二輪複檢：依鏡像版本戳失效的快取 | ✅ | 唯一的 PRTG 鏡像快取 `PrtgDeviceIndexCache` 刻意不綁版本戳、TTL 30 秒；裝置清除後最多 30 秒內衝突頁可能仍列出已刪裝置，無害 |
+| 第二輪複檢：「最後結構同步時間」 | ✅（推翻原判斷） | 原寫「不受影響」，實作 C 時發現範圍補抓會推高感測器 `synced_at`，已改取裝置表 |
+
+比對後全套測試結果見「體檢交接」（已更新）。

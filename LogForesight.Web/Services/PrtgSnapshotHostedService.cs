@@ -92,6 +92,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;
+    private readonly PrtgProbeRunState _probeState;
 
     /// <summary>服務持有的單一實例：DNS 快取跨輪有效，取數範圍計算不必每輪重新解析。</summary>
     private readonly PrtgAddressResolver _addressResolver = new();
@@ -128,9 +129,11 @@ public class PrtgSnapshotHostedService : BackgroundService
         PrtgBackfillService backfillService,
         IHostStore hostStore,
         ISentinelStore sentinelStore,
+        PrtgProbeRunState probeState,
         IHostApplicationLifetime lifetime)
     {
         _hosts = hostStore ?? throw new ArgumentNullException(nameof(hostStore));
+        _probeState = probeState ?? throw new ArgumentNullException(nameof(probeState));
         _sentinels = sentinelStore ?? throw new ArgumentNullException(nameof(sentinelStore));
         _settingsStore = systemSettingsStore ?? throw new ArgumentNullException(nameof(systemSettingsStore));
         _backend = storageBackend ?? throw new ArgumentNullException(nameof(storageBackend));
@@ -537,6 +540,10 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// </summary>
     private async Task BackfillScopeSensorsAsync(SystemSettings settings, CancellationToken ct)
     {
+        // 環境探測執行中不補抓：探測在量 PRTG 的回應時間與併發（步驟 9），疊上補抓的請求會讓量測失真。
+        // 快照本身不受這道限制（它一輪只有少數請求，且探測的前置說明已涵蓋）。
+        if (_probeState.Snapshot().IsRunning) return;
+
         try
         {
             var store = _backend.PrtgStore();
