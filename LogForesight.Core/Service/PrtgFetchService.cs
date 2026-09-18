@@ -65,6 +65,11 @@ public sealed class PrtgFetchService
     /// <param name="day">目標日期（本地時間）</param>
     /// <param name="concurrency">hourly 數值抓取併發上限（1~8）</param>
     /// <param name="ct">取消語彙基元</param>
+    /// <param name="scopeProvider">
+    /// 取數範圍提供者（必填）。引數＝devicesRefreshed：本趟階段 1 執行了、沒有擲例外、已收斂且寫入裝置數大於 0 才為 true。
+    /// syncStructure 為 true 時在階段 1 之後、階段 2 之前呼叫恰一次；為 false 時在階段 3 之前呼叫恰一次。
+    /// 呼叫端在這裡做主機對應（對應要用剛更新的裝置鏡像）並回傳範圍；本段取數行為仍為全站、不以範圍過濾。
+    /// </param>
     /// <param name="syncStructure">
     /// 是否同步 device／sensor 結構（階段 1、2）。每日擷取為 true。
     /// 歷史回填傳 false：結構鏡像永遠是「現況」，逐日回填時重跑它既是對 PRTG 做 N 次無謂的全量查詢，
@@ -78,19 +83,46 @@ public sealed class PrtgFetchService
     /// <param name="progress">進度回呼（stage, done, total），null＝不回報</param>
     /// <param name="stateChangesFrom">狀態變更區間起點（非 null 時階段 3 使用此起點到今天，null 時維持 day-1）</param>
     public async Task<PrtgFetchResult> FetchDayAsync(
-        DateTime day, int concurrency, CancellationToken ct, bool syncStructure = true, bool fetchValues = true,
+        DateTime day, int concurrency, CancellationToken ct,
+        Func<bool, PrtgScopeResult> scopeProvider,
+        bool syncStructure = true, bool fetchValues = true,
         Action<string, int, int>? progress = null,
         DateTime? stateChangesFrom = null)
     {
+        ArgumentNullException.ThrowIfNull(scopeProvider);
         var devicesCount = 0;
         var sensorsCount = 0;
         var stateChangesCount = 0;
         var valuesCount = 0;
         var failures = 0;
         var sensorTargets = new List<(long Objid, bool Paused)>();
+        var devicesRefreshed = false;
+        // 取數範圍：本段只取得、不過濾（後續段才用它縮圈）
+        PrtgScopeResult? scope = null;
+
+        void ResolveScope()
+        {
+            try
+            {
+                scope = scopeProvider(devicesRefreshed);
+                _console.WriteLine($"[範圍] 取數範圍：{scope.DeviceObjids.Count} 台裝置（對應 {scope.Mapped}、衝突 {scope.Conflict}、人工 {scope.Manual}、守門 {scope.Guard}）");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                _console.WriteLine($"[範圍] ✗ 取數範圍計算失敗：{ex.Message}");
+            }
+        }
 
         if (!syncStructure)
         {
+            // 不同步結構時沒有新的裝置鏡像，provider 收到 false。放在「鏡像沒有感測器」的提早返回之前：
+            // 夜間在手動同步剛完成時也走這條路，對應仍要照做，不能因鏡像沒有感測器就被略過。
+            ResolveScope();
             sensorTargets = _store.GetSensorTargets();
             if (sensorTargets.Count == 0)
             {
@@ -122,6 +154,7 @@ public sealed class PrtgFetchService
                     failures++;
                     _console.WriteLine($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
                 }
+                devicesRefreshed = outcome.Converged && devicesCount > 0;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -132,6 +165,9 @@ public sealed class PrtgFetchService
                 failures++;
                 _console.WriteLine($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
             }
+
+            // 主機對應要用剛更新的裝置鏡像，且範圍要在感測器同步之前就定下來
+            ResolveScope();
 
             // 階段 2：sensor 結構全量同步
             try

@@ -12,8 +12,9 @@ namespace LogForesight.Core.Service;
 /// 鏡像表要等到隔天才有內容，而主機對應、資源守門的自動偵測、觸發式取數全都建立在鏡像之上。
 /// 這條路徑讓管理者當場把鏡像補齊並立刻重算今天的對應。
 ///
-/// 兩步：① 結構與狀態變更同步（不取數值）；② 對今天做主機對應。
-/// 結構同步失敗就不做對應——對著半套或空的鏡像算對應，只會把既有結果洗成一堆 unmatched。
+/// 兩步：① 結構與狀態變更同步（不取數值）；② 對今天做主機對應——在裝置同步之後、感測器同步之前
+/// （經 FetchDayAsync 的 scopeProvider）。裝置結構沒有成功更新就不做對應——對著半套或空的鏡像算對應，
+/// 只會把既有結果洗成一堆 unmatched。
 /// </summary>
 public static class PrtgStructureSyncRunner
 {
@@ -28,6 +29,9 @@ public static class PrtgStructureSyncRunner
         int concurrency,
         IRunConsole console,
         CancellationToken ct,
+        IPrtgResourceGuardSource guardSource,
+        SystemSettings settings,
+        IReadOnlyList<Sentinel> sentinels,
         Action<string, int, int>? progress = null,
         DateTime? today = null)
     {
@@ -35,14 +39,47 @@ public static class PrtgStructureSyncRunner
         var stopwatch = Stopwatch.StartNew();
         var status = new PrtgStructureSyncStatus { MapDate = mapDate };
         var syncFailures = 0;
+        PrtgHostMapResult? mapResult = null;
+        string? mapError = null;
 
         try
         {
-            // 1. 結構與狀態變更同步（fetchValues:false——數值取數是夜間批次與歷史回填的事）
+            // 1. 結構與狀態變更同步（fetchValues:false——數值取數是夜間批次與歷史回填的事）。
+            //    主機對應在 scopeProvider 裡做（裝置同步之後、感測器同步之前）：
+            //    裝置結構沒有成功更新就不做對應——對著空的或半套的鏡像算對應，會把原本正確的
+            //    對應洗成一整批 unmatched，比不算還糟；對應失敗也不抹掉結構同步成果。
             progress?.Invoke(RunPhases.PrtgSync, 0, 0);
             var fetchResult = await fetchService.FetchDayAsync(
-                mapDate, concurrency, ct, syncStructure: true, fetchValues: false,
-                (stage, done, total) => progress?.Invoke(stage, done, total));
+                mapDate, concurrency, ct,
+                devicesRefreshed =>
+                {
+                    if (devicesRefreshed)
+                    {
+                        try
+                        {
+                            // 2. 主機對應（對今天）
+                            var mapper = new PrtgHostMapper(prtgStore, hostStore, console, resolver);
+                            mapResult = mapper.MapForDate(mapDate);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            // 對應失敗不抹掉已完成的結構同步成果——鏡像已經更新了，那部分是有效的。
+                            mapError = ex.Message;
+                            console.WriteLine($"✗ 主機對應失敗：{ex.Message}（結構同步結果已保留）");
+                        }
+                    }
+                    else
+                    {
+                        console.WriteLine("結構同步沒有取得任何裝置（未進行主機對應，既有對應結果保持不變）");
+                    }
+                    return PrtgScopeDevices.Compute(prtgStore, hostStore, guardSource, settings, sentinels, console, resolver);
+                },
+                syncStructure: true, fetchValues: false,
+                progress: (stage, done, total) => progress?.Invoke(stage, done, total));
 
             status.Devices = fetchResult.Devices;
             status.Sensors = fetchResult.Sensors;
@@ -53,17 +90,15 @@ public static class PrtgStructureSyncRunner
                               (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : ""));
 
             // 分頁階段的失敗不會擲例外，只累加 Failures——沒有這道判斷的話，
-            // 「PRTG 整台連不上」會被當成一次成功的同步（裝置 0、感測器 0），
-            // 接著把整份對應洗成空的。
-            if (fetchResult.Failures > 0 && fetchResult.Devices == 0)
+            // 「PRTG 整台連不上」會被當成一次成功的同步（裝置 0、感測器 0）。
+            if (mapResult == null && mapError == null && fetchResult.Failures > 0 && fetchResult.Devices == 0)
             {
                 stopwatch.Stop();
                 status.Success = false;
                 status.ErrorMessage = $"結構同步有 {fetchResult.Failures} 個階段失敗，且沒有取得任何裝置。";
                 status.ElapsedSeconds = stopwatch.Elapsed.TotalSeconds;
                 status.CompletedAt = DateTime.Now;
-                console.WriteLine("✗ 結構同步沒有取得任何裝置（未進行主機對應，既有對應結果保持不變）。" +
-                                  "請確認 PRTG 連線位址與認證是否正確。");
+                console.WriteLine("✗ 請確認 PRTG 連線位址與認證是否正確。");
                 return status;
             }
         }
@@ -73,8 +108,7 @@ public static class PrtgStructureSyncRunner
         }
         catch (Exception ex)
         {
-            // 結構同步失敗就不做對應：對著空的或半套的鏡像算對應，會把原本正確的對應
-            // 洗成一整批 unmatched，比不算還糟。
+            // 結構同步整個擲例外：provider 若還沒被呼叫就沒有做對應（見上方說明），既有對應保持不變。
             stopwatch.Stop();
             status.Success = false;
             status.ErrorMessage = ex.Message;
@@ -84,12 +118,21 @@ public static class PrtgStructureSyncRunner
             return status;
         }
 
-        try
+        if (mapError is not null)
         {
-            // 2. 主機對應（對今天）
-            var mapper = new PrtgHostMapper(prtgStore, hostStore, console, resolver);
-            var mapResult = mapper.MapForDate(mapDate);
-
+            // 對應失敗不抹掉已完成的結構同步成果——鏡像已經更新了，那部分是有效的。
+            status.Success = false;
+            status.ErrorMessage = $"主機對應失敗：{mapError}";
+        }
+        else if (mapResult is null)
+        {
+            // 裝置結構未成功更新（未收斂、或收斂但 0 台）而沒有做對應：沿用既有對應，依階段失敗數判定成功與否
+            status.Success = syncFailures == 0;
+            if (syncFailures > 0)
+                status.ErrorMessage = $"結構同步有 {syncFailures} 個階段失敗，鏡像可能不完整。";
+        }
+        else
+        {
             status.MapOk = mapResult.Ok;
             status.MapManual = mapResult.Manual;
             status.MapConflict = mapResult.Conflict;
@@ -116,17 +159,6 @@ public static class PrtgStructureSyncRunner
                 status.ErrorMessage = $"結構同步有 {syncFailures} 個階段失敗，鏡像可能不完整。";
                 console.WriteLine($"⚠ 結構同步有 {syncFailures} 個階段失敗，主機對應已依現有鏡像完成，但結果可能不完整。");
             }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // 對應失敗不抹掉已完成的結構同步成果——鏡像已經更新了，那部分是有效的。
-            status.Success = false;
-            status.ErrorMessage = $"主機對應失敗：{ex.Message}";
-            console.WriteLine($"✗ 主機對應失敗：{ex.Message}（結構同步結果已保留）");
         }
 
         stopwatch.Stop();

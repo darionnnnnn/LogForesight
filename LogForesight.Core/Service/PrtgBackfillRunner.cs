@@ -25,6 +25,7 @@ public static class PrtgBackfillRunner
     /// <param name="concurrency">hourly 數值抓取併發上限（取自 PrtgFetchConcurrency，與每日擷取共用）</param>
     /// <param name="console">執行歷程輸出</param>
     /// <param name="ct">取消語彙基元</param>
+    /// <param name="scopeDeviceObjids">取數範圍裝置集合（呼叫端以 PrtgScopeDevices.Compute 算好；本段只傳給擷取服務、不過濾）</param>
     /// <param name="store">PRTG 鏡像 store（傳入時啟用觸發式過濾）</param>
     /// <param name="records">分析紀錄查詢介面（傳入時啟用觸發式過濾）</param>
     /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>
@@ -37,6 +38,7 @@ public static class PrtgBackfillRunner
     /// </returns>
     public static async Task<bool> RunAsync(
         PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct,
+        IReadOnlyCollection<long> scopeDeviceObjids,
         EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null,
         Action<int, int, DateTime?>? dayProgress = null,
         Action<int, int>? sensorProgress = null,
@@ -120,8 +122,11 @@ public static class PrtgBackfillRunner
                     {
                         // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
                         // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
+                        // 範圍由呼叫端在回填開始前算好（回填不做主機對應）
                         var result = await fetchService.FetchDayAsync(
-                            day, concurrency, ct, syncStructure: false,
+                            day, concurrency, ct,
+                            _ => new PrtgScopeResult(scopeDeviceObjids.ToHashSet(), 0, 0, 0, 0),
+                            syncStructure: false,
                             progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
                         if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
                         {

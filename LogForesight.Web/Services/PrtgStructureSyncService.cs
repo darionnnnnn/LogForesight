@@ -84,6 +84,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     private readonly PrtgBackfillRunState _backfillState;
     private readonly IHostStore _hosts;
     private readonly PrtgStructureSyncStatusStore _statusStore;
+    private readonly ISentinelStore _sentinels;
     private readonly IHostApplicationLifetime? _lifetime;
 
     /// <summary>
@@ -106,9 +107,11 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         IHostStore hosts,
         PrtgStructureSyncStatusStore statusStore,
         PrtgBackfillRunState backfillState,
+        ISentinelStore sentinels,
         IHostApplicationLifetime? lifetime = null)
     {
         _backfillState = backfillState;
+        _sentinels = sentinels;
         _lifetime = lifetime;
         // 站台關閉時中止同步：這條路徑會對 PRTG 做整棵樹的分頁查詢，
         // 沒有取消來源的話，PRTG 端卡住（TCP 半開、不回應）就會讓狀態永遠停在「執行中」，
@@ -324,6 +327,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
                     var status = await PrtgStructureSyncRunner.RunAsync(
                         fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
                         concurrency, console, cts.Token,
+                        new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
                         progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
 
                     Persist(status);

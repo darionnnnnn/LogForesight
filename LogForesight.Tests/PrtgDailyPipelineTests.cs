@@ -293,6 +293,62 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
     }
 
+    /// <summary>裝置結構本趟沒有成功更新：仍依既有鏡像重算最新日對應並說明。</summary>
+    [Fact]
+    public async Task 裝置同步失敗時仍依既有鏡像重算對應()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
+        });
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-MIRROR", Active = true, IpAddress = "192.168.1.150" });
+        _backend.PrtgStore().UpsertDevices(new[] { new PrtgDeviceRow { Objid = 77, Name = "SRV-MIRROR", Ip = "192.168.1.150" } }, DateTime.Now);
+
+        var (ctx, console, _, _) = CreateContext();
+        var newest = DateTime.Today.AddDays(-1);
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, hostStore,
+            new[] { newest }, Task.CompletedTask, guard: null, structureSyncGate: null);
+
+        Assert.Contains(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
+        var row = Assert.Single(_backend.PrtgStore().GetHostMapForDate(newest), r => r.DeviceObjid == 77);
+        Assert.Equal(PrtgMapStatus.Ok, row.MapStatus);
+        Assert.Equal(host.HostId, row.HostId);
+    }
+
+    /// <summary>手動同步剛成功更新鏡像（本趟跳過結構同步）：仍要重算對應，不印沿用訊息。</summary>
+    [Fact]
+    public async Task 跳過結構同步時仍重算對應()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
+        });
+
+        var (ctx, console, _, _) = CreateContext();
+        var gate = new FakeStructureSyncGate(running: true);
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: gate);
+
+        Assert.Contains(console.Lines, l => l.Contains("對應完成"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
+    }
+
     /// <summary>
     /// 保守策略下：不執行觸發式取數、印出保守說明與策略狀態，其餘階段（finding、done）照跑。
     /// </summary>

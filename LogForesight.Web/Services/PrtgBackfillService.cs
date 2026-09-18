@@ -172,6 +172,7 @@ public class PrtgBackfillService
     // 做成可選的話漏注入時保護會靜默消失。
     private readonly SchedulerRunState _schedulerRunState;
     private readonly PrtgStructureSyncRunState _structureSyncState;
+    private readonly ISentinelStore _sentinels;
 
     public PrtgBackfillService(
         ISystemSettingsStore settings,
@@ -180,8 +181,10 @@ public class PrtgBackfillService
         PrtgProbeRunState probeState,
         IHostStore hosts,
         SchedulerRunState schedulerRunState,
-        PrtgStructureSyncRunState structureSyncState)
+        PrtgStructureSyncRunState structureSyncState,
+        ISentinelStore sentinels)
     {
+        _sentinels = sentinels;
         _settings = settings;
         _backend = backend;
         _state = state;
@@ -349,8 +352,15 @@ public class PrtgBackfillService
                                           string.Join("、", unresolvedHosts.Take(10)));
                     }
 
+                    // 取數範圍：回填不做主機對應，直接以既有對應算一次，整趟共用
+                    var scopeResult = PrtgScopeDevices.Compute(
+                        prtgStore, _hosts, new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
+                        console, new PrtgAddressResolver());
+                    console.WriteLine($"取數範圍：{scopeResult.DeviceObjids.Count} 台裝置");
+
                     success = await PrtgBackfillRunner.RunAsync(
                         fetchService, days, concurrency, console, runToken,
+                        scopeResult.DeviceObjids,
                         prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist,
                         dayProgress: (dDone, dTotal, curDate) => _state.UpdateDay(dDone, dTotal, curDate),
                         sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),

@@ -109,12 +109,45 @@ internal static class PrtgDailyPipeline
             }
 
             // 1. 結構同步＋狀態變更只做一次（區間覆蓋 oldest.AddDays(-1) 到今天，目標日為 newest）
+            // 2. PRTG 主機對應重算只對 newest，在 scopeProvider 裡做（裝置同步之後、感測器同步之前）：
+            //    一律重算：鏡像在同步失敗時不會縮小（upsert 只增不減、過期清除只在裝置階段完整成功後才做），
+            //    拿既有鏡像重算是安全的，且能反映白天主機主檔的異動。裝置未更新時只多印一行說明。
+            //    FetchDayAsync 整個擲例外（syncFailed 那條路）時 provider 可能沒被呼叫——維持「擷取失敗就沒有對應」
+            //    的既有語意（mapResult 為 null），不另外補做。
+            PrtgHostMapResult? mapResult = null;
             var syncStopwatch = Stopwatch.StartNew();
             try
             {
                 progress?.Report(RunPhases.PrtgSync, 0, 0);
                 fetchResult = await fetchService.FetchDayAsync(
                     newest, systemSettings.PrtgFetchConcurrency, ct,
+                    devicesRefreshed =>
+                    {
+                        var mirrorStore = backend.PrtgStore();
+                        var resolver = new PrtgAddressResolver();
+                        if (!devicesRefreshed && !skipStructureSync)
+                        {
+                            prtgConsole.WriteLine("  ⚠ 裝置結構本趟未成功更新，主機對應依既有鏡像重算。");
+                        }
+                        try
+                        {
+                            var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
+                            mapResult = hostMapper.MapForDate(newest);
+                            runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
+                            prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
+                        }
+                        var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
+                        return PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
+                            systemSettings, sentinels, prtgConsole, resolver);
+                    },
                     syncStructure: !skipStructureSync, fetchValues: false,
                     progress: (stage, done, total) => progress?.Report(stage, done, total),
                     stateChangesFrom: oldest.AddDays(-1));
@@ -138,24 +171,6 @@ internal static class PrtgDailyPipeline
                 // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
                 Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
                 prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
-            }
-
-            // 2. PRTG 主機對應重算只對 newest
-            PrtgHostMapResult? mapResult = null;
-            try
-            {
-                var hostMapper = new PrtgHostMapper(backend.PrtgStore(), hostStore, prtgConsole, new PrtgAddressResolver());
-                mapResult = hostMapper.MapForDate(newest);
-                runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
             }
 
             syncStopwatch.Stop();

@@ -115,7 +115,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
         }, DateTime.Now);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>());
 
         Assert.True(ok);
         Assert.Contains(console.Lines, l => l.Contains("開始執行 PRTG 歷史回填（共 3 天"));
@@ -184,7 +184,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
         }, DateTime.Now);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>());
 
         Assert.True(ok); // 有成功的天數即回傳 true
         Assert.Contains(console.Lines, l => l.Contains($"回填 {day2Str}（第 2/3 天）失敗"));
@@ -207,7 +207,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
         }, DateTime.Now);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>());
 
         Assert.False(ok);
         Assert.Contains(console.Lines, l => l.Contains("共成功 0 天，失敗 2 天"));
@@ -221,8 +221,8 @@ public class PrtgBackfillRunnerTests : IDisposable
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, 2, console, CancellationToken.None);
-        var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, 2, console, CancellationToken.None);
+        var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, 2, console, CancellationToken.None, Array.Empty<long>());
+        var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, 2, console, CancellationToken.None, Array.Empty<long>());
 
         Assert.False(okZero);
         Assert.False(okNegative);
@@ -270,7 +270,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         {
             // 第一天唯一一顆 sensor 的數值寫完（進度回報 1/1）當下按停止：
             // 這一天已沒有任何取消檢查點、照常做完，第二天入口才中斷
-            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token,
+            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token, Array.Empty<long>(),
                 sensorProgress: (done, total) => { if (total > 0 && done == total) cts.Cancel(); });
         });
 
@@ -310,7 +310,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
         }, DateTime.Now);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>());
         Assert.True(ok);
 
         using var ctx = _fx.NewContext();
@@ -351,7 +351,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         }, DateTime.Now);
 
         // 不傳 store、records、whitelist（預設 null），應走全量回填路徑
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>());
 
         Assert.True(ok);
         Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=201"));
@@ -405,7 +405,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 1, 2, console, CancellationToken.None,
+            fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>(),
             store, recordStore);
 
         Assert.True(ok);
@@ -460,7 +460,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 1, 2, console, CancellationToken.None,
+            fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>(),
             store, recordStore, whitelist);
 
         Assert.True(ok);
@@ -509,7 +509,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 1, 2, console, CancellationToken.None,
+            fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>(),
             store, recordStore);
 
         // 該日無問題主機：不抓數值（無 historicdata 請求）且不算失敗（回傳 true）
@@ -553,7 +553,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var dayProgressList = new List<(int Done, int Total, DateTime? Date)>();
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 3, 2, console, CancellationToken.None,
+            fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>(),
             dayProgress: (done, total, date) => dayProgressList.Add((done, total, date)));
 
         Assert.True(ok);
@@ -614,7 +614,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         DateTime? currentDay = null;
 
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 2, 2, console, CancellationToken.None,
+            fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(),
             dayProgress: (done, total, date) =>
             {
                 if (date.HasValue)
@@ -733,7 +733,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         });
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, store, records);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
         Assert.True(ok);
         // 3 天只有迴圈前那一次 messages 請求；數值照樣逐日取（3 天各一次 historicdata）
@@ -762,7 +762,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         });
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, store, records);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
         Assert.True(ok);
         var day2 = DateTime.Today.AddDays(-2);
@@ -785,7 +785,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         });
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, store, records);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
         Assert.False(ok);
         Assert.Contains(console.Lines, l => l.Contains("沒有任何一天有主機對應，未取得數值"));
@@ -807,7 +807,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         });
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, store, records);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
         Assert.False(ok);
         Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("historicdata.json")));
@@ -839,7 +839,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, cts.Token, store, records));
+            PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, cts.Token, Array.Empty<long>(), store, records));
 
         // 第 1 天完整做完、第 2 天做到一半被停：完成 1／3 天
         Assert.Contains(console.Lines, l => l.Contains("已停止：完成 1／3 天"));
@@ -907,7 +907,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             }, DateTime.Now);
             Service = new PrtgBackfillService(
                 Settings, Backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState);
+                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore());
         }
 
         public void AddMap(string status) =>

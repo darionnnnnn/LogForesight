@@ -68,8 +68,8 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         var schedulerRunState = new SchedulerRunState();
         var lifetime = new FakeHostApplicationLifetime();
         var statusStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
-        var structureSync = new PrtgStructureSyncService(_settingsStore, _backend, syncState, schedulerRunState, hostStore, statusStore, new PrtgBackfillRunState(), lifetime);
-        var backfill = new PrtgBackfillService(_settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, schedulerRunState, syncState);
+        var structureSync = new PrtgStructureSyncService(_settingsStore, _backend, syncState, schedulerRunState, hostStore, statusStore, new PrtgBackfillRunState(), new FakeSentinelStore(), lifetime);
+        var backfill = new PrtgBackfillService(_settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, schedulerRunState, syncState, new FakeSentinelStore());
 
         var service = new PrtgSnapshotHostedService(
             _settingsStore,
