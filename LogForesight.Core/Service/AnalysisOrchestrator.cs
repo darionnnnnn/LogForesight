@@ -630,6 +630,12 @@ public class AnalysisOrchestrator
                     ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
                 };
             }
+            if (systemSettings.AutoDispatchEnabled && candidatePool.ActivePoolMemberCount == 0)
+            {
+                // 開關開著卻派不出任何單：設定頁只在儲存當下提醒一次，之後群組或成員異動造成的空池要在每趟執行紀錄現身
+                Log.Warn("自動派工已開啟，但派工池沒有可接單的成員（池成員 {Pool} 人、未暫停 0 人），本趟自動派工不會派出任何單",
+                    candidatePool.PoolMemberCount);
+            }
             var workOrderStore = backend.WorkOrderStore();
             var issueCaseStore = backend.IssueCaseStore();
             DispatchContext dispatchContext;
@@ -714,11 +720,8 @@ public class AnalysisOrchestrator
                 {
                     var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
                     runCtx.Result.DispatchSummary = dispatchSummary;
-                    Log.Info("派工：建 {CreatedOrders} 單／掛入 {AttachedMembers} 台／略過 {SkipCounts}",
-                        dispatchSummary.CreatedOrders, dispatchSummary.AttachedMembers,
-                        dispatchSummary.SkipCounts.Count == 0
-                            ? "無"
-                            : string.Join("、", dispatchSummary.SkipCounts.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}:{p.Value}")));
+                    // 走 console 才進得了執行紀錄（Log.Info 不進）；管理者隔天要從這一行看出「昨晚派了什麼、為什麼沒派」
+                    console.WriteLine("\n" + NightlyDispatch.DescribeSummary(dispatchSummary));
                 }
                 catch (Exception ex)
                 {

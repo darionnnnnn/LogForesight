@@ -408,6 +408,9 @@ public class WorkOrderCommandServiceTests : IDisposable
         var result = _service.Create(Single(handler.UserId));
 
         Assert.Equal(new Dictionary<long, int> { [handler.UserId] = 1 }, AllocationOf(preview));
+        // 「將交辦 N 台」也只算會寫入的主機：算進略過主機的話，同一個 modal 的總數與分配表對不上
+        Assert.Equal(1, preview.AffectedHosts);
+        Assert.Equal(1, preview.AffectedMembers);
         Assert.Null(preview.Hosts.Single(h => h.HostName == "HOST-A").AllocatedHandlerId);
         Assert.Equal("丙(DOMAIN\\z)", preview.Hosts.Single(h => h.HostName == "HOST-A").ExistingHandlerName);
         var order = Assert.Single(result.Orders, o => o.HandlerId == handler.UserId);
@@ -613,6 +616,65 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Equal(orderId, OpenCase("HOST-B")!.WorkOrderId);
         Assert.Null(OpenCase("HOST-C"));
         Assert.Equal(orderId.ToString(), SingleAudit(AuditActions.WorkOrderAppend).TargetId);
+    }
+
+    [Fact]
+    public void 驗證_期限早於今天_零寫入()
+    {
+        AddHost("HOST-A");
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var req = Single(handler.UserId);
+        req.DueDate = DateTime.Today.AddDays(-1);
+
+        var ex = Assert.Throws<DomainException>(() => _service.Create(req));
+
+        Assert.Contains("不可早於今天", ex.Message);
+        AssertNoWrites();
+    }
+
+    [Fact]
+    public void 續掛_手動排除過主機時不開()
+    {
+        var a = AddHost("HOST-A");
+        AddHost("HOST-B");
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var req = Single(handler.UserId);
+        req.ScopeKind = WorkOrderScopes.All;
+        req.AutoAttach = true;
+        req.ExcludeHostIds = new List<long> { a.HostId };
+
+        var result = _service.Create(req);
+
+        Assert.False(_orderStore.Get(Assert.Single(result.Orders).WorkOrderId)!.AutoAttach);
+    }
+
+    [Fact]
+    public void 續掛_全站範圍且未排除時照請求開啟()
+    {
+        AddHost("HOST-A");
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var req = Single(handler.UserId);
+        req.ScopeKind = WorkOrderScopes.All;
+        req.AutoAttach = true;
+
+        var result = _service.Create(req);
+
+        Assert.True(_orderStore.Get(Assert.Single(result.Orders).WorkOrderId)!.AutoAttach);
+    }
+
+    [Fact]
+    public void 改派_給現任處理人_拒絕且不寄信不寫稽核()
+    {
+        var (orderId, handler) = CreateOneOrder("HOST-A");
+        _mailSender.Sent.Clear();
+        _audit.Entries.Clear();
+
+        var ex = Assert.Throws<DomainException>(() =>
+            _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = handler.UserId }));
+
+        Assert.Contains("已經是這張交辦單的處理人", ex.Message);
+        Assert.Empty(_mailSender.Sent);
+        Assert.Empty(_audit.Entries);
     }
 
     [Fact]

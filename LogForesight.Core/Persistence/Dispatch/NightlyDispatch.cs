@@ -89,7 +89,8 @@ public sealed class NightlyDispatch
                         {
                             Kind = DispatchDecisionKind.AttachTo, WorkOrderId = order.WorkOrderId,
                             HandlerId = order.HandlerId, Step = decision.Step,
-                            Recurrence = decision.Recurrence
+                            // 撞唯一索引而採用別人剛建的單時處理人可能換了——復發是對「上次修好的那個人」說的
+                            Recurrence = decision.Recurrence && order.HandlerId == decision.HandlerId
                         };
                         break;
                     }
@@ -120,6 +121,24 @@ public sealed class NightlyDispatch
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// 趟末寫進執行紀錄的一行摘要。略過原因用中文——代碼（gate_noise 之類）對看執行紀錄的管理者沒有意義。
+    /// 「未開啟自動派工」不列：開關關著時每個沒人接的問題都會計一次，數字只是雜訊。
+    /// </summary>
+    public static string DescribeSummary(NightlyDispatchSummary summary)
+    {
+        int Count(string reason) => summary.SkipCounts.GetValueOrDefault(reason);
+
+        var gate = Count(WorkOrderDispatcher.SkipSuppressed) + Count(WorkOrderDispatcher.SkipNoise)
+                   + Count(WorkOrderDispatcher.SkipSeverity) + Count(WorkOrderDispatcher.SkipDismissed);
+        var text = $"自動派工：建 {summary.CreatedOrders} 單／掛入 {summary.AttachedMembers} 台／無候選人 {Count(WorkOrderDispatcher.SkipNoCandidate)} 台" +
+                   $"／靜音略過 {Count(WorkOrderDispatcher.SkipMuted)}／閘門略過 {gate}" +
+                   $"（抑制 {Count(WorkOrderDispatcher.SkipSuppressed)}、已知雜訊 {Count(WorkOrderDispatcher.SkipNoise)}、" +
+                   $"嚴重度 {Count(WorkOrderDispatcher.SkipSeverity)}、不再打擾 {Count(WorkOrderDispatcher.SkipDismissed)}）";
+        if (Count(WorkOrderDispatcher.SkipUnavailable) > 0) text += "；派工資料讀取失敗，本趟未派工";
+        return text;
     }
 
     public NightlyDispatchSummary FlushRun(DateTime occurredAt)

@@ -1528,7 +1528,8 @@ function renderWorkOrderForm(body, group, users, groups) {
 
     // 單一使用者：searchableUserSelect
     const defaultUser = users.find(u => u.active);
-    const { element: handlerSelectWrap, select: handlerSelect } = searchableUserSelect(users, {
+    // 停用帳號後端一定拒絕，不擺必定失敗的選項
+    const { element: handlerSelectWrap, select: handlerSelect } = searchableUserSelect(users.filter(u => u.active), {
         selectedId: defaultUser ? defaultUser.userId : null,
         onChange: () => {
             currentPage = 1;
@@ -1544,7 +1545,7 @@ function renderWorkOrderForm(body, group, users, groups) {
 
     const groupSelect = document.createElement('select');
     groupSelect.className = 'form-select form-select-sm mb-2';
-    for (const g of groups) {
+    for (const g of groups.filter(x => x.active)) {
         const option = document.createElement('option');
         option.value = String(g.groupId);
         option.textContent = `${g.groupName}（${g.role}）`;
@@ -1614,13 +1615,16 @@ function renderWorkOrderForm(body, group, users, groups) {
     form.appendChild(scopeWrap);
 
     // 手動排除任一台主機時停用續掛並取消勾選；排除全部取消後恢復可用並回到預設勾選
+    let autoAttachWanted = true;   // 使用者自己的選擇（預設勾）；因排除而停用期間不改它
+    autoAttachCheck.addEventListener('change', () => { autoAttachWanted = autoAttachCheck.checked; });
+
     function updateAutoAttachState() {
         const hasExcluded = excludedHostIds.size > 0;
         if (hasExcluded) {
             autoAttachCheck.checked = false;
             autoAttachHelp.textContent = '已手動排除主機時不提供續掛（被排除的主機之後再出現會被自動加回）。';
         } else {
-            if (autoAttachCheck.disabled) autoAttachCheck.checked = true;
+            autoAttachCheck.checked = autoAttachWanted;
             autoAttachHelp.textContent = '之後這個範圍內新出現此問題、還沒有人處理的主機，夜間自動加入這張單。';
         }
         autoAttachCheck.disabled = hasExcluded;
@@ -1932,11 +1936,10 @@ function renderWorkOrderForm(body, group, users, groups) {
             }
 
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
-            currentPage = 1;
             search();
-        } catch (error) {
+        } catch {
+            // 錯誤訊息已由 api.js 顯示
             restore();
-            toast(error?.message || '建立交辦單失敗', 'danger');
         }
     });
 

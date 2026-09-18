@@ -147,7 +147,11 @@ function renderKpi(data) {
 
 // ── 交辦單頁籤 ─────────────────────────────────────────────────────────────
 
+/** 交辦單清單的請求序號（同 work-orders.js）：慢回來的舊請求不可蓋掉新篩選的結果 */
+let ordersLoadSeq = 0;
+
 async function loadOrders() {
+    const seq = ++ordersLoadSeq;
     renderLoading(ordersEl, 5);
 
     const pageSize = loadPageSize('handler-work-orders');
@@ -161,6 +165,7 @@ async function loadOrders() {
     if (pausedCheckbox.checked) params.set('paused', 'only');
 
     const data = await api.get(`/api/handlers/${userId}/work-orders?${params}`);
+    if (seq !== ordersLoadSeq) return;
     renderOrders(data);
 }
 
@@ -335,7 +340,8 @@ function renderOrders(data) {
 }
 
 function renderPausedNote() {
-    const paused = summary?.pausedWorkOrders ?? 0;
+    // 勾「只看暫停的單」時表格列的就是那些單，再寫「另有 N 張」會自相矛盾
+    const paused = pausedCheckbox.checked ? 0 : (summary?.pausedWorkOrders ?? 0);
     ordersNoteEl.textContent = paused > 0 ? `另有 ${paused} 張暫停（問題靜音中，到期自動恢復）` : '';
     ordersNoteEl.classList.toggle('d-none', paused === 0);
 }

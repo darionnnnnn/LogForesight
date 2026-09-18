@@ -42,7 +42,8 @@ public class TransactionExecutionStrategyGuardTests
         var offenders = new List<string>();
         foreach (var path in sources)
         {
-            var text = File.ReadAllText(path);
+            // 去掉註解行再數：註解裡提到 CreateExecutionStrategy() 不能算一筆
+            var text = string.Join("\n", File.ReadAllLines(path).Where(line => !line.TrimStart().StartsWith("//")));
             var transactions = Regex.Matches(text, @"Database\.BeginTransaction\(").Count;
             if (transactions == 0) continue;
 

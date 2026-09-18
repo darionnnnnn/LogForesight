@@ -76,7 +76,7 @@ public sealed class EfJsonLogStore
         }
     }
 
-    /// <summary>批次附加多行（依清單順序取得遞增 seq）：一個 context、分批 SaveChanges，
+    /// <summary>批次附加多行（同一交易內寫入；SQL Server 批次插入不保證 seq 照清單順序配發，需要順序的呼叫端自帶序號）：一個 context、分批 SaveChanges，
     /// 取代迴圈逐行 <see cref="AppendLine"/>（每行一次連線與交易）</summary>
     public void AppendLines(IReadOnlyList<string> lines)
     {

@@ -18,7 +18,7 @@ import {
     searchableUserSelect,
     labelValue
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatUserName, statusBadge } from '../core/format.js';
+import { formatDate, formatDateTime, formatUserName, statusBadge, workOrderClosedReasonText } from '../core/format.js';
 
 // DOM 元素
 const rootEl = document.getElementById('wo-detail');
@@ -83,7 +83,8 @@ async function getAssignableUsers() {
 
 async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit }) {
     const users = await getAssignableUsers();
-    const filteredUsers = (users || []).filter(u => u.userId !== currentHandlerId);
+    // 停用帳號後端一定拒絕，不擺一個必定失敗的選項
+    const filteredUsers = (users || []).filter(u => u.userId !== currentHandlerId && u.active);
 
     const body = document.createElement('div');
     const form = document.createElement('form');
@@ -241,7 +242,7 @@ function renderHeader(detail) {
     const statusWrap = document.createElement('div');
     statusWrap.className = 'd-flex align-items-center gap-1 flex-wrap';
     if (detail.closedAt) {
-        statusWrap.appendChild(statusBadge('已結案', 'neutral', { title: detail.closedReason || '' }));
+        statusWrap.appendChild(statusBadge('已結案', 'neutral', { title: workOrderClosedReasonText(detail.closedReason) }));
     } else {
         if (detail.paused) {
             statusWrap.appendChild(statusBadge(`暫停（靜音至 ${detail.mutedUntil || ''}）`, 'warning'));
@@ -260,7 +261,7 @@ function renderHeader(detail) {
 
 // ── 動作按鈕 ───────────────────────────────────────────────────────────────
 
-// 處理人自己的「回覆」按鈕由下一個 UI 段 D-2 實作，此處不提供
+// 處理人回覆的入口在處理人工作頁（/handlers/{id}），詳情頁只放管理動作
 
 function openAdminCloseModal() {
     const body = document.createElement('div');
@@ -383,9 +384,15 @@ function renderActions(detail, user) {
         });
         if (!reason) return;
 
-        const res = await api.post(`/api/work-orders/${workOrderId}/cancel`, { reason });
-        toast(`已取消，${res.closedCases} 台調回未處理`, 'success');
-        await reloadAll();
+        const restore = withBusy(cancelBtn, '處理中…');
+        try {
+            const res = await api.post(`/api/work-orders/${workOrderId}/cancel`, { reason });
+            toast(`已取消，${res.closedCases} 台調回未處理`, 'success');
+            await reloadAll();
+        } catch {
+            // 錯誤訊息已由 api.js 顯示
+            restore();
+        }
     });
     actionsContainer.appendChild(cancelBtn);
 
@@ -682,7 +689,8 @@ memberCsvBtn.addEventListener('click', async () => {
             if (res.items && res.items.length > 0) {
                 allItems.push(...res.items);
             }
-            if (!res.items || res.items.length < 200 || allItems.length >= res.total) {
+            // 以後端實際採用的頁大小判斷（後端會夾上限），不假設等於請求值
+            if (!res.items || res.items.length < res.pageSize || allItems.length >= res.total) {
                 break;
             }
             page++;
@@ -737,9 +745,14 @@ memberCsvBtn.addEventListener('click', async () => {
 
 // ── 載入流程 ───────────────────────────────────────────────────────────────
 
+/** 成員清單的請求序號：連點分頁或連續換篩選時，慢回來的舊請求不可蓋掉新結果 */
+let membersLoadSeq = 0;
+
 async function loadMembersOnly() {
+    const seq = ++membersLoadSeq;
     renderLoading(membersContainer, 5);
     const members = await api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`);
+    if (seq !== membersLoadSeq) return;
     renderMembers(members);
 }
 
@@ -792,6 +805,7 @@ async function loadAll() {
 }
 
 async function reloadAll() {
+    selectedCaseIds.clear();
     await guardLoad([headerContainer, membersContainer, timelineContainer], loadAll, { backLink: { href: appUrl('/work-orders'), text: '返回交辦清單' } });
 }
 

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using NLog;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -158,8 +157,9 @@ public sealed class WorkOrderBackfiller
 
         // SQL Server 後端啟用了連線重試（EnableRetryOnFailure），自開交易必須包在執行策略裡，
         // 否則 EF 直接擲 InvalidOperationException——SQLite 沒有重試策略，測試照樣全綠
-        IExecutionStrategy strategy;
-        using (var probe = _contextFactory()) strategy = probe.Database.CreateExecutionStrategy();
+        // probe 要活到所有 Execute 結束：重試策略第一次執行時會回頭讀它的 context（檢查外層交易），先 Dispose 會擲例外
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
 
         int created = 0, merged = 0, members = 0;
         foreach (var group in groups)

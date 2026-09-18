@@ -124,7 +124,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
             // 理由：目前系統內可能存在多個獨立實例（例如 Web 端註冊的 Singleton，以及
             // AnalysisOrchestrator 內自建的 StorageBackend 實例）。如果使用記憶體快取序號，
             // 夜間分析寫入多筆歷程後，Web 端的快取會落後，導致隔天 Web 端寫入時發生 LogId 重號。
-            // ReadLastLogId() 只會讀取尾端幾行資料，成本與讀一行幾乎相同，不值得為了快取承擔重號風險。
+            // ReadLastLogId() 只讀尾端一小段（同一次索引反向 seek），不值得為了快取承擔重號風險。
             var next = ReadLastLogId() + 1;
             _logStore.AppendLine(PrepareAndSerialize(log, next));
         }

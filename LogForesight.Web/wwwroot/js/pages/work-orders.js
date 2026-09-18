@@ -24,7 +24,7 @@ import {
     loadPageSize,
     savePageSize
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, statusBadge } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, statusBadge, workOrderClosedReasonText } from '../core/format.js';
 import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
 // DOM 元素
@@ -316,7 +316,7 @@ function renderActiveTable(data) {
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
                 if (r.closedAt) {
-                    wrap.appendChild(statusBadge('已結案', 'neutral', { title: r.closedReason || '' }));
+                    wrap.appendChild(statusBadge('已結案', 'neutral', { title: workOrderClosedReasonText(r.closedReason) }));
                 } else {
                     if (r.paused) {
                         wrap.appendChild(statusBadge(`暫停（靜音至 ${r.mutedUntil || ''}）`, 'warning'));

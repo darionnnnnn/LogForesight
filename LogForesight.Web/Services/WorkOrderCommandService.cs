@@ -113,8 +113,9 @@ public class WorkOrderCommandService
 
         return new WorkOrderPreviewDto
         {
-            AffectedHosts = plan.Hosts.Count(h => h.Resolved.Members.Count > 0),
-            AffectedMembers = plan.Hosts.Sum(h => h.Resolved.Members.Count),
+            // 以實際會寫入的成員計（Effective）：他人處理中且未勾改派的主機會被略過，算進來預覽就與落盤對不上
+            AffectedHosts = plan.Hosts.Count(h => h.Effective.Count > 0),
+            AffectedMembers = plan.Hosts.Sum(h => h.Effective.Count),
             EstimatedHostDays = estimatedHostDays,
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
             ManuallyExcludedHosts = plan.ManuallyExcludedHosts,
@@ -148,7 +149,8 @@ public class WorkOrderCommandService
         var actor = NewActor();
         var scopeKind = req.ScopeKind;
         var scopeGroupIds = scopeKind == WorkOrderScopes.Groups ? req.GroupIds!.Distinct().ToList() : new List<long>();
-        var autoAttach = scopeKind != WorkOrderScopes.Hosts && req.AutoAttach;
+        // 手動排除過主機就不續掛：被排除的主機之後再出現會被續掛加回，與排除的意圖矛盾
+        var autoAttach = scopeKind != WorkOrderScopes.Hosts && req.AutoAttach && req.ExcludeHostIds is not { Count: > 0 };
 
         var orders = new List<WorkOrderCreatedDto>();
         var raceSkipped = new List<WorkOrderConflict>();
@@ -227,8 +229,10 @@ public class WorkOrderCommandService
             var hostNames = allocationMap.TryGetValue(order.HandlerId, out var alloc)
                 ? alloc.Hosts.Select(h => h.Resolved.Host.HostName).ToList()
                 : (IReadOnlyList<string>)Array.Empty<string>();
+            // 併入既有單時協調器不覆蓋單上的說明與期限，信件要寫單上實際的值
+            var (note, dueDate) = order.CreatedOrder ? (req.Note, req.DueDate) : NoteAndDueOf(order.WorkOrderId);
             NotifyHandler(WorkOrderNoticeKinds.Created, order.WorkOrderId, plan.IssueLabel, plan.Source, plan.EventId,
-                order.HandlerId, hostNames.Count, hostNames, req.Note, req.DueDate, null, rules);
+                order.HandlerId, hostNames.Count, hostNames, note, dueDate, null, rules);
         }
 
         return new CreateWorkOrderResultDto
@@ -297,6 +301,8 @@ public class WorkOrderCommandService
     {
         var order = GetOrder(id);
         var handler = ResolveActiveHandler(req.HandlerId);
+        if (handler.UserId == order.HandlerId)
+            throw DomainException.Validation($"{NameOf(handler)} 已經是這張交辦單的處理人。");
 
         var result = Guard(() => _coordinator.Reassign(id, handler.UserId, NewActor()));
 
@@ -409,6 +415,8 @@ public class WorkOrderCommandService
             throw DomainException.Validation("交辦範圍為主機群組時，請至少選擇一個主機群組。");
         if (req.Note is { Length: > NoteMaxLength })
             throw DomainException.Validation($"說明不可超過 {NoteMaxLength} 字。");
+        if (req.DueDate is { } due && due.Date < DateTime.Today)
+            throw DomainException.Validation("預計完成日不可早於今天。");
 
         var users = _users.GetAll();
         var usersById = users.ToDictionary(u => u.UserId);
@@ -490,7 +498,6 @@ public class WorkOrderCommandService
                     .OrderBy(c => loads.GetValueOrDefault(c.UserId) + assignedMembers[c.UserId])
                     .First(); // candidates 已依 Account 升冪，OrderBy 穩定排序＝同分依帳號
 
-            assignedMembers[handler.UserId] += host.Resolved.Members.Count;
             host.Handler = handler;
 
             // 成員分類與協調器同規則：無案件＝新建；同處理人＝改連；他人＝改派或略過
@@ -504,6 +511,8 @@ public class WorkOrderCommandService
                 }
                 host.Effective.Add(member);
             }
+            // 虛擬負載只計實際會寫入的成員：被略過的衝突主機不該把後續主機推給別人
+            assignedMembers[handler.UserId] += host.Effective.Count;
         }
 
         // 衝突摘要：他人（有處理人）的進行中案件，依原處理人計主機數
@@ -631,6 +640,12 @@ public class WorkOrderCommandService
 
     private WorkOrder GetOrder(long id) =>
         _orders.Get(id) ?? throw DomainException.NotFound($"找不到交辦單 {id}。");
+
+    private (string? Note, DateTime? DueDate) NoteAndDueOf(long workOrderId)
+    {
+        var existing = GetOrder(workOrderId);
+        return (existing.Note, existing.DueDate);
+    }
 
     private WebUser ResolveActiveHandler(long handlerId)
     {

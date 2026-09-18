@@ -294,6 +294,35 @@ public class NightlyDispatchTests
     }
 
     [Fact]
+    public void 趟末摘要_略過原因以中文分項且不列未開啟()
+    {
+        var text = NightlyDispatch.DescribeSummary(new NightlyDispatchSummary
+        {
+            CreatedOrders = 2, AttachedMembers = 7,
+            SkipCounts = new Dictionary<string, int>
+            {
+                [WorkOrderDispatcher.SkipNoCandidate] = 3, [WorkOrderDispatcher.SkipMuted] = 1,
+                [WorkOrderDispatcher.SkipSuppressed] = 4, [WorkOrderDispatcher.SkipNoise] = 5,
+                [WorkOrderDispatcher.SkipSeverity] = 6, [WorkOrderDispatcher.SkipDismissed] = 7,
+                [WorkOrderDispatcher.SkipDisabled] = 99
+            }
+        });
+
+        Assert.Equal("自動派工：建 2 單／掛入 7 台／無候選人 3 台／靜音略過 1／閘門略過 22（抑制 4、已知雜訊 5、嚴重度 6、不再打擾 7）", text);
+    }
+
+    [Fact]
+    public void 趟末摘要_派工資料讀取失敗時明講()
+    {
+        var text = NightlyDispatch.DescribeSummary(new NightlyDispatchSummary
+        {
+            SkipCounts = new Dictionary<string, int> { [WorkOrderDispatcher.SkipUnavailable] = 12 }
+        });
+
+        Assert.EndsWith("；派工資料讀取失敗，本趟未派工", text);
+    }
+
+    [Fact]
     public void 夜間彙總_復發台數計入單行()
     {
         var host1 = AddHost("SRV-01");
