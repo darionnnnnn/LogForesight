@@ -504,6 +504,42 @@ public class WorkOrderDispatcherTests
         AssertCreate(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), 1, WorkOrderOrigins.AutoDispatch);
     }
 
+    [Fact]
+    public void 自動派工_延續性命中時標記復發()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        Candidate(2, "b", visibleHostIds: 1);
+        Load(2, members: 5, workOrders: 5);
+        Resolved("SRV-01", 2, DateTime.Today.AddDays(-10));
+
+        var decision = WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today);
+        AssertCreate(decision, 2, WorkOrderOrigins.AutoDispatch);
+        Assert.True(decision.Recurrence);
+    }
+
+    [Fact]
+    public void 自動派工_依負載選人時不標記復發()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        Candidate(2, "b", visibleHostIds: 1);
+
+        var decision = WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today);
+        AssertCreate(decision, 1, WorkOrderOrigins.AutoDispatch);
+        Assert.False(decision.Recurrence);
+    }
+
+    [Fact]
+    public void 負責人派工_不標記復發()
+    {
+        Candidate(7, "owner", inPool: false);
+        Owners(7);
+        Resolved("SRV-01", 7, DateTime.Today.AddDays(-10));
+
+        var decision = WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today);
+        AssertCreate(decision, 7, WorkOrderOrigins.OwnerRule);
+        Assert.False(decision.Recurrence);
+    }
+
     // ── Commit／RegisterOrder ──────────────────────────────────────────
 
     [Fact]

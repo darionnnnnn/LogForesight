@@ -293,6 +293,35 @@ public class NightlyDispatchTests
         Assert.Equal(createdOrder.IssueLabel, createdLine.IssueLabel);
     }
 
+    [Fact]
+    public void 夜間彙總_復發台數計入單行()
+    {
+        var host1 = AddHost("SRV-01");
+        var host2 = AddHost("SRV-02");
+        _settings.AutoDispatchEnabled = true;
+        _candidates.Add(new DispatchCandidate { UserId = 1, Account = "user1", InPool = true, VisibleHostIds = new HashSet<long> { host1.HostId, host2.HostId } });
+        _candidates.Add(new DispatchCandidate { UserId = 2, Account = "user2", InPool = true, VisibleHostIds = new HashSet<long> { host1.HostId, host2.HostId } });
+
+        _cases.Save(new IssueCase
+        {
+            CaseId = "res1", HostName = "SRV-01", IssueKey = IssueKey, HandlerId = 1,
+            Status = IssueHandlingStatuses.Resolved, ClosedAt = DateTime.Today.AddDays(-5)
+        });
+
+        var (dispatch, _) = Create();
+        var today = DateTime.Today;
+
+        Attach(dispatch, "SRV-01", today, Issue());
+        Attach(dispatch, "SRV-02", today, Issue());
+
+        var summary = dispatch.FlushRun(DateTime.Now);
+        Assert.Equal(1, summary.CreatedOrders);
+        Assert.Equal(2, summary.AttachedMembers);
+        var line = Assert.Single(summary.PerHandler[1]);
+        Assert.Equal(2, line.AddedMembers);
+        Assert.Equal(1, line.RecurrenceMembers);
+    }
+
     /// <summary>寫入交辦單時斷言呼叫端持有派工脈絡的鎖</summary>
     private sealed class GateAssertingWorkOrderStore : FakeWorkOrderStore
     {
