@@ -23,6 +23,12 @@ public class WorkOrderListController : ControllerBase
     [HttpGet("")]
     public ApiResponse<WorkOrderListDto> List([FromQuery] WorkOrderListRequest request) =>
         ApiResponse<WorkOrderListDto>.Ok(_service.List(request));
+
+    /// <summary>清單篩選用的使用者群組選項（定案 48）：只回啟用中群組的 id、名稱、是否派工池。
+    /// 群組名稱對 Assign／ViewAll 使用者本來就可見（處理人頁、使用者名稱旁的群組標示），不是新的洩漏面。</summary>
+    [HttpGet("handler-groups")]
+    public ApiResponse<List<HandlerGroupOptionDto>> HandlerGroups() =>
+        ApiResponse<List<HandlerGroupOptionDto>>.Ok(_service.ListHandlerGroups());
 }
 
 /// <summary>

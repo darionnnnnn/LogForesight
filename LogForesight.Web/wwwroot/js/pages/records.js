@@ -833,7 +833,7 @@ function goHandleLink(record) {
 }
 
 /**
- * 依問題視角「處理人」欄：每個名字連到其工作頁（docs/archive/FEEDBACK-4-PLAN.md §4/§6）。
+ * 依問題視角「處理人」欄：每個名字連到「這個問題、這個人」的交辦單（定案 49）。
  * 超過 3 人時收斂成「第一人 等 N 人」——第一個名字仍是連結，收斂在前端做
  * 就是為了這個（伺服器端收斂成純文字，連結就斷了）。
  */
@@ -846,8 +846,12 @@ function issueHandlersCell(group) {
     shown.forEach((h, index) => {
         if (index > 0) wrap.appendChild(document.createTextNode('、'));
         const link = document.createElement('a');
-        link.href = appUrl(`/handlers/${h.handlerId}`);
-        link.textContent = formatUserName(h.displayName, h.account);
+        const name = formatUserName(h.displayName, h.account);
+        link.href = appUrl('/work-orders') + '?' + new URLSearchParams({
+            source: group.source, eventId: String(group.eventId), handlerId: String(h.handlerId)
+        });
+        link.textContent = name;
+        link.title = `檢視 ${name} 在這個問題的交辦單`;
         link.addEventListener('click', event => event.stopPropagation());
         wrap.appendChild(link);
     });

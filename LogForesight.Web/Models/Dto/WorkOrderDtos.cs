@@ -232,6 +232,9 @@ public class WorkOrderListRequest
     /// <summary>true＝只列處理人已停用的單</summary>
     public bool HandlerInactive { get; set; }
 
+    /// <summary>處理人所屬的使用者群組（定案 48：與負載看板同義）；null＝不限</summary>
+    public long? GroupId { get; set; }
+
     /// <summary><c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c></summary>
     public string Sort { get; set; } = "created_desc";
 
@@ -248,6 +251,14 @@ public class WorkOrderListRequest
 
     /// <summary>true＝只列「靜音到期、近 7 日內恢復」問題的進行中單（見 <see cref="WorkOrderRowDto.ResumedFromMuteAt"/>）</summary>
     public bool ResumedFromMute { get; set; }
+}
+
+/// <summary>清單篩選用的使用者群組選項（定案 48）</summary>
+public class HandlerGroupOptionDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
+    public bool DispatchPool { get; set; }
 }
 
 public class WorkOrderCountsDto

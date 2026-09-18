@@ -30,6 +30,7 @@ const tabsEl = document.getElementById('wo-tabs');
 // 進行中頁籤
 const activeStatusSelect = document.getElementById('wo-status');
 const activeSortSelect = document.getElementById('wo-sort');
+const activeGroupSelect = document.getElementById('wo-group');
 const activeResumedCheckbox = document.getElementById('wo-resumed');
 const activeListContainer = document.getElementById('wo-list');
 const activePagerContainer = document.getElementById('wo-pager');
@@ -79,13 +80,17 @@ const EXCLUDED_LABELS = {
     gateDismissed: '不再打擾'
 };
 
-// URL 篩選參數（依問題篩選）
+// URL 篩選參數（依問題／處理人篩選；群組只預選下拉）
 const urlParams = new URLSearchParams(location.search);
 const filterSource = urlParams.get('source');
 const filterEventId = urlParams.get('eventId');
-const hasIssueFilter = Boolean(filterSource || filterEventId);
+const filterHandlerId = urlParams.get('handlerId');
+const initialGroupId = urlParams.get('groupId');
+const hasUrlFilter = Boolean(filterSource || filterEventId || filterHandlerId);
+/** 篩選橫幅的文字節點：處理人名稱要等清單回來才知道，所以留參照回填 */
+let filterLabelSpan = null;
 
-if (hasIssueFilter) {
+if (hasUrlFilter) {
     if (activeStatusSelect) {
         activeStatusSelect.value = 'all';
     }
@@ -94,14 +99,45 @@ if (hasIssueFilter) {
         const hintRow = document.createElement('div');
         hintRow.className = 'd-flex align-items-center gap-2 mb-2 small text-muted';
         const labelSpan = document.createElement('span');
-        const parts = [filterSource, filterEventId].filter(x => x !== null && x !== '');
-        labelSpan.textContent = `篩選：${parts.join(' ')}`;
+        filterLabelSpan = labelSpan;
+        updateFilterLabel(null);
         const clearLink = document.createElement('a');
         clearLink.href = appUrl('/work-orders');
         clearLink.textContent = '清除篩選';
         hintRow.appendChild(labelSpan);
         hintRow.appendChild(clearLink);
         toolbar.parentElement.insertBefore(hintRow, toolbar);
+    }
+}
+
+/** 篩選橫幅：「篩選：{source} {eventId}｜處理人 {名稱}」；名稱未知時用「處理人 #{id}」 */
+function updateFilterLabel(handlerName) {
+    if (!filterLabelSpan) return;
+    const parts = [filterSource, filterEventId].filter(x => x !== null && x !== '');
+    let text = `篩選：${parts.join(' ')}`;
+    if (filterHandlerId) {
+        const handlerText = handlerName ? `處理人 ${handlerName}` : `處理人 #${filterHandlerId}`;
+        text += parts.length > 0 ? `｜${handlerText}` : handlerText;
+    }
+    filterLabelSpan.textContent = text;
+}
+
+/** 群組下拉選項（定案 48）：失敗靜默，下拉只剩「全部」 */
+async function loadHandlerGroups() {
+    let groups = [];
+    try {
+        groups = await api.get('/api/work-orders/handler-groups', { silent: true });
+    } catch {
+        return;
+    }
+    for (const g of groups ?? []) {
+        const opt = document.createElement('option');
+        opt.value = String(g.groupId);
+        opt.textContent = g.dispatchPool ? `${g.groupName}（派工池）` : g.groupName;
+        activeGroupSelect.appendChild(opt);
+    }
+    if (initialGroupId && [...activeGroupSelect.options].some(o => o.value === initialGroupId)) {
+        activeGroupSelect.value = initialGroupId;
     }
 }
 
@@ -148,12 +184,17 @@ async function loadActive() {
         resumedFromMute: String(resumed)
     });
 
-    if (hasIssueFilter) {
+    if (hasUrlFilter) {
         if (filterSource) params.set('source', filterSource);
         if (filterEventId) params.set('eventId', filterEventId);
+        if (filterHandlerId) params.set('handlerId', filterHandlerId);
     }
+    if (activeGroupSelect.value) params.set('groupId', activeGroupSelect.value);
 
     const data = await api.get(`/api/work-orders?${params}`);
+    if (filterHandlerId) {
+        updateFilterLabel(data?.items?.length > 0 ? data.items[0].handlerName : null);
+    }
     renderActiveTable(data);
     loadedTabs.add('active');
 }
@@ -518,6 +559,7 @@ const onActiveFilterChange = () => {
 };
 activeStatusSelect.addEventListener('change', onActiveFilterChange);
 activeSortSelect.addEventListener('change', onActiveFilterChange);
+activeGroupSelect.addEventListener('change', onActiveFilterChange);
 activeResumedCheckbox.addEventListener('change', onActiveFilterChange);
 
 // 待派查詢
@@ -576,6 +618,9 @@ async function init() {
     if (hasCapability(currentUser, 'Maintain')) {
         gapsAutoDispatchBtn.classList.remove('d-none');
     }
+
+    // 群組選項先填好，網址帶 groupId 時第一次查詢就用預選值
+    await loadHandlerGroups();
 
     bindTabs(tabsEl, { hash: true, onChange: handleTabChange });
 

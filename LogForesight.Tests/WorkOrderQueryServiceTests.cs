@@ -21,6 +21,7 @@ public class WorkOrderQueryServiceTests
     private readonly FakeHostStore _hosts = new();
     private readonly FakeHostGroupStore _hostGroups = new();
     private readonly FakeUserStore _users = new();
+    private readonly FakeUserGroupStore _userGroups = new();
     private readonly FakeIssueCaseStore _cases = new();
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeHandlingStore _handlingLog = new();
@@ -48,7 +49,7 @@ public class WorkOrderQueryServiceTests
 
     private WorkOrderQueryService Service(ICurrentUser user, params long[] visibleHostIds) => new(
         _orders, _cases, _users, _hosts, _hostGroups, new FakeRuleStore(), new ScopedVisibility(visibleHostIds), user,
-        new UserDisplayNameService(_settings), _exclusionSource);
+        new UserDisplayNameService(_settings), _exclusionSource, _userGroups);
 
     private static ICurrentUser As(long userId, params Capability[] caps) => FakeCurrentUser.ForUser(userId, caps);
 
@@ -231,6 +232,62 @@ public class WorkOrderQueryServiceTests
         var yes = AddOrder(_alice.UserId, eventId: 2, closed: DateTime.Now);
 
         Assert.Equal(new[] { yes }, Ids(Service(As(1, Capability.ViewAll)).List(new WorkOrderListRequest { Status = "closed" })));
+    }
+
+    [Fact]
+    public void 清單_群組篩選_只列該群組成員的單()
+    {
+        var gA = _userGroups.Upsert(new UserGroup { GroupName = "甲組", Active = true });
+        var gB = _userGroups.Upsert(new UserGroup { GroupName = "乙組", Active = true });
+        _users.SetGroups(_alice.UserId, new[] { gA.GroupId });
+        _users.SetGroups(_bob.UserId, new[] { gB.GroupId });
+        var alices = AddOrder(_alice.UserId);
+        var bobs = AddOrder(_bob.UserId);
+        var svc = Service(As(1, Capability.Assign));
+
+        Assert.Equal(new[] { alices }, Ids(svc.List(new WorkOrderListRequest { GroupId = gA.GroupId })));
+        Assert.Equal(new[] { bobs }, Ids(svc.List(new WorkOrderListRequest { GroupId = gB.GroupId })));
+        Assert.Equal(2, svc.List(new WorkOrderListRequest()).Total);
+    }
+
+    [Fact]
+    public void 清單_群組篩選與處理人篩選取交集()
+    {
+        var gA = _userGroups.Upsert(new UserGroup { GroupName = "甲組", Active = true });
+        _users.SetGroups(_alice.UserId, new[] { gA.GroupId });
+        var alices = AddOrder(_alice.UserId);
+        AddOrder(_bob.UserId);
+        var svc = Service(As(1, Capability.ViewAll));
+
+        Assert.Equal(0, svc.List(new WorkOrderListRequest { GroupId = gA.GroupId, HandlerId = _bob.UserId }).Total);
+        Assert.Equal(new[] { alices }, Ids(svc.List(new WorkOrderListRequest { GroupId = gA.GroupId, HandlerId = _alice.UserId })));
+    }
+
+    [Fact]
+    public void 清單_群組不存在或無成員_查無不擲()
+    {
+        var empty = _userGroups.Upsert(new UserGroup { GroupName = "空組", Active = true });
+        AddOrder(_alice.UserId);
+        var svc = Service(As(1, Capability.Assign));
+
+        Assert.Equal(0, svc.List(new WorkOrderListRequest { GroupId = empty.GroupId }).Total);
+        Assert.Equal(0, svc.List(new WorkOrderListRequest { GroupId = 9999 }).Total);
+    }
+
+    [Fact]
+    public void 群組選項_只列啟用中且派工池旗標正確()
+    {
+        _userGroups.Upsert(new UserGroup { GroupName = "b 值班", Active = true });
+        var pool = _userGroups.Upsert(new UserGroup { GroupName = "A 派工", Active = true });
+        _userGroups.SetDispatchPool(pool.GroupId, true);
+        _userGroups.Upsert(new UserGroup { GroupName = "C 停用", Active = false });
+
+        var options = Service(As(1, Capability.Assign)).ListHandlerGroups();
+
+        Assert.Equal(new[] { "A 派工", "b 值班" }, options.Select(o => o.GroupName));
+        Assert.True(options[0].DispatchPool);
+        Assert.Equal(pool.GroupId, options[0].GroupId);
+        Assert.False(options[1].DispatchPool);
     }
 
     [Fact]

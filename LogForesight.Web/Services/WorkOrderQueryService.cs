@@ -29,6 +29,7 @@ public class WorkOrderQueryService
     private readonly ICurrentUser _currentUser;
     private readonly IUserDisplayNameService _displayNames;
     private readonly IIssueExclusionSource _exclusions;
+    private readonly IUserGroupStore _userGroups;
 
     /// <summary>「靜音到期恢復」的回看天數：最近一個已結束區間的迄日落在 [今天−7, 今天−1]</summary>
     private const int ResumedWindowDays = 7;
@@ -43,8 +44,10 @@ public class WorkOrderQueryService
         IVisibilityService visibility,
         ICurrentUser currentUser,
         IUserDisplayNameService displayNames,
-        IIssueExclusionSource exclusions)
+        IIssueExclusionSource exclusions,
+        IUserGroupStore userGroups)
     {
+        _userGroups = userGroups;
         _orders = orders;
         _cases = cases;
         _users = users;
@@ -128,6 +131,13 @@ public class WorkOrderQueryService
             var inactive = users.Values.Where(u => !u.Active).Select(u => u.UserId).ToHashSet();
             handlerIds = handlerIds == null ? inactive : handlerIds.Where(inactive.Contains).ToList();
         }
+        if (req.GroupId.HasValue)
+        {
+            // 定案 48：處理人屬於該使用者群組；群組不存在或無成員＝空集合＝查無
+            var groupId = req.GroupId.Value;
+            var members = users.Values.Where(u => u.GroupIds.Contains(groupId)).Select(u => u.UserId).ToHashSet();
+            handlerIds = handlerIds == null ? members : handlerIds.Where(members.Contains).ToList();
+        }
 
         var result = _orders.QueryOrders(new WorkOrderQuery
         {
@@ -154,6 +164,14 @@ public class WorkOrderQueryService
             PageSize = pageSize
         };
     }
+
+    /// <summary>清單篩選用的使用者群組選項（定案 48）：只列啟用中群組，依名稱不分大小寫排序</summary>
+    public List<HandlerGroupOptionDto> ListHandlerGroups() =>
+        _userGroups.GetAll()
+            .Where(g => g.Active)
+            .OrderBy(g => g.GroupName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new HandlerGroupOptionDto { GroupId = g.GroupId, GroupName = g.GroupName, DispatchPool = g.DispatchPool })
+            .ToList();
 
     // ── 詳情／成員／時間軸 ───────────────────────────────────────────────────
 
