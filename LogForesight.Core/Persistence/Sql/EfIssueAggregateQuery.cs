@@ -206,6 +206,59 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return count;
     }
 
+    public List<MutedIssueSummary> CurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<MutedIssueSummary>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
+        if (exclusion.CurrentlyMuted.Count == 0) return new List<MutedIssueSummary>();
+
+        var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(AliasIndex(), hostIds);
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+
+        using var ctx = _contextFactory();
+        var rows = BuildCurrentlyMutedRowsQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
+
+        // 來源與最高嚴重度：與 Aggregate 同一個 GROUP BY 鍵與取法（Min(SourceName)、Max(SeverityRank)）
+        var grouped = rows
+            .GroupBy(x => new { SourceUpper = x.SourceName.ToUpper(), x.EventId })
+            .Select(g => new
+            {
+                g.Key.SourceUpper,
+                Source = g.Min(x => x.SourceName) ?? g.Key.SourceUpper,
+                g.Key.EventId,
+                FallbackCategory = g.Min(x => x.Category),
+                MaxSeverityRank = g.Max(x => x.SeverityRank)
+            })
+            .ToList();
+
+        // 類別：與 Aggregate 的 LatestCategories 同一個判準（最近一天、同日字典序決勝）
+        var latestCategories = rows
+            .Select(x => new { x.SourceName, x.EventId, x.RecordDate, x.Category })
+            .Distinct()
+            .ToList()
+            .GroupBy(x => (SourceUpper: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+            .ToDictionary(g => g.Key, g => PickLatestCategory(g.Select(x => (x.RecordDate, x.Category))));
+
+        var result = grouped.Select(g =>
+        {
+            var key = (g.SourceUpper.ToUpperInvariant(), g.EventId);
+            return new MutedIssueSummary(
+                g.Source,
+                g.EventId,
+                latestCategories.TryGetValue(key, out var cat) ? cat : (g.FallbackCategory ?? string.Empty),
+                LegacySeverityRank.Normalize(g.MaxSeverityRank));
+        }).ToList();
+
+        _performance?.Record("issues:CurrentlyMuted", sw.ElapsedMilliseconds);
+        return result;
+    }
+
     public int IssueHostDayCount(
         IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
@@ -235,12 +288,23 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
         IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels)
     {
+        return BuildCurrentlyMutedRowsQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels)
+            .Select(x => x.SourceName.ToUpper() + IssueExclusion.CompositeKeySeparator + x.EventId.ToString()).Distinct();
+    }
+
+    /// <summary>
+    /// 「目前靜音中」問題列的唯一一份篩選（<see cref="CountCurrentlyMutedIssues"/> 與
+    /// <see cref="CurrentlyMutedIssues"/> 共用，兩邊只在尾端各自投影／分組，母體不會分岔）。
+    /// </summary>
+    private static IQueryable<TopIssueRow> BuildCurrentlyMutedRowsQuery(
+        LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
+        IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels)
+    {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
         q = IssueExclusionSql.OnlyCurrentlyMuted(q, exclusion);
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
-        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
-        return q.Select(x => x.SourceName.ToUpper() + IssueExclusion.CompositeKeySeparator + x.EventId.ToString()).Distinct();
+        return ApplyRiskLevels(ctx, q, f, t, riskLevels);
     }
 
     /// <summary>可見範圍（存活主機 id）展開回涵蓋的墓碑列 id；索引裡找不到的 id
@@ -1708,15 +1772,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Distinct()
             .ToList()
             .GroupBy(x => (SourceUpper: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
-            .ToDictionary(
-                g => g.Key,
-                // 同一天可能有多個類別（規則在當天中途被改）：字典序當決勝條件，
-                // 只為了讓結果穩定，不是語意上的選擇
-                g => g.OrderByDescending(x => x.RecordDate)
-                      .ThenBy(x => x.Category, StringComparer.Ordinal)
-                      .Select(x => x.Category)
-                      .FirstOrDefault() ?? string.Empty);
+            .ToDictionary(g => g.Key, g => PickLatestCategory(g.Select(x => (x.RecordDate, x.Category))));
     }
+
+    /// <summary>
+    /// 一個簽章的 (日期, 類別) 集合中取最近一天的類別（<see cref="LatestCategories"/> 與
+    /// <see cref="CurrentlyMutedIssues"/> 共用同一個判準）。
+    /// 同一天可能有多個類別（規則在當天中途被改）：字典序當決勝條件，只為了讓結果穩定，不是語意上的選擇。
+    /// </summary>
+    private static string PickLatestCategory(IEnumerable<(DateTime RecordDate, string Category)> rows) =>
+        rows.OrderByDescending(x => x.RecordDate)
+            .ThenBy(x => x.Category, StringComparer.Ordinal)
+            .Select(x => x.Category)
+            .FirstOrDefault() ?? string.Empty;
 
     /// <summary>
     /// 每個 (Source, EventId) 底下出現過的相異完整簽章。

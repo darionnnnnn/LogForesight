@@ -830,6 +830,83 @@ public class RecordQueryServiceSearchTests : IDisposable
     /// 高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一嚴重度），
     /// 勾「高＋中」時不該出現低嚴重度的問題組。
     /// </summary>
+    // ── 靜音數套用與主清單相同的後段篩選（回饋第 47 輪 G-2a）──────────────────
+
+    /// <summary>
+    /// 依問題視角改接假聚合查詢：主清單有一個未靜音問題 net/99（Security、高）；
+    /// 目前靜音中兩個問題 disk/153（Storage、高）與 cron/7（Service、低）。
+    /// </summary>
+    private RecordQueryServiceFacade ServiceWithMutedIssues()
+    {
+        var aggregates = new FakeIssueAggregateQuery
+        {
+            Result = new List<IssueAggregate>
+            {
+                new()
+                {
+                    Source = "net", EventId = 99, Category = IssueCategory.Security.ToString(),
+                    MaxSeverityRank = (int)IssueSeverity.High, HostCount = 1, DayCount = 1, ActiveDays = 1,
+                    FirstSeen = Yesterday, LastSeen = Yesterday, TotalCount = 1
+                }
+            },
+            MutedIssuesResult = new List<MutedIssueSummary>
+            {
+                new("Disk", 153, IssueCategory.Storage.ToString(), (int)IssueSeverity.High),
+                new("cron", 7, IssueCategory.Service.ToString(), (int)IssueSeverity.Low)
+            }
+        };
+        var visibility = new AlwaysVisibleService(_hosts);
+        return new RecordQueryServiceFacade(
+            repository: new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility),
+            reports: new NullReportReader(),
+            hosts: _hosts,
+            users: _users,
+            hostGroups: new FakeHostGroupStore(),
+            visibility: visibility,
+            handlings: _handlingStore,
+            issueHandlings: _issueHandlingStore,
+            cases: _caseStore,
+            workOrders: _workOrders,
+            noiseMarks: new FakeNoiseMarkStore(),
+            rules: new FakeRuleStore(),
+            currentUser: FakeCurrentUser.WithCapabilities(),
+            settings: _settingsStore,
+            aggregates: aggregates,
+            statusResolver: new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),
+            issueOwners: _issueOwners,
+            settingsService: _severityVisibility);
+    }
+
+    [Fact]
+    public void 依問題_篩來源與事件時靜音數只算符合的問題()
+    {
+        AddHost("HOST-A");
+        var service = ServiceWithMutedIssues();
+
+        Assert.Equal(2, service.SearchByIssue(new RecordSearchRequest()).MutedIssueCount);
+        // 來源大小寫不分（與主清單同一個比對）
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { Source = "disk", EventId = 153 }).MutedIssueCount);
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { EventId = 7 }).MutedIssueCount);
+
+        var unmuted = service.SearchByIssue(new RecordSearchRequest { Source = "net", EventId = 99 });
+        Assert.Equal(0, unmuted.MutedIssueCount);
+        Assert.Single(unmuted.Items);
+    }
+
+    [Fact]
+    public void 依問題_篩類別與嚴重度時靜音數同樣套用()
+    {
+        AddHost("HOST-A");
+        var service = ServiceWithMutedIssues();
+
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { Categories = new List<string> { "storage" } }).MutedIssueCount);
+        var low = service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { RiskLevels.Low } });
+        Assert.Equal(1, low.MutedIssueCount);
+        Assert.Empty(low.Items);
+        // 嚴重度門檻：只有 disk/153（高）達到
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { Severity = "High" }).MutedIssueCount);
+    }
+
     [Fact]
     public void SearchByIssue_高風險日內的低嚴重度問題_預設高中篩選下不出現_勾低後出現()
     {

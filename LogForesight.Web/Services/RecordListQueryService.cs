@@ -394,39 +394,16 @@ public class RecordListQueryService
         // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
         // 卡片數字才等於下鑽進來的筆數
         var aggregates = _aggregates.Aggregate(exclusion, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
-        // 「N 個靜音中的問題未列出」：與上方主查詢同一組期間／可見主機／嚴重度／日風險等級母體
-        var mutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, visibleSeverities, scope.DayRiskLevels);
-
-        if (request.EventId.HasValue)
-            aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
-
-        if (!string.IsNullOrWhiteSpace(request.Source))
-            aggregates = aggregates.Where(a => string.Equals(a.Source, request.Source, StringComparison.OrdinalIgnoreCase)).ToList();
-
-        // 風險類型過濾（回饋十三輪新增項1）：這裡的 Category 已經是問題層級（一個 (Source,EventId)
-        // 恆定一個類別），不像舊版 BuildFilter 的記錄層過濾需要另外疊加一層
-        if (request.Categories is { Count: > 0 } wantedCategories)
-        {
-            var allowedCategories = wantedCategories.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            aggregates = aggregates.Where(a => allowedCategories.Contains(a.Category)).ToList();
-        }
-
-        // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：這裡篩的是問題層級的期間內最高嚴重度
-        // （Aggregate 已套用 LegacySeverityRank 正規化，不會再看到 Critical）。
-        // 依問題視角是問題主視角，chip 一律是「問題嚴重度」語意，畫面上也這樣標示
-        if (request.RiskLevels is { Count: > 0 } riskLevels)
-        {
-            var allowedSeverities = riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet();
-            aggregates = aggregates.Where(a => allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)).ToList();
-        }
-
-        // 嚴重度門檻（報表「類別×嚴重度」下鑽用，docs/WEB-SPEC.md）：語意同 RecordQueryFilter.MinSeverity
-        // 「紀錄中任一問題簽章達到此嚴重度」，這裡的等價物是「問題期間內最高嚴重度達到門檻」
-        if (!string.IsNullOrWhiteSpace(request.Severity) &&
-            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var minSeverity))
-        {
-            aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
-        }
+        // 後段篩選（來源／事件／類別／問題嚴重度 chip／嚴重度門檻）只有一份：主清單與靜音清單都套它，
+        // 註腳「另有 N 個問題靜音中」才是「在目前篩選下」被靜音藏起來的問題數
+        var postFilter = IssuePostFilter(request);
+        aggregates = aggregates
+            .Where(a => postFilter((a.Source, a.EventId, a.Category, a.MaxSeverityRank)))
+            .ToList();
+        // 「N 個靜音中的問題未列出」：與上方主查詢同一組期間／可見主機／嚴重度／日風險等級母體，再套同一個後段篩選
+        var mutedIssueCount = _aggregates
+            .CurrentlyMutedIssues(exclusion, from, to, hostIds, visibleSeverities, scope.DayRiskLevels)
+            .Count(m => postFilter((m.Source, m.EventId, m.Category, m.MaxSeverityRank)));
 
         if (aggregates.Count == 0) return WithDistinctHosts(Paginate(new List<IssueGroupDto>(), request), 0, mutedIssueCount);
 
@@ -741,6 +718,43 @@ public class RecordListQueryService
     /// 依問題視角用它當 universe，才會與儀表板風險類型卡是同一批主機日。</summary>
     private IReadOnlySet<string>? ResolveVisibleDayRiskLevels() =>
         RecordRepository.ResolveDayRiskLevels(_settingsService.GetVisibleDayRiskLevels(), null);
+
+    /// <summary>
+    /// 依問題視角的後段篩選述詞（主清單與靜音清單共用，回饋第 47 輪 G-2a）。
+    /// 輸入是問題層級的 (來源, 事件編號, 類別, 期間最高嚴重度)。
+    /// </summary>
+    private static Func<(string Source, int EventId, string Category, int MaxSeverityRank), bool> IssuePostFilter(RecordSearchRequest request)
+    {
+        var eventId = request.EventId;
+        var source = string.IsNullOrWhiteSpace(request.Source) ? null : request.Source;
+
+        // 風險類型過濾（回饋十三輪新增項1）：這裡的 Category 已經是問題層級（一個 (Source,EventId)
+        // 恆定一個類別），不像舊版 BuildFilter 的記錄層過濾需要另外疊加一層
+        HashSet<string>? allowedCategories = request.Categories is { Count: > 0 } wantedCategories
+            ? wantedCategories.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：這裡篩的是問題層級的期間內最高嚴重度
+        // （聚合端已套用 LegacySeverityRank 正規化，不會再看到 Critical）。
+        // 依問題視角是問題主視角，chip 一律是「問題嚴重度」語意，畫面上也這樣標示
+        HashSet<IssueSeverity>? allowedSeverities = request.RiskLevels is { Count: > 0 } riskLevels
+            ? riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet()
+            : null;
+
+        // 嚴重度門檻（報表「類別×嚴重度」下鑽用，docs/WEB-SPEC.md）：語意同 RecordQueryFilter.MinSeverity
+        // 「紀錄中任一問題簽章達到此嚴重度」，這裡的等價物是「問題期間內最高嚴重度達到門檻」
+        int? minSeverityRank = !string.IsNullOrWhiteSpace(request.Severity) &&
+            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var minSeverity)
+            ? (int)minSeverity
+            : null;
+
+        return a =>
+            (!eventId.HasValue || a.EventId == eventId.Value) &&
+            (source == null || string.Equals(a.Source, source, StringComparison.OrdinalIgnoreCase)) &&
+            (allowedCategories == null || allowedCategories.Contains(a.Category)) &&
+            (allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)) &&
+            (!minSeverityRank.HasValue || a.MaxSeverityRank >= minSeverityRank.Value);
+    }
 
     /// <summary>
     /// 依問題視角的 chip → 問題嚴重度集合（docs/archive/FEEDBACK-8-PLAN.md #5）。Critical 併入

@@ -1176,6 +1176,63 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Contains("CRON#7", sql);
     }
 
+    // ── CurrentlyMutedIssues（回饋第 47 輪 G-2a）─────────────────────────────
+
+    private static LogIssueSignature Categorized(string source, int eventId, IssueSeverity severity, IssueCategory category)
+    {
+        var issue = Issue(source, eventId, severity: severity);
+        issue.Category = category;
+        return issue;
+    }
+
+    /// <summary>disk/153 與 cron/7 目前靜音中、net/99 未靜音；disk 兩天類別與嚴重度不同（驗最近一天類別與期間最高嚴重度）。</summary>
+    private IssueExclusion SeedCurrentlyMutedScenario()
+    {
+        Add(1, "A", new DateTime(2026, 8, 3), RiskLevels.High, Categorized("disk", 153, IssueSeverity.High, IssueCategory.Other));
+        Add(1, "A", new DateTime(2026, 8, 20), RiskLevels.High, Categorized("disk", 153, IssueSeverity.Medium, IssueCategory.Storage));
+        Add(2, "B", new DateTime(2026, 8, 26), RiskLevels.High, Categorized("cron", 7, IssueSeverity.Low, IssueCategory.Service));
+        Add(3, "C", new DateTime(2026, 8, 7), RiskLevels.High, Categorized("net", 99, IssueSeverity.High, IssueCategory.Security));
+
+        var interval = new MuteInterval { From = new DateTime(2026, 8, 25), To = new DateTime(2026, 9, 10) };
+        return IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "disk", EventId = 153, Mutes = { interval } },
+            new IssueProfile { SourceName = "cron", EventId = 7, Mutes = { new MuteInterval { From = interval.From, To = interval.To } } }
+        }, MuteToday);
+    }
+
+    [Fact]
+    public void CurrentlyMutedIssues_與計數同母體且帶類別與最高嚴重度()
+    {
+        var exclusion = SeedCurrentlyMutedScenario();
+
+        var muted = Query().CurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null, null, null);
+        var all = Query().Aggregate(IssueExclusion.None, MuteFrom, MuteTo, null);
+
+        Assert.Equal(2, muted.Count);
+        Assert.Equal(Query().CountCurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, null, null, null), muted.Count);
+        Assert.Equal(new[] { 7, 153 }, muted.Select(m => m.EventId).OrderBy(e => e));
+        foreach (var m in muted)
+        {
+            var agg = all.Single(a => a.EventId == m.EventId);
+            Assert.Equal(agg.Source, m.Source);
+            Assert.Equal(agg.Category, m.Category);
+            Assert.Equal(agg.MaxSeverityRank, m.MaxSeverityRank);
+        }
+        var disk = muted.Single(m => m.EventId == 153);
+        Assert.Equal(IssueCategory.Storage.ToString(), disk.Category);
+        Assert.Equal((int)IssueSeverity.High, disk.MaxSeverityRank);
+    }
+
+    [Fact]
+    public void CurrentlyMutedIssues_主機空集合回空()
+    {
+        var exclusion = SeedCurrentlyMutedScenario();
+
+        Assert.Empty(Query().CurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, Array.Empty<long>(), null, null));
+        Assert.Single(Query().CurrentlyMutedIssues(exclusion, MuteFrom, MuteTo, new long[] { 2 }, null, null));
+    }
+
     [Fact]
     public void 靜音排除_期間外的歷史區間不進SQL()
     {

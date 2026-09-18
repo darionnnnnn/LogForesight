@@ -89,6 +89,14 @@ public interface IIssueAggregateQuery
         IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
 
+    /// <summary>
+    /// 目前靜音中、在篩選母體下期間內至少有一列的問題（回饋第 47 輪 G-2a）。篩選與 <see cref="CountCurrentlyMutedIssues"/> 相同；
+    /// 每列帶類別與期間最高嚴重度，供呼叫端套與主清單相同的後段篩選。
+    /// </summary>
+    List<MutedIssueSummary> CurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
+
     /// <summary>單一問題在期間內的主機日數（存活主機去重）；篩選與 Aggregate 相同，結果等於 Aggregate 該問題列的 DayCount</summary>
     int IssueHostDayCount(IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
@@ -385,6 +393,13 @@ public sealed class CategoryAggregate
     /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
     public int ElevatesCount { get; init; }
 }
+
+/// <summary>
+/// 目前靜音中的一個問題（<see cref="IIssueAggregateQuery.CurrentlyMutedIssues"/> 的回傳列）。
+/// <see cref="Category"/>／<see cref="MaxSeverityRank"/> 與 <see cref="IssueAggregate"/> 同口徑：
+/// 類別取期間內最近一天的類別、嚴重度為期間最高並經 LegacySeverityRank 正規化。
+/// </summary>
+public sealed record MutedIssueSummary(string Source, int EventId, string Category, int MaxSeverityRank);
 
 public sealed record DayTodoAggregate(
     int TotalCount, int OpenCount, int InProgressCount, int ResolvedCount, int OverdueCount);

@@ -91,6 +91,17 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         return MutedIssueCountResult;
     }
 
+    /// <summary>CurrentlyMutedIssues 要回傳的靜音問題（回饋第 47 輪 G-2a）；空集合主機仍回空清單。</summary>
+    public List<MutedIssueSummary> MutedIssuesResult { get; set; } = new();
+
+    public List<MutedIssueSummary> CurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<MutedIssueSummary>();
+        return MutedIssuesResult;
+    }
+
     /// <summary>IssueHostDayCount 要回傳的數字；空集合主機仍回 0。</summary>
     public int IssueHostDayCountResult { get; set; }
 
