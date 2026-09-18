@@ -554,6 +554,34 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 清除本趟全站裝置同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即 PRTG 端已不存在的裝置。
+    /// 只動 <c>lf_prtg_devices</c>；人工對應、主機對應、感測器、狀態變更與數值表一律不碰。
+    /// 呼叫端必須保證本趟裝置階段是完整收斂的全站同步，否則「沒刷新到」不等於「已被刪除」。
+    /// </summary>
+    public PrtgStaleDeleteResult DeleteDevicesNotSyncedSince(DateTime syncStartedAt)
+    {
+        using var __perf = _performance.Measure("prtg:DeleteStaleDevices");
+        using var ctx = _contextFactory();
+        var total = ctx.PrtgDevices.Count();
+        var stale = ctx.PrtgDevices.Count(d => d.SyncedAt < syncStartedAt);
+        if (stale == 0)
+        {
+            return new PrtgStaleDeleteResult(total, 0, 0, false);
+        }
+
+        // 安全保險（常數門檻，刻意不做成設定）：過期列超過鏡像一半就一列都不刪。
+        // PRTG API 帳號權限被縮小、或查詢被代理截斷時，回傳會合法地少一大塊且分頁照樣收斂，
+        // 那不代表裝置被刪了；此時照刪會把大半鏡像連同下游對應一起清掉。
+        if (stale * 2 > total)
+        {
+            return new PrtgStaleDeleteResult(total, stale, 0, true);
+        }
+
+        var deleted = ctx.PrtgDevices.Where(d => d.SyncedAt < syncStartedAt).ExecuteDelete();
+        return new PrtgStaleDeleteResult(total, stale, deleted, false);
+    }
+
+    /// <summary>
     /// 取得所有 PRTG 裝置鏡像清單（唯讀查詢）。
     /// </summary>
     public List<PrtgDeviceRow> GetAllDevices()
@@ -1383,4 +1411,10 @@ public sealed record PrtgTypeHourlyProfile(string SensorType, int Hour, double? 
 /// PRTG 快照取樣涵蓋指標
 /// </summary>
 public sealed record PrtgSampledCoverage(int SensorCount, double? AverageCoverage);
+
+/// <summary>
+/// 過期裝置清除結果。Total＝清除前鏡像裝置總數；Stale＝本趟沒刷新到的列數；
+/// SkippedBySafety＝過期列超過一半而觸發安全保險、一列都沒刪。
+/// </summary>
+public sealed record PrtgStaleDeleteResult(int Total, int Stale, int Deleted, bool SkippedBySafety);
 

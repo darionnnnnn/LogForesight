@@ -1863,4 +1863,92 @@ public class EfPrtgStoreTests : IDisposable
 
         Assert.Equal(t2, store.GetLatestStructureSyncedAt());
     }
+
+    // ── 過期裝置清除（DeleteDevicesNotSyncedSince）──
+
+    /// <summary>預放 total 台裝置（objid 1..total），前 stale 台的 SyncedAt 早於 cutoff，其餘等於 cutoff。</summary>
+    private static DateTime SeedDevicesForStale(EfPrtgStore store, int total, int stale)
+    {
+        var cutoff = new DateTime(2026, 9, 18, 2, 0, 0);
+        var old = cutoff.AddDays(-1);
+        var staleRows = Enumerable.Range(1, stale)
+            .Select(i => new PrtgDeviceRow { Objid = i, Name = $"Dev-{i}", GroupPath = "G" }).ToList();
+        var freshRows = Enumerable.Range(stale + 1, total - stale)
+            .Select(i => new PrtgDeviceRow { Objid = i, Name = $"Dev-{i}", GroupPath = "G" }).ToList();
+        if (staleRows.Count > 0) store.UpsertDevices(staleRows, old);
+        if (freshRows.Count > 0) store.UpsertDevices(freshRows, cutoff);
+        return cutoff;
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_少數過期時刪除過期列()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 1);
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.Equal(new PrtgStaleDeleteResult(10, 1, 1, false), result);
+        var remaining = store.GetAllDevices();
+        Assert.Equal(9, remaining.Count);
+        Assert.DoesNotContain(remaining, d => d.Objid == 1);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_過期超過一半時觸發安全保險一列都不刪()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 6);
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.True(result.SkippedBySafety);
+        Assert.Equal(6, result.Stale);
+        Assert.Equal(10, result.Total);
+        Assert.Equal(0, result.Deleted);
+        Assert.Equal(10, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_剛好一半過期時照刪()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 5);
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.Equal(new PrtgStaleDeleteResult(10, 5, 5, false), result);
+        Assert.Equal(5, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_鏡像為空時全部為零()
+    {
+        var store = CreateStore();
+
+        var result = store.DeleteDevicesNotSyncedSince(new DateTime(2026, 9, 18, 2, 0, 0));
+
+        Assert.Equal(new PrtgStaleDeleteResult(0, 0, 0, false), result);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_不影響同objid的人工對應()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 1);
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1,
+            HostId = 10,
+            CreatedBy = "admin",
+            Note = "已刪裝置的人工對應",
+            CreatedAt = cutoff
+        });
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.Equal(1, result.Deleted);
+        Assert.DoesNotContain(store.GetAllDevices(), d => d.Objid == 1);
+        Assert.Contains(store.GetManualMaps(), m => m.DeviceObjid == 1 && m.HostId == 10);
+    }
 }

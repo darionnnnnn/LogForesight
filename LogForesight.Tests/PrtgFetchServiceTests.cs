@@ -1975,5 +1975,132 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Contains(seq, u => u.Contains("content=messages"));
     }
 
+    // ── 過期裝置清除（階段 1 之後、取數範圍之前）──
+
+    /// <summary>預放裝置鏡像，SyncedAt 設在過去，模擬上一趟同步留下的列。</summary>
+    private static void SeedOldDevices(EfPrtgStore store, IEnumerable<long> objids)
+    {
+        var rows = objids.Select(id => new PrtgDeviceRow { Objid = id, Name = $"Old-{id}", GroupPath = "G" }).ToList();
+        store.UpsertDevices(rows, DateTime.Now.AddDays(-1));
+    }
+
+    /// <summary>devices 回指定 objid、sensors 與 messages 皆空的替身。</summary>
+    private static PrtgClient CreateDevicesOnlyClient(IEnumerable<long> objids)
+    {
+        var devJson = "{\"devices\":[" +
+                      string.Join(",", objids.Select(id => $"{{\"objid\":{id},\"device\":\"Dev-{id}\",\"paused\":false}}")) +
+                      "]}";
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse(url.Contains("start=0") ? devJson : "{\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        return client;
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_清除PRTG端已不存在的裝置且在取數範圍之前()
+    {
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 101, 102, 99 });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(CreateDevicesOnlyClient(new long[] { 101, 102 }), store, console,
+            new Dictionary<string, string>());
+
+        int? devicesSeenByProvider = null;
+        PrtgScopeResult Provider(bool _)
+        {
+            devicesSeenByProvider = store.GetAllDevices().Count;
+            return new PrtgScopeResult(new HashSet<long>(), 0, 0, 0, 0);
+        }
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, Provider,
+            fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        var remaining = store.GetAllDevices().Select(d => d.Objid).OrderBy(id => id).ToList();
+        Assert.Equal(new long[] { 101, 102 }, remaining);
+        Assert.Equal(2, devicesSeenByProvider);
+        Assert.Contains(console.Lines, l => l.Contains("[階段 1/4] 已清除 1 台 PRTG 端已不存在的裝置。"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_devices端點失敗時不清除過期裝置()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse("{\"error\":\"Internal error\"}", HttpStatusCode.InternalServerError);
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 101, 102, 99 });
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.True(result.Failures > 0);
+        Assert.Equal(3, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_devices分頁未收斂時不清除過期裝置()
+    {
+        // 未收斂＝翻到頁數上限仍是滿頁且都是新列。沒有 objid 的列不會被去重、也不會寫入（mapper 回 null），
+        // 用它填滿每一頁，只花解析成本就能讓分頁器翻到上限；第一頁另放 2 台真實裝置讓寫入數大於 0，
+        // 確保擋下清除的是「未收斂」這個條件，而不是「寫入數為 0」。
+        var filler = string.Join(",", Enumerable.Repeat("{}", PageSizeForFullPage - 2));
+        var firstPage = "{\"devices\":[{\"objid\":101,\"device\":\"Dev-101\"},{\"objid\":102,\"device\":\"Dev-102\"}," + filler + "]}";
+        var otherPage = "{\"devices\":[" + string.Join(",", Enumerable.Repeat("{}", PageSizeForFullPage)) + "]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse(url.Contains("start=0&") ? firstPage : otherPage);
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 99 });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.Equal(2, result.Devices);
+        Assert.True(result.Failures > 0);
+        Assert.Contains(console.Lines, l => l.Contains("鏡像不完整"));
+        Assert.Contains(store.GetAllDevices(), d => d.Objid == 99);
+        Assert.Equal(3, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_本趟未出現的裝置過半時不清除且不計失敗()
+    {
+        var store = CreateStore();
+        SeedOldDevices(store, Enumerable.Range(1, 10).Select(i => (long)i));
+        var console = new TestConsole();
+        var service = new PrtgFetchService(CreateDevicesOnlyClient(new long[] { 1, 2, 3, 4 }), store, console,
+            new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(10, store.GetAllDevices().Count);
+        Assert.Contains(console.Lines, l => l.Contains("有 6 台裝置（超過鏡像 10 台的一半）") && l.Contains("本趟不清除"));
+    }
+
     private static PrtgScopeResult NoScope(bool _) => new(new HashSet<long>(), 0, 0, 0, 0);
 }

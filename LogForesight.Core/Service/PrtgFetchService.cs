@@ -139,11 +139,13 @@ public sealed class PrtgFetchService
         if (syncStructure)
         {
             // 階段 1：device 結構全量同步
+            // 本趟寫入的列 SyncedAt 都等於這個時間；早於它的列就是這趟全站同步沒出現的裝置
+            var devicesSyncStartedAt = DateTime.Now;
             try
             {
                 _console.WriteLine("[階段 1/4] 開始同步 PRTG 裝置結構鏡像...");
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var outcome = await FetchDevicesAsync(ct, progress);
+                var outcome = await FetchDevicesAsync(devicesSyncStartedAt, ct, progress);
                 stopwatch.Stop();
                 devicesCount = outcome.Written;
                 _console.WriteLine($"[階段 1/4] 裝置結構同步完成，共寫入/更新 {devicesCount} 台裝置{FormatStageStats(stopwatch, outcome)}。");
@@ -164,6 +166,33 @@ public sealed class PrtgFetchService
             {
                 failures++;
                 _console.WriteLine($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
+            }
+
+            // 清除 PRTG 端已不存在的裝置：只有階段 1 無例外、分頁收斂且有寫入時，「沒刷新到」才代表「已被刪除」。
+            // 必須在 ResolveScope 之前——主機對應要用清除後的裝置表，已刪裝置才不會再對到主機。
+            if (devicesRefreshed)
+            {
+                try
+                {
+                    var stale = _store.DeleteDevicesNotSyncedSince(devicesSyncStartedAt);
+                    if (stale.SkippedBySafety)
+                    {
+                        _console.WriteLine($"[階段 1/4] ⚠ 有 {stale.Stale} 台裝置（超過鏡像 {stale.Total} 台的一半）本趟未出現在 PRTG 回應中，疑似帳號權限或查詢範圍變動，本趟不清除。");
+                    }
+                    else if (stale.Deleted > 0)
+                    {
+                        _console.WriteLine($"[階段 1/4] 已清除 {stale.Deleted} 台 PRTG 端已不存在的裝置。");
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failures++;
+                    _console.WriteLine($"[階段 1/4] 過期裝置清除失敗：{ex.Message}");
+                }
             }
 
             // 主機對應要用剛更新的裝置鏡像，且範圍要在感測器同步之前就定下來
@@ -300,9 +329,8 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>
-    private async Task<StageOutcome> FetchDevicesAsync(CancellationToken ct, Action<string, int, int>? progress = null)
+    private async Task<StageOutcome> FetchDevicesAsync(DateTime syncedAt, CancellationToken ct, Action<string, int, int>? progress = null)
     {
-        var syncedAt = DateTime.Now;
         var totalWritten = 0;
 
         var paged = await RunPagedStageAsync(() => FetchTablePagedAsync<PrtgDeviceRow>(
