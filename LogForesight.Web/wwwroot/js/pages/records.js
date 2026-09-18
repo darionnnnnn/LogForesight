@@ -476,7 +476,22 @@ function render() {
     if (currentView === 'issue' && lastResult.total > 0 && Number.isInteger(lastResult.distinctHostCount)) {
         countText += `，共 ${lastResult.distinctHostCount} 台主機（去重）`;
     }
-    document.getElementById('result-count').textContent = countText;
+    const countNodes = [document.createTextNode(countText)];
+    // 靜音中的問題不列在依問題視角（規劃 15.3 (2)）：計數列尾端誠實說出少了幾個。
+    // 查出零筆時更要說——期間內的問題若全被靜音，畫面只剩空清單，看起來像「沒有問題」
+    const mutedIssueCount = lastResult.mutedIssueCount;
+    if (currentView === 'issue' && Number.isInteger(mutedIssueCount) && mutedIssueCount > 0) {
+        const lead = countText ? '；另有 ' : '另有 ';
+        if (hasCapability(currentUser, 'Maintain')) {
+            const link = document.createElement('a');
+            link.href = appUrl('/work-orders') + '#muted';
+            link.textContent = `${mutedIssueCount} 個問題靜音中`;
+            countNodes.push(document.createTextNode(lead), link, document.createTextNode('（未列出）'));
+        } else {
+            countNodes.push(document.createTextNode(`${lead}${mutedIssueCount} 個問題靜音中（未列出）`));
+        }
+    }
+    document.getElementById('result-count').replaceChildren(...countNodes);
 
     if (currentView === 'host') renderHostView();
     else if (currentView === 'date') renderDateView();

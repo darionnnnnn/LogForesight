@@ -8,6 +8,7 @@
  */
 
 import { api } from '../core/api.js';
+import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, button, bindTabs, renderChips,
     renderPagination, sortRows, loadPageSize, savePageSize, searchableHostSelect
@@ -1169,3 +1170,4 @@ document.getElementById('rule-import-apply-btn').addEventListener('click', async
 });
 
 checkRuleImportStatus();
+renderAlertToolsTable(document.getElementById('suppression-alert-tools'));

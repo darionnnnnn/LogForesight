@@ -5,6 +5,7 @@
  * 1. 進行中：追蹤每張交辦單的進度、成員數與逾期/回覆狀態。
  * 2. 負載看板：檢視各處理人的交辦單數、成員數與負載狀況。
  * 3. 待派：列出期間內尚未派工的問題與建議處理人，支援依規則一鍵立即派工。
+ * 4. 靜音中（只有具 Maintain 時存在）：列出靜音中的問題，可延長或解除。
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
@@ -15,6 +16,7 @@ import {
     renderLoading,
     renderEmpty,
     bindTabs,
+    button,
     toast,
     confirmAction,
     withBusy,
@@ -23,6 +25,7 @@ import {
     savePageSize
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge } from '../core/format.js';
+import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -46,6 +49,10 @@ const gapsAutoDispatchBtn = document.getElementById('wo-auto-dispatch');
 const gapsNoteEl = document.getElementById('wo-gaps-note');
 const gapsContainer = document.getElementById('wo-gaps');
 const gapsPagerContainer = document.getElementById('wo-gaps-pager');
+
+// 靜音中頁籤
+const mutedTabItem = document.getElementById('wo-muted-tab-item');
+const mutedContainer = document.getElementById('wo-muted-list');
 
 // 來源名稱對照
 const ORIGIN_LABELS = {
@@ -534,6 +541,192 @@ function renderGapsTable(data) {
     });
 }
 
+// ── 靜音中頁籤 ─────────────────────────────────────────────────────────────
+
+/** 暫停中交辦單張數只逐一查前幾個問題（規劃 15.3 (1)：問題數通常個位數） */
+const MUTED_PAUSED_LOOKUP_LIMIT = 20;
+
+/** init 先取的靜音中清單；第一次進頁籤直接用，之後重新載入才重打 API */
+let mutedPrefetched = null;
+
+/** 取靜音中的問題（currentMute 不為 null），並同步頁籤標題的數字 */
+async function fetchMutedIssues() {
+    const owners = await api.get('/api/admin/issue-owners');
+    const muted = (owners ?? []).filter(o => o.currentMute != null);
+    updateMutedTabTitle(muted.length);
+    return muted;
+}
+
+function updateMutedTabTitle(count) {
+    const btn = mutedTabItem?.querySelector('[data-tab="muted"]');
+    if (btn) btn.textContent = `靜音中（${count}）`;
+}
+
+/** 本地今天的 yyyy-MM-dd */
+function todayText() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 剩餘天數＝靜音至 − 今天 + 1；今天到期顯示「今天到期」 */
+function remainingDaysText(toDate) {
+    if (!toDate) return '—';
+    const diff = Math.round((Date.parse(toDate + 'T00:00:00Z') - Date.parse(todayText() + 'T00:00:00Z')) / 86400000);
+    if (Number.isNaN(diff)) return '—';
+    if (diff < 0) return '已到期';
+    if (diff === 0) return '今天到期';
+    return `${diff + 1} 天`;
+}
+
+/** 單一問題目前暫停中的交辦單張數；失敗回 null（顯示「—」，不中斷整張表） */
+async function fetchPausedCount(source, eventId) {
+    const params = new URLSearchParams({
+        source,
+        eventId: String(eventId),
+        status: 'active',
+        paused: 'only',
+        pageSize: '1'
+    });
+    try {
+        const data = await api.get(`/api/work-orders?${params}`, { silent: true });
+        return Number.isInteger(data?.total) ? data.total : null;
+    } catch {
+        return null;
+    }
+}
+
+async function loadMuted() {
+    renderLoading(mutedContainer, 5);
+
+    let muted;
+    if (mutedPrefetched) {
+        muted = mutedPrefetched;
+        mutedPrefetched = null;
+    } else {
+        muted = await fetchMutedIssues();
+    }
+
+    const rows = muted.slice().sort((a, b) =>
+        String(a.currentMute.to ?? '').localeCompare(String(b.currentMute.to ?? '')));
+
+    const counts = await Promise.all(rows.slice(0, MUTED_PAUSED_LOOKUP_LIMIT)
+        .map(r => fetchPausedCount(r.sourceName, r.eventId)));
+    const pausedCounts = new Map();
+    rows.slice(0, MUTED_PAUSED_LOOKUP_LIMIT).forEach((r, i) => pausedCounts.set(r, counts[i]));
+
+    renderMutedTable(rows, pausedCounts);
+    loadedTabs.add('muted');
+}
+
+function reloadMuted() {
+    loadedTabs.delete('muted');
+    guardLoad(mutedContainer, loadMuted);
+}
+
+function renderMutedTable(rows, pausedCounts) {
+    if (rows.length === 0) {
+        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題' });
+        return;
+    }
+
+    const columns = [
+        {
+            title: '問題',
+            render: r => renderIssueCell(r.displayLabel, `${r.sourceName ?? ''} ${r.eventId ?? ''}`.trim())
+        },
+        {
+            title: '靜音至',
+            className: 'text-nowrap',
+            render: r => String(r.currentMute.to ?? '').slice(0, 10) || '—'
+        },
+        {
+            title: '剩餘天數',
+            className: 'text-nowrap',
+            render: r => remainingDaysText(String(r.currentMute.to ?? '').slice(0, 10))
+        },
+        {
+            title: '起始日',
+            className: 'text-nowrap',
+            render: r => String(r.currentMute.from ?? '').slice(0, 10) || '—'
+        },
+        {
+            title: '原因',
+            render: r => r.currentMute.reason || '—'
+        },
+        {
+            title: '設定者',
+            render: r => r.currentMute.byAccount || '—'
+        },
+        {
+            title: '暫停中交辦單',
+            className: 'text-end',
+            render: r => {
+                const n = pausedCounts.get(r);
+                if (!Number.isInteger(n)) return '—';
+                if (n === 0) return '0';
+                const a = document.createElement('a');
+                a.href = appUrl('/work-orders') + '?' + new URLSearchParams({ source: r.sourceName, eventId: String(r.eventId) });
+                a.textContent = `${n} 張`;
+                return a;
+            }
+        },
+        {
+            title: '動作',
+            className: 'text-nowrap',
+            render: r => {
+                const wrap = document.createElement('div');
+                wrap.className = 'd-flex align-items-center gap-1';
+                wrap.append(
+                    button('延長', { onClick: () => extendMute(r) }),
+                    button('解除', { variant: 'outline-danger', onClick: () => removeMute(r) })
+                );
+                return wrap;
+            }
+        }
+    ];
+
+    renderTable(mutedContainer, { columns, rows });
+
+    if (rows.length > MUTED_PAUSED_LOOKUP_LIMIT) {
+        const note = document.createElement('div');
+        note.className = 'small text-muted mt-2';
+        note.textContent = `只統計前 ${MUTED_PAUSED_LOOKUP_LIMIT} 個問題的暫停交辦單張數`;
+        mutedContainer.appendChild(note);
+    }
+}
+
+function extendMute(r) {
+    openIssueMuteModal({
+        source: r.sourceName,
+        eventId: r.eventId,
+        issueLabel: r.displayLabel,
+        currentMute: r.currentMute,
+        onApplied: reloadMuted
+    });
+}
+
+/** 確認文字與 issue-owners.js 的「解除」同一份說法 */
+async function removeMute(r) {
+    const confirmed = await confirmAction({
+        title: '解除靜音',
+        message: '解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。',
+        confirmText: '解除',
+        confirmVariant: 'danger'
+    });
+    if (!confirmed) return;
+
+    try {
+        await clearIssueMute(r.sourceName, r.eventId);
+        toast('已解除靜音', 'success');
+        // 解除後暫停中的交辦單恢復，進行中頁籤下次切過去要重查
+        loadedTabs.delete('active');
+        reloadMuted();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    }
+}
+
 // ── 頁籤切換與事件綁定 ─────────────────────────────────────────────────────
 
 function loadTab(tabName) {
@@ -543,6 +736,8 @@ function loadTab(tabName) {
         guardLoad(loadContainer, loadLoadBoard);
     } else if (tabName === 'gaps') {
         guardLoad(gapsContainer, loadGaps);
+    } else if (tabName === 'muted') {
+        guardLoad(mutedContainer, loadMuted);
     }
 }
 
@@ -617,6 +812,17 @@ async function init() {
 
     if (hasCapability(currentUser, 'Maintain')) {
         gapsAutoDispatchBtn.classList.remove('d-none');
+        mutedTabItem?.classList.remove('d-none');
+        // 頁籤標題要帶數字，所以在 bindTabs 之前先取一次；失敗時標題維持「靜音中」，進頁籤再重試
+        try {
+            mutedPrefetched = await fetchMutedIssues();
+        } catch {
+            mutedPrefetched = null;
+        }
+    } else {
+        // 沒有 Maintain 看得到也做不了事：頁籤與 panel 一起拿掉，網址帶 #muted 時 bindTabs 找不到就停在預設頁籤
+        mutedTabItem?.remove();
+        document.querySelector('[data-panel="muted"]')?.remove();
     }
 
     // 群組選項先填好，網址帶 groupId 時第一次查詢就用預選值

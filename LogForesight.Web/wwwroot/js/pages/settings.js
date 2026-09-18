@@ -4,6 +4,7 @@
  */
 
 import { api } from '../core/api.js';
+import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
     guardLoad, renderSpinner
@@ -1257,4 +1258,5 @@ unsaved = trackUnsaved(document.getElementById('settings-form'), {
         '#mail-test-btn, #mail-test-result'
 });
 load();
+renderAlertToolsTable(document.getElementById('auto-dispatch-alert-tools'));
 

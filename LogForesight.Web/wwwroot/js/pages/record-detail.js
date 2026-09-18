@@ -1275,6 +1275,19 @@ function issueCell(issue) {
         wrap.appendChild(badge);
     }
 
+    // 靜音中的問題（規劃 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
+    if (issue.isMuted && issue.muteTo) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        if (issue.suppressed) badge.classList.add('ms-1');
+        badge.textContent = `靜音至 ${issue.muteTo}`;
+        const tip = [];
+        if (issue.muteReason) tip.push(`原因：${issue.muteReason}`);
+        if (issue.mutedByAccount) tip.push(`設定者：${issue.mutedByAccount}`);
+        if (tip.length > 0) badge.title = tip.join('｜');
+        wrap.appendChild(badge);
+    }
+
     const meta = document.createElement('div');
     meta.className = 'lf-issue-cell__meta d-flex flex-wrap align-items-center gap-2 small text-muted mt-1';
     meta.appendChild(severityCell(issue));

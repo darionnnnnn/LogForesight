@@ -17,6 +17,7 @@
             <li class="nav-item"><button class="nav-link active" data-tab="active" type="button">進行中</button></li>
             <li class="nav-item"><button class="nav-link" data-tab="load" type="button">負載看板</button></li>
             <li class="nav-item"><button class="nav-link" data-tab="gaps" type="button">待派</button></li>
+            <li class="nav-item d-none" id="wo-muted-tab-item"><button class="nav-link" data-tab="muted" type="button">靜音中</button></li>
         </ul>
 
         <div data-panel="active">
@@ -79,6 +80,20 @@
             <div id="wo-gaps"></div>
             <nav id="wo-gaps-pager" class="mt-3"></nav>
         </div>
+
+        <section data-panel="muted" class="d-none">
+            <div class="lf-card">
+                <div class="lf-card__header">
+                    <div>
+                        <h3 class="lf-card__title">靜音中的問題</h3>
+                        <div class="small text-muted">靜音期間新資料不進待辦、不告警；到期自動恢復</div>
+                    </div>
+                </div>
+                <div class="lf-card__body">
+                    <div id="wo-muted-list"></div>
+                </div>
+            </div>
+        </section>
     </div>
 </section>
 

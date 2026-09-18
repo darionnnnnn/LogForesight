@@ -408,7 +408,7 @@ function renderTopIssues(data) {
     // 背景整理中的提示放在**表格容器之外**——renderTable 會 replaceChildren，
     // 塞在同一個容器裡會被下一次渲染吃掉
     renderStatsPendingNote('dashboard-issues-pending', data);
-    renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount);
+    renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount, data.mutedIssueCount);
 
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
@@ -438,11 +438,13 @@ function renderTopIssues(data) {
  * 但悄悄少幾筆會讓人以為問題變少了——卡底把數字誠實說出來。
  * 同 renderStatsPendingNote，容器在表格外，不會被 renderTable 的 replaceChildren 清掉。
  */
-function renderConcludedNote(containerId, concludedCount) {
+function renderConcludedNote(containerId, concludedCount, mutedCount) {
     const el = document.getElementById(containerId);
     if (!el) return;
 
-    if (!concludedCount) {
+    const c = concludedCount > 0 ? concludedCount : 0;
+    const m = mutedCount > 0 ? mutedCount : 0;
+    if (!c && !m) {
         el.classList.add('d-none');
         el.textContent = '';
         return;
@@ -452,7 +454,10 @@ function renderConcludedNote(containerId, concludedCount) {
     // 蓋掉會讓這行文字貼齊卡片左緣（批次I 體檢修正）
     el.classList.remove('d-none');
     el.classList.add('small', 'text-muted');
-    el.textContent = `另有 ${concludedCount} 個問題已有結論（未列入）`;
+    // 靜音中的問題同樣不列入（規劃 15.3 (2)）；儀表板給所有角色看，不加連結
+    if (c && m) el.textContent = `另有 ${c} 個問題已有結論、${m} 個靜音中（未列入）`;
+    else if (c) el.textContent = `另有 ${c} 個問題已有結論（未列入）`;
+    else el.textContent = `另有 ${m} 個問題靜音中（未列入）`;
 }
 
 /**
