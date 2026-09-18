@@ -1472,6 +1472,54 @@ public class MailNotificationServiceTests : IDisposable
         Assert.DoesNotContain("101", sent.Message.Body);
     }
 
+    [Fact]
+    public async Task 交辦摘要信_復發台數寫進該行()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153") { RecurrenceMembers = 2 },
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("其中 2 台是復發", sent.Message.Body);
+        Assert.Contains("單號 101：disk 153（新建，3 台），其中 2 台是復發：你最近 30 天內修好過的主機又出現同一個問題", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task 交辦摘要信_無復發時行文不變()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153") { RecurrenceMembers = 0 },
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.DoesNotContain("復發", sent.Message.Body);
+        Assert.Contains("單號 101：disk 153（新建，3 台）", sent.Message.Body);
+    }
+
     // ── 週報靜音中問題段（回饋第 47 輪 E-1e）─────────────────────────────────────
 
     [Fact]

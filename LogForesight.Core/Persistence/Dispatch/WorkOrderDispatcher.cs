@@ -32,6 +32,9 @@ public sealed class DispatchDecision
     /// ⑤⑥ 掛進該人既有單時也是 AttachTo，只看 Kind 分不出來，歷程動作靠這欄決定。
     /// </summary>
     public string? Step { get; init; }
+
+    /// <summary>⑥ 自動派工選中的處理人正是這台主機這個問題最近 30 天內以 resolved 結案的處理人（延續性偏好命中）＝復發</summary>
+    public bool Recurrence { get; init; }
 }
 
 /// <summary>
@@ -107,7 +110,7 @@ public static class WorkOrderDispatcher
             if (owners.Count > 0)
             {
                 var ownerId = SelectHandler(ctx, owners, issue.Source, issue.EventId, continuityHandlerId: null);
-                return AssignTo(ownerId, activeOrders, WorkOrderOrigins.OwnerRule);
+                return AssignTo(ownerId, activeOrders, WorkOrderOrigins.OwnerRule, false);
             }
         }
 
@@ -131,9 +134,10 @@ public static class WorkOrderDispatcher
             };
         }
 
-        var handlerId = SelectHandler(ctx, candidates, issue.Source, issue.EventId,
-            ctx.ContinuityHandlerFor(host.HostName, issue.Source, issue.EventId));
-        return AssignTo(handlerId, activeOrders, WorkOrderOrigins.AutoDispatch);
+        var continuityHandlerId = ctx.ContinuityHandlerFor(host.HostName, issue.Source, issue.EventId);
+        var handlerId = SelectHandler(ctx, candidates, issue.Source, issue.EventId, continuityHandlerId);
+        var recurrence = continuityHandlerId == handlerId;
+        return AssignTo(handlerId, activeOrders, WorkOrderOrigins.AutoDispatch, recurrence);
     }
 
     private static bool ScopeCovers(WorkOrder order, WebHost host) => order.ScopeKind switch
@@ -170,7 +174,7 @@ public static class WorkOrderDispatcher
             .First();
 
     /// <summary>該人此問題已有進行中單（含本趟登記的）→ 掛進去；否則建新單</summary>
-    private static DispatchDecision AssignTo(long handlerId, IReadOnlyList<WorkOrder> activeOrders, string origin)
+    private static DispatchDecision AssignTo(long handlerId, IReadOnlyList<WorkOrder> activeOrders, string origin, bool recurrence)
     {
         var existing = activeOrders
             .Where(o => o.HandlerId == handlerId)
@@ -179,8 +183,8 @@ public static class WorkOrderDispatcher
             .FirstOrDefault();
 
         return existing != null
-            ? new DispatchDecision { Kind = DispatchDecisionKind.AttachTo, WorkOrderId = existing.WorkOrderId, HandlerId = handlerId, Step = origin }
-            : new DispatchDecision { Kind = DispatchDecisionKind.CreateFor, HandlerId = handlerId, Origin = origin, Step = origin };
+            ? new DispatchDecision { Kind = DispatchDecisionKind.AttachTo, WorkOrderId = existing.WorkOrderId, HandlerId = handlerId, Step = origin, Recurrence = recurrence }
+            : new DispatchDecision { Kind = DispatchDecisionKind.CreateFor, HandlerId = handlerId, Origin = origin, Step = origin, Recurrence = recurrence };
     }
 
     private static DispatchDecision Skip(string reason) =>

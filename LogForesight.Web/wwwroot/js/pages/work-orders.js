@@ -306,6 +306,11 @@ function renderActiveTable(data) {
             render: r => formatDateTime(r.createdAt)
         },
         {
+            title: '最近新增',
+            className: 'text-nowrap',
+            render: r => (r.lastAppendedAt ? formatDateTime(r.lastAppendedAt) : '—')
+        },
+        {
             title: '狀態',
             render: r => {
                 const wrap = document.createElement('div');

@@ -15,7 +15,11 @@ public sealed class NightlyDispatchSummary
 }
 
 /// <summary>夜間派工彙總的一張單</summary>
-public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers, string IssueLabel);
+public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers, string IssueLabel)
+{
+    /// <summary>本趟新增成員中屬於復發的台數</summary>
+    public int RecurrenceMembers { get; init; }
+}
 
 /// <summary>
 /// 夜間派工：一趟執行一個實例，本機、NetIQ、PRTG 三路並行共用。每個主機日在掛接（①②③）之後，
@@ -35,6 +39,7 @@ public sealed class NightlyDispatch
 
     // 本趟累計（皆在 _ctx.Gate 內讀寫）
     private readonly Dictionary<long, int> _addedByOrder = new();
+    private readonly Dictionary<long, int> _recurrenceByOrder = new();
     private readonly Dictionary<long, long> _handlerByOrder = new();
     private readonly Dictionary<long, string> _labelByOrder = new();
     private readonly HashSet<long> _createdOrders = new();
@@ -60,6 +65,7 @@ public sealed class NightlyDispatch
         lock (_ctx.Gate)
         {
             var members = new List<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)>();
+            var recurrences = new List<bool>();
             foreach (var issue in unassigned)
             {
                 var decision = WorkOrderDispatcher.Decide(_ctx, host, issue, date.Date);
@@ -82,21 +88,28 @@ public sealed class NightlyDispatch
                         decision = new DispatchDecision
                         {
                             Kind = DispatchDecisionKind.AttachTo, WorkOrderId = order.WorkOrderId,
-                            HandlerId = order.HandlerId, Step = decision.Step
+                            HandlerId = order.HandlerId, Step = decision.Step,
+                            Recurrence = decision.Recurrence
                         };
                         break;
                     }
                 }
 
                 members.Add((issue, decision.WorkOrderId!.Value, decision.HandlerId!.Value, decision.Step!));
+                recurrences.Add(decision.Recurrence);
                 _ctx.Commit(decision, issue.Source, issue.EventId);
             }
 
             _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
 
-            foreach (var (issue, workOrderId, handlerId, _) in members)
+            for (var i = 0; i < members.Count; i++)
             {
+                var (issue, workOrderId, handlerId, _) = members[i];
                 _addedByOrder[workOrderId] = _addedByOrder.GetValueOrDefault(workOrderId) + 1;
+                if (recurrences[i])
+                {
+                    _recurrenceByOrder[workOrderId] = _recurrenceByOrder.GetValueOrDefault(workOrderId) + 1;
+                }
                 _handlerByOrder[workOrderId] = handlerId;
                 if (!_labelByOrder.ContainsKey(workOrderId))
                 {
@@ -123,7 +136,10 @@ public sealed class NightlyDispatch
                     g => g.Key,
                     g => (IReadOnlyList<NightlyDispatchOrderLine>)g
                         .OrderBy(p => p.Key)
-                        .Select(p => new NightlyDispatchOrderLine(p.Key, _createdOrders.Contains(p.Key), _addedByOrder.GetValueOrDefault(p.Key), _labelByOrder[p.Key]))
+                        .Select(p => new NightlyDispatchOrderLine(p.Key, _createdOrders.Contains(p.Key), _addedByOrder.GetValueOrDefault(p.Key), _labelByOrder[p.Key])
+                        {
+                            RecurrenceMembers = _recurrenceByOrder.GetValueOrDefault(p.Key)
+                        })
                         .ToList());
 
             var summary = new NightlyDispatchSummary
@@ -135,6 +151,7 @@ public sealed class NightlyDispatch
             };
 
             _addedByOrder.Clear();
+            _recurrenceByOrder.Clear();
             _handlerByOrder.Clear();
             _createdOrders.Clear();
             _labelByOrder.Clear();

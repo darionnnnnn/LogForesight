@@ -404,6 +404,10 @@ public class MailNotificationService
                     var line = order.CreatedThisRun
                         ? $"  單號 {order.WorkOrderId}：{order.IssueLabel}（新建，{order.AddedMembers} 台）"
                         : $"  單號 {order.WorkOrderId}：{order.IssueLabel}（新增 {order.AddedMembers} 台）";
+                    if (order.RecurrenceMembers > 0)
+                    {
+                        line += $"，其中 {order.RecurrenceMembers} 台是復發：你最近 30 天內修好過的主機又出現同一個問題";
+                    }
                     body.AppendLine(line);
                 }
                 body.AppendLine();
