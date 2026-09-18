@@ -426,23 +426,13 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         var store = _backend.PrtgStore();
         var today = now.Date;
-        var hostMaps = store.GetHostMapForDate(today);
+        // 與校準同一個來源：錨點今天、回看 30 天的最近一次對應
+        var (_, hostMaps) = store.GetLatestHostMapWithDate(30, today);
         var okDeviceIds = hostMaps
             .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .Select(m => m.DeviceObjid)
             .Distinct()
             .ToList();
-
-        if (okDeviceIds.Count == 0)
-        {
-            var yesterday = today.AddDays(-1);
-            hostMaps = store.GetHostMapForDate(yesterday);
-            okDeviceIds = hostMaps
-                .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
-                .Select(m => m.DeviceObjid)
-                .Distinct()
-                .ToList();
-        }
 
         var targets = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, okDeviceIds);
         _targetObjids = targets.ToHashSet();
