@@ -265,7 +265,8 @@ public sealed class IssueMuteTests : IDisposable
             ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
         };
 
-        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+        // 現在不在任何區間內，只驗紀錄日的判定；目前靜音中的規則見下一條測試
+        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now.AddDays(10));
 
         Assert.True(ctx.IsMuted("DISK", EventId, Today.AddDays(-3)));
         Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(-2).AddHours(20)));
@@ -273,6 +274,22 @@ public sealed class IssueMuteTests : IDisposable
         Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(1)));
         Assert.False(ctx.IsMuted(Source, EventId, Today.AddDays(2)));
         Assert.False(ctx.IsMuted(Source, 154, Today));
+    }
+
+    [Fact]
+    public void 派工脈絡_今天在區間內時區間外的紀錄日也算靜音()
+    {
+        var owners = new FakeIssueOwnerStore();
+        owners.Upsert(Profile((Today, Today.AddDays(1))));
+        var pool = new DispatchCandidatePool
+        {
+            ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
+        };
+
+        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+
+        Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(-5)));
+        Assert.False(ctx.IsMuted(Source, 154, Today.AddDays(-5)));
     }
 
     // ── 設定／解除 API ─────────────────────────────────────────────────────

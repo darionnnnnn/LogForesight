@@ -67,8 +67,9 @@ public class IssueProfile
     public bool AutoApply { get; set; }
 
     /// <summary>
-    /// 靜音區間清單（唯一事實來源）：紀錄日落在任一區間內（含首尾）＝該日這個問題靜音。
-    /// 一律以紀錄日判定，不以執行時間判定。舊 blob 缺欄＝空清單。
+    /// 靜音區間清單（唯一事實來源）。分析側標記 Suppressed 只看紀錄日是否落在任一區間（含首尾），
+    /// 重新分析舊日子永遠同答案；讀取側與派工另把「目前靜音中」（今天落在任一區間）也算靜音——
+    /// 見 IssueExclusion.IsMuted 與 DispatchContext.IsMuted。舊 blob 缺欄＝空清單。
     /// </summary>
     public List<MuteInterval> Mutes { get; set; } = new();
 
