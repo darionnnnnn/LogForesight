@@ -733,17 +733,20 @@ public class PrtgBackfillRunnerTests : IDisposable
         });
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, new long[] { 1001, 1002 }, store, records);
 
         Assert.True(ok);
-        // 3 天只有迴圈前那一次 messages 請求；數值照樣逐日取（3 天各一次 historicdata）
-        Assert.Single(handler.RequestedUrls, u => u.Contains("content=messages"));
+        // 3 天只有迴圈前那一趟 messages 查詢：範圍內每台裝置恰一組請求；數值照樣逐日取（3 天各一次 historicdata）
+        var messageUrls = handler.RequestedUrls.Where(u => u.Contains("content=messages")).ToList();
+        Assert.Equal(2, messageUrls.Count);
+        Assert.Single(messageUrls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=1001(&|$)"));
+        Assert.Single(messageUrls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=1002(&|$)"));
         Assert.Equal(3, handler.RequestedUrls.Count(u => u.Contains("historicdata.json")));
         // messages 請求在第一個 historicdata 之前
         var firstMsg = handler.RequestedUrls.FindIndex(u => u.Contains("content=messages"));
         var firstHist = handler.RequestedUrls.FindIndex(u => u.Contains("historicdata.json"));
         Assert.True(firstMsg < firstHist, "狀態變更應在逐日迴圈之前取");
-        Assert.Contains(console.Lines, l => l.StartsWith("狀態變更：讀取 ") && l.Contains("新增 0 筆"));
+        Assert.Contains(console.Lines, l => l.StartsWith("狀態變更：查詢 2 台、讀取 ") && l.Contains("新增 0 筆"));
         Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 3 天、失敗 0 天、略過 0 天"));
     }
 
@@ -807,7 +810,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         });
         var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, new long[] { 1001 }, store, records);
 
         Assert.False(ok);
         Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("historicdata.json")));

@@ -121,7 +121,7 @@ public class PrtgBackfillRunState : PrtgProbeRunState
         }
     }
 
-    /// <summary>狀態變更區間讀取進度（已讀筆數, 約略總筆數）。</summary>
+    /// <summary>狀態變更逐裝置查詢進度（已完成台數, 總台數）；欄位沿用 StateChangesRead／StateChangesTotal 的名稱。</summary>
     public void UpdateStateChanges(int done, int total)
     {
         lock (_progressLock)
@@ -366,7 +366,7 @@ public class PrtgBackfillService
                         sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
                         scope: s.PrtgValueFetchScope,
                         extraScopeHosts: scopeHostIds,
-                        stateChangeProgress: (read, total) => _state.UpdateStateChanges(read, total));
+                        stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices));
                 }
             }
             catch (OperationCanceledException) when (runToken.IsCancellationRequested)

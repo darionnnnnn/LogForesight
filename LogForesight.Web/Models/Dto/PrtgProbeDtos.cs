@@ -35,11 +35,11 @@ public class PrtgBackfillStatusDto
     public int SensorsDone { get; set; }
     public int SensorsTotal { get; set; }
 
-    /// <summary>狀態變更區間已讀取筆數</summary>
+    /// <summary>狀態變更逐裝置查詢已完成台數（欄位名沿用舊稱）</summary>
     public int StateChangesRead { get; set; }
-    /// <summary>狀態變更區間約略總筆數（0＝未知）</summary>
+    /// <summary>狀態變更要查詢的總台數（0＝尚未開始）</summary>
     public int StateChangesTotal { get; set; }
-    /// <summary>是否正在翻狀態變更（逐日數值開始前）</summary>
+    /// <summary>是否正在查狀態變更（逐日數值開始前）</summary>
     public bool ReadingStateChanges { get; set; }
     /// <summary>最近一趟是否被使用者停止</summary>
     public bool Cancelled { get; set; }

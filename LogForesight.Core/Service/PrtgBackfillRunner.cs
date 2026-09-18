@@ -31,7 +31,7 @@ public static class PrtgBackfillRunner
     /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>
     /// <param name="dayProgress">天數層進度回呼（已完成天數, 總天數, 當前日期），null＝不回報</param>
     /// <param name="sensorProgress">當日 sensor 進度回呼（已完成數, 總數），null＝不回報</param>
-    /// <param name="stateChangeProgress">觸發式回填翻狀態變更區間的進度回呼（已讀筆數, 約略總筆數），null＝不回報</param>
+    /// <param name="stateChangeProgress">觸發式回填翻狀態變更區間的進度回呼（已完成台數, 總台數），null＝不回報</param>
     /// <returns>
     /// 全量分支：有任何一天成功回傳 true。
     /// 觸發式分支：沒有失敗日、狀態變更完整取得、且至少一天成功才回傳 true。
@@ -81,10 +81,9 @@ public static class PrtgBackfillRunner
                 try
                 {
                     var range = await fetchService.FetchStateChangesRangeAsync(
-                        DateTime.Today.AddDays(-days - 1), DateTime.Today, ct,
+                        DateTime.Today.AddDays(-days - 1), DateTime.Today, scopeDeviceObjids, concurrency, ct,
                         (stage, done, total) => stateChangeProgress?.Invoke(done, total));
-                    var ending = range.StoppedEarly ? "（依時間排序提早結束）" : "（已翻到結尾）";
-                    console.WriteLine($"狀態變更：讀取 {range.ReadRows} 筆（{range.Pages} 頁）、新增 {range.TotalWritten} 筆（其餘已存在）{ending}");
+                    console.WriteLine($"狀態變更：查詢 {range.QueriedObjects} 台、讀取 {range.ReadRows} 筆、新增 {range.TotalWritten} 筆（其餘已存在）");
                     if (!range.Converged)
                     {
                         stateChangesFailed = true;
