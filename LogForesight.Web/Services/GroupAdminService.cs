@@ -46,7 +46,8 @@ public class GroupAdminService
                 Role = g.Role.ToString(),
                 Builtin = g.Builtin,
                 Active = g.Active,
-                MemberCount = users.Count(u => u.GroupIds.Contains(g.GroupId))
+                MemberCount = users.Count(u => u.GroupIds.Contains(g.GroupId)),
+                DispatchPool = g.DispatchPool
             })
             .ToList();
     }
@@ -117,6 +118,24 @@ public class GroupAdminService
             summary: $"刪除使用者群組「{group.GroupName}」",
             targetKind: "group",
             targetId: groupId.ToString());
+    }
+
+    public void SetDispatchPool(long groupId, bool inPool)
+    {
+        var group = _userGroups.Get(groupId)
+                    ?? throw DomainException.NotFound("找不到這個群組，可能已被刪除。");
+
+        if (group.Builtin)
+            throw DomainException.Validation("系統內建群組不能設為派工池，請改用自建的維運群組。");
+
+        _userGroups.SetDispatchPool(groupId, inPool);
+
+        _audit.Record(
+            action: AuditActions.GroupDispatchPool,
+            summary: $"{group.GroupName}：{(inPool ? "設為派工池" : "取消派工池")}",
+            targetKind: "group",
+            targetId: groupId.ToString(),
+            detail: new { InPool = inPool });
     }
 
     public List<HostGroupDto> GetHostGroups()

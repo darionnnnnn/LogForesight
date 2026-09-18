@@ -27,7 +27,7 @@ internal class AlwaysVisibleService : IVisibilityService
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => GetVisibleHostIds();
 
     // 全部主機本來就可見，沒有「只靠案件授與才看得到」的情況（§7）
-    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
     public bool IsCaseGrantOnly(long hostId) => false;
 
     /// <summary>null＝不限制問題（這個替身對全部主機都有一般檢視權）</summary>

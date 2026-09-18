@@ -30,16 +30,18 @@ async function load() {
     renderLoading(document.getElementById('dashboard-hosts'), 4);
     renderLoading(document.getElementById('dashboard-group-risk'), 3);
 
-    const [data, user, displaySettings] = await Promise.all([
+    const [data, user, displaySettings, myBadge] = await Promise.all([
         api.get(`/api/dashboard/summary?days=${currentDays}`),
         getCurrentUser(),
-        getDisplaySettings()
+        getDisplaySettings(),
+        // 我的交辦單數字走既有聚合端點，不動儀表板後端 DTO；失敗就不顯示那張卡（靜默）
+        api.get('/api/handlers/me/badge', { silent: true }).catch(() => null)
     ]);
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
     renderBanner(data);
-    renderKpi(data, user, displaySettings);
+    renderKpi(data, user, displaySettings, myBadge);
     renderCategories(data);
     renderTopIssues(data);
     renderHosts(data);
@@ -175,7 +177,7 @@ function renderBanner(data) {
     container.replaceChildren(banner);
 }
 
-function renderKpi(data, user, displaySettings) {
+function renderKpi(data, user, displaySettings, myBadge) {
     // docs/archive/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定。後端已在 RecordRepository 這一咽喉
     // 過濾掉被隱藏等級的紀錄，data.mediumRiskDays 本來就會是 0——但「0」與「被藏起來」是
     // 兩件事，這裡整卡不顯示，不讓「0」被誤讀成「這期間真的沒有中風險日」
@@ -235,6 +237,23 @@ function renderKpi(data, user, displaySettings) {
         url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`,
         extra: todoExtra
     });
+
+    // 我的交辦單：緊接在「未處理問題」之後——主管看完「有哪些事沒處理」，
+    // 處理人接著要看的就是「其中有幾張在我手上」，兩張卡同屬待辦脈絡應該相鄰。
+    // 沒有 Handle 能力的角色動不了手，這張卡對他們只是噪音，不顯示。
+    if (myBadge && hasCapability(user, 'Handle')) {
+        cards.push({
+            label: '我的交辦單',
+            value: myBadge.activeWorkOrders ?? 0,
+            // 0 張時仍顯示（處理人看到「0 張」是有意義的），只是不用強調色
+            variant: (myBadge.overdueMembers ?? 0) > 0 ? 'danger'
+                : ((myBadge.activeWorkOrders ?? 0) > 0 ? 'primary' : 'secondary'),
+            hint: `${formatNumber(myBadge.activeMembers ?? 0)} 台；`
+                + `逾期 ${formatNumber(myBadge.overdueMembers ?? 0)} 台、`
+                + `未回覆 ${formatNumber(myBadge.unrepliedWorkOrders ?? 0)} 張`,
+            url: `/handlers/${user.userId}`
+        });
+    }
 
     // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
@@ -389,7 +408,7 @@ function renderTopIssues(data) {
     // 背景整理中的提示放在**表格容器之外**——renderTable 會 replaceChildren，
     // 塞在同一個容器裡會被下一次渲染吃掉
     renderStatsPendingNote('dashboard-issues-pending', data);
-    renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount);
+    renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount, data.mutedIssueCount);
 
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
@@ -419,11 +438,13 @@ function renderTopIssues(data) {
  * 但悄悄少幾筆會讓人以為問題變少了——卡底把數字誠實說出來。
  * 同 renderStatsPendingNote，容器在表格外，不會被 renderTable 的 replaceChildren 清掉。
  */
-function renderConcludedNote(containerId, concludedCount) {
+function renderConcludedNote(containerId, concludedCount, mutedCount) {
     const el = document.getElementById(containerId);
     if (!el) return;
 
-    if (!concludedCount) {
+    const c = concludedCount > 0 ? concludedCount : 0;
+    const m = mutedCount > 0 ? mutedCount : 0;
+    if (!c && !m) {
         el.classList.add('d-none');
         el.textContent = '';
         return;
@@ -433,7 +454,10 @@ function renderConcludedNote(containerId, concludedCount) {
     // 蓋掉會讓這行文字貼齊卡片左緣（批次I 體檢修正）
     el.classList.remove('d-none');
     el.classList.add('small', 'text-muted');
-    el.textContent = `另有 ${concludedCount} 個問題已有結論（未列入）`;
+    // 靜音中的問題同樣不列入（docs/archive/FEEDBACK-47-PLAN.md 15.3 (2)）；儀表板給所有角色看，不加連結
+    if (c && m) el.textContent = `另有 ${c} 個問題已有結論、${m} 個靜音中（未列入）`;
+    else if (c) el.textContent = `另有 ${c} 個問題已有結論（未列入）`;
+    else el.textContent = `另有 ${m} 個問題靜音中（未列入）`;
 }
 
 /**

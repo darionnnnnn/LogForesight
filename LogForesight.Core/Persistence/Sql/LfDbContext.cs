@@ -48,6 +48,12 @@ public class LfDbContext : DbContext
     /// <summary>問題案件（↔ lf_issue_cases，原 blob key=issue_cases）</summary>
     public DbSet<IssueCaseRow> IssueCases => Set<IssueCaseRow>();
 
+    /// <summary>交辦單（↔ lf_work_orders）：一個問題 × 一組主機 × 一位處理人，成員為案件</summary>
+    public DbSet<WorkOrderRow> WorkOrders => Set<WorkOrderRow>();
+
+    /// <summary>交辦單異動事件（↔ lf_work_order_events，append-only）</summary>
+    public DbSet<WorkOrderEventRow> WorkOrderEvents => Set<WorkOrderEventRow>();
+
     /// <summary>日層級處理狀態快照（↔ lf_record_handling，原 blob key=record_handling）</summary>
     public DbSet<RecordHandlingRow> RecordHandlings => Set<RecordHandlingRow>();
 
@@ -275,6 +281,73 @@ public class LfDbContext : DbContext
             // GetOpen／GetOpenForHost：同一 (主機, 問題簽章) 至多一個進行中案件的查詢形狀
             e.HasIndex(x => new { x.HostNameKey, x.IssueKey, x.ClosedAt });
             e.HasIndex(x => new { x.HandlerId, x.ClosedAt });   // GetOpenByHandler／GetByHandler
+
+            // 交辦單成員（work_order_id）與依問題查（source_key 正規化大寫，同 lf_issue_first_seen 慣例）。
+            // source_key：由 issue_key 解析；null＝尚未解析（等背景整併補）、''＝解析失敗（無法依問題查）
+            e.Property(x => x.WorkOrderId).HasColumnName("work_order_id");
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
+            e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255);
+            e.Property(x => x.EventId).HasColumnName("event_id");
+            e.Property(x => x.DaySyncPending).HasColumnName("day_sync_pending");
+            e.Property(x => x.Cancelled).HasColumnName("cancelled");
+            e.Property(x => x.DaySyncIntent).HasColumnName("day_sync_intent");
+            e.HasIndex(x => new { x.WorkOrderId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_work_order_closed");
+            e.HasIndex(x => new { x.SourceKey, x.EventId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_issue_closed");
+            e.HasIndex(x => x.DaySyncPending).HasDatabaseName("IX_lf_issue_cases_day_sync_pending");
+        });
+
+        b.Entity<WorkOrderRow>(e =>
+        {
+            e.ToTable("lf_work_orders");
+            e.HasKey(x => x.WorkOrderId);
+            e.Property(x => x.WorkOrderId).HasColumnName("work_order_id").ValueGeneratedOnAdd();
+            e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255);
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
+            e.Property(x => x.EventId).HasColumnName("event_id");
+            e.Property(x => x.IssueLabel).HasColumnName("issue_label").HasMaxLength(512);
+            e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.Origin).HasColumnName("origin").HasMaxLength(30);
+            e.Property(x => x.ScopeKind).HasColumnName("scope_kind").HasMaxLength(30);
+            e.Property(x => x.ScopeGroupIds).HasColumnName("scope_group_ids");
+            e.Property(x => x.AutoAttach).HasColumnName("auto_attach");
+            e.Property(x => x.Note).HasColumnName("note").HasMaxLength(1000);
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.CreatedById).HasColumnName("created_by_id");
+            e.Property(x => x.CreatedByAccount).HasColumnName("created_by_account").HasMaxLength(255);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.LastAppendedAt).HasColumnName("last_appended_at");
+            e.Property(x => x.LastReplyAt).HasColumnName("last_reply_at");
+            e.Property(x => x.ClosedAt).HasColumnName("closed_at");
+            e.Property(x => x.ClosedReason).HasColumnName("closed_reason").HasMaxLength(30);
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            e.HasIndex(x => new { x.HandlerId, x.ClosedAt }).HasDatabaseName("IX_lf_work_orders_handler_closed");
+            e.HasIndex(x => new { x.SourceKey, x.EventId, x.ClosedAt }).HasDatabaseName("IX_lf_work_orders_issue_closed");
+            // 同一處理人同一問題至多一張進行中單，由資料庫保證。
+            // 過濾條件必須含 source_key IS NOT NULL：SQL Server 唯一索引把 NULL 視為相等、SQLite 視為相異——
+            // 不排除 NULL 的話，同一人兩張多問題單（source_key／event_id 皆 null）在 SQL Server 會撞索引、
+            // 在 SQLite 不會，兩後端行為分岔。SchemaUpgrader 用同一字串補既有 DB（filtered／partial index 語法相同），
+            // 兩處一致性由 SchemaUpgraderWorkOrderTests 守門。
+            e.HasIndex(x => new { x.HandlerId, x.SourceKey, x.EventId })
+                .IsUnique()
+                .HasFilter("closed_at IS NULL AND source_key IS NOT NULL")
+                .HasDatabaseName("IX_lf_work_orders_active_handler_issue");
+        });
+
+        b.Entity<WorkOrderEventRow>(e =>
+        {
+            e.ToTable("lf_work_order_events");
+            e.HasKey(x => x.EventId);
+            e.Property(x => x.EventId).HasColumnName("event_id").ValueGeneratedOnAdd();
+            e.Property(x => x.WorkOrderId).HasColumnName("work_order_id");
+            e.Property(x => x.Action).HasColumnName("action").HasMaxLength(30);
+            e.Property(x => x.ActorId).HasColumnName("actor_id");
+            e.Property(x => x.ActorAccount).HasColumnName("actor_account").HasMaxLength(255);
+            e.Property(x => x.MemberDelta).HasColumnName("member_delta");
+            e.Property(x => x.Note).HasColumnName("note").HasMaxLength(1000);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            e.HasIndex(x => new { x.WorkOrderId, x.CreatedAt }).HasDatabaseName("IX_lf_work_order_events_order_created");
         });
 
         b.Entity<RecordHandlingRow>(e =>
@@ -693,6 +766,59 @@ public class IssueCaseRow
     public DateTime CreatedAt { get; set; }
     public string CreatedByAccount { get; set; } = string.Empty;
     public DateTime UpdatedAt { get; set; }
+    public long? WorkOrderId { get; set; }
+
+    /// <summary>SourceName 的正規化大寫；null＝尚未解析、''＝解析失敗（視同無法依問題查）</summary>
+    public string? SourceKey { get; set; }
+    public string? SourceName { get; set; }
+    public int? EventId { get; set; }
+    public bool DaySyncPending { get; set; }
+    public bool Cancelled { get; set; }
+
+    /// <summary>待背景同步的逐日寫入意圖（CaseDayIntent 的 JSON）；null＝無待同步</summary>
+    public string? DaySyncIntent { get; set; }
+}
+
+/// <summary>交辦單的一列。↔ lf_work_orders</summary>
+public class WorkOrderRow
+{
+    public long WorkOrderId { get; set; }
+    public string? SourceName { get; set; }
+
+    /// <summary>SourceName 的正規化大寫，比對與索引一律用它</summary>
+    public string? SourceKey { get; set; }
+    public int? EventId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+    public long HandlerId { get; set; }
+    public string Origin { get; set; } = string.Empty;
+    public string ScopeKind { get; set; } = string.Empty;
+
+    /// <summary>逗號分隔的主機群組 id；空清單＝空字串（轉換在 store）</summary>
+    public string ScopeGroupIds { get; set; } = string.Empty;
+    public bool AutoAttach { get; set; }
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+    public long? CreatedById { get; set; }
+    public string CreatedByAccount { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastAppendedAt { get; set; }
+    public DateTime? LastReplyAt { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public string? ClosedReason { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>交辦單異動事件的一列。↔ lf_work_order_events</summary>
+public class WorkOrderEventRow
+{
+    public long EventId { get; set; }
+    public long WorkOrderId { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public long? ActorId { get; set; }
+    public string ActorAccount { get; set; } = string.Empty;
+    public int MemberDelta { get; set; }
+    public string? Note { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
 
 /// <summary>日層級處理狀態快照的一列。↔ lf_record_handling</summary>

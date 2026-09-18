@@ -248,6 +248,10 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     private readonly HttpMessageHandler? _handler;
     private readonly int _totalBudgetSeconds = InteractiveTotalBudgetSeconds;
 
+    /// <summary>總預算計時器的時間來源。正式環境一律系統時鐘；測試以手動時鐘在指定時點觸發逾期，
+    /// 不靠真實等待——全套負載下執行緒池飢餓會讓計時器回呼晚到，真實等待的測試因此偶發失敗。</summary>
+    private readonly TimeProvider _timeProvider = TimeProvider.System;
+
     public SentinelRestDirectoryClient(NetiqOptionsStore netiqOptionsStore)
     {
         _netiqOptionsStore = netiqOptionsStore;
@@ -265,6 +269,13 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         _optionsOverride = options;
         _handler = handler;
         if (totalBudgetSeconds is > 0) _totalBudgetSeconds = totalBudgetSeconds.Value;
+    }
+
+    /// <summary>測試用建構子：另帶總預算計時器的時間來源（見 <see cref="_timeProvider"/>）。</summary>
+    public SentinelRestDirectoryClient(NetiqOptions options, HttpMessageHandler handler, int totalBudgetSeconds, TimeProvider timeProvider)
+        : this(options, handler, totalBudgetSeconds)
+    {
+        _timeProvider = timeProvider;
     }
 
     public async Task<NetiqDiscoveryResult> ListHostsAsync(
@@ -314,8 +325,8 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
         // 整趟掃描的總預算（見 InteractiveTotalBudgetSeconds）——分頁迴圈本身不受單次逾時約束，
         // 沒有這道 deadline 就沒有任何東西能保證互動操作會在可接受的時間內結束
-        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budgetCts.CancelAfter(TimeSpan.FromSeconds(budgetSeconds));
+        using var budgetTimer = new CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds), _timeProvider);
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct, budgetTimer.Token);
         var scanCt = budgetCts.Token;
 
         var effectiveConcurrency = Math.Clamp(concurrency, 1, MaxScanConcurrency);

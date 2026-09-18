@@ -28,7 +28,7 @@ public class IssueTodoQueryTests : IDisposable
     {
         var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
         var resolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
-        return new IssueTodoQuery(aggregates, resolver);
+        return new IssueTodoQuery(aggregates, resolver, new FixedIssueExclusionSource(IssueExclusion.None));
     }
 
     private static LogIssueSignature Issue(

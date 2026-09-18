@@ -16,12 +16,13 @@ public class ReportService
     private readonly ISystemSettingsService _systemSettings;
 
     private readonly SummaryCache _summaryCache;
+    private readonly IIssueExclusionSource _exclusions;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings,
-        SummaryCache summaryCache)
+        SummaryCache summaryCache, IIssueExclusionSource exclusions)
     {
         _repository = repository;
         _hosts = hosts;
@@ -32,6 +33,7 @@ public class ReportService
         _aggregates = aggregates;
         _systemSettings = systemSettings;
         _summaryCache = summaryCache;
+        _exclusions = exclusions;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
@@ -42,14 +44,17 @@ public class ReportService
         // 可見主機在這裡取一次就傳給 BuildSummary——為了組鍵而多走訪一次整份主機表
         // 會撞破 GetAllCallCount 的效能契約（ReportServiceTests 有測試釘住）。
         var visibleHosts = _visibility.GetVisibleHosts();
+        // 靜音排除條件本次請求只取一次：快取鍵與 BuildSummary 內全部查詢共用同一份
+        var exclusion = _exclusions.Current();
         return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("report", $"{from:yyyyMMdd}|{to:yyyyMMdd}|{handlingScope}|{compare}",
+            SummaryCache.KeyOf("report", $"{from:yyyyMMdd}|{to:yyyyMMdd}|{handlingScope}|{compare}|{exclusion.CacheToken}",
                 visibleHosts.Select(h => h.HostId).ToList()),
-            () => BuildSummary(from, to, handlingScope, compare, visibleHosts));
+            () => BuildSummary(from, to, handlingScope, compare, visibleHosts, exclusion));
     }
 
     private ReportSummaryDto BuildSummary(
-        DateTime from, DateTime to, string? handlingScope, string? compare, List<WebHost> visibleHosts)
+        DateTime from, DateTime to, string? handlingScope, string? compare, List<WebHost> visibleHosts,
+        IssueExclusion exclusion)
     {
 
         var (previousFrom, previousTo, actualComparisonMode) = CalculateComparisonPeriod(from, to, compare);
@@ -89,7 +94,7 @@ public class ReportService
                 // 本期＋前期一次取回（回饋二十七輪作業 F3）：EF 端是合併查詢，
                 // 少一半的 KPI 往返；測試替身走介面預設實作（呼叫兩次單期），語意相同
                 var (kpiAgg, kpiAggPrev) = _aggregates.AggregateReportKpiPair(
-                    from, to, previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
+                    exclusion, from, to, previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
 
                 kpi = new ReportKpiDto
                 {
@@ -102,16 +107,16 @@ public class ReportService
                     CoverageGapDays = kpiAgg.CoverageGapDays
                 };
 
-                var trendAgg = _aggregates.AggregateReportTrend(from, to, hostIds, riskLevels, visibleSeverities);
+                var trendAgg = _aggregates.AggregateReportTrend(exclusion, from, to, hostIds, riskLevels, visibleSeverities);
                 trend = BuildTrendFromAggregate(trendAgg, from, to);
 
                 // 排序規則與 BuildHostRanking 一致：高風險日 → 關聯日 → 中風險日。
-                var hostRiskAgg = _aggregates.AggregateByHost(from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
+                var hostRiskAgg = _aggregates.AggregateByHost(exclusion, from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
                 // 用手上這份 visibleHosts 建索引，不再多打一次整份主機表（回饋二十七輪作業 F）：
                 // 聚合本身就是以 hostIds（＝可見主機）為範圍查的，索引不可能需要範圍外的主機
                 var hostsById = visibleHosts.ToDictionary(h => h.HostId);
                 ranked = RecordStatsBuilder.BuildHostRanking(hostRiskAgg, hostsById);
-                handlingDto = _handling.GetTodoByRange(from, to, riskLevels);
+                handlingDto = _handling.GetTodoByRange(exclusion, from, to, riskLevels);
             }
             // 待辦走 GetTodoByRange（見下方 Handling 欄位），這條分支從頭到尾不載入任何紀錄
         }
@@ -122,11 +127,11 @@ public class ReportService
             // 90 天區間下低風險列占絕大多數。與可見等級的交集由 QueryLightweight 既有機制處理。
             var actionableLevels = new[] { RiskLevels.High, RiskLevels.Medium };
             var records = _handling.FilterByScope(
-                _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to, RiskLevels = actionableLevels }), scope);
+                exclusion, _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to, RiskLevels = actionableLevels }), scope);
             recordsForTodo = records;
 
             var previousRecords = _handling.FilterByScope(
-                _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo, RiskLevels = actionableLevels }), scope);
+                exclusion, _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo, RiskLevels = actionableLevels }), scope);
 
             // 同上：QueryLightweight 已套可見範圍（RecordRepository.ApplyVisibility），
             // 撈回來的紀錄其主機必然在 visibleHosts 裡，不必再載一次整份主機表
@@ -137,7 +142,7 @@ public class ReportService
         }
 
         var allIssueRanked = _issueRanking.Build(
-            from, to, hostIds, visibleHosts.Count, visibleHosts);
+            exclusion, from, to, hostIds, visibleHosts.Count, visibleHosts);
         // §10.6：全部主機都已有結論的問題不佔用排行版面（與儀表板重點問題卡同一套規則）
         var (issueRanked, concludedIssueCount) = IssueRankingBuilder.ExcludeConcluded(allIssueRanked);
 
@@ -160,7 +165,7 @@ public class ReportService
             // 篩的日層級處理狀態不是同一件事
             Categories = RecordStatsBuilder.BuildCategoryCards(nothingVisible
                 ? new List<CategoryAggregate>()
-                : _aggregates.AggregateByCategory(from, to, hostIds, visibleSeverities, riskLevels)),
+                : _aggregates.AggregateByCategory(exclusion, from, to, hostIds, visibleSeverities, riskLevels)),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
@@ -170,6 +175,8 @@ public class ReportService
             RankedIssueCount = issueRanked.Count,
             IssueOthers = BuildIssueOthers(issueRanked),
             ConcludedIssueCount = concludedIssueCount,
+            // 「N 個靜音中的問題未列出」：與問題排行同一段期間與可見主機
+            MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, null, null),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,
@@ -178,7 +185,7 @@ public class ReportService
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
                 ? handlingDto ?? new HandlingTodoDto()
-                : _handling.GetTodo(recordsForTodo!)
+                : _handling.GetTodo(exclusion, recordsForTodo!)
         };
 
         return dto;

@@ -59,12 +59,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
         services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
         services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
+        services.AddSingleton<IWorkOrderStore>(sp => sp.GetRequiredService<StorageBackend>().WorkOrderStore());
 
         // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
         services.AddSingleton<IIssueAggregateQuery>(sp =>
             sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(sp.GetRequiredService<IHostStore>()));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
+        services.AddSingleton(sp => new WorkOrderBackfiller(sp.GetRequiredService<StorageBackend>().WorkOrderStore()));
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<AiUsageStore>(sp =>
@@ -292,6 +294,11 @@ public static class ServiceCollectionExtensions
         // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
         // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
         services.AddSingleton<DataVersionStamp>();
+        // 讀取側靜音排除條件（回饋第 47 輪批次 B-2a）：以 (版本戳, 今天) 快取一份，全站共用（與使用者無關）
+        services.AddSingleton<IIssueExclusionSource>(sp => new IssueExclusionProvider(
+            sp.GetRequiredService<IIssueOwnerStore>(),
+            sp.GetRequiredService<DataVersionStamp>(),
+            () => DateTime.Today));
         services.AddSingleton<SummaryCache>();
         // 「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）：同樣是 Singleton
         // ——它要吸收的正是「每次進詳情頁、每次批次儲存後」的重複詢問，跨請求才有意義。
@@ -328,11 +335,23 @@ public static class ServiceCollectionExtensions
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();
 
+        // 交辦單協調器：相依的 store 與 IssueCaseCoordinator 皆為 Singleton，本身沒有請求範圍狀態
+        services.AddSingleton<WorkOrderCoordinator>();
+
         // 處理狀態（原 HandlingService，依關注點拆為日層級／問題層級／查詢三個服務，
         // 共用 HandlingProgressCalculator 推導進度）
         services.AddScoped<HandlingProgressCalculator>();
         services.AddScoped<DayHandlingCommandService>();
         services.AddScoped<IssueHandlingCommandService>();
+
+        // 交辦單命令 API：依篩選建單／追加／改派／拆單／取消／代為結案（經 RecordListQueryService 共用範圍解析）
+        services.AddScoped<WorkOrderCommandService>();
+        // 交辦單查詢 API：清單／詳情／成員／時間軸（逐單授權在服務內）
+        services.AddScoped<WorkOrderQueryService>();
+        // 交辦單回覆（處理人本人；授權在服務內）
+        services.AddScoped<WorkOrderReplyService>();
+        // 交辦單負載看板／待派清單（派工試跑）／立即派工
+        services.AddScoped<WorkOrderBoardService>();
         services.AddScoped<HandlingHistoryQueryService>();
 
         services.AddScoped<PermissionChangeService>();
@@ -350,6 +369,9 @@ public static class ServiceCollectionExtensions
         // OccurrenceStatusResolver 皆已是 Singleton
         services.AddSingleton<MailIssueDigest>();
         services.AddSingleton<MailNotificationService>();
+
+        // 派工候選人快照：Singleton，相依全是 Singleton store（能力／可見範圍規則留在 Web，Core 只吃快照）
+        services.AddSingleton<IDispatchCandidateSource, DispatchCandidateSource>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊
@@ -407,6 +429,9 @@ public static class ServiceCollectionExtensions
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
+        services.AddHostedService<WorkOrderBackfillHostedService>();
+        // 案件逐日同步：列數超過就地門檻的案件意圖由背景分批展開
+        services.AddHostedService<CaseDaySyncHostedService>();
         services.AddSingleton<IssueFirstSeenSeedHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<IssueFirstSeenSeedHostedService>());
 

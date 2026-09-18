@@ -593,7 +593,8 @@ public sealed class CalibrationService
 
         // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 規則庫全部 PRTG 規則的門檻現值（含適用分類）
         var ruleFrom = anchorDate.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
-        var ruleHits = _issueQuery.AggregatePrtgRuleHits(ruleFrom, anchorDate, null);
+        // 靜音不排除：校準看的是規則實際命中量，靜音只是讀取側的顯示決定，排掉會讓門檻建議失真
+        var ruleHits = _issueQuery.AggregatePrtgRuleHits(IssueExclusion.None, ruleFrom, anchorDate, null);
 
         var allRules = KnownIssueCatalog.ResolveRules(_ruleStore);
         var prtgRules = allRules
@@ -887,7 +888,8 @@ public sealed class CalibrationService
         var stateSummary = _prtgStore.GetStateChangeCoverageSummary(from, toExclusive);
         var distinctDates = stateSummary.DistinctDates;
 
-        var ruleHits = _issueQuery.AggregatePrtgRuleHits(from, anchor.Date, null);
+        // 靜音不排除：校準看的是規則實際命中量，靜音只是讀取側的顯示決定，排掉會讓門檻建議失真
+        var ruleHits = _issueQuery.AggregatePrtgRuleHits(IssueExclusion.None, from, anchor.Date, null);
         var totalHits = ruleHits.Sum(h => h.HitCount);
 
         // 逐規則的 sensor-日數：門檻校準是逐規則進行的，四條加總會讓「down 只有 3 筆但

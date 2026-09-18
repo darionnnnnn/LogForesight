@@ -49,7 +49,7 @@ internal static class PrtgDailyPipeline
         var oldest = days[^1].Date;
 
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
@@ -224,7 +224,10 @@ internal static class PrtgDailyPipeline
                 ? prtgStore.GetHostMapForDate(newest)
                 : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
 
-            var allSuppressions = new SuppressionStore(backend.Blob("suppressions")).LoadAll();
+            // 包裝層：合成問題靜音項目（以紀錄日 day 判定，見下方逐主機標記）
+            var allSuppressions = new MuteAwareSuppressionStore(
+                new SuppressionStore(backend.Blob("suppressions")), new IssueOwnerStore(backend.Blob("issue_owners"))).LoadAll();
+            var allMutes = SuppressionFilter.MutesOf(allSuppressions);
 
             // 兩段式：處理最新一天的當下，較舊日期的 finding 還沒評估也還沒寫進資料庫，
             // 跨日判定只查資料庫會少算。所以先對全部日期評估並歸戶（不發佈），再逐日標註、抑制、發佈、追加。
@@ -330,8 +333,9 @@ internal static class PrtgDailyPipeline
             {
                 try
                 {
+                    // 靜音不排除：跨日判定是分析側事實（sensor 連續幾天命中），不是讀取側的顯示
                     dbHitDates = backend.IssueAggregateQuery(hostStore).GetPrtgFindingHitDates(
-                        allEventKeys, oldest.AddDays(-PrtgRuleCatalog.CrossDayWindowDays), newest);
+                        IssueExclusion.None, allEventKeys, oldest.AddDays(-PrtgRuleCatalog.CrossDayWindowDays), newest);
                 }
                 catch (OperationCanceledException)
                 {
@@ -390,7 +394,7 @@ internal static class PrtgDailyPipeline
                             ? (webHost.HostName, (IReadOnlyCollection<long>)webHost.GroupIds)
                             : (string.Empty, (IReadOnlyCollection<long>)Array.Empty<long>());
                         var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, hostName, hostGroupIds, DateTime.Now);
-                        suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions);
+                        suppressedCount += SuppressionFilter.MarkSuppressed(hostFindings, activeSuppressions, allMutes, day);
                         // 跨來源佐證的關聯抑制與 finding 抑制用同一份有效抑制，兩條追加路徑從登錄簿取用
                         suppressedPatternIdsByHost[hostId] = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
                     }
@@ -416,7 +420,7 @@ internal static class PrtgDailyPipeline
                             {
                                 appendedHosts++;
                                 corroboratedCount += hostCorroborated;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
                             }
                             else pendingHosts++;
                         }

@@ -23,6 +23,7 @@ public class DashboardService
 
     private readonly SummaryCache _summaryCache;
     private readonly EfPrtgStore _prtgStore;
+    private readonly IIssueExclusionSource _exclusions;
 
     public DashboardService(
         IVisibilityService visibility,
@@ -37,7 +38,8 @@ public class DashboardService
         IssueTodoQuery issueTodo,
         ISystemSettingsService systemSettings,
         SummaryCache summaryCache,
-        EfPrtgStore prtgStore)
+        EfPrtgStore prtgStore,
+        IIssueExclusionSource exclusions)
     {
         _prtgStore = prtgStore;
         _visibility = visibility;
@@ -52,6 +54,7 @@ public class DashboardService
         _issueTodo = issueTodo;
         _systemSettings = systemSettings;
         _summaryCache = summaryCache;
+        _exclusions = exclusions;
     }
 
     public DashboardDto GetSummary(int days)
@@ -64,12 +67,15 @@ public class DashboardService
         // 兩個可見主機集合相同、稽核權限不同的帳號共用同一筆快取就是把登入失敗數
         // 端給無權者（或讓有權者看到 0）。BuildSummary 內其餘內容不依個人能力分歧。
         var canViewAudit = _currentUser.Has(Auth.Capability.ViewAudit);
+        // 靜音排除條件本次請求只取一次：快取鍵與 BuildSummary 內全部查詢（含重點問題、可行動快照、
+        // 待辦）用同一份，跨午夜或設定變更時同一頁不會混用兩份規則
+        var exclusion = _exclusions.Current();
         return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}", visibleHosts.Select(h => h.HostId).ToList()),
-            () => BuildSummary(days, visibleHosts));
+            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|{exclusion.CacheToken}", visibleHosts.Select(h => h.HostId).ToList()),
+            () => BuildSummary(days, visibleHosts, exclusion));
     }
 
-    private DashboardDto BuildSummary(int days, List<WebHost> visibleHosts)
+    private DashboardDto BuildSummary(int days, List<WebHost> visibleHosts, IssueExclusion exclusion)
     {
         // 期間錨點＝昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
         // （AnalysisOrchestrator 固定分析 yesterday），錨在真實今天會讓「今天」按鈕查詢
@@ -97,14 +103,14 @@ public class DashboardService
 
         var hostRiskAgg = nothingVisible
             ? new List<HostRiskAggregate>()
-            : _aggregates.AggregateByHost(from, anchor, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
+            : _aggregates.AggregateByHost(exclusion, from, anchor, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
 
         // 風險類型卡（回饋十九輪批次D、二十輪批次B）：SQL 端聚合，與報表共用同一個查詢方法，
         // 可見嚴重度傳入 visibleSeverities（與下鑽依問題查詢相同），並傳入 riskLevels；全部隱藏時短路為空
         dto.Categories = nothingVisible
             ? new List<DashboardCategoryDto>()
             : RecordStatsBuilder.BuildCategoryCards(
-                _aggregates.AggregateByCategory(from, anchor, visibleHostIds, visibleSeverities, riskLevels));
+                _aggregates.AggregateByCategory(exclusion, from, anchor, visibleHostIds, visibleSeverities, riskLevels));
 
         dto.HostRanking = RecordStatsBuilder
             .BuildHostRanking(hostRiskAgg, visibleHosts.ToDictionary(h => h.HostId))
@@ -116,10 +122,12 @@ public class DashboardService
         // 在記憶體 GroupBy——6000 台 × 7 天約 4.2 萬筆紀錄、數十萬個問題物件，
         // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
         // 那是「今天有什麼不一樣」的唯一來源。
-        var ranked = _issueRanking.Build(from, anchor, visibleHostIds, visibleHosts.Count, visibleHosts);
+        var ranked = _issueRanking.Build(exclusion, from, anchor, visibleHostIds, visibleHosts.Count, visibleHosts);
         var (openIssues, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
         dto.TopIssues = openIssues.Take(5).ToList();
         dto.ConcludedTopIssueCount = concludedCount;
+        // 「N 個靜音中的問題未列出」：與重點問題排行同一段期間與可見主機（排行不套嚴重度／日風險等級母體）
+        dto.MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, anchor, visibleHostIds, null, null);
 
         // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
         (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();
@@ -131,7 +139,7 @@ public class DashboardService
         // 每個群組都是一趟 SQL＋三次批次載入，群組數不設上限時就是 4×N 次查詢的 N+1
         var actionableResolved = nothingVisible
             ? new List<ResolvedOccurrence>()
-            : _issueTodo.ResolveActionable(from, anchor, visibleHostIds, riskLevels, visibleSeverities: visibleSeverities);
+            : _issueTodo.ResolveActionable(exclusion, from, anchor, visibleHostIds, riskLevels, visibleSeverities: visibleSeverities);
         BuildGroupRisk(dto, hostRiskAgg, visibleHosts, actionableResolved);
 
         // 全站三個日數從同一個 KPI 聚合取（與報表同一支查詢）。刻意**不**用 hostRiskAgg 加總——
@@ -145,7 +153,7 @@ public class DashboardService
         }
         else
         {
-            var kpi = _aggregates.AggregateReportKpi(from, anchor, visibleHostIds, riskLevels, visibleSeverities);
+            var kpi = _aggregates.AggregateReportKpi(exclusion, from, anchor, visibleHostIds, riskLevels, visibleSeverities);
             dto.HighRiskDays = kpi.HighRiskDays;
             dto.MediumRiskDays = kpi.MediumRiskDays;
             dto.CoverageGapDays = kpi.CoverageGapDays;
@@ -153,7 +161,7 @@ public class DashboardService
             // 待辦走 GetTodoByRange：它負責墓碑主機的兩段相加（SQL 經 host_name 橋接對合併主機
             // 必然落空，那些主機另行以記憶體精算），母體（高＋中風險日）也由它內部強制套用。
             // 不要直接呼叫 AggregateDayTodo——那會漏掉墓碑、也漏掉 TotalCount
-            dto.Todo = _handling.GetTodoByRange(from, anchor, riskLevels);
+            dto.Todo = _handling.GetTodoByRange(exclusion, from, anchor, riskLevels);
         }
         // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
         dto.IssueTodo = IssueTodoQuery.Aggregate(actionableResolved);

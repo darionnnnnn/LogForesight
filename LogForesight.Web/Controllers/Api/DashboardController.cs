@@ -53,19 +53,22 @@ public class RunActivityController : ControllerBase
     private readonly IUserStore _users;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly ICurrentUser _currentUser;
+    private readonly IIssueCaseStore _cases;
 
     public RunActivityController(
         SchedulerRunState runState,
         AiAnalysisRunState aiRunState,
         IUserStore users,
         IUserDisplayNameService userDisplayNames,
-        ICurrentUser currentUser)
+        ICurrentUser currentUser,
+        IIssueCaseStore cases)
     {
         _runState = runState;
         _aiRunState = aiRunState;
         _users = users;
         _userDisplayNames = userDisplayNames;
         _currentUser = currentUser;
+        _cases = cases;
     }
 
     /// <summary>觸發者姓名屬維運資訊：與 <c>/api/admin/schedule/status</c> 同一道門檻，其餘角色為 null</summary>
@@ -98,6 +101,7 @@ public class RunActivityController : ControllerBase
                 TriggerText = _runState.IsRunning && CanSeeTrigger
                     ? RunTriggerText.Of(_runState.Trigger, _userDisplayNames, _users)
                     : null,
+                CaseDaySyncPending = _cases.CountDaySyncPending(),
                 // 取數分支：互斥判斷要分得出「取數在跑」與「只有 AI 在跑」（見 DTO 註解）
                 IsFetchRun = _runState.IsRunning
             });
@@ -115,6 +119,7 @@ public class RunActivityController : ControllerBase
             TriggerText = ai.IsRunning && CanSeeTrigger
                 ? RunTriggerText.Of(ai.Trigger, _userDisplayNames, _users)
                 : null,
+            CaseDaySyncPending = _cases.CountDaySyncPending(),
             // AI 分支：取數此時必定閒置（上面的分支沒進來），主機更新不該被擋
             IsFetchRun = false
         });

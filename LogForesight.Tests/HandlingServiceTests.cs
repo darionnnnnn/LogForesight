@@ -157,7 +157,7 @@ public class HandlingServiceTests : IDisposable
     }
 
     /// <summary>
-    /// 回饋十三輪，體檢 H1 殘餘：批次指派（IssueHandlingCommandService.BulkAssignIssueCase）
+    /// 回饋十三輪，體檢 H1 殘餘：交辦單與批次指派
     /// 已有「對方沒有處理能力」的提示，日層級指派原本沒有——同一套「不擋、只提示」決策，
     /// 同一個 UserCapabilityResolver 事實來源（沒有群組、也不是任何主機負責人，兩條授權路徑都不成立）。
     /// </summary>
@@ -1263,7 +1263,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(-3);
         _repository.AddRecord(_host.HostName, day, a);
 
-        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        Create(Capability.Assign, Capability.Handle, Capability.Maintain).BulkCloseIssue(new BulkCloseIssueRequest
         {
             Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知的雜訊來源",
             AutoApply = true
@@ -1274,6 +1274,27 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(IssueHandlingStatuses.KnownNoise, profile!.ConclusionStatus);
         Assert.Equal("已知的雜訊來源", profile.ConclusionNote);
         Assert.True(profile.AutoApply);
+    }
+
+    /// <summary>勾「之後自動套用」需要 Maintain：沒有時整筆 Forbidden，統一標記本身也不寫（檢查在任何寫入之前）</summary>
+    [Fact]
+    public void 統一標記_勾選自動套用但無Maintain_Forbidden且零寫入()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var ex = Assert.Throws<DomainException>(() => Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知的雜訊來源",
+            AutoApply = true
+        }));
+
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+        Assert.Null(_issueOwners.Get("disk", 153));
+        Assert.Empty(_issueHandlings.GetForDay(_host.HostName, day));
+        Assert.Empty(_handlings.GetLogs(_host.HostName, day));
+        Assert.Empty(_cases.GetMany(new[] { _host.HostName }));
     }
 
     /// <summary>不勾選時只處理既有日子，不建立／不動問題檔案的機房結論</summary>
@@ -1317,6 +1338,61 @@ public class HandlingServiceTests : IDisposable
         var row = Assert.Single(preview.Hosts);
         Assert.Contains("OOO", row.SkipReason);
         Assert.Equal(0, row.DayCount);
+    }
+
+    [Fact]
+    public void 統一結案預覽_案件查詢一次不逐台()
+    {
+        // 3 台主機
+        var hostB = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
+        var hostC = _hosts.Upsert(new WebHost { HostName = "SRV-C" });
+
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+        _repository.AddRecord(hostB.HostName, day, a);
+        _repository.AddRecord(hostC.HostName, day, a);
+
+        // 1 台有別人的進行中案件（處理人＝OOO）
+        _cases.Save(new IssueCase
+        {
+            CaseId = "CASE-1",
+            HostName = _host.HostName,
+            IssueKey = IssueSignatureKey.For(a),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = _owner.UserId,
+            FirstLinkedDate = day,
+            LastLinkedDate = day
+        });
+
+        var countingCases = new CountingIssueCaseStore(_cases);
+        var coordinator = new IssueCaseCoordinator(countingCases, _issueHandlings, _handlings, _repository, _hosts, new FakeIssueOwnerStore());
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle);
+        var facade = new HandlingServiceFacade(
+            store: _handlings,
+            issueStore: _issueHandlings,
+            cases: countingCases,
+            caseCoordinator: coordinator,
+            noiseMarks: _noiseMarks,
+            repository: _repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: new AlwaysVisibleService(_hosts),
+            currentUser: currentUser,
+            audit: _audit,
+            settings: _settings,
+            groups: null,
+            issueOwners: _issueOwners);
+
+        var preview = facade.PreviewBulkClose("disk", 153, null, null);
+
+        Assert.Equal(0, countingCases.GetOpenCalls);
+        Assert.Equal(1, countingCases.GetOpenManyCalls);
+        Assert.Equal(3, preview.Hosts.Count);
+
+        var skipped = preview.Hosts.Single(h => string.Equals(h.HostName, _host.HostName, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(_owner.DisplayName, skipped.SkipReason);
     }
 
     /// <summary>
@@ -1664,56 +1740,6 @@ public class HandlingServiceTests : IDisposable
         Assert.Contains(_handlings.GetLogs(_host.HostName, day), l => l.Action == HandlingActions.CaseReassign);
     }
 
-    /// <summary>§11：跨主機一次回覆——自己名下的全部進行中案件同步更新</summary>
-    [Fact]
-    public void 跨主機回覆_更新自己名下的全部案件()
-    {
-        var day = Today.AddDays(-44);
-        var a = Issue("disk", 153);
-        var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
-        _repository.AddRecord(_host.HostName, day, a);
-        _repository.AddRecord(second.HostName, day, a);
-
-        var service = Create(Capability.Assign, Capability.Handle);
-        service.Assign(_host.HostId, day, _other.UserId);     // 目前使用者
-        service.Assign(second.HostId, day, _other.UserId);
-
-        var result = service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
-        {
-            Source = "disk", EventId = 153,
-            Status = IssueHandlingStatuses.Resolved,
-            Note = "已更換硬碟"
-        });
-
-        Assert.Equal(2, result.UpdatedCaseCount);
-        Assert.Equal(new[] { "SRV-A", "SRV-B" }, result.HostNames);
-        // 結案類會讓案件本身結案（沿用 SyncStatus 既有語意）
-        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));
-        Assert.Null(_cases.GetOpen(second.HostName, IssueSignatureKey.For(a)));
-    }
-
-    /// <summary>§11：別人名下的案件不受影響——這是「回覆自己手上的工作」，不是代人回覆</summary>
-    [Fact]
-    public void 跨主機回覆_不動別人名下的案件()
-    {
-        var day = Today.AddDays(-45);
-        var a = Issue("disk", 153);
-        _repository.AddRecord(_host.HostName, day, a);
-
-        var service = Create(Capability.Assign, Capability.Handle);
-        service.Assign(_host.HostId, day, _owner.UserId);   // 指派給別人
-
-        var ex = Assert.Throws<DomainException>(() =>
-            service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
-            {
-                Source = "disk", EventId = 153,
-                Status = IssueHandlingStatuses.Resolved
-            }));
-
-        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
-        Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
-    }
-
     // ── 無法處理（escalated，回饋十八輪批次G）────────────────────────────────
 
     /// <summary>問題層級標無法處理必填原因——admin 要據此決定結案或改派，後端擋不只信前端</summary>
@@ -1869,34 +1895,153 @@ public class HandlingServiceTests : IDisposable
         Assert.DoesNotContain("2 個問題", second.Message.Body);
     }
 
-    /// <summary>跨主機一次回覆轉入無法處理寄一封；同一批案件已是無法處理時再回覆不重寄。</summary>
+    /// <summary>
+    /// 一張交辦單一次回覆轉入無法處理寄一封；同一張單全部成員都已是無法處理時再回覆不重寄。
+    /// 入口改走交辦單回覆（原本借已退役的跨主機端點驗，行為本身沒變）。
+    /// </summary>
     [Fact]
-    public void BulkSetIssueStatusByHandler_轉入無法處理通知一次_已上報再回覆不重寄()
+    public void 交辦單回覆_轉入無法處理通知一次_已上報再回覆不重寄()
     {
         var day = Today.AddDays(-3);
         var a = Issue("disk", 153);
         var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
         _repository.AddRecord(_host.HostName, day, a);
         _repository.AddRecord(second.HostName, day, a);
-        var mail = CreateMail();
-        var service = CreateWithMail(mail, Capability.Assign, Capability.Handle);
-        service.Assign(_host.HostId, day, _other.UserId);
-        service.Assign(second.HostId, day, _other.UserId);
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Handle);
+        var (_, orders, coordinator) = CreateIssueServiceWithOrders(currentUser);
+        var reply = new WorkOrderReplyService(coordinator, orders, _cases, currentUser, _audit, CreateMail());
+        var id = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName, second.HostName);
 
-        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        reply.Reply(id, new WorkOrderReplyRequest
         {
-            Source = "disk", EventId = 153,
-            Status = IssueHandlingStatuses.Escalated,
-            Note = "需要外部廠商"
+            Status = IssueHandlingStatuses.Escalated, Note = "需要外部廠商"
         });
         Assert.Single(_mailSender.Sent);
 
-        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        reply.Reply(id, new WorkOrderReplyRequest
         {
-            Source = "disk", EventId = 153,
-            Status = IssueHandlingStatuses.Escalated,
-            Note = "追加說明"
+            Status = IssueHandlingStatuses.Escalated, Note = "追加說明"
         });
         Assert.Single(_mailSender.Sent);
+    }
+
+    // ── 交辦單回覆時間同步（回饋第 47 輪 D-1）────────────────────────────────────────
+
+    /// <summary>直接組 <see cref="IssueHandlingCommandService"/>，拿得到交辦單 store 以便斷言（門面內的 store 取不到）</summary>
+    private (IssueHandlingCommandService Service, FakeWorkOrderStore Orders, WorkOrderCoordinator Coordinator) CreateIssueServiceWithOrders(ICurrentUser currentUser)
+    {
+        var orders = new FakeWorkOrderStore(_cases);
+        var coordinator = new WorkOrderCoordinator(orders, _cases, _issueHandlings, _caseCoordinator, _handlings, _hosts);
+        var displayNames = new UserDisplayNameService(_settings);
+        var service = new IssueHandlingCommandService(
+            _handlings, _issueHandlings, _cases, _caseCoordinator, coordinator, _noiseMarks, _repository, _hosts, _users,
+            new AlwaysVisibleService(_hosts), currentUser, _audit,
+            new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings, new FixedIssueExclusionSource(IssueExclusion.None)),
+            new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator),
+            displayNames);
+        return (service, orders, coordinator);
+    }
+
+    private static long CreateWorkOrder(WorkOrderCoordinator coordinator, long handlerId, LogIssueSignature issue, DateTime day, params string[] hosts) =>
+        coordinator.Create(new WorkOrderCreateRequest
+        {
+            Source = issue.Source, EventId = issue.EventId, IssueLabel = $"{issue.Source} {issue.EventId}", HandlerId = handlerId,
+            Members = hosts.Select(h => new WorkOrderMember
+            {
+                HostName = h, IssueKey = IssueSignatureKey.For(issue), IssueLabel = $"{issue.Source} {issue.EventId}", TriggerDate = day
+            }).ToList(),
+            Actor = new WorkOrderActor { ActorAccount = "boss", OccurredAt = DateTime.Now.AddHours(-1) }
+        }).WorkOrderId;
+
+    [Fact]
+    public void 詳情頁標記_處理人本人_所屬單LastReplyAt更新_事件數不變()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var (service, orders, coordinator) = CreateIssueServiceWithOrders(FakeCurrentUser.ForUser(_other.UserId, Capability.Handle));
+        var id = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName);
+        var eventsBefore = orders.ListEvents(id).Count;
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.InProgress, Note = "處理中"
+        });
+
+        Assert.NotNull(orders.Get(id)!.LastReplyAt);
+        Assert.Equal(eventsBefore, orders.ListEvents(id).Count);
+    }
+
+    [Fact]
+    public void 詳情頁標記_管理者代標非處理人_LastReplyAt不變()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var admin = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle, Capability.ViewAll);
+        var (service, orders, coordinator) = CreateIssueServiceWithOrders(admin);
+
+        // 有處理人的案件：管理者本來就被擋（改狀態要走改派），單不動
+        var owned = CreateWorkOrder(coordinator, _owner.UserId, a, day, _host.HostName);
+        Assert.Throws<DomainException>(() => service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.InProgress, Note = "代標"
+        }));
+        Assert.Null(orders.Get(owned)!.LastReplyAt);
+
+        // 案件在單上但沒有處理人（整併前舊資料）：標記會寫入，但標記的人不是處理人，不算回覆
+        var openCase = _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!;
+        openCase.HandlerId = null;
+        _cases.Save(openCase);
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.InProgress, Note = "代標"
+        });
+
+        Assert.Equal(IssueHandlingStatuses.InProgress, result.Status);
+        Assert.Equal(owned, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.WorkOrderId);
+        Assert.Null(orders.Get(owned)!.LastReplyAt);
+    }
+
+    private sealed class CountingIssueCaseStore : IIssueCaseStore
+    {
+        private readonly FakeIssueCaseStore _inner;
+        public int GetOpenCalls { get; private set; }
+        public int GetOpenManyCalls { get; private set; }
+
+        public CountingIssueCaseStore(FakeIssueCaseStore inner) => _inner = inner;
+
+        public IssueCase? GetOpen(string hostName, string issueKey)
+        {
+            GetOpenCalls++;
+            return _inner.GetOpen(hostName, issueKey);
+        }
+
+        public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId)
+        {
+            GetOpenManyCalls++;
+            return _inner.GetOpenMany(hostNames, source, eventId);
+        }
+
+        public IssueCase? Get(string caseId) => _inner.Get(caseId);
+        public List<IssueCase> GetByHandler(long userId) => _inner.GetByHandler(userId);
+        public bool HasCaseOnHost(long handlerId, string hostName) => _inner.HasCaseOnHost(handlerId, hostName);
+        public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) => _inner.IssueKeysOnHost(handlerId, hostName);
+        public List<string> HostNamesWithCases(long handlerId) => _inner.HostNamesWithCases(handlerId);
+        public List<IssueCase> GetResolvedSince(DateTime since) => _inner.GetResolvedSince(since);
+        public List<IssueCase> GetOpenForHost(string hostName) => _inner.GetOpenForHost(hostName);
+        public List<IssueCase> GetMany(IEnumerable<string> hostNames) => _inner.GetMany(hostNames);
+        public List<IssueCase> GetOpenByHandler(long userId) => _inner.GetOpenByHandler(userId);
+        public List<(string HostNameKey, string IssueKey)> GetOpenKeys() => _inner.GetOpenKeys();
+        public void SaveMany(IEnumerable<IssueCase> cases) => _inner.SaveMany(cases);
+        public void Save(IssueCase issueCase) => _inner.Save(issueCase);
+        public List<IssueCase> GetOpenByIssue(string source, int eventId) => _inner.GetOpenByIssue(source, eventId);
+        public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) => _inner.GetByWorkOrder(workOrderId, skip, take);
+        public int CountByWorkOrder(long workOrderId) => _inner.CountByWorkOrder(workOrderId);
+        public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q) => _inner.QueryMembers(q);
+        public List<IssueCase> GetDaySyncPending(int take) => _inner.GetDaySyncPending(take);
+        public int CountDaySyncPending() => _inner.CountDaySyncPending();
+        public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent) => _inner.ClearDaySyncPendingIfUnchanged(caseId, intent);
     }
 }

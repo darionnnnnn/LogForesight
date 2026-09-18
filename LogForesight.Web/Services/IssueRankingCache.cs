@@ -32,13 +32,14 @@ public class IssueRankingCache
 
     public IssueRankingCache(Func<DateTime>? now = null) => _now = now ?? (() => DateTime.Now);
 
-    /// <summary>組鍵：區間＋可見範圍＋主機總數。主機 id 排序後串起，順序不同的同一集合是同一鍵。</summary>
-    public static string KeyOf(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts)
+    /// <summary>組鍵：區間＋可見範圍＋主機總數＋靜音排除（<see cref="IssueExclusion.CacheToken"/>）。
+    /// 主機 id 排序後串起，順序不同的同一集合是同一鍵。靜音設定或換日改變時鍵跟著變，不等 TTL。</summary>
+    public static string KeyOf(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts, string exclusionToken)
     {
         var hosts = visibleHostIds == null
             ? "*"
             : string.Join(",", visibleHostIds.OrderBy(id => id));
-        return $"{from:yyyyMMdd}|{to:yyyyMMdd}|{totalHosts}|{hosts}";
+        return $"{from:yyyyMMdd}|{to:yyyyMMdd}|{totalHosts}|{exclusionToken}|{hosts}";
     }
 
     /// <summary>命中回傳**副本**——呼叫端會 Take／篩選，不能讓它改到共用清單。</summary>

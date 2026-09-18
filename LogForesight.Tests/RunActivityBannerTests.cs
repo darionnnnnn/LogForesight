@@ -30,7 +30,7 @@ public class RunActivityBannerTests : IDisposable
     private RunActivityController CreateRunActivityController(
         SchedulerRunState runState, AiAnalysisRunState aiRunState, ICurrentUser? currentUser = null) =>
         new(runState, aiRunState, _users, _displayNames,
-            currentUser ?? FakeCurrentUser.WithCapabilities(Capability.DevMonitor));
+            currentUser ?? FakeCurrentUser.WithCapabilities(Capability.DevMonitor), new FakeIssueCaseStore());
 
     private ScheduleController CreateScheduleController(SchedulerRunState runState, AiAnalysisRunState aiRunState) =>
         new(

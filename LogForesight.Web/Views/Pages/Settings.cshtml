@@ -720,10 +720,14 @@
                     <input type="time" class="form-control form-control-sm lf-time-input" id="mail-weekly-time" />
                 </div>
             </div>
-            <div class="form-check mb-3">
+            <div class="form-check mb-2">
                 <input class="form-check-input" type="checkbox" id="mail-digest-skip-empty" />
                 <label class="form-check-label" for="mail-digest-skip-empty">期間內無達門檻風險日時不寄摘要信</label>
                 <div class="form-text">預設仍照寄——「期間內無事」的信同時是系統存活訊號，關閉後只在有達門檻風險日時才收到每日／每週摘要。</div>
+            </div>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="mail-notify-work-orders" />
+                <label class="form-check-label" for="mail-notify-work-orders">交辦單通知（建立／改派／取消與夜間摘要）</label>
             </div>
 
             <hr />
@@ -751,6 +755,30 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" id="mail-test-btn">測試寄信</button>
             </div>
             <div id="mail-test-result"></div>
+
+            <hr />
+
+            <h3 class="h6">自動派工</h3>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="auto-dispatch-enabled" />
+                <label class="form-check-label" for="auto-dispatch-enabled">夜間分析後自動派工</label>
+            </div>
+            <div class="text-warning small mb-2 d-none" id="auto-dispatch-no-pool-warning">
+                目前沒有任何使用者群組被設為派工池，自動派工不會派出任何單。請到「群組與授權」設定。
+            </div>
+            <div class="lf-hint mb-1">
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
+                <span>候選人：派工池群組的成員，排除已暫停接單、看不到該主機的人。</span>
+            </div>
+            <div class="lf-hint mb-1">
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
+                <span>負載：以目前進行中交辦單的進行中成員數計算，挑最輕的人。</span>
+            </div>
+            <div class="lf-hint mb-3">
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
+                <span>不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾。</span>
+            </div>
+            <div id="auto-dispatch-alert-tools"></div>
         </div>
     </div>
 

@@ -76,6 +76,46 @@ public sealed class EfJsonLogStore
         }
     }
 
+    /// <summary>批次附加多行（依清單順序取得遞增 seq）：一個 context、分批 SaveChanges，
+    /// 取代迴圈逐行 <see cref="AppendLine"/>（每行一次連線與交易）</summary>
+    public void AppendLines(IReadOnlyList<string> lines)
+    {
+        if (lines.Count == 0) return;
+
+        lock (_lock)
+        {
+            using var probe = _contextFactory();
+            var strategy = probe.Database.CreateExecutionStrategy();
+
+            strategy.Execute(() =>
+            {
+                using var ctx = _contextFactory();
+                using var tx = ctx.Database.BeginTransaction();
+
+                const int batchSize = 1000;
+                for (var i = 0; i < lines.Count; i += batchSize)
+                {
+                    var count = Math.Min(batchSize, lines.Count - i);
+                    var batch = new List<LogLineRow>(count);
+                    for (var j = 0; j < count; j++)
+                    {
+                        batch.Add(new LogLineRow
+                        {
+                            LogKey = _key,
+                            Line = lines[i + j],
+                            CreatedAt = DateTime.Now
+                        });
+                    }
+                    ctx.LogLines.AddRange(batch);
+                    ctx.SaveChanges();
+                }
+
+                tx.Commit();
+            });
+        }
+    }
+
+
     /// <summary>
     /// 刪除附加時間早於 cutoff 的行，回傳刪除筆數（docs/archive/HISTORY.md P0-3）。
     /// 附加時間是**寫入時的插入時間戳記**，不是行內容解析出的業務日期——這批資料多是

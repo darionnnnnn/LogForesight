@@ -31,7 +31,7 @@ public class MailIssueDigestTests : IDisposable
     {
         var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
-        return new MailIssueDigest(aggregates, statusResolver, _settings);
+        return new MailIssueDigest(aggregates, statusResolver, _settings, new FixedIssueExclusionSource(IssueExclusion.None));
     }
 
     private static LogIssueSignature Issue(

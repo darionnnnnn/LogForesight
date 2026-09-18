@@ -50,7 +50,7 @@ public class MailNotificationServiceTests : IDisposable
     private MailNotificationService CreateWithIssueDigest()
     {
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore);
-        var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore);
+        var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
         return new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
             new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates, issueDigest);
     }
@@ -464,6 +464,54 @@ public class MailNotificationServiceTests : IDisposable
         await Create().NotifyAfterRunAsync();
 
         Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
+    }
+
+    /// <summary>命中問題負責人規則的問題若被抑制（含靜音），不觸發問題負責人路由，落回主機負責人。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_命中負責人規則的問題被抑制時不通知問題負責人而落回主機負責人()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+
+        var issue = Issue("disk", 153);
+        issue.Suppressed = true;
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: issue));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);   // 全域收件人 ops + 主機負責人 hostowner
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local" && s.Message.Body.Contains("host1"));
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local");
+    }
+
+    /// <summary>同日有多個問題命中負責人規則時，被抑制問題的負責人不收到，但未抑制問題的負責人仍正常收到，且不落回主機負責人。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_同日另有未抑制問題命中時問題負責人仍收到()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var ownerA = _users.Upsert(new WebUser { Account = "ownera", Email = "ownera@test.local", Active = true });
+        var ownerB = _users.Upsert(new WebUser { Account = "ownerb", Email = "ownerb@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { ownerA.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { ownerB.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+
+        var issueA = Issue("disk", 153);
+        issueA.Suppressed = true;
+        var issueB = Issue("network", 999);
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: new[] { issueA, issueB }));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);   // 全域收件人 ops + 問題負責人 ownerb
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "ownerb@test.local" && s.Message.Body.Contains("host1"));
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "ownera@test.local");
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
     }
 
     /// <summary>同一批通知裡，不同主機日各自路由到不同對象——這是逐 record 的判定，不是全站開關。</summary>
@@ -1197,6 +1245,325 @@ public class MailNotificationServiceTests : IDisposable
         await Create().NotifyEscalationAsync(Notice());
 
         Assert.Empty(_sender.Sent);
+    }
+
+    // ── NotifyWorkOrderAsync：交辦單通知（回饋第 47 輪 E-1b）───────────────────────
+
+    private static WorkOrderNotice MakeWorkOrderNotice(
+        string kind = WorkOrderNoticeKinds.Created,
+        long workOrderId = 101,
+        string issueLabel = "Schannel 36888",
+        string? plainExplanation = "TLS 握手失敗",
+        int hostCount = 2,
+        IReadOnlyList<string>? hostNames = null,
+        string? note = "請優先排查",
+        DateTime? dueDate = null,
+        string recipientAccount = "engineer1",
+        string? recipientEmail = "eng1@test.local",
+        string actorAccount = "lead1",
+        string? reason = null) =>
+        new(kind, workOrderId, issueLabel, plainExplanation, hostCount,
+            hostNames ?? new[] { "host-a", "host-b" }, note, dueDate,
+            recipientAccount, recipientEmail, actorAccount, reason);
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_建立通知寄給處理人且內容含單號主機數與期限()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var dueDate = DateTime.Today.AddDays(3);
+        var notice = MakeWorkOrderNotice(dueDate: dueDate);
+
+        await Create().NotifyWorkOrderAsync(notice);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "eng1@test.local" }, sent.Message.To);
+        Assert.Contains("交辦", sent.Message.Subject);
+        Assert.Contains("Schannel 36888（2 台）", sent.Message.Subject);
+        Assert.Contains("lead1 交辦了一張單給你：Schannel 36888", sent.Message.Body);
+        Assert.Contains("單號：101", sent.Message.Body);
+        Assert.Contains("說明：TLS 握手失敗", sent.Message.Body);
+        Assert.Contains("主機數：2", sent.Message.Body);
+        Assert.Contains("主機：host-a、host-b", sent.Message.Body);
+        Assert.Contains("交辦說明：請優先排查", sent.Message.Body);
+        Assert.Contains($"期限：{dueDate:yyyy-MM-dd}", sent.Message.Body);
+        Assert.Contains("請至站台的「交辦單」頁檢視單號 101。", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_超過20台只列前20台並註明總數()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var hostNames = Enumerable.Range(1, 25).Select(i => $"host-{i:D2}").ToList();
+        var notice = MakeWorkOrderNotice(hostCount: 25, hostNames: hostNames);
+
+        await Create().NotifyWorkOrderAsync(notice);
+
+        var sent = Assert.Single(_sender.Sent);
+        var first20 = string.Join("、", hostNames.Take(20));
+        Assert.Contains($"主機：{first20}…等 25 台", sent.Message.Body);
+        Assert.DoesNotContain("host-21", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_移交與取消的主旨類型不同()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var service = Create();
+
+        var transferNotice = MakeWorkOrderNotice(
+            kind: WorkOrderNoticeKinds.Transferred,
+            workOrderId: 201,
+            issueLabel: "Disk Full",
+            actorAccount: "admin1",
+            reason: "改由 DBA 處理");
+        var cancelNotice = MakeWorkOrderNotice(
+            kind: WorkOrderNoticeKinds.Cancelled,
+            workOrderId: 202,
+            issueLabel: "Memory Leak",
+            actorAccount: "admin2",
+            reason: "誤判已結案");
+
+        await service.NotifyWorkOrderAsync(transferNotice);
+        await service.NotifyWorkOrderAsync(cancelNotice);
+
+        Assert.Equal(2, _sender.Sent.Count);
+
+        var sentTransfer = _sender.Sent[0];
+        Assert.Contains("交辦移交", sentTransfer.Message.Subject);
+        Assert.Contains("Disk Full 已移交", sentTransfer.Message.Subject);
+        Assert.Contains("已由 admin1 移交給其他處理人", sentTransfer.Message.Body);
+        Assert.Contains("原因：改由 DBA 處理", sentTransfer.Message.Body);
+
+        var sentCancel = _sender.Sent[1];
+        Assert.Contains("交辦取消", sentCancel.Message.Subject);
+        Assert.Contains("Memory Leak 已取消", sentCancel.Message.Subject);
+        Assert.Contains("已由 admin2 取消，其中的主機已調回未處理", sentCancel.Message.Body);
+        Assert.Contains("原因：誤判已結案", sentCancel.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_開關關閉時不寄()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = false);
+        var notice = MakeWorkOrderNotice();
+
+        await Create().NotifyWorkOrderAsync(notice);
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderAsync_處理人沒有email時不寄也不拋例外()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        var noticeEmpty = MakeWorkOrderNotice(recipientEmail: "");
+        var noticeWhitespace = MakeWorkOrderNotice(recipientEmail: "   ");
+        var noticeNull = MakeWorkOrderNotice(recipientEmail: null);
+
+        var service = Create();
+        await service.NotifyWorkOrderAsync(noticeEmpty);
+        await service.NotifyWorkOrderAsync(noticeWhitespace);
+        await service.NotifyWorkOrderAsync(noticeNull);
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    // ── NotifyWorkOrderDigestAsync：夜間交辦摘要信（回饋第 47 輪 E-1e）─────────────
+
+    [Fact]
+    public async Task NotifyWorkOrderDigestAsync_每位處理人一封且列出各自的單()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
+        _users.Upsert(new WebUser { UserId = 2, Account = "eng2", Email = "eng2@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
+                    new(102, CreatedThisRun: false, AddedMembers: 5, IssueLabel: "DCOM 10016"),
+                },
+                [2] = new List<NightlyDispatchOrderLine>
+                {
+                    new(201, CreatedThisRun: true, AddedMembers: 2, IssueLabel: "Schannel 36888"),
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        Assert.Equal(2, _sender.Sent.Count);
+
+        var sent1 = _sender.Sent[0];
+        Assert.Equal(new[] { "eng1@test.local" }, sent1.Message.To);
+        Assert.Contains("交辦摘要", sent1.Message.Subject);
+        Assert.Contains("新交辦 1 張、新增 8 台", sent1.Message.Subject);
+        Assert.Contains("昨夜的分析替你派了以下交辦單：", sent1.Message.Body);
+        Assert.Contains("單號 101：disk 153（新建，3 台）", sent1.Message.Body);
+        Assert.Contains("單號 102：DCOM 10016（新增 5 台）", sent1.Message.Body);
+        Assert.Contains("請至站台的「交辦單」頁檢視。", sent1.Message.Body);
+        Assert.DoesNotContain("201", sent1.Message.Body);
+        Assert.DoesNotContain("Schannel", sent1.Message.Body);
+
+        var sent2 = _sender.Sent[1];
+        Assert.Equal(new[] { "eng2@test.local" }, sent2.Message.To);
+        Assert.Contains("交辦摘要", sent2.Message.Subject);
+        Assert.Contains("新交辦 1 張、新增 2 台", sent2.Message.Subject);
+        Assert.Contains("昨夜的分析替你派了以下交辦單：", sent2.Message.Body);
+        Assert.Contains("單號 201：Schannel 36888（新建，2 台）", sent2.Message.Body);
+        Assert.Contains("請至站台的「交辦單」頁檢視。", sent2.Message.Body);
+        Assert.DoesNotContain("101", sent2.Message.Body);
+        Assert.DoesNotContain("102", sent2.Message.Body);
+        Assert.DoesNotContain("disk 153", sent2.Message.Body);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderDigestAsync_開關關閉時不寄()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = false);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyWorkOrderDigestAsync_處理人沒有email時略過其他人照寄()
+    {
+        EnableMail(s => s.MailNotifyWorkOrders = true);
+        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "", Active = true });
+        _users.Upsert(new WebUser { UserId = 2, Account = "eng2", Email = "eng2@test.local", Active = true });
+
+        var summary = new NightlyDispatchSummary
+        {
+            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
+            {
+                [1] = new List<NightlyDispatchOrderLine>
+                {
+                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
+                },
+                [2] = new List<NightlyDispatchOrderLine>
+                {
+                    new(201, CreatedThisRun: true, AddedMembers: 2, IssueLabel: "Schannel 36888"),
+                }
+            }
+        };
+
+        await Create().NotifyWorkOrderDigestAsync(summary);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "eng2@test.local" }, sent.Message.To);
+        Assert.Contains("單號 201：Schannel 36888（新建，2 台）", sent.Message.Body);
+        Assert.DoesNotContain("101", sent.Message.Body);
+    }
+
+    // ── 週報靜音中問題段（回饋第 47 輪 E-1e）─────────────────────────────────────
+
+    [Fact]
+    public async Task 週報_有目前靜音中的問題時附靜音段()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var now = new DateTime(2026, 8, 10, 9, 0, 0);
+        EnableMail(s =>
+        {
+            s.MailWeeklyEnabled = true;
+            s.MailWeeklyDayOfWeek = now.DayOfWeek.ToString();
+            s.MailWeeklyTime = "08:00";
+        });
+        var to = now.Date.AddDays(-1);
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host1.HostId, "host1", to, RiskLevels.High));
+
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "disk",
+            EventId = 153,
+            Mutes = new List<MuteInterval>
+            {
+                new()
+                {
+                    From = now.Date.AddDays(-2),
+                    To = now.Date.AddDays(5),
+                    Reason = "更換硬碟",
+                    ByAccount = "alice"
+                }
+            }
+        });
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "DCOM",
+            EventId = 10016,
+            Mutes = new List<MuteInterval>
+            {
+                new()
+                {
+                    From = now.Date.AddDays(-10),
+                    To = now.Date.AddDays(-1),
+                    Reason = "已排查完畢",
+                    ByAccount = "bob"
+                }
+            }
+        });
+
+        await Create().CheckAndSendDailyWeeklyAsync(now);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("目前靜音中的問題（共 1 個，到期後恢復告警）：", sent.Message.Body);
+        Assert.Contains($"disk/153：靜音至 {now.Date.AddDays(5):yyyy-MM-dd}｜原因：更換硬碟｜設定者：alice", sent.Message.Body);
+        Assert.DoesNotContain("DCOM/10016", sent.Message.Body);
+        Assert.DoesNotContain("已排查完畢", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task 週報_沒有靜音中的問題時不出現靜音段()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var now = new DateTime(2026, 8, 10, 9, 0, 0);
+        EnableMail(s =>
+        {
+            s.MailWeeklyEnabled = true;
+            s.MailWeeklyDayOfWeek = now.DayOfWeek.ToString();
+            s.MailWeeklyTime = "08:00";
+        });
+        var to = now.Date.AddDays(-1);
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host1.HostId, "host1", to, RiskLevels.High));
+
+        _issueOwners.Upsert(new IssueProfile
+        {
+            SourceName = "DCOM",
+            EventId = 10016,
+            Mutes = new List<MuteInterval>
+            {
+                new()
+                {
+                    From = now.Date.AddDays(-10),
+                    To = now.Date.AddDays(-1),
+                    Reason = "已過期",
+                    ByAccount = "bob"
+                }
+            }
+        });
+
+        await Create().CheckAndSendDailyWeeklyAsync(now);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.DoesNotContain("目前靜音中的問題", sent.Message.Body);
     }
 }
 

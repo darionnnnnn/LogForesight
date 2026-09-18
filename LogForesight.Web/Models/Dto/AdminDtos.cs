@@ -24,6 +24,9 @@ public class UserDto
     /// 「這個人沒權限，可以不用管」。
     /// </summary>
     public int OwnedHostCount { get; set; }
+
+    /// <summary>暫停接單：夜間自動派工跳過此人</summary>
+    public bool DispatchPaused { get; set; }
 }
 
 /// <summary>
@@ -99,6 +102,9 @@ public class UserAssignmentHistoryDto
     /// <summary>案件涵蓋的風險日區間（首見～最近掛接）</summary>
     public string FirstLinkedDate { get; set; } = string.Empty;
     public string LastLinkedDate { get; set; } = string.Empty;
+
+    /// <summary>案件所屬交辦單；舊案件未整併時為 null</summary>
+    public long? WorkOrderId { get; set; }
 }
 
 public class SaveUserRequest
@@ -119,6 +125,11 @@ public class SaveUserRequest
 public class SetUserGroupsRequest
 {
     public List<long> GroupIds { get; set; } = new();
+}
+
+public class SetUserDispatchPausedRequest
+{
+    public bool Paused { get; set; }
 }
 
 /// <summary>
@@ -160,6 +171,14 @@ public class UserGroupDto
     public bool Builtin { get; set; }
     public bool Active { get; set; }
     public int MemberCount { get; set; }
+
+    /// <summary>派工池：此群組的成員為夜間自動派工的候選人</summary>
+    public bool DispatchPool { get; set; }
+}
+
+public class SetGroupDispatchPoolRequest
+{
+    public bool InPool { get; set; }
 }
 
 public class SaveUserGroupRequest

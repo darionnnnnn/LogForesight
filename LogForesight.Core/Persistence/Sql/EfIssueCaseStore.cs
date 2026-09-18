@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -80,6 +81,46 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             .ToList();
     }
 
+    public bool HasCaseOnHost(long handlerId, string hostName)
+    {
+        var key = HostNameKey.Of(hostName);
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Any(c => c.HandlerId == handlerId && c.HostNameKey == key);
+    }
+
+    public HashSet<string> IssueKeysOnHost(long handlerId, string hostName)
+    {
+        var key = HostNameKey.Of(hostName);
+        using var ctx = _contextFactory();
+        var keys = ctx.IssueCases.AsNoTracking()
+            .Where(c => c.HandlerId == handlerId && c.HostNameKey == key)
+            .Select(c => c.IssueKey)
+            .ToList();
+        return new HashSet<string>(keys, StringComparer.Ordinal);
+    }
+
+    public List<string> HostNamesWithCases(long handlerId)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.HandlerId == handlerId)
+            .Select(c => c.HostName)
+            .Distinct()
+            .OrderBy(h => h)
+            .ToList();
+    }
+
+    public List<IssueCase> GetResolvedSince(DateTime since)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.ClosedAt != null && c.ClosedAt >= since && c.Status == IssueHandlingStatuses.Resolved)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
     public IssueCase? Get(string caseId)
     {
         using var ctx = _contextFactory();
@@ -117,6 +158,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         row.LastLinkedDate = issueCase.LastLinkedDate;
         row.ClosedAt = issueCase.ClosedAt;
         row.UpdatedAt = issueCase.UpdatedAt;
+        ApplyMemberColumns(issueCase, row);
 
         SaveWithConflictTranslation(ctx);
     }
@@ -161,9 +203,196 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             row.LastLinkedDate = issueCase.LastLinkedDate;
             row.ClosedAt = issueCase.ClosedAt;
             row.UpdatedAt = issueCase.UpdatedAt;
+            ApplyMemberColumns(issueCase, row);
         }
 
         SaveWithConflictTranslation(ctx);
+    }
+
+    /// <summary>
+    /// 交辦單相關欄位的寫入。source_name／source_key／event_id 一律由 issue_key 算出，呼叫端不填：
+    /// issue_key 建案後不變，所以只在尚未解析（source_key 為 null）時算；解析失敗三欄維持 null，
+    /// 交給背景整併標成 ''（見 <see cref="WorkOrderBackfiller"/>）。
+    /// </summary>
+    private static void ApplyMemberColumns(IssueCase issueCase, IssueCaseRow row)
+    {
+        // 連結後只會換成另一張單、永遠不會變回 null：背景整併以 ExecuteUpdate 寫入連結且刻意不動 updated_at，
+        // 呼叫端手上若是整併前讀到的舊模型（WorkOrderId=null），整欄覆寫會把連結靜默抹掉
+        if (issueCase.WorkOrderId != null) row.WorkOrderId = issueCase.WorkOrderId;
+        row.DaySyncPending = issueCase.DaySyncPending;
+        row.DaySyncIntent = issueCase.DaySyncIntent == null ? null : SerializeIntent(issueCase.DaySyncIntent);
+        row.Cancelled = issueCase.Cancelled;
+
+        if (row.SourceKey != null) return;
+        var parsed = EfWorkOrderStore.ParseIssueColumns(row.IssueKey);
+        if (parsed == null) return;
+
+        row.SourceName = parsed.Value.SourceName;
+        row.SourceKey = parsed.Value.SourceKey;
+        row.EventId = parsed.Value.EventId;
+    }
+
+    /// <summary>主機清單分批查詢的批次大小：避免 IN 清單過長（SQL Server 參數上限 2100）</summary>
+    private const int HostBatchSize = 500;
+
+    public List<(string HostNameKey, string IssueKey)> GetOpenKeys()
+    {
+        using var ctx = _contextFactory();
+
+        // 單句、只選兩欄：待派清單要扣掉「已有進行中案件」的全部缺口，不把整列案件拉回來
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.ClosedAt == null)
+            .Select(c => new { c.HostNameKey, c.IssueKey })
+            .AsEnumerable()
+            .Select(x => (x.HostNameKey, x.IssueKey))
+            .ToList();
+    }
+
+    public List<IssueCase> GetOpenByIssue(string source, int eventId)
+    {
+        var key = EfWorkOrderStore.SourceKeyOf(source);
+
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.SourceKey == key && c.EventId == eventId && c.ClosedAt == null)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
+    public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId)
+    {
+        var sourceKey = EfWorkOrderStore.SourceKeyOf(source);
+        var keys = hostNames.Select(HostNameKey.Of).Distinct().ToList();
+        var result = new List<IssueCase>();
+        if (keys.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in keys.Chunk(HostBatchSize))
+        {
+            result.AddRange(ctx.IssueCases.AsNoTracking()
+                .Where(c => batch.Contains(c.HostNameKey) && c.SourceKey == sourceKey && c.EventId == eventId && c.ClosedAt == null)
+                .ToList()
+                .Select(ToModel));
+        }
+        return result;
+    }
+
+    public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.WorkOrderId == workOrderId)
+            .OrderBy(c => c.HostNameKey)
+            .ThenBy(c => c.CaseId)
+            .Skip(skip)
+            .Take(take)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
+    public int CountByWorkOrder(long workOrderId)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.Count(c => c.WorkOrderId == workOrderId);
+    }
+
+    /// <summary>
+    /// 成員分頁查詢。不限主機時總數與本頁各一句 SQL；限定主機時主機名清單可能超過一批（500），
+    /// 分批 IN 無法在 SQL 端跨批分頁，所以各批只取（host_name_key, case_id）兩欄、在記憶體合併排序後，
+    /// 再以本頁 case_id（≤200）取整列——查詢次數＝批數＋1，隨主機名數而非成員數增長。
+    /// </summary>
+    public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q)
+    {
+        WorkOrderQueries.Validate(q);
+        var skip = (q.Page - 1) * q.PageSize;
+
+        using var ctx = _contextFactory();
+
+        if (q.HostNameKeys == null)
+        {
+            var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today);
+            var total = all.Count();
+            var rows = all.OrderBy(c => c.HostNameKey).ThenBy(c => c.CaseId).Skip(skip).Take(q.PageSize).ToList();
+            return (rows.Select(ToModel).ToList(), total);
+        }
+
+        var keys = q.HostNameKeys.Select(HostNameKey.Of).Distinct().ToList();
+        var matched = new List<(string HostNameKey, string CaseId)>();
+        foreach (var batch in keys.Chunk(HostBatchSize))
+        {
+            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today)
+                .Where(c => batch.Contains(c.HostNameKey))
+                .Select(c => new { c.HostNameKey, c.CaseId })
+                .ToList()
+                .Select(r => (r.HostNameKey, r.CaseId)));
+        }
+
+        var pageIds = matched
+            .OrderBy(m => m.HostNameKey, StringComparer.Ordinal)
+            .ThenBy(m => m.CaseId, StringComparer.Ordinal)
+            .Skip(skip)
+            .Take(q.PageSize)
+            .Select(m => m.CaseId)
+            .ToList();
+        if (pageIds.Count == 0) return (new List<IssueCase>(), matched.Count);
+
+        var byId = ctx.IssueCases.AsNoTracking()
+            .Where(c => pageIds.Contains(c.CaseId))
+            .ToList()
+            .ToDictionary(c => c.CaseId);
+        return (pageIds.Where(byId.ContainsKey).Select(id => ToModel(byId[id])).ToList(), matched.Count);
+    }
+
+    /// <summary>成員狀態篩選本體；逾期判準與 <see cref="WorkOrderQueries.IsOverdue"/> 同義</summary>
+    internal static IQueryable<IssueCaseRow> BuildMemberFilterQuery(LfDbContext ctx, long workOrderId, string status, DateTime today)
+    {
+        var query = ctx.IssueCases.AsNoTracking().Where(c => c.WorkOrderId == workOrderId);
+        return status switch
+        {
+            WorkOrderQueries.StatusActive => query.Where(c => c.ClosedAt == null),
+            WorkOrderQueries.StatusClosed => query.Where(c => c.ClosedAt != null),
+            WorkOrderQueries.StatusEscalated => query.Where(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
+            WorkOrderQueries.StatusOverdue => query.Where(c => c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing)),
+            _ => query
+        };
+    }
+
+    public List<IssueCase> GetDaySyncPending(int take)
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.DaySyncPending)
+            .OrderBy(c => c.UpdatedAt)
+            .ThenBy(c => c.CaseId)
+            .Take(take)
+            .ToList()
+            .Select(ToModel)
+            .ToList();
+    }
+
+    public int CountDaySyncPending()
+    {
+        using var ctx = _contextFactory();
+        return ctx.IssueCases.Count(c => c.DaySyncPending);
+    }
+
+    /// <summary>
+    /// 單句條件式更新：WHERE case_id 與 day_sync_intent 都相符才清，讀與寫之間沒有空窗——
+    /// 先讀再比再寫的話，使用者在中間送出的新意圖會被這一趟清掉。刻意不動 updated_at（樂觀鎖欄位）：
+    /// 這是背景維護，不該讓使用者手上的案件因此撞 409。
+    /// </summary>
+    public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent)
+    {
+        var json = SerializeIntent(intent);
+        using var ctx = _contextFactory();
+        return ctx.IssueCases
+            .Where(c => c.CaseId == caseId && c.DaySyncIntent == json)
+            .ExecuteUpdate(s => s
+                .SetProperty(c => c.DaySyncPending, false)
+                .SetProperty(c => c.DaySyncIntent, (string?)null)) == 1;
     }
 
     /// <summary>樂觀鎖衝突轉語意例外（D3）：訊息帶「哪一件案件」，讓 Web 層對應成 409</summary>
@@ -226,6 +455,17 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         ClosedAt = row.ClosedAt,
         CreatedAt = row.CreatedAt,
         CreatedByAccount = row.CreatedByAccount,
-        UpdatedAt = row.UpdatedAt
+        UpdatedAt = row.UpdatedAt,
+        WorkOrderId = row.WorkOrderId,
+        SourceName = row.SourceName,
+        EventId = row.EventId,
+        DaySyncPending = row.DaySyncPending,
+        DaySyncIntent = row.DaySyncIntent == null
+            ? null
+            : JsonSerializer.Deserialize<CaseDayIntent>(row.DaySyncIntent, LfJsonOptions.Compact),
+        Cancelled = row.Cancelled
     };
+
+    /// <summary>意圖的序列化單點：寫入與「未變更才清」的比對必須用同一份選項，否則字串永遠不相等</summary>
+    internal static string SerializeIntent(CaseDayIntent intent) => JsonSerializer.Serialize(intent, LfJsonOptions.Compact);
 }

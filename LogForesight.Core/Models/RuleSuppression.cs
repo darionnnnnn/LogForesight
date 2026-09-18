@@ -37,6 +37,12 @@ public static class SuppressionTargetTypes
     /// <summary>整體錯誤量／安全稽核事件量突增，見 <see cref="RuleSuppression.VolumeKind"/></summary>
     public const string Volume = "Volume";
 
+    /// <summary>
+    /// 問題靜音：由問題檔案（<see cref="IssueProfile.Mutes"/>）的區間在記憶體合成，**不存進抑制 blob**、
+    /// 也不在 <see cref="All"/> 內（規則頁不能建立這一型）。以紀錄日判定，不以執行時間判定。
+    /// </summary>
+    public const string IssueMute = "IssueMute";
+
     public static readonly string[] All = { Rule, Signature, Correlation, Volume };
 
     public static bool IsValid(string targetType) => All.Contains(targetType);
@@ -122,4 +128,16 @@ public class RuleSuppression
 
     /// <summary>為未來「同規則同範圍下，只關閉部分比對範圍」的抑制粒度卡位，此版本必須為 null。</summary>
     public string? MatchFilter { get; set; }
+
+    /// <summary>TargetType=IssueMute 時的問題來源（不分大小寫比對）；其餘型別為 null</summary>
+    public string? SourceName { get; set; }
+
+    /// <summary>TargetType=IssueMute 時的 Event ID；其餘型別為 null</summary>
+    public int? EventId { get; set; }
+
+    /// <summary>TargetType=IssueMute 時的靜音區間起日（含）；其餘型別為 null</summary>
+    public DateTime? MuteFrom { get; set; }
+
+    /// <summary>TargetType=IssueMute 時的靜音區間迄日（含）；其餘型別為 null</summary>
+    public DateTime? MuteTo { get; set; }
 }

@@ -50,6 +50,13 @@ public class AuditQueryService
         [AuditActions.HandlingStatus] = "變更處理狀態",
         [AuditActions.HandlingNote] = "更新處理說明",
         [AuditActions.IssueBulkClose] = "統一標記問題",
+        [AuditActions.WorkOrderCreate] = "交辦",
+        [AuditActions.WorkOrderAppend] = "交辦單追加主機",
+        [AuditActions.WorkOrderReassign] = "交辦單改派",
+        [AuditActions.WorkOrderSplit] = "交辦單拆分",
+        [AuditActions.WorkOrderCancel] = "取消交辦",
+        [AuditActions.WorkOrderAdminClose] = "代為結案",
+        [AuditActions.WorkOrderAutoDispatchRun] = "立即派工",
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",
         [AuditActions.PermConfirmSuspicious] = "標記權限異動可疑",
@@ -66,12 +73,14 @@ public class AuditQueryService
 
         [AuditActions.UserCreate] = "新增使用者",
         [AuditActions.UserUpdate] = "更新使用者",
+        [AuditActions.UserDispatchPaused] = "設定暫停接單",
         [AuditActions.HostUpdate] = "更新主機",
         [AuditActions.HostMerge] = "合併主機",
         [AuditActions.HostUnmerge] = "解除主機合併",
         [AuditActions.GroupCreate] = "新增群組",
         [AuditActions.GroupUpdate] = "更新群組",
         [AuditActions.GroupDelete] = "刪除群組",
+        [AuditActions.GroupDispatchPool] = "設定派工池",
         [AuditActions.AccessGrant] = "授予存取權",
         [AuditActions.AccessRevoke] = "收回存取權",
 
@@ -112,7 +121,10 @@ public class AuditQueryService
         [AuditActions.CalibrationExport] = "匯出校準數值",
 
         [AuditActions.IssueOwnerUpdate] = "設定問題負責人",
-        [AuditActions.IssueOwnerDelete] = "刪除問題負責人"
+        [AuditActions.IssueOwnerDelete] = "刪除問題負責人",
+
+        [AuditActions.IssueMute] = "靜音問題",
+        [AuditActions.IssueUnmute] = "解除靜音"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry, IReadOnlyDictionary<string, string> displayNameByAccount) => new()

@@ -126,11 +126,31 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
             // 夜間分析寫入多筆歷程後，Web 端的快取會落後，導致隔天 Web 端寫入時發生 LogId 重號。
             // ReadLastLogId() 只會讀取尾端幾行資料，成本與讀一行幾乎相同，不值得為了快取承擔重號風險。
             var next = ReadLastLogId() + 1;
-            log.LogId = next;
-            if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
-
-            _logStore.AppendLine(JsonSerializer.Serialize(log, LfJsonOptions.Compact));
+            _logStore.AppendLine(PrepareAndSerialize(log, next));
         }
+    }
+
+    public void AppendLogs(IReadOnlyList<RecordHandlingLog> logs)
+    {
+        if (logs.Count == 0) return;
+
+        lock (_logLock)
+        {
+            var next = ReadLastLogId() + 1;
+            var lines = new List<string>(logs.Count);
+            foreach (var log in logs)
+            {
+                lines.Add(PrepareAndSerialize(log, next++));
+            }
+            _logStore.AppendLines(lines);
+        }
+    }
+
+    private static string PrepareAndSerialize(RecordHandlingLog log, long logId)
+    {
+        log.LogId = logId;
+        if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
+        return JsonSerializer.Serialize(log, LfJsonOptions.Compact);
     }
 
     /// <summary>
@@ -154,16 +174,18 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     }
 
     /// <summary>
-    /// 續號探測的回看行數。損毀通常是連續的一小段，20 行足以跨過去；
-    /// 而這仍是索引 (log_key, seq) 的同一次反向 seek，成本與讀一行幾乎相同。
+    /// 續號探測的回看行數。要涵蓋**一整個插入批次**：批次寫入（<see cref="AppendLogs"/>）在 SQL Server 上
+    /// 以 MERGE 一次插入多列，自增的 seq 不保證照清單順序配發，LogId 最大的那列不一定是 seq 最大的那列
+    /// （EF 對 SQL Server 預設每批 42 列）。損毀通常是連續的一小段也在這個範圍內。
+    /// 這仍是索引 (log_key, seq) 的同一次反向 seek。
     /// </summary>
-    private const int LogIdProbeLines = 20;
+    private const int LogIdProbeLines = 100;
 
     /// <summary>
-    /// 續號起點＝**最後一筆解析得出來的** LogId。
+    /// 續號起點＝回看窗內**解析得出來的 LogId 最大值**。
     ///
-    /// 由新到舊逐行嘗試，第一個成功的就是起點——只看最後一行的話，
-    /// 那一行剛好損毀就會從 1 重新續號，與既有歷程重號、同一天的排序因此錯亂。
+    /// 不取「最後一行」：那一行剛好損毀就會從 1 重新續號；批次插入時最後一行也不一定是最大號。
+    /// 兩種情況都會與既有歷程重號、同一天的排序因此錯亂。
     /// 全部失敗才回 0 並記 Warn：那代表歷程尾端整段損毀，值得被看見而不是安靜地重號。
     /// </summary>
     private long ReadLastLogId()
@@ -171,11 +193,13 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
         var lines = _logStore.ReadLastLines(LogIdProbeLines);
         if (lines.Count == 0) return 0;
 
+        long? max = null;
         foreach (var line in lines)
         {
             var parsed = JsonLogParser.Parse<RecordHandlingLog>(new[] { line }, LfJsonOptions.Compact);
-            if (parsed.Count > 0) return parsed[0].LogId;
+            if (parsed.Count > 0 && (max == null || parsed[0].LogId > max)) max = parsed[0].LogId;
         }
+        if (max != null) return max.Value;
 
         Log.Warn("[SQL] 處理歷程最後 {Count} 行都無法解析，續號自 0 起算——" +
                  "若歷程尾端確實損毀，新舊 LogId 可能重號，請檢查 lf_log_lines 的 handling_log 內容", lines.Count);

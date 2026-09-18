@@ -42,7 +42,9 @@ public class HostDetailIssueSummaryTests : IDisposable
             // 詳情頁的知識庫面板依 RuleId 反查規則庫，替身要帶內建種子才查得到
             new FakeRuleStore { Content = new RuleFileContent { Rules = KnownIssueSeed.CreateRules() } },
             FakeCurrentUser.WithCapabilities(),
-            _settingsStore);
+            _settingsStore,
+            new FixedIssueExclusionSource(IssueExclusion.None),
+            new FakeIssueOwnerStore());
     }
 
     public void Dispose() => _fixture.Dispose();

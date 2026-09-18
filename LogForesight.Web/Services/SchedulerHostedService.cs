@@ -244,6 +244,7 @@ public class SchedulerHostedService : BackgroundService
             // 印象停留在「已開始執行」的 toast，只能翻 log 檔才知道其實失敗了。
             // null＝這次沒有真的開始過（mutex 逾時），不覆蓋上一筆真正跑過的結果。
             RunOutcome? outcome = null;
+            NightlyDispatchSummary? dispatchSummary = null;
             try
             {
                 var acquired = await _mutexGate.RunExclusiveAsync(async () =>
@@ -268,6 +269,7 @@ public class SchedulerHostedService : BackgroundService
                     // AnalysisOrchestrator 的說明），但 NetIQ 那一路可能已經對數百上千台主機完成
                     // 分析並寫入——下面的通知閘門要用這個欄位區分「整趟真的什麼都沒做」與
                     // 「一路失敗、另一路已有真實產出」，見 RunOutcome.AnyRecordsWritten 的說明。
+                    dispatchSummary = result.DispatchSummary;
                     outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
                         effectiveRequest.Trigger ?? "manual", DateTime.Now, RunOutcome.ComputeAnyRecordsWritten(result));
                 }, MutexTimeout);
@@ -314,6 +316,14 @@ public class SchedulerHostedService : BackgroundService
             if (outcome is { ShouldNotify: true })
             {
                 await _mail.NotifyAfterRunAsync(_lifetime.ApplicationStopping);
+            }
+
+            // 夜間交辦摘要信（回饋第 47 輪 E-1）：與 ShouldNotify 無關，只要本趟有派工（PerHandler.Count > 0）就寄；
+            // 每位處理人一封列出各自的單，無派工不寄。
+            // 郵件方法內部自行 try/catch 到底，不影響本次執行的成敗判定。
+            if (dispatchSummary is { PerHandler.Count: > 0 })
+            {
+                await _mail.NotifyWorkOrderDigestAsync(dispatchSummary, _lifetime.ApplicationStopping);
             }
         });
 

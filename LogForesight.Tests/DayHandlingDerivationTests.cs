@@ -33,7 +33,7 @@ public class DayHandlingDerivationTests
         var b = Issue("app", 1000);
         var handlings = new[] { Mark(a, IssueHandlingStatuses.Resolved), Mark(b, IssueHandlingStatuses.FalsePositive) };
 
-        var result = DayHandlingDerivation.Derive(new[] { a, b }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { a, b }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(2, result.Total);
         Assert.Equal(2, result.Closed);
@@ -48,7 +48,7 @@ public class DayHandlingDerivationTests
         var b = Issue("app", 1000);
         var handlings = new[] { Mark(a, IssueHandlingStatuses.Resolved) };
 
-        var result = DayHandlingDerivation.Derive(new[] { a, b }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { a, b }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(1, result.Closed);
         Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
@@ -60,13 +60,13 @@ public class DayHandlingDerivationTests
     {
         var a = Issue("disk", 153);
 
-        var open = DayHandlingDerivation.Derive(new[] { a }, System.Array.Empty<IssueHandling>(), HandlingStatuses.Open, DefaultSeverities);
+        var open = DayHandlingDerivation.Derive(new[] { a }, System.Array.Empty<IssueHandling>(), HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
         Assert.Equal(HandlingStatuses.Open, open.DayStatus);
         Assert.Equal(0, open.Closed);
         Assert.True(open.IsUnresolved);
 
         // 日層級被標成處理中（有人在看整天）但個別問題還沒標——沿用日層級
-        var inProgress = DayHandlingDerivation.Derive(new[] { a }, System.Array.Empty<IssueHandling>(), HandlingStatuses.InProgress, DefaultSeverities);
+        var inProgress = DayHandlingDerivation.Derive(new[] { a }, System.Array.Empty<IssueHandling>(), HandlingStatuses.InProgress, DefaultSeverities, IssueExclusion.None, DateTime.Today);
         Assert.Equal(HandlingStatuses.InProgress, inProgress.DayStatus);
     }
 
@@ -74,7 +74,7 @@ public class DayHandlingDerivationTests
     public void 沒有任何問題_退回日層級狀態()
     {
         var result = DayHandlingDerivation.Derive(
-            System.Array.Empty<LogIssueSignature>(), System.Array.Empty<IssueHandling>(), HandlingStatuses.Resolved, DefaultSeverities);
+            System.Array.Empty<LogIssueSignature>(), System.Array.Empty<IssueHandling>(), HandlingStatuses.Resolved, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(0, result.Total);
         Assert.Equal(HandlingStatuses.Resolved, result.DayStatus);
@@ -87,7 +87,7 @@ public class DayHandlingDerivationTests
         var low = Issue("app", 1000, IssueSeverity.Low);   // 未列在 DefaultSeverities，且從未被標記
         var handlings = new[] { Mark(high, IssueHandlingStatuses.Resolved) };
 
-        var result = DayHandlingDerivation.Derive(new[] { high, low }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { high, low }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(1, result.Total);   // low 被排除，不計入母體
         Assert.Equal(1, result.Closed);
@@ -101,7 +101,7 @@ public class DayHandlingDerivationTests
         // 使用者手動把一個本可預設略過的 Low 問題標成「不處理」——明確標記優先於等級篩選
         var handlings = new[] { Mark(low, IssueHandlingStatuses.WontFix) };
 
-        var result = DayHandlingDerivation.Derive(new[] { low }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { low }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(1, result.Total);
         Assert.Equal(1, result.Closed);
@@ -115,7 +115,7 @@ public class DayHandlingDerivationTests
         // 使用者把自動推導的「已知雜訊」調回未處理，明確持久化一筆 open——不能被等級篩選悄悄蓋掉
         var handlings = new[] { Mark(low, IssueHandlingStatuses.Open) };
 
-        var result = DayHandlingDerivation.Derive(new[] { low }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { low }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(1, result.Total);
         Assert.Equal(0, result.Closed);
@@ -127,7 +127,7 @@ public class DayHandlingDerivationTests
     {
         var low = Issue("app", 1000, IssueSeverity.Low);
 
-        var result = DayHandlingDerivation.Derive(new[] { low }, System.Array.Empty<IssueHandling>(), HandlingStatuses.Open, AllSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { low }, System.Array.Empty<IssueHandling>(), HandlingStatuses.Open, AllSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(1, result.Total);
         Assert.Equal(0, result.Closed);
@@ -145,7 +145,7 @@ public class DayHandlingDerivationTests
             DueDate = DateTime.Today.AddDays(7)
         } };
 
-        var result = DayHandlingDerivation.Derive(new[] { a }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { a }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
         Assert.True(result.IsUnresolved);   // 處理中仍算未結案，只是不再是 open
@@ -163,7 +163,7 @@ public class DayHandlingDerivationTests
             DueDate = DateTime.Today.AddDays(-1)   // 昨天到期
         } };
 
-        var result = DayHandlingDerivation.Derive(new[] { a }, handlings, HandlingStatuses.Open, DefaultSeverities);
+        var result = DayHandlingDerivation.Derive(new[] { a }, handlings, HandlingStatuses.Open, DefaultSeverities, IssueExclusion.None, DateTime.Today);
 
         Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
     }
@@ -178,7 +178,7 @@ public class DayHandlingDerivationTests
             DueDate = DateTime.Today.AddDays(-1)
         };
 
-        Assert.True(DayHandlingDerivation.HasOverdueIssue(new[] { expired }, DateTime.Today));
+        Assert.True(DayHandlingDerivation.HasOverdueIssue(new[] { expired }, DateTime.Today, IssueExclusion.None, DateTime.Today));
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class DayHandlingDerivationTests
             DueDate = DateTime.Today.AddDays(7)
         };
 
-        Assert.False(DayHandlingDerivation.HasOverdueIssue(new[] { active }, DateTime.Today));
+        Assert.False(DayHandlingDerivation.HasOverdueIssue(new[] { active }, DateTime.Today, IssueExclusion.None, DateTime.Today));
     }
 
     [Fact]
@@ -204,6 +204,6 @@ public class DayHandlingDerivationTests
             DueDate = DateTime.Today
         };
 
-        Assert.False(DayHandlingDerivation.HasOverdueIssue(new[] { dueToday }, DateTime.Today));
+        Assert.False(DayHandlingDerivation.HasOverdueIssue(new[] { dueToday }, DateTime.Today, IssueExclusion.None, DateTime.Today));
     }
 }

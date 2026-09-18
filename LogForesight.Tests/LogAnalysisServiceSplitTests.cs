@@ -264,4 +264,99 @@ public class LogAnalysisServiceSplitTests : IDisposable
 
         Assert.Empty(result);
     }
+
+    // ── 問題靜音（分析側）──────────────────────────────────────────────────
+
+    private static List<EventLogEntryData> MakeNtfsEvents(int count = 20) =>
+        Enumerable.Range(0, count).Select(i => new EventLogEntryData
+        {
+            TimeGenerated = DateTime.Today.AddHours(-(i % 20)),
+            EntryType = EventLogEntryType.Error,
+            LogName = "System",
+            Source = "Ntfs",
+            EventId = 55,
+            Message = $"檔案系統結構損毀 #{i}"
+        }).ToList();
+
+    private LogAnalysisService CreateMuteAwareService(FakeIssueOwnerStore owners, FakeReportSink sink)
+    {
+        var ai = new FakeAiService();
+        return new LogAnalysisService(new EventLogService(), ai, new EfAnalysisRecordStore(_fx.NewContext, "test"),
+            new MuteAwareSuppressionStore(new FakeSuppressionStore(), owners),
+            reportService: new RiskReportService(ai, sink));
+    }
+
+    private static FakeIssueOwnerStore MutedDisk(DateTime from, DateTime to, string reason = "更換磁碟陣列中")
+    {
+        var owners = new FakeIssueOwnerStore();
+        owners.Upsert(new IssueProfile
+        {
+            SourceName = "DISK", EventId = 153,
+            Mutes = new List<MuteInterval> { new() { From = from, To = to, Reason = reason, ByAccount = "admin" } }
+        });
+        return owners;
+    }
+
+    [Fact]
+    public async Task 問題靜音_紀錄日在區間內_標Suppressed且報告已抑制段顯示靜音至()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var sink = new FakeReportSink();
+        var service = CreateMuteAwareService(MutedDisk(day, DateTime.Today.AddDays(2)), sink);
+
+        var record = await service.AnalyzeDayAsync(day, MakeHighRiskDiskEvents().Concat(MakeNtfsEvents()).ToList(), useAi: false);
+
+        Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
+        Assert.False(record.TopIssues.Single(i => i.Source == "Ntfs").Suppressed);
+        Assert.Equal("高", record.RiskLevel); // 由未靜音的 Ntfs 拉高，確保報告會產出
+        Assert.NotNull(sink.LastContent);
+        Assert.Contains("已抑制的告警 1 項", sink.LastContent);
+        Assert.Contains($"靜音至 {DateTime.Today.AddDays(2):yyyy-MM-dd}：更換磁碟陣列中", sink.LastContent);
+    }
+
+    [Fact]
+    public async Task 問題靜音_紀錄日在區間內_日風險不被該問題拉高()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var service = CreateMuteAwareService(MutedDisk(day, day), new FakeReportSink());
+
+        var record = await service.AnalyzeDayAsync(day, MakeHighRiskDiskEvents(), useAi: false);
+
+        Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
+        Assert.NotEqual("高", record.RiskLevel);
+    }
+
+    [Fact]
+    public async Task 問題靜音_紀錄日在區間外_不標()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var service = CreateMuteAwareService(MutedDisk(DateTime.Today, DateTime.Today.AddDays(3)), new FakeReportSink());
+
+        var record = await service.AnalyzeDayAsync(day, MakeHighRiskDiskEvents(), useAi: false);
+
+        Assert.False(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
+        Assert.Equal("高", record.RiskLevel);
+    }
+
+    /// <summary>以紀錄日判定而非執行時間：靜音昨天才設（今天仍在區間內），分析前天的資料不標</summary>
+    [Fact]
+    public async Task 問題靜音_昨天才設_分析前天資料不標()
+    {
+        var service = CreateMuteAwareService(MutedDisk(DateTime.Today.AddDays(-1), DateTime.Today.AddDays(5)), new FakeReportSink());
+
+        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-2), MakeHighRiskDiskEvents(), useAi: false);
+
+        Assert.False(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
+    }
+
+    /// <summary>反向：過去的區間（今天已不在內），重新分析區間內的過去日子仍標記</summary>
+    [Fact]
+    public async Task 問題靜音_已到期的過去區間_重新分析區間內日子仍標記()
+    {
+        var service = CreateMuteAwareService(MutedDisk(DateTime.Today.AddDays(-5), DateTime.Today.AddDays(-3)), new FakeReportSink());
+
+        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-4), MakeHighRiskDiskEvents(), useAi: false);
+
+        Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
+    }
 }

@@ -448,9 +448,18 @@ public class RiskReportService
             // 物件版重載（含 EventKey 第五段，理由同 LogAnalysisService 的標記邏輯）
             var issueKey = IssueSignatureKey.For(issue);
             var reason = activeSuppressions?.FirstOrDefault(s =>
-                (issue.RuleId != null && s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase)) ||
-                (s.TargetType == SuppressionTargetTypes.Signature &&
-                 string.Equals(s.SignatureKey, issueKey, StringComparison.OrdinalIgnoreCase)))?.Reason;
+                s.TargetType != SuppressionTargetTypes.IssueMute &&
+                ((issue.RuleId != null && s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase)) ||
+                 (s.TargetType == SuppressionTargetTypes.Signature &&
+                  string.Equals(s.SignatureKey, issueKey, StringComparison.OrdinalIgnoreCase))))?.Reason;
+            // 第三條：問題靜音——以 (Source 不分大小寫, EventId) 且紀錄日在區間內比對
+            if (reason == null)
+            {
+                var mute = activeSuppressions?.FirstOrDefault(s =>
+                    SuppressionFilter.MuteMatches(s, issue.Source, issue.EventId, record.Date));
+                if (mute != null)
+                    reason = $"靜音至 {mute.MuteTo!.Value:yyyy-MM-dd}：{mute.Reason}";
+            }
             sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.SourceEventLabel} x{issue.Count}" +
                           $"：{issue.KnownIssue}");
             sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");

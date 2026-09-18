@@ -233,7 +233,136 @@ internal static class SchemaUpgrader
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_ip_excludes",
             isSqlite ? SqliteCreatePrtgIpExcludes : SqlServerCreatePrtgIpExcludes);
+
+        // 交辦單（↔ WorkOrderRow／WorkOrderEventRow）與案件的成員欄。
+        // 既有案件的 source_* 與 work_order_id 由 WorkOrderBackfiller 在背景補，不在啟動路徑上跑
+        CreateTableIfMissing(ctx, isSqlite, "lf_work_orders",
+            isSqlite ? SqliteCreateWorkOrders : SqlServerCreateWorkOrders);
+        AddIndexIfMissing(ctx, isSqlite, "lf_work_orders", "IX_lf_work_orders_handler_closed", "handler_id, closed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_work_orders",
+            "IX_lf_work_orders_issue_closed", "source_key, event_id, closed_at");
+        AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_work_orders",
+            "IX_lf_work_orders_active_handler_issue", "handler_id, source_key, event_id", WorkOrderActiveIssueFilter);
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_work_order_events",
+            isSqlite ? SqliteCreateWorkOrderEvents : SqlServerCreateWorkOrderEvents);
+        AddIndexIfMissing(ctx, isSqlite, "lf_work_order_events",
+            "IX_lf_work_order_events_order_created", "work_order_id, created_at");
+
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "work_order_id", isSqlite ? "INTEGER NULL" : "bigint NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "source_key", isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "source_name", isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "event_id", isSqlite ? "INTEGER NULL" : "int NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_pending",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "cancelled",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_intent", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
+            "IX_lf_issue_cases_work_order_closed", "work_order_id, closed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
+            "IX_lf_issue_cases_issue_closed", "source_key, event_id, closed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
+            "IX_lf_issue_cases_day_sync_pending", "day_sync_pending");
     }
+
+    /// <summary>
+    /// 「同一處理人同一問題至多一張進行中交辦單」部分唯一索引的過濾條件（與 LfDbContext 的 HasFilter 同字串）。
+    /// 必須含 <c>source_key IS NOT NULL</c>：SQL Server 唯一索引把 NULL 視為相等、SQLite 視為相異，
+    /// 不排除 NULL 的話同一人兩張多問題單在 SQL Server 會撞索引、在 SQLite 不會——兩後端行為分岔。
+    /// </summary>
+    internal const string WorkOrderActiveIssueFilter = "closed_at IS NULL AND source_key IS NOT NULL";
+
+    /// <summary>部分唯一索引 DDL：SQL Server（filtered index）與 SQLite（partial index）同一份語法</summary>
+    internal static string BuildFilteredUniqueIndexSql(string table, string indexName, string columns, string filter) =>
+        "CREATE UNIQUE INDEX " + indexName + " ON " + table + " (" + columns + ") WHERE " + filter;
+
+    private static void AddFilteredUniqueIndexIfMissing(
+        LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, string filter)
+    {
+        if (!TableExists(ctx, isSqlite, table)) return;
+
+        if (IndexExists(ctx, isSqlite, table, indexName)) return;
+
+        Log.Info("[SQL] schema 升級：{Table} 補部分唯一索引 {Index}", table, indexName);
+        ctx.Database.ExecuteSqlRaw(BuildFilteredUniqueIndexSql(table, indexName, columns, filter));
+    }
+
+    private const string SqliteCreateWorkOrders = """
+        CREATE TABLE lf_work_orders (
+            work_order_id INTEGER NOT NULL CONSTRAINT PK_lf_work_orders PRIMARY KEY AUTOINCREMENT,
+            source_name TEXT NULL,
+            source_key TEXT NULL,
+            event_id INTEGER NULL,
+            issue_label TEXT NOT NULL,
+            handler_id INTEGER NOT NULL,
+            origin TEXT NOT NULL,
+            scope_kind TEXT NOT NULL,
+            scope_group_ids TEXT NOT NULL,
+            auto_attach INTEGER NOT NULL,
+            note TEXT NULL,
+            due_date TEXT NULL,
+            created_by_id INTEGER NULL,
+            created_by_account TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_appended_at TEXT NULL,
+            last_reply_at TEXT NULL,
+            closed_at TEXT NULL,
+            closed_reason TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """;
+
+    internal const string SqlServerCreateWorkOrders = """
+        CREATE TABLE lf_work_orders (
+            work_order_id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_work_orders PRIMARY KEY,
+            source_name nvarchar(255) NULL,
+            source_key nvarchar(255) NULL,
+            event_id int NULL,
+            issue_label nvarchar(512) NOT NULL,
+            handler_id bigint NOT NULL,
+            origin nvarchar(30) NOT NULL,
+            scope_kind nvarchar(30) NOT NULL,
+            scope_group_ids nvarchar(max) NOT NULL,
+            auto_attach bit NOT NULL,
+            note nvarchar(1000) NULL,
+            due_date datetime2 NULL,
+            created_by_id bigint NULL,
+            created_by_account nvarchar(255) NOT NULL,
+            created_at datetime2 NOT NULL,
+            last_appended_at datetime2 NULL,
+            last_reply_at datetime2 NULL,
+            closed_at datetime2 NULL,
+            closed_reason nvarchar(30) NULL,
+            updated_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreateWorkOrderEvents = """
+        CREATE TABLE lf_work_order_events (
+            event_id INTEGER NOT NULL CONSTRAINT PK_lf_work_order_events PRIMARY KEY AUTOINCREMENT,
+            work_order_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            actor_id INTEGER NULL,
+            actor_account TEXT NOT NULL,
+            member_delta INTEGER NOT NULL,
+            note TEXT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreateWorkOrderEvents = """
+        CREATE TABLE lf_work_order_events (
+            event_id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_work_order_events PRIMARY KEY,
+            work_order_id bigint NOT NULL,
+            action nvarchar(30) NOT NULL,
+            actor_id bigint NULL,
+            actor_account nvarchar(255) NOT NULL,
+            member_delta int NOT NULL,
+            note nvarchar(1000) NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
 
 
 

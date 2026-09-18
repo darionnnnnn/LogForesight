@@ -59,13 +59,13 @@ public interface IVisibilityService
 
     /// <summary>
     /// 案件授與（docs/archive/FEEDBACK-10-PLAN.md §7）：目前登入者身為案件處理人而取得的
-    /// **範圍限定**檢視權——主機名稱 → 該主機上他經手過的問題簽章集合。
+    /// **範圍限定**檢視權——名下有經手過問題的主機名稱清單。
     ///
     /// 這是「被交辦了就看得到那件事」的最小授權：admin 把某台沒授權給你的主機上的某個問題
     /// 指派給你，你看得到的就只有那一個問題，不是那台主機的全部資料。
     /// 授與以「現在或曾經是處理人」為準——結案後仍看得到自己處理過的東西。
     /// </summary>
-    IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants();
+    IReadOnlyList<string> GetCaseGrantHostNames();
 
     /// <summary>
     /// 這台主機是不是**只**經由案件授與才看得到（docs/archive/FEEDBACK-10-PLAN.md §7）。
@@ -115,7 +115,9 @@ public class VisibilityService : IVisibilityService
     // 每請求快取：一次請求內可能被多個 Service 呼叫（查詢＋計數＋明細），
     // Scoped 生命週期下重複解析同一份資料是白費工
     private IReadOnlySet<long>? _cached;
-    private IReadOnlyDictionary<string, IReadOnlySet<string>>? _cachedGrants;
+    private IReadOnlyList<string>? _cachedGrantHostNames;
+    private readonly Dictionary<long, bool> _cachedIsCaseGrantOnly = new();
+    private readonly Dictionary<long, IReadOnlySet<string>> _cachedIssueKeyRestrictions = new();
 
     public VisibilityService(
         ICurrentUser currentUser,
@@ -243,43 +245,68 @@ public class VisibilityService : IVisibilityService
             .ToList();
     }
 
-    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants()
+    public IReadOnlyList<string> GetCaseGrantHostNames()
     {
-        if (_cachedGrants != null) return _cachedGrants;
+        if (_cachedGrantHostNames != null) return _cachedGrantHostNames;
 
         // ServerAdmin（UserId=0）與未登入者沒有案件，不必查
         if (_currentUser.UserId <= 0)
         {
-            _cachedGrants = new Dictionary<string, IReadOnlySet<string>>();
-            return _cachedGrants;
+            _cachedGrantHostNames = Array.Empty<string>();
+            return _cachedGrantHostNames;
         }
 
-        _cachedGrants = _cases.GetByHandler(_currentUser.UserId)
-            .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlySet<string>)g.Select(c => c.IssueKey).ToHashSet(StringComparer.Ordinal),
-                StringComparer.OrdinalIgnoreCase);
-
-        return _cachedGrants;
+        _cachedGrantHostNames = _cases.HostNamesWithCases(_currentUser.UserId);
+        return _cachedGrantHostNames;
     }
 
     public bool IsCaseGrantOnly(long hostId)
     {
         if (GetVisibleHostIds().Contains(hostId)) return false;
 
+        if (_cachedIsCaseGrantOnly.TryGetValue(hostId, out var cached))
+        {
+            return cached;
+        }
+
+        if (_currentUser.UserId <= 0)
+        {
+            _cachedIsCaseGrantOnly[hostId] = false;
+            return false;
+        }
+
         var host = _hosts.Get(hostId);
-        return host != null && GetCaseGrants().ContainsKey(host.HostName);
+        if (host == null)
+        {
+            _cachedIsCaseGrantOnly[hostId] = false;
+            return false;
+        }
+
+        var result = _cases.HasCaseOnHost(_currentUser.UserId, host.HostName);
+        _cachedIsCaseGrantOnly[hostId] = result;
+        return result;
     }
 
     public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId)
     {
         if (!IsCaseGrantOnly(hostId)) return null;
 
+        if (_cachedIssueKeyRestrictions.TryGetValue(hostId, out var cached))
+        {
+            return cached;
+        }
+
         var host = _hosts.Get(hostId);
-        return host != null && GetCaseGrants().TryGetValue(host.HostName, out var keys)
-            ? keys
-            : new HashSet<string>(StringComparer.Ordinal);   // 主機查無＝什麼都不給碰
+        if (host == null)
+        {
+            var empty = new HashSet<string>(StringComparer.Ordinal);
+            _cachedIssueKeyRestrictions[hostId] = empty;
+            return empty;
+        }
+
+        var keys = (IReadOnlySet<string>)_cases.IssueKeysOnHost(_currentUser.UserId, host.HostName);
+        _cachedIssueKeyRestrictions[hostId] = keys;
+        return keys;
     }
 
     public void EnsureVisible(long hostId)

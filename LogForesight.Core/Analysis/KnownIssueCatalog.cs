@@ -41,6 +41,12 @@ public static class LegacySeverityRank
     public static int Normalize(int rank) =>
         rank == (int)IssueSeverity.Critical ? (int)IssueSeverity.High : rank;
 
+    /// <summary>
+    /// 排名→嚴重度的唯一轉換：先正規化（Critical 降為 High）再轉列舉。
+    /// 派工試跑以出現點的 severity_rank 組回簽章時用，舊資料的 Critical 才會跟夜間派工看到的 High 一致。
+    /// </summary>
+    public static IssueSeverity ToSeverity(int rank) => (IssueSeverity)Normalize(rank);
+
     /// <summary>是否因為原始值是 Critical 而必須強制視為「重大」</summary>
     public static bool ForcesElevate(int rank) => rank == (int)IssueSeverity.Critical;
 
@@ -355,6 +361,27 @@ public static class KnownIssueCatalog
     /// Linux 規則；聚合層沒有訊息內容，無法套 MessagePatterns，因此**只在恰好一條規則
     /// 命中該 program 時**才給說明——兩條以上時給不出「是哪一種」，寧可不顯示也不要顯示錯的。
     /// </summary>
+    /// <summary>
+    /// 「規則可能命中哪個問題」的唯一判定（以聚合層看得到的來源／事件 ID 判斷，看不到訊息內容）：
+    /// PRTG 以 <c>PrtgFindingMapper.TryGetRuleCode</c> 從 Source（PRTG finding 固定為 <c>PRTG:{代碼}</c>，
+    /// 與 EventKey 前綴 <c>prtg:{代碼}:</c> 的代碼同源）解出代碼，與 <see cref="KnownIssueRule.PrtgRuleCode"/> 不分大小寫比對；
+    /// Linux 以 Source 包含 <see cref="KnownIssueRule.ProgramPattern"/>；Windows 以 Source 包含
+    /// <see cref="KnownIssueRule.SourcePattern"/> 且（<see cref="KnownIssueRule.MatchAllEventIds"/> 或事件 ID 在清單內）。
+    /// 比分析當下的訊息層條件寬：可能多判命中、不會少判。消費端：抑制影響面預覽、派工試跑的 Rule 型抑制。
+    /// </summary>
+    public static bool RuleMayHit(KnownIssueRule rule, string source, int eventId)
+    {
+        if (string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase))
+            return PrtgFindingMapper.TryGetRuleCode(source, out var code)
+                   && string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase);
+
+        if (string.Equals(rule.Platform, "linux", StringComparison.OrdinalIgnoreCase))
+            return source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase);
+
+        return source.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase)
+               && (rule.MatchAllEventIds || rule.EventIds.Contains(eventId));
+    }
+
     public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
         if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))

@@ -4,6 +4,7 @@
  */
 
 import { api } from '../core/api.js';
+import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
     guardLoad, renderSpinner
@@ -79,6 +80,7 @@ async function loadSettings() {
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
     loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
+    loadDispatchPoolWarning(); // 獨立打，失敗靜默
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -551,6 +553,8 @@ function renderMailFields(settings) {
     document.getElementById('mail-subject-template').value = settings.mailSubjectTemplate ?? '';
     document.getElementById('mail-body-intro').value = settings.mailBodyIntro ?? '';
     document.getElementById('mail-digest-skip-empty').checked = settings.mailDigestSkipEmpty;
+    document.getElementById('mail-notify-work-orders').checked = !!settings.mailNotifyWorkOrders;
+    document.getElementById('auto-dispatch-enabled').checked = !!settings.autoDispatchEnabled;
     document.getElementById('mail-test-result').replaceChildren();
 
     // 已暫停寄送的收件人（回饋十七輪批次B-1）：連續失敗達門檻的地址，通常是打錯字
@@ -565,6 +569,22 @@ const SLOW_QUERY_TOP_N = 10;
 /** 一行一位、去除空白行——與後端 SystemSettingsService.NormalizeLines 對齊的寬鬆解析 */
 function collectMailRecipients() {
     return collectLines('mail-recipients');
+}
+
+/**
+ * 派工池群組狀態檢查：沒有任何啟用中的派工池群組時，顯示警示
+ */
+async function loadDispatchPoolWarning() {
+    try {
+        const groups = await api.get('/api/admin/groups', { silent: true });
+        const hasActivePool = Array.isArray(groups) && groups.some(g => g.active && g.dispatchPool);
+        const warningEl = document.getElementById('auto-dispatch-no-pool-warning');
+        if (warningEl) {
+            warningEl.classList.toggle('d-none', hasActivePool);
+        }
+    } catch {
+        // 讀取失敗靜默
+    }
 }
 
 /**
@@ -1061,6 +1081,8 @@ function bindForm() {
                 mailSubjectTemplate: document.getElementById('mail-subject-template').value.trim(),
                 mailBodyIntro: document.getElementById('mail-body-intro').value.trim(),
                 mailDigestSkipEmpty: document.getElementById('mail-digest-skip-empty').checked,
+                mailNotifyWorkOrders: document.getElementById('mail-notify-work-orders').checked,
+                autoDispatchEnabled: document.getElementById('auto-dispatch-enabled').checked,
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
@@ -1236,4 +1258,5 @@ unsaved = trackUnsaved(document.getElementById('settings-form'), {
         '#mail-test-btn, #mail-test-result'
 });
 load();
+renderAlertToolsTable(document.getElementById('auto-dispatch-alert-tools'));
 

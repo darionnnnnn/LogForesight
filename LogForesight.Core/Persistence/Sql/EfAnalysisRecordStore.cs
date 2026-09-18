@@ -487,10 +487,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             // **先刪子表再刪主表，不依賴 FK cascade**：顯式刪除避免孤兒 top_issues 列。
             // 兩次刪除包在同一個交易裡——中斷在兩者之間會留下沒有主列的孤兒子列
             // （SQLite 有 cascade 掩護、SqlServer 不保證），重跑的取消語意也依賴「不留半日」。
-            using var tx = ctx.Database.BeginTransaction();
-            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
-            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
-            tx.Commit();
+            // 交易包在執行策略裡：SQL Server 後端啟用連線重試時，自開交易不包會直接擲例外。
+            var deleted = 0;
+            ctx.Database.CreateExecutionStrategy().Execute(() =>
+            {
+                using var tx = ctx.Database.BeginTransaction();
+                ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+                deleted = ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+                tx.Commit();
+            });
+            total += deleted;
         }
 
         if (total == 0)
@@ -953,6 +959,82 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         Log.Debug("[SQL] CountPendingAi → {Count} 筆、{Ms}ms", count, sw.ElapsedMilliseconds);
         _performance?.Record("records:CountPendingAi", sw.ElapsedMilliseconds);
         return count;
+    }
+
+    /// <summary>批次候選日查詢的主機分批大小：避免 IN 清單過長（SQL Server 參數上限 2100）</summary>
+    private const int IssueDayHostBatchSize = 500;
+
+    /// <summary>
+    /// 批次候選日（案件逐日同步用）：走 <c>lf_top_issues</c> 事實表，不反序列化紀錄。
+    /// EventId 在 SQL 端預篩，完整鍵在 C# 端以 <see cref="IssueSignatureKey.For(string,string,int,EventLogEntryType,string)"/>
+    /// 同一個出口組回、Ordinal 比對。未回填的舊列（record_date = MinValue）不回傳。
+    ///
+    /// 主機比對照抄 <see cref="ApplyPushableFilters"/>＋<see cref="Query"/> 的 HostMatcher：
+    /// SQL 端以 id 粗篩並一併撈出 host_id=0 的舊列，舊列再以父紀錄的主機名稱在記憶體比對
+    /// （PK 優先、名稱只給 host_id=0 的列）。host_id=0 的舊列不分主機，只在第一批撈一次。
+    /// </summary>
+    public List<IssueDayHit> IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys)
+    {
+        var result = new List<IssueDayHit>();
+        if (hosts.Count == 0 || issueKeys.Count == 0) return result;
+
+        var keySet = issueKeys.ToHashSet(StringComparer.Ordinal);
+        var eventIds = keySet
+            .Select(IssueSignatureKey.TryParseSignature)
+            .Where(p => p != null)
+            .Select(p => p!.Value.EventId)
+            .Distinct()
+            .ToList();
+        if (eventIds.Count == 0) return result;
+
+        var sw = Stopwatch.StartNew();
+        var matcher = new HostMatcher(hosts);
+        var ids = hosts.Select(k => k.HostId).Where(id => id != 0).Distinct().ToList();
+        var seen = new HashSet<IssueDayHit>();
+        var rowCount = 0;
+
+        using var ctx = _contextFactory();
+        // 至少跑一批：全部 id 都是 0 時仍要查 host_id=0 的舊列（同 Query 的語意）
+        var batches = ids.Count == 0 ? new[] { Array.Empty<long>() } : ids.Chunk(IssueDayHostBatchSize).ToArray();
+        for (var i = 0; i < batches.Length; i++)
+        {
+            var batch = batches[i];
+            var includeLegacy = i == 0;
+            var rows = ctx.TopIssues.AsNoTracking()
+                .Where(t => t.RecordDate != DateTime.MinValue
+                            && eventIds.Contains(t.EventId)
+                            && ((t.HostId != 0 && batch.Contains(t.HostId)) || (includeLegacy && t.HostId == 0)))
+                .Select(t => new
+                {
+                    t.HostId, t.RecordDate, t.LogName, t.SourceName, t.EventId, t.EntryType, t.EventKey,
+                    // 只有舊列需要父紀錄名稱做 fallback 比對
+                    LegacyHostName = t.HostId == 0
+                        ? ctx.DailyRecords.Where(r => r.RecordId == t.RecordId).Select(r => r.HostName).FirstOrDefault()
+                        : null
+                })
+                .ToList();
+            rowCount += rows.Count;
+
+            foreach (var t in rows)
+            {
+                var probe = new DailyAnalysisRecord { HostId = t.HostId, Host = t.LegacyHostName ?? string.Empty };
+                if (!matcher.Matches(probe)) continue;
+
+                var key = IssueSignatureKey.For(t.LogName, t.SourceName, t.EventId, (EventLogEntryType)t.EntryType, t.EventKey);
+                if (!keySet.Contains(key)) continue;
+
+                var hit = new IssueDayHit(t.HostId, key, t.RecordDate.Date);
+                if (seen.Add(hit)) result.Add(hit);
+            }
+        }
+
+        // 與 Query 同序（日期新到舊），單主機呼叫端（IssueCaseCoordinator.FindCandidateDays）的列順序不變
+        result = result.OrderByDescending(h => h.Date).ThenBy(h => h.HostId).ToList();
+
+        Log.Debug("[SQL] IssueDaysFor（hosts={Hosts} keys={Keys} 批數={Batches}）→ DB {Rows} 列、命中 {Hits} 筆、{Ms}ms",
+            hosts.Count, keySet.Count, batches.Length, rowCount, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:IssueDaysFor", sw.ElapsedMilliseconds);
+        return result;
     }
 
     /// <summary>待補條件單點化（批次C）：全域 ai_pending = true 條件僅定義於此處。

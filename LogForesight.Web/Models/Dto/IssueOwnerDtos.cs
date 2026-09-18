@@ -41,6 +41,39 @@ public class IssueOwnerDto
 
     /// <summary>之後新出現的主機日是否自動套用這個結論</summary>
     public bool AutoApply { get; set; }
+
+    // ── 問題靜音 ───────────────────────────────────────────────────────────
+
+    /// <summary>今天所在的靜音區間；沒有進行中的靜音為 null</summary>
+    public IssueMuteDto? CurrentMute { get; set; }
+
+    /// <summary>靜音歷程（最近 10 筆，新到舊）</summary>
+    public List<IssueMuteDto> MuteHistory { get; set; } = new();
+}
+
+/// <summary>問題靜音區間（From／To 為日期，含首尾）</summary>
+public class IssueMuteDto
+{
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string ByAccount { get; set; } = string.Empty;
+}
+
+/// <summary>靜音問題：<see cref="Days"/> 與 <see cref="Until"/> 恰給一個（見 IssueOwnerAdminService.SetMute）</summary>
+public class SetIssueMuteRequest
+{
+    /// <summary>靜音天數（1～365，含今天）</summary>
+    public int? Days { get; set; }
+
+    /// <summary>靜音至（含當天）；不可早於今天、不可超過今天＋365</summary>
+    public DateTime? Until { get; set; }
+
+    /// <summary>原因必填（≤500）</summary>
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>進行中交辦單的處置："pause"（不動）｜"close"（以不處理代為結案，需指派＋處理權限）</summary>
+    public string ExistingOrders { get; set; } = "pause";
 }
 
 public class SaveIssueOwnerRequest

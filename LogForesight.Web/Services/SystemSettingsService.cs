@@ -412,6 +412,8 @@ public class SystemSettingsService : ISystemSettingsService
                 : request.MailSubjectTemplate.Trim();
             s.MailBodyIntro = request.MailBodyIntro?.Trim() ?? "";
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
+            s.MailNotifyWorkOrders = request.MailNotifyWorkOrders;
+            s.AutoDispatchEnabled = request.AutoDispatchEnabled;
 
             // PRTG 監控系統設定（PRTG 第 1 輪批次B）
             if (request.PrtgEnabled.HasValue) s.PrtgEnabled = request.PrtgEnabled.Value;
@@ -1345,6 +1347,8 @@ public class SystemSettingsService : ISystemSettingsService
         MailSubjectTemplate = s.MailSubjectTemplate,
         MailBodyIntro = s.MailBodyIntro,
         MailDigestSkipEmpty = s.MailDigestSkipEmpty,
+        MailNotifyWorkOrders = s.MailNotifyWorkOrders,
+        AutoDispatchEnabled = s.AutoDispatchEnabled,
         SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
         // PRTG 監控系統設定
         PrtgEnabled = s.PrtgEnabled,

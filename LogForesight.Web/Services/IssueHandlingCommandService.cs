@@ -18,6 +18,7 @@ public class IssueHandlingCommandService
     private readonly IIssueHandlingStore _issueStore;
     private readonly IIssueCaseStore _cases;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly WorkOrderCoordinator _workOrders;
     private readonly INoiseMarkStore _noiseMarks;
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
@@ -48,6 +49,7 @@ public class IssueHandlingCommandService
         IIssueHandlingStore issueStore,
         IIssueCaseStore cases,
         IssueCaseCoordinator caseCoordinator,
+        WorkOrderCoordinator workOrders,
         INoiseMarkStore noiseMarks,
         IRecordRepository repository,
         IHostStore hosts,
@@ -66,6 +68,7 @@ public class IssueHandlingCommandService
         _issueStore = issueStore;
         _cases = cases;
         _caseCoordinator = caseCoordinator;
+        _workOrders = workOrders;
         _noiseMarks = noiseMarks;
         _repository = repository;
         _hosts = hosts;
@@ -102,7 +105,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
@@ -152,7 +155,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
 
         // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了。
         // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
@@ -259,33 +262,6 @@ public class IssueHandlingCommandService
             $"此問題由 {name} 的案件處理中，無法直接變更狀態。如需接手，請由管理者改派處理人。");
     }
 
-    private static void ValidateIssueStatus(string status, DateTime? dueDate, bool clearing, string? note = null)
-    {
-        if (!clearing && !IssueHandlingStatuses.IsValid(status))
-            throw DomainException.Validation($"未知的問題處理狀態「{status}」。");
-
-        if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
-            throw DomainException.Validation("預計完成日不可早於今天。");
-
-        // 無法處理必填原因（回饋十八輪批次G）：admin 收到上報通知要看得出「為什麼處理不了」
-        // 才決定得了結案或改派——前端已標必填，這裡是防繞過的實際防線（同 wont_fix 的前端
-        // 必填慣例，但上報多了「別人要據此做決定」的分量，值得後端也擋）
-        if (status == IssueHandlingStatuses.Escalated && string.IsNullOrWhiteSpace(note))
-            throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
-
-        // 觀察中一定要有觀察至日期（docs/archive/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
-        // 前端固定送「今天 + N 天」（1~90 天），這裡防禦性驗證同一個範圍，不只信前端
-        if (status == IssueHandlingStatuses.Observing)
-        {
-            if (!dueDate.HasValue)
-                throw DomainException.Validation("標記為觀察中時必須指定觀察至日期。");
-            if (dueDate.Value.Date < DateTime.Today)
-                throw DomainException.Validation("觀察至日期不可早於今天。");
-            if (dueDate.Value.Date > DateTime.Today.AddDays(90))
-                throw DomainException.Validation("觀察至日期不可超過 90 天。");
-        }
-    }
-
     /// <summary>
     /// 寫入單一問題的處理狀態，並成對寫入處理歷程（不含稽核記錄——單筆與批次的稽核摘要不同，
     /// 由呼叫端各自記）。批次呼叫端逐一呼叫本方法，天然逐問題各留一列歷程（D4）。
@@ -302,10 +278,18 @@ public class IssueHandlingCommandService
         var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
         var trimmedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 
+        // 交辦單回覆時間：要在 SyncStatus 之前取案件（結案後 GetOpen 就取不到了）
+        var openCase = _cases.GetOpen(host.HostName, issueKey);
+
         var caseSync = _caseCoordinator.SyncStatus(
             host.HostName, issueKey, issueLabel, date,
             status, trimmedNote, dueDate, clearing,
             actorId, _currentUser.Account, occurredAt);
+
+        // 處理人本人標記才算回覆（管理者代標不算）；只推進回覆時間、不寫單的事件——
+        // 逐筆各寫一筆會淹沒時間軸。成員因此全結案的單由背景結案掃描補上
+        if (caseSync.Applied && openCase?.WorkOrderId is { } workOrderId && openCase.HandlerId == _currentUser.UserId)
+            _workOrders.TouchReply(workOrderId, occurredAt);
 
         if (!caseSync.Applied)
         {
@@ -366,300 +350,6 @@ public class IssueHandlingCommandService
         return caseSync;
     }
 
-    // ── 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）────────────────────
-
-    /// <summary>
-    /// 批次指派 modal 開啟時的受影響主機預覽：查詢天生受可見範圍限制（走 IRecordRepository.Query），
-    /// 使用者只會看到自己有權限的主機。已有進行中案件的主機標出既有處理人，讓使用者送出前
-    /// 就知道哪些會被跳過（2.1，不搶走）。
-    /// </summary>
-    public IssueCaseAssignPreviewDto PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to)
-    {
-        var occurrences = ResolveIssueOccurrences(source, eventId, from, to);
-
-        var all = occurrences.Values
-            .Select(o =>
-            {
-                var openCase = _cases.GetOpen(o.Host.HostName, IssueSignatureKey.For(o.Issue));
-                var existing = openCase?.HandlerId.HasValue == true ? _users.Get(openCase.HandlerId.Value) : null;
-                return new IssueCasePreviewHostDto
-                {
-                    HostId = o.Host.HostId,
-                    HostName = o.Host.HostName,
-                    ExistingHandlerName = existing == null ? null : _displayNameService.Of(existing.DisplayName),
-                    ExistingHandlerAccount = existing?.Account,
-                    ExistingHandlerId = existing?.UserId
-                };
-            })
-            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        // 同統一標記的理由（體檢 M10）：常見問題在 6000 台環境會把 6000 列塞進 modal。
-        // 上限只影響顯示；勾選範圍由畫面明確說明「預設全選前 N 台」，總數誠實回報
-        return new IssueCaseAssignPreviewDto
-        {
-            TotalHostCount = all.Count,
-            Truncated = all.Count > PreviewHostLimit,
-            Hosts = all.Take(PreviewHostLimit).ToList()
-        };
-    }
-
-    /// <summary>
-    /// 跨主機批次建案：對每台勾選主機的這個問題（取該主機在篩選區間內最近一次出現的確切
-    /// 問題簽章）呼叫 BuildCase——已有他人進行中案件的主機依 2.1 保留原處理人、列入略過清單，
-    /// 建案本身仍走全部留存歷史回溯關聯（Q6：受影響主機的認定範圍與回溯深度是兩件事）。
-    /// </summary>
-    public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request)
-    {
-        var occurrences = ResolveIssueOccurrences(request.Source, request.EventId, request.From, request.To);
-        var wantedIds = request.HostIds.ToHashSet();
-        var targets = occurrences.Values.Where(o => wantedIds.Contains(o.Host.HostId)).ToList();
-        if (targets.Count == 0)
-            throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
-
-        // 逐台的處理人（§12 群組分攤）：Assignments 沒帶就全部給同一個 HandlerId（單人指派）。
-        // 只認勾選清單內的主機——Assignments 不能拿來偷渡沒被勾選的主機
-        var handlerByHostId = request.Assignments
-            .Where(a => wantedIds.Contains(a.HostId))
-            .GroupBy(a => a.HostId)
-            .ToDictionary(g => g.Key, g => g.Last().HandlerId);
-
-        var handlerCache = new Dictionary<long, WebUser>();
-        WebUser ResolveHandler(long handlerId)
-        {
-            if (handlerCache.TryGetValue(handlerId, out var cached)) return cached;
-
-            var user = _users.Get(handlerId)
-                       ?? throw DomainException.NotFound("找不到指定的處理人。");
-            if (!user.Active)
-                throw DomainException.Validation($"{_displayNameService.WithAccount(user.DisplayName, user.Account)} 的帳號已停用，無法指派。");
-
-            handlerCache[handlerId] = user;
-            return user;
-        }
-
-        // 先把每台主機的處理人解析完（含停用檢查）再開始寫：寫到一半才發現有人停用，
-        // 前面幾台已經建案，使用者得到一個半套的結果
-        var plan = targets
-            .Select(o => (Occurrence: o, Handler: ResolveHandler(handlerByHostId.TryGetValue(o.Host.HostId, out var id) ? id : request.HandlerId)))
-            .ToList();
-
-        var reassignIds = request.ReassignHostIds.ToHashSet();
-        var visibleToAssignee = new Dictionary<long, IReadOnlySet<long>>();
-
-        var occurredAt = DateTime.Now;
-        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
-        var created = 0;
-        var skipped = new List<BulkAssignSkippedDto>();
-        var reassigned = new List<BulkAssignReassignedDto>();
-        var noAccess = new List<AssigneeNoAccessDto>();
-
-        foreach (var (o, handler) in plan)
-        {
-            var key = IssueSignatureKey.For(o.Issue);
-            var result = _caseCoordinator.BuildCase(
-                o.Host.HostName, key, HandlingTextHelpers.IssueLabel(o.Issue), o.Date,
-                handler.UserId, request.Note, request.DueDate,
-                actorId, _currentUser.Account, occurredAt);
-
-            if (result.Created)
-            {
-                created++;
-            }
-            else if (result.ExistingHandlerId.HasValue)
-            {
-                var existingName = ResolveDisplayName(result.ExistingHandlerId.Value);
-
-                // 已有他人的進行中案件：只有明確勾了「改派」才換人（§9），
-                // 否則維持既有語意——保留原處理人並回報略過，不靜默搶走
-                if (reassignIds.Contains(o.Host.HostId) && result.ExistingHandlerId.Value != handler.UserId)
-                {
-                    _caseCoordinator.ReassignCase(o.Host.HostName, key, handler.UserId, actorId, _currentUser.Account, occurredAt);
-                    reassigned.Add(new BulkAssignReassignedDto { HostName = o.Host.HostName, PreviousHandlerName = existingName });
-                }
-                else
-                {
-                    skipped.Add(new BulkAssignSkippedDto { HostName = o.Host.HostName, ExistingHandlerName = existingName });
-                    continue;   // 沒換人＝這台主機的處理人沒變，不必檢查可見性
-                }
-            }
-
-            // 被指派者看不到這台主機時提示執行指派的人（§7）：指派仍然成立，
-            // 對方會以案件處理人身分取得該問題的範圍限定檢視權，但只看得到這一個問題
-            if (!visibleToAssignee.TryGetValue(handler.UserId, out var visible))
-            {
-                visible = _visibility.GetVisibleHostIdsFor(handler.UserId);
-                visibleToAssignee[handler.UserId] = visible;
-            }
-            if (!visible.Contains(o.Host.HostId))
-            {
-                noAccess.Add(new AssigneeNoAccessDto
-                {
-                    HostName = o.Host.HostName,
-                    HandlerName = _displayNameService.WithAccount(handler.DisplayName, handler.Account)
-                });
-            }
-        }
-
-        // 被指派者動得了嗎（體檢 H1）：指派前的檢查過去只做了「他看得到這台主機嗎」
-        // （§7 的 assigneeNoAccess），沒做「他動得了嗎」。交辦出去的工作進了對方清單、
-        // 對方按下「回覆處理狀態」必定 403，而指派的人完全不知情。
-        //
-        // **不擋、只提示**：把工作知會給主管是合理用法；問題不在能不能指派，
-        // 而在於指派的人不知道對方動不了。
-        //
-        // 能力解析走 UserCapabilityResolver——那是這條規則（群組角色聯集 ∪
-        // 負責人隱含 User 角色，§2b）的單一事實來源，登入與使用者詳細頁走的也是它。
-        // 在這裡另寫一份判斷，就會變成第三份複本，而 H3 正是這樣壞掉的。
-        var cannotHandle = plan
-            .Select(p => p.Handler)
-            .DistinctBy(h => h.UserId)
-            .Where(h => !_capabilities.Resolve(h).Contains(Capability.Handle))
-            .Select(h => new AssigneeCannotHandleDto
-            {
-                HandlerName = _displayNameService.WithAccount(h.DisplayName, h.Account),
-                HostCount = plan.Count(p => p.Handler.UserId == h.UserId)
-            })
-            .ToList();
-
-        var handlerNames = plan.Select(p => p.Handler).DistinctBy(h => h.UserId)
-            .Select(h => _displayNameService.WithAccount(h.DisplayName, h.Account)).ToList();
-
-        _audit.Record(
-            action: AuditActions.HandlingAssign,
-            summary: $"批次指派「{request.Source} {request.EventId}」給 {NameFormat.Join(handlerNames)}：" +
-                     $"建立 {created} 個案件" +
-                     (reassigned.Count > 0 ? $"，改派 {reassigned.Count} 台" : "") +
-                     (skipped.Count > 0 ? $"，{skipped.Count} 台已由他人案件涵蓋" : ""),
-            targetKind: "issue_case",
-            targetId: $"{request.Source}/{request.EventId}",
-            detail: new
-            {
-                request.Source, request.EventId, Handlers = handlerNames,
-                Assignments = plan.Select(p => new { p.Occurrence.Host.HostName, Handler = p.Handler.Account }),
-                Created = created, Skipped = skipped, Reassigned = reassigned
-            });
-
-        return new BulkAssignIssueCaseResultDto
-        {
-            Created = created,
-            Skipped = skipped,
-            Reassigned = reassigned,
-            AssigneeNoAccess = noAccess,
-            AssigneeCannotHandle = cannotHandle
-        };
-    }
-
-    /// <summary>
-    /// 群組指派的候選處理人（docs/archive/FEEDBACK-10-PLAN.md §12）：指定使用者群組內**啟用中**的成員，
-    /// 附上各自目前的進行中案件數（供「依現有負載分攤」與畫面顯示）。
-    /// 停用成員直接排除——分攤給停用帳號等於那幾台沒人處理。
-    /// </summary>
-    public List<HandlerCandidateDto> GetHandlerCandidates(long userGroupId)
-    {
-        var members = _users.GetAll()
-            .Where(u => u.Active && u.GroupIds.Contains(userGroupId))
-            .ToList();
-
-        return members
-            .Select(u => new HandlerCandidateDto
-            {
-                UserId = u.UserId,
-                DisplayName = _displayNameService.Of(u.DisplayName),
-                Account = u.Account,
-                OpenCaseCount = _cases.GetOpenByHandler(u.UserId).Count
-            })
-            .OrderBy(c => c.Account, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    /// <summary>
-    /// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
-    ///
-    /// 對象限定「**目前使用者名下**、這個問題的進行中案件」——這是處理人替自己手上的工作
-    /// 一次交代結果，不是管理者代人回覆（§8 的規則同樣適用：別人的案件不給動）。
-    /// admin 要換人掛名走 §9 的改派，不從這裡繞。
-    ///
-    /// 逐案走既有的 <c>SyncStatus</c>，案件跨日展開、歷程、結案語意全部沿用同一套規則——
-    /// 這裡只是「一次呼叫多台」，不是第二套狀態機。
-    /// </summary>
-    public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request)
-    {
-        var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
-
-        if (_currentUser.UserId <= 0)
-            throw DomainException.Validation("此帳號沒有可回覆的案件。");
-
-        // 可見範圍過濾照舊（案件授與也算——被交辦的人本來就看得到自己的案件）
-        var visibleHostIds = _visibility.GetVisibleHostIds();
-        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-
-        var targets = _cases.GetOpenByHandler(_currentUser.UserId)
-            .Where(c => hostsByName.TryGetValue(c.HostName, out var host) &&
-                        (visibleHostIds.Contains(host.HostId) || _visibility.IsCaseGrantOnly(host.HostId)) &&
-                        MatchesSignature(c.IssueKey, request.Source, request.EventId))
-            .ToList();
-
-        if (targets.Count == 0)
-            throw DomainException.Validation("找不到指派給您、且仍在進行中的這個問題。");
-
-        // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）：
-        // targets 是案件物件本身，SyncStatus 之後 openCase.Status 會被就地改寫成新值，
-        // 必須在迴圈開始前先讀一次舊狀態。只取「新」轉入的子集——信件的主機數也只算這些，
-        // 不把早已上報過的主機重複算進去（終檢輪修正，同批次回覆的理由）。
-        var newlyEscalatedHosts = targets
-            .Where(c => c.Status != IssueHandlingStatuses.Escalated)
-            .Select(c => c.HostName)
-            .ToList();
-
-        // 整批共用同一個時間戳：前端的處理歷程 timeline 靠「同操作者＋同時間戳」分組，
-        // 逐案取 DateTime.Now 的微小差異會讓一次操作在畫面上散成好幾筆
-        var occurredAt = DateTime.Now;
-        var actorId = (long?)_currentUser.UserId;
-        var updatedDays = 0;
-
-        foreach (var openCase in targets)
-        {
-            var sync = _caseCoordinator.SyncStatus(
-                openCase.HostName, openCase.IssueKey, openCase.IssueLabel, openCase.LastLinkedDate,
-                request.Status, request.Note, request.DueDate, clearing,
-                actorId, _currentUser.Account, occurredAt);
-
-            // SyncedDayCount 不含觸發日（見 Coordinator 的說明），這裡要的是「總共動到幾天」
-            updatedDays += sync.SyncedDayCount + 1;
-        }
-
-        var hostNames = targets.Select(c => c.HostName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
-
-        _audit.Record(
-            action: AuditActions.HandlingStatus,
-            summary: clearing
-                ? $"跨主機清除「{request.Source} {request.EventId}」的處理標記：{targets.Count} 台主機"
-                : $"跨主機將「{request.Source} {request.EventId}」標為「{HandlingTextHelpers.IssueStatusText(request.Status)}」：" +
-                  $"{targets.Count} 台主機、共 {updatedDays} 天",
-            targetKind: "issue_case",
-            targetId: $"{request.Source}/{request.EventId}",
-            detail: new { request.Source, request.EventId, request.Status, request.Note, request.DueDate, HostNames = hostNames });
-
-        // 跨主機一次回覆無法處理：一封信彙整（這正是「負責人回覆無法處理」的主要入口）。
-        // 主機標籤只算「新」轉入的那些（見上方 newlyEscalatedHosts 的說明），
-        // 不透過 NotifyEscalationIfNeeded 的 previousStatus 參數。
-        if (request.Status == IssueHandlingStatuses.Escalated && newlyEscalatedHosts.Count > 0 && _mail != null)
-        {
-            _ = _mail.NotifyEscalationAsync(new EscalationNotice(
-                $"{request.Source} {request.EventId}",
-                newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
-                _currentUser.Account, request.Note));
-        }
-
-        return new BulkIssueStatusResultDto
-        {
-            UpdatedCaseCount = targets.Count,
-            UpdatedDayCount = updatedDays,
-            HostNames = hostNames
-        };
-    }
 
     // ── 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）────────────────────────────────────
 
@@ -723,6 +413,10 @@ public class IssueHandlingCommandService
         var note = request.Note?.Trim();
         if (string.IsNullOrEmpty(note))
             throw DomainException.Validation("請填寫原因——統一標記是代全體下結論，理由要留在紀錄裡。");
+
+        // 勾「之後自動套用」會設定機房結論（需 Maintain）：檢查提前到任何寫入之前，
+        // 否則逐日標記寫完才在 SetConclusion 被擋，留下半套結果
+        if (request.AutoApply) _issueOwnerAdmin.EnsureMaintain();
 
         var plan = PlanBulkClose(request.Source, request.EventId, request.From, request.To);
         var targets = plan.Where(p => p.Row.SkipReason == null && p.Days.Count > 0).ToList();
@@ -852,16 +546,19 @@ public class IssueHandlingCommandService
                       .ToDictionary(x => x.Key, x => x.Last().Status),
                 StringComparer.OrdinalIgnoreCase);
 
+        // 已有進行中案件＝有人接手（不論是誰，含 admin 自己）：整台略過（定案 6-1）。
+        // 同一個 Source+EventId 可能對應多個完整簽章，任一個有案件就算有人在處理這件事。
+        // 一次批次查詢，不逐台逐出現點查。
+        var ownersByHost = _cases.GetOpenMany(byHost.Keys, source, eventId)
+            .Where(c => c.HandlerId != null)
+            .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderBy(c => c.CaseId, StringComparer.Ordinal).First(), StringComparer.OrdinalIgnoreCase);
+
         foreach (var (host, occurrences) in byHost.Values.OrderBy(e => e.Host.HostName, StringComparer.OrdinalIgnoreCase))
         {
             var row = new IssueBulkCloseHostDto { HostId = host.HostId, HostName = host.HostName };
 
-            // 已有進行中案件＝有人接手（不論是誰，含 admin 自己）：整台略過（定案 6-1）。
-            // 同一個 Source+EventId 可能對應多個完整簽章，任一個有案件就算有人在處理這件事。
-            var owner = occurrences
-                .Select(o => _cases.GetOpen(host.HostName, IssueSignatureKey.For(o.Item2)))
-                .FirstOrDefault(c => c?.HandlerId != null);
-            if (owner != null)
+            if (ownersByHost.TryGetValue(host.HostName, out var owner))
             {
                 row.SkipReason = $"已由 {ResolveDisplayName(owner.HandlerId!.Value)} 的案件處理中";
                 plan.Add((host, new List<(DateTime, string, string)>(), row));
@@ -904,49 +601,10 @@ public class IssueHandlingCommandService
         return plan;
     }
 
-    /// <summary>
-    /// 問題簽章鍵（<c>LogName|Source|EventId|EntryType</c>）是否屬於這個 Source＋EventId。
-    /// 依問題視角以 Source＋EventId 分組，同組可能含多個完整簽章（不同 LogName／EntryType），
-    /// 這裡因此比對鍵的中間兩段而不是整串相等。
-    /// </summary>
-    private static bool MatchesSignature(string issueKey, string source, int eventId)
-    {
-        var parts = issueKey.Split('|');
-        return parts.Length >= 3 &&
-               string.Equals(parts[1], source, StringComparison.OrdinalIgnoreCase) &&
-               parts[2] == eventId.ToString();
-    }
-
     private string ResolveDisplayName(long userId)
     {
         var user = _users.Get(userId);
         return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
-    }
-
-    /// <summary>
-    /// 給定 Source+EventId（及可選日期區間），找出每台主機「最近一次出現」這個問題的確切
-    /// 問題簽章——同 Source+EventId 但不同 LogName/EntryType 時視為不同問題，取各主機最新一次
-    /// 出現的那個簽章最能代表「現在的狀態」。查詢天生受可見範圍限制（IRecordRepository.Query）。
-    /// </summary>
-    private Dictionary<string, (WebHost Host, LogIssueSignature Issue, DateTime Date)> ResolveIssueOccurrences(
-        string source, int eventId, DateTime? from, DateTime? to)
-    {
-        var filter = new RecordQueryFilter { Source = source, EventId = eventId, From = from, To = to };
-        var records = _repository.Query(filter);
-        var lookup = new HostLookup(_hosts.GetAll());
-
-        var result = new Dictionary<string, (WebHost, LogIssueSignature, DateTime)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var record in records.OrderBy(r => r.Date))
-        {
-            var host = lookup.For(record);
-            if (host == null) continue;
-
-            var issue = record.TopIssues.FirstOrDefault(i => i.Source == source && i.EventId == eventId);
-            if (issue == null) continue;
-
-            result[host.HostName] = (host, issue, record.Date);   // 由舊到新覆寫，最後留下最新一次
-        }
-        return result;
     }
 
     private WebHost RequireVisibleHost(long hostId)

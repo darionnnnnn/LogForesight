@@ -6,8 +6,14 @@ public readonly record struct CaseBuildResult(bool Created, string? CaseId, long
 /// <summary>狀態同步結果：Applied=false 代表該問題目前沒有進行中案件，呼叫端應走既有的單日寫入</summary>
 public readonly record struct CaseSyncResult(bool Applied, int SyncedDayCount, bool CaseClosed);
 
-/// <summary>批次掛接結果：供 runRecorder / log 顯示掛接了幾個問題</summary>
-public readonly record struct CaseAttachResult(int AttachedCount);
+/// <summary>
+/// 批次掛接結果：AttachedCount 供 runRecorder / log 顯示掛接了幾個問題；
+/// Unassigned 為本次結束後當日仍無標記、也無進行中案件的問題，交給夜間派工
+/// </summary>
+public readonly record struct CaseAttachResult(int AttachedCount, IReadOnlyList<LogIssueSignature> Unassigned);
+
+/// <summary>批次逐日寫入的送出結果：Inline=false 代表已存意圖交給背景，Rows 為（冪等跳過後的）目標列數</summary>
+public readonly record struct CaseDaySubmitResult(bool Inline, int Rows, int PendingCases);
 
 /// <summary>
 /// 問題案件的建案／同步／掛接規則單點定義（docs/archive/FEEDBACK-4-PLAN.md §0.4）。
@@ -29,6 +35,8 @@ public readonly record struct CaseAttachResult(int AttachedCount);
 /// </summary>
 public class IssueCaseCoordinator
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly IIssueCaseStore _cases;
     private readonly IIssueHandlingStore _issueHandlings;
     private readonly IRecordHandlingStore _handlingLog;
@@ -192,43 +200,27 @@ public class IssueCaseCoordinator
     ///      <see cref="IssueProfile.AutoApply"/>＝true：自動套用該結論，記
     ///      <see cref="HandlingActions.FleetApply"/>——這正是機房結論存在的主要情境
     ///      （多數問題從沒建過案件，不會走到分支 2）。
-    ///   4. 沒有進行中案件也沒有機房結論，但問題檔案有負責人：自動建立案件並指派給第一位負責人，
-    ///      記 <see cref="HandlingActions.OwnerAutoAssign"/>。
-    /// 只掛進行中案件／有 AutoApply 結論／有負責人的問題（已結案案件見 <see cref="SyncStatus"/> 的重現語意），
+    /// 其餘問題回傳在 <see cref="CaseAttachResult.Unassigned"/>，由呼叫端交給夜間派工（NightlyDispatch：
+    /// 負責人規則、續掛、自動派工皆走交辦單）。
+    /// 只掛進行中案件／有 AutoApply 結論的問題（已結案案件見 <see cref="SyncStatus"/> 的重現語意），
     /// 失敗由呼叫端決定是否吞掉（不擋分析主流程）。
     /// </summary>
     public CaseAttachResult AttachNewDay(string hostName, DateTime date, IReadOnlyCollection<LogIssueSignature> issues, DateTime occurredAt)
     {
-        if (issues.Count == 0) return new CaseAttachResult(0);
+        if (issues.Count == 0) return new CaseAttachResult(0, Array.Empty<LogIssueSignature>());
 
         var openCases = _cases.GetOpenForHost(hostName);
         var casesByIssueKey = openCases.ToDictionary(c => c.IssueKey, StringComparer.Ordinal);
 
-        // 自動建案的「不再打擾」集合：同主機同問題最近一筆案件被人以 wont_fix／false_positive／
-        // known_noise 結案時，代表負責人已判定這個問題不值得處理——隔天問題再出現不該再開一件
-        // 新案件把它復活（resolved 除外：真正修好後再出現是新的事件，該再交辦一次）。
-        // 只在有負責人 profile 時才需要這份資料，避免每主機日多讀一次全部案件。
-        HashSet<string>? dismissedIssueKeys = null;
         var existingForDay = _issueHandlings.GetForDay(hostName, date)
             .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
 
-        // fleet 結論與問題負責人索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
-        // 不是逐問題查）。索引涵蓋有 AutoApply 結論或有負責人的檔案
+        // fleet 結論索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
+        // 不是逐問題查）。負責人派工改由交辦單派工（NightlyDispatch）處理，這裡只收 AutoApply 結論
         var profilesByKey = _issueProfiles.GetAll()
-            .Where(p => (p.AutoApply && p.ConclusionStatus != null) || p.OwnerUserIds.Count > 0)
+            .Where(p => p.AutoApply && p.ConclusionStatus != null)
             .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
             .ToDictionary(g => g.Key, g => g.First());
-
-        if (profilesByKey.Values.Any(p => p.OwnerUserIds.Count > 0))
-        {
-            dismissedIssueKeys = _cases.GetMany(new[] { hostName })
-                .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
-                .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
-                .Where(c => c.Status is IssueHandlingStatuses.WontFix
-                    or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
-                .Select(c => c.IssueKey)
-                .ToHashSet(StringComparer.Ordinal);
-        }
 
         var toSave = new List<IssueHandling>();
         var casesToSave = new List<IssueCase>();
@@ -287,44 +279,23 @@ public class IssueCaseCoordinator
                     Action = HandlingActions.FleetApply, CreatedAt = occurredAt
                 });
                 existingForDay[key] = toSave[^1];
-                continue;
-            }
-
-            if (profile.OwnerUserIds.Count > 0)
-            {
-                if (dismissedIssueKeys != null && dismissedIssueKeys.Contains(key)) continue;
-
-                var caseId = Guid.NewGuid().ToString("n");
-                const string status = IssueHandlingStatuses.InProgress;
-                const string autoNote = "系統依問題檔案自動派送";
-
-                toSave.Add(new IssueHandling
-                {
-                    HostName = hostName, Date = date, IssueKey = key, Status = status,
-                    Note = autoNote, DueDate = null, CaseId = caseId,
-                    ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
-                });
-
-                _handlingLog.AppendLog(new RecordHandlingLog
-                {
-                    HostName = hostName, Date = date, Status = status, IssueKey = key,
-                    IssueLabel = issue.SourceEventLabel, Note = autoNote,
-                    ActorId = null, ActorAccount = string.Empty,
-                    Action = HandlingActions.OwnerAutoAssign, CreatedAt = occurredAt
-                });
-
-                casesToSave.Add(CreateOpenCase(
-                    caseId, hostName, key, issue.SourceEventLabel,
-                    profile.OwnerUserIds[0], autoNote, null,
-                    date.Date, date.Date,
-                    occurredAt, string.Empty));
-                existingForDay[key] = toSave[^1];
             }
         }
 
         _issueHandlings.SaveMany(toSave);
         _cases.SaveMany(casesToSave);
-        return new CaseAttachResult(toSave.Count);
+
+        // 仍沒有當日列、也沒有進行中案件的問題交給派工（依問題鍵去重、保持輸入順序）
+        var unassigned = new List<LogIssueSignature>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var issue in issues)
+        {
+            var key = IssueSignatureKey.For(issue);
+            if (!seen.Add(key) || existingForDay.ContainsKey(key) || casesByIssueKey.ContainsKey(key)) continue;
+            unassigned.Add(issue);
+        }
+
+        return new CaseAttachResult(toSave.Count, unassigned);
     }
 
     /// <summary>
@@ -386,21 +357,402 @@ public class IssueCaseCoordinator
             .ToDictionary(h => h.Date.Date);
 
         return candidates
-            .Where(d => !existingByDate.TryGetValue(d, out var existing) || !IssueHandlingStatuses.IsClosed(existing.Status))
+            .Where(d => IsOverwritable(existingByDate.GetValueOrDefault(d)))
             .ToList();
     }
 
+    /// <summary>
+    /// 合格判定的唯一一份：該日此鍵沒有列，或有列但不是結案類——單案件方法（<see cref="ResolveEligibleDays"/>）
+    /// 與批次逐日寫入（<see cref="SubmitCaseDays"/>／<see cref="ApplyPendingCaseDays"/>）共用。
+    /// </summary>
+    private static bool IsOverwritable(IssueHandling? existing) =>
+        existing == null || !IssueHandlingStatuses.IsClosed(existing.Status);
+
     /// <summary>該主機（含已併入它的墓碑列別名展開）全部留存歷史中，TopIssues 含此問題簽章的風險日</summary>
+    // 口徑：走 lf_top_issues 事實表，詳情已清除（PruneDetails 只清 ContentJson、事實表列保留）的日子也算候選日——
+    // 與依問題視角／儀表板／待辦的 SQL 聚合同一口徑，案件標記才不會比畫面上看到的風險日少幾天。
     private List<DateTime> FindCandidateDays(WebHost host, string issueKey)
     {
         var hostKeys = HostIdentityResolver.Expand(_hosts.GetAll(), host.HostId);
-        var filter = new RecordQueryFilter { Hosts = hostKeys };
 
-        return _records.Query(filter)
-            .Where(r => r.TopIssues.Any(i => IssueSignatureKey.For(i) == issueKey))
-            .Select(r => r.Date.Date)
+        return _records.IssueDaysFor(hostKeys, new[] { issueKey })
+            .Select(h => h.Date)
             .Distinct()
             .ToList();
+    }
+
+    // ── 批次逐日寫入（交辦單底層）─────────────────────────────────────────────
+
+    /// <summary>就地寫入的逐日列數門檻（暫定）：超過就改存意圖交給背景服務分批寫</summary>
+    public const int CaseDayInlineRowLimit = 5000;
+
+    /// <summary>逐日列 GetMany 的主機名分批大小（避免 IN 清單過長）</summary>
+    private const int CaseDayHostBatchSize = 500;
+
+    /// <summary>取消模式 GetByCases 的案件 id 分批大小</summary>
+    private const int CaseDayCaseIdBatchSize = 500;
+
+    /// <summary>逐日列 SaveMany 的每批列數</summary>
+    private const int CaseDaySaveBatchSize = 5000;
+
+    /// <summary>
+    /// 一次把多個案件的狀態展開到各自的合格日（三種模式見 <see cref="CaseDayModes"/>）。
+    /// 預估列數 ≤ <paramref name="inlineRowLimit"/> 當場寫完；否則只把意圖存在案件上，由背景
+    /// （<see cref="ApplyPendingCaseDays"/>）分批寫。兩條路都會把傳入的案件物件原樣存回。
+    /// 冪等：既有列內容與目標相同且 UpdatedAt 等於 OccurredAt 的日子不寫列、不記歷程、不計列數。
+    /// </summary>
+    public CaseDaySubmitResult SubmitCaseDays(IReadOnlyList<IssueCase> cases, CaseDayIntent intent, int inlineRowLimit)
+    {
+        if (cases.Count == 0) return new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0);
+
+        var plans = PlanCaseDays(cases.Select(c => (c, intent)).ToList());
+        var rows = plans.Sum(p => p.Rows.Count);
+
+        if (rows <= inlineRowLimit)
+        {
+            WritePlans(plans);
+            foreach (var plan in plans)
+            {
+                ApplyLinkedDates(plan.Case, plan);
+                plan.Case.DaySyncPending = false;
+                plan.Case.DaySyncIntent = null;
+            }
+            _cases.SaveMany(cases);
+            return new CaseDaySubmitResult(Inline: true, Rows: rows, PendingCases: 0);
+        }
+
+        foreach (var issueCase in cases)
+        {
+            issueCase.DaySyncPending = true;
+            issueCase.DaySyncIntent = intent;
+        }
+        _cases.SaveMany(cases);
+        return new CaseDaySubmitResult(Inline: false, Rows: rows, PendingCases: cases.Count);
+    }
+
+    /// <summary>
+    /// 背景一批：取待同步案件，依各自的意圖寫入（同一批合併查詢），寫完以「意圖未變更才清」清旗標。
+    /// 指派模式要推進的 First/LastLinkedDate 以 store 讀新值後只改這兩欄再存——批次開頭讀到的
+    /// 物件可能已經過時，整列覆寫會蓋掉使用者期間做的變更。回傳本批處理的案件數。
+    /// </summary>
+    public int ApplyPendingCaseDays(int take)
+    {
+        var pending = _cases.GetDaySyncPending(take);
+        if (pending.Count == 0) return 0;
+
+        var work = new List<(IssueCase Case, CaseDayIntent Intent)>();
+        foreach (var issueCase in pending)
+        {
+            if (issueCase.DaySyncIntent != null)
+            {
+                work.Add((issueCase, issueCase.DaySyncIntent));
+                continue;
+            }
+
+            // 髒列：旗標在但沒有意圖，無從寫起——清旗標免得每一批都撿到它
+            Log.Warn("[案件逐日同步] 案件 {CaseId}（{Host}）待同步旗標為真但沒有意圖，清除旗標、不寫入",
+                issueCase.CaseId, issueCase.HostName);
+            var fresh = _cases.Get(issueCase.CaseId);
+            if (fresh != null && fresh.DaySyncPending && fresh.DaySyncIntent == null)
+            {
+                fresh.DaySyncPending = false;
+                _cases.Save(fresh);
+            }
+        }
+
+        var plans = PlanCaseDays(work);
+        WritePlans(plans);
+
+        foreach (var plan in plans)
+        {
+            if (plan.LinkedMin != null)
+            {
+                var fresh = _cases.Get(plan.Case.CaseId);
+                if (fresh != null && ApplyLinkedDates(fresh, plan)) _cases.Save(fresh);
+            }
+            _cases.ClearDaySyncPendingIfUnchanged(plan.Case.CaseId, plan.Intent);
+        }
+
+        return pending.Count;
+    }
+
+    /// <summary>單一案件的展開結果：要寫的逐日列與歷程（已排除冪等跳過的日子）</summary>
+    private sealed class CaseDayPlan
+    {
+        public required IssueCase Case { get; init; }
+        public required CaseDayIntent Intent { get; init; }
+        public List<IssueHandling> Rows { get; } = new();
+        public List<RecordHandlingLog> Logs { get; } = new();
+
+        /// <summary>指派模式的合格日範圍（含冪等跳過的日子）；null＝不推進案件的關聯日期</summary>
+        public DateTime? LinkedMin { get; set; }
+        public DateTime? LinkedMax { get; set; }
+    }
+
+    /// <summary>
+    /// 批次算出每個案件的目標列。查詢次數與案件數無關：主機清單讀一次、候選日一次
+    /// <see cref="IAnalysisRecordQuery.IssueDaysFor"/>、既有逐日列依主機名分批 GetMany。
+    /// </summary>
+    private List<CaseDayPlan> PlanCaseDays(IReadOnlyList<(IssueCase Case, CaseDayIntent Intent)> work)
+    {
+        var plans = new List<CaseDayPlan>(work.Count);
+        if (work.Count == 0) return plans;
+
+        var allHosts = _hosts.GetAll();
+        var aliasIndex = new HostAliasIndex(allHosts);
+        var hostsByName = new Dictionary<string, WebHost>(StringComparer.OrdinalIgnoreCase);
+        foreach (var host in allHosts) hostsByName.TryAdd(host.HostName, host);
+
+        // 候選日（取消模式不查）：全部案件主機的別名合併成一次查詢，命中再依別名 id 歸回案件主機
+        var hostKeys = new Dictionary<long, HostKey>();
+        var ownerIdsByAliasId = new Dictionary<long, HashSet<long>>();
+        var issueKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (issueCase, intent) in work)
+        {
+            if (intent.Mode == CaseDayModes.Cancel) continue;
+            issueKeys.Add(issueCase.IssueKey);
+            if (!hostsByName.TryGetValue(issueCase.HostName, out var host)) continue;
+            foreach (var alias in aliasIndex.Aliases(host.HostId))
+            {
+                hostKeys.TryAdd(alias.HostId, alias);
+                if (!ownerIdsByAliasId.TryGetValue(alias.HostId, out var owners))
+                    ownerIdsByAliasId[alias.HostId] = owners = new HashSet<long>();
+                owners.Add(host.HostId);
+            }
+        }
+
+        // （案件主機 id, 問題鍵）→ 候選日。host_id=0 的舊列無法歸回特定主機，批次路徑不採用
+        var candidatesByOwner = new Dictionary<(long HostId, string IssueKey), HashSet<DateTime>>();
+        if (hostKeys.Count > 0 && issueKeys.Count > 0)
+        {
+            foreach (var hit in _records.IssueDaysFor(hostKeys.Values.ToList(), issueKeys.ToList()))
+            {
+                if (!ownerIdsByAliasId.TryGetValue(hit.HostId, out var owners)) continue;
+                foreach (var ownerId in owners)
+                {
+                    if (!candidatesByOwner.TryGetValue((ownerId, hit.IssueKey), out var days))
+                        candidatesByOwner[(ownerId, hit.IssueKey)] = days = new HashSet<DateTime>();
+                    days.Add(hit.Date.Date);
+                }
+            }
+        }
+
+        // 每個案件的候選日（指派／同步含觸發日；取消不查候選日，既有列依案件 id 精確查）
+        var candidateDays = new List<List<DateTime>>(work.Count);
+        DateTime? from = null, to = null;
+        void Widen(DateTime d)
+        {
+            if (from == null || d < from) from = d;
+            if (to == null || d > to) to = d;
+        }
+        foreach (var (issueCase, intent) in work)
+        {
+            var days = new List<DateTime>();
+            if (intent.Mode != CaseDayModes.Cancel)
+            {
+                if (hostsByName.TryGetValue(issueCase.HostName, out var host)
+                    && candidatesByOwner.TryGetValue((host.HostId, issueCase.IssueKey), out var found))
+                    days.AddRange(found);
+                if (intent.TriggerDate != null) Widen(intent.TriggerDate.Value.Date);
+                foreach (var d in days) Widen(d);
+            }
+            candidateDays.Add(days);
+        }
+
+        // 取消模式的既有列：依案件 id 精確查——觸發日可能落在 First/LastLinkedDate 範圍外
+        // （SyncStatus 會寫觸發日但不推進關聯日期），用日期範圍查會漏
+        var ownedByCaseId = new Dictionary<string, List<IssueHandling>>(StringComparer.Ordinal);
+        var cancelIds = work.Where(w => w.Intent.Mode == CaseDayModes.Cancel)
+            .Select(w => w.Case.CaseId).Distinct(StringComparer.Ordinal).ToList();
+        foreach (var batch in cancelIds.Chunk(CaseDayCaseIdBatchSize))
+        {
+            foreach (var row in _issueHandlings.GetByCases(batch))
+            {
+                if (!ownedByCaseId.TryGetValue(row.CaseId!, out var owned))
+                    ownedByCaseId[row.CaseId!] = owned = new List<IssueHandling>();
+                owned.Add(row);
+            }
+        }
+
+        // 既有逐日列：主機名分批，記憶體依（主機, 鍵）→ 日 配對
+        var existing = new Dictionary<(string HostName, string IssueKey), Dictionary<DateTime, IssueHandling>>(ExistingKeyComparer.Instance);
+        if (from != null)
+        {
+            var names = work.Where(w => w.Intent.Mode != CaseDayModes.Cancel)
+                .Select(w => w.Case.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var batch in names.Chunk(CaseDayHostBatchSize))
+            {
+                foreach (var row in _issueHandlings.GetMany(batch, from.Value, to!.Value))
+                {
+                    if (!existing.TryGetValue((row.HostName, row.IssueKey), out var byDate))
+                        existing[(row.HostName, row.IssueKey)] = byDate = new Dictionary<DateTime, IssueHandling>();
+                    byDate[row.Date.Date] = row;
+                }
+            }
+        }
+
+        for (var i = 0; i < work.Count; i++)
+        {
+            var (issueCase, intent) = work[i];
+            var existingByDate = intent.Mode == CaseDayModes.Cancel
+                ? OwnedByDate(ownedByCaseId.GetValueOrDefault(issueCase.CaseId), issueCase)
+                : existing.GetValueOrDefault((issueCase.HostName, issueCase.IssueKey)) ?? new Dictionary<DateTime, IssueHandling>();
+            IssueHandling? Existing(DateTime d) => existingByDate.GetValueOrDefault(d.Date);
+
+            var plan = new CaseDayPlan { Case = issueCase, Intent = intent };
+            plans.Add(plan);
+
+            List<DateTime> days;
+            if (intent.Mode == CaseDayModes.Cancel)
+            {
+                days = existingByDate
+                    .Where(e => e.Value.CaseId == issueCase.CaseId && IsOverwritable(e.Value))
+                    .Select(e => e.Key)
+                    .ToList();
+            }
+            else
+            {
+                days = candidateDays[i].Where(d => IsOverwritable(Existing(d))).ToList();
+                if (intent.TriggerDate != null && !days.Contains(intent.TriggerDate.Value.Date))
+                    days.Add(intent.TriggerDate.Value.Date);
+            }
+            days.Sort();
+
+            if (intent.Mode == CaseDayModes.Assign && days.Count > 0)
+            {
+                plan.LinkedMin = days[0];
+                plan.LinkedMax = days[^1];
+            }
+
+            foreach (var date in days)
+            {
+                var current = Existing(date);
+                var target = TargetRow(issueCase, intent, date, current);
+                if (current != null
+                    && current.Status == target.Status && current.Note == target.Note
+                    && current.DueDate == target.DueDate && current.CaseId == target.CaseId
+                    && current.UpdatedAt == intent.OccurredAt)
+                    continue;
+
+                plan.Rows.Add(target);
+                plan.Logs.Add(new RecordHandlingLog
+                {
+                    HostName = issueCase.HostName, Date = date, Status = target.Status,
+                    IssueKey = issueCase.IssueKey, IssueLabel = issueCase.IssueLabel,
+                    Note = LogNote(intent, target),
+                    ActorId = intent.ActorId, ActorAccount = intent.ActorAccount,
+                    Action = LogAction(issueCase, intent, date),
+                    CreatedAt = intent.OccurredAt
+                });
+            }
+        }
+
+        return plans;
+    }
+
+    /// <summary>取消模式：案件擁有的列（限本案件主機與問題鍵）依日期索引</summary>
+    private static Dictionary<DateTime, IssueHandling> OwnedByDate(List<IssueHandling>? owned, IssueCase issueCase)
+    {
+        var byDate = new Dictionary<DateTime, IssueHandling>();
+        if (owned == null) return byDate;
+        foreach (var row in owned)
+        {
+            if (string.Equals(row.HostName, issueCase.HostName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(row.IssueKey, issueCase.IssueKey, StringComparison.Ordinal))
+                byDate[row.Date.Date] = row;
+        }
+        return byDate;
+    }
+
+    private static IssueHandling TargetRow(IssueCase issueCase, CaseDayIntent intent, DateTime date, IssueHandling? current)
+    {
+        var row = new IssueHandling
+        {
+            HostName = issueCase.HostName, Date = date, IssueKey = issueCase.IssueKey,
+            CaseId = issueCase.CaseId,
+            ActorId = intent.ActorId, ActorAccount = intent.ActorAccount, UpdatedAt = intent.OccurredAt
+        };
+
+        switch (intent.Mode)
+        {
+            case CaseDayModes.Assign:
+                row.Status = intent.Status;
+                row.Note = intent.Note;
+                row.DueDate = intent.DueDate;
+                break;
+            case CaseDayModes.Sync:
+                row.Status = intent.Clearing ? IssueHandlingStatuses.Open : intent.Status;
+                row.Note = intent.Clearing ? null : intent.Note;
+                // 同 SyncStatus：DueDate 只在 InProgress／Observing 才有意義
+                row.DueDate = row.Status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing
+                    ? intent.DueDate : null;
+                break;
+            case CaseDayModes.Cancel:
+                row.Status = IssueHandlingStatuses.Open;
+                row.Note = null;
+                row.DueDate = null;
+                // 取消只調回 open，列的出處保留原值（合格日本來就限定 CaseId＝本案件）
+                row.CaseId = current!.CaseId;
+                break;
+            default:
+                throw new InvalidOperationException($"IssueCaseCoordinator：不支援的逐日同步模式「{intent.Mode}」。");
+        }
+        return row;
+    }
+
+    private static string? LogNote(CaseDayIntent intent, IssueHandling target) => intent.Mode switch
+    {
+        CaseDayModes.Sync => IssueHandlingStatuses.ComposeLogNote(target.Status, target.Note, target.DueDate),
+        _ => intent.Note
+    };
+
+    private static string LogAction(IssueCase issueCase, CaseDayIntent intent, DateTime date)
+    {
+        switch (intent.Mode)
+        {
+            case CaseDayModes.Assign:
+                var assignDay = (intent.TriggerDate ?? issueCase.LastLinkedDate).Date;
+                return date == assignDay ? HandlingActions.CaseAssign : HandlingActions.CaseSync;
+            case CaseDayModes.Sync:
+                if (intent.TriggerDate != null && date == intent.TriggerDate.Value.Date)
+                    return intent.Clearing ? HandlingActions.IssueStatusCleared : HandlingActions.IssueStatus;
+                return HandlingActions.CaseSync;
+            default:
+                return HandlingActions.IssueStatusCleared;
+        }
+    }
+
+    private void WritePlans(List<CaseDayPlan> plans)
+    {
+        var rows = plans.SelectMany(p => p.Rows).ToList();
+        foreach (var batch in rows.Chunk(CaseDaySaveBatchSize)) _issueHandlings.SaveMany(batch);
+        _handlingLog.AppendLogs(plans.SelectMany(p => p.Logs).ToList());
+    }
+
+    /// <summary>指派模式推進案件的 First/LastLinkedDate（原值與合格日取最小／最大），回傳是否有變</summary>
+    private static bool ApplyLinkedDates(IssueCase issueCase, CaseDayPlan plan)
+    {
+        if (plan.LinkedMin == null || plan.LinkedMax == null) return false;
+        var first = plan.LinkedMin.Value < issueCase.FirstLinkedDate ? plan.LinkedMin.Value : issueCase.FirstLinkedDate;
+        var last = plan.LinkedMax.Value > issueCase.LastLinkedDate ? plan.LinkedMax.Value : issueCase.LastLinkedDate;
+        if (first == issueCase.FirstLinkedDate && last == issueCase.LastLinkedDate) return false;
+        issueCase.FirstLinkedDate = first;
+        issueCase.LastLinkedDate = last;
+        return true;
+    }
+
+    /// <summary>既有逐日列的配對鍵：主機名不分大小寫（同 store 的 host_name_key 語意），問題鍵 Ordinal</summary>
+    private sealed class ExistingKeyComparer : IEqualityComparer<(string HostName, string IssueKey)>
+    {
+        public static readonly ExistingKeyComparer Instance = new();
+
+        public bool Equals((string HostName, string IssueKey) x, (string HostName, string IssueKey) y) =>
+            StringComparer.OrdinalIgnoreCase.Equals(x.HostName, y.HostName)
+            && StringComparer.Ordinal.Equals(x.IssueKey, y.IssueKey);
+
+        public int GetHashCode((string HostName, string IssueKey) key) =>
+            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.HostName),
+                StringComparer.Ordinal.GetHashCode(key.IssueKey));
     }
 
     private static IssueCase CreateOpenCase(

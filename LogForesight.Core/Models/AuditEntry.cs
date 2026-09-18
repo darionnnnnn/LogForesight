@@ -82,6 +82,15 @@ public static class AuditActions
     /// </summary>
     public const string IssueBulkClose = "issue_bulk_close";
 
+    // 交辦單命令（交辦單 API）
+    public const string WorkOrderCreate = "work_order_create";
+    public const string WorkOrderAppend = "work_order_append";
+    public const string WorkOrderReassign = "work_order_reassign";
+    public const string WorkOrderSplit = "work_order_split";
+    public const string WorkOrderCancel = "work_order_cancel";
+    public const string WorkOrderAdminClose = "work_order_admin_close";
+    public const string WorkOrderAutoDispatchRun = "work_order_auto_dispatch_run";
+
     // 權限異動確認
     public const string PermConfirmAuthorized = "perm_confirm_authorized";
     public const string PermConfirmSuspicious = "perm_confirm_suspicious";
@@ -101,18 +110,24 @@ public static class AuditActions
     // 帳號/主機/群組
     public const string UserCreate = "user_create";
     public const string UserUpdate = "user_update";
+    public const string UserDispatchPaused = "user_dispatch_paused";
     public const string HostUpdate = "host_update";
     public const string HostMerge = "host_merge";
     public const string HostUnmerge = "host_unmerge";
     public const string GroupCreate = "group_create";
     public const string GroupUpdate = "group_update";
     public const string GroupDelete = "group_delete";
+    public const string GroupDispatchPool = "group_dispatch_pool";
     public const string AccessGrant = "access_grant";
     public const string AccessRevoke = "access_revoke";
 
     // 問題負責人（回饋十八輪批次F）
     public const string IssueOwnerUpdate = "issue_owner_update";
     public const string IssueOwnerDelete = "issue_owner_delete";
+
+    // 問題靜音
+    public const string IssueMute = "issue_mute";
+    public const string IssueUnmute = "issue_unmute";
 
     // 匯入
     public const string ImportApply = "import_apply";

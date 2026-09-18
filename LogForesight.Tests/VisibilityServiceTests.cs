@@ -415,7 +415,8 @@ public class VisibilityServiceTests
         var granted = Create(FakeCurrentUser.ForUser(user.UserId));
         granted.EnsureVisible(xxHost.HostId);   // 不再拋例外
         Assert.True(granted.IsCaseGrantOnly(xxHost.HostId));
-        Assert.Equal(new[] { "App|disk|153|1" }, granted.GetCaseGrants()[xxHost.HostName]);
+        Assert.Contains(xxHost.HostName, granted.GetCaseGrantHostNames());
+        Assert.Equal(new[] { "App|disk|153|1" }, granted.GetIssueKeyRestriction(xxHost.HostId));
 
         // **範圍限定**：授與不會讓主機混進一般可見清單，統計與清單頁因此不受影響
         Assert.DoesNotContain(xxHost.HostId, granted.GetVisibleHostIds());
@@ -456,7 +457,7 @@ public class VisibilityServiceTests
         var service = Create(FakeCurrentUser.ForUser(user.UserId));
 
         Assert.Throws<DomainException>(() => service.EnsureVisible(xxHost.HostId));
-        Assert.Empty(service.GetCaseGrants());
+        Assert.Empty(service.GetCaseGrantHostNames());
     }
 
     /// <summary>
@@ -498,5 +499,95 @@ public class VisibilityServiceTests
         _users.Upsert(user);
 
         Assert.Empty(Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIdsFor(user.UserId));
+    }
+
+    [Fact]
+    public void 案件授與_已結案案件仍授與()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.Resolved,
+            ClosedAt = DateTime.Now
+        });
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        Assert.True(service.IsCaseGrantOnly(xxHost.HostId));
+        var restriction = service.GetIssueKeyRestriction(xxHost.HostId);
+        Assert.NotNull(restriction);
+        Assert.Contains("App|disk|153|1", restriction);
+    }
+
+    [Fact]
+    public void 案件授與_不載入使用者全部案件且同主機只查一次()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.InProgress
+        });
+
+        var countingCases = new CountingIssueCaseStore(_cases);
+        var service = new VisibilityService(
+            FakeCurrentUser.ForUser(user.UserId), _users, _userGroups, _access, _hosts, countingCases, _settings, _issueOwners, _issueAggregates);
+
+        service.IsCaseGrantOnly(xxHost.HostId);
+        service.IsCaseGrantOnly(xxHost.HostId);
+        service.GetIssueKeyRestriction(xxHost.HostId);
+        service.GetIssueKeyRestriction(xxHost.HostId);
+
+        Assert.Equal(0, countingCases.GetByHandlerCalls);
+        Assert.Equal(1, countingCases.HasCaseOnHostCalls);
+        Assert.Equal(1, countingCases.IssueKeysOnHostCalls);
+    }
+
+    private sealed class CountingIssueCaseStore : IIssueCaseStore
+    {
+        private readonly IIssueCaseStore _inner;
+        public CountingIssueCaseStore(IIssueCaseStore inner) => _inner = inner;
+
+        public int GetByHandlerCalls { get; private set; }
+        public int HasCaseOnHostCalls { get; private set; }
+        public int IssueKeysOnHostCalls { get; private set; }
+
+        public List<IssueCase> GetByHandler(long userId)
+        {
+            GetByHandlerCalls++;
+            return _inner.GetByHandler(userId);
+        }
+
+        public bool HasCaseOnHost(long handlerId, string hostName)
+        {
+            HasCaseOnHostCalls++;
+            return _inner.HasCaseOnHost(handlerId, hostName);
+        }
+
+        public HashSet<string> IssueKeysOnHost(long handlerId, string hostName)
+        {
+            IssueKeysOnHostCalls++;
+            return _inner.IssueKeysOnHost(handlerId, hostName);
+        }
+
+        public List<string> HostNamesWithCases(long handlerId) => _inner.HostNamesWithCases(handlerId);
+        public IssueCase? GetOpen(string hostName, string issueKey) => _inner.GetOpen(hostName, issueKey);
+        public List<IssueCase> GetOpenForHost(string hostName) => _inner.GetOpenForHost(hostName);
+        public List<IssueCase> GetMany(IEnumerable<string> hostNames) => _inner.GetMany(hostNames);
+        public List<IssueCase> GetOpenByHandler(long userId) => _inner.GetOpenByHandler(userId);
+        public List<IssueCase> GetResolvedSince(DateTime since) => _inner.GetResolvedSince(since);
+        public IssueCase? Get(string caseId) => _inner.Get(caseId);
+        public void Save(IssueCase issueCase) => _inner.Save(issueCase);
+        public void SaveMany(IEnumerable<IssueCase> cases) => _inner.SaveMany(cases);
+        public List<(string HostNameKey, string IssueKey)> GetOpenKeys() => _inner.GetOpenKeys();
+        public List<IssueCase> GetOpenByIssue(string source, int eventId) => _inner.GetOpenByIssue(source, eventId);
+        public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId) => _inner.GetOpenMany(hostNames, source, eventId);
+        public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) => _inner.GetByWorkOrder(workOrderId, skip, take);
+        public int CountByWorkOrder(long workOrderId) => _inner.CountByWorkOrder(workOrderId);
+        public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q) => _inner.QueryMembers(q);
+        public List<IssueCase> GetDaySyncPending(int take) => _inner.GetDaySyncPending(take);
+        public int CountDaySyncPending() => _inner.CountDaySyncPending();
+        public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent) => _inner.ClearDaySyncPendingIfUnchanged(caseId, intent);
     }
 }

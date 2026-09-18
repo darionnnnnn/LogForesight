@@ -46,7 +46,7 @@ public class NextUnhandledShortcutTests : IDisposable
             new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
             new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),
             new UserDisplayNameService(_settingsStore),
-            _cache);
+            _cache, new FixedIssueExclusionSource(IssueExclusion.None));
 
     public void Dispose() => _fixture.Dispose();
 
@@ -375,7 +375,7 @@ internal class ScopedVisibility : IVisibilityService
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => _visible;
     public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => _visible;
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => _visible;
-    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
     public bool IsCaseGrantOnly(long hostId) => false;
     public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
     public List<WebHost> GetVisibleHosts() => new();

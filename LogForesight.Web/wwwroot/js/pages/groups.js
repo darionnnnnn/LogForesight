@@ -119,6 +119,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
             { title: '群組名稱', render: g => g.groupName },
             { title: '角色', render: g => roleBadge(g.role) },
             { title: '成員數', className: 'text-end', render: g => String(g.memberCount) },
+            { title: '派工池', className: 'text-center', render: g => renderDispatchPoolToggle(g) },
             { title: '狀態', render: g => activeBadge(g.active) },
             { title: '', className: 'text-end', render: g => groupActions('user', g) }
         ],
@@ -696,6 +697,40 @@ function roleBadge(role) {
     span.className = `lf-badge lf-badge--${variants[role] ?? 'secondary'}`;
     span.textContent = role;
     return span;
+}
+
+function renderDispatchPoolToggle(group) {
+    const wrap = document.createElement('div');
+    wrap.className = 'form-check d-flex justify-content-center m-0';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'form-check-input';
+    input.checked = !!group.dispatchPool;
+
+    if (group.builtin) {
+        input.disabled = true;
+        input.title = '系統內建群組不能設為派工池';
+        wrap.title = '系統內建群組不能設為派工池';
+    } else {
+        input.addEventListener('change', async () => {
+            const next = input.checked;
+            input.disabled = true;
+            try {
+                await api.put(`/api/admin/groups/${group.groupId}/dispatch-pool`, { inPool: next }, { silent: true });
+                group.dispatchPool = next;
+                toast('已更新派工池設定');
+            } catch (error) {
+                input.checked = !next;
+                toast(error.message, 'danger');
+            } finally {
+                input.disabled = false;
+            }
+        });
+    }
+
+    wrap.appendChild(input);
+    return wrap;
 }
 
 function activeBadge(active) {

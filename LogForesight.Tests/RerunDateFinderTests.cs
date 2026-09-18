@@ -305,6 +305,7 @@ public sealed class RerunDateFinderTests
         }
 
         public List<IssueHandling> GetByCase(string caseId) => new();
+        public List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds) => new();
         public void Save(IssueHandling handling) => _items.Add(handling);
         public void SaveMany(IEnumerable<IssueHandling> handlings) => _items.AddRange(handlings);
         public void Clear(string hostName, DateTime date, string issueKey) =>

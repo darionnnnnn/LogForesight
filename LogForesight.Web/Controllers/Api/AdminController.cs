@@ -85,6 +85,13 @@ public class AdminController : ControllerBase
     public ApiResponse<UserDto> SetUserGroups(long userId, [FromBody] SetUserGroupsRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SetUserGroups(userId, request.GroupIds));
 
+    [HttpPut("users/{userId:long}/dispatch-paused")]
+    public ApiResponse SetDispatchPaused(long userId, [FromBody] SetUserDispatchPausedRequest request)
+    {
+        _users.SetDispatchPaused(userId, request.Paused);
+        return ApiResponse.Ok();
+    }
+
     // ── 使用者群組 ───────────────────────────────────────────────────────────
 
     [HttpGet("groups")]
@@ -94,6 +101,13 @@ public class AdminController : ControllerBase
     [HttpPost("groups")]
     public ApiResponse<UserGroupDto> SaveUserGroup([FromBody] SaveUserGroupRequest request) =>
         ApiResponse<UserGroupDto>.Ok(_groups.SaveUserGroup(request));
+
+    [HttpPut("groups/{groupId:long}/dispatch-pool")]
+    public ApiResponse SetDispatchPool(long groupId, [FromBody] SetGroupDispatchPoolRequest request)
+    {
+        _groups.SetDispatchPool(groupId, request.InPool);
+        return ApiResponse.Ok();
+    }
 
     [HttpDelete("groups/{groupId:long}")]
     public ApiResponse DeleteUserGroup(long groupId)

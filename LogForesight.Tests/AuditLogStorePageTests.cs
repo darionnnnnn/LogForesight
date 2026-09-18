@@ -223,4 +223,16 @@ public class AuditLogStorePageTests : IDisposable
             row.CreatedAt = null;
         ctx.SaveChanges();
     }
+
+    [Fact]
+    public void AppendLines_依清單順序附加()
+    {
+        var store = _fixture.LogStore("append_lines_test");
+        var lines = Enumerable.Range(1, 1500).Select(i => $"line_{i}").ToList();
+
+        store.AppendLines(lines);
+
+        var read = store.ReadLines();
+        Assert.Equal(lines, read);
+    }
 }

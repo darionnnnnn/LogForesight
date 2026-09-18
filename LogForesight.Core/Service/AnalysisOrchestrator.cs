@@ -69,6 +69,9 @@ public class OrchestratorResult
     public List<LocalDaySummary> LocalResults { get; set; } = new();
     public NetiqPipelineResult? NetiqResult { get; set; }
     public TimeSpan Elapsed { get; set; }
+
+    /// <summary>本趟夜間派工彙總；派工收尾失敗時為 null。供排程端寄交辦摘要信。</summary>
+    public NightlyDispatchSummary? DispatchSummary { get; set; }
 }
 
 /// <summary>
@@ -80,7 +83,7 @@ internal sealed record AnalysisRunContext(
     RunRequest Request, AppSettings Settings, RetentionOptions Retention, IRunConsole Console,
     CancellationToken Ct, EventLogService EventLogService, IssueCaseCoordinator CaseCoordinator,
     IRiskyEventStore RiskyEventStore, BatchRunRecorder RunRecorder, OrchestratorResult Result,
-    bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings);
+    bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings, NightlyDispatch Dispatch);
 
 /// <summary>
 /// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
@@ -119,6 +122,14 @@ public interface IRunProgress
 public class AnalysisOrchestrator
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    private readonly IDispatchCandidateSource _candidateSource;
+
+    /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource)
+    {
+        _candidateSource = candidateSource;
+    }
 
     /// <summary>
     /// 「當日 PRTG finding 已到齊」的訊號 phase（不是進度，done／total 恆為 0）。
@@ -190,7 +201,9 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "規則種子鏡像同步失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            var suppressionStore = new SuppressionStore(backend.Blob("suppressions"));
+            // 包裝層：LoadAll 附帶由問題檔案合成的靜音項目（到期提醒等「生效中抑制」判定由 SuppressionFilter 排除）
+            var suppressionStore = new MuteAwareSuppressionStore(
+                new SuppressionStore(backend.Blob("suppressions")), new IssueOwnerStore(backend.Blob("issue_owners")));
             var currentHost = Environment.MachineName;
             // 到期抑制的通知移到 hostStore.Touch 之後才印（回饋十三輪 F）：Group／Site 範圍的抑制
             // 判定需要知道本機的群組成員資格，那個資訊要等主機登記完成才拿得到，見下方。
@@ -530,11 +543,12 @@ public class AnalysisOrchestrator
                 var recordHandlingStore = backend.RecordHandlingStore();
                 var dayHandlingPruned = recordHandlingStore.Prune(retention.RetentionDays);
                 var casePruned = backend.IssueCaseStore().Prune(retention.RetentionDays);
+                var workOrderPruned = backend.WorkOrderStore().PruneClosed(retention.RetentionDays);
 
-                var handlingPruned = issueHandlingPruned + dayHandlingPruned + casePruned;
+                var handlingPruned = issueHandlingPruned + dayHandlingPruned + casePruned + workOrderPruned;
                 if (handlingPruned > 0)
                     console.WriteLine($"已清除 {handlingPruned} 筆超過 {retention.RetentionDays} 天的處理狀態" +
-                                      $"（問題 {issueHandlingPruned}／日 {dayHandlingPruned}／已結案 {casePruned}）。");
+                                      $"（問題 {issueHandlingPruned}／日 {dayHandlingPruned}／已結案 {casePruned}／交辦單 {workOrderPruned}）。");
 
                 var handlingLogPruned = recordHandlingStore.PruneLogs(retention.AuditRetentionDays);
                 if (handlingLogPruned > 0)
@@ -599,9 +613,46 @@ public class AnalysisOrchestrator
             // 兩條寫入路徑在紀錄剛落地時就地併入該主機的 finding（docs/PRTG-SPEC.md §9）。
             var prtgFindings = new PrtgFindingsRegistry();
 
+            // 夜間派工：一趟一份派工脈絡與 NightlyDispatch，三路共用（互斥由脈絡的 Gate 負責）。
+            // 系統設定在這裡讀一次，下方資源守門沿用同一個變數
+            var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            DispatchCandidatePool candidatePool;
+            try
+            {
+                candidatePool = _candidateSource.Build();
+            }
+            catch (Exception ex)
+            {
+                // 錯誤處理：候選人快照失敗時以空池執行——負責人規則與自動派工都找不到人而略過，續掛仍照常
+                Log.Error(ex, "派工候選人快照失敗，本趟不派工");
+                candidatePool = new DispatchCandidatePool
+                {
+                    ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
+                };
+            }
+            var workOrderStore = backend.WorkOrderStore();
+            var issueCaseStore = backend.IssueCaseStore();
+            DispatchContext dispatchContext;
+            try
+            {
+                dispatchContext = DispatchContext.Build(
+                    candidatePool, new IssueOwnerStore(backend.Blob("issue_owners")), workOrderStore, issueCaseStore,
+                    new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, DateTime.Now);
+            }
+            catch (Exception ex)
+            {
+                // 錯誤處理：派工是附加步驟，讀不到派工資料（例如問題檔案 blob 損毀）不可拖垮整趟分析
+                Log.Error(ex, "派工脈絡建立失敗，本趟不派工");
+                dispatchContext = DispatchContext.CreateUnavailable(issueCaseStore);
+            }
+            var workOrderCoordinator = new WorkOrderCoordinator(
+                workOrderStore, issueCaseStore, backend.IssueHandlingStore(), caseCoordinator,
+                backend.RecordHandlingStore(), hostStore);
+            var nightlyDispatch = new NightlyDispatch(workOrderCoordinator, dispatchContext, hostStore);
+
             var runCtx = new AnalysisRunContext(
                 request, settings, retention, console, ct, eventLogService, caseCoordinator,
-                riskyEventStore, runRecorder, result, useAi, progress, prtgFindings);
+                riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch);
 
             // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
             // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
@@ -631,7 +682,6 @@ public class AnalysisOrchestrator
             // 資源守門（docs/PRTG-SPEC.md §12）：建構走 TryCreate 這個唯一入口——守門自己的建構失敗
             // （密文損毀、鏡像表或 Sentinel 清單讀取失敗）不能讓整趟批次在啟動前就掛掉，失敗＝本趟不守門。
             // 未啟用或認證不齊時回 null 且零成本。NetIQ 與 PRTG 兩路共用同一個實例。
-            var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
             using var resourceGuard = PrtgResourceGuard.TryCreate(
                 systemSettings, backend.PrtgStore(), sentinelStore, runRecorder, console, progress);
 
@@ -652,7 +702,29 @@ public class AnalysisOrchestrator
             // try/catch 吞掉非取消例外，只有取消會穿透；本機路徑
             // 沒有這層保護，維持「本機出問題就是整趟失敗」的既有嚴格度（本機通常只有一台，
             // 出問題多半是環境性的，值得當硬失敗訊號，不像 NetIQ/PRTG 是外部系統失聯不該拖累其他主機）。
-            await Task.WhenAll(analysisTask, prtgTask);
+            try
+            {
+                await Task.WhenAll(analysisTask, prtgTask);
+            }
+            finally
+            {
+                // 三路匯合（含任一路擲例外）：已寫入的交辦單成員都要補記 appended 事件並彙總，否則失敗那一趟留痕不完整；
+                // 收尾本身失敗只記警告
+                try
+                {
+                    var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
+                    runCtx.Result.DispatchSummary = dispatchSummary;
+                    Log.Info("派工：建 {CreatedOrders} 單／掛入 {AttachedMembers} 台／略過 {SkipCounts}",
+                        dispatchSummary.CreatedOrders, dispatchSummary.AttachedMembers,
+                        dispatchSummary.SkipCounts.Count == 0
+                            ? "無"
+                            : string.Join("、", dispatchSummary.SkipCounts.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}:{p.Value}")));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "夜間派工收尾失敗（交辦單成員已寫入，只缺本趟 appended 事件）");
+                }
+            }
 
             // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
             if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
@@ -729,7 +801,7 @@ public class AnalysisOrchestrator
         IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
 
         // 回望天數（回饋三十四輪 C）：立即執行的「回望天數」是單一欄位，缺漏日與重跑日
         // 共用同一個窗口，且**本機與 NetIQ 都適用**——合併前這個欄位只影響 NetIQ，
@@ -921,7 +993,7 @@ public class AnalysisOrchestrator
 
                     // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
                     // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
-                    HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
+                    HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, currentHost, date, record.TopIssues);
                     HostDayPostProcessor.ReplaceRiskyEvents(
                         riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
 
@@ -986,7 +1058,7 @@ public class AnalysisOrchestrator
         PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
 
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
@@ -1029,7 +1101,7 @@ public class AnalysisOrchestrator
                 NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
             var netiqPipeline = new NetiqPipelineService(
                 backend, netiqOptions, sentinelStore, hostStore,
-                eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
+                eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, dispatch, console,
                 riskyEventStore, retention.RawEventRetentionDays, useAi, progress,
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings,

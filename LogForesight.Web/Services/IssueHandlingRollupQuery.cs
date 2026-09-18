@@ -38,14 +38,16 @@ public class IssueHandlingRollupQuery
     /// 大於 HostCount，PriorityScore 的 openW 突破 [0.5,1.0] 值域扭曲排序，且
     /// `ExcludeConcluded` 的「全部主機已有結論」判定永遠不成立）。
     /// </summary>
+    /// <param name="exclusion">靜音排除條件：必須是呼叫端算出 <paramref name="aggregates"/> 時用的同一份
+    /// （同一次請求只取一次），處理概況的母體才與排行本身一致。</param>
     public IReadOnlyDictionary<string, IssueHostStatusSets> Build(
-        IReadOnlyCollection<IssueAggregate> aggregates, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<IssueAggregate> aggregates, DateTime from, DateTime to,
         IReadOnlyCollection<long>? visibleHostIds)
     {
         if (aggregates.Count == 0) return new Dictionary<string, IssueHostStatusSets>();
 
         var issues = aggregates.Select(a => (a.Source, a.EventId)).Distinct().ToList();
-        var occurrences = _aggregates.LatestOccurrences(issues, from, to, visibleHostIds);
+        var occurrences = _aggregates.LatestOccurrences(exclusion, issues, from, to, visibleHostIds);
         if (occurrences.Count == 0) return new Dictionary<string, IssueHostStatusSets>();
 
         var resolved = _statusResolver.Resolve(occurrences, from, to);

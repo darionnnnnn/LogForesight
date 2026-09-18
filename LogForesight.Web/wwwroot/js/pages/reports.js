@@ -613,9 +613,16 @@ function renderIssueRankMeta() {
         : '';
 
     // §10.6：全部主機都已有結論的問題不佔用排行版面，卡底同一行誠實說出排除了幾筆
-    const concludedNote = currentData.concludedIssueCount > 0
-        ? `；另有 ${currentData.concludedIssueCount} 個問題已有結論（未列入）`
-        : '';
+    // 靜音中的問題同樣不列入排行（docs/archive/FEEDBACK-47-PLAN.md 15.3 (2)），同一行續接
+    const concludedCount = currentData.concludedIssueCount > 0 ? currentData.concludedIssueCount : 0;
+    const mutedCount = currentData.mutedIssueCount > 0 ? currentData.mutedIssueCount : 0;
+    const concludedNote = concludedCount && mutedCount
+        ? `；另有 ${concludedCount} 個問題已有結論、${mutedCount} 個靜音中（未列入）`
+        : concludedCount
+            ? `；另有 ${concludedCount} 個問題已有結論（未列入）`
+            : mutedCount
+                ? `；另有 ${mutedCount} 個問題靜音中（未列入）`
+                : '';
 
     subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
 

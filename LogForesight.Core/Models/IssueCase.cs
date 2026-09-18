@@ -58,4 +58,23 @@ public class IssueCase
     public DateTime? ClosedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>所屬交辦單（<see cref="WorkOrder"/>）；null＝尚未連結到任何交辦單</summary>
+    public long? WorkOrderId { get; set; }
+
+    /// <summary>由 <see cref="IssueKey"/> 解析出的問題來源原字，store 寫入時自動算出、讀回資料庫值；
+    /// 呼叫端不需要也不應該自己填。解析失敗為 null</summary>
+    public string? SourceName { get; set; }
+
+    /// <summary>由 <see cref="IssueKey"/> 解析出的事件 ID，規則同 <see cref="SourceName"/></summary>
+    public int? EventId { get; set; }
+
+    /// <summary>逐日 <see cref="IssueHandling"/> 列尚待背景同步（後續階段使用）</summary>
+    public bool DaySyncPending { get; set; }
+
+    /// <summary>待背景同步的逐日寫入意圖；<see cref="DaySyncPending"/> 為 false 時為 null</summary>
+    public CaseDayIntent? DaySyncIntent { get; set; }
+
+    /// <summary>因取消交辦而關閉的案件</summary>
+    public bool Cancelled { get; set; }
 }

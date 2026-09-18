@@ -28,6 +28,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly FakeIssueOwnerStore _issueOwners = new();
+    private readonly FakeWorkOrderStore _workOrders;
     private readonly RecordQueryServiceFacade _service;
     private readonly HandlingServiceFacade _handlingService;
 
@@ -38,6 +39,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     public RecordQueryServiceSearchTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
+        _workOrders = new FakeWorkOrderStore(_caseStore);
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
@@ -429,6 +431,35 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Null(dto.CaseFirstLinkedDate);
     }
 
+    /// <summary>
+    /// 案件所屬交辦單（回饋第 47 輪 D-2c）：有單就帶單號給前端組單號連結；
+    /// 沒有案件時為 null（舊案件未整併也是 null，同一條路徑）。
+    /// </summary>
+    [Fact]
+    public void GetDetail_問題案件有交辦單時帶回單號_無案件時為null()
+    {
+        var host = AddHost("HOST-A");
+        var other = AddHost("HOST-B");
+        var issue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
+        AddRecord(other, Yesterday, "高", issues: new[] { issue });
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-wo", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, WorkOrderId = 77,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        Assert.Equal(77, _service.GetDetail(host.HostId, Yesterday).TopIssues.Single().WorkOrderId);
+        Assert.Null(_service.GetDetail(other.HostId, Yesterday).TopIssues.Single().WorkOrderId);
+    }
+
     // ── 依問題視角（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────────
 
     private static LogIssueSignature DiskIssue(IssueSeverity severity = IssueSeverity.High) => new()
@@ -668,6 +699,156 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     [Fact]
+    public void SearchByIssue_已交辦主機數_只計進行中交辦單成員主機數()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var c = AddHost("HOST-C");
+        var d = AddHost("HOST-D");
+
+        var disk = DiskIssue();
+        AddRecord(a, Yesterday, "高", issues: new[] { disk });
+        AddRecord(b, Yesterday, "高", issues: new[] { disk });
+        AddRecord(c, Yesterday, "高", issues: new[] { disk });
+
+        var net = new LogIssueSignature
+        {
+            LogName = "System", Source = "Network", EventId = 99,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.Medium
+        };
+        AddRecord(d, Yesterday, "中", issues: new[] { net });
+
+        var order = new WorkOrder
+        {
+            SourceName = "disk",
+            EventId = 153,
+            IssueLabel = "disk 153",
+            HandlerId = 1,
+            Origin = WorkOrderOrigins.Manual,
+            ScopeKind = WorkOrderScopes.Hosts,
+            CreatedAt = DateTime.Now
+        };
+        var orderId = _workOrders.Insert(order);
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-a",
+            HostName = a.HostName,
+            IssueKey = IssueSignatureKey.For(disk),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = 1,
+            WorkOrderId = orderId,
+            CreatedAt = Yesterday,
+            UpdatedAt = Yesterday
+        });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-b",
+            HostName = b.HostName,
+            IssueKey = IssueSignatureKey.For(disk),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = 1,
+            WorkOrderId = orderId,
+            CreatedAt = Yesterday,
+            UpdatedAt = Yesterday
+        });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var diskGroup = Assert.Single(result.Items, i => i.Source == "disk" && i.EventId == 153);
+        Assert.Equal(3, diskGroup.HostCount);
+        Assert.Equal(2, diskGroup.AssignedHostCount);
+
+        var netGroup = Assert.Single(result.Items, i => i.Source == "Network" && i.EventId == 99);
+        Assert.Equal(1, netGroup.HostCount);
+        Assert.Equal(0, netGroup.AssignedHostCount);
+    }
+
+    /// <summary>以指定可見範圍組裝的服務（其餘與建構子同一套 store）</summary>
+    private RecordQueryServiceFacade ServiceWithVisibility(IVisibilityService visibility) =>
+        new(
+            repository: new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility),
+            reports: new NullReportReader(),
+            hosts: _hosts,
+            users: _users,
+            hostGroups: new FakeHostGroupStore(),
+            visibility: visibility,
+            handlings: _handlingStore,
+            issueHandlings: _issueHandlingStore,
+            cases: _caseStore,
+            noiseMarks: new FakeNoiseMarkStore(),
+            rules: new FakeRuleStore(),
+            currentUser: FakeCurrentUser.WithCapabilities(),
+            settings: _settingsStore,
+            aggregates: new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
+            statusResolver: new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),
+            issueOwners: _issueOwners,
+            settingsService: _severityVisibility);
+
+    /// <summary>進行中且已屬於交辦單的案件</summary>
+    private void AssignedCase(WebHost host, LogIssueSignature issue, long workOrderId) =>
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = $"case-{host.HostName}",
+            HostName = host.HostName,
+            IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153",
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = 1,
+            WorkOrderId = workOrderId,
+            CreatedAt = Yesterday,
+            UpdatedAt = Yesterday
+        });
+
+    private long DiskOrder() => _workOrders.Insert(new WorkOrder
+    {
+        SourceName = "disk", EventId = 153, IssueLabel = "disk 153", HandlerId = 1,
+        Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
+    });
+
+    [Fact]
+    public void 已交辦_只數檢視者範圍內的主機()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var c = AddHost("HOST-C");
+        var disk = DiskIssue();
+        var orderId = DiskOrder();
+        foreach (var host in new[] { a, b, c })
+        {
+            AddRecord(host, Yesterday, "高", issues: new[] { disk });
+            AssignedCase(host, disk, orderId);
+        }
+
+        var result = ServiceWithVisibility(new ScopedVisibility(a.HostId)).SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(1, group.HostCount);
+        Assert.Equal(1, group.AssignedHostCount);
+    }
+
+    [Fact]
+    public void 已交辦_期間外的主機不計()
+    {
+        var inside = AddHost("HOST-IN");
+        var outside = AddHost("HOST-OUT");
+        var disk = DiskIssue();
+        var orderId = DiskOrder();
+        AddRecord(inside, Yesterday, "高", issues: new[] { disk });
+        AddRecord(outside, Yesterday.AddDays(-10), "高", issues: new[] { disk });
+        AssignedCase(inside, disk, orderId);
+        AssignedCase(outside, disk, orderId);
+
+        var result = _service.SearchByIssue(new RecordSearchRequest { From = Yesterday, To = Yesterday });
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(1, group.HostCount);
+        Assert.Equal(1, group.AssignedHostCount);
+    }
+
+    [Fact]
     public void Search_未指派過濾_只留無有效處理人的風險日()
     {
         // §5/§10：明細視角未指派＝日層級無處理人且無案件涵蓋
@@ -730,6 +911,82 @@ public class RecordQueryServiceSearchTests : IDisposable
     /// 高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一嚴重度），
     /// 勾「高＋中」時不該出現低嚴重度的問題組。
     /// </summary>
+    // ── 靜音數套用與主清單相同的後段篩選（回饋第 47 輪 G-2a）──────────────────
+
+    /// <summary>
+    /// 依問題視角改接假聚合查詢：主清單有一個未靜音問題 net/99（Security、高）；
+    /// 目前靜音中兩個問題 disk/153（Storage、高）與 cron/7（Service、低）。
+    /// </summary>
+    private RecordQueryServiceFacade ServiceWithMutedIssues()
+    {
+        var aggregates = new FakeIssueAggregateQuery
+        {
+            Result = new List<IssueAggregate>
+            {
+                new()
+                {
+                    Source = "net", EventId = 99, Category = IssueCategory.Security.ToString(),
+                    MaxSeverityRank = (int)IssueSeverity.High, HostCount = 1, DayCount = 1, ActiveDays = 1,
+                    FirstSeen = Yesterday, LastSeen = Yesterday, TotalCount = 1
+                }
+            },
+            MutedIssuesResult = new List<MutedIssueSummary>
+            {
+                new("Disk", 153, IssueCategory.Storage.ToString(), (int)IssueSeverity.High),
+                new("cron", 7, IssueCategory.Service.ToString(), (int)IssueSeverity.Low)
+            }
+        };
+        var visibility = new AlwaysVisibleService(_hosts);
+        return new RecordQueryServiceFacade(
+            repository: new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility),
+            reports: new NullReportReader(),
+            hosts: _hosts,
+            users: _users,
+            hostGroups: new FakeHostGroupStore(),
+            visibility: visibility,
+            handlings: _handlingStore,
+            issueHandlings: _issueHandlingStore,
+            cases: _caseStore,
+            noiseMarks: new FakeNoiseMarkStore(),
+            rules: new FakeRuleStore(),
+            currentUser: FakeCurrentUser.WithCapabilities(),
+            settings: _settingsStore,
+            aggregates: aggregates,
+            statusResolver: new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore),
+            issueOwners: _issueOwners,
+            settingsService: _severityVisibility);
+    }
+
+    [Fact]
+    public void 依問題_篩來源與事件時靜音數只算符合的問題()
+    {
+        AddHost("HOST-A");
+        var service = ServiceWithMutedIssues();
+
+        Assert.Equal(2, service.SearchByIssue(new RecordSearchRequest()).MutedIssueCount);
+        // 來源大小寫不分（與主清單同一個比對）
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { Source = "disk", EventId = 153 }).MutedIssueCount);
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { EventId = 7 }).MutedIssueCount);
+
+        var unmuted = service.SearchByIssue(new RecordSearchRequest { Source = "net", EventId = 99 });
+        Assert.Equal(0, unmuted.MutedIssueCount);
+        Assert.Single(unmuted.Items);
+    }
+
+    [Fact]
+    public void 依問題_篩類別與嚴重度時靜音數同樣套用()
+    {
+        AddHost("HOST-A");
+        var service = ServiceWithMutedIssues();
+
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { Categories = new List<string> { "storage" } }).MutedIssueCount);
+        var low = service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { RiskLevels.Low } });
+        Assert.Equal(1, low.MutedIssueCount);
+        Assert.Empty(low.Items);
+        // 嚴重度門檻：只有 disk/153（高）達到
+        Assert.Equal(1, service.SearchByIssue(new RecordSearchRequest { Severity = "High" }).MutedIssueCount);
+    }
+
     [Fact]
     public void SearchByIssue_高風險日內的低嚴重度問題_預設高中篩選下不出現_勾低後出現()
     {
@@ -793,131 +1050,6 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("disk", result.Items[1].Source);    // 2 台
     }
 
-    // ── 跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────
-
-    [Fact]
-    public void BulkAssignIssueCase_對每台主機建案_已有案件的保留原處理人並列入略過()
-    {
-        var host1 = AddHost("HOST-A");
-        var host2 = AddHost("HOST-B");
-        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
-        var newHandler = _users.Upsert(new WebUser { Account = "DOMAIN\\new", DisplayName = "新處理人" });
-        var issue = DiskIssue();
-        AddRecord(host1, Yesterday, "高", issues: new[] { issue });
-        AddRecord(host2, Yesterday, "高", issues: new[] { issue });
-
-        // host1 先有案件
-        _handlingService.Assign(host1.HostId, Yesterday, owner.UserId);
-
-        var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
-        {
-            Source = "disk", EventId = 153,
-            HostIds = new List<long> { host1.HostId, host2.HostId },
-            HandlerId = newHandler.UserId
-        });
-
-        Assert.Equal(1, result.Created);   // 只有 host2 真的建案
-        var skipped = Assert.Single(result.Skipped);
-        Assert.Equal("HOST-A", skipped.HostName);
-        // 全站統一的「顯示名稱(帳號)」（docs/archive/FEEDBACK-10-PLAN.md §6）
-        Assert.Equal("原處理人(DOMAIN\\owner)", skipped.ExistingHandlerName);
-    }
-
-    // ── 回饋第十輪 §9（改派）／§12（分攤）────────────────────────────────────
-
-    /// <summary>§12：Assignments 讓每台主機各有處理人——群組分攤靠這個欄位落盤</summary>
-    [Fact]
-    public void BulkAssignIssueCase_逐台指派不同處理人()
-    {
-        var host1 = AddHost("HOST-A");
-        var host2 = AddHost("HOST-B");
-        var first = _users.Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
-        var second = _users.Upsert(new WebUser { Account = "DOMAIN\\b", DisplayName = "乙" });
-        var issue = DiskIssue();
-        AddRecord(host1, Yesterday, "高", issues: new[] { issue });
-        AddRecord(host2, Yesterday, "高", issues: new[] { issue });
-
-        var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
-        {
-            Source = "disk", EventId = 153,
-            HostIds = new List<long> { host1.HostId, host2.HostId },
-            Assignments = new List<IssueCaseAssignmentDto>
-            {
-                new() { HostId = host1.HostId, HandlerId = first.UserId },
-                new() { HostId = host2.HostId, HandlerId = second.UserId }
-            }
-        });
-
-        Assert.Equal(2, result.Created);
-        Assert.Equal(first.UserId, _caseStore.GetOpen("HOST-A", IssueSignatureKey.For(issue))!.HandlerId);
-        Assert.Equal(second.UserId, _caseStore.GetOpen("HOST-B", IssueSignatureKey.For(issue))!.HandlerId);
-    }
-
-    /// <summary>
-    /// §9：勾了「改派」的主機才換人，其餘維持既有的「保留原處理人並列入略過」語意——
-    /// 沒有這個分野，一次批次指派就會把別人手上的工作全部靜默搶走。
-    /// </summary>
-    [Fact]
-    public void BulkAssignIssueCase_只改派勾選的主機()
-    {
-        var host1 = AddHost("HOST-A");
-        var host2 = AddHost("HOST-B");
-        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
-        var newHandler = _users.Upsert(new WebUser { Account = "DOMAIN\\new", DisplayName = "新處理人" });
-        var issue = DiskIssue();
-        AddRecord(host1, Yesterday, "高", issues: new[] { issue });
-        AddRecord(host2, Yesterday, "高", issues: new[] { issue });
-
-        // 兩台都先有 owner 的案件
-        _handlingService.Assign(host1.HostId, Yesterday, owner.UserId);
-        _handlingService.Assign(host2.HostId, Yesterday, owner.UserId);
-
-        var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
-        {
-            Source = "disk", EventId = 153,
-            HostIds = new List<long> { host1.HostId, host2.HostId },
-            HandlerId = newHandler.UserId,
-            ReassignHostIds = new List<long> { host1.HostId }
-        });
-
-        Assert.Equal(0, result.Created);
-        var reassigned = Assert.Single(result.Reassigned);
-        Assert.Equal("HOST-A", reassigned.HostName);
-        Assert.Equal("HOST-B", Assert.Single(result.Skipped).HostName);
-
-        Assert.Equal(newHandler.UserId, _caseStore.GetOpen("HOST-A", IssueSignatureKey.For(issue))!.HandlerId);
-        Assert.Equal(owner.UserId, _caseStore.GetOpen("HOST-B", IssueSignatureKey.For(issue))!.HandlerId);
-    }
-
-    /// <summary>§12：群組候選人只列啟用中的成員——分攤給停用帳號等於那幾台沒人處理</summary>
-    [Fact]
-    public void GetHandlerCandidates_排除停用成員()
-    {
-        var active = _users.Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲", GroupIds = new List<long> { 7 } });
-        _users.Upsert(new WebUser { Account = "DOMAIN\\b", DisplayName = "乙", GroupIds = new List<long> { 7 }, Active = false });
-
-        var candidates = _handlingService.GetHandlerCandidates(7);
-
-        Assert.Equal(active.UserId, Assert.Single(candidates).UserId);
-    }
-
-    [Fact]
-    public void PreviewIssueCaseAssign_列出受影響主機與既有處理人()
-    {
-        var host = AddHost("HOST-A");
-        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
-        var issue = DiskIssue();
-        AddRecord(host, Yesterday, "高", issues: new[] { issue });
-        _handlingService.Assign(host.HostId, Yesterday, owner.UserId);
-
-        var preview = _handlingService.PreviewIssueCaseAssign("disk", 153, null, null);
-
-        var item = Assert.Single(preview.Hosts);
-        Assert.Equal("HOST-A", item.HostName);
-        Assert.Equal("原處理人", item.ExistingHandlerName);
-        Assert.Equal(1, preview.TotalHostCount);
-        Assert.False(preview.Truncated);
-    }
 
     // ── ClusterSignatures（回饋十九輪批次E6：改走 Aggregate 子集）──────────────────
 
@@ -1007,6 +1139,26 @@ public class RecordQueryServiceSearchTests : IDisposable
         // 跨問題去重後的主機總數為 2 台（HOST-A、HOST-B），不重複計算 HOST-A
         // ——各列 HostCount 加總是 3，去重後才是可以跟風險類型卡對照的數字
         Assert.Equal(2, result.DistinctHostCount);
+    }
+
+    /// <summary>
+    /// 依問題端點的宣告回傳型別要是 <see cref="IssueSearchResultDto"/>：JSON 依宣告型別序列化，
+    /// 寫成父型別 <c>PagedResult</c> 會把去重主機數與靜音未列出數静默吊掉，
+    /// 而服務層測試（上一條）看不到——只有實際打 API 才發現。
+    /// </summary>
+    [Fact]
+    public void 依問題端點_序列化後仍帶去重主機數與靜音未列出數()
+    {
+        var method = typeof(LogForesight.Web.Controllers.Api.RecordsController)
+            .GetMethod(nameof(LogForesight.Web.Controllers.Api.RecordsController.ByIssue))!;
+        var payloadType = method.ReturnType.GetGenericArguments()[0];
+        Assert.Equal(typeof(IssueSearchResultDto), payloadType);
+
+        var dto = new IssueSearchResultDto { DistinctHostCount = 7, MutedIssueCount = 3 };
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            LogForesight.Web.Models.ApiResponse<object>.Ok(dto));
+        Assert.Contains("distinctHostCount", json, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mutedIssueCount", json, System.StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

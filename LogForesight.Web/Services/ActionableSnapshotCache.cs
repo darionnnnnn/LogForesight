@@ -23,18 +23,20 @@ public class ActionableSnapshotCache
 
     public ActionableSnapshotCache(Func<DateTime>? now = null) => _now = now ?? (() => DateTime.Now);
 
-    /// <summary>組鍵：區間＋可見主機＋日風險等級＋可見嚴重度——後兩者來自系統設定，
-    /// 設定變更後 TTL 內的殘影與其他快取一致，可接受。</summary>
+    /// <summary>組鍵：區間＋可見主機＋日風險等級＋可見嚴重度＋靜音排除（<see cref="IssueExclusion.CacheToken"/>）——
+    /// 日風險等級與可見嚴重度來自系統設定，設定變更後 TTL 內的殘影與其他快取一致，可接受；
+    /// 靜音設定或換日改變時鍵直接跟著變。</summary>
     public static string KeyOf(
         DateTime from, DateTime to,
         IReadOnlyCollection<long>? visibleHostIds,
         IReadOnlyCollection<string>? riskLevels,
-        IReadOnlyCollection<string>? visibleSeverities)
+        IReadOnlyCollection<string>? visibleSeverities,
+        string exclusionToken)
     {
         var hosts = visibleHostIds == null ? "*" : string.Join(",", visibleHostIds.OrderBy(id => id));
         var risks = riskLevels == null ? "*" : string.Join(",", riskLevels.OrderBy(r => r, StringComparer.Ordinal));
         var sevs = visibleSeverities == null ? "*" : string.Join(",", visibleSeverities.OrderBy(s => s, StringComparer.Ordinal));
-        return $"{from:yyyyMMdd}|{to:yyyyMMdd}|{risks}|{sevs}|{hosts}";
+        return $"{from:yyyyMMdd}|{to:yyyyMMdd}|{risks}|{sevs}|{exclusionToken}|{hosts}";
     }
 
     /// <summary>命中回傳**副本**——呼叫端會依群組子集篩選，不能讓它改到共用清單。</summary>

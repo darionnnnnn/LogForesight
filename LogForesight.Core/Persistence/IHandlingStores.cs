@@ -26,6 +26,9 @@ public interface IRecordHandlingStore
 
     void AppendLog(RecordHandlingLog log);
 
+    /// <summary>批次附加歷程：續號規則同 AppendLog，整批只讀一次尾端續號</summary>
+    void AppendLogs(IReadOnlyList<RecordHandlingLog> logs);
+
     /// <summary>單一風險日的完整處理歷程，依時間先後排序</summary>
     List<RecordHandlingLog> GetLogs(string hostName, DateTime date);
 }
@@ -45,6 +48,11 @@ public interface IIssueHandlingStore
 
     /// <summary>某案件展開寫入的全部逐日列（案件同步展開時定位既有列用，docs/archive/FEEDBACK-4-PLAN.md §0.5）</summary>
     List<IssueHandling> GetByCase(string caseId);
+
+    /// <summary>
+    /// 多個案件展開寫入的全部逐日列（批次取消用，依 case_id 精確查、store 內分批）。
+    /// </summary>
+    List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds);
 
     /// <summary>寫入／更新單一問題的狀態；status 為 null／空字串代表清除該問題的標記（回到未處理）</summary>
     void Save(IssueHandling handling);
@@ -86,6 +94,18 @@ public interface IIssueCaseStore
     /// </summary>
     List<IssueCase> GetByHandler(long userId);
 
+    /// <summary>指定處理人在指定主機上是否有案件，含已結案（案件授與語意）</summary>
+    bool HasCaseOnHost(long handlerId, string hostName);
+
+    /// <summary>指定處理人在指定主機上的問題鍵集合，含已結案（案件授與語意）</summary>
+    HashSet<string> IssueKeysOnHost(long handlerId, string hostName);
+
+    /// <summary>指定處理人名下有案件的主機名清單，含已結案（案件授與語意）</summary>
+    List<string> HostNamesWithCases(long handlerId);
+
+    /// <summary>結案時間 &gt;= <paramref name="since"/> 且狀態為 resolved 的案件（派工延續性用）</summary>
+    List<IssueCase> GetResolvedSince(DateTime since);
+
     IssueCase? Get(string caseId);
 
     void Save(IssueCase issueCase);
@@ -97,5 +117,36 @@ public interface IIssueCaseStore
     /// 與 <see cref="IIssueHandlingStore.SaveMany"/> 同一個理由存在。
     /// </summary>
     void SaveMany(IEnumerable<IssueCase> cases);
+
+    /// <summary>全部進行中案件的（host_name_key, issue_key）：單一查詢、只選這兩欄（待派清單扣除已有人處理的缺口用）</summary>
+    List<(string HostNameKey, string IssueKey)> GetOpenKeys();
+
+    /// <summary>某問題的全部進行中案件（source 不分大小寫，比對正規化的 source_key）</summary>
+    List<IssueCase> GetOpenByIssue(string source, int eventId);
+
+    /// <summary>指定主機集合中某問題的進行中案件（主機以 host_name_key 比對，分批查）</summary>
+    List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId);
+
+    /// <summary>某交辦單的成員案件（分頁，含已結案）</summary>
+    List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take);
+
+    int CountByWorkOrder(long workOrderId);
+
+    /// <summary>
+    /// 某交辦單的成員（狀態與主機名篩選、分頁），依 host_name_key、case_id 排序。
+    /// 查詢次數不隨成員數增長；主機名清單依既有 500 一批分批比對。條件不合法擲 ArgumentException。
+    /// </summary>
+    (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q);
+
+    /// <summary>待背景逐日同步的案件（day_sync_pending = 1），依 updated_at、case_id 升冪取前 take 筆</summary>
+    List<IssueCase> GetDaySyncPending(int take);
+
+    int CountDaySyncPending();
+
+    /// <summary>
+    /// 背景寫完逐日列後清旗標：只在案件上存的意圖仍等於 <paramref name="intent"/>（序列化字串相同）時
+    /// 清除旗標與意圖，回傳是否清到。期間使用者送了新意圖就不清，留給下一批依新意圖重寫。
+    /// </summary>
+    bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent);
 }
 

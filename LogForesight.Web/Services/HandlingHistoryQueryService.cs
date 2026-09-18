@@ -30,6 +30,7 @@ public class HandlingHistoryQueryService
     private readonly HandlingProgressCalculator _progress;
     private readonly IIssueAggregateQuery _aggregateQuery;
     private readonly IUserDisplayNameService _displayNameService;
+    private readonly IIssueExclusionSource _exclusions;
 
     public HandlingHistoryQueryService(
         IRecordHandlingStore store,
@@ -42,7 +43,8 @@ public class HandlingHistoryQueryService
         IRecordRepository repository,
         HandlingProgressCalculator progress,
         IIssueAggregateQuery aggregateQuery,
-        IUserDisplayNameService displayNameService)
+        IUserDisplayNameService displayNameService,
+        IIssueExclusionSource exclusions)
     {
         _store = store;
         _issueStore = issueStore;
@@ -55,6 +57,7 @@ public class HandlingHistoryQueryService
         _progress = progress;
         _aggregateQuery = aggregateQuery;
         _displayNameService = displayNameService;
+        _exclusions = exclusions;
     }
 
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date)
@@ -112,7 +115,8 @@ public class HandlingHistoryQueryService
     /// 語意內），使用者要看全部就選「全部」。狀態推導與 <see cref="GetTodo"/>／問題查詢清單同一套
     /// （DayHandlingDerivation），不另發明第二份語意；未指派＝日層級無處理人且無案件涵蓋。
     /// </summary>
-    public List<DailyAnalysisRecord> FilterByScope(IReadOnlyCollection<DailyAnalysisRecord> records, string scope)
+    /// <param name="exclusion">呼叫端同一次請求取得的靜音排除條件（狀態推導用）</param>
+    public List<DailyAnalysisRecord> FilterByScope(IssueExclusion exclusion, IReadOnlyCollection<DailyAnalysisRecord> records, string scope)
     {
         scope = HandlingScopes.Normalize(scope);
         if (scope == HandlingScopes.All) return records.ToList();
@@ -156,7 +160,7 @@ public class HandlingHistoryQueryService
             }
 
             var external = HandlingStatuses.ExternalOf(
-                DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities).DayStatus);
+                DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities, exclusion, record.Date).DayStatus);
 
             return scope switch
             {
@@ -190,7 +194,11 @@ public class HandlingHistoryQueryService
     /// 為什麼要分兩段：處理狀態以主機名稱為鍵，合併後紀錄帶舊名稱、狀態掛存活名稱，
     /// SQL 經 host_name 橋接對墓碑必然落空。
     /// </summary>
-    public HandlingTodoDto GetTodoByRange(DateTime from, DateTime to, IReadOnlySet<string>? riskLevels = null)
+    public HandlingTodoDto GetTodoByRange(DateTime from, DateTime to, IReadOnlySet<string>? riskLevels = null) =>
+        GetTodoByRange(_exclusions.Current(), from, to, riskLevels);
+
+    /// <summary>呼叫端已在同一次請求取得靜音排除條件時用這個（儀表板／報表）。SQL 段與墓碑記憶體段共用同一份。</summary>
+    public HandlingTodoDto GetTodoByRange(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlySet<string>? riskLevels)
     {
         var visibleHostIds = _visibility.GetVisibleHostIds();
         if (visibleHostIds.Count == 0) return new HandlingTodoDto();
@@ -218,7 +226,7 @@ public class HandlingHistoryQueryService
         }
 
         var sqlTodo = _aggregateQuery.AggregateDayTodo(
-            from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today, riskLevels);
+            exclusion, from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today, riskLevels);
 
         var todo = new HandlingTodoDto
         {
@@ -237,7 +245,7 @@ public class HandlingHistoryQueryService
                 To = to,
                 Hosts = tombstoneHostKeys
             });
-            var memTodo = GetTodo(tombstoneRecords);
+            var memTodo = GetTodo(exclusion, tombstoneRecords);
 
             todo.TotalCount += memTodo.TotalCount;
             todo.OpenCount += memTodo.OpenCount;
@@ -249,7 +257,11 @@ public class HandlingHistoryQueryService
         return todo;
     }
 
-    public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records)
+    public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) =>
+        GetTodo(_exclusions.Current(), records);
+
+    /// <summary>呼叫端已在同一次請求取得靜音排除條件時用這個。</summary>
+    public HandlingTodoDto GetTodo(IssueExclusion exclusion, IReadOnlyCollection<DailyAnalysisRecord> records)
     {
         // 待辦母體＝高＋中風險日，全站唯一定義（S3）：呼叫端不必也不應該自己先過濾
         var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
@@ -291,7 +303,7 @@ public class HandlingHistoryQueryService
 
             // 日狀態由問題層級推導（方案 B，與問題清單同一套規則）——
             // 全部問題結案的風險日不再算未處理，即使日層級從沒被人動過
-            var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities);
+            var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities, exclusion, record.Date);
 
             // 對外三態（#12）：日層級 fallback 出來的狀態可能是 wont_fix/false_positive/known_noise
             // （使用者把整天標成這些狀態、當天沒有問題層級標記時），改看 ExternalOf 前這三種狀態
@@ -309,7 +321,7 @@ public class HandlingHistoryQueryService
             var dayOverdue = handling?.DueDate.HasValue == true &&
                              handling.DueDate.Value.Date < DateTime.Today &&
                              progress.IsUnresolved;
-            if (dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, DateTime.Today))
+            if (dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, DateTime.Today, exclusion, record.Date))
             {
                 todo.OverdueCount++;
             }
@@ -334,14 +346,15 @@ public class HandlingHistoryQueryService
         // （docs/archive/FEEDBACK-10-PLAN.md §7）：被交辦到授權範圍外的主機時，「我的交辦」
         // 若還是看不到那些案件，等於被指派了卻找不到工作在哪
         var visibleHostIds = _visibility.GetVisibleHostIds().ToHashSet();
-        foreach (var hostName in _visibility.GetCaseGrants().Keys)
+        foreach (var hostName in _visibility.GetCaseGrantHostNames())
         {
             var granted = _hosts.FindByName(hostName);
             if (granted != null) visibleHostIds.Add(granted.HostId);
         }
 
         var caseItems = BuildHandlerCaseItems(userId, visibleHostIds);
-        var dayItems = BuildHandlerDayItems(userId, visibleHostIds, includeResolvedDays);
+        // 靜音排除條件本次請求只取一次，逐筆推導共用
+        var dayItems = BuildHandlerDayItems(userId, visibleHostIds, includeResolvedDays, _exclusions.Current());
 
         return new HandlerWorkloadDto
         {
@@ -400,7 +413,8 @@ public class HandlingHistoryQueryService
     /// 狀態」——沿用詳情頁／清單頁同一套 ComputeProgress。預設只列推導後未結案；
     /// includeResolvedDays 時另外納入近 30 天內已結案的（成就感與回顧用）。
     /// </summary>
-    private List<HandlerDayItemDto> BuildHandlerDayItems(long userId, IReadOnlySet<long> visibleHostIds, bool includeResolvedDays)
+    private List<HandlerDayItemDto> BuildHandlerDayItems(
+        long userId, IReadOnlySet<long> visibleHostIds, bool includeResolvedDays, IssueExclusion exclusion)
     {
         var cutoff = DateTime.Today.AddDays(-30);
         var items = new List<HandlerDayItemDto>();
@@ -413,13 +427,13 @@ public class HandlingHistoryQueryService
             var record = _repository.GetOne(host.HostId, handling.Date);
             if (record == null) continue;   // 分析紀錄不存在（理論上不會，防禦性——指派本身要求紀錄存在）
 
-            var progress = _progress.ComputeProgress(host, handling.Date, record);
+            var progress = _progress.ComputeProgress(exclusion, host, handling.Date, record);
             var unresolved = progress.IsUnresolved;
             if (!unresolved && (!includeResolvedDays || handling.Date.Date < cutoff)) continue;
 
             var forDayIssues = _issueStore.GetForDay(host.HostName, handling.Date);
             var isOverdue = (handling.DueDate.HasValue && handling.DueDate.Value.Date < DateTime.Today && unresolved) ||
-                            DayHandlingDerivation.HasOverdueIssue(forDayIssues, DateTime.Today);
+                            DayHandlingDerivation.HasOverdueIssue(forDayIssues, DateTime.Today, exclusion, handling.Date);
 
             items.Add(new HandlerDayItemDto
             {

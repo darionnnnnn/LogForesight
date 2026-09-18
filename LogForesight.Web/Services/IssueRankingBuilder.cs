@@ -21,6 +21,7 @@ public class IssueRankingBuilder
 {
     private readonly IIssueAggregateQuery _aggregates;
     private readonly IHostStore _hosts;
+    private readonly IIssueExclusionSource _exclusions;
     private readonly IssueHandlingRollupQuery? _rollup;
     private readonly TopIssueBackfiller? _backfiller;
     private readonly StorageBackend? _backend;
@@ -37,6 +38,7 @@ public class IssueRankingBuilder
     public IssueRankingBuilder(
         IIssueAggregateQuery aggregates,
         IHostStore hosts,
+        IIssueExclusionSource exclusions,
         IssueHandlingRollupQuery? rollup = null,
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null,
@@ -46,6 +48,7 @@ public class IssueRankingBuilder
     {
         _aggregates = aggregates;
         _hosts = hosts;
+        _exclusions = exclusions;
         _rollup = rollup;
         _backfiller = backfiller;
         _backend = backend;
@@ -103,11 +106,21 @@ public class IssueRankingBuilder
     /// </summary>
     public List<IssueRankingDto> Build(
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
-        IReadOnlyCollection<WebHost>? hostSnapshot = null)
+        IReadOnlyCollection<WebHost>? hostSnapshot = null) =>
+        Build(_exclusions.Current(), from, to, visibleHostIds, totalHosts, hostSnapshot);
+
+    /// <summary>
+    /// 同上，靜音排除條件由呼叫端傳入：儀表板／報表在同一次請求只取一次
+    /// <see cref="IIssueExclusionSource.Current"/>，這份排行與同頁其他查詢才會用同一份規則。
+    /// 機房首見日不套靜音（見該呼叫處註解），其餘聚合一律套用。
+    /// </summary>
+    public List<IssueRankingDto> Build(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
+        IReadOnlyCollection<WebHost>? hostSnapshot)
     {
         // 跨請求快取（回饋二十七輪作業 F4）：儀表板與報表共用這份投影，
         // 使用者在兩頁間切換時同一組聚合幾秒內會被整套重算——短 TTL 內直接沿用
-        var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(from, to, visibleHostIds, totalHosts);
+        var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(from, to, visibleHostIds, totalHosts, exclusion.CacheToken);
         if (cacheKey != null)
         {
             var cached = _cache!.TryGet(cacheKey);
@@ -122,18 +135,18 @@ public class IssueRankingBuilder
         // 鍵一律正規化成大寫（回饋二十輪 I）：Aggregate 已把大小寫不同的同名來源合併成一筆，
         // 但輸出的 Source 是該期間內任一個原始寫法——本期與前期各自取到的寫法可能不同，
         // 用原始字串當鍵會讓前期對比靜默落空、老問題被當成新問題
-        var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
+        var previous = _aggregates.Aggregate(exclusion, previousFrom, previousTo, visibleHostIds)
             .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
-        var current = _aggregates.Aggregate(from, to, visibleHostIds);
-        var result = BuildFromAggregates(current, previous, from, to, visibleHostIds, totalHosts, hostSnapshot, periodDays);
+        var current = _aggregates.Aggregate(exclusion, from, to, visibleHostIds);
+        var result = BuildFromAggregates(exclusion, current, previous, from, to, visibleHostIds, totalHosts, hostSnapshot, periodDays);
 
         if (cacheKey != null) _cache!.Set(cacheKey, result);
         return result;
     }
 
     private List<IssueRankingDto> BuildFromAggregates(
-        List<IssueAggregate> current, Dictionary<(string SourceUpper, int EventId), IssueAggregate> previous,
+        IssueExclusion exclusion, List<IssueAggregate> current, Dictionary<(string SourceUpper, int EventId), IssueAggregate> previous,
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
         IReadOnlyCollection<WebHost>? hostSnapshot, int periodDays)
     {
@@ -144,8 +157,9 @@ public class IssueRankingBuilder
         var issuesOnPage = current.Select(a => (a.Source, a.EventId)).Distinct().ToList();
         var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
         var baselines = IssueBaselineCalculator.Compute(
-            _aggregates.DailyHostCounts(issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
-        var fleetFirstSeen = _aggregates.FirstSeenFor(issuesOnPage);
+            _aggregates.DailyHostCounts(exclusion, issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
+        // 靜音不排除：機房首見日是跨主機的機房級事實，與顯示決定無關
+        var fleetFirstSeen = _aggregates.FirstSeenFor(IssueExclusion.None, issuesOnPage);
 
         // 規則白話說明：以當頁問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
         var rules = KnownIssueCatalog.ResolveRules(_rules);
@@ -156,14 +170,14 @@ public class IssueRankingBuilder
 
         // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
         // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
-        var hostIdsByIssue = _aggregates.HostIdsByIssue(issuesOnPage, from, to, visibleHostIds);
+        var hostIdsByIssue = _aggregates.HostIdsByIssue(exclusion, issuesOnPage, from, to, visibleHostIds);
         var tierByHostId = (hostSnapshot ?? _hosts.GetAll()).ToDictionary(h => h.HostId, h => h.Tier);
 
         // 處理概況（§10.6）：由本類別內建計算，不留給呼叫端傳字典——這個參數過去就是
         // 「呼叫端自己組字典」的形式存在，結果兩個正式呼叫端都忘了傳，一直是死碼
         // （回饋十九輪查證抓到）。_rollup 為 null 時（測試未注入）OpenHostCount／
         // ResolvedHostCount 維持 0，不影響其餘欄位。
-        var handlingByIssue = _rollup?.Build(current, from, to, visibleHostIds);
+        var handlingByIssue = _rollup?.Build(exclusion, current, from, to, visibleHostIds);
 
         // 距今天數以查詢期間的 to 為準，不是另外抓一次真實今天（回饋十九輪批次C）：
         // 分析資料只到昨天，呼叫端（Dashboard/Report）傳的 to 本來就是「現在能看到的最後一天」；

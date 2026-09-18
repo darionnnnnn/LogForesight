@@ -52,6 +52,7 @@ public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStor
             existing.ConcludedByAccount = rule.ConcludedByAccount;
             existing.ConcludedAt = rule.ConcludedAt;
             existing.AutoApply = rule.AutoApply;
+            existing.Mutes = rule.Mutes;
             return existing;
         });
     }

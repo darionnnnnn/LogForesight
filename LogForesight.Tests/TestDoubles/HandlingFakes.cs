@@ -42,22 +42,24 @@ internal class HandlingServiceFacade
         LogForesight.Web.Services.Mail.MailNotificationService? mail = null,
         IIssueAggregateQuery? issueAggregates = null)
     {
-        var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
+        var progress = new HandlingProgressCalculator(issueStore, store, cases, settings, new FixedIssueExclusionSource(IssueExclusion.None));
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         var displayNames = new UserDisplayNameService(settings);
+        var workOrderStore = new FakeWorkOrderStore(cases);
+        var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, store, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
-            audit, currentUser, displayNames);
+            audit, currentUser, displayNames, workOrderStore, workOrders);
         _day = new DayHandlingCommandService(
-            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
+            store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
             displayNames, mail, issueOwners);
         _issue = new IssueHandlingCommandService(
-            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
+            store, issueStore, cases, caseCoordinator, workOrders, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, displayNames, mail);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery(),
-            displayNames);
+            displayNames, new FixedIssueExclusionSource(IssueExclusion.None));
     }
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);
@@ -65,12 +67,8 @@ internal class HandlingServiceFacade
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false) => _day.Assign(hostId, date, handlerId, reassign);
     public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request) => _issue.SetIssueStatus(hostId, date, request);
     public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request) => _issue.SetIssueStatusBatch(hostId, date, request);
-    public IssueCaseAssignPreviewDto PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
-    public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request) => _issue.BulkAssignIssueCase(request);
-    public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request) => _issue.BulkSetIssueStatusByHandler(request);
     public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewBulkClose(source, eventId, from, to);
     public BulkCloseIssueResultDto BulkCloseIssue(BulkCloseIssueRequest request) => _issue.BulkCloseIssue(request);
-    public List<HandlerCandidateDto> GetHandlerCandidates(long userGroupId) => _issue.GetHandlerCandidates(userGroupId);
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date) => _history.GetLogs(hostId, date);
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) => _history.GetTodo(records);
     public HandlerWorkloadDto GetHandlerWorkload(long userId, bool includeResolvedDays) => _history.GetHandlerWorkload(userId, includeResolvedDays);
@@ -83,7 +81,7 @@ internal class RestrictedVisibleService : IVisibilityService
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => new HashSet<long>();
     public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => new HashSet<long>();
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => new HashSet<long>();
-    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
     public bool IsCaseGrantOnly(long hostId) => false;
     public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
     public List<WebHost> GetVisibleHosts() => new();
@@ -206,6 +204,20 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     int IAnalysisRecordQuery.CountPendingAi() => _records.Count(r => r.AiPending);
 
+    /// <summary>批次候選日：主機比對沿用上方 Query，逐筆 TopIssues 以 IssueSignatureKey.For 組鍵（語意同 EF 實作）</summary>
+    List<IssueDayHit> IAnalysisRecordQuery.IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys)
+    {
+        if (hosts.Count == 0 || issueKeys.Count == 0) return new List<IssueDayHit>();
+        var keys = issueKeys.ToHashSet(StringComparer.Ordinal);
+        return ((IAnalysisRecordQuery)this).Query(new RecordQueryFilter { Hosts = hosts })
+            .SelectMany(r => r.TopIssues
+                .Select(IssueSignatureKey.For)
+                .Where(keys.Contains)
+                .Select(key => new IssueDayHit(r.HostId, key, r.Date.Date)))
+            .Distinct()
+            .ToList();
+    }
+
     /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
     int IAnalysisRecordQuery.MarkAllForAiRerun()
     {
@@ -265,6 +277,12 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
     public List<IssueHandling> GetByCase(string caseId) =>
         _items.Where(h => h.CaseId == caseId).ToList();
 
+    public List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds)
+    {
+        var ids = caseIds.ToHashSet(StringComparer.Ordinal);
+        return _items.Where(h => h.CaseId != null && ids.Contains(h.CaseId)).ToList();
+    }
+
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });
 
     public void SaveMany(IEnumerable<IssueHandling> handlings)
@@ -308,6 +326,24 @@ internal class FakeIssueCaseStore : IIssueCaseStore
 
     public List<IssueCase> GetByHandler(long userId) => _items.Where(c => c.HandlerId == userId).ToList();
 
+    public bool HasCaseOnHost(long handlerId, string hostName) =>
+        _items.Any(c => c.HandlerId == handlerId && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName));
+
+    public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) =>
+        _items.Where(c => c.HandlerId == handlerId && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName))
+            .Select(c => c.IssueKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+    public List<string> HostNamesWithCases(long handlerId) =>
+        _items.Where(c => c.HandlerId == handlerId)
+            .Select(c => c.HostName)
+            .Distinct()
+            .ToList();
+
+    /// <summary>同 EF 版：結案時間 &gt;= since 且狀態為 resolved</summary>
+    public List<IssueCase> GetResolvedSince(DateTime since) =>
+        _items.Where(c => c.ClosedAt != null && c.ClosedAt >= since && c.Status == IssueHandlingStatuses.Resolved).ToList();
+
     public List<IssueCase> GetOpenForHost(string hostName) =>
         _items.Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && c.ClosedAt == null).ToList();
 
@@ -320,6 +356,15 @@ internal class FakeIssueCaseStore : IIssueCaseStore
     public List<IssueCase> GetOpenByHandler(long userId) =>
         _items.Where(c => c.HandlerId == userId && c.ClosedAt == null).ToList();
 
+    public int GetOpenKeysCalls { get; private set; }
+
+    /// <summary>同 EF 版：全部進行中案件的（host_name_key, issue_key）</summary>
+    public List<(string HostNameKey, string IssueKey)> GetOpenKeys()
+    {
+        GetOpenKeysCalls++;
+        return _items.Where(c => c.ClosedAt == null).Select(c => (HostNameKey.Of(c.HostName), c.IssueKey)).ToList();
+    }
+
     public IssueCase? Get(string caseId) => _items.FirstOrDefault(c => c.CaseId == caseId);
 
     /// <summary>批次入口與逐筆同語意——假實作沒有「整份讀改寫」的成本，行為一致即可</summary>
@@ -331,7 +376,15 @@ internal class FakeIssueCaseStore : IIssueCaseStore
     public void Save(IssueCase issueCase)
     {
         var existing = _items.FirstOrDefault(c => c.CaseId == issueCase.CaseId);
-        if (existing == null) { _items.Add(issueCase); return; }
+        if (existing == null)
+        {
+            // 同 EF 版：SourceName／EventId 由 IssueKey 算出，不採呼叫端填的值
+            var parsed = IssueSignatureKey.TryParseSignature(issueCase.IssueKey);
+            issueCase.SourceName = parsed?.Source;
+            issueCase.EventId = parsed?.EventId;
+            _items.Add(issueCase);
+            return;
+        }
         existing.Status = issueCase.Status;
         existing.HandlerId = issueCase.HandlerId;
         existing.Note = issueCase.Note;
@@ -340,6 +393,75 @@ internal class FakeIssueCaseStore : IIssueCaseStore
         existing.LastLinkedDate = issueCase.LastLinkedDate;
         existing.ClosedAt = issueCase.ClosedAt;
         existing.UpdatedAt = issueCase.UpdatedAt;
+        existing.WorkOrderId = issueCase.WorkOrderId;
+        existing.DaySyncPending = issueCase.DaySyncPending;
+        existing.Cancelled = issueCase.Cancelled;
+        existing.DaySyncIntent = issueCase.DaySyncIntent;
+    }
+
+    private static bool SameIssue(IssueCase c, string source, int eventId) =>
+        c.SourceName != null && c.EventId == eventId &&
+        c.SourceName.ToUpperInvariant() == source.ToUpperInvariant();
+
+    public List<IssueCase> GetOpenByIssue(string source, int eventId) =>
+        _items.Where(c => c.ClosedAt == null && SameIssue(c, source, eventId)).ToList();
+
+    public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames, string source, int eventId)
+    {
+        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _items.Where(c => names.Contains(c.HostName) && c.ClosedAt == null && SameIssue(c, source, eventId)).ToList();
+    }
+
+    public List<IssueCase> GetByWorkOrder(long workOrderId, int skip, int take) =>
+        _items.Where(c => c.WorkOrderId == workOrderId)
+            .OrderBy(c => c.HostName.ToUpperInvariant(), StringComparer.Ordinal)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Skip(skip).Take(take).ToList();
+
+    public int CountByWorkOrder(long workOrderId) => _items.Count(c => c.WorkOrderId == workOrderId);
+
+    /// <summary>同 EF 版：狀態與主機名（大寫鍵）篩選，依主機名大寫、CaseId 排序後分頁</summary>
+    public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q)
+    {
+        WorkOrderQueries.Validate(q);
+        var today = DateTime.Today;
+        var keys = q.HostNameKeys?.Select(HostNameKey.Of).ToHashSet(StringComparer.Ordinal);
+
+        var matched = _items.Where(c => c.WorkOrderId == q.WorkOrderId)
+            .Where(c => keys == null || keys.Contains(HostNameKey.Of(c.HostName)))
+            .Where(c => q.Status switch
+            {
+                WorkOrderQueries.StatusActive => c.ClosedAt == null,
+                WorkOrderQueries.StatusClosed => c.ClosedAt != null,
+                WorkOrderQueries.StatusEscalated => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated,
+                WorkOrderQueries.StatusOverdue => WorkOrderQueries.IsOverdue(c, today),
+                _ => true
+            })
+            .OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .ToList();
+
+        return (matched.Skip((q.Page - 1) * q.PageSize).Take(q.PageSize).ToList(), matched.Count);
+    }
+
+    /// <summary>同 EF 版：旗標為真者依 UpdatedAt、CaseId 升冪取前 take 筆</summary>
+    public List<IssueCase> GetDaySyncPending(int take) =>
+        _items.Where(c => c.DaySyncPending)
+            .OrderBy(c => c.UpdatedAt)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Take(take).ToList();
+
+    public int CountDaySyncPending() => _items.Count(c => c.DaySyncPending);
+
+    /// <summary>同 EF 版：存的意圖序列化字串與傳入者相等才清</summary>
+    public bool ClearDaySyncPendingIfUnchanged(string caseId, CaseDayIntent intent)
+    {
+        var existing = _items.FirstOrDefault(c => c.CaseId == caseId);
+        if (existing == null || existing.DaySyncIntent == null) return false;
+        if (EfIssueCaseStore.SerializeIntent(existing.DaySyncIntent) != EfIssueCaseStore.SerializeIntent(intent)) return false;
+        existing.DaySyncPending = false;
+        existing.DaySyncIntent = null;
+        return true;
     }
 }
 
@@ -352,6 +474,8 @@ internal class FakeNoiseMarkStore : INoiseMarkStore
 
     public NoiseMark? Get(string hostName, string issueKey) =>
         _items.FirstOrDefault(m => Same(m, hostName, issueKey));
+
+    public List<NoiseMark> GetAll() => _items.ToList();
 
     public void Save(NoiseMark mark)
     {
@@ -430,6 +554,14 @@ internal class FakeHandlingStore : IRecordHandlingStore
         log.LogId = _nextLogId++;
         if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
         _logs.Add(log);
+    }
+
+    public void AppendLogs(IReadOnlyList<RecordHandlingLog> logs)
+    {
+        foreach (var log in logs)
+        {
+            ((IRecordHandlingStore)this).AppendLog(log);
+        }
     }
 
     public List<RecordHandlingLog> GetLogs(string hostName, DateTime date) =>

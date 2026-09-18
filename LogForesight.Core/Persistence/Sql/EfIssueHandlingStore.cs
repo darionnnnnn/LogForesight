@@ -73,6 +73,27 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
             .ToList();
     }
 
+    /// <summary>GetByCases 的 case_id IN 分批大小：避免 IN 清單過長（SQL Server 參數上限 2100）</summary>
+    private const int CaseIdBatchSize = 500;
+
+    /// <summary>依 case_id 分批精確查（走 IX_lf_issue_handling_case_id）</summary>
+    public List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds)
+    {
+        var result = new List<IssueHandling>();
+        var ids = caseIds.Distinct(StringComparer.Ordinal).ToList();
+        if (ids.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in ids.Chunk(CaseIdBatchSize))
+        {
+            result.AddRange(ctx.IssueHandlings.AsNoTracking()
+                .Where(h => h.CaseId != null && batch.Contains(h.CaseId))
+                .ToList()
+                .Select(ToModel));
+        }
+        return result;
+    }
+
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });
 
     /// <summary>

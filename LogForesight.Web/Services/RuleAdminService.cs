@@ -390,21 +390,23 @@ public class RuleAdminService
         {
             // PRTG 規則沒有 SourcePattern／ProgramPattern，改依 EventKey 的 prtg:{代碼}: 前綴計數
             // （每筆 finding 一列 lf_top_issues，Count 恆為 1，筆數即命中數）；主機篩選在 SQL 端做。
-            hitCount = _issueAggregateQuery.AggregatePrtgRuleHits(windowFrom, DateTime.Today, hostIds)
+            // 靜音不排除：抑制影響面預覽要估的是規則實際會吃掉多少命中，與讀取側的靜音無關
+            hitCount = _issueAggregateQuery.AggregatePrtgRuleHits(IssueExclusion.None, windowFrom, DateTime.Today, hostIds)
                 .Where(h => string.Equals(h.RuleCode, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase))
                 .Sum(h => (long)h.HitCount);
         }
         else if (isLinux)
         {
-            hitCount = _issueAggregateQuery.Aggregate(windowFrom, DateTime.Today, hostIds)
-                .Where(a => a.Source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase))
+            // 靜音不排除：抑制影響面預覽要估的是規則實際會吃掉多少命中，與讀取側的靜音無關
+            hitCount = _issueAggregateQuery.Aggregate(IssueExclusion.None, windowFrom, DateTime.Today, hostIds)
+                .Where(a => KnownIssueCatalog.RuleMayHit(rule, a.Source, a.EventId))
                 .Sum(a => a.TotalCount);
         }
         else
         {
-            hitCount = _issueAggregateQuery.Aggregate(windowFrom, DateTime.Today, hostIds)
-                .Where(a => a.Source.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase) &&
-                            (rule.MatchAllEventIds || rule.EventIds.Contains(a.EventId)))
+            // 靜音不排除：抑制影響面預覽要估的是規則實際會吃掉多少命中，與讀取側的靜音無關
+            hitCount = _issueAggregateQuery.Aggregate(IssueExclusion.None, windowFrom, DateTime.Today, hostIds)
+                .Where(a => KnownIssueCatalog.RuleMayHit(rule, a.Source, a.EventId))
                 .Sum(a => a.TotalCount);
         }
 

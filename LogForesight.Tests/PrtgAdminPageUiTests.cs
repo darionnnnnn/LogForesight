@@ -389,7 +389,12 @@ public class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void 僅PrtgAdmin啟用Hash其餘頁面維持不變()
+    /// <summary>
+    /// 頁籤 hash 是**明列制**：只有需要「從別頁直接連到某個頁籤」的頁面才開，
+    /// 其餘頁面維持不動（開了等於把頁籤狀態寫進網址，重整與返回的行為都要跟著想）。
+    /// 交辦總覽（回饋第 47 輪）要能從別處直接連到「待派」等頁籤，故列入。
+    /// </summary>
+    public void 頁籤Hash只在明列的頁面啟用()
     {
         var root = FindRepoRoot();
         var pagesDir = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages");
@@ -407,8 +412,9 @@ public class PrtgAdminPageUiTests
             }
         }
 
-        Assert.Single(filesWithHashTrue);
-        Assert.Equal("prtg-admin.js", filesWithHashTrue[0]);
+        Assert.Equal(
+            new[] { "prtg-admin.js", "work-orders.js" },
+            filesWithHashTrue.OrderBy(f => f, StringComparer.Ordinal).ToArray());
     }
 
     [Fact]

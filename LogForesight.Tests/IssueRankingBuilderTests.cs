@@ -28,7 +28,7 @@ public class IssueRankingBuilderTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private IssueRankingBuilder Builder() => new(new EfIssueAggregateQuery(_fx.NewContext, _hosts), _hosts);
+    private IssueRankingBuilder Builder() => new(new EfIssueAggregateQuery(_fx.NewContext, _hosts), _hosts, new FixedIssueExclusionSource(IssueExclusion.None));
 
     /// <summary>帶處理概況彙總的完整組裝——驗證 OpenHostCount／ResolvedHostCount 這條路徑要串真的
     /// IssueHandlingRollupQuery，不是像 <see cref="Builder"/> 那樣單測 Aggregate→DTO 映射。</summary>
@@ -37,7 +37,7 @@ public class IssueRankingBuilderTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
         var rollup = new IssueHandlingRollupQuery(aggregates, statusResolver);
-        return new IssueRankingBuilder(aggregates, _hosts, rollup);
+        return new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None), rollup);
     }
 
     private static LogIssueSignature Issue(

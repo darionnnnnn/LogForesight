@@ -51,4 +51,14 @@ public class IssueOwnersController : ControllerBase
     [HttpDelete("{source}/{eventId:int}/conclusion")]
     public ApiResponse<IssueOwnerDto> ClearConclusion(string source, int eventId) =>
         ApiResponse<IssueOwnerDto>.Ok(_service.ClearConclusion(source, eventId));
+
+    /// <summary>靜音問題（今天起的區間；今天已在靜音中則延長）</summary>
+    [HttpPut("{source}/{eventId:int}/mute")]
+    public ApiResponse<IssueOwnerDto> SetMute(string source, int eventId, [FromBody] SetIssueMuteRequest request) =>
+        ApiResponse<IssueOwnerDto>.Ok(_service.SetMute(source, eventId, request));
+
+    /// <summary>解除進行中的靜音</summary>
+    [HttpDelete("{source}/{eventId:int}/mute")]
+    public ApiResponse<IssueOwnerDto> ClearMute(string source, int eventId) =>
+        ApiResponse<IssueOwnerDto>.Ok(_service.ClearMute(source, eventId));
 }

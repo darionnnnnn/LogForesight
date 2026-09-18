@@ -274,7 +274,7 @@ public class RecordRepositoryAliasTests : IDisposable
 
         public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => _visible;
 
-        public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
 
         public bool IsCaseGrantOnly(long hostId) => false;
 

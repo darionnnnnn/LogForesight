@@ -8,6 +8,9 @@ public class IssueSearchResultDto : PagedResult<IssueGroupDto>
 {
     /// <summary>期間內符合條件的問題所影響的相異存活主機去重計數（定義同風險類型卡的主機數）</summary>
     public int DistinctHostCount { get; set; }
+
+    /// <summary>目前靜音中、在同一組期間／可見範圍下有出現但未列出的相異問題數</summary>
+    public int MutedIssueCount { get; set; }
 }
 
 /// <summary>問題查詢的清單列</summary>
@@ -122,6 +125,9 @@ public class IssueGroupDto
 
     /// <summary>影響範圍：出現過這個問題的相異主機數</summary>
     public int HostCount { get; set; }
+
+    /// <summary>這個問題已在進行中交辦單內的主機數（分母是 HostCount）</summary>
+    public int AssignedHostCount { get; set; }
 
     /// <summary>出現過的主機日總數（同一台主機多天各算一次）</summary>
     public int DayCount { get; set; }
@@ -405,6 +411,9 @@ public class IssueDto
     public string? CaseStatus { get; set; }
     public string? CaseFirstLinkedDate { get; set; }
 
+    /// <summary>這個問題在本機的進行中案件所屬的交辦單；沒有案件或舊案件未整併時為 null</summary>
+    public long? WorkOrderId { get; set; }
+
     /// <summary>
     /// true＝這個問題簽章在本主機更早的日期有結案過的紀錄（逐日標記或已結案案件皆算）
     /// ——docs/archive/FEEDBACK-5-PLAN.md §4「之前處理過的問題再次發生」。前端據此顯示「先前處理」
@@ -412,6 +421,21 @@ public class IssueDto
     /// 不帶內容，避免每個問題都攜帶一份可能用不到的歷史清單。
     /// </summary>
     public bool HasPriorHandling { get; set; }
+
+    /// <summary>這一列是否被靜音（與讀取側排除 <c>IssueExclusion.IsMuted(來源, 事件編號, 紀錄日)</c> 同一判定）</summary>
+    public bool IsMuted { get; set; }
+
+    /// <summary>顯示用的靜音區間起日（yyyy-MM-dd）：紀錄日所在區間優先，否則今天所在區間；都沒有為 null</summary>
+    public string? MuteFrom { get; set; }
+
+    /// <summary>顯示用的靜音區間迄日（yyyy-MM-dd），取法同 <see cref="MuteFrom"/></summary>
+    public string? MuteTo { get; set; }
+
+    /// <summary>該區間的靜音原因</summary>
+    public string? MuteReason { get; set; }
+
+    /// <summary>該區間的設定者帳號</summary>
+    public string? MutedByAccount { get; set; }
 
     /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。

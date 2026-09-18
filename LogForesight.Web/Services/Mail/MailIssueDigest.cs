@@ -23,15 +23,18 @@ public class MailIssueDigest
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
     private readonly ISystemSettingsStore _settingsStore;
+    private readonly IIssueExclusionSource _exclusions;
 
     public MailIssueDigest(
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
-        ISystemSettingsStore settingsStore)
+        ISystemSettingsStore settingsStore,
+        IIssueExclusionSource exclusions)
     {
         _aggregates = aggregates;
         _statusResolver = statusResolver;
         _settingsStore = settingsStore;
+        _exclusions = exclusions;
     }
 
     /// <summary>
@@ -57,22 +60,25 @@ public class MailIssueDigest
 
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 
+        // 靜音排除條件本次只取一次，本期／前期／逾期三個查詢共用同一份
+        var exclusion = _exclusions.Current();
+
         // 前期對比用**等長**的前一個期間——與 IssueRankingBuilder.Build 同一套規則
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-periodDays + 1);
         // 鍵正規化成大寫（回饋二十輪 I）：Aggregate 輸出的 Source 是該期間內任一個原始寫法，
         // 本期與前期可能取到不同大小寫，用原始字串當鍵會讓前期對比靜默落空
         var previous = _aggregates.Aggregate(
-            previousFrom, previousTo, visibleHostIds,
+            exclusion, previousFrom, previousTo, visibleHostIds,
             visibleSeverities: visibleSeverities, riskLevels: riskLevels)
             .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(
-            from, to, visibleHostIds,
+            exclusion, from, to, visibleHostIds,
             visibleSeverities: visibleSeverities, riskLevels: riskLevels);
         if (current.Count == 0) return new List<MailIssueRow>();
 
-        var overdueKeys = ResolveOverdueKeys(from, to, visibleHostIds, visibleSeverities, riskLevels);
+        var overdueKeys = ResolveOverdueKeys(exclusion, from, to, visibleHostIds, visibleSeverities, riskLevels);
 
         var rows = new List<MailIssueRow>();
         foreach (var a in current)
@@ -100,12 +106,12 @@ public class MailIssueDigest
     /// <summary>逾期問題的 (Source,EventId) 集合——母體與判定規則與 <see cref="IssueTodoQuery"/>
     /// 共用同一個口徑（<see cref="IssueTodoQuery.IsOverdueInProgress"/>），不是另訂一套規則。</summary>
     private HashSet<(string SourceUpper, int EventId)> ResolveOverdueKeys(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities,
         IReadOnlySet<string>? riskLevels)
     {
         var actionable = _aggregates.ActionableOccurrences(
-            from, to, visibleHostIds,
+            exclusion, from, to, visibleHostIds,
             visibleSeverities: visibleSeverities, riskLevels: riskLevels);
         if (actionable.Count == 0) return new HashSet<(string, int)>();
 

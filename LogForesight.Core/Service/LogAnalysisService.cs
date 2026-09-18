@@ -198,8 +198,15 @@ public class LogAnalysisService
         // 抑制掛載點，是 A1 指出的核心缺口。TargetType=Signature 的抑制以 IssueSignatureKey 比對，
         // 不看有沒有命中規則——同一個 issue 也可能同時被 Rule 與 Signature 兩種抑制命中，兩者是
         // 「或」的關係，任一命中即算抑制。
-        var activeSuppressions = SuppressionFilter.ActiveForHost(LoadSuppressions(), _host, _hostGroupIds, DateTime.Now);
-        SuppressionFilter.MarkSuppressed(issues, activeSuppressions);
+        //
+        // 問題靜音（IssueMute）：由完整清單取出，以紀錄日（targetDate）判定，不以執行時間判定——
+        // 重新分析過去的日子永遠得到同一個答案。activeSuppressions 本身不含靜音項目。
+        var allSuppressions = LoadSuppressions();
+        var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, _host, _hostGroupIds, DateTime.Now);
+        var mutes = SuppressionFilter.MutesOf(allSuppressions);
+        SuppressionFilter.MarkSuppressed(issues, activeSuppressions, mutes, targetDate);
+        // 傳給報告（含 AI 段的報告）的抑制清單：生效中抑制＋當日命中的靜音項目，供「已抑制的告警」反查原因
+        var reportSuppressions = activeSuppressions.Concat(SuppressionFilter.MutesOn(mutes, targetDate)).ToList();
 
         // EntryType 0 是 classic API 讀到的 Critical 等級事件（如 Kernel-Power 41），計入錯誤
         var errorCount = logs.Count(l => l.EntryType == EventLogEntryType.Error || (int)l.EntryType == 0);
@@ -399,7 +406,7 @@ public class LogAnalysisService
             // 顯示「（無對應的原始 log）」——報告已有此優雅降級，非新增缺口。
             var workItem = new AiWorkItem(targetDate, issues, trendAlerts, correlations, ruleRisk, riskBasis,
                 uncoveredChecks, dataIncomplete, errorCount, warningCount, auditCount, historyDays,
-                RiskyEventSelector.SelectSourceEvents(issues, logs), activeSuppressions);
+                RiskyEventSelector.SelectSourceEvents(issues, logs), reportSuppressions);
             return (record, workItem);
         }
 
@@ -414,7 +421,7 @@ public class LogAnalysisService
         // record 此時已是完整定案內容（Headline/Summary/RiskLevel/TrendAlerts/CorrelationAlerts/
         // UncoveredChecks/DataIncomplete 皆已設好），直接傳給報告產生器，GenerateAsync 會就地
         // 把 DeepDives 寫進同一個物件，不需要另外合併
-        record.ReportFile = await GenerateReportIfActionableAsync(record, logs, activeSuppressions, ct);
+        record.ReportFile = await GenerateReportIfActionableAsync(record, logs, reportSuppressions, ct);
 
         return (record, null);
     }
@@ -564,7 +571,11 @@ public class LogAnalysisService
             if (riskyEvents.Count > 0)
             {
                 var logs = riskyEvents.Select(ToEventLogEntryData).ToList();
-                var activeSuppressions = SuppressionFilter.ActiveForHost(LoadSuppressions(), _host, _hostGroupIds, DateTime.Now);
+                // 已抑制段反查原因：生效中抑制＋紀錄日命中的靜音項目（同統計段的口徑）
+                var allSuppressions = LoadSuppressions();
+                var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, _host, _hostGroupIds, DateTime.Now)
+                    .Concat(SuppressionFilter.MutesOn(SuppressionFilter.MutesOf(allSuppressions), pendingRecord.Date))
+                    .ToList();
 
                 // 形狀比照 CompleteAiAsync 的 scratch：GenerateReportIfActionableAsync 只看
                 // record 上這些欄位，少一個報告內容就缺一塊

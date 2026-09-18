@@ -1,18 +1,17 @@
 /**
- * 跨主機回覆處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）：同一個問題被指派到多台主機時，
- * 處理人在這裡填一次就套用到**自己名下**的全部進行中案件，不必逐台進詳情頁標一樣的狀態。
+ * 回覆處理狀態 modal（共用元件）：欄位、必填規則與狀態值域只有這一份——
+ * 值域與風險日詳情的問題層級狀態一致（core 的 IssueHandlingStatuses）。
  *
- * 共用元件（docs/archive/FEEDBACK-11-PLAN.md §7 自 records.js 抽出）：問題查詢「依問題」視角與
- * 處理人工作頁的「依問題」視角都要這顆按鈕，兩邊各寫一份遲早會漂移成兩套必填規則。
- * 入口的顯示條件（「這個問題的處理人包含自己」）由呼叫端判斷——後端另有同一條限制。
+ * 分工：`openWorkOrderReplyModal` 只負責「填什麼、怎麼驗」；「回覆哪些對象、打哪支端點」
+ * 由呼叫端以 `submit` 帶進來。處理人工作頁的兩條動線（整張單／單內選取主機）與
+ * 問題查詢的「依問題」視角都走這顆 modal，兩邊各寫一份遲早會漂移成兩套必填規則。
+ * 入口的顯示條件（「這個問題／這張單的處理人是自己」）由呼叫端判斷——後端另有同一條限制。
  */
 
-import { api } from '../core/api.js';
+import { api, getCurrentUser } from '../core/api.js';
 import { toast, withBusy, showDetailModal } from '../core/ui.js';
 
-/** 值域與風險日詳情的問題層級狀態一致（core 的 IssueHandlingStatuses）。
- * escalated（回饋十八輪批次G）：「我處理不了，需要上報」——非結案，後端會即時通知
- * admin 群組決定結案或重新指派 */
+/** escalated：「我處理不了，需要上報」——非結案，後端會即時通知 admin 群組決定結案或重新指派 */
 const STATUS_OPTIONS = [
     { value: 'in_progress', label: '處理中' },
     { value: 'observing', label: '觀察中' },
@@ -24,17 +23,20 @@ const STATUS_OPTIONS = [
 ];
 
 /**
- * @param {{source: string, eventId: number}} group 問題（Source＋EventId）
- * @param {() => void} onApplied 套用成功後的重新載入
+ * @param {object} options
+ * @param {string} options.title modal 標題
+ * @param {string} options.targetText 最上方的對象說明（呼叫端決定，例如「本單 96 台中的 5 台」）
+ * @param {(payload: {status: string, note: string|null, dueDate: string|null}) => Promise<any>} options.submit
+ *        呼叫端提供的送出函式；成功與否的訊息由呼叫端自己出
+ * @param {() => void} [options.onApplied] 送出成功後的重新載入
  */
-export function openIssueStatusReplyModal(group, onApplied) {
+export function openWorkOrderReplyModal({ title, targetText, submit, onApplied }) {
     const body = document.createElement('div');
     const form = document.createElement('form');
 
     const hint = document.createElement('div');
     hint.className = 'lf-hint mb-3';
-    hint.textContent = '套用對象是這個問題目前指派給您、且尚未結案的全部主機；' +
-        '每台主機的案件會連同它涵蓋的日期一起更新。';
+    hint.textContent = `套用對象：${targetText}；每台主機的案件會連同它涵蓋的日期一起更新。`;
     form.appendChild(hint);
 
     const statusLabel = document.createElement('label');
@@ -75,11 +77,11 @@ export function openIssueStatusReplyModal(group, onApplied) {
     statusSelect.addEventListener('change', syncDueVisibility);
     syncDueVisibility();
 
-    const submit = document.createElement('button');
-    submit.type = 'submit';
-    submit.className = 'btn btn-sm btn-primary';
-    submit.textContent = '送出';
-    form.appendChild(submit);
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'btn btn-sm btn-primary';
+    submitBtn.textContent = '送出';
+    form.appendChild(submitBtn);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -89,7 +91,7 @@ export function openIssueStatusReplyModal(group, onApplied) {
             toast('標記為「不處理」時請填寫說明', 'warning');
             return;
         }
-        // 「無法處理」必填原因（回饋十八輪批次G）：管理員收到上報通知要據此決定結案或改派
+        // 「無法處理」必填原因：管理員收到上報通知要據此決定結案或改派
         if (statusSelect.value === 'escalated' && !noteInput.value.trim()) {
             toast('標記為「無法處理」時請填寫原因，管理員將據此決定結案或重新指派', 'warning');
             return;
@@ -99,17 +101,14 @@ export function openIssueStatusReplyModal(group, onApplied) {
             return;
         }
 
-        const restore = withBusy(submit, '送出中');
+        const restore = withBusy(submitBtn, '送出中');
         try {
-            const result = await api.post('/api/handling/issue-cases/bulk-status', {
-                source: group.source,
-                eventId: group.eventId,
+            await submit({
                 status: statusSelect.value,
                 note: noteInput.value.trim() || null,
                 dueDate: dueInput.value || null
             });
 
-            toast(`已更新 ${result.updatedCaseCount} 台主機、共 ${result.updatedDayCount} 天`, 'success');
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
             onApplied?.();
         } catch {
@@ -118,5 +117,63 @@ export function openIssueStatusReplyModal(group, onApplied) {
     });
 
     body.appendChild(form);
-    showDetailModal({ title: `回覆處理狀態：${group.source} (${group.eventId})`, body });
+    showDetailModal({ title, body });
+}
+
+/** 單張交辦單回覆的成功訊息（POST /api/work-orders/{id}/reply 的回應） */
+export function toastReplyResult(result) {
+    const closed = result.workOrderClosed ? '，整張單已結案' : '';
+    toast(`已回覆 ${result.cases} 台${closed}`, 'success');
+    if (result.daySyncPendingCases > 0) {
+        toast('逐日同步在背景進行', 'info');
+    }
+}
+
+/** 多張交辦單回覆的成功訊息（POST /api/work-orders/reply-many 的回應） */
+export function toastReplyManyResult(result) {
+    const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
+    toast(`已回覆 ${result.workOrders} 張單共 ${result.cases} 台${closed}`, 'success');
+    if (result.daySyncPendingCases > 0) {
+        toast('逐日同步在背景進行', 'info');
+    }
+}
+
+/**
+ * 依問題視角的入口：把「這個問題指派給我的進行中交辦單」全部帶進 reply-many。
+ * @param {{source: string, eventId: number}} group 問題（Source＋EventId）
+ * @param {() => void} onApplied 套用成功後的重新載入
+ */
+export async function openIssueStatusReplyModal(group, onApplied) {
+    const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '100' });
+    if (group.source) params.set('source', group.source);
+    if (group.eventId !== null && group.eventId !== undefined) params.set('eventId', String(group.eventId));
+
+    // 呼叫端是 click 監聽（沒有人接這個 Promise），取單失敗要在這裡收掉——
+    // api.js 已經出過錯誤 toast，往外擲只會變成 unhandled rejection
+    let list;
+    try {
+        const user = await getCurrentUser();
+        list = await api.get(`/api/handlers/${user.userId}/work-orders?${params}`);
+    } catch {
+        return;
+    }
+
+    const orders = list?.items ?? [];
+    if (orders.length === 0) {
+        toast('這個問題目前沒有指派給您的交辦單', 'info');
+        return;
+    }
+
+    const hosts = orders.reduce((sum, order) => sum + (order.counts?.active ?? 0), 0);
+    const workOrderIds = orders.map(order => order.workOrderId);
+
+    openWorkOrderReplyModal({
+        title: `回覆處理狀態：${group.source} (${group.eventId})`,
+        targetText: `${orders.length} 張單共 ${hosts} 台`,
+        submit: async payload => {
+            const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
+            toastReplyManyResult(result);
+        },
+        onApplied
+    });
 }

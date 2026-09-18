@@ -163,7 +163,7 @@ public class DataVersionStampPolicyTests
     [Theory]
     [InlineData("PUT", "/api/records/12/2026-09-16/handling")]
     [InlineData("PUT", "/api/handling/issue-cases/assign")]
-    [InlineData("POST", "/api/handling/issue-cases/bulk-status")]
+    [InlineData("POST", "/api/work-orders/12/reply")]
     public void 處理狀態寫入_推進版本戳(string method, string path)
     {
         var (context, stamp) = Request(method, path);
@@ -188,8 +188,8 @@ public class DataVersionStampPolicyTests
     [Theory]
     [InlineData("GET", "/api/records", 200)]
     [InlineData("HEAD", "/api/records", 200)]
-    [InlineData("POST", "/api/handling/issue-cases/bulk-status", 400)]
-    [InlineData("POST", "/api/handling/issue-cases/bulk-status", 500)]
+    [InlineData("POST", "/api/work-orders/12/reply", 400)]
+    [InlineData("POST", "/api/work-orders/12/reply", 500)]
     public void GET與失敗回應_不推進版本戳(string method, string path, int status)
     {
         var (context, stamp) = Request(method, path, status);

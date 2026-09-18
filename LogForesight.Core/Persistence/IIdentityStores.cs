@@ -35,6 +35,10 @@ public interface IUserStore
     /// 與 owners.csv 曾漏抄 SentinelId 同一種失敗模式，用意圖精準的方法避開。
     /// </summary>
     void TouchLogin(long userId, DateTime at);
+
+    /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
+    /// 這裡是它的唯一寫入點</summary>
+    void SetDispatchPaused(long userId, bool paused);
 }
 
 /// <summary>
@@ -53,6 +57,10 @@ public interface IUserGroupStore
 
     /// <summary>依 GroupId 更新；GroupId 為 0 時新增並配發</summary>
     UserGroup Upsert(UserGroup group);
+
+    /// <summary>只改派工池旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
+    /// 這裡是它的唯一寫入點</summary>
+    void SetDispatchPool(long groupId, bool inPool);
 
     void Delete(long groupId);
 }

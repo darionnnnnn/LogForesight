@@ -330,6 +330,12 @@ internal class FakeUserStore : IUserStore
         var user = Get(userId);
         if (user != null) user.LastLoginAt = at;
     }
+
+    public void SetDispatchPaused(long userId, bool paused)
+    {
+        var user = Get(userId);
+        if (user != null) user.DispatchPaused = paused;
+    }
 }
 
 internal class FakeUserGroupStore : IUserGroupStore
@@ -359,6 +365,12 @@ internal class FakeUserGroupStore : IUserGroupStore
         existing.Builtin = group.Builtin;
         existing.Active = group.Active;
         return existing;
+    }
+
+    public void SetDispatchPool(long groupId, bool inPool)
+    {
+        var group = Get(groupId);
+        if (group != null) group.DispatchPool = inPool;
     }
 
     public void Delete(long groupId) => _groups.RemoveAll(g => g.GroupId == groupId);
@@ -452,6 +464,20 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
         foreach (var r in targets) r.AiPending = true;
         return targets.Count;
     }
+
+    /// <summary>批次候選日：主機比對沿用 Query，逐筆 TopIssues 以 IssueSignatureKey.For 組鍵（語意同 EF 實作）</summary>
+    public List<IssueDayHit> IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys)
+    {
+        if (hosts.Count == 0 || issueKeys.Count == 0) return new List<IssueDayHit>();
+        var keys = issueKeys.ToHashSet(StringComparer.Ordinal);
+        return Query(new RecordQueryFilter { Hosts = hosts })
+            .SelectMany(r => r.TopIssues
+                .Select(IssueSignatureKey.For)
+                .Where(keys.Contains)
+                .Select(key => new IssueDayHit(r.HostId, key, r.Date.Date)))
+            .Distinct()
+            .ToList();
+    }
 }
 
 /// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
@@ -483,6 +509,8 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         existing.ConcludedByAccount = rule.ConcludedByAccount;
         existing.ConcludedAt = rule.ConcludedAt;
         existing.AutoApply = rule.AutoApply;
+        // 與正式 IssueOwnerStore.Upsert 逐欄複製保持一致（替身 Get 回傳同一個參考，漏欄缺陷要靠真實 store 的測試抓）
+        existing.Mutes = rule.Mutes;
         return existing;
     }
 

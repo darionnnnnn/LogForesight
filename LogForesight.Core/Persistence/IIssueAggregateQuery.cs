@@ -57,6 +57,10 @@ public sealed class IssueAggregate
 /// <c>DailyAnalysisRecord</c> 全部撈回記憶體再 GroupBy——6000 台 × 30 天約 18 萬筆紀錄、
 /// 近 GB 的 ContentJson，儀表板每次載入都做一遍，報表還要再做一次前期對比（雙倍）。
 /// 這條路沒有優化空間，只能換路：改由 <c>lf_top_issues</c> 一句 GROUP BY 回答。
+///
+/// **每個方法的第一個參數 <see cref="IssueExclusion"/> 刻意沒有預設值**：靜音排除要不要套，
+/// 由呼叫端逐一明寫（套用時傳同一次請求取得的那一份，不套時明寫「不排除」那一份靜態實例），
+/// 不讓新呼叫端以「沒傳」的形式靜默漏套（反射測試守門）。
 /// </summary>
 public interface IIssueAggregateQuery
 {
@@ -72,9 +76,30 @@ public interface IIssueAggregateQuery
     /// <see cref="AggregateByCategory"/> 同一套語意，儀表板風險類型卡的數字才等於下鑽筆數。
     /// </summary>
     List<IssueAggregate> Aggregate(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null);
+
+    /// <summary>
+    /// 「N 個靜音中的問題未列出」計數：<see cref="IssueExclusion.CurrentlyMuted"/> 裡，在期間內、
+    /// 可見主機、可見嚴重度、日風險等級母體下至少有一列的相異問題數。篩選與 <see cref="Aggregate"/> 同一套；
+    /// <paramref name="hostIds"/> 為空集合或沒有目前靜音中的問題時回 0。
+    /// </summary>
+    int CountCurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
+
+    /// <summary>
+    /// 目前靜音中、在篩選母體下期間內至少有一列的問題（回饋第 47 輪 G-2a）。篩選與 <see cref="CountCurrentlyMutedIssues"/> 相同；
+    /// 每列帶類別與期間最高嚴重度，供呼叫端套與主清單相同的後段篩選。
+    /// </summary>
+    List<MutedIssueSummary> CurrentlyMutedIssues(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
+
+    /// <summary>單一問題在期間內的主機日數（存活主機去重）；篩選與 Aggregate 相同，結果等於 Aggregate 該問題列的 DayCount</summary>
+    int IssueHostDayCount(IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels);
 
     /// <summary>
     /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
@@ -83,7 +108,7 @@ public interface IIssueAggregateQuery
     /// host_id=0（未回填或無主機識別的舊列）不列入——與 <see cref="EfAnalysisRecordStore.ListHostDates"/>
     /// 同一套排除慣例。
     /// </summary>
-    HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to);
+    HashSet<long> HostIdsFor(IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to);
 
     /// <summary>
     /// 期間內每個問題各自影響的相異存活主機 id 集合（回饋十九輪批次G3，PriorityScore 的
@@ -92,7 +117,7 @@ public interface IIssueAggregateQuery
     /// 主機（授權反查用），這裡是「逐一問題」各自的主機集合。查無資料的問題不在回傳字典中。
     /// </summary>
     Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds);
 
     /// <summary>
@@ -100,10 +125,11 @@ public interface IIssueAggregateQuery
     /// §10.6「排除已有結論的問題」的資料基礎）。這裡只回答「這個組合最後一次出現時長什麼樣子」——
     /// 「有沒有結論」由呼叫端另外查處理狀態／案件表判斷，兩件事分開才不會把 SQL 查詢與
     /// 處理狀態的業務規則（案件優先／觀察到期／預設嚴重度）綁在同一層。
+    /// <see cref="HostIssueOccurrence.IssueKey"/> 為完整簽章鍵（含 EventKey 第五段），與處理狀態、案件同一個鍵。
     /// </summary>
     /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
     List<HostIssueOccurrence> LatestOccurrences(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null);
 
@@ -112,9 +138,10 @@ public interface IIssueAggregateQuery
     /// （回饋十九輪批次D，Todo 問題口徑用）。母體與 <c>HandlingHistoryQueryService.GetTodo</c>
     /// 的既有定義一致：日層級 RiskLevel 為高或中，不是問題自身嚴重度。
     /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
+    /// <see cref="HostIssueOccurrence.IssueKey"/> 為完整簽章鍵（含 EventKey 第五段），與處理狀態、案件同一個鍵。
     /// </summary>
     List<HostIssueOccurrence> ActionableOccurrences(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
         IReadOnlySet<string>? riskLevels = null);
 
@@ -124,7 +151,7 @@ public interface IIssueAggregateQuery
     /// 否則只計入落在集合內的問題（已含 Critical→High 的舊資料相容映射，呼叫端不必自己展開）。
     /// </summary>
     List<CategoryAggregate> AggregateByCategory(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? allowedSeverities,
         IReadOnlySet<string>? riskLevels = null);
 
@@ -141,7 +168,7 @@ public interface IIssueAggregateQuery
     /// 母體上（<c>Categories</c> 欄位），不影響高/中/低風險日分桶——那是日層級欄位，不受問題嚴重度
     /// 可見性影響（同 <c>RecordRepository.ApplySeverityVisibility</c> 只砍 TopIssues、不動 RiskLevel 的既有原則）。
     List<DateRiskAggregate> AggregateByDate(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null);
@@ -152,7 +179,7 @@ public interface IIssueAggregateQuery
     /// 其餘參數語意同 <see cref="AggregateByDate"/>。
     /// </summary>
     List<HostRiskAggregate> AggregateByHost(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null);
@@ -164,7 +191,7 @@ public interface IIssueAggregateQuery
     /// （通常是當頁排行結果），不是整份表——與 <see cref="LatestOccurrences"/> 同一個規模假設。
     /// </summary>
     List<IssueDailyHostCount> DailyHostCounts(
-        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds);
 
     /// <summary>
@@ -184,20 +211,20 @@ public interface IIssueAggregateQuery
     /// 做授權下推稽核時請勿把這裡「修」成有過濾。
     /// </summary>
     Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
-        IReadOnlyCollection<(string Source, int EventId)> issues);
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues);
 
     /// <summary>
     /// 推導風險日的處理狀態（SQL 端實作）。
     /// 注意：墓碑主機不在本查詢的責任範圍，呼叫端必須排除並自行處理。
     /// </summary>
     List<DayHandlingProjection> DeriveDayHandling(
-        DateTime from, DateTime to,
+        IssueExclusion exclusion, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds);
 
     DayTodoAggregate AggregateDayTodo(
-        DateTime from, DateTime to,
+        IssueExclusion exclusion, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds,
@@ -207,12 +234,12 @@ public interface IIssueAggregateQuery
     /// <summary>
     /// 報表 KPI 聚合 (scope == all)。
     /// </summary>
-    ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+    ReportKpiAggregate AggregateReportKpi(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
 
     /// <summary>
     /// 報表逐日趨勢聚合 (scope == all)。
     /// </summary>
-    List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+    List<TrendAggregate> AggregateReportTrend(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
 
     /// <summary>
     /// PRTG 規則命中分組查詢（docs/archive/FEEDBACK-37-PLAN.md 批次A，校準數值匯出用）。
@@ -220,7 +247,7 @@ public interface IIssueAggregateQuery
     /// 僅納入 LogName == "PRTG" 的列，EventKey 格式不符者歸入「其他」桶。
     /// </summary>
     /// <param name="hostIds">目標存活主機集合；null＝不篩主機（校準匯出用），空集合＝零結果。</param>
-    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+    List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
 
     /// <summary>
     /// PRTG finding 跨日命中日期（docs/PRTG-SPEC.md 跨日判定）：回傳每個 EventKey 在
@@ -229,7 +256,7 @@ public interface IIssueAggregateQuery
     /// 查不到的鍵不會出現在結果裡。
     /// </summary>
     Dictionary<string, HashSet<DateTime>> GetPrtgFindingHitDates(
-        IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive);
+        IssueExclusion exclusion, IReadOnlyCollection<string> eventKeys, DateTime fromInclusive, DateTime toExclusive);
 
     /// <summary>
     /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次
@@ -237,10 +264,10 @@ public interface IIssueAggregateQuery
     /// （測試替身自動取得等值行為），EF 實作覆寫成合併查詢收斂資料庫往返。
     /// </summary>
     (ReportKpiAggregate Current, ReportKpiAggregate Previous) AggregateReportKpiPair(
-        DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
+        IssueExclusion exclusion, DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) =>
-        (AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities),
-         AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities));
+        (AggregateReportKpi(exclusion, from, to, hostIds, riskLevels, visibleSeverities),
+         AggregateReportKpi(exclusion, previousFrom, previousTo, hostIds, riskLevels, visibleSeverities));
 }
 
 /// <summary>
@@ -366,6 +393,13 @@ public sealed class CategoryAggregate
     /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
     public int ElevatesCount { get; init; }
 }
+
+/// <summary>
+/// 目前靜音中的一個問題（<see cref="IIssueAggregateQuery.CurrentlyMutedIssues"/> 的回傳列）。
+/// <see cref="Category"/>／<see cref="MaxSeverityRank"/> 與 <see cref="IssueAggregate"/> 同口徑：
+/// 類別取期間內最近一天的類別、嚴重度為期間最高並經 LegacySeverityRank 正規化。
+/// </summary>
+public sealed record MutedIssueSummary(string Source, int EventId, string Category, int MaxSeverityRank);
 
 public sealed record DayTodoAggregate(
     int TotalCount, int OpenCount, int InProgressCount, int ResolvedCount, int OverdueCount);

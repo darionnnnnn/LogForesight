@@ -68,6 +68,9 @@ public class PrtgDailyPipelineTests : IDisposable
             _backend.RecordStore(),
             new HostStore(_backend.Blob("hosts")),
             new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var dispatch = NightlyDispatchFakes.Create(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
+            new HostStore(_backend.Blob("hosts")), new IssueOwnerStore(_backend.Blob("issue_owners")), caseCoordinator);
 
         var recorder = new BatchRunRecorder(
             new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
@@ -76,7 +79,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var ctx = new AnalysisRunContext(
             new RunRequest(), new AppSettings(), new RetentionOptions(), console, ct,
             new EventLogService(), caseCoordinator, _backend.RiskyEventStore(), recorder,
-            new OrchestratorResult(), UseAi: false, progress, registry);
+            new OrchestratorResult(), UseAi: false, progress, registry, dispatch);
 
         return (ctx, console, progress, registry);
     }
@@ -952,6 +955,81 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
         Assert.DoesNotContain("prtg:down", record.RiskBasis ?? string.Empty);
         Assert.Contains(console.Lines, l => l.Contains("已抑制 1 筆"));
+    }
+
+    /// <summary>問題靜音經包裝層在 PRTG 路徑生效：紀錄日（day）落在靜音區間→finding Suppressed、不拉高日風險；
+    /// 區間只涵蓋今天（不含 day）→不標（以紀錄日判定，不以執行時間）</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 問題靜音以紀錄日判定_PRTG發佈簽章Suppressed與否(bool dayInInterval)
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>();
+        });
+
+        var day = DateTime.Today.AddDays(-1);
+
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-TEST", Ip = "192.168.1.101" } }, now);
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Disk", SensorType = "SNMP Disk Free", Status = "Down" } }, now);
+        prtgStore.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow
+            {
+                MapDate = day, DeviceObjid = 1, HostId = host.HostId, HostName = "SRV-TEST",
+                MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now
+            }
+        });
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddHours(2), Status = "Down" }
+        });
+
+        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        hostRecordStore.Append(new DailyAnalysisRecord
+        {
+            Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
+        });
+
+        // Source 以不同大小寫存入，驗證不分大小寫比對
+        new IssueOwnerStore(_backend.Blob("issue_owners")).Upsert(new IssueProfile
+        {
+            SourceName = "prtg:down", EventId = 0,
+            Mutes = new List<MuteInterval>
+            {
+                new() { From = dayInInterval ? day : DateTime.Today, To = DateTime.Today, Reason = "機房搬遷", ByAccount = "admin" }
+            }
+        });
+
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, guard: null);
+
+        var downSig = Assert.Single(registry.For(host.HostId, day));
+        Assert.Equal("PRTG:down", downSig.Source);
+        Assert.Equal(0, downSig.EventId);
+        Assert.Equal(dayInInterval, downSig.Suppressed);
+
+        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+        if (dayInInterval)
+            Assert.Equal(RiskLevels.Low, record.RiskLevel);
+        else
+            Assert.NotEqual(RiskLevels.Low, record.RiskLevel);
+        // 靜音不寫進抑制 blob
+        Assert.DoesNotContain(new SuppressionStore(_backend.Blob("suppressions")).LoadAll(),
+            s => s.TargetType == SuppressionTargetTypes.IssueMute);
     }
 
     [Fact]

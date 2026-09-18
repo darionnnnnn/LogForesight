@@ -333,9 +333,18 @@ public class SystemSettings
     /// 「排程本身掛了」；使用者可主動關閉以減少噪音。</summary>
     public bool MailDigestSkipEmpty { get; set; }
 
+    /// <summary>交辦單郵件：建立／改派／取消時通知處理人，並於夜間派工後寄每位處理人的摘要。需同時開啟 MailEnabled。</summary>
+    public bool MailNotifyWorkOrders { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }
+
+    /// <summary>
+    /// 夜間自動派工總開關：關閉時派工決策到「自動派工」步驟即略過（續掛既有單與負責人規則不受影響）。
+    /// 預設關閉。消費端：<c>WorkOrderDispatcher</c>。
+    /// </summary>
+    public bool AutoDispatchEnabled { get; set; }
 
     /// <summary>
     /// <see cref="UnhandledSeverities"/> 解析成 <see cref="IssueSeverity"/> 集合，供
