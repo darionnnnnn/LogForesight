@@ -659,12 +659,16 @@ public sealed class EfPrtgStore
         return result;
     }
 
-    /// <summary>sensor 結構鏡像最近一次同步時間（lf_prtg_sensors.synced_at 最大值）；表為空時回 null。</summary>
+    /// <summary>
+    /// 結構鏡像最近一次完整同步的時間（lf_prtg_devices.synced_at 最大值）；表為空時回 null。
+    /// 取裝置表而不是感測器表：裝置只有結構同步會寫，感測器還會被快照服務的範圍補抓零星寫入當下時間——
+    /// 拿感測器的最大值，同步連壞幾天時只要補抓過一台就會被當成「剛同步過」。
+    /// </summary>
     public DateTime? GetLatestStructureSyncedAt()
     {
         using var __perf = _performance.Measure("prtg:GetLatestStructureSyncedAt");
         using var ctx = _contextFactory();
-        return ctx.PrtgSensors.Max(s => (DateTime?)s.SyncedAt);
+        return ctx.PrtgDevices.Max(d => (DateTime?)d.SyncedAt);
     }
 
     /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>

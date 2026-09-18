@@ -732,6 +732,13 @@ public class HostAdminServiceTests : IDisposable
             new() { Objid = 5, DeviceObjid = 2004, Name = "Ping", SensorType = "ping", Status = "Down", Category = PrtgSensorCategories.Availability }
         }, syncedAt);
 
+        // 「最後結構同步時間」取裝置表：結構同步必定同時寫裝置
+        seedStore.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 2001, Name = "D1" }, new() { Objid = 2002, Name = "D2" },
+            new() { Objid = 2003, Name = "D3" }, new() { Objid = 2004, Name = "D4" }
+        }, syncedAt);
+
         return (down, up, noMap, normal);
     }
 

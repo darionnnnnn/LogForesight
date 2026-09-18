@@ -87,6 +87,13 @@ public static class PrtgResourceGuardProbe
     public const int MaxBatchSize = 50;
 
     /// <summary>
+    /// 組出 table.json 的 objid 過濾查詢字串（每顆一個 filter_objid 參數）。
+    /// 全專案唯一的組法：資源守門與數值快照分批查詢都呼叫它；單批顆數由呼叫端以 <see cref="MaxBatchSize"/> 控制。
+    /// </summary>
+    public static string BuildObjidFilter(IEnumerable<long> objids) =>
+        string.Concat(objids.Select(id => $"&filter_objid={id.ToString(CultureInfo.InvariantCulture)}"));
+
+    /// <summary>
     /// 讀取指定 sensor objid 清單的即時狀態與百分比數值。
     /// API 呼叫失敗時不擲例外，回傳無法取值結果；取消請求時（OperationCanceledException）例外穿透。
     /// </summary>
@@ -113,7 +120,7 @@ public static class PrtgResourceGuardProbe
             {
                 ct.ThrowIfCancellationRequested();
                 var batch = distinctObjids.Skip(i).Take(MaxBatchSize).ToList();
-                var filterQuery = string.Concat(batch.Select(id => $"&filter_objid={id}"));
+                var filterQuery = BuildObjidFilter(batch);
                 var relativePathAndQuery = $"/api/table.json?content=sensors&columns=objid,device,sensor,status,lastvalue,lastvalue_raw{filterQuery}";
 
                 var json = await client.GetJsonAsync(relativePathAndQuery, ct);

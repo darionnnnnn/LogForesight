@@ -27,6 +27,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     private readonly PrtgBackfillService _backfill;
     private readonly FakeHostApplicationLifetime _lifetime;
     private readonly StubHandler _stubHandler;
+    private readonly HostStore _hostStore;
 
     public PrtgSnapshotHostedServiceTests()
     {
@@ -41,6 +42,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _lifetime = new FakeHostApplicationLifetime();
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
+        _hostStore = hostStore;
         var statusStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         _backfillState = new PrtgBackfillRunState();
         _structureSync = new PrtgStructureSyncService(_settingsStore, _backend, _syncState, _schedulerRunState, hostStore, statusStore, _backfillState, new FakeSentinelStore(), _lifetime);
@@ -78,6 +80,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _schedulerRunState,
             _structureSync,
             _backfill,
+            _hostStore,
+            new FakeSentinelStore(),
             _lifetime);
 
         service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
@@ -508,7 +512,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     [Fact]
     public async Task TickAsync_執行輸出有上限_長時間運行不無限增長()
     {
-        SetupTargetSensors(new[] { (601L, "Ping") });
+        // 截斷警告只在單發全站查詢（目標超過分批門檻）時出現
+        SetupTargetSensors(ManyTargets(601, PrtgSnapshotHostedService.FilteredSnapshotLimit + 1));
         var service = CreateService();
         var clock = DateTime.Today.AddHours(1);
         service.Now = () => clock;
@@ -525,6 +530,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         Assert.True(service.ExecutionOutputs.Count <= 100,
             $"執行輸出應有上限，實際 {service.ExecutionOutputs.Count} 筆");
+        // 確認真的每輪都有寫（上限有被撞到），不是因為沒輸出才恆成立
+        Assert.Equal(100, service.ExecutionOutputs.Count);
     }
 
     /// <summary>
@@ -587,7 +594,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     [Fact]
     public async Task TickAsync_筆數少於treesize_記錄截斷警告()
     {
-        SetupTargetSensors(new[] { (601L, "Ping") });
+        // 截斷警告只在單發全站查詢（目標超過分批門檻）時出現
+        SetupTargetSensors(ManyTargets(601, PrtgSnapshotHostedService.FilteredSnapshotLimit + 1));
 
         var json = "{\"treesize\":10,\"sensors\":[" +
                    "{\"objid\":601,\"lastvalue_raw\":10,\"interval\":\"60 s\"}" +
@@ -699,5 +707,360 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         await service.TickAsync();
         Assert.Null(service.GetStatus().LastSkipReason);
+    }
+
+    // ── 分批快照與範圍補抓 ──
+
+    private static IEnumerable<(long Objid, string SensorType)> ManyTargets(long start, int count) =>
+        Enumerable.Range(0, count).Select(i => (start + i, "Ping"));
+
+    /// <summary>快照請求（查目前值）；補抓請求帶 parentid 欄位，兩者以欄位區分。</summary>
+    private static bool IsSnapshotUrl(string url) => url.Contains("lastvalue_raw");
+
+    private static bool IsBackfillUrl(string url) => url.Contains("content=sensors") && url.Contains("parentid");
+
+    private List<string> SnapshotUrls() { lock (_stubHandler.RequestedUrls) return _stubHandler.RequestedUrls.Where(IsSnapshotUrl).ToList(); }
+
+    private List<string> BackfillUrls() { lock (_stubHandler.RequestedUrls) return _stubHandler.RequestedUrls.Where(IsBackfillUrl).ToList(); }
+
+    private static List<long> FilterObjids(string url) =>
+        System.Text.RegularExpressions.Regex.Matches(url, @"filter_objid=(\d+)")
+            .Select(m => long.Parse(m.Groups[1].Value))
+            .ToList();
+
+    /// <summary>分批請求照 filter_objid 回對應的感測器值（可指定要漏掉的 objid）。</summary>
+    private static HttpResponseMessage FilteredValues(string url, ISet<long>? omit = null)
+    {
+        var ids = FilterObjids(url).Where(id => omit == null || !omit.Contains(id)).ToList();
+        var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\"}}"));
+        return JsonResponse($"{{\"treesize\":{ids.Count},\"sensors\":[{rows}]}}");
+    }
+
+    /// <summary>補抓的逐台回應：指定裝置回一顆感測器，其他裝置回空。</summary>
+    private static HttpResponseMessage DeviceSensors(string url, IReadOnlyDictionary<long, long> sensorByDevice)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(url, @"[?&]id=(\d+)");
+        var deviceId = long.Parse(m.Groups[1].Value);
+        if (url.Contains("start=0") && sensorByDevice.TryGetValue(deviceId, out var sensorId))
+        {
+            return JsonResponse($"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"parentid\":{deviceId},\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}}]}}");
+        }
+        return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+    }
+
+    private void SetupOkDevices(IEnumerable<long> deviceObjids)
+    {
+        var today = DateTime.Today;
+        _backend.PrtgStore().ReplaceHostMapForDate(today, deviceObjids.Select((id, i) => new PrtgHostMapRow
+        {
+            DeviceObjid = id,
+            HostId = i + 1,
+            HostName = $"Server-{id}",
+            Ip = $"192.168.{id / 250}.{id % 250 + 1}",
+            MapStatus = PrtgMapStatus.Ok,
+            MapDate = today
+        }).ToArray());
+    }
+
+    [Fact]
+    public async Task 分批快照_目標120顆_恰3個filter請求且無全站查詢()
+    {
+        SetupTargetSensors(ManyTargets(1001, 120));
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var snapshots = SnapshotUrls();
+        Assert.Equal(3, snapshots.Count);
+        Assert.All(snapshots, u => Assert.Contains("filter_objid=", u));
+        Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
+        // 依 objid 排序、每批 50 顆
+        Assert.Equal(Enumerable.Range(1001, 50).Select(i => (long)i), FilterObjids(snapshots[0]));
+        Assert.Equal(20, FilterObjids(snapshots[2]).Count);
+        Assert.Equal(120, service.GetStatus().PendingSamples);
+        Assert.Equal(120, service.GetStatus().LastSensorCount);
+    }
+
+    [Fact]
+    public async Task 分批快照_目標超過門檻_改單發全站查詢()
+    {
+        SetupTargetSensors(ManyTargets(1001, PrtgSnapshotHostedService.FilteredSnapshotLimit + 1));
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":1001,\"lastvalue_raw\":1,\"interval\":\"60 s\"}]}"));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var snapshots = SnapshotUrls();
+        var single = Assert.Single(snapshots);
+        Assert.Contains("count=50000", single);
+        Assert.DoesNotContain("filter_objid=", single);
+    }
+
+    [Fact]
+    public async Task 分批快照_目標剛好等於門檻_仍走分批()
+    {
+        SetupTargetSensors(ManyTargets(1001, PrtgSnapshotHostedService.FilteredSnapshotLimit));
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Equal(PrtgSnapshotHostedService.FilteredSnapshotLimit / PrtgResourceGuardProbe.MaxBatchSize, SnapshotUrls().Count);
+        Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
+    }
+
+    [Fact]
+    public async Task 分批快照_目標0顆_不發請求且照記成功()
+    {
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{}"));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.NotNull(service.GetStatus().LastSuccessAt);
+        Assert.Equal(0, service.GetStatus().LastSensorCount);
+    }
+
+    [Fact]
+    public async Task 分批快照_要求50回48_輸出缺2顆()
+    {
+        SetupTargetSensors(ManyTargets(1001, 50));
+        var omit = new HashSet<long> { 1010, 1020 };
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString(), omit));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Single(service.ExecutionOutputs, l => l.Contains("要求 50 顆、取回 48 顆") && l.Contains("缺 2 顆"));
+        Assert.Equal(48, service.GetStatus().PendingSamples);
+    }
+
+    [Fact]
+    public async Task 分批快照_取齊時不出缺顆警告()
+    {
+        SetupTargetSensors(ManyTargets(1001, 50));
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("缺"));
+    }
+
+    [Fact]
+    public async Task 分批快照_三批中一批500_其餘照累積且不進退避()
+    {
+        SetupTargetSensors(ManyTargets(1001, 150));
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            return Task.FromResult(FilterObjids(url).Contains(1051)
+                ? JsonResponse("{}", HttpStatusCode.InternalServerError)
+                : FilteredValues(url));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Equal(3, SnapshotUrls().Count);
+        Assert.Contains(service.ExecutionOutputs, l => l.Contains("1 批查詢失敗"));
+        // 失敗批次不重複算成「缺」
+        Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("缺"));
+        var status = service.GetStatus();
+        Assert.Equal(100, status.PendingSamples);
+        Assert.Equal(0, status.ConsecutiveFailures);
+        Assert.NotNull(status.LastSuccessAt);
+    }
+
+    [Fact]
+    public async Task 分批快照_三批全500_進退避()
+    {
+        SetupTargetSensors(ManyTargets(1001, 150));
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{}", HttpStatusCode.InternalServerError));
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        await service.TickAsync();
+        Assert.Equal(3, SnapshotUrls().Count);
+        Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
+        Assert.Null(service.GetStatus().LastSuccessAt);
+
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Equal(3, service.GetStatus().ConsecutiveFailures);
+        Assert.Equal(30, service.GetStatus().IntervalMinutes);
+    }
+
+    [Fact]
+    public void 組filter查詢字串_共用方法格式()
+    {
+        Assert.Equal("&filter_objid=3&filter_objid=12", PrtgResourceGuardProbe.BuildObjidFilter(new long[] { 3, 12 }));
+        Assert.Equal("", PrtgResourceGuardProbe.BuildObjidFilter(Array.Empty<long>()));
+    }
+
+    [Fact]
+    public async Task 範圍補抓_鏡像無感測器的裝置_恰對它發一個請求並寫入鏡像()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long> { [20] = 201 }));
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var backfill = Assert.Single(BackfillUrls());
+        Assert.Matches(@"[?&]id=20(&|$)", backfill);
+        var sensor = Assert.Single(_backend.PrtgStore().GetAllSensors(), s => s.Objid == 201);
+        Assert.Equal(20, sensor.DeviceObjid);
+        Assert.Contains(service.ExecutionOutputs, l => l.Contains("已為 1 台新進取數範圍的裝置補上 1 個感測器"));
+        // 補抓不影響快照本身
+        Assert.NotNull(service.GetStatus().LastSuccessAt);
+    }
+
+    [Fact]
+    public async Task 範圍補抓_回0顆的裝置下一輪不再請求_結構同步寫過鏡像後再試()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        var store = _backend.PrtgStore();
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now.AddMinutes(-30));
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long>()));
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        await service.TickAsync();
+        var first = BackfillUrls().Count;
+        Assert.True(first >= 1);
+        Assert.All(BackfillUrls(), u => Assert.Matches(@"[?&]id=20(&|$)", u));
+        Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("補上"));
+
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Equal(first, BackfillUrls().Count);
+
+        // 結構同步寫過鏡像（裝置表 synced_at 最大值變新）→ 「已確認為空」清空，再試一次
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 10, Name = "D" }
+        }, DateTime.Now.AddMinutes(5));
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Equal(first * 2, BackfillUrls().Count);
+    }
+
+    [Fact]
+    public async Task 範圍補抓_補抓自己寫入的列不觸發清空已確認為空()
+    {
+        // 20 補到感測器（推高 synced_at）、30 確認為空；下一輪不能因為 synced_at 變新就重打 30
+        SetupOkDevices(new long[] { 10, 20, 30 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now.AddMinutes(-30));
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long> { [20] = 201 }));
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        await service.TickAsync();
+        var first = BackfillUrls().Count;
+        Assert.Contains(BackfillUrls(), u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=30(&|$)"));
+
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Equal(first, BackfillUrls().Count);
+    }
+
+    [Fact]
+    public async Task 範圍補抓_結構同步執行中_零補抓請求()
+    {
+        SetupOkDevices(new long[] { 20 });
+        _stubHandler.OnSend = (req, _) => Task.FromResult(DeviceSensors(req.RequestUri!.ToString(), new Dictionary<long, long>()));
+
+        var service = CreateService();
+        Assert.True(_syncState.TryBegin());
+        await service.TickAsync();
+
+        Assert.Empty(BackfillUrls());
+    }
+
+    [Fact]
+    public async Task 範圍補抓_待補60台_本輪恰50個補抓請求()
+    {
+        var devices = Enumerable.Range(1, 60).Select(i => (long)(5000 + i)).ToList();
+        SetupOkDevices(devices);
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long>()));
+            return Task.FromResult(FilteredValues(url));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var urls = BackfillUrls();
+        Assert.Equal(PrtgSnapshotHostedService.MaxBackfillDevicesPerTick, urls.Count);
+        // 由小到大取前 50 台
+        Assert.DoesNotContain(urls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=5051(&|$)"));
+        Assert.Contains(urls, u => System.Text.RegularExpressions.Regex.IsMatch(u, @"[?&]id=5050(&|$)"));
+    }
+
+    [Fact]
+    public async Task 範圍補抓_擲例外_快照照常完成且退避計數不變()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+
+        var service = CreateService();
+        // 第一次建立連線（補抓）就擲例外；之後（快照）正常
+        var calls = 0;
+        service.ClientFactory = () =>
+        {
+            if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("模擬補抓失敗");
+            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
+        };
+
+        await service.TickAsync();
+
+        Assert.Equal(2, calls);
+        Assert.Contains(service.ExecutionOutputs, l => l.Contains("補抓失敗") && l.Contains("模擬補抓失敗"));
+        var status = service.GetStatus();
+        Assert.NotNull(status.LastSuccessAt);
+        Assert.Equal(0, status.ConsecutiveFailures);
+        Assert.Single(SnapshotUrls());
     }
 }

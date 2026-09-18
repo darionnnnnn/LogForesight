@@ -1295,7 +1295,7 @@ public static class PrtgProbeRunner
             var requestedBatch = firstDeviceSensors.Take(50).ToList();
             var requestedSet = requestedBatch.ToHashSet();
             var r = requestedBatch.Count;
-            var filterQuery = string.Concat(requestedBatch.Select(id => $"&filter_objid={id}"));
+            var filterQuery = PrtgResourceGuardProbe.BuildObjidFilter(requestedBatch);
             var url = $"/api/table.json?content=sensors&columns=objid,lastvalue_raw{filterQuery}";
 
             var swE = System.Diagnostics.Stopwatch.StartNew();

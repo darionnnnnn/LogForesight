@@ -21,6 +21,12 @@ public sealed record PrtgStateChangeRangeResult(
     int FailedObjects,  // 例外或分頁未收斂的物件數
     int EmptyObjects);  // 本趟區間內一筆都沒取到的物件數
 
+/// <summary>範圍補抓結果：寫入的感測器數、取得失敗的裝置、查詢成功但 PRTG 端一顆感測器都沒有的裝置。</summary>
+public sealed record PrtgSensorBackfillResult(
+    int SensorsWritten,
+    IReadOnlyList<long> FailedDevices,
+    IReadOnlyList<long> EmptyDevices);
+
 /// <summary>
 /// PRTG 每日擷取服務：負責將 PRTG 的裝置結構、感測器結構、狀態變更（訊息）與 hourly 聚合數值
 /// 擷取並寫入本機鏡像表（lf_prtg_*）。
@@ -229,7 +235,7 @@ public sealed class PrtgFetchService
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     if (scopeDevices.Count <= PerDeviceSensorFetchLimit)
                     {
-                        var (written, targets, failedDevices) = await FetchSensorsForDevicesAsync(
+                        var (written, targets, failedDevices, _) = await FetchSensorsForDevicesAsync(
                             scopeDevices.OrderBy(id => id).ToList(), concurrency, sensorsSyncStartedAt, ct, progress);
                         stopwatch.Stop();
                         sensorsCount = written;
@@ -399,6 +405,21 @@ public sealed class PrtgFetchService
         return (written, failed);
     }
 
+    /// <summary>
+    /// 白天範圍補抓：只為指定裝置逐台取感測器寫進鏡像（數值快照服務呼叫，補上新進取數範圍、鏡像還沒有感測器的裝置）。
+    /// 逐台取法、單台失敗隔離、寫入鎖與夜間階段 2 逐台模式同一份（<see cref="FetchSensorsForDevicesAsync"/>）；
+    /// 寫完照階段 2 重算語意分類。**不清除任何列**——這裡只看得到少數幾台，「沒刷新到」不代表該刪。
+    /// 寫入列的 SyncedAt 是呼叫當下，晚於任何已在進行中的結構同步起點，不會被那趟的「未刷新即刪除」清掉。
+    /// </summary>
+    public async Task<PrtgSensorBackfillResult> BackfillSensorsForDevicesAsync(
+        IReadOnlyList<long> deviceObjids, int concurrency, CancellationToken ct)
+    {
+        var (written, _, failedDevices, emptyDevices) = await FetchSensorsForDevicesAsync(
+            deviceObjids, concurrency, DateTime.Now, ct, progress: null);
+        _store.ApplyAutoCategories(_categoryOverrides);
+        return new PrtgSensorBackfillResult(written, failedDevices, emptyDevices);
+    }
+
     /// <summary>階段 1：分頁抓取所有 devices 並寫入鏡像表</summary>
     private async Task<StageOutcome> FetchDevicesAsync(DateTime syncedAt, CancellationToken ct, Action<string, int, int>? progress = null)
     {
@@ -447,8 +468,8 @@ public sealed class PrtgFetchService
     /// 逐台以 <c>id={裝置 objid}</c> 分頁抓取感測器並寫入鏡像表，同時收集名單供階段 4 使用。
     /// 單台失敗（例外或分頁未收斂）只記入失敗清單、不影響其他台；取消照舊往外擲。
     /// </summary>
-    /// <returns>寫入數、感測器名單（objid、是否暫停）、失敗的裝置 objid 清單</returns>
-    private async Task<(int Written, List<(long Objid, bool Paused)> Targets, List<long> FailedDevices)> FetchSensorsForDevicesAsync(
+    /// <returns>寫入數、感測器名單（objid、是否暫停）、失敗的裝置 objid 清單、查詢成功但取回 0 顆的裝置 objid 清單</returns>
+    private async Task<(int Written, List<(long Objid, bool Paused)> Targets, List<long> FailedDevices, List<long> EmptyDevices)> FetchSensorsForDevicesAsync(
         IReadOnlyList<long> deviceObjids, int concurrency, DateTime syncedAt, CancellationToken ct,
         Action<string, int, int>? progress)
     {
@@ -463,6 +484,7 @@ public sealed class PrtgFetchService
         var totalWritten = 0;
         var targets = new List<(long Objid, bool Paused)>();
         var failed = new List<long>();
+        var empty = new List<long>();
         var completed = 0;
 
         var tasks = deviceObjids.Select(async deviceObjid =>
@@ -471,12 +493,15 @@ public sealed class PrtgFetchService
             try
             {
                 ct.ThrowIfCancellationRequested();
+                // 本台取回（通過範圍過濾）的列數：查詢成功且為 0 才算「PRTG 端確實沒有感測器」
+                var deviceRows = 0;
                 // 逐台不帶 phase／stageLabel：逐台印分頁進度會洗版，進度改由本方法以「台」回報
                 var paged = await FetchSensorPagesAsync($"id={deviceObjid}", filter, syncedAt,
                     batch =>
                     {
                         lock (sync)
                         {
+                            deviceRows += batch.Count;
                             totalWritten += _store.UpsertSensors(batch, syncedAt);
                             targets.AddRange(batch.Select(r => (r.Objid, r.Paused)));
                         }
@@ -485,6 +510,10 @@ public sealed class PrtgFetchService
                 if (paged.Error != null)
                 {
                     lock (sync) failed.Add(deviceObjid);
+                }
+                else if (deviceRows == 0)
+                {
+                    lock (sync) empty.Add(deviceObjid);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -504,7 +533,7 @@ public sealed class PrtgFetchService
         });
 
         await Task.WhenAll(tasks);
-        return (totalWritten, targets, failed);
+        return (totalWritten, targets, failed, empty);
     }
 
     /// <summary>

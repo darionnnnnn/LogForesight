@@ -1917,16 +1917,20 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     [Fact]
-    public void GetLatestStructureSyncedAt_空表為null_有資料取最大值()
+    public void GetLatestStructureSyncedAt_空表為null_取裝置表最大值且不受感測器補抓影響()
     {
         var store = CreateStore();
         Assert.Null(store.GetLatestStructureSyncedAt());
 
         var t1 = new DateTime(2026, 9, 1, 8, 0, 0);
         var t2 = new DateTime(2026, 9, 3, 8, 0, 0);
-        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 1, DeviceObjid = 1, Name = "A", SensorType = "ping" } }, t1);
-        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 2, DeviceObjid = 1, Name = "B", SensorType = "ping" } }, t2);
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 1, Name = "A" } }, t1);
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 2, Name = "B" } }, t2);
+        Assert.Equal(t2, store.GetLatestStructureSyncedAt());
 
+        // 感測器被補抓寫入更新的時間，不得讓結構同步時間跟著變新
+        var t3 = new DateTime(2026, 9, 5, 8, 0, 0);
+        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 9, DeviceObjid = 1, Name = "S", SensorType = "ping" } }, t3);
         Assert.Equal(t2, store.GetLatestStructureSyncedAt());
     }
 

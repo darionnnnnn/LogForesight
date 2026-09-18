@@ -2636,4 +2636,68 @@ public class PrtgFetchServiceTests : IDisposable
             .Select(u => IdQuery(u)).OrderBy(id => id).ToList();
         Assert.Equal(new long?[] { 201 }, histIds);
     }
+
+    [Fact]
+    public async Task BackfillSensorsForDevicesAsync_兩台一台失敗_另一台寫入且不清除既有列()
+    {
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("id=102"))
+                return JsonResponse("{}", HttpStatusCode.InternalServerError);
+            if (url.Contains("content=sensors") && url.Contains("id=101"))
+                return url.Contains("start=0")
+                    ? JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\"}]}")
+                    : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        // 範圍外、很久以前同步的既有列：補抓不得清除
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 900, DeviceObjid = 999, Name = "Old", SensorType = "ping", Status = "Up" }
+        }, new DateTime(2020, 1, 1));
+        var service = new PrtgFetchService(client, store, new TestConsole(),
+            new Dictionary<string, string> { ["wmicpu"] = PrtgSensorCategories.Cpu });
+
+        var before = DateTime.Now;
+        var result = await service.BackfillSensorsForDevicesAsync(new long[] { 101, 102 }, 2, CancellationToken.None);
+
+        Assert.Equal(1, result.SensorsWritten);
+        Assert.Equal(new long[] { 102 }, result.FailedDevices);
+        Assert.Empty(result.EmptyDevices);
+        var all = store.GetAllSensors();
+        Assert.Contains(all, s => s.Objid == 900);
+        var written = Assert.Single(all, s => s.Objid == 201);
+        Assert.Equal(101, written.DeviceObjid);
+        // SyncedAt 用當下時間，晚於任何已開始的結構同步起點
+        Assert.True(written.SyncedAt >= before.AddSeconds(-1));
+        // 與階段 2 同一個語意分類重算（同一份補充對照）：wmicpu 依補充對照分類為 cpu
+        Assert.Equal(PrtgSensorCategories.Cpu, written.Category);
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=101"));
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=102"));
+    }
+
+    [Fact]
+    public async Task BackfillSensorsForDevicesAsync_查詢成功但0顆_列入取回0顆清單()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("id=101"))
+                return url.Contains("start=0")
+                    ? JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\"}]}")
+                    : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=sensors") && url.Contains("id=103"))
+                return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            return JsonResponse("{}", HttpStatusCode.InternalServerError);
+        });
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.BackfillSensorsForDevicesAsync(new long[] { 101, 102, 103 }, 1, CancellationToken.None);
+
+        Assert.Equal(new long[] { 103 }, result.EmptyDevices);
+        Assert.Equal(new long[] { 102 }, result.FailedDevices);
+        Assert.Equal(1, result.SensorsWritten);
+    }
 }
