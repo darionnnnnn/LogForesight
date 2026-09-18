@@ -656,8 +656,8 @@ public class EfPrtgStoreTests : IDisposable
 
         store.UpsertSensors(new List<PrtgSensorRow>
         {
-            new() { Objid = 301, DeviceObjid = 1, Name = "DNS Sensor", SensorType = "dns", Paused = false },
-            new() { Objid = 302, DeviceObjid = 1, Name = "HTTP Sensor", SensorType = "http", Paused = false },
+            new() { Objid = 301, DeviceObjid = 1, Name = "Custom Sensor", SensorType = "SNMP Custom", Paused = false },
+            new() { Objid = 302, DeviceObjid = 1, Name = "Script Sensor", SensorType = "SSH Script", Paused = false },
             new() { Objid = 303, DeviceObjid = 1, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false }
         }, now);
 

@@ -1141,7 +1141,7 @@ public class PrtgFetchServiceTests : IDisposable
         var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
         var senJson = "{\"treesize\":3,\"sensors\":[" +
             "{\"objid\":201,\"parentid\":101,\"sensor\":\"Free Space C:\",\"type\":\"SNMP Disk Free\",\"status\":\"Up\",\"paused\":false}," +
-            "{\"objid\":202,\"parentid\":101,\"sensor\":\"HTTP\",\"type\":\"http\",\"status\":\"Up\",\"paused\":false}," +
+            "{\"objid\":202,\"parentid\":101,\"sensor\":\"Custom\",\"type\":\"SNMP Custom\",\"status\":\"Up\",\"paused\":false}," +
             "{\"objid\":203,\"parentid\":101,\"sensor\":\"Fan\",\"type\":\"Custom Fan\",\"status\":\"Up\",\"paused\":false}" +
             "]}";
         var msgJson = "{\"treesize\":0,\"messages\":[]}";

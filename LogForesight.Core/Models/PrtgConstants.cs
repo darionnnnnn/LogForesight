@@ -122,6 +122,20 @@ public static class PrtgSensorTypeCategoryMap
             ["SNMP Memory"] = PrtgSensorCategories.Memory,
             ["SNMP Linux Meminfo"] = PrtgSensorCategories.Memory,
             ["Ping"] = PrtgSensorCategories.Availability,
+            // 連通性類：服務端點回不回應，down 的語意與 Ping 相同
+            ["Port"] = PrtgSensorCategories.Availability,
+            ["HTTP"] = PrtgSensorCategories.Availability,
+            ["SNTP"] = PrtgSensorCategories.Availability,
+            ["DNS (DEPRECATED)"] = PrtgSensorCategories.Availability,
+            ["FTP"] = PrtgSensorCategories.Availability,
+            ["RDP (Remote Desktop)"] = PrtgSensorCategories.Availability,
+            ["Cisco IP SLA"] = PrtgSensorCategories.Availability,
+            // 硬體健康：實機清單中唯一的硬體健康 type（溫度、風扇、電源），多半掛在網路設備上
+            ["SNMP Cisco System Health"] = PrtgSensorCategories.Hardware,
+            // 刻意不列：SNMP Linux Load Average（不是百分比，歸 cpu 會讓資源守門以百分比門檻誤判）、
+            // SNMP Custom*／SNMP Library／SSH Script／EXE/Script Advanced／Sensor Factory（內容因環境而異）、
+            // System／Probe／Core Health（PRTG 自身健康，守門另以 corehealth 判定）、Uptime 類（時間長度，down 與 Ping 重複）。
+            // 需要時由補充對照 PrtgSensorTypeCategoryOverrides 指定。
         };
 
     /// <summary>

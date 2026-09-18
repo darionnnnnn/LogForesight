@@ -95,8 +95,36 @@ public class PrtgSensorCategoryMapTests
         Assert.Equal(PrtgSensorCategories.Hardware, PrtgSensorTypeCategoryMap.Resolve("snmp cpu load", overrides));
         Assert.Equal(PrtgSensorCategories.Disk, PrtgSensorTypeCategoryMap.Resolve("Custom", overrides));
         Assert.Equal(PrtgSensorCategories.Availability, PrtgSensorTypeCategoryMap.Resolve("Ping", overrides));
-        Assert.Null(PrtgSensorTypeCategoryMap.Resolve("HTTP", overrides));
+        Assert.Null(PrtgSensorTypeCategoryMap.Resolve("SNMP Custom", overrides));
         Assert.Null(PrtgSensorTypeCategoryMap.Resolve(null, overrides));
+    }
+
+    [Theory]
+    [InlineData("Port", "availability")]
+    [InlineData("http", "availability")]
+    [InlineData("SNTP", "availability")]
+    [InlineData("DNS (DEPRECATED)", "availability")]
+    [InlineData("FTP", "availability")]
+    [InlineData("RDP (Remote Desktop)", "availability")]
+    [InlineData("cisco ip sla", "availability")]
+    [InlineData("SNMP Cisco System Health", "hardware")]
+    public void 內建對照_實機type清單補齊的條目(string type, string expected)
+    {
+        var none = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(expected, PrtgSensorTypeCategoryMap.Resolve(type, none));
+    }
+
+    [Theory]
+    [InlineData("SNMP Linux Load Average")]
+    [InlineData("SNMP Custom Table")]
+    [InlineData("SSH Script")]
+    [InlineData("Core Health")]
+    [InlineData("SNMP System Uptime")]
+    [InlineData("Sensor Factory")]
+    public void 內建對照_刻意不分類的type回null(string type)
+    {
+        var none = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Assert.Null(PrtgSensorTypeCategoryMap.Resolve(type, none));
     }
 
     [Theory]
