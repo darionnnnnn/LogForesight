@@ -49,9 +49,15 @@ public sealed class PrtgFetchService
 
     /// <summary>
     /// 階段 2 逐台查詢感測器的裝置數上限：範圍內裝置數不超過它時逐台以 <c>id=</c> 查詢，超過時改一次全站分頁再以範圍過濾。
-    /// 暫定值：超過時逐台查詢的固定成本（每台一次往返）高於一次全站分頁。
+    /// 取這個值的理由：超過時逐台查詢的固定成本（每台一次往返）高於一次全站分頁；尚無實機數據佐證，有實測再調。
     /// </summary>
     private const int PerDeviceSensorFetchLimit = 500;
+
+    /// <summary>
+    /// 「查詢成功但回 0 個感測器」的裝置，鏡像列的寬限期：上次刷新在這段時間內的列本趟不刪。
+    /// 36 小時＝夜間同步一天一趟再留半天餘裕——連續兩趟夜間都回 0 才會清掉。
+    /// </summary>
+    private static readonly TimeSpan EmptyDeviceGrace = TimeSpan.FromHours(36);
 
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
@@ -84,7 +90,7 @@ public sealed class PrtgFetchService
     /// 取數範圍提供者（必填）。引數＝devicesRefreshed：本趟階段 1 執行了、沒有擲例外、已收斂且寫入裝置數大於 0 才為 true。
     /// syncStructure 為 true 時在階段 1 之後、階段 2 之前呼叫恰一次；為 false 時在階段 3 之前呼叫恰一次。
     /// 呼叫端在這裡做主機對應（對應要用剛更新的裝置鏡像）並回傳範圍。
-    /// 範圍用於縮圈取數：階段 2 只同步範圍內裝置的感測器（並清除範圍外的鏡像列），狀態變更階段的縮圈在後續實作。
+    /// 範圍用於縮圈取數：階段 2 只同步範圍內裝置的感測器（並清除範圍外的鏡像列），階段 3 只查範圍內裝置的狀態變更。
     /// </param>
     /// <param name="syncStructure">
     /// 是否同步 device／sensor 結構（階段 1、2）。每日擷取為 true。
@@ -140,7 +146,9 @@ public sealed class PrtgFetchService
             // 夜間在手動同步剛完成時也走這條路，對應仍要照做，不能因鏡像沒有感測器就被略過。
             ResolveScope();
             sensorTargets = _store.GetSensorTargets();
-            if (sensorTargets.Count == 0)
+            // 只有要取數值（歷史回填）時才因鏡像沒有感測器而提早返回；夜間沿用手動同步剛更新的鏡像時
+            // （fetchValues 為 false）取數範圍可能本來就是空的，狀態變更階段自己會說明並略過，不該被這裡報成失敗。
+            if (sensorTargets.Count == 0 && fetchValues)
             {
                 // 鏡像還沒有任何 sensor（例如剛設定完就按回填、每日擷取一次都沒跑過）。
                 // 不計失敗的話，接下來每一天都是「0 個 sensor 可抓 → 0 筆 → 無失敗」，
@@ -219,6 +227,8 @@ public sealed class PrtgFetchService
             var sensorsSyncStartedAt = DateTime.Now;
             // 本趟感測器鏡像是否「完整刷新」——成立時「沒刷新到」才代表範圍外或 PRTG 端已刪除
             var sensorsRefreshed = false;
+            // 本趟「查詢成功但回 0 顆」的裝置：清除時給一趟寬限（見 DeleteSensorsNotSyncedSince）
+            IReadOnlyCollection<long> emptyDevices = Array.Empty<long>();
             var scopeDevices = scope?.DeviceObjids;
             if (scopeDevices == null || scopeDevices.Count == 0)
             {
@@ -235,7 +245,7 @@ public sealed class PrtgFetchService
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     if (scopeDevices.Count <= PerDeviceSensorFetchLimit)
                     {
-                        var (written, targets, failedDevices, _) = await FetchSensorsForDevicesAsync(
+                        var (written, targets, failedDevices, empties) = await FetchSensorsForDevicesAsync(
                             scopeDevices.OrderBy(id => id).ToList(), concurrency, sensorsSyncStartedAt, ct, progress);
                         stopwatch.Stop();
                         sensorsCount = written;
@@ -248,6 +258,7 @@ public sealed class PrtgFetchService
                             var more = failedDevices.Count > 5 ? " 等" : "";
                             _console.WriteLine($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
                         }
+                        emptyDevices = empties;
                         sensorsRefreshed = failedDevices.Count == 0 && sensorsCount > 0;
                     }
                     else
@@ -284,13 +295,23 @@ public sealed class PrtgFetchService
             // 清除本趟沒被刷新的感測器（範圍外的、PRTG 端已刪的）：只有範圍非空、階段 2 無例外、
             // 全站模式已收斂／逐台模式零失敗、且有寫入時，「沒刷新到」才代表「不該留在鏡像」。
             // 必須在語意分類重算之前，免得替即將刪除的列白做工。
+            // 另一道保險：範圍內沒有任何對應成功的裝置時不清。感測器清除沒有裝置那種「過半不刪」（首次套用取數範圍本來就會刪九成以上），
+            // 而「主機主檔暫時讀到空清單 → 對應全數落空 → 範圍只剩守門裝置」會把整份鏡像清光；沒有對應成功的主機時鏡像留著也無害。
+            if (sensorsRefreshed && scope!.Mapped == 0)
+            {
+                sensorsRefreshed = false;
+                _console.WriteLine("[階段 2/4] 取數範圍內沒有任何對應成功的裝置，本趟不清除感測器鏡像。");
+            }
             if (sensorsRefreshed)
             {
                 try
                 {
-                    var deleted = _store.DeleteSensorsNotSyncedSince(sensorsSyncStartedAt);
+                    var (deleted, graceKept) = _store.DeleteSensorsNotSyncedSince(
+                        sensorsSyncStartedAt, emptyDevices, sensorsSyncStartedAt - EmptyDeviceGrace);
                     if (deleted > 0)
                         _console.WriteLine($"[階段 2/4] 已清除 {deleted} 個範圍外或 PRTG 端已不存在的感測器。");
+                    if (graceKept > 0)
+                        _console.WriteLine($"[階段 2/4] ⚠ {emptyDevices.Count} 台裝置本趟回傳 0 個感測器，鏡像中原有的 {graceKept} 個先保留一趟（下一趟仍為 0 才清除）：{string.Join("、", emptyDevices.OrderBy(id => id).Take(5))}{(emptyDevices.Count > 5 ? " 等" : "")}");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {

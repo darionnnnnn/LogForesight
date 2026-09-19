@@ -2528,6 +2528,61 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 感測器同步_單台回零顆時該台舊感測器保留一趟_上次刷新已過寬限才清()
+    {
+        var store = CreateStore();
+        // 裝置 2 本趟回 0 顆：302 昨天才刷新過（寬限內）→ 留；303 三天前刷新（連續回空）→ 清；裝置 3 範圍外 → 清
+        SeedOldSensors(store, (302, 2), (301, 3));
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 303, DeviceObjid = 2, Name = "Old-303", SensorType = "ping" }
+        }, DateTime.Now.AddDays(-3));
+        var (client, _) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A") });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        Assert.Equal(new long[] { 201, 302 }, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("1 台裝置本趟回傳 0 個感測器") && l.Contains("先保留一趟"));
+        Assert.Equal(0, result.Failures);
+    }
+
+    [Fact]
+    public async Task 感測器同步_範圍內沒有對應成功的裝置時不清除()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (301, 3));
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors);
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        // 範圍只有守門裝置（Mapped = 0）：主機主檔讀到空清單時就是這個形狀
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+            _ => new PrtgScopeResult(new HashSet<long> { 1, 2 }, 0, 0, 0, 2), fetchValues: false);
+
+        Assert.Contains(301L, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("沒有任何對應成功的裝置，本趟不清除"));
+    }
+
+    [Fact]
+    public async Task 不同步結構且不取數值時_鏡像沒有感測器不提早返回_狀態變更階段照常說明()
+    {
+        var store = CreateStore();
+        var (client, handler) = CreateSensorScopeClient(Array.Empty<FakeSensor>());
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, NoScope,
+            syncStructure: false, fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("無法回填"));
+        Assert.Contains(console.Lines, l => l.Contains("略過狀態變更同步"));
+    }
+
+    [Fact]
     public async Task 感測器同步_範圍內全部零感測器時不清除()
     {
         var store = CreateStore();

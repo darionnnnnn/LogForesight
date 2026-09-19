@@ -480,7 +480,7 @@ public sealed class EfPrtgStore
     /// <summary>
     /// 保留期清理：對象三張表（lf_prtg_values、lf_prtg_state_changes、lf_prtg_host_map），
     /// 皆依 created_at &lt; 今天減 retentionDays 刪除。
-    /// lf_prtg_devices 與 lf_prtg_sensors 不清（結構鏡像永遠是現況全量）。
+    /// lf_prtg_devices 與 lf_prtg_sensors 不依保留期清（結構鏡像是現況；過期列由結構同步自己清，見 DeleteDevicesNotSyncedSince／DeleteSensorsNotSyncedSince）。
     /// </summary>
     public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
 
@@ -490,7 +490,7 @@ public sealed class EfPrtgStore
         var cutoff = DateTime.Today.AddDays(-retentionDays);
         var total = 0;
 
-        // lf_prtg_devices 與 lf_prtg_sensors 不清（結構鏡像永遠是現況全量）。
+        // lf_prtg_devices 與 lf_prtg_sensors 不依保留期清（過期列由結構同步自己清）。
         if (total < maxRows)
         {
             total += BatchedPrune.Run<long>(
@@ -587,12 +587,26 @@ public sealed class EfPrtgStore
     /// 刻意不做裝置那種「過半不刪」保險：縮圈到取數範圍後的第一趟本來就會刪掉九成以上，
     /// 而感測器鏡像只是 PRTG 的複本、不掛人工資料，誤刪了下一趟同步即可重建。
     /// 呼叫端必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
+    /// <para>
+    /// <paramref name="graceDeviceObjids"/>＝本趟「查詢成功但回 0 顆」的裝置。PRTG 偶發回空陣列時，一次就把整台的感測器刪光
+    /// 會讓當晚對那台主機的規則評估無聲失效；所以這些裝置底下 <c>SyncedAt &gt;= graceSince</c> 的列本趟先留著（回傳 GraceKept 供出聲）。
+    /// 下一趟仍回 0 顆時，那些列的 SyncedAt 已早於 graceSince，照常刪除——PRTG 上真的移除了全部感測器的裝置最多多留一趟。
+    /// </para>
     /// </summary>
-    public int DeleteSensorsNotSyncedSince(DateTime syncStartedAt)
+    public (int Deleted, int GraceKept) DeleteSensorsNotSyncedSince(
+        DateTime syncStartedAt, IReadOnlyCollection<long> graceDeviceObjids, DateTime graceSince)
     {
         using var __perf = _performance.Measure("prtg:DeleteStaleSensors");
         using var ctx = _contextFactory();
-        return ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt).ExecuteDelete();
+        var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
+        if (graceDeviceObjids.Count == 0)
+            return (stale.ExecuteDelete(), 0);
+
+        // 回 0 顆的裝置數量級很小（偶發狀況），IN 清單不會撞參數上限；保險起見仍截在單批上限內，超出的照常刪
+        var grace = graceDeviceObjids.Take(DeviceQueryBatchSize).ToList();
+        var kept = stale.Count(s => grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince);
+        var deleted = stale.Where(s => !(grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince)).ExecuteDelete();
+        return (deleted, kept);
     }
 
     /// <summary>

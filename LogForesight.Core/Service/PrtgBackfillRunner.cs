@@ -25,7 +25,7 @@ public static class PrtgBackfillRunner
     /// <param name="concurrency">hourly 數值抓取併發上限（取自 PrtgFetchConcurrency，與每日擷取共用）</param>
     /// <param name="console">執行歷程輸出</param>
     /// <param name="ct">取消語彙基元</param>
-    /// <param name="scopeDeviceObjids">取數範圍裝置集合（呼叫端以 PrtgScopeDevices.Compute 算好；本段只傳給擷取服務、不過濾）</param>
+    /// <param name="scopeDeviceObjids">取數範圍裝置集合（呼叫端以 PrtgScopeDevices.Compute 算好；本方法只轉交給擷取服務、不自行過濾）</param>
     /// <param name="store">PRTG 鏡像 store（傳入時啟用觸發式過濾）</param>
     /// <param name="records">分析紀錄查詢介面（傳入時啟用觸發式過濾）</param>
     /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>

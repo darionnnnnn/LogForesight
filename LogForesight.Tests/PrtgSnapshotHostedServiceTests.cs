@@ -1038,6 +1038,26 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 分批快照_PRTG忽略filter回整站時_每顆只累積一次()
+    {
+        SetupTargetSensors(ManyTargets(1001, 120));
+        // 不論 filter 帶什麼，一律回全部 120 顆
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (IsBackfillUrl(url)) return Task.FromResult(DeviceSensors(url, new Dictionary<long, long>()));
+            var rows = string.Join(",", Enumerable.Range(0, 120).Select(i => $"{{\"objid\":{1001 + i},\"lastvalue_raw\":1,\"interval\":\"60 s\"}}"));
+            return Task.FromResult(JsonResponse($"{{\"treesize\":120,\"sensors\":[{rows}]}}"));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        Assert.Equal(3, SnapshotUrls().Count);
+        Assert.Equal(120, service.GetStatus().LastSensorCount);
+    }
+
+    [Fact]
     public async Task 範圍補抓_待補60台_本輪恰50個補抓請求()
     {
         var devices = Enumerable.Range(1, 60).Select(i => (long)(5000 + i)).ToList();

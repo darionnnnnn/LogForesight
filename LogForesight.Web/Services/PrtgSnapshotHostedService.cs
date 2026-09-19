@@ -81,7 +81,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     /// <summary>
     /// 目標顆數不超過它時以 filter_objid 分批查（每批 <see cref="PrtgResourceGuardProbe.MaxBatchSize"/> 顆），超過時改單發全站查詢。
-    /// 暫定值：超過時分批請求數（40 個以上）的往返成本多於一次全站查詢。
+    /// 取這個值的理由：超過時分批請求數（40 個以上）的往返成本多於一次全站查詢；尚無實機數據佐證，有實測再調。
     /// </summary>
     internal const int FilteredSnapshotLimit = 2000;
 
@@ -351,7 +351,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 json = await client.GetJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000", ct);
             }
 
-            var (treeSize, totalSensorsInResponse) = ParseSnapshotResponse(json, now, tally);
+            var (treeSize, totalSensorsInResponse) = ParseSnapshotResponse(json, now, tally, _targetObjids ?? new HashSet<long>());
             if (treeSize.HasValue && treeSize.Value > 0 && totalSensorsInResponse < treeSize.Value)
             {
                 var msg = $"[PRTG快照] 只取到 {totalSensorsInResponse} 個感測器（總數 {treeSize.Value}），快照結果可能被截斷。";
@@ -394,7 +394,9 @@ public class PrtgSnapshotHostedService : BackgroundService
                     var json = await client.GetJsonAsync(
                         "api/table.json?content=sensors&columns=objid,lastvalue_raw,interval"
                         + PrtgResourceGuardProbe.BuildObjidFilter(batch), ct);
-                    ParseSnapshotResponse(json, now, tally);
+                    // 只收本批要求的 objid：PRTG 若忽略 filter_objid 會每批都回整站，
+                    // 不擋的話同一顆感測器一輪會被重複累加幾十次，而「取回少於要求」的警告也不會響
+                    ParseSnapshotResponse(json, now, tally, batch.ToHashSet());
                     requested += batch.Count;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -431,7 +433,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 解析一份 table.json 回應並逐列累積（分批與全站兩種模式共用的唯一解析入口）。
     /// </summary>
     /// <returns>回應的 treesize（沒有時 null）與 sensors 陣列長度</returns>
-    private (long? TreeSize, int Total) ParseSnapshotResponse(string json, DateTime now, SnapshotTally tally)
+    private (long? TreeSize, int Total) ParseSnapshotResponse(string json, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -456,14 +458,14 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         foreach (var el in sensorsArr.EnumerateArray())
         {
-            AccumulateSensorRow(el, now, tally);
+            AccumulateSensorRow(el, now, tally, accept);
         }
 
         return (treeSize, sensorsArr.GetArrayLength());
     }
 
-    /// <summary>單列：只收目標集合內的感測器，換算（流量類轉每小時量）後進累積器。</summary>
-    private void AccumulateSensorRow(JsonElement el, DateTime now, SnapshotTally tally)
+    /// <summary>單列：只收 accept 內的感測器（全站模式＝目標集合、分批模式＝本批要求的 objid），換算（流量類轉每小時量）後進累積器。</summary>
+    private void AccumulateSensorRow(JsonElement el, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
     {
         long? objid = null;
         if (el.TryGetProperty("objid", out var objidProp))
@@ -476,7 +478,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         if (!objid.HasValue) return;
 
-        if (_targetObjids == null || !_targetObjids.Contains(objid.Value))
+        if (!accept.Contains(objid.Value))
             return;
 
         tally.Matched++;
@@ -600,6 +602,14 @@ public class PrtgSnapshotHostedService : BackgroundService
             }
 
             foreach (var id in result.EmptyDevices) _confirmedEmptyDevices.Add(id);
+            // 覆寫清單的感測器補抓後仍不在鏡像（所在裝置回 0 顆、或回傳裡沒有這顆）→ 記為查不到，
+            // 否則它每一輪都會被重查 parentid、重補同一台，永遠不收斂。清空時機同「已確認為空」。
+            if (missingOverride.Count > 0 && result.FailedDevices.Count == 0)
+            {
+                var nowMirrored = store.GetAllSensors().Select(s => s.Objid).ToHashSet();
+                foreach (var id in missingOverride.Where(id => !nowMirrored.Contains(id)))
+                    _overrideObjidsNotFound.Add(id);
+            }
             if (result.SensorsWritten > 0)
             {
                 WriteOutput($"[PRTG快照] 已為 {pending.Count} 台新進取數範圍的裝置補上 {result.SensorsWritten} 個感測器", LogLevel.Info);

@@ -1350,7 +1350,7 @@ public class EfPrtgStoreTests : IDisposable
             new() { SensorObjid = 8001, ChangedAt = new DateTime(2026, 8, 25, 8, 0, 0), Status = "Down", Quality = "Good" },
         });
 
-        var deleted = store.DeleteSensorsNotSyncedSince(now);
+        var (deleted, _) = store.DeleteSensorsNotSyncedSince(now, Array.Empty<long>(), now);
 
         Assert.Equal(1, deleted);
         using var ctx = _fx.NewContext();

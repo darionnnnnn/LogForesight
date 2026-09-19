@@ -2556,10 +2556,11 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
   否則會把 PRTG 進度軌的數字蓋成 0/0）；PRTG 日期範圍訊號 `prtg-date-range`（同樣不是進度，同樣要排在前綴分支之前：
   `done`＝本趟天數、`total`＝目前第幾天。回望多日時 PRTG 軌文字加「（第 i／N 天）」，AI 完整性閘門依它擋住整個範圍）。
-  **結構同步三階段各自回報自己的 phase**（常數見 `PrtgFetchService`）：分子是已讀取列數、
-  分母取 PRTG 回應的 `treesize`（缺這個欄位時分母 0，畫不定進度但分子照走）。
+  **結構同步三階段各自回報自己的 phase**（常數見 `PrtgFetchService`）：裝置階段的分子是已讀取列數、
+  分母取 PRTG 回應的 `treesize`（缺這個欄位時分母 0，畫不定進度但分子照走）；感測器與狀態變更階段逐裝置查詢，
+  分子分母是**台數**（取數範圍超過 500 台、感測器改走全站分頁時只有起訖兩點，PRTG-SPEC §3c）。
   少了這三個 phase，從進入 PRTG 到觸發式取數之間整段只有一次 `prtg-sync (0,0)`，
-  「剛啟動」「結構同步跑四十分鐘」「卡死」在畫面上完全一樣。分頁每滿 5 頁另寫一行執行輸出，
+  「剛啟動」「結構同步跑四十分鐘」「卡死」在畫面上完全一樣。裝置階段（與感測器的全站分頁模式）每滿 5 頁另寫一行執行輸出，
   各階段完成時另寫耗時與跳過的重複列數。
   PRTG 卡的同步入口旁有**停止鈕**，只在同步執行中出現（與維護頁鏡像頁籤同一組端點）。
 - **首次載入不慢半拍**：狀態查詢與 options／ai-status／settings 同時發出，
@@ -2671,7 +2672,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **`ReportProgress` 的最後一個分支是 catch-all（寫進 NetIQ 主組）**——PRTG 的 phase
   必須顯式分支，否則會蓋掉 NetIQ 的進度條（已有反例測試釘住）。
   **PRTG 歷史回填**另有自己的進度（獨立狀態物件與端點，不走 `SchedulerRunState`）：
-  先是「讀取狀態變更：N / 約 T 筆」（整趟只翻一次；約略總數還不知道時只印已讀筆數），之後「第 X / N 天（日期）：sensor a / b」，換日時 sensor 進度重設；
+  先是「讀取狀態變更：N / T 台」（整趟只查一次，逐裝置查詢；總台數還不知道時只印已完成台數），之後「第 X / N 天（日期）：sensor a / b」，換日時 sensor 進度重設；
   結束後被停止的顯示「■ 已停止」。
   進度欄位加在 `PrtgBackfillRunState` 自己身上，**不動它繼承的 `PrtgProbeRunState`**
   ——環境探測沒有自然分母，刻意不加進度。

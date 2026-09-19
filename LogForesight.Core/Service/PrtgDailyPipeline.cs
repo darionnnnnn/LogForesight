@@ -112,8 +112,8 @@ internal static class PrtgDailyPipeline
             // 2. PRTG 主機對應重算只對 newest，在 scopeProvider 裡做（裝置同步之後、感測器同步之前）：
             //    一律重算：鏡像在同步失敗時不會縮小（upsert 只增不減、過期清除只在裝置階段完整成功後才做），
             //    拿既有鏡像重算是安全的，且能反映白天主機主檔的異動。裝置未更新時只多印一行說明。
-            //    FetchDayAsync 整個擲例外（syncFailed 那條路）時 provider 可能沒被呼叫——維持「擷取失敗就沒有對應」
-            //    的既有語意（mapResult 為 null），不另外補做。
+            //    FetchDayAsync 各階段自帶 catch，取消以外幾乎不會整個擲出；真的擲出而 provider 沒被呼叫時
+            //    mapResult 為 null，不另外補做對應。
             PrtgHostMapResult? mapResult = null;
             var syncStopwatch = Stopwatch.StartNew();
             try
