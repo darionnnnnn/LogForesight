@@ -9,7 +9,7 @@
 import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
+import { formatNumber, formatDateTime, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 import { bindRangeChips, setActiveChip } from '../core/date-range.js';
@@ -725,6 +725,35 @@ function renderGroupRisk(data) {
         empty: { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
     });
 }
+
+/**
+ * 資料時間：進頁查一次 /api/health/freshness（不隨期間切換重打），失敗靜默留空。
+ * 過期且未確認時改警示色，並附上可聯絡的系統管理員（後端只在檢視者不能自己處理時才給名單）。
+ */
+async function loadFreshness() {
+    const el = document.getElementById('dashboard-freshness');
+    if (!el) return;
+    let f;
+    try {
+        f = await api.get('/api/health/freshness', { silent: true });
+    } catch {
+        return;
+    }
+    if (!f.scheduleEnabled && !f.lastSuccessAt) {
+        el.textContent = '';
+        return;
+    }
+
+    const warn = !!f.stale && !f.acked;
+    const contacts = f.adminContacts ?? [];
+    let text = `資料最近更新：${f.lastSuccessAt ? formatDateTime(f.lastSuccessAt) : '近 14 天無紀錄'}`;
+    if (warn && contacts.length > 0) text += `，請聯絡系統管理員：${contacts.join('、')}`;
+    el.textContent = text;
+    el.classList.toggle('text-muted', !warn);
+    el.classList.toggle('text-warning-emphasis', warn);
+}
+
+loadFreshness();
 
 const rangeChips = bindRangeChips({
     markActive: true,

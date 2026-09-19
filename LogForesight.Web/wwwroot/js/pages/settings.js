@@ -7,9 +7,12 @@ import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
-    guardLoad, renderSpinner
+    guardLoad, renderSpinner, renderEmpty
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import {
+    formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
+    statusBadge, toLocalDateString
+} from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
 
@@ -597,11 +600,7 @@ async function loadDispatchPoolWarning() {
 async function loadBackfillStatus() {
     const el = document.getElementById('backfill-status');
     try {
-        const detail = await api.get('/api/health/detail', { silent: true });
-
-        // 同一次 /api/health/detail 也帶著資料層慢查詢清單，順手渲染（不必為它多打一次）
-        renderSlowQueries(detail.topSlowOperations);
-
+        const detail = await fetchHealthDetail();
         if (!detail.backfillInProgress) return;
 
         el.textContent = `問題聚合欄背景回填進行中（${detail.backfillDone} / ${detail.backfillTotal}）——` +
@@ -613,23 +612,136 @@ async function loadBackfillStatus() {
 }
 
 /**
- * 慢查詢區塊的容器。頁面骨架裡沒有這個節點（它是純維運資訊，不佔靜態版面），
- * 第一次要顯示時才建在「資料保留」面板的回填狀態之後——那裡已經是 /api/health/detail
- * 的既有讀取點，維運資訊集中在同一處比另開一頁好找。
+ * /api/health/detail 的單一讀取點：資料保留面板的回填狀態與系統健康頁籤共用同一次回應，
+ * 不重複打。失敗時清掉快取，下次切到健康頁籤可以重試；refresh 用於確認靜音後重新載入。
  */
+let healthDetailPromise = null;
+function fetchHealthDetail({ refresh = false } = {}) {
+    if (refresh || !healthDetailPromise) {
+        const pending = api.get('/api/health/detail', { silent: true });
+        pending.catch(() => { if (healthDetailPromise === pending) healthDetailPromise = null; });
+        healthDetailPromise = pending;
+    }
+    return healthDetailPromise;
+}
+
+/** 慢查詢區塊的容器：系統健康頁籤「慢查詢」卡片內的靜態節點 */
 function resolveSlowQueryHost() {
-    const existing = document.getElementById('slow-query-status');
-    if (existing) return existing;
+    return document.getElementById('slow-query-status');
+}
 
-    const anchorEl = document.getElementById('backfill-status');
-    if (!anchorEl) return null;
+/**
+ * 系統健康頁籤：切到該頁籤（或 #health 深連結進站）時才呼叫。
+ * 三個區塊都來自同一次 /api/health/detail。
+ */
+async function loadHealthTab({ refresh = false } = {}) {
+    let detail;
+    try {
+        detail = await fetchHealthDetail({ refresh });
+    } catch {
+        renderEmpty(document.getElementById('health-freshness'), {
+            title: '無法載入系統健康資訊', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle'
+        });
+        return;
+    }
+    renderFreshness(detail.scheduleFreshness);
+    renderSlowQueries(detail.topSlowOperations);
+    renderBackgroundJobs(detail);
+}
 
-    const host = document.createElement('div');
-    host.id = 'slow-query-status';
-    host.className = 'alert alert-secondary';
-    host.setAttribute('role', 'status');
-    anchorEl.insertAdjacentElement('afterend', host);
-    return host;
+/** 排程資料新鮮度：啟用狀態、最近一次成功、狀態徽章；過期且未確認時露出確認靜音列 */
+function renderFreshness(freshness) {
+    const host = document.getElementById('health-freshness');
+    const ackRow = document.getElementById('health-ack-row');
+    if (!host) return;
+    const f = freshness ?? {};
+
+    let badge;
+    if (f.acked) badge = statusBadge(`已確認，靜音至 ${formatDate(f.ackedUntil)}`, 'secondary');
+    else if (f.stale) badge = statusBadge('過期', 'warning');
+    else badge = statusBadge('正常', 'success');
+
+    const line = (label, value) => {
+        const row = document.createElement('div');
+        row.className = 'mb-1';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'text-muted me-2';
+        labelEl.textContent = label;
+        row.append(labelEl, value);
+        return row;
+    };
+    host.replaceChildren(
+        line('排程', f.scheduleEnabled ? '已啟用' : '未啟用'),
+        line('最近一次成功更新', f.lastSuccessAt ? formatDateTime(f.lastSuccessAt) : '近 14 天沒有成功紀錄'),
+        line('狀態', badge)
+    );
+
+    const needAck = !!f.stale && !f.acked;
+    ackRow?.classList.toggle('d-none', !needAck);
+    if (needAck) {
+        const input = document.getElementById('health-ack-until');
+        const offsetDay = days => {
+            const d = new Date();
+            d.setDate(d.getDate() + days);
+            return toLocalDateString(d);
+        };
+        input.min = offsetDay(1);
+        input.max = offsetDay(30);
+        input.value = offsetDay(1);
+    }
+}
+
+/** 背景工作：分析、回填、兩項遷移、首見日合併、暫停的郵件收件人（兩欄表） */
+function renderBackgroundJobs(detail) {
+    const withError = (state, error) => (error ? `${state || '未知'}（錯誤：${error}）` : (state || '未知'));
+    const suspended = detail.suspendedMailRecipients ?? [];
+    const rows = [
+        {
+            item: '分析執行',
+            status: detail.analysisRunning
+                ? `執行中${detail.analysisPhase ? `（${detail.analysisPhase}）` : ''}`
+                : '未執行'
+        },
+        {
+            item: '問題聚合欄回填',
+            status: detail.backfillInProgress
+                ? `進行中（${formatNumber(detail.backfillDone)} / ${formatNumber(detail.backfillTotal)}）`
+                : '無進行中的回填'
+        },
+        { item: '處理狀態遷移', status: withError(detail.migrationState, detail.migrationError) },
+        { item: '權限異動遷移', status: withError(detail.permissionChangeMigrationState, detail.permissionChangeMigrationError) },
+        {
+            item: '首見日合併',
+            status: `${withError(detail.issueFirstSeenSeedState, detail.issueFirstSeenSeedError)}，失敗 ${formatNumber(detail.issueFirstSeenSeedFailures ?? 0)} 次`
+        },
+        { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' }
+    ];
+    renderTable(document.getElementById('health-background'), {
+        columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
+        rows
+    });
+}
+
+/** 「確認並靜音」：成功後 toast 並重新載入系統健康頁籤 */
+function bindFreshnessAck() {
+    const btn = document.getElementById('health-ack-btn');
+    btn?.addEventListener('click', async () => {
+        const until = document.getElementById('health-ack-until').value;
+        if (!until) {
+            toast('請選擇靜音到哪一天', 'warning');
+            return;
+        }
+        const restore = withBusy(btn, '確認中…');
+        try {
+            await api.post('/api/health/freshness-ack', { until });
+            toast(`已確認，靜音至 ${until}`, 'success');
+            await loadHealthTab({ refresh: true });
+        } catch {
+            // api.js 已顯示錯誤
+        } finally {
+            restore();
+        }
+    });
 }
 
 /** 慢查詢區塊的文字（清單為空時顯示這一句，而不是一張空表） */
@@ -1250,12 +1362,16 @@ document.getElementById('ad-servers')?.addEventListener('input', renderAdStatus)
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
-bindTabs(document.getElementById('settings-tabs'));
+bindTabs(document.getElementById('settings-tabs'), {
+    hash: true,
+    onChange: name => { if (name === 'health') loadHealthTab(); }
+});
+bindFreshnessAck();
 // 資源守門的「預覽／自動偵測」兩顆鈕（docs/PRTG-SPEC.md §12）
 bindGuardPreview();
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
-        '#mail-test-btn, #mail-test-result'
+        '#mail-test-btn, #mail-test-result, #health-ack-until, #health-ack-btn'
 });
 load();
 renderAlertToolsTable(document.getElementById('auto-dispatch-alert-tools'));

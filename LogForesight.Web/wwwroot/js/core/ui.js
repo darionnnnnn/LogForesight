@@ -149,15 +149,19 @@ export function bindTabs(tabsEl, { onChange, hash = false } = {}) {
     };
 
     if (hash) {
-        const initialHash = (location.hash || '').replace(/^#/, '');
-        if (initialHash) {
+        const activateFromHash = () => {
+            const current = (location.hash || '').replace(/^#/, '');
+            if (!current) return;
             for (const btn of tabsEl.querySelectorAll('[data-tab]')) {
-                if (btn.dataset.tab === initialHash) {
+                if (btn.dataset.tab === current) {
                     activateTab(btn, false);
                     break;
                 }
             }
-        }
+        };
+        activateFromHash();
+        // 已在本頁時點到同頁的深連結（例如全站告示列的「確認並靜音」）只改 hash 不重載，要跟著切頁籤
+        window.addEventListener('hashchange', activateFromHash);
     }
 
     tabsEl.addEventListener('click', event => {

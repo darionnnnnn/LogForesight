@@ -8,6 +8,8 @@
     <li class="nav-item"><button class="nav-link" data-tab="ad" type="button">AD 驗證</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="analysis" type="button">分析參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
+    @* 系統健康：沒有可儲存欄位，純維運資訊（排程新鮮度、慢查詢、背景工作），不參與設定表單 *@
+    <li class="nav-item"><button class="nav-link" data-tab="health" type="button">系統健康</button></li>
     @* 資源守門：同時節制 NetIQ 取數與 PRTG 擷取兩路，因此放在全站設定而非 PRTG 維護頁 *@
     <li class="nav-item"><button class="nav-link" data-tab="guard" type="button">資源守門</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mail" type="button">郵件通知</button></li>
@@ -504,6 +506,43 @@
             <p class="text-muted small mb-0">
                 PRTG 資料保留天數在 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護</a> 頁設定。
             </p>
+        </div>
+    </div>
+
+    @* 系統健康：切到本頁籤（或 #health 深連結進站）才載入 /api/health/detail。
+       整頁在 settings-form 內，按鈕一律 type="button"，避免觸發表單送出 *@
+    <div class="d-none" data-panel="health">
+        <div class="lf-card mb-3">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">排程資料新鮮度</h2>
+            </div>
+            <div class="lf-card__body">
+                <div id="health-freshness" role="status"></div>
+                <div class="d-flex flex-wrap align-items-center gap-2 mt-3 d-none" id="health-ack-row">
+                    <label for="health-ack-until" class="form-label mb-0">靜音到</label>
+                    <input type="date" class="form-control" id="health-ack-until" style="max-width: 12rem;" />
+                    <button type="button" class="btn btn-outline-secondary" id="health-ack-btn">確認並靜音</button>
+                </div>
+                <p class="small mb-0 mt-3"><a id="health-runs-link" href="@Url.Content("~/runs")">前往排程作業</a></p>
+            </div>
+        </div>
+
+        <div class="lf-card mb-3">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">慢查詢</h2>
+            </div>
+            <div class="lf-card__body">
+                <div id="slow-query-status" role="status"></div>
+            </div>
+        </div>
+
+        <div class="lf-card mb-3">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">背景工作</h2>
+            </div>
+            <div class="lf-card__body">
+                <div id="health-background"></div>
+            </div>
         </div>
     </div>
 

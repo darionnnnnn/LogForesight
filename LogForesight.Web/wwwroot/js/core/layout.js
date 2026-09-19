@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
-import { formatUserName, formatNumber } from './format.js';
+import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
 
 /**
@@ -84,6 +84,7 @@ async function init() {
     initHelpPopovers();
     renderSetupReturnBanner();
     refreshRunActivity();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）
+    loadHealthBanner(user);
 
     if (user.needsAdminSetup) {
         const { toast } = await import('./ui.js');
@@ -435,6 +436,51 @@ async function refreshRunActivity() {
     window.dispatchEvent(new CustomEvent(RUN_ACTIVITY_EVENT, { detail: activity }));
 
     setTimeout(refreshRunActivity, activity?.isRunning ? 30000 : 60000);
+}
+
+/**
+ * 排程資料過期告示：只有能處理它的人（Maintain／DevMonitor）才查，進頁查一次、不輪詢。
+ * 過期且尚未確認靜音時顯示一條；其餘情況（含呼叫失敗）一律清空，容器零高度。
+ */
+async function loadHealthBanner(user) {
+    const container = document.getElementById('lf-health-banner');
+    if (!container) return;
+    if (!hasCapability(user, 'Maintain') && !hasCapability(user, 'DevMonitor')) return;
+
+    let freshness;
+    try {
+        freshness = await api.get('/api/health/freshness', { silent: true });
+    } catch {
+        container.replaceChildren();
+        return;
+    }
+    if (!freshness?.stale || freshness.acked) {
+        container.replaceChildren();
+        return;
+    }
+
+    const bar = document.createElement('div');
+    bar.className = 'alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2 mb-3';
+    bar.setAttribute('role', 'status');
+
+    const text = document.createElement('span');
+    const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
+    text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。`;
+
+    const runsLink = document.createElement('a');
+    runsLink.href = appUrl('/runs');
+    runsLink.textContent = '查看排程作業';
+
+    bar.append(text, runsLink);
+
+    // 確認靜音在設定頁、需要 Maintain：只有 DevMonitor 的人看得到告示，但不給他進不去的連結
+    if (hasCapability(user, 'Maintain')) {
+        const ackLink = document.createElement('a');
+        ackLink.href = appUrl('/admin/settings#health');
+        ackLink.textContent = '確認並靜音';
+        bar.appendChild(ackLink);
+    }
+    container.replaceChildren(bar);
 }
 
 /**
