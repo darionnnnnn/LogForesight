@@ -101,6 +101,19 @@ async function loadAssignableUsers() {
  * 「現在真正的狀態」，與清單頁看到的完全同源。derivedStatus 為 null（Update/Assign
  * 呼叫端未補算）時 fallback 用 statusText，不帶結案進度。
  */
+/**
+ * AI 整理的問題脈絡：只勾一個問題時帶它的名稱（取自左側問題列表那一列的標題），
+ * 勾多個或沒勾時不帶名稱；本面板是單一主機的風險日，主機數固定 1
+ */
+function aiNoteContext(selection) {
+    if (selection.size !== 1) return { hostCount: 1 };
+    const [issueKey] = selection;
+    const check = document.querySelector(`input[type="checkbox"][data-issue-key="${CSS.escape(issueKey)}"]`);
+    const title = check && check.closest('tr') && check.closest('tr').querySelector('.lf-issue-cell .fw-semibold');
+    const issueLabel = title ? title.textContent.trim() : '';
+    return issueLabel ? { issueLabel, hostCount: 1 } : { hostCount: 1 };
+}
+
 /** 面板內的一句提示（lf-hint 是全站既有的提示樣式） */
 function hintText(text) {
     const el = document.createElement('div');
@@ -430,7 +443,10 @@ function handlingForm() {
     noteFeedback.setAttribute('role', 'alert');
     form.appendChild(noteFeedback);
 
-    const noteEditor = attachNoteEditor(noteInput, { draftKey: `record:${hostId}:${date}` });
+    const noteEditor = attachNoteEditor(noteInput, {
+        draftKey: `record:${hostId}:${date}`,
+        ai: { context: () => aiNoteContext(getSelection()) }
+    });
 
     /** 使用者對表單的輸入存進模組層暫存：勾選問題會整張重建，重建時以此為初值 */
     function saveFormDraft() {

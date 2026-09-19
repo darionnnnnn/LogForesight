@@ -10,7 +10,7 @@
  * 不可用就當作沒有草稿，計數與輸入照常運作。
  */
 
-import { getCurrentUser } from './api.js';
+import { api, getCurrentUser } from './api.js';
 import { confirmAction } from './ui.js';
 
 const KEY_PREFIX = 'lf-draft:';
@@ -55,6 +55,32 @@ export function clearAllDraftsForUser(userId) {
     }
 }
 
+/**
+ * AI 狀態（/api/ai/status）模組內快取：同頁多個說明欄只問一次。存的是 Promise，
+ * 同時初始化的編輯器共用同一個請求；失敗時清掉快取、這次當不可用（按鈕不出現）。
+ */
+let aiStatusPromise = null;
+
+function loadAiStatus() {
+    if (!aiStatusPromise) {
+        aiStatusPromise = api.get('/api/ai/status', { silent: true }).catch(() => {
+            aiStatusPromise = null;
+            return null;
+        });
+    }
+    return aiStatusPromise;
+}
+
+const AI_FAILED_TEXT = 'AI 目前無法回應，請稍後再試';
+const AI_TOO_SHORT_TEXT = 'AI 整理是把你已經寫下的內容整理成條列，不會補上你沒提到的事。內容太短時請直接填寫。';
+
+function mutedHint(text) {
+    const el = document.createElement('span');
+    el.className = 'small text-muted ms-2';
+    el.textContent = text;
+    return el;
+}
+
 function linkButton(text, onClick) {
     const btn = document.createElement('button');
     btn.type = 'button';   // 放在 form 裡，不指定會變成送出鈕
@@ -66,18 +92,28 @@ function linkButton(text, onClick) {
 
 /**
  * @param {HTMLTextAreaElement} textarea 已放進 DOM 的說明欄（計數列插在它之後）
- * @param {{draftKey?: string, maxLength?: number}} options draftKey 空＝不存草稿
+ * @param {{draftKey?: string, maxLength?: number, ai?: {context: () => ({issueLabel?: string, hostCount?: number})}}} options
+ *        draftKey 空＝不存草稿；ai 有值才顯示「AI 整理」按鈕（AI 不可用時按鈕整個不出現）
  * @returns {{clearDraft: () => void, setValue: (text: string) => void}}
  */
-export function attachNoteEditor(textarea, { draftKey, maxLength = 1000 } = {}) {
+export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai } = {}) {
     const counter = document.createElement('div');
     counter.className = 'form-text';
     counter.setAttribute('aria-live', 'polite');
-    textarea.after(counter);
+
+    // 計數列：有 AI 選項時是「計數（左）＋AI 整理按鈕（右）」一列，否則就是計數本身
+    let counterRow = counter;
+    if (ai) {
+        counterRow = document.createElement('div');
+        counterRow.className = 'd-flex justify-content-between align-items-center gap-2';
+        counterRow.appendChild(counter);
+    }
+    textarea.after(counterRow);
 
     let storageKey = null;
     let timer = null;
     let notice = null;
+    let aiControls = null;
 
     function updateCounter() {
         const length = textarea.value.length;   // 與後端 StringLength 同口徑（UTF-16 字串長度）
@@ -121,7 +157,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000 } = {}) 
         notice = document.createElement('div');
         notice.className = 'text-muted small';
         notice.append(...parts);
-        counter.before(notice);
+        counterRow.before(notice);
     }
 
     function restoreDraft() {
@@ -163,6 +199,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000 } = {}) 
     function clearDraft() {
         clearTimeout(timer);
         timer = null;
+        if (aiControls) aiControls.resetUndo();   // 送出成功：這次整理的復原狀態一併失效
         if (!storageKey) return;
         pendingSaves.delete(storageKey);
         writeDraft(storageKey, '');
@@ -185,5 +222,121 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000 } = {}) 
         });
     }
 
+    if (ai) {
+        loadAiStatus().then(status => {
+            if (!status || !status.available) return;   // 不可用：按鈕整個不出現（不是灰色停用）
+            aiControls = attachAiTidy(textarea, counterRow, status, ai.context, setValue);
+        });
+    }
+
     return { clearDraft, setValue };
+}
+
+/**
+ * 「AI 整理」按鈕（回饋第 50 輪批次C-3）：把說明欄目前的內容整理成四段條列、填回說明欄，
+ * 使用者檢查修改後再送出。輸出只當文字框內容（setValue），不以 HTML 呈現。
+ */
+function attachAiTidy(textarea, counterRow, status, context, setValue) {
+    const box = document.createElement('div');
+    box.className = 'd-flex align-items-center flex-shrink-0';
+
+    const emptyHint = document.createElement('span');
+    emptyHint.className = 'small text-danger me-2';
+
+    if (status.external) box.appendChild(mutedHint('內容會送至外部 AI 服務'));
+    if (status.batchBusy) box.appendChild(mutedHint('AI 分析排程執行中，可能較慢'));
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-outline-secondary ms-2';
+    button.textContent = 'AI 整理';
+
+    let requestSeq = 0;
+    const abandon = linkButton('放棄', () => {
+        requestSeq++;   // 這次回應到了也不採用
+        setIdle();
+    });
+    abandon.classList.add('d-none');
+
+    box.prepend(emptyHint);
+    box.append(button, abandon);
+    counterRow.appendChild(box);
+
+    // 結果訊息列：放在計數列下方
+    const message = document.createElement('div');
+    message.className = 'small text-muted';
+    message.setAttribute('aria-live', 'polite');
+    counterRow.after(message);
+
+    let undoText = null;
+
+    function setIdle() {
+        button.disabled = false;
+        button.textContent = 'AI 整理';
+        abandon.classList.add('d-none');
+    }
+
+    function showMessage(...parts) {
+        message.replaceChildren(...parts);
+    }
+
+    function resetUndo() {
+        undoText = null;
+        showMessage();
+    }
+
+    textarea.addEventListener('input', () => {
+        emptyHint.textContent = '';
+    });
+
+    button.addEventListener('click', async () => {
+        const text = textarea.value;
+        if (!text.trim()) {
+            emptyHint.textContent = '請先輸入要整理的內容';
+            return;
+        }
+        emptyHint.textContent = '';
+        showMessage();
+
+        const seq = ++requestSeq;
+        button.disabled = true;
+        button.textContent = '整理中…';
+        abandon.classList.remove('d-none');
+
+        let result = null;
+        let errorText = null;
+        try {
+            result = await api.post('/api/ai/tidy-note', { text, ...context() }, { silent: true });
+        } catch (err) {
+            // 節流（429）與輸入驗證的伺服器訊息對使用者有意義；其餘一律同一句
+            errorText = err.status === 429 || err.code === 'validation_failed' ? err.message : AI_FAILED_TEXT;
+        }
+        if (seq !== requestSeq) return;   // 已按「放棄」或又送了新的一次
+        setIdle();
+
+        if (errorText) {
+            showMessage(errorText);
+            return;
+        }
+        if (result && result.tooShort) {
+            showMessage(AI_TOO_SHORT_TEXT);
+            return;
+        }
+        if (!result || result.unavailable || result.failed || !result.text) {
+            showMessage(AI_FAILED_TEXT);
+            return;
+        }
+
+        undoText = textarea.value;   // 最近一次整理前的原文（等待期間若有修改，以修改後為準）
+        setValue(result.text);
+        const undo = linkButton('復原', () => {
+            if (undoText === null) return;
+            const original = undoText;
+            resetUndo();
+            setValue(original);
+        });
+        showMessage(result.truncated ? '已整理，請檢查後再送出（內容過長已截斷）' : '已整理，請檢查後再送出', undo);
+    });
+
+    return { resetUndo };
 }

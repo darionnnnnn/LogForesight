@@ -123,6 +123,7 @@ public class AuditQueryService
         [AuditActions.PrtgSettingsUpdate] = "更新 PRTG 設定",
 
         [AuditActions.CalibrationExport] = "匯出校準數值",
+        [AuditActions.AiNoteTidy] = "AI 整理處理說明",
 
         [AuditActions.IssueOwnerUpdate] = "設定問題負責人",
         [AuditActions.IssueOwnerDelete] = "刪除問題負責人",

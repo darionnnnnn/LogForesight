@@ -31,8 +31,10 @@ const STATUS_OPTIONS = [
  *        呼叫端提供的送出函式；成功與否的訊息由呼叫端自己出
  * @param {() => void} [options.onApplied] 送出成功後的重新載入
  * @param {string} options.draftKey 草稿識別（必填）：可區分回覆對象的字串，下次打開同一批對象會還原草稿
+ * @param {{issueLabel?: string, hostCount?: number}} [options.aiContext] 「AI 整理」的問題脈絡；
+ *        一次回覆多張不同問題的單時不帶 issueLabel
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {} }) {
     const body = document.createElement('div');
     const form = document.createElement('form');
     form.noValidate = true;   // 超過字數的 customValidity 走下方手動驗證，不跳原生泡泡
@@ -62,7 +64,10 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     noteInput.className = 'form-control form-control-sm mb-3';
     noteInput.rows = 3;
     form.append(noteLabel, noteInput);
-    const noteEditor = attachNoteEditor(noteInput, { draftKey: `wo-reply:${draftKey}` });
+    const noteEditor = attachNoteEditor(noteInput, {
+        draftKey: `wo-reply:${draftKey}`,
+        ai: { context: () => aiContext }
+    });
 
     // 處理中的預計完成日／觀察中的觀察至日期共用同一個欄位（後端同一個 DueDate）
     const dueLabel = document.createElement('label');
@@ -205,6 +210,7 @@ export async function openIssueStatusReplyModal(group, onApplied) {
         title: `回覆處理狀態：${group.source} (${group.eventId})`,
         targetText: `${orders.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
+        aiContext: { issueLabel: `${group.source} (${group.eventId})`, hostCount: hosts },
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);

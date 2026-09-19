@@ -1,4 +1,9 @@
+using LogForesight.Core.Configuration;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
+using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -21,6 +26,12 @@ public class AiController : ControllerBase
     private readonly RecordDetailQueryService _recordsDetail;
     private readonly RiskyEventLookupService _eventLookup;
     private readonly IHostStore _hosts;
+    private readonly HandlingNoteAiService _noteAi;
+    private readonly HandlingNoteTidyThrottle _tidyThrottle;
+    private readonly ICurrentUser _currentUser;
+    private readonly IAuditService _audit;
+    private readonly ISystemSettingsStore _systemSettings;
+    private readonly AiAnalysisRunState _aiRunState;
 
     public AiController(
         AiInsightService ai,
@@ -28,7 +39,13 @@ public class AiController : ControllerBase
         RecordListQueryService recordsList,
         RecordDetailQueryService recordsDetail,
         RiskyEventLookupService eventLookup,
-        IHostStore hosts)
+        IHostStore hosts,
+        HandlingNoteAiService noteAi,
+        HandlingNoteTidyThrottle tidyThrottle,
+        ICurrentUser currentUser,
+        IAuditService audit,
+        ISystemSettingsStore systemSettings,
+        AiAnalysisRunState aiRunState)
     {
         _ai = ai;
         _dashboard = dashboard;
@@ -36,12 +53,62 @@ public class AiController : ControllerBase
         _recordsDetail = recordsDetail;
         _eventLookup = eventLookup;
         _hosts = hosts;
+        _noteAi = noteAi;
+        _tidyThrottle = tidyThrottle;
+        _currentUser = currentUser;
+        _audit = audit;
+        _systemSettings = systemSettings;
+        _aiRunState = aiRunState;
     }
 
-    /// <summary>AI 是否可用——前端在渲染前先問一次，避免對每個功能各發一次註定失敗的請求</summary>
+    /// <summary>AI 是否可用——前端在渲染前先問一次，避免對每個功能各發一次註定失敗的請求。
+    /// External／BatchBusy 供「AI 整理」按鈕旁的提示（內容會送外部服務、排程執行中可能較慢）。</summary>
     [HttpGet("status")]
     public ApiResponse<AiStatusDto> Status() =>
-        ApiResponse<AiStatusDto>.Ok(new AiStatusDto { Available = _ai.Available });
+        ApiResponse<AiStatusDto>.Ok(new AiStatusDto
+        {
+            Available = _ai.Available,
+            External = AiProviders.Normalize(_systemSettings.Get().AiProvider) != AiProviders.Local,
+            BatchBusy = _aiRunState.IsRunning
+        });
+
+    /// <summary>
+    /// 處理說明「AI 整理」（回饋第 50 輪批次C-3）：每使用者 60 秒 6 次節流；
+    /// 每次呼叫寫一筆稽核，detail 只記長度／問題名稱／結果，**不記原文與輸出**。
+    /// </summary>
+    [HttpPost("tidy-note")]
+    [Permission(Capability.Handle)]
+    public async Task<ActionResult<ApiResponse<TidyNoteResponseDto>>> TidyNote([FromBody] TidyNoteRequest request)
+    {
+        // 只有真的會呼叫 AI 的請求才扣節流額度：太短或超長在服務內直接回提示／驗證錯誤，不該讓使用者被擋
+        var trimmedLength = (request.Text ?? "").Trim().Length;
+        var willCallAi = trimmedLength >= HandlingNoteAiService.MinInputChars && trimmedLength <= HandlingNoteAiService.MaxInputChars;
+        if (willCallAi && !_tidyThrottle.TryAcquire(_currentUser.UserId, DateTime.UtcNow))
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<TidyNoteResponseDto>.Fail(
+                ApiErrorCodes.Forbidden, "AI 整理太頻繁，請稍候再試。"));
+        }
+
+        var inputLength = (request.Text ?? "").Trim().Length;
+        var result = await _noteAi.TidyAsync(request.Text ?? "", request.IssueLabel, request.HostCount);
+
+        var outcome = result.TooShort ? "too_short"
+            : result.Unavailable ? "unavailable"
+            : result.Failed ? "failed"
+            : result.Truncated ? "truncated"
+            : "ok";
+        _audit.Record(AuditActions.AiNoteTidy, $"AI 整理處理說明（{inputLength} 字，結果 {outcome}）",
+            detail: new { InputLength = inputLength, IssueLabel = request.IssueLabel, Outcome = outcome });
+
+        return ApiResponse<TidyNoteResponseDto>.Ok(new TidyNoteResponseDto
+        {
+            Text = result.Text,
+            Truncated = result.Truncated,
+            TooShort = result.TooShort,
+            Unavailable = result.Unavailable,
+            Failed = result.Failed
+        });
+    }
 
     /// <summary>儀表板今日焦點（W1-1）</summary>
     [HttpGet("today-focus")]
@@ -159,4 +226,10 @@ public class AiController : ControllerBase
 public class AiStatusDto
 {
     public bool Available { get; set; }
+
+    /// <summary>目前設定的提供者不是本機端點——內容會送到外部 AI 服務</summary>
+    public bool External { get; set; }
+
+    /// <summary>AI 分析排程正在執行（互動請求可能較慢）</summary>
+    public bool BatchBusy { get; set; }
 }

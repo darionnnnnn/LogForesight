@@ -284,6 +284,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<HelpContentService>();
         services.AddScoped<HelpQaService>();
 
+        // 處理說明 AI 整理（回饋第 50 輪批次C-3）：節流窗口要全站共用，Singleton
+        services.AddScoped<HandlingNoteAiService>();
+        services.AddSingleton<HandlingNoteTidyThrottle>();
+
         // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();

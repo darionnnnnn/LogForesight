@@ -192,6 +192,9 @@ public static class AuditActions
     // 校準數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A4）
     public const string CalibrationExport = "calibration_export";
 
+    /// <summary>處理說明 AI 整理（回饋第 50 輪批次C-3）：DetailJson 只含長度／問題名稱／結果，不含原文與輸出</summary>
+    public const string AiNoteTidy = "ai_note_tidy";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

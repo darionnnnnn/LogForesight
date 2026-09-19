@@ -356,11 +356,16 @@ replyOrdersBtn.addEventListener('click', () => {
 
     const workOrderIds = [...selectedOrderIds];
     const hosts = workOrderIds.reduce((sum, id) => sum + (orderRowsById.get(id)?.counts?.active ?? 0), 0);
+    // 選取的單都是同一個問題才帶問題名稱，不同問題混在一起時只帶主機數
+    const labels = new Set(workOrderIds.map(id => orderRowsById.get(id)?.issueLabel));
+    const [onlyLabel] = labels;
+    const aiContext = labels.size === 1 && onlyLabel ? { issueLabel: onlyLabel, hostCount: hosts } : { hostCount: hosts };
 
     openWorkOrderReplyModal({
         title: '回覆選取的交辦單',
         targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
+        aiContext,
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);
@@ -564,6 +569,7 @@ function buildMemberPanel(row, cell) {
             title: `回覆交辦單 #${row.workOrderId}`,
             targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
             draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
+            aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },
             submit: async payload => {
                 const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload });
                 toastReplyResult(result);
