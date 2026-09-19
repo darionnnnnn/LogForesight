@@ -270,6 +270,15 @@
                     </button>
                 </div>
 
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="schedule-auto-catchup" data-maintain-only />
+                    <label class="form-check-label" for="schedule-auto-catchup">錯過窗口時自動補跑</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="站台在排程窗口期間沒有執行（停機、IIS 閒置回收）時，於窗口結束後 4 小時內自動補跑一次，回望天數涵蓋漏掉的日子。關閉後不會自動補跑，可在排程作業頁手動立即執行。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                </div>
+
                 <label class="form-label small fw-semibold">執行窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">

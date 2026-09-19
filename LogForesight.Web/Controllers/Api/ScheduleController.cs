@@ -85,6 +85,7 @@ public class ScheduleController : ControllerBase
             o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
             o.LocalAnalysisEnabled = request.LocalAnalysisEnabled;
+            o.AutoCatchUp = request.AutoCatchUp;
             o.AiWindows = request.AiWindows;
             o.AiConcurrency = Math.Clamp(request.AiConcurrency, 1, 8);
             o.UpdatedByAccount = _currentUser.Account;
@@ -95,6 +96,7 @@ public class ScheduleController : ControllerBase
             summary: $"更新排程設定：{(saved.Enabled ? "已啟用" : "未啟用")}、{saved.Windows.Count} 個執行窗口" +
                      (saved.DebugDump ? "，AI 診斷傾印開啟中" : "") +
                      (saved.LocalAnalysisEnabled ? "" : "，本機分析已停用") +
+                     (saved.AutoCatchUp ? "" : "，錯過窗口不自動補跑") +
                      $"，AI 分析：{saved.AiWindows.Count} 個背景補跑窗口、併發 {saved.AiConcurrency}",
             targetKind: "schedule",
             detail: new
@@ -103,6 +105,7 @@ public class ScheduleController : ControllerBase
                 saved.Windows,
                 saved.DebugDump,
                 saved.LocalAnalysisEnabled,
+                saved.AutoCatchUp,
                 saved.AiWindows,
                 saved.AiConcurrency
             });
@@ -488,6 +491,7 @@ public class ScheduleController : ControllerBase
         Windows = options.Windows,
         DebugDump = options.DebugDump,
         LocalAnalysisEnabled = options.LocalAnalysisEnabled,
+        AutoCatchUp = options.AutoCatchUp,
         AiWindows = options.AiWindows,
         AiConcurrency = options.AiConcurrency,
         NextAiTriggerTime = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)

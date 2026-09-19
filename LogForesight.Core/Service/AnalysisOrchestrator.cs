@@ -50,6 +50,11 @@ public class RunRequest
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
     public string? Trigger { get; init; }
+
+    /// <summary>
+    /// 補跑說明（非 null＝這趟是補跑，內容是要寫進里程碑的白話說明）。
+    /// </summary>
+    public string? CatchUpNote { get; init; }
 }
 
 /// <summary>本機逐日分析的單日摘要（批次E）：執行結果總表與計數用，不持有分析內容。</summary>
@@ -227,8 +232,13 @@ public class AnalysisOrchestrator
             // 把取消權杖交給 recorder：優雅停止時 OperationCanceledException 會直接離開本 using 範圍，
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
-                onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"));
+                onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
+                catchUp: request.CatchUpNote != null);
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
+            if (request.CatchUpNote != null)
+            {
+                runRecorder.Milestone(request.CatchUpNote);
+            }
 
             var eventLogService = new EventLogService();
             IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();

@@ -702,6 +702,7 @@ function applyScheduleOptions(options) {
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
     document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || aiAvailable !== true);
     document.getElementById('schedule-local-analysis').checked = options.localAnalysisEnabled;
+    document.getElementById('schedule-auto-catchup').checked = options.autoCatchUp;
     localAnalysisEnabled = options.localAnalysisEnabled;
     const scopeAllLabel = document.getElementById('run-now-scope-all-label');
     if (scopeAllLabel) {
@@ -839,6 +840,7 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
             windows: scheduleWindows,
             debugDump: document.getElementById('schedule-debug-dump').checked,
             localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked,
+            autoCatchUp: document.getElementById('schedule-auto-catchup').checked,
             aiWindows: scheduleAiWindows,
             aiConcurrency: concurrencyVal
         });

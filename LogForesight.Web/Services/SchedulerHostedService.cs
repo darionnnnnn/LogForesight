@@ -151,9 +151,54 @@ public class SchedulerHostedService : BackgroundService
             _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
             _runState.RecentScheduleAttempts);
 
-        if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
+        if (ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes))
+        {
+            await TriggerRunAsync(ComposeScheduledRequest());
+            return;
+        }
 
-        await TriggerRunAsync(ComposeScheduledRequest());
+        // 補跑只在「剛過完一個窗口的 N 小時內」才有可能：先用不讀資料庫的條件擋掉一天中絕大多數的輪詢，
+        // 才去讀涵蓋回望上限的長期紀錄（算缺口天數需要找到窗口之前最後一次觸發，可能是好幾天前）
+        var lastEnded = ScheduleCalculator.LastEndedWindowInstance(now, options.Windows);
+        if (options.AutoCatchUp && lastEnded != null && now - lastEnded.Value.End <= ScheduleCalculator.AutoCatchUpMaxDelay)
+        {
+            var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_systemSettingsStore.Get().RetentionDays);
+            var longTriggerTimes = GetScheduleTriggerTimes(
+                    _batchRunStore.GetRecentRuns(effectiveLimit + 1, null),
+                    _runState.RecentScheduleAttempts)
+                .ToList();
+            recentScheduleTriggerTimes = longTriggerTimes;
+            var missed = ScheduleCalculator.FindMissedWindow(now, options.Windows, longTriggerTimes, ScheduleCalculator.AutoCatchUpMaxDelay);
+            if (missed.HasValue)
+            {
+                var (start, end) = missed.Value;
+                var triggerTimes = recentScheduleTriggerTimes as IReadOnlyCollection<DateTime> ?? recentScheduleTriggerTimes.ToList();
+                var earlier = triggerTimes
+                    .Where(t => t < start)
+                    .OrderByDescending(t => t)
+                    .Cast<DateTime?>()
+                    .FirstOrDefault();
+
+                var days = earlier.HasValue
+                    ? Math.Clamp((now.Date - earlier.Value.Date).Days, 1, effectiveLimit)
+                    : 1;
+
+                var catchUpNote = $"補跑：上一個排程窗口（{start:MM-dd HH:mm}～{end:MM-dd HH:mm}）未執行，本趟回望 {days} 天";
+                Log.Info(catchUpNote);
+
+                var scheduledReq = ComposeScheduledRequest();
+                var catchUpReq = new RunRequest
+                {
+                    Scope = scheduledReq.Scope,
+                    HostIds = scheduledReq.HostIds,
+                    BackfillOverride = days,
+                    CatchUpNote = catchUpNote,
+                    Trigger = scheduledReq.Trigger
+                };
+
+                await TriggerRunAsync(catchUpReq);
+            }
+        }
     }
 
     /// <summary>
@@ -242,7 +287,8 @@ public class SchedulerHostedService : BackgroundService
         RerunMode = request.RerunMode,
         DebugDump = scheduleOptions.DebugDump,
         IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
-        Trigger = request.Trigger
+        Trigger = request.Trigger,
+        CatchUpNote = request.CatchUpNote
     };
 
     public async Task<bool> TriggerRunAsync(RunRequest request)

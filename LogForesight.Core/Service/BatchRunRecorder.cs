@@ -59,7 +59,8 @@ public class BatchRunRecorder : IDisposable
     /// 整趟執行的 Warn 全部靜默丟失且沒有任何訊號。
     /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
-        CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null)
+        CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null,
+        bool catchUp = false)
     {
         _store = store;
         _ct = ct;
@@ -70,7 +71,8 @@ public class BatchRunRecorder : IDisposable
             AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
             Args = string.Join(" ", args),
             Trigger = trigger,
-            JobType = jobType
+            JobType = jobType,
+            CatchUp = catchUp ? true : null
         };
 
         if (_store == null) return;

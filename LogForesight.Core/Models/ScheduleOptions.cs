@@ -42,6 +42,9 @@ public class ScheduleOptions
     /// </summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
+    /// <summary>錯過窗口時是否自動補跑</summary>
+    public bool AutoCatchUp { get; set; } = true;
+
     // AI 分析沒有獨立的啟用開關：AI 服務只要設定好就一律啟用。
     // 取數執行一發佈當日 PRTG finding 就立刻開跑，其餘時間在 AiWindows 內背景消化積壓。
     // 舊設定 blob 裡殘留的 aiEnabled 欄位由反序列化忽略，升級不需要任何動作。

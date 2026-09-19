@@ -45,6 +45,11 @@ public class BatchRun
     public bool Stopped { get; set; }
 
     /// <summary>
+    /// 錯過窗口時自動補跑標示（null＝一般執行或舊紀錄，true＝補跑）。
+    /// </summary>
+    public bool? CatchUp { get; set; }
+
+    /// <summary>
     /// 作業類型（回饋三十五輪批次D）：null＝取數／分析執行（含舊紀錄，缺欄反序列化為 null）、
     /// <see cref="JobTypeAi"/>＝AI 分析排程的執行。執行總表（主機×日視角）只統計取數執行，
     /// AI 執行走執行紀錄的逐筆視角——它不是「哪台主機哪天跑了沒」的語意。
