@@ -67,7 +67,10 @@ public class SqlPerformanceMonitorTests
     }
 }
 
-/// <summary>健康檢查端點的行為（匿名層與診斷層的資訊邊界）</summary>
+/// <summary>健康檢查端點的行為（匿名層與診斷層的資訊邊界）。
+/// 密文解密失敗旗標是行程層級 static（別的測試類別餵損毀密文就會設起來、讓狀態變 degraded），
+/// 因此放進不並行的 CryptoKeyState 集合並在建構時重設。</summary>
+[Collection("CryptoKeyState")]
 public class HealthServiceTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-health-" + Guid.NewGuid().ToString("N"));
@@ -75,6 +78,8 @@ public class HealthServiceTests : IDisposable
 
     public HealthServiceTests()
     {
+        CryptoHelper.ResetForTests();
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = false;
         Directory.CreateDirectory(_dir);
         _backend = new StorageBackend(
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "h.db")}" }, _dir);
@@ -150,6 +155,27 @@ public class HealthServiceTests : IDisposable
         Assert.Equal(HealthStatuses.Ok, dto.Status);
         Assert.Null(dto.StorageError);
         Assert.False(dto.AnalysisRunning);
+    }
+
+    [Fact]
+    public void 診斷檢查_金鑰不符或密文解不開時為degraded()
+    {
+        var clean = NewService().GetDetail();
+        Assert.False(clean.CryptoKeyMismatch);
+        Assert.False(clean.CryptoDecryptFailure);
+        Assert.False(string.IsNullOrEmpty(clean.CryptoKeySource));
+
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = true;
+        var mismatch = NewService().GetDetail();
+        Assert.Equal(HealthStatuses.Degraded, mismatch.Status);
+        Assert.True(mismatch.CryptoKeyMismatch);
+
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = false;
+        Assert.False(CryptoHelper.TryDecrypt(CryptoHelper.EncryptWith(new byte[32], "x"), out _));
+        var failure = NewService().GetDetail();
+        Assert.Equal(HealthStatuses.Degraded, failure.Status);
+        Assert.True(failure.CryptoDecryptFailure);
+        CryptoHelper.ResetForTests();
     }
 
     /// <summary>分析執行中要看得出來——E1（夜間分析與 Web 同行程）時，這是「畫面為什麼變慢」的第一線索</summary>

@@ -77,12 +77,17 @@ public class HealthService
         var firstSeenProgress = _firstSeenSeedService?.Progress;
         var firstSeenFailed = firstSeenProgress?.IsFailed == true;
 
+        // 密碼欄位解不開時各功能只會靜默當成未設定——必須在這裡看得到
+        var cryptoKeyMismatch = CryptoKeyBootstrapper.KeyMismatch;
+        var cryptoDecryptFailure = CryptoHelper.DecryptFailureSeen;
+
         // 「慢操作占比過高」或「首見日合併連續失敗達上限」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
         // 因此獨立成 degraded 狀態，而不是併進 ok。排程資料過期且未確認靜音時亦視為 degraded（任務 A-3）
         var degraded = (performance.TotalOperations > 0 &&
                        performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent)
                        || firstSeenFailed
-                       || (freshness.Stale && !freshness.Acked);
+                       || (freshness.Stale && !freshness.Acked)
+                       || cryptoKeyMismatch || cryptoDecryptFailure;
 
         return new HealthDetailDto
         {
@@ -140,7 +145,11 @@ public class HealthService
             IssueFirstSeenSeedFailures = firstSeenProgress?.Failures ?? 0,
             IssueFirstSeenSeedError = firstSeenProgress?.LastError,
 
-            SuspendedMailRecipients = _mail.GetSuspendedRecipients()
+            SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
+
+            CryptoKeySource = CryptoHelper.KeySource,
+            CryptoKeyMismatch = cryptoKeyMismatch,
+            CryptoDecryptFailure = cryptoDecryptFailure
         };
     }
 

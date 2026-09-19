@@ -14,8 +14,17 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
+/// <summary>含 HealthService.GetDetail 狀態斷言：密文解密失敗旗標是行程層級 static，
+/// 別的測試類別餵損毀密文就會讓狀態變 degraded，因此放進不並行的 CryptoKeyState 集合並在建構時重設。</summary>
+[Collection("CryptoKeyState")]
 public class ScheduleFreshnessTests
 {
+    public ScheduleFreshnessTests()
+    {
+        CryptoHelper.ResetForTests();
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = false;
+    }
+
     public sealed record RunSpec(
         int StartedHoursAgo,
         int? FinishedHoursAgo,

@@ -35,8 +35,9 @@ public static class RuntimeSettingsResolver
             // AI 呼叫失敗時各日自動降級為統計模式，規則/趨勢/關聯偵測不受影響
             if (systemSettings.UpdatedAt != null)
                 settings.Ai.BaseUrl = systemSettings.AiBaseUrl.Trim();
+            // 解不開（金鑰不符）當成未設定，不讓分析整趟失敗（AI 呼叫失敗時各日自動降級）
             if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
-                settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
+                settings.Ai.ApiKey = CryptoHelper.TryDecrypt(systemSettings.AiApiKeyEnc, out var aiKey) ? aiKey : "";
 
             settings.Ai.Provider = AiProviders.Normalize(systemSettings.AiProvider);
             settings.Ai.Model = string.IsNullOrWhiteSpace(systemSettings.AiModel)

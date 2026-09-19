@@ -184,9 +184,10 @@ public class SentinelAdminService
             var existing = _sentinels.Get(request.SentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
             if (string.IsNullOrEmpty(existing.PasswordEnc))
                 throw DomainException.Validation("這台 Sentinel 尚未設定密碼，請先輸入密碼再測試連線。");
-            password = CryptoHelper.IsEncrypted(existing.PasswordEnc)
-                ? CryptoHelper.Decrypt(existing.PasswordEnc)
-                : existing.PasswordEnc;
+            // 解不開（金鑰不符）等同未設定密碼：回驗證訊息，不讓測試連線 500
+            if (!CryptoHelper.TryDecrypt(existing.PasswordEnc, out var savedPassword))
+                throw DomainException.Validation("這台 Sentinel 已儲存的密碼無法解密（金鑰不符），請重新輸入密碼再測試連線。");
+            password = savedPassword;
         }
         else
         {

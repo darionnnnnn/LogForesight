@@ -539,10 +539,10 @@ public class MailNotificationService
 
     private SmtpConnectionSpec ResolveConnection(SystemSettings settings) => new(
         settings.SmtpServer, settings.SmtpPort, settings.SmtpUseTls, settings.SmtpAccount,
-        // 先判斷才解密：Decrypt 對非本格式的值會擲例外，會讓整批每日／每週寄信失敗
+        // TryDecrypt：非密文原樣回傳；解不開（金鑰不符）當成未設定，不讓整批每日／每週寄信失敗
         string.IsNullOrEmpty(settings.SmtpPasswordEnc) ? null
-            : CryptoHelper.IsEncrypted(settings.SmtpPasswordEnc) ? CryptoHelper.Decrypt(settings.SmtpPasswordEnc)
-            : settings.SmtpPasswordEnc);
+            : CryptoHelper.TryDecrypt(settings.SmtpPasswordEnc, out var smtpPassword) ? smtpPassword
+            : null);
 
     private static string ExpandTemplate(string template, string host, string date, string risk, string type, string summary) =>
         template

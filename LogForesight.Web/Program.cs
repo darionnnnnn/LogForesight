@@ -103,6 +103,13 @@ try
     // ── 啟動時的資料準備 ──────────────────────────────────────────────────────
     using (var scope = app.Services.CreateScope())
     {
+        // 密文金鑰準備（金鑰檔、指紋比對、v1→v2 重加密）必須最先做：之後任何服務都可能解密
+        CryptoKeyBootstrapper.Run(
+            scope.ServiceProvider.GetRequiredService<StorageBackend>(),
+            dataRoot,
+            scope.ServiceProvider.GetRequiredService<ISystemSettingsStore>(),
+            scope.ServiceProvider.GetRequiredService<ISentinelStore>());
+
         var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
 

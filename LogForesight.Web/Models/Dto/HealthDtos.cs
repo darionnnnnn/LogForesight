@@ -119,6 +119,17 @@ public class HealthDetailDto : HealthDto
     /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();
 
+    // ── 密碼欄位加密 ─────────────────────────────────────────────────────
+
+    /// <summary>密文金鑰來源：env｜file｜embedded（見 CryptoHelper.KeySource）</summary>
+    public string CryptoKeySource { get; set; } = string.Empty;
+
+    /// <summary>啟動時金鑰指紋與資料庫記錄不符（還原 DB 沒一併還原金鑰檔等）</summary>
+    public bool CryptoKeyMismatch { get; set; }
+
+    /// <summary>本行程曾有密文解不開（該欄被當成未設定）</summary>
+    public bool CryptoDecryptFailure { get; set; }
+
     /// <summary>排程資料新鮮度（任務 A-3）</summary>
     public ScheduleFreshnessDto ScheduleFreshness { get; set; } = new();
 }

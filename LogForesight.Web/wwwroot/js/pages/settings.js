@@ -714,12 +714,20 @@ function renderBackgroundJobs(detail) {
             item: '首見日合併',
             status: `${withError(detail.issueFirstSeenSeedState, detail.issueFirstSeenSeedError)}，失敗 ${formatNumber(detail.issueFirstSeenSeedFailures ?? 0)} 次`
         },
-        { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' }
+        { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' },
+        { item: '密碼欄位加密', status: cryptoStatus(detail) }
     ];
     renderTable(document.getElementById('health-background'), {
         columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
         rows
     });
+}
+
+/** 密碼欄位加密：金鑰不相符或曾有密文解不開時顯示警示，否則顯示金鑰來源 */
+function cryptoStatus(detail) {
+    if (detail.cryptoKeyMismatch || detail.cryptoDecryptFailure) return '部分密碼無法解密，請重新輸入（見 log）';
+    const sourceLabels = { env: '環境變數', file: '金鑰檔', embedded: '內嵌（不建議）' };
+    return `金鑰來源：${sourceLabels[detail.cryptoKeySource] ?? (detail.cryptoKeySource || '未知')}`;
 }
 
 /** 「確認並靜音」：成功後 toast 並重新載入系統健康頁籤 */

@@ -115,7 +115,8 @@ public class WebAiService : IWebAiService
             {
                 Provider = provider,
                 BaseUrl = baseUrl,
-                ApiKey = CryptoHelper.IsEncrypted(keyEnc) ? CryptoHelper.Decrypt(keyEnc) : "",
+                // 只接受密文（明文維持視為未設定）；解不開（金鑰不符）也當成未設定
+                ApiKey = CryptoHelper.IsEncrypted(keyEnc) && CryptoHelper.TryDecrypt(keyEnc, out var apiKey) ? apiKey : "",
                 Model = model,
                 AzureDeployment = azureDeployment,
                 AzureApiVersion = azureApiVersion,
@@ -144,7 +145,8 @@ public class WebAiService : IWebAiService
             {
                 Provider = provider,
                 BaseUrl = baseUrl,
-                ApiKey = CryptoHelper.IsEncrypted(keyEnc) ? CryptoHelper.Decrypt(keyEnc) : "",
+                // 只接受密文（明文維持視為未設定）；解不開（金鑰不符）也當成未設定
+                ApiKey = CryptoHelper.IsEncrypted(keyEnc) && CryptoHelper.TryDecrypt(keyEnc, out var apiKey) ? apiKey : "",
                 Model = model,
                 AzureDeployment = azureDeployment,
                 AzureApiVersion = azureApiVersion,

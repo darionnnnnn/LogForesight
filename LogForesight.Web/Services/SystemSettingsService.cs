@@ -953,27 +953,24 @@ public class SystemSettingsService : ISystemSettingsService
     {
         var enc = _store.Get().PrtgApiTokenEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文（同 SentinelConnectionFactory 的相容寫法）
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // TryDecrypt：匯入或手動編輯 blob 的路徑上這欄可能是明文（原樣回傳）；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     private string? DecryptSavedPrtgPassword()
     {
         var enc = _store.Get().PrtgPasswordEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // TryDecrypt：匯入或手動編輯 blob 的路徑上這欄可能是明文（原樣回傳）；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     private string? DecryptSavedPrtgPasshash()
     {
         var enc = _store.Get().PrtgPasshashEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // TryDecrypt：匯入或手動編輯 blob 的路徑上這欄可能是明文（原樣回傳）；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     /// <summary>
@@ -986,9 +983,8 @@ public class SystemSettingsService : ISystemSettingsService
     {
         var enc = _store.Get().SmtpPasswordEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 守衛同 DecryptSavedPrtgApiToken：Decrypt 對非本格式的值會擲例外，
-        // 匯入或手動編輯 blob 的路徑上這欄有可能是明文
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // 同 DecryptSavedPrtgApiToken：明文原樣回傳；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     /// <summary>

@@ -39,19 +39,20 @@ public static class PrtgClientFactory
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal))
         {
             var enc = settings.PrtgPasshashEnc ?? string.Empty;
-            var passhash = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+            var passhash = CryptoHelper.TryDecrypt(enc, out var plainPasshash) ? plainPasshash : string.Empty;
             return (string.Empty, settings.PrtgUsername ?? string.Empty, string.Empty, passhash);
         }
 
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal))
         {
             var enc = settings.PrtgPasswordEnc ?? string.Empty;
-            var password = CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+            var password = CryptoHelper.TryDecrypt(enc, out var plainPassword) ? plainPassword : string.Empty;
             return (string.Empty, settings.PrtgUsername ?? string.Empty, password, string.Empty);
         }
 
         var tokenEnc = settings.PrtgApiTokenEnc ?? string.Empty;
-        var token = CryptoHelper.IsEncrypted(tokenEnc) ? CryptoHelper.Decrypt(tokenEnc) : tokenEnc;
+        // TryDecrypt：明文原樣回傳；解不開（金鑰不符）當成未設定，不讓取數整趟失敗
+        var token = CryptoHelper.TryDecrypt(tokenEnc, out var plainToken) ? plainToken : string.Empty;
         return (token, string.Empty, string.Empty, string.Empty);
     }
 
@@ -68,15 +69,23 @@ public static class PrtgClientFactory
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal))
         {
             return !string.IsNullOrWhiteSpace(settings.PrtgUsername) &&
-                   !string.IsNullOrWhiteSpace(settings.PrtgPasshashEnc);
+                   IsUsableSecret(settings.PrtgPasshashEnc);
         }
 
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal))
         {
             return !string.IsNullOrWhiteSpace(settings.PrtgUsername) &&
-                   !string.IsNullOrWhiteSpace(settings.PrtgPasswordEnc);
+                   IsUsableSecret(settings.PrtgPasswordEnc);
         }
 
-        return !string.IsNullOrWhiteSpace(settings.PrtgApiTokenEnc);
+        return IsUsableSecret(settings.PrtgApiTokenEnc);
     }
+
+    /// <summary>
+    /// 憑證欄非空且解得開（明文原樣視為可用）。解不開（金鑰不符）等同未設定——否則各取數路徑會拿空憑證去打 PRTG，
+    /// 而不是在閘門處就回「認證未設定」。
+    /// </summary>
+    private static bool IsUsableSecret(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        CryptoHelper.TryDecrypt(value, out var plain) && !string.IsNullOrWhiteSpace(plain);
 }

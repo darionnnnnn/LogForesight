@@ -623,12 +623,27 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 
 | 環境變數 | 對應設定 | 用途 |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | — | 設為 `Production`——`WebAppSettings.Validate()` 的多項 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只在 Production 生效 |
+| `ASPNETCORE_ENVIRONMENT` | — | 正式站台設為 `Production`（未設定時預設就是 Production）。`WebAppSettings.Validate()` 的 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只有 `Development` 放行，其餘任何值都會擋下啟動 |
 | `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
 | `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
-| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定，**使用雲端 AI provider（OpenAI 官方／Azure OpenAI）時必須設定**：保護的是真實的雲端 API 憑證 |
+| `LF_CRYPTO_KEY` | — | 密碼欄位（Sentinel、PRTG、SMTP、AI API 金鑰）加密用（base64、解碼後需恰為 32 bytes）。**選填**：未設定時站台第一次啟動會自動產生金鑰檔 `Storage:DataRoot\keys\lf-crypto.key`（見下方「密碼欄位的金鑰檔」）。有設定時以環境變數為準、不產生金鑰檔 |
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
+
+### 密碼欄位的金鑰檔
+
+站台第一次啟動時，若沒有設定 `LF_CRYPTO_KEY`，會在 `Storage:DataRoot\keys\lf-crypto.key` 產生一把站台專屬金鑰，
+並把資料庫中舊格式的密碼欄位重新加密。啟動 log 會印出「密文金鑰來源」。
+
+- **金鑰檔要另外備份，而且不要和資料庫放在一起**：只拿到資料庫備份的人解不開密碼，這正是它的用途。
+  還原到新主機時，資料庫與金鑰檔要**一起**搬；只搬資料庫，設定頁與「系統健康」頁籤會顯示「金鑰檔與資料庫不相符」，
+  需要還原正確的金鑰檔，或在設定頁重新輸入 PRTG／SMTP／AI／Sentinel 的密碼。
+- **權限**：金鑰檔的存取權限會限縮為「建立它的帳號＋Administrators」。請讓站台第一次啟動就用正式的執行帳號
+  （IIS 應用程式集區身分或 Windows 服務帳號）；若先用管理員手動啟動過，之後服務會讀不到金鑰檔而無法啟動——
+  在該檔「內容 › 安全性」加入執行帳號的讀取權限即可。
+- **降版**：升級後的密文是新格式，舊版程式解不開。要降版時先設定 `LF_CRYPTO_KEY` 為金鑰檔內容（同一把金鑰）
+  仍不足以讓舊版讀新格式——降版後需在設定頁重新輸入各密碼欄位。升級前請先備份資料庫。
+- 資料搬運（PRTG 維護頁的匯出／匯入）不含任何密碼欄位，不受金鑰影響。
 
 ### 登入不了時的診斷順序
 
