@@ -660,7 +660,7 @@ public class WorkOrderCoordinator
         var members = ActiveMembers(workOrderId);
         var daySync = ApplyStatus(members, status, reason, null, actor);
 
-        CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, $"{status}：{reason}");
+        CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, EventNoteOf($"{status}：", reason, ""));
         return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
     }
 
@@ -719,10 +719,23 @@ public class WorkOrderCoordinator
     }
 
     /// <summary>回覆事件說明的唯一一份（<see cref="Reply"/> 用）</summary>
-    private static string ReplyNoteOf(string status, string? note, int caseCount) =>
+    internal static string ReplyNoteOf(string status, string? note, int caseCount) =>
         string.IsNullOrWhiteSpace(note)
             ? $"{status}（{caseCount} 台）"
-            : $"{status}：{note}（{caseCount} 台）";
+            : EventNoteOf($"{status}：", note, $"（{caseCount} 台）");
+
+    /// <summary>
+    /// 事件說明組字的唯一一份（回覆與代為結案共用）：事件表 Note 上限
+    /// <see cref="EfWorkOrderStore.NoteMaxLength"/>，store 寫入時從尾端截——會把狀態碼後的台數砍掉。
+    /// 這裡先截使用者說明的尾端並以「…」結尾，保證前綴與尾綴完整。
+    /// </summary>
+    private static string EventNoteOf(string prefix, string note, string suffix)
+    {
+        var room = EfWorkOrderStore.NoteMaxLength - prefix.Length - suffix.Length;
+        if (note.Length > room)
+            note = note[..Math.Max(0, room - 1)] + "…";
+        return prefix + note + suffix;
+    }
 
     /// <summary>
     /// 目標值規則的唯一一份（回覆與代為結案共用），與 <see cref="IssueCaseCoordinator.SyncStatus"/> 相同：

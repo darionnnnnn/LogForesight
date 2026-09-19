@@ -225,7 +225,7 @@ public class WorkOrderReplyServiceTests : IDisposable
     // ── 多單回覆 ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void 多單回覆_兩張本人單都寫_稽核一筆()
+    public void 多單回覆_兩張本人單都寫_逐張稽核()
     {
         var a = CreateOrder(_alice, 153, "H1", "H2");
         var b = CreateOrder(_alice, 154, "H3");
@@ -244,9 +244,9 @@ public class WorkOrderReplyServiceTests : IDisposable
             Assert.Equal(WorkOrderCloseReasons.AllClosed, _orders.Get(id)!.ClosedReason);
             Assert.Single(_orders.ListEvents(id), e => e.Action == WorkOrderEventActions.Replied);
         });
-        var entry = Assert.Single(_audit.Entries);
-        Assert.Equal($"{a},{b}", entry.TargetId);
-        Assert.Equal("work_order", entry.TargetKind);
+        // 逐張稽核：寫入中途失敗時已成功的單也要有紀錄（見 HandlingNoteBackendTests）
+        Assert.Equal(new[] { a.ToString(), b.ToString() }, _audit.Entries.Select(e => e.TargetId));
+        Assert.All(_audit.Entries, e => Assert.Equal("work_order", e.TargetKind));
     }
 
     [Fact]
@@ -284,7 +284,7 @@ public class WorkOrderReplyServiceTests : IDisposable
     }
 
     [Fact]
-    public void 多單回覆_稽核單號超過20張只列前20等N張()
+    public void 多單回覆_21張_每張一筆稽核_目標是單號()
     {
         var ids = new List<long>();
         for (var i = 0; i < 21; i++) ids.Add(CreateOrder(_alice, 1000 + i, "H1"));
@@ -294,8 +294,7 @@ public class WorkOrderReplyServiceTests : IDisposable
             WorkOrderIds = ids, Status = IssueHandlingStatuses.InProgress, Note = "處理中"
         });
 
-        var entry = Assert.Single(_audit.Entries);
-        Assert.Equal(string.Join(",", ids.Take(20)) + " 等 21 張", entry.TargetId);
+        Assert.Equal(ids.Select(id => id.ToString()), _audit.Entries.Select(e => e.TargetId));
     }
 
     // ── 狀態驗證共用 helper ──────────────────────────────────────────────────

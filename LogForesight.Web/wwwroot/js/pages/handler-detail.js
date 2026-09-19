@@ -190,10 +190,14 @@ function renderOrders(data) {
     const rows = data.items || [];
     orderRowsById.clear();
     for (const row of rows) orderRowsById.set(row.workOrderId, row);
-    // 換頁／換篩選後，勾選中但已不在畫面上的單要跟著消失，否則按鈕數字對不上看得到的列
+    // 換頁／換篩選後，勾選中但已不在畫面上的單要跟著消失，否則按鈕數字對不上看得到的列；
+    // 已結案的單不能回覆（送出會整批被 400 拒絕），也一併清掉
     for (const id of [...selectedOrderIds]) {
-        if (!orderRowsById.has(id)) selectedOrderIds.delete(id);
+        const row = orderRowsById.get(id);
+        if (!row || row.closedAt) selectedOrderIds.delete(id);
     }
+    // 可勾選的列（未結案）：全選與全選框的勾選狀態都只看這些
+    const selectable = rows.filter(r => !r.closedAt);
 
     const columns = [];
 
@@ -206,13 +210,14 @@ function renderOrders(data) {
                 chk.type = 'checkbox';
                 chk.className = 'form-check-input';
                 chk.title = '全選本頁交辦單';
-                chk.checked = rows.length > 0 && rows.every(r => selectedOrderIds.has(r.workOrderId));
+                chk.checked = selectable.length > 0 && selectable.every(r => selectedOrderIds.has(r.workOrderId));
+                chk.disabled = selectable.length === 0;
                 chk.addEventListener('change', () => {
-                    for (const r of rows) {
+                    for (const r of selectable) {
                         if (chk.checked) selectedOrderIds.add(r.workOrderId);
                         else selectedOrderIds.delete(r.workOrderId);
                     }
-                    for (const rc of ordersEl.querySelectorAll('.handler-wo-select')) {
+                    for (const rc of ordersEl.querySelectorAll('.handler-wo-select:not(:disabled)')) {
                         rc.checked = chk.checked;
                     }
                     updateReplyOrdersBtn();
@@ -225,12 +230,17 @@ function renderOrders(data) {
                 chk.className = 'form-check-input handler-wo-select';
                 chk.checked = selectedOrderIds.has(row.workOrderId);
                 chk.addEventListener('click', event => event.stopPropagation());
+                if (row.closedAt) {
+                    chk.disabled = true;
+                    chk.title = '已結案的交辦單無法回覆';
+                    return chk;
+                }
                 chk.addEventListener('change', () => {
                     if (chk.checked) selectedOrderIds.add(row.workOrderId);
                     else selectedOrderIds.delete(row.workOrderId);
                     const selectAll = ordersEl.querySelector('thead input[type="checkbox"]');
                     if (selectAll) {
-                        selectAll.checked = rows.length > 0 && rows.every(r => selectedOrderIds.has(r.workOrderId));
+                        selectAll.checked = selectable.length > 0 && selectable.every(r => selectedOrderIds.has(r.workOrderId));
                     }
                     updateReplyOrdersBtn();
                 });
@@ -354,7 +364,7 @@ function updateReplyOrdersBtn() {
 replyOrdersBtn.addEventListener('click', () => {
     if (selectedOrderIds.size === 0) return;
 
-    const workOrderIds = [...selectedOrderIds];
+    let workOrderIds = [...selectedOrderIds];
     const hosts = workOrderIds.reduce((sum, id) => sum + (orderRowsById.get(id)?.counts?.active ?? 0), 0);
     // 選取的單都是同一個問題才帶問題名稱，不同問題混在一起時只帶主機數
     const labels = new Set(workOrderIds.map(id => orderRowsById.get(id)?.issueLabel));
@@ -369,6 +379,17 @@ replyOrdersBtn.addEventListener('click', () => {
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);
+            // 部分失敗：只留失敗與未處理的單；彈窗保持開著（說明不必重打），再按送出就只送剩下的單。
+            // 擲出例外讓彈窗不關閉、不清草稿（issue-status-reply 的 submit 失敗路徑只還原按鈕）；清單在背景刷新
+            if (result.failedWorkOrderId != null) {
+                const keep = new Set([result.failedWorkOrderId, ...(result.notProcessed || [])]);
+                for (const id of [...selectedOrderIds]) {
+                    if (!keep.has(id)) selectedOrderIds.delete(id);
+                }
+                workOrderIds = [...keep];
+                guardLoad([kpiEl, ordersEl, casesEl, daysEl], load);
+                throw new Error('partial');
+            }
         },
         onApplied: () => guardLoad([kpiEl, ordersEl, casesEl, daysEl], load)
     });

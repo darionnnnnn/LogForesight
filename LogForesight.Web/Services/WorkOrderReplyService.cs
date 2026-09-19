@@ -13,14 +13,16 @@ namespace LogForesight.Web.Services;
 /// 不從這裡以處理人名義代答——全站同一條規則：回覆一律是處理人本人的名義。
 ///
 /// 多單回覆**先全部檢查再寫**：任一張不存在、不是本人、已結案，整筆擋下、零寫入——
-/// 逐張檢查逐張寫會讓使用者拿到「前幾張已回覆、後面失敗」的半套結果。
+/// 檢查通過後逐張寫入（不做整批單一交易：協調層不持有連線）；寫入中途某張失敗時停在那張，
+/// 已成功的單照樣逐張稽核、上報通知，回應列出成功／失敗／未處理，讓前端保留勾選重送。
 ///
 /// 寫入一律走 <see cref="WorkOrderCoordinator.Reply"/>；這裡只做授權、狀態驗證、上報通知、稽核。
 /// </summary>
 public class WorkOrderReplyService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private const string TargetKind = "work_order";
-    private const int AuditIdListLimit = 20;
     private const int MemberPageSize = 500;
 
     private readonly WorkOrderCoordinator _coordinator;
@@ -89,38 +91,65 @@ public class WorkOrderReplyService
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
         var actor = NewActor();
-        var newlyEscalated = orders.SelectMany(o => NewlyEscalatedHosts(o.WorkOrderId, null, req.Status)).ToList();
+        var statusText = HandlingTextHelpers.IssueStatusText(req.Status);
 
+        var succeeded = new List<WorkOrder>();
+        var newlyEscalated = new List<string>();
+        long? failedId = null;
+        string? failureMessage = null;
         var cases = 0;
         var closed = 0;
         var pending = 0;
         foreach (var order in orders)
         {
-            var result = Guard(() => _coordinator.Reply(order.WorkOrderId, null, req.Status, req.Note, req.DueDate, actor));
+            WorkOrderReplyResult result;
+            List<string> escalatedHosts;
+            try
+            {
+                escalatedHosts = NewlyEscalatedHosts(order.WorkOrderId, null, req.Status);
+                result = Guard(() => _coordinator.Reply(order.WorkOrderId, null, req.Status, req.Note, req.DueDate, actor));
+            }
+            catch (Exception ex)
+            {
+                // 中途失敗：停在這張，已寫入的單照常有稽核與通知，回應交代成功／失敗／未處理
+                failedId = order.WorkOrderId;
+                failureMessage = ex is DomainException ? ex.Message : "回覆時發生未預期的錯誤。";
+                if (ex is not DomainException)
+                    Log.Error(ex, "多單回覆在交辦單 #{0} 發生未預期錯誤（前面的單已寫入）", order.WorkOrderId);
+                break;
+            }
+
+            succeeded.Add(order);
+            newlyEscalated.AddRange(escalatedHosts);
             cases += result.Cases;
             if (result.WorkOrderClosed) closed++;
             pending += result.DaySync.PendingCases;
+
+            // 逐張稽核：寫入成功就立即留紀錄，後面的單失敗也不會讓這張沒有稽核
+            _audit.Record(
+                action: AuditActions.HandlingStatus,
+                summary: $"回覆交辦單 #{order.WorkOrderId}：{result.Cases} 台標為「{statusText}」",
+                targetKind: TargetKind,
+                targetId: order.WorkOrderId.ToString(),
+                detail: new { order.WorkOrderId, BatchWorkOrderIds = ids, req.Status, req.Note, req.DueDate, result.Cases, result.WorkOrderClosed });
         }
 
-        var targetId = string.Join(",", ids.Take(AuditIdListLimit)) +
-                       (ids.Count > AuditIdListLimit ? $" 等 {ids.Count} 張" : "");
-        _audit.Record(
-            action: AuditActions.HandlingStatus,
-            summary: $"回覆 {orders.Count} 張交辦單：{cases} 台標為「{HandlingTextHelpers.IssueStatusText(req.Status)}」",
-            targetKind: TargetKind,
-            targetId: targetId,
-            detail: new { WorkOrderIds = ids, req.Status, req.Note, req.DueDate, Cases = cases, ClosedWorkOrders = closed });
-
-        // 整批一封（不逐張各寄一封轟炸 admin）
-        var issueLabel = orders.Count == 1 ? orders[0].IssueLabel : $"{orders.Count} 張交辦單";
+        // 整批一封（不逐張各寄一封轟炸 admin），只涵蓋已成功的單
+        var issueLabel = succeeded.Count == 1 ? succeeded[0].IssueLabel : $"{succeeded.Count} 張交辦單";
         NotifyEscalation(req.Status, issueLabel, newlyEscalated, req.Note);
 
         return new WorkOrderReplyManyResultDto
         {
-            WorkOrders = orders.Count,
+            WorkOrders = succeeded.Count,
             Cases = cases,
             ClosedWorkOrders = closed,
-            DaySyncPendingCases = pending
+            DaySyncPendingCases = pending,
+            Succeeded = succeeded.Select(o => o.WorkOrderId).ToList(),
+            FailedWorkOrderId = failedId,
+            FailureMessage = failureMessage,
+            NotProcessed = failedId == null
+                ? new List<long>()
+                : orders.SkipWhile(o => o.WorkOrderId != failedId).Skip(1).Select(o => o.WorkOrderId).ToList()
         };
     }
 

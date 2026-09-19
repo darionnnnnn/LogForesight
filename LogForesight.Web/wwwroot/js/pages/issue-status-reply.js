@@ -168,10 +168,19 @@ export function toastReplyResult(result) {
     }
 }
 
-/** 多張交辦單回覆的成功訊息（POST /api/work-orders/reply-many 的回應） */
+/**
+ * 多張交辦單回覆的結果訊息（POST /api/work-orders/reply-many 的回應）。
+ * 寫入中途某張失敗時後端停在那張、回 200：成功的已寫入，改顯示警告交代失敗與未處理。
+ */
 export function toastReplyManyResult(result) {
-    const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
-    toast(`已回覆 ${result.workOrders} 張單共 ${result.cases} 台${closed}`, 'success');
+    if (result.failedWorkOrderId != null) {
+        const notProcessed = result.notProcessed?.length ?? 0;
+        toast(`已完成 ${result.succeeded?.length ?? 0} 張；#${result.failedWorkOrderId} 失敗：${result.failureMessage || '未知原因'}；`
+            + `尚有 ${notProcessed} 張未處理，已保留勾選可直接重送。`, 'warning');
+    } else {
+        const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
+        toast(`已回覆 ${result.workOrders} 張單共 ${result.cases} 台${closed}`, 'success');
+    }
     if (result.daySyncPendingCases > 0) {
         toast('逐日同步在背景進行', 'info');
     }

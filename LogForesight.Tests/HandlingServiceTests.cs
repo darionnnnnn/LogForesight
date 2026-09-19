@@ -616,7 +616,8 @@ public class HandlingServiceTests : IDisposable
         service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
         {
             IssueKey = IssueSignatureKey.For(b),
-            Status = IssueHandlingStatuses.WontFix
+            Status = IssueHandlingStatuses.WontFix,
+            Note = "評估後不處理"
         });
 
         var todo = service.GetTodo(new[] { record });

@@ -581,10 +581,10 @@ function eventNoteText(note) {
     if (move) {
         return `${handlerNameOf(move[1])} → ${handlerNameOf(move[2])}`;
     }
-    const at = note.indexOf('：');
-    if (at <= 0) return note;
-    const meta = MEMBER_STATUS_META[note.slice(0, at)];
-    return meta ? meta.label + note.slice(at) : note;
+    // 「狀態碼：說明（N 台）」與不填說明的「狀態碼（N 台）」：開頭的狀態碼緊接全形冒號或左括號
+    const code = note.match(/^([a-z_]+)(?=[：（])/);
+    const meta = code ? MEMBER_STATUS_META[code[1]] : null;
+    return meta ? meta.label + note.slice(code[1].length) : note;
 }
 
 /** 改派註記用：使用者清單載入前（或查不到）就顯示原始 id，不擋畫面 */

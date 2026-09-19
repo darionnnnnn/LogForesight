@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace LogForesight.Web.Models.Dto;
 
 // ── 交辦單命令 API（/api/work-orders）────────────────────────────────────────
@@ -42,6 +44,7 @@ public class CreateWorkOrderRequest
     /// <summary><c>ScopeKind=Hosts</c> 時一律視為 false（忽略傳入值）</summary>
     public bool AutoAttach { get; set; }
 
+    [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Note { get; set; }
     public DateTime? DueDate { get; set; }
 
@@ -200,12 +203,14 @@ public class WorkOrderMoveResultDto
 
 public class CancelWorkOrderRequest
 {
+    [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Reason { get; set; }
 }
 
 public class AdminCloseWorkOrderRequest
 {
     public string Status { get; set; } = string.Empty;
+    [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Reason { get; set; }
 }
 
@@ -510,6 +515,7 @@ public class WorkOrderReplyRequest
     /// <summary>open＝清除（調回未處理）</summary>
     public string Status { get; set; } = string.Empty;
 
+    [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Note { get; set; }
     public DateTime? DueDate { get; set; }
 }
@@ -527,6 +533,7 @@ public class WorkOrderReplyManyRequest
 {
     public List<long> WorkOrderIds { get; set; } = new();
     public string Status { get; set; } = string.Empty;
+    [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Note { get; set; }
     public DateTime? DueDate { get; set; }
 }
@@ -537,6 +544,17 @@ public class WorkOrderReplyManyResultDto
     public int Cases { get; set; }
     public int ClosedWorkOrders { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>已寫入成功的單（依送出順序）</summary>
+    public List<long> Succeeded { get; set; } = new();
+
+    /// <summary>寫入中途失敗的那張；全部成功為 null</summary>
+    public long? FailedWorkOrderId { get; set; }
+
+    public string? FailureMessage { get; set; }
+
+    /// <summary>失敗那張之後、沒有處理到的單</summary>
+    public List<long> NotProcessed { get; set; } = new();
 }
 
 /// <summary>處理人的進行中摘要（我的交辦清單頁首與側欄徽章共用）</summary>

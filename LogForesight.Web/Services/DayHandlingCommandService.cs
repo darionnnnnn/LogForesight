@@ -107,9 +107,9 @@ public class DayHandlingCommandService
         if (request.DueDate.HasValue && request.DueDate.Value.Date < DateTime.Today)
             throw DomainException.Validation("預計完成日不可早於今天。");
 
-        // 無法處理必填原因（回饋十八輪批次G，與問題層級 ValidateIssueStatus 同一條規則）
-        if (request.Status == HandlingStatuses.Escalated && string.IsNullOrWhiteSpace(request.Note))
-            throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
+        // 必填說明（無法處理／不處理）與問題層級同一份規則：日層級值域是問題層級的子集，
+        // 上面已擋掉日層級不存在的狀態，這裡只借用共用驗證的其餘條件
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing: false, request.Note);
 
         var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date, record);
         var previousStatus = existing.Status;
