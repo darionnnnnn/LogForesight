@@ -17,13 +17,23 @@ namespace LogForesight;
 ///   「暖快取」的主要機制（cache_size 只活在單一連線內）。
 /// - temp_store=MEMORY：GROUP BY／DISTINCT 的 temp b-tree 不落地暫存檔。
 ///
-/// 不動 journal_mode：WAL 會改變部署檔案佈局（-wal/-shm），另案評估。
+/// - journal_mode：預設 WAL，讓讀者與寫者不互擋（多支背景服務與前景請求同時寫同一個檔）。
+///   代價是部署目錄多出 -wal、-shm 兩檔，備份時須一併帶走；可由 Storage:SqliteWal=false 切回 DELETE。
+/// - busy_timeout：寫鎖被占用時等 5 秒再放棄，而不是立刻擲 SQLITE_BUSY。
 /// </summary>
 public sealed class SqlitePragmaInterceptor : DbConnectionInterceptor
 {
     /// <summary>單一連線的 page cache 上限：64MB（負值＝KB）。按需成長，不是預先配置。</summary>
-    private const string Pragmas =
-        "PRAGMA cache_size=-65536; PRAGMA mmap_size=1073741824; PRAGMA temp_store=MEMORY;";
+    private const string BasePragmas =
+        "PRAGMA cache_size=-65536; PRAGMA mmap_size=1073741824; PRAGMA temp_store=MEMORY; PRAGMA busy_timeout=5000;";
+
+    private readonly string Pragmas;
+
+    /// <param name="wal">true＝journal_mode=WAL；false＝journal_mode=DELETE（Storage:SqliteWal）</param>
+    public SqlitePragmaInterceptor(bool wal)
+    {
+        Pragmas = BasePragmas + (wal ? " PRAGMA journal_mode=WAL;" : " PRAGMA journal_mode=DELETE;");
+    }
 
     public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
     {
@@ -38,7 +48,7 @@ public sealed class SqlitePragmaInterceptor : DbConnectionInterceptor
         await base.ConnectionOpenedAsync(connection, eventData, cancellationToken);
     }
 
-    private static void ApplyPragmas(DbConnection connection)
+    private void ApplyPragmas(DbConnection connection)
     {
         using var cmd = connection.CreateCommand();
         cmd.CommandText = Pragmas;

@@ -35,6 +35,12 @@ public sealed class PrtgClient : IDisposable
     private string? _credentialFailure;
     private bool _disposed;
 
+    /// <summary>
+    /// 單一回應的緩衝上限：256 MB。回應會整包讀成字串，沒有上限時一次過大的取數範圍會把站台記憶體吃光；
+    /// 超過就擲 <see cref="PrtgClientException"/> 要使用者縮小範圍。
+    /// </summary>
+    internal const long MaxResponseBytes = 256L * 1024 * 1024;
+
     internal TimeSpan Timeout => _http.Timeout;
     internal HttpMessageHandler Handler { get; }
 
@@ -90,7 +96,8 @@ public sealed class PrtgClient : IDisposable
 
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
         {
-            Timeout = TimeSpan.FromSeconds(Math.Max(timeoutSeconds, 1))
+            Timeout = TimeSpan.FromSeconds(Math.Max(timeoutSeconds, 1)),
+            MaxResponseContentBufferSize = MaxResponseBytes
         };
 
         if (ownsHandler && ignoreSslErrors)
@@ -184,6 +191,10 @@ public sealed class PrtgClient : IDisposable
             {
                 throw;
             }
+            catch (HttpRequestException ex) when (IsOverCapacity(ex))
+            {
+                throw OversizeException(ex);
+            }
             catch (Exception ex)
             {
                 var sanitized = StripSecrets(ex.Message);
@@ -230,6 +241,18 @@ public sealed class PrtgClient : IDisposable
     }
 
     /// <summary>
+    /// 回應超過 <see cref="MaxResponseBytes"/> 時 HttpClient 擲的例外：HttpRequestException、沒有 InnerException、
+    /// 訊息帶著上限位元組數。逾時是 TaskCanceledException、連線失敗帶 InnerException（SocketException／IOException），
+    /// 兩者都不會落進這裡——超量與逾時／連線失敗是兩種訊息。
+    /// </summary>
+    private static bool IsOverCapacity(HttpRequestException ex) =>
+        ex.InnerException == null &&
+        ex.Message.Contains(MaxResponseBytes.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+
+    private static PrtgClientException OversizeException(HttpRequestException ex) =>
+        new("PRTG 回應超過 256 MB 上限，請縮小取數範圍或降低單次筆數", ex);
+
+    /// <summary>
     /// 記下憑證層級的失敗並回傳要擲出的例外——同一個 client 實例之後不再送出任何需要認證的請求
     /// （換 passhash 與資料請求都算）。只用於「憑證本身不被接受」這類重試也不會成功的失敗；
     /// 傳輸類失敗與 403 不記，那些重試有意義或屬於單一物件的權限問題。
@@ -264,6 +287,10 @@ public sealed class PrtgClient : IDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (HttpRequestException ex) when (IsOverCapacity(ex))
+        {
+            throw OversizeException(ex);
         }
         catch (Exception ex)
         {

@@ -441,6 +441,39 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             "已結案的交辦單", maxRows, batchSize);
     }
 
+    /// <summary>每張未結案單至少保留的最新事件筆數（依事件時間）</summary>
+    internal const int OpenOrderEventsKeepLatest = 200;
+
+    /// <summary>
+    /// 清除**未結案**交辦單的過期事件：同時符合「事件時間早於 今天 − retentionDays」、
+    /// 「不在該單時間最新的 <see cref="OpenOrderEventsKeepLatest"/> 筆內」、「不是建單事件」才刪。
+    /// 單本身與建單事件一律保留；已結案的單由 <see cref="PruneClosed(int)"/> 整單連事件一起清。
+    /// </summary>
+    public int PruneOpenOrderEvents(int retentionDays) =>
+        PruneOpenOrderEvents(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+
+    internal int PruneOpenOrderEvents(int retentionDays, int maxRows, int batchSize)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+
+        // 「比這筆新的事件」：時間較晚，或同時間但 EventId 較大（同一時間多筆時仍有確定的先後）
+        IQueryable<long> Prunable(LfDbContext ctx) => ctx.WorkOrderEvents
+            .Where(e => e.CreatedAt < cutoff
+                        && e.Action != WorkOrderEventActions.Created
+                        && ctx.WorkOrders.Any(w => w.WorkOrderId == e.WorkOrderId && w.ClosedAt == null)
+                        && ctx.WorkOrderEvents.Count(n => n.WorkOrderId == e.WorkOrderId
+                               && (n.CreatedAt > e.CreatedAt || (n.CreatedAt == e.CreatedAt && n.EventId > e.EventId)))
+                           >= OpenOrderEventsKeepLatest)
+            .OrderBy(e => e.EventId)
+            .Select(e => e.EventId);
+
+        return BatchedPrune.Run<long>(_contextFactory,
+            (ctx, take) => Prunable(ctx).Take(take).ToList(),
+            (ctx, ids) => ctx.WorkOrderEvents.Where(e => ids.Contains(e.EventId)).ExecuteDelete(),
+            ctx => Prunable(ctx).Count(),
+            "未結案交辦單的事件", maxRows, batchSize);
+    }
+
     internal static void CopyToRow(WorkOrder order, WorkOrderRow row)
     {
         row.SourceName = TruncateOrNull(order.SourceName, SourceMaxLength);

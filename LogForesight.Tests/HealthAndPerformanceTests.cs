@@ -191,7 +191,7 @@ public class HealthServiceTests : IDisposable
                 cmd.ExecuteNonQuery();
             }
 
-            var service = new IssueFirstSeenSeedHostedService(tempBackend, new DataVersionStamp())
+            var service = new IssueFirstSeenSeedHostedService(tempBackend, new DataVersionStamp(), new BackgroundWorkGate(new SchedulerRunState(), TimeSpan.FromMilliseconds(50)))
             {
                 InitialDelay = TimeSpan.Zero,
                 RetryInterval = TimeSpan.Zero
@@ -220,7 +220,7 @@ public class HealthServiceTests : IDisposable
     public void 健康檢查_診斷檢查含首見日合併狀態與降級反映()
     {
         var runState = new SchedulerRunState();
-        var seedService = new IssueFirstSeenSeedHostedService(_backend, new DataVersionStamp());
+        var seedService = new IssueFirstSeenSeedHostedService(_backend, new DataVersionStamp(), new BackgroundWorkGate(new SchedulerRunState(), TimeSpan.FromMilliseconds(50)));
 
         // 1. 初始/未開始狀態
         var healthService = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService(), seedService);

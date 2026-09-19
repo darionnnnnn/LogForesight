@@ -90,6 +90,9 @@ public class SchedulerHostedService : BackgroundService
                 Log.Error(ex, "排程輪詢發生未預期錯誤（不影響下次輪詢）");
             }
 
+            // 排程判斷之後（不論排程是否啟用）：分析當天沒跑時單獨補做保留清除；內部自行 try/catch
+            await RunRetentionIfDueAsync();
+
             try
             {
                 await Task.Delay(PollInterval, stoppingToken);
@@ -323,9 +326,7 @@ public class SchedulerHostedService : BackgroundService
                 {
                     startSignal.TrySetResult(true);
 
-                    var settings = BuildAppSettings();
-                    var dataRoot = settings.Storage.ResolveDataRoot();
-                    var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
+                    var (settings, dataRoot, retention) = ResolveRunSettings();
 
                     var console = new WebRunConsole(_runState);
                     var progress = new WebRunProgress(_runState);
@@ -412,4 +413,71 @@ public class SchedulerHostedService : BackgroundService
     {
         Storage = _webSettings.Storage
     };
+
+    /// <summary>分析執行與單獨保留清除共用的設定組裝：出廠值＋DB 覆寫、資料根目錄、保留期</summary>
+    private (AppSettings Settings, string DataRoot, RetentionOptions Retention) ResolveRunSettings()
+    {
+        var settings = BuildAppSettings();
+        var dataRoot = settings.Storage.ResolveDataRoot();
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
+        return (settings, dataRoot, retention);
+    }
+
+    /// <summary>單獨保留清除的起始時刻：過了中午當天仍沒有任何保留清除（分析沒跑）才補做</summary>
+    private static readonly TimeSpan RetentionOnlyNotBefore = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// 已確認「今天做過保留清除」的日期。記在記憶體是為了不必每分鐘都建一次 StorageBackend
+    /// （建構時會做 schema 確認）去讀 retention_state；確認過一次當天就不再讀。
+    /// </summary>
+    private DateTime? _retentionConfirmedDate;
+
+    /// <summary>
+    /// 分析沒跑的日子單獨執行保留清除（排程停用、停擺、錯過窗口時保留期仍要生效）。
+    /// 條件：沒有執行中、現在已過中午、今天還沒做過保留清除。拿不到執行鎖就這次略過，下次輪詢再試。
+    /// 訊息只寫 NLog，不進執行狀態卡（這不是一趟分析執行）。例外只記警告，不影響下一次輪詢。
+    /// </summary>
+    private async Task RunRetentionIfDueAsync()
+    {
+        var now = DateTime.Now;
+        if (_runState.IsRunning || now.TimeOfDay < RetentionOnlyNotBefore || _retentionConfirmedDate == now.Date) return;
+
+        try
+        {
+            var (settings, dataRoot, retention) = ResolveRunSettings();
+            var lastRun = RetentionPruner.LastRunDate(new StorageBackend(settings.Storage, dataRoot));
+            // 24 小時內有取數執行開始過＝它本身就會（或已經）做保留清除（例如昨晚 22:00 的排程），
+            // 今天不必另外單獨清一次；排程停擺或停用時這個條件不成立，才由這裡接手
+            var fetchRanRecently = _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null)
+                .Any(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt >= now.AddHours(-24));
+            if (lastRun == now.Date || fetchRanRecently)
+            {
+                _retentionConfirmedDate = now.Date;
+                return;
+            }
+
+            var acquired = await _mutexGate.RunExclusiveAsync(async () =>
+            {
+                Log.Info("今天尚未執行保留清除（分析未執行），開始單獨執行保留清除。");
+                await _orchestrator.RunRetentionOnlyAsync(settings, dataRoot, retention, new NLogRunConsole());
+                _retentionConfirmedDate = now.Date;
+            }, MutexTimeout);
+
+            if (!acquired)
+                Log.Info("單獨保留清除取得執行鎖逾時（可能有其他執行個體正在跑），本次略過。");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "單獨保留清除失敗（下次輪詢再試）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>只寫 NLog 的 console：單獨保留清除的訊息不進執行狀態卡</summary>
+    private sealed class NLogRunConsole : IRunConsole
+    {
+        public void WriteLine(string message = "")
+        {
+            if (!string.IsNullOrWhiteSpace(message)) Log.Info(message.Trim());
+        }
+    }
 }

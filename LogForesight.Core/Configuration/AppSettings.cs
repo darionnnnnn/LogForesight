@@ -222,6 +222,12 @@ public class StorageSettings
     /// <summary>SQL 後端的連線字串</summary>
     public string ConnectionString { get; set; } = "";
 
+    /// <summary>
+    /// SQLite 使用 WAL 日誌模式（讀寫不互擋）。關閉會切回 DELETE 模式；
+    /// 開啟時備份須連同 db 檔旁的 <c>-wal</c>、<c>-shm</c> 兩檔一起帶走。
+    /// </summary>
+    public bool SqliteWal { get; set; } = true;
+
     /// <summary>Type 是否為受支援的後端（不分大小寫）</summary>
     public bool IsValidType => ValidTypes.Contains(Type, StringComparer.OrdinalIgnoreCase);
 

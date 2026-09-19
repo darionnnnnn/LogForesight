@@ -22,6 +22,15 @@ public sealed class LdapService
 
     private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
+    /// <summary>單台伺服器 bind 的等待上限：逾時視為該台不可用，改試下一台。</summary>
+    private static readonly TimeSpan BindTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>一次 Authenticate 對全部伺服器的總時長上限：超過就不再試剩下的伺服器。</summary>
+    private static readonly TimeSpan AuthenticateBudget = TimeSpan.FromSeconds(20);
+
+    /// <summary>DirectorySearcher 的用戶端／伺服端逾時。</summary>
+    private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(10);
+
     private readonly LdapOptions _options;
     private readonly IReadOnlyList<string> _servers;
 
@@ -64,7 +73,12 @@ public sealed class LdapService
         {
             if (status != LdapAuthStatus.Success || root == null) return default;
 
-            using var searcher = new DirectorySearcher(root, BuildFilter(userId));
+            using var searcher = new DirectorySearcher(root, BuildFilter(userId))
+            {
+                ClientTimeout = SearchTimeout,
+                ServerTimeLimit = SearchTimeout,
+                SizeLimit = 1
+            };
             var result = searcher.FindOne();
             if (result == null) return default;
 
@@ -105,13 +119,32 @@ public sealed class LdapService
 
         var lastStatus = LdapAuthStatus.ServerUnavailable;
 
+        var budget = System.Diagnostics.Stopwatch.StartNew();
         foreach (var server in _servers)
         {
+            if (budget.Elapsed >= AuthenticateBudget)
+            {
+                Log.Warn("LDAP 驗證已超過總時長上限 {0} 秒，不再嘗試剩餘伺服器。", AuthenticateBudget.TotalSeconds);
+                return LdapAuthStatus.ServerUnavailable;
+            }
+
             var candidate = new DirectoryEntry(BuildPath(server), userId, password, _options.AuthenticationType);
             try
             {
                 // 存取 NativeObject 會觸發實際的 LDAP bind，藉此驗證帳密。
-                _ = candidate.NativeObject;
+                // 放在背景執行緒並限時等待：伺服器不回應時 bind 本身沒有可用的逾時。
+                var bind = Task.Run(() => { _ = candidate.NativeObject; });
+                // 用 WaitAny 而不是 Wait：Wait 在工作失敗時丟 AggregateException，下方依型別分辨
+                // 「帳密錯誤」與「連線失敗」的 catch 會全部對不上；WaitAny 只等不丟，例外由 GetResult 原樣拋出
+                if (Task.WaitAny(new Task[] { bind }, BindTimeout) < 0)
+                {
+                    Log.Warn("LDAP 伺服器 {0} bind 超過 {1} 秒未回應，視為不可用，改試下一台。", server, BindTimeout.TotalSeconds);
+                    // 背景那條還在用這個 DirectoryEntry，等它自己結束後再 Dispose
+                    bind.ContinueWith(_ => candidate.Dispose(), TaskScheduler.Default);
+                    lastStatus = LdapAuthStatus.ServerUnavailable;
+                    continue;
+                }
+                bind.GetAwaiter().GetResult();
                 entry = candidate;
                 return LdapAuthStatus.Success;
             }

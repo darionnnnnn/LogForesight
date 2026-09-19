@@ -90,7 +90,7 @@ public class StorageBackend
             // 只能在每次連線開啟時重設——理由與各 PRAGMA 取值見 SqlitePragmaInterceptor
             options = new DbContextOptionsBuilder<LfDbContext>()
                 .UseSqlite(cs)
-                .AddInterceptors(new SqlitePragmaInterceptor())
+                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal))
                 .Options;
             _dbDesc = $"Sqlite（{cs}）";
         }

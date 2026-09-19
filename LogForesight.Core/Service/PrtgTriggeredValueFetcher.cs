@@ -22,6 +22,9 @@ public sealed class PrtgTriggeredValueFetcher
     /// </summary>
     public const int HostMapLookbackDays = 31;
 
+    /// <summary>觸發式取數輪詢迴圈的總時長上限（自進入迴圈起算）；到上限仍會做收尾掃描</summary>
+    private static readonly TimeSpan MaxPollDuration = TimeSpan.FromHours(8);
+
     private readonly PrtgFetchService _fetchService;
     private readonly EfPrtgStore _store;
     private readonly IAnalysisRecordQuery _records;
@@ -152,11 +155,18 @@ public sealed class PrtgTriggeredValueFetcher
             _console.WriteLine($"觸發式取數：新增問題主機 {newHosts.Count} 台、目標 sensor {targets.Count} 個，寫入 {written} 筆數值。");
         }
 
+        // 輪詢總時長上限：分析若卡住不結束，輪詢不能跟著無限期掛著
+        var pollWatch = System.Diagnostics.Stopwatch.StartNew();
         while (true)
         {
             await ScanAndFetchAsync();
             if (singlePass || analysisCompleted())
             {
+                break;
+            }
+            if (pollWatch.Elapsed >= MaxPollDuration)
+            {
+                _console.WriteLine("觸發式取數輪詢已達 8 小時上限，提前結束。");
                 break;
             }
             progress?.Invoke(RunPhases.PrtgTriggered, totalTargetSensors, 0);

@@ -157,7 +157,7 @@ public class AIService : IAiService
             }
         }
 
-        // Polly 重試：連線失敗、HTTP 錯誤、逾時、空回應皆重試，間隔指數遞增（10s → 20s → 40s）。
+        // Polly 重試：連線失敗、HTTP 錯誤、空回應皆重試（HttpClient 逾時除外，見下），間隔指數遞增（10s → 20s → 40s）。
         // 涵蓋模型剛重啟、瞬間過載等暫時性失敗；重試全部耗盡才回報失敗，由呼叫端降級處理。
         _retryPipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -167,7 +167,11 @@ public class AIService : IAiService
                 BackoffType = DelayBackoffType.Exponential,
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
-                    .Handle<TaskCanceledException>()
+                    // HttpClient.Timeout 逾時丟的 TaskCanceledException 其 InnerException 是
+                    // TimeoutException——這種不重試：地端模型逾時多半是「這個 prompt 就是跑不完」，
+                    // 重試只是再等一次同樣長的時間（最壞＝逾時×(重試次數+1)＋退避）。
+                    // 呼叫端取消（外部 ct 已取消）Polly 本身就不重試，行為不變。
+                    .Handle<TaskCanceledException>(ex => ex.InnerException is not TimeoutException)
                     .Handle<EmptyAiResponseException>()
                     .Handle<AiEnvelopeParseException>(),
                 OnRetry = args =>

@@ -383,6 +383,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AnalysisOrchestrator>();
         services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
+        // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路
+        services.AddSingleton(sp => new BackgroundWorkGate(sp.GetRequiredService<SchedulerRunState>(), TimeSpan.FromSeconds(30)));
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 

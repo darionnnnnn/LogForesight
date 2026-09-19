@@ -113,6 +113,10 @@ public class PrtgSnapshotHostedService : BackgroundService
     private DateTime? _seenStructureSyncedAt;
 
     internal Func<PrtgClient>? ClientFactory { get; set; }
+
+    /// <summary>目前重用中的 PRTG client 與建立它時的設定指紋（見 <see cref="GetClient"/>）</summary>
+    private PrtgClient? _client;
+    private string? _clientFingerprint;
     internal IRunConsole? Console { get; set; }
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
     internal PrtgSnapshotAccumulator Accumulator => _accumulator;
@@ -345,11 +349,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         else
         {
-            string json;
-            using (var client = CreateClient(settings))
-            {
-                json = await client.GetJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000", ct);
-            }
+            var client = GetClient(settings);
+            var json = await client.GetJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000", ct);
 
             var (treeSize, totalSensorsInResponse) = ParseSnapshotResponse(json, now, tally, _targetObjids ?? new HashSet<long>());
             if (treeSize.HasValue && treeSize.Value > 0 && totalSensorsInResponse < treeSize.Value)
@@ -383,7 +384,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         var requested = 0;
         Exception? lastError = null;
 
-        using (var client = CreateClient(settings))
+        var client = GetClient(settings);
         {
             for (var i = 0; i < targets.Count; i += batchSize)
             {
@@ -584,7 +585,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
             PrtgSensorBackfillResult result;
             List<long> pending;
-            using (var client = CreateClient(settings))
+            var client = GetClient(settings);
             {
                 var overrideDevices = await LookupOverrideDevicesAsync(client, missingOverride, ct);
                 // 守門覆寫清單的裝置排在前面：它們進不了鏡像時守門會靜默失效，不能被大批新進範圍的裝置擠到後面幾輪
@@ -816,6 +817,9 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private void RecordFailure(Exception ex)
     {
+        // 失敗的一輪丟掉重用中的 client：PrtgClient 會把帳號類憑證失敗「黏住」（防 PRTG 帳號被鎖），
+        // 重用後若不丟，PRTG 端解鎖或修好帳號但站台設定沒變時，快照會永遠卡在那個失敗上
+        DisposeClient();
         _consecutiveFailures++;
         if (_consecutiveFailures >= 3 && _consecutiveFailures % 3 == 0)
         {
@@ -853,6 +857,52 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             Log.Error(ex, "站台關閉時寫出 PRTG 快照殘存樣本失敗");
         }
+    }
+
+    /// <summary>
+    /// 取得重用的 PRTG client：每輪都建新的會讓 SocketsHttpHandler 的連線池與 TLS 握手每輪重來。
+    /// 設定指紋（連線位址、認證方式、帳號、各憑證密文、逾時、忽略憑證錯誤）不同才換新的。
+    /// 只由 ExecuteAsync 的單一迴圈呼叫，沒有併發。
+    /// </summary>
+    private PrtgClient GetClient(SystemSettings settings)
+    {
+        var fingerprint = string.Join("\u001f",
+            settings.PrtgUrl ?? string.Empty,
+            settings.PrtgAuthMode ?? string.Empty,
+            settings.PrtgUsername ?? string.Empty,
+            settings.PrtgPasswordEnc ?? string.Empty,
+            settings.PrtgPasshashEnc ?? string.Empty,
+            settings.PrtgApiTokenEnc ?? string.Empty,
+            settings.PrtgTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            settings.PrtgIgnoreSslErrors ? "1" : "0");
+
+        if (_client == null || _clientFingerprint != fingerprint)
+        {
+            var created = CreateClient(settings);
+            _client?.Dispose();
+            _client = created;
+            _clientFingerprint = fingerprint;
+        }
+        return _client;
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        DisposeClient();
+    }
+
+    public override void Dispose()
+    {
+        DisposeClient();
+        base.Dispose();
+    }
+
+    private void DisposeClient()
+    {
+        _client?.Dispose();
+        _client = null;
+        _clientFingerprint = null;
     }
 
     internal virtual PrtgClient CreateClient(SystemSettings settings)
