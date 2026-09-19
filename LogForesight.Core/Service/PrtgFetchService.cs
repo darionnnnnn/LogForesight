@@ -61,6 +61,7 @@ public sealed class PrtgFetchService
 
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
+    private readonly PrtgFreshnessStore _freshness;
     private readonly IRunConsole _console;
     private readonly PrtgResourceGuard? _guard;
     private readonly IReadOnlyDictionary<string, string> _categoryOverrides;
@@ -70,15 +71,22 @@ public sealed class PrtgFetchService
     /// <see cref="PrtgSensorTypeCategoryMap.ParseOverrides"/> 自目前設定解析出的 Map 傳入
     /// （錯誤行已被略過；設定層存檔時已擋，這裡只防禦舊資料）。
     /// </param>
-    public PrtgFetchService(PrtgClient client, EfPrtgStore store, IRunConsole console,
+    public PrtgFetchService(PrtgClient client, EfPrtgStore store, PrtgFreshnessStore freshness, IRunConsole console,
         IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null)
     {
         _client = client;
         _store = store;
+        _freshness = freshness;
         _console = console;
         _categoryOverrides = categoryOverrides;
         _guard = guard;
     }
+
+    /// <summary>
+    /// 記錄某類 PRTG 資料成功完成一次擷取（見 <see cref="PrtgFreshnessStore"/>）。
+    /// 觸發式取數與歷史回填沿用本服務的 store，不各自另建。
+    /// </summary>
+    public void RecordFreshness(string category, int count) => _freshness.Record(category, count);
 
     /// <summary>
     /// 執行指定日期的 PRTG 每日擷取。
@@ -180,6 +188,10 @@ public sealed class PrtgFetchService
                     failures++;
                     _console.WriteLine($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
                 }
+                else
+                {
+                    _freshness.Record(PrtgFreshnessStore.Devices, devicesCount);
+                }
                 devicesRefreshed = outcome.Converged && devicesCount > 0;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -258,6 +270,10 @@ public sealed class PrtgFetchService
                             var more = failedDevices.Count > 5 ? " 等" : "";
                             _console.WriteLine($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
                         }
+                        else
+                        {
+                            _freshness.Record(PrtgFreshnessStore.Sensors, sensorsCount);
+                        }
                         emptyDevices = empties;
                         sensorsRefreshed = failedDevices.Count == 0 && sensorsCount > 0;
                     }
@@ -277,6 +293,10 @@ public sealed class PrtgFetchService
                             // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
                             // 數值表會安靜地少一大塊而看不出邊界在哪。
                             _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
+                        }
+                        else
+                        {
+                            _freshness.Record(PrtgFreshnessStore.Sensors, sensorsCount);
                         }
                         sensorsRefreshed = outcome.Converged && sensorsCount > 0;
                     }
@@ -359,6 +379,11 @@ public sealed class PrtgFetchService
             {
                 failures++;
                 _console.WriteLine($"[階段 3/4] ✗ {rangeResult.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
+            }
+            else if (scope != null)
+            {
+                // 範圍無法取得時本階段是略過，不算一次成功的擷取
+                _freshness.Record(PrtgFreshnessStore.StateChanges, stateChangesCount);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

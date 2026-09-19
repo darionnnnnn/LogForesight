@@ -328,7 +328,8 @@ public class PrtgBackfillService
         }
 
         var prtgStore = _backend.PrtgStore();
-        var fetchService = new PrtgFetchService(client, prtgStore, console,
+        var fetchService = new PrtgFetchService(client, prtgStore,
+            new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
             PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
         var days = s.PrtgBackfillDays;
         var concurrency = s.PrtgFetchConcurrency;

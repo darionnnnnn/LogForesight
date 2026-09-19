@@ -117,7 +117,24 @@ public class RunDetailDto
     /// <summary>PRTG 觸發式取數問題主機數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgTriggeredHosts { get; set; }
 
+    /// <summary>PRTG 逐日統計（null＝舊紀錄或 PRTG 未產出）</summary>
+    public List<PrtgDayStatDto>? PrtgDays { get; set; }
+
     public List<RunLogDto> Logs { get; set; } = new();
+}
+
+/// <summary>執行詳情「PRTG 逐日」表的一列</summary>
+public class PrtgDayStatDto
+{
+    public DateTime Date { get; set; }
+    public string Outcome { get; set; } = string.Empty;
+    public int Findings { get; set; }
+    public int AttributedHosts { get; set; }
+    public bool MapAvailable { get; set; }
+    public int TriggerHosts { get; set; }
+    public int TargetSensors { get; set; }
+    public int FailedSensors { get; set; }
+    public string? Note { get; set; }
 }
 
 public class RunLogDto

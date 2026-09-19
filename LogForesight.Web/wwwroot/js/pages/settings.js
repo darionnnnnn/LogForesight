@@ -11,7 +11,7 @@ import {
 } from '../core/ui.js';
 import {
     formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
-    statusBadge, toLocalDateString
+    prtgFreshnessLabel, statusBadge, toLocalDateString
 } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
@@ -717,6 +717,16 @@ function renderBackgroundJobs(detail) {
         { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' },
         { item: '密碼欄位加密', status: cryptoStatus(detail) }
     ];
+    // PRTG 擷取：未啟用時後端回 null、不加這列；曾有資料卻連續多次取得 0 筆的類別列出來
+    if (Array.isArray(detail.prtgFreshness)) {
+        const suspicious = detail.prtgFreshness.filter(f => f.suspicious);
+        rows.push({
+            item: 'PRTG 擷取',
+            status: suspicious.length > 0
+                ? suspicious.map(f => `${prtgFreshnessLabel(f.category)} 連續 ${f.zeroStreak} 次取得 0 筆`).join('、')
+                : '正常'
+        });
+    }
     renderTable(document.getElementById('health-background'), {
         columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
         rows

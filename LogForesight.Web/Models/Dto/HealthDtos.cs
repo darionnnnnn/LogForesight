@@ -132,6 +132,9 @@ public class HealthDetailDto : HealthDto
 
     /// <summary>排程資料新鮮度（任務 A-3）</summary>
     public ScheduleFreshnessDto ScheduleFreshness { get; set; } = new();
+
+    /// <summary>PRTG 各類資料的擷取新鮮度；PRTG 未啟用時為 null（畫面不顯示「PRTG 擷取」列）</summary>
+    public List<PrtgFreshnessDto>? PrtgFreshness { get; set; }
 }
 
 /// <summary>排程資料新鮮度（任務 A-3）</summary>

@@ -114,7 +114,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var result = await fetcher.RunAsync(
@@ -164,7 +164,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var result = await fetcher.RunAsync(
@@ -202,7 +202,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         });
 
         var (client, handler) = CreateClient(req => JsonResponse("{\"histdata\":[]}"));
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var result = await fetcher.RunAsync(
@@ -251,7 +251,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var result = await fetcher.RunAsync(
@@ -298,7 +298,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         // 指定白名單只有 SNMP CPU Load
@@ -345,7 +345,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         // 第一次回 false，第二次回 true（模擬兩輪掃描）
@@ -400,7 +400,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
 
         var (client, handler) = CreateClient(req => JsonResponse("{\"histdata\":[]}"));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var result = await fetcher.RunAsync(
@@ -450,7 +450,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         // 將 host 101 作為 extraTriggerHosts 傳入
@@ -498,7 +498,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, handler) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var pollCount = 0;
@@ -556,7 +556,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
         var (client, _) = CreateClient(req => JsonResponse(histJson));
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         // 沒有任何高／中風險紀錄，所以 triggered 模式下會是 0 台；all-mapped 應該抓到 2 台。
@@ -588,7 +588,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>());
 
         var (client, _) = CreateClient(req => JsonResponse("{}"));
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -614,7 +614,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>());
 
         var (client, _) = CreateClient(req => JsonResponse("{}"));
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var fetcher = new PrtgTriggeredValueFetcher(fetchService, store, recordStore, console);
 
         var result = await fetcher.RunAsync(

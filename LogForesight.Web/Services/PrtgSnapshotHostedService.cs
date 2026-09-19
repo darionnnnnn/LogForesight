@@ -595,7 +595,8 @@ public class PrtgSnapshotHostedService : BackgroundService
                     .ToList();
                 if (pending.Count == 0) return;
 
-                var fetch = new PrtgFetchService(client, store, SilentConsole,
+                var fetch = new PrtgFetchService(client, store,
+                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
                     PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
                 // 補抓寫入的列 SyncedAt 是當下時間（沿用 mapper），晚於任何已開始的結構同步起點，
                 // 不會被那趟「未刷新即刪除」清掉
@@ -813,6 +814,16 @@ public class PrtgSnapshotHostedService : BackgroundService
             WriteOutput(msg, LogLevel.Info);
         }
         _consecutiveFailures = 0;
+
+        // 擷取紀錄是記帳，寫不進資料庫不是 PRTG 的失敗，不能往外丟進退避計數
+        try
+        {
+            new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)).Record(PrtgFreshnessStore.Snapshot, addedCount);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "PRTG 快照擷取紀錄寫入失敗");
+        }
     }
 
     private void RecordFailure(Exception ex)

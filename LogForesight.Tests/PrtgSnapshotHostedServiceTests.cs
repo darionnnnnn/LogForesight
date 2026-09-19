@@ -45,7 +45,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _hostStore = hostStore;
         var statusStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         _backfillState = new PrtgBackfillRunState();
-        _structureSync = new PrtgStructureSyncService(_settingsStore, _backend, _syncState, _schedulerRunState, hostStore, statusStore, _backfillState, new FakeSentinelStore(), _lifetime);
+        _structureSync = new PrtgStructureSyncService(_settingsStore, _backend, _syncState, _schedulerRunState, hostStore, statusStore, _backfillState, new FakeSentinelStore(), new DataVersionStamp(), _lifetime);
 
         _probeState = new PrtgProbeRunState();
         _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore, _schedulerRunState, _syncState, new FakeSentinelStore());

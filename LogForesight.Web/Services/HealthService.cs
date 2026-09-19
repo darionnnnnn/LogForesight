@@ -1,4 +1,5 @@
 using System.Reflection;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services.Mail;
@@ -96,6 +97,9 @@ public class HealthService
             StorageOk = storageOk,
             StorageError = storageError,
             ScheduleFreshness = freshness,
+            PrtgFreshness = storageOk && new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgEnabled
+                ? PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
+                : null,
             SlowThresholdMs = performance.ThresholdMs,
             TotalOperations = performance.TotalOperations,
             SlowOperations = performance.SlowOperations,

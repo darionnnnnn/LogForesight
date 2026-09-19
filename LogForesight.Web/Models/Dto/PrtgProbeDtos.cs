@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence;
+
 namespace LogForesight.Web.Models.Dto;
 
 /// <summary>PRTG 探測（probe）狀態，供前端輪詢用</summary>
@@ -77,6 +79,46 @@ public class PrtgMirrorStatusDto
     public int SnapshotConsecutiveFailures { get; set; }
     public bool SnapshotBackingOff { get; set; }
     public string? SnapshotSkipReason { get; set; }
+    /// <summary>各類資料最後一次成功擷取的紀錄（鏡像頁「擷取紀錄」表）</summary>
+    public List<PrtgFreshnessDto> Freshness { get; set; } = new();
+}
+
+/// <summary>
+/// PRTG 單一類別資料的擷取新鮮度（鏡像頁與系統健康頁共用）。
+/// 資料時間推導的「最後同步」在連續擷取 0 筆時不會變、看起來正常；這裡是擷取本身的紀錄。
+/// </summary>
+public class PrtgFreshnessDto
+{
+    /// <summary>devices｜sensors｜state_changes｜snapshot｜values</summary>
+    public string Category { get; set; } = string.Empty;
+    public DateTime LastSuccessAt { get; set; }
+    public int LastCount { get; set; }
+    /// <summary>連續取得 0 筆的次數（畫面「連續 N 次取得 0 筆」的 N）</summary>
+    public int ZeroStreak { get; set; }
+    public bool Suspicious { get; set; }
+
+    private static readonly string[] CategoryOrder =
+    {
+        PrtgFreshnessStore.Devices, PrtgFreshnessStore.Sensors, PrtgFreshnessStore.StateChanges,
+        PrtgFreshnessStore.Snapshot, PrtgFreshnessStore.Values
+    };
+
+    /// <summary>依固定類別順序列出已有紀錄的類別（從未成功擷取過的類別不列）</summary>
+    public static List<PrtgFreshnessDto> FromStore(PrtgFreshnessStore store)
+    {
+        var all = store.GetAll();
+        return CategoryOrder
+            .Where(all.ContainsKey)
+            .Select(c => new PrtgFreshnessDto
+            {
+                Category = c,
+                LastSuccessAt = all[c].LastSuccessAt,
+                LastCount = all[c].LastCount,
+                ZeroStreak = all[c].ZeroStreak,
+                Suspicious = PrtgFreshnessStore.IsSuspicious(all[c])
+            })
+            .ToList();
+    }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>

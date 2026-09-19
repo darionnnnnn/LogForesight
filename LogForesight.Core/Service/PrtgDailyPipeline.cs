@@ -82,7 +82,8 @@ internal static class PrtgDailyPipeline
 
             using var client = PrtgClientFactory.Create(systemSettings);
 
-            var fetchService = new PrtgFetchService(client, backend.PrtgStore(), prtgConsole,
+            var fetchService = new PrtgFetchService(client, backend.PrtgStore(),
+                new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), prtgConsole,
                 PrtgSensorTypeCategoryMap.ParseOverrides(systemSettings.PrtgSensorTypeCategoryOverrides).Map, guard);
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);

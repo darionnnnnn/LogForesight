@@ -320,6 +320,18 @@ public class RunMonitorService
             PrtgSensorsFetched = run.PrtgSensorsFetched,
             PrtgSensorsFailed = run.PrtgSensorsFailed,
             PrtgTriggeredHosts = run.PrtgTriggeredHosts,
+            PrtgDays = run.PrtgDays?.Select(d => new PrtgDayStatDto
+            {
+                Date = d.Date,
+                Outcome = d.Outcome,
+                Findings = d.Findings,
+                AttributedHosts = d.AttributedHosts,
+                MapAvailable = d.MapAvailable,
+                TriggerHosts = d.TriggerHosts,
+                TargetSensors = d.TargetSensors,
+                FailedSensors = d.FailedSensors,
+                Note = d.Note
+            }).ToList(),
             Logs = logs.Select(l => new RunLogDto
             {
                 LoggedAt = l.LoggedAt,

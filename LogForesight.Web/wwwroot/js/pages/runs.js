@@ -11,7 +11,7 @@ import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText
 } from '../core/ui.js';
-import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
 
 /* 色值對齊 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
@@ -491,6 +491,30 @@ async function showDetail(runId) {
     renderStats(statsRow, detail);
     body.appendChild(statsRow);
 
+    // PRTG 逐日：每個資料日的結局與取數數字（舊紀錄或 PRTG 未產出時沒有這張表）
+    if (Array.isArray(detail.prtgDays) && detail.prtgDays.length > 0) {
+        const prtgTitle = document.createElement('div');
+        prtgTitle.className = 'fw-semibold mb-2';
+        prtgTitle.textContent = 'PRTG 逐日';
+        const prtgEl = document.createElement('div');
+        prtgEl.className = 'mb-3';
+        body.append(prtgTitle, prtgEl);
+        renderTable(prtgEl, {
+            columns: [
+                { title: '日期', render: d => String(d.date).slice(0, 10) },
+                { title: '結局', render: d => renderPrtgBadge(d.outcome) ?? d.outcome },
+                { title: 'finding', render: d => formatNumber(d.findings) },
+                { title: '歸戶主機', render: d => formatNumber(d.attributedHosts) },
+                { title: '對應', render: d => (d.mapAvailable ? '有' : '無') },
+                { title: '觸發主機', render: d => formatNumber(d.triggerHosts) },
+                { title: '目標 sensor', render: d => formatNumber(d.targetSensors) },
+                { title: '失敗 sensor', render: d => formatNumber(d.failedSensors) },
+                { title: '說明', render: d => d.note || '—' }
+            ],
+            rows: detail.prtgDays
+        });
+    }
+
     // 等級過濾（原本在 cshtml 的 log-level-filter，改建在 modal 內）
     const filterWrap = document.createElement('div');
     filterWrap.className = 'd-flex justify-content-end mb-2';
@@ -905,7 +929,11 @@ let scheduleStatusTimer = null;
 async function refreshScheduleStatus() {
     const [status, aiStatus] = await Promise.all([
         api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
-        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null)
+        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
+        // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
+        // 兩者自帶錯誤吞掉，且快速計時器「執行中才開、已存在就不重建」，重複呼叫不會疊計時器
+        refreshPrtgSyncStatus(),
+        refreshPrtgBackfillStatus()
     ]);
     if (status) applyScheduleStatus(status);
     if (aiStatus) applyAiScheduleStatus(aiStatus);
@@ -1844,7 +1872,7 @@ function renderPrtgBackfillStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `回填中…${elapsedSinceText(status.startedAt)}${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 

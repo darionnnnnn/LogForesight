@@ -67,6 +67,7 @@ public static class PrtgBackfillRunner
         var skippedDays = 0;
         var processedDays = 0;
         var stateChangesFailed = false;
+        var totalValuesWritten = 0;
         string? stateChangesError = null;
 
         console.WriteLine($"開始執行 PRTG 歷史回填（共 {days} 天，由近往遠逐日擷取）...");
@@ -135,6 +136,7 @@ public static class PrtgBackfillRunner
                         else
                         {
                             successDays++;
+                            totalValuesWritten += result.Values;
                             console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：數值 {result.Values} 筆、狀態變更 {result.StateChanges} 筆");
                         }
                     }
@@ -214,6 +216,7 @@ public static class PrtgBackfillRunner
                         else
                         {
                             successDays++;
+                            totalValuesWritten += valuesWritten;
                             console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：問題主機 {problemHostsCount} 台、sensor {targetSensorsCount} 個、數值 {valuesWritten} 筆");
                         }
                     }
@@ -244,6 +247,12 @@ public static class PrtgBackfillRunner
         {
             console.WriteLine($"回填已中斷（已停止：完成 {processedDays}／{days} 天）。累計完成 {successDays} 天，失敗 {failedDays} 天。");
             throw;
+        }
+
+        // 回填結束（未被停止）且至少一天成功，才算一次成功完成的數值擷取
+        if (successDays > 0)
+        {
+            fetchService.RecordFreshness(PrtgFreshnessStore.Values, totalValuesWritten);
         }
 
         if (!triggered)

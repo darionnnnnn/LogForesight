@@ -220,6 +220,33 @@ export function formatNumber(value) {
     return Number(value).toLocaleString('zh-TW');
 }
 
+/** 已執行時長「分:秒」（例如 12:05；超過一小時分鐘數照累加）。負值視為 0 */
+export function formatElapsed(ms) {
+    const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${minutes}:${seconds}`;
+}
+
+const PRTG_FRESHNESS_LABEL = {
+    devices: '裝置',
+    sensors: '感測器',
+    state_changes: '狀態變更',
+    snapshot: '即時快照',
+    values: '歷史數值'
+};
+
+/** PRTG 擷取紀錄的類別中文名（鏡像頁「擷取紀錄」與系統健康頁共用）；未知類別原樣顯示 */
+export function prtgFreshnessLabel(category) {
+    return PRTG_FRESHNESS_LABEL[category] ?? category;
+}
+
+/** 執行中狀態的「（已執行 分:秒）」附註；沒有開始時間時回空字串（回填與探測狀態共用） */
+export function elapsedSinceText(startedAt) {
+    if (!startedAt) return '';
+    return `（已執行 ${formatElapsed(Date.now() - new Date(startedAt).getTime())}）`;
+}
+
 /**
  * 機房級基準線的純文字描述（回饋十九輪批次G1）：儀表板重點問題卡／報表問題排行／
  * 依問題視角三處共用同一份措辭與四捨五入規則，「vs 基準」欄位的數字才不會各自寫法不同。

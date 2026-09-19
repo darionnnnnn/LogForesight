@@ -622,7 +622,8 @@ public class SettingsController : ControllerBase
             SnapshotIntervalMinutes = snapshotIntervalMinutes,
             SnapshotConsecutiveFailures = snapshotConsecutiveFailures,
             SnapshotBackingOff = snapshotBackingOff,
-            SnapshotSkipReason = snapshotSkipReason
+            SnapshotSkipReason = snapshotSkipReason,
+            Freshness = PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
         });
     }
 

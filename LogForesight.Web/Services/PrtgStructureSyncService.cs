@@ -99,6 +99,9 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// </summary>
     private volatile bool _lastRunSucceeded;
 
+    /// <summary>同步成功寫入鏡像後推進資料版本戳，讓儀表板的 PRTG 失聯台數等快取即時失效。</summary>
+    private readonly DataVersionStamp _versionStamp;
+
     public PrtgStructureSyncService(
         ISystemSettingsStore settings,
         StorageBackend backend,
@@ -108,10 +111,12 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         PrtgStructureSyncStatusStore statusStore,
         PrtgBackfillRunState backfillState,
         ISentinelStore sentinels,
+        DataVersionStamp versionStamp,
         IHostApplicationLifetime? lifetime = null)
     {
         _backfillState = backfillState;
         _sentinels = sentinels;
+        _versionStamp = versionStamp;
         _lifetime = lifetime;
         // 站台關閉時中止同步：這條路徑會對 PRTG 做整棵樹的分頁查詢，
         // 沒有取消來源的話，PRTG 端卡住（TCP 半開、不回應）就會讓狀態永遠停在「執行中」，
@@ -313,7 +318,8 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         }
 
         var prtgStore = _backend.PrtgStore();
-        var fetchService = new PrtgFetchService(client, prtgStore, console,
+        var fetchService = new PrtgFetchService(client, prtgStore,
+            new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
             PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
         var concurrency = s.PrtgFetchConcurrency;
 
@@ -332,6 +338,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
 
                     Persist(status);
                     success = status.Success;
+                    if (success) _versionStamp.Bump();
                 }
             }
             catch (OperationCanceledException)

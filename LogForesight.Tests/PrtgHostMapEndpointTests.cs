@@ -485,7 +485,7 @@ public class PrtgHostMapEndpointTests : IDisposable
             settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState,
             new HostStore(_backend.Blob("hosts")),
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-            new PrtgBackfillRunState(), new FakeSentinelStore());
+            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
 
         var controller = new SettingsController(
             new StubSystemSettingsService(),

@@ -216,7 +216,7 @@ public class ExternalCallLimitTests : IDisposable
         var statusStore = new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         var backfillState = new PrtgBackfillRunState();
         var structureSync = new PrtgStructureSyncService(settingsStore, backend, syncState, schedulerRunState, hostStore,
-            statusStore, backfillState, new FakeSentinelStore(), lifetime);
+            statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
         var probeState = new PrtgProbeRunState();
         var backfill = new PrtgBackfillService(settingsStore, backend, backfillState, probeState, hostStore,
             schedulerRunState, syncState, new FakeSentinelStore());

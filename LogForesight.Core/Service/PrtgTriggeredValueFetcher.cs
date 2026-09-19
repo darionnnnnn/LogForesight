@@ -180,6 +180,12 @@ public sealed class PrtgTriggeredValueFetcher
             await ScanAndFetchAsync();
         }
 
+        // 有目標 sensor 卻全部失敗不算成功完成，不記新鮮度
+        if (!(totalFailedSensors > 0 && totalValuesWritten == 0))
+        {
+            _fetchService.RecordFreshness(PrtgFreshnessStore.Values, totalValuesWritten);
+        }
+
         return new PrtgTriggeredFetchResult(
             fetchedHosts.Count,
             totalTargetSensors,

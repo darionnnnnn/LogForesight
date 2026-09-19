@@ -8,9 +8,9 @@ import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
-    collectLines, numberOr
+    collectLines, numberOr, renderTable
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { PRTG_SCOPE_OFF, toScopeSelectValue } from '../core/prtg-scope-labels.js';
 
@@ -467,6 +467,32 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-ip-exclude-count', formatNumber(data.ipExcludeCount || 0));
     setTxt('prtg-mirror-whitelist-count', formatNumber(data.whitelistSensorCount));
     setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
+
+    renderPrtgFreshness(data.freshness ?? []);
+}
+
+/** 鏡像頁「擷取紀錄」：各類資料最後一次成功擷取；連續取得 0 筆的列加警示 */
+function renderPrtgFreshness(items) {
+    const el = document.getElementById('prtg-mirror-freshness');
+    if (!el) return;
+    renderTable(el, {
+        columns: [
+            { title: '類別', render: f => prtgFreshnessLabel(f.category) },
+            { title: '最後成功', render: f => formatDateTime(f.lastSuccessAt) },
+            {
+                title: '取得筆數',
+                render: f => {
+                    if (!f.suspicious) return formatNumber(f.lastCount);
+                    const warn = document.createElement('span');
+                    warn.className = 'text-warning fw-semibold';
+                    warn.textContent = `${formatNumber(f.lastCount)}（連續 ${f.zeroStreak} 次取得 0 筆）`;
+                    return warn;
+                }
+            }
+        ],
+        rows: items,
+        empty: { title: '尚無擷取紀錄', hint: '結構同步、快照或取數成功完成後會記錄在這裡。' }
+    });
 }
 
 // ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
@@ -988,7 +1014,7 @@ function renderPrtgProbeStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `探測中…${elapsedSinceText(status.startedAt)}${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
