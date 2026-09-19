@@ -16,19 +16,20 @@ public class AuditQueryService
         _displayNameService = displayNameService;
     }
 
-    public PagedResult<AuditEntryDto> Query(AuditQuery query)
+    public AuditPageDto Query(AuditQuery query)
     {
         var result = _store.Query(query);
 
         // 一次載入做字典（docs/archive/FEEDBACK-8-PLAN.md #6）：單頁筆數有限，不必逐筆查
         var byAccount = _users.GetAll().ToDictionary(u => u.Account, u => _displayNameService.Of(u.DisplayName), StringComparer.OrdinalIgnoreCase);
 
-        return new PagedResult<AuditEntryDto>
+        return new AuditPageDto
         {
             Items = result.Items.Select(e => ToDto(e, byAccount)).ToList(),
             Page = result.Page,
             PageSize = result.PageSize,
-            Total = result.Total
+            Total = result.Total,
+            DefaultRangeApplied = result.DefaultRangeApplied
         };
     }
 

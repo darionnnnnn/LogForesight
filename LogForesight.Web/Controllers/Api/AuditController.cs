@@ -22,7 +22,7 @@ public class AuditController : ControllerBase
     }
 
     [HttpGet]
-    public ApiResponse<PagedResult<AuditEntryDto>> Query(
+    public ApiResponse<AuditPageDto> Query(
         [FromQuery] string? from,
         [FromQuery] string? to,
         [FromQuery] long? userId,
@@ -55,7 +55,7 @@ public class AuditController : ControllerBase
             query.Result = auditResult;
         }
 
-        return ApiResponse<PagedResult<AuditEntryDto>>.Ok(_service.Query(query));
+        return ApiResponse<AuditPageDto>.Ok(_service.Query(query));
     }
 
     [HttpGet("actions")]

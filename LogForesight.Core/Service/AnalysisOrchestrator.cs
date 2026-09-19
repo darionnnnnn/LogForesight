@@ -343,6 +343,11 @@ public class AnalysisOrchestrator
                     Log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
                     runConsole.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
                 }
+                if (currentHostId == 0)
+                {
+                    // HostId=0 的列會讓涵蓋到它的清單查詢退回記憶體分頁，值得在執行輸出上被看見
+                    runConsole.WriteLine("  ⚠ 本機主機未能登記，這趟本機分析結果會以未對應主機的形式寫入（清單查詢會變慢），請檢查主機清單。");
+                }
 
                 // 到期抑制通知（回饋十三輪 F 移到這裡）：Group／Site 範圍的判定需要本機的群組成員資格，
                 // 上面 Touch 完成後才拿得到（新主機或註冊失敗時 currentHostGroupIds 為空——

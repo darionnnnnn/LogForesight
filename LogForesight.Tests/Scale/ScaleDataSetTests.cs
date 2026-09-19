@@ -41,7 +41,7 @@ public class ScaleDataSetTests
         Assert.Equal(ScaleProfile.Small.TombstoneCount, tombstones.Count);
         Assert.All(tombstones, t => Assert.Contains(hosts, h => h.HostId == t.MergedInto));
 
-        var users = new UserStore(data.Backend.Blob("users")).GetAll();
+        var users = new UserStore(data.Backend.Blob("users"), data.Backend.Blob("users_last_login")).GetAll();
         Assert.Equal(2, users.Count);
     }
 

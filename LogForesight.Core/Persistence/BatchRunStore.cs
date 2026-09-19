@@ -160,7 +160,7 @@ public class BatchRunStore
     /// 下一趟配成 101，與既有的 101 撞號——撞號後兩趟執行被合併成一筆、診斷行整批錯掛。
     /// 32 行足以涵蓋「同時活著的執行數 × 2」再加上一段損毀容忍。
     /// </summary>
-    private const int IdProbeLines = 32;
+    internal const int IdProbeLines = 32;
 
     /// <summary>
     /// SQL 端依**附加時間**窄化時往前多放的緩衝天數。
@@ -193,32 +193,8 @@ public class BatchRunStore
 
         // 續號起點以反向 seek 取得，不再整份讀回——這裡是 Singleton store 的建構式，
         // 全撈等於站台啟動時同步讀十萬列並逐行解析。
-        _lastRunId = ProbeLastId<BatchRun>(_runs, r => r.RunId, "執行紀錄");
-        _lastLogId = ProbeLastId<BatchRunLog>(_logs, l => l.LogId, "執行診斷紀錄");
-    }
-
-    /// <summary>
-    /// 續號起點＝尾端 N 行裡**解析得出來的最大** id（理由見 <see cref="IdProbeLines"/>）。
-    /// 全部無法解析才回 0 並記 Warn——那代表尾端整段損毀，值得被看見而不是安靜地重號。
-    /// </summary>
-    private static long ProbeLastId<T>(EfJsonLogStore store, Func<T, long> idOf, string what) where T : class
-    {
-        var lines = store.ReadLastLines(IdProbeLines);
-        if (lines.Count == 0) return 0;
-
-        long? max = null;
-        foreach (var line in lines)
-        {
-            var parsed = JsonLogParser.Parse<T>(new[] { line }, LfJsonOptions.Compact);
-            if (parsed.Count == 0) continue;
-            var id = idOf(parsed[0]);
-            if (max == null || id > max) max = id;
-        }
-        if (max != null) return max.Value;
-
-        Log.Warn("[BatchRunStore] {What}最後 {Count} 行都無法解析，續號自 0 起算——可能與既有紀錄重號。",
-            what, lines.Count);
-        return 0;
+        _lastRunId = _runs.ProbeMaxId<BatchRun>(r => r.RunId, IdProbeLines, "執行紀錄", LfJsonOptions.Compact);
+        _lastLogId = _logs.ProbeMaxId<BatchRunLog>(l => l.LogId, IdProbeLines, "執行診斷紀錄", LfJsonOptions.Compact);
     }
 
     /// <summary>啟動時登記，回傳配發的 RunId</summary>
@@ -281,7 +257,7 @@ public class BatchRunStore
     /// 若它落在窗口內的 RunId 範圍之間卻沒找到（已被清除、或根本不存在——舊書籤、手改網址），
     /// 全撈也不會找到，只是把本輪要消滅的整份讀取變成每次查無此執行都付一次。
     /// 窗口內完全沒有列時無從判斷（可能是保留期拉長後長期未執行的站台），維持全撈一次。
-    /// 這條規則倚賴 RunId 單調遞增；唯一的例外是尾端整段損毀讓 <see cref="ProbeLastId{T}"/> 回 0
+    /// 這條規則倚賴 RunId 單調遞增；唯一的例外是尾端整段損毀讓 <see cref="EfJsonLogStore.ProbeMaxId{T}"/> 回 0
     /// 重新續號（那時已記 Warn），此後號碼較大的舊執行會被判成不存在——那是資料已損毀的後果，
     /// 不值得為它讓每次查無此執行都付整份讀取。RunId 從 1 起算，非正數直接視為不存在。
     /// </summary>

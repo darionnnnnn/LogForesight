@@ -35,10 +35,10 @@ public class EfWebdataStoreTests
     public void 使用者_EF往返_跨store實例持久()
     {
         using var fx = new EfSqliteFixture();
-        new UserStore(fx.Blob("users")).Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
+        new UserStore(fx.Blob("users"), fx.Blob("users_last_login")).Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
 
         // 另一個 store 實例讀同一個 DB key——資料在 DB 裡持久
-        var reread = new UserStore(fx.Blob("users")).FindByAccount("domain\\a");
+        var reread = new UserStore(fx.Blob("users"), fx.Blob("users_last_login")).FindByAccount("domain\\a");
         Assert.NotNull(reread);
         Assert.Equal("甲", reread!.DisplayName);
     }

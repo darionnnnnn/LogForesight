@@ -30,7 +30,11 @@ public static class ServiceCollectionExtensions
         // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
         services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
 
-        services.AddSingleton<IUserStore>(sp => new UserStore(sp.GetRequiredService<StorageBackend>().Blob("users")));
+        services.AddSingleton<IUserStore>(sp =>
+        {
+            var backend = sp.GetRequiredService<StorageBackend>();
+            return new UserStore(backend.Blob("users"), backend.Blob("user_last_login"));
+        });
         services.AddSingleton<IUserGroupStore>(sp => new UserGroupStore(sp.GetRequiredService<StorageBackend>().Blob("user_groups")));
         services.AddSingleton<IHostStore>(sp => new HostStore(sp.GetRequiredService<StorageBackend>().Blob("hosts")));
         services.AddSingleton<IHostGroupStore>(sp => new HostGroupStore(sp.GetRequiredService<StorageBackend>().Blob("host_groups")));

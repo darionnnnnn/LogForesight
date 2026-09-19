@@ -120,12 +120,12 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     {
         lock (_logLock)
         {
-            // 每次寫入都呼叫 ReadLastLogId() 取得起點。
+            // 每次寫入都重新探測尾端取得起點。
             // 理由：目前系統內可能存在多個獨立實例（例如 Web 端註冊的 Singleton，以及
             // AnalysisOrchestrator 內自建的 StorageBackend 實例）。如果使用記憶體快取序號，
             // 夜間分析寫入多筆歷程後，Web 端的快取會落後，導致隔天 Web 端寫入時發生 LogId 重號。
-            // ReadLastLogId() 只讀尾端一小段（同一次索引反向 seek），不值得為了快取承擔重號風險。
-            var next = ReadLastLogId() + 1;
+            // 探測只讀尾端一小段（同一次索引反向 seek），不值得為了快取承擔重號風險。
+            var next = NextLogIdStart();
             _logStore.AppendLine(PrepareAndSerialize(log, next));
         }
     }
@@ -136,7 +136,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
 
         lock (_logLock)
         {
-            var next = ReadLastLogId() + 1;
+            var next = NextLogIdStart();
             var lines = new List<string>(logs.Count);
             foreach (var log in logs)
             {
@@ -181,30 +181,10 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     /// </summary>
     private const int LogIdProbeLines = 100;
 
-    /// <summary>
-    /// 續號起點＝回看窗內**解析得出來的 LogId 最大值**。
-    ///
-    /// 不取「最後一行」：那一行剛好損毀就會從 1 重新續號；批次插入時最後一行也不一定是最大號。
-    /// 兩種情況都會與既有歷程重號、同一天的排序因此錯亂。
-    /// 全部失敗才回 0 並記 Warn：那代表歷程尾端整段損毀，值得被看見而不是安靜地重號。
-    /// </summary>
-    private long ReadLastLogId()
-    {
-        var lines = _logStore.ReadLastLines(LogIdProbeLines);
-        if (lines.Count == 0) return 0;
-
-        long? max = null;
-        foreach (var line in lines)
-        {
-            var parsed = JsonLogParser.Parse<RecordHandlingLog>(new[] { line }, LfJsonOptions.Compact);
-            if (parsed.Count > 0 && (max == null || parsed[0].LogId > max)) max = parsed[0].LogId;
-        }
-        if (max != null) return max.Value;
-
-        Log.Warn("[SQL] 處理歷程最後 {Count} 行都無法解析，續號自 0 起算——" +
-                 "若歷程尾端確實損毀，新舊 LogId 可能重號，請檢查 lf_log_lines 的 handling_log 內容", lines.Count);
-        return 0;
-    }
+    /// <summary>下一個 LogId＝回看窗內可解析的最大 LogId＋1（共用 <see cref="EfJsonLogStore.ProbeMaxId{T}"/>，
+    /// 全部解析失敗時該方法記 Warn 回 0）</summary>
+    private long NextLogIdStart() =>
+        _logStore.ProbeMaxId<RecordHandlingLog>(l => l.LogId, LogIdProbeLines, "處理歷程", LfJsonOptions.Compact) + 1;
 
     // ── 保留天數（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）────────────────────
     //
@@ -239,7 +219,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     /// 清除超過保留天數的處理歷程（G4）。歷程過去**從來不會被清理**——6000 台環境下
     /// 它是千萬列級且無上限成長，而 <see cref="GetLogs"/> 的 SQL 端窄化效果會隨表成長遞減。
     ///
-    /// 從最舊的一端刪不影響續號：<see cref="ReadLastLogId"/> 讀的是**最後**幾行。
+    /// 從最舊的一端刪不影響續號：續號探測讀的是**最後**幾行。
     /// </summary>
     public int PruneLogs(int retentionDays)
     {

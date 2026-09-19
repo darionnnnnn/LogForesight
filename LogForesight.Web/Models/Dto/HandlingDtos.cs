@@ -489,6 +489,13 @@ public class PermissionChangeIdListDto
 
 // ── 操作紀錄（§9.11）───────────────────────────────────────────────────────
 
+/// <summary>稽核分頁結果（§9.11）：共用 <see cref="PagedResult{T}"/> 之外多帶是否套用了預設起日</summary>
+public class AuditPageDto : PagedResult<AuditEntryDto>
+{
+    /// <summary>true＝有篩選條件但沒指定起日，只查了近 90 天</summary>
+    public bool DefaultRangeApplied { get; set; }
+}
+
 public class AuditEntryDto
 {
     public long AuditId { get; set; }

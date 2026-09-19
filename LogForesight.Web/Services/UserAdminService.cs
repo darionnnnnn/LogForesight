@@ -57,9 +57,12 @@ public class UserAdminService
                 ownedCounts[ownerId] = ownedCounts.GetValueOrDefault(ownerId) + 1;
         }
 
+        // 最後登入時間整份取一次，不逐列查
+        var lastLogins = _users.GetLastLogins();
+
         return _users.GetAll()
             .OrderBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
-            .Select(u => ToDto(u, groupsById, ownedCounts.GetValueOrDefault(u.UserId)))
+            .Select(u => ToDto(u, groupsById, lastLogins, ownedCounts.GetValueOrDefault(u.UserId)))
             .ToList();
     }
 
@@ -115,7 +118,7 @@ public class UserAdminService
 
         return new UserDetailDto
         {
-            User = ToDto(user, groupsById),
+            User = ToDto(user, groupsById, _users.GetLastLogins()),
             Groups = memberGroups.Select(g => new UserGroupDto
             {
                 GroupId = g.GroupId,
@@ -187,7 +190,7 @@ public class UserAdminService
             targetId: user.UserId.ToString(),
             detail: new { user.Account, user.DisplayName, user.Email, user.Active });
 
-        return ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId));
+        return ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId), _users.GetLastLogins());
     }
 
     public UserDto SetUserGroups(long userId, IEnumerable<long> groupIds)
@@ -212,7 +215,7 @@ public class UserAdminService
             targetId: userId.ToString(),
             detail: new { Before = before, After = after });
 
-        return ToDto(_users.Get(userId)!, allGroups);
+        return ToDto(_users.Get(userId)!, allGroups, _users.GetLastLogins());
     }
 
     /// <summary>一次新增的帳號上限，防手滑貼整份名冊——超過請分批處理</summary>
@@ -309,7 +312,8 @@ public class UserAdminService
     }
 
     private UserDto ToDto(
-        WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById, int ownedHostCount = 0) => new()
+        WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById,
+        IReadOnlyDictionary<long, DateTime> lastLogins, int ownedHostCount = 0) => new()
     {
         UserId = user.UserId,
         Account = user.Account,
@@ -318,7 +322,8 @@ public class UserAdminService
         Active = user.Active,
         GroupIds = user.GroupIds,
         GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName),
-        LastLoginAt = user.LastLoginAt,
+        // 最後登入時間存在使用者清單之外；查不到才用升級前留在清單裡的舊值（只讀、不再寫）
+        LastLoginAt = lastLogins.TryGetValue(user.UserId, out var lastLogin) ? lastLogin : user.LastLoginAt,
         OwnedHostCount = ownedHostCount,
         DispatchPaused = user.DispatchPaused
     };

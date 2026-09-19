@@ -41,7 +41,7 @@ internal sealed class ScaleServices
         var backend = data.Backend;
 
         Hosts = new HostStore(backend.Blob("hosts"));
-        var users = new UserStore(backend.Blob("users"));
+        var users = new UserStore(backend.Blob("users"), backend.Blob("users_last_login"));
         var userGroups = new UserGroupStore(backend.Blob("user_groups"));
         var hostGroups = new HostGroupStore(backend.Blob("host_groups"));
         var access = new GroupAccessStore(backend.Blob("group_access"));

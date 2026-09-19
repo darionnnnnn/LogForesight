@@ -685,7 +685,7 @@ public class HandlingStoreContractTests : IDisposable
     {
         _fx.Blob("users").Mutate(_ => ("[{\"UserId\":1,\"Account\":\"a\",\"Active\":true}]", 0));
 
-        var user = Assert.Single(new UserStore(_fx.Blob("users")).GetAll());
+        var user = Assert.Single(new UserStore(_fx.Blob("users"), _fx.Blob("users_last_login")).GetAll());
         Assert.False(user.DispatchPaused);
     }
 

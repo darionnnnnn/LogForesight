@@ -130,7 +130,7 @@ public class BlobStoreRoundTripTests : IDisposable
 
     // ── UserStore ───────────────────────────────────────────────────────────
 
-    private UserStore Users() => new(_fixture.Blob("users"));
+    private UserStore Users() => new(_fixture.Blob("users"), _fixture.Blob("user_last_login"));
 
     private static WebUser FullyPopulatedUser(string account = "DOMAIN\\alice") => new()
     {
@@ -172,7 +172,8 @@ public class BlobStoreRoundTripTests : IDisposable
 
         var reread = Users().Get(original.UserId)!;
         AssertUserFieldsMatch(FullyPopulatedUser(), reread);
-        Assert.Equal(new DateTime(2026, 8, 5, 9, 0, 0), reread.LastLoginAt);
+        // 最後登入時間存在使用者清單之外（user_last_login），Upsert 不得影響它
+        Assert.Equal(new DateTime(2026, 8, 5, 9, 0, 0), Users().GetLastLogins()[original.UserId]);
     }
 
     [Fact]
@@ -422,8 +423,8 @@ public class BlobStoreRoundTripTests : IDisposable
     [Fact]
     public void 快取_未啟用快取的Store不受影響_UserStore跨實例讀寫正常()
     {
-        var storeA = new UserStore(_fixture.Blob("cache_test_4"));
-        var storeB = new UserStore(_fixture.Blob("cache_test_4"));
+        var storeA = new UserStore(_fixture.Blob("cache_test_4"), _fixture.Blob("cache_test_4_last_login"));
+        var storeB = new UserStore(_fixture.Blob("cache_test_4"), _fixture.Blob("cache_test_4_last_login"));
 
         storeB.GetAll(); // 觸發讀取
 

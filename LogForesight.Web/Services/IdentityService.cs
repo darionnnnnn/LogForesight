@@ -165,9 +165,20 @@ public class IdentityService
         var beforeDisplayName = user.DisplayName;
         var beforeEmail = user.Email;
 
-        if (newDisplayName != null) user.DisplayName = newDisplayName;
-        if (newEmail != null) user.Email = newEmail;
-        var saved = _users.Upsert(user);
+        // 先複製再改：使用者清單有快取，FindByAccount 回傳的是快取裡的共用物件，
+        // 就地改會讓其他請求在寫入完成前就看到未存檔的值（寫入失敗時更是永久錯值）
+        var updated = new WebUser
+        {
+            UserId = user.UserId,
+            Account = user.Account,
+            DisplayName = newDisplayName ?? user.DisplayName,
+            Email = newEmail ?? user.Email,
+            Active = user.Active,
+            GroupIds = user.GroupIds.ToList(),
+            LastLoginAt = user.LastLoginAt,
+            DispatchPaused = user.DispatchPaused
+        };
+        var saved = _users.Upsert(updated);
 
         // 登入流程此時尚未建立已登入身分（Cookie 要到 Controller 回應才寫入），
         // 用 RecordAuth（明確指定帳號／UserId）而非 Record（會讀「目前登入者」，此刻是 anonymous）

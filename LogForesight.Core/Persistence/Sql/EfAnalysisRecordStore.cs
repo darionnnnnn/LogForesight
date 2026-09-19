@@ -776,6 +776,25 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    /// <summary>
+    /// 最近一次 <see cref="QueryPage"/> 是否走 SQL 端分頁（false＝有命中的舊列、退回記憶體分頁）。
+    /// 只供測試觀察路徑，不影響行為；多執行緒下只代表「某一次」的結果。
+    /// </summary>
+    internal bool LastQueryPageUsedSqlPaging { get; private set; }
+
+    /// <summary>
+    /// 套用可下推篩選後，是否還有這次查詢可能命中的 HostId=0 舊列。
+    /// 沒有主機篩選時舊列一律算命中；有主機篩選時以 <see cref="HostMatcher"/> 同一個名稱比較語意判斷。
+    /// </summary>
+    private static bool HasMatchingLegacyRows(IQueryable<DailyRecordRow> filtered, RecordQueryFilter filter)
+    {
+        var legacy = filtered.Where(r => r.HostId == 0);
+        if (filter.Hosts == null) return legacy.Any();
+
+        var names = filter.Hosts.Select(k => k.HostName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return legacy.Select(r => r.HostName).Distinct().AsEnumerable().Any(names.Contains);
+    }
+
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var sw = Stopwatch.StartNew();
@@ -788,11 +807,22 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 這個殘餘條件存在時無法安全做 SQL 端真分頁——有這類舊列就整批撈回退回記憶體排序＋分頁，
         // 沒有就直接在 SQL 端 OFFSET/FETCH。這是本方法效能與正確性的分界點，
         // 契約測試（EfAnalysisRecordQueryTests）逐位比對兩條路徑與 Query() 結果一致。
-        var hasLegacyHostRows = ctx.DailyRecords.Any(r => r.HostId == 0);
+        //
+        // 舊列探測放在套用可下推篩選**之後**、而且只算「這次篩選真的可能命中的」舊列：
+        // 問整張表的話，只要表裡任何地方有一列 HostId=0（本機主機登記失敗時今天仍會產生），
+        // 全站每一次清單查詢都永遠走整窗撈回的慢路徑，與這次查的日期、主機完全無關。
+        // 有主機篩選時，ApplyPushableFilters 會把所有 HostId=0 的列留給記憶體比對名稱，
+        // 所以這裡只撈舊列的**名稱**（去重、量小）以與 HostMatcher 相同的 OrdinalIgnoreCase 比對，
+        // 不在 SQL 端比字串（同一個 collation 理由）。
         var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        var hasLegacyHostRows = HasMatchingLegacyRows(q, filter);
+        LastQueryPageUsedSqlPaging = !hasLegacyHostRows;
 
         if (!hasLegacyHostRows)
         {
+            // 留在 q 裡的 HostId=0 列（若有）名稱都不在主機篩選內，HostMatcher 本來就會排除，
+            // 在 SQL 端直接排除後分頁結果與 Query() 一致
+            q = q.Where(r => r.HostId != 0);
             var total = q.Count();
 
             // 表頭排序（date/host/risk）與預設「風險→關聯→日期」緊急程度排序共用同一個下推點；
