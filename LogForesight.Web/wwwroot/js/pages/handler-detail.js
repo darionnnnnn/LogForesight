@@ -21,7 +21,7 @@ import {
     savePageSize
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -360,6 +360,7 @@ replyOrdersBtn.addEventListener('click', () => {
     openWorkOrderReplyModal({
         title: '回覆選取的交辦單',
         targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
+        draftKey: workOrdersDraftKey(workOrderIds),
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);
@@ -562,6 +563,7 @@ function buildMemberPanel(row, cell) {
         openWorkOrderReplyModal({
             title: `回覆交辦單 #${row.workOrderId}`,
             targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
+            draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
             submit: async payload => {
                 const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload });
                 toastReplyResult(result);

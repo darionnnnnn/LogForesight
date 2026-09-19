@@ -10,6 +10,7 @@ import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
+import { clearAllDraftsForUser } from './note-editor.js';
 
 /**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
@@ -80,7 +81,7 @@ async function init() {
 
     renderNav(user);
     renderCurrentUser(user);
-    bindLogout();
+    bindLogout(user);
     initHelpPopovers();
     renderSetupReturnBanner();
     refreshRunActivity();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）
@@ -311,7 +312,7 @@ function renderCurrentUser(user) {
     el.title = el.textContent;
 }
 
-function bindLogout() {
+function bindLogout(user) {
     const button = document.getElementById('lf-logout');
     if (!button) return;
 
@@ -319,6 +320,8 @@ function bindLogout() {
         button.disabled = true;
         try {
             await api.post('/api/auth/logout');
+            // 主動登出才清草稿；工作階段逾時被導回登入頁不清（重新登入後要能還原）
+            clearAllDraftsForUser(user.userId);
         } finally {
             location.href = appUrl('/login');
         }

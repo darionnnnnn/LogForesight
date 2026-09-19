@@ -664,7 +664,17 @@ function defaultUnhandledControl(issue) {
     badge.title = '低風險問題預設不處理；沒有實際落盤，可在此確認或調回未處理';
     wrap.appendChild(badge);
 
-    const confirmBtn = smallActionButton('確認不處理', () => setIssueStatus(issue, 'wont_fix', wrap, { note: null }));
+    // 「不處理」一律要理由（與處理表單、交辦單回覆同一條必填規則），預設不處理的確認也不例外
+    const confirmBtn = smallActionButton('確認不處理', async () => {
+        const reason = await confirmActionWithReason({
+            title: '確認不處理？',
+            message: '這個問題會標為「不處理」，請留下理由供日後回頭確認判斷依據。',
+            reasonLabel: '不處理的理由（必填）',
+            confirmText: '確認不處理',
+            confirmVariant: 'primary'
+        });
+        if (reason) await setIssueStatus(issue, 'wont_fix', wrap, { note: reason });
+    });
     const reopenBtn = smallActionButton('調回未處理', () => setIssueStatus(issue, 'open', wrap, { forgetNoise: false }));
     wrap.append(confirmBtn, reopenBtn);
     return wrap;
@@ -767,14 +777,19 @@ function statusLabel(issue) {
  * 那套推導邏輯只在後端算一次（單一事實來源），前端用哪個值必須問後端要。
  */
 async function setIssueStatus(issue, status, wrap, extra = {}) {
+    let result;
     try {
-        const result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
+        result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
             issueKey: issue.issueKey,
             status,
             note: extra.note ?? null,
             forgetNoise: !!extra.forgetNoise
         });
+    } catch {
+        return;   // api.js 已顯示錯誤訊息，不再重複 toast
+    }
 
+    try {
         const fresh = await api.get(`/api/records/${hostId}/${date}`, { silent: true });
         const updated = fresh.topIssues.find(i => i.issueKey === issue.issueKey);
         if (updated) Object.assign(issue, updated);
@@ -789,8 +804,9 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
         // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
         const caseNote = result?.caseSyncedDayCount > 0 ? `（已同步案件涵蓋的 ${result.caseSyncedDayCount} 天）` : '';
         toast((status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記') + caseNote, 'success');
-    } catch (error) {
-        toast(error?.message || '更新失敗', 'danger');
+    } catch {
+        // 標記已成立，失敗的是 silent 的重新取回：api.js 沒出過訊息，這裡要自己講
+        toast('已更新，但重新載入狀態失敗，請重新整理頁面', 'warning');
     }
 }
 
