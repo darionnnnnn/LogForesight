@@ -110,7 +110,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
 
         Assert.Equal(1, result.Devices);
         Assert.Equal(1, result.Sensors);
@@ -166,11 +166,11 @@ public class PrtgFetchServiceTests : IDisposable
         var day = new DateTime(2026, 8, 30);
 
         // 跑第一次
-        var result1 = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result1 = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result1.Failures);
 
         // 跑第二次（同一天重跑）
-        var result2 = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result2 = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result2.Failures);
 
         using var ctx = _fx.NewContext();
@@ -211,7 +211,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result.Failures);
         Assert.Equal(1, result.Values);
 
@@ -262,7 +262,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
 
@@ -308,7 +308,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
 
@@ -354,7 +354,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, result.Values);
 
@@ -402,7 +402,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
         Assert.Equal(0, result.Failures);
         // 新語意：抓取目標日前一天～今天，因此 2026-08-29 (301)、2026-08-30 (302)、2026-08-31 (303) 皆在區間內並寫入
         Assert.Equal(3, result.StateChanges);
@@ -440,7 +440,7 @@ public class PrtgFetchServiceTests : IDisposable
         var day = new DateTime(2026, 8, 30);
 
         // 斷言不擲出例外
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
 
         // 斷言 devices 仍然寫入、回傳的 Failures 大於 0
         Assert.Equal(1, result.Devices);
@@ -492,7 +492,7 @@ public class PrtgFetchServiceTests : IDisposable
         var day = new DateTime(2026, 8, 30);
 
         // 限制併發數為 1
-        var result = await service.FetchDayAsync(day, concurrency: 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, concurrency: 1, CancellationToken.None, ScopeOf(0));
         Assert.Equal(0, result.Failures);
         Assert.Equal(5, result.Values);
 
@@ -536,7 +536,7 @@ public class PrtgFetchServiceTests : IDisposable
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
         var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None, ScopeOf(0));
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, handler.MaxConcurrentRequests);
@@ -584,7 +584,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, NoScope);
         Assert.Equal(0, result.Failures);
         Assert.Equal(5003, result.Devices);
 
@@ -613,7 +613,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
 
-        var task = service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+        var task = service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope);
         var finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10)));
 
         Assert.Same(task, finished);
@@ -644,7 +644,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope);
 
         Assert.Equal(PageSizeForFullPage * 2, result.Devices);
         Assert.Equal(0, result.Failures);
@@ -686,7 +686,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(day, 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 1, CancellationToken.None, ScopeOf(1));
 
         Assert.Equal(6, result.StateChanges);
         using var ctx = _fx.NewContext();
@@ -755,7 +755,7 @@ public class PrtgFetchServiceTests : IDisposable
         var (client, _) = CreateHistClient(histJson);
         var console = new TestConsole();
         var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
-        var result = await service.FetchDayAsync(new DateTime(2026, 9, 10), 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 10), 1, CancellationToken.None, ScopeOf(1));
         using var ctx = _fx.NewContext();
         var rows = await ctx.PrtgValues.OrderBy(v => v.PeriodStart).ToListAsync();
         return (result, rows, console);
@@ -978,7 +978,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
         Assert.Equal(0, result.Values);
         Assert.Contains(console.Lines, l => l.Contains("無法解析") && l.Contains("2"));
@@ -1012,7 +1012,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
@@ -1047,7 +1047,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
@@ -1075,7 +1075,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
         // 有 sensor 要抓卻一筆都沒抓到＝這個階段實質沒成功，必須反映在 Failures
         Assert.True(result.Failures > 0);
@@ -1105,7 +1105,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, syncStructure: false);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope, syncStructure: false);
 
         // 結構端點零請求；paused 的 902 不抓；synced_at 未被改寫（回填不得汙染「最後結構同步時間」）
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=devices"));
@@ -1128,7 +1128,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, syncStructure: false);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope, syncStructure: false);
 
         Assert.True(result.Failures > 0);
         Assert.Empty(handler.RequestedUrls);
@@ -1141,7 +1141,7 @@ public class PrtgFetchServiceTests : IDisposable
         var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
         var senJson = "{\"treesize\":3,\"sensors\":[" +
             "{\"objid\":201,\"parentid\":101,\"sensor\":\"Free Space C:\",\"type\":\"SNMP Disk Free\",\"status\":\"Up\",\"paused\":false}," +
-            "{\"objid\":202,\"parentid\":101,\"sensor\":\"HTTP\",\"type\":\"http\",\"status\":\"Up\",\"paused\":false}," +
+            "{\"objid\":202,\"parentid\":101,\"sensor\":\"Custom\",\"type\":\"SNMP Custom\",\"status\":\"Up\",\"paused\":false}," +
             "{\"objid\":203,\"parentid\":101,\"sensor\":\"Fan\",\"type\":\"Custom Fan\",\"status\":\"Up\",\"paused\":false}" +
             "]}";
         var msgJson = "{\"treesize\":0,\"messages\":[]}";
@@ -1168,7 +1168,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, overrides);
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 1, CancellationToken.None);
+        var result = await service.FetchDayAsync(day, 1, CancellationToken.None, ScopeOf(101));
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, result.Sensors);
@@ -1215,7 +1215,7 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
-        var result = await service.FetchDayAsync(day, 1, CancellationToken.None, syncStructure: true, fetchValues: false);
+        var result = await service.FetchDayAsync(day, 1, CancellationToken.None, ScopeOf(101), syncStructure: true, fetchValues: false);
 
         // 階段 1~3 照常完成（device／sensor／狀態變更有寫入）
         Assert.Equal(1, result.Devices);
@@ -1341,7 +1341,11 @@ public class PrtgFetchServiceTests : IDisposable
             if (url.Contains("content=devices"))
                 return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
             if (url.Contains("content=sensors"))
+            {
+                // S＝{101,102}：102 沒有感測器，逐台查詢時回空表
+                if (!HasIdQuery(url, 101)) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
                 return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":2,\"sensors\":[]}");
+            }
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata"))
@@ -1357,7 +1361,7 @@ public class PrtgFetchServiceTests : IDisposable
         var reports = new List<(string Stage, int Done, int Total)>();
         var lockObj = new object();
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, syncStructure: true, fetchValues: true,
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101, 102), syncStructure: true, fetchValues: true,
             progress: (stage, done, total) =>
             {
                 lock (lockObj)
@@ -1404,13 +1408,13 @@ public class PrtgFetchServiceTests : IDisposable
         var reports = new List<(string Stage, int Done, int Total)>();
         var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(101),
             syncStructure: true, fetchValues: false,
             progress: (stage, done, total) => reports.Add((stage, done, total)));
 
         Assert.Equal(0, result.Failures);
         Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncDevicesPhase && r.Done == 1 && r.Total == 0);
-        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncSensorsPhase && r.Done == 1 && r.Total == 0);
+        Assert.Contains(reports, r => r.Stage == PrtgFetchService.PrtgSyncSensorsPhase && r.Done == 1 && r.Total == 1);
     }
 
     /// <summary>
@@ -1450,12 +1454,12 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
-        await service.FetchDayAsync(DateTime.Today.AddDays(-daysAgo), 2, CancellationToken.None,
+        await service.FetchDayAsync(DateTime.Today.AddDays(-daysAgo), 2, CancellationToken.None, ScopeOf(1),
             syncStructure: true, fetchValues: false);
 
         var messageUrl = Assert.Single(messageUrls);
         Assert.Contains(expectedFilter, messageUrl);
-        Assert.Contains("id=0", messageUrl);
+        Assert.Contains("id=1", messageUrl);
     }
 
     /// <summary>
@@ -1484,11 +1488,11 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
-        await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-daysAgo), DateTime.Today, CancellationToken.None);
+        await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-daysAgo), DateTime.Today, new long[] { 1 }, 1, CancellationToken.None);
 
         var messageUrl = Assert.Single(messageUrls);
         Assert.Contains(expectedFilter, messageUrl);
-        Assert.Contains("id=0", messageUrl);
+        Assert.Contains("id=1", messageUrl);
     }
 
     /// <summary>
@@ -1513,13 +1517,13 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
-        await service.FetchDayAsync(DateTime.Today.AddDays(-400), 2, CancellationToken.None,
+        await service.FetchDayAsync(DateTime.Today.AddDays(-400), 2, CancellationToken.None, ScopeOf(1),
             syncStructure: true, fetchValues: false);
 
         var messageUrl = Assert.Single(messageUrls);
         Assert.DoesNotContain("filter_drel", messageUrl);
-        Assert.Contains("id=0", messageUrl);
-        Assert.DoesNotContain("id=0&&", messageUrl);
+        Assert.Contains("id=1", messageUrl);
+        Assert.DoesNotContain("id=1&&", messageUrl);
     }
 
     private static string BuildMessagePage(int count, Func<int, (long Objid, string DtStr, string Status, string Message)> rowGenerator, int? treesize = null)
@@ -1583,7 +1587,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
         Assert.Equal(2, handler.RequestedUrls.Count(u => u.Contains("content=messages")));
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("start=10000"));
@@ -1642,7 +1646,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
         Assert.Contains(handler.RequestedUrls, u => u.Contains("start=10000"));
         Assert.False(result.StoppedEarly);
@@ -1686,7 +1690,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
         Assert.Contains(handler.RequestedUrls, u => u.Contains("start=10000"));
         Assert.False(result.StoppedEarly);
@@ -1730,7 +1734,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
         Assert.Contains(handler.RequestedUrls, u => u.Contains("start=10000"));
         Assert.False(result.StoppedEarly);
@@ -1763,7 +1767,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
         Assert.Equal(4, result.TotalWritten);
         Assert.Equal(2, result.WrittenByDay[new DateTime(2026, 8, 22)]);
@@ -1803,11 +1807,11 @@ public class PrtgFetchServiceTests : IDisposable
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
         // 第一次執行：新增 2 筆
-        var res1 = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var res1 = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
         Assert.Equal(2, res1.TotalWritten);
 
         // 第二次執行（同一區間重跑）：新增 0 筆
-        var res2 = await service.FetchStateChangesRangeAsync(fromDate, toDate, CancellationToken.None);
+        var res2 = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
         Assert.Equal(0, res2.TotalWritten);
         Assert.Equal(0, res2.WrittenByDay[new DateTime(2026, 8, 20)]);
         Assert.Equal(0, res2.WrittenByDay[new DateTime(2026, 8, 21)]);
@@ -1842,7 +1846,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, syncStructure: true, fetchValues: false);
+        var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(1), syncStructure: true, fetchValues: false);
 
         Assert.Equal(0, result.Failures);
         // 目標日前兩天 (701) 與明天 (705) 不寫；前一天 (702)、目標日 (703)、今天 (704) 寫入
@@ -1856,5 +1860,899 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Contains(rows, r => r.SensorObjid == 704);
         Assert.DoesNotContain(rows, r => r.SensorObjid == 701);
         Assert.DoesNotContain(rows, r => r.SensorObjid == 705);
+    }
+
+    // ── 狀態變更逐裝置查詢（階段 3）──
+
+    private static string MessagesJson(params (long Objid, DateTime At)[] rows) =>
+        "{\"messages\":[" + string.Join(",", rows.Select(r =>
+            $"{{\"objid\":{r.Objid},\"datetime\":\"{r.At:yyyy-MM-dd HH:mm:ss}\",\"status\":\"Down\",\"message\":\"m\"}}")) + "]}";
+
+    /// <summary>messages 替身：依 <c>id=</c>（整段比對）路由到各裝置的第一頁內容，其餘頁回空。</summary>
+    private static (PrtgClient Client, StubHandler Handler) CreateMessagesClient(
+        IReadOnlyDictionary<long, string> firstPageByDevice, long? failingDevice = null)
+    {
+        return CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+            {
+                var id = IdQuery(url);
+                if (id.HasValue && id == failingDevice) throw new HttpRequestException("模擬連線失敗");
+                if (id.HasValue && url.Contains("start=0&") && firstPageByDevice.TryGetValue(id.Value, out var page))
+                    return JsonResponse(page);
+                return JsonResponse("{\"messages\":[]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+    }
+
+    [Fact]
+    public async Task 狀態變更_範圍兩台_逐台帶id查詢且不查id0也不帶parent欄位()
+    {
+        var today = DateTime.Today;
+        var (client, handler) = CreateMessagesClient(new Dictionary<long, string>
+        {
+            [1] = MessagesJson((201, today.AddHours(1))),
+            [2] = MessagesJson((202, today.AddHours(2))),
+        });
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(today.AddDays(-1), 2, CancellationToken.None, ScopeOf(1, 2), fetchValues: false);
+
+        var messageUrls = handler.RequestedUrls.Where(u => u.Contains("content=messages")).ToList();
+        Assert.Single(messageUrls, u => HasIdQuery(u, 1));
+        Assert.Single(messageUrls, u => HasIdQuery(u, 2));
+        Assert.Equal(2, messageUrls.Count);
+        Assert.DoesNotContain(handler.RequestedUrls, u => HasIdQuery(u, 0));
+        Assert.DoesNotContain(messageUrls, u => u.Contains("parent"));
+        Assert.Equal(2, result.StateChanges);
+        Assert.Equal(0, result.Failures);
+    }
+
+    [Fact]
+    public async Task 狀態變更_範圍為空_不發messages請求且不計失敗()
+    {
+        var (client, handler) = CreateMessagesClient(new Dictionary<long, string>());
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(DateTime.Today.AddDays(-1), 2, CancellationToken.None, NoScope, fetchValues: false);
+
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=messages"));
+        Assert.Equal(0, result.Failures);
+        Assert.Contains("[階段 3/4] 取數範圍內沒有任何裝置，略過狀態變更同步。", console.Lines);
+    }
+
+    [Fact]
+    public async Task 狀態變更_範圍計算失敗_不發messages請求且只計一次失敗()
+    {
+        var (client, handler) = CreateMessagesClient(new Dictionary<long, string>());
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(DateTime.Today.AddDays(-1), 2, CancellationToken.None,
+            _ => throw new InvalidOperationException("模擬範圍計算失敗"), fetchValues: false);
+
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=messages"));
+        // 只有範圍計算那一次失敗；階段 3 不重複計
+        Assert.Equal(1, result.Failures);
+        Assert.Contains("[階段 3/4] 取數範圍無法取得，略過狀態變更同步。", console.Lines);
+
+        // 直接呼叫傳 null 也一樣：零請求、視為收斂
+        var direct = await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-1), DateTime.Today, null, 2, CancellationToken.None);
+        Assert.True(direct.Converged);
+        Assert.Equal(0, direct.QueriedObjects);
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=messages"));
+    }
+
+    [Fact]
+    public async Task 狀態變更_一台逾時_另一台照寫且記為失敗並列出明細()
+    {
+        var today = DateTime.Today;
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages"))
+            {
+                // 逾時：替身擲 TaskCanceledException，但測試的 ct 並未取消
+                if (HasIdQuery(url, 2)) throw new TaskCanceledException("模擬逾時");
+                return JsonResponse(url.Contains("start=0&") ? MessagesJson((201, today.AddHours(1))) : "{\"messages\":[]}");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 2, Name = "Dev-Two" } }, DateTime.Now);
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1, 2 }, 2, CancellationToken.None);
+
+        Assert.False(result.Converged);
+        Assert.Equal(1, result.FailedObjects);
+        Assert.Equal(2, result.QueriedObjects);
+        Assert.Equal(1, result.TotalWritten);
+        Assert.Equal("1 台裝置的狀態變更取得失敗。", result.Error);
+        Assert.Contains(console.Lines, l => l.StartsWith("[階段 3/4] ✗ 1 台裝置的狀態變更取得失敗：") && l.Contains("Dev-Two(2)"));
+        using var ctx = _fx.NewContext();
+        Assert.Contains(ctx.PrtgStateChanges, r => r.SensorObjid == 201);
+    }
+
+    [Fact]
+    public async Task 狀態變更_一台連線失敗_FetchDayAsync失敗數加一()
+    {
+        var today = DateTime.Today;
+        var (client, _) = CreateMessagesClient(new Dictionary<long, string>
+        {
+            [1] = MessagesJson((201, today.AddHours(1))),
+        }, failingDevice: 2);
+        var store = CreateStore();
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 2, Name = "Dev-Two" } }, DateTime.Now);
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(today.AddDays(-1), 2, CancellationToken.None, ScopeOf(1, 2), fetchValues: false);
+
+        // 階段 1、2 無失敗（裝置表空、感測器空），唯一的失敗來自階段 3
+        Assert.Equal(1, result.Failures);
+        Assert.Equal(1, result.StateChanges);
+        Assert.Contains(console.Lines, l => l.StartsWith("[階段 3/4] ✗ 1 台裝置的狀態變更取得失敗：Dev-Two(2)"));
+    }
+
+    [Fact]
+    public async Task 狀態變更_全部零筆時印出9d5提示_有一台非空就不印()
+    {
+        var today = DateTime.Today;
+        var (emptyClient, _) = CreateMessagesClient(new Dictionary<long, string>());
+        var emptyConsole = new TestConsole();
+        var emptyService = new PrtgFetchService(emptyClient, CreateStore(), emptyConsole, new Dictionary<string, string>());
+        var emptyResult = await emptyService.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1, 2 }, 2, CancellationToken.None);
+        Assert.Contains(emptyConsole.Lines, l => l.Contains("9d-5") && l.Contains("範圍內 2 台裝置近期都沒有任何狀態變更"));
+        Assert.Equal(2, emptyResult.EmptyObjects);
+
+        var (someClient, _) = CreateMessagesClient(new Dictionary<long, string>
+        {
+            [2] = MessagesJson((202, today.AddHours(1))),
+        });
+        var someConsole = new TestConsole();
+        var someService = new PrtgFetchService(someClient, CreateStore(), someConsole, new Dictionary<string, string>());
+        var someResult = await someService.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1, 2 }, 2, CancellationToken.None);
+        Assert.DoesNotContain(someConsole.Lines, l => l.Contains("9d-5"));
+        Assert.Equal(1, someResult.EmptyObjects);
+    }
+
+    [Fact]
+    public async Task 狀態變更_提早停止狀態不跨物件共用()
+    {
+        var fromDate = new DateTime(2026, 8, 30);
+        var toDate = new DateTime(2026, 8, 31);
+        // 裝置 1 第一頁：滿頁且整頁早於門檻（2026-08-29 00:00）→ 提早停止
+        var oldPage = BuildMessagePage(PageSizeForFullPage, i =>
+            (10000 + i, new DateTime(2026, 8, 28, 23, 59, 59).AddSeconds(-i).ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}"));
+        // 裝置 2 第一頁：滿頁且在區間內 → 不停，必須翻第二頁
+        var recentPage = BuildMessagePage(PageSizeForFullPage, i =>
+            (20000 + i, new DateTime(2026, 8, 31, 23, 59, 59).AddSeconds(-i).ToString("yyyy-MM-dd HH:mm:ss"), "Up", $"m{i}"));
+
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (!url.Contains("content=messages")) return JsonResponse("{}", HttpStatusCode.NotFound);
+            if (url.Contains("start=0&"))
+                return JsonResponse(HasIdQuery(url, 1) ? oldPage : recentPage);
+            return JsonResponse("{\"messages\":[]}");
+        });
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+
+        // 併發 1：裝置 1 一定先跑完，它的提早停止若外洩就會讓裝置 2 少翻一頁
+        var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1, 2 }, 1, CancellationToken.None);
+
+        Assert.True(result.StoppedEarly);
+        Assert.DoesNotContain(handler.RequestedUrls, u => HasIdQuery(u, 1) && u.Contains("start=5000"));
+        Assert.Contains(handler.RequestedUrls, u => HasIdQuery(u, 2) && u.Contains("start=5000"));
+    }
+
+    [Fact]
+    public async Task 狀態變更_守門忙碌時放行前不發messages請求()
+    {
+        var today = DateTime.Today;
+        var (client, handler) = CreateMessagesClient(new Dictionary<long, string>
+        {
+            [1] = MessagesJson((201, today.AddHours(1))),
+        });
+
+        // 守門自己的 client：第一次讀到 CPU 95%（超標、strikes=1 → 進入暫停），之後回落
+        var guardCalls = 0;
+        var (guardClient, _) = CreateClient(_ =>
+        {
+            var busy = Interlocked.Increment(ref guardCalls) == 1;
+            return JsonResponse($"{{\"sensors\":[{{\"objid\":9001,\"device\":\"PRTG\",\"sensor\":\"CPU Load\",\"status\":\"Up\",\"lastvalue\":\"{(busy ? "95 %" : "50 %")}\"}}]}}");
+        });
+        var settings = new SystemSettings
+        {
+            PrtgResourceGuardEnabled = true,
+            PrtgResourceGuardStrikes = 1,
+            PrtgResourceGuardCpuPercent = 80,
+            PrtgResourceGuardCheckSeconds = 0,
+            PrtgResourceGuardPauseMinutes = 5
+        };
+        var recorder = new BatchRunRecorder(new LogForesight.Core.Persistence.BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")), "test-host", Array.Empty<string>());
+        int? messagesSeenDuringPause = null;
+        using var guard = new PrtgResourceGuard(guardClient, settings,
+            new PrtgResourceGuardTargetResult(new long[] { 9001 }, new Dictionary<long, string> { [9001] = "cpu" }),
+            recorder, new TestConsole(), null)
+        {
+            DelayAsync = (_, _) =>
+            {
+                messagesSeenDuringPause ??= handler.RequestedUrls.Count(u => u.Contains("content=messages"));
+                return Task.CompletedTask;
+            }
+        };
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>(), guard);
+
+        var result = await service.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1 }, 1, CancellationToken.None);
+
+        Assert.Equal(0, messagesSeenDuringPause);
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("content=messages") && HasIdQuery(u, 1));
+        Assert.Equal(1, result.TotalWritten);
+    }
+
+    [Fact]
+    public async Task 狀態變更_感測器不在鏡像中_仍寫入並提示()
+    {
+        var today = DateTime.Today;
+        var (client, _) = CreateMessagesClient(new Dictionary<long, string>
+        {
+            [1] = MessagesJson((201, today.AddHours(1)), (777, today.AddHours(2))),
+        });
+        var store = CreateStore();
+        SeedOldSensors(store, (201, 1));
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1 }, 1, CancellationToken.None);
+
+        Assert.Equal(2, result.TotalWritten);
+        Assert.Contains(console.Lines, l => l.Contains("其中 1 顆感測器尚未在鏡像中"));
+        using var ctx = _fx.NewContext();
+        Assert.Contains(ctx.PrtgStateChanges, r => r.SensorObjid == 777);
+    }
+
+    // ── 取數範圍提供者（scopeProvider）的呼叫時機與引數 ──
+
+    private const string ScopeMark = "<<SCOPE>>";
+
+    /// <summary>最小結構樹；devicesMode：ok＝一台裝置、empty＝空陣列、error＝回 500。</summary>
+    private static (PrtgClient Client, StubHandler Handler) CreateScopeClient(string devicesMode)
+    {
+        return CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+            {
+                return devicesMode switch
+                {
+                    "error" => JsonResponse("{}", HttpStatusCode.InternalServerError),
+                    "empty" => JsonResponse("{\"treesize\":0,\"devices\":[]}"),
+                    _ => url.Contains("start=0")
+                        ? JsonResponse("{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"S1\",\"host\":\"10.0.0.1\",\"group\":\"G\"}]}")
+                        : JsonResponse("{\"treesize\":1,\"devices\":[]}")
+                };
+            }
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0")
+                    ? JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\"}]}")
+                    : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata.json"))
+                return JsonResponse("{\"histdata\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+    }
+
+    private static Func<bool, PrtgScopeResult> MarkingScope(StubHandler handler, List<bool> received) => refreshed =>
+    {
+        received.Add(refreshed);
+        lock (handler.RequestedUrls) handler.RequestedUrls.Add(ScopeMark);
+        return new PrtgScopeResult(new HashSet<long> { 101 }, 1, 0, 0, 0);
+    };
+
+    [Fact]
+    public async Task FetchDayAsync_範圍提供者在裝置同步之後_感測器同步之前呼叫恰一次()
+    {
+        var (client, handler) = CreateScopeClient("ok");
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
+        var received = new List<bool>();
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, MarkingScope(handler, received));
+
+        var seq = handler.RequestedUrls.ToList();
+        Assert.Single(seq, u => u == ScopeMark);
+        var mark = seq.IndexOf(ScopeMark);
+        var lastDevices = seq.FindLastIndex(u => u.Contains("content=devices"));
+        var firstSensors = seq.FindIndex(u => u.Contains("content=sensors"));
+        Assert.True(lastDevices >= 0 && firstSensors >= 0);
+        Assert.True(lastDevices < mark, "標記要在最後一個 devices 請求之後");
+        Assert.True(mark < firstSensors, "標記要在第一個 sensors 請求之前");
+        Assert.Contains(console.Lines, l => l.Contains("[範圍] 取數範圍：1 台裝置（對應 1、衝突 0、人工 0、守門 0）"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_不同步結構時範圍提供者在狀態變更之前呼叫恰一次且收到false()
+    {
+        var (client, handler) = CreateScopeClient("ok");
+        var store = CreateStore();
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
+        // 先跑一次讓鏡像有感測器（syncStructure:false 需要既有鏡像）
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(101));
+        lock (handler.RequestedUrls) handler.RequestedUrls.Clear();
+
+        var received = new List<bool>();
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, MarkingScope(handler, received), syncStructure: false);
+
+        var seq = handler.RequestedUrls.ToList();
+        Assert.Single(seq, u => u == ScopeMark);
+        var firstMessages = seq.FindIndex(u => u.Contains("content=messages"));
+        Assert.True(firstMessages >= 0);
+        Assert.True(seq.IndexOf(ScopeMark) < firstMessages, "標記要在第一個 messages 請求之前");
+        Assert.Equal(new[] { false }, received);
+    }
+
+    [Theory]
+    [InlineData("ok", true)]
+    [InlineData("error", false)]
+    [InlineData("empty", false)]
+    public async Task FetchDayAsync_範圍提供者收到的devicesRefreshed依裝置同步結果(string devicesMode, bool expected)
+    {
+        var (client, handler) = CreateScopeClient(devicesMode);
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+        var received = new List<bool>();
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, MarkingScope(handler, received));
+
+        Assert.Equal(new[] { expected }, received);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_範圍提供者擲例外_失敗加一且其餘階段照常()
+    {
+        var (client, handler) = CreateScopeClient("ok");
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
+
+        var baseline = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope);
+        lock (handler.RequestedUrls) handler.RequestedUrls.Clear();
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None,
+            _ => throw new InvalidOperationException("範圍壞了"));
+
+        Assert.Equal(baseline.Failures + 1, result.Failures);
+        Assert.Contains(console.Lines, l => l.Contains("取數範圍計算失敗") && l.Contains("範圍壞了"));
+        var seq = handler.RequestedUrls.ToList();
+        Assert.DoesNotContain(seq, u => u.Contains("content=sensors"));
+        // 範圍無法取得時階段 3 也略過（逐裝置查詢沒有可查的物件），且不重複計失敗
+        Assert.DoesNotContain(seq, u => u.Contains("content=messages"));
+    }
+
+    // ── 過期裝置清除（階段 1 之後、取數範圍之前）──
+
+    /// <summary>預放裝置鏡像，SyncedAt 設在過去，模擬上一趟同步留下的列。</summary>
+    private static void SeedOldDevices(EfPrtgStore store, IEnumerable<long> objids)
+    {
+        var rows = objids.Select(id => new PrtgDeviceRow { Objid = id, Name = $"Old-{id}", GroupPath = "G" }).ToList();
+        store.UpsertDevices(rows, DateTime.Now.AddDays(-1));
+    }
+
+    /// <summary>devices 回指定 objid、sensors 與 messages 皆空的替身。</summary>
+    private static PrtgClient CreateDevicesOnlyClient(IEnumerable<long> objids)
+    {
+        var devJson = "{\"devices\":[" +
+                      string.Join(",", objids.Select(id => $"{{\"objid\":{id},\"device\":\"Dev-{id}\",\"paused\":false}}")) +
+                      "]}";
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse(url.Contains("start=0") ? devJson : "{\"devices\":[]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        return client;
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_清除PRTG端已不存在的裝置且在取數範圍之前()
+    {
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 101, 102, 99 });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(CreateDevicesOnlyClient(new long[] { 101, 102 }), store, console,
+            new Dictionary<string, string>());
+
+        int? devicesSeenByProvider = null;
+        PrtgScopeResult Provider(bool _)
+        {
+            devicesSeenByProvider = store.GetAllDevices().Count;
+            return new PrtgScopeResult(new HashSet<long>(), 0, 0, 0, 0);
+        }
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, Provider,
+            fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        var remaining = store.GetAllDevices().Select(d => d.Objid).OrderBy(id => id).ToList();
+        Assert.Equal(new long[] { 101, 102 }, remaining);
+        Assert.Equal(2, devicesSeenByProvider);
+        Assert.Contains(console.Lines, l => l.Contains("[階段 1/4] 已清除 1 台 PRTG 端已不存在的裝置。"));
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_devices端點失敗時不清除過期裝置()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse("{\"error\":\"Internal error\"}", HttpStatusCode.InternalServerError);
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 101, 102, 99 });
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.True(result.Failures > 0);
+        Assert.Equal(3, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_devices分頁未收斂時不清除過期裝置()
+    {
+        // 未收斂＝翻到頁數上限仍是滿頁且都是新列。沒有 objid 的列不會被去重、也不會寫入（mapper 回 null），
+        // 用它填滿每一頁，只花解析成本就能讓分頁器翻到上限；第一頁另放 2 台真實裝置讓寫入數大於 0，
+        // 確保擋下清除的是「未收斂」這個條件，而不是「寫入數為 0」。
+        var filler = string.Join(",", Enumerable.Repeat("{}", PageSizeForFullPage - 2));
+        var firstPage = "{\"devices\":[{\"objid\":101,\"device\":\"Dev-101\"},{\"objid\":102,\"device\":\"Dev-102\"}," + filler + "]}";
+        var otherPage = "{\"devices\":[" + string.Join(",", Enumerable.Repeat("{}", PageSizeForFullPage)) + "]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse(url.Contains("start=0&") ? firstPage : otherPage);
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 99 });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.Equal(2, result.Devices);
+        Assert.True(result.Failures > 0);
+        Assert.Contains(console.Lines, l => l.Contains("鏡像不完整"));
+        Assert.Contains(store.GetAllDevices(), d => d.Objid == 99);
+        Assert.Equal(3, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_本趟未出現的裝置過半時不清除且不計失敗()
+    {
+        var store = CreateStore();
+        SeedOldDevices(store, Enumerable.Range(1, 10).Select(i => (long)i));
+        var console = new TestConsole();
+        var service = new PrtgFetchService(CreateDevicesOnlyClient(new long[] { 1, 2, 3, 4 }), store, console,
+            new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(10, store.GetAllDevices().Count);
+        Assert.Contains(console.Lines, l => l.Contains("有 6 台裝置（超過鏡像 10 台的一半）") && l.Contains("本趟不清除"));
+    }
+
+    private static PrtgScopeResult NoScope(bool _) => new(new HashSet<long>(), 0, 0, 0, 0);
+
+    /// <summary>取數範圍＝指定裝置集合（階段 2 只同步這些裝置的感測器）。</summary>
+    private static Func<bool, PrtgScopeResult> ScopeOf(params long[] ids) =>
+        _ => new PrtgScopeResult(ids.ToHashSet(), ids.Length, 0, 0, 0);
+
+    /// <summary>URL 是否帶 <c>id={id}</c>（整段比對，避免 id=1 誤中 id=10）。</summary>
+    private static bool HasIdQuery(string url, long id) =>
+        System.Text.RegularExpressions.Regex.IsMatch(url, $@"[?&]id={id}(&|$)");
+
+    private static long? IdQuery(string url)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(url, @"[?&]id=(\d+)(&|$)");
+        return m.Success ? long.Parse(m.Groups[1].Value) : null;
+    }
+
+    // ── 感測器依取數範圍同步與清除（階段 2）──
+
+    private sealed record FakeSensor(long Objid, long Device, string Name, bool Paused = false);
+
+    private static string SensorsJson(IReadOnlyCollection<FakeSensor> sensors) =>
+        $"{{\"treesize\":{sensors.Count},\"sensors\":[" +
+        string.Join(",", sensors.Select(s =>
+            $"{{\"objid\":{s.Objid},\"parentid\":{s.Device},\"sensor\":\"{s.Name}\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":{(s.Paused ? "true" : "false")}}}")) +
+        "]}";
+
+    /// <summary>
+    /// 感測器替身：帶 <c>id=</c> 的 sensors 請求只回該裝置的感測器（failingDevice 回 500）；
+    /// 不帶 <c>id=</c> 的回全部感測器。devices、messages 回空；historicdata 回一筆。
+    /// </summary>
+    private static (PrtgClient Client, StubHandler Handler) CreateSensorScopeClient(
+        IReadOnlyList<FakeSensor> sensors, long? failingDevice = null)
+    {
+        return CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+            {
+                var id = IdQuery(url);
+                if (id.HasValue && id == failingDevice)
+                    return JsonResponse("{\"error\":\"Internal error\"}", HttpStatusCode.InternalServerError);
+                var rows = id.HasValue ? sensors.Where(s => s.Device == id.Value).ToList() : sensors.ToList();
+                return JsonResponse(url.Contains("start=0&") ? SensorsJson(rows) : SensorsJson(Array.Empty<FakeSensor>()));
+            }
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+    }
+
+    /// <summary>預放感測器鏡像，SyncedAt 設在過去，模擬上一趟同步留下的列。</summary>
+    private static void SeedOldSensors(EfPrtgStore store, params (long Objid, long Device)[] sensors)
+    {
+        store.UpsertSensors(sensors.Select(s => new PrtgSensorRow
+        {
+            Objid = s.Objid,
+            DeviceObjid = s.Device,
+            Name = $"Old-{s.Objid}",
+            SensorType = "ping"
+        }).ToList(), DateTime.Now.AddDays(-1));
+    }
+
+    private List<long> MirrorSensorObjids()
+    {
+        using var ctx = _fx.NewContext();
+        return ctx.PrtgSensors.Select(s => s.Objid).OrderBy(id => id).ToList();
+    }
+
+    private static readonly FakeSensor[] TwoDeviceSensors =
+    {
+        new(201, 1, "D1-A"),
+        new(202, 2, "D2-A"),
+    };
+
+    [Fact]
+    public async Task 感測器同步_範圍不超過門檻時逐台帶id查詢且沒有全站查詢()
+    {
+        var (client, handler) = CreateSensorScopeClient(TwoDeviceSensors);
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        var sensorUrls = handler.RequestedUrls.Where(u => u.Contains("content=sensors")).ToList();
+        Assert.Equal(2, sensorUrls.Count);
+        Assert.Single(sensorUrls, u => HasIdQuery(u, 1));
+        Assert.Single(sensorUrls, u => HasIdQuery(u, 2));
+        Assert.DoesNotContain(sensorUrls, u => IdQuery(u) == null);
+        Assert.Equal(2, result.Sensors);
+        Assert.Equal(0, result.Failures);
+    }
+
+    [Fact]
+    public async Task 感測器同步_清除範圍外與PRTG端已不存在的感測器()
+    {
+        var store = CreateStore();
+        // 301：範圍外裝置 3；299：裝置 1 但 PRTG 這次沒回
+        SeedOldSensors(store, (301, 3), (299, 1));
+        var console = new TestConsole();
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(new long[] { 201, 202 }, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 已清除 2 個範圍外或 PRTG 端已不存在的感測器。"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_範圍為空時不抓不清除()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (301, 3));
+        var console = new TestConsole();
+        var (client, handler) = CreateSensorScopeClient(TwoDeviceSensors);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(new long[] { 301 }, MirrorSensorObjids());
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=sensors"));
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 取數範圍內沒有任何裝置，略過感測器同步。"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_範圍提供者擲例外時不抓不清除()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (301, 3));
+        var console = new TestConsole();
+        var (client, handler) = CreateSensorScopeClient(TwoDeviceSensors);
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+            _ => throw new InvalidOperationException("範圍壞了"), fetchValues: false);
+
+        // 只有範圍計算失敗那一次
+        Assert.Equal(1, result.Failures);
+        Assert.Equal(new long[] { 301 }, MirrorSensorObjids());
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=sensors"));
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 取數範圍無法取得，略過感測器同步。"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_有一台取得失敗時不清除()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (301, 3));
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, failingDevice: 2);
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        Assert.Contains(301L, MirrorSensorObjids());
+    }
+
+    [Fact]
+    public async Task 感測器同步_單台回零顆時該台舊感測器保留一趟_上次刷新已過寬限才清()
+    {
+        var store = CreateStore();
+        // 裝置 2 本趟回 0 顆：302 昨天才刷新過（寬限內）→ 留；303 三天前刷新（連續回空）→ 清；裝置 3 範圍外 → 清
+        SeedOldSensors(store, (302, 2), (301, 3));
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 303, DeviceObjid = 2, Name = "Old-303", SensorType = "ping" }
+        }, DateTime.Now.AddDays(-3));
+        var (client, _) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A") });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        Assert.Equal(new long[] { 201, 302 }, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("1 台裝置本趟回傳 0 個感測器") && l.Contains("先保留一趟"));
+        Assert.Equal(0, result.Failures);
+    }
+
+    [Fact]
+    public async Task 感測器同步_範圍內沒有對應成功的裝置時不清除()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (301, 3));
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors);
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        // 範圍只有守門裝置（Mapped = 0）：主機主檔讀到空清單時就是這個形狀
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+            _ => new PrtgScopeResult(new HashSet<long> { 1, 2 }, 0, 0, 0, 2), fetchValues: false);
+
+        Assert.Contains(301L, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("沒有任何對應成功的裝置，本趟不清除"));
+    }
+
+    [Fact]
+    public async Task 不同步結構且不取數值時_鏡像沒有感測器不提早返回_狀態變更階段照常說明()
+    {
+        var store = CreateStore();
+        var (client, handler) = CreateSensorScopeClient(Array.Empty<FakeSensor>());
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, NoScope,
+            syncStructure: false, fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("無法回填"));
+        Assert.Contains(console.Lines, l => l.Contains("略過狀態變更同步"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_範圍內全部零感測器時不清除()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (301, 3));
+        var (client, _) = CreateSensorScopeClient(Array.Empty<FakeSensor>());
+        var service = new PrtgFetchService(client, store, new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        Assert.Equal(0, result.Sensors);
+        Assert.Equal(new long[] { 301 }, MirrorSensorObjids());
+    }
+
+    [Fact]
+    public async Task 感測器同步_單台失敗時其餘照寫且失敗只加一()
+    {
+        var console = new TestConsole();
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, failingDevice: 2);
+        var service = new PrtgFetchService(client, CreateStore(), console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
+            fetchValues: false);
+
+        // 其餘階段（裝置空表、狀態變更空表）都不會失敗，失敗數就是階段 2 的那一次
+        Assert.Equal(1, result.Failures);
+        Assert.Equal(1, result.Sensors);
+        Assert.Equal(new long[] { 201 }, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("1 台裝置的感測器取得失敗") && l.Contains("：2"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_範圍超過門檻時全站分頁一次且只寫範圍內()
+    {
+        var (client, handler) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A"), new(901, 9999, "Out") });
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+        var scope = Enumerable.Range(1, 501).Select(i => (long)i).ToArray();
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(scope),
+            fetchValues: false);
+
+        var sensorUrls = handler.RequestedUrls.Where(u => u.Contains("content=sensors")).ToList();
+        Assert.Single(sensorUrls);
+        Assert.Null(IdQuery(sensorUrls[0]));
+        Assert.Equal(new long[] { 201 }, MirrorSensorObjids());
+        Assert.Equal(1, result.Sensors);
+    }
+
+    [Fact]
+    public async Task 感測器同步_逐台與全站兩種取法寫進鏡像的內容相同()
+    {
+        var sensors = new FakeSensor[]
+        {
+            new(201, 1, "D1-A"),
+            new(202, 1, "D1-B", Paused: true),
+            new(203, 2, "D2-A"),
+            new(901, 7777, "Out"),
+        };
+        var (client, handler) = CreateSensorScopeClient(sensors);
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+
+        List<(long, long, string, string, string?, bool)> Snapshot()
+        {
+            using var ctx = _fx.NewContext();
+            return ctx.PrtgSensors.Where(s => s.DeviceObjid == 1 || s.DeviceObjid == 2)
+                .OrderBy(s => s.Objid).ToList()
+                .Select(s => (s.Objid, s.DeviceObjid, s.Name, s.SensorType, s.Status, s.Paused)).ToList();
+        }
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2), fetchValues: false);
+        var perDevice = Snapshot();
+        using (var ctx = _fx.NewContext()) ctx.PrtgSensors.ExecuteDelete();
+
+        lock (handler.RequestedUrls) handler.RequestedUrls.Clear();
+        var wide = new long[] { 1, 2 }.Concat(Enumerable.Range(1000, 500).Select(i => (long)i)).ToArray();
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(wide), fetchValues: false);
+        var siteWide = Snapshot();
+
+        // 確認第二趟真的走全站模式
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("content=sensors") && IdQuery(u) == null);
+        Assert.Equal(3, perDevice.Count);
+        Assert.Equal(perDevice, siteWide);
+        Assert.Equal(new long[] { 201, 202, 203 }, MirrorSensorObjids());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task 感測器同步_數值名單只含範圍內未暫停感測器(bool siteWide)
+    {
+        var sensors = new FakeSensor[]
+        {
+            new(201, 1, "D1-A"),
+            new(202, 1, "D1-B", Paused: true),
+            new(301, 3, "D3-A"),
+        };
+        var (client, handler) = CreateSensorScopeClient(sensors);
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+        var scope = siteWide
+            ? new long[] { 1 }.Concat(Enumerable.Range(1000, 500).Select(i => (long)i)).ToArray()
+            : new long[] { 1 };
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(scope), fetchValues: true);
+
+        var histIds = handler.RequestedUrls.Where(u => u.Contains("historicdata"))
+            .Select(u => IdQuery(u)).OrderBy(id => id).ToList();
+        Assert.Equal(new long?[] { 201 }, histIds);
+    }
+
+    [Fact]
+    public async Task BackfillSensorsForDevicesAsync_兩台一台失敗_另一台寫入且不清除既有列()
+    {
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("id=102"))
+                return JsonResponse("{}", HttpStatusCode.InternalServerError);
+            if (url.Contains("content=sensors") && url.Contains("id=101"))
+                return url.Contains("start=0")
+                    ? JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\"}]}")
+                    : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        // 範圍外、很久以前同步的既有列：補抓不得清除
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 900, DeviceObjid = 999, Name = "Old", SensorType = "ping", Status = "Up" }
+        }, new DateTime(2020, 1, 1));
+        var service = new PrtgFetchService(client, store, new TestConsole(),
+            new Dictionary<string, string> { ["wmicpu"] = PrtgSensorCategories.Cpu });
+
+        var before = DateTime.Now;
+        var result = await service.BackfillSensorsForDevicesAsync(new long[] { 101, 102 }, 2, CancellationToken.None);
+
+        Assert.Equal(1, result.SensorsWritten);
+        Assert.Equal(new long[] { 102 }, result.FailedDevices);
+        Assert.Empty(result.EmptyDevices);
+        var all = store.GetAllSensors();
+        Assert.Contains(all, s => s.Objid == 900);
+        var written = Assert.Single(all, s => s.Objid == 201);
+        Assert.Equal(101, written.DeviceObjid);
+        // SyncedAt 用當下時間，晚於任何已開始的結構同步起點
+        Assert.True(written.SyncedAt >= before.AddSeconds(-1));
+        // 與階段 2 同一個語意分類重算（同一份補充對照）：wmicpu 依補充對照分類為 cpu
+        Assert.Equal(PrtgSensorCategories.Cpu, written.Category);
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=101"));
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=102"));
+    }
+
+    [Fact]
+    public async Task BackfillSensorsForDevicesAsync_查詢成功但0顆_列入取回0顆清單()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("id=101"))
+                return url.Contains("start=0")
+                    ? JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\"}]}")
+                    : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=sensors") && url.Contains("id=103"))
+                return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            return JsonResponse("{}", HttpStatusCode.InternalServerError);
+        });
+        var service = new PrtgFetchService(client, CreateStore(), new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.BackfillSensorsForDevicesAsync(new long[] { 101, 102, 103 }, 1, CancellationToken.None);
+
+        Assert.Equal(new long[] { 103 }, result.EmptyDevices);
+        Assert.Equal(new long[] { 102 }, result.FailedDevices);
+        Assert.Equal(1, result.SensorsWritten);
     }
 }

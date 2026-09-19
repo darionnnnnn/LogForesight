@@ -29,7 +29,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 | 改規則機制（語意邊界/seed/匯入/DB 映射） | `docs/RULES-SPEC.md`；Linux 規則面 `docs/LINUX-RULES.md` |
 | 改資料庫欄位/索引/保留/Schema 升級 | `docs/DB-SPEC.md` |
 | 改 NetIQ/Sentinel 取數 | `docs/NETIQ-API-REFERENCE.md` |
-| 改 PRTG 整合（鏡像表/取數策略與快照/觸發式取數/主機對應/規則與分類/跨來源佐證/未回報提示/探測/回填/資料搬運/校準匯出） | `docs/PRTG-SPEC.md` |
+| 改 PRTG 整合（鏡像表/取數範圍與過期清除/取數策略與快照/觸發式取數/主機對應/規則與分類/跨來源佐證/未回報提示/探測/回填/資料搬運/校準匯出） | `docs/PRTG-SPEC.md` |
 | 設計系統色票/字型/token | `docs/DESIGN-SYSTEM.md` |
 | 查「已知但刻意未做」 | `docs/BACKLOG.md` |
 | 追某個現況決策的來龍去脈 | `docs/archive/README.md` 索引 → 按需開**單一**檔案，**非必要不要讀、勿全掃** |
@@ -38,7 +38,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **4807** 個測試（略過 10；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **4908** 個測試（略過 10；
   略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑）。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
@@ -83,6 +83,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   直接呼叫 `IssueCaseCoordinator.BuildCase` 會產生沒有單的散案，處理人清單、徽章、看板全都數不到。
 - 不要讓控制器宣告回傳父型別而實際回子型別：JSON 依**宣告型別**序列化，子型別多出來的欄位會被靜默吃掉，
   服務層測試照樣全綠（依問題端點的去重主機數曾因此消失多輪）。宣告型別寫成實際型別，必要時補序列化守門測試。
+- 不要讓 PRTG 取數對整台 PRTG 查：感測器、狀態變更、快照一律只處理 `PrtgScopeDevices.Compute` 的取數範圍（PRTG-SPEC §3c）。
+  實機 `messages&id=0` 的 treesize 封頂在 100 萬、連 `count=5` 都逾時；只有裝置鏡像是全站（主機對應要用全部 IP）。
+  新增 PRTG 查詢路徑時先問「範圍從哪來」，範圍參數寫成必填——可選的話漏接的呼叫端會靜默退回全站。
 - 不要把外部系統回傳的字串直接寫進有長度上限的欄位——寫入前一律依 `HasMaxLength` 截斷。
   外部來源（PRTG、NetIQ…）沒有長度保證，超長在 SQL Server 端會讓整批寫入一起擲截斷例外、
   SQLite 端卻靜默通過——兩個後端行為分岔，測試環境永遠看不到，正式機才爆。

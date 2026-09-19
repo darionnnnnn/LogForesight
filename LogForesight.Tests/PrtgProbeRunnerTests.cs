@@ -1214,7 +1214,7 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_步驟9_成本行標示87次historicdata與11次tablejson()
+    public async Task RunAsync_步驟9_成本行標示87次historicdata與最多19次tablejson()
     {
         var stub = BuildPerfStub(@"{""sensors"": []}");
 
@@ -1222,7 +1222,7 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.Contains(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata 與 11 次 table.json"));
+        Assert.Contains(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata 與最多 19 次 table.json"));
     }
 
     [Fact]
@@ -1396,5 +1396,422 @@ public class PrtgProbeRunnerTests
         var hintIdx = console.Lines.FindIndex(l => l.Contains("未分類的 type 可在 PRTG 維護頁『sensor type 分類補充對照』指定。"));
         var lastDetailIdx = console.Lines.FindLastIndex(l => l.Contains("| 內建分類："));
         Assert.True(hintIdx > lastDetailIdx, "指引行應在 Type 分布明細之後");
+    }
+
+    private static bool UrlHasId(string url, long id)
+    {
+        return url.Contains($"&id={id}&") || url.EndsWith($"&id={id}") ||
+               url.Contains($"?id={id}&") || url.EndsWith($"?id={id}");
+    }
+
+    // 步驟 8 的 messages 分頁診斷請求：count=5（完整值，避免誤中 9d-5 的 count=50）且 filter_drel=7days
+    // （9d-4 的分頁量測也是 count=5，但固定 id=0&filter_drel=today，依規格保留，不屬於步驟 8）。
+    private static bool IsStep8MessagesUrl(string url)
+    {
+        return url.Contains("content=messages") && url.Contains("&count=5&") && url.Contains("filter_drel=7days");
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟8_messages診斷使用樣本裝置且不含id0()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        var step8 = stub.RequestedUrls.Where(IsStep8MessagesUrl).ToList();
+        Assert.NotEmpty(step8);
+        Assert.All(step8, u => Assert.True(UrlHasId(u, 1), u));
+        Assert.DoesNotContain(step8, u => UrlHasId(u, 0));
+    }
+
+    [Fact]
+    public async Task RunAsync_挑樣本_三台以上裝置時有Down感測器排第一()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
+                    ""treesize"": 4,
+                    ""sensors"": [
+                        {""objid"": 101, ""parentid"": 1, ""status"": ""Up"", ""type"": ""ping"", ""unit"": ""ms""},
+                        {""objid"": 102, ""parentid"": 2, ""status"": ""Down"", ""type"": ""ping"", ""unit"": ""ms""},
+                        {""objid"": 103, ""parentid"": 3, ""status"": ""Up"", ""type"": ""ping"", ""unit"": ""ms""},
+                        {""objid"": 104, ""parentid"": 4, ""status"": ""Up"", ""type"": ""ping"", ""unit"": ""ms""}
+                    ]
+                }"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(stub.RequestedUrls, u => IsStep8MessagesUrl(u) && UrlHasId(u, 2));
+        Assert.DoesNotContain(stub.RequestedUrls, u => IsStep8MessagesUrl(u) && !UrlHasId(u, 2));
+    }
+
+    [Fact]
+    public async Task RunAsync_樣本為空時_略過messages診斷與9d5且不擲例外()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 0, ""sensors"": []}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.DoesNotContain(stub.RequestedUrls, IsStep8MessagesUrl);
+        Assert.Contains(console.Lines, l => l.Contains("messages：略過（沒有可用的裝置樣本，無法以單一裝置診斷）"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：略過（沒有可用的裝置樣本）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_b_含下層感測器訊息時印結論可用()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+            }
+            if (url.Contains("content=messages") && url.Contains("count=50") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""messages"": [{""objid"": 101, ""datetime"": ""2026-09-18 10:00:00""}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取狀態變更") && l.Contains("✓ 含下層感測器訊息"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：結論 ✓ 逐裝置查詢狀態變更可用"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_b_只有裝置自身時印結論需改為逐感測器()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+            }
+            if (url.Contains("content=messages") && url.Contains("count=50") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""messages"": [{""objid"": 1, ""datetime"": ""2026-09-18 10:00:00""}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取狀態變更") && l.Contains("✗ 只有裝置自身——狀態變更取數需改為逐感測器"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：結論 ✗ 逐裝置查詢只回裝置自身訊息，狀態變更取數需改為逐感測器"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_b_無資料時印無法判定()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+            }
+            if (url.Contains("content=messages") && url.Contains("count=50") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""messages"": []}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取狀態變更") && l.Contains("無資料，無法判定"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：結論 無法判定（樣本裝置近 7 天都沒有狀態變更）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_b_回傳不屬於該裝置objid時警告()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+            }
+            if (url.Contains("content=messages") && url.Contains("count=50") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""messages"": [{""objid"": 999, ""datetime"": ""2026-09-18 10:00:00""}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取狀態變更") && l.Contains("⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_a_回傳含其他裝置感測器時標示錯誤()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 999}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取感測器") && l.Contains("✗ 回傳含其他裝置的感測器（id 參數未生效）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_e_分批取值回傳等量時判為可用()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
+                    ""treesize"": 2,
+                    ""sensors"": [
+                        {""objid"": 101, ""device"": ""A"", ""sensor"": ""Ping1"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1},
+                        {""objid"": 102, ""device"": ""A"", ""sensor"": ""Ping2"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1}
+                    ]
+                }"));
+            }
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}, {""objid"": 102}]}"));
+            }
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,lastvalue_raw"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101, ""lastvalue_raw"": 10}, {""objid"": 102, ""lastvalue_raw"": 20}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：filter_objid 分批取值") && l.Contains("✓ 分批取值可用"));
+        var filterUrl = stub.RequestedUrls.FirstOrDefault(u => u.Contains("columns=objid,lastvalue_raw"));
+        Assert.NotNull(filterUrl);
+        var filterCount = filterUrl.Split("filter_objid=").Length - 1;
+        Assert.Equal(2, filterCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_e_分批取值少回時標示少回顆數()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
+                    ""treesize"": 2,
+                    ""sensors"": [
+                        {""objid"": 101, ""device"": ""A"", ""sensor"": ""Ping1"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1},
+                        {""objid"": 102, ""device"": ""A"", ""sensor"": ""Ping2"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1}
+                    ]
+                }"));
+            }
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}, {""objid"": 102}]}"));
+            }
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,lastvalue_raw"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101, ""lastvalue_raw"": 10}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：filter_objid 分批取值") && l.Contains("⚠ 少回 1 顆"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_e_分批取值回傳未要求感測器時警告()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+            }
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,lastvalue_raw"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 999, ""lastvalue_raw"": 10}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：filter_objid 分批取值") && l.Contains("⚠ 回傳了未要求的感測器（filter_objid 未生效）"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_b_單台異常不影響其他台量測()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
+                    ""treesize"": 2,
+                    ""sensors"": [
+                        {""objid"": 101, ""device"": ""A"", ""sensor"": ""Ping1"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1},
+                        {""objid"": 102, ""device"": ""B"", ""sensor"": ""Ping2"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 2}
+                    ]
+                }"));
+            }
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000"))
+            {
+                if (UrlHasId(url, 1)) return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+                if (UrlHasId(url, 2)) return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 102}]}"));
+            }
+            if (url.Contains("content=messages") && url.Contains("count=50"))
+            {
+                if (UrlHasId(url, 1)) throw new HttpRequestException("連線失敗");
+                if (UrlHasId(url, 2)) return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""messages"": [{""objid"": 102, ""datetime"": ""2026-09-18 10:00:00""}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 無法量測"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=2 逐裝置取狀態變更") && l.Contains("✓ 含下層感測器訊息"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_a無感測器時略過逐感測器量測()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": []}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取感測器") && l.Contains("無法判定（沒有回傳任何感測器）"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：略過逐感測器量測（沒有可用的感測器）"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("filter_objid 分批取值"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9d5_d_逐感測器取狀態變更輸出成功行()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("columns=objid&count=5000") && UrlHasId(url, 1))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101}]}"));
+            }
+            if (url.Contains("content=messages") && url.Contains("count=50") && UrlHasId(url, 101))
+            {
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""messages"": [{""objid"": 101, ""datetime"": ""2026-09-18 10:00:00""}]}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("9d-5：感測器 objid=101 逐感測器取狀態變更") && l.Contains("回傳 1 筆"));
     }
 }

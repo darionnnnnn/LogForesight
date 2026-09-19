@@ -480,7 +480,7 @@ public sealed class EfPrtgStore
     /// <summary>
     /// 保留期清理：對象三張表（lf_prtg_values、lf_prtg_state_changes、lf_prtg_host_map），
     /// 皆依 created_at &lt; 今天減 retentionDays 刪除。
-    /// lf_prtg_devices 與 lf_prtg_sensors 不清（結構鏡像永遠是現況全量）。
+    /// lf_prtg_devices 與 lf_prtg_sensors 不依保留期清（結構鏡像是現況；過期列由結構同步自己清，見 DeleteDevicesNotSyncedSince／DeleteSensorsNotSyncedSince）。
     /// </summary>
     public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
 
@@ -490,7 +490,7 @@ public sealed class EfPrtgStore
         var cutoff = DateTime.Today.AddDays(-retentionDays);
         var total = 0;
 
-        // lf_prtg_devices 與 lf_prtg_sensors 不清（結構鏡像永遠是現況全量）。
+        // lf_prtg_devices 與 lf_prtg_sensors 不依保留期清（過期列由結構同步自己清）。
         if (total < maxRows)
         {
             total += BatchedPrune.Run<long>(
@@ -551,6 +551,62 @@ public sealed class EfPrtgStore
         }
 
         return total;
+    }
+
+    /// <summary>
+    /// 清除本趟全站裝置同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即 PRTG 端已不存在的裝置。
+    /// 只動 <c>lf_prtg_devices</c>；人工對應、主機對應、感測器、狀態變更與數值表一律不碰。
+    /// 呼叫端必須保證本趟裝置階段是完整收斂的全站同步，否則「沒刷新到」不等於「已被刪除」。
+    /// </summary>
+    public PrtgStaleDeleteResult DeleteDevicesNotSyncedSince(DateTime syncStartedAt)
+    {
+        using var __perf = _performance.Measure("prtg:DeleteStaleDevices");
+        using var ctx = _contextFactory();
+        var total = ctx.PrtgDevices.Count();
+        var stale = ctx.PrtgDevices.Count(d => d.SyncedAt < syncStartedAt);
+        if (stale == 0)
+        {
+            return new PrtgStaleDeleteResult(total, 0, 0, false);
+        }
+
+        // 安全保險（常數門檻，刻意不做成設定）：過期列超過鏡像一半就一列都不刪。
+        // PRTG API 帳號權限被縮小、或查詢被代理截斷時，回傳會合法地少一大塊且分頁照樣收斂，
+        // 那不代表裝置被刪了；此時照刪會把大半鏡像連同下游對應一起清掉。
+        if (stale * 2 > total)
+        {
+            return new PrtgStaleDeleteResult(total, stale, 0, true);
+        }
+
+        var deleted = ctx.PrtgDevices.Where(d => d.SyncedAt < syncStartedAt).ExecuteDelete();
+        return new PrtgStaleDeleteResult(total, stale, deleted, false);
+    }
+
+    /// <summary>
+    /// 清除本趟感測器同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即取數範圍外或 PRTG 端已不存在的感測器，回傳刪除數。
+    /// 只動 <c>lf_prtg_sensors</c>；狀態變更、數值與快照表一律不碰（交給保留期）。
+    /// 刻意不做裝置那種「過半不刪」保險：縮圈到取數範圍後的第一趟本來就會刪掉九成以上，
+    /// 而感測器鏡像只是 PRTG 的複本、不掛人工資料，誤刪了下一趟同步即可重建。
+    /// 呼叫端必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
+    /// <para>
+    /// <paramref name="graceDeviceObjids"/>＝本趟「查詢成功但回 0 顆」的裝置。PRTG 偶發回空陣列時，一次就把整台的感測器刪光
+    /// 會讓當晚對那台主機的規則評估無聲失效；所以這些裝置底下 <c>SyncedAt &gt;= graceSince</c> 的列本趟先留著（回傳 GraceKept 供出聲）。
+    /// 下一趟仍回 0 顆時，那些列的 SyncedAt 已早於 graceSince，照常刪除——PRTG 上真的移除了全部感測器的裝置最多多留一趟。
+    /// </para>
+    /// </summary>
+    public (int Deleted, int GraceKept) DeleteSensorsNotSyncedSince(
+        DateTime syncStartedAt, IReadOnlyCollection<long> graceDeviceObjids, DateTime graceSince)
+    {
+        using var __perf = _performance.Measure("prtg:DeleteStaleSensors");
+        using var ctx = _contextFactory();
+        var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
+        if (graceDeviceObjids.Count == 0)
+            return (stale.ExecuteDelete(), 0);
+
+        // 回 0 顆的裝置數量級很小（偶發狀況），IN 清單不會撞參數上限；保險起見仍截在單批上限內，超出的照常刪
+        var grace = graceDeviceObjids.Take(DeviceQueryBatchSize).ToList();
+        var kept = stale.Count(s => grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince);
+        var deleted = stale.Where(s => !(grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince)).ExecuteDelete();
+        return (deleted, kept);
     }
 
     /// <summary>
@@ -617,12 +673,16 @@ public sealed class EfPrtgStore
         return result;
     }
 
-    /// <summary>sensor 結構鏡像最近一次同步時間（lf_prtg_sensors.synced_at 最大值）；表為空時回 null。</summary>
+    /// <summary>
+    /// 結構鏡像最近一次完整同步的時間（lf_prtg_devices.synced_at 最大值）；表為空時回 null。
+    /// 取裝置表而不是感測器表：裝置只有結構同步會寫，感測器還會被快照服務的範圍補抓零星寫入當下時間——
+    /// 拿感測器的最大值，同步連壞幾天時只要補抓過一台就會被當成「剛同步過」。
+    /// </summary>
     public DateTime? GetLatestStructureSyncedAt()
     {
         using var __perf = _performance.Measure("prtg:GetLatestStructureSyncedAt");
         using var ctx = _contextFactory();
-        return ctx.PrtgSensors.Max(s => (DateTime?)s.SyncedAt);
+        return ctx.PrtgDevices.Max(d => (DateTime?)d.SyncedAt);
     }
 
     /// <summary>取得指定期間的 hourly 數值（依 sensor 與時間排序，匯出用）。</summary>
@@ -1209,6 +1269,8 @@ public sealed class EfPrtgStore
     /// 取得指定期間內狀態變更的涵蓋摘要。
     /// 全程在 SQL 端聚合，統計相異日期數、相異 sensor 數、總筆數與最早／最晚變更時間。
     /// 無資料時回傳計數皆為 0、時間為 null 的摘要物件。
+    /// 只計 sensor 仍在感測器鏡像中的列：鏡像已縮到取數範圍內，範圍外的舊狀態變更要到保留期才消失，
+    /// 不排除的話新舊口徑會混在同一個數字裡。
     /// </summary>
     /// <param name="fromInclusive">起始時間（含）</param>
     /// <param name="toExclusive">結束時間（不含）</param>
@@ -1218,7 +1280,8 @@ public sealed class EfPrtgStore
         using var ctx = _contextFactory();
         var summary = ctx.PrtgStateChanges
             .AsNoTracking()
-            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive)
+            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive
+                && ctx.PrtgSensors.Any(s => s.Objid == r.SensorObjid))
             .GroupBy(_ => 1)
             .Select(g => new
             {
@@ -1383,4 +1446,10 @@ public sealed record PrtgTypeHourlyProfile(string SensorType, int Hour, double? 
 /// PRTG 快照取樣涵蓋指標
 /// </summary>
 public sealed record PrtgSampledCoverage(int SensorCount, double? AverageCoverage);
+
+/// <summary>
+/// 過期裝置清除結果。Total＝清除前鏡像裝置總數；Stale＝本趟沒刷新到的列數；
+/// SkippedBySafety＝過期列超過一半而觸發安全保險、一列都沒刪。
+/// </summary>
+public sealed record PrtgStaleDeleteResult(int Total, int Stale, int Deleted, bool SkippedBySafety);
 

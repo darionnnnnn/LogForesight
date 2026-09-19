@@ -1768,14 +1768,15 @@ function renderPrtgBackfillStatus(status) {
     const dayLabel = dateStr
         ? `第 ${currentDayNo} / ${status.daysTotal} 天（${dateStr}）：sensor ${status.sensorsDone} / ${status.sensorsTotal}`
         : `已完成 ${status.daysDone} / ${status.daysTotal} 天`;
-    // 翻狀態變更在逐日之前、可能要好幾分鐘：這段不顯示讀取量，畫面會一直停在 sensor 0 / 0
+    // 逐裝置查狀態變更在逐日之前、可能要好幾分鐘：這段不顯示進度，畫面會一直停在 sensor 0 / 0
+    // stateChangesRead／stateChangesTotal 是「已完成台數／總台數」
     let label = status.daysTotal > 0 ? dayLabel : null;
     if (status.readingStateChanges) {
-        const read = status.stateChangesRead || 0;
+        const done = status.stateChangesRead || 0;
         const total = status.stateChangesTotal || 0;
         label = total > 0
-            ? `讀取狀態變更：${formatNumber(read)} / 約 ${formatNumber(total)} 筆`
-            : `讀取狀態變更：${formatNumber(read)}`;
+            ? `讀取狀態變更：${formatNumber(done)} / ${formatNumber(total)} 台`
+            : `讀取狀態變更：${formatNumber(done)} 台`;
     }
 
     updateProgressBar(

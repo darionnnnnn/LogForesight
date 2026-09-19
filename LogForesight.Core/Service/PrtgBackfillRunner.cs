@@ -25,18 +25,20 @@ public static class PrtgBackfillRunner
     /// <param name="concurrency">hourly 數值抓取併發上限（取自 PrtgFetchConcurrency，與每日擷取共用）</param>
     /// <param name="console">執行歷程輸出</param>
     /// <param name="ct">取消語彙基元</param>
+    /// <param name="scopeDeviceObjids">取數範圍裝置集合（呼叫端以 PrtgScopeDevices.Compute 算好；本方法只轉交給擷取服務、不自行過濾）</param>
     /// <param name="store">PRTG 鏡像 store（傳入時啟用觸發式過濾）</param>
     /// <param name="records">分析紀錄查詢介面（傳入時啟用觸發式過濾）</param>
     /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>
     /// <param name="dayProgress">天數層進度回呼（已完成天數, 總天數, 當前日期），null＝不回報</param>
     /// <param name="sensorProgress">當日 sensor 進度回呼（已完成數, 總數），null＝不回報</param>
-    /// <param name="stateChangeProgress">觸發式回填翻狀態變更區間的進度回呼（已讀筆數, 約略總筆數），null＝不回報</param>
+    /// <param name="stateChangeProgress">觸發式回填翻狀態變更區間的進度回呼（已完成台數, 總台數），null＝不回報</param>
     /// <returns>
     /// 全量分支：有任何一天成功回傳 true。
     /// 觸發式分支：沒有失敗日、狀態變更完整取得、且至少一天成功才回傳 true。
     /// </returns>
     public static async Task<bool> RunAsync(
         PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct,
+        IReadOnlyCollection<long> scopeDeviceObjids,
         EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null,
         Action<int, int, DateTime?>? dayProgress = null,
         Action<int, int>? sensorProgress = null,
@@ -79,10 +81,9 @@ public static class PrtgBackfillRunner
                 try
                 {
                     var range = await fetchService.FetchStateChangesRangeAsync(
-                        DateTime.Today.AddDays(-days - 1), DateTime.Today, ct,
+                        DateTime.Today.AddDays(-days - 1), DateTime.Today, scopeDeviceObjids, concurrency, ct,
                         (stage, done, total) => stateChangeProgress?.Invoke(done, total));
-                    var ending = range.StoppedEarly ? "（依時間排序提早結束）" : "（已翻到結尾）";
-                    console.WriteLine($"狀態變更：讀取 {range.ReadRows} 筆（{range.Pages} 頁）、新增 {range.TotalWritten} 筆（其餘已存在）{ending}");
+                    console.WriteLine($"狀態變更：查詢 {range.QueriedObjects} 台、讀取 {range.ReadRows} 筆、新增 {range.TotalWritten} 筆（其餘已存在）");
                     if (!range.Converged)
                     {
                         stateChangesFailed = true;
@@ -120,8 +121,11 @@ public static class PrtgBackfillRunner
                     {
                         // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
                         // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
+                        // 範圍由呼叫端在回填開始前算好（回填不做主機對應）
                         var result = await fetchService.FetchDayAsync(
-                            day, concurrency, ct, syncStructure: false,
+                            day, concurrency, ct,
+                            _ => new PrtgScopeResult(scopeDeviceObjids.ToHashSet(), 0, 0, 0, 0),
+                            syncStructure: false,
                             progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
                         if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
                         {

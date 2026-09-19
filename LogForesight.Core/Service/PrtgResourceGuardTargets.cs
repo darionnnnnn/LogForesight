@@ -95,6 +95,113 @@ public static class PrtgResourceGuardTargets
             return new PrtgResourceGuardTargetResult(objids, categories);
         }
 
+        // 2～4. 自動偵測守門裝置（Sentinel 主機、PRTG 主機與 corehealth fallback）
+        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors) = DetectGuardDevices(source, settings, sentinels, console, resolver);
+
+        // 5. 取命中的 device 底下未暫停（Paused == false）且 Category 為 cpu 或 memory 的 sensor；
+        // PRTG 主機那台另外加上 corehealth sensor。
+        var targetSensors = new Dictionary<long, string>();
+
+        foreach (var sensor in allSensors)
+        {
+            if (sensor.Paused) continue;
+
+            bool isSentinelDev = sentinelDeviceObjids.Contains(sensor.DeviceObjid);
+            bool isPrtgDev = prtgDeviceObjids.Contains(sensor.DeviceObjid);
+
+            if (!isSentinelDev && !isPrtgDev) continue;
+
+            var effectiveCategory = GetEffectiveCategory(sensor);
+            bool isCpu = string.Equals(effectiveCategory, PrtgSensorCategories.Cpu, StringComparison.OrdinalIgnoreCase);
+            bool isMemory = string.Equals(effectiveCategory, PrtgSensorCategories.Memory, StringComparison.OrdinalIgnoreCase);
+            bool isCoreHealth = IsCoreHealthSensor(sensor);
+
+            if (isCpu)
+            {
+                targetSensors[sensor.Objid] = PrtgSensorCategories.Cpu;
+            }
+            else if (isMemory)
+            {
+                targetSensors[sensor.Objid] = PrtgSensorCategories.Memory;
+            }
+            else if (isPrtgDev && isCoreHealth)
+            {
+                targetSensors[sensor.Objid] = CategoryCoreHealth;
+            }
+        }
+
+        // 6. 一個 sensor 都沒找到時回傳空清單並警告（不要擲例外）——
+        // 守門的原則是「讀不到就放行」，不能反過來把排程卡死。
+        if (targetSensors.Count == 0)
+        {
+            console.WriteLine("[PRTG資源守門] 未偵測到任何受監看的 PRTG 感測器。");
+            return new PrtgResourceGuardTargetResult(Array.Empty<long>(), targetSensors);
+        }
+
+        // 排序：這份清單會被「自動偵測並填入」寫進覆寫清單再存檔，同樣的資料兩次偵測
+        // 要得到同樣的字串，否則設定頁的「有未存變更」會被 Dictionary 的鍵序騙到。
+        var sortedObjids = targetSensors.Keys.OrderBy(x => x).ToList();
+        return new PrtgResourceGuardTargetResult(sortedObjids, targetSensors);
+    }
+
+    /// <summary>
+    /// 守門相關的 PRTG 裝置集合：自動偵測到的 Sentinel 主機與 PRTG 主機裝置（不論守門是否啟用、
+    /// 不論覆寫清單是否有值都算），再加上覆寫清單中在鏡像找得到的 sensor 所在裝置。
+    /// 供取數範圍計算用；找不到的覆寫 objid 直接略過（<see cref="Resolve"/> 的覆寫路徑已負責警告）。
+    /// </summary>
+    public static IReadOnlySet<long> ResolveDeviceObjids(
+        IPrtgResourceGuardSource source,
+        SystemSettings settings,
+        IReadOnlyList<Sentinel> sentinels,
+        IRunConsole console,
+        IPrtgAddressResolver resolver)
+    {
+        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors) = DetectGuardDevices(source, settings, sentinels, console, resolver);
+
+        var result = new HashSet<long>(sentinelDeviceObjids);
+        result.UnionWith(prtgDeviceObjids);
+
+        if (settings.PrtgResourceGuardSensorObjids != null && settings.PrtgResourceGuardSensorObjids.Count > 0)
+        {
+            var overrideIds = ParseOverrideObjids(settings.PrtgResourceGuardSensorObjids);
+            foreach (var sensor in allSensors)
+            {
+                if (overrideIds.Contains(sensor.Objid))
+                    result.Add(sensor.DeviceObjid);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 覆寫清單解析（不出聲版）：逐項 Trim 後 long.TryParse，空白與非數字略過。
+    /// 取數範圍的守門項與快照服務的範圍補抓共用這一份，兩邊對「清單裡有哪些 objid」的認定才不會分岔。
+    /// public 而非 internal：呼叫端在 Web 組件，Core 只對測試組件開 InternalsVisibleTo。
+    /// </summary>
+    public static HashSet<long> ParseOverrideObjids(IEnumerable<string> items)
+    {
+        var ids = new HashSet<long>();
+        foreach (var item in items)
+        {
+            if (!string.IsNullOrWhiteSpace(item) && long.TryParse(item.Trim(), out var id))
+                ids.Add(id);
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// 自動偵測第 2～4 步：依 Sentinel 位址與 PRTG 位址比對裝置（含裝置側 DNS 預算），
+    /// PRTG 位址對不到時以 corehealth sensor 所在裝置 fallback。所有警告在此輸出。
+    /// 一併回傳本次讀到的 sensor 清單，呼叫端不必再讀一次。
+    /// </summary>
+    private static (HashSet<long> SentinelDeviceObjids, HashSet<long> PrtgDeviceObjids, IReadOnlyList<PrtgSensorRow> AllSensors) DetectGuardDevices(
+        IPrtgResourceGuardSource source,
+        SystemSettings settings,
+        IReadOnlyList<Sentinel> sentinels,
+        IRunConsole console,
+        IPrtgAddressResolver resolver)
+    {
         // 2. 自動偵測：組出「要監看的主機位址集合」
         var sentinelHosts = new List<string>();
         foreach (var s in sentinels)
@@ -193,50 +300,7 @@ public static class PrtgResourceGuardTargets
                               $"{UnresolvedHint(prtgHost, resolver)}{SourceHint(source)}。");
         }
 
-        // 5. 取命中的 device 底下未暫停（Paused == false）且 Category 為 cpu 或 memory 的 sensor；
-        // PRTG 主機那台另外加上 corehealth sensor。
-        var targetSensors = new Dictionary<long, string>();
-
-        foreach (var sensor in allSensors)
-        {
-            if (sensor.Paused) continue;
-
-            bool isSentinelDev = sentinelDeviceObjids.Contains(sensor.DeviceObjid);
-            bool isPrtgDev = prtgDeviceObjids.Contains(sensor.DeviceObjid);
-
-            if (!isSentinelDev && !isPrtgDev) continue;
-
-            var effectiveCategory = GetEffectiveCategory(sensor);
-            bool isCpu = string.Equals(effectiveCategory, PrtgSensorCategories.Cpu, StringComparison.OrdinalIgnoreCase);
-            bool isMemory = string.Equals(effectiveCategory, PrtgSensorCategories.Memory, StringComparison.OrdinalIgnoreCase);
-            bool isCoreHealth = IsCoreHealthSensor(sensor);
-
-            if (isCpu)
-            {
-                targetSensors[sensor.Objid] = PrtgSensorCategories.Cpu;
-            }
-            else if (isMemory)
-            {
-                targetSensors[sensor.Objid] = PrtgSensorCategories.Memory;
-            }
-            else if (isPrtgDev && isCoreHealth)
-            {
-                targetSensors[sensor.Objid] = CategoryCoreHealth;
-            }
-        }
-
-        // 6. 一個 sensor 都沒找到時回傳空清單並警告（不要擲例外）——
-        // 守門的原則是「讀不到就放行」，不能反過來把排程卡死。
-        if (targetSensors.Count == 0)
-        {
-            console.WriteLine("[PRTG資源守門] 未偵測到任何受監看的 PRTG 感測器。");
-            return new PrtgResourceGuardTargetResult(Array.Empty<long>(), targetSensors);
-        }
-
-        // 排序：這份清單會被「自動偵測並填入」寫進覆寫清單再存檔，同樣的資料兩次偵測
-        // 要得到同樣的字串，否則設定頁的「有未存變更」會被 Dictionary 的鍵序騙到。
-        var sortedObjids = targetSensors.Keys.OrderBy(x => x).ToList();
-        return new PrtgResourceGuardTargetResult(sortedObjids, targetSensors);
+        return (sentinelDeviceObjids, prtgDeviceObjids, allSensors);
     }
 
     /// <summary>
@@ -366,7 +430,7 @@ public static class PrtgResourceGuardTargets
     /// <summary>
     /// 判定感測器是否為 PRTG Core Health 核心健康感測器。
     /// </summary>
-    private static bool IsCoreHealthSensor(PrtgSensorRow sensor)
+    internal static bool IsCoreHealthSensor(PrtgSensorRow sensor)
     {
         if (string.IsNullOrWhiteSpace(sensor.SensorType)) return false;
         var normalized = sensor.SensorType.Replace(" ", "");

@@ -121,7 +121,7 @@ public class PrtgBackfillRunState : PrtgProbeRunState
         }
     }
 
-    /// <summary>狀態變更區間讀取進度（已讀筆數, 約略總筆數）。</summary>
+    /// <summary>狀態變更逐裝置查詢進度（已完成台數, 總台數）；欄位沿用 StateChangesRead／StateChangesTotal 的名稱。</summary>
     public void UpdateStateChanges(int done, int total)
     {
         lock (_progressLock)
@@ -172,6 +172,7 @@ public class PrtgBackfillService
     // 做成可選的話漏注入時保護會靜默消失。
     private readonly SchedulerRunState _schedulerRunState;
     private readonly PrtgStructureSyncRunState _structureSyncState;
+    private readonly ISentinelStore _sentinels;
 
     public PrtgBackfillService(
         ISystemSettingsStore settings,
@@ -180,8 +181,10 @@ public class PrtgBackfillService
         PrtgProbeRunState probeState,
         IHostStore hosts,
         SchedulerRunState schedulerRunState,
-        PrtgStructureSyncRunState structureSyncState)
+        PrtgStructureSyncRunState structureSyncState,
+        ISentinelStore sentinels)
     {
+        _sentinels = sentinels;
         _settings = settings;
         _backend = backend;
         _state = state;
@@ -349,14 +352,21 @@ public class PrtgBackfillService
                                           string.Join("、", unresolvedHosts.Take(10)));
                     }
 
+                    // 取數範圍：回填不做主機對應，直接以既有對應算一次，整趟共用
+                    var scopeResult = PrtgScopeDevices.Compute(
+                        prtgStore, _hosts, new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
+                        console, new PrtgAddressResolver());
+                    console.WriteLine($"取數範圍：{scopeResult.DeviceObjids.Count} 台裝置");
+
                     success = await PrtgBackfillRunner.RunAsync(
                         fetchService, days, concurrency, console, runToken,
+                        scopeResult.DeviceObjids,
                         prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist,
                         dayProgress: (dDone, dTotal, curDate) => _state.UpdateDay(dDone, dTotal, curDate),
                         sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
                         scope: s.PrtgValueFetchScope,
                         extraScopeHosts: scopeHostIds,
-                        stateChangeProgress: (read, total) => _state.UpdateStateChanges(read, total));
+                        stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices));
                 }
             }
             catch (OperationCanceledException) when (runToken.IsCancellationRequested)

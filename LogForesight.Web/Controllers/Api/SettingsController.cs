@@ -311,9 +311,8 @@ public class SettingsController : ControllerBase
         var effectiveScope = PrtgValueFetchScope.EffectiveScope(requestedScope, whitelist.Count == 0);
         var prtgStore = _backend.PrtgStore();
 
-        // 估算一律以「最新一日的 ok 對應」為準：實際取數用的是當日對應，但估算是設定當下的
-        // 規模概念，拿最新一份就夠，不必為此多查一輪歷史。
-        var mapRows = prtgStore.GetLatestHostMap()
+        // 與校準同一個來源：錨點今天、回看 30 天的最近一次對應
+        var mapRows = prtgStore.GetLatestHostMapWithDate(30, DateTime.Today).Rows
             .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .ToList();
 

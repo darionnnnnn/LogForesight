@@ -93,7 +93,8 @@ public class PrtgStructureSyncRunnerTests : IDisposable
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
-                concurrency: 1, console, CancellationToken.None, today: today);
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), today: today);
 
             Assert.True(status.Success);
             Assert.Null(status.ErrorMessage);
@@ -132,7 +133,8 @@ public class PrtgStructureSyncRunnerTests : IDisposable
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
-                concurrency: 1, console, CancellationToken.None, today: today);
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), today: today);
 
             Assert.False(status.Success);
             Assert.NotNull(status.ErrorMessage);
@@ -163,11 +165,77 @@ public class PrtgStructureSyncRunnerTests : IDisposable
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
-                concurrency: 1, console, CancellationToken.None, today: new DateTime(2026, 9, 9));
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), today: new DateTime(2026, 9, 9));
 
             Assert.True(status.Success);
             Assert.Equal(0, status.MapOk);
             Assert.Contains(console.Lines, l => l.Contains("沒有任何 PRTG 裝置對應到主機主檔"));
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_裝置同步全失敗時不呼叫對應_當日對應表沒有新列()
+    {
+        var store = CreateStore();
+        var console = new TestConsole();
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+            hosts.Add(new WebHost { HostId = 51, HostName = "srv-a", IpAddress = "10.1.1.1", Active = true }));
+        var today = new DateTime(2026, 9, 9);
+        // 鏡像已有一台對得上的裝置：若對應被呼叫，當日一定會寫出一列
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "SRV-A", GroupPath = "G", Ip = "10.1.1.1", SyncedAt = DateTime.Now, CreatedAt = DateTime.Now }
+        }, DateTime.Now);
+
+        var (client, _) = CreateClient(req =>
+            req.RequestUri!.ToString().Contains("content=devices")
+                ? throw new HttpRequestException("devices 連不上")
+                : StructureResponder(req));
+        using (client)
+        {
+            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+            var status = await PrtgStructureSyncRunner.RunAsync(
+                fetchService, store, hostStore, new PrtgAddressResolver(),
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), today: today);
+
+            Assert.False(status.Success);
+            Assert.Empty(store.GetHostMapForDate(today));
+            Assert.Contains(console.Lines, l => l.Contains("未進行主機對應"));
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_裝置同步正常時對應照常寫入_各欄位值正確()
+    {
+        var store = CreateStore();
+        var console = new TestConsole();
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+            hosts.Add(new WebHost { HostId = 51, HostName = "srv-a", IpAddress = "10.1.1.1", Active = true }));
+        var today = new DateTime(2026, 9, 9);
+
+        var (client, _) = CreateClient(StructureResponder);
+        using (client)
+        {
+            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+
+            var status = await PrtgStructureSyncRunner.RunAsync(
+                fetchService, store, hostStore, new PrtgAddressResolver(),
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), today: today);
+
+            Assert.True(status.Success);
+            Assert.Equal(1, status.MapOk);
+            Assert.Equal(0, status.MapManual);
+            Assert.Equal(0, status.MapConflict);
+            Assert.Equal(0, status.MapUnmatched);
+            Assert.Equal(0, status.MapSkippedNoIp + status.MapSkippedExcluded + status.MapSkippedManualSibling);
+            Assert.Single(store.GetHostMapForDate(today));
+            Assert.Contains(console.Lines, l => l.Contains("[範圍] 取數範圍：1 台裝置"));
         }
     }
 }

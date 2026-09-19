@@ -321,7 +321,7 @@ public class ScheduleGuardStatusCodeTests : IDisposable
     {
         var backfill = new PrtgBackfillService(
             _settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-            new HostStore(_backend.Blob("hosts")), schedulerState, new PrtgStructureSyncRunState());
+            new HostStore(_backend.Blob("hosts")), schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore());
 
         var controller = new SettingsController(
             new StubSystemSettingsService(),

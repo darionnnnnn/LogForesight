@@ -20,8 +20,8 @@ export const PROGRESS_PHASE_LABEL = {
 export const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
     'prtg-sync-devices': '台',
-    'prtg-sync-sensors': '個',
-    'prtg-sync-messages': '筆',
+    'prtg-sync-sensors': '台',
+    'prtg-sync-messages': '台',
     'prtg-values': 'sensor',
     'prtg-triggered': 'sensor',
     'prtg-wait-sync': ''

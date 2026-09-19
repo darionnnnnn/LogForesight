@@ -51,19 +51,7 @@ public sealed class PrtgHostMapper
 
         var hostById = activeHosts.ToDictionary(h => h.HostId);
 
-        var hostLookup = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var host in activeHosts)
-        {
-            var normIp = _resolver.Resolve(host.IpAddress);
-            if (normIp == null) continue;
-
-            if (!hostLookup.TryGetValue(normIp, out var list))
-            {
-                list = new List<WebHost>();
-                hostLookup[normIp] = list;
-            }
-            list.Add(host);
-        }
+        var hostLookup = BuildActiveHostIpLookup(_hostStore, _resolver);
 
         // 規則二預備：分組前先算出本次有哪些正規化 IP，其底下至少有一台 device 走了人工對應
         var manualMappedIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -260,6 +248,31 @@ public sealed class PrtgHostMapper
         }
 
         return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount, skippedExcluded, skippedManualSibling);
+    }
+
+    /// <summary>
+    /// 啟用中主機的 IP 索引：只收 Active 且未合併的主機，依 HostId 排序後以解析後 IP 為鍵，
+    /// 同 IP 多台主機時清單內仍維持 HostId 由小到大。對應作業與取數範圍計算共用這一份。
+    /// </summary>
+    internal static Dictionary<string, List<WebHost>> BuildActiveHostIpLookup(IHostStore hostStore, IPrtgAddressResolver resolver)
+    {
+        var hostLookup = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
+        var activeHosts = hostStore.GetAll()
+            .Where(h => h.Active && h.MergedInto == null)
+            .OrderBy(h => h.HostId);
+        foreach (var host in activeHosts)
+        {
+            var normIp = resolver.Resolve(host.IpAddress);
+            if (normIp == null) continue;
+
+            if (!hostLookup.TryGetValue(normIp, out var list))
+            {
+                list = new List<WebHost>();
+                hostLookup[normIp] = list;
+            }
+            list.Add(host);
+        }
+        return hostLookup;
     }
 
     /// <summary>

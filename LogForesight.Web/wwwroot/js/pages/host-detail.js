@@ -719,7 +719,7 @@ function renderPrtgDevices(container, data) {
         if (!device.sensors || device.sensors.length === 0) {
             const noSensors = document.createElement('div');
             noSensors.className = 'text-muted small';
-            noSensors.textContent = '此裝置上無 sensor 資料。';
+            noSensors.textContent = '此裝置的感測器清單尚未取得（新對應的裝置會在數分鐘內自動補上）。';
             devCard.appendChild(noSensors);
         } else {
             const table = document.createElement('table');

@@ -377,21 +377,29 @@ public static class PrtgProbeRunner
             return Task.CompletedTask;
         });
 
+        var sampleDeviceIds = PickSampleDevices(sensorSamples);
+
         // 步驟 8：分頁語意診斷（不影響探測成敗）——回答「這台 PRTG 的 table.json 遵不遵守 start 位移」。
         // 結構同步與資源守門的分頁迴圈都以「遵守 start」為前提；忽略 start 或超出範圍時夾回某一頁的
         // 環境會讓分頁永遠收不斂。這一步每個 content 只做四次 count=5 的小查詢（三次位移＋一次排序對照），
-        // 結果純供人工判讀，任何一筆失敗
+        // messages 以單一裝置查詢（因為 id=0 在大型環境會逾時），結果純供人工判讀，任何一筆失敗
         // 都只印出原因、不把整趟探測算失敗。
         console.WriteLine("[8] 分頁語意診斷（table.json 的 start 位移是否被遵守）");
-        foreach (var (content, extra) in new[] { ("devices", ""), ("sensors", ""), ("messages", "&id=0&filter_drel=7days") })
+        await DiagnosePagingAsync(client, console, "devices", "", ct);
+        await DiagnosePagingAsync(client, console, "sensors", "", ct);
+        if (sampleDeviceIds.Count > 0)
         {
-            await DiagnosePagingAsync(client, console, content, extra, ct);
+            await DiagnosePagingAsync(client, console, "messages", $"&id={sampleDeviceIds[0]}&filter_drel=7days", ct);
+        }
+        else
+        {
+            console.WriteLine("     messages：略過（沒有可用的裝置樣本，無法以單一裝置診斷）");
         }
 
         // 步驟 9：效能量測（不影響探測成敗）——量「分頁放大有沒有效」「只取 objid 省多少」「併發開到幾級還不排隊」。
         // 三個子量測各自 try/catch，任何失敗只印原因、不把整趟探測算失敗。
         console.WriteLine("[9] 效能量測（table.json 分頁大小、objid-only、historicdata 併發）");
-        console.WriteLine("     本步驟會發 87 次 historicdata 與 11 次 table.json，供後續決定分頁大小、併發上限與值的取得方式");
+        console.WriteLine("     本步驟會發 87 次 historicdata 與最多 19 次 table.json，供後續決定分頁大小、併發上限與值的取得方式");
 
         PerfSample? fullColumns50000 = null;
         try
@@ -487,6 +495,19 @@ public static class PrtgProbeRunner
         catch (Exception ex)
         {
             console.WriteLine($"     9d-4：無法量測（{ex.Message}）");
+        }
+
+        try
+        {
+            await MeasureObjectQueriesAsync(client, console, sampleDeviceIds, sensorSamples, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-5：無法量測（{ex.Message}）");
         }
 
         console.WriteLine();
@@ -1089,6 +1110,225 @@ public static class PrtgProbeRunner
         catch (Exception ex)
         {
             console.WriteLine($"     9d-4：filter_drel=today 無法判定（{ex.Message}）");
+        }
+    }
+
+    /// <summary>
+    /// 從步驟 3 的感測器樣本中挑出最多 3 台樣本裝置供步驟 8 messages 診斷與步驟 9d-5 逐物件查詢驗證使用。
+    /// 優先挑選底下有非 Up（或狀態缺失）感測器的裝置，其次按 ParentId 遞增排序。
+    /// </summary>
+    private static List<long> PickSampleDevices(List<SensorTypeSample> sensorSamples)
+    {
+        if (sensorSamples == null || sensorSamples.Count == 0)
+        {
+            return new List<long>();
+        }
+
+        static bool IsNotUp(string? status)
+        {
+            if (string.IsNullOrWhiteSpace(status)) return true;
+            return !status.StartsWith("Up", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return sensorSamples
+            .Where(s => s.ParentId.HasValue)
+            .GroupBy(s => s.ParentId!.Value)
+            .OrderByDescending(g => g.Any(s => IsNotUp(s.Status)))
+            .ThenBy(g => g.Key)
+            .Take(3)
+            .Select(g => (long)g.Key)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 9d-5：逐物件查詢驗證——驗證以單一裝置查詢 sensors 與 messages 是否生效、
+    /// messages 是否包含下層感測器狀態變更，以及 filter_objid 分批取值是否可用。
+    /// </summary>
+    private static async Task MeasureObjectQueriesAsync(
+        PrtgClient client,
+        IRunConsole console,
+        List<long> sampleDeviceIds,
+        List<SensorTypeSample> sensorSamples,
+        CancellationToken ct)
+    {
+        if (sampleDeviceIds == null || sampleDeviceIds.Count == 0)
+        {
+            console.WriteLine("     9d-5：略過（沒有可用的裝置樣本）");
+            return;
+        }
+
+        var bVerdicts = new List<string>();
+        var bElapsedList = new List<double>();
+        List<long>? firstDeviceSensors = null;
+        var firstDeviceId = sampleDeviceIds[0];
+
+        foreach (var deviceId in sampleDeviceIds)
+        {
+            try
+            {
+                // (a) 查 sensors
+                var swA = System.Diagnostics.Stopwatch.StartNew();
+                var jsonA = await client.GetJsonAsync($"/api/table.json?content=sensors&columns=objid&count=5000&id={deviceId}", ct);
+                swA.Stop();
+
+                var parsedA = ParseTable(jsonA, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
+                var rowsA = parsedA.Rows.Select(r => r.Objid).ToList();
+                var expectedSet = sensorSamples
+                    .Where(s => s.ParentId.HasValue && (long)s.ParentId.Value == deviceId && s.Objid.HasValue)
+                    .Select(s => s.Objid!.Value)
+                    .ToHashSet();
+                var expectedCount = sensorSamples.Count(s => s.ParentId.HasValue && (long)s.ParentId.Value == deviceId);
+
+                string verdictA;
+                if (rowsA.Count == 0)
+                {
+                    verdictA = "無法判定（沒有回傳任何感測器）";
+                }
+                else if (rowsA.Any(id => !expectedSet.Contains(id)))
+                {
+                    verdictA = "✗ 回傳含其他裝置的感測器（id 參數未生效）";
+                }
+                else
+                {
+                    verdictA = "✓ 只回該裝置的感測器";
+                }
+
+                console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取感測器 耗時 {swA.Elapsed.TotalMilliseconds:F0} ms、回傳 {rowsA.Count} 顆（全站清單中該裝置 {expectedCount} 顆）→ {verdictA}");
+
+                if (deviceId == firstDeviceId && rowsA.Count > 0)
+                {
+                    firstDeviceSensors = rowsA;
+                }
+
+                // (b) 查 messages
+                var swB = System.Diagnostics.Stopwatch.StartNew();
+                var jsonB = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid,datetime&count=50&id={deviceId}&filter_drel=7days", ct);
+                swB.Stop();
+
+                var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+                var rowsB = parsedB.Rows.Select(r => r.Objid).ToList();
+                var subSet = rowsA.ToHashSet();
+                var nB = rowsB.Count;
+                var kB = rowsB.Distinct().Count();
+                var treesizeText = parsedB.TotalTreesize?.ToString() ?? "無";
+
+                string verdictB;
+                if (nB == 0)
+                {
+                    verdictB = "無資料，無法判定";
+                }
+                else if (rowsB.Any(id => subSet.Contains(id)))
+                {
+                    verdictB = "✓ 含下層感測器訊息";
+                }
+                else if (rowsB.All(id => id == deviceId))
+                {
+                    verdictB = "✗ 只有裝置自身——狀態變更取數需改為逐感測器";
+                }
+                else
+                {
+                    verdictB = "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）";
+                }
+
+                console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {nB} 筆、treesize {treesizeText}、不重複 objid {kB} 個 → {verdictB}");
+
+                bVerdicts.Add(verdictB);
+                bElapsedList.Add(swB.Elapsed.TotalMilliseconds);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                console.WriteLine($"     9d-5：裝置 objid={deviceId} 無法量測（{ex.Message}）");
+            }
+        }
+
+        // (c) 結論行
+        if (bVerdicts.Any(v => v.StartsWith("✓", StringComparison.Ordinal)))
+        {
+            var avgMs = bElapsedList.Count > 0 ? bElapsedList.Average() : 0;
+            console.WriteLine($"     9d-5：結論 ✓ 逐裝置查詢狀態變更可用（平均每台 {avgMs:F0} ms）");
+        }
+        else if (bVerdicts.Any(v => v.StartsWith("✗", StringComparison.Ordinal)))
+        {
+            var avgMs = bElapsedList.Count > 0 ? bElapsedList.Average() : 0;
+            console.WriteLine($"     9d-5：結論 ✗ 逐裝置查詢只回裝置自身訊息，狀態變更取數需改為逐感測器（平均每台 {avgMs:F0} ms）");
+        }
+        else
+        {
+            console.WriteLine("     9d-5：結論 無法判定（樣本裝置近 7 天都沒有狀態變更）");
+        }
+
+        // (d) & (e)
+        if (firstDeviceSensors == null || firstDeviceSensors.Count == 0)
+        {
+            console.WriteLine("     9d-5：略過逐感測器量測（沒有可用的感測器）");
+            return;
+        }
+
+        var firstSensorId = firstDeviceSensors[0];
+
+        // (d) 查逐感測器 messages
+        try
+        {
+            var swD = System.Diagnostics.Stopwatch.StartNew();
+            var jsonD = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid,datetime&count=50&id={firstSensorId}&filter_drel=7days", ct);
+            swD.Stop();
+
+            var parsedD = ParseTable(jsonD, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+            console.WriteLine($"     9d-5：感測器 objid={firstSensorId} 逐感測器取狀態變更 耗時 {swD.Elapsed.TotalMilliseconds:F0} ms、回傳 {parsedD.Rows.Count} 筆");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-5：感測器 objid={firstSensorId} 逐感測器取狀態變更無法量測（{ex.Message}）");
+        }
+
+        // (e) 查 filter_objid 分批取值
+        try
+        {
+            var requestedBatch = firstDeviceSensors.Take(50).ToList();
+            var requestedSet = requestedBatch.ToHashSet();
+            var r = requestedBatch.Count;
+            var filterQuery = PrtgResourceGuardProbe.BuildObjidFilter(requestedBatch);
+            var url = $"/api/table.json?content=sensors&columns=objid,lastvalue_raw{filterQuery}";
+
+            var swE = System.Diagnostics.Stopwatch.StartNew();
+            var jsonE = await client.GetJsonAsync(url, ct);
+            swE.Stop();
+
+            var parsedE = ParseTable(jsonE, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
+            var rowsE = parsedE.Rows.Select(r => r.Objid).ToList();
+            var n = rowsE.Count;
+
+            string verdictE;
+            if (rowsE.Any(id => !requestedSet.Contains(id)))
+            {
+                verdictE = "⚠ 回傳了未要求的感測器（filter_objid 未生效）";
+            }
+            else if (n == r)
+            {
+                verdictE = "✓ 分批取值可用";
+            }
+            else
+            {
+                verdictE = $"⚠ 少回 {r - n} 顆";
+            }
+
+            console.WriteLine($"     9d-5：filter_objid 分批取值 要求 {r} 顆、回傳 {n} 顆、耗時 {swE.Elapsed.TotalMilliseconds:F0} ms → {verdictE}");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     9d-5：filter_objid 分批取值無法量測（{ex.Message}）");
         }
     }
 

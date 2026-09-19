@@ -446,7 +446,7 @@ public class RunsPageUiTests
         Assert.Contains("prtg-backfill/cancel", js);
         Assert.Contains("readingStateChanges", js);
         Assert.Contains("已停止", js);
-        Assert.Contains("讀取狀態變更：${formatNumber(read)} / 約 ${formatNumber(total)} 筆", js);
+        Assert.Contains("讀取狀態變更：${formatNumber(done)} / ${formatNumber(total)} 台", js);
         Assert.Contains("已送出停止，回填會在目前這一步結束後停下", js);
         // 權限守門：同步與回填兩顆停止鈕的輪詢切換都要看 canMaintainSchedule
         Assert.Equal(2, CountOccurrences(js, "cancelBtn && canMaintainSchedule"));

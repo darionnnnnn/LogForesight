@@ -656,8 +656,8 @@ public class EfPrtgStoreTests : IDisposable
 
         store.UpsertSensors(new List<PrtgSensorRow>
         {
-            new() { Objid = 301, DeviceObjid = 1, Name = "DNS Sensor", SensorType = "dns", Paused = false },
-            new() { Objid = 302, DeviceObjid = 1, Name = "HTTP Sensor", SensorType = "http", Paused = false },
+            new() { Objid = 301, DeviceObjid = 1, Name = "Custom Sensor", SensorType = "SNMP Custom", Paused = false },
+            new() { Objid = 302, DeviceObjid = 1, Name = "Script Sensor", SensorType = "SSH Script", Paused = false },
             new() { Objid = 303, DeviceObjid = 1, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false }
         }, now);
 
@@ -1276,6 +1276,8 @@ public class EfPrtgStoreTests : IDisposable
             new() { SensorObjid = 5003, ChangedAt = new DateTime(2026, 8, 27, 18, 45, 0), Status = "Warning", Quality = "Good" },
         };
         store.AppendStateChanges(changes);
+        // 涵蓋摘要只計感測器鏡像中的 sensor
+        SeedMirrorSensors(store, 5001, 5002, 5003);
 
         var summary = store.GetStateChangeCoverageSummary(from, to);
 
@@ -1292,6 +1294,68 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(0, emptySummary.TotalCount);
         Assert.Null(emptySummary.EarliestChangedAt);
         Assert.Null(emptySummary.LatestChangedAt);
+    }
+
+    /// <summary>預放感測器鏡像列（裝置 1），供「只計鏡像中 sensor」的查詢使用。</summary>
+    private static void SeedMirrorSensors(EfPrtgStore store, params long[] objids)
+    {
+        store.UpsertSensors(objids.Select(id => new PrtgSensorRow
+        {
+            Objid = id,
+            DeviceObjid = 1,
+            Name = $"S-{id}",
+            SensorType = "ping"
+        }).ToList(), DateTime.Now);
+    }
+
+    [Fact]
+    public void GetStateChangeCoverageSummary_不在感測器鏡像中的sensor不計入()
+    {
+        var store = CreateStore();
+        store.AppendStateChanges(new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 7001, ChangedAt = new DateTime(2026, 8, 25, 8, 0, 0), Status = "Down", Quality = "Good" },
+            new() { SensorObjid = 7002, ChangedAt = new DateTime(2026, 8, 25, 9, 0, 0), Status = "Down", Quality = "Good" },
+            // 7099 不在鏡像（範圍外的舊列）
+            new() { SensorObjid = 7099, ChangedAt = new DateTime(2026, 8, 26, 10, 0, 0), Status = "Down", Quality = "Good" },
+        });
+        SeedMirrorSensors(store, 7001, 7002);
+
+        var summary = store.GetStateChangeCoverageSummary(new DateTime(2026, 8, 25), new DateTime(2026, 8, 28));
+
+        Assert.Equal(2, summary.TotalCount);
+        Assert.Equal(2, summary.DistinctSensors);
+        Assert.Equal(1, summary.DistinctDates);
+        Assert.Equal(new DateTime(2026, 8, 25, 9, 0, 0), summary.LatestChangedAt);
+    }
+
+    [Fact]
+    public void DeleteSensorsNotSyncedSince_只刪本趟沒刷新的感測器且不碰狀態變更()
+    {
+        var store = CreateStore();
+        var old = DateTime.Now.AddDays(-1);
+        var now = DateTime.Now;
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 8001, DeviceObjid = 1, Name = "Old-1", SensorType = "ping" },
+            new() { Objid = 8002, DeviceObjid = 2, Name = "Old-2", SensorType = "ping" },
+        }, old);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 8002, DeviceObjid = 2, Name = "New-2", SensorType = "ping" },
+            new() { Objid = 8003, DeviceObjid = 3, Name = "New-3", SensorType = "ping" },
+        }, now);
+        store.AppendStateChanges(new List<PrtgStateChangeRow>
+        {
+            new() { SensorObjid = 8001, ChangedAt = new DateTime(2026, 8, 25, 8, 0, 0), Status = "Down", Quality = "Good" },
+        });
+
+        var (deleted, _) = store.DeleteSensorsNotSyncedSince(now, Array.Empty<long>(), now);
+
+        Assert.Equal(1, deleted);
+        using var ctx = _fx.NewContext();
+        Assert.Equal(new long[] { 8002, 8003 }, ctx.PrtgSensors.Select(s => s.Objid).OrderBy(id => id).ToArray());
+        Assert.Equal(1, ctx.PrtgStateChanges.Count());
     }
 
     [Fact]
@@ -1324,6 +1388,8 @@ public class EfPrtgStoreTests : IDisposable
             new() { SensorObjid = 6001, ChangedAt = new DateTime(2026, 9, 1, 0, 0, 0), Status = "Down", Quality = "Good" },
         };
         store.AppendStateChanges(changes);
+        // 狀態變更涵蓋摘要只計感測器鏡像中的 sensor
+        SeedMirrorSensors(store, 6001);
 
         // 1. GetValueCoverageSummary
         var cov = store.GetValueCoverageSummary(from, to);
@@ -1851,16 +1917,108 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     [Fact]
-    public void GetLatestStructureSyncedAt_空表為null_有資料取最大值()
+    public void GetLatestStructureSyncedAt_空表為null_取裝置表最大值且不受感測器補抓影響()
     {
         var store = CreateStore();
         Assert.Null(store.GetLatestStructureSyncedAt());
 
         var t1 = new DateTime(2026, 9, 1, 8, 0, 0);
         var t2 = new DateTime(2026, 9, 3, 8, 0, 0);
-        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 1, DeviceObjid = 1, Name = "A", SensorType = "ping" } }, t1);
-        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 2, DeviceObjid = 1, Name = "B", SensorType = "ping" } }, t2);
-
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 1, Name = "A" } }, t1);
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 2, Name = "B" } }, t2);
         Assert.Equal(t2, store.GetLatestStructureSyncedAt());
+
+        // 感測器被補抓寫入更新的時間，不得讓結構同步時間跟著變新
+        var t3 = new DateTime(2026, 9, 5, 8, 0, 0);
+        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 9, DeviceObjid = 1, Name = "S", SensorType = "ping" } }, t3);
+        Assert.Equal(t2, store.GetLatestStructureSyncedAt());
+    }
+
+    // ── 過期裝置清除（DeleteDevicesNotSyncedSince）──
+
+    /// <summary>預放 total 台裝置（objid 1..total），前 stale 台的 SyncedAt 早於 cutoff，其餘等於 cutoff。</summary>
+    private static DateTime SeedDevicesForStale(EfPrtgStore store, int total, int stale)
+    {
+        var cutoff = new DateTime(2026, 9, 18, 2, 0, 0);
+        var old = cutoff.AddDays(-1);
+        var staleRows = Enumerable.Range(1, stale)
+            .Select(i => new PrtgDeviceRow { Objid = i, Name = $"Dev-{i}", GroupPath = "G" }).ToList();
+        var freshRows = Enumerable.Range(stale + 1, total - stale)
+            .Select(i => new PrtgDeviceRow { Objid = i, Name = $"Dev-{i}", GroupPath = "G" }).ToList();
+        if (staleRows.Count > 0) store.UpsertDevices(staleRows, old);
+        if (freshRows.Count > 0) store.UpsertDevices(freshRows, cutoff);
+        return cutoff;
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_少數過期時刪除過期列()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 1);
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.Equal(new PrtgStaleDeleteResult(10, 1, 1, false), result);
+        var remaining = store.GetAllDevices();
+        Assert.Equal(9, remaining.Count);
+        Assert.DoesNotContain(remaining, d => d.Objid == 1);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_過期超過一半時觸發安全保險一列都不刪()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 6);
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.True(result.SkippedBySafety);
+        Assert.Equal(6, result.Stale);
+        Assert.Equal(10, result.Total);
+        Assert.Equal(0, result.Deleted);
+        Assert.Equal(10, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_剛好一半過期時照刪()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 5);
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.Equal(new PrtgStaleDeleteResult(10, 5, 5, false), result);
+        Assert.Equal(5, store.GetAllDevices().Count);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_鏡像為空時全部為零()
+    {
+        var store = CreateStore();
+
+        var result = store.DeleteDevicesNotSyncedSince(new DateTime(2026, 9, 18, 2, 0, 0));
+
+        Assert.Equal(new PrtgStaleDeleteResult(0, 0, 0, false), result);
+    }
+
+    [Fact]
+    public void DeleteDevicesNotSyncedSince_不影響同objid的人工對應()
+    {
+        var store = CreateStore();
+        var cutoff = SeedDevicesForStale(store, 10, 1);
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 1,
+            HostId = 10,
+            CreatedBy = "admin",
+            Note = "已刪裝置的人工對應",
+            CreatedAt = cutoff
+        });
+
+        var result = store.DeleteDevicesNotSyncedSince(cutoff);
+
+        Assert.Equal(1, result.Deleted);
+        Assert.DoesNotContain(store.GetAllDevices(), d => d.Objid == 1);
+        Assert.Contains(store.GetManualMaps(), m => m.DeviceObjid == 1 && m.HostId == 10);
     }
 }
