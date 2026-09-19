@@ -59,6 +59,7 @@ public class AuditQueryService
         [AuditActions.WorkOrderSplit] = "交辦單拆分",
         [AuditActions.WorkOrderCancel] = "取消交辦",
         [AuditActions.WorkOrderAdminClose] = "代為結案",
+        [AuditActions.WorkOrderDueDate] = "修改交辦單期限",
         [AuditActions.WorkOrderAutoDispatchRun] = "立即派工",
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",

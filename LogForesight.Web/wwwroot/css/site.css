@@ -1675,6 +1675,8 @@ a.lf-stat:hover .lf-card,
     transition: transform .15s ease;
 }
 .lf-row-open .lf-row-caret { transform: rotate(0); }
+/* 剛回覆而結案的列：就地重繪前短暫淡化（處理人工作頁） */
+.lf-row--done { opacity: .55; }
 .lf-row-detail > td {
     background: var(--lf-gray-50);
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);

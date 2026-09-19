@@ -520,6 +520,18 @@ public class WorkOrderReplyRequest
     public DateTime? DueDate { get; set; }
 }
 
+/// <summary>處理人修改單的期限（PUT api/work-orders/{id}/due-date）；null＝清除期限</summary>
+public class WorkOrderDueDateRequest
+{
+    public DateTime? DueDate { get; set; }
+}
+
+public class WorkOrderDueDateResultDto
+{
+    public long WorkOrderId { get; set; }
+    public DateTime? DueDate { get; set; }
+}
+
 public class WorkOrderReplyResultDto
 {
     public long WorkOrderId { get; set; }
@@ -567,4 +579,12 @@ public class HandlerSummaryDto
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; set; }
+
+    /// <summary>檢視者自己的可見主機數（處理人工作頁空狀態分流用；側欄徽章不填，恆為 0）</summary>
+    public int VisibleHostCount { get; set; }
+
+    /// <summary>處理人工作頁標頭（側欄徽章不填）</summary>
+    public string DisplayName { get; set; } = string.Empty;
+    public string Account { get; set; } = string.Empty;
+    public bool Active { get; set; }
 }

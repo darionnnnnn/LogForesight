@@ -94,6 +94,7 @@ public static class AuditActions
     public const string WorkOrderCancel = "work_order_cancel";
     public const string WorkOrderAdminClose = "work_order_admin_close";
     public const string WorkOrderAutoDispatchRun = "work_order_auto_dispatch_run";
+    public const string WorkOrderDueDate = "work_order_due_date";
 
     // 權限異動確認
     public const string PermConfirmAuthorized = "perm_confirm_authorized";

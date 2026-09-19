@@ -80,7 +80,16 @@ public class WorkOrderQueryService
     public HandlerSummaryDto HandlerSummary(long userId)
     {
         AuthorizeHandlerView(userId);
-        return SummaryOf(userId);
+        var user = _users.Get(userId) ?? throw DomainException.NotFound("找不到這位使用者。");
+        var dto = SummaryOf(userId);
+        // 工作頁標頭：主清單不再呼叫 workload，處理人名稱改由摘要一併帶回
+        dto.DisplayName = _displayNames.Of(user.DisplayName);
+        dto.Account = user.Account;
+        dto.Active = user.Active;
+        // 檢視者自己的可見主機數：只用在本人頁的空狀態分流（側欄徽章不需要，不算）
+        // 只經案件授與看得到的主機也算「有授權」：只算群組授權會把這種人誤判成「尚未被授權任何主機」
+        dto.VisibleHostCount = _visibility.GetVisibleHostIds().Count + _visibility.GetCaseGrantHostNames().Count;
+        return dto;
     }
 
     /// <summary>

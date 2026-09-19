@@ -153,6 +153,37 @@ public class WorkOrderReplyService
         };
     }
 
+    /// <summary>處理人可排定的期限最遠天數（自今天起算）</summary>
+    public const int MaxDueDateDays = 90;
+
+    /// <summary>
+    /// 修改單的期限：授權同回覆（本人、進行中）；日期不得早於今天、不得超過今天＋90 天，null＝清除。
+    /// 只動單的 DueDate，不動任何成員狀態與說明；期限沒變時不寫事件與稽核。
+    /// </summary>
+    public WorkOrderDueDateResultDto ChangeDueDate(long id, WorkOrderDueDateRequest req)
+    {
+        var order = RequireOwnActive(id);
+        var dueDate = req.DueDate?.Date;
+        var today = DateTime.Today;
+        if (dueDate < today)
+            throw DomainException.Validation("期限不可早於今天。");
+        if (dueDate > today.AddDays(MaxDueDateDays))
+            throw DomainException.Validation($"期限最多只能設在 {MaxDueDateDays} 天內。");
+
+        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, NewActor()));
+        if (changed)
+        {
+            _audit.Record(
+                action: AuditActions.WorkOrderDueDate,
+                summary: $"修改交辦單 #{id}「{order.IssueLabel}」期限：{order.DueDate?.ToString("yyyy-MM-dd") ?? "無"}→{dueDate?.ToString("yyyy-MM-dd") ?? "無"}",
+                targetKind: TargetKind,
+                targetId: id.ToString(),
+                detail: new { WorkOrderId = id, Previous = order.DueDate, DueDate = dueDate });
+        }
+
+        return new WorkOrderDueDateResultDto { WorkOrderId = id, DueDate = dueDate };
+    }
+
     // ── 內部 ────────────────────────────────────────────────────────────────
 
     /// <summary>單不存在 404；不是本人 403（管理者也擋）；已結案 400</summary>

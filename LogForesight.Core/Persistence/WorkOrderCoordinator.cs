@@ -704,6 +704,37 @@ public class WorkOrderCoordinator
     /// </summary>
     public void TouchReply(long workOrderId, DateTime occurredAt) => TryMarkReplied(workOrderId, occurredAt);
 
+    /// <summary>
+    /// 修改單的期限：只改單的 DueDate，不動任何成員狀態與說明；寫一筆 <see cref="WorkOrderEventActions.DueDateChanged"/> 事件。
+    /// 期限沒變回 false、不寫事件。單不存在或已結案擲 <see cref="InvalidOperationException"/>。
+    /// </summary>
+    public bool ChangeDueDate(long workOrderId, DateTime? dueDate, WorkOrderActor actor)
+    {
+        lock (OrderMutationLock) return ChangeDueDateLocked(workOrderId, dueDate, actor);
+    }
+
+    private bool ChangeDueDateLocked(long workOrderId, DateTime? dueDate, WorkOrderActor actor)
+    {
+        var newDate = dueDate?.Date;
+        DateTime? previous = null;
+        var changed = UpdateOrder(workOrderId, o =>
+        {
+            if (o.ClosedAt != null)
+                throw new InvalidOperationException($"交辦單 #{workOrderId} 已結案，無法修改期限。");
+            previous = o.DueDate;
+            if (o.DueDate?.Date == newDate) return false;
+            o.DueDate = newDate;
+            return true;
+        });
+        if (!changed) return false;
+
+        AppendEvent(workOrderId, WorkOrderEventActions.DueDateChanged, actor, 0,
+            $"期限 {DueDateText(previous)}→{DueDateText(newDate)}");
+        return true;
+    }
+
+    private static string DueDateText(DateTime? date) => date?.ToString("yyyy-MM-dd") ?? "無";
+
     /// <summary>推進 LastReplyAt（經併發重試）；單不存在或已結案回 false、不寫</summary>
     private bool TryMarkReplied(long workOrderId, DateTime occurredAt)
     {

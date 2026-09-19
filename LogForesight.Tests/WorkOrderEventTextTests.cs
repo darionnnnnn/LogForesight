@@ -22,7 +22,8 @@ public class WorkOrderEventTextTests
     {
         var codes = AllActions().Select(a => (string)a[1]).ToList();
         Assert.Contains(WorkOrderEventActions.Replied, codes);
-        Assert.Equal(10, codes.Count);
+        Assert.Contains(WorkOrderEventActions.DueDateChanged, codes);
+        Assert.Equal(11, codes.Count);
     }
 
     [Fact]
