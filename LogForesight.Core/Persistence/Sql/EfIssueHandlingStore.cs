@@ -19,7 +19,7 @@ namespace LogForesight.Core.Persistence.Sql;
 ///      現在由資料庫的唯一索引保證（更強：繞過 store 也破不了）。
 ///   3. 主機名比對不分大小寫——以 host_name_key 正規化欄位達成，見 <see cref="HostNameKey"/>。
 /// </summary>
-public sealed class EfIssueHandlingStore : IIssueHandlingStore
+public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
 {
     private readonly Func<LfDbContext> _contextFactory;
     private readonly SqlPerformanceMonitor? _performance;
@@ -92,6 +92,27 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
                 .Select(ToModel));
         }
         return result;
+    }
+
+    /// <summary>走 IX_lf_issue_handling_issue_key_updated_at；見 <see cref="IIssueNoteQuery.GetLatestNote"/></summary>
+    public (string HostName, DateTime RecordDate, string Note, DateTime UpdatedAt)? GetLatestNote(
+        string issueKey, IReadOnlyCollection<string>? visibleHostNameKeys)
+    {
+        using var ctx = _contextFactory();
+        var query = ctx.IssueHandlings.AsNoTracking()
+            .Where(h => h.IssueKey == issueKey && h.Note != null && h.Note.Trim() != "");
+        if (visibleHostNameKeys != null)
+        {
+            if (visibleHostNameKeys.Count == 0) return null;
+            var keys = visibleHostNameKeys.Distinct(StringComparer.Ordinal).ToList();
+            query = query.Where(h => keys.Contains(h.HostNameKey));
+        }
+
+        var row = query
+            .OrderByDescending(h => h.UpdatedAt)
+            .Select(h => new { h.HostName, h.RecordDate, h.Note, h.UpdatedAt })
+            .FirstOrDefault();
+        return row == null ? null : (row.HostName, row.RecordDate, row.Note!, row.UpdatedAt);
     }
 
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });

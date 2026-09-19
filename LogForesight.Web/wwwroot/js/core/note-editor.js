@@ -11,7 +11,7 @@
  */
 
 import { api, getCurrentUser } from './api.js';
-import { confirmAction } from './ui.js';
+import { confirmAction, showDetailModal, toast } from './ui.js';
 
 const KEY_PREFIX = 'lf-draft:';
 const SAVE_DELAY_MS = 500;
@@ -92,21 +92,27 @@ function linkButton(text, onClick) {
 
 /**
  * @param {HTMLTextAreaElement} textarea 已放進 DOM 的說明欄（計數列插在它之後）
- * @param {{draftKey?: string, maxLength?: number, ai?: {context: () => ({issueLabel?: string, hostCount?: number})}}} options
- *        draftKey 空＝不存草稿；ai 有值才顯示「AI 整理」按鈕（AI 不可用時按鈕整個不出現）
+ * @param {{draftKey?: string, maxLength?: number, ai?: {context: () => ({issueLabel?: string, hostCount?: number})},
+ *          reuse?: {issueKey: () => (string|null)}, phrases?: boolean}} options
+ *        draftKey 空＝不存草稿；ai 有值才顯示「AI 整理」按鈕（AI 不可用時按鈕整個不出現）；
+ *        reuse 有值且 issueKey() 非 null 時顯示「沿用此問題上次的說明」；phrases 為 true 時顯示「常用語」選單
  * @returns {{clearDraft: () => void, setValue: (text: string) => void}}
  */
-export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai } = {}) {
+export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reuse, phrases } = {}) {
     const counter = document.createElement('div');
     counter.className = 'form-text';
     counter.setAttribute('aria-live', 'polite');
 
-    // 計數列：有 AI 選項時是「計數（左）＋AI 整理按鈕（右）」一列，否則就是計數本身
+    // 計數列：有附加工具時是「計數＋沿用／常用語（左）＋AI 整理按鈕（右）」一列，否則就是計數本身
     let counterRow = counter;
-    if (ai) {
+    let leftTools = null;
+    if (ai || reuse || phrases) {
         counterRow = document.createElement('div');
         counterRow.className = 'd-flex justify-content-between align-items-center gap-2';
-        counterRow.appendChild(counter);
+        leftTools = document.createElement('div');
+        leftTools.className = 'd-flex align-items-center flex-wrap gap-2';
+        leftTools.appendChild(counter);
+        counterRow.appendChild(leftTools);
     }
     textarea.after(counterRow);
 
@@ -229,7 +235,215 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai } = 
         });
     }
 
+    if (reuse) attachReuseLink(textarea, leftTools, reuse.issueKey, setValue);
+    if (phrases) attachPhraseMenu(textarea, leftTools, setValue);
+
     return { clearDraft, setValue };
+}
+
+/**
+ * 「沿用此問題上次的說明」（回饋第 50 輪 C-4）：取同一問題簽章在自己可見主機內最新一筆說明。
+ * issueKey() 為 null（沒勾或勾了多個問題）時連結不出現。
+ */
+function attachReuseLink(textarea, leftTools, issueKey, setValue) {
+    if (!issueKey()) return;
+
+    const hint = document.createElement('span');
+    hint.className = 'small text-muted';
+    hint.setAttribute('aria-live', 'polite');
+
+    const link = linkButton('沿用此問題上次的說明', async () => {
+        const key = issueKey();
+        if (!key) return;
+        hint.textContent = '';
+        link.disabled = true;
+        let found = null;
+        try {
+            found = await api.get(`/api/handling/last-note?${new URLSearchParams({ issueKey: key })}`);
+        } catch {
+            return;   // 錯誤訊息已由 api.js 顯示
+        } finally {
+            link.disabled = false;
+        }
+        if (!found || !found.note) {
+            hint.textContent = '此問題還沒有其他人寫過說明';
+            return;
+        }
+        if (textarea.value.trim()) {
+            const preview = found.note.length > 60 ? `${found.note.slice(0, 60)}…` : found.note;
+            const confirmed = await confirmAction({
+                title: `要以 ${found.hostName} ${found.date} 的說明取代目前內容嗎？`,
+                message: `目前說明欄的內容會被取代為：\n${preview}`,
+                confirmText: '取代',
+                confirmVariant: 'primary'
+            });
+            if (!confirmed) return;
+        }
+        setValue(found.note);
+    });
+    link.classList.remove('ms-2');
+    leftTools.append(link, hint);
+}
+
+/**
+ * 常用語（模組內快取，存 Promise：同頁多個說明欄共用一次請求；失敗時清掉快取、下次展開再試）。
+ * 「管理常用語…」儲存後以伺服器回傳的清單換掉快取，其他說明欄下次展開即看到新清單。
+ */
+let phrasesPromise = null;
+
+function loadPhrases() {
+    if (!phrasesPromise) {
+        phrasesPromise = api.get('/api/me/note-phrases').catch(err => {
+            phrasesPromise = null;
+            throw err;
+        });
+    }
+    return phrasesPromise;
+}
+
+/** 插入常用語：原本有焦點就插在游標處，否則附加在結尾（前面自動補換行） */
+function insertPhrase(textarea, phrase, hadFocus, setValue) {
+    const value = textarea.value;
+    let next;
+    let caret;
+    if (hadFocus.focused) {
+        const start = hadFocus.start;
+        const end = hadFocus.end;
+        next = value.slice(0, start) + phrase + value.slice(end);
+        caret = start + phrase.length;
+    } else {
+        const prefix = value && !value.endsWith('\n') ? '\n' : '';
+        next = value + prefix + phrase;
+        caret = next.length;
+    }
+    setValue(next);   // 走 input 事件：計數與草稿一併更新
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+}
+
+function attachPhraseMenu(textarea, leftTools, setValue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'dropdown';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn-link btn-sm p-0 align-baseline dropdown-toggle';
+    toggle.setAttribute('data-bs-toggle', 'dropdown');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = '常用語';
+
+    const menu = document.createElement('ul');
+    menu.className = 'dropdown-menu';
+    wrap.append(toggle, menu);
+    leftTools.appendChild(wrap);
+
+    // 點開選單前記下說明欄是否有焦點與游標位置——按下按鈕後焦點就移走了
+    const hadFocus = { focused: false, start: 0, end: 0 };
+    toggle.addEventListener('pointerdown', () => {
+        hadFocus.focused = document.activeElement === textarea;
+        hadFocus.start = textarea.selectionStart;
+        hadFocus.end = textarea.selectionEnd;
+    });
+    toggle.addEventListener('keydown', () => {
+        hadFocus.focused = false;   // 鍵盤操作時焦點本來就在按鈕上
+    });
+
+    function menuItem(text, onClick, extraClass) {
+        const li = document.createElement('li');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'dropdown-item text-wrap' + (extraClass ? ` ${extraClass}` : '');
+        btn.textContent = text;
+        btn.addEventListener('click', onClick);
+        li.appendChild(btn);
+        return li;
+    }
+
+    function renderMenu(data) {
+        const items = [];
+        for (const phrase of data.phrases ?? []) {
+            items.push(menuItem(phrase, () => insertPhrase(textarea, phrase, hadFocus, setValue)));
+        }
+        if (items.length === 0) {
+            const empty = document.createElement('li');
+            const text = document.createElement('span');
+            text.className = 'dropdown-item-text small text-muted';
+            text.textContent = '還沒有常用語';
+            empty.appendChild(text);
+            items.push(empty);
+        }
+        const divider = document.createElement('li');
+        const hr = document.createElement('hr');
+        hr.className = 'dropdown-divider';
+        divider.appendChild(hr);
+        items.push(divider, menuItem('管理常用語…', () => openPhraseManager(data)));
+        menu.replaceChildren(...items);
+    }
+
+    wrap.addEventListener('show.bs.dropdown', () => {
+        const loading = document.createElement('li');
+        const text = document.createElement('span');
+        text.className = 'dropdown-item-text small text-muted';
+        text.textContent = '載入中…';
+        loading.appendChild(text);
+        menu.replaceChildren(loading);
+        loadPhrases().then(renderMenu).catch(() => {
+            text.textContent = '常用語載入失敗，請再試一次';
+        });
+    });
+}
+
+/** 「管理常用語」modal：一行一條，儲存＝個人清單；恢復預設＝刪除個人清單 */
+function openPhraseManager(data) {
+    const body = document.createElement('div');
+
+    if (data.isDefault) {
+        const hint = document.createElement('div');
+        hint.className = 'lf-hint mb-2';
+        hint.textContent = '目前使用全站預設，儲存後改用你自己的清單';
+        body.appendChild(hint);
+    }
+
+    const label = document.createElement('label');
+    label.className = 'form-label small text-muted';
+    label.textContent = '一行一條，最多 20 條、每條最多 200 字';
+    const input = document.createElement('textarea');
+    input.className = 'form-control form-control-sm mb-3';
+    input.rows = 8;
+    input.value = (data.phrases ?? []).join('\n');
+    label.htmlFor = input.id = `lf-phrases-${Math.random().toString(36).slice(2, 10)}`;
+
+    const actions = document.createElement('div');
+    actions.className = 'd-flex gap-2';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'btn btn-primary btn-sm';
+    save.textContent = '儲存';
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'btn btn-outline-secondary btn-sm';
+    reset.textContent = '恢復預設';
+    actions.append(save, reset);
+    body.append(label, input, actions);
+
+    async function submit(list) {
+        save.disabled = reset.disabled = true;
+        try {
+            const result = await api.put('/api/me/note-phrases', { phrases: list });
+            phrasesPromise = Promise.resolve(result);
+            toast(result.isDefault ? '已恢復為全站預設常用語' : '已儲存常用語', 'success');
+            bootstrap.Modal.getInstance(body.closest('.modal')).hide();
+        } catch {
+            // 驗證失敗（超過條數或字數）的訊息已由 api.js 顯示，留在 modal 讓使用者修改
+        } finally {
+            save.disabled = reset.disabled = false;
+        }
+    }
+
+    save.addEventListener('click', () => submit(input.value.split('\n')));
+    reset.addEventListener('click', () => submit([]));
+
+    showDetailModal({ title: '管理常用語', body });
 }
 
 /**

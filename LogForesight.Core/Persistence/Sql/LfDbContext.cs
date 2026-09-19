@@ -256,6 +256,7 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostNameKey, x.RecordDate, x.IssueKey }).IsUnique().HasDatabaseName("IX_lf_issue_handling_unique");
             e.HasIndex(x => new { x.HostNameKey, x.RecordDate }).HasDatabaseName("IX_lf_issue_handling_host_date");   // GetForDay
             e.HasIndex(x => x.CaseId).HasDatabaseName("IX_lf_issue_handling_case_id");   // GetByCase
+            e.HasIndex(x => new { x.IssueKey, x.UpdatedAt }).HasDatabaseName("IX_lf_issue_handling_issue_key_updated_at");   // GetLatestNote
         });
 
         b.Entity<IssueCaseRow>(e =>

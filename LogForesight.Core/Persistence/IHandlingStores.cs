@@ -69,6 +69,21 @@ public interface IIssueHandlingStore
 }
 
 /// <summary>
+/// 「沿用此問題上次的說明」的查詢（回饋第 50 輪 C-4）。由 <see cref="Sql.EfIssueHandlingStore"/> 實作；
+/// 獨立成窄介面是為了不讓 <see cref="IIssueHandlingStore"/> 的每個替身都得跟著實作一個用不到的方法。
+/// </summary>
+public interface IIssueNoteQuery
+{
+    /// <summary>
+    /// 此問題簽章最新一筆非空白說明（依 UpdatedAt 降冪）。
+    /// <paramref name="visibleHostNameKeys"/> 為 host_name_key 集合：null＝不限（全域可見者），
+    /// 非 null 時只在這些主機內找——空集合一律回 null。
+    /// </summary>
+    (string HostName, DateTime RecordDate, string Note, DateTime UpdatedAt)? GetLatestNote(
+        string issueKey, IReadOnlyCollection<string>? visibleHostNameKeys);
+}
+
+/// <summary>
 /// 問題案件的讀寫（↔ 未來 lf_issue_cases，docs/archive/FEEDBACK-4-PLAN.md §0）。
 /// 案件是（主機、問題簽章）跨日的處理協調紀錄；逐日結案狀態仍在 <see cref="IIssueHandlingStore"/>，
 /// 兩者的關係與職責邊界見 <see cref="IssueCase"/> 類別註解。

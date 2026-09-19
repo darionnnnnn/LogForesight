@@ -86,6 +86,9 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling",
             "IX_lf_issue_handling_host_date", "host_name_key, record_date");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling", "IX_lf_issue_handling_case_id", "case_id");
+        // 沿用此問題上次的說明（回饋第 50 輪 C-4）：依問題簽章取最新一筆說明
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling",
+            "IX_lf_issue_handling_issue_key_updated_at", "issue_key, updated_at");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_cases",
             isSqlite ? SqliteCreateIssueCases : SqlServerCreateIssueCases);

@@ -445,7 +445,10 @@ function handlingForm() {
 
     const noteEditor = attachNoteEditor(noteInput, {
         draftKey: `record:${hostId}:${date}`,
-        ai: { context: () => aiNoteContext(getSelection()) }
+        ai: { context: () => aiNoteContext(getSelection()) },
+        // 沿用上次的說明：只在恰好勾一個問題時有明確的問題簽章
+        reuse: { issueKey: () => { const selection = getSelection(); return selection.size === 1 ? [...selection][0] : null; } },
+        phrases: true
     });
 
     /** 使用者對表單的輸入存進模組層暫存：勾選問題會整張重建，重建時以此為初值 */

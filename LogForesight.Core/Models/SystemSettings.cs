@@ -72,6 +72,12 @@ public class SystemSettings
     /// </summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中" };
 
+    /// <summary>
+    /// 全站預設常用語（回饋第 50 輪 C-4）：處理說明輸入框「常用語」選單在使用者沒有自己的清單時列出這份。
+    /// 消費端＝<c>GET api/me/note-phrases</c>；個人清單存在 user_prefs blob，不寫進本物件。
+    /// </summary>
+    public List<string> DefaultNotePhrases { get; set; } = new();
+
     /// <summary>AI 提供者（Local／OpenAi／AzureOpenAi）。預設為 Local（本機 OpenAI 相容端點）</summary>
     public string AiProvider { get; set; } = Configuration.AiProviders.Local;
 

@@ -33,8 +33,10 @@ const STATUS_OPTIONS = [
  * @param {string} options.draftKey 草稿識別（必填）：可區分回覆對象的字串，下次打開同一批對象會還原草稿
  * @param {{issueLabel?: string, hostCount?: number}} [options.aiContext] 「AI 整理」的問題脈絡；
  *        一次回覆多張不同問題的單時不帶 issueLabel
+ * @param {string|null} [options.reuseIssueKey] 「沿用此問題上次的說明」的完整問題簽章；
+ *        沒有單一明確的簽章（例如一次回覆多張單）時傳 null，不顯示沿用連結
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {} }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {}, reuseIssueKey = null }) {
     const body = document.createElement('div');
     const form = document.createElement('form');
     form.noValidate = true;   // 超過字數的 customValidity 走下方手動驗證，不跳原生泡泡
@@ -66,7 +68,9 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     form.append(noteLabel, noteInput);
     const noteEditor = attachNoteEditor(noteInput, {
         draftKey: `wo-reply:${draftKey}`,
-        ai: { context: () => aiContext }
+        ai: { context: () => aiContext },
+        reuse: { issueKey: () => reuseIssueKey },
+        phrases: true
     });
 
     // 處理中的預計完成日／觀察中的觀察至日期共用同一個欄位（後端同一個 DueDate）
@@ -220,6 +224,8 @@ export async function openIssueStatusReplyModal(group, onApplied) {
         targetText: `${orders.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
         aiContext: { issueLabel: `${group.source} (${group.eventId})`, hostCount: hosts },
+        // 依問題視角只有 Source＋EventId、沒有完整簽章（同一事件可能分屬多個簽章），不顯示沿用
+        reuseIssueKey: null,
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);

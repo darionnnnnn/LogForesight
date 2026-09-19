@@ -73,6 +73,7 @@ async function loadSettings() {
     renderSeverityChecks(current.unhandledSeverities);
     renderDisplayModeButtons(current.severityDisplayMode);
     renderDayRiskLevelChecks(current.visibleDayRiskLevels);
+    document.getElementById('default-note-phrases').value = (current.defaultNotePhrases ?? []).join('\n');
     renderAiFields(current);
     renderAdFields(current);
     renderAnalysisFields(current);
@@ -1191,6 +1192,7 @@ function bindForm() {
                 unhandledSeverities: severities,
                 severityDisplayMode: collectDisplayMode(),
                 visibleDayRiskLevels: collectDayRiskLevels(),
+                defaultNotePhrases: collectLines('default-note-phrases'),
                 aiProvider,
                 aiBaseUrl,
                 aiModel,

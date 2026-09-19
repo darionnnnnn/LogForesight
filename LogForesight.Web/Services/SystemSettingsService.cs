@@ -155,6 +155,12 @@ public class SystemSettingsService : ISystemSettingsService
         if (!dayRiskLevels.Contains(RiskLevels.High))
             throw DomainException.Validation("「高風險日」為必要顯示項目，無法取消勾選。");
 
+        // 全站預設常用語（回饋第 50 輪 C-4）：與個人清單同一套上限，超出直接擋
+        var defaultNotePhrases = NotePhraseRules.Normalize(request.DefaultNotePhrases);
+        var phraseError = NotePhraseRules.Validate(defaultNotePhrases);
+        if (phraseError != null)
+            throw DomainException.Validation("預設常用語：" + phraseError);
+
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
 
@@ -337,6 +343,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.UnhandledSeverities = severities;
             s.SeverityDisplayMode = request.SeverityDisplayMode;
             s.VisibleDayRiskLevels = dayRiskLevels;
+            s.DefaultNotePhrases = defaultNotePhrases;
             s.AiProvider = aiProvider;
             s.AiBaseUrl = request.AiBaseUrl.Trim();
             if (request.ClearAiApiKey)
@@ -477,7 +484,7 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels,
+                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.DefaultNotePhrases,
                     before.AiProvider, AiBaseUrl = UrlSecrets.Mask(before.AiBaseUrl), before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.RawEventRetentionDays, before.ReportRetentionDays,
@@ -510,7 +517,7 @@ public class SystemSettingsService : ISystemSettingsService
                 },
                 After = new
                 {
-                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels,
+                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.DefaultNotePhrases,
                     saved.AiProvider, AiBaseUrl = UrlSecrets.Mask(saved.AiBaseUrl), saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.RawEventRetentionDays, saved.ReportRetentionDays,
@@ -1291,6 +1298,7 @@ public class SystemSettingsService : ISystemSettingsService
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
+        DefaultNotePhrases = s.DefaultNotePhrases,
         AiProvider = AiProviders.Normalize(s.AiProvider),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
