@@ -544,6 +544,16 @@
                 <div id="health-background"></div>
             </div>
         </div>
+
+        @* 登入暫停：登入節流擋下的帳號與 IP（站台重啟即清空），可手動解除 *@
+        <div class="lf-card mb-3">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">登入暫停</h2>
+            </div>
+            <div class="lf-card__body">
+                <div id="health-login-throttle"></div>
+            </div>
+        </div>
     </div>
 
     @* 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：SMTP 連線＋收件人＋三路觸發開關。

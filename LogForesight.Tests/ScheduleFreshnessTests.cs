@@ -482,6 +482,7 @@ public class ScheduleFreshnessTests
             currentUser: currentUser,
             users: users,
             groups: groups,
-            userDisplayNames: displayNames);
+            userDisplayNames: displayNames,
+            throttle: new LoginThrottle());
     }
 }

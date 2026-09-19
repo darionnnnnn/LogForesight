@@ -5,6 +5,7 @@ using LogForesight.Web.Extensions;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Middleware;
 using LogForesight.Web.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 using NLog;
 using NLog.Web;
 
@@ -162,6 +163,22 @@ try
     }
 
     // ── 管線 ─────────────────────────────────────────────────────────────────
+    // 反向代理轉送標頭：必須是管線第一個，之後的 middleware 與登入節流看到的
+    // RemoteIpAddress 才是真實來源。只信任設定列出的代理 IP——清空預設值（預設信任迴路位址），
+    // 否則任何人都能自己帶 X-Forwarded-For 偽造來源 IP 繞過節流。未設定＝完全不處理。
+    if (settings.Server.TrustedProxies.Count > 0)
+    {
+        var forwarded = new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+        };
+        forwarded.KnownNetworks.Clear();
+        forwarded.KnownProxies.Clear();
+        foreach (var proxy in settings.Server.TrustedProxies)
+            forwarded.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
+        app.UseForwardedHeaders(forwarded);
+    }
+
     // 掛載前綴：IIS 以子 Application 掛載時 ASP.NET Core 會自動填 Request.PathBase，
     // 這個設定只給「Kestrel 直曝但前面有反向代理加了前綴」的情境，以及本機驗證前綴行為用。
     // 必須排在所有 middleware 之前——之後才註冊的東西看到的 Path 才是扣掉前綴的。

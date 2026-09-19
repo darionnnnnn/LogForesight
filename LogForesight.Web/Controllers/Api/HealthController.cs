@@ -31,6 +31,7 @@ public class HealthController : ControllerBase
     private readonly IUserGroupStore _groups;
     private readonly IUserStore _users;
     private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly LoginThrottle _throttle;
 
     public HealthController(
         HealthService health,
@@ -40,8 +41,10 @@ public class HealthController : ControllerBase
         ICurrentUser currentUser,
         IUserGroupStore groups,
         IUserStore users,
-        IUserDisplayNameService userDisplayNames)
+        IUserDisplayNameService userDisplayNames,
+        LoginThrottle throttle)
     {
+        _throttle = throttle;
         _health = health;
         _freshness = freshness;
         _optionsStore = optionsStore;
@@ -123,6 +126,29 @@ public class HealthController : ControllerBase
             summary: $"確認資料過期提醒，靜音至 {request.Until:yyyy-MM-dd}",
             targetKind: "schedule",
             detail: new { until = request.Until.ToString("yyyy-MM-dd") });
+
+        return ApiResponse.Ok();
+    }
+
+    /// <summary>目前被登入節流暫停的帳號與 IP（需 Maintain）</summary>
+    [HttpGet("login-throttle")]
+    [Permission(Capability.Maintain)]
+    public ApiResponse<IReadOnlyList<LoginThrottleEntry>> LoginThrottleList() =>
+        ApiResponse<IReadOnlyList<LoginThrottleEntry>>.Ok(_throttle.GetBlocked(DateTime.Now));
+
+    /// <summary>手動解除登入暫停（需 Maintain），key 為帳號或 IP</summary>
+    [HttpDelete("login-throttle/{key}")]
+    [Permission(Capability.Maintain)]
+    public ApiResponse LoginThrottleClear(string key)
+    {
+        if (!_throttle.Clear(key))
+            throw DomainException.NotFound("找不到這個被暫停的帳號或 IP（可能已自動解除）。");
+
+        _audit.Record(
+            action: AuditActions.LoginThrottleCleared,
+            summary: $"解除登入暫停：{key}",
+            targetKind: "login_throttle",
+            targetId: key);
 
         return ApiResponse.Ok();
     }

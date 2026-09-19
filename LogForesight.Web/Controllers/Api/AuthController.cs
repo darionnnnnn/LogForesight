@@ -25,6 +25,7 @@ public class AuthController : ControllerBase
     private readonly IAuditService _audit;
     private readonly WebAppSettings _settings;
     private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly LoginThrottle _throttle;
 
     public AuthController(
         IdentityService identity,
@@ -33,8 +34,10 @@ public class AuthController : ControllerBase
         ICurrentUser currentUser,
         IAuditService audit,
         WebAppSettings settings,
-        IUserDisplayNameService userDisplayNames)
+        IUserDisplayNameService userDisplayNames,
+        LoginThrottle throttle)
     {
+        _throttle = throttle;
         _identity = identity;
         _tokens = tokens;
         _provider = provider;
@@ -58,13 +61,42 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public ActionResult<ApiResponse<CurrentUserDto>> Login([FromBody] LoginRequest request)
     {
-        var outcome = _identity.Login(request.Account, request.Password);
+        var now = DateTime.Now;
+        var account = request.Account ?? string.Empty;
+
+        // 本地救援帳號（serverAdmin）豁免 IP 維度，只看帳號維度：AD 掛掉時它是唯一入口，
+        // 不能因為同一個 IP（例如共用跳板機、NAT 出口）上其他人的失敗而被連坐擋在門外。
+        // 它自己的連續失敗鎖定仍由 ServerAdminAuthenticator 負責，兩道並存。
+        var isServerAdmin = string.Equals(account.Trim(), _settings.Auth.ServerAdmin.Account.Trim(),
+            StringComparison.OrdinalIgnoreCase);
+        var ip = isServerAdmin ? null : HttpContext.Connection.RemoteIpAddress;
+
+        if (_throttle.IsBlocked(account, ip, now, out var retryAfter))
+        {
+            // 同一次暫停只在第一次被擋時寫稽核：暫停期間的連續嘗試不能再讓稽核表無上限成長
+            if (_throttle.MarkBlockAudited(account, ip, now))
+            {
+                _audit.RecordAuth(AuditActions.LoginThrottled, account.Trim(), null,
+                    $"登入嘗試過多，暫停登入（來源 IP：{HttpContext.Connection.RemoteIpAddress?.ToString() ?? "未知"}）",
+                    AuditResult.Denied);
+            }
+
+            // 不透露是帳號還是 IP 被擋，也不透露帳號是否存在
+            var minutes = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalMinutes));
+            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<CurrentUserDto>.Fail(
+                ApiErrorCodes.Forbidden, $"登入嘗試次數過多，請於 {minutes} 分鐘後再試。"));
+        }
+
+        var outcome = _identity.Login(account, request.Password);
 
         if (!outcome.Success || outcome.Identity == null)
         {
+            _throttle.RecordFailure(account, ip, now);
             return Unauthorized(ApiResponse<CurrentUserDto>.Fail(
                 ApiErrorCodes.Forbidden, outcome.ErrorMessage ?? "登入失敗。"));
         }
+
+        _throttle.RecordSuccess(account);
 
         var token = _tokens.CreateToken(outcome.Identity);
         var expires = _tokens.ExpiresAt();

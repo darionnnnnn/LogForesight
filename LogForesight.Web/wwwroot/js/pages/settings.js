@@ -647,6 +647,50 @@ async function loadHealthTab({ refresh = false } = {}) {
     renderFreshness(detail.scheduleFreshness);
     renderSlowQueries(detail.topSlowOperations);
     renderBackgroundJobs(detail);
+    await loadLoginThrottle();
+}
+
+/** 登入暫停：列出被登入節流暫停的帳號與 IP，可逐筆解除 */
+async function loadLoginThrottle() {
+    const host = document.getElementById('health-login-throttle');
+    if (!host) return;
+    let entries;
+    try {
+        entries = await api.get('/api/health/login-throttle', { silent: true });
+    } catch {
+        renderEmpty(host, { title: '無法載入登入暫停清單', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle' });
+        return;
+    }
+    renderTable(host, {
+        columns: [
+            { key: 'key', title: '對象' },
+            { key: 'kind', title: '類型', render: r => (r.kind === 'ip' ? 'IP' : '帳號') },
+            { key: 'blockedUntil', title: '解除時間', render: r => formatDateTime(r.blockedUntil) },
+            { key: 'action', title: '', render: r => loginThrottleClearButton(r.key) }
+        ],
+        rows: entries ?? [],
+        empty: { title: '目前沒有被暫停的帳號或 IP' }
+    });
+}
+
+function loginThrottleClearButton(key) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-outline-secondary btn-sm';
+    btn.textContent = '解除';
+    btn.addEventListener('click', async () => {
+        const restore = withBusy(btn, '解除中…');
+        try {
+            await api.delete(`/api/health/login-throttle/${encodeURIComponent(key)}`);
+            toast(`已解除 ${key} 的登入暫停`, 'success');
+            await loadLoginThrottle();
+        } catch {
+            // api.js 已顯示錯誤
+        } finally {
+            restore();
+        }
+    });
+    return btn;
 }
 
 /** 排程資料新鮮度：啟用狀態、最近一次成功、狀態徽章；過期且未確認時露出確認靜音列 */

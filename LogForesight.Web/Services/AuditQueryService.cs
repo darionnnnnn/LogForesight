@@ -45,6 +45,8 @@ public class AuditQueryService
         [AuditActions.Logout] = "登出",
         [AuditActions.LoginFailed] = "登入失敗",
         [AuditActions.SessionExpired] = "工作階段逾期",
+        [AuditActions.LoginThrottled] = "登入嘗試過多暫停",
+        [AuditActions.LoginThrottleCleared] = "解除登入暫停",
         ["access_denied"] = "權限不足被拒",
 
         [AuditActions.HandlingAssign] = "指派處理人",

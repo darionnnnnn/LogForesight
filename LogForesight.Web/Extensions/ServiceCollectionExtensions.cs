@@ -106,6 +106,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddSingleton<JwtTokenService>();
         services.AddSingleton<ServerAdminAuthenticator>();
+        services.AddSingleton<LoginThrottle>();   // 行程內節流狀態，必須是 Singleton 才跨請求累計
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。

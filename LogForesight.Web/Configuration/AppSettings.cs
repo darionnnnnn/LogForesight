@@ -33,6 +33,8 @@ public class WebAppSettings
 
     public AuthSettings Auth { get; set; } = new();
 
+    public ServerSettings Server { get; set; } = new();
+
     // §12（回饋第九輪）：Ai／Permissions／Analysis／Import／Ui／Netiq 區段已自 appsettings.json 退役。
     // 前四者的唯一事實來源改為 DB「系統管理 > 設定」頁（見 SystemSettings ＋
     // RuntimeSettingsResolver.ApplySystemSettingsOverrides）；Ui 的兩個值改為程式常數
@@ -86,9 +88,24 @@ public class WebAppSettings
         // NetIQ 離線示範資料（§13）改由 DB「NetIQ 維護」頁的 UseOfflineDemoData 開關控制（僅非
         // Production 生效），appsettings 不再有 Netiq:DiscoveryClient，這裡因此不需要對應的啟動驗證。
 
+        foreach (var proxy in Server.TrustedProxies)
+        {
+            if (!System.Net.IPAddress.TryParse((proxy ?? "").Trim(), out _))
+                errors.Add($"Server:TrustedProxies 含有不是 IP 位址的值「{proxy}」（只能填反向代理的 IP，例如 10.0.0.5）。");
+        }
+
         if (errors.Count > 0)
             throw new InvalidOperationException("appsettings.json 設定不合格：" + Environment.NewLine + string.Join(Environment.NewLine, errors.Select(e => "  - " + e)));
     }
+}
+
+public class ServerSettings
+{
+    /// <summary>
+    /// 站台前面有反向代理（ARR、nginx）時，填代理的 IP；會用 X-Forwarded-For 取得真實來源 IP
+    /// （登入節流的 IP 維度靠它）。空＝不處理轉送標頭。
+    /// </summary>
+    public List<string> TrustedProxies { get; set; } = new();
 }
 
 public class JwtSettings

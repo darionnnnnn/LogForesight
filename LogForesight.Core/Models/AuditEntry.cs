@@ -70,6 +70,10 @@ public static class AuditActions
     public const string LoginFailed = "login_failed";
     public const string SessionExpired = "session_expired";
 
+    // 登入節流（LoginThrottle）：同一次暫停只在第一次被擋時寫一筆
+    public const string LoginThrottled = "login_throttled";
+    public const string LoginThrottleCleared = "login_throttle_cleared";
+
     // 處理流程
     public const string HandlingAssign = "handling_assign";
     public const string HandlingStatus = "handling_status";
