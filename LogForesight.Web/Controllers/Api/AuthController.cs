@@ -26,6 +26,7 @@ public class AuthController : ControllerBase
     private readonly WebAppSettings _settings;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly LoginThrottle _throttle;
+    private readonly RevokedTokens _revoked;
 
     public AuthController(
         IdentityService identity,
@@ -35,9 +36,11 @@ public class AuthController : ControllerBase
         IAuditService audit,
         WebAppSettings settings,
         IUserDisplayNameService userDisplayNames,
-        LoginThrottle throttle)
+        LoginThrottle throttle,
+        RevokedTokens revoked)
     {
         _throttle = throttle;
+        _revoked = revoked;
         _identity = identity;
         _tokens = tokens;
         _provider = provider;
@@ -116,6 +119,16 @@ public class AuthController : ControllerBase
         {
             _audit.RecordAuth(AuditActions.Logout, _currentUser.Account,
                 _currentUser.UserId > 0 ? _currentUser.UserId : null, "登出", AuditResult.Ok);
+        }
+
+        // 登出撤銷：只刪 cookie 的話，事先被複製走的 token 在剩餘效期內仍可重放
+        var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+        if (jti != null)
+        {
+            var exp = long.TryParse(User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Exp)?.Value, out var seconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+                : _tokens.ExpiresAt();   // 讀不到到期時間就以最長效期保守記住
+            _revoked.Revoke(jti, exp);
         }
 
         AuthCookie.Delete(Response, Request, _settings.Jwt.CookieName);

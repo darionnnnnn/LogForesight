@@ -50,7 +50,7 @@ internal class HandlingServiceFacade
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, store, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
-            audit, currentUser, displayNames, workOrderStore, workOrders);
+            audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared);
         _day = new DayHandlingCommandService(
             store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
             displayNames, mail, issueOwners);

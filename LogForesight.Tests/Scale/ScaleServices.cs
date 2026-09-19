@@ -93,7 +93,7 @@ internal sealed class ScaleServices
 
         WorkOrders = new WorkOrderCoordinator(WorkOrderStore, Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames,
-            WorkOrderStore, WorkOrders);
+            WorkOrderStore, WorkOrders, TestPermissionStamps.Shared);
 
         var capabilities = new UserCapabilityResolver(userGroups, Hosts, issueOwners);
         var auditService = new RecordingAuditService();

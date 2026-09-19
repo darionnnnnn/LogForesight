@@ -107,6 +107,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<JwtTokenService>();
         services.AddSingleton<ServerAdminAuthenticator>();
         services.AddSingleton<LoginThrottle>();   // 行程內節流狀態，必須是 Singleton 才跨請求累計
+        // 權限版本號與登出撤銷清單都是跨請求共享狀態，必須是 Singleton
+        services.AddSingleton<PermissionVersionStamp>(sp =>
+            new PermissionVersionStamp(sp.GetRequiredService<StorageBackend>().Blob(PermissionVersionStamp.BlobKey)));
+        services.AddSingleton<RevokedTokens>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。

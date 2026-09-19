@@ -317,7 +317,7 @@ public class IssueExclusionTests : IDisposable
         var service = new IssueOwnerAdminService(
             owners, aggregates, new FakeUserStore(), new RecordingAuditService(),
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
-            new UserDisplayNameService(new FakeSystemSettingsStore()), workOrderStore, workOrders);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), workOrderStore, workOrders, TestPermissionStamps.Shared);
 
         var recent = service.RecentIssues();
 

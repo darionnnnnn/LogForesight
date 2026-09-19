@@ -312,7 +312,7 @@ public class PrtgHostMapEndpointTests : IDisposable
             new UserDisplayNameService(new FakeSystemSettingsStore()),
             _backend.PrtgStore(),
             new PrtgHostMapRefresher(new FakeSystemSettingsStore(), _backend),
-            new FakeSystemSettingsStore());
+            new FakeSystemSettingsStore(), TestPermissionStamps.Shared);
 
         var list = service.GetAllActiveHostOptions();
 

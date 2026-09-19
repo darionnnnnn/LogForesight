@@ -21,6 +21,7 @@ public class UserAdminService
     private readonly IAuditService _audit;
     private readonly UserCapabilityResolver _capabilities;
     private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     public UserAdminService(
         IUserStore users,
@@ -31,8 +32,10 @@ public class UserAdminService
         IVisibilityService visibility,
         IAuditService audit,
         UserCapabilityResolver capabilities,
-        IUserDisplayNameService userDisplayNames)
+        IUserDisplayNameService userDisplayNames,
+        PermissionVersionStamp permissionVersion)
     {
+        _permissionVersion = permissionVersion;
         _users = users;
         _groups = groups;
         _hosts = hosts;
@@ -180,6 +183,7 @@ public class UserAdminService
             // 「更新顯示名稱」這種操作就有機會意外清掉某人的所有權限
             GroupIds = existing?.GroupIds ?? new List<long>()
         });
+        if (existing != null && existing.Active != user.Active) _permissionVersion.Bump();
 
         _audit.Record(
             action: isNew ? AuditActions.UserCreate : AuditActions.UserUpdate,
@@ -207,6 +211,7 @@ public class UserAdminService
         var after = requested.Select(id => allGroups[id].GroupName).ToList();
 
         _users.SetGroups(userId, requested);
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.UserUpdate,

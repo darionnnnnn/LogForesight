@@ -32,7 +32,7 @@ public class UserAdminServiceTests
             _users, _groups, _access, _hosts, _cases, _settings),
         _audit,
         new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts),
-        new UserDisplayNameService(_settings));
+        new UserDisplayNameService(_settings), TestPermissionStamps.Shared);
 
     private long AddGroup(string name) => _groups.Upsert(new UserGroup { GroupName = name, Role = UserRole.User, Active = true }).GroupId;
 
@@ -383,7 +383,7 @@ public class UserAdminServiceTests
     }
 
     private GroupAdminService CreateGroupAdmin() => new(
-        _groups, _hostGroups, _access, _users, _hosts, _audit);
+        _groups, _hostGroups, _access, _users, _hosts, _audit, TestPermissionStamps.Shared);
 
     [Fact]
     public void 設派工池_內建群組被拒且零寫入()

@@ -68,8 +68,14 @@ form.addEventListener('submit', async event => {
     }
 });
 
+// 只接受站內相對路徑：瀏覽器會把 '\' 當 '/'（'/\evil.com' ≡ '//evil.com'），
+// 所以任何反斜線都拒絕；含 '://' 的值也一律拒絕，不賭解析器怎麼讀
 function isSafeReturnUrl(url) {
-    return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//');
+    return typeof url === 'string'
+        && url.startsWith('/')
+        && !url.startsWith('//')
+        && !url.includes('\\')
+        && !url.includes('://');
 }
 
 function showError(message) {

@@ -53,7 +53,7 @@ public sealed class IssueMuteTests : IDisposable
 
     private IssueOwnerAdminService Admin(ICurrentUser user, IIssueOwnerStore? store = null) =>
         new(store ?? _owners, new FakeIssueAggregateQuery(), _users, _audit, user,
-            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared);
 
     private static ICurrentUser Maintainer() => FakeCurrentUser.ForUser(5, Capability.Maintain);
 

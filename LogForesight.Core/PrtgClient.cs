@@ -63,7 +63,7 @@ public sealed class PrtgClient : IDisposable
             string.IsNullOrEmpty(parsed.Host))
         {
             throw new PrtgClientException(
-                $"PRTG 的連線位址格式不正確：「{baseUrl}」。" +
+                $"PRTG 的連線位址格式不正確：「{UrlSecrets.Mask(baseUrl)}」。" +
                 "請填寫完整網址，含 https:// 或 http://（例如 https://prtg.corp.local）。");
         }
 

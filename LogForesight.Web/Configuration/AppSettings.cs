@@ -47,9 +47,17 @@ public class WebAppSettings
     /// 沿用批次端「設定錯誤要顯性化」的原則——設定寫錯時最糟的結果是「看起來正常但行為不對」，
     /// 例如 SecretKey 空白會讓 JWT 簽章失效、DataRoot 指錯會讓整站看起來沒有任何資料。
     /// </summary>
-    public void Validate(bool isProduction)
+    /// <param name="strict">
+    /// 是否擋下出廠公開值與 Stub。呼叫端傳「環境不是 Development」：只有 Development 放行，
+    /// 環境名稱設成 Staging／Test 之類的值時一律從嚴，不讓欄杆因為名稱不是字面上的 Production 而靜默失效。
+    /// </param>
+    /// <param name="environmentName">目前環境名稱，寫進錯誤訊息讓部署者知道站台以為自己跑在哪個環境</param>
+    public void Validate(bool strict, string environmentName)
     {
         var errors = new List<string>();
+        var envPrefix = $"目前環境為「{environmentName}」：";
+        const string devHint = "若這是開發／展示用站台，請把環境變數 ASPNETCORE_ENVIRONMENT 設為 Development" +
+                               "（Windows 服務：設為機器層級環境變數後重啟服務；IIS：在 web.config 的 aspNetCore 元素下加 environmentVariable）。";
 
         if (!Storage.IsValidType)
             errors.Add($"Storage:Type「{Storage.Type}」不受支援，僅允許 " +
@@ -59,8 +67,8 @@ public class WebAppSettings
             errors.Add("Jwt:SecretKey 未設定（正式環境請用環境變數 Jwt__SecretKey 或 user-secrets 提供，不要進版控）。");
         else if (System.Text.Encoding.UTF8.GetByteCount(Jwt.SecretKey) < 32)
             errors.Add("Jwt:SecretKey 長度不足：HMAC-SHA256 簽章金鑰至少需要 32 bytes。");
-        else if (isProduction && KnownDevSecrets.Contains(Jwt.SecretKey))
-            errors.Add("Jwt:SecretKey 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Jwt__SecretKey 設定另一組隨機字串）。");
+        else if (strict && KnownDevSecrets.Contains(Jwt.SecretKey))
+            errors.Add(envPrefix + "Jwt:SecretKey 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Jwt__SecretKey 設定另一組隨機字串）。" + devHint);
 
         if (Jwt.ExpireHours <= 0)
             errors.Add("Jwt:ExpireHours 必須大於 0。");
@@ -76,14 +84,14 @@ public class WebAppSettings
             errors.Add("Auth:ServerAdmin:PasswordHash 未設定（以 LogForesight.Web.exe --hash-password 產生）。");
         else if (!PasswordHasher.IsValidHashFormat(Auth.ServerAdmin.PasswordHash))
             errors.Add("Auth:ServerAdmin:PasswordHash 格式不正確（不可直接填寫明文密碼，請使用 LogForesight.Web.exe --hash-password 產生 PBKDF2 雜湊）。");
-        else if (isProduction && KnownDevSecrets.Contains(Auth.ServerAdmin.PasswordHash))
-            errors.Add("Auth:ServerAdmin:PasswordHash 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Auth__ServerAdmin__PasswordHash 設定 --hash-password 產生的新雜湊）。");
+        else if (strict && KnownDevSecrets.Contains(Auth.ServerAdmin.PasswordHash))
+            errors.Add(envPrefix + "Auth:ServerAdmin:PasswordHash 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Auth__ServerAdmin__PasswordHash 設定 --hash-password 產生的新雜湊）。" + devHint);
 
         // Stub 不驗密碼，只要知道帳號就能登入。測試環境刻意允許（已評估接受），
         // 但絕不能跟著設定檔一起被帶上正式環境——這道欄杆防的是部署時的疏忽，不是測試期的使用。
-        if (isProduction && string.Equals(Auth.Provider, "Stub", StringComparison.OrdinalIgnoreCase))
-            errors.Add("正式環境不允許 Auth:Provider=Stub（Stub 不驗證密碼）。請改用 Ad，" +
-                       "並以 serverAdmin 登入後至「系統管理 > 設定」頁啟用 AD 驗證。");
+        if (strict && string.Equals(Auth.Provider, "Stub", StringComparison.OrdinalIgnoreCase))
+            errors.Add(envPrefix + "正式環境不允許 Auth:Provider=Stub（Stub 不驗證密碼）。請改用 Ad，" +
+                       "並以 serverAdmin 登入後至「系統管理 > 設定」頁啟用 AD 驗證。" + devHint);
 
         // NetIQ 離線示範資料（§13）改由 DB「NetIQ 維護」頁的 UseOfflineDemoData 開關控制（僅非
         // Production 生效），appsettings 不再有 Netiq:DiscoveryClient，這裡因此不需要對應的啟動驗證。

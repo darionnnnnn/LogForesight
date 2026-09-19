@@ -28,7 +28,7 @@ public class LinuxIssueOwnerAdminTests
         var workOrderStore = new FakeWorkOrderStore(cases);
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, handlingStore, hosts);
         return new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account), new UserDisplayNameService(new FakeSystemSettingsStore()),
-            workOrderStore, workOrders);
+            workOrderStore, workOrders, TestPermissionStamps.Shared);
     }
 
     private WebUser AddUser(string account, string displayName) =>

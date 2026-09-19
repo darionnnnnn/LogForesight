@@ -122,17 +122,23 @@ public class IdentityService
         // 上次登入時間（§3）：只有這一個寫入點。serverAdmin 不經這裡（它不在 lf_users）
         _users.TouchLogin(user.UserId, DateTime.Now);
 
-        var capabilities = ResolveCapabilities(user);
+        var identity = CreateTokenIdentity(user);
         _audit.RecordAuth(AuditActions.Login, account, user.UserId,
             $"登入成功（{_provider.Name}）", AuditResult.Ok);
 
-        return LoginOutcome.Ok(new TokenIdentity(
-            UserId: user.UserId,
-            Account: user.Account,
-            DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
-            Capabilities: capabilities,
-            IsServerAdmin: false));
+        return LoginOutcome.Ok(identity);
     }
+
+    /// <summary>
+    /// 一般使用者的 token 身分（能力當下重算）。登入與 ActiveUserMiddleware 的權限版本換發共用這一份，
+    /// 兩條路徑簽出來的 token 內容才不會漂移。
+    /// </summary>
+    public TokenIdentity CreateTokenIdentity(WebUser user) => new(
+        UserId: user.UserId,
+        Account: user.Account,
+        DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
+        Capabilities: ResolveCapabilities(user),
+        IsServerAdmin: false);
 
     /// <summary>
     /// AD 登入自動補顯示名稱與 Email（docs/archive/HISTORY.md #8）：批次新增使用者

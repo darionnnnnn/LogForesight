@@ -18,7 +18,7 @@ namespace LogForesight.Tests;
 public class ActiveUserMiddlewareTests
 {
     private readonly FakeUserStore _users = new();
-    private static readonly WebAppSettings Settings = new();
+    private static readonly WebAppSettings Settings = AuthTestKit.Settings();
 
     /// <summary>跑一次 middleware，回傳 (是否放行到下一段, HttpContext)</summary>
     private async Task<(bool Reached, DefaultHttpContext Context)> Invoke(string path, ICurrentUser currentUser)
@@ -34,7 +34,7 @@ public class ActiveUserMiddlewareTests
         context.Request.Path = path;
         context.Response.Body = new MemoryStream();
 
-        await middleware.InvokeAsync(context, currentUser, _users, Settings);
+        await AuthTestKit.InvokeMiddleware(middleware, context, currentUser, _users, Settings);
         return (reached, context);
     }
 

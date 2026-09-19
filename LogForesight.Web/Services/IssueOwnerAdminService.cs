@@ -24,6 +24,7 @@ public class IssueOwnerAdminService
     private readonly IUserDisplayNameService _displayNameService;
     private readonly IWorkOrderStore _workOrders;
     private readonly WorkOrderCoordinator _workOrderCoordinator;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     /// <summary>靜音天數上限（含自訂截止日距今天的上限）</summary>
     public const int MaxMuteDays = 365;
@@ -36,8 +37,10 @@ public class IssueOwnerAdminService
     public IssueOwnerAdminService(
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
         ICurrentUser currentUser, IUserDisplayNameService displayNameService,
-        IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator)
+        IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator,
+        PermissionVersionStamp permissionVersion)
     {
+        _permissionVersion = permissionVersion;
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
         _users = users;
@@ -136,6 +139,8 @@ public class IssueOwnerAdminService
             // 靜音區間同理：編輯負責人不可洗掉既有靜音
             Mutes = before?.Mutes ?? new List<MuteInterval>()
         });
+        // 問題負責人隱含 User 角色能力：負責人清單一變就推進權限版本
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
@@ -369,6 +374,7 @@ public class IssueOwnerAdminService
         var ownerNames = existing.OwnerUserIds.Select(id => usersById.TryGetValue(id, out var u) ? u.Account : id.ToString()).ToList();
 
         _issueOwners.Delete(source, eventId);
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.IssueOwnerDelete,

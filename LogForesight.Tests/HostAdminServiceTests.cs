@@ -48,7 +48,7 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         new EfPrtgStore(_fx.NewContext),
         _mapRefresher,
-        new FakeSystemSettingsStore());
+        new FakeSystemSettingsStore(), TestPermissionStamps.Shared);
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -60,7 +60,7 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
         _mapRefresher,
-        new FakeSystemSettingsStore());
+        new FakeSystemSettingsStore(), TestPermissionStamps.Shared);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -752,7 +752,7 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
         _mapRefresher,
-        settings);
+        settings, TestPermissionStamps.Shared);
 
     [Fact]
     public void GetHosts_未回報主機PRTG提示_down_up_nomap與正常主機null_sensor只查一次()

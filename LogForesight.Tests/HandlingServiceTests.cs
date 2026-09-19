@@ -1942,7 +1942,7 @@ public class HandlingServiceTests : IDisposable
             new AlwaysVisibleService(_hosts), currentUser, _audit,
             new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings, new FixedIssueExclusionSource(IssueExclusion.None)),
             new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
-            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator, TestPermissionStamps.Shared),
             displayNames);
         return (service, orders, coordinator);
     }

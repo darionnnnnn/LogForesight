@@ -38,6 +38,7 @@ public class SentinelAdminService
         var name = request.Name.Trim();
         if (name.Length == 0)
             throw DomainException.Validation("請輸入 Sentinel 名稱。");
+        SystemSettingsService.RejectSecretQuery(request.BaseUrl);
 
         var duplicate = _sentinels.FindByName(name);
         var isNew = request.SentinelId == 0;

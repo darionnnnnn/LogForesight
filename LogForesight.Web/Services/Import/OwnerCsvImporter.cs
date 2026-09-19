@@ -1,3 +1,5 @@
+using LogForesight.Web.Auth;
+
 namespace LogForesight.Web.Services.Import;
 
 /// <summary>
@@ -15,11 +17,13 @@ public class OwnerCsvImporter : ICsvImporter
 {
     private readonly IHostStore _hosts;
     private readonly IUserStore _users;
+    private readonly PermissionVersionStamp _permissionVersion;
 
-    public OwnerCsvImporter(IHostStore hosts, IUserStore users)
+    public OwnerCsvImporter(IHostStore hosts, IUserStore users, PermissionVersionStamp permissionVersion)
     {
         _hosts = hosts;
         _users = users;
+        _permissionVersion = permissionVersion;
     }
 
     public ImportKind Kind => ImportKind.Owners;
@@ -169,6 +173,9 @@ public class OwnerCsvImporter : ICsvImporter
             _hosts.SetOwners(host.HostId, ownerIds);
             result.Updated++;
         }
+
+        // 負責人整批換過：一次推進權限版本就夠（隱含 User 角色能力隨負責人身分變動）
+        if (result.Updated > 0) _permissionVersion.Bump();
 
         return result;
     }

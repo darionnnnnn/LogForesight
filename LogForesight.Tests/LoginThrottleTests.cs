@@ -126,9 +126,9 @@ public class LoginThrottleTests
             var hosts = new FakeHostStore();
             var identity = new IdentityService(users, groups, hosts, Provider,
                 new ServerAdminAuthenticator(Settings), Audit, new UserCapabilityResolver(groups, hosts));
-            var controller = new AuthController(identity, new JwtTokenService(Settings), Provider,
+            var controller = new AuthController(identity, new JwtTokenService(Settings, TestPermissionStamps.Shared), Provider,
                 FakeCurrentUser.Anonymous(), Audit, Settings,
-                new UserDisplayNameService(new FakeSystemSettingsStore()), Throttle);
+                new UserDisplayNameService(new FakeSystemSettingsStore()), Throttle, new RevokedTokens());
             var http = new DefaultHttpContext();
             http.Connection.RemoteIpAddress = ip;
             controller.ControllerContext = new ControllerContext { HttpContext = http };

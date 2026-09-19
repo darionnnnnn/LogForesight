@@ -2,6 +2,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -129,8 +130,10 @@ public class HostAdminService
         IUserDisplayNameService userDisplayNames,
         EfPrtgStore prtgStore,
         IPrtgHostMapRefresher mapRefresher,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        PermissionVersionStamp permissionVersion)
     {
+        _permissionVersion = permissionVersion;
         _settings = settings;
         _mapRefresher = mapRefresher;
         _hosts = hosts;
@@ -144,6 +147,7 @@ public class HostAdminService
     }
 
     private readonly IPrtgHostMapRefresher _mapRefresher;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
     {
@@ -554,6 +558,8 @@ public class HostAdminService
         var after = requested.Select(id => allUsers[id].Account).ToList();
 
         _hosts.SetOwners(hostId, requested);
+        // 主機負責人隱含 User 角色能力（UserCapabilityResolver）：負責人一變，相關的人能力就變
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostUpdate,

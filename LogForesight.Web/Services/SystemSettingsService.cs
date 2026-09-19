@@ -296,6 +296,8 @@ public class SystemSettingsService : ISystemSettingsService
         if (matchedProvider == null)
             throw DomainException.Validation("AI 服務提供者不合法。");
         aiProvider = matchedProvider;
+        RejectSecretQuery(request.AiBaseUrl);
+        RejectSecretQuery(request.SmtpServer);
 
         var hasApiKey = HasEffectiveSecret(request.AiApiKey, before.AiApiKeyEnc, request.ClearAiApiKey);
 
@@ -476,7 +478,7 @@ public class SystemSettingsService : ISystemSettingsService
                 Before = new
                 {
                     before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels,
-                    before.AiProvider, before.AiBaseUrl, before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
+                    before.AiProvider, AiBaseUrl = UrlSecrets.Mask(before.AiBaseUrl), before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.RawEventRetentionDays, before.ReportRetentionDays,
                     before.WatchedFolders, before.ServerDescription, before.CheckupIntervalDays, before.AnalysisChannels,
@@ -486,7 +488,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
                     before.MailOnRunCompleted, before.MailDailyEnabled, before.MailDailyTime,
                     before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled,
-                    before.PrtgEnabled, before.PrtgUrl, before.PrtgAuthMode, before.PrtgUsername,
+                    before.PrtgEnabled, PrtgUrl = UrlSecrets.Mask(before.PrtgUrl), before.PrtgAuthMode, before.PrtgUsername,
                     before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
                     before.PrtgResourceGuardEnabled,
@@ -509,7 +511,7 @@ public class SystemSettingsService : ISystemSettingsService
                 After = new
                 {
                     saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels,
-                    saved.AiProvider, saved.AiBaseUrl, saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
+                    saved.AiProvider, AiBaseUrl = UrlSecrets.Mask(saved.AiBaseUrl), saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.RawEventRetentionDays, saved.ReportRetentionDays,
                     saved.WatchedFolders, saved.ServerDescription, saved.CheckupIntervalDays, saved.AnalysisChannels,
@@ -519,7 +521,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
                     saved.MailOnRunCompleted, saved.MailDailyEnabled, saved.MailDailyTime,
                     saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled,
-                    saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgAuthMode, saved.PrtgUsername,
+                    saved.PrtgEnabled, PrtgUrl = UrlSecrets.Mask(saved.PrtgUrl), saved.PrtgAuthMode, saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
                     saved.PrtgResourceGuardEnabled,
@@ -647,7 +649,7 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.PrtgUrl,
+                    PrtgUrl = UrlSecrets.Mask(before.PrtgUrl),
                     before.PrtgAuthMode,
                     before.PrtgUsername,
                     before.PrtgIgnoreSslErrors,
@@ -675,7 +677,7 @@ public class SystemSettingsService : ISystemSettingsService
                 },
                 After = new
                 {
-                    saved.PrtgUrl,
+                    PrtgUrl = UrlSecrets.Mask(saved.PrtgUrl),
                     saved.PrtgAuthMode,
                     saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors,
@@ -915,7 +917,7 @@ public class SystemSettingsService : ISystemSettingsService
             summary: "執行 PRTG 測試連線",
             targetKind: "system_settings",
             targetId: "prtg_test",
-            detail: new { Url = url, AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
+            detail: new { Url = UrlSecrets.Mask(url), AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
 
         try
         {
@@ -1013,6 +1015,16 @@ public class SystemSettingsService : ISystemSettingsService
             .Select(v => v!)
             .Distinct()
             .ToList();
+
+    /// <summary>
+    /// 位址欄位不得夾帶密碼／金鑰參數：位址會進稽核、例外訊息與回應，夾在網址上的憑證會沿著這些路徑外流。
+    /// 判定規則只有 <see cref="UrlSecrets.ContainsSecretQuery"/> 一份，這裡只負責擲出統一訊息。
+    /// </summary>
+    internal static void RejectSecretQuery(string? url)
+    {
+        if (UrlSecrets.ContainsSecretQuery(url))
+            throw DomainException.Validation("網址不可包含密碼或金鑰參數，請改填專用的密碼／金鑰欄位。");
+    }
 
     private static bool IsValidHttpUrl(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
@@ -1145,6 +1157,7 @@ public class SystemSettingsService : ISystemSettingsService
         List<string>? effectivePrtgSensorTypeWhitelist = null,
         string? effectivePrtgFetchStrategy = null)
     {
+        RejectSecretQuery(effectivePrtgUrl);
         ValidatePrtgValueFetchScope(effectivePrtgValueFetchScope, effectivePrtgSensorTypeWhitelist);
         ValidatePrtgFetchStrategy(effectivePrtgFetchStrategy);
 
