@@ -1243,6 +1243,33 @@ function bindStructureSync() {
     });
 }
 
+// 規則未套用提示：內建規則有新版本未套用，或沒有任何啟用中的 PRTG 規則時，夜間 PRTG 評估會不完整
+async function refreshPrtgRuleBanner() {
+    const [status, rules] = await Promise.all([
+        api.get('/api/rules/import-status', { silent: true }).catch(() => null),
+        api.get('/api/rules', { silent: true }).catch(() => null)
+    ]);
+    const banner = document.getElementById('prtg-rule-banner');
+    if (!banner) return;
+    banner.replaceChildren();
+    const hasUpdate = status != null && status.hasUpdate === true;
+    const noPrtgRules = Array.isArray(rules) && !rules.some(r =>
+        r.enabled && String(r.platform).toLowerCase() === 'prtg' && r.prtgRuleCode);
+    if (!hasUpdate && !noPrtgRules) return;
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-warning';
+    // 兩種原因給不同的話：沒有任何啟用中的 PRTG 規則時整晚零評估，比「有新版未套用」嚴重
+    alert.appendChild(document.createTextNode(noPrtgRules
+        ? '規則庫沒有任何啟用中的 PRTG 規則，PRTG 狀態不會產生任何問題訊號。請套用內建規則更新或啟用 PRTG 規則。'
+        : '內建規則有新版本尚未套用，PRTG 規則評估可能不完整。'));
+    const link = document.createElement('a');
+    link.href = appUrl('/admin/rules');
+    link.className = 'ms-2';
+    link.textContent = '前往規則維護';
+    alert.appendChild(link);
+    banner.appendChild(alert);
+}
+
 function init() {
     bindPrtgTest();
     bindPrtgMirror();
@@ -1258,6 +1285,7 @@ function init() {
     refreshPrtgMirror();
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();
+    refreshPrtgRuleBanner();
 }
 
 init();

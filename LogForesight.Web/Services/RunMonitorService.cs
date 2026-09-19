@@ -112,6 +112,9 @@ public class RunMonitorService
             // 3. 都沒有 → null。
             // 注意：PrtgDays 非 null 但不含 D 的執行不得落到第 2 條。
             string? prtgOutcome = null;
+            int? prtgFindings = null;
+            int? prtgTargetSensors = null;
+            string? prtgNote = null;
             foreach (var run in runs.Where(r => r.JobType != BatchRun.JobTypeAi).OrderByDescending(r => r.StartedAt))
             {
                 if (run.PrtgDays != null)
@@ -120,6 +123,9 @@ public class RunMonitorService
                     if (dayStat != null)
                     {
                         prtgOutcome = dayStat.Outcome;
+                        prtgFindings = dayStat.Findings;
+                        prtgTargetSensors = dayStat.TargetSensors;
+                        prtgNote = dayStat.Note;
                         break;
                     }
                 }
@@ -130,6 +136,9 @@ public class RunMonitorService
                 }
             }
             summary.PrtgOutcome = prtgOutcome;
+            summary.PrtgFindings = prtgFindings;
+            summary.PrtgTargetSensors = prtgTargetSensors;
+            summary.PrtgNote = prtgNote;
 
             foreach (var host in hosts)
             {

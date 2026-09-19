@@ -63,6 +63,10 @@ internal static class PrtgDailyPipeline
         var dayStates = new Dictionary<DateTime, PrtgDayState>();
         PrtgFetchResult? fetchResult = null;
         var syncFailed = false;
+        // 逐日「無產出」判定要用的事實（在 try 內決定，finally 寫逐日結果時用）
+        var rulesAvailableForStat = true;
+        var sensorMirrorEmpty = false;
+        var conservativeStrategy = false;
 
         try
         {
@@ -83,6 +87,7 @@ internal static class PrtgDailyPipeline
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";
+            conservativeStrategy = !strategyProfile.NightlyExactValues;
             prtgConsole.WriteLine($"PRTG 取數策略：{strategyLabel}（快照間隔 {strategyProfile.SnapshotIntervalMinutes} 分鐘）。");
 
             // 0. 手動同步佔用中就先等它（docs/PRTG-SPEC.md §5a）。等完之後鏡像是最新的，
@@ -208,6 +213,7 @@ internal static class PrtgDailyPipeline
                 .ToList();
 
             var rulesAvailable = prtgRules.Any(r => !string.IsNullOrEmpty(r.PrtgRuleCode));
+            rulesAvailableForStat = rulesAvailable;
             if (!rulesAvailable)
             {
                 prtgConsole.WriteLine("規則庫尚無啟用中的 PRTG 規則（升級後請至「規則維護」頁套用內建規則更新），本次略過規則評估。");
@@ -217,6 +223,7 @@ internal static class PrtgDailyPipeline
             // 規則評估母體＝鏡像中的感測器＝取數範圍內裝置的未暫停感測器（感測器鏡像只同步範圍內裝置）。
             // 取數白名單不參與：它是為數值取數量體設計的（預設不含 Ping），拿來過濾規則母體會讓主機失聯（Ping Down）永遠命中不了。
             var allSensors = prtgStore.GetSensorStatuses();
+            sensorMirrorEmpty = allSensors.Count == 0;
             var sensorNames = allSensors
                 .GroupBy(s => s.Objid)
                 .ToDictionary(g => g.Key, g => g.First().SensorName);
@@ -595,6 +602,33 @@ internal static class PrtgDailyPipeline
                 progress?.Report(RunPhases.PrtgFindingsReady, 0, 0);
             }
 
+            // 逐日結果：只記有進到逐日迴圈的日子（PRTG 未啟用時一天都沒有，PrtgDays 維持 null）。
+            // 中途被停止的日子就記到哪算到哪，執行總表才看得出「哪幾天其實已經評估完了」。
+            List<PrtgDayStat>? dayStats = null;
+            if (dayStates.Count > 0)
+            {
+                var stageFailed = fetchResult != null && fetchResult.Failures > 0;
+                dayStats = days
+                    .Where(dayStates.ContainsKey)
+                    .Select(day =>
+                    {
+                        var s = dayStates[day];
+                        var failedSensors = s.Triggered?.FailedSensors ?? 0;
+                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed,
+                            rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
+                        return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
+                            s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note);
+                    })
+                    .ToList();
+
+                // 整趟：逐日全部無產出才算無產出，否則維持原判定
+                if (prtgOutcome == BatchRun.PrtgOutcomeSuccess &&
+                    dayStats.Count > 0 && dayStats.All(d => d.Outcome == BatchRun.PrtgOutcomeNoOutput))
+                {
+                    prtgOutcome = BatchRun.PrtgOutcomeNoOutput;
+                }
+            }
+
             if (prtgOutcome != null)
             {
                 runRecorder.RecordPrtgOutcome(
@@ -604,24 +638,9 @@ internal static class PrtgDailyPipeline
                     totalTriggerHosts);
             }
 
-            // 逐日結果：只記有進到逐日迴圈的日子（PRTG 未啟用時一天都沒有，PrtgDays 維持 null）。
-            // 中途被停止的日子就記到哪算到哪，執行總表才看得出「哪幾天其實已經評估完了」。
-            if (dayStates.Count > 0)
+            if (dayStats != null)
             {
-                var stageFailed = fetchResult != null && fetchResult.Failures > 0;
-                runRecorder.RecordPrtgDays(days
-                    .Where(dayStates.ContainsKey)
-                    .Select(day =>
-                    {
-                        var s = dayStates[day];
-                        var failedSensors = s.Triggered?.FailedSensors ?? 0;
-                        var outcome = syncFailed ? BatchRun.PrtgOutcomeFailed
-                            : (failedSensors > 0 || stageFailed) ? BatchRun.PrtgOutcomePartial
-                            : BatchRun.PrtgOutcomeSuccess;
-                        return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
-                            s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors);
-                    })
-                    .ToList());
+                runRecorder.RecordPrtgDays(dayStats);
             }
             else if (prtgOutcome == BatchRun.PrtgOutcomeFailed)
             {
@@ -638,6 +657,50 @@ internal static class PrtgDailyPipeline
                 totalTriggerHosts,
                 totalTargetSensors);
         }
+    }
+
+    /// <summary>規則庫沒有啟用中的 PRTG 規則時的逐日原因。</summary>
+    public const string NoteNoRules = "規則庫沒有啟用中的 PRTG 規則（請至規則維護頁套用內建規則更新）";
+
+    /// <summary>感測器鏡像為空時的逐日原因。</summary>
+    public const string NoteEmptySensorMirror = "PRTG 感測器鏡像是空的（請至 PRTG 維護頁執行同步結構與對應）";
+
+    /// <summary>該日沒有任何主機對應可用時的逐日原因。</summary>
+    public const string NoteNoHostMap = "沒有任何主機對應到 PRTG 裝置（請檢查主機清單 IP 與 PRTG 裝置位址）";
+
+    /// <summary>保守取數策略成功時的逐日說明。</summary>
+    public const string NoteSnapshotValues = "數值由快照供應";
+
+    /// <summary>
+    /// 單日 PRTG 結局與原因。失敗、部分成功照舊；原本會判成功的日子，
+    /// 若沒有任何可評估的對象（無規則 → 鏡像空 → 無主機對應，取第一個成立的原因）改判無產出。
+    /// finding 為 0 但規則確實評估過仍是成功。
+    /// </summary>
+    public static (string Outcome, string? Note) ClassifyDay(
+        bool syncFailed, bool anyFailure, bool rulesAvailable, bool sensorMirrorEmpty, bool mapAvailable,
+        bool conservativeStrategy)
+    {
+        if (syncFailed)
+        {
+            return (BatchRun.PrtgOutcomeFailed, null);
+        }
+        if (anyFailure)
+        {
+            return (BatchRun.PrtgOutcomePartial, null);
+        }
+        if (!rulesAvailable)
+        {
+            return (BatchRun.PrtgOutcomeNoOutput, NoteNoRules);
+        }
+        if (sensorMirrorEmpty)
+        {
+            return (BatchRun.PrtgOutcomeNoOutput, NoteEmptySensorMirror);
+        }
+        if (!mapAvailable)
+        {
+            return (BatchRun.PrtgOutcomeNoOutput, NoteNoHostMap);
+        }
+        return (BatchRun.PrtgOutcomeSuccess, conservativeStrategy ? NoteSnapshotValues : null);
     }
 
     /// <summary>

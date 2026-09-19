@@ -76,7 +76,7 @@ public class BatchRun
 
     /// <summary>
     /// PRTG 擷取成果狀態：<see cref="PrtgOutcomeDisabled"/> | <see cref="PrtgOutcomeSuccess"/> |
-    /// <see cref="PrtgOutcomePartial"/> | <see cref="PrtgOutcomeFailed"/>。null＝舊紀錄或本次未執行 PRTG。
+    /// <see cref="PrtgOutcomePartial"/> | <see cref="PrtgOutcomeFailed"/> | <see cref="PrtgOutcomeNoOutput"/>。null＝舊紀錄或本次未執行 PRTG。
     /// </summary>
     public string? PrtgOutcome { get; set; }
 
@@ -101,6 +101,9 @@ public class BatchRun
     /// <summary>PRTG 擷取失敗（<see cref="PrtgOutcome"/>）</summary>
     public const string PrtgOutcomeFailed = "failed";
 
+    /// <summary>階段全部成功，但本趟沒有任何可評估的對象（<see cref="PrtgOutcome"/>；原因見 <see cref="PrtgDayStat.Note"/>）</summary>
+    public const string PrtgOutcomeNoOutput = "no_output";
+
     /// <summary>逐日 PRTG 統計（null＝舊紀錄或未執行 PRTG）</summary>
     public List<PrtgDayStat>? PrtgDays { get; set; }
 }
@@ -114,7 +117,8 @@ public sealed record PrtgDayStat(
     bool MapAvailable,
     int TriggerHosts,
     int TargetSensors,
-    int FailedSensors);
+    int FailedSensors,
+    string? Note = null);
 
 /// <summary>
 /// 執行期間的診斷紀錄（↔ lf_batch_run_logs）。

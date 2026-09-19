@@ -32,6 +32,15 @@ public class RunDaySummaryDto
     /// <summary>PRTG 擷取成果狀態（取該日取數類最後一筆，null＝舊紀錄或當日未執行 PRTG）</summary>
     public string? PrtgOutcome { get; set; }
 
+    /// <summary>該日 PRTG finding 數（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄為 null）</summary>
+    public int? PrtgFindings { get; set; }
+
+    /// <summary>該日 PRTG 觸發式取數目標 sensor 數（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄為 null）</summary>
+    public int? PrtgTargetSensors { get; set; }
+
+    /// <summary>該日 PRTG 結局原因（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄或無原因為 null）</summary>
+    public string? PrtgNote { get; set; }
+
     /// <summary>失敗（含異常中斷）的主機名，最多 10 台；其餘用 OtherFailedCount 表示</summary>
     public List<string> FailedHostNames { get; set; } = new();
     public int OtherFailedCount { get; set; }

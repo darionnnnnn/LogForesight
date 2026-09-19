@@ -37,7 +37,9 @@ const PRTG_OUTCOME_META = {
     disabled: { text: '未啟用', bg: 'bg-secondary' },
     success: { text: '成功', bg: 'bg-success' },
     partial: { text: '部分失敗', bg: 'bg-warning text-dark' },
-    failed: { text: '失敗', bg: 'bg-danger' }
+    failed: { text: '失敗', bg: 'bg-danger' },
+    // 階段全部成功但沒有可評估的對象（無規則／鏡像空／無主機對應），原因在 prtgNote
+    no_output: { text: '無產出', bg: 'bg-warning text-dark' }
 };
 
 function renderPrtgBadge(outcome) {
@@ -47,6 +49,36 @@ function renderPrtgBadge(outcome) {
     badge.className = `badge ${meta.bg}`;
     badge.textContent = meta.text;
     return badge;
+}
+
+// 執行總表每日 PRTG 欄：徽章＋finding／sensor 數字；原因放徽章滑鼠提示並在下方小字顯示
+function renderPrtgDaySummaryCell(s) {
+    if (s.prtgOutcome == null) return document.createTextNode('—');
+    const badge = renderPrtgBadge(s.prtgOutcome);
+    if (!badge) return document.createTextNode('—');
+    const wrap = document.createElement('div');
+    const line = document.createElement('span');
+    line.className = 'd-inline-flex align-items-center gap-1';
+    line.appendChild(badge);
+    if (s.prtgFindings != null) {
+        const findings = document.createElement('small');
+        findings.textContent = `finding ${s.prtgFindings}`;
+        line.appendChild(findings);
+    }
+    if (s.prtgTargetSensors != null && s.prtgTargetSensors > 0) {
+        const sensors = document.createElement('small');
+        sensors.textContent = `sensor ${s.prtgTargetSensors}`;
+        line.appendChild(sensors);
+    }
+    wrap.appendChild(line);
+    if (s.prtgNote != null) {
+        badge.title = s.prtgNote;
+        const note = document.createElement('div');
+        note.className = 'small text-muted';
+        note.textContent = s.prtgNote;
+        wrap.appendChild(note);
+    }
+    return wrap;
 }
 
 function formatLocalBranch(analyzed, failed) {
@@ -176,7 +208,7 @@ function renderSummary(summaryPage) {
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
-            { title: 'PRTG', render: s => s.prtgOutcome != null ? (renderPrtgBadge(s.prtgOutcome) ?? document.createTextNode('—')) : document.createTextNode('—') },
+            { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
