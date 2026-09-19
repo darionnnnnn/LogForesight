@@ -51,7 +51,7 @@ public sealed class PrtgFetchService
     /// 階段 2 逐台查詢感測器的裝置數上限：範圍內裝置數不超過它時逐台以 <c>id=</c> 查詢，超過時改一次全站分頁再以範圍過濾。
     /// 取這個值的理由：超過時逐台查詢的固定成本（每台一次往返）高於一次全站分頁；尚無實機數據佐證，有實測再調。
     /// </summary>
-    private const int PerDeviceSensorFetchLimit = 500;
+    internal const int PerDeviceSensorFetchLimit = 500;
 
     /// <summary>
     /// 「查詢成功但回 0 個感測器」的裝置，鏡像列的寬限期：上次刷新在這段時間內的列本趟不刪。

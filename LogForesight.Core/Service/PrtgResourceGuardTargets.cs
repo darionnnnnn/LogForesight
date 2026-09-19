@@ -11,6 +11,26 @@ public sealed record PrtgResourceGuardTargetResult(
     IReadOnlyDictionary<long, string> SensorCategories)
 ;
 
+/// <summary>PRTG 主機裝置是怎麼找到的。</summary>
+public enum PrtgGuardMatchKind
+{
+    /// <summary>找不到（含 PRTG 連線網址解析不出 host）。</summary>
+    None,
+    /// <summary>PRTG 位址比對到裝置。</summary>
+    Address,
+    /// <summary>位址對不到，靠 corehealth 感測器所在裝置找到。</summary>
+    CoreHealthFallback
+}
+
+/// <summary>
+/// 守門自動偵測的完整結果：命中的裝置、PRTG 主機的命中方式，以及挑出的目標感測器。
+/// </summary>
+public sealed record PrtgGuardDetection(
+    IReadOnlySet<long> SentinelDeviceObjids,
+    IReadOnlySet<long> PrtgDeviceObjids,
+    PrtgGuardMatchKind PrtgMatchKind,
+    PrtgResourceGuardTargetResult Targets);
+
 /// <summary>
 /// 批次執行期間 PRTG 資源守門的監看感測器目標自動偵測與覆寫解析服務。
 /// </summary>
@@ -96,8 +116,37 @@ public static class PrtgResourceGuardTargets
         }
 
         // 2～4. 自動偵測守門裝置（Sentinel 主機、PRTG 主機與 corehealth fallback）
-        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors) = DetectGuardDevices(source, settings, sentinels, console, resolver);
+        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors, _) = DetectGuardDevices(source, settings, sentinels, console, resolver);
 
+        return SelectTargetSensors(sentinelDeviceObjids, prtgDeviceObjids, allSensors, console);
+    }
+
+    /// <summary>
+    /// 自動偵測並回報「怎麼找到的」：命中的 Sentinel 主機裝置、PRTG 主機裝置、PRTG 主機的命中方式，
+    /// 以及等同 <c>Resolve(..., ignoreOverride: true)</c> 的目標感測器。給環境探測對照取數範圍用。
+    /// 對來源的裝置與感測器各只讀一次。
+    /// </summary>
+    public static PrtgGuardDetection Detect(
+        IPrtgResourceGuardSource source,
+        SystemSettings settings,
+        IReadOnlyList<Sentinel> sentinels,
+        IRunConsole console,
+        IPrtgAddressResolver resolver)
+    {
+        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors, matchKind) = DetectGuardDevices(source, settings, sentinels, console, resolver);
+        var targets = SelectTargetSensors(sentinelDeviceObjids, prtgDeviceObjids, allSensors, console);
+        return new PrtgGuardDetection(sentinelDeviceObjids, prtgDeviceObjids, matchKind, targets);
+    }
+
+    /// <summary>
+    /// 自動偵測第 5～6 步：從偵測到的裝置挑出受監看感測器。<see cref="Resolve"/> 與 <see cref="Detect"/> 共用這一份。
+    /// </summary>
+    private static PrtgResourceGuardTargetResult SelectTargetSensors(
+        HashSet<long> sentinelDeviceObjids,
+        HashSet<long> prtgDeviceObjids,
+        IReadOnlyList<PrtgSensorRow> allSensors,
+        IRunConsole console)
+    {
         // 5. 取命中的 device 底下未暫停（Paused == false）且 Category 為 cpu 或 memory 的 sensor；
         // PRTG 主機那台另外加上 corehealth sensor。
         var targetSensors = new Dictionary<long, string>();
@@ -156,7 +205,7 @@ public static class PrtgResourceGuardTargets
         IRunConsole console,
         IPrtgAddressResolver resolver)
     {
-        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors) = DetectGuardDevices(source, settings, sentinels, console, resolver);
+        var (sentinelDeviceObjids, prtgDeviceObjids, allSensors, _) = DetectGuardDevices(source, settings, sentinels, console, resolver);
 
         var result = new HashSet<long>(sentinelDeviceObjids);
         result.UnionWith(prtgDeviceObjids);
@@ -193,9 +242,9 @@ public static class PrtgResourceGuardTargets
     /// <summary>
     /// 自動偵測第 2～4 步：依 Sentinel 位址與 PRTG 位址比對裝置（含裝置側 DNS 預算），
     /// PRTG 位址對不到時以 corehealth sensor 所在裝置 fallback。所有警告在此輸出。
-    /// 一併回傳本次讀到的 sensor 清單，呼叫端不必再讀一次。
+    /// 一併回傳本次讀到的 sensor 清單（呼叫端不必再讀一次）與 PRTG 主機的命中方式。
     /// </summary>
-    private static (HashSet<long> SentinelDeviceObjids, HashSet<long> PrtgDeviceObjids, IReadOnlyList<PrtgSensorRow> AllSensors) DetectGuardDevices(
+    private static (HashSet<long> SentinelDeviceObjids, HashSet<long> PrtgDeviceObjids, IReadOnlyList<PrtgSensorRow> AllSensors, PrtgGuardMatchKind PrtgMatchKind) DetectGuardDevices(
         IPrtgResourceGuardSource source,
         SystemSettings settings,
         IReadOnlyList<Sentinel> sentinels,
@@ -256,12 +305,14 @@ public static class PrtgResourceGuardTargets
 
         var prtgDeviceObjids = new HashSet<long>();
         bool prtgMatched = false;
+        var matchKind = PrtgGuardMatchKind.None;
         if (prtgHost != null)
         {
             var prtgDevs = FindDevicesForHost(prtgHost, allDevices, resolver, budget);
             if (prtgDevs.Count > 0)
             {
                 prtgMatched = true;
+                matchKind = PrtgGuardMatchKind.Address;
                 foreach (var d in prtgDevs)
                     prtgDeviceObjids.Add(d.Objid);
             }
@@ -274,6 +325,7 @@ public static class PrtgResourceGuardTargets
             var coreHealthSensor = allSensors.FirstOrDefault(s => IsCoreHealthSensor(s));
             if (coreHealthSensor != null)
             {
+                matchKind = PrtgGuardMatchKind.CoreHealthFallback;
                 var dev = allDevices.FirstOrDefault(d => d.Objid == coreHealthSensor.DeviceObjid);
                 if (dev != null)
                 {
@@ -300,7 +352,7 @@ public static class PrtgResourceGuardTargets
                               $"{UnresolvedHint(prtgHost, resolver)}{SourceHint(source)}。");
         }
 
-        return (sentinelDeviceObjids, prtgDeviceObjids, allSensors);
+        return (sentinelDeviceObjids, prtgDeviceObjids, allSensors, matchKind);
     }
 
     /// <summary>

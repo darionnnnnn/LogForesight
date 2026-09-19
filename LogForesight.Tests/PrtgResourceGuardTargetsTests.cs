@@ -613,4 +613,118 @@ public class PrtgResourceGuardTargetsTests : IDisposable
 
         Assert.DoesNotContain(console.Lines, l => l.Contains("已達上限"));
     }
+
+    // ── Detect：回報 PRTG 主機的命中方式 ────────────────────────────────
+
+    /// <summary>裝置 3001（10.3.0.1，cpu＋memory）、裝置 3002（10.3.0.2，cpu＋Core Health）。</summary>
+    private EfPrtgStore SeedDetectMirror()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 3001, Name = "AppSrv", Ip = "10.3.0.1" },
+            new PrtgDeviceRow { Objid = 3002, Name = "PrtgCore", Ip = "10.3.0.2" }
+        }, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 4001, DeviceObjid = 3001, Name = "CPU", Category = "cpu", Paused = false },
+            new PrtgSensorRow { Objid = 4002, DeviceObjid = 3001, Name = "RAM", Category = "memory", Paused = false },
+            new PrtgSensorRow { Objid = 4003, DeviceObjid = 3002, Name = "CPU", Category = "cpu", Paused = false },
+            new PrtgSensorRow { Objid = 4004, DeviceObjid = 3002, Name = "Core", SensorType = "Core Health", Paused = false }
+        }, now);
+        return store;
+    }
+
+    [Fact]
+    public void Detect_PRTG位址比對命中_回Address()
+    {
+        var store = SeedDetectMirror();
+        var settings = new SystemSettings { PrtgUrl = "https://10.3.0.2" };
+
+        var d = PrtgResourceGuardTargets.Detect(new PrtgMirrorGuardSource(store), settings,
+            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver());
+
+        Assert.Equal(PrtgGuardMatchKind.Address, d.PrtgMatchKind);
+        Assert.Equal(new HashSet<long> { 3002 }, d.PrtgDeviceObjids.ToHashSet());
+    }
+
+    [Fact]
+    public void Detect_位址對不到但有CoreHealth_回CoreHealthFallback()
+    {
+        var store = SeedDetectMirror();
+        var settings = new SystemSettings { PrtgUrl = "https://10.9.9.9" };
+
+        var d = PrtgResourceGuardTargets.Detect(new PrtgMirrorGuardSource(store), settings,
+            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver());
+
+        Assert.Equal(PrtgGuardMatchKind.CoreHealthFallback, d.PrtgMatchKind);
+        Assert.Equal(new HashSet<long> { 3002 }, d.PrtgDeviceObjids.ToHashSet());
+    }
+
+    [Fact]
+    public void Detect_位址對不到也沒有CoreHealth_回None()
+    {
+        var store = CreateStore();
+        var now = DateTime.Now;
+        store.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 3001, Name = "AppSrv", Ip = "10.3.0.1" } }, now);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 4001, DeviceObjid = 3001, Name = "CPU", Category = "cpu", Paused = false }
+        }, now);
+        var settings = new SystemSettings { PrtgUrl = "https://10.9.9.9" };
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.3.0.1:8443" } };
+
+        var d = PrtgResourceGuardTargets.Detect(new PrtgMirrorGuardSource(store), settings,
+            sentinels, new TestConsole(), new PrtgAddressResolver());
+
+        Assert.Equal(PrtgGuardMatchKind.None, d.PrtgMatchKind);
+        Assert.Empty(d.PrtgDeviceObjids);
+        Assert.Equal(new HashSet<long> { 3001 }, d.SentinelDeviceObjids.ToHashSet());
+    }
+
+    [Fact]
+    public void Detect_Targets與Resolve忽略覆寫的結果相同()
+    {
+        var store = SeedDetectMirror();
+        var settings = new SystemSettings
+        {
+            PrtgUrl = "https://10.9.9.9",
+            PrtgResourceGuardSensorObjids = new List<string> { "9999" }
+        };
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.3.0.1:8443" } };
+
+        var d = PrtgResourceGuardTargets.Detect(new PrtgMirrorGuardSource(store), settings,
+            sentinels, new TestConsole(), new PrtgAddressResolver());
+        var r = ResolveTargets(store, settings, sentinels, new TestConsole(), ignoreOverride: true);
+
+        Assert.Equal(new long[] { 4001, 4002, 4003, 4004 }, r.SensorObjids);
+        Assert.Equal(r.SensorObjids, d.Targets.SensorObjids);
+        Assert.Equal(r.SensorCategories.OrderBy(x => x.Key), d.Targets.SensorCategories.OrderBy(x => x.Key));
+    }
+
+    /// <summary>計數讀取次數的來源替身。</summary>
+    private sealed class CountingSource : IPrtgResourceGuardSource
+    {
+        private readonly IPrtgResourceGuardSource _inner;
+        public int DeviceReads { get; private set; }
+        public int SensorReads { get; private set; }
+        public CountingSource(IPrtgResourceGuardSource inner) => _inner = inner;
+        public string SourceLabel => _inner.SourceLabel;
+        public IReadOnlyList<PrtgDeviceRow> GetDevices() { DeviceReads++; return _inner.GetDevices(); }
+        public IReadOnlyList<PrtgSensorRow> GetSensors() { SensorReads++; return _inner.GetSensors(); }
+    }
+
+    [Fact]
+    public void Detect_裝置與感測器各只讀一次()
+    {
+        var src = new CountingSource(new PrtgMirrorGuardSource(SeedDetectMirror()));
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.3.0.1:8443" } };
+
+        PrtgResourceGuardTargets.Detect(src, new SystemSettings { PrtgUrl = "https://10.9.9.9" },
+            sentinels, new TestConsole(), new PrtgAddressResolver());
+
+        Assert.Equal(1, src.DeviceReads);
+        Assert.Equal(1, src.SensorReads);
+    }
 }

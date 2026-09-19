@@ -1,5 +1,6 @@
 using System.Text;
 using LogForesight.Core;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 
@@ -92,12 +93,21 @@ public class PrtgProbeService
     // 必要相依，不設預設值：探測與回填會打同一台 PRTG，這道互斥是保護。
     // 做成可選參數的話，哪天有人漏注入，保護會靜默消失而不是編譯失敗。
     private readonly PrtgBackfillRunState _backfillState;
+    // 站台對照要對照的三個本機事實來源：鏡像、主機清單、Sentinel 清單。
+    // 同樣不設預設值——漏注入的話這一段會靜默消失，而不是編譯失敗。
+    private readonly StorageBackend _backend;
+    private readonly IHostStore _hosts;
+    private readonly ISentinelStore _sentinels;
 
-    public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState)
+    public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState,
+        StorageBackend backend, IHostStore hosts, ISentinelStore sentinels)
     {
         _settings = settings;
         _state = state;
         _backfillState = backfillState;
+        _backend = backend;
+        _hosts = hosts;
+        _sentinels = sentinels;
     }
 
     public PrtgProbeStatusDto GetStatus()
@@ -171,6 +181,21 @@ public class PrtgProbeService
                 using (client)
                 {
                     success = await PrtgProbeRunner.RunAsync(client, console);
+
+                    // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），
+                    // 而且不影響 success：它是附加資訊，不是探測的成敗條件。
+                    if (success)
+                    {
+                        try
+                        {
+                            await PrtgProbeSiteCheck.RunAsync(client, console, _backend.PrtgStore(), _hosts, s, _sentinels.GetAll(),
+                                new PrtgLiveGuardSource(client, CancellationToken.None, console));
+                        }
+                        catch (Exception ex)
+                        {
+                            console.WriteLine($"站台對照發生未預期錯誤：{ex.Message}");
+                        }
+                    }
                 }
             }
             catch (Exception ex)

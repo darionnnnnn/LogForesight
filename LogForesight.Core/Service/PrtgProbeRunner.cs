@@ -1124,20 +1124,53 @@ public static class PrtgProbeRunner
             return new List<long>();
         }
 
+        return PickTopSampleDevices(sensorSamples
+            .Where(s => s.ParentId.HasValue)
+            .Select(s => ((long)s.ParentId!.Value, s.Status)));
+    }
+
+    /// <summary>
+    /// 樣本裝置的排序規則（全專案唯一一份）：把感測器依所屬裝置分組，
+    /// 底下有「非 Up」（狀態缺失或不以 Up 開頭）感測器的裝置優先，其次 objid 由小到大，最多取 3 台。
+    /// 站台對照（<see cref="PrtgProbeSiteCheck"/>）與探測本身共用這一份，避免兩邊挑到不同的樣本。
+    /// </summary>
+    internal static List<long> PickTopSampleDevices(IEnumerable<(long DeviceObjid, string? Status)> sensors)
+    {
         static bool IsNotUp(string? status)
         {
             if (string.IsNullOrWhiteSpace(status)) return true;
             return !status.StartsWith("Up", StringComparison.OrdinalIgnoreCase);
         }
 
-        return sensorSamples
-            .Where(s => s.ParentId.HasValue)
-            .GroupBy(s => s.ParentId!.Value)
+        return sensors
+            .GroupBy(s => s.DeviceObjid)
             .OrderByDescending(g => g.Any(s => IsNotUp(s.Status)))
             .ThenBy(g => g.Key)
             .Take(3)
-            .Select(g => (long)g.Key)
+            .Select(g => g.Key)
             .ToList();
+    }
+
+    /// <summary>
+    /// 「以裝置 id 查 messages 回了什麼」的判定（全專案唯一一份）：
+    /// 回傳空集合＝無資料；含下層感測器 objid＝可用；全部都是裝置自身＝只有裝置訊息；
+    /// 其餘＝回了不屬於該裝置的 objid。站台對照與 9d-5 共用。
+    /// </summary>
+    internal static string JudgeDeviceMessagesScope(long deviceObjid, IReadOnlySet<long> childSensorObjids, IReadOnlyList<long> returnedObjids)
+    {
+        if (returnedObjids.Count == 0)
+        {
+            return "無資料，無法判定";
+        }
+        if (returnedObjids.Any(id => childSensorObjids.Contains(id)))
+        {
+            return "✓ 含下層感測器訊息";
+        }
+        if (returnedObjids.All(id => id == deviceObjid))
+        {
+            return "✗ 只有裝置自身——狀態變更取數需改為逐感測器";
+        }
+        return "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）";
     }
 
     /// <summary>
@@ -1212,23 +1245,7 @@ public static class PrtgProbeRunner
                 var kB = rowsB.Distinct().Count();
                 var treesizeText = parsedB.TotalTreesize?.ToString() ?? "無";
 
-                string verdictB;
-                if (nB == 0)
-                {
-                    verdictB = "無資料，無法判定";
-                }
-                else if (rowsB.Any(id => subSet.Contains(id)))
-                {
-                    verdictB = "✓ 含下層感測器訊息";
-                }
-                else if (rowsB.All(id => id == deviceId))
-                {
-                    verdictB = "✗ 只有裝置自身——狀態變更取數需改為逐感測器";
-                }
-                else
-                {
-                    verdictB = "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）";
-                }
+                var verdictB = JudgeDeviceMessagesScope(deviceId, subSet, rowsB);
 
                 console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {nB} 筆、treesize {treesizeText}、不重複 objid {kB} 個 → {verdictB}");
 
