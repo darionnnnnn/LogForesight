@@ -50,7 +50,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
     private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder)
     {
         var handler = new StubHandler { OnSend = responder };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         return (client, handler);
     }
 

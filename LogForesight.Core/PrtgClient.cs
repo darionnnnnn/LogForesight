@@ -49,11 +49,11 @@ public sealed class PrtgClient : IDisposable
         string tokenOrEmpty,
         int timeoutSeconds,
         bool ignoreSslErrors,
-        HttpMessageHandler? handler = null,
-        string authMode = PrtgAuthModes.Token,
-        string usernameOrEmpty = "",
-        string passwordOrEmpty = "",
-        string passhashOrEmpty = "")
+        HttpMessageHandler? handler,
+        string authMode,
+        string usernameOrEmpty,
+        string passwordOrEmpty,
+        string passhashOrEmpty)
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new PrtgClientException("PRTG 未設定連線位址。");

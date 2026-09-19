@@ -171,7 +171,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         StubGuardSource? guard = null, List<Sentinel>? sentinels = null)
     {
         var console = new TestConsole();
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         await PrtgProbeSiteCheck.RunAsync(client, console, store, new FakeHostStore(),
             settings ?? new SystemSettings(), sentinels ?? new List<Sentinel>(), guard ?? new StubGuardSource());
         return console;

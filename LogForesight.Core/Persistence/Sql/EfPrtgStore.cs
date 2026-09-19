@@ -447,33 +447,45 @@ public sealed class EfPrtgStore
     public int ReplaceHostMapForDate(DateTime mapDate, IReadOnlyList<PrtgHostMapRow> rows)
     {
         var targetDate = mapDate.Date;
-        using (var ctx = _contextFactory())
-        {
-            ctx.PrtgHostMaps.Where(m => m.MapDate == targetDate).ExecuteDelete();
-        }
-
-        if (rows == null || rows.Count == 0) return 0;
-
+        var list = rows?.ToList() ?? new List<PrtgHostMapRow>();
         var now = DateTime.Now;
-        return BatchWrite(rows, (ctx, batch) =>
+
+        // 刪除與全部寫入放在同一個交易：刪完、寫入前行程被回收或寫入中途失敗時整批回滾，
+        // 不會留下「該日對應整批消失」的空日。SQL Server 開了連線重試，自開交易必須包在執行策略內。
+        using var ctx = _contextFactory();
+        var strategy = ctx.Database.CreateExecutionStrategy();
+        return strategy.Execute(() =>
         {
-            foreach (var item in batch)
+            ctx.ChangeTracker.Clear();
+            using var tx = ctx.Database.BeginTransaction();
+            ctx.PrtgHostMaps.Where(m => m.MapDate == targetDate).ExecuteDelete();
+
+            var written = 0;
+            for (var offset = 0; offset < list.Count; offset += UpsertBatchSize)
             {
-                ctx.PrtgHostMaps.Add(new PrtgHostMapRow
+                var count = Math.Min(UpsertBatchSize, list.Count - offset);
+                foreach (var item in list.GetRange(offset, count))
                 {
-                    MapDate = targetDate,
-                    DeviceObjid = item.DeviceObjid,
-                    Ip = item.Ip,
-                    HostId = item.HostId,
-                    HostName = item.HostName,
-                    MapStatus = item.MapStatus,
-                    Note = item.Note,
-                    CreatedAt = item.CreatedAt != default ? item.CreatedAt : now
-                });
+                    ctx.PrtgHostMaps.Add(new PrtgHostMapRow
+                    {
+                        MapDate = targetDate,
+                        DeviceObjid = item.DeviceObjid,
+                        Ip = item.Ip,
+                        HostId = item.HostId,
+                        HostName = item.HostName,
+                        MapStatus = item.MapStatus,
+                        Note = item.Note,
+                        CreatedAt = item.CreatedAt != default ? item.CreatedAt : now
+                    });
+                }
+
+                ctx.SaveChanges();
+                ctx.ChangeTracker.Clear();
+                written += count;
             }
 
-            ctx.SaveChanges();
-            return batch.Count;
+            tx.Commit();
+            return written;
         });
     }
 

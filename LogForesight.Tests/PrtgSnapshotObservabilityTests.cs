@@ -82,7 +82,7 @@ public class PrtgSnapshotObservabilityTests : IDisposable
             new PrtgProbeRunState(),
             lifetime);
 
-        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
+        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
         return service;
     }
 

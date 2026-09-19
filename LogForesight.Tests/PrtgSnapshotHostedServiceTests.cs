@@ -85,7 +85,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _probeState,
             _lifetime);
 
-        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
+        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
         if (console != null)
         {
             service.Console = console;
@@ -1228,7 +1228,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.ClientFactory = () =>
         {
             if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("模擬補抓失敗");
-            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
+            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
         };
 
         await service.TickAsync();

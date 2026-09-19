@@ -46,7 +46,7 @@ public sealed class PrtgResourceGuardTests : IDisposable
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         return (client, handler);
     }
 
@@ -221,7 +221,7 @@ public sealed class PrtgResourceGuardTests : IDisposable
         {
             OnSend = (_, _) => throw new HttpRequestException("PRTG API 連線中斷")
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var (recorder, _) = CreateRecorder();
         var console = new TestConsole();
         var settings = new SystemSettings

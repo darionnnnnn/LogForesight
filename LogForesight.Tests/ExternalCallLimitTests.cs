@@ -164,7 +164,7 @@ public class ExternalCallLimitTests : IDisposable
         {
             Content = new HugeStreamingContent()
         }));
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, false, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, false, handler, PrtgAuthModes.Token, "", "", "");
 
         var ex = await Assert.ThrowsAsync<PrtgClientException>(
             () => client.GetJsonAsync("api/table.json?content=sensors"));
@@ -193,7 +193,7 @@ public class ExternalCallLimitTests : IDisposable
         internal override PrtgClient CreateClient(SystemSettings settings)
         {
             CreateCount++;
-            return new PrtgClient(settings.PrtgUrl, "token123", 30, false, _handler);
+            return new PrtgClient(settings.PrtgUrl, "token123", 30, false, _handler, PrtgAuthModes.Token, "", "", "");
         }
     }
 

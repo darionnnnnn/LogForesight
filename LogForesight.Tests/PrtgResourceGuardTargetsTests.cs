@@ -391,7 +391,7 @@ public class PrtgResourceGuardTargetsTests : IDisposable
         var fromMirror = PrtgResourceGuardTargets.Resolve(
             new PrtgMirrorGuardSource(store), settings, sentinels, new TestConsole(), new PrtgAddressResolver());
 
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var fromLive = PrtgResourceGuardTargets.Resolve(
             new PrtgLiveGuardSource(client), settings, sentinels, new TestConsole(), new PrtgAddressResolver());
 

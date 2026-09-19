@@ -38,7 +38,7 @@ public class PrtgClientTests
     public void 建構子_位址格式不合法時擲PrtgClientException(string invalidUrl)
     {
         var ex = Assert.Throws<PrtgClientException>(() =>
-            new PrtgClient(invalidUrl, SampleToken, 30, false));
+            new PrtgClient(invalidUrl, SampleToken, 30, false, null, PrtgAuthModes.Token, "", "", ""));
 
         Assert.NotEmpty(ex.Message);
     }
@@ -53,7 +53,7 @@ public class PrtgClientTests
                 @"{""prtg-version"": ""23.1.82"", ""treesize"": 1, ""sensors"": [{""objid"": 1001}]}"))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var elapsed = await client.TestConnectionAsync();
 
         Assert.True(elapsed >= TimeSpan.Zero);
@@ -72,7 +72,7 @@ public class PrtgClientTests
                 "<!DOCTYPE html><html><body><form action='/public/login.htm'>Login</form></body></html>"))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.TestConnectionAsync());
 
         Assert.Contains("HTML", ex.Message);
@@ -86,7 +86,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.TestConnectionAsync());
 
         Assert.Contains("token 無效", ex.Message);
@@ -100,7 +100,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{}"))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         _ = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid");
 
         Assert.Single(stub.Requests);
@@ -119,7 +119,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(HtmlResponse(HttpStatusCode.OK, html73Bytes))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
 
@@ -136,7 +136,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(HtmlResponse(HttpStatusCode.OK, htmlWithWhitespace))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
 
@@ -153,7 +153,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var result = await client.GetJsonAsync("/api/table.json?content=devices");
 
         Assert.Equal(json, result);
@@ -167,7 +167,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, ""))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var result = await client.GetJsonAsync("/api/table.json?content=sensors");
 
         Assert.Equal("", result);
@@ -184,7 +184,7 @@ public class PrtgClientTests
             OnSend = (req, _) => throw new HttpRequestException($"Failed to connect to {req.RequestUri}")
         };
 
-        using var client = new PrtgClient(ValidUrl, sensitiveToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, sensitiveToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/test"));
 
         Assert.DoesNotContain(sensitiveToken, ex.Message);
@@ -195,19 +195,19 @@ public class PrtgClientTests
     public void 逾時秒數與SSL選項傳遞正確()
     {
         // 驗證逾時秒數生效（包含邊界值小於 1 夾至 1）
-        using var client1 = new PrtgClient(ValidUrl, SampleToken, 45, false);
+        using var client1 = new PrtgClient(ValidUrl, SampleToken, 45, false, null, PrtgAuthModes.Token, "", "", "");
         Assert.Equal(TimeSpan.FromSeconds(45), client1.Timeout);
 
-        using var client2 = new PrtgClient(ValidUrl, SampleToken, 0, false);
+        using var client2 = new PrtgClient(ValidUrl, SampleToken, 0, false, null, PrtgAuthModes.Token, "", "", "");
         Assert.Equal(TimeSpan.FromSeconds(1), client2.Timeout);
 
         // 驗證 SocketsHttpHandler SslOptions 設定有生效
-        using var clientSsl = new PrtgClient(ValidUrl, SampleToken, 30, true);
+        using var clientSsl = new PrtgClient(ValidUrl, SampleToken, 30, true, null, PrtgAuthModes.Token, "", "", "");
         var socketHandler = Assert.IsType<SocketsHttpHandler>(clientSsl.Handler);
         Assert.NotNull(socketHandler.SslOptions.RemoteCertificateValidationCallback);
         Assert.True(socketHandler.SslOptions.RemoteCertificateValidationCallback!(null!, null!, null!, System.Net.Security.SslPolicyErrors.None));
 
-        using var clientNoSsl = new PrtgClient(ValidUrl, SampleToken, 30, false);
+        using var clientNoSsl = new PrtgClient(ValidUrl, SampleToken, 30, false, null, PrtgAuthModes.Token, "", "", "");
         var noSslHandler = Assert.IsType<SocketsHttpHandler>(clientNoSsl.Handler);
         Assert.Null(noSslHandler.SslOptions.RemoteCertificateValidationCallback);
     }
@@ -240,7 +240,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "admin",
-            passwordOrEmpty: "secret");
+            passwordOrEmpty: "secret",
+            passhashOrEmpty: "");
 
         await client.GetJsonAsync("/api/table.json?content=sensors");
         await client.GetJsonAsync("/api/table.json?content=devices");
@@ -292,7 +293,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "testuser",
-            passwordOrEmpty: "testpass");
+            passwordOrEmpty: "testpass",
+            passhashOrEmpty: "");
 
         var tasks = Enumerable.Range(0, 10)
             .Select(i => client.GetJsonAsync($"/api/table.json?content=sensors&i={i}"))
@@ -330,7 +332,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "secretpass");
+            passwordOrEmpty: "secretpass",
+            passhashOrEmpty: "");
 
         await client.GetJsonAsync("/api/table.json?content=sensors");
         await client.GetJsonAsync("/api/table.json?content=devices");
@@ -365,7 +368,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "wrongpass");
+            passwordOrEmpty: "wrongpass",
+            passhashOrEmpty: "");
 
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors"));
@@ -398,7 +402,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "wrongpass");
+            passwordOrEmpty: "wrongpass",
+            passhashOrEmpty: "");
 
         for (var i = 0; i < 5; i++)
         {
@@ -437,7 +442,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "anypass");
+            passwordOrEmpty: "anypass",
+            passhashOrEmpty: "");
 
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors"));
@@ -471,7 +477,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "anypass");
+            passwordOrEmpty: "anypass",
+            passhashOrEmpty: "");
 
         for (var i = 0; i < 3; i++)
         {
@@ -506,7 +513,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "anypass");
+            passwordOrEmpty: "anypass",
+            passhashOrEmpty: "");
 
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
@@ -538,7 +546,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "testuser",
-            passwordOrEmpty: specialPassword);
+            passwordOrEmpty: specialPassword,
+            passhashOrEmpty: "");
 
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors"));
@@ -562,7 +571,8 @@ public class PrtgClientTests
                 handler: null,
                 authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
                 usernameOrEmpty: "   ",
-                passwordOrEmpty: "mypassword"));
+                passwordOrEmpty: "mypassword",
+                passhashOrEmpty: ""));
 
         Assert.Contains("帳號", ex.Message);
     }
@@ -664,7 +674,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "operator",
-            passwordOrEmpty: "wrongpass");
+            passwordOrEmpty: "wrongpass",
+            passhashOrEmpty: "");
 
         var tasks = Enumerable.Range(0, 5)
             .Select(_ => Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x")))
@@ -741,7 +752,7 @@ public class PrtgClientTests
             OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized))
         };
 
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub);
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
 
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/y"));
@@ -806,7 +817,10 @@ public class PrtgClientTests
             timeoutSeconds: 30,
             ignoreSslErrors: false,
             handler: stub,
-            authMode: LogForesight.Core.Models.PrtgAuthModes.Token);
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Token,
+            usernameOrEmpty: "",
+            passwordOrEmpty: "",
+            passhashOrEmpty: "");
 
         await tokenClient.GetJsonAsync("/api/table.json?content=sensors");
 
@@ -826,7 +840,8 @@ public class PrtgClientTests
             handler: stub,
             authMode: LogForesight.Core.Models.PrtgAuthModes.Password,
             usernameOrEmpty: "admin",
-            passwordOrEmpty: "secret");
+            passwordOrEmpty: "secret",
+            passhashOrEmpty: "");
 
         await passwordClient.GetJsonAsync("/api/table.json?content=sensors");
 
@@ -851,7 +866,10 @@ public class PrtgClientTests
             timeoutSeconds: 30,
             ignoreSslErrors: false,
             handler: stub,
-            authMode: LogForesight.Core.Models.PrtgAuthModes.Token);
+            authMode: LogForesight.Core.Models.PrtgAuthModes.Token,
+            usernameOrEmpty: "",
+            passwordOrEmpty: "",
+            passhashOrEmpty: "");
 
         await client.GetJsonAsync("/api/table.json?content=sensors");
 

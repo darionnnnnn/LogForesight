@@ -79,7 +79,7 @@ public class PrtgFetchServiceTests : IDisposable
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         return (client, handler);
     }
 
@@ -485,7 +485,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         };
 
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var store = CreateStore();
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -533,7 +533,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         };
 
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None, ScopeOf(0));

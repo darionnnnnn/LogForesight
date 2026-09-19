@@ -56,7 +56,7 @@ public class PrtgTablePagerTests
         Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
     {
         var handler = new StubHandler { Responder = responder };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var console = new TestConsole();
         var written = new List<long>();
 
@@ -242,7 +242,7 @@ public class PrtgTablePagerTests
         var next = 0L;
         handler.Responder = _ => Page("devices", Enumerable.Range(0, 5).Select(_ => ++next));
 
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
 
         await Assert.ThrowsAsync<PrtgPagingNotConvergedException>(() => PrtgTablePager.FetchAsync<long>(
             client, new TestConsole(), "devices", "objid", null,
@@ -261,7 +261,7 @@ public class PrtgTablePagerTests
     public async Task 查詢一律帶sortby與extraQuery()
     {
         var handler = new StubHandler { Responder = _ => Page("messages", Array.Empty<long>()) };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
 
         await PrtgTablePager.FetchAsync<long>(
             client, new TestConsole(), "messages", "objid", "id=0&filter_drel=7days",
@@ -287,7 +287,7 @@ public class PrtgTablePagerTests
                 ? "{\"devices\":[{\"device\":\"A\"},{\"device\":\"B\"},{\"objid\":1},{\"objid\":2},{\"objid\":3}]}"
                 : "{\"devices\":[]}"
         };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var written = new List<string>();
 
         var result = await PrtgTablePager.FetchAsync<string>(
@@ -314,7 +314,7 @@ public class PrtgTablePagerTests
                 return Page("devices", slice, treesize: 10);
             }
         };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var reported = new List<(int Done, int Total)>();
 
         await PrtgTablePager.FetchAsync<long>(
@@ -335,7 +335,7 @@ public class PrtgTablePagerTests
     public async Task 取消訊號會穿透分頁迴圈()
     {
         var handler = new StubHandler { Responder = _ => Page("devices", new long[] { 1, 2, 3, 4, 5 }) };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -360,7 +360,7 @@ public class PrtgTablePagerTests
                     : Page("devices", Array.Empty<long>());
             }
         };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var batchSizes = new List<int>();
         var written = new List<long>();
 
@@ -387,7 +387,7 @@ public class PrtgTablePagerTests
     public async Task 預設分頁大小為5000且批次為500()
     {
         var handler = new StubHandler { Responder = _ => Page("devices", Array.Empty<long>()) };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
 
         await PrtgTablePager.FetchAsync<long>(
             client, new TestConsole(), "devices", "objid", null,
