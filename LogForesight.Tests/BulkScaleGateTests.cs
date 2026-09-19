@@ -74,9 +74,13 @@ public class BulkScaleGateTests : IDisposable
         var query = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore, severity,
             visibility, aggregates, statusResolver, displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(_fixture.Blob("schedule_options")));
         var mail = new MailNotificationService(
             _settingsStore, new FakeSmtpMailSender(), _hosts, _users, groups, new FakeGroupAccessStore(),
-            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), new FakeIssueOwnerStore());
+            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
+            freshness, new FakeIssueOwnerStore());
         return new WorkOrderCommandService(
             query, aggregates, coordinator, workOrderStore, _caseStore, new FakeNoiseMarkStore(),
             _hosts, _users, visibility, new UserCapabilityResolver(groups, _hosts),

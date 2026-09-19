@@ -97,6 +97,9 @@ public class SchedulerTriggerQueryTests
                 new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "test.db")}" }, dir);
             var mailState = new MailNotifyStateStore(backend.Blob("mail_notify_state"));
             var capturingSender = new CapturingMailSender();
+            var freshness = new ScheduleFreshnessService(
+                new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs")),
+                new ScheduleOptionsStore(backend.Blob("schedule_options")));
             var mailService = new MailNotificationService(
                 new FakeSystemSettingsStore(),
                 capturingSender,
@@ -106,7 +109,8 @@ public class SchedulerTriggerQueryTests
                 new FakeGroupAccessStore(),
                 new FakeAnalysisRecordQuery(),
                 new FakeHandlingStore(),
-                mailState);
+                mailState,
+                freshness);
 
             var spec = new SmtpConnectionSpec("smtp.example.com", 25, false, "user", null);
             await mailService.SendTestAsync(spec, "noreply@example.com", new List<string> { "admin@example.com" },

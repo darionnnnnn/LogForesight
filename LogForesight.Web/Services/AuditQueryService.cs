@@ -101,6 +101,7 @@ public class AuditQueryService
         [AuditActions.ScheduleOptionsUpdate] = "更新排程設定",
         [AuditActions.ScheduleManualRun] = "手動觸發分析",
         [AuditActions.ScheduleManualCancel] = "取消執行中的分析",
+        [AuditActions.HealthFreshnessAck] = "確認資料過期提醒",
 
         [AuditActions.NetiqProbeRun] = "執行 NetIQ API 診斷",
 

@@ -87,14 +87,18 @@ public class HealthServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService());
+    private ScheduleFreshnessService NewFreshnessService() => new(
+        new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
+        new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+
+    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService());
 
     /// <summary>HealthService 只用得到 GetSuspendedRecipients()（回饋十七輪批次B-1），
     /// 其餘相依給最小可用的替身即可</summary>
     private MailNotificationService NewMailService() => new(
         new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
         new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-        new MailNotifyStateStore(_backend.Blob("mail_notify_state")));
+        new MailNotifyStateStore(_backend.Blob("mail_notify_state")), NewFreshnessService());
 
     [Fact]
     public void 存活檢查_資料庫可達時回ok()
@@ -156,7 +160,7 @@ public class HealthServiceTests : IDisposable
         Assert.True(runState.TryBeginRun("manual", out _));
         runState.ReportProgress("分析主機", 30, 100);
 
-        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService()).GetDetail();
+        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService()).GetDetail();
 
         Assert.True(dto.AnalysisRunning);
         Assert.Equal("manual", dto.AnalysisTrigger);
@@ -219,7 +223,7 @@ public class HealthServiceTests : IDisposable
         var seedService = new IssueFirstSeenSeedHostedService(_backend, new DataVersionStamp());
 
         // 1. 初始/未開始狀態
-        var healthService = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), seedService);
+        var healthService = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService(), seedService);
         var detail1 = healthService.GetDetail();
         Assert.Equal(IssueFirstSeenSeedStates.NotStarted, detail1.IssueFirstSeenSeedState);
         Assert.Equal(0, detail1.IssueFirstSeenSeedFailures);

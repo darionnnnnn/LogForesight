@@ -54,9 +54,13 @@ public class WorkOrderReplyServiceTests : IDisposable
         var admins = groups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
         _users.Upsert(new WebUser { Account = "admin1", Email = "admin1@test.local", Active = true, GroupIds = new List<long> { admins.GroupId } });
         _settings.Update(s => s.MailEnabled = true);
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(_fx.Blob("schedule_options")));
         _mail = new MailNotificationService(
             _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
-            new FakeAnalysisRecordQuery(), _handlingLog, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), new FakeIssueOwnerStore());
+            new FakeAnalysisRecordQuery(), _handlingLog, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
+            freshness, new FakeIssueOwnerStore());
 
         foreach (var host in new[] { "H1", "H2", "H3" })
         {

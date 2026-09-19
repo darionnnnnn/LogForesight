@@ -267,12 +267,17 @@ public class HealthSlowQueryDtoTests : IDisposable
     }
 
     /// <summary>HealthService 只用得到 MailNotificationService.GetSuspendedRecipients()，其餘相依給最小替身</summary>
-    private HealthService NewService() => new(
-        _backend, new SchedulerRunState(), _backend.TopIssueBackfiller(),
-        new MailNotificationService(
-            new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
-            new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-            new MailNotifyStateStore(_backend.Blob("mail_notify_state"))));
+    private HealthService NewService()
+    {
+        var freshness = new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")), new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+        return new(
+            _backend, new SchedulerRunState(), _backend.TopIssueBackfiller(),
+            new MailNotificationService(
+                new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
+                new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness),
+            freshness);
+    }
 
     [Fact]
     public void 診斷檢查帶出最慢前幾支()

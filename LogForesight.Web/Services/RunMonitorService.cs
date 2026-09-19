@@ -20,7 +20,7 @@ public class RunMonitorService
     private readonly IUserDisplayNameService _displayNameService;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
-    private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
+    internal static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
 
     /// <summary>失敗主機清單的顯示上限——超過的部分只算數量，避免單一異常日把整頁撐爆</summary>
     private const int MaxFailedHostNames = 10;
@@ -138,14 +138,14 @@ public class RunMonitorService
 
                 switch (status)
                 {
-                    case "success": summary.SuccessCount++; break;
+                    case BatchRunStatus.Success: summary.SuccessCount++; break;
                     case "backfilled": summary.BackfilledCount++; break;
-                    case "warning": summary.WarningCount++; break;
-                    case "failed": summary.FailedCount++; failedHosts.Add(host.HostName); break;
-                    case "stuck": summary.StuckCount++; failedHosts.Add(host.HostName); break;
-                    case "running": summary.RunningCount++; break;
+                    case BatchRunStatus.Warning: summary.WarningCount++; break;
+                    case BatchRunStatus.Failed: summary.FailedCount++; failedHosts.Add(host.HostName); break;
+                    case BatchRunStatus.Stuck: summary.StuckCount++; failedHosts.Add(host.HostName); break;
+                    case BatchRunStatus.Running: summary.RunningCount++; break;
                     // 已停止不列失敗主機清單——那是使用者的明確操作，缺漏日下次執行自動回補
-                    case "stopped": summary.StoppedCount++; break;
+                    case BatchRunStatus.Stopped: summary.StoppedCount++; break;
                     case "local_disabled": summary.LocalDisabledCount++; break;
                     default: summary.NotRunCount++; break;
                 }
@@ -202,7 +202,7 @@ public class RunMonitorService
         host.Source == "netiq" ? NetiqStatus(host, date, recordDates) : LocalStatus(host, dayRuns, date, recordDates, localEnabled);
 
     private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
-        recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "success" : "none";
+        recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? BatchRunStatus.Success : "none";
 
     private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
         new() { Status = NetiqStatus(host, date, recordDates) };
@@ -253,22 +253,6 @@ public class RunMonitorService
 
     private static string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
 
-    /// <summary>單筆 BatchRun 的狀態判定（回饋十七輪批次F-3 抽出，原本內嵌在 BuildCell 裡）：
-    /// 執行紀錄分頁（GetRunList）需要對每一筆 BatchRun 各自判定，不像 BuildCell 只取「當天最新一筆」
-    /// 代表整天。抽出單點化，避免兩處各自維護一份判定邏輯而漂移。</summary>
-    private static string ComputeStatus(BatchRun run)
-    {
-        // Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
-        // 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來
-        if (run.FinishedAt == null)
-            return DateTime.Now - run.StartedAt > StuckThreshold ? "stuck" : "running";
-        if (run.Stopped) return "stopped";
-        if (run.ExitCode != 0) return "failed";
-        if (run.ErrorCount > 0) return "failed";
-        if (run.WarnCount > 0 || run.AiFailures > 0) return "warning";
-        return "success";
-    }
-
     private static RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
     {
         if (dayRuns.Count == 0)
@@ -282,7 +266,7 @@ public class RunMonitorService
 
         return new RunDayHostStatusDto
         {
-            Status = ComputeStatus(latest),
+            Status = BatchRunStatus.Compute(latest, DateTime.Now, StuckThreshold),
             RunId = latest.RunId,
             StartedAt = latest.StartedAt,
             FinishedAt = latest.FinishedAt,
@@ -368,7 +352,7 @@ public class RunMonitorService
                 DurationSeconds = run.FinishedAt.HasValue
                     ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                     : null,
-                Status = ComputeStatus(run),
+                Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold),
                 JobTypeText = run.JobType == BatchRun.JobTypeAi ? "AI 分析" : "取數分析",
                 TriggerText = TriggerText(run.Trigger),
                 Args = run.Args,

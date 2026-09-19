@@ -118,4 +118,24 @@ public class HealthDetailDto : HealthDto
     /// <summary>因連續寄送失敗達門檻而暫停寄送的郵件收件人（回饋十七輪批次B-1）：
     /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();
+
+    /// <summary>排程資料新鮮度（任務 A-3）</summary>
+    public ScheduleFreshnessDto ScheduleFreshness { get; set; } = new();
+}
+
+/// <summary>排程資料新鮮度（任務 A-3）</summary>
+public class ScheduleFreshnessDto
+{
+    public bool ScheduleEnabled { get; set; }
+    public DateTime? LastSuccessAt { get; set; }
+    public bool Stale { get; set; }
+    public DateTime? AckedUntil { get; set; }
+    public bool Acked { get; set; }
+    public List<string> AdminContacts { get; set; } = new();
+}
+
+/// <summary>確認資料過期提醒請求（任務 A-3）</summary>
+public class FreshnessAckRequest
+{
+    public DateTime Until { get; set; }
 }

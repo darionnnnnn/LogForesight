@@ -31,6 +31,16 @@ public class MailNotificationServiceTests : IDisposable
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeIssueCaseStore _cases = new();
     private readonly EfSqliteFixture _fx = new();
+    private readonly BatchRunStore _batchRuns;
+    private readonly ScheduleOptionsStore _scheduleOptions;
+    private readonly ScheduleFreshnessService _freshness;
+
+    public MailNotificationServiceTests()
+    {
+        _batchRuns = new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs"));
+        _scheduleOptions = new ScheduleOptionsStore(_fx.Blob("schedule_options"));
+        _freshness = new ScheduleFreshnessService(_batchRuns, _scheduleOptions);
+    }
 
     /// <summary>分析永遠只產出到昨天——所有測試紀錄以此為基準日，而非 DateTime.Today</summary>
     private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
@@ -42,7 +52,7 @@ public class MailNotificationServiceTests : IDisposable
     /// 的既有慣例，同 _issueOwners／_issueAggregates 選填）。</summary>
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates);
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, _issueOwners, _issueAggregates);
 
     /// <summary>含問題優先摘要：串真的 OccurrenceStatusResolver（逾期判定需要），
     /// _issueAggregates 仍是 Fake——測試以 _issueAggregates.Result／AggregateOverride／
@@ -52,7 +62,7 @@ public class MailNotificationServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore);
         var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
         return new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates, issueDigest);
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, _issueOwners, _issueAggregates, issueDigest);
     }
 
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
@@ -1612,6 +1622,103 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.DoesNotContain("目前靜音中的問題", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task 摘要信_過期狀態下第一封含警示_隔天不含()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s =>
+        {
+            s.MailDailyEnabled = true;
+            s.MailDailyTime = "08:00";
+        });
+
+        var now1 = DateTime.Today.AddHours(9);
+        // 直接寫 blob：ScheduleOptionsStore.Update 會把 UpdatedAt 蓋成現在，無法模擬「排程早已啟用」
+        _fx.Blob("schedule_options").Mutate(_ =>
+        {
+            var opt = new ScheduleOptions { Enabled = true, UpdatedAt = now1.AddHours(-72) };
+            return (System.Text.Json.JsonSerializer.Serialize(opt, LfJsonOptions.Pretty), opt);
+        });
+        var runId = _batchRuns.StartRun(new BatchRun
+        {
+            HostName = "host1",
+            StartedAt = now1.AddHours(-73),
+            Trigger = "schedule"
+        });
+        _batchRuns.FinishRun(new BatchRun
+        {
+            RunId = runId,
+            HostName = "host1",
+            StartedAt = now1.AddHours(-73),
+            FinishedAt = now1.AddHours(-72),
+            Trigger = "schedule",
+            ExitCode = 0
+        });
+
+        var service = Create();
+
+        await service.CheckAndSendDailyWeeklyAsync(now1);
+
+        var sent1 = Assert.Single(_sender.Sent);
+        Assert.Contains("超過 48 小時沒有成功更新", sent1.Message.Body);
+
+        _sender.Sent.Clear();
+
+        var now2 = now1.AddDays(1);
+        await service.CheckAndSendDailyWeeklyAsync(now2);
+
+        var sent2 = Assert.Single(_sender.Sent);
+        Assert.DoesNotContain("超過 48 小時沒有成功更新", sent2.Message.Body);
+    }
+
+    [Fact]
+    public async Task 摘要信_過期狀態下過了7天再次含警示()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s =>
+        {
+            s.MailDailyEnabled = true;
+            s.MailDailyTime = "08:00";
+        });
+
+        var now1 = DateTime.Today.AddHours(9);
+        // 直接寫 blob：ScheduleOptionsStore.Update 會把 UpdatedAt 蓋成現在，無法模擬「排程早已啟用」
+        _fx.Blob("schedule_options").Mutate(_ =>
+        {
+            var opt = new ScheduleOptions { Enabled = true, UpdatedAt = now1.AddHours(-72) };
+            return (System.Text.Json.JsonSerializer.Serialize(opt, LfJsonOptions.Pretty), opt);
+        });
+        var runId = _batchRuns.StartRun(new BatchRun
+        {
+            HostName = "host1",
+            StartedAt = now1.AddHours(-73),
+            Trigger = "schedule"
+        });
+        _batchRuns.FinishRun(new BatchRun
+        {
+            RunId = runId,
+            HostName = "host1",
+            StartedAt = now1.AddHours(-73),
+            FinishedAt = now1.AddHours(-72),
+            Trigger = "schedule",
+            ExitCode = 0
+        });
+
+        var service = Create();
+
+        await service.CheckAndSendDailyWeeklyAsync(now1);
+        var sent1 = Assert.Single(_sender.Sent);
+        Assert.Contains("超過 48 小時沒有成功更新", sent1.Message.Body);
+
+        _sender.Sent.Clear();
+
+        var now7 = now1.AddDays(7);
+        await service.CheckAndSendDailyWeeklyAsync(now7);
+
+        var sent7 = Assert.Single(_sender.Sent);
+        Assert.Contains("超過 48 小時沒有成功更新", sent7.Message.Body);
     }
 }
 

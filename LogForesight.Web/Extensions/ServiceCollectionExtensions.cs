@@ -329,6 +329,7 @@ public static class ServiceCollectionExtensions
 
         // 健康檢查（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）：Singleton——它只讀 StorageBackend
         // 與 SchedulerRunState 兩個既有的行程內單例，沒有請求範圍狀態
+        services.AddSingleton<ScheduleFreshnessService>();
         services.AddSingleton<HealthService>();
 
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），

@@ -151,6 +151,10 @@ public static class AuditActions
     public const string ScheduleManualRun = "schedule_manual_run";
     public const string ScheduleManualCancel = "schedule_manual_cancel";
 
+    // 健康檢查（任務 A-3）
+    /// <summary>確認資料過期提醒</summary>
+    public const string HealthFreshnessAck = "health_freshness_ack";
+
     // NetIQ API 診斷（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：對 Sentinel 的主動查詢操作
     public const string NetiqProbeRun = "netiq_probe_run";
 

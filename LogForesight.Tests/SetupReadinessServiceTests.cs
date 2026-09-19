@@ -40,7 +40,8 @@ public class SetupReadinessServiceTests : IDisposable
 
     private SetupReadinessService Create()
     {
-        var health = new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService());
+        var freshness = new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")), new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+        var health = new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService(), freshness);
         var identity = new IdentityService(
             _users, _groups, _hosts, new StubAuthenticationProvider(),
             new ServerAdminAuthenticator(new WebAppSettings { Auth = new AuthSettings { ServerAdmin = new ServerAdminSettings() } }),
@@ -51,10 +52,14 @@ public class SetupReadinessServiceTests : IDisposable
             new SetupWizardStateStore(_backend.Blob("setup_wizard_state")));
     }
 
-    private MailNotificationService NewMailService() => new(
-        _settings, new FakeSmtpMailSender(), _hosts, _users,
-        _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-        new MailNotifyStateStore(_backend.Blob("mail_notify_state")));
+    private MailNotificationService NewMailService()
+    {
+        var freshness = new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")), new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+        return new(
+            _settings, new FakeSmtpMailSender(), _hosts, _users,
+            _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
+            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness);
+    }
 
     private void EnsureAdmin()
     {

@@ -86,9 +86,13 @@ public class HandlingServiceTests : IDisposable
         var admins = groups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
         _users.Upsert(new WebUser { Account = "admin1", Email = "admin1@test.local", Active = true, GroupIds = new List<long> { admins.GroupId } });
         _settings.Update(s => s.MailEnabled = true);
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(_fx.Blob("schedule_options")));
         return new MailNotificationService(
             _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
-            new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners);
+            new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
+            freshness, _issueOwners);
     }
 
     private HandlingServiceFacade CreateWithMail(MailNotificationService mail, params Capability[] capabilities)

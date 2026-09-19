@@ -374,3 +374,36 @@ public class BatchRunStore
     private List<BatchRunLog> ReadLogs(DateTime? from, DateTime? to) =>
         JsonLogParser.Parse<BatchRunLog>(_logs.ReadLines(from, to), LfJsonOptions.Compact);
 }
+
+/// <summary>
+/// 批次執行狀態判定（任務 A-3：由 RunMonitorService 抽出，作為全系統唯一的狀態判定）。
+/// </summary>
+public static class BatchRunStatus
+{
+    public const string Running = "running";
+    public const string Stuck = "stuck";
+    public const string Stopped = "stopped";
+    public const string Failed = "failed";
+    public const string Warning = "warning";
+    public const string Success = "success";
+
+    /// <summary>
+    /// 單筆 BatchRun 的狀態判定。
+    /// Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
+    /// 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來。
+    /// </summary>
+    public static string Compute(BatchRun run, DateTime now, TimeSpan stuckThreshold)
+    {
+        if (run.FinishedAt == null)
+            return now - run.StartedAt > stuckThreshold ? Stuck : Running;
+        if (run.Stopped) return Stopped;
+        if (run.ExitCode != 0) return Failed;
+        if (run.ErrorCount > 0) return Failed;
+        if (run.WarnCount > 0 || run.AiFailures > 0) return Warning;
+        return Success;
+    }
+
+    /// <summary>成功或有警告但完成，資料都確實更新了</summary>
+    public static bool UpdatedData(string status) => status is Success or Warning;
+}
+

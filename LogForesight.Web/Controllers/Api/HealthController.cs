@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -22,10 +24,32 @@ namespace LogForesight.Web.Controllers.Api;
 public class HealthController : ControllerBase
 {
     private readonly HealthService _health;
+    private readonly ScheduleFreshnessService _freshness;
+    private readonly ScheduleOptionsStore _optionsStore;
+    private readonly IAuditService _audit;
+    private readonly ICurrentUser _currentUser;
+    private readonly IUserGroupStore _groups;
+    private readonly IUserStore _users;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
-    public HealthController(HealthService health)
+    public HealthController(
+        HealthService health,
+        ScheduleFreshnessService freshness,
+        ScheduleOptionsStore optionsStore,
+        IAuditService audit,
+        ICurrentUser currentUser,
+        IUserGroupStore groups,
+        IUserStore users,
+        IUserDisplayNameService userDisplayNames)
     {
         _health = health;
+        _freshness = freshness;
+        _optionsStore = optionsStore;
+        _audit = audit;
+        _currentUser = currentUser;
+        _groups = groups;
+        _users = users;
+        _userDisplayNames = userDisplayNames;
     }
 
     /// <summary>
@@ -51,4 +75,55 @@ public class HealthController : ControllerBase
     [HttpGet("detail")]
     [Permission(Capability.Maintain)]
     public ApiResponse<HealthDetailDto> Detail() => ApiResponse<HealthDetailDto>.Ok(_health.GetDetail());
+
+    /// <summary>
+    /// 排程資料新鮮度（任務 A-3）：任何已登入使用者可讀。
+    /// 只在 Stale && !Acked 且檢視者沒有 Maintain 時填入 admin 群組成員的顯示名稱，其餘為空清單。
+    /// </summary>
+    [HttpGet("freshness")]
+    public ApiResponse<ScheduleFreshnessDto> Freshness()
+    {
+        var freshness = _freshness.GetScheduleFreshness(DateTime.Now);
+        if (freshness.Stale && !freshness.Acked && !_currentUser.Has(Capability.Maintain))
+        {
+            freshness.AdminContacts = AdminMembersResolver.GetAdminMembers(_groups, _users)
+                .Select(u =>
+                {
+                    var name = _userDisplayNames.Of(u.DisplayName);
+                    return string.IsNullOrWhiteSpace(name) ? u.Account : name;
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        return ApiResponse<ScheduleFreshnessDto>.Ok(freshness);
+    }
+
+    /// <summary>
+    /// 確認並靜音資料過期提醒（任務 A-3）：需 Maintain 權限。
+    /// </summary>
+    [HttpPost("freshness-ack")]
+    [Permission(Capability.Maintain)]
+    public ApiResponse FreshnessAck([FromBody] FreshnessAckRequest request)
+    {
+        var today = DateTime.Today;
+        if (request.Until.Date <= today)
+            throw DomainException.Validation("靜音日期必須晚於今天。");
+
+        if (request.Until.Date > today.AddDays(30))
+            throw DomainException.Validation("靜音日期不可超過今天起算 30 天。");
+
+        _optionsStore.Update(o =>
+        {
+            o.FreshnessAckUntil = request.Until.Date;
+        });
+
+        _audit.Record(
+            action: AuditActions.HealthFreshnessAck,
+            summary: $"確認資料過期提醒，靜音至 {request.Until:yyyy-MM-dd}",
+            targetKind: "schedule",
+            detail: new { until = request.Until.ToString("yyyy-MM-dd") });
+
+        return ApiResponse.Ok();
+    }
 }

@@ -81,6 +81,7 @@ public class ScheduleController : ControllerBase
 
         var saved = _optionsStore.Update(o =>
         {
+            if (request.Enabled && !o.Enabled) o.EnabledAt = DateTime.Now;
             o.Enabled = request.Enabled;
             o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;

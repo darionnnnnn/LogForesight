@@ -109,6 +109,9 @@ internal sealed class ScaleServices
         var suppressions = new SuppressionStore(backend.Blob("suppressions"));
         var mailSender = new FakeSmtpMailSender();
         var mailState = new MailNotifyStateStore(backend.Blob("mail_notify_state"));
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(backend.Blob("schedule_options")));
         _mail = new MailNotificationService(
             settingsStore,
             mailSender,
@@ -119,6 +122,7 @@ internal sealed class ScaleServices
             recordStore,
             recordHandling,
             mailState,
+            freshness,
             issueOwners,
             aggregates);
 
