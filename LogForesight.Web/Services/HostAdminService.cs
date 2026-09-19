@@ -87,9 +87,9 @@ public class HostAdminService
             return (hints, false);
         }
 
-        var silentSet = silentIds.ToHashSet();
-        var devicesByHost = prtgStore.GetLatestHostMap()
-            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && silentSet.Contains(m.HostId.Value))
+        // 只查本頁未回報主機的對應列，不讀回整日對應表
+        var devicesByHost = prtgStore.GetLatestHostMapForHosts(silentIds)
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .GroupBy(m => m.HostId!.Value)
             .ToDictionary(g => g.Key, g => g.Select(m => m.DeviceObjid).Distinct().ToList());
 

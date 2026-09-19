@@ -781,19 +781,8 @@ public sealed class EfPrtgStore
         int maxLookbackDays = 30, DateTime? anchor = null)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapWithDate");
-        if (maxLookbackDays <= 0)
-        {
-            return (null, new List<PrtgHostMapRow>());
-        }
-
-        var anchorDate = (anchor ?? DateTime.Today).Date;
-        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
-
         using var ctx = _contextFactory();
-        var latestDate = ctx.PrtgHostMaps
-            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
-            .Max(m => (DateTime?)m.MapDate);
-
+        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor);
         if (latestDate == null)
         {
             return (null, new List<PrtgHostMapRow>());
@@ -827,19 +816,8 @@ public sealed class EfPrtgStore
         long hostId, int maxLookbackDays = 30, DateTime? anchor = null)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapForHost");
-        if (maxLookbackDays <= 0)
-        {
-            return (null, new List<PrtgHostMapRow>());
-        }
-
-        var anchorDate = (anchor ?? DateTime.Today).Date;
-        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
-
         using var ctx = _contextFactory();
-        var latestDate = ctx.PrtgHostMaps
-            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
-            .Max(m => (DateTime?)m.MapDate);
-
+        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor);
         if (latestDate == null)
         {
             return (null, new List<PrtgHostMapRow>());
@@ -851,6 +829,50 @@ public sealed class EfPrtgStore
             .ToList();
 
         return (latestDate.Value, rows);
+    }
+
+    /// <summary>
+    /// 多台版的 <see cref="GetLatestHostMapForHost"/>：同一個「最近一次對應」的日期，
+    /// 第二趟只取 <paramref name="hostIds"/> 內主機的列（host_id IN (...)）。
+    /// 主機清單每頁只需要本頁未回報主機的對應，不必讀回整日對應表。
+    /// hostIds 為空時直接回空清單，不查資料庫。
+    /// </summary>
+    public List<PrtgHostMapRow> GetLatestHostMapForHosts(
+        IReadOnlyCollection<long> hostIds, int maxLookbackDays = 30)
+    {
+        using var __perf = _performance.Measure("prtg:GetLatestHostMapForHosts");
+        if (hostIds.Count == 0)
+        {
+            return new List<PrtgHostMapRow>();
+        }
+
+        using var ctx = _contextFactory();
+        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor: null);
+        if (latestDate == null)
+        {
+            return new List<PrtgHostMapRow>();
+        }
+
+        var ids = hostIds.Distinct().ToList();
+        return ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == latestDate.Value && m.HostId.HasValue && ids.Contains(m.HostId.Value))
+            .ToList();
+    }
+
+    /// <summary>單台／多台版共用：回看窗內最近一個有對應資料的日期，無資料或窗長不合法回 null。</summary>
+    private static DateTime? FindLatestHostMapDate(LfDbContext ctx, int maxLookbackDays, DateTime? anchor)
+    {
+        if (maxLookbackDays <= 0)
+        {
+            return null;
+        }
+
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
+        return ctx.PrtgHostMaps
+            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
+            .Max(m => (DateTime?)m.MapDate);
     }
 
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>

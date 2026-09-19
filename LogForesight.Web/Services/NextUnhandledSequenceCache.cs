@@ -23,13 +23,13 @@ public class NextUnhandledSequenceCache
     public const int TtlSeconds = IssueRankingCache.TtlSeconds;
 
     /// <summary>條目上限：同 <see cref="SummaryCache"/>——鍵含授權範圍，組合無限，
-    /// 超過上限整批清掉，重算付得起。</summary>
-    private const int MaxEntries = 64;
+    /// 滿了逐筆淘汰（先清過期、再清最久沒被存取的），不整批清空。</summary>
+    private const int MaxEntries = 256;
 
     private readonly DataVersionStamp _stamp;
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
-    private readonly Dictionary<string, (List<(long HostId, string Date)> Items, DateTime CachedAt, long Version)> _entries = new();
+    private readonly Dictionary<string, (List<(long HostId, string Date)> Items, DateTime CachedAt, long Version, DateTime LastAccess)> _entries = new();
 
     public NextUnhandledSequenceCache(DataVersionStamp stamp, Func<DateTime>? now = null)
     {
@@ -58,10 +58,12 @@ public class NextUnhandledSequenceCache
 
         lock (_lock)
         {
+            var now = _now();
             if (_entries.TryGetValue(key, out var entry)
                 && entry.Version == version
-                && (_now() - entry.CachedAt).TotalSeconds < TtlSeconds)
+                && (now - entry.CachedAt).TotalSeconds < TtlSeconds)
             {
+                _entries[key] = entry with { LastAccess = now };
                 return new List<(long, string)>(entry.Items);
             }
         }
@@ -72,10 +74,29 @@ public class NextUnhandledSequenceCache
 
         lock (_lock)
         {
-            if (_entries.Count >= MaxEntries) _entries.Clear();
-            _entries[key] = (new List<(long, string)>(value), _now(), version);
+            var now = _now();
+            if (!_entries.ContainsKey(key)) EvictForInsert(now, version);
+            _entries[key] = (new List<(long, string)>(value), now, version, now);
         }
 
         return new List<(long, string)>(value);
+    }
+
+    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除已過期（逾時或版本已推進、再也命不中）的項目，
+    /// 仍滿就逐筆移除最後存取時間最舊的一筆。</summary>
+    private void EvictForInsert(DateTime now, long version)
+    {
+        if (_entries.Count < MaxEntries) return;
+
+        var expired = _entries
+            .Where(e => e.Value.Version != version || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
+            .Select(e => e.Key)
+            .ToList();
+        foreach (var k in expired) _entries.Remove(k);
+
+        while (_entries.Count >= MaxEntries)
+        {
+            _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
+        }
     }
 }

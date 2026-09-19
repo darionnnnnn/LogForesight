@@ -832,4 +832,32 @@ public class HostAdminServiceTests : IDisposable
 
         Assert.Equal(PrtgPresenceHint.Down, dto.PrtgHint);
     }
+
+    [Fact]
+    public void ComputeSilentPrtgHints_對應表3台本頁只1台未回報_只查該台對應且提示不變()
+    {
+        // 對應表當日有 3 台主機的列（SILENT-DOWN／SILENT-UP ok、SILENT-NOMAP conflict、NORMAL ok 共 4 列）
+        var (down, up, noMap, normal) = SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fx.NewContext), DateTime.Now);
+        var monitor = new SqlPerformanceMonitor(thresholdMs: 0);
+        var store = new EfPrtgStore(_fx.NewContext, monitor);
+
+        // 本頁只有 down（未回報）與 normal（正常回報）
+        var (hints, stale) = HostAdminService.ComputeSilentPrtgHints(store, new[] { down, normal }, DateTime.Now);
+
+        Assert.Single(hints);
+        Assert.Equal(PrtgPresenceHint.Down, hints[down.HostId]);
+        Assert.False(stale);
+
+        // 走多台版、不走整表版
+        var ops = monitor.Snapshot().TopSlowOperations;
+        Assert.Equal(1, ops.Single(o => o.Operation == "prtg:GetLatestHostMapForHosts").Count);
+        Assert.DoesNotContain(ops, o => o.Operation == "prtg:GetLatestHostMapWithDate");
+
+        // 多台版只回傳被要求的主機列；空集合不查庫
+        var rows = store.GetLatestHostMapForHosts(new[] { down.HostId });
+        Assert.All(rows, r => Assert.Equal(down.HostId, r.HostId));
+        Assert.Single(rows);
+        Assert.Equal(2, store.GetLatestHostMapForHosts(new[] { up.HostId, noMap.HostId }).Count);
+        Assert.Empty(store.GetLatestHostMapForHosts(Array.Empty<long>()));
+    }
 }
