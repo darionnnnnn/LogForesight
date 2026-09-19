@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 using LogForesight.Core.Persistence;
@@ -17,6 +18,12 @@ namespace LogForesight.Core.Persistence.Sql;
 internal static class SchemaUpgrader
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 升級器建立的索引名稱（AddIndexIfMissing／AddFilteredUniqueIndexIfMissing 呼叫時登記）。
+    /// 名稱都是常數，重複登記無副作用；移除重複索引時用它決定每組保留哪一個。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, byte> UpgraderIndexNames = new(StringComparer.OrdinalIgnoreCase);
 
     public static void Upgrade(LfDbContext ctx)
     {
@@ -264,6 +271,104 @@ internal static class SchemaUpgrader
             "IX_lf_issue_cases_issue_closed", "source_key, event_id, closed_at");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
             "IX_lf_issue_cases_day_sync_pending", "day_sync_pending");
+
+        // 最後一步：EF 預設命名與升級器命名並存時留下的重複索引（必須在所有 AddIndexIfMissing 之後，名稱才登記齊）。
+        // 這是空間與寫入效能的整理、不是正確性前提——任何失敗（特別是尚未實機驗證的 SQL Server 系統目錄查詢）只記 Warn，不得擋住站台啟動
+        try
+        {
+            RemoveDuplicateIndexes(ctx, isSqlite);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[SQL] 重複索引整理失敗（不影響站台運作，下次啟動再試）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>索引的比對形狀：欄位（含順序）＋唯一性</summary>
+    private sealed record IndexShape(string Name, bool Unique, string Columns);
+
+    /// <summary>
+    /// 移除重複索引（冪等）：同一張 lf_ 表中欄位（含順序）完全相同、唯一性相同、都不是部分索引、
+    /// 都不是 sqlite_autoindex_ 的索引為一組，保留升級器使用的名稱、其餘 DROP。
+    /// 組內沒有升級器名稱（無法判斷保留哪一個）→ 全部保留並 Warn。
+    /// SQL Server 只報告不移除：DDL 尚未在 SQL Server 實機驗證。
+    /// </summary>
+    private static void RemoveDuplicateIndexes(LfDbContext ctx, bool isSqlite)
+    {
+        var tables = isSqlite
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sqlite_master WHERE type = 'table' AND name LIKE 'lf\\_%' ESCAPE '\\'").ToList()
+            : ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sys.tables WHERE name LIKE 'lf[_]%'").ToList();
+
+        foreach (var table in tables)
+        {
+            var groups = (isSqlite ? ReadSqliteIndexes(ctx, table) : ReadSqlServerIndexes(ctx, table))
+                .GroupBy(i => (i.Unique, Columns: i.Columns.ToLowerInvariant()))
+                .Where(g => g.Count() > 1);
+
+            foreach (var group in groups)
+            {
+                var names = group.Select(i => i.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+                if (!isSqlite)
+                {
+                    Log.Warn("[SQL] schema 升級：{Table} 偵測到重複索引 {Indexes}，DDL 尚未在 SQL Server 實機驗證，不自動移除",
+                        table, string.Join(" 與 ", names));
+                    continue;
+                }
+
+                var keep = names.FirstOrDefault(n => UpgraderIndexNames.ContainsKey(n));
+                if (keep == null)
+                {
+                    Log.Warn("[SQL] schema 升級：{Table} 偵測到重複索引 {Indexes}，組內沒有升級器使用的名稱、無法判斷保留哪一個，全部保留",
+                        table, string.Join(" 與 ", names));
+                    continue;
+                }
+
+                foreach (var name in names.Where(n => !string.Equals(n, keep, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Log.Info("[SQL] schema 升級：{Table} 移除與 {Keep} 重複的索引 {Index}", table, keep, name);
+                    // 名稱來自系統目錄（非外部輸入），識別字不支援參數化
+                    var sql = "DROP INDEX \"" + name.Replace("\"", "\"\"") + "\"";
+                    ctx.Database.ExecuteSqlRaw(sql);
+                }
+            }
+        }
+    }
+
+    /// <summary>SQLite：PRAGMA index_list／index_info；排除部分索引、sqlite_autoindex_ 與含運算式欄的索引</summary>
+    private static List<IndexShape> ReadSqliteIndexes(LfDbContext ctx, string table)
+    {
+        var result = new List<IndexShape>();
+        var rows = ctx.Database.SqlQueryRaw<string>(
+            "SELECT name || '|' || \"unique\" || '|' || partial AS Value FROM pragma_index_list('" + table + "')").ToList();
+        foreach (var row in rows)
+        {
+            var parts = row.Split('|');
+            var name = parts[0];
+            if (parts[2] != "0" || name.StartsWith("sqlite_autoindex_", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var columns = ctx.Database.SqlQueryRaw<string>(
+                "SELECT ifnull(name, '') AS Value FROM pragma_index_info('" + name + "') ORDER BY seqno").ToList();
+            if (columns.Count == 0 || columns.Any(c => c.Length == 0)) continue;
+            result.Add(new IndexShape(name, parts[1] == "1", string.Join(",", columns)));
+        }
+        return result;
+    }
+
+    /// <summary>SQL Server：sys.indexes／sys.index_columns（只取鍵欄、依 key_ordinal）；排除篩選索引、主鍵、堆積</summary>
+    private static List<IndexShape> ReadSqlServerIndexes(LfDbContext ctx, string table)
+    {
+        var rows = ctx.Database.SqlQueryRaw<string>(
+            "SELECT i.name + '|' + CAST(i.is_unique AS varchar(1)) + '|' + " +
+            "STUFF((SELECT ',' + c.name FROM sys.index_columns ic " +
+            "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id " +
+            "WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal > 0 " +
+            "ORDER BY ic.key_ordinal FOR XML PATH('')), 1, 1, '') AS Value " +
+            "FROM sys.indexes i JOIN sys.tables t ON i.object_id = t.object_id " +
+            "WHERE t.name = {0} AND i.type > 0 AND i.is_primary_key = 0 AND i.has_filter = 0", table).ToList();
+        return rows.Select(r => r.Split('|'))
+            .Where(p => p.Length == 3 && p[2].Length > 0)
+            .Select(p => new IndexShape(p[0], p[1] == "1", p[2]))
+            .ToList();
     }
 
     /// <summary>
@@ -280,6 +385,7 @@ internal static class SchemaUpgrader
     private static void AddFilteredUniqueIndexIfMissing(
         LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, string filter)
     {
+        UpgraderIndexNames.TryAdd(indexName, 0);
         if (!TableExists(ctx, isSqlite, table)) return;
 
         if (IndexExists(ctx, isSqlite, table, indexName)) return;
@@ -979,6 +1085,7 @@ internal static class SchemaUpgrader
     private static void AddIndexIfMissing(
         LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false)
     {
+        UpgraderIndexNames.TryAdd(indexName, 0);
         // 同 AddColumnIfMissing：表不存在就跳過，不讓 CREATE INDEX 炸掉啟動
         if (!TableExists(ctx, isSqlite, table)) return;
 

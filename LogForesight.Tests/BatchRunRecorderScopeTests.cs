@@ -1,8 +1,21 @@
+using System.Runtime.CompilerServices;
 using NLog;
 using NLog.Config;
 using Xunit;
 
 namespace LogForesight.Tests;
+
+/// <summary>
+/// 測試組件載入時就建好 NLog 全域設定，在任何測試類別建構之前。
+/// 否則多個測試類別的建構子同時以 <c>LogManager.Configuration ??= new ...</c> 初始化時，
+/// 兩邊都讀到 null、後設定的那份會取代先設定的那份——已經掛在先前那份上的 recorder target 跟著消失，
+/// 該趟執行紀錄靜默變成沒有任何警告，Scope 相關斷言偶發失敗。
+/// </summary>
+internal static class NLogTestConfigurationInitializer
+{
+    [ModuleInitializer]
+    internal static void Initialize() => LogManager.Configuration ??= new LoggingConfiguration();
+}
 
 /// <summary>
 /// 驗證 <see cref="BatchRunRecorder"/> 的 NLog 作用域隔離機制（ScopeContext），

@@ -32,10 +32,15 @@ public class NetiqDiscoveryService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
 
-    private static readonly ConcurrentDictionary<string, PendingScan> Pending = new();
-    private static readonly ConcurrentDictionary<string, ScanJob> Jobs = new();
-    private static readonly object _jobsLock = new();
     private static readonly TimeSpan ScanLifetime = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// 正式環境全行程共用的掃描狀態：服務註冊為 Scoped（每個請求一個實例），背景掃描工作與待匯入結果
+    /// 要跨請求查得到，所以放在行程層級的一份 <see cref="ScanRegistry"/>。
+    /// </summary>
+    private static readonly ScanRegistry SharedRegistry = new();
+
+    private readonly ScanRegistry _registry;
 
     public NetiqDiscoveryService(
         INetiqServerCatalog catalog,
@@ -46,7 +51,26 @@ public class NetiqDiscoveryService
         IImportLogStore importLogs,
         ICurrentUser currentUser,
         IAuditService audit)
+        : this(catalog, client, hosts, hostGroups, sentinels, importLogs, currentUser, audit, SharedRegistry)
     {
+    }
+
+    /// <summary>
+    /// 掃描狀態的注入點（必填）：測試每個實例給獨立的 <see cref="ScanRegistry"/>，
+    /// 不與其他測試類別共用「已有掃描進行中」的全行程狀態。
+    /// </summary>
+    internal NetiqDiscoveryService(
+        INetiqServerCatalog catalog,
+        INetiqDirectoryClient client,
+        IHostStore hosts,
+        IHostGroupStore hostGroups,
+        ISentinelStore sentinels,
+        IImportLogStore importLogs,
+        ICurrentUser currentUser,
+        IAuditService audit,
+        ScanRegistry registry)
+    {
+        _registry = registry;
         _catalog = catalog;
         _client = client;
         _hosts = hosts;
@@ -65,15 +89,15 @@ public class NetiqDiscoveryService
             throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
 
         CleanupExpired();
-        lock (_jobsLock)
+        lock (_registry.JobsLock)
         {
-            if (Jobs.Values.Any(j => j.Status == "running"))
+            if (_registry.Jobs.Values.Any(j => j.Status == "running"))
                 throw DomainException.Validation("已有掃描進行中，請等待完成或取消後再試。");
 
             var jobId = Guid.NewGuid().ToString("N");
             var cts = new CancellationTokenSource();
             var job = new ScanJob(jobId, serverName, subnetPrefix, cts);
-            Jobs[jobId] = job;
+            _registry.Jobs[jobId] = job;
 
             _ = Task.Run(async () =>
             {
@@ -132,7 +156,7 @@ public class NetiqDiscoveryService
     public NetiqScanJobDto GetScanStatus(string jobId)
     {
         CleanupExpired();
-        if (!Jobs.TryGetValue(jobId, out var job))
+        if (!_registry.Jobs.TryGetValue(jobId, out var job))
             throw DomainException.Validation("掃描工作不存在或已逾期，請重新掃描。");
 
         lock (job)
@@ -144,7 +168,7 @@ public class NetiqDiscoveryService
     public void CancelScan(string jobId)
     {
         CleanupExpired();
-        if (!Jobs.TryGetValue(jobId, out var job))
+        if (!_registry.Jobs.TryGetValue(jobId, out var job))
             throw DomainException.Validation("掃描工作不存在或已逾期，請重新掃描。");
 
         job.Cts.Cancel();
@@ -242,7 +266,7 @@ public class NetiqDiscoveryService
 
         CleanupExpired();
         var token = Guid.NewGuid().ToString("N");
-        Pending[token] = new PendingScan(serverName, discovered, DateTime.Now);
+        _registry.Pending[token] = new PendingScan(serverName, discovered, DateTime.Now);
 
         var byName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
 
@@ -290,7 +314,7 @@ public class NetiqDiscoveryService
     public NetiqImportResultDto Import(NetiqImportRequest request)
     {
         CleanupExpired();
-        if (!Pending.TryGetValue(request.Token, out var scan))
+        if (!_registry.Pending.TryGetValue(request.Token, out var scan))
             throw DomainException.Validation("掃描結果已逾期或不存在，請重新掃描。");
 
         // 只接受掃描過的 IP（前端不能硬塞任意主機）
@@ -324,7 +348,7 @@ public class NetiqDiscoveryService
             wanted.Count, outcome.Added, outcome.Updated, outcome.Revived, applyStopwatch.ElapsedMilliseconds);
 
         // 用過即丟：token 對應的掃描快照已經落盤，同一個 token 不該被重複套用第二次
-        Pending.TryRemove(request.Token, out _);
+        _registry.Pending.TryRemove(request.Token, out _);
 
         _importLogs.Append(new ImportLogEntry
         {
@@ -414,17 +438,25 @@ public class NetiqDiscoveryService
         return $"{parts[0]}.{parts[1]}.{parts[2]}.0/24";
     }
 
-    private static void CleanupExpired()
+    private void CleanupExpired()
     {
         var cutoff = DateTime.Now - ScanLifetime;
-        foreach (var entry in Pending.Where(p => p.Value.CreatedAt < cutoff).ToList())
-            Pending.TryRemove(entry.Key, out _);
+        foreach (var entry in _registry.Pending.Where(p => p.Value.CreatedAt < cutoff).ToList())
+            _registry.Pending.TryRemove(entry.Key, out _);
 
-        foreach (var entry in Jobs.Where(j => j.Value.Status != "running" && (j.Value.FinishedAt ?? j.Value.CreatedAt) < cutoff).ToList())
-            Jobs.TryRemove(entry.Key, out _);
+        foreach (var entry in _registry.Jobs.Where(j => j.Value.Status != "running" && (j.Value.FinishedAt ?? j.Value.CreatedAt) < cutoff).ToList())
+            _registry.Jobs.TryRemove(entry.Key, out _);
     }
 
-    private record PendingScan(string ServerName, List<NetiqDiscoveredHost> Hosts, DateTime CreatedAt);
+    /// <summary>掃描狀態：待匯入的掃描結果與背景掃描工作（見 <see cref="SharedRegistry"/>）</summary>
+    internal sealed class ScanRegistry
+    {
+        public ConcurrentDictionary<string, PendingScan> Pending { get; } = new();
+        public ConcurrentDictionary<string, ScanJob> Jobs { get; } = new();
+        public object JobsLock { get; } = new();
+    }
+
+    internal record PendingScan(string ServerName, List<NetiqDiscoveredHost> Hosts, DateTime CreatedAt);
 
     /// <summary>
     /// NetIQ 背景掃描工作狀態。
@@ -432,7 +464,7 @@ public class NetiqDiscoveryService
     /// 工作是行程內狀態，站台重啟即消失——這是刻意的取捨（掃描可重跑，
     /// 不值得為它引入持久化）。
     /// </summary>
-    private sealed class ScanJob
+    internal sealed class ScanJob
     {
         public string JobId { get; }
         public string ServerName { get; }

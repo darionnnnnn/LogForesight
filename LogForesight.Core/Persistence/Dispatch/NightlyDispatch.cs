@@ -43,6 +43,8 @@ public sealed class NightlyDispatch
     private readonly Dictionary<long, long> _handlerByOrder = new();
     private readonly Dictionary<long, string> _labelByOrder = new();
     private readonly HashSet<long> _createdOrders = new();
+    /// <summary>寫入當下才發現的途中變動（單已結案／已改派），趟末併入 SkipCounts</summary>
+    private readonly Dictionary<string, int> _midrunCounts = new(StringComparer.Ordinal);
 
     public NightlyDispatch(WorkOrderCoordinator coordinator, DispatchContext ctx, IHostStore hosts)
     {
@@ -101,11 +103,20 @@ public sealed class NightlyDispatch
                 _ctx.Commit(decision, issue.Source, issue.EventId);
             }
 
-            _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
+            // 途中已結案的單不寫入、途中改派的依新處理人寫入（判斷在 coordinator 鎖內，見 WriteNightlyMembers）
+            var writtenHandlers = _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
 
             for (var i = 0; i < members.Count; i++)
             {
-                var (issue, workOrderId, handlerId, _) = members[i];
+                var (issue, workOrderId, plannedHandlerId, _) = members[i];
+                if (writtenHandlers[i] is not long handlerId)
+                {
+                    _midrunCounts[WorkOrderCoordinator.SkipOrderClosedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.SkipOrderClosedMidrun) + 1;
+                    continue;
+                }
+                if (handlerId != plannedHandlerId)
+                    _midrunCounts[WorkOrderCoordinator.HandlerChangedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.HandlerChangedMidrun) + 1;
+
                 _addedByOrder[workOrderId] = _addedByOrder.GetValueOrDefault(workOrderId) + 1;
                 if (recurrences[i])
                 {
@@ -137,6 +148,10 @@ public sealed class NightlyDispatch
                    $"／靜音略過 {Count(WorkOrderDispatcher.SkipMuted)}／閘門略過 {gate}" +
                    $"（抑制 {Count(WorkOrderDispatcher.SkipSuppressed)}、已知雜訊 {Count(WorkOrderDispatcher.SkipNoise)}、" +
                    $"嚴重度 {Count(WorkOrderDispatcher.SkipSeverity)}、不再打擾 {Count(WorkOrderDispatcher.SkipDismissed)}）";
+        if (Count(WorkOrderCoordinator.SkipOrderClosedMidrun) > 0)
+            text += $"；交辦單在派工途中已結案 {Count(WorkOrderCoordinator.SkipOrderClosedMidrun)} 台";
+        if (Count(WorkOrderCoordinator.HandlerChangedMidrun) > 0)
+            text += $"；交辦單在派工途中已改派，已依新處理人掛入 {Count(WorkOrderCoordinator.HandlerChangedMidrun)} 台";
         if (Count(WorkOrderDispatcher.SkipUnavailable) > 0) text += "；派工資料讀取失敗，本趟未派工";
         return text;
     }
@@ -161,11 +176,15 @@ public sealed class NightlyDispatch
                         })
                         .ToList());
 
+            var skipCounts = new Dictionary<string, int>(_ctx.SkipCounts, StringComparer.Ordinal);
+            foreach (var (reason, count) in _midrunCounts)
+                skipCounts[reason] = skipCounts.GetValueOrDefault(reason) + count;
+
             var summary = new NightlyDispatchSummary
             {
                 CreatedOrders = _createdOrders.Count,
                 AttachedMembers = _addedByOrder.Values.Sum(),
-                SkipCounts = new Dictionary<string, int>(_ctx.SkipCounts, StringComparer.Ordinal),
+                SkipCounts = skipCounts,
                 PerHandler = perHandler
             };
 
@@ -174,6 +193,7 @@ public sealed class NightlyDispatch
             _handlerByOrder.Clear();
             _createdOrders.Clear();
             _labelByOrder.Clear();
+            _midrunCounts.Clear();
             return summary;
         }
     }
