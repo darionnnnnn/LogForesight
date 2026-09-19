@@ -137,13 +137,191 @@ public class PrtgProbeSiteCheckTests : IDisposable
         return store;
     }
 
-    private static async Task<TestConsole> RunAsync(EfPrtgStore store, StubPrtg stub, SystemSettings? settings = null)
+    /// <summary>守門偵測來源替身：直接給裝置與感測器，記錄讀取次數。</summary>
+    private sealed class StubGuardSource : IPrtgResourceGuardSource
+    {
+        public List<PrtgDeviceRow> Devices { get; } = new();
+        public List<PrtgSensorRow> Sensors { get; } = new();
+        public bool ThrowOnSensors { get; set; }
+        public int DeviceReads { get; private set; }
+        public int SensorReads { get; private set; }
+        public string SourceLabel => "live";
+
+        public IReadOnlyList<PrtgDeviceRow> GetDevices()
+        {
+            DeviceReads++;
+            return Devices;
+        }
+
+        public IReadOnlyList<PrtgSensorRow> GetSensors()
+        {
+            SensorReads++;
+            if (ThrowOnSensors) throw new HttpRequestException("模擬感測器全表逾時");
+            return Sensors;
+        }
+    }
+
+    private static async Task<TestConsole> RunAsync(EfPrtgStore store, StubPrtg stub, SystemSettings? settings = null,
+        StubGuardSource? guard = null, List<Sentinel>? sentinels = null)
     {
         var console = new TestConsole();
         using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
         await PrtgProbeSiteCheck.RunAsync(client, console, store, new FakeHostStore(),
-            settings ?? new SystemSettings(), new List<Sentinel>());
+            settings ?? new SystemSettings(), sentinels ?? new List<Sentinel>(), guard ?? new StubGuardSource());
         return console;
+    }
+
+    // ── [S3] 資源守門目標偵測 ────────────────────────────────────────
+
+    /// <summary>
+    /// 守門來源：裝置 1（10.0.0.1，cpu）、裝置 3（10.0.0.3，Core Health）。
+    /// 搭配 <see cref="SeedTwoMappedOneUnmatched"/>：裝置 1 在取數範圍內、裝置 3 不在。
+    /// </summary>
+    private static StubGuardSource GuardWithCoreHealthOn3()
+    {
+        var g = new StubGuardSource();
+        g.Devices.Add(new PrtgDeviceRow { Objid = 1, Name = "D1", Ip = "10.0.0.1" });
+        g.Devices.Add(new PrtgDeviceRow { Objid = 3, Name = "D3", Ip = "10.0.0.3" });
+        g.Sensors.Add(new PrtgSensorRow { Objid = 11, DeviceObjid = 1, Name = "CPU", Category = "cpu", Paused = false });
+        g.Sensors.Add(new PrtgSensorRow { Objid = 31, DeviceObjid = 3, Name = "Core", SensorType = "Core Health", Paused = false });
+        return g;
+    }
+
+    [Fact]
+    public async Task S3_PRTG位址命中且都在範圍內_印位址命中與都在範圍內()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var guard = GuardWithCoreHealthOn3();
+
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings { PrtgUrl = "https://10.0.0.1" }, guard);
+
+        Assert.Contains("[S3] 資源守門目標偵測（直接查 PRTG）", console.Lines);
+        Assert.Contains("PRTG 主機：以位址比對命中 1 台裝置：D1(1)", console.Text);
+        Assert.Contains("Sentinel 主機：未設定 Sentinel", console.Text);
+        Assert.Contains("守門會監看的感測器：cpu 1 顆、memory 0 顆、corehealth 0 顆", console.Text);
+        Assert.Contains("都在取數範圍內", console.Text);
+        Assert.DoesNotContain("不在取數範圍內", console.Text);
+    }
+
+    [Fact]
+    public async Task S3_位址對不到改以CoreHealth找到且不在範圍內_提示自動偵測並填入()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var guard = GuardWithCoreHealthOn3();
+
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings { PrtgUrl = "https://10.9.9.9" }, guard);
+
+        Assert.Contains("改以 Core Health 感測器找到裝置 D3(3)", console.Text);
+        Assert.Contains("1 台守門用到的裝置不在取數範圍內：D3(3)", console.Text);
+        Assert.Contains("自動偵測並填入", console.Text);
+        Assert.DoesNotContain("都在取數範圍內", console.Text);
+    }
+
+    [Fact]
+    public async Task S3_都找不到_印找不到且Sentinel有設定但沒命中()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var guard = new StubGuardSource();
+        guard.Devices.Add(new PrtgDeviceRow { Objid = 1, Name = "D1", Ip = "10.0.0.1" });
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.8.8.8:8443" } };
+
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings { PrtgUrl = "https://10.9.9.9" }, guard, sentinels);
+
+        Assert.Contains("PRTG 主機：找不到（位址比對不到，也沒有 Core Health 感測器）", console.Text);
+        Assert.Contains("Sentinel 主機：沒有命中任何裝置", console.Text);
+        // 守門自己的警告直接進探測輸出
+        Assert.Contains(console.Lines, l => l.Contains("[PRTG資源守門] 找不到主機「10.8.8.8」"));
+    }
+
+    [Fact]
+    public async Task S3_Sentinel命中超過5台_只列5台並加等N台()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var guard = new StubGuardSource();
+        for (var i = 101; i <= 107; i++)
+            guard.Devices.Add(new PrtgDeviceRow { Objid = i, Name = $"N{i}", Ip = "10.7.7.7" });
+        var sentinels = new List<Sentinel> { new() { Name = "S1", BaseUrl = "https://10.7.7.7:8443" } };
+
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings(), guard, sentinels);
+
+        Assert.Contains("Sentinel 主機：命中 7 台裝置：N101(101)、N102(102)、N103(103)、N104(104)、N105(105) 等 7 台", console.Text);
+        Assert.Contains("7 台守門用到的裝置不在取數範圍內", console.Text);
+    }
+
+    [Fact]
+    public async Task S3_鏡像空_仍執行守門偵測但無法對照取數範圍()
+    {
+        var store = CreateStore();
+        var guard = GuardWithCoreHealthOn3();
+
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings { PrtgUrl = "https://10.0.0.1" }, guard);
+
+        Assert.Contains("略過（鏡像尚未同步）", console.Text);
+        Assert.Contains("PRTG 主機：", console.Text);
+        Assert.Contains("無法對照取數範圍", console.Text);
+        Assert.DoesNotContain("取數範圍內", console.Text);
+    }
+
+    [Fact]
+    public async Task S3_覆寫清單3顆其中1顆在鏡像_印已在與不在鏡像顆數()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var guard = GuardWithCoreHealthOn3();
+        var settings = new SystemSettings
+        {
+            PrtgUrl = "https://10.0.0.1",
+            PrtgResourceGuardSensorObjids = new List<string> { "11", "98", "99" }
+        };
+
+        var console = await RunAsync(store, new StubPrtg(), settings, guard);
+
+        Assert.Contains("覆寫清單 3 顆：已在鏡像 1 顆、不在鏡像 2 顆（快照服務的範圍補抓會查出所在裝置並補進鏡像）", console.Text);
+    }
+
+    [Fact]
+    public async Task S3_沒有Sentinel且PRTG網址解析不出主機_略過且不查來源()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var guard = GuardWithCoreHealthOn3();
+
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings { PrtgUrl = "" }, guard);
+
+        Assert.Contains("沒有可比對的位址（未設定 Sentinel，PRTG 連線網址也解析不出主機），略過。", console.Text);
+        Assert.Equal(0, guard.DeviceReads);
+        Assert.Equal(0, guard.SensorReads);
+    }
+
+    [Fact]
+    public async Task S3_來源讀感測器擲例外_印無法完成且S1S2不受影響()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var stub = new StubPrtg();
+        stub.SensorsByDevice[1] = new long[] { 11, 12 };
+        stub.SensorsByDevice[2] = new long[] { 21, 22 };
+        stub.MessagesByDevice[1] = new long[] { 11 };
+        stub.MessagesByDevice[2] = new long[] { 21 };
+        var guard = GuardWithCoreHealthOn3();
+        guard.ThrowOnSensors = true;
+
+        // PRTG 網址用鏡像對不到的位址，[S1] 的守門項維持 0，與既有試算測試同一行可比
+        var console = await RunAsync(store, stub, new SystemSettings { PrtgUrl = "https://10.9.9.9" }, guard);
+
+        Assert.Contains("守門偵測無法完成（模擬感測器全表逾時）", console.Text);
+        Assert.Contains("取數範圍：2 台裝置（對應 2、衝突 0、人工 0、守門 0）", console.Text);
+        Assert.Contains("結論 ✓ 範圍內裝置逐台查詢狀態變更可用", console.Text);
+        Assert.Contains("估算：範圍 2 台、併發 2——", console.Text);
+    }
+
+    [Fact]
+    public async Task S3_在S2之後輸出_且成本說明行提到守門偵測()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var console = await RunAsync(store, new StubPrtg(), new SystemSettings { PrtgUrl = "https://10.0.0.1" }, GuardWithCoreHealthOn3());
+
+        var s2 = console.Lines.IndexOf("[S2] 範圍內裝置逐台查詢實測");
+        var s3 = console.Lines.IndexOf("[S3] 資源守門目標偵測（直接查 PRTG）");
+        Assert.True(s2 >= 0 && s3 > s2);
+        Assert.Contains("另以直接查 PRTG 取裝置與感測器全表各一次", console.Text);
     }
 
     [Fact]

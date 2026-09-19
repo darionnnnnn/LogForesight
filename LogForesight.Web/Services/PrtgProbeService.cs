@@ -188,7 +188,8 @@ public class PrtgProbeService
                     {
                         try
                         {
-                            await PrtgProbeSiteCheck.RunAsync(client, console, _backend.PrtgStore(), _hosts, s, _sentinels.GetAll());
+                            await PrtgProbeSiteCheck.RunAsync(client, console, _backend.PrtgStore(), _hosts, s, _sentinels.GetAll(),
+                                new PrtgLiveGuardSource(client, CancellationToken.None, console));
                         }
                         catch (Exception ex)
                         {

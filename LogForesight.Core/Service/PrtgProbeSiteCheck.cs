@@ -19,17 +19,19 @@ public static class PrtgProbeSiteCheck
         PrtgClient client, IRunConsole console,
         EfPrtgStore store, IHostStore hostStore,
         SystemSettings settings, IReadOnlyList<Sentinel> sentinels,
+        IPrtgResourceGuardSource liveGuardSource,
         CancellationToken ct = default)
     {
         console.WriteLine();
         console.WriteLine("══════════ 站台對照 ══════════");
-        console.WriteLine("以本機鏡像與主機對應對照 PRTG：取數範圍有多大、下次同步會清掉什麼、範圍內的裝置逐台查詢成不成立。最多發 6 次 table.json。");
+        console.WriteLine("以本機鏡像與主機對應對照 PRTG：取數範圍有多大、下次同步會清掉什麼、範圍內的裝置逐台查詢成不成立。最多發 6 次 table.json，另以直接查 PRTG 取裝置與感測器全表各一次（守門偵測用，感測器那次在大型環境約需 1 分鐘）。");
 
         // ── [S1] 取數範圍試算（純本機，不打 PRTG）────────────────────────────
         console.WriteLine("[S1] 取數範圍試算");
 
         var devices = new List<PrtgDeviceRow>();
         var sensors = new List<PrtgSensorRow>();
+        var sensorsLoaded = false;
         PrtgScopeResult? scope = null;
         string? skipReason = null;
 
@@ -37,6 +39,7 @@ public static class PrtgProbeSiteCheck
         {
             devices = store.GetAllDevices();
             sensors = store.GetAllSensors();
+            sensorsLoaded = true;
 
             if (devices.Count == 0)
             {
@@ -80,6 +83,19 @@ public static class PrtgProbeSiteCheck
             skipReason = "取數範圍試算失敗";
         }
 
+        await RunDeviceQueryCheckAsync(client, console, settings, devices, sensors, scope, skipReason, ct);
+
+        // [S3] 不靠鏡像，不論 [S1]／[S2] 結果都執行
+        RunGuardDetectionCheck(console, store, settings, sentinels, liveGuardSource,
+            devices.Count == 0 && sensorsLoaded, scope, sensorsLoaded ? sensors : null, ct);
+    }
+
+    /// <summary>[S2] 範圍內裝置逐台查詢實測（打 PRTG，唯讀）。</summary>
+    private static async Task RunDeviceQueryCheckAsync(
+        PrtgClient client, IRunConsole console, SystemSettings settings,
+        List<PrtgDeviceRow> devices, List<PrtgSensorRow> sensors,
+        PrtgScopeResult? scope, string? skipReason, CancellationToken ct)
+    {
         // ── [S2] 範圍內裝置逐台查詢實測（打 PRTG，唯讀）──────────────────────
         console.WriteLine("[S2] 範圍內裝置逐台查詢實測");
 
@@ -157,6 +173,122 @@ public static class PrtgProbeSiteCheck
             var changeSeconds = EstimateStageSeconds(changeStageMs.Average(), total, concurrency);
             console.WriteLine($"     估算：範圍 {total} 台、併發 {concurrency}——感測器階段約 {sensorSeconds} 秒、狀態變更階段約 {changeSeconds} 秒（以 7 天級距量測；回望 30 天的資料量更大，實際會更久）");
         }
+    }
+
+    /// <summary>
+    /// [S3] 資源守門目標偵測：直接查 PRTG 做一次與夜間守門同一套的自動偵測，
+    /// 再對照 [S1] 的取數範圍——範圍外的守門裝置夜間讀鏡像會偵測不到。
+    /// 守門偵測自己的警告（找不到主機、DNS 預算用盡、截斷）直接進探測輸出，那正是管理者要看的。
+    /// </summary>
+    /// <param name="mirrorEmpty">[S1] 讀到的裝置鏡像是空的（沒算範圍）。</param>
+    /// <param name="mirrorSensors">[S1] 已讀的感測器鏡像；[S1] 沒讀到時為 null，改讀一次 store。</param>
+    private static void RunGuardDetectionCheck(
+        IRunConsole console, EfPrtgStore store, SystemSettings settings, IReadOnlyList<Sentinel> sentinels,
+        IPrtgResourceGuardSource liveGuardSource, bool mirrorEmpty, PrtgScopeResult? scope,
+        List<PrtgSensorRow>? mirrorSensors, CancellationToken ct)
+    {
+        console.WriteLine("[S3] 資源守門目標偵測（直接查 PRTG）");
+
+        try
+        {
+            var hasSentinel = sentinels.Any(s => !string.IsNullOrWhiteSpace(s.BaseUrl));
+            var prtgHostParsable = !string.IsNullOrWhiteSpace(settings.PrtgUrl)
+                && Uri.TryCreate(settings.PrtgUrl, UriKind.Absolute, out var prtgUri)
+                && !string.IsNullOrWhiteSpace(prtgUri.Host);
+            if (!hasSentinel && !prtgHostParsable)
+            {
+                console.WriteLine("     沒有可比對的位址（未設定 Sentinel，PRTG 連線網址也解析不出主機），略過。");
+                return;
+            }
+
+            var detection = PrtgResourceGuardTargets.Detect(
+                liveGuardSource, settings, sentinels, console, new PrtgAddressResolver());
+            ct.ThrowIfCancellationRequested();
+
+            var names = new Dictionary<long, string>();
+            foreach (var d in liveGuardSource.GetDevices())
+                names.TryAdd(d.Objid, d.Name);
+
+            var prtgText = detection.PrtgMatchKind switch
+            {
+                PrtgGuardMatchKind.Address =>
+                    $"以位址比對命中 {detection.PrtgDeviceObjids.Count} 台裝置：{FormatDevices(detection.PrtgDeviceObjids, names)}",
+                PrtgGuardMatchKind.CoreHealthFallback =>
+                    $"位址比對不到，改以 Core Health 感測器找到裝置 {FormatDevices(detection.PrtgDeviceObjids, names)}",
+                _ => "找不到（位址比對不到，也沒有 Core Health 感測器）"
+            };
+            console.WriteLine($"     PRTG 主機：{prtgText}");
+
+            string sentinelText;
+            if (!hasSentinel)
+                sentinelText = "未設定 Sentinel";
+            else if (detection.SentinelDeviceObjids.Count == 0)
+                sentinelText = "沒有命中任何裝置";
+            else
+                sentinelText = $"命中 {detection.SentinelDeviceObjids.Count} 台裝置：{FormatDevices(detection.SentinelDeviceObjids, names)}";
+            console.WriteLine($"     Sentinel 主機：{sentinelText}");
+
+            var categories = detection.Targets.SensorCategories.Values.ToList();
+            var cpu = categories.Count(c => c == PrtgSensorCategories.Cpu);
+            var memory = categories.Count(c => c == PrtgSensorCategories.Memory);
+            var coreHealth = categories.Count(c => c == PrtgResourceGuardTargets.CategoryCoreHealth);
+            console.WriteLine($"     守門會監看的感測器：cpu {cpu} 顆、memory {memory} 顆、corehealth {coreHealth} 顆");
+
+            // 對照取數範圍
+            if (scope == null)
+            {
+                console.WriteLine(mirrorEmpty
+                    ? "     （鏡像尚未同步，無法對照取數範圍）"
+                    : "     （取數範圍試算失敗，無法對照取數範圍）");
+            }
+            else
+            {
+                var guardDevices = new HashSet<long>(detection.PrtgDeviceObjids);
+                guardDevices.UnionWith(detection.SentinelDeviceObjids);
+                var outside = guardDevices.Where(id => !scope.DeviceObjids.Contains(id)).OrderBy(id => id).ToList();
+                if (outside.Count == 0)
+                {
+                    console.WriteLine("     ✓ 守門用到的裝置都在取數範圍內，夜間讀鏡像偵測得到。");
+                }
+                else
+                {
+                    console.WriteLine($"     ⚠ {outside.Count} 台守門用到的裝置不在取數範圍內：{FormatDevices(outside, names)}——夜間讀鏡像會偵測不到。處置：到系統設定「資源守門」頁按「自動偵測並填入」存入覆寫清單，快照服務下一輪會把這些感測器補進鏡像。");
+                }
+            }
+
+            // 覆寫清單
+            var overrideIds = settings.PrtgResourceGuardSensorObjids != null
+                ? PrtgResourceGuardTargets.ParseOverrideObjids(settings.PrtgResourceGuardSensorObjids)
+                : new HashSet<long>();
+            if (overrideIds.Count > 0)
+            {
+                var mirrorIds = (mirrorSensors ?? store.GetAllSensors()).Select(s => s.Objid).ToHashSet();
+                var inMirror = overrideIds.Count(mirrorIds.Contains);
+                var notInMirror = overrideIds.Count - inMirror;
+                var line = $"     覆寫清單 {overrideIds.Count} 顆：已在鏡像 {inMirror} 顆、不在鏡像 {notInMirror} 顆";
+                if (notInMirror > 0) line += "（快照服務的範圍補抓會查出所在裝置並補進鏡像）";
+                console.WriteLine(line);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     守門偵測無法完成（{ex.Message}）");
+        }
+    }
+
+    /// <summary>裝置清單顯示：依 objid 排序、每行最多 5 台，超過加「 等 N 台」。</summary>
+    private static string FormatDevices(IEnumerable<long> objids, IReadOnlyDictionary<long, string> names)
+    {
+        var ordered = objids.OrderBy(id => id).ToList();
+        var shown = ordered.Take(5).Select(id =>
+            names.TryGetValue(id, out var n) && !string.IsNullOrWhiteSpace(n) ? $"{n}({id})" : $"({id})");
+        var text = string.Join("、", shown);
+        if (ordered.Count > 5) text += $" 等 {ordered.Count} 台";
+        return text;
     }
 
     /// <summary>
