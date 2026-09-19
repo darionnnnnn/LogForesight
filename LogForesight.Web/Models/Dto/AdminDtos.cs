@@ -409,6 +409,23 @@ public class HostTierBatchResultDto
     public List<SkippedHostDto> Skipped { get; set; } = new();
 }
 
+/// <summary>批次指派負責人（回饋第 50 輪批次F-2）</summary>
+public class SetOwnersBatchRequest
+{
+    public List<long> HostIds { get; set; } = new();
+    public List<long> OwnerUserIds { get; set; } = new();
+
+    /// <summary>"replace"（改為僅這些人）｜ "add"（加入）｜ "remove"（移除）</summary>
+    public string Mode { get; set; } = "add";
+}
+
+/// <summary>批次指派負責人的結果：附更新後的主機列，前端就地替換不整頁重載</summary>
+public class HostOwnersBatchResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<HostDto> Hosts { get; set; } = new();
+}
+
 public class SkippedHostDto
 {
     public string HostName { get; set; } = string.Empty;

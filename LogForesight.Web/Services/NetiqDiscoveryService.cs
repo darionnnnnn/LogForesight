@@ -347,6 +347,12 @@ public class NetiqDiscoveryService
         Log.Info("NetIQ 匯入套用完成：{Count} 台（新增 {Added}／更新 {Updated}／復活 {Revived}），耗時 {ElapsedMs}ms",
             wanted.Count, outcome.Added, outcome.Updated, outcome.Revived, applyStopwatch.ElapsedMilliseconds);
 
+        // 分組結果依實際落盤狀態計算（既有主機群組不動，所以不能依請求推算）
+        var wantedSet = new HashSet<string>(wanted, StringComparer.OrdinalIgnoreCase);
+        var importedHosts = _hosts.GetAll().Where(h => wantedSet.Contains(h.HostName)).ToList();
+        var groupCount = importedHosts.SelectMany(h => h.GroupIds).Distinct().Count();
+        var ungroupedCount = importedHosts.Count(h => h.GroupIds.Count == 0);
+
         // 用過即丟：token 對應的掃描快照已經落盤，同一個 token 不該被重複套用第二次
         _registry.Pending.TryRemove(request.Token, out _);
 
@@ -375,7 +381,10 @@ public class NetiqDiscoveryService
             ServerName = scan.ServerName,
             Added = outcome.Added,
             Updated = outcome.Updated,
-            Revived = outcome.Revived
+            Revived = outcome.Revived,
+            ImportedCount = importedHosts.Count,
+            GroupCount = groupCount,
+            UngroupedCount = ungroupedCount
         };
     }
 
@@ -390,6 +399,15 @@ public class NetiqDiscoveryService
         if (assignments.Count == 0) return result;
 
         var cidrByIp = scan.Hosts.ToDictionary(h => h.IpAddress, h => Slash24(h.IpAddress), StringComparer.OrdinalIgnoreCase);
+
+        // 先驗全部再建立：任一網段指派不合整批拒絕，不留下半套新群組、也不讓主機靜默落成未分組
+        foreach (var assignment in assignments)
+        {
+            if (assignment.Mode == "new" && string.IsNullOrWhiteSpace(assignment.NewGroupName))
+                throw DomainException.Validation($"網段 {assignment.Cidr} 選了「建立新群組」但沒有填群組名稱。");
+            if (assignment.Mode == "existing" && (assignment.HostGroupId is not { } gid || _hostGroups.Get(gid) == null))
+                throw DomainException.Validation($"網段 {assignment.Cidr} 指定的既有群組不存在，請重新選擇。");
+        }
 
         var groupIdByCidr = new Dictionary<string, long?>(StringComparer.OrdinalIgnoreCase);
         foreach (var assignment in assignments)
@@ -411,11 +429,9 @@ public class NetiqDiscoveryService
         return result;
     }
 
-    private long? ResolveOrCreateGroup(string? name)
+    private long ResolveOrCreateGroup(string? name)
     {
-        var trimmed = name?.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed)) return null;
-
+        var trimmed = name!.Trim();
         var existing = _hostGroups.FindByName(trimmed);
         if (existing != null) return existing.GroupId;
 

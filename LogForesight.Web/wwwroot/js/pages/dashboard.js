@@ -40,7 +40,7 @@ async function load() {
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
-    renderBanner(data);
+    renderBanner(data, user);
     renderKpi(data, user, displaySettings, myBadge);
     renderCategories(data);
     renderTopIssues(data);
@@ -159,8 +159,20 @@ function renderServerAdminGuide() {
 }
 
 /** 全綠時明確說「沒事」——空白畫面無法讓人分辨「沒問題」與「沒載入」 */
-function renderBanner(data) {
+function renderBanner(data, user) {
     const container = document.getElementById('dashboard-banner');
+
+    // 可見主機為 0 的一般使用者：不是「沒事」而是「沒有權限」，說清楚原因與找誰
+    // （具 Maintain 者自己就能設定授權，不需要這句）
+    if (data.totalHosts === 0 && !hasCapability(user, 'Maintain')) {
+        const hint = document.createElement('div');
+        hint.className = 'lf-hint mb-3';
+        hint.setAttribute('role', 'status');
+        hint.append(icon('info-circle'), document.createTextNode(
+            '你目前沒有任何主機的檢視權限，所以這裡沒有資料。請聯絡系統管理員為你設定部門群組授權。'));
+        container.replaceChildren(hint);
+        return;
+    }
 
     if (data.highRiskDays > 0 || data.mediumRiskDays > 0) {
         container.replaceChildren();

@@ -762,7 +762,7 @@ public class PrtgAdminPageUiTests
         var settingsJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "settings.js"));
         Assert.Contains("prtg-guard.js", settingsJs);
         Assert.Contains("collectGuardPayload()", settingsJs);
-        Assert.Contains("loadGuardFields(current)", settingsJs);
+        Assert.Contains("loadGuardFields(settings)", settingsJs);   // 整頁套用設定 applySettings(settings) 內呼叫
         Assert.Contains("bindGuardPreview()", settingsJs);
     }
 

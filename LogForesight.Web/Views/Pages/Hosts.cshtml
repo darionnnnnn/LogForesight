@@ -58,7 +58,9 @@
     <span class="fw-semibold" id="host-selection-count"></span>
     <button type="button" class="btn btn-sm btn-primary" id="btn-batch-groups">批次設定群組</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-tier">批次設定分級</button>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-owners">指派負責人</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
+    <span class="small text-muted">大量指派也可以用 CSV：<a id="link-owner-csv" href="#">資料匯入 › 負責人</a></span>
 </div>
 
 <div class="lf-card">
@@ -299,6 +301,49 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary" id="batch-tier-save">套用</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batch-owners-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">指派負責人</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="batch-owners-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <div class="form-label small text-muted" id="batch-owners-hosts-label"></div>
+                        <div id="batch-owners-hosts" class="lf-bulk-assign-hosts"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">模式</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="batch-owners-mode" id="batch-owners-mode-add" value="add" checked />
+                            <label class="form-check-label" for="batch-owners-mode-add">加入（保留每台既有負責人，勾選的人加上去）</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="batch-owners-mode" id="batch-owners-mode-remove" value="remove" />
+                            <label class="form-check-label" for="batch-owners-mode-remove">移除（從每台的負責人中拿掉勾選的人）</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="batch-owners-mode" id="batch-owners-mode-replace" value="replace" />
+                            <label class="form-check-label" for="batch-owners-mode-replace">取代（改為僅勾選的人）</label>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label">使用者</label>
+                        <div id="batch-owners-checks" class="border rounded p-2" style="max-height: 220px; overflow-y: auto;"></div>
+                        <div class="form-text">負責人會自動取得所負責主機的檢視權限與處理能力。</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="batch-owners-save">套用</button>
                 </div>
             </form>
         </div>

@@ -202,6 +202,11 @@ public class AdminController : ControllerBase
     public ApiResponse<HostTierBatchResultDto> SetTierBatch([FromBody] SetTierBatchRequest request) =>
         ApiResponse<HostTierBatchResultDto>.Ok(_hosts.SetTierBatch(request.HostIds, request.Tier));
 
+    /// <summary>批次指派負責人（回饋第 50 輪批次F-2）</summary>
+    [HttpPut("hosts/owners/batch")]
+    public ApiResponse<HostOwnersBatchResultDto> SetOwnersBatch([FromBody] SetOwnersBatchRequest request) =>
+        ApiResponse<HostOwnersBatchResultDto>.Ok(_hosts.SetOwnersBatch(request.HostIds, request.OwnerUserIds, request.Mode));
+
     [HttpPut("hosts/{hostId:long}/owners")]
     public ApiResponse<HostDto> SetHostOwners(long hostId, [FromBody] SetIdsRequest request) =>
         ApiResponse<HostDto>.Ok(_hosts.SetHostOwners(hostId, request.Ids));

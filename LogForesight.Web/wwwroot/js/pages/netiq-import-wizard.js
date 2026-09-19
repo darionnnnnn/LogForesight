@@ -10,6 +10,7 @@
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, withBusy, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { appUrl } from '../core/paths.js';
 
 let scanPicker = null;
 let discoverableSentinels = [];
@@ -154,8 +155,9 @@ let wizardTitle = null;
 let wizardHint = null;
 let wizardBackButton = null;
 let wizardPrimaryButton = null;
+let wizardDonePane = null;
 
-let wizardPane = 'subnets';       // 'subnets' | 'groups'
+let wizardPane = 'subnets';       // 'subnets' | 'groups' | 'done'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
 let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
@@ -190,6 +192,13 @@ function bindWizardControls() {
     wizardBackButton = document.getElementById('wizard-back');
     wizardPrimaryButton = document.getElementById('wizard-primary');
 
+    // 匯入完成畫面：精靈最後一步的結果區（匯入台數、分組結果與下一步）
+    wizardDonePane = document.createElement('div');
+    wizardDonePane.id = 'wizard-pane-done';
+    wizardDonePane.className = 'd-none';
+    wizardDonePane.setAttribute('aria-live', 'polite');
+    document.getElementById('wizard-pane-groups').after(wizardDonePane);
+
     wizardBackButton.addEventListener('click', () => {
         if (wizardPane !== 'groups') return;
         wizardPane = 'subnets';
@@ -199,6 +208,8 @@ function bindWizardControls() {
     wizardPrimaryButton.addEventListener('click', () => {
         if (wizardPane === 'subnets') {
             wizardAdvanceToGroups();
+        } else if (wizardPane === 'done') {
+            wizardModal.hide();
         } else {
             wizardSubmitImport();
         }
@@ -383,6 +394,7 @@ function wizardNote(text) {
 function renderWizardPane() {
     document.getElementById('wizard-pane-subnets').classList.toggle('d-none', wizardPane !== 'subnets');
     document.getElementById('wizard-pane-groups').classList.toggle('d-none', wizardPane !== 'groups');
+    wizardDonePane.classList.toggle('d-none', wizardPane !== 'done');
 
     wizardBackButton.classList.toggle('d-none', wizardPane !== 'groups');
     wizardHint.textContent = '';
@@ -391,10 +403,32 @@ function renderWizardPane() {
         wizardTitle.textContent = `從「${wizardServer}」掃描匯入`;
         wizardPrimaryButton.textContent = '下一步';
         updateSubnetSelectionHint();
-    } else {
+    } else if (wizardPane === 'groups') {
         wizardTitle.textContent = '指派網段所屬主機群組';
         wizardPrimaryButton.textContent = '完成匯入';
+    } else {
+        wizardTitle.textContent = '匯入完成';
+        wizardPrimaryButton.textContent = '關閉';
     }
+}
+
+function renderImportDone(result) {
+    const summary = document.createElement('p');
+    summary.className = 'mb-2';
+    summary.textContent = `已匯入 ${result.importedCount} 台，分入 ${result.groupCount} 個群組（未分組 ${result.ungroupedCount} 台）`;
+
+    const detail = wizardNote(`新增 ${result.added}、更新 ${result.updated}` +
+        (result.revived > 0 ? `、復活 ${result.revived}` : '') + '。既有主機的群組維持原樣。');
+
+    const next = document.createElement('p');
+    next.className = 'mb-0';
+    next.append('下一步：');
+    const link = document.createElement('a');
+    link.href = appUrl('/admin/groups');
+    link.textContent = '設定群組授權';
+    next.append(link, '——讓部門使用者看得到這些主機。');
+
+    wizardDonePane.replaceChildren(summary, detail, next);
 }
 
 function wizardAdvanceToGroups() {
@@ -410,6 +444,7 @@ function wizardAdvanceToGroups() {
 async function wizardSubmitImport() {
     const selectedIps = selectedWizardIps();
     const groupAssignments = collectGroupAssignments();
+    if (!groupAssignments) return;
 
     const restore = withBusy(wizardPrimaryButton, '匯入中');
     try {
@@ -420,9 +455,10 @@ async function wizardSubmitImport() {
             os: document.getElementById('wizard-os').value,
             tier: document.getElementById('wizard-tier').value
         });
-        toast(`已匯入：新增 ${result.added}、更新 ${result.updated}` +
-              (result.revived > 0 ? `、復活 ${result.revived}` : ''), 'success', 6000);
-        wizardModal.hide();
+        toast(`已匯入 ${result.importedCount} 台`, 'success');
+        renderImportDone(result);
+        wizardPane = 'done';
+        renderWizardPane();
         // 匯入會改變主機數，Sentinel 清單（含主機數欄）要跟著更新——由 netiq.js 重載，
         // 它會在完成後回頭呼叫 refreshScanPicker
         await onSentinelsChanged?.();
@@ -585,7 +621,9 @@ async function renderGroupAssignment() {
 
         select.addEventListener('change', () => {
             newNameInput.classList.toggle('d-none', select.value !== 'new');
+            clearAssignmentError(row);
         });
+        newNameInput.addEventListener('input', () => clearAssignmentError(row));
 
         container.appendChild(row);
     }
@@ -595,23 +633,57 @@ async function renderGroupAssignment() {
     }
 }
 
+function clearAssignmentError(row) {
+    for (const el of row.querySelectorAll('.is-invalid')) el.classList.remove('is-invalid');
+    row.querySelector('.invalid-feedback')?.remove();
+}
+
+function markAssignmentError(row, field, message) {
+    field.classList.add('is-invalid');
+    const feedback = document.createElement('div');
+    feedback.className = 'invalid-feedback d-block';
+    feedback.setAttribute('role', 'alert');
+    feedback.textContent = message;
+    field.after(feedback);
+}
+
+/**
+ * 收集各網段的群組指派；任一列不合（新群組沒填名稱、既有群組沒選到）就標出欄位、
+ * 捲到並 focus 第一個錯誤列，回傳 null 不送出——不再把它默默改成未分組。
+ */
 function collectGroupAssignments() {
     const assignments = [];
+    let firstInvalid = null;
     for (const row of document.querySelectorAll('#wizard-group-assign > .row[data-cidr]')) {
-        const mode = row.querySelector('.lf-wizard-group-mode').value;
+        clearAssignmentError(row);
+        const select = row.querySelector('.lf-wizard-group-mode');
+        const mode = select.value;
         const assignment = { cidr: row.dataset.cidr, mode: 'skip' };
 
         if (mode.startsWith('existing:')) {
-            assignment.mode = 'existing';
-            assignment.hostGroupId = Number(mode.split(':')[1]);
-        } else if (mode === 'new') {
-            const name = row.querySelector('.lf-wizard-group-new').value.trim();
-            if (name) {
-                assignment.mode = 'new';
-                assignment.newGroupName = name;
+            const groupId = Number(mode.split(':')[1]);
+            if (!(groupId > 0)) {
+                markAssignmentError(row, select, '請選擇群組');
+                firstInvalid ??= select;
             }
+            assignment.mode = 'existing';
+            assignment.hostGroupId = groupId;
+        } else if (mode === 'new') {
+            const input = row.querySelector('.lf-wizard-group-new');
+            const name = input.value.trim();
+            if (!name) {
+                markAssignmentError(row, input, '請輸入新群組名稱');
+                firstInvalid ??= input;
+            }
+            assignment.mode = 'new';
+            assignment.newGroupName = name;
         }
         assignments.push(assignment);
+    }
+    if (firstInvalid) {
+        firstInvalid.scrollIntoView({ block: 'center' });
+        firstInvalid.focus();
+        return null;
     }
     return assignments;
 }

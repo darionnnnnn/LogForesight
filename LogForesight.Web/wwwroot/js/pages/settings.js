@@ -70,21 +70,29 @@ async function load() {
 
 async function loadSettings() {
     current = await api.get('/api/admin/settings');
-    renderSeverityChecks(current.unhandledSeverities);
-    renderDisplayModeButtons(current.severityDisplayMode);
-    renderDayRiskLevelChecks(current.visibleDayRiskLevels);
-    document.getElementById('default-note-phrases').value = (current.defaultNotePhrases ?? []).join('\n');
-    renderAiFields(current);
-    renderAdFields(current);
-    renderAnalysisFields(current);
-    renderRetentionFields(current);
-    renderMailFields(current);
-    renderBrandFields(current);
-    loadGuardFields(current);
-    renderUpdatedAt(current);
+    applySettings(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
     loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
     loadDispatchPoolWarning(); // 獨立打，失敗靜默
+}
+
+/**
+ * 整頁套用設定：所有頁籤的欄位一次重繪。載入與存檔成功後都走這一支——
+ * 存檔後只重繪部分頁籤會讓沒重繪的頁籤停在送出前的輸入（例如資料保留、資源守門）。
+ */
+function applySettings(settings) {
+    renderSeverityChecks(settings.unhandledSeverities);
+    renderDisplayModeButtons(settings.severityDisplayMode);
+    renderDayRiskLevelChecks(settings.visibleDayRiskLevels);
+    document.getElementById('default-note-phrases').value = (settings.defaultNotePhrases ?? []).join('\n');
+    renderAiFields(settings);
+    renderAdFields(settings);
+    renderAnalysisFields(settings);
+    renderRetentionFields(settings);
+    renderMailFields(settings);
+    renderBrandFields(settings);
+    loadGuardFields(settings);
+    renderUpdatedAt(settings);
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -1025,12 +1033,72 @@ function activateTabForElement(el) {
     document.querySelector(`#settings-tabs [data-tab="${panelName}"]`)?.click();
 }
 
+/**
+ * 讀數字欄：空白回 null，不轉成 0——後端數字欄不收 null，所以送出前由
+ * {@link findInvalidNumberFields} 擋下空白；萬一漏網，送 null 也會被後端拒絕，而不是靜默存成 0。
+ */
+function readNumber(id) {
+    const raw = document.getElementById(id).value.trim();
+    return raw === '' ? null : Number(raw);
+}
+
+/** 送出前逐一檢查表單內的數字欄（空白、超出 min/max、格式不符），回傳 [{ el, message }] */
+function findInvalidNumberFields(form) {
+    const invalid = [];
+    for (const input of form.querySelectorAll('input[type="number"]')) {
+        const { validity } = input;
+        if (input.value.trim() === '' || validity.badInput) {
+            invalid.push({ el: input, message: '請輸入數值' });
+        } else if (validity.rangeUnderflow || validity.rangeOverflow) {
+            invalid.push({ el: input, message: `請輸入 ${input.min}～${input.max} 之間的數值` });
+        } else if (!validity.valid) {
+            invalid.push({ el: input, message: '數值格式不符' });
+        }
+    }
+    return invalid;
+}
+
+function clearFieldError(el) {
+    el.classList.remove('is-invalid');
+    if (el.nextElementSibling?.classList.contains('lf-field-error')) el.nextElementSibling.remove();
+}
+
+/**
+ * 欄位錯誤的呈現（§6b 表單驗證錯誤）：每個欄位紅框＋下方 invalid-feedback，
+ * 切到第一個錯誤欄位所在的頁籤（收合在「進階設定」裡就展開）並 focus，toast 只留一則摘要。
+ */
+function showFieldErrors(errors) {
+    for (const { el, message } of errors) {
+        clearFieldError(el);
+        el.classList.add('is-invalid');
+        const feedback = document.createElement('div');
+        feedback.className = 'invalid-feedback lf-field-error';
+        feedback.setAttribute('role', 'alert');
+        feedback.textContent = message;
+        el.after(feedback);
+        el.addEventListener('input', () => clearFieldError(el), { once: true });
+    }
+    const first = errors[0].el;
+    activateTabForElement(first);
+    const details = first.closest('details');
+    if (details) details.open = true;
+    first.focus();
+    toast(`有 ${errors.length} 個欄位需要修正`, 'warning');
+}
+
 function bindForm() {
     const form = document.getElementById('settings-form');
     const saveButton = document.getElementById('settings-save');
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
+
+        // 表單是 novalidate：數字欄空白或超出範圍要自己擋，否則空白會被當成 0 送出
+        const invalidFields = findInvalidNumberFields(form);
+        if (invalidFields.length > 0) {
+            showFieldErrors(invalidFields);
+            return;
+        }
 
         const severities = collectSeverities();
         if (severities.length === 0) {
@@ -1039,18 +1107,18 @@ function bindForm() {
             return;
         }
 
-        const initialHistoryDays = Number(document.getElementById('initial-history-days').value);
-        const retentionDays = Number(document.getElementById('retention-days').value);
+        const initialHistoryDays = readNumber('initial-history-days');
+        const retentionDays = readNumber('retention-days');
         if (retentionDays < initialHistoryDays) {
             activateTabForElement(document.getElementById('retention-days'));
             toast('歷史資料保留天數不可小於首次執行回補天數。', 'warning');
             return;
         }
 
-        const rawEventRetentionDays = Number(document.getElementById('raw-event-retention-days').value);
-        const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
-        const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
-        const reportRetentionDays = Number(document.getElementById('report-retention-days').value);
+        const rawEventRetentionDays = readNumber('raw-event-retention-days');
+        const runLogRetentionDays = readNumber('run-log-retention-days');
+        const auditRetentionDays = readNumber('audit-retention-days');
+        const reportRetentionDays = readNumber('report-retention-days');
         if (rawEventRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('raw-event-retention-days'));
             toast('原始事件內容保留天數不可大於歷史資料保留天數。', 'warning');
@@ -1212,33 +1280,33 @@ function bindForm() {
                 adSearchFilter: document.getElementById('ad-search-filter').value.trim(),
                 accountDisplayRules: document.getElementById('account-display-rules').value,
                 // AI 進階參數（§12）
-                aiTimeoutSeconds: Number(document.getElementById('ai-timeout-seconds').value),
-                aiRetryCount: Number(document.getElementById('ai-retry-count').value),
-                aiRetryDelaySeconds: Number(document.getElementById('ai-retry-delay-seconds').value),
-                aiJsonRetryCount: Number(document.getElementById('ai-json-retry-count').value),
-                aiMaxTokens: Number(document.getElementById('ai-max-tokens').value),
-                aiDeepDiveMaxTokens: Number(document.getElementById('ai-deep-dive-max-tokens').value),
-                aiFrequencyPenalty: Number(document.getElementById('ai-frequency-penalty').value),
-                aiPresencePenalty: Number(document.getElementById('ai-presence-penalty').value),
+                aiTimeoutSeconds: readNumber('ai-timeout-seconds'),
+                aiRetryCount: readNumber('ai-retry-count'),
+                aiRetryDelaySeconds: readNumber('ai-retry-delay-seconds'),
+                aiJsonRetryCount: readNumber('ai-json-retry-count'),
+                aiMaxTokens: readNumber('ai-max-tokens'),
+                aiDeepDiveMaxTokens: readNumber('ai-deep-dive-max-tokens'),
+                aiFrequencyPenalty: readNumber('ai-frequency-penalty'),
+                aiPresencePenalty: readNumber('ai-presence-penalty'),
                 aiExtraRequestFieldsJson: document.getElementById('ai-extra-request-fields').value.trim(),
                 // token 用量單價（跟著整頁 form 儲存）
-                aiInputPricePerMillion: Number(document.getElementById('ai-input-price').value) || 0,
-                aiOutputPricePerMillion: Number(document.getElementById('ai-output-price').value) || 0,
+                aiInputPricePerMillion: readNumber('ai-input-price'),
+                aiOutputPricePerMillion: readNumber('ai-output-price'),
                 // 分析參數（§12）
                 serverDescription: document.getElementById('server-description').value.trim(),
-                checkupIntervalDays: Number(document.getElementById('checkup-interval-days').value),
+                checkupIntervalDays: readNumber('checkup-interval-days'),
                 watchedFolders: collectLines('watched-folders'),
                 analysisChannels: collectLines('analysis-channels'),
                 permissionOperatorFields: collectLines('perm-operator-fields'),
                 permissionMemberFields: collectLines('perm-member-fields'),
                 permissionGroupFields: collectLines('perm-group-fields'),
                 permissionObjectFields: collectLines('perm-object-fields'),
-                importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
-                importMaxRows: Number(document.getElementById('import-max-rows').value),
+                importMaxFileSizeKb: readNumber('import-max-file-size-kb'),
+                importMaxRows: readNumber('import-max-rows'),
                 // 郵件通知（回饋十五輪批次D）
                 mailEnabled,
                 smtpServer,
-                smtpPort: Number(document.getElementById('smtp-port').value),
+                smtpPort: readNumber('smtp-port'),
                 smtpUseTls: document.getElementById('smtp-use-tls').checked,
                 smtpAccount: document.getElementById('smtp-account').value.trim(),
                 smtpPassword: document.getElementById('smtp-password').value || null,
@@ -1265,13 +1333,8 @@ function bindForm() {
                 brandIconDataUri: brandIconDataUri
             });
             toast('已儲存設定', 'success');
-            renderAiFields(current);
-            renderAdFields(current);
-            renderAnalysisFields(current);
-            renderMailFields(current);
-            renderBrandFields(current);
+            applySettings(current);
             applyBrandToSidebar(current);
-            renderUpdatedAt(current);
             unsaved?.clear();
         } catch {
             // 錯誤訊息已由 api.js 以 toast 顯示（與其餘頁面同一套）；這裡吞掉是為了不留下
@@ -1280,6 +1343,30 @@ function bindForm() {
             restore();
         }
     });
+}
+
+/**
+ * 「進階設定」收合區（§6b 資訊密度）：純調校參數預設收合，記住使用者的展開選擇。
+ * localStorage 可能被停用或滿了，讀寫都包 try/catch——記不住只是每次回到預設收合。
+ */
+const ADVANCED_STORAGE_PREFIX = 'lf.settings.advanced.';
+
+function bindAdvancedSections() {
+    for (const details of document.querySelectorAll('#settings-form details[data-advanced]')) {
+        const key = ADVANCED_STORAGE_PREFIX + details.id;
+        try {
+            details.open = localStorage.getItem(key) === 'open';
+        } catch {
+            // 讀不到＝維持預設收合
+        }
+        details.addEventListener('toggle', () => {
+            try {
+                localStorage.setItem(key, details.open ? 'open' : 'closed');
+            } catch {
+                // 寫不進去＝下次回到預設收合
+            }
+        });
+    }
 }
 
 /**
@@ -1431,6 +1518,7 @@ bindTabs(document.getElementById('settings-tabs'), {
     onChange: name => { if (name === 'health') loadHealthTab(); }
 });
 bindFreshnessAck();
+bindAdvancedSections();
 // 資源守門的「預覽／自動偵測」兩顆鈕（docs/PRTG-SPEC.md §12）
 bindGuardPreview();
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
