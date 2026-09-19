@@ -16,9 +16,11 @@ import {
     showDetailModal,
     withBusy,
     searchableUserSelect,
-    labelValue
+    labelValue,
+    icon
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatUserName, statusBadge, workOrderClosedReasonText } from '../core/format.js';
+import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
 
 // DOM 元素
 const rootEl = document.getElementById('wo-detail');
@@ -29,6 +31,7 @@ const headerContainer = document.getElementById('wo-header');
 const memberStatusSelect = document.getElementById('wo-member-status');
 const memberCsvBtn = document.getElementById('wo-member-csv');
 const memberSplitBtn = document.getElementById('wo-member-split');
+const memberReplyBtn = document.getElementById('wo-member-reply');
 const memberNoteEl = document.getElementById('wo-member-note');
 const membersContainer = document.getElementById('wo-members');
 const memberPagerContainer = document.getElementById('wo-member-pager');
@@ -329,10 +332,63 @@ function openAdminCloseModal() {
     showDetailModal({ title: '代為結案', body });
 }
 
+/** 以本單的回覆端點回覆指定成員；成功後重新載入本頁 */
+function openMemberReply(caseIds, targetText) {
+    openWorkOrderReplyModal({
+        title: `回覆交辦單 #${workOrderId}`,
+        targetText,
+        draftKey: `order:${workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
+        aiContext: { issueLabel: currentDetail.issueLabel, hostCount: caseIds.length },
+        reuseIssueKey: currentDetail.issueKey || null,
+        submit: async payload => {
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload });
+            toastReplyResult(result);
+        },
+        onApplied: () => reloadAll()
+    });
+}
+
 function renderActions(detail, user) {
     actionsContainer.replaceChildren();
 
-    if (!detail.viewerCanAssign || detail.closedAt) {
+    if (detail.closedAt) {
+        return;
+    }
+
+    if (detail.viewerIsHandler) {
+        const replyBtn = document.createElement('button');
+        replyBtn.type = 'button';
+        replyBtn.className = 'btn btn-sm btn-outline-primary';
+        replyBtn.textContent = '回覆這張單';
+        // 與工作頁列上的「回覆」同一套分流：進行中 1 台直接開彈窗；多台就在本頁成員表勾選後「回覆選取的主機」
+        replyBtn.addEventListener('click', async () => {
+            const activeCount = detail.counts.active;
+            if (activeCount === 0) {
+                toast('這張單已沒有進行中的主機', 'info');
+                return;
+            }
+            if (activeCount > 1) {
+                memberStatusSelect.value = 'active';
+                memberPage = 1;
+                selectedCaseIds.clear();
+                await guardLoad(membersContainer, loadMembersOnly);
+                membersContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                toast('勾選這次處理好的主機，再按「回覆選取的主機」', 'info');
+                return;
+            }
+            const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '1' });
+            const data = await api.get(`/api/work-orders/${workOrderId}/members?${params}`);
+            const [member] = data.items;
+            if (!member) {
+                toast('這張單已沒有進行中的主機', 'info');
+                return;
+            }
+            openMemberReply([member.caseId], `主機 ${member.hostName}`);
+        });
+        actionsContainer.appendChild(replyBtn);
+    }
+
+    if (!detail.viewerCanAssign) {
         return;
     }
 
@@ -422,6 +478,17 @@ function updateSplitBtn() {
     memberSplitBtn.disabled = selectedCaseIds.size === 0;
 }
 
+function updateReplyBtn() {
+    const canReply = currentDetail && currentDetail.viewerIsHandler && !currentDetail.closedAt;
+    if (!canReply) {
+        memberReplyBtn.classList.add('d-none');
+        memberReplyBtn.disabled = true;
+        return;
+    }
+    memberReplyBtn.classList.remove('d-none');
+    memberReplyBtn.disabled = selectedCaseIds.size === 0;
+}
+
 function renderMembers(data) {
     if (data.hiddenMemberCount > 0) {
         memberNoteEl.textContent = `另有 ${data.hiddenMemberCount} 台主機不在您的檢視範圍，未列出`;
@@ -432,9 +499,11 @@ function renderMembers(data) {
     }
 
     const canSplit = currentDetail && currentDetail.viewerCanAssign && !currentDetail.closedAt;
+    const canReply = currentDetail && currentDetail.viewerIsHandler && !currentDetail.closedAt;
+    const showCheckboxes = canSplit || canReply;
     const columns = [];
 
-    if (canSplit) {
+    if (showCheckboxes) {
         columns.push({
             title: '',
             className: 'text-center text-nowrap',
@@ -442,12 +511,15 @@ function renderMembers(data) {
                 const chk = document.createElement('input');
                 chk.type = 'checkbox';
                 chk.className = 'form-check-input';
-                chk.title = '全選可拆出主機';
-                const splitableItems = (data.items || []).filter(item => !item.closedAt);
-                chk.checked = splitableItems.length > 0 && splitableItems.every(item => selectedCaseIds.has(item.caseId));
-                chk.disabled = splitableItems.length === 0;
+                let chkTitle = '全選可處理主機';
+                if (canReply && !canSplit) chkTitle = '全選可回覆主機';
+                else if (canSplit && !canReply) chkTitle = '全選可拆出主機';
+                chk.title = chkTitle;
+                const selectableItems = (data.items || []).filter(item => !item.closedAt);
+                chk.checked = selectableItems.length > 0 && selectableItems.every(item => selectedCaseIds.has(item.caseId));
+                chk.disabled = selectableItems.length === 0;
                 chk.addEventListener('change', () => {
-                    for (const item of splitableItems) {
+                    for (const item of selectableItems) {
                         if (chk.checked) {
                             selectedCaseIds.add(item.caseId);
                         } else {
@@ -459,6 +531,7 @@ function renderMembers(data) {
                         rc.checked = chk.checked;
                     }
                     updateSplitBtn();
+                    updateReplyBtn();
                 });
                 return chk;
             },
@@ -477,10 +550,11 @@ function renderMembers(data) {
                         selectedCaseIds.delete(item.caseId);
                     }
                     updateSplitBtn();
+                    updateReplyBtn();
                     const selectAll = membersContainer.querySelector('thead input[type="checkbox"]');
                     if (selectAll) {
-                        const splitableItems = (data.items || []).filter(i => !i.closedAt);
-                        selectAll.checked = splitableItems.length > 0 && splitableItems.every(i => selectedCaseIds.has(i.caseId));
+                        const selectableItems = (data.items || []).filter(i => !i.closedAt);
+                        selectAll.checked = selectableItems.length > 0 && selectableItems.every(i => selectedCaseIds.has(i.caseId));
                     }
                 });
                 return chk;
@@ -562,11 +636,13 @@ function renderMembers(data) {
             memberPage = newPage;
             selectedCaseIds.clear();
             updateSplitBtn();
+            updateReplyBtn();
             guardLoad(membersContainer, loadMembersOnly);
         }
     });
 
     updateSplitBtn();
+    updateReplyBtn();
 }
 
 // ── 時間軸 ─────────────────────────────────────────────────────────────────
@@ -652,6 +728,7 @@ memberStatusSelect.addEventListener('change', () => {
     memberPage = 1;
     selectedCaseIds.clear();
     updateSplitBtn();
+    updateReplyBtn();
     guardLoad(membersContainer, loadMembersOnly);
 });
 
@@ -673,9 +750,16 @@ memberSplitBtn.addEventListener('click', () => {
             }
             selectedCaseIds.clear();
             updateSplitBtn();
+            updateReplyBtn();
             await reloadAll();
         }
     });
+});
+
+memberReplyBtn.addEventListener('click', () => {
+    if (selectedCaseIds.size === 0) return;
+    const caseIds = Array.from(selectedCaseIds);
+    openMemberReply(caseIds, `選取的 ${caseIds.length} 台主機`);
 });
 
 memberCsvBtn.addEventListener('click', async () => {
@@ -756,6 +840,42 @@ async function loadMembersOnly() {
     renderMembers(members);
 }
 
+/**
+ * 檢視者曾是這張單的處理人、單已改派給別人（此時他仍能看這頁，代表另有 Assign／ViewAll）：
+ * 說明這頁為什麼沒有回覆入口，並指回自己的交辦。改派事件註記是「舊處理人 id→新處理人 id」。
+ * 只有 Handle 的原處理人拿到的是 403，改由拒絕畫面的提示處理（見 loadAll）。
+ */
+function renderReassignedHint(detail, user, timeline) {
+    const existing = rootEl.querySelector('.wo-reassign-hint');
+    if (existing) existing.remove();
+
+    if (detail.viewerIsHandler) return;
+
+    const wasHandler = timeline.some(ev => {
+        if (ev.action !== 'reassigned') return false;
+        const move = (ev.note || '').match(/^(\d+)→(\d+)$/);
+        return move && Number(move[1]) === user.userId;
+    });
+
+    if (!wasHandler) return;
+
+    const hintEl = document.createElement('div');
+    hintEl.className = 'lf-hint mb-3 p-3 bg-light rounded border wo-reassign-hint';
+    hintEl.appendChild(icon('info-circle'));
+
+    const span = document.createElement('span');
+    span.textContent = `這張單已改派給 ${detail.handlerName || '其他處理人'}。`;
+
+    const link = document.createElement('a');
+    link.href = appUrl(`/handlers/${user.userId}`);
+    link.textContent = '回到我的交辦';
+    link.className = 'ms-2';
+    span.appendChild(link);
+
+    hintEl.appendChild(span);
+    rootEl.prepend(hintEl);
+}
+
 async function loadAll() {
     try {
         const [user, detail, members, timeline] = await Promise.all([
@@ -769,6 +889,7 @@ async function loadAll() {
         currentDetail = detail;
 
         renderHeader(detail);
+        renderReassignedHint(detail, user, timeline);
         renderActions(detail, user);
         renderMembers(members);
         // 改派註記要把處理人 id 換成名字，先確保使用者清單在手（取不到就顯示 id，不擋畫面）
@@ -795,6 +916,20 @@ async function loadAll() {
             a.textContent = '返回交辦清單';
             wrap.appendChild(a);
             headerContainer.appendChild(wrap);
+            // 只有 Handle 的原處理人在單被改派後會落到這裡（授權只認目前處理人），而 403 拿不到歷程，
+            // 無法確認他是否曾是處理人——對有 Handle 的檢視者一律給出可能原因與回自己交辦的路
+            const user = await getCurrentUser();
+            if (!user.isServerAdmin && user.capabilities.includes('Handle')) {
+                const hint = document.createElement('div');
+                hint.className = 'lf-hint mt-3 wo-reassign-hint';
+                hint.textContent = '若這張單原本交辦給你，可能已改派給其他人。';
+                const link = document.createElement('a');
+                link.className = 'ms-1';
+                link.href = appUrl(`/handlers/${user.userId}`);
+                link.textContent = '回到我的交辦';
+                hint.appendChild(link);
+                headerContainer.appendChild(hint);
+            }
             membersContainer.replaceChildren();
             timelineContainer.replaceChildren();
             actionsContainer.replaceChildren();
@@ -806,6 +941,8 @@ async function loadAll() {
 
 async function reloadAll() {
     selectedCaseIds.clear();
+    updateSplitBtn();
+    updateReplyBtn();
     await guardLoad([headerContainer, membersContainer, timelineContainer], loadAll, { backLink: { href: appUrl('/work-orders'), text: '返回交辦清單' } });
 }
 

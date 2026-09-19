@@ -1087,6 +1087,39 @@ function renderSeverityFilter(detail) {
 }
 
 /**
+ * 處理人被帶到風險日詳情時，點出「這些問題其實是某張交辦單的一部分」——
+ * 到我的交辦可以一次回覆同一張單的所有主機，不必逐日逐主機處理。
+ * workOrderId 是該問題進行中案件所屬的交辦單（RecordDetailQueryService 以 openCase.WorkOrderId 填入）。
+ */
+function renderWorkOrderHint(detail, container) {
+    const myIssues = detail.topIssues.filter(i => i.caseHandlerId === currentUserId && i.workOrderId != null);
+    if (myIssues.length === 0) return;
+
+    const orderIds = [...new Set(myIssues.map(i => i.workOrderId))];
+    const shown = orderIds.slice(0, 3);
+    let orderText = shown.map(id => `#${id}`).join('、');
+    if (orderIds.length > 3) {
+        orderText += ` 等 ${orderIds.length} 張`;
+    }
+
+    const hintEl = document.createElement('div');
+    hintEl.className = 'lf-hint p-3 border-bottom';
+    hintEl.appendChild(icon('info-circle'));
+
+    const span = document.createElement('span');
+    span.textContent = `這一天有 ${myIssues.length} 個問題屬於你的交辦單（${orderText}）——到「我的交辦」可以一次回覆同一張單的所有主機。`;
+
+    const link = document.createElement('a');
+    link.href = appUrl(`/handlers/${currentUserId}?order=${orderIds[0]}`);
+    link.textContent = '前往我的交辦';
+    link.className = 'ms-1';
+    span.appendChild(link);
+
+    hintEl.appendChild(span);
+    container.appendChild(hintEl);
+}
+
+/**
  * 重點問題依類別分節，對齊報告 txt 的「■【類別】重點問題 N 項」——
  * 一天常同時有硬體＋資源＋服務的問題，合併成一張平面表會讓「這項屬於哪一類」
  * 從畫面上消失，儀表板分類卡下鑽進來就對不上自己點的類別。
@@ -1106,6 +1139,7 @@ function renderIssues(detail) {
     const highlighted = highlightedCategories();
     container.replaceChildren();
 
+    renderWorkOrderHint(detail, container);
     renderProgress();
 
     let shown = 0;

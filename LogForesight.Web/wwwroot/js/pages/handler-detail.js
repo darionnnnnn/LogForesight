@@ -112,6 +112,60 @@ async function load() {
     renderKpi(summary);
 
     await loadOrders();
+
+    const orderParam = new URLSearchParams(location.search).get('order');
+    const targetOrderId = orderParam ? parseInt(orderParam, 10) : null;
+    if (targetOrderId && !isNaN(targetOrderId)) {
+        await locateOrder(targetOrderId);
+    }
+}
+
+/**
+ * 網址 ?order= 定位：通知信、風險日詳情的提示都帶著單號進來。
+ * 本頁有就捲過去、標亮、展開成員；沒有就先確認這張單仍是我的進行中單，再改看「全部」重找。
+ */
+async function locateOrder(targetOrderId) {
+    if (highlightOrderRow(targetOrderId)) {
+        clearOrderParam();
+        return;
+    }
+
+    let detail = null;
+    try {
+        detail = await api.get(`/api/work-orders/${targetOrderId}`, { silent: true });
+    } catch {
+        // 不存在或無權檢視：視同不在清單中
+    }
+    if (detail && detail.viewerIsHandler && !detail.closedAt) {
+        statusSelect.value = 'all';
+        orderPage = 1;
+        await loadOrders();
+        if (!highlightOrderRow(targetOrderId)) {
+            location.href = appUrl(`/work-orders/${targetOrderId}`);
+            return;
+        }
+    } else {
+        toast(`交辦單 #${targetOrderId} 已不在你的清單中`, 'info');
+    }
+    clearOrderParam();
+}
+
+/** 列在本頁：捲到、標亮、展開成員面板；不在本頁回 false */
+function highlightOrderRow(workOrderId) {
+    const tr = orderRowEl(workOrderId);
+    if (!tr) return false;
+    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    tr.classList.add('lf-row--highlight');
+    expandOrderRow(workOrderId);
+    return true;
+}
+
+function clearOrderParam() {
+    const url = new URL(location.href);
+    if (url.searchParams.has('order')) {
+        url.searchParams.delete('order');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
 }
 
 function renderHeader(data) {

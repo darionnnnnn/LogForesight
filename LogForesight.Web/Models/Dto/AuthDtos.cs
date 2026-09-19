@@ -27,6 +27,9 @@ public class CurrentUserDto
 
     /// <summary>尚無任何 admin 成員時為 true，前端據此提示 serverAdmin 去指派</summary>
     public bool NeedsAdminSetup { get; set; }
+
+    /// <summary>登入後沒有 returnUrl 時的落地頁（站內相對路徑，前端以 appUrl 補前綴）</summary>
+    public string LandingPath { get; set; } = "/";
 }
 
 /// <summary>登入頁初始化資訊（是否需要密碼欄）</summary>

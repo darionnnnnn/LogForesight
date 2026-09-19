@@ -20,12 +20,11 @@ const NAV_SECTIONS = [
     {
         label: '監控作業',
         items: [
+            // 動態 href：連到「自己」的處理人工作頁——處理人每天的起點，擺在第一位。
+            // ServerAdmin 帳號 userId=0，沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
+            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
             { href: '/', label: '總覽儀表板', icon: 'speedometer2', requires: null },
             { href: '/records', label: '問題查詢', icon: 'search', requires: null },
-            // 動態 href（docs/archive/FEEDBACK-4-PLAN.md §6）：連到「自己」的處理人工作頁——
-            // 處理人員每天上工的起點，不該藏在別的頁面連結後面。ServerAdmin 帳號 userId=0，
-            // 沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
-            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
             { href: '/work-orders', label: '交辦總覽', icon: 'inbox', requires: ['Assign', 'ViewAll'] },
             { href: '/permission-changes', label: '權限異動檢核', icon: 'clipboard-check', requires: 'ConfirmPermission' },
             { href: '/reports', label: '報表', icon: 'file-earmark-text', requires: null }
