@@ -464,8 +464,9 @@ async function showDetail(runId) {
     filterWrap.className = 'd-flex justify-content-end mb-2';
     const levelSelect = document.createElement('select');
     levelSelect.className = 'form-select form-select-sm';
-    levelSelect.style.width = '130px';
-    for (const [value, text] of [['', '全部等級'], ['Warn', 'Warn 以上'], ['Error', 'Error 以上']]) {
+    levelSelect.style.width = '180px';
+    // 預設「重要紀錄」：執行輸出（Logger=Output）量大，預設隱藏，只看里程碑／警告／錯誤
+    for (const [value, text] of [['important', '重要紀錄'], ['', '全部（含執行輸出）'], ['Warn', 'Warn 以上'], ['Error', 'Error 以上']]) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = text;
@@ -480,15 +481,17 @@ async function showDetail(runId) {
     function renderLogs() {
         const level = levelSelect.value;
         const order = { Info: 0, Warn: 1, Error: 2, Fatal: 3 };
-        const filtered = level
-            ? detail.logs.filter(l => (order[l.level] ?? 0) >= (order[level] ?? 0))
-            : detail.logs;
+        const filtered = level === 'important'
+            ? detail.logs.filter(l => l.logger !== 'Output')
+            : level
+                ? detail.logs.filter(l => (order[l.level] ?? 0) >= (order[level] ?? 0))
+                : detail.logs;
 
         renderTable(logsEl, {
             columns: [
                 { title: '時間', render: l => formatDateTime(l.loggedAt) },
                 { title: '等級', render: l => logLevelBadge(l.level) },
-                { title: '來源', render: l => l.logger },
+                { title: '來源', render: l => logSourceText(l.logger) },
                 { title: '訊息', render: l => logMessageCell(l) }
             ],
             rows: filtered,
@@ -546,6 +549,13 @@ function formatDuration(seconds) {
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
     return `${Math.floor(minutes / 60)} 時 ${minutes % 60} 分`;
+}
+
+// 執行詳情「來源」欄：紀錄器內建的兩種來源顯示中文，其他（NLog logger 短名）照舊
+function logSourceText(logger) {
+    if (logger === 'Output') return '執行輸出';
+    if (logger === 'Milestone') return '里程碑';
+    return logger;
 }
 
 function logLevelBadge(level) {

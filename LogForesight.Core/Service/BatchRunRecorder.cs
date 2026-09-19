@@ -130,6 +130,69 @@ public class BatchRunRecorder : IDisposable
     /// <summary>里程碑：固定的 Info 級紀錄（開始/掃描完成/逐日分析完成/結束）</summary>
     public void Milestone(string message) => Append("Info", "Milestone", message, null);
 
+    /// <summary>每趟直接寫入的執行輸出行數上限；超過後只保留最新 <see cref="OutputTailCapacity"/> 行</summary>
+    private const int OutputHeadLimit = 1500;
+
+    /// <summary>超過上限後環形緩衝保留的最新行數（結束時寫出）</summary>
+    private const int OutputTailCapacity = 500;
+
+    // 輸出可能來自並行的本機／NetIQ 兩路，計數與緩衝用專用鎖保護
+    private readonly object _outputLock = new();
+    private int _outputWritten;
+    private int _outputSkipped;
+    private readonly Queue<string> _outputTail = new();
+    private bool _outputFlushed;
+
+    /// <summary>
+    /// 執行輸出（IRunConsole 的白話訊息）寫進執行紀錄：Logger="Output"、Level="Info"。
+    /// 不靠放寬 NLog 層級（會把 EF／HttpClient 的 Info 全寫進資料庫），而是由 console 包裝層親自呼叫。
+    /// 前 1500 行直接寫入；之後只保留最新 500 行，於結束時連同略過行數一起寫出。空白行不記。
+    /// </summary>
+    public void Message(string message)
+    {
+        if (_store == null || string.IsNullOrWhiteSpace(message)) return;
+
+        lock (_outputLock)
+        {
+            if (_outputFlushed) return;
+            if (_outputWritten < OutputHeadLimit)
+            {
+                _outputWritten++;
+                Append("Info", "Output", message, null);
+                return;
+            }
+
+            _outputTail.Enqueue(message);
+            if (_outputTail.Count > OutputTailCapacity)
+            {
+                _outputTail.Dequeue();
+                _outputSkipped++;
+            }
+        }
+    }
+
+    /// <summary>致命原因親自寫進紀錄：最外層 catch 執行 Log.Fatal 時 NLog target 已卸除，靠它會遺失</summary>
+    public void Fatal(Exception ex)
+    {
+        if (_store == null) return;
+        lock (_countLock) _run.ErrorCount++;
+        Append("Fatal", "Orchestrator", ex.Message, ex.ToString());
+    }
+
+    /// <summary>寫出超過上限後保留的最新輸出（任何結束路徑都經 Finish 呼叫；只寫一次）</summary>
+    private void FlushOutputTail()
+    {
+        lock (_outputLock)
+        {
+            if (_outputFlushed) return;
+            _outputFlushed = true;
+            if (_outputSkipped > 0)
+                Append("Info", "Output", $"（中間略過 {_outputSkipped} 行輸出）", null);
+            while (_outputTail.Count > 0)
+                Append("Info", "Output", _outputTail.Dequeue(), null);
+        }
+    }
+
     public void RecordDayAnalyzed()
     {
         lock (_countLock) _run.DaysAnalyzed++;
@@ -193,6 +256,7 @@ public class BatchRunRecorder : IDisposable
 
         try
         {
+            FlushOutputTail();
             _target?.Detach();
             _scope?.Dispose();
             _scope = null;
