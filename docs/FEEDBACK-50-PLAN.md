@@ -502,3 +502,6 @@ K 是唯一動到千萬列級資料的批次，獨立 commit、可單獨回滾�
 | A-4 | impl-low | 通過（Claude 補 R5、R6） | 全套 4977 綠 | 中途 API 額度中斷後續作完成 |
 | A-9 | Claude | 完成 | — | README：IIS 應用程式集區常駐三項、`keys\` 權限、WAL 三檔備份與關閉方式 |
 | I0 | Claude | 完成 | — | 本機站台巡查（開發資料庫無資料，只看得出結構）；發現：儀表板 8 張 KPI 卡在 1280 寬被壓成每字一行、排程頁 PRTG 卡在模組未啟用時「開始回填」是實心主要鈕而「立即執行」是外框鈕；`ui-ux-pro-max` 建議與現行設計系統一致（Data-Dense Dashboard／Fira），色彩字型不動；寫入 DESIGN-SYSTEM §6b 頁面層級規則 |
+| A-5 | impl-low（worktree 並行） | 通過（Claude 補兩處） | 全套 4992 綠（三段合併後） | impl-low 自加指紋欄位 `PrtgIgnoreSslErrors`（合理，不放會「有設定無行為」）。Claude 抓到：LDAP bind 改用 `Task.Wait` 後工作失敗丟 `AggregateException`，原本分辨「帳密錯誤／連線失敗」的 catch 全部對不上 → 改 `Task.WaitAny`；快照重用 client 後 `PrtgClient` 的帳號憑證失敗會黏住到重啟 → 失敗的一輪丟掉 client。LDAP 逾時與總時長無自動化測試（沒有 AD），列入待實機確認 |
+| A-6 | impl-low（worktree 並行） | 通過（Claude 補一處） | 同上 | 清除區塊搬移後少一行里程碑（簽章沒有 recorder）——B-1 起整趟 console 輸出進執行紀錄，提示仍看得到，接受。Claude 補：24 小時內有取數執行開始過就不單獨清（避免排程在中午後的站台一天清兩次）。單獨清除會暫佔執行鎖、排程端分支無自動化測試，列為已知取捨 |
+| A-7 | impl-low（worktree 並行） | 通過 | 同上；突變「拿掉 semaphore」「拿掉排程檢查」各紅 | 排程檢查改到持有閘門之後（避免排隊數分鐘後撞上排程，合理）；五支服務補「關站時排隊中被取消」的 catch |
