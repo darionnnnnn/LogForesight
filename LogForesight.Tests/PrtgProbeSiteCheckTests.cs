@@ -50,6 +50,8 @@ public class PrtgProbeSiteCheckTests : IDisposable
         public Dictionary<long, long[]> SensorsByDevice { get; } = new();
         public Dictionary<long, long[]> MessagesByDevice { get; } = new();
         public HashSet<long> ThrowForDevice { get; } = new();
+        /// <summary>非 null 時 sensors 回應的 treesize 用這個值（模擬單發查詢被截斷）。</summary>
+        public long? SensorTreeSizeOverride { get; set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -63,7 +65,11 @@ public class PrtgProbeSiteCheckTests : IDisposable
 
             string json;
             if (url.Contains("content=sensors"))
+            {
                 json = Table("sensors", SensorsByDevice.TryGetValue(id, out var s) ? s : Array.Empty<long>());
+                if (SensorTreeSizeOverride.HasValue)
+                    json = Regex.Replace(json, @"""treesize"":\d+", $@"""treesize"":{SensorTreeSizeOverride.Value}");
+            }
             else if (url.Contains("content=messages"))
                 json = Table("messages", MessagesByDevice.TryGetValue(id, out var msg) ? msg : Array.Empty<long>());
             else
@@ -231,6 +237,9 @@ public class PrtgProbeSiteCheckTests : IDisposable
         Assert.Contains("Sentinel 主機：沒有命中任何裝置", console.Text);
         // 守門自己的警告直接進探測輸出
         Assert.Contains(console.Lines, l => l.Contains("[PRTG資源守門] 找不到主機「10.8.8.8」"));
+        // 什麼都沒命中時不能印「都在取數範圍內」的勾——空集合對「沒有任何一台不在範圍」恆成立
+        Assert.Contains("沒有命中任何守門裝置，無從對照取數範圍", console.Text);
+        Assert.DoesNotContain("都在取數範圍內", console.Text);
     }
 
     [Fact]
@@ -421,8 +430,10 @@ public class PrtgProbeSiteCheckTests : IDisposable
         var ids = stub.RequestedDeviceIds();
         Assert.Equal(new HashSet<long> { 1, 2 }, ids);
         Assert.DoesNotContain(3L, ids);
-        Assert.True(ids.Count <= 3);
-        Assert.True(stub.RequestedUrls.Count <= 6);
+        // 兩台各一次 sensors、一次 messages；查詢參數要與結構同步的逐台取法一致
+        Assert.Equal(4, stub.RequestedUrls.Count);
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=sensors") && u.Contains("columns=objid") && u.Contains("count=5000"));
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("count=50&") && u.Contains("filter_drel=7days"));
         Assert.Contains("估算：範圍 2 台、併發 2——", console.Text);
     }
 
@@ -499,9 +510,43 @@ public class PrtgProbeSiteCheckTests : IDisposable
     [InlineData(400.0, 20, 2, 4)]
     [InlineData(1.0, 1, 8, 1)]
     [InlineData(1500.0, 3, 1, 5)]
+    [InlineData(400.0, 0, 2, 0)]
+    [InlineData(400.0, 20, 0, 8)]
+    [InlineData(5000.0, 2_000_000_000, 1, int.MaxValue)]
     public void 估算純函式_平均毫秒乘台數除併發_無條件進位(double avgMs, int devices, int concurrency, int expected)
     {
         Assert.Equal(expected, PrtgProbeSiteCheck.EstimateStageSeconds(avgMs, devices, concurrency));
+    }
+
+    [Fact]
+    public async Task 實測_感測器回應少於treesize_標示被截斷()
+    {
+        var store = SeedTwoMappedOneUnmatched();
+        var stub = new StubPrtg { SensorTreeSizeOverride = 9999 };
+        stub.SensorsByDevice[1] = new long[] { 101 };
+
+        var console = await RunAsync(store, stub);
+
+        Assert.Contains("treesize 9999，回應被截斷", console.Text);
+    }
+
+    [Fact]
+    public async Task 估算_範圍超過逐台門檻_感測器階段標示不適用()
+    {
+        // 門檻與結構同步同一個常數；超過時感測器階段走全站分頁，逐台估算沒有意義
+        var store = CreateStore();
+        var count = PrtgFetchService.PerDeviceSensorFetchLimit + 1;
+        var ids = Enumerable.Range(1, count).Select(i => (long)i).ToList();
+        store.UpsertDevices(ids.Select(i => new PrtgDeviceRow { Objid = i, Name = $"D{i}", Ip = $"10.1.{i / 250}.{i % 250 + 1}" }).ToList(), DateTime.Now);
+        store.ReplaceHostMapForDate(DateTime.Today, ids.Select(i => MapRow(i, $"10.1.{i / 250}.{i % 250 + 1}", (int)i, PrtgMapStatus.Ok)).ToList());
+        var stub = new StubPrtg();
+        stub.SensorsByDevice[1] = new long[] { 101 };
+        stub.MessagesByDevice[1] = new long[] { 101 };
+
+        var console = await RunAsync(store, stub);
+
+        Assert.Contains($"感測器階段改走全站分頁（範圍超過 {PrtgFetchService.PerDeviceSensorFetchLimit} 台），不適用逐台估算", console.Text);
+        Assert.Contains("狀態變更階段約", console.Text);
     }
 
     // ── PrtgProbeService 接線：探測成功才接站台對照 ────────────────────────

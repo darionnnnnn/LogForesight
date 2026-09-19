@@ -126,14 +126,17 @@ public static class PrtgProbeSiteCheck
                 var jsonA = await client.GetJsonAsync(
                     $"/api/table.json?content=sensors&columns=objid&count=5000&id={deviceObjid}", ct);
                 swA.Stop();
-                var returnedSensors = ParseObjids(jsonA, "sensors");
+                var returnedSensors = ParseObjids(jsonA, "sensors", out var sensorTreeSize);
                 sensorStageMs.Add(swA.Elapsed.TotalMilliseconds);
 
                 var mirrorCount = sensors.Count(s => s.DeviceObjid == deviceObjid);
                 var nameText = deviceNames.TryGetValue(deviceObjid, out var name) && !string.IsNullOrWhiteSpace(name)
                     ? $"（{name}）"
-                    : string.Empty;
+                    : " ";
                 var diffText = returnedSensors.Count != mirrorCount ? "——與鏡像不同，下次同步後更新" : string.Empty;
+                // 單發查詢取不齊要出聲：回傳少於 treesize 就是被截斷，顆數與後面的下層判定都只代表取到的部分
+                if (sensorTreeSize.HasValue && returnedSensors.Count < sensorTreeSize.Value)
+                    diffText += $"；⚠ 只取到 {returnedSensors.Count} 顆／treesize {sensorTreeSize.Value}，回應被截斷";
                 console.WriteLine($"     裝置 objid={deviceObjid}{nameText}逐裝置取感測器 耗時 {swA.Elapsed.TotalMilliseconds:F0} ms、回傳 {returnedSensors.Count} 顆（鏡像 {mirrorCount} 顆）{diffText}");
 
                 // (b) 逐裝置取狀態變更
@@ -141,7 +144,7 @@ public static class PrtgProbeSiteCheck
                 var jsonB = await client.GetJsonAsync(
                     $"/api/table.json?content=messages&columns=objid,datetime&count=50&id={deviceObjid}&filter_drel=7days", ct);
                 swB.Stop();
-                var returnedMessages = ParseObjids(jsonB, "messages");
+                var returnedMessages = ParseObjids(jsonB, "messages", out _);
                 changeStageMs.Add(swB.Elapsed.TotalMilliseconds);
 
                 var verdict = PrtgProbeRunner.JudgeDeviceMessagesScope(deviceObjid, returnedSensors.ToHashSet(), returnedMessages);
@@ -169,9 +172,12 @@ public static class PrtgProbeSiteCheck
         {
             var concurrency = Math.Max(settings.PrtgFetchConcurrency, 1);
             var total = scope.DeviceObjids.Count;
-            var sensorSeconds = EstimateStageSeconds(sensorStageMs.Average(), total, concurrency);
             var changeSeconds = EstimateStageSeconds(changeStageMs.Average(), total, concurrency);
-            console.WriteLine($"     估算：範圍 {total} 台、併發 {concurrency}——感測器階段約 {sensorSeconds} 秒、狀態變更階段約 {changeSeconds} 秒（以 7 天級距量測；回望 30 天的資料量更大，實際會更久）");
+            // 範圍超過逐台門檻時，結構同步的感測器階段改走全站分頁（PrtgFetchService），逐台估算不適用
+            var sensorText = total > PrtgFetchService.PerDeviceSensorFetchLimit
+                ? $"感測器階段改走全站分頁（範圍超過 {PrtgFetchService.PerDeviceSensorFetchLimit} 台），不適用逐台估算"
+                : $"感測器階段約 {EstimateStageSeconds(sensorStageMs.Average(), total, concurrency)} 秒";
+            console.WriteLine($"     估算：範圍 {total} 台、併發 {concurrency}——{sensorText}、狀態變更階段約 {changeSeconds} 秒（以 7 天級距量測；回望 30 天的資料量更大，實際會更久）");
         }
     }
 
@@ -201,6 +207,8 @@ public static class PrtgProbeSiteCheck
                 return;
             }
 
+            // 即時來源是同步阻塞的全表查詢（大型環境約 1 分鐘），中途無法取消；至少不要在已取消時才開始
+            ct.ThrowIfCancellationRequested();
             var detection = PrtgResourceGuardTargets.Detect(
                 liveGuardSource, settings, sentinels, console, new PrtgAddressResolver());
             ct.ThrowIfCancellationRequested();
@@ -246,7 +254,12 @@ public static class PrtgProbeSiteCheck
                 var guardDevices = new HashSet<long>(detection.PrtgDeviceObjids);
                 guardDevices.UnionWith(detection.SentinelDeviceObjids);
                 var outside = guardDevices.Where(id => !scope.DeviceObjids.Contains(id)).OrderBy(id => id).ToList();
-                if (outside.Count == 0)
+                if (guardDevices.Count == 0)
+                {
+                    // 空集合「沒有任何一台不在範圍內」恆成立——印 ✓ 會把「守門什麼都沒找到」說成沒問題
+                    console.WriteLine("     （沒有命中任何守門裝置，無從對照取數範圍）");
+                }
+                else if (outside.Count == 0)
                 {
                     console.WriteLine("     ✓ 守門用到的裝置都在取數範圍內，夜間讀鏡像偵測得到。");
                 }
@@ -262,12 +275,20 @@ public static class PrtgProbeSiteCheck
                 : new HashSet<long>();
             if (overrideIds.Count > 0)
             {
-                var mirrorIds = (mirrorSensors ?? store.GetAllSensors()).Select(s => s.Objid).ToHashSet();
-                var inMirror = overrideIds.Count(mirrorIds.Contains);
-                var notInMirror = overrideIds.Count - inMirror;
-                var line = $"     覆寫清單 {overrideIds.Count} 顆：已在鏡像 {inMirror} 顆、不在鏡像 {notInMirror} 顆";
-                if (notInMirror > 0) line += "（快照服務的範圍補抓會查出所在裝置並補進鏡像）";
-                console.WriteLine(line);
+                // 自己一層 try：上面的偵測結論已經印完，這一步讀鏡像失敗不該再補一句「守門偵測無法完成」
+                try
+                {
+                    var mirrorIds = (mirrorSensors ?? store.GetAllSensors()).Select(s => s.Objid).ToHashSet();
+                    var inMirror = overrideIds.Count(mirrorIds.Contains);
+                    var notInMirror = overrideIds.Count - inMirror;
+                    var line = $"     覆寫清單 {overrideIds.Count} 顆：已在鏡像 {inMirror} 顆、不在鏡像 {notInMirror} 顆";
+                    if (notInMirror > 0) line += "（快照服務的範圍補抓會查出所在裝置並補進鏡像）";
+                    console.WriteLine(line);
+                }
+                catch (Exception ex)
+                {
+                    console.WriteLine($"     覆寫清單無法比對鏡像（{ex.Message}）");
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -299,7 +320,8 @@ public static class PrtgProbeSiteCheck
     {
         if (avgMsPerDevice <= 0 || deviceCount <= 0) return 0;
         var effective = Math.Max(concurrency, 1);
-        return (int)Math.Ceiling(avgMsPerDevice * deviceCount / effective / 1000.0);
+        var seconds = Math.Ceiling(avgMsPerDevice * deviceCount / effective / 1000.0);
+        return seconds >= int.MaxValue ? int.MaxValue : (int)seconds;
     }
 
     /// <summary>
@@ -326,16 +348,22 @@ public static class PrtgProbeSiteCheck
 
     /// <summary>
     /// 取 table.json 回應中指定陣列的 objid 清單；解析不了的整份回空清單、單列壞掉就跳過那一列。
-    /// 這一段是唯讀診斷，不需要 treesize 與損壞筆數。
+    /// 一併回傳 treesize（沒有或不是數字為 null），供呼叫端判斷單發查詢有沒有被截斷。
     /// </summary>
-    private static List<long> ParseObjids(string json, string contentName)
+    private static List<long> ParseObjids(string json, string contentName, out long? treeSize)
     {
+        treeSize = null;
         var result = new List<long>();
         try
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return result;
+            if (root.TryGetProperty("treesize", out var ts))
+            {
+                if (ts.ValueKind == JsonValueKind.Number && ts.TryGetInt64(out var tsNum)) treeSize = tsNum;
+                else if (ts.ValueKind == JsonValueKind.String && long.TryParse(ts.GetString(), out var tsParsed)) treeSize = tsParsed;
+            }
             if (!root.TryGetProperty(contentName, out var arr) || arr.ValueKind != JsonValueKind.Array) return result;
 
             foreach (var item in arr.EnumerateArray())
