@@ -96,7 +96,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.True(registry.IsReady);
         Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
@@ -127,7 +127,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var days = new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) };
 
         await PrtgDailyPipeline.RunAsync(
-            ctx, _backend, new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, guard: null);
+            ctx, _backend, new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.True(registry.IsReady);
         Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
@@ -153,7 +153,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null);
 
         var readyAt = progress.Phases.IndexOf(RunPhases.PrtgFindingsReady);
         var doneAt = progress.Phases.IndexOf(RunPhases.PrtgDone);
@@ -206,7 +206,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
 
         Assert.Equal(1, gate.WaitCalls);
         Assert.Contains(console.Lines, l => l.Contains("手動同步未成功結束"));
@@ -237,7 +237,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
 
         Assert.Equal(1, gate.WaitCalls);
         Assert.Contains(RunPhases.PrtgWaitSync, progress.Phases);
@@ -260,7 +260,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
 
         Assert.Equal(0, gate.WaitCalls);
         Assert.DoesNotContain(RunPhases.PrtgWaitSync, progress.Phases);
@@ -288,7 +288,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: null);
 
         Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
     }
@@ -316,7 +316,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { newest }, Task.CompletedTask, guard: null, structureSyncGate: null);
+            new[] { newest }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: null);
 
         Assert.Contains(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
         var row = Assert.Single(_backend.PrtgStore().GetHostMapForDate(newest), r => r.DeviceObjid == 77);
@@ -343,7 +343,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
 
         Assert.Contains(console.Lines, l => l.Contains("對應完成"));
         Assert.DoesNotContain(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
@@ -369,7 +369,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.True(registry.IsReady);
         // 印出策略狀態行
@@ -403,7 +403,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null);
 
         // 印出激進策略狀態行
         Assert.Contains(console.Lines, l => l.Contains("PRTG 取數策略：激進（快照間隔 5 分鐘）。"));
@@ -568,7 +568,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null, structureSyncGate: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: null);
 
         var after = store.GetOrNull();
         Assert.NotNull(after);
@@ -642,7 +642,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { day1, day2, day3 }, Task.CompletedTask, guard: null);
+            new[] { day1, day2, day3 }, Task.CompletedTask, hostIds: null, guard: null);
 
         // progress 收到 RunPhases.PrtgDateRange
         Assert.Contains(progress.Reports, r => r.Phase == RunPhases.PrtgDateRange && r.Done == 3 && r.Total == 0);
@@ -697,7 +697,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day2, day1 }, Task.CompletedTask, guard: null);
+            new[] { day2, day1 }, Task.CompletedTask, hostIds: null, guard: null);
 
         // prtgConsole 輸出包含「無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶」
         Assert.Contains(console.Lines, l => l.Contains("無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶"));
@@ -761,7 +761,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { day, day1 }, Task.CompletedTask, guard: null);
+            new[] { day, day1 }, Task.CompletedTask, hostIds: null, guard: null);
 
         // day-1 評估時成功取用 day-3 的對應表，找到主機並完成 finding 歸屬
         var findings = registry.For(101, day1);
@@ -816,7 +816,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day2, day1 }, Task.CompletedTask, guard: null);
+            new[] { day2, day1 }, Task.CompletedTask, hostIds: null, guard: null);
 
         // day1 不產生 silent finding
         Assert.DoesNotContain(registry.For(host.HostId, day1), f => f.EventKey.StartsWith("prtg:silent"));
@@ -848,7 +848,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            days, Task.CompletedTask, guard: null);
+            days, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.Contains(console.Lines, l => l.Contains("其餘 2 天的 PRTG 數值不在立即執行內取，請用排程作業頁的「開始回填」。"));
     }
@@ -876,7 +876,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            days, Task.CompletedTask, guard: null);
+            days, Task.CompletedTask, hostIds: null, guard: null);
 
         var dateRangeReports = progress.Reports.Where(r => r.Phase == RunPhases.PrtgDateRange).ToList();
         Assert.Equal(4, dateRangeReports.Count);
@@ -922,7 +922,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, console, _, _) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, guard: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.Contains(console.Lines, l => l.Contains("規則代碼 down 有多條啟用規則，採用 a-custom-down"));
     }
@@ -999,7 +999,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var findings = registry.For(host.HostId, day);
         var downSig = Assert.Single(findings);
@@ -1071,7 +1071,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var (ctx, _, _, registry) = CreateContext();
 
-        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, guard: null);
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var downSig = Assert.Single(registry.For(host.HostId, day));
         Assert.Equal("PRTG:down", downSig.Source);
@@ -1167,7 +1167,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var findings = registry.For(host.HostId, day);
         var downSig = Assert.Single(findings);
@@ -1252,7 +1252,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var findings = registry.For(host.HostId, day);
         Assert.Equal(2, findings.Count);
@@ -1328,7 +1328,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, _, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { today, day }, Task.CompletedTask, guard: null);
+            new[] { today, day }, Task.CompletedTask, hostIds: null, guard: null);
 
         // 連通性分類 → 挑到 availability 規則（門檻 30、重大）→ 日風險「高」
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
@@ -1367,7 +1367,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, _, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
         Assert.Equal("builtin-prtg-down", sig.RuleId);
@@ -1406,7 +1406,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, console, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { today, day }, Task.CompletedTask, guard: null);
+            new[] { today, day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var signatures = registry.For(host.HostId, day);
         Assert.Contains(signatures, f => f.EventKey == "prtg:down:2001");
@@ -1450,7 +1450,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, console, progress, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day1, day2, day3 }, Task.CompletedTask, guard: null);
+            new[] { day1, day2, day3 }, Task.CompletedTask, hostIds: null, guard: null);
 
         var newestSig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001");
         Assert.Contains("第 3 次，連續第 3 日", newestSig.SampleMessages[0]);
@@ -1516,7 +1516,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, _, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day1, day2 }, Task.CompletedTask, guard: null);
+            new[] { day1, day2 }, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.Empty(registry.For(host.HostId, day2));
         var sig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001");
@@ -1577,7 +1577,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, console, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
         Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
@@ -1629,7 +1629,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, console, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
         Assert.Equal(PrtgSensorCategories.Availability, sig.PrtgSensorCategory);
@@ -1690,7 +1690,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, console, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { day }, Task.CompletedTask, guard: null);
+            new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.Contains(CorrelationPatternIds.PrtgOutageCorroborated, registry.SuppressedPatternIdsFor(host.HostId, day));
 

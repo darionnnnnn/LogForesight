@@ -125,9 +125,9 @@
             </div>
             <div class="lf-card__body">
                 <div class="mb-3">
-                    <label for="prtg-value-fetch-scope" class="form-label fw-semibold">PRTG 擷取</label>
+                    <label for="prtg-value-fetch-scope" class="form-label fw-semibold">PRTG 擷取（數值取數對象）</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="選擇任一範圍即啟用 PRTG 擷取。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
+                            data-bs-content="選擇任一數值取數對象即啟用 PRTG 擷取。數值取數對象只決定夜間要抓哪些主機的數值；感測器與狀態變更同步的是「監看裝置」（由主機對應算出的裝置集合），兩者不同。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <select class="form-select" id="prtg-value-fetch-scope">
@@ -137,7 +137,7 @@
                         <option value="triggered-plus-list">觸發主機＋指定清單</option>
                     </select>
                     <div class="form-text">
-                        選擇任一範圍即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
+                        選擇任一數值取數對象即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
                         環境探測與資源守門預覽不受影響。
                         「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
                     </div>
@@ -266,7 +266,7 @@
                         </div>
                     </div>
                     <div class="small text-warning mt-2 d-none" id="prtg-structure-sync-disabled-hint">
-                        PRTG 擷取未啟用，無法同步。請到「擷取參數」頁籤選擇取數範圍。
+                        PRTG 擷取未啟用，無法同步。請到「擷取參數」頁籤選擇數值取數對象。
                     </div>
                     <div class="small mt-2" id="prtg-structure-sync-status">上次同步：載入中…</div>
                     <div class="small text-muted" id="prtg-structure-sync-progress"></div>
@@ -281,7 +281,7 @@
                     </div>
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="text-muted small">鏡像感測器數（取數範圍內）</div>
+                            <div class="text-muted small">鏡像感測器數（監看裝置）</div>
                             <div class="fs-5 fw-semibold" id="prtg-mirror-sensor-count">-</div>
                             <div class="text-muted small" id="prtg-mirror-last-sensor-sync">最後同步：-</div>
                         </div>
@@ -299,6 +299,19 @@
                     <div class="fw-semibold small mb-2">擷取紀錄</div>
                     <div class="form-text text-muted mb-2">各類資料最後一次成功擷取的時間與取得筆數；曾經有資料卻連續多次取得 0 筆時標示警示。</div>
                     <div id="prtg-mirror-freshness"></div>
+                </div>
+
+                <div class="border rounded p-3 mb-3" id="prtg-scope-purge">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                        <span class="fw-semibold small">監看範圍外資料</span>
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="prtg-scope-purge-btn" disabled>確認清除</button>
+                    </div>
+                    <div class="form-text text-muted mb-2">
+                        不屬於任何監看裝置的數值與狀態變更。夜間同步會自動清除；監看裝置數驟減或第一次時不自動清，需在這裡確認。
+                    </div>
+                    <div class="small text-warning d-none" id="prtg-scope-purge-blocked" role="status"></div>
+                    <div class="small" id="prtg-scope-purge-summary">載入中…</div>
+                    <div class="small text-muted" id="prtg-scope-purge-devices"></div>
                 </div>
 
                 <div class="border rounded p-3 mb-3">

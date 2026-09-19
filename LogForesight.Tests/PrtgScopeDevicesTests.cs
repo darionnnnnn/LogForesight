@@ -29,7 +29,7 @@ public class PrtgScopeDevicesTests : IDisposable
     /// </summary>
     private static PrtgScopeResult Compute(EfPrtgStore store, IHostStore hostStore, SystemSettings settings, IReadOnlyList<Sentinel> sentinels)
         => PrtgScopeDevices.Compute(store, hostStore, new PrtgMirrorGuardSource(store), settings, sentinels,
-            new TestConsole(), new PrtgAddressResolver());
+            new TestConsole(), new PrtgAddressResolver(), hostIds: null);
 
     private static PrtgHostMapRow MapRow(long deviceObjid, string ip, int? hostId, string status) => new()
     {
@@ -143,6 +143,7 @@ public class PrtgScopeDevicesTests : IDisposable
         }, now);
         var settings = new SystemSettings
         {
+            PrtgResourceGuardEnabled = true,
             PrtgResourceGuardSensorObjids = new List<string> { "1101", "999999", "not-a-number" }
         };
 
@@ -153,14 +154,15 @@ public class PrtgScopeDevicesTests : IDisposable
     }
 
     [Fact]
-    public void Compute_守門停用_Sentinel裝置仍在集合()
+    public void Compute_守門停用_Sentinel裝置不入範圍但在保留集合()
     {
         var (store, hostStore, settings, sentinels) = SeedComposition();
         settings.PrtgResourceGuardEnabled = false;
 
         var result = Compute(store, hostStore, settings, sentinels);
 
-        Assert.Contains(7L, result.DeviceObjids);
+        Assert.DoesNotContain(7L, result.DeviceObjids);
+        Assert.Contains(7L, result.PreserveDeviceObjids);
     }
 
     [Fact]

@@ -173,7 +173,7 @@ async function loadPrtgSettings() {
 }
 
 /**
- * 取數範圍切換：只有「觸發主機＋指定清單」需要主機名稱輸入框；
+ * 數值取數對象切換：只有「觸發主機＋指定清單」需要主機名稱輸入框；
  * 選「關閉」時連「估算規模」都沒有意義（不會取數），一併藏起來。
  * 用 classList 切換而非 style.display（同本頁認證方式切換的既有作法）。
  */
@@ -243,7 +243,7 @@ function bindScopeControls() {
             }
 
             if (snapshotResult) {
-                const snapBase = `快照（不受取數範圍影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
+                const snapBase = `快照（不受數值取數對象影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
                 if (res.snapshotWarning) {
                     snapshotResult.className = 'text-warning small d-block';
                     snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}`;
@@ -972,6 +972,71 @@ async function refreshPrtgMirror() {
     } catch {
         // 失敗時不干擾整體頁面
     }
+    await refreshScopePurge();
+}
+
+// ── 監看範圍外資料（預覽＋確認清除）────────────────────────────────────
+
+function renderScopePurge(preview) {
+    const btn = document.getElementById('prtg-scope-purge-btn');
+    const blockedEl = document.getElementById('prtg-scope-purge-blocked');
+    const summaryEl = document.getElementById('prtg-scope-purge-summary');
+    const devicesEl = document.getElementById('prtg-scope-purge-devices');
+    if (!btn || !blockedEl || !summaryEl || !devicesEl) return;
+
+    // 自動清除被擋下的原因（縮小保護／第一次）：外部來源無關的站內字串，仍一律 textContent
+    blockedEl.textContent = preview.blockedReason
+        ? `夜間自動清除未執行（${formatDateTime(preview.blockedAt)}）：${preview.blockedReason}`
+        : '';
+    blockedEl.classList.toggle('d-none', !preview.blockedReason);
+
+    if (!preview.success) {
+        summaryEl.textContent = preview.errorMessage || '目前無法預覽。';
+        devicesEl.textContent = '';
+        btn.disabled = true;
+        return;
+    }
+
+    const baseline = preview.baselineAt
+        ? `基準：${formatDateTime(preview.baselineAt)} 清除時 ${formatNumber(preview.baselineDeviceCount)} 台`
+        : '尚無基準（還沒清除過）';
+    summaryEl.textContent = `監看裝置 ${formatNumber(preview.monitoredDevices)} 台；範圍外數值 ${formatNumber(preview.values)} 筆、`
+        + `狀態變更 ${formatNumber(preview.stateChanges)} 筆，涉及 ${formatNumber(preview.affectedDevices)} 台裝置`
+        + (preview.unknownSensors > 0 ? `及 ${formatNumber(preview.unknownSensors)} 顆鏡像已無的感測器` : '')
+        + `。${baseline}`;
+    const names = Array.isArray(preview.topDeviceNames) ? preview.topDeviceNames : [];
+    devicesEl.textContent = names.length > 0
+        ? `裝置：${names.join('、')}${preview.affectedDevices > names.length ? ' 等' : ''}`
+        : '';
+    btn.disabled = preview.values + preview.stateChanges === 0;
+}
+
+async function refreshScopePurge() {
+    try {
+        renderScopePurge(await api.get('/api/admin/settings/prtg-scope-purge/preview', { silent: true }));
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindScopePurge() {
+    const btn = document.getElementById('prtg-scope-purge-btn');
+    btn?.addEventListener('click', async () => {
+        const confirmed = await confirmAction({
+            message: '確定要清除監看範圍外的 PRTG 數值與狀態變更嗎？刪除後無法復原（重新納入監看的裝置只能靠回填補回保留期內的資料）。'
+        });
+        if (!confirmed) return;
+        const restore = withBusy(btn, '清除中');
+        try {
+            const res = await api.post('/api/admin/settings/prtg-scope-purge/confirm', {});
+            toast(`已清除數值 ${formatNumber(res.values)} 筆、狀態變更 ${formatNumber(res.stateChanges)} 筆`, 'success');
+        } catch {
+            // 錯誤已由 api.js 顯示
+        } finally {
+            restore();
+        }
+        await refreshScopePurge();
+    });
 }
 
 function bindPrtgMirror() {
@@ -1237,7 +1302,7 @@ function bindStructureSync() {
     btn?.addEventListener('click', async () => {
         // 按鈕已依模組狀態灰掉，這裡是輪詢競態時的第二道（後端還有第三道）
         if (!prtgEnabled) {
-            toast('PRTG 擷取未啟用，請先在「擷取參數」頁籤選擇取數範圍。', 'warning');
+            toast('PRTG 擷取未啟用，請先在「擷取參數」頁籤選擇數值取數對象。', 'warning');
             return;
         }
         const restore = withBusy(btn, '啟動中');
@@ -1299,6 +1364,7 @@ async function refreshPrtgRuleBanner() {
 function init() {
     bindPrtgTest();
     bindPrtgMirror();
+    bindScopePurge();
     bindPrtgProbe();
     bindAssignForm();
     bindPrtgDataTransfer();

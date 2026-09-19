@@ -173,6 +173,7 @@ public static class AuditActions
     public const string PrtgBackfillCancel = "prtg_backfill_cancel";
     public const string PrtgStructureSyncRun = "prtg_structure_sync_run";
     public const string PrtgStructureSyncCancel = "prtg_structure_sync_cancel";
+    public const string PrtgScopePurge = "prtg_scope_purge";
 
     // PRTG 人工主機對應（PRTG 第 2 輪任務E-1）
     public const string PrtgManualMapSet = "prtg_manual_map_set";

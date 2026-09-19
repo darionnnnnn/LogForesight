@@ -563,7 +563,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
             var scope = PrtgScopeDevices.Compute(
                 store, _hosts, new PrtgMirrorGuardSource(store), settings, _sentinels.GetAll(),
-                SilentConsole, _addressResolver);
+                SilentConsole, _addressResolver, hostIds: null);
 
             var mirrorSensors = store.GetAllSensors();
             var devicesWithSensors = mirrorSensors.Select(s => s.DeviceObjid).ToHashSet();

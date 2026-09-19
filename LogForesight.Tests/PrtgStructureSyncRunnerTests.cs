@@ -235,7 +235,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
             Assert.Equal(0, status.MapUnmatched);
             Assert.Equal(0, status.MapSkippedNoIp + status.MapSkippedExcluded + status.MapSkippedManualSibling);
             Assert.Single(store.GetHostMapForDate(today));
-            Assert.Contains(console.Lines, l => l.Contains("[範圍] 取數範圍：1 台裝置"));
+            Assert.Contains(console.Lines, l => l.Contains("[範圍] 監看裝置：1 台裝置"));
         }
     }
 }

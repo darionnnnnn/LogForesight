@@ -26,8 +26,13 @@ internal static class PrtgDailyPipeline
     /// 由呼叫端注入；未接上時傳 null＝行為與沒有這個機制時完全相同。
     /// 同步正在跑時這一趟先等它結束，然後跳過自己的結構同步——鏡像剛更新過，重做一次沒有意義。
     /// </param>
+    /// <param name="hostIds">
+    /// 監看裝置只算這些主機（指定主機更新）；null＝全站。必填——漏傳時靜默退回全站，就是對整台 PRTG 做全範圍擷取。
+    /// 非 null 時範圍為 partial：感測器鏡像與範圍外資料都不清除。
+    /// </param>
     public static async Task RunAsync(
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, IReadOnlyList<DateTime> days, Task analysisTask,
+        IReadOnlyCollection<long>? hostIds,
         PrtgResourceGuard? guard = null,
         IPrtgStructureSyncGate? structureSyncGate = null)
     {
@@ -151,8 +156,13 @@ internal static class PrtgDailyPipeline
                             prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
                         }
                         var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
-                        return PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
-                            systemSettings, sentinels, prtgConsole, resolver);
+                        var scope = PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
+                            systemSettings, sentinels, prtgConsole, resolver, hostIds);
+                        if (scope.IsPartial)
+                        {
+                            prtgConsole.WriteLine($"本趟 PRTG 只處理指定的 {hostIds!.Count} 台主機（{scope.DeviceObjids.Count} 台裝置）。");
+                        }
+                        return scope;
                     },
                     syncStructure: !skipStructureSync, fetchValues: false,
                     progress: (stage, done, total) => progress?.Report(stage, done, total),
@@ -203,6 +213,12 @@ internal static class PrtgDailyPipeline
                 {
                     Log.Warn(ex, "夜間結構同步狀態寫入 blob 失敗，不影響 PRTG 其他階段與 outcome");
                 }
+            }
+
+            // 本趟自己的結構同步與主機對應全部成功，才考慮清除監看範圍外的數值與狀態變更（其餘保護在 PrtgScopePurge 內）
+            if (!skipStructureSync && !syncFailed && fetchResult is { Failures: 0 } && mapResult != null)
+            {
+                PrtgScopePurge.RunAfterStructureSync(backend.PrtgStore(), fetchResult.Scope, fetchResult.DevicesRefreshed, prtgConsole);
             }
 
             // 日期範圍訊號（不是進度）：Web 端據此擋住本趟範圍內的 AI 待補、顯示第 i／N 天。迴圈前先送一次「尚未開始逐日」

@@ -1,7 +1,8 @@
 /**
- * PRTG 擷取的「關閉＋三種取數範圍」四值與顯示字串（docs/PRTG-SPEC.md §3a、§7）。
+ * PRTG 擷取的「關閉＋三種數值取數對象」四值與顯示字串（docs/PRTG-SPEC.md §3a、§7）。
  *
- * 啟用與範圍在畫面上是同一個下拉：選「關閉」＝ PrtgEnabled false，選任一範圍＝ true 加該範圍。
+ * 啟用與數值取數對象在畫面上是同一個下拉：選「關閉」＝ PrtgEnabled false，選任一對象＝ true 加該對象。
+ * 畫面用詞：這個設定叫「數值取數對象」；由主機對應算出、決定感測器與狀態變更同步範圍的裝置集合叫「監看裝置」，兩者不可混稱。
  * 後端仍是兩個欄位（PrtgEnabled 有七個消費端、PrtgValueFetchScope 有六個），這裡只負責 UI 的對應。
  *
  * 維護頁（載入／存檔的值對應）與排程作業頁（狀態顯示）共用這一份，兩頁各寫一份就會在改字時只改到一邊。
@@ -33,8 +34,8 @@ export function toScopeSelectValue(prtgEnabled, prtgValueFetchScope) {
         : 'triggered';
 }
 
-/** 模組狀態的顯示文字：關閉時只說未啟用，啟用時把生效範圍一起說出來。 */
+/** 模組狀態的顯示文字：關閉時只說未啟用，啟用時把生效的數值取數對象一起說出來。 */
 export function prtgModuleStateText(prtgEnabled, prtgValueFetchScope) {
     if (!prtgEnabled) return '未啟用';
-    return `已啟用：${PRTG_SCOPE_LABEL[toScopeSelectValue(true, prtgValueFetchScope)]}`;
+    return `已啟用（數值取數對象：${PRTG_SCOPE_LABEL[toScopeSelectValue(true, prtgValueFetchScope)]}）`;
 }

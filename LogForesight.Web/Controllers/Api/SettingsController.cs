@@ -627,6 +627,107 @@ public class SettingsController : ControllerBase
         });
     }
 
+    // ── 監看範圍外資料清除（docs/PRTG-SPEC.md §3c）────────────────────────────
+
+    /// <summary>受影響裝置名稱最多列幾台</summary>
+    private const int ScopePurgeTopDevices = 20;
+
+    /// <summary>
+    /// 以目前設定重新計算全站監看裝置，並套用範圍可信的判斷（規則 1）。
+    /// 人工確認沒有「本趟」，裝置鏡像的條件以「裝置鏡像非空」判斷。預覽與確認共用這一份。
+    /// </summary>
+    private (EfPrtgStore Store, PrtgScopeResult? Scope, string? Blocked) ComputeScopeForPurge(StorageBackend backend)
+    {
+        var store = backend.PrtgStore();
+        PrtgScopeResult? scope = null;
+        try
+        {
+            var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            scope = PrtgScopeDevices.Compute(
+                store, new HostStore(backend.Blob("hosts")), new PrtgMirrorGuardSource(store), settings,
+                new SentinelStore(backend.Blob("sentinels")).GetAll(), new ResourceGuardWarningConsole(), new PrtgAddressResolver(),
+                hostIds: null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "監看裝置計算失敗，不提供範圍外清除");
+        }
+        var blocked = PrtgScopePurge.CheckScope(scope, store.GetMirrorSummary().DeviceCount > 0);
+        return (store, scope, blocked);
+    }
+
+    [HttpGet("prtg-scope-purge/preview")]
+    public ApiResponse<PrtgScopePurgePreviewDto> PreviewPrtgScopePurge()
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgScopePurgePreviewDto>.Ok(new PrtgScopePurgePreviewDto
+            {
+                ErrorMessage = "資料存放區未啟用，無法預覽。"
+            });
+        }
+
+        var (store, scope, blocked) = ComputeScopeForPurge(_backend);
+        var baseline = store.ScopeBaseline().Get();
+        var dto = new PrtgScopePurgePreviewDto
+        {
+            MonitoredDevices = scope?.DeviceObjids.Count ?? 0,
+            BlockedReason = baseline.BlockedReason,
+            BlockedAt = baseline.BlockedAt,
+            BaselineAt = baseline.HasBaseline ? baseline.At : null,
+            BaselineDeviceCount = baseline.DeviceCount
+        };
+        if (blocked != null)
+        {
+            dto.ErrorMessage = $"{blocked}，目前不能清除範圍外資料。";
+            return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
+        }
+
+        var preview = store.PreviewOutOfScopeData(PrtgScopePurge.KeepSet(scope!), ScopePurgeTopDevices);
+        dto.Success = true;
+        dto.Values = preview.Values;
+        dto.StateChanges = preview.StateChanges;
+        dto.AffectedDevices = preview.AffectedDevices;
+        dto.TopDeviceNames = preview.TopDeviceNames.ToList();
+        dto.UnknownSensors = preview.UnknownSensors;
+        return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
+    }
+
+    [HttpPost("prtg-scope-purge/confirm")]
+    public ApiResponse<PrtgScopePurgeResultDto> ConfirmPrtgScopePurge()
+    {
+        if (_backend == null)
+            throw DomainException.Validation("資料存放區未啟用，無法清除。");
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用，無法判斷是否有其他 PRTG 作業執行中。");
+
+        // 與取數、結構同步、回填互斥：它們正在寫鏡像，範圍與資料都還在變
+        var conflict = _prtgBackfill.ScopePurgeConflict();
+        if (conflict != null)
+            throw DomainException.Conflict(conflict);
+
+        var (store, scope, blocked) = ComputeScopeForPurge(_backend);
+        if (blocked != null)
+            throw DomainException.Validation($"{blocked}，目前不能清除範圍外資料。");
+
+        var (values, stateChanges) = store.DeleteOutOfScopeData(PrtgScopePurge.KeepSet(scope!));
+        PrtgScopePurge.RecordBaseline(store, scope!.DeviceObjids.Count);
+
+        _audit.Record(
+            action: AuditActions.PrtgScopePurge,
+            summary: $"清除監看範圍外的 PRTG 資料：數值 {values} 筆、狀態變更 {stateChanges} 筆",
+            targetKind: "system_settings",
+            targetId: "prtg_scope_purge",
+            detail: new { values, stateChanges, monitoredDevices = scope.DeviceObjids.Count });
+
+        return ApiResponse<PrtgScopePurgeResultDto>.Ok(new PrtgScopePurgeResultDto
+        {
+            Values = values,
+            StateChanges = stateChanges,
+            MonitoredDevices = scope.DeviceObjids.Count
+        });
+    }
+
     /// <summary>PRTG 主機對應衝突清單分頁</summary>
     [HttpGet("prtg-host-map")]
     public ApiResponse<PrtgHostMapPageDto> GetPrtgHostMap(

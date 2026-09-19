@@ -107,7 +107,7 @@
     </section>
 
     @* PRTG：模組狀態、結構同步狀態、每日擷取進度、歷史回填四件事集中在這張卡。
-       啟用開關在 PRTG 維護頁「擷取參數」的取數範圍下拉，這裡只顯示狀態並指路。
+       啟用開關在 PRTG 維護頁「擷取參數」的數值取數對象下拉，這裡只顯示狀態並指路。
        每日擷取是三路並行的第三路，進度軌從取數卡搬過來——那條軌的內容全是 PRTG 的事。 *@
     <section class="lf-card" id="prtg-status-card">
         <div class="lf-card__header">
@@ -118,10 +118,10 @@
                 <span class="lf-kv__label">模組狀態</span>
                 <span class="lf-kv__value" id="prtg-module-state">載入中…</span>
             </div>
-            @* 未啟用時指路：開關與取數範圍是維護頁「擷取參數」的同一個下拉，
+            @* 未啟用時指路：開關與數值取數對象是維護頁「擷取參數」的同一個下拉，
                卡片上只說「未啟用」的話，使用者會在這頁到處找開關。 *@
             <div class="small text-warning d-none" id="prtg-disabled-hint">
-                到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇取數範圍即可啟用；
+                到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇數值取數對象即可啟用；
                 未啟用時無法同步結構與回填。
             </div>
             <div class="lf-kv">

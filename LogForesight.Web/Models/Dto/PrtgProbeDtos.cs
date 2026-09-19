@@ -121,6 +121,40 @@ public class PrtgFreshnessDto
     }
 }
 
+/// <summary>監看範圍外資料清除的預覽（PRTG 維護頁「鏡像狀態」頁籤）</summary>
+public class PrtgScopePurgePreviewDto
+{
+    /// <summary>false＝範圍不可信或資料存放區未啟用，<see cref="ErrorMessage"/> 說明原因，不可確認清除</summary>
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    /// <summary>目前的監看裝置數</summary>
+    public int MonitoredDevices { get; set; }
+    /// <summary>將刪除的數值列數</summary>
+    public int Values { get; set; }
+    /// <summary>將刪除的狀態變更列數</summary>
+    public int StateChanges { get; set; }
+    /// <summary>受影響裝置數（感測器鏡像對得到裝置的部分）</summary>
+    public int AffectedDevices { get; set; }
+    /// <summary>受影響裝置前 20 台的名稱（外部字串，前端一律 textContent）</summary>
+    public List<string> TopDeviceNames { get; set; } = new();
+    /// <summary>感測器鏡像已沒有、對不到裝置的 sensor 數（它們的列同樣會被刪）</summary>
+    public int UnknownSensors { get; set; }
+    /// <summary>最近一次自動清除被擋下的原因（縮小保護／無基準）；成功清除後為 null</summary>
+    public string? BlockedReason { get; set; }
+    public DateTime? BlockedAt { get; set; }
+    /// <summary>基準（上次成功清除）時間；null＝尚無基準</summary>
+    public DateTime? BaselineAt { get; set; }
+    public int BaselineDeviceCount { get; set; }
+}
+
+/// <summary>監看範圍外資料清除的結果</summary>
+public class PrtgScopePurgeResultDto
+{
+    public int Values { get; set; }
+    public int StateChanges { get; set; }
+    public int MonitoredDevices { get; set; }
+}
+
 /// <summary>設定 PRTG 人工主機對應請求</summary>
 public class SetPrtgManualMapRequest
 {

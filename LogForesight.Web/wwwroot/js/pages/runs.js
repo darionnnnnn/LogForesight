@@ -743,7 +743,7 @@ async function loadSchedule() {
 
     applyScheduleOptions(options);
     if (settings) {
-        // 啟用開關在 PRTG 維護頁「擷取參數」的取數範圍下拉，本頁只顯示狀態
+        // 啟用開關在 PRTG 維護頁「擷取參數」的數值取數對象下拉，本頁只顯示狀態
         renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope);
         // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
         prtgConnectionConfigured = hasPrtgConnection(settings);
@@ -1426,7 +1426,7 @@ function bindPrtgSync() {
     btn?.addEventListener('click', async () => {
         // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
         if (prtgModuleEnabled !== true) {
-            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
+            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇數值取數對象。', 'warning');
             return;
         }
         const restore = withBusy(btn, '啟動中');
@@ -1769,7 +1769,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const goOn = await confirmAction({
             title: 'PRTG 尚未啟用',
             message: '這次執行不會做 PRTG 擷取（連線已設定，但擷取未啟用）。\n'
-                + '要啟用請到 PRTG 維護頁「擷取參數」選擇取數範圍。\n\n仍要開始執行嗎？',
+                + '要啟用請到 PRTG 維護頁「擷取參數」選擇數值取數對象。\n\n仍要開始執行嗎？',
             confirmText: '仍要開始',
             confirmVariant: 'primary'
         });
@@ -1920,7 +1920,7 @@ function bindPrtgBackfill() {
     startButton?.addEventListener('click', async () => {
         // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
         if (prtgModuleEnabled !== true) {
-            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
+            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇數值取數對象。', 'warning');
             return;
         }
         const ok = await confirmAction({

@@ -1137,8 +1137,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         var settings = _settingsStore.Get();
         var scope = PrtgScopeDevices.Compute(store, _hostStore, new PrtgMirrorGuardSource(store), settings,
-            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver());
-        Assert.Contains(77L, scope.DeviceObjids);
+            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver(), hostIds: null);
+        // 本測試未啟用資源守門：守門裝置不入監看，但在清除時的保留集合裡
+        Assert.Contains(77L, scope.PreserveDeviceObjids);
     }
 
     [Fact]

@@ -218,6 +218,22 @@ public class PrtgBackfillService
         };
     }
 
+    /// <summary>
+    /// 清除監看範圍外資料（PRTG 維護頁確認）現在能不能做：取數執行、結構同步、回填任一在跑就不行，回傳原因；null＝可以。
+    /// 放在這裡是因為本服務本來就持有這三個執行狀態（與 <see cref="TryStart"/> 的互斥同一組）。
+    /// </summary>
+    public string? ScopePurgeConflict()
+    {
+        if (_schedulerRunState.IsRunning)
+            return $"取數執行中{ElapsedSuffix(_schedulerRunState.StartedAt)}，請等它結束後再清除。";
+        var syncSnapshot = _structureSyncState.Snapshot();
+        if (syncSnapshot.IsRunning)
+            return $"「同步結構與對應」執行中{ElapsedSuffix(syncSnapshot.StartedAt)}，請等它完成後再清除。";
+        if (_state.Snapshot().IsRunning)
+            return "歷史回填執行中，請等它完成或按停止後再清除。";
+        return null;
+    }
+
     /// <summary>要求停止進行中的回填；沒有執行中回 false。</summary>
     public bool TryCancel() => _state.TryCancel();
 
@@ -356,8 +372,8 @@ public class PrtgBackfillService
                     // 取數範圍：回填不做主機對應，直接以既有對應算一次，整趟共用
                     var scopeResult = PrtgScopeDevices.Compute(
                         prtgStore, _hosts, new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
-                        console, new PrtgAddressResolver());
-                    console.WriteLine($"取數範圍：{scopeResult.DeviceObjids.Count} 台裝置");
+                        console, new PrtgAddressResolver(), hostIds: null);
+                    console.WriteLine($"監看裝置：{scopeResult.DeviceObjids.Count} 台");
 
                     success = await PrtgBackfillRunner.RunAsync(
                         fetchService, days, concurrency, console, runToken,

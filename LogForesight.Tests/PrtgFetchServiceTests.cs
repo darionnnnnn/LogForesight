@@ -1923,7 +1923,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=messages"));
         Assert.Equal(0, result.Failures);
-        Assert.Contains("[階段 3/4] 取數範圍內沒有任何裝置，略過狀態變更同步。", console.Lines);
+        Assert.Contains("[階段 3/4] 沒有任何監看裝置，略過狀態變更同步。", console.Lines);
     }
 
     [Fact]
@@ -1939,7 +1939,7 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=messages"));
         // 只有範圍計算那一次失敗；階段 3 不重複計
         Assert.Equal(1, result.Failures);
-        Assert.Contains("[階段 3/4] 取數範圍無法取得，略過狀態變更同步。", console.Lines);
+        Assert.Contains("[階段 3/4] 監看裝置無法取得，略過狀態變更同步。", console.Lines);
 
         // 直接呼叫傳 null 也一樣：零請求、視為收斂
         var direct = await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-1), DateTime.Today, null, 2, CancellationToken.None);
@@ -2177,7 +2177,7 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.True(lastDevices >= 0 && firstSensors >= 0);
         Assert.True(lastDevices < mark, "標記要在最後一個 devices 請求之後");
         Assert.True(mark < firstSensors, "標記要在第一個 sensors 請求之前");
-        Assert.Contains(console.Lines, l => l.Contains("[範圍] 取數範圍：1 台裝置（對應 1、衝突 0、人工 0、守門 0）"));
+        Assert.Contains(console.Lines, l => l.Contains("[範圍] 監看裝置：1 台裝置（對應 1、衝突 0、人工 0、守門 0）"));
     }
 
     [Fact]
@@ -2230,7 +2230,7 @@ public class PrtgFetchServiceTests : IDisposable
             _ => throw new InvalidOperationException("範圍壞了"));
 
         Assert.Equal(baseline.Failures + 1, result.Failures);
-        Assert.Contains(console.Lines, l => l.Contains("取數範圍計算失敗") && l.Contains("範圍壞了"));
+        Assert.Contains(console.Lines, l => l.Contains("監看裝置計算失敗") && l.Contains("範圍壞了"));
         var seq = handler.RequestedUrls.ToList();
         Assert.DoesNotContain(seq, u => u.Contains("content=sensors"));
         // 範圍無法取得時階段 3 也略過（逐裝置查詢沒有可查的物件），且不重複計失敗
@@ -2491,7 +2491,7 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(0, result.Failures);
         Assert.Equal(new long[] { 301 }, MirrorSensorObjids());
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=sensors"));
-        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 取數範圍內沒有任何裝置，略過感測器同步。"));
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 沒有任何監看裝置，略過感測器同步。"));
     }
 
     [Fact]
@@ -2510,7 +2510,7 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(1, result.Failures);
         Assert.Equal(new long[] { 301 }, MirrorSensorObjids());
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=sensors"));
-        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 取數範圍無法取得，略過感測器同步。"));
+        Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 監看裝置無法取得，略過感測器同步。"));
     }
 
     [Fact]
