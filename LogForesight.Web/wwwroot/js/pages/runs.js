@@ -1776,17 +1776,25 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         if (!goOn) return;
     }
 
-    if (prtgModuleEnabled === true && scope === 'all' && days !== null && days > 1) {
-        const isAggressive = prtgFetchStrategy === 'aggressive';
-        const confirmed = await confirmAction({
-            title: isAggressive ? 'PRTG 將逐日查詢歷史值' : 'PRTG 回望範圍',
-            message: isAggressive
-                ? `PRTG 採激進策略：這次會對 ${days} 天的觸發主機逐顆查詢歷史值，可能耗時數小時並明顯增加 PRTG 負載。\n可先縮小回望天數，或到 PRTG 維護頁「擷取參數」改為保守策略。\n\n仍要開始執行嗎？`
-                : `PRTG 會補齊這 ${days} 天的狀態變更與規則評估，讓重跑的日子也帶到 PRTG 訊號。\n過去日的數值不在立即執行內取（保守策略），需要時請用下方 PRTG 卡的「開始回填」。\n\n仍要開始執行嗎？`,
-            confirmText: '仍要開始',
-            confirmVariant: 'primary'
-        });
-        if (!confirmed) return;
+    // 一併補齊 PRTG 逐小時數值：只有保守策略才問（激進本來就逐顆取），勾選結果隨請求送出，
+    // 後端在同一趟結束前接續回填（回填若等這趟結束後另開，會被「取數執行中」擋下）
+    let includePrtgValues = false;
+    if (prtgModuleEnabled === true && days !== null && days > 1) {
+        if (prtgFetchStrategy === 'aggressive') {
+            if (scope === 'all') {
+                const confirmed = await confirmAction({
+                    title: 'PRTG 將逐日查詢歷史值',
+                    message: `PRTG 採激進策略：這次會對 ${days} 天的觸發主機逐顆查詢歷史值，可能耗時數小時並明顯增加 PRTG 負載。\n可先縮小回望天數，或到 PRTG 維護頁「擷取參數」改為保守策略。\n\n仍要開始執行嗎？`,
+                    confirmText: '仍要開始',
+                    confirmVariant: 'primary'
+                });
+                if (!confirmed) return;
+            }
+        } else {
+            const answer = await confirmRunWithPrtgValues(days, scope === 'segment' ? segment : null);
+            if (!answer.confirmed) return;
+            includePrtgValues = answer.includePrtgValues;
+        }
     }
 
     const submitButton = document.getElementById('run-now-submit');
@@ -1797,7 +1805,8 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
             segment: scope === 'segment' ? segment : null,
             backfillDays: days,
             onlyMissingOrFailed,
-            rerunMode
+            rerunMode,
+            includePrtgValues
         });
         toast(result.message, result.started ? 'success' : 'warning');
         if (result.started) {
@@ -1810,6 +1819,72 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         restore();
     }
 });
+
+/**
+ * 保守策略的立即執行確認框：多一個預設勾選的「一併補齊這 N 天的 PRTG 逐小時數值」。
+ * confirmAction 不支援內嵌核取方塊（簽章不動），改用 showDetailModal 自組，版面比照 confirmAction。
+ * 估算取不到時只顯示不帶數字的勾選文字。
+ * @param {number} days 回望天數
+ * @param {string|null} segment 網段範圍（null＝全部主機）；估算只算那些主機
+ * @returns {Promise<{confirmed: boolean, includePrtgValues: boolean}>}
+ */
+function confirmRunWithPrtgValues(days, segment) {
+    return new Promise(resolve => {
+        const body = document.createElement('div');
+        const message = document.createElement('p');
+        message.style.whiteSpace = 'pre-line';
+        message.textContent = `PRTG 會補齊這 ${days} 天的狀態變更與規則評估，讓重跑的日子也帶到 PRTG 訊號。\n\n仍要開始執行嗎？`;
+
+        const check = document.createElement('div');
+        check.className = 'form-check mb-0';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'form-check-input';
+        input.id = 'run-now-include-prtg-values';
+        input.checked = true;
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        const baseText = `一併補齊這 ${days} 天的 PRTG 逐小時數值`;
+        label.textContent = baseText;
+        check.append(input, label);
+        body.append(message, check);
+
+        let confirmed = false;
+        showDetailModal({
+            title: 'PRTG 回望範圍',
+            body,
+            onClose: () => resolve({ confirmed, includePrtgValues: confirmed && input.checked })
+        });
+
+        // showDetailModal 只有「關閉」鈕：改成「取消」並補上確認鈕，與 confirmAction 同一組按鈕
+        const modalEl = body.closest('.modal');
+        modalEl.querySelector('.modal-dialog').classList.add('modal-dialog-centered');
+        const footer = modalEl.querySelector('.modal-footer');
+        footer.querySelector('[data-bs-dismiss="modal"]').textContent = '取消';
+        const okButton = document.createElement('button');
+        okButton.type = 'button';
+        okButton.className = 'btn btn-primary';
+        okButton.textContent = '仍要開始';
+        okButton.addEventListener('click', () => {
+            confirmed = true;
+            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        });
+        footer.appendChild(okButton);
+
+        const params = new URLSearchParams({ days: String(days) });
+        if (segment) params.set('segment', segment);
+        api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true })
+            .then(estimate => {
+                if (!estimate || !Number.isFinite(estimate.queries)) return;
+                const minutesText = estimate.minutes > 0 ? `，約 ${formatNumber(estimate.minutes)} 分鐘` : '';
+                label.textContent = `${baseText}（約 ${formatNumber(estimate.queries)} 次查詢${minutesText}）`;
+            })
+            .catch(() => {
+                // 取不到估算就不顯示數字，勾選照常可用
+            });
+    });
+}
 
 // ── PRTG 擷取開關與歷史回填 ─────────────────────────────────────────────────
 

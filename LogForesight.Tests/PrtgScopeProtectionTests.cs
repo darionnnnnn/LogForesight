@@ -425,7 +425,8 @@ public class PrtgScopeProtectionTests : IDisposable
         });
         var scheduler = new SchedulerRunState();
         var backfill = new PrtgBackfillService(settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-            _hosts, scheduler, new PrtgStructureSyncRunState(), new FakeSentinelStore());
+            _hosts, scheduler, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
+            new PrtgStructureSyncService(settingsStore, _backend, new PrtgStructureSyncRunState(), scheduler, _hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
         var audit = new RecordingAuditService();
         var controller = new SettingsController(
             new StubSettingsService(), new AiUsageStore(_backend.Blob("ai_usage")), audit,

@@ -219,7 +219,7 @@ public class ExternalCallLimitTests : IDisposable
             statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
         var probeState = new PrtgProbeRunState();
         var backfill = new PrtgBackfillService(settingsStore, backend, backfillState, probeState, hostStore,
-            schedulerRunState, syncState, new FakeSentinelStore());
+            schedulerRunState, syncState, new FakeSentinelStore(), structureSync);
 
         settingsStore.Update(s =>
         {

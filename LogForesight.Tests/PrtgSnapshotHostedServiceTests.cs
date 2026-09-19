@@ -48,7 +48,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _structureSync = new PrtgStructureSyncService(_settingsStore, _backend, _syncState, _schedulerRunState, hostStore, statusStore, _backfillState, new FakeSentinelStore(), new DataVersionStamp(), _lifetime);
 
         _probeState = new PrtgProbeRunState();
-        _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore, _schedulerRunState, _syncState, new FakeSentinelStore());
+        _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore, _schedulerRunState, _syncState, new FakeSentinelStore(), _structureSync);
 
         _stubHandler = new StubHandler();
 

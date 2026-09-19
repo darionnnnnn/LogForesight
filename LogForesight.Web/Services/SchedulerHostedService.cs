@@ -33,6 +33,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly DataVersionStamp _dataVersion;
     private readonly AnalysisOrchestrator _orchestrator;
     private readonly PrtgStructureSyncService _structureSync;
+    private readonly PrtgBackfillService _prtgBackfill;
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
@@ -46,6 +47,7 @@ public class SchedulerHostedService : BackgroundService
         SchedulerRunState runState,
         AnalysisOrchestrator orchestrator,
         PrtgStructureSyncService structureSync,
+        PrtgBackfillService prtgBackfill,
         NamedMutexGate mutexGate,
         MailNotificationService mail,
         IHostApplicationLifetime lifetime,
@@ -59,6 +61,7 @@ public class SchedulerHostedService : BackgroundService
         _dataVersion = dataVersion;
         _orchestrator = orchestrator;
         _structureSync = structureSync;
+        _prtgBackfill = prtgBackfill;
         _mutexGate = mutexGate;
         _mail = mail;
         _lifetime = lifetime;
@@ -291,7 +294,8 @@ public class SchedulerHostedService : BackgroundService
         DebugDump = scheduleOptions.DebugDump,
         IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
         Trigger = request.Trigger,
-        CatchUpNote = request.CatchUpNote
+        CatchUpNote = request.CatchUpNote,
+        PrtgBackfillDays = request.PrtgBackfillDays
     };
 
     public async Task<bool> TriggerRunAsync(RunRequest request)
@@ -332,7 +336,7 @@ public class SchedulerHostedService : BackgroundService
                     var progress = new WebRunProgress(_runState);
                     var result = await _orchestrator.RunAsync(
                         effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress,
-                        structureSyncGate: _structureSync);
+                        structureSyncGate: _structureSync, prtgBackfillTail: _prtgBackfill);
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);

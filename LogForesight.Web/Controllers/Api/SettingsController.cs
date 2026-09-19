@@ -387,6 +387,41 @@ public class SettingsController : ControllerBase
         });
     }
 
+    /// <summary>粗估用的每次 historicdata 查詢平均秒數（暫定）。</summary>
+    private const double PrtgValueQuerySeconds = 1.5;
+
+    /// <summary>
+    /// 立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估：目前監看裝置上的白名單感測器數 × 天數。
+    /// 帶 segment 時只算那個網段的主機（與立即執行的網段範圍同一套解析）。
+    /// </summary>
+    [HttpGet("prtg-estimate")]
+    public ApiResponse<PrtgValuesEstimateDto> EstimatePrtgValues([FromQuery] int days, [FromQuery] string? segment = null)
+    {
+        if (days < 1)
+            throw DomainException.Validation("天數必須大於等於 1。");
+        if (_backend == null || _hosts == null)
+            throw DomainException.Validation("資料存放區未啟用，無法估算。");
+
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        var sentinels = new SentinelStore(_backend.Blob("sentinels"));
+        var hostIds = segment == null ? null : ScheduleController.ResolveSegmentHostIds(segment, _hosts, sentinels);
+
+        var store = _backend.PrtgStore();
+        var scope = PrtgScopeDevices.Compute(
+            store, _hosts, new PrtgMirrorGuardSource(store), settings, sentinels.GetAll(),
+            new ResourceGuardWarningConsole(), new PrtgAddressResolver(), hostIds);
+        var sensors = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, scope.DeviceObjids.ToList()).Count;
+        var queries = (long)sensors * days;
+        var concurrency = Math.Max(1, settings.PrtgFetchConcurrency);
+
+        return ApiResponse<PrtgValuesEstimateDto>.Ok(new PrtgValuesEstimateDto
+        {
+            Sensors = sensors,
+            Queries = queries,
+            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60)
+        });
+    }
+
     /// <summary>估算量達到這個數就提醒「一晚可能跑不完」。實機併發上限 8、單次 historicdata 往返
     /// 以秒計，五千個 sensor 已是數小時等級。刻意不開設定——它是提醒不是閘門。</summary>
     private const int PrtgFetchScopeSensorWarnThreshold = 5000;

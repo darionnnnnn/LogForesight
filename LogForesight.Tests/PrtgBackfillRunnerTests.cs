@@ -910,7 +910,8 @@ public class PrtgBackfillRunnerTests : IDisposable
             }, DateTime.Now);
             Service = new PrtgBackfillService(
                 Settings, Backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore());
+                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore(),
+                new PrtgStructureSyncService(Settings, Backend, SyncState, Scheduler, new HostStore(Backend.Blob("hosts")), new PrtgStructureSyncStatusStore(Backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
         }
 
         public void AddMap(string status) =>

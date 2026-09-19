@@ -322,7 +322,8 @@ public class ScheduleGuardStatusCodeTests : IDisposable
     {
         var backfill = new PrtgBackfillService(
             _settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-            new HostStore(_backend.Blob("hosts")), schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore());
+            new HostStore(_backend.Blob("hosts")), schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
+            new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState, new HostStore(_backend.Blob("hosts")), new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
 
         var controller = new SettingsController(
             new StubSystemSettingsService(),
@@ -362,7 +363,7 @@ public class ScheduleGuardStatusCodeTests : IDisposable
     }
 
     [Fact]
-    public void C4_回填啟動_鏡像無感測器結構維持400()
+    public void C4_回填啟動_鏡像無感測器改由背景工作先同步()
     {
         _settingsStore.Update(s =>
         {
@@ -374,10 +375,9 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         });
         var controller = CreateBackfillController(new SchedulerRunState());
 
-        var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());
+        var response = controller.StartPrtgBackfill();
 
-        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
-        Assert.Contains("鏡像尚無任何感測器結構", ex.Message);
+        Assert.True(response.Data?.Started);
     }
 
     [Fact]

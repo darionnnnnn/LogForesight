@@ -193,6 +193,25 @@ public class TriggerRunRequest
     /// </summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public RerunMode RerunMode { get; set; } = RerunMode.None;
+
+    /// <summary>
+    /// 一併補齊回望期間的 PRTG 逐小時數值（立即執行確認框的勾選，預設 false）。
+    /// 只在 PRTG 已啟用、取數策略為保守、回望天數 &gt; 1 時生效，見 ScheduleController.ToRunRequest。
+    /// </summary>
+    public bool IncludePrtgValues { get; set; }
+}
+
+/// <summary>立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估（GET api/admin/settings/prtg-estimate）。</summary>
+public class PrtgValuesEstimateDto
+{
+    /// <summary>監看裝置上符合 sensor type 白名單的感測器數</summary>
+    public int Sensors { get; set; }
+
+    /// <summary>感測器數 × 天數（每顆每天一次 historicdata 查詢）</summary>
+    public long Queries { get; set; }
+
+    /// <summary>以併發設定與每次查詢平均 1.5 秒粗估的分鐘數</summary>
+    public int Minutes { get; set; }
 }
 
 public class TriggerRunResultDto

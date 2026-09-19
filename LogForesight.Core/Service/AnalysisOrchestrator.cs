@@ -55,6 +55,11 @@ public class RunRequest
     /// 補跑說明（非 null＝這趟是補跑，內容是要寫進里程碑的白話說明）。
     /// </summary>
     public string? CatchUpNote { get; init; }
+
+    /// <summary>
+    /// 本趟結束前接續補齊 PRTG 逐小時數值的天數（0＝不接續）。只有手動立即執行勾選時才非 0，夜間排程一律 0。
+    /// </summary>
+    public int PrtgBackfillDays { get; init; }
 }
 
 /// <summary>本機逐日分析的單日摘要（批次E）：執行結果總表與計數用，不持有分析內容。</summary>
@@ -197,10 +202,14 @@ public class AnalysisOrchestrator
     /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）；未接上時為 null＝行為不變。
     /// 只往下傳給 PRTG 路徑，不影響本機與 NetIQ 兩路。
     /// </param>
+    /// <param name="prtgBackfillTail">
+    /// 同一趟接續補 PRTG 數值的執行者（Web 端的回填服務）；只在 <see cref="RunRequest.PrtgBackfillDays"/> &gt; 0 時使用。
+    /// </param>
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
         RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null,
-        IPrtgStructureSyncGate? structureSyncGate = null)
+        IPrtgStructureSyncGate? structureSyncGate = null,
+        IPrtgBackfillTail? prtgBackfillTail = null)
     {
         var runStopwatch = Stopwatch.StartNew();
         var result = new OrchestratorResult();
@@ -665,6 +674,16 @@ public class AnalysisOrchestrator
                     runConsole.WriteLine($"  ⏱ 體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
                     Log.Info("體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
                         yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
+                }
+
+                // 7. 接續補 PRTG 數值（立即執行勾選時）：放在分析、派工、體檢都完成之後，是本趟的附加段——
+                //    成敗不影響整趟判定；取消照一般取消處理（例外穿透到下方 catch）。
+                //    回填不能等這趟結束後另開：回填入口會被「取數執行中」擋下，而那個旗標要到這趟結束才放開。
+                if (request.PrtgBackfillDays > 0 && prtgBackfillTail != null)
+                {
+                    runRecorder.Milestone($"接續補 PRTG 數值 {request.PrtgBackfillDays} 天");
+                    var tailOk = await prtgBackfillTail.RunTailAsync(request.PrtgBackfillDays, prtgHostIds, runConsole, ct);
+                    runRecorder.Milestone(tailOk ? "PRTG 數值補齊完成" : "PRTG 數值補齊未完成（原因見上方輸出）");
                 }
 
                 runConsole.WriteLine($"\n歷史資料庫：{historyService.Location}");
