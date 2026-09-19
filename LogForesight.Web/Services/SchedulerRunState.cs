@@ -40,12 +40,25 @@ public class SchedulerRunState
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly object _lock = new();
+    private readonly List<DateTime> _recentScheduleAttempts = new();
     private CancellationTokenSource? _cts;
 
     public bool IsRunning { get; private set; }
     public string? Trigger { get; private set; }
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
+
+    /// <summary>最近幾次排程觸發嘗試的時間（保留最近 10 筆，行程內狀態）</summary>
+    public IReadOnlyList<DateTime> RecentScheduleAttempts
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _recentScheduleAttempts.ToList();
+            }
+        }
+    }
 
     /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq；done/total 為主機日粒度。
     /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡改顯示不定進度。
@@ -197,6 +210,10 @@ public class SchedulerRunState
             IsRunning = true;
             Trigger = trigger;
             StartedAt = DateTime.Now;
+            if (trigger == "schedule")
+            {
+                RecordScheduleAttemptLocked(StartedAt.Value);
+            }
             LatestMessage = null;
             ResetTracks();
             PrtgFindingsReady = false;
@@ -208,6 +225,24 @@ public class SchedulerRunState
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
+        }
+    }
+
+    /// <summary>記錄一次排程觸發嘗試時間（保留最近 10 筆，執行緒安全）</summary>
+    public void RecordScheduleAttempt(DateTime time)
+    {
+        lock (_lock)
+        {
+            RecordScheduleAttemptLocked(time);
+        }
+    }
+
+    private void RecordScheduleAttemptLocked(DateTime time)
+    {
+        _recentScheduleAttempts.Add(time);
+        if (_recentScheduleAttempts.Count > 10)
+        {
+            _recentScheduleAttempts.RemoveAt(0);
         }
     }
 

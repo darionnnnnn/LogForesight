@@ -155,8 +155,8 @@ public static class ScheduleCalculator
     /// <summary>
     /// 現在是否該觸發一次排程執行：now 落在某個窗口內，且**那個窗口目前這次的實例**還沒有觸發過
     /// （<paramref name="recentScheduledTriggerTimes"/> 裡沒有任何一筆落在該實例的起訖區間）。
-    /// 同一個函式服務兩個呼叫端：常態輪詢（週期性檢查是否該觸發）與服務啟動時的漏跑補償
-    /// （docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）——語意完全相同，不需要兩套邏輯。
+    /// 同一個函式服務兩個呼叫端：常態輪詢（週期性檢查是否該觸發）與服務啟動時的補觸發
+    /// （只在重新啟動時仍落在窗口內才會補觸發；錯過整個窗口不會補）——語意完全相同，不需要兩套邏輯。
     /// </summary>
     public static bool ShouldTriggerNow(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<DateTime> recentScheduledTriggerTimes)
     {

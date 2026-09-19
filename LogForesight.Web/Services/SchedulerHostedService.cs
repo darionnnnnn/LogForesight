@@ -7,7 +7,7 @@ namespace LogForesight.Web.Services;
 /// <summary>
 /// 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.4）：週期輪詢
 /// <see cref="ScheduleOptionsStore"/>，命中執行窗口且該窗口本次尚未觸發過
-/// （<see cref="ScheduleCalculator.ShouldTriggerNow"/>，同一函式天生涵蓋服務啟動時的漏跑補償——
+/// （<see cref="ScheduleCalculator.ShouldTriggerNow"/>，只在重新啟動時仍落在窗口內才會補觸發；錯過整個窗口不會補——
 /// 啟動後第一次輪詢就是在檢查「現在是否該觸發」，跟平常輪詢問的是同一個問題）時觸發一次
 /// <see cref="AnalysisOrchestrator"/> 完整執行。也是手動觸發 API（<see cref="TriggerRunAsync"/>）
 /// 的執行載體，兩種觸發來源共用同一個 <see cref="SchedulerRunState"/> 單一執行 gate與
@@ -36,6 +36,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
+    private Task? _lastMailTask;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -82,7 +83,7 @@ public class SchedulerHostedService : BackgroundService
         {
             try
             {
-                await TickAsync();
+                await TickAsync(stoppingToken);
             }
             catch (Exception ex)
             {
@@ -100,12 +101,24 @@ public class SchedulerHostedService : BackgroundService
         }
     }
 
-    private async Task TickAsync()
+    private async Task TickAsync(CancellationToken stoppingToken)
     {
         // 每日／每週定時彙總（回饋十五輪批次D）：獨立於排程分析窗口之外，即使排程本身未啟用
         // 也照常檢查——通知的時間軸是「使用者想幾點收到摘要」，不是「排程窗口設在幾點」。
         // 內部自行 try/catch 到底且成功寄送與否都不影響下方的排程判斷，緊接著跑不需要額外保護。
-        await _mail.CheckAndSendDailyWeeklyAsync(DateTime.Now);
+        // 上一次寄送尚未結束時跳過本次寄送且不等待；整段寄送設 5 分鐘上限，逾時不再等待直接繼續排程判斷。
+        if (_lastMailTask == null || _lastMailTask.IsCompleted)
+        {
+            _lastMailTask = _mail.CheckAndSendDailyWeeklyAsync(DateTime.Now, stoppingToken);
+            try
+            {
+                await _lastMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (TimeoutException)
+            {
+                Log.Warn("每日／每週彙總寄送超過 5 分鐘未返回，本次輪詢不再等待");
+            }
+        }
 
         var options = _scheduleOptionsStore.Get();
 
@@ -134,10 +147,9 @@ public class SchedulerHostedService : BackgroundService
         if (!options.Enabled) return;
 
         var now = DateTime.Now;
-        var recentScheduleTriggerTimes = _batchRunStore
-            .GetRecentRuns(RecentRunsLookbackDays, null)
-            .Where(r => r.Trigger == "schedule")
-            .Select(r => r.StartedAt);
+        var recentScheduleTriggerTimes = GetScheduleTriggerTimes(
+            _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
+            _runState.RecentScheduleAttempts);
 
         if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
 
@@ -165,10 +177,9 @@ public class SchedulerHostedService : BackgroundService
 
         // **這個窗口已經跑過就不算被佔用**：22:00 觸發、22:40 跑完，23:00 有人按立即執行——
         // 少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
-        var scheduledTriggerTimes = _batchRunStore
-            .GetRecentRuns(RecentRunsLookbackDays, null)
-            .Where(r => r.Trigger == "schedule")
-            .Select(r => r.StartedAt);
+        var scheduledTriggerTimes = GetScheduleTriggerTimes(
+            _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
+            _runState.RecentScheduleAttempts);
 
         if (ScheduleCalculator.WindowAlreadyTriggered(now, windowStart.Value, scheduledTriggerTimes)) return;
 
@@ -181,6 +192,21 @@ public class SchedulerHostedService : BackgroundService
             Log.Info(text);
             _runState.ReportMessage(text);
         }
+    }
+
+    /// <summary>
+    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的 StartedAt，
+    /// 並與記憶體中最近的排程觸發嘗試時間聯集。
+    /// </summary>
+    internal static IEnumerable<DateTime> GetScheduleTriggerTimes(
+        IEnumerable<BatchRun> runs,
+        IEnumerable<DateTime> inMemoryTriggerTimes)
+    {
+        var persistentTimes = runs
+            .Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi)
+            .Select(r => r.StartedAt);
+
+        return persistentTimes.Union(inMemoryTriggerTimes);
     }
 
     /// <summary>
