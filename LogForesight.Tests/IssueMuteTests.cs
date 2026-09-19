@@ -301,7 +301,9 @@ public sealed class IssueMuteTests : IDisposable
         yield return new object?[] { 3, DateTime.Today.AddDays(3) };
         yield return new object?[] { null, null };
         yield return new object?[] { null, DateTime.Today.AddDays(-1) };
-        yield return new object?[] { null, DateTime.Today.AddDays(366) };
+        // MemberData 可能在午夜前探索、午夜後才執行；用明確超出上限的 400 天，
+        // 避免原本 366 天在跨日時縮成合法的 365 天而偶發失敗。
+        yield return new object?[] { null, DateTime.Today.AddDays(400) };
     }
 
     [Theory]
