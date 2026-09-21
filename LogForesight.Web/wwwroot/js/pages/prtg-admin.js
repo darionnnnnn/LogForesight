@@ -510,8 +510,43 @@ function renderPrtgFreshness(items) {
 let conflictPage = 1;
 let conflictPageSize = loadPageSize('prtg-conflicts');
 
+function renderConflictsLoading() {
+    const tbody = document.getElementById('prtg-mirror-conflicts-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-muted text-center py-2';
+    td.textContent = '載入中…';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function renderConflictsError(errorMessage) {
+    const tbody = document.getElementById('prtg-mirror-conflicts-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-danger text-center py-2';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = `載入衝突清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
+    retryBtn.textContent = '重試';
+    retryBtn.addEventListener('click', () => refreshConflicts(conflictPage));
+    td.append(textSpan, retryBtn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
+}
+
 async function refreshConflicts(page = conflictPage) {
     conflictPage = page;
+    renderConflictsLoading();
     try {
         const res = await api.get(`/api/admin/settings/prtg-host-map?status=conflict&page=${conflictPage}&pageSize=${conflictPageSize}`, { silent: true });
         const total = (res && res.total) ? res.total : 0;
@@ -523,8 +558,8 @@ async function refreshConflicts(page = conflictPage) {
 
         renderConflicts((res && res.items) ? res.items : []);
         renderConflictPagination(totalPages);
-    } catch {
-        // 失敗時不干擾整體頁面
+    } catch (error) {
+        renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
     }
 }
 
@@ -601,6 +636,7 @@ function renderConflicts(items) {
                     await Promise.all([
                         refreshPrtgMirror(),
                         refreshConflicts(conflictPage),
+                        refreshUnmatched(unmatchedPage),
                         refreshIpExcludes()
                     ]);
                 } catch (error) {
@@ -635,12 +671,215 @@ function renderConflictPagination(totalPages) {
     });
 }
 
+// ── PRTG 未對應清單 ──────────────────────────────────────────────────
+
+let unmatchedPage = 1;
+let unmatchedPageSize = loadPageSize('prtg-unmatched');
+
+function renderUnmatchedLoading() {
+    const tbody = document.getElementById('prtg-unmatched-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-muted text-center py-2';
+    td.textContent = '載入中…';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function renderUnmatchedError(errorMessage) {
+    const tbody = document.getElementById('prtg-unmatched-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-danger text-center py-2';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = `載入未對應清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
+    retryBtn.textContent = '重試';
+    retryBtn.addEventListener('click', () => refreshUnmatched(unmatchedPage));
+    td.append(textSpan, retryBtn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    document.getElementById('prtg-unmatched-pagination')?.replaceChildren();
+}
+
+async function refreshUnmatched(page = unmatchedPage) {
+    unmatchedPage = page;
+    renderUnmatchedLoading();
+    try {
+        const res = await api.get(`/api/admin/settings/prtg-host-map?status=unmatched&page=${unmatchedPage}&pageSize=${unmatchedPageSize}`, { silent: true });
+        const total = (res && res.total) ? res.total : 0;
+        const totalPages = Math.ceil(total / unmatchedPageSize);
+
+        if (unmatchedPage > totalPages && totalPages > 0) {
+            return refreshUnmatched(totalPages);
+        }
+
+        renderUnmatched((res && res.items) ? res.items : []);
+        renderUnmatchedPagination(totalPages);
+    } catch (error) {
+        renderUnmatchedError(error && error.message ? error.message : '載入未對應清單失敗');
+    }
+}
+
+function renderUnmatched(items) {
+    const tbody = document.getElementById('prtg-unmatched-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+
+    if (!items || items.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'text-muted text-center py-2';
+        td.textContent = '無未對應項目';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    for (const item of items) {
+        const tr = document.createElement('tr');
+
+        const tdDevice = document.createElement('td');
+        tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
+
+        const tdIp = document.createElement('td');
+        tdIp.className = 'font-monospace';
+        tdIp.textContent = item.ip || '-';
+
+        const tdKind = document.createElement('td');
+        const kindBadge = document.createElement('span');
+        if (item.conflictKind === 'multi-device') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '同 IP 多裝置';
+        } else if (item.conflictKind === 'multi-host') {
+            kindBadge.className = 'badge bg-info text-dark';
+            kindBadge.textContent = 'IP 對多主機';
+        } else if (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched') {
+            kindBadge.className = 'badge bg-secondary';
+            kindBadge.textContent = '未對應';
+        } else {
+            kindBadge.className = 'badge bg-secondary';
+            kindBadge.textContent = item.conflictKind || '-';
+        }
+        tdKind.appendChild(kindBadge);
+
+        const tdNote = document.createElement('td');
+        tdNote.className = 'text-muted';
+        tdNote.textContent = item.note || '-';
+
+        const tdAction = document.createElement('td');
+        const assignBtn = document.createElement('button');
+        assignBtn.type = 'button';
+        assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
+        assignBtn.textContent = '指派';
+        assignBtn.addEventListener('click', () => openAssignModal(item));
+        tdAction.appendChild(assignBtn);
+
+        const excludeBtn = document.createElement('button');
+        excludeBtn.type = 'button';
+        excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
+        excludeBtn.textContent = '排除此 IP';
+        if (!item.ip) {
+            excludeBtn.disabled = true;
+            excludeBtn.title = '此 device 沒有 IP';
+        } else {
+            excludeBtn.addEventListener('click', async () => {
+                const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
+                const confirmed = await confirmAction({
+                    message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
+                });
+                if (!confirmed) return;
+                try {
+                    const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null });
+                    toast('已排除此 IP', 'success');
+                    notifyRemapWarning(res);
+                    await Promise.all([
+                        refreshPrtgMirror(),
+                        refreshConflicts(conflictPage),
+                        refreshUnmatched(unmatchedPage),
+                        refreshIpExcludes()
+                    ]);
+                } catch (error) {
+                    toast(error && error.message ? error.message : '排除失敗', 'danger');
+                }
+            });
+        }
+        tdAction.appendChild(excludeBtn);
+
+        tr.append(tdDevice, tdIp, tdKind, tdNote, tdAction);
+        tbody.appendChild(tr);
+    }
+}
+
+function renderUnmatchedPagination(totalPages) {
+    const container = document.getElementById('prtg-unmatched-pagination');
+    if (!container) return;
+
+    renderPagination(container, {
+        page: unmatchedPage,
+        totalPages,
+        onPage: page => {
+            refreshUnmatched(page);
+        },
+        pageSize: unmatchedPageSize,
+        onPageSize: size => {
+            unmatchedPageSize = size;
+            savePageSize('prtg-unmatched', size);
+            refreshUnmatched(1);
+        },
+        pageSizeOptions: PAGE_SIZE_OPTIONS
+    });
+}
+
+function renderIpExcludesLoading() {
+    const tbody = document.getElementById('prtg-ip-excludes-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-muted text-center py-2';
+    td.textContent = '載入中…';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function renderIpExcludesError(errorMessage) {
+    const tbody = document.getElementById('prtg-ip-excludes-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-danger text-center py-2';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = `載入 IP 排除清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
+    retryBtn.textContent = '重試';
+    retryBtn.addEventListener('click', () => refreshIpExcludes());
+    td.append(textSpan, retryBtn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
 async function refreshIpExcludes() {
+    renderIpExcludesLoading();
     try {
         const items = await api.get('/api/admin/settings/prtg-ip-excludes', { silent: true });
         renderIpExcludes(items || []);
-    } catch {
-        // 失敗時不干擾整體頁面
+    } catch (error) {
+        renderIpExcludesError(error && error.message ? error.message : '載入 IP 排除清單失敗');
     }
 }
 
@@ -694,6 +933,7 @@ function renderIpExcludes(items) {
                 await Promise.all([
                     refreshPrtgMirror(),
                     refreshConflicts(conflictPage),
+                    refreshUnmatched(unmatchedPage),
                     refreshIpExcludes()
                 ]);
             } catch (error) {
@@ -763,6 +1003,7 @@ function renderManualMaps(items) {
                 await Promise.all([
                     refreshPrtgMirror(),
                     refreshConflicts(conflictPage),
+                    refreshUnmatched(unmatchedPage),
                     refreshIpExcludes()
                 ]);
             } catch (error) {
@@ -961,6 +1202,7 @@ function bindAssignForm() {
             await Promise.all([
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
+                refreshUnmatched(unmatchedPage),
                 refreshIpExcludes()
             ]);
         } catch (error) {
@@ -1057,6 +1299,7 @@ function bindPrtgMirror() {
             await Promise.all([
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
+                refreshUnmatched(unmatchedPage),
                 refreshIpExcludes()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
@@ -1393,6 +1636,72 @@ async function refreshPrtgRuleBanner() {
     banner.appendChild(alert);
 }
 
+function bindUnmatchedControls() {
+    const badge = document.getElementById('prtg-mirror-map-unmatched');
+    const section = document.getElementById('prtg-unmatched-section');
+    const collapseEl = document.getElementById('prtg-unmatched-collapse');
+    const toggleBtn = document.getElementById('prtg-unmatched-toggle-btn');
+
+    const ensureExpanded = () => {
+        if (!collapseEl) return;
+        if (window.bootstrap?.Collapse) {
+            const inst = window.bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+            inst.show();
+        } else {
+            collapseEl.classList.add('show');
+        }
+        if (toggleBtn) {
+            toggleBtn.textContent = '收合';
+            toggleBtn.setAttribute('aria-expanded', 'true');
+        }
+    };
+
+    if (toggleBtn && collapseEl) {
+        toggleBtn.addEventListener('click', () => {
+            if (window.bootstrap?.Collapse) {
+                const inst = window.bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+                inst.toggle();
+            } else {
+                const isShown = collapseEl.classList.contains('show');
+                if (isShown) {
+                    collapseEl.classList.remove('show');
+                    toggleBtn.textContent = '展開';
+                    toggleBtn.setAttribute('aria-expanded', 'false');
+                } else {
+                    collapseEl.classList.add('show');
+                    toggleBtn.textContent = '收合';
+                    toggleBtn.setAttribute('aria-expanded', 'true');
+                }
+            }
+        });
+
+        collapseEl.addEventListener('shown.bs.collapse', () => {
+            toggleBtn.textContent = '收合';
+            toggleBtn.setAttribute('aria-expanded', 'true');
+        });
+        collapseEl.addEventListener('hidden.bs.collapse', () => {
+            toggleBtn.textContent = '展開';
+            toggleBtn.setAttribute('aria-expanded', 'false');
+        });
+    }
+
+    if (badge && section) {
+        const jumpToUnmatched = () => {
+            ensureExpanded();
+            section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            section.focus();
+        };
+
+        badge.addEventListener('click', jumpToUnmatched);
+        badge.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                jumpToUnmatched();
+            }
+        });
+    }
+}
+
 function init() {
     bindPrtgTest();
     bindPrtgMirror();
@@ -1404,9 +1713,13 @@ function init() {
     bindParamsForm();
     bindScopeControls();
     bindStructureSync();
+    bindUnmatchedControls();
     initCalibration();
     loadSettings();
     refreshPrtgMirror();
+    refreshConflicts(1);
+    refreshUnmatched(1);
+    refreshIpExcludes();
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();
     refreshPrtgRuleBanner();

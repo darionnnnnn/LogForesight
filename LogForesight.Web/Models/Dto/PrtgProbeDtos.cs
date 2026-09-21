@@ -205,6 +205,7 @@ public class PrtgConflictItemDto
     public string? Ip { get; set; }
     public string? HostName { get; set; }
     public string? Note { get; set; }
+    public string MapStatus { get; set; } = string.Empty;
     public string ConflictKind { get; set; } = string.Empty;
     public List<PrtgConflictDeviceDto> SameIpDevices { get; set; } = new();
     public List<PrtgCandidateHostDto> CandidateHosts { get; set; } = new();

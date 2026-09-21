@@ -793,9 +793,11 @@ public class SettingsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
-        if (!string.Equals(status, "conflict", StringComparison.OrdinalIgnoreCase))
+        var isConflict = string.Equals(status, PrtgMapStatus.Conflict, StringComparison.OrdinalIgnoreCase);
+        var isUnmatched = string.Equals(status, PrtgMapStatus.Unmatched, StringComparison.OrdinalIgnoreCase);
+        if (!isConflict && !isUnmatched)
         {
-            throw DomainException.Validation("目前僅支援 status=conflict 查詢。");
+            throw DomainException.Validation("status 僅支援 conflict 或 unmatched 查詢。");
         }
 
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
@@ -812,15 +814,17 @@ public class SettingsController : ControllerBase
         var store = _backend.PrtgStore();
         var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
 
+        var targetStatus = isConflict ? PrtgMapStatus.Conflict : PrtgMapStatus.Unmatched;
+
         // 依 DeviceObjid 排序後才分頁：GetLatestHostMapWithDate 的查詢沒有 ORDER BY，
         // 未排序就分頁時同一列可能在兩頁重複出現、也可能整列被跳過。
-        var conflictRows = hostMaps
-            .Where(m => m.MapStatus == PrtgMapStatus.Conflict)
+        var filteredRows = hostMaps
+            .Where(m => string.Equals(m.MapStatus, targetStatus, StringComparison.OrdinalIgnoreCase))
             .OrderBy(m => m.DeviceObjid)
             .ToList();
 
-        var total = conflictRows.Count;
-        var pagedRows = conflictRows
+        var total = filteredRows.Count;
+        var pagedRows = filteredRows
             .Skip((normPage - 1) * normPageSize)
             .Take(normPageSize)
             .ToList();
@@ -860,7 +864,15 @@ public class SettingsController : ControllerBase
             var sameDevices = deviceIndex.ByNormIp(normIp);
 
             var isMultiDevice = sameDevices.Count > 1;
-            var conflictKind = isMultiDevice ? "multi-device" : "multi-host";
+            string conflictKind;
+            if (isUnmatched)
+            {
+                conflictKind = "unmatched";
+            }
+            else
+            {
+                conflictKind = isMultiDevice ? "multi-device" : "multi-host";
+            }
 
             List<PrtgConflictDeviceDto> sameIpDevices;
             if (isMultiDevice)
@@ -912,6 +924,7 @@ public class SettingsController : ControllerBase
                 Ip = row.Ip,
                 HostName = isMultiDevice ? null : row.HostName,
                 Note = row.Note,
+                MapStatus = row.MapStatus ?? targetStatus,
                 ConflictKind = conflictKind,
                 SameIpDevices = sameIpDevices,
                 CandidateHosts = candidateHosts

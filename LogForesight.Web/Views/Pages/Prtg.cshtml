@@ -327,7 +327,7 @@
                     <div class="d-flex flex-wrap gap-4 small mb-2">
                         <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
                         <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
-                        <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>未對應（PRTG 獨有）：<button type="button" class="badge bg-secondary border-0 text-decoration-none" id="prtg-mirror-map-unmatched" style="cursor: pointer;" aria-label="跳至未對應清單" title="跳至未對應清單">0</button></div>
                         <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
@@ -348,11 +348,39 @@
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-mirror-conflicts-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無衝突項目</td></tr>
+                                    <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
                                 </tbody>
                             </table>
                         </div>
                         <div id="prtg-conflicts-pagination" class="mt-2"></div>
+                    </div>
+
+                    <div class="mt-4" id="prtg-unmatched-section" tabindex="-1">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <div class="small fw-semibold text-secondary">未對應清單（PRTG 獨有）</div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="prtg-unmatched-toggle-btn" aria-expanded="true" aria-controls="prtg-unmatched-collapse">
+                                收合
+                            </button>
+                        </div>
+                        <div class="collapse show" id="prtg-unmatched-collapse">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-0 small" id="prtg-unmatched-table">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width: 200px;">Device</th>
+                                            <th style="width: 140px;">IP</th>
+                                            <th style="width: 130px;">型別</th>
+                                            <th>說明</th>
+                                            <th style="width: 160px;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="prtg-unmatched-body">
+                                        <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="prtg-unmatched-pagination" class="mt-2"></div>
+                        </div>
                     </div>
 
                     <div class="mt-4">
@@ -390,7 +418,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-ip-excludes-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無排除 IP</td></tr>
+                                    <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
                                 </tbody>
                             </table>
                         </div>
