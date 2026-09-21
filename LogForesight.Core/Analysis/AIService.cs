@@ -9,6 +9,8 @@ using Polly;
 using Polly.Retry;
 
 using LogForesight.Core.Configuration;
+using LogForesight.Core.Models;
+using System.Net.Http.Headers;
 
 namespace LogForesight.Core.Analysis;
 
@@ -97,37 +99,9 @@ public class AIService : IAiService
         _provider = AiProviders.Normalize(settings.Provider);
         _defaultModel = string.IsNullOrWhiteSpace(settings.Model) ? AiProviders.DefaultModel(_provider) : settings.Model.Trim();
 
-        if (_provider == AiProviders.AzureOpenAi)
-        {
-            var baseUrl = settings.BaseUrl.TrimEnd('/');
-            var deployment = settings.AzureDeployment?.Trim() ?? "";
-            var apiVersion = string.IsNullOrWhiteSpace(settings.AzureApiVersion) ? "2024-10-21" : settings.AzureApiVersion.Trim();
-            _requestUrl = $"{baseUrl}/openai/deployments/{deployment}/chat/completions?api-version={apiVersion}";
-            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
-            {
-                _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("api-key", settings.ApiKey);
-            }
-        }
-        else if (_provider == AiProviders.OpenAi)
-        {
-            var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com" : settings.BaseUrl.TrimEnd('/');
-            _requestUrl = $"{baseUrl}/v1/chat/completions";
-            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
-            {
-                _httpClient.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
-            }
-        }
-        else
-        {
-            var baseUrl = settings.BaseUrl.TrimEnd('/');
-            _requestUrl = $"{baseUrl}/v1/chat/completions";
-            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
-            {
-                _httpClient.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
-            }
-        }
+        var (endpointUrl, applyAuth) = ResolveEndpointAndAuth(settings);
+        _requestUrl = endpointUrl;
+        applyAuth(_httpClient.DefaultRequestHeaders);
 
         _maxTokens = settings.MaxTokens;
         _jsonRetryCount = settings.JsonRetryCount;
@@ -497,6 +471,78 @@ public class AIService : IAiService
             return flat;
         }
         return $"{flat[..headLength]} …(共 {content.Length} 字元)… {flat[^tailLength..]}";
+    }
+
+    /// <summary>
+    /// 依據 <see cref="AiSettings"/> 解析請求端點 URL 與對應的驗證標頭設定（五十輪批次 F-1b）。
+    /// AIService 與 AI 探活服務共用此邏輯，確保兩者端點與認證組裝一致。
+    /// </summary>
+    public static (string RequestUrl, Action<HttpRequestHeaders> ApplyAuth) ResolveEndpointAndAuth(AiSettings settings)
+    {
+        var provider = AiProviders.Normalize(settings.Provider);
+        if (provider == AiProviders.AzureOpenAi)
+        {
+            var baseUrl = (settings.BaseUrl ?? "").TrimEnd('/');
+            var deployment = settings.AzureDeployment?.Trim() ?? "";
+            var apiVersion = string.IsNullOrWhiteSpace(settings.AzureApiVersion) ? "2024-10-21" : settings.AzureApiVersion.Trim();
+            var url = $"{baseUrl}/openai/deployments/{deployment}/chat/completions?api-version={apiVersion}";
+            Action<HttpRequestHeaders> applyAuth = headers =>
+            {
+                if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+                {
+                    headers.TryAddWithoutValidation("api-key", settings.ApiKey);
+                }
+            };
+            return (url, applyAuth);
+        }
+        else if (provider == AiProviders.OpenAi)
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com" : settings.BaseUrl.TrimEnd('/');
+            var url = $"{baseUrl}/v1/chat/completions";
+            Action<HttpRequestHeaders> applyAuth = headers =>
+            {
+                if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+                {
+                    headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
+                }
+            };
+            return (url, applyAuth);
+        }
+        else
+        {
+            var baseUrl = (settings.BaseUrl ?? "").TrimEnd('/');
+            var url = $"{baseUrl}/v1/chat/completions";
+            Action<HttpRequestHeaders> applyAuth = headers =>
+            {
+                if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+                {
+                    headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
+                }
+            };
+            return (url, applyAuth);
+        }
+    }
+
+    /// <summary>
+    /// 自 DB <see cref="SystemSettings"/> 建立對應的 <see cref="AiSettings"/>（五十輪批次 F-1b）。
+    /// </summary>
+    public static AiSettings BuildSettingsFromDb(SystemSettings db)
+    {
+        var provider = AiProviders.Normalize(db.AiProvider);
+        var model = string.IsNullOrWhiteSpace(db.AiModel) ? AiProviders.DefaultModel(provider) : db.AiModel.Trim();
+        var azureDeployment = db.AiAzureDeployment?.Trim() ?? "";
+        var azureApiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? "2024-10-21" : db.AiAzureApiVersion.Trim();
+        var apiKey = CryptoHelper.IsEncrypted(db.AiApiKeyEnc) && CryptoHelper.TryDecrypt(db.AiApiKeyEnc, out var key) ? key : "";
+
+        return new AiSettings
+        {
+            Provider = provider,
+            BaseUrl = (db.AiBaseUrl ?? "").Trim(),
+            ApiKey = apiKey,
+            Model = model,
+            AzureDeployment = azureDeployment,
+            AzureApiVersion = azureApiVersion
+        };
     }
 
     private class EmptyAiResponseException : Exception

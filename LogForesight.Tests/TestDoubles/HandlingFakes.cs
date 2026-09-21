@@ -575,3 +575,17 @@ internal class FakeHandlingStore : IRecordHandlingStore
             .OrderBy(l => l.LogId)
             .ToList();
 }
+
+internal class FakeAiProbeService : IAiProbeService
+{
+    public AiProbeResult LatestResult { get; set; } = new(false, AiProbeStatus.NotProbed, "AI 尚未探活", DateTime.MinValue);
+
+    public Func<CancellationToken, Task<AiProbeResult>>? OnRefresh { get; set; }
+
+    public Task<AiProbeResult> RefreshAsync(CancellationToken ct = default)
+    {
+        if (OnRefresh != null)
+            return OnRefresh(ct);
+        return Task.FromResult(LatestResult);
+    }
+}

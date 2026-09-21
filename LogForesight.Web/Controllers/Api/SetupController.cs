@@ -24,23 +24,29 @@ public class SetupController : ControllerBase
     }
 
     [HttpGet("status")]
-    public ApiResponse<SetupStatusDto> Status() => ApiResponse<SetupStatusDto>.Ok(_service.GetStatus());
+    public async Task<ApiResponse<SetupStatusDto>> Status(CancellationToken ct)
+    {
+        await _service.RefreshProbeAsync(ct);
+        return ApiResponse<SetupStatusDto>.Ok(_service.GetStatus());
+    }
 
     [HttpPost("skip/{stepId}")]
-    public ApiResponse<SetupStatusDto> Skip(string stepId, [FromBody] SetSkippedRequest request)
+    public async Task<ApiResponse<SetupStatusDto>> Skip(string stepId, [FromBody] SetSkippedRequest request, CancellationToken ct)
     {
         _service.SetSkipped(stepId, request.Skipped);
+        await _service.RefreshProbeAsync(ct);
         return ApiResponse<SetupStatusDto>.Ok(_service.GetStatus());
     }
 
     [HttpPost("hidden")]
-    public ApiResponse<SetupStatusDto> SetHidden([FromBody] SetHiddenRequest request)
+    public async Task<ApiResponse<SetupStatusDto>> SetHidden([FromBody] SetHiddenRequest request, CancellationToken ct)
     {
         _service.SetHidden(request.Hidden);
         _audit.Record(
             action: AuditActions.SettingsUpdate,
             summary: request.Hidden ? "隱藏教學文件裡的啟動精靈入口" : "重新顯示教學文件裡的啟動精靈入口",
             targetKind: "setup_wizard");
+        await _service.RefreshProbeAsync(ct);
         return ApiResponse<SetupStatusDto>.Ok(_service.GetStatus());
     }
 }

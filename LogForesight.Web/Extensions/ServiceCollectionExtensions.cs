@@ -1,4 +1,6 @@
+using System.Net.Http;
 using System.Text;
+
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -253,6 +255,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
         services.AddScoped<IssueOwnerAdminService>();
+        services.AddSingleton<IAiProbeService>(sp =>
+        {
+            var settings = sp.GetRequiredService<ISystemSettingsStore>();
+            var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
+            var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            return new AiProbeService(settings, http);
+        });
         services.AddScoped<SetupReadinessService>();
 
         // Sentinel 名單改由 Web 維護（docs/archive/HISTORY.md 定案 1），讀寫都經 ISentinelStore

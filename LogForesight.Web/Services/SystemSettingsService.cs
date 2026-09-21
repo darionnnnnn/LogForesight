@@ -262,9 +262,9 @@ public class SystemSettingsService : ISystemSettingsService
 
         // 郵件通知（回饋十五輪批次D）：任一路觸發啟用時，收件人與寄件人是硬性前提——
         // 沒有收件人的通知設定等於沒設定，儲存當下就該擋，而不是等到排程觸發時才在 log 裡默默失敗
-        var mailRecipients = NormalizeLines(request.MailRecipients);
-        var anyMailTriggerEnabled = request.MailOnRunCompleted || request.MailDailyEnabled ||
-                                     request.MailWeeklyEnabled || request.MailUrgentEnabled;
+        var mailRecipients = SystemSettingsMailHelper.NormalizeRecipients(request.MailRecipients);
+        var anyMailTriggerEnabled = SystemSettingsMailHelper.HasAnyTriggerEnabled(
+            request.MailOnRunCompleted, request.MailDailyEnabled, request.MailWeeklyEnabled, request.MailUrgentEnabled);
         if (request.MailEnabled && anyMailTriggerEnabled)
         {
             if (string.IsNullOrWhiteSpace(request.SmtpServer))
@@ -278,11 +278,11 @@ public class SystemSettingsService : ISystemSettingsService
         // 建 MailAddress 才炸、又被 SendSafeAsync 靜默吞掉只記 log——使用者會以為通知設好了
         // 卻永遠收不到信，這正是「儲存當下就該擋」最有價值的一類錯誤
         if (!string.IsNullOrWhiteSpace(request.MailFrom) &&
-            !System.Net.Mail.MailAddress.TryCreate(request.MailFrom.Trim(), out _))
+            !SystemSettingsMailHelper.IsValidEmail(request.MailFrom))
             throw DomainException.Validation($"寄件人「{request.MailFrom.Trim()}」不是合法的電子郵件位址。");
         foreach (var recipient in mailRecipients)
         {
-            if (!System.Net.Mail.MailAddress.TryCreate(recipient, out _))
+            if (!SystemSettingsMailHelper.IsValidEmail(recipient))
                 throw DomainException.Validation($"收件人「{recipient}」不是合法的電子郵件位址。");
         }
         if (!RiskLevels.All.Contains(request.MailMinRiskLevel))

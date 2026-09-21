@@ -25,6 +25,7 @@ public class SetupWizardV2Tests : IDisposable
     private readonly ScheduleOptionsStore _scheduleOptions;
     private readonly SetupWizardStateStore _stateStore;
     private readonly PrtgStructureSyncStatusStore _prtgSyncStore;
+    private readonly FakeAiProbeService _aiProbe = new();
 
     public SetupWizardV2Tests()
     {
@@ -64,7 +65,7 @@ public class SetupWizardV2Tests : IDisposable
 
         return new SetupReadinessService(
             health, identity, _settings, _sentinels, _hosts, _groupAccess, _groups,
-            _scheduleOptions, _stateStore, appSettings, _prtgSyncStore);
+            _scheduleOptions, _stateStore, appSettings, _prtgSyncStore, _aiProbe);
     }
 
     private MailNotificationService NewMailService()

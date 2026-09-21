@@ -30,6 +30,7 @@ public class SetupReadinessService
     private readonly SetupWizardStateStore _state;
     private readonly WebAppSettings _webSettings;
     private readonly PrtgStructureSyncStatusStore _prtgSyncStatus;
+    private readonly IAiProbeService _aiProbe;
 
     public SetupReadinessService(
         HealthService health,
@@ -42,7 +43,8 @@ public class SetupReadinessService
         ScheduleOptionsStore scheduleOptions,
         SetupWizardStateStore state,
         WebAppSettings webSettings,
-        PrtgStructureSyncStatusStore prtgSyncStatus)
+        PrtgStructureSyncStatusStore prtgSyncStatus,
+        IAiProbeService aiProbe)
     {
         _health = health;
         _identity = identity;
@@ -55,7 +57,11 @@ public class SetupReadinessService
         _state = state;
         _webSettings = webSettings;
         _prtgSyncStatus = prtgSyncStatus;
+        _aiProbe = aiProbe ?? throw new ArgumentNullException(nameof(aiProbe));
     }
+
+    public Task<AiProbeResult> RefreshProbeAsync(CancellationToken ct = default) =>
+        _aiProbe.RefreshAsync(ct);
 
     private sealed record StepMetadata(
         string Id,
@@ -63,8 +69,8 @@ public class SetupReadinessService
         string? TargetUrl,
         Func<WebAppSettings, bool> CanSkip,
         Func<SetupEvaluationContext, bool> IsDone,
-        string DoneDetail,
-        string NotDoneDetail);
+        Func<SetupEvaluationContext, string> DoneDetail,
+        Func<SetupEvaluationContext, string> NotDoneDetail);
 
     private sealed class SetupEvaluationContext
     {
@@ -76,7 +82,10 @@ public class SetupReadinessService
         public required bool HasAuthorization { get; init; }
         public required bool PrtgConfigured { get; init; }
         public required bool MailConfigured { get; init; }
+        public required string MailDetail { get; init; }
         public required bool AiConfigured { get; init; }
+        public required string AiProbeDetail { get; init; }
+        public required bool LegacyAiConfigured { get; init; }
         public required bool ScheduleEnabled { get; init; }
         public required bool ScheduleConfigured { get; init; }
     }
@@ -86,52 +95,52 @@ public class SetupReadinessService
         new StepMetadata("storage", "儲存體", null,
             _ => false,
             ctx => ctx.StorageOk,
-            "資料庫連線正常。", "資料庫目前無法連線，請檢查連線設定。"),
+            _ => "資料庫連線正常。", _ => "資料庫目前無法連線，請檢查連線設定。"),
 
         new StepMetadata("ad", "AD 驗證", "/admin/settings#ad",
             s => string.Equals(s.Auth?.Provider, "Stub", StringComparison.OrdinalIgnoreCase),
             ctx => ctx.AdConfigured,
-            "AD 驗證已啟用並設定伺服器。", "尚未啟用 AD 驗證或未設定伺服器位址。"),
+            _ => "AD 驗證已啟用並設定伺服器。", _ => "尚未啟用 AD 驗證或未設定伺服器位址。"),
 
         new StepMetadata("admin-account", "管理員帳號", "/admin/users",
             _ => false,
             ctx => ctx.HasAdmins,
-            "已有啟用中的管理員帳號。", "尚未指派任何管理員，請至「使用者」頁建立。"),
+            _ => "已有啟用中的管理員帳號。", _ => "尚未指派任何管理員，請至「使用者」頁建立。"),
 
         new StepMetadata("dept-groups", "部門群組", "/admin/groups",
             _ => true,
             ctx => ctx.HasDeptGroups,
-            "已有啟用中的一般使用者部門群組。", "尚未建立任何一般使用者部門群組，請至「群組與授權」建立。"),
+            _ => "已有啟用中的一般使用者部門群組。", _ => "尚未建立任何一般使用者部門群組，請至「群組與授權」建立。"),
 
         new StepMetadata("netiq", "NetIQ Sentinel 與主機", "/admin/netiq",
             _ => true,
             ctx => ctx.HasNetiqHosts,
-            "已有啟用中的 Sentinel 與可輪巡的 NetIQ 主機。", "尚未設定 Sentinel 或沒有可輪巡的 NetIQ 主機。"),
+            _ => "已有啟用中的 Sentinel 與可輪巡的 NetIQ 主機。", _ => "尚未設定 Sentinel 或沒有可輪巡的 NetIQ 主機。"),
 
         new StepMetadata("groups", "主機群組與授權", "/admin/groups",
             _ => true,
             ctx => ctx.HasAuthorization,
-            "已有部門群組授權或主機負責人設定。", "尚未設定任何部門群組授權或主機負責人——一般使用者將看不到任何主機。"),
+            _ => "已有部門群組授權或主機負責人設定。", _ => "尚未設定任何部門群組授權或主機負責人——一般使用者將看不到任何主機。"),
 
         new StepMetadata("prtg", "PRTG 整合", "/admin/prtg",
             _ => true,
             ctx => ctx.PrtgConfigured,
-            "PRTG 監控已啟用且結構同步正常。", "PRTG 監控尚未啟用、未完成同步或尚無主機對應成功。"),
+            _ => "PRTG 監控已啟用且結構同步正常。", _ => "PRTG 監控尚未啟用、未完成同步或尚無主機對應成功。"),
 
         new StepMetadata("mail", "郵件通知", "/admin/settings#mail",
             _ => true,
             ctx => ctx.MailConfigured,
-            "郵件通知已啟用並設定 SMTP 伺服器。", "尚未啟用郵件通知或未設定 SMTP 伺服器。"),
+            _ => "郵件通知已啟用，SMTP 伺服器、觸發項目與收件人皆已就緒。", ctx => ctx.MailDetail),
 
         new StepMetadata("ai", "AI 服務", "/admin/settings#ai",
             _ => true,
             ctx => ctx.AiConfigured,
-            "AI 服務位址已設定。", "尚未設定 AI 服務位址，分析將以統計模式執行（可正常運作，僅缺白話摘要）。"),
+            _ => "AI 服務探活成功，可正常提供白話摘要。", ctx => ctx.AiProbeDetail),
 
         new StepMetadata("schedule", "排程啟用", "/runs#settings",
             _ => true,
             ctx => ctx.ScheduleConfigured,
-            "排程已啟用且設有執行窗口，將自動定時執行分析。", "排程尚未啟用或未設定執行窗口，僅能於「排程作業」頁手動立即執行。")
+            _ => "排程已啟用且設有執行窗口，將自動定時執行分析。", _ => "排程尚未啟用或未設定執行窗口，僅能於「排程作業」頁手動立即執行。")
     };
 
     private static readonly Dictionary<string, StepMetadata> StepDefinitionsById =
@@ -157,10 +166,12 @@ public class SetupReadinessService
             var oldSevenDoneOrSkipped = OldSevenStepIds.All(id =>
             {
                 var def = StepDefinitionsById[id];
-                // 升級判斷必須沿用舊七步當時的完成口徑。舊版排程只看 Enabled；
-                // 若改用新版「至少一個窗口」，原本已全部完成的站台會被誤判成未完成，
+                // 升級判斷必須沿用舊七步當時的完成口徑。舊版排程只看 Enabled；舊版 AI 只看 AiBaseUrl；
+                // 若改用新版「至少一個窗口」或「實際探活」，原本已全部完成的站台會被誤判成未完成，
                 // 進而在升級後突然顯示三個新增步驟。
-                var legacyDone = id == "schedule" ? evalCtx.ScheduleEnabled : def.IsDone(evalCtx);
+                var legacyDone = id == "schedule"
+                    ? evalCtx.ScheduleEnabled
+                    : (id == "ai" ? evalCtx.LegacyAiConfigured : def.IsDone(evalCtx));
                 return legacyDone || (def.CanSkip(_webSettings) && state.SkippedSteps.Contains(id));
             });
 
@@ -197,7 +208,7 @@ public class SetupReadinessService
                 Done = done,
                 Skipped = skipped,
                 CanSkip = canSkip,
-                Detail = done ? def.DoneDetail : def.NotDoneDetail,
+                Detail = done ? def.DoneDetail(evalCtx) : def.NotDoneDetail(evalCtx),
                 TargetUrl = def.TargetUrl
             };
         }).ToList();
@@ -231,6 +242,9 @@ public class SetupReadinessService
         var scheduleOptions = _scheduleOptions.Get();
         var prtgSync = _prtgSyncStatus.GetOrNull();
 
+        var (mailConfigured, mailDetail) = EvaluateMail(settings);
+        var probe = _aiProbe.LatestResult;
+
         return new SetupEvaluationContext
         {
             StorageOk = _health.GetLiveness().StorageOk,
@@ -240,11 +254,39 @@ public class SetupReadinessService
             HasNetiqHosts = HasPollableNetiqHosts(allHosts),
             HasAuthorization = HasAnyAuthorization(allHosts),
             PrtgConfigured = settings.PrtgEnabled && prtgSync != null && prtgSync.Success && prtgSync.MapOk > 0,
-            MailConfigured = settings.MailEnabled && !string.IsNullOrWhiteSpace(settings.SmtpServer),
-            AiConfigured = !string.IsNullOrWhiteSpace(settings.AiBaseUrl),
+            MailConfigured = mailConfigured,
+            MailDetail = mailDetail,
+            AiConfigured = probe.IsReady,
+            AiProbeDetail = probe.Detail,
+            LegacyAiConfigured = !string.IsNullOrWhiteSpace(settings.AiBaseUrl),
             ScheduleEnabled = scheduleOptions.Enabled,
             ScheduleConfigured = scheduleOptions.Enabled && (scheduleOptions.Windows?.Count ?? 0) > 0
         };
+    }
+
+    private static (bool Configured, string Detail) EvaluateMail(SystemSettings settings)
+    {
+        var mailEnabled = settings.MailEnabled;
+        var hasSmtpServer = !string.IsNullOrWhiteSpace(settings.SmtpServer);
+        var hasTriggers = SystemSettingsMailHelper.HasAnyTriggerEnabled(settings);
+        var hasRecipients = SystemSettingsMailHelper.HasValidRecipient(settings.MailRecipients);
+
+        if (mailEnabled && hasSmtpServer && hasTriggers && hasRecipients)
+        {
+            return (true, "郵件通知已啟用，SMTP 伺服器、觸發項目與收件人皆已就緒。");
+        }
+
+        if (!mailEnabled || !hasSmtpServer)
+        {
+            return (false, "尚未啟用郵件通知或未設定 SMTP 伺服器。");
+        }
+
+        if (!hasTriggers)
+        {
+            return (false, "郵件通知已啟用，但未開啟任何通知觸發項目。");
+        }
+
+        return (false, "郵件通知已啟用，但未設定任何有效收件人。");
     }
 
     private bool HasPollableNetiqHosts(List<WebHost> allHosts)
