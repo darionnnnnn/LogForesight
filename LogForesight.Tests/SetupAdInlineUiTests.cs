@@ -124,7 +124,7 @@ public class SetupAdInlineUiTests
         Assert.Contains("account", adTestBlock);
         Assert.Contains("password", adTestBlock);
 
-        // 2. settings PUT 區塊包含 snapshot 展開與 4 個 AD 欄位，不得含 account 與 password
+        // 2. settings PUT 區塊包含最新設定展開與 4 個 AD 欄位，不得含 account 與 password
         var putIndex = js.IndexOf("api.put('/api/admin/settings'", StringComparison.Ordinal);
         Assert.True(putIndex >= 0, "找不到 /api/admin/settings PUT 呼叫");
 
@@ -132,7 +132,7 @@ public class SetupAdInlineUiTests
         Assert.True(payloadIndex >= 0, "找不到 payload 物件建立");
         var payloadBlock = js.Substring(payloadIndex, putIndex - payloadIndex);
 
-        Assert.Contains("...settingsSnapshot", payloadBlock);
+        Assert.Contains("...latest", payloadBlock);
         Assert.Contains("adAuthEnabled", payloadBlock);
         Assert.Contains("adServers", payloadBlock);
         Assert.Contains("adSearchBase", payloadBlock);

@@ -85,6 +85,71 @@
     </div>
 </template>
 
+<template id="setup-mail-template">
+    <div class="lf-card mt-3" id="setup-mail-form">
+        <div class="lf-card__body">
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="setup-mail-enabled" />
+                <label class="form-check-label fw-semibold" for="setup-mail-enabled">啟用郵件通知</label>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-smtp-server" class="form-label small fw-semibold">SMTP 伺服器</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-smtp-server" placeholder="smtp.corp.local" />
+                </div>
+                <div class="col-sm-3">
+                    <label for="setup-smtp-port" class="form-label small fw-semibold">Port</label>
+                    <input type="number" class="form-control form-control-sm" id="setup-smtp-port" min="1" max="65535" value="25" />
+                </div>
+                <div class="col-sm-3 d-flex align-items-end">
+                    <div class="form-check mb-1">
+                        <input class="form-check-input" type="checkbox" id="setup-smtp-use-tls" />
+                        <label class="form-check-label small" for="setup-smtp-use-tls">使用 TLS</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-smtp-account" class="form-label small fw-semibold">SMTP 帳號（選填）</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-smtp-account" placeholder="留空＝匿名／不驗證" />
+                </div>
+                <div class="col-sm-6">
+                    <label for="setup-smtp-password" class="form-label small fw-semibold">SMTP 密碼（留空沿用）</label>
+                    <input type="password" class="form-control form-control-sm" id="setup-smtp-password" autocomplete="off" placeholder="留空＝沿用既有密碼" />
+                </div>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-mail-from" class="form-label small fw-semibold">寄件人</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-mail-from" placeholder="logforesight@corp.local" />
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="setup-mail-recipients" class="form-label small fw-semibold">收件人</label>
+                <textarea class="form-control form-control-sm" id="setup-mail-recipients" rows="3" placeholder="一行一位，例如：&#10;admin@corp.local"></textarea>
+                <div class="form-text small text-muted">一行一位收件人電子郵件地址。</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold d-block">通知觸發</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="setup-mail-on-run-completed" />
+                    <label class="form-check-label small" for="setup-mail-on-run-completed">排程／手動執行結束後寄執行摘要</label>
+                </div>
+            </div>
+            <div class="p-3 mb-3 border rounded bg-light">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="setup-mail-test-btn">測試寄信</button>
+                    <span class="small" id="setup-mail-test-result"></span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-primary" id="setup-mail-save-btn">儲存並繼續</button>
+                <span class="small" id="setup-mail-save-feedback"></span>
+            </div>
+        </div>
+    </div>
+</template>
+
 @section Scripts {
     <script type="module" src="~/js/pages/setup.js" asp-append-version="true"></script>
 }

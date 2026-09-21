@@ -24,6 +24,15 @@ export function parseServers(raw) {
     return [...new Set(lines)];
 }
 
+/**
+ * 收件人依一行一位 trim、去空白、去重
+ */
+export function parseRecipients(raw) {
+    if (!raw) return [];
+    const lines = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    return [...new Set(lines)];
+}
+
 async function load() {
     const [statusData, settingsData] = await Promise.all([
         api.get('/api/admin/setup/status'),
@@ -116,12 +125,14 @@ function renderSteps() {
 
         if (step.id === 'ad' && !step.done) {
             body.appendChild(renderAdInlineForm(step));
+        } else if (step.id === 'mail' && !step.done) {
+            body.appendChild(renderMailInlineForm(step));
         }
 
         const actions = document.createElement('div');
         actions.className = 'd-flex gap-2 mt-2';
 
-        if (step.targetUrl && !step.done && step.id !== 'ad') {
+        if (step.targetUrl && !step.done && step.id !== 'ad' && step.id !== 'mail') {
             const goButton = document.createElement('a');
             goButton.className = 'btn btn-sm btn-primary';
             goButton.href = appUrl(`${step.targetUrl}?from=setup`);
@@ -239,18 +250,204 @@ function renderAdInlineForm(step) {
             return;
         }
 
-        const payload = {
-            ...settingsSnapshot,
-            adAuthEnabled,
-            adServers,
-            adSearchBase,
-            adSearchFilter
-        };
+        const restore = withBusy(saveBtn, '儲存中');
+        try {
+            const latest = await api.get('/api/admin/settings');
+            const payload = {
+                ...latest,
+                adAuthEnabled,
+                adServers,
+                adSearchBase,
+                adSearchFilter
+            };
+            await api.put('/api/admin/settings', payload);
+            toast('已儲存 AD 驗證設定', 'success');
+            await load();
+            const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
+            if (nextIncomplete) {
+                const target = document.querySelector(`[data-step-row="${nextIncomplete.id}"]`);
+                target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+        } catch (err) {
+            saveFeedback.className = 'small text-danger';
+            saveFeedback.textContent = err?.message || '儲存設定失敗。';
+        } finally {
+            restore();
+        }
+    });
+
+    return form;
+}
+
+function renderMailInlineForm(step) {
+    const template = document.getElementById('setup-mail-template');
+    const form = template.content.firstElementChild.cloneNode(true);
+
+    const enabledCheckbox = form.querySelector('#setup-mail-enabled');
+    const smtpServerInput = form.querySelector('#setup-smtp-server');
+    const smtpPortInput = form.querySelector('#setup-smtp-port');
+    const smtpUseTlsCheckbox = form.querySelector('#setup-smtp-use-tls');
+    const smtpAccountInput = form.querySelector('#setup-smtp-account');
+    const smtpPasswordInput = form.querySelector('#setup-smtp-password');
+    const mailFromInput = form.querySelector('#setup-mail-from');
+    const mailRecipientsInput = form.querySelector('#setup-mail-recipients');
+    const mailOnRunCompletedCheckbox = form.querySelector('#setup-mail-on-run-completed');
+    const testBtn = form.querySelector('#setup-mail-test-btn');
+    const testResult = form.querySelector('#setup-mail-test-result');
+    const saveBtn = form.querySelector('#setup-mail-save-btn');
+    const saveFeedback = form.querySelector('#setup-mail-save-feedback');
+
+    enabledCheckbox.checked = Boolean(settingsSnapshot?.mailEnabled);
+    smtpServerInput.value = settingsSnapshot?.smtpServer ?? '';
+    smtpPortInput.value = settingsSnapshot?.smtpPort || 25;
+    smtpUseTlsCheckbox.checked = Boolean(settingsSnapshot?.smtpUseTls);
+    smtpAccountInput.value = settingsSnapshot?.smtpAccount ?? '';
+    smtpPasswordInput.value = '';
+    smtpPasswordInput.setAttribute('autocomplete', 'off');
+    mailFromInput.value = settingsSnapshot?.mailFrom ?? '';
+    mailRecipientsInput.value = (settingsSnapshot?.mailRecipients ?? []).join('\n');
+    mailOnRunCompletedCheckbox.checked = Boolean(settingsSnapshot?.mailOnRunCompleted);
+    testBtn.type = 'button';
+    saveBtn.type = 'button';
+
+    testBtn.addEventListener('click', async () => {
+        testResult.textContent = '';
+        testResult.className = 'small';
+
+        const smtpServer = smtpServerInput.value.trim();
+        const portVal = smtpPortInput.value.trim();
+        const smtpPort = Number(portVal);
+        const smtpUseTls = smtpUseTlsCheckbox.checked;
+        const smtpAccount = smtpAccountInput.value.trim();
+        const smtpPassword = smtpPasswordInput.value;
+        const mailFrom = mailFromInput.value.trim();
+        const recipients = parseRecipients(mailRecipientsInput.value);
+
+        if (!smtpServer) {
+            testResult.className = 'small text-danger';
+            testResult.textContent = '請輸入 SMTP 伺服器。';
+            smtpServerInput.focus();
+            return;
+        }
+
+        if (!portVal || !Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
+            testResult.className = 'small text-danger';
+            testResult.textContent = 'SMTP Port 必須介於 1~65535。';
+            smtpPortInput.focus();
+            return;
+        }
+
+        if (!mailFrom) {
+            testResult.className = 'small text-danger';
+            testResult.textContent = '請輸入寄件人。';
+            mailFromInput.focus();
+            return;
+        }
+
+        if (recipients.length === 0) {
+            testResult.className = 'small text-danger';
+            testResult.textContent = '請至少輸入一位收件人。';
+            mailRecipientsInput.focus();
+            return;
+        }
+
+        const restore = withBusy(testBtn, '寄送中');
+        try {
+            const result = await api.post('/api/admin/settings/mail-test', {
+                smtpServer,
+                smtpPort,
+                smtpUseTls,
+                smtpAccount,
+                smtpPassword: smtpPassword || null,
+                mailFrom,
+                recipients,
+                subjectTemplate: settingsSnapshot?.mailSubjectTemplate ?? '',
+                bodyIntro: settingsSnapshot?.mailBodyIntro ?? ''
+            }, { silent: true });
+            testResult.className = result.success ? 'small text-success' : 'small text-danger';
+            testResult.textContent = result.message;
+        } catch (err) {
+            testResult.className = 'small text-danger';
+            testResult.textContent = err?.message || '測試寄信失敗。';
+        } finally {
+            restore();
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        saveFeedback.textContent = '';
+        saveFeedback.className = 'small';
+
+        const mailEnabled = enabledCheckbox.checked;
+        const smtpServer = smtpServerInput.value.trim();
+        const portVal = smtpPortInput.value.trim();
+        const smtpPort = Number(portVal);
+        const smtpUseTls = smtpUseTlsCheckbox.checked;
+        const smtpAccount = smtpAccountInput.value.trim();
+        const smtpPassword = smtpPasswordInput.value;
+        const mailFrom = mailFromInput.value.trim();
+        const mailRecipients = parseRecipients(mailRecipientsInput.value);
+        const mailOnRunCompleted = mailOnRunCompletedCheckbox.checked;
+
+        if (!portVal || !Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
+            saveFeedback.className = 'small text-danger';
+            saveFeedback.textContent = 'SMTP Port 必須介於 1~65535。';
+            smtpPortInput.focus();
+            return;
+        }
+
+        if (mailEnabled) {
+            if (!smtpServer) {
+                saveFeedback.className = 'small text-danger';
+                saveFeedback.textContent = '請輸入 SMTP 伺服器。';
+                smtpServerInput.focus();
+                return;
+            }
+
+            if (!mailFrom) {
+                saveFeedback.className = 'small text-danger';
+                saveFeedback.textContent = '請輸入寄件人。';
+                mailFromInput.focus();
+                return;
+            }
+
+            if (mailRecipients.length === 0) {
+                saveFeedback.className = 'small text-danger';
+                saveFeedback.textContent = '請至少輸入一位收件人。';
+                mailRecipientsInput.focus();
+                return;
+            }
+        }
 
         const restore = withBusy(saveBtn, '儲存中');
         try {
+            const latest = await api.get('/api/admin/settings');
+
+            if (mailEnabled) {
+                const hasAnyTrigger = mailOnRunCompleted || Boolean(latest?.mailDailyEnabled || latest?.mailWeeklyEnabled || latest?.mailUrgentEnabled);
+                if (!hasAnyTrigger) {
+                    saveFeedback.className = 'small text-danger';
+                    saveFeedback.textContent = '請至少勾選一項通知觸發（請勾選「執行摘要」）。';
+                    mailOnRunCompletedCheckbox.focus();
+                    return;
+                }
+            }
+
+            const payload = {
+                ...latest,
+                mailEnabled,
+                smtpServer,
+                smtpPort,
+                smtpUseTls,
+                smtpAccount,
+                smtpPassword: smtpPassword || null,
+                mailFrom,
+                mailRecipients,
+                mailOnRunCompleted
+            };
+
             await api.put('/api/admin/settings', payload);
-            toast('已儲存 AD 驗證設定', 'success');
+            toast('已儲存郵件通知設定', 'success');
             await load();
             const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
             if (nextIncomplete) {
