@@ -644,6 +644,7 @@ function resolveSlowQueryHost() {
  * 三個區塊都來自同一次 /api/health/detail。
  */
 async function loadHealthTab({ refresh = false } = {}) {
+    const setupGuideTask = loadSetupGuideHealth();
     let detail;
     try {
         detail = await fetchHealthDetail({ refresh });
@@ -651,12 +652,56 @@ async function loadHealthTab({ refresh = false } = {}) {
         renderEmpty(document.getElementById('health-freshness'), {
             title: '無法載入系統健康資訊', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle'
         });
+        await setupGuideTask;
         return;
     }
     renderFreshness(detail.scheduleFreshness);
     renderSlowQueries(detail.topSlowOperations);
     renderBackgroundJobs(detail);
-    await loadLoginThrottle();
+    await Promise.all([loadLoginThrottle(), setupGuideTask]);
+}
+
+/** 初始設定引導偏好：hidden 時顯示「重新顯示初始設定引導」按鈕，未 hidden 顯示提示文字 */
+async function loadSetupGuideHealth() {
+    const host = document.getElementById('health-setup-guide');
+    if (!host) return;
+    let guide;
+    try {
+        guide = await api.get('/api/me/setup-guide', { silent: true });
+    } catch {
+        renderEmpty(host, { title: '無法載入初始設定狀態', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle' });
+        return;
+    }
+    renderSetupGuideHealth(guide);
+}
+
+function renderSetupGuideHealth(guide) {
+    const host = document.getElementById('health-setup-guide');
+    if (!host) return;
+    if (guide?.hidden) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline-secondary btn-sm';
+        btn.textContent = '重新顯示初始設定引導';
+        btn.addEventListener('click', async () => {
+            const restore = withBusy(btn, '更新中…');
+            try {
+                await api.put('/api/me/setup-guide', { hidden: false });
+                toast('已重新顯示初始設定引導', 'success');
+                await loadSetupGuideHealth();
+            } catch {
+                // api.js 已顯示錯誤
+            } finally {
+                restore();
+            }
+        });
+        host.replaceChildren(btn);
+    } else {
+        const text = document.createElement('span');
+        text.className = 'text-muted small';
+        text.textContent = '引導會在初始設定完成前顯示';
+        host.replaceChildren(text);
+    }
 }
 
 /** 登入暫停：列出被登入節流暫停的帳號與 IP，可逐筆解除 */

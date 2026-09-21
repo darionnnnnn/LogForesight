@@ -53,18 +53,13 @@
                 </div>
             </header>
 
-            @* 回到啟動精靈提示列（回饋十八輪批次H）：從精靈「前往設定」點過來時顯示，
-               layout.js 依 ?from=setup 判斷是否要顯示，內容純前端組裝 *@
-            <div id="lf-setup-return-banner" class="d-none lf-no-print"></div>
-
-            @* 排程資料過期告示：只對 Maintain／DevMonitor 顯示。layout.js 進頁查一次 /api/health/freshness，
-               過期且未確認靜音時才組一條；其餘情況容器完全空著，零高度不佔位。 *@
-            <div id="lf-health-banner" class="lf-no-print"></div>
-
-            @* 全站執行中告示（回饋四十五輪批次A3）：分析與網站同一個行程，執行期間整站變慢，
-               告示放在共用版型讓每一頁都看得到原因。內容由 layout.js 輪詢 /api/run-activity 組裝；
-               閒置時容器完全空著（不帶 margin/padding），零高度不佔位。 *@
-            <div id="lf-run-activity-banner" class="lf-no-print"></div>
+            @* 頁頂提醒區（F1c 提醒協調）：收納 setup、health、run activity，超出顯示摘要 *@
+            <div id="lf-top-alerts" class="lf-no-print">
+                <div id="lf-setup-return-banner" class="d-none lf-no-print"></div>
+                <div id="lf-health-banner" class="lf-no-print"></div>
+                <div id="lf-run-activity-banner" class="lf-no-print"></div>
+                <div id="lf-alerts-summary" class="d-none lf-no-print"></div>
+            </div>
 
             <main class="lf-content">
                 @RenderBody()
