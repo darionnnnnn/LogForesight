@@ -523,20 +523,21 @@ function renderOrders(data) {
  */
 function renderOrdersEmpty() {
     if (!(isSelf && statusSelect.value === 'active' && !pausedCheckbox.checked)) {
-        renderEmpty(ordersEl, { title: '目前沒有符合條件的交辦單' });
+        renderEmpty(ordersEl, { title: '目前沒有符合條件的交辦單', hint: '請調整狀態篩選或取消勾選「只看暫停」。' });
         return;
     }
     if (summary.visibleHostCount === 0) {
         renderEmpty(ordersEl, { title: '尚未被授權任何主機', hint: '請聯絡系統管理員為你設定主機群組授權。' });
         return;
     }
-    renderEmpty(ordersEl, { title: '目前沒有被指派的工作' });
+    renderEmpty(ordersEl, { title: '目前沒有被指派的工作', hint: '目前沒有進行中的交辦單；可前往總覽儀表板查看最新狀況。' });
     const link = document.createElement('a');
     link.href = appUrl('/');
     link.textContent = '前往總覽儀表板';
-    const hint = document.createElement('div');
-    hint.appendChild(link);
-    ordersEl.firstElementChild.appendChild(hint);
+    const actionEl = document.createElement('div');
+    actionEl.className = 'mt-2';
+    actionEl.appendChild(link);
+    ordersEl.firstElementChild.appendChild(actionEl);
 }
 
 function renderPausedNote() {
@@ -927,7 +928,7 @@ function buildMemberPanel(row, cell) {
         renderTable(tableBox, {
             columns,
             rows: items,
-            empty: { title: '沒有符合條件的主機' }
+            empty: { title: '沒有符合條件的主機', hint: '請切換上方的處理狀態篩選條件。' }
         });
 
         renderPagination(pagerBox, {
@@ -1018,7 +1019,7 @@ function renderDays(days) {
         rowHref: d => `/records/${d.hostId}/${d.date}`,
         empty: {
             title: includeResolvedDays ? '沒有被指派的風險日' : '目前沒有未結案的風險日',
-            hint: includeResolvedDays ? '' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'
+            hint: includeResolvedDays ? '目前無任何指派至此處理人的風險日紀錄。' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'
         }
     });
 }

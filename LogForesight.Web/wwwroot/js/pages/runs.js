@@ -214,7 +214,7 @@ function renderSummary(summaryPage) {
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
         // 點日期就地展開該天每台主機的狀態（§2）：懶載入，展開才 fetch，各列狀態獨立
         onRowExpand: (summary, cell) => renderDayDetailInto(cell, summary.date),
-        empty: { title: '尚無執行紀錄' }
+        empty: { title: '尚無執行紀錄', hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。' }
     });
 
     // 分頁控制（批次G）：總頁數由後端回傳，只有多頁時才顯示（renderPagination 自動判定）
@@ -304,7 +304,7 @@ async function renderDayDetailInto(cell, date) {
             rows: pageRows,
             sort: state.sort,
             onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; render(); },
-            empty: { title: '這天沒有任何主機資料' }
+            empty: { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
         });
 
         renderPagination(pagerEl, {
@@ -434,7 +434,7 @@ function renderRunListTable() {
             runListSort = { key, dir };
             renderRunListTable();
         },
-        empty: { title: '此期間沒有執行紀錄' }
+        empty: { title: '此期間沒有執行紀錄', hint: '請調整上方的查詢期間，或至排程設定確認執行週期。' }
     });
 }
 

@@ -723,7 +723,7 @@ async function loadLoginThrottle() {
             { key: 'action', title: '', render: r => loginThrottleClearButton(r.key) }
         ],
         rows: entries ?? [],
-        empty: { title: '目前沒有被暫停的帳號或 IP' }
+        empty: { title: '目前沒有被暫停的帳號或 IP', hint: '所有帳號與來源 IP 目前皆處於正常可登入狀態。' }
     });
 }
 

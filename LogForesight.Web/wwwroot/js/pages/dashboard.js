@@ -45,7 +45,7 @@ async function load() {
     renderCategories(data);
     renderTopIssues(data);
     renderHosts(data);
-    renderGroupRisk(data);
+    renderGroupRisk(data, user);
 
     loadAiFocus();   // AI 今日焦點：非同步、失敗靜默，不擋主畫面
 }
@@ -723,7 +723,8 @@ function hostLink(host) {
 }
 
 /** 依群組風險概況（§5.4 D-4）：點列導向問題查詢並帶群組篩選，兩千台規模的主要動線是「先群組後下鑽」 */
-function renderGroupRisk(data) {
+function renderGroupRisk(data, user) {
+    const canMaintain = hasCapability(user, 'Maintain');
     renderTable(document.getElementById('dashboard-group-risk'), {
         columns: [
             { title: '群組', render: g => g.groupName },
@@ -734,7 +735,9 @@ function renderGroupRisk(data) {
         ],
         rows: data.groupRisk,
         rowHref: g => `/records?groupIds=${g.groupId}&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`,
-        empty: { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
+        empty: canMaintain
+            ? { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
+            : { title: '尚未設定任何主機群組', hint: '請聯絡系統管理員建立主機群組並指派主機。' }
     });
 }
 

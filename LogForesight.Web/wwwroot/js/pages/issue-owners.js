@@ -189,7 +189,7 @@ function renderMuteHistoryDetail(rule) {
 
     const history = rule.muteHistory ?? [];
     if (history.length === 0) {
-        renderEmpty(tableContainer, { title: '沒有靜音紀錄', icon: 'bell-slash' });
+        renderEmpty(tableContainer, { title: '沒有靜音紀錄', hint: '此問題過去未曾設定過靜音區間。', icon: 'bell-slash' });
         return wrap;
     }
 
@@ -221,7 +221,7 @@ function renderMuteHistoryDetail(rule) {
             }
         ],
         rows: history,
-        empty: { title: '沒有靜音紀錄' }
+        empty: { title: '沒有靜音紀錄', hint: '此問題過去未曾設定過靜音區間。' }
     });
 
     return wrap;

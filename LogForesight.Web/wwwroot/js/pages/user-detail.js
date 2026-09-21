@@ -226,7 +226,7 @@ function renderOpenWork(workload) {
         ],
         rows: workload.cases,
         rowHref: c => `/records/${c.hostId}/${c.lastLinkedDate}`,
-        empty: { title: '目前沒有進行中案件', hint: '' }
+        empty: { title: '目前沒有進行中案件', hint: '被指派問題並建立案件後，會顯示在這裡。' }
     });
 
     // 未結案風險日：workload 帶回近 30 天已結案的日子，這裡只留推導後未結案的。
@@ -249,7 +249,7 @@ function renderOpenWork(workload) {
         ],
         rows: openDays,
         rowHref: d => `/records/${d.hostId}/${d.date}`,
-        empty: { title: '目前沒有未結案的風險日', hint: '' }
+        empty: { title: '目前沒有未結案的風險日', hint: '所有指派的風險日皆已結案，或尚未被指派任何風險日。' }
     });
 }
 

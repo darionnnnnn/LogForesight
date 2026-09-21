@@ -124,7 +124,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
             { title: '', className: 'text-end', render: g => groupActions('user', g) }
         ],
         rows: groups,
-        empty: { title: '（無）' }
+        empty: { title: '尚無群組', hint: '可透過右上角「新增群組」建立。' }
     });
     container.appendChild(table);
 }

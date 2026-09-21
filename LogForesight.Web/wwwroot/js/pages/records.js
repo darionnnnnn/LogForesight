@@ -802,7 +802,7 @@ async function renderIssueOccurrences(cell, group) {
     }
 
     if (!result.items.length) {
-        renderEmpty(wrap, { title: '此範圍內沒有可展開的主機日' });
+        renderEmpty(wrap, { title: '此範圍內沒有可展開的主機日', hint: '可能因目前的篩選條件或權限限制未包含此問題的主機日，可調整篩選或切換至明細視角。' });
         return;
     }
 
@@ -818,7 +818,7 @@ async function renderIssueOccurrences(cell, group) {
         ],
         rows: result.items,
         rowHref: r => `/records/${r.hostId}/${r.date}`,
-        empty: { title: '沒有資料' }
+        empty: { title: '沒有資料', hint: '查無符合目前條件的主機日。' }
     });
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
@@ -1300,7 +1300,7 @@ function renderBulkCloseForm(body, group, preview) {
             { title: '狀態', render: h => bulkCloseStatusCell(h) }
         ],
         rows: preview.hosts,
-        empty: { title: '目前查詢範圍內沒有受影響的主機' }
+        empty: { title: '目前查詢範圍內沒有受影響的主機', hint: '所選問題在目前查詢範圍內沒有可批次套用結論的主機，請調整查詢條件後再試。' }
     });
     form.appendChild(table);
 

@@ -455,7 +455,7 @@ function issueHistoryBody(history) {
     }
 
     if (history.cases.length === 0 && history.entries.length === 0) {
-        renderEmpty(wrap, { title: '查無先前處理紀錄' });
+        renderEmpty(wrap, { title: '查無先前處理紀錄', hint: '此問題在此主機過去未曾有結案或處理歷程。' });
     }
 
     return wrap;
@@ -1660,7 +1660,7 @@ function renderAlerts(detail) {
 
     const hasSuppressed = detail.suppressedTrendAlerts?.length > 0 || detail.suppressedCorrelationAlerts?.length > 0;
     if (detail.correlationAlerts.length === 0 && detail.trendAlerts.length === 0 && !hasSuppressed) {
-        renderEmpty(container, { title: '無關聯或趨勢訊號' });
+        renderEmpty(container, { title: '無關聯或趨勢訊號', hint: '當日未偵測到跨事件關聯或異常趨勢告警。' });
         return;
     }
 
@@ -1878,7 +1878,7 @@ function renderCategories(detail) {
     const container = document.getElementById('detail-categories');
 
     if (detail.categories.length === 0) {
-        renderEmpty(container, { title: '無分類資料' });
+        renderEmpty(container, { title: '無分類資料', hint: '當日未偵測到任何類別的問題事件。' });
         return;
     }
 
