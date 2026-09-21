@@ -173,6 +173,12 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
             .ToList();
     }
 
+    public List<RecordHandlingLog> GetReassignments(long previousHandlerId, DateTime from) =>
+        JsonLogParser.Parse<RecordHandlingLog>(_logStore.ReadLines(from, null), LfJsonOptions.Compact)
+            .Where(l => l.Action == HandlingActions.CaseReassign && l.PreviousHandlerId == previousHandlerId &&
+                        l.CaseId != null && l.CreatedAt >= from)
+            .OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.LogId).ToList();
+
     /// <summary>
     /// 續號探測的回看行數。要涵蓋**一整個插入批次**：批次寫入（<see cref="AppendLogs"/>）在 SQL Server 上
     /// 以 MERGE 一次插入多列，自增的 seq 不保證照清單順序配發，LogId 最大的那列不一定是 seq 最大的那列

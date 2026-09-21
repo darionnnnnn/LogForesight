@@ -57,9 +57,8 @@ const NAV_SECTIONS = [
             // 沒有這個入口就搆不到全新環境的排程初始設定）
             { href: '/runs', label: '排程作業', icon: 'activity', requires: ['DevMonitor', 'Maintain'] },
             { href: '/audit', label: '操作紀錄', icon: 'journal-text', requires: 'ViewAudit' },
-            // 操作說明書（docs/archive/FEEDBACK-15-PLAN.md 批次E）：刻意放側欄最下方——
-            // 僅 Maintain 顯示，不是日常監控/管理動線的一部分，擺最後才不會擠掉更常用的項目
-            { href: '/help/manual', label: '操作說明書', icon: 'info-circle', requires: 'Maintain' }
+            // 操作說明書：全登入角色皆可見入口，章節內容由 API 依權限過濾
+            { href: '/help/manual', label: '操作說明書', icon: 'info-circle' }
         ]
     }
 ];

@@ -11,7 +11,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad } from '../core/ui.js';
+import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
@@ -134,8 +134,97 @@ function renderList() {
             title: '尚未指派任何問題負責人',
             hint: '按右上角「新增規則」開始指派——問題負責人是長期負責人，該問題之後每天出現時會自動建案指派給他，郵件通知也優先看這裡。'
         },
-        stickyLastColumn: true
+        stickyLastColumn: true,
+        onRowExpand: (rule, cell) => {
+            const actions = document.createElement('div');
+            cell.appendChild(actions);
+            cell.appendChild(renderMuteHistoryDetail(rule));
+            loadMuteActions(rule, actions);
+        }
     });
+}
+
+async function loadMuteActions(rule, container) {
+    renderLoading(container);
+    try {
+        const rows = await api.get(`/api/admin/issue-owners/${encodeURIComponent(rule.sourceName)}/${rule.eventId}/mute-history`, { silent: true });
+        const heading = document.createElement('p');
+        heading.className = 'fw-semibold mt-3';
+        heading.textContent = '最近 10 筆靜音操作（保留期間內）';
+        const table = document.createElement('div');
+        container.replaceChildren(heading, table);
+        renderTable(table, {
+            rows,
+            columns: [
+                { title: '時間', render: row => formatDateTime(row.at) },
+                { title: '操作者', render: row => row.byAccount || '—' },
+                { title: '動作', render: row => row.action },
+                { title: '說明', render: row => row.summary }
+            ],
+            empty: { title: '沒有靜音操作紀錄', hint: '下方仍可查看留存的靜音區間。' }
+        });
+    } catch {
+        const message = document.createElement('span');
+        message.textContent = '載入靜音操作失敗。';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn btn-sm btn-outline-secondary';
+        retry.textContent = '重試';
+        retry.addEventListener('click', () => loadMuteActions(rule, container));
+        container.replaceChildren(message, retry);
+    }
+}
+
+function renderMuteHistoryDetail(rule) {
+    const wrap = document.createElement('div');
+    wrap.className = 'p-3 bg-light border-top';
+
+    const header = document.createElement('div');
+    header.className = 'fw-semibold mb-2 text-secondary small';
+    header.textContent = '留存的靜音區間';
+    wrap.appendChild(header);
+
+    const tableContainer = document.createElement('div');
+    wrap.appendChild(tableContainer);
+
+    const history = rule.muteHistory ?? [];
+    if (history.length === 0) {
+        renderEmpty(tableContainer, { title: '沒有靜音紀錄', icon: 'bell-slash' });
+        return wrap;
+    }
+
+    renderTable(tableContainer, {
+        columns: [
+            {
+                title: '時間',
+                className: 'text-nowrap',
+                render: m => m.at ? formatDateTime(m.at) : (m.from ? formatDateTime(m.from).slice(0, 10) : '—')
+            },
+            {
+                title: '操作者',
+                className: 'text-nowrap',
+                render: m => m.byAccount || '—'
+            },
+            {
+                title: '開始日',
+                className: 'text-nowrap',
+                render: m => m.from ? formatDateTime(m.from).slice(0, 10) : '—'
+            },
+            {
+                title: '到期日',
+                className: 'text-nowrap',
+                render: m => m.to ? formatDateTime(m.to).slice(0, 10) : '—'
+            },
+            {
+                title: '理由',
+                render: m => m.reason || '—'
+            }
+        ],
+        rows: history,
+        empty: { title: '沒有靜音紀錄' }
+    });
+
+    return wrap;
 }
 
 function renderMuted(text) {

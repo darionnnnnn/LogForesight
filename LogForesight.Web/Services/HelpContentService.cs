@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -12,7 +13,7 @@ namespace LogForesight.Web.Services;
 /// manifest 有填 aiFile 時才有值；要餵給 AI 的內容一律走 <see cref="ContentForAi"/>，
 /// 不要直接讀這個欄位。</summary>
 public record HelpChapter(string Id, string Title, string Content, List<string> Keywords, List<string> Related, string Icon,
-    string Type = "markdown", string? Href = null, string AiContent = "")
+    string Type = "markdown", string? Href = null, string AiContent = "", string? Requires = null)
 {
     /// <summary>實際餵給 AI 的內容：沒有 AI 版時 fallback 成使用者版。
     /// **fallback 只寫在這裡一處**——寫在載入端的話，任何直接建構 HelpChapter 的地方
@@ -35,27 +36,39 @@ public class HelpContentService
 
     public IReadOnlyList<HelpChapter> Chapters => _chapters.Value;
 
-    /// <summary>
-    /// <paramref name="hideSetupWizard"/>（回饋十八輪批次H）：精靈全部步驟完成後使用者選擇隱藏時，
-    /// 濾掉 id=setup-wizard 的導引卡章節。過濾放在這裡而不是 <see cref="Load"/>——章節內容
-    /// 編譯進組件、Lazy 只載入一次，不該讓「隱藏與否」這種會變動的狀態滲進那份快取；
-    /// 每次呼叫依當下狀態現算，快取本身維持與狀態無關。
-    /// </summary>
-    public HelpManualDto GetManual(bool hideSetupWizard = false) => new()
+    /// <summary>依檢視者的 Capabilities 過濾出可見章節清單。</summary>
+    public IReadOnlyList<HelpChapter> GetVisibleChapters(IReadOnlySet<Capability> capabilities, bool hideSetupWizard = false)
     {
-        Chapters = Chapters
+        return Chapters
             .Where(c => !(hideSetupWizard && c.Id == "setup-wizard"))
-            .Select(c => new HelpChapterDto
+            .Where(c => c.Requires == null || (Enum.TryParse<Capability>(c.Requires, out var required) && capabilities.Contains(required)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 依檢視者的 Capabilities 過濾可見章節，並將指向已被過濾章節的 Related 連結一併剪除（prune）。
+    /// <paramref name="hideSetupWizard"/>（回饋十八輪批次H）：精靈全部步驟完成後使用者選擇隱藏時，
+    /// 濾掉 id=setup-wizard 的導引卡章節。
+    /// </summary>
+    public HelpManualDto GetManual(IReadOnlySet<Capability> capabilities, bool hideSetupWizard = false)
+    {
+        var visibleChapters = GetVisibleChapters(capabilities, hideSetupWizard);
+        var visibleIds = visibleChapters.Select(c => c.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return new HelpManualDto
+        {
+            Chapters = visibleChapters.Select(c => new HelpChapterDto
             {
                 Id = c.Id,
                 Title = c.Title,
                 Content = c.Content,
-                Related = c.Related,
+                Related = c.Related.Where(id => visibleIds.Contains(id)).ToList(),
                 Icon = c.Icon,
                 Type = c.Type,
                 Href = c.Href
             }).ToList()
-    };
+        };
+    }
 
     private static List<HelpChapter> Load()
     {
@@ -75,7 +88,7 @@ public class HelpContentService
             if (entry.Type == "link")
             {
                 chapters.Add(new HelpChapter(entry.Id, entry.Title, "", entry.Keywords, entry.Related, entry.Icon,
-                    entry.Type, entry.Href, AiContent: ""));
+                    entry.Type, entry.Href, AiContent: "", Requires: entry.Requires));
                 continue;
             }
 
@@ -100,7 +113,7 @@ public class HelpContentService
             }
 
             chapters.Add(new HelpChapter(entry.Id, entry.Title, content,
-                entry.Keywords, entry.Related, entry.Icon, entry.Type, entry.Href, AiContent: aiContent));
+                entry.Keywords, entry.Related, entry.Icon, entry.Type, entry.Href, AiContent: aiContent, Requires: entry.Requires));
         }
         return chapters;
     }
@@ -133,6 +146,9 @@ public class HelpContentService
         /// <summary>選填：AI 問答用的詳細版內容檔（回饋二十七輪作業 G）。沒填就沿用
         /// <see cref="File"/> 的內容——使用者版與 AI 版分離是加值，不是每章的必要條件。</summary>
         public string? AiFile { get; set; }
+
+        /// <summary>選填：章節所需的 Capability 名稱（例："Maintain"）。未指定表示公開章節，登入者皆可見。</summary>
+        public string? Requires { get; set; }
     }
 
     private class ManifestRoot

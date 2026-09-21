@@ -1,4 +1,5 @@
 using System.Text;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -29,11 +30,13 @@ public class HelpQaService
 
     private readonly HelpContentService _content;
     private readonly IWebAiService _ai;
+    private readonly ICurrentUser _currentUser;
 
-    public HelpQaService(HelpContentService content, IWebAiService ai)
+    public HelpQaService(HelpContentService content, IWebAiService ai, ICurrentUser currentUser)
     {
         _content = content;
         _ai = ai;
+        _currentUser = currentUser;
     }
 
     /// <summary>AI 是否已設定——手冊頁據此決定要不要顯示問答框，或改換說明文案</summary>
@@ -51,7 +54,8 @@ public class HelpQaService
 
         if (!_ai.Available) return null;
 
-        var selected = HelpChapterScorer.SelectChapters(trimmed, _content.Chapters, ContentTokenBudget);
+        var visibleChapters = _content.GetVisibleChapters(_currentUser.Capabilities);
+        var selected = HelpChapterScorer.SelectChapters(trimmed, visibleChapters, ContentTokenBudget);
         var userPrompt = BuildUserPrompt(trimmed, selected);
 
         var answer = await _ai.ChatOnceAsync(SystemPrompt, userPrompt);

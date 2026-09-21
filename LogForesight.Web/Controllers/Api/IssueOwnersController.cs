@@ -26,6 +26,22 @@ public class IssueOwnersController : ControllerBase
     [HttpGet]
     public ApiResponse<List<IssueOwnerDto>> List() => ApiResponse<List<IssueOwnerDto>>.Ok(_service.List());
 
+    /// <summary>按需讀取此問題最近的靜音操作，只回傳白名單欄位，不開放一般稽核明細。</summary>
+    [HttpGet("{source}/{eventId:int}/mute-history")]
+    public ApiResponse<List<IssueMuteActionDto>> MuteHistory(string source, int eventId,
+        [FromServices] AuditLogStore audit, [FromServices] ISystemSettingsStore settings)
+    {
+        var rows = audit.Query(new AuditQuery
+        {
+            From = DateTime.Today.AddDays(-Math.Max(1, settings.Get().AuditRetentionDays)),
+            TargetKind = "issue_owner", TargetId = $"{source}/{eventId}",
+            Actions = new() { AuditActions.IssueMute, AuditActions.IssueUnmute },
+            Result = AuditResult.Ok, PageSize = 10
+        }).Items;
+        return ApiResponse<List<IssueMuteActionDto>>.Ok(rows.Select(e => new IssueMuteActionDto(
+            e.OccurredAt, e.Account, e.Action == AuditActions.IssueUnmute ? "解除靜音" : "設定／延長靜音", e.Summary)).ToList());
+    }
+
     /// <summary>問題選擇器候選項：近期出現過的問題，供新增規則時挑選（也允許前端手動輸入不在清單內的值）</summary>
     [HttpGet("recent-issues")]
     public ApiResponse<List<RecentIssueOptionDto>> RecentIssues() => ApiResponse<List<RecentIssueOptionDto>>.Ok(_service.RecentIssues());

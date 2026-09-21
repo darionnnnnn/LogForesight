@@ -441,6 +441,7 @@ public class WorkOrderCoordinator
     private void ReassignCases(IReadOnlyList<IssueCase> cases, long newHandlerId, long workOrderId, WorkOrderActor actor)
     {
         if (cases.Count == 0) return;
+        var previousHandlers = cases.ToDictionary(c => c.CaseId, c => c.HandlerId);
 
         foreach (var issueCase in cases)
         {
@@ -456,6 +457,7 @@ public class WorkOrderCoordinator
             {
                 HostName = issueCase.HostName, Date = issueCase.LastLinkedDate, Status = issueCase.Status,
                 IssueKey = issueCase.IssueKey, IssueLabel = issueCase.IssueLabel, Note = ReassignLogNote,
+                CaseId = issueCase.CaseId, PreviousHandlerId = previousHandlers[issueCase.CaseId], HandlerId = newHandlerId,
                 ActorId = actor.ActorId, ActorAccount = actor.ActorAccount,
                 Action = HandlingActions.CaseReassign, CreatedAt = actor.OccurredAt
             });

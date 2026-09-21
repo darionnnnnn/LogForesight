@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -22,6 +24,8 @@ public class UserAdminService
     private readonly UserCapabilityResolver _capabilities;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly IRecordHandlingStore _handlings;
+    private readonly ISystemSettingsStore _settings;
 
     public UserAdminService(
         IUserStore users,
@@ -33,7 +37,9 @@ public class UserAdminService
         IAuditService audit,
         UserCapabilityResolver capabilities,
         IUserDisplayNameService userDisplayNames,
-        PermissionVersionStamp permissionVersion)
+        PermissionVersionStamp permissionVersion,
+        IRecordHandlingStore handlings,
+        ISystemSettingsStore settings)
     {
         _permissionVersion = permissionVersion;
         _users = users;
@@ -45,6 +51,8 @@ public class UserAdminService
         _audit = audit;
         _capabilities = capabilities;
         _userDisplayNames = userDisplayNames;
+        _handlings = handlings;
+        _settings = settings;
     }
 
     public List<UserDto> GetUsers()
@@ -143,8 +151,10 @@ public class UserAdminService
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().HostId, StringComparer.OrdinalIgnoreCase);
 
-        return _cases.GetByHandler(userId)
-            .OrderByDescending(c => c.CreatedAt)
+        var myCases = _cases.GetByHandler(userId);
+        var myCaseIds = myCases.Select(c => c.CaseId).ToHashSet();
+
+        var result = myCases
             .Select(c => new UserAssignmentHistoryDto
             {
                 CaseId = c.CaseId,
@@ -162,6 +172,35 @@ public class UserAdminService
                 WorkOrderId = c.WorkOrderId
             })
             .ToList();
+
+        // 舊紀錄沒有原處理人時不猜測；一次讀取保留期內具有明確身分的改派事件。
+        var cutoff = DateTime.Today.AddDays(-Math.Max(1, _settings.Get().AuditRetentionDays));
+        var reassigned = _handlings.GetReassignments(userId, cutoff)
+            .Where(l => !myCaseIds.Contains(l.CaseId!))
+            .GroupBy(l => l.CaseId!)
+            .Select(g => g.First());
+        foreach (var log in reassigned)
+        {
+            var next = log.HandlerId.HasValue ? _users.Get(log.HandlerId.Value) : null;
+            var name = next == null ? "其他處理人" : _userDisplayNames.Of(next.DisplayName);
+            result.Add(new UserAssignmentHistoryDto
+            {
+                CaseId = log.CaseId!,
+                HostId = hostIdByName.TryGetValue(log.HostName, out var hostId) ? hostId : null,
+                HostName = log.HostName,
+                IssueLabel = log.IssueLabel ?? "",
+                Status = "reassigned",
+                StatusText = $"已改派給 {name}",
+                Closed = true,
+                CreatedAt = log.CreatedAt,
+                CreatedByAccount = log.ActorAccount,
+                ClosedAt = log.CreatedAt,
+                FirstLinkedDate = log.Date.ToString("yyyy-MM-dd"),
+                LastLinkedDate = log.Date.ToString("yyyy-MM-dd"),
+                NewHandler = name
+            });
+        }
+        return result.OrderByDescending(c => c.CreatedAt).ToList();
     }
 
     public UserDto SaveUser(SaveUserRequest request)

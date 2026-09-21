@@ -205,6 +205,7 @@ public static class AuditActions
 /// <summary>稽核查詢條件（全部為選用，null = 不限）</summary>
 public class AuditQuery
 {
+    public string? TargetId { get; set; }
     public DateTime? From { get; set; }
     public DateTime? To { get; set; }
     public long? UserId { get; set; }

@@ -438,7 +438,7 @@ public class IssueOwnerAdminService
 
     private static IssueMuteDto ToMuteDto(MuteInterval m) => new()
     {
-        From = m.From, To = m.To, Reason = m.Reason, ByAccount = m.ByAccount
+        From = m.From, To = m.To, Reason = m.Reason, ByAccount = m.ByAccount, At = m.At
     };
 
     /// <summary>

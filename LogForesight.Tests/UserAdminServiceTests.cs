@@ -19,6 +19,7 @@ public class UserAdminServiceTests
     private readonly FakeIssueCaseStore _cases = new();
     private readonly RecordingAuditService _audit = new();
     private readonly FakeSystemSettingsStore _settings = new();
+    private readonly FakeHandlingStore _history = new();
 
     /// <summary>
     /// 使用者詳細（§3）要回答「這個人看得到什麼」，因此刻意串**真實的**
@@ -32,7 +33,32 @@ public class UserAdminServiceTests
             _users, _groups, _access, _hosts, _cases, _settings),
         _audit,
         new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts),
-        new UserDisplayNameService(_settings), TestPermissionStamps.Shared);
+        new UserDisplayNameService(_settings), TestPermissionStamps.Shared, _history, _settings);
+
+    [Fact]
+    public void 改派歷程只認明確原處理人_不受案件最近掛接日移動影響()
+    {
+        var user = SetupVisibilityFixture();
+        var next = _users.Upsert(new WebUser { Account = "next", DisplayName = "新處理人", Active = true });
+        _settings.Update(s => s.AuditRetentionDays = 30);
+        foreach (var entry in new[]
+        {
+            new RecordHandlingLog { CaseId = "mine", PreviousHandlerId = user.UserId, HandlerId = next.UserId, CreatedAt = DateTime.Now.AddDays(-2) },
+            new RecordHandlingLog { CaseId = "other", PreviousHandlerId = next.UserId, HandlerId = user.UserId, CreatedAt = DateTime.Now.AddDays(-1) },
+            new RecordHandlingLog { CaseId = "unknown", Note = "移入單號 123", CreatedAt = DateTime.Now },
+            new RecordHandlingLog { CaseId = "expired", PreviousHandlerId = user.UserId, HandlerId = next.UserId, CreatedAt = DateTime.Now.AddDays(-40) }
+        })
+        {
+            entry.HostName = "SRV-A";
+            entry.Date = DateTime.Today.AddDays(-10);
+            entry.Action = HandlingActions.CaseReassign;
+            _history.AppendLog(entry);
+        }
+        var row = Assert.Single(Create().GetUserDetail(user.UserId).AssignmentHistory);
+        Assert.Equal("mine", row.CaseId);
+        Assert.Equal("reassigned", row.Status);
+        Assert.Equal("新處理人", row.NewHandler);
+    }
 
     private long AddGroup(string name) => _groups.Upsert(new UserGroup { GroupName = name, Role = UserRole.User, Active = true }).GroupId;
 

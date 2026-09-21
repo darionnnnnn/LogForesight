@@ -136,7 +136,7 @@ function renderKpi(detail, workload) {
         { value: detail.visibleHosts.length, label: '可見主機' },
         // 這兩張來自 workload（檢視者範圍），與左右兩張的母體不同，必須講出來
         { value: workload.openCaseCount, label: '處理中案件', hint: scopeNote, viewerScoped: true },
-        { value: detail.assignmentHistory.filter(h => h.closed).length, label: '已結案案件' },
+        { value: detail.assignmentHistory.filter(h => h.closed && h.status !== 'reassigned').length, label: '已結案案件' },
         {
             value: workload.overdueCount,
             label: '逾期',
@@ -254,7 +254,7 @@ function renderOpenWork(workload) {
 }
 
 function renderClosedWork(history) {
-    const closed = history.filter(h => h.closed);
+    const closed = history.filter(h => h.closed && h.status !== 'reassigned');
 
     renderTable(document.getElementById('user-closed-work'), {
         columns: [
@@ -305,8 +305,14 @@ function renderAssignmentHistory(history) {
 function historyStatusCell(item) {
     const wrap = document.createElement('span');
     wrap.className = 'd-flex gap-1 align-items-center flex-wrap';
+    const isReassigned = item.status === 'reassigned';
     wrap.appendChild(badge(item.statusText, item.closed ? 'secondary' : 'primary'));
-    if (item.closed && item.closedAt) {
+    if (isReassigned && item.closedAt) {
+        const when = document.createElement('span');
+        when.className = 'text-muted small';
+        when.textContent = `改派於 ${formatDateTime(item.closedAt)}`;
+        wrap.appendChild(when);
+    } else if (item.closed && item.closedAt) {
         const when = document.createElement('span');
         when.className = 'text-muted small';
         when.textContent = `結案於 ${formatDateTime(item.closedAt)}`;

@@ -331,6 +331,7 @@ public class IssueCaseCoordinator
             IssueKey = issueKey,
             IssueLabel = openCase.IssueLabel,
             Note = "變更案件處理人",
+            CaseId = openCase.CaseId, PreviousHandlerId = previousHandlerId, HandlerId = newHandlerId,
             ActorId = actorId,
             ActorAccount = actorAccount,
             Action = HandlingActions.CaseReassign,

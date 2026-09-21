@@ -52,8 +52,11 @@ public class IssueOwnerDto
 }
 
 /// <summary>問題靜音區間（From／To 為日期，含首尾）</summary>
+public sealed record IssueMuteActionDto(DateTime At, string ByAccount, string Action, string Summary);
+
 public class IssueMuteDto
 {
+    public DateTime At { get; set; }
     public DateTime From { get; set; }
     public DateTime To { get; set; }
     public string Reason { get; set; } = string.Empty;

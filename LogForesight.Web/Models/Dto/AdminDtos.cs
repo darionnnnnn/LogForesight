@@ -86,11 +86,11 @@ public class UserAssignmentHistoryDto
     public string HostName { get; set; } = string.Empty;
     public string IssueLabel { get; set; } = string.Empty;
 
-    /// <summary>案件目前狀態（含結案類）</summary>
+    /// <summary>案件目前狀態（含結案類；改派時為 "reassigned"）</summary>
     public string Status { get; set; } = string.Empty;
     public string StatusText { get; set; } = string.Empty;
 
-    /// <summary>true＝案件已結案；false＝仍在此人名下進行中</summary>
+    /// <summary>true＝案件已結案（或已改派走）；false＝仍在此人名下進行中</summary>
     public bool Closed { get; set; }
 
     /// <summary>建案時間與建案者帳號（誰把這件事交辦給他）</summary>
@@ -105,6 +105,9 @@ public class UserAssignmentHistoryDto
 
     /// <summary>案件所屬交辦單；舊案件未整併時為 null</summary>
     public long? WorkOrderId { get; set; }
+
+    /// <summary>選填：若案件被改派，記錄新處理人顯示名稱</summary>
+    public string? NewHandler { get; set; }
 }
 
 public class SaveUserRequest

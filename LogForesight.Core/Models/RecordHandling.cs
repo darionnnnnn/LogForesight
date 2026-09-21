@@ -37,6 +37,8 @@ public class RecordHandling
 /// </summary>
 public class RecordHandlingLog
 {
+    public string? CaseId { get; set; }
+    public long? PreviousHandlerId { get; set; }
     public long LogId { get; set; }
 
     public string HostName { get; set; } = string.Empty;

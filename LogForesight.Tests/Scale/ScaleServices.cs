@@ -164,6 +164,7 @@ internal sealed class ScaleServices
             WorkOrders,
             currentUser,
             auditService,
-            displayNames);
+            displayNames,
+            _mail);
     }
 }

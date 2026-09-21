@@ -512,6 +512,10 @@ internal class FakeSystemSettingsStore : ISystemSettingsStore
 
 internal class FakeHandlingStore : IRecordHandlingStore
 {
+    public List<RecordHandlingLog> GetReassignments(long previousHandlerId, DateTime from) =>
+        _logs.Where(l => l.Action == HandlingActions.CaseReassign && l.PreviousHandlerId == previousHandlerId &&
+                         l.CaseId != null && l.CreatedAt >= from)
+            .OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.LogId).ToList();
     private readonly List<RecordHandling> _handlings = new();
     private readonly List<RecordHandlingLog> _logs = new();
     private long _nextLogId = 1;

@@ -31,6 +31,8 @@ public interface IRecordHandlingStore
 
     /// <summary>單一風險日的完整處理歷程，依時間先後排序</summary>
     List<RecordHandlingLog> GetLogs(string hostName, DateTime date);
+    /// <summary>有明確原處理人證據的改派歷程，僅讀指定時間以後。</summary>
+    List<RecordHandlingLog> GetReassignments(long previousHandlerId, DateTime from);
 }
 
 /// <summary>

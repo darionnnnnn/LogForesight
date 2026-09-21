@@ -64,7 +64,7 @@ public class AuditLogStore
         // 只要有任何篩選條件就不走這條路：From/To 篩選涉及 CreatedAt 為 null 的既存列
         // （schema 升級前寫入）在 SQL 端無法精確判斷是否落在範圍內，全表無篩選時這個顧慮不存在。
         var noFilter = query.From == null && query.To == null && query.UserId == null &&
-                       query.Result == null && string.IsNullOrEmpty(query.TargetKind) &&
+                       query.Result == null && string.IsNullOrEmpty(query.TargetKind) && string.IsNullOrEmpty(query.TargetId) &&
                        query.Actions is not { Count: > 0 };
 
         if (noFilter)
@@ -91,6 +91,7 @@ public class AuditLogStore
                 UserId = query.UserId,
                 Actions = query.Actions,
                 TargetKind = query.TargetKind,
+                TargetId = query.TargetId,
                 Result = query.Result,
                 Ascending = query.Ascending,
                 Page = query.Page,
@@ -128,6 +129,7 @@ public class AuditLogStore
 
     private static bool Matches(AuditEntry entry, AuditQuery query)
     {
+        if (!string.IsNullOrEmpty(query.TargetId) && !string.Equals(entry.TargetId, query.TargetId, StringComparison.OrdinalIgnoreCase)) return false;
         if (query.From.HasValue && entry.OccurredAt < query.From.Value) return false;
         if (query.To.HasValue && entry.OccurredAt > query.To.Value) return false;
         if (query.UserId.HasValue && entry.UserId != query.UserId.Value) return false;

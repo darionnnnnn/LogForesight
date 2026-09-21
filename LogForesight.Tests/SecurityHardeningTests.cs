@@ -255,7 +255,7 @@ public class SecurityHardeningTests
             rig.Users, rig.Groups, rig.Hosts, new FakeHostGroupStore(), new FakeIssueCaseStore(),
             new AlwaysVisibleService(rig.Hosts), new RecordingAuditService(),
             new UserCapabilityResolver(rig.Groups, rig.Hosts), new UserDisplayNameService(new FakeSystemSettingsStore()),
-            rig.Stamp);
+            rig.Stamp, new FakeHandlingStore(), new FakeSystemSettingsStore());
         var before = rig.Stamp.Current;
 
         service.SetUserGroups(user.UserId, Array.Empty<long>());

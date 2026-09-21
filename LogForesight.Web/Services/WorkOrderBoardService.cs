@@ -2,6 +2,7 @@ using System.Text.Json;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services.Mail;
 
 namespace LogForesight.Web.Services;
 
@@ -53,6 +54,7 @@ public class WorkOrderBoardService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _displayNames;
+    private readonly MailNotificationService _mail;
     private readonly int _maxOccurrences;
 
     public WorkOrderBoardService(
@@ -73,9 +75,10 @@ public class WorkOrderBoardService
         WorkOrderCoordinator coordinator,
         ICurrentUser currentUser,
         IAuditService audit,
-        IUserDisplayNameService displayNames)
+        IUserDisplayNameService displayNames,
+        MailNotificationService mail)
         : this(orders, cases, users, userGroups, hosts, hostGroups, rules, suppressions, query, aggregates, candidates, issueOwners,
-            noiseMarks, settings, coordinator, currentUser, audit, displayNames, DefaultMaxOccurrences)
+            noiseMarks, settings, coordinator, currentUser, audit, displayNames, mail, DefaultMaxOccurrences)
     {
     }
 
@@ -99,6 +102,7 @@ public class WorkOrderBoardService
         ICurrentUser currentUser,
         IAuditService audit,
         IUserDisplayNameService displayNames,
+        MailNotificationService mail,
         int maxOccurrences)
     {
         _orders = orders;
@@ -119,6 +123,7 @@ public class WorkOrderBoardService
         _currentUser = currentUser;
         _audit = audit;
         _displayNames = displayNames;
+        _mail = mail;
         _maxOccurrences = maxOccurrences;
     }
 
@@ -264,6 +269,7 @@ public class WorkOrderBoardService
         var daySyncPending = 0;
         var hostsByHandler = new Dictionary<long, int>();
         var failedGroups = new List<AutoDispatchFailedGroupDto>();
+        var createdOrdersByHandler = new Dictionary<long, List<(long WorkOrderId, string IssueLabel, List<string> HostNames)>>();
         foreach (var group in groups)
         {
             var first = group.First();
@@ -317,15 +323,63 @@ public class WorkOrderBoardService
             var skipped = outcome.SkippedConflicts
                 .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
                 .ToHashSet();
-            var hosts = members
+            var distinctGroupHosts = members
                 .Where(m => !skipped.Contains((HostNameKey.Of(m.HostName), m.IssueKey)))
-                .Select(m => HostNameKey.Of(m.HostName))
-                .Distinct()
-                .Count();
+                .Select(m => m.HostName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var hosts = distinctGroupHosts.Count;
             hostsByHandler[group.Key.HandlerId] = hostsByHandler.GetValueOrDefault(group.Key.HandlerId) + hosts;
+
+            if (outcome.CreatedOrder && outcome.WorkOrderId > 0)
+            {
+                if (distinctGroupHosts.Count == 0)
+                {
+                    distinctGroupHosts = members.Select(m => m.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                }
+                if (!createdOrdersByHandler.TryGetValue(group.Key.HandlerId, out var list))
+                {
+                    list = new List<(long WorkOrderId, string IssueLabel, List<string> HostNames)>();
+                    createdOrdersByHandler[group.Key.HandlerId] = list;
+                }
+                list.Add((outcome.WorkOrderId, label, distinctGroupHosts));
+            }
         }
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
+
+        foreach (var (handlerId, orders) in createdOrdersByHandler)
+        {
+            if (orders.Count == 0) continue;
+            if (handlerId == _currentUser.UserId) continue;
+            if (!users.TryGetValue(handlerId, out var handler) || string.IsNullOrWhiteSpace(handler.Email)) continue;
+
+            WorkOrderNotice notice;
+            if (orders.Count == 1)
+            {
+                var (workOrderId, issueLabel, hosts) = orders[0];
+                notice = new WorkOrderNotice(
+                    WorkOrderNoticeKinds.Created, workOrderId,
+                    issueLabel, WorkOrderScopes.Hosts,
+                    hosts.Count, hosts, AutoDispatchNote, null,
+                    handler.Account, handler.Email, _currentUser.Account, null);
+            }
+            else
+            {
+                var allHosts = orders.SelectMany(o => o.HostNames).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                var allLabels = string.Join("、", orders.Select(o => o.IssueLabel));
+                var orderListText = string.Join("\n", orders.Select(o => $"  - 單號 {o.WorkOrderId}：{o.IssueLabel}"));
+                var note = $"{AutoDispatchNote}\n本次共建立 {orders.Count} 張交辦單：\n{orderListText}";
+
+                notice = new WorkOrderNotice(
+                    WorkOrderNoticeKinds.Created, orders[0].WorkOrderId,
+                    $"共 {orders.Count} 項問題（{allLabels}）", WorkOrderScopes.Hosts,
+                    allHosts.Count, allHosts, note, null,
+                    handler.Account, handler.Email, _currentUser.Account, null);
+            }
+
+            _ = _mail.NotifyWorkOrderAsync(notice);
+        }
         var perHandler = hostsByHandler
             .Where(p => p.Value > 0)
             .Select(p => new AutoDispatchHandlerDto { HandlerId = p.Key, Name = NameOf(users, p.Key), Hosts = p.Value })

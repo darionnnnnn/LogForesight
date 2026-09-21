@@ -155,7 +155,7 @@ public class UserDisplayNameServiceTests
         var capabilities = new UserCapabilityResolver(groups, hosts);
 
         var service = new UserAdminService(
-            users, groups, hosts, hostGroups, cases, visibility, audit, capabilities, userDisplayNames, TestPermissionStamps.Shared);
+            users, groups, hosts, hostGroups, cases, visibility, audit, capabilities, userDisplayNames, TestPermissionStamps.Shared, new FakeHandlingStore(), new FakeSystemSettingsStore());
 
         // 1. 建立使用者（寫入端）
         var originalDisplayName = "鄭孟瑋 Wayne2021 (Yuanta)";
@@ -241,7 +241,7 @@ public class UserDisplayNameServiceTests
             new AlwaysVisibleService(hosts),
             new RecordingAuditService(),
             new UserCapabilityResolver(new FakeUserGroupStore(), hosts),
-            displayNameService, TestPermissionStamps.Shared);
+            displayNameService, TestPermissionStamps.Shared, new FakeHandlingStore(), new FakeSystemSettingsStore());
         var adminUser = adminService.GetUsers().Single(u => u.Account == "181035");
 
         // 2. 呼叫 DayHandlingCommandService.Get(...) 取得 HandlingDto.OwnerNames

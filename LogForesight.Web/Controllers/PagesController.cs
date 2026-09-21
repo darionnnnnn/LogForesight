@@ -140,10 +140,8 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Settings() => View();
 
-    /// <summary>操作說明書（docs/archive/FEEDBACK-15-PLAN.md 批次E）：僅 Maintain 顯示，
-    /// 側欄選單顯示與此頁面級標註雙閘，比照既有 admin 頁慣例</summary>
+    /// <summary>操作說明書：全登入使用者皆可存取，章節內容由 API 依 Maintain 能力過濾。</summary>
     [HttpGet("/help/manual")]
-    [Permission(Capability.Maintain)]
     public IActionResult HelpManual() => View();
 
     /// <summary>首次啟動精靈（回饋十八輪批次H）：不進側欄——入口在教學文件清單第一項，

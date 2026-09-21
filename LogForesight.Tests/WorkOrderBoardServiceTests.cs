@@ -7,6 +7,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Xunit;
 
@@ -43,6 +44,8 @@ public class WorkOrderBoardServiceTests : IDisposable
     private readonly EfIssueAggregateQuery _aggregates;
     private readonly WorkOrderCoordinator _coordinator;
     private readonly UserDisplayNameService _displayNames;
+    private readonly MailNotificationService _mail;
+    private readonly FakeSmtpMailSender _sender = new();
 
     public WorkOrderBoardServiceTests()
     {
@@ -62,15 +65,45 @@ public class WorkOrderBoardServiceTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
         _coordinator = new WorkOrderCoordinator(_orderStore, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
 
+        _mail = new MailNotificationService(
+            _settingsStore, _sender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
+            new ScheduleFreshnessService(new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
+            new FakeIssueOwnerStore());
+
         _settingsStore.Update(s => s.AutoDispatchEnabled = false);
     }
 
     public void Dispose() => _fixture.Dispose();
 
+    [Fact]
+    public void 一次派工三張單給同一人只寄一封通知且列出每張單()
+    {
+        var third = Disk();
+        third.Source = "third";
+        var host = AddHost("MAIL-HOST", null, Disk(), Ntfs(), third);
+        var (handler, _) = PoolSeeing(host);
+        handler.Email = "handler@example.test";
+        _users.Upsert(handler);
+        _settingsStore.Update(s =>
+        {
+            s.MailEnabled = true;
+            s.MailNotifyWorkOrders = true;
+            s.SmtpServer = "smtp.example.test";
+            s.MailFrom = "system@example.test";
+        });
+        var result = Service().RunAutoDispatch(null, null);
+        Assert.Equal(3, result.CreatedOrders);
+        var mail = Assert.Single(_sender.Sent).Message;
+        Assert.Contains("handler@example.test", mail.To);
+        foreach (var order in _orderStore.All)
+            Assert.Contains($"單號 {order.WorkOrderId}：", mail.Body);
+    }
+
     private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences) => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, maxOccurrences);
+        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences);
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 
@@ -645,7 +678,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         var service = new WorkOrderBoardService(
             failing, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
             _candidates, _issueOwners, _noiseMarks, _settingsStore, coordinator,
-            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, WorkOrderBoardService.DefaultMaxOccurrences);
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
 
         var result = service.RunAutoDispatch(null, null);
 
@@ -673,7 +706,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         var service = new WorkOrderBoardService(
             failing, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
             _candidates, _issueOwners, _noiseMarks, _settingsStore, coordinator,
-            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, WorkOrderBoardService.DefaultMaxOccurrences);
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
 
         var result = service.RunAutoDispatch(null, null);
 

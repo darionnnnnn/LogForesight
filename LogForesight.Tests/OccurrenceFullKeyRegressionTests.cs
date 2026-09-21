@@ -88,7 +88,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
     private WorkOrderBoardService BoardService() => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, WorkOrderBoardService.DefaultMaxOccurrences);
+        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 
