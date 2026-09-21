@@ -13,9 +13,24 @@ import { statusBadge } from '../core/format.js';
 
 const stepsContainer = document.getElementById('setup-steps');
 let status = null;
+let settingsSnapshot = null;
+
+/**
+ * 伺服器依一行一台 trim、去空白、去重
+ */
+export function parseServers(raw) {
+    if (!raw) return [];
+    const lines = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    return [...new Set(lines)];
+}
 
 async function load() {
-    status = await api.get('/api/admin/setup/status');
+    const [statusData, settingsData] = await Promise.all([
+        api.get('/api/admin/setup/status'),
+        api.get('/api/admin/settings')
+    ]);
+    status = statusData;
+    settingsSnapshot = settingsData;
     render();
 
     // 深連結（§ URL 反映狀態）：重整或分享網址時捲到同一步
@@ -99,10 +114,14 @@ function renderSteps() {
         detail.textContent = step.detail;
         body.appendChild(detail);
 
+        if (step.id === 'ad' && !step.done) {
+            body.appendChild(renderAdInlineForm(step));
+        }
+
         const actions = document.createElement('div');
         actions.className = 'd-flex gap-2 mt-2';
 
-        if (step.targetUrl && !step.done) {
+        if (step.targetUrl && !step.done && step.id !== 'ad') {
             const goButton = document.createElement('a');
             goButton.className = 'btn btn-sm btn-primary';
             goButton.href = appUrl(`${step.targetUrl}?from=setup`);
@@ -127,6 +146,126 @@ function renderSteps() {
     });
 
     stepsContainer.appendChild(list);
+}
+
+function renderAdInlineForm(step) {
+    const template = document.getElementById('setup-ad-template');
+    const form = template.content.firstElementChild.cloneNode(true);
+
+    const enabledCheckbox = form.querySelector('#setup-ad-auth-enabled');
+    const serversInput = form.querySelector('#setup-ad-servers');
+    const searchBaseInput = form.querySelector('#setup-ad-search-base');
+    const searchFilterInput = form.querySelector('#setup-ad-search-filter');
+    const accountInput = form.querySelector('#setup-ad-test-account');
+    const passwordInput = form.querySelector('#setup-ad-test-password');
+    const testBtn = form.querySelector('#setup-ad-test-btn');
+    const testResult = form.querySelector('#setup-ad-test-result');
+    const saveBtn = form.querySelector('#setup-ad-save-btn');
+    const saveFeedback = form.querySelector('#setup-ad-save-feedback');
+
+    enabledCheckbox.checked = Boolean(settingsSnapshot?.adAuthEnabled);
+    serversInput.value = (settingsSnapshot?.adServers ?? []).join('\n');
+    searchBaseInput.value = settingsSnapshot?.adSearchBase ?? '';
+    searchFilterInput.value = settingsSnapshot?.adSearchFilter ?? '';
+    accountInput.value = '';
+    passwordInput.value = '';
+    passwordInput.setAttribute('autocomplete', 'off');
+    testBtn.type = 'button';
+    saveBtn.type = 'button';
+
+    testBtn.addEventListener('click', async () => {
+        testResult.textContent = '';
+        testResult.className = 'mt-2 small';
+
+        const servers = parseServers(serversInput.value);
+        const account = accountInput.value.trim();
+        const password = passwordInput.value;
+
+        if (servers.length === 0) {
+            testResult.className = 'mt-2 small text-danger';
+            testResult.textContent = '請至少輸入一台 AD 伺服器。';
+            serversInput.focus();
+            return;
+        }
+        if (!account) {
+            testResult.className = 'mt-2 small text-danger';
+            testResult.textContent = '請輸入測試帳號。';
+            accountInput.focus();
+            return;
+        }
+        if (!password) {
+            testResult.className = 'mt-2 small text-danger';
+            testResult.textContent = '請輸入測試密碼。';
+            passwordInput.focus();
+            return;
+        }
+
+        const searchBase = searchBaseInput.value.trim();
+        const searchFilter = searchFilterInput.value.trim();
+
+        const restore = withBusy(testBtn, '測試中');
+        try {
+            const result = await api.post('/api/admin/settings/ad-test', {
+                servers,
+                searchBase,
+                searchFilter,
+                account,
+                password
+            });
+            testResult.className = result.success ? 'mt-2 small text-success' : 'mt-2 small text-danger';
+            testResult.textContent = result.message;
+        } catch (err) {
+            // API exception 由 api.js 顯示（api.js 自動 toast），但表單不可清空
+            testResult.className = 'mt-2 small text-danger';
+            testResult.textContent = err?.message || '測試連線失敗。';
+        } finally {
+            restore();
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        saveFeedback.textContent = '';
+        saveFeedback.className = 'small';
+
+        const adAuthEnabled = enabledCheckbox.checked;
+        const adServers = parseServers(serversInput.value);
+        const adSearchBase = searchBaseInput.value.trim();
+        const adSearchFilter = searchFilterInput.value.trim();
+
+        if (adAuthEnabled && adServers.length === 0) {
+            saveFeedback.className = 'small text-danger';
+            saveFeedback.textContent = '啟用 AD 驗證時，請至少輸入一台 AD 伺服器。';
+            serversInput.focus();
+            return;
+        }
+
+        const payload = {
+            ...settingsSnapshot,
+            adAuthEnabled,
+            adServers,
+            adSearchBase,
+            adSearchFilter
+        };
+
+        const restore = withBusy(saveBtn, '儲存中');
+        try {
+            await api.put('/api/admin/settings', payload);
+            toast('已儲存 AD 驗證設定', 'success');
+            await load();
+            const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
+            if (nextIncomplete) {
+                const target = document.querySelector(`[data-step-row="${nextIncomplete.id}"]`);
+                target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+        } catch (err) {
+            saveFeedback.className = 'small text-danger';
+            saveFeedback.textContent = err?.message || '儲存設定失敗。';
+        } finally {
+            restore();
+        }
+    });
+
+    return form;
 }
 
 function stepState(step) {

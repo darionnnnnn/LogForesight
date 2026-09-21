@@ -37,6 +37,54 @@
     <div class="lf-card__body p-0" id="setup-steps"></div>
 </section>
 
+<template id="setup-ad-template">
+    <div class="card mt-3 border bg-light" id="setup-ad-form">
+        <div class="card-body">
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="setup-ad-auth-enabled" />
+                <label class="form-check-label fw-semibold" for="setup-ad-auth-enabled">啟用 AD 驗證</label>
+            </div>
+            <div class="mb-3">
+                <label for="setup-ad-servers" class="form-label small fw-semibold">AD 伺服器</label>
+                <textarea class="form-control form-control-sm" id="setup-ad-servers" rows="3" placeholder="一行一台，例如：&#10;dc1.corp.local&#10;dc2.corp.local"></textarea>
+                <div class="form-text small text-muted">一行一台 AD / LDAP 伺服器主機名稱或 IP。</div>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-ad-search-base" class="form-label small fw-semibold">查詢基準 DN（選填）</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-ad-search-base" placeholder="DC=corp,DC=local" />
+                </div>
+                <div class="col-sm-6">
+                    <label for="setup-ad-search-filter" class="form-label small fw-semibold">查詢過濾器（選填）</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-ad-search-filter" placeholder="(sAMAccountName={0})" />
+                </div>
+            </div>
+            <div class="card mb-3 border bg-white">
+                <div class="card-body p-2">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-sm-5">
+                            <label for="setup-ad-test-account" class="form-label small mb-1">測試帳號</label>
+                            <input type="text" class="form-control form-control-sm" id="setup-ad-test-account" />
+                        </div>
+                        <div class="col-sm-5">
+                            <label for="setup-ad-test-password" class="form-label small mb-1">測試密碼</label>
+                            <input type="password" class="form-control form-control-sm" id="setup-ad-test-password" autocomplete="off" />
+                        </div>
+                        <div class="col-sm-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100" id="setup-ad-test-btn">測試連線</button>
+                        </div>
+                    </div>
+                    <div class="mt-2 small" id="setup-ad-test-result"></div>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-primary" id="setup-ad-save-btn">儲存並繼續</button>
+                <span class="small" id="setup-ad-save-feedback"></span>
+            </div>
+        </div>
+    </div>
+</template>
+
 @section Scripts {
     <script type="module" src="~/js/pages/setup.js" asp-append-version="true"></script>
 }
