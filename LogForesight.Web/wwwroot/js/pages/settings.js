@@ -806,6 +806,11 @@ function renderBackgroundJobs(detail) {
                 ? `進行中（${formatNumber(detail.backfillDone)} / ${formatNumber(detail.backfillTotal)}）`
                 : '無進行中的回填'
         },
+        {
+            item: '來源名稱鍵回填',
+            status: detail.sourceKeyBackfillComplete ? '完成' :
+                `進行中（${formatNumber(detail.sourceKeyBackfillDone ?? 0)} / ${formatNumber(detail.sourceKeyBackfillTotal ?? 0)}）`
+        },
         { item: '處理狀態遷移', status: withError(detail.migrationState, detail.migrationError) },
         { item: '權限異動遷移', status: withError(detail.permissionChangeMigrationState, detail.permissionChangeMigrationError) },
         {
@@ -829,6 +834,14 @@ function renderBackgroundJobs(detail) {
         columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
         rows
     });
+    const preview = detail.sourceMergePreview ?? [];
+    if (preview.length > 0) {
+        const note = document.createElement('p');
+        note.className = 'small text-muted mt-2';
+        note.textContent = `來源大小寫合併預覽（最多 50 組）：${preview.map(g =>
+            `${g.names.join('／')}（Event ID ${g.eventId}）`).join('；')}`;
+        document.getElementById('health-background').appendChild(note);
+    }
 }
 
 /** 密碼欄位加密：金鑰不相符或曾有密文解不開時顯示警示，否則顯示金鑰來源 */

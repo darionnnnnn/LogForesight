@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -7,12 +8,15 @@ namespace LogForesight.Core.Persistence.Sql;
 public class EfRiskyEventStore : IRiskyEventStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private const int DefaultSourceKeyBackfillBatchSize = 500;
 
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly Func<bool> _sourceKeyReady;
 
-    public EfRiskyEventStore(Func<LfDbContext> contextFactory)
+    public EfRiskyEventStore(Func<LfDbContext> contextFactory, Func<bool>? sourceKeyReady = null)
     {
         _contextFactory = contextFactory;
+        _sourceKeyReady = sourceKeyReady ?? (() => false);
     }
 
     public void ReplaceDay(long hostId, DateTime date, List<RiskyEvent> events)
@@ -42,6 +46,7 @@ public class EfRiskyEventStore : IRiskyEventStore
                     Date = day,
                     LogName = e.LogName,
                     Source = e.Source,
+                    SourceKey = WorkOrderIssueKey.SourceKeyOf(e.Source),
                     EventId = e.EventId,
                     EntryType = e.EntryType,
                     EventTime = e.EventTime,
@@ -64,17 +69,69 @@ public class EfRiskyEventStore : IRiskyEventStore
         var day = date.Date;
         using var ctx = _contextFactory();
 
-        // Source 用 UPPER() 正規化比對——provider collation 不保證一致（SQLite 預設區分大小寫、
-        // SqlServer 常見不分），與 SentinelEventFetchService 的 OrdinalIgnoreCase 比對同一慣例
-        // （EfAnalysisRecordStore.ApplyPushableFilters 的 Source 過濾同款理由）
-        var upperSource = source.ToUpperInvariant();
-        var rows = ctx.RiskyEvents.AsNoTracking()
-            .Where(r => r.HostId == hostId && r.Date == day && r.EventId == eventId && r.Source.ToUpper() == upperSource)
+        var sourceKeyReady = _sourceKeyReady();
+        var query = ctx.RiskyEvents.AsNoTracking()
+            .Where(r => r.HostId == hostId && r.Date == day && r.EventId == eventId);
+        query = ApplySourceFilter(query, source, sourceKeyReady);
+
+        var rows = query
             .OrderByDescending(r => r.EventTime)
             .Take(maxResults)
             .ToList();
 
         return rows.Select(Map).ToList();
+    }
+
+    /// <summary>
+    /// 來源簽章的 SQL 篩選分流。ready 路徑只比較索引欄；舊路徑保留 UPPER() 以相容尚未回填的列。
+    /// </summary>
+    internal static IQueryable<RiskyEventRow> ApplySourceFilter(
+        IQueryable<RiskyEventRow> query, string source, bool sourceKeyReady)
+    {
+        if (sourceKeyReady)
+        {
+            var sourceKey = WorkOrderIssueKey.SourceKeyOf(source);
+            return query.Where(r => r.SourceKey == sourceKey);
+        }
+
+        var upperSource = source.ToUpperInvariant();
+        return query.Where(r => r.Source.ToUpper() == upperSource);
+    }
+
+    /// <summary>
+    /// 回填一批既有風險事件的來源鍵。每次呼叫只處理一批，SaveChanges 自帶交易，
+    /// 供背景服務在取消後下次接續；回傳本批實際更新的列數，0 表示已完成。
+    /// </summary>
+    public int BackfillSourceKeysBatch(
+        int batchSize = DefaultSourceKeyBackfillBatchSize,
+        CancellationToken cancellationToken = default)
+    {
+        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var ctx = _contextFactory();
+        var batch = ctx.RiskyEvents
+            .Where(r => r.SourceKey == null)
+            .OrderBy(r => r.Id)
+            .Take(batchSize)
+            .ToList();
+        if (batch.Count == 0) return 0;
+
+        foreach (var row in batch)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            row.SourceKey = WorkOrderIssueKey.SourceKeyOf(row.Source);
+        }
+
+        ctx.SaveChanges();
+        return batch.Count;
+    }
+
+    /// <summary>回填器用來發布 readiness 的檢查；查詢端不會自行以此取代外部 gate。</summary>
+    public bool AreAllSourceKeysBackfilled()
+    {
+        using var ctx = _contextFactory();
+        return !ctx.RiskyEvents.AsNoTracking().Any(r => r.SourceKey == null);
     }
 
     public List<RiskyEvent> QueryDay(long hostId, DateTime date)

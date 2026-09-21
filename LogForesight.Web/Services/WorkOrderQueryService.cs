@@ -353,7 +353,7 @@ public class WorkOrderQueryService
 
     private static List<MuteSpan> SpansOf(IssueExclusion exclusion, string source, int eventId)
     {
-        var key = source.ToUpperInvariant();
+        var key = WorkOrderIssueKey.SourceKeyOf(source);
         return exclusion.Spans.Where(s => s.EventId == eventId && s.SourceKey == key).ToList();
     }
 

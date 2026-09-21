@@ -71,7 +71,9 @@ public static class ServiceCollectionExtensions
         // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
         services.AddSingleton<IIssueAggregateQuery>(sp =>
-            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(sp.GetRequiredService<IHostStore>()));
+            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(
+                sp.GetRequiredService<IHostStore>(),
+                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton(sp => new WorkOrderBackfiller(sp.GetRequiredService<StorageBackend>().WorkOrderStore()));
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
@@ -101,7 +103,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<UserPreferenceStore>(sp => new UserPreferenceStore(sp.GetRequiredService<StorageBackend>().Blob("user_prefs")));
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
-        services.AddSingleton<IRiskyEventStore>(sp => sp.GetRequiredService<StorageBackend>().RiskyEventStore());
+        services.AddSingleton<IRiskyEventStore>(sp =>
+        {
+            var backfiller = sp.GetRequiredService<TopIssueBackfiller>();
+            return sp.GetRequiredService<StorageBackend>().RiskyEventStore(
+                () => backfiller.RiskySourceKeyProgress.Completed);
+        });
 
         return services;
     }

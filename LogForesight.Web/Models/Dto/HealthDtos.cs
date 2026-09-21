@@ -72,6 +72,17 @@ public class HealthDetailDto : HealthDto
     public int BackfillDone { get; set; }
     public int BackfillTotal { get; set; }
 
+    /// <summary>來源名稱鍵背景回填；完成前查詢維持舊路徑。</summary>
+    public bool SourceKeyBackfillComplete { get; set; }
+    public int SourceKeyBackfillDone { get; set; }
+    public int SourceKeyBackfillTotal { get; set; }
+    public List<SourceMergePreviewDto> SourceMergePreview { get; set; } = new();
+
+    /// <summary>風險事件來源名稱鍵背景回填；完成前 Web lookup 維持 legacy 查詢。</summary>
+    public bool RiskySourceKeyBackfillComplete { get; set; }
+    public int RiskySourceKeyBackfillDone { get; set; }
+    public int RiskySourceKeyBackfillTotal { get; set; }
+
     // ── 處理狀態的 blob → 真表遷移（升級時才會發生一次）────────────────────
     // 未完成時處理狀態是**唯讀**的（寫入被 MigrationGateMiddleware 擋下），
     // 這是唯一能看出「為什麼標記不了」的地方
@@ -135,6 +146,13 @@ public class HealthDetailDto : HealthDto
 
     /// <summary>PRTG 各類資料的擷取新鮮度；PRTG 未啟用時為 null（畫面不顯示「PRTG 擷取」列）</summary>
     public List<PrtgFreshnessDto>? PrtgFreshness { get; set; }
+}
+
+public class SourceMergePreviewDto
+{
+    public string SourceKey { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public List<string> Names { get; set; } = new();
 }
 
 /// <summary>排程資料新鮮度（任務 A-3）</summary>

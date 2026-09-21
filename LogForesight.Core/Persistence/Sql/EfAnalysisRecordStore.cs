@@ -450,6 +450,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             RecordId = recordId,
             SourceName = issue.Source,
+            SourceKey = WorkOrderIssueKey.SourceKeyOf(issue.Source),
             EventId = issue.EventId,
             Category = issue.Category.ToString(),
             SeverityRank = (int)issue.Severity,
@@ -740,10 +741,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
         if (!string.IsNullOrWhiteSpace(filter.Source))
         {
-            // 與 OwnedRows 同一個 UPPER() 正規化理由：provider collation 不保證一致，
-            // 兩邊都正規化才與 RecordFilterMatcher 的 OrdinalIgnoreCase 逐位一致
-            var source = filter.Source.ToUpperInvariant();
-            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == source));
+            // 新列走寫入時計算的 source_key；尚未回填的舊列保留舊路徑，直到背景作業完成。
+            var source = WorkOrderIssueKey.SourceKeyOf(filter.Source);
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId &&
+                (t.SourceKey == source || (t.SourceKey == null && t.SourceName.ToUpper() == source))));
         }
 
         // 主機以 id 在 DB 端粗篩（高選擇度、便宜）；host_id=0 的舊列一律先撈出，

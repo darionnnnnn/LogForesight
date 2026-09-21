@@ -51,6 +51,107 @@ public class IssueHandling
 }
 
 /// <summary>
+/// 問題來源的唯一比較規則：先套用 <see cref="WorkOrderIssueKey.SourceKeyOf"/>，再以序數方式比較。
+///
+/// 來源欄位會出現在處理狀態、案件、交辦單、靜音與問題負責人的不同索引中；
+/// 直接混用 OrdinalIgnoreCase 與 ToUpperInvariant 會讓 Unicode 大小寫在不同路徑得到不同答案。
+/// 這個 comparer 只比較來源欄位，不改寫或正規化 <see cref="IssueSignatureKey.For"/> 的輸出。
+/// </summary>
+public sealed class SourceKeyComparer : IEqualityComparer<string>
+{
+    public static readonly SourceKeyComparer Instance = new();
+
+    private SourceKeyComparer() { }
+
+    public bool Equals(string? x, string? y)
+    {
+        if (ReferenceEquals(x, y)) return true;
+        if (x == null || y == null) return false;
+        return StringComparer.Ordinal.Equals(WorkOrderIssueKey.SourceKeyOf(x), WorkOrderIssueKey.SourceKeyOf(y));
+    }
+
+    public int GetHashCode(string obj) =>
+        StringComparer.Ordinal.GetHashCode(WorkOrderIssueKey.SourceKeyOf(obj));
+}
+
+/// <summary>
+/// 完整問題簽章鍵的唯一比較規則：LogName、EventId、EntryType、EventKey 保持原值語義，
+/// 只有 Source 套用 <see cref="SourceKeyComparer"/>。因此比較器不會改寫
+/// <see cref="IssueSignatureKey.For"/> 的輸出字面，只影響索引與查找的相等判定。
+///
+/// 可反解的四段／五段 legacy 鍵走欄位比較；格式不合法的舊字串保留 Ordinal 比較，
+/// 避免把人為改壞或歷史未知格式的兩個字串意外合併。GetHashCode 與 Equals 使用完全相同的分流。
+/// </summary>
+public sealed class IssueSignatureKeyComparer : IEqualityComparer<string>
+{
+    public static readonly IssueSignatureKeyComparer Instance = new();
+
+    private IssueSignatureKeyComparer() { }
+
+    public bool Equals(string? x, string? y)
+    {
+        if (ReferenceEquals(x, y)) return true;
+        if (x == null || y == null) return false;
+
+        var left = IssueSignatureKey.TryParseFull(x);
+        var right = IssueSignatureKey.TryParseFull(y);
+        if (left == null || right == null)
+            return StringComparer.Ordinal.Equals(x, y);
+
+        return StringComparer.Ordinal.Equals(left.Value.LogName, right.Value.LogName)
+            && SourceKeyComparer.Instance.Equals(left.Value.Source, right.Value.Source)
+            && left.Value.EventId == right.Value.EventId
+            && left.Value.EntryType == right.Value.EntryType
+            && StringComparer.Ordinal.Equals(left.Value.EventKey, right.Value.EventKey);
+    }
+
+    public int GetHashCode(string obj)
+    {
+        if (obj == null) return 0;
+
+        var parsed = IssueSignatureKey.TryParseFull(obj);
+        if (parsed == null) return StringComparer.Ordinal.GetHashCode(obj);
+
+        return HashCode.Combine(
+            StringComparer.Ordinal.GetHashCode(parsed.Value.LogName),
+            SourceKeyComparer.Instance.GetHashCode(parsed.Value.Source),
+            parsed.Value.EventId,
+            parsed.Value.EntryType,
+            StringComparer.Ordinal.GetHashCode(parsed.Value.EventKey));
+    }
+}
+
+/// <summary>主機名稱＋完整簽章鍵的複合索引比較器；主機名保留既有不分大小寫語義。</summary>
+public sealed class HostIssueSignatureKeyComparer : IEqualityComparer<(string HostName, string IssueKey)>
+{
+    public static readonly HostIssueSignatureKeyComparer Instance = new();
+
+    private HostIssueSignatureKeyComparer() { }
+
+    public bool Equals((string HostName, string IssueKey) x, (string HostName, string IssueKey) y) =>
+        StringComparer.OrdinalIgnoreCase.Equals(x.HostName, y.HostName)
+        && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
+
+    public int GetHashCode((string HostName, string IssueKey) key) =>
+        HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.HostName),
+            IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
+}
+
+/// <summary>日期＋完整簽章鍵的複合索引比較器。</summary>
+public sealed class DateIssueSignatureKeyComparer : IEqualityComparer<(DateTime Date, string IssueKey)>
+{
+    public static readonly DateIssueSignatureKeyComparer Instance = new();
+
+    private DateIssueSignatureKeyComparer() { }
+
+    public bool Equals((DateTime Date, string IssueKey) x, (DateTime Date, string IssueKey) y) =>
+        x.Date == y.Date && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
+
+    public int GetHashCode((DateTime Date, string IssueKey) key) =>
+        HashCode.Combine(key.Date, IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
+}
+
+/// <summary>
 /// 問題簽章的穩定鍵。以聚合鍵的四個欄位組成——與 <see cref="LogIssueSignature"/> 的相同性
 /// 判定（LogName＋Source＋EventId＋EntryType）一致，換言之同一個問題跨日、跨查詢都是同一個鍵。
 /// </summary>

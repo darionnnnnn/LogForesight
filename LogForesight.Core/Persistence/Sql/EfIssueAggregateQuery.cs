@@ -29,13 +29,33 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     private readonly Func<LfDbContext> _contextFactory;
     private readonly IHostStore _hosts;
     private readonly SqlPerformanceMonitor? _performance;
+    private readonly Func<bool> _sourceKeyReady;
 
-    public EfIssueAggregateQuery(Func<LfDbContext> contextFactory, IHostStore hosts, SqlPerformanceMonitor? performance = null)
+    public EfIssueAggregateQuery(
+        Func<LfDbContext> contextFactory, IHostStore hosts, SqlPerformanceMonitor? performance = null,
+        Func<bool>? sourceKeyReady = null)
     {
         _contextFactory = contextFactory;
         _hosts = hosts;
         _performance = performance;
+        _sourceKeyReady = sourceKeyReady ?? (() => false);
     }
+
+    private sealed record IssueAggregateGroup(
+        string SourceKey, string Source, int EventId, string? FallbackCategory,
+        int MaxSeverityRank, int Elevates, int ActiveDays, DateTime FirstSeen,
+        DateTime LastSeen, long TotalCount, int Rows);
+
+    private sealed record MutedIssueGroup(
+        string SourceKey, string Source, int EventId, string? FallbackCategory, int MaxSeverityRank);
+
+    private sealed record ActionableIssueGroup(
+        long HostId, string LogName, string SourceKey, string SourceName, int EventId,
+        int EntryType, string EventKey, DateTime LastSeen, int MaxSeverityRank);
+
+    private sealed record CategoryRiskItem(
+        string Category, long HostId, string SourceKey, string SourceName, int EventId,
+        int MaxSeverityRank, int AnyElevates, int Occurrences, long EventTotal);
 
     /// <summary>索引與它對應的資料版本綁在同一個不可變物件上——兩個獨立欄位的話，
     /// 讀取端可能看到「新索引配舊版本」的撕裂組合（同 JsonBlobCollection 的快照作法）。</summary>
@@ -93,6 +113,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
@@ -101,7 +122,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 讓它們以 0001-01-01 混進來會把 FirstSeen 拉到西元 1 年。
             // 回填未完成期間數字會偏低，由呼叫端誠實標示「統計中」（P4 的既定取捨）
             .Where(x => x.RecordDate >= f && x.RecordDate <= t);
-        q = IssueExclusionSql.Apply(q, exclusion);
+        q = IssueExclusionSql.Apply(q, exclusion, sourceKeyReady);
 
         // SiteHidden 模式（RecordRepository.ApplySeverityVisibility 的 SQL 端等價物）：
         // 這裡繞過 RecordRepository 的單一咽喉，隱藏的嚴重度要在這裡自己擋掉，
@@ -119,41 +140,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 儀表板風險類型卡的數字才等於下鑽到依問題視角的筆數
         q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
 
-        var grouped = q
-            .GroupBy(x => new { SourceUpper = x.SourceName.ToUpper(), x.EventId })
-            .Select(g => new
-            {
-                g.Key.SourceUpper,
-                Source = g.Min(x => x.SourceName) ?? g.Key.SourceUpper,
-                g.Key.EventId,
-                // 類別在同一組內**不**恆定：category 是分析當下寫入的快照，規則新增／改分類／
-                // 停用之後，同一個簽章的歷史列會留著舊分類。過去取 MIN（字串字典序）等於
-                // 讓「Other」永遠贏過 Resource／Security／Service／Storage——只要這個簽章
-                // 歷史上有任何一天沒命中規則，整組就永久黏在「其他」。改由 LatestCategories
-                // 取最近一天的分類（見下方輕量查詢）。這裡只留一個回退值，
-                // 供 LatestCategories 查不到該簽章時使用（理論上不會發生，兩邊同一組篩選條件）。
-                FallbackCategory = g.Min(x => x.Category),
-                MaxSeverityRank = g.Max(x => x.SeverityRank),
-                Elevates = g.Max(x => x.ElevatesDayRisk ? 1 : 0),
-                ActiveDays = g.Select(x => x.RecordDate).Distinct().Count(),
-                FirstSeen = g.Min(x => x.RecordDate),
-                LastSeen = g.Max(x => x.RecordDate),
-                TotalCount = g.Sum(x => (long)x.EventCount),
-                Rows = g.Count()
-            })
-            .ToList();
+        var grouped = GroupIssueAggregates(q, sourceKeyReady);
 
         // 主機數／主機日數／相異簽章各補一趟輕量查詢：主機數與主機日數需要先把 host_id
         // 解析成存活主機再去重（無法在 SQL 端表達合併鏈的 CASE 映射），相異簽章是字串集合，
         // 三者都無法併進同一句 GROUP BY，而且回傳量都遠小於原始列數
-        var hostCounts = SurvivingHostCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
-        var hostDays = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, null);
-        var signatures = DistinctSignatures(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
-        var latestCategories = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var hostCounts = SurvivingHostCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, sourceKeyReady);
+        var hostDays = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, null, sourceKeyReady);
+        var signatures = DistinctSignatures(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels, sourceKeyReady);
+        var latestCategories = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels, sourceKeyReady);
 
         var result = grouped.Select(g =>
         {
-            var key = (g.SourceUpper.ToUpperInvariant(), g.EventId);
+            var key = (SourceKeyOf(g.SourceKey, g.Source, sourceKeyReady), g.EventId);
             return new IssueAggregate
             {
                 Source = g.Source,
@@ -198,9 +197,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(AliasIndex(), hostIds);
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
-        var count = BuildCurrentlyMutedIssueKeysQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels).Count();
+        var count = BuildCurrentlyMutedIssueKeysQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels, sourceKeyReady).Count();
 
         _performance?.Record("issues:CountCurrentlyMuted", sw.ElapsedMilliseconds);
         return count;
@@ -220,34 +220,25 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(AliasIndex(), hostIds);
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
-        var rows = BuildCurrentlyMutedRowsQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var rows = BuildCurrentlyMutedRowsQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels, sourceKeyReady);
 
         // 來源與最高嚴重度：與 Aggregate 同一個 GROUP BY 鍵與取法（Min(SourceName)、Max(SeverityRank)）
-        var grouped = rows
-            .GroupBy(x => new { SourceUpper = x.SourceName.ToUpper(), x.EventId })
-            .Select(g => new
-            {
-                g.Key.SourceUpper,
-                Source = g.Min(x => x.SourceName) ?? g.Key.SourceUpper,
-                g.Key.EventId,
-                FallbackCategory = g.Min(x => x.Category),
-                MaxSeverityRank = g.Max(x => x.SeverityRank)
-            })
-            .ToList();
+        var grouped = GroupMutedIssues(rows, sourceKeyReady);
 
         // 類別：與 Aggregate 的 LatestCategories 同一個判準（最近一天、同日字典序決勝）
         var latestCategories = rows
-            .Select(x => new { x.SourceName, x.EventId, x.RecordDate, x.Category })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.RecordDate, x.Category })
             .Distinct()
             .ToList()
-            .GroupBy(x => (SourceUpper: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+            .GroupBy(x => (SourceKey: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId))
             .ToDictionary(g => g.Key, g => PickLatestCategory(g.Select(x => (x.RecordDate, x.Category))));
 
         var result = grouped.Select(g =>
         {
-            var key = (g.SourceUpper.ToUpperInvariant(), g.EventId);
+            var key = (SourceKeyOf(g.SourceKey, g.Source, sourceKeyReady), g.EventId);
             return new MutedIssueSummary(
                 g.Source,
                 g.EventId,
@@ -270,11 +261,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
         var expandedHostIds = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
 
         using var ctx = _contextFactory();
         var sourceUpper = source.ToUpperInvariant();
-        var counts = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, (sourceUpper, eventId));
+        var counts = SurvivingHostDayCounts(ctx, exclusion, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels, (sourceUpper, eventId), sourceKeyReady);
 
         return counts.TryGetValue((sourceUpper, eventId), out var count) ? count : 0;
     }
@@ -286,10 +278,13 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// </summary>
     internal static IQueryable<string> BuildCurrentlyMutedIssueKeysQuery(
         LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
-        IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels)
+        IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
+        bool sourceKeyReady = false)
     {
-        return BuildCurrentlyMutedRowsQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels)
-            .Select(x => x.SourceName.ToUpper() + IssueExclusion.CompositeKeySeparator + x.EventId.ToString()).Distinct();
+        var rows = BuildCurrentlyMutedRowsQuery(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels, sourceKeyReady);
+        return sourceKeyReady
+            ? rows.Select(x => x.SourceKey + IssueExclusion.CompositeKeySeparator + x.EventId.ToString()).Distinct()
+            : rows.Select(x => x.SourceName.ToUpper() + IssueExclusion.CompositeKeySeparator + x.EventId.ToString()).Distinct();
     }
 
     /// <summary>
@@ -298,10 +293,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// </summary>
     private static IQueryable<TopIssueRow> BuildCurrentlyMutedRowsQuery(
         LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
-        IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels)
+        IReadOnlyCollection<long>? expandedHostIds, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
+        bool sourceKeyReady)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
-        q = IssueExclusionSql.OnlyCurrentlyMuted(q, exclusion);
+        q = IssueExclusionSql.OnlyCurrentlyMuted(q, exclusion, sourceKeyReady);
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         return ApplyRiskLevels(ctx, q, f, t, riskLevels);
@@ -333,6 +329,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var f = from.Date;
         var t = to.Date;
         exclusion = exclusion.ForRange(f, t);
+        var sourceKeyReady = _sourceKeyReady();
         // 大小寫不分（同 EfAnalysisRecordStore.ApplyPushableFilters 的 Source 篩選理由：
         // provider collation 不保證一致，兩邊都正規化才與比對邏輯逐位一致）
         var wanted = issues
@@ -344,14 +341,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // SQL 端先用 EventId 粗篩（高選擇度、可下推，Source 不分大小寫的精確比對留在記憶體），
         // 拉回的是相異三元組，數量遠小於原始列數
-        var rows = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+        var rows = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.HostId != 0 && eventIds.Contains(x.EventId))
-            .Select(x => new { x.SourceName, x.EventId, x.HostId })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.HostId })
             .Distinct()
             .ToList();
 
         var result = rows
-            .Where(r => wanted.Contains((r.SourceName.ToUpperInvariant(), r.EventId)))
+            .Where(r => wanted.Contains((SourceKeyOf(r.SourceKey, r.SourceName, sourceKeyReady), r.EventId)))
             .Select(r => r.HostId)
             .ToHashSet();
 
@@ -375,13 +372,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var t = to.Date;
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
 
         var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
 
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.HostId != 0 && eventIds.Contains(x.EventId));
 
         if (hostIds != null)
@@ -391,14 +389,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
 
         var rows = q
-            .Select(x => new { x.SourceName, x.EventId, x.HostId })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.HostId })
             .Distinct()
             .ToList()
-            .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
+            .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
             .ToList();
 
         var result = rows
-            .GroupBy(x => (SourceKey: x.SourceName.ToUpperInvariant(), x.EventId))
+            .GroupBy(x => (SourceKey: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId))
             .ToDictionary(g => g.Key, g => g.Select(x => Surviving(aliasIndex, x.HostId)).ToHashSet());
 
         Log.Debug("[SQL] IssueAggregate.HostIdsByIssue（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，{IssueCount} 個問題）→ {Count} 種問題、{Ms}ms",
@@ -422,13 +420,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
 
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
 
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
@@ -447,17 +446,18 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var rows = q
             .Select(x => new
             {
-                x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue
+                x.HostId, x.LogName, x.SourceKey, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue
             })
             .ToList()
-            .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
+            .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
             .ToList();
 
         var result = rows
             // host_id 先解析成存活主機再分組：合併前後兩個 id 在同一天或不同天各自出現過，
             // 併起來取真正最近的一次，不是各自留一筆。分組含 EventKey：IssueKey 是完整簽章鍵，
             // 同主機同規則的兩顆 PRTG sensor（或 Linux 命中不同規則）是兩個出現點
-            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey))
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName,
+                SourceKey: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId, x.EntryType, x.EventKey))
             .Select(g =>
             {
                 var latest = g.OrderByDescending(x => x.RecordDate).ThenByDescending(x => x.SeverityRank).First();
@@ -465,7 +465,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 {
                     HostId = g.Key.SurvivingHostId,
                     IssueKey = IssueSignatureKey.For(
-                        g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
+                        g.Key.LogName, g.Select(x => x.SourceName).Min() ?? g.Key.SourceKey, g.Key.EventId,
+                        (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
                         g.Key.EventKey),
                     LastSeen = latest.RecordDate,
                     SeverityRank = latest.SeverityRank,
@@ -493,13 +494,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var t = to.Date;
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
 
         var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
 
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
 
         if (hostIds != null)
@@ -511,9 +513,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 目標範圍是呼叫端已經算出的少數幾種問題（通常是當頁排行結果），不是整份表——
         // 與 LatestOccurrences／HostIdsFor 同一個規模假設
         var rows = q
-            .Select(x => new { x.HostId, x.SourceName, x.EventId, x.RecordDate })
+            .Select(x => new { x.HostId, x.SourceKey, x.SourceName, x.EventId, x.RecordDate })
             .ToList()
-            .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
+            .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
             .ToList();
 
         var result = rows
@@ -522,7 +524,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // wanted-normalization 慣例一致）——大小寫變體會被拆成同日兩列，下游
             // IssueBaselineCalculator 的「一筆＝一天」假設被破壞：出現日數虛胖、中位數偏低、
             // 偏離倍數因此偏高，且污染 PriorityScore 的 spreadW
-            .GroupBy(x => (SourceKey: x.SourceName.ToUpperInvariant(), x.EventId, x.RecordDate))
+            .GroupBy(x => (SourceKey: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId, x.RecordDate))
             .Select(g => new IssueDailyHostCount
             {
                 Source = g.Key.SourceKey,
@@ -575,6 +577,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
@@ -591,7 +594,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
 
         var q =
-            from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+            from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             join dr in recordsQuery on ti.RecordId equals dr.RecordId
             select ti;
 
@@ -605,29 +608,18 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // 每個 (主機,問題) 的最近出現日與期間內最高嚴重度：SQL 端 GROUP BY 做完，
         // 拉回的量受限於相異 (主機,問題) 組合數，不是可行動日的原始問題列數
-        var grouped = q
-            .GroupBy(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey })
-            .Select(g => new
-            {
-                g.Key.HostId,
-                g.Key.LogName,
-                g.Key.SourceName,
-                g.Key.EventId,
-                g.Key.EntryType,
-                g.Key.EventKey,
-                LastSeen = g.Max(x => x.RecordDate),
-                MaxSeverityRank = g.Max(x => x.SeverityRank)
-            })
-            .ToList();
+        var grouped = GroupActionableOccurrences(q, sourceKeyReady);
 
         var result = grouped
             // host_id 解析成存活主機再合併：同 LatestOccurrences 的既有規則（分組同樣含 EventKey）
-            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey))
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName,
+                SourceKey: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId, x.EntryType, x.EventKey))
             .Select(g => new HostIssueOccurrence
             {
                 HostId = g.Key.SurvivingHostId,
                 IssueKey = IssueSignatureKey.For(
-                    g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
+                    g.Key.LogName, g.Select(x => x.SourceName).Min() ?? g.Key.SourceKey, g.Key.EventId,
+                    (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
                     g.Key.EventKey),
                 LastSeen = g.Max(x => x.LastSeen),
                 SeverityRank = g.Max(x => x.MaxSeverityRank)
@@ -660,7 +652,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         LfDbContext ctx, IssueExclusion exclusion, DateTime f, DateTime t,
         HashSet<long>? expandedHostIds, IReadOnlyCollection<long> excludedHostIds,
         List<int> unhandledRanks, DateTime todayForOverdue,
-        IReadOnlySet<string>? riskLevels = null)
+        IReadOnlySet<string>? riskLevels = null, bool sourceKeyReady = false)
     {
         var sw = Stopwatch.StartNew();
 
@@ -713,7 +705,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 2. 「嚴重度落在 unhandledRanks 的問題數」以 SQL 端 GROUP BY RecordId 直接算出
         //    靜音列不計入（IssueExclusionSql.Apply）；另以 OnlyMuted 算「原本會被計入的靜音列」數，
         //    供日狀態階梯判定「全部都靜音＝已有結論」——沒有任何區間時不查
-        var unhandledCounts = (from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+        var unhandledCounts = (from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
                                join dr in recordsQuery on ti.RecordId equals dr.RecordId
                                where unhandledRanks.Contains(ti.SeverityRank)
                                group ti by ti.RecordId into g
@@ -722,7 +714,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var mutedCounts = exclusion.IsEmpty
             ? new Dictionary<long, int>()
-            : (from ti in IssueExclusionSql.OnlyMuted(ctx.TopIssues.AsNoTracking(), exclusion)
+            : (from ti in IssueExclusionSql.OnlyMuted(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
                join dr in recordsQuery on ti.RecordId equals dr.RecordId
                where unhandledRanks.Contains(ti.SeverityRank)
                group ti by ti.RecordId into g
@@ -741,7 +733,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 ih.RecordDate,
                 ih.IssueKey,
                 ih.Status,
-                ih.DueDate
+                ih.DueDate,
+                ih.UpdatedAt
             })
             .ToList();
 
@@ -759,15 +752,18 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .GroupBy(ih => (ih.HostNameKey.ToUpperInvariant(), ih.RecordDate))
             .ToDictionary(
                 g => g.Key,
-                g => g.GroupBy(x => x.IssueKey, StringComparer.Ordinal)
-                      .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal)
+                g => g.GroupBy(x => x.IssueKey, IssueSignatureKeyComparer.Instance)
+                      .ToDictionary(x => x.Key,
+                          x => x.OrderByDescending(h => h.UpdatedAt)
+                              .ThenBy(h => h.IssueKey, StringComparer.Ordinal).First(),
+                          IssueSignatureKeyComparer.Instance)
             );
 
         var casesByHost = openCases
             .GroupBy(ic => ic.HostNameKey.ToUpperInvariant())
             .ToDictionary(
                 g => g.Key,
-                g => g.Select(x => x.IssueKey).ToHashSet(StringComparer.Ordinal)
+                g => g.Select(x => x.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance)
             );
 
         // 4. 只有在該主機日真的有處理狀態列或案件列時，才需要它的 lf_top_issues 明細來比對問題鍵。
@@ -913,6 +909,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
@@ -923,7 +920,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
         }
 
-        var projected = GetDayHandlingRaw(ctx, exclusion, f, t, expandedHostIds, excludedHostIds, unhandledRanks, DateTime.MinValue);
+        var projected = GetDayHandlingRaw(ctx, exclusion, f, t, expandedHostIds, excludedHostIds, unhandledRanks, DateTime.MinValue, sourceKeyReady: sourceKeyReady);
 
         var result = projected.Select(x =>
         {
@@ -958,6 +955,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
@@ -968,7 +966,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
         }
 
-        var projected = GetDayHandlingRaw(ctx, exclusion, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date, riskLevels);
+        var projected = GetDayHandlingRaw(ctx, exclusion, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date, riskLevels, sourceKeyReady);
 
         int totalCount = 0;
         int openCount = 0;
@@ -1013,6 +1011,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
@@ -1037,7 +1036,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Distinct()
             .Count();
 
-        var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= f && x.RecordDate <= t);
         if (hostIds != null)
         {
             var expanded = ExpandToAliasIds(aliasIndex, hostIds);
@@ -1089,6 +1088,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var previousExclusion = exclusion.ForRange(f2, t2);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
         var expanded = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
 
         using var ctx = _contextFactory();
@@ -1118,7 +1118,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             if (expanded != null) qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
             if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
 
-            var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), periodExclusion).Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
+            var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), periodExclusion, sourceKeyReady).Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
             if (expanded != null) qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
             if (riskLevels != null)
             {
@@ -1189,11 +1189,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var t = to.Date;
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
         // SQL 端過濾來源與日期範圍（不得先撈全表）
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion)
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             // 不用 ToUpper：寫入端固定是 PrtgFindingMapper.PrtgLogName，而 UPPER
             // 會讓 SQL Server 端的索引無法 seek
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.LogName == PrtgFindingMapper.PrtgLogName);
@@ -1260,11 +1261,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var f = fromInclusive.Date;
         var t = toExclusive.Date;
         exclusion = exclusion.ForRange(f, t);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
         foreach (var batch in keys.Chunk(PrtgHitDateBatchSize))
         {
-            var rows = BuildPrtgHitDatesQuery(IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion), batch, f, t).ToList();
+            var rows = BuildPrtgHitDatesQuery(IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady), batch, f, t).ToList();
 
             foreach (var row in rows)
             {
@@ -1306,10 +1308,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var t = to.Date;
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
         HashSet<long>? expandedHostIds = null;
         if (hostIds != null)
@@ -1328,20 +1331,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // 風險資訊層級（去重前）：SQL 端 GROUP BY 拿到每個 (類別,主機,問題) 組合在期間內的
         // 最高嚴重度／是否曾重大／累計次數與事件數——組數受限於相異風險資訊數，不是原始列數
-        var riskItems = q
-            .GroupBy(x => new { x.Category, x.HostId, x.SourceName, x.EventId })
-            .Select(g => new
-            {
-                g.Key.Category,
-                g.Key.HostId,
-                g.Key.SourceName,
-                g.Key.EventId,
-                MaxSeverityRank = g.Max(x => x.SeverityRank),
-                AnyElevates = g.Max(x => x.ElevatesDayRisk ? 1 : 0),
-                Occurrences = g.Count(),
-                EventTotal = g.Sum(x => (long)x.EventCount)
-            })
-            .ToList();
+        var riskItems = GroupCategoryRiskItems(q, sourceKeyReady);
 
         // 一個問題只歸一個類別：同一個 (Source, EventId) 的列可能帶不同 category（規則調整過、
         // 或部分主機日未命中規則而落 Other）。卡片這邊若照原始列的類別各算一次，同一個問題
@@ -1349,16 +1339,17 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         //
         // 收斂方式必須與 Aggregate（依問題視角）**完全相同**：取該簽章最近一天的類別。
         // 兩邊用不同的收斂規則，等於卡片與下鑽各講一套。
-        var canonicalCategory = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var canonicalCategory = LatestCategories(ctx, exclusion, f, t, expandedHostIds, visibleRanks, riskLevels, sourceKeyReady);
 
         var result = riskItems
             .Select(x => new
             {
                 Category = canonicalCategory.TryGetValue(
-                    ((x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId), out var cat)
+                    (SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId), out var cat)
                     ? cat
                     : x.Category,
                 x.HostId,
+                SourceKey = SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady),
                 x.SourceName,
                 x.EventId,
                 x.MaxSeverityRank,
@@ -1368,11 +1359,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             })
             // host_id 解析成存活主機再去重合併：合併前後的兩個 id 代表同一筆風險資訊，
             // 語意與 SurvivingHostCounts／SurvivingHostDayCounts 一致
-            .GroupBy(x => new { x.Category, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.SourceName, x.EventId })
+            .GroupBy(x => new { x.Category, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.SourceKey, x.SourceName, x.EventId })
             .Select(g => new
             {
                 g.Key.Category,
                 g.Key.SurvivingHostId,
+                g.Key.SourceKey,
                 g.Key.SourceName,
                 g.Key.EventId,
                 // 舊資料相容（LegacySeverityRank）：與 Aggregate 同一條規則，否則這張卡跟
@@ -1387,7 +1379,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             {
                 // 問題類型＝相異 (Source, EventId)；每個類型取跨主機跨日的最高嚴重度分桶
                 var typeMaxRank = g
-                    .GroupBy(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+                    .GroupBy(x => (Source: x.SourceKey, x.EventId))
                     .Select(t => t.Max(x => x.MaxSeverityRank))
                     .ToList();
                 return new CategoryAggregate
@@ -1435,11 +1427,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
         var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
-        var issuesQuery = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var issuesQuery = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
         HashSet<long>? expanded = null;
         if (hostIds != null)
@@ -1449,7 +1442,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             issuesQuery = issuesQuery.Where(x => expanded.Contains(x.HostId));
         }
         if (riskLevels != null) recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
-        recordsQuery = ApplyIssueExistsFilters(ctx, exclusion, recordsQuery, categories, eventId, source, minSeverity);
+        recordsQuery = ApplyIssueExistsFilters(ctx, exclusion, recordsQuery, categories, eventId, source, minSeverity, sourceKeyReady);
 
         // SiteHidden 模式：只影響風險類型 chips（issuesQuery），不動 recordsQuery——
         // 同 RecordRepository.ApplySeverityVisibility 只砍 TopIssues、不排除整筆紀錄／不動
@@ -1515,11 +1508,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var sourceKeyReady = _sourceKeyReady();
 
         using var ctx = _contextFactory();
 
         var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
-        var issuesQuery = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        var issuesQuery = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
         HashSet<long>? expanded = null;
         if (hostIds != null)
@@ -1529,7 +1523,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             issuesQuery = issuesQuery.Where(x => expanded.Contains(x.HostId));
         }
         if (riskLevels != null) recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
-        recordsQuery = ApplyIssueExistsFilters(ctx, exclusion, recordsQuery, categories, eventId, source, minSeverity);
+        recordsQuery = ApplyIssueExistsFilters(ctx, exclusion, recordsQuery, categories, eventId, source, minSeverity, sourceKeyReady);
         if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         // 1. 主聚合在 SQL 端：依 HostId 分組算天數與最新日期，拉回量受限於主機數而非紀錄數
@@ -1628,10 +1622,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// </summary>
     private static IQueryable<DailyRecordRow> ApplyIssueExistsFilters(
         LfDbContext ctx, IssueExclusion exclusion, IQueryable<DailyRecordRow> q,
-        IReadOnlySet<IssueCategory>? categories, int? eventId, string? source, IssueSeverity? minSeverity)
+        IReadOnlySet<IssueCategory>? categories, int? eventId, string? source, IssueSeverity? minSeverity,
+        bool sourceKeyReady)
     {
         // exists 子查詢只看非靜音列：「這一天有沒有符合篩選的問題」不該被靜音問題撐起來
-        var topIssues = IssueExclusionSql.Apply(ctx.TopIssues, exclusion);
+        var topIssues = IssueExclusionSql.Apply(ctx.TopIssues, exclusion, sourceKeyReady);
         if (categories is { Count: > 0 })
         {
             var names = categories.Select(c => c.ToString()).ToList();
@@ -1645,7 +1640,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         if (!string.IsNullOrWhiteSpace(source))
         {
             var src = source.ToUpperInvariant();
-            q = q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == src));
+            q = sourceKeyReady
+                ? q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && t.SourceKey == src))
+                : q.Where(r => topIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == src));
         }
         if (minSeverity.HasValue)
         {
@@ -1680,6 +1677,147 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     .ToList());
     }
 
+    private static string SourceKeyOf(string? sourceKey, string sourceName, bool sourceKeyReady) =>
+        sourceKeyReady
+            ? sourceKey ?? WorkOrderIssueKey.SourceKeyOf(sourceName)
+            : sourceName.ToUpperInvariant();
+
+    private static List<IssueAggregateGroup> GroupIssueAggregates(
+        IQueryable<TopIssueRow> q, bool sourceKeyReady)
+    {
+        if (sourceKeyReady)
+        {
+            return q
+                .GroupBy(x => new { SourceKey = x.SourceKey!, x.EventId })
+                .Select(g => new IssueAggregateGroup(
+                    g.Key.SourceKey,
+                    g.Min(x => x.SourceName) ?? g.Key.SourceKey,
+                    g.Key.EventId,
+                    g.Min(x => x.Category),
+                    g.Max(x => x.SeverityRank),
+                    g.Max(x => x.ElevatesDayRisk ? 1 : 0),
+                    g.Select(x => x.RecordDate).Distinct().Count(),
+                    g.Min(x => x.RecordDate),
+                    g.Max(x => x.RecordDate),
+                    g.Sum(x => (long)x.EventCount),
+                    g.Count()))
+                .ToList();
+        }
+
+        return q
+            .GroupBy(x => new { SourceKey = x.SourceName.ToUpper(), x.EventId })
+            .Select(g => new IssueAggregateGroup(
+                g.Key.SourceKey,
+                g.Min(x => x.SourceName) ?? g.Key.SourceKey,
+                g.Key.EventId,
+                g.Min(x => x.Category),
+                g.Max(x => x.SeverityRank),
+                g.Max(x => x.ElevatesDayRisk ? 1 : 0),
+                g.Select(x => x.RecordDate).Distinct().Count(),
+                g.Min(x => x.RecordDate),
+                g.Max(x => x.RecordDate),
+                g.Sum(x => (long)x.EventCount),
+                g.Count()))
+            .ToList();
+    }
+
+    private static List<MutedIssueGroup> GroupMutedIssues(
+        IQueryable<TopIssueRow> q, bool sourceKeyReady)
+    {
+        if (sourceKeyReady)
+        {
+            return q
+                .GroupBy(x => new { SourceKey = x.SourceKey!, x.EventId })
+                .Select(g => new MutedIssueGroup(
+                    g.Key.SourceKey,
+                    g.Min(x => x.SourceName) ?? g.Key.SourceKey,
+                    g.Key.EventId,
+                    g.Min(x => x.Category),
+                    g.Max(x => x.SeverityRank)))
+                .ToList();
+        }
+
+        return q
+            .GroupBy(x => new { SourceKey = x.SourceName.ToUpper(), x.EventId })
+            .Select(g => new MutedIssueGroup(
+                g.Key.SourceKey,
+                g.Min(x => x.SourceName) ?? g.Key.SourceKey,
+                g.Key.EventId,
+                g.Min(x => x.Category),
+                g.Max(x => x.SeverityRank)))
+            .ToList();
+    }
+
+    private static List<ActionableIssueGroup> GroupActionableOccurrences(
+        IQueryable<TopIssueRow> q, bool sourceKeyReady)
+    {
+        if (sourceKeyReady)
+        {
+            return q
+                .GroupBy(x => new { x.HostId, x.LogName, SourceKey = x.SourceKey!, x.EventId, x.EntryType, x.EventKey })
+                .Select(g => new ActionableIssueGroup(
+                    g.Key.HostId,
+                    g.Key.LogName,
+                    g.Key.SourceKey,
+                    g.Min(x => x.SourceName) ?? g.Key.SourceKey,
+                    g.Key.EventId,
+                    g.Key.EntryType,
+                    g.Key.EventKey,
+                    g.Max(x => x.RecordDate),
+                    g.Max(x => x.SeverityRank)))
+                .ToList();
+        }
+
+        return q
+            .GroupBy(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.EventKey })
+            .Select(g => new ActionableIssueGroup(
+                g.Key.HostId,
+                g.Key.LogName,
+                g.Key.SourceName.ToUpper(),
+                g.Key.SourceName,
+                g.Key.EventId,
+                g.Key.EntryType,
+                g.Key.EventKey,
+                g.Max(x => x.RecordDate),
+                g.Max(x => x.SeverityRank)))
+            .ToList();
+    }
+
+    private static List<CategoryRiskItem> GroupCategoryRiskItems(
+        IQueryable<TopIssueRow> q, bool sourceKeyReady)
+    {
+        if (sourceKeyReady)
+        {
+            return q
+                .GroupBy(x => new { x.Category, x.HostId, SourceKey = x.SourceKey!, x.EventId })
+                .Select(g => new CategoryRiskItem(
+                    g.Key.Category,
+                    g.Key.HostId,
+                    g.Key.SourceKey,
+                    g.Min(x => x.SourceName) ?? g.Key.SourceKey,
+                    g.Key.EventId,
+                    g.Max(x => x.SeverityRank),
+                    g.Max(x => x.ElevatesDayRisk ? 1 : 0),
+                    g.Count(),
+                    g.Sum(x => (long)x.EventCount)))
+                .ToList();
+        }
+
+        return q
+            .GroupBy(x => new { x.Category, x.HostId, x.SourceName, x.EventId })
+            .Select(g => new CategoryRiskItem(
+                g.Key.Category,
+                g.Key.HostId,
+                g.Key.SourceName.ToUpper(),
+                g.Key.SourceName,
+                g.Key.EventId,
+                g.Max(x => x.SeverityRank),
+                g.Max(x => x.ElevatesDayRisk ? 1 : 0),
+                g.Count(),
+                g.Sum(x => (long)x.EventCount)))
+            .ToList();
+    }
+
     /// <summary>
     /// 日風險等級母體限縮的單一出口：問題只要出現在風險等級符合的主機日就算。
     /// 主查詢（<see cref="Aggregate"/>／<see cref="AggregateByCategory"/>／
@@ -1701,18 +1839,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
     private static Dictionary<(string, int), int> SurvivingHostCounts(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
-        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)
+        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
+        bool sourceKeyReady)
     {
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
-            .Select(x => new { x.SourceName, x.EventId, x.HostId })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.HostId })
             .Distinct()
             .ToList()   // host_id → 存活 id 的解析非 SQL 可翻譯，先拉回輕量投影再算
-            .GroupBy(x => (SourceUpper: x.SourceName.ToUpperInvariant(), x.EventId))
+            .GroupBy(x => (SourceUpper: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId))
             .ToDictionary(
                 g => g.Key,
                 g => g.Select(x => Surviving(aliasIndex, x.HostId)).Distinct().Count());
@@ -1722,23 +1861,25 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     private static Dictionary<(string, int), int> SurvivingHostDayCounts(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
         HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
-        (string SourceUpper, int EventId)? onlyIssue)
+        (string SourceUpper, int EventId)? onlyIssue, bool sourceKeyReady)
     {
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         if (onlyIssue != null)
         {
             var (src, id) = onlyIssue.Value;
-            q = q.Where(x => x.EventId == id && x.SourceName.ToUpper() == src);
+            q = sourceKeyReady
+                ? q.Where(x => x.EventId == id && x.SourceKey == src)
+                : q.Where(x => x.EventId == id && x.SourceName.ToUpper() == src);
         }
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
-            .Select(x => new { x.SourceName, x.EventId, x.HostId, x.RecordDate })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.HostId, x.RecordDate })
             .Distinct()
             .ToList()
-            .GroupBy(x => (SourceUpper: x.SourceName.ToUpperInvariant(), x.EventId))
+            .GroupBy(x => (SourceUpper: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId))
             .ToDictionary(
                 g => g.Key,
                 g => g.Select(x => (Surviving(aliasIndex, x.HostId), x.RecordDate)).Distinct().Count());
@@ -1756,9 +1897,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// </summary>
     private static Dictionary<(string, int), string> LatestCategories(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<int>? visibleRanks = null, IReadOnlySet<string>? riskLevels = null)
+        IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels, bool sourceKeyReady)
     {
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {
@@ -1768,10 +1909,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
-            .Select(x => new { x.SourceName, x.EventId, x.RecordDate, x.Category })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.RecordDate, x.Category })
             .Distinct()
             .ToList()
-            .GroupBy(x => (SourceUpper: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+            .GroupBy(x => (SourceUpper: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId))
             .ToDictionary(g => g.Key, g => PickLatestCategory(g.Select(x => (x.RecordDate, x.Category))));
     }
 
@@ -1793,9 +1934,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// </summary>
     private static Dictionary<(string, int), IReadOnlyList<string>> DistinctSignatures(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<int>? visibleRanks = null, IReadOnlySet<string>? riskLevels = null)
+        IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels, bool sourceKeyReady)
     {
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {
@@ -1805,10 +1946,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
-            .Select(x => new { x.SourceName, x.EventId, x.LogName, x.EntryType })
+            .Select(x => new { x.SourceKey, x.SourceName, x.EventId, x.LogName, x.EntryType })
             .Distinct()
             .ToList()
-            .GroupBy(x => (SourceUpper: x.SourceName.ToUpperInvariant(), x.EventId))
+            .GroupBy(x => (SourceUpper: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId))
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyList<string>)g

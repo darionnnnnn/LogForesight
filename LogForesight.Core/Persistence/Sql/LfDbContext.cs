@@ -173,6 +173,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.IssueId).HasColumnName("issue_id").ValueGeneratedOnAdd();
             e.Property(x => x.RecordId).HasColumnName("record_id");
             e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255);
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20);
             e.Property(x => x.SeverityRank).HasColumnName("severity_rank");
@@ -200,6 +201,7 @@ public class LfDbContext : DbContext
 
             e.HasIndex(x => x.RecordId);
             e.HasIndex(x => new { x.EventId, x.SourceName });   // 跨主機同簽章查詢
+            e.HasIndex(x => new { x.SourceKey, x.EventId, x.RecordDate }).HasDatabaseName("IX_lf_top_issues_source_key_event_date");
             e.HasIndex(x => x.Category);
             // 問題聚合的查詢形狀：期間 → 依簽章 GROUP BY
             e.HasIndex(x => new { x.RecordDate, x.SourceName, x.EventId }).HasDatabaseName("IX_lf_top_issues_date_signature");
@@ -389,6 +391,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.Date).HasColumnName("date");
             e.Property(x => x.LogName).HasColumnName("log_name").HasMaxLength(255);
             e.Property(x => x.Source).HasColumnName("source").HasMaxLength(255);
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.EntryType).HasColumnName("entry_type");
             e.Property(x => x.EventTime).HasColumnName("event_time");
@@ -396,6 +399,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.RuleId).HasColumnName("rule_id").HasMaxLength(64);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
+            e.HasIndex(x => new { x.HostId, x.Date, x.SourceKey, x.EventId })
+                .HasDatabaseName("IX_lf_risky_events_host_id_date_source_key_event_id");
             // AI 對話查詢形狀（host_id+date+source+event_id）；date 單獨一支供 Prune 清理
             e.HasIndex(x => new { x.HostId, x.Date, x.Source, x.EventId }).HasDatabaseName("IX_lf_risky_events_host_id_date_source_event_id");
             e.HasIndex(x => x.Date).HasDatabaseName("IX_lf_risky_events_date");
@@ -649,6 +654,8 @@ public class TopIssueRow
     public long IssueId { get; set; }
     public long RecordId { get; set; }
     public string SourceName { get; set; } = string.Empty;
+    /// <summary>依 WorkOrderIssueKey.SourceKeyOf 寫入；null 表示升級後尚待背景回填。</summary>
+    public string? SourceKey { get; set; }
     public int EventId { get; set; }
     public string Category { get; set; } = string.Empty;
     public int SeverityRank { get; set; }
@@ -691,6 +698,8 @@ public class RiskyEventRow
     public DateTime Date { get; set; }
     public string LogName { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+    /// <summary>依 WorkOrderIssueKey.SourceKeyOf 寫入；舊列在背景回填完成前為 null。</summary>
+    public string? SourceKey { get; set; }
     public int EventId { get; set; }
     public EventLogEntryType EntryType { get; set; }
     public DateTime EventTime { get; set; }

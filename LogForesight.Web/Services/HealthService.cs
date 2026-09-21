@@ -130,6 +130,18 @@ public class HealthService
             BackfillInProgress = _backfiller.Progress.InProgress,
             BackfillDone = _backfiller.Progress.Done,
             BackfillTotal = _backfiller.Progress.Total,
+            SourceKeyBackfillComplete = _backfiller.IssueSourceKeyReady,
+            SourceKeyBackfillDone = _backfiller.SourceKeyProgress.Done,
+            SourceKeyBackfillTotal = _backfiller.SourceKeyProgress.Total,
+            RiskySourceKeyBackfillComplete = _backfiller.RiskySourceKeyProgress.Completed,
+            RiskySourceKeyBackfillDone = _backfiller.RiskySourceKeyProgress.Done,
+            RiskySourceKeyBackfillTotal = _backfiller.RiskySourceKeyProgress.Total,
+            SourceMergePreview = _backfiller.SourceMergePreview.Select(g => new SourceMergePreviewDto
+            {
+                SourceKey = g.SourceKey,
+                EventId = g.EventId,
+                Names = g.Names.ToList()
+            }).ToList(),
 
             // 遷移未完成時處理狀態是唯讀的——這是唯一能看出「為什麼標記不了」的地方
             MigrationState = migration.State,

@@ -257,7 +257,7 @@ public class WorkOrderBoardService
         // 掛單與建單都依（處理人, 問題）分組；掛進他人範圍單的決策交給同處理人的建單自動併入其進行中單
         var groups = trial.Gaps
             .Where(g => g.Decision.Kind != DispatchDecisionKind.Skip)
-            .GroupBy(g => (HandlerId: g.Decision.HandlerId!.Value, SourceKey: g.Issue.Source.ToUpperInvariant(), g.Issue.EventId))
+            .GroupBy(g => (HandlerId: g.Decision.HandlerId!.Value, SourceKey: WorkOrderIssueKey.SourceKeyOf(g.Issue.Source), g.Issue.EventId))
             .OrderBy(g => g.Key.HandlerId)
             .ThenBy(g => g.Key.SourceKey, StringComparer.Ordinal)
             .ThenBy(g => g.Key.EventId)
@@ -322,7 +322,7 @@ public class WorkOrderBoardService
 
             var skipped = outcome.SkippedConflicts
                 .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
-                .ToHashSet();
+                .ToHashSet(HostIssueSignatureKeyComparer.Instance);
             var distinctGroupHosts = members
                 .Where(m => !skipped.Contains((HostNameKey.Of(m.HostName), m.IssueKey)))
                 .Select(m => m.HostName)
@@ -445,7 +445,8 @@ public class WorkOrderBoardService
         var occurrences = _aggregates.LatestOccurrences(
             IssueExclusion.None, issues, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
 
-        var openKeys = _cases.GetOpenKeys().ToHashSet();
+        var openKeys = _cases.GetOpenKeys().Select(x => (x.HostNameKey, x.IssueKey))
+            .ToHashSet(HostIssueSignatureKeyComparer.Instance);
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
 
         var candidates = occurrences
@@ -522,7 +523,7 @@ public class WorkOrderBoardService
     /// <summary>依問題彙總試跑決策（待派清單的列與立即派工的無法派計數共用）</summary>
     private static List<IssueSummary> Summarize(List<GapDecision> gaps) =>
         gaps
-            .GroupBy(g => (SourceKey: g.Issue.Source.ToUpperInvariant(), g.Issue.EventId))
+            .GroupBy(g => (SourceKey: WorkOrderIssueKey.SourceKeyOf(g.Issue.Source), g.Issue.EventId))
             .Select(g =>
             {
                 var list = g.ToList();

@@ -309,6 +309,19 @@ public class SuppressionTests
 
         Assert.Single(keys);
         Assert.Contains("system|disk|153|1", keys);
+        Assert.Contains("SYSTEM|DISK|153|1", keys);
+    }
+
+    [Fact]
+    public void 簽章抑制_來源用正規化鍵而其餘欄位保留原本不分大小寫()
+    {
+        var keys = SuppressionFilter.ToSignatureKeySet(new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Signature,
+                SignatureKey = "System|évent|153|1|Rule-A" }
+        });
+
+        Assert.Contains("system|ÉVENT|153|1|rule-a", keys);
     }
 
     [Fact]

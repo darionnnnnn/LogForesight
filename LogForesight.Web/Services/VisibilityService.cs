@@ -299,12 +299,13 @@ public class VisibilityService : IVisibilityService
         var host = _hosts.Get(hostId);
         if (host == null)
         {
-            var empty = new HashSet<string>(StringComparer.Ordinal);
+            var empty = new HashSet<string>(IssueSignatureKeyComparer.Instance);
             _cachedIssueKeyRestrictions[hostId] = empty;
             return empty;
         }
 
-        var keys = (IReadOnlySet<string>)_cases.IssueKeysOnHost(_currentUser.UserId, host.HostName);
+        var keys = (IReadOnlySet<string>)new HashSet<string>(
+            _cases.IssueKeysOnHost(_currentUser.UserId, host.HostName), IssueSignatureKeyComparer.Instance);
         _cachedIssueKeyRestrictions[hostId] = keys;
         return keys;
     }

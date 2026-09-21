@@ -269,7 +269,13 @@ public class DayHandlingCommandService
     {
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var dayIssueHandlings = _issueStore.GetForDay(host.HostName, date)
-            .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
+            .GroupBy(h => h.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(h => h.UpdatedAt)
+                    .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
         var actor = new WorkOrderActor
         {
             ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,

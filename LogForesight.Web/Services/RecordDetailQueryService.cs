@@ -74,28 +74,46 @@ public class RecordDetailQueryService
         var hostName = host?.HostName ?? record.Host;
         var issueHandlingByKey = _issueHandlings
             .GetForDay(hostName, date)
-            .GroupBy(h => h.IssueKey, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            .GroupBy(h => h.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(h => h.UpdatedAt)
+                    .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
 
         // 已知雜訊記憶（跨日、以主機＋簽章為鍵，見 §5.1 D-1 #3）：未標記的問題若命中記憶，
         // 前端自動顯示「已知雜訊（自動）」，不必使用者每天重標
         var noiseMarks = _noiseMarks.GetForHost(hostName)
-            .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
+            .GroupBy(m => m.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(m => m.MarkedAt)
+                    .ThenBy(m => m.IssueKey, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
 
         // 問題案件（docs/archive/FEEDBACK-4-PLAN.md §2）：進行中案件涵蓋的問題顯示「○○○ 處理中
         // （1/10 起）」，解釋為什麼某些問題的狀態會被案件同步「自己動」
         var openCases = _cases.GetOpenForHost(hostName)
+            .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
             .ToDictionary(
-                c => c.IssueKey,
-                c =>
+                g => g.Key,
+                g =>
                 {
+                    // 舊資料可能有同一完整鍵但 Source 大小寫不同的兩列；先用最新更新時間
+                    // 決定保留哪一列，避免 comparer ToDictionary 直接撞鍵而回 500。
+                    var c = g.OrderByDescending(c => c.UpdatedAt)
+                        .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
+                        .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+                        .First();
                     // 帳號與顯示名稱一起帶出（docs/archive/FEEDBACK-10-PLAN.md §6）：徽章要組成
                     // 「顯示名稱(帳號)」，同一次 Get 拿齊，不為了帳號再查一次
                     var handler = c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value) : null;
                     return (HandlerId: c.HandlerId, HandlerName: handler?.DisplayName, HandlerAccount: handler?.Account,
                             c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd"), c.WorkOrderId);
                 },
-                StringComparer.Ordinal);
+                IssueSignatureKeyComparer.Instance);
 
         // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：本主機更早日期有結案類逐日標記，
         // 或有已結案案件，任一命中即視為「這個問題之前處理過」——只算旗標，內容留給
@@ -104,7 +122,7 @@ public class RecordDetailQueryService
             .GetMany(new[] { hostName }, DateTime.MinValue, date.Date.AddDays(-1))
             .Where(h => IssueHandlingStatuses.IsClosed(h.Status))
             .Select(h => h.IssueKey)
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(IssueSignatureKeyComparer.Instance);
         priorClosedIssueKeys.UnionWith(
             _cases.GetMany(new[] { hostName })
                 .Where(c => c.ClosedAt != null)
@@ -257,7 +275,7 @@ public class RecordDetailQueryService
 
         var entries = _issueHandlings
             .GetMany(new[] { hostName }, DateTime.MinValue, date.Date.AddDays(-1))
-            .Where(h => string.Equals(h.IssueKey, issueKey, StringComparison.Ordinal) && IssueHandlingStatuses.IsClosed(h.Status))
+            .Where(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, issueKey) && IssueHandlingStatuses.IsClosed(h.Status))
             .OrderByDescending(h => h.Date)
             .Select(h => new IssueHistoryEntryDto
             {
@@ -272,7 +290,7 @@ public class RecordDetailQueryService
             .ToList();
 
         var cases = _cases.GetMany(new[] { hostName })
-            .Where(c => string.Equals(c.IssueKey, issueKey, StringComparison.Ordinal) && c.ClosedAt != null)
+            .Where(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, issueKey) && c.ClosedAt != null)
             .OrderByDescending(c => c.ClosedAt)
             .Select(c => new IssueHistoryCaseDto
             {
@@ -392,7 +410,7 @@ public class RecordDetailQueryService
             // 合併當天可能有存活主機與墓碑各一筆，取存活主機那筆（同 GetHostDetail 的既有處理）
             .GroupBy(r => r.Date.Date)
             .Select(g => g.FirstOrDefault(r => r.HostId == hostId) ?? g.First())
-            .Where(r => r.TopIssues.Any(i => i.Source == source && i.EventId == eventId))
+            .Where(r => r.TopIssues.Any(i => SourceKeyComparer.Instance.Equals(i.Source, source) && i.EventId == eventId))
             .OrderBy(r => r.Date)
             .ToList();
 
@@ -402,21 +420,28 @@ public class RecordDetailQueryService
         // 一個 (Source,EventId) 可能對到多個完整 IssueKey（LogName/EntryType 不同）——
         // 逐日取當天實際命中的那個簽章，狀態也各自對應那個簽章的標記，不強行假設全期間同一把鍵
         var issueKeys = records
-            .SelectMany(r => r.TopIssues.Where(i => i.Source == source && i.EventId == eventId))
+            .SelectMany(r => r.TopIssues.Where(i => SourceKeyComparer.Instance.Equals(i.Source, source) && i.EventId == eventId))
             .Select(IssueSignatureKey.For)
-            .Distinct(StringComparer.Ordinal)
-            .ToHashSet();
+            .Distinct(IssueSignatureKeyComparer.Instance)
+            .ToHashSet(IssueSignatureKeyComparer.Instance);
 
         var issueHandlings = _issueHandlings.GetMany(new[] { hostName }, records.Min(r => r.Date), records.Max(r => r.Date));
-        var noiseMarks = _noiseMarks.GetForHost(hostName).ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
+        var noiseMarks = _noiseMarks.GetForHost(hostName)
+            .GroupBy(m => m.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(m => m.MarkedAt)
+                    .ThenBy(m => m.IssueKey, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
         var occurrences = new List<HostIssueOccurrenceDayDto>();
         foreach (var record in records)
         {
-            var issue = record.TopIssues.First(i => i.Source == source && i.EventId == eventId);
+            var issue = record.TopIssues.First(i => SourceKeyComparer.Instance.Equals(i.Source, source) && i.EventId == eventId);
             var key = IssueSignatureKey.For(issue);
-            var handling = issueHandlings.FirstOrDefault(h => h.Date.Date == record.Date.Date && string.Equals(h.IssueKey, key, StringComparison.Ordinal));
+            var handling = issueHandlings.FirstOrDefault(h => h.Date.Date == record.Date.Date && IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, key));
             var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
 
             occurrences.Add(new HostIssueOccurrenceDayDto

@@ -579,7 +579,7 @@ public class RecordListQueryService
         // 紀錄的 KnownIssue」語意相同
         var latestKnownIssue = occurrences.OrderByDescending(o => o.Occurrence.LastSeen).FirstOrDefault()?.Occurrence.KnownIssue;
 
-        var baselineKey = (SourceKey: aggregate.Source.ToUpperInvariant(), aggregate.EventId);
+            var baselineKey = (SourceKey: WorkOrderIssueKey.SourceKeyOf(aggregate.Source), aggregate.EventId);
         baselines.TryGetValue(baselineKey, out var baseline);
         fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
 
@@ -744,7 +744,7 @@ public class RecordListQueryService
 
         return a =>
             (!eventId.HasValue || a.EventId == eventId.Value) &&
-            (source == null || string.Equals(a.Source, source, StringComparison.OrdinalIgnoreCase)) &&
+            (source == null || SourceKeyComparer.Instance.Equals(a.Source, source)) &&
             (allowedCategories == null || allowedCategories.Contains(a.Category)) &&
             (allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)) &&
             (!minSeverityRank.HasValue || a.MaxSeverityRank >= minSeverityRank.Value);
@@ -920,7 +920,7 @@ public class RecordListQueryService
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
 
         if (!string.IsNullOrWhiteSpace(request.Source))
-            aggregates = aggregates.Where(a => string.Equals(a.Source, request.Source, StringComparison.OrdinalIgnoreCase)).ToList();
+            aggregates = aggregates.Where(a => SourceKeyComparer.Instance.Equals(a.Source, request.Source)).ToList();
 
         if (request.Categories is { Count: > 0 } wantedCategories)
         {
@@ -963,7 +963,7 @@ public class RecordListQueryService
         if (FindHandling(handlings, lookup, record)?.HandlerId != null) return false;
         if (record.TopIssues.Count == 0) return true;
         var name = lookup.For(record)?.HostName ?? record.Host;
-        var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+        var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(IssueSignatureKeyComparer.Instance);
         return !openCases.Any(c =>
             c.HandlerId.HasValue &&
             string.Equals(c.HostName, name, StringComparison.OrdinalIgnoreCase) &&
@@ -1041,7 +1041,7 @@ public class RecordListQueryService
         var handlerFromCase = false;
         if (!handlerId.HasValue && openCases is { Count: > 0 } && record.TopIssues.Count > 0)
         {
-            var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+            var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(IssueSignatureKeyComparer.Instance);
             var openCase = openCases.FirstOrDefault(c =>
                 string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
                 issueKeys.Contains(c.IssueKey) && c.HandlerId.HasValue);

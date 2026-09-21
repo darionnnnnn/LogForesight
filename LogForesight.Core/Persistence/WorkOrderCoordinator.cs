@@ -255,7 +255,7 @@ public class WorkOrderCoordinator
 
             var parsed = IssueSignatureKey.TryParseSignature(member.IssueKey);
             if (parsed == null || parsed.Value.EventId != eventId
-                || !string.Equals(parsed.Value.Source, source, StringComparison.OrdinalIgnoreCase))
+                || !SourceKeyComparer.Instance.Equals(parsed.Value.Source, source))
                 throw new InvalidOperationException(
                     $"WorkOrderCoordinator：成員「{member.HostName}」的問題簽章與交辦單 {orderLabel} 的問題不符。");
         }
@@ -991,10 +991,10 @@ public class WorkOrderCoordinator
 
         public bool Equals((string HostName, string IssueKey) x, (string HostName, string IssueKey) y) =>
             StringComparer.OrdinalIgnoreCase.Equals(x.HostName, y.HostName)
-            && StringComparer.Ordinal.Equals(x.IssueKey, y.IssueKey);
+            && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
 
         public int GetHashCode((string HostName, string IssueKey) key) =>
             HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.HostName),
-                StringComparer.Ordinal.GetHashCode(key.IssueKey));
+                IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
     }
 }

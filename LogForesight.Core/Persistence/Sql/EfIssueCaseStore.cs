@@ -31,8 +31,16 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var key = HostNameKey.Of(hostName);
 
         using var ctx = _contextFactory();
+        // 先以主機＋進行中狀態縮小結果，再在 C# 比較完整 IssueKey；不能用 UPPER()，
+        // 否則 SQLite／SQL Server 的 Unicode 大小寫規則會不一致。成本受該主機進行中案件數限制。
         var row = ctx.IssueCases.AsNoTracking()
-            .FirstOrDefault(c => c.HostNameKey == key && c.IssueKey == issueKey && c.ClosedAt == null);
+            .Where(c => c.HostNameKey == key && c.ClosedAt == null)
+            .ToList()
+            .Where(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, issueKey))
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
+            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .FirstOrDefault();
         return row == null ? null : ToModel(row);
     }
 
@@ -97,7 +105,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             .Where(c => c.HandlerId == handlerId && c.HostNameKey == key)
             .Select(c => c.IssueKey)
             .ToList();
-        return new HashSet<string>(keys, StringComparer.Ordinal);
+        return new HashSet<string>(keys, IssueSignatureKeyComparer.Instance);
     }
 
     public List<string> HostNamesWithCases(long handlerId)

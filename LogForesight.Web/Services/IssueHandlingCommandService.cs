@@ -108,7 +108,7 @@ public class IssueHandlingCommandService
         IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
-        var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
+        var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(IssueSignatureKey.For(i), request.IssueKey))
                     ?? throw DomainException.Validation("找不到這個問題，可能紀錄已更新，請重新整理。");
 
         RequireIssueAllowed(hostId, request.IssueKey);
@@ -116,7 +116,7 @@ public class IssueHandlingCommandService
 
         // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）
         var previousStatus = _issueStore.GetForDay(host.HostName, date)
-            .FirstOrDefault(h => string.Equals(h.IssueKey, request.IssueKey, StringComparison.Ordinal))?.Status;
+            .FirstOrDefault(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, request.IssueKey))?.Status;
 
         var caseSync = ApplyIssueStatus(host, date, request.IssueKey, HandlingTextHelpers.IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, DateTime.Now);
 
@@ -160,9 +160,9 @@ public class IssueHandlingCommandService
         // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了。
         // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
         var labelByKey = record.TopIssues
-            .GroupBy(IssueSignatureKey.For, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => HandlingTextHelpers.IssueLabel(g.First()), StringComparer.Ordinal);
-        var appliedKeys = request.IssueKeys.Distinct(StringComparer.Ordinal).Where(labelByKey.ContainsKey).ToList();
+            .GroupBy(IssueSignatureKey.For, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(g => g.Key, g => HandlingTextHelpers.IssueLabel(g.First()), IssueSignatureKeyComparer.Instance);
+        var appliedKeys = request.IssueKeys.Distinct(IssueSignatureKeyComparer.Instance).Where(labelByKey.ContainsKey).ToList();
         if (appliedKeys.Count == 0)
             throw DomainException.Validation("找不到任何勾選的問題，可能紀錄已更新，請重新整理。");
 
@@ -182,7 +182,13 @@ public class IssueHandlingCommandService
         // 子集，不把早已上報過的問題重複算進去（終檢輪修正：原本用整批數量當標籤，
         // admin 會誤以為先前的上報又發生了一次）。
         var previousStatusByKey = _issueStore.GetForDay(host.HostName, date)
-            .ToDictionary(h => h.IssueKey, h => h.Status, StringComparer.Ordinal);
+            .GroupBy(h => h.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(h => h.UpdatedAt)
+                    .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                    .First().Status,
+                IssueSignatureKeyComparer.Instance);
         var newlyEscalatedKeys = appliedKeys.Where(k =>
             !previousStatusByKey.TryGetValue(k, out var prev) || prev != IssueHandlingStatuses.Escalated).ToList();
 
@@ -520,7 +526,8 @@ public class IssueHandlingCommandService
             var host = lookup.For(record);
             if (host == null) continue;
 
-            foreach (var issue in record.TopIssues.Where(i => i.Source == source && i.EventId == eventId))
+            foreach (var issue in record.TopIssues.Where(i =>
+                SourceKeyComparer.Instance.Equals(i.Source, source) && i.EventId == eventId))
             {
                 if (!byHost.TryGetValue(host.HostName, out var entry))
                 {
@@ -542,8 +549,8 @@ public class IssueHandlingCommandService
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 g => g.Key,
-                g => g.GroupBy(h => (h.Date.Date, h.IssueKey))
-                      .ToDictionary(x => x.Key, x => x.Last().Status),
+                g => g.GroupBy(h => (h.Date.Date, h.IssueKey), DateIssueSignatureKeyComparer.Instance)
+                      .ToDictionary(x => x.Key, x => x.Last().Status, DateIssueSignatureKeyComparer.Instance),
                 StringComparer.OrdinalIgnoreCase);
 
         // 已有進行中案件＝有人接手（不論是誰，含 admin 自己）：整台略過（定案 6-1）。

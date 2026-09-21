@@ -33,7 +33,7 @@ public static class IssueBaselineCalculator
     {
         var result = new Dictionary<(string, int), Baseline>();
 
-        foreach (var group in days.GroupBy(d => (SourceKey: d.Source.ToUpperInvariant(), d.EventId)))
+        foreach (var group in days.GroupBy(d => (SourceKey: WorkOrderIssueKey.SourceKeyOf(d.Source), d.EventId)))
         {
             var ordered = group.OrderBy(d => d.Date).ToList();
 

@@ -264,11 +264,12 @@ public sealed class WorkOrderBackfiller
         if (groups.Count == 0) return result;
 
         // (處理人, issue_key) → (所屬組, 該組案件最早 CreatedAt)；同處理人的 issue_key 只會落在一組
-        var wanted = new Dictionary<(long, string), ((long, string, int) Group, DateTime Since)>();
+        var wanted = new Dictionary<(long HandlerId, string IssueKey), ((long, string, int) Group, DateTime Since)>(
+            HandlerIssueKeyComparer.Instance);
         foreach (var group in groups)
         {
             var since = group.Min(c => c.CreatedAt);
-            foreach (var key in group.Select(c => c.IssueKey).Distinct())
+            foreach (var key in group.Select(c => c.IssueKey).Distinct(IssueSignatureKeyComparer.Instance))
                 wanted[(group.Key.HandlerId, key)] = (group.Key, since);
         }
         var earliest = groups.Min(g => g.Min(c => c.CreatedAt));
@@ -327,4 +328,17 @@ public sealed class WorkOrderBackfiller
     private sealed record CandidateCase(
         string CaseId, long HandlerId, string SourceKey, string? SourceName, int? EventId,
         string IssueKey, string IssueLabel, DateTime CreatedAt);
+
+    /// <summary>處理人保持 Ordinal 相等；完整問題鍵只由 SourceKeyComparer 正規化來源欄位。</summary>
+    private sealed class HandlerIssueKeyComparer : IEqualityComparer<(long HandlerId, string IssueKey)>
+    {
+        public static readonly HandlerIssueKeyComparer Instance = new();
+
+        public bool Equals((long HandlerId, string IssueKey) x, (long HandlerId, string IssueKey) y) =>
+            x.HandlerId == y.HandlerId
+            && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
+
+        public int GetHashCode((long HandlerId, string IssueKey) key) =>
+            HashCode.Combine(key.HandlerId, IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
+    }
 }

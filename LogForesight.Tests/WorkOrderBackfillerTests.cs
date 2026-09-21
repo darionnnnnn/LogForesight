@@ -217,6 +217,23 @@ public class WorkOrderBackfillerTests : IDisposable
         Assert.Equal(Base.AddHours(2), Assert.Single(ctx.WorkOrders.ToList()).LastReplyAt);
     }
 
+    [Fact]
+    public void LastReplyAt_處理歷程SourceUnicode大小寫異體仍命中但EventKey仍區分()
+    {
+        var candidateKey = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
+        var logKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+        AddLegacyCase("unicode", "SRV-UNICODE", candidateKey, 1);
+        AppendLog(1, logKey, HandlingActions.IssueStatus, Base.AddHours(2));
+        AppendLog(1, IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error, "other-rule"),
+            HandlingActions.IssueStatus, Base.AddHours(3));
+
+        Backfiller().Run(CancellationToken.None);
+
+        using var ctx = _fx.NewContext();
+        var order = Assert.Single(ctx.WorkOrders.ToList());
+        Assert.Equal(Base.AddHours(2), order.LastReplyAt);
+    }
+
     /// <summary>起點由全體最早案件決定；較晚建立的組仍要逐筆比自己組的建立時間</summary>
     [Fact]
     public void LastReplyAt以各組自己的最早建立時間為界()

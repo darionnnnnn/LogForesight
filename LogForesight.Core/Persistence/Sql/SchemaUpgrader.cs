@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using NLog;
 using LogForesight.Core.Persistence;
 
@@ -48,6 +50,12 @@ internal static class SchemaUpgrader
         // 「檢查缺什麼→缺才補」冪等 DDL 補上整張表，新 DB 則由 EnsureCreated 直接建好、這裡 no-op。
         CreateTableIfMissing(ctx, isSqlite, "lf_risky_events",
             isSqlite ? SqliteCreateRiskyEventsTable : SqlServerCreateRiskyEventsTable);
+        // 舊列保留 NULL，交由 EfRiskyEventStore.BackfillSourceKeysBatch 在背景分批補齊；
+        // 未完成前查詢仍走 source + UPPER()，避免啟動時掃描整張暫存表。
+        AddColumnIfMissing(ctx, isSqlite, "lf_risky_events", "source_key",
+            isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
+            "IX_lf_risky_events_host_id_date_source_key_event_id", "host_id, date, source_key, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
             "IX_lf_risky_events_host_id_date_source_event_id", "host_id, date, source, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events", "IX_lf_risky_events_date", "date");
@@ -143,6 +151,11 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "known_issue", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "event_key",
             isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        // 來源名稱的寫入時計算鍵；舊列保留 NULL 供背景分批補齊，不在啟動閘掃全表。
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_key",
+            isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_top_issues", "IX_lf_top_issues_source_key_event_date",
+            "source_key, event_id, record_date");
 
         // 問題機房首見日（回饋十九輪批次B／G，↔ IssueFirstSeenRow）
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_first_seen",
@@ -477,6 +490,208 @@ internal static class SchemaUpgrader
 
     internal const string IssueFirstSeenWatermarkBlobKey = "issue_first_seen_watermark";
     internal const string IssueFirstSeenFullDoneBlobKey = "issue_first_seen_full_done";
+    internal const string IssueFirstSeenSourceKeyRekeyDoneBlobKey = "issue_first_seen_source_key_rekey_done";
+    private const string IssueFirstSeenSourceKeyRekeyVersion = "1";
+
+    /// <summary>
+    /// 將來源鍵回填前以 SQL <c>UPPER(source_name)</c> 寫入的首見日列，安全地
+    /// 合併到 <c>lf_top_issues.source_key</c> 的正規鍵。只接受能由現有 top issue
+    /// 列證明的對應；沒有 top issue 的舊列保留原樣。
+    /// </summary>
+    internal static int RekeyIssueFirstSeenToSourceKeys(Func<LfDbContext> contextFactory)
+    {
+        IExecutionStrategy strategy;
+        using (var probe = contextFactory())
+        {
+            // 成功標記是 durable gate：正常 hosted service 重啟只做這個索引欄位查詢，
+            // 不開交易、不載入 top_issues 或 issue_first_seen。
+            if (probe.Blobs.AsNoTracking().Any(x =>
+                    x.BlobKey == IssueFirstSeenSourceKeyRekeyDoneBlobKey &&
+                    x.Content == IssueFirstSeenSourceKeyRekeyVersion))
+            {
+                return 0;
+            }
+
+            strategy = probe.Database.CreateExecutionStrategy();
+        }
+
+        return strategy.Execute(() =>
+        {
+            using var ctx = contextFactory();
+            using var transaction = ctx.Database.BeginTransaction();
+
+            var done = ctx.Blobs.FirstOrDefault(x =>
+                x.BlobKey == IssueFirstSeenSourceKeyRekeyDoneBlobKey);
+            if (done?.Content == IssueFirstSeenSourceKeyRekeyVersion)
+            {
+                transaction.Commit();
+                return 0;
+            }
+
+            var topIssues = LoadDistinctSourceKeyTopIssues(ctx);
+            var mappings = BuildIssueFirstSeenSourceMappings(topIssues);
+            var existing = ctx.IssueFirstSeen.ToList();
+            var byKey = existing.ToDictionary(x => (x.SourceKey, x.EventId));
+            var pendingAdds = new List<IssueFirstSeenRow>();
+            var changed = 0;
+
+            foreach (var row in existing)
+            {
+                if (!mappings.TryGetValue((row.SourceKey, row.EventId), out var mapping) ||
+                    string.Equals(row.SourceKey, mapping.SourceKey, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var targetKey = (mapping.SourceKey, row.EventId);
+                if (byKey.TryGetValue(targetKey, out var target))
+                {
+                    if (row.FirstSeen < target.FirstSeen) target.FirstSeen = row.FirstSeen;
+                    target.SourceName = mapping.SourceName;
+                    ctx.IssueFirstSeen.Remove(row);
+                }
+                else
+                {
+                    ctx.IssueFirstSeen.Remove(row);
+                    target = new IssueFirstSeenRow
+                    {
+                        SourceKey = mapping.SourceKey,
+                        EventId = row.EventId,
+                        SourceName = mapping.SourceName,
+                        FirstSeen = row.FirstSeen
+                    };
+                    pendingAdds.Add(target);
+                    byKey.Add(targetKey, target);
+                }
+
+                changed++;
+            }
+
+            // 先落實刪除，再新增 canonical key。SQL Server 常見 CI collation 下，
+            // old/new 來源鍵可能被視為同一個 PK；同一個 SaveChanges 內若先 INSERT
+            // 會撞唯一鍵。兩步仍在同一 execution-strategy transaction 內，故不會留下半套結果。
+            ctx.SaveChanges();
+            foreach (var row in pendingAdds) ctx.IssueFirstSeen.Add(row);
+
+            if (done == null)
+            {
+                ctx.Blobs.Add(new BlobRow
+                {
+                    BlobKey = IssueFirstSeenSourceKeyRekeyDoneBlobKey,
+                    Content = IssueFirstSeenSourceKeyRekeyVersion,
+                    UpdatedAt = DateTime.Now,
+                    Version = 1
+                });
+            }
+            else
+            {
+                done.Content = IssueFirstSeenSourceKeyRekeyVersion;
+                done.UpdatedAt = DateTime.Now;
+                done.Version++;
+            }
+
+            ctx.SaveChanges();
+            transaction.Commit();
+            if (changed > 0)
+                Log.Info("[SQL] lf_issue_first_seen 來源鍵重鍵完成：合併 {Changed} 列", changed);
+            return changed;
+        });
+    }
+
+    private static List<IssueFirstSeenTopIssue> LoadDistinctSourceKeyTopIssues(LfDbContext ctx)
+    {
+        var query = ctx.TopIssues.AsNoTracking().Where(x => x.SourceKey != null);
+        if (ctx.Database.IsSqlite())
+        {
+            return query
+                .Select(x => new
+                {
+                    SourceName = EF.Functions.Collate(x.SourceName, "BINARY"),
+                    SourceKey = x.SourceKey!,
+                    x.EventId
+                })
+                .Distinct()
+                .ToList()
+                .Select(x => new IssueFirstSeenTopIssue(x.SourceName, x.SourceKey, x.EventId))
+                .ToList();
+        }
+
+        return query
+            .Select(x => new
+            {
+                SourceName = EF.Functions.Collate(x.SourceName, "Latin1_General_100_BIN2"),
+                SourceKey = x.SourceKey!,
+                x.EventId
+            })
+            .Distinct()
+            .ToList()
+            .Select(x => new IssueFirstSeenTopIssue(x.SourceName, x.SourceKey, x.EventId))
+            .ToList();
+    }
+
+    private static Dictionary<(string SourceKey, int EventId), IssueFirstSeenSourceMapping>
+        BuildIssueFirstSeenSourceMappings(IEnumerable<IssueFirstSeenTopIssue> topIssues)
+    {
+        var mappings = new Dictionary<(string SourceKey, int EventId), IssueFirstSeenSourceMapping>();
+        var ambiguous = new HashSet<(string SourceKey, int EventId)>();
+
+        foreach (var topIssue in topIssues)
+        {
+            var mapping = new IssueFirstSeenSourceMapping(topIssue.SourceKey, topIssue.SourceName);
+            foreach (var alias in LegacySourceKeyAliases(topIssue.SourceName, topIssue.SourceKey))
+            {
+                var key = (alias, (int)topIssue.EventId);
+                if (ambiguous.Contains(key)) continue;
+
+                if (!mappings.TryGetValue(key, out var previous))
+                {
+                    mappings.Add(key, mapping);
+                    continue;
+                }
+
+                if (!string.Equals(previous.SourceKey, mapping.SourceKey, StringComparison.Ordinal))
+                {
+                    mappings.Remove(key);
+                    ambiguous.Add(key);
+                }
+                else if (string.CompareOrdinal(mapping.SourceName, previous.SourceName) < 0)
+                {
+                    mappings[key] = mapping;
+                }
+            }
+        }
+
+        return mappings;
+    }
+
+    private static IEnumerable<string> LegacySourceKeyAliases(string sourceName, string sourceKey)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var alias in new[]
+        {
+            sourceName,
+            sourceName.ToUpperInvariant(),
+            sourceName.ToUpper(),
+            AsciiUpper(sourceName),
+            sourceKey
+        })
+        {
+            if (seen.Add(alias)) yield return alias;
+        }
+    }
+
+    private static string AsciiUpper(string value)
+    {
+        var chars = value.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            if (chars[i] is >= 'a' and <= 'z') chars[i] = (char)(chars[i] - ('a' - 'A'));
+        }
+        return new string(chars);
+    }
+
+    private readonly record struct IssueFirstSeenSourceMapping(string SourceKey, string SourceName);
+    private readonly record struct IssueFirstSeenTopIssue(string SourceName, string SourceKey, int EventId);
 
     internal static IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(LfDbContext ctx, bool force = false)
     {
@@ -516,14 +731,14 @@ internal static class SchemaUpgrader
             INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen)
             SELECT src.source_key, src.event_id, src.source_name, src.first_seen
             FROM (
-                SELECT UPPER(source_name) AS source_key,
+                SELECT COALESCE(source_key, UPPER(source_name)) AS source_key,
                        event_id           AS event_id,
                        MIN(source_name)   AS source_name,
                        MIN(record_date)   AS first_seen
                 FROM lf_top_issues
                 WHERE record_date >= '2000-01-01'
                   AND record_id > {0}
-                GROUP BY UPPER(source_name), event_id
+                GROUP BY COALESCE(source_key, UPPER(source_name)), event_id
             ) src
             WHERE NOT EXISTS (
                 SELECT 1 FROM lf_issue_first_seen fs
@@ -538,7 +753,7 @@ internal static class SchemaUpgrader
             SET first_seen = (
                 SELECT MIN(t.record_date)
                 FROM lf_top_issues t
-                WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                WHERE COALESCE(t.source_key, UPPER(t.source_name)) = lf_issue_first_seen.source_key
                   AND t.event_id = lf_issue_first_seen.event_id
                   AND t.record_date >= '2000-01-01'
                   AND t.record_id > {0}
@@ -546,7 +761,7 @@ internal static class SchemaUpgrader
             WHERE (
                 SELECT MIN(t2.record_date)
                 FROM lf_top_issues t2
-                WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                WHERE COALESCE(t2.source_key, UPPER(t2.source_name)) = lf_issue_first_seen.source_key
                   AND t2.event_id = lf_issue_first_seen.event_id
                   AND t2.record_date >= '2000-01-01'
                   AND t2.record_id > {0}
@@ -565,14 +780,14 @@ internal static class SchemaUpgrader
                 SET first_seen = (
                     SELECT MIN(t.record_date)
                     FROM lf_top_issues t
-                    WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                    WHERE COALESCE(t.source_key, UPPER(t.source_name)) = lf_issue_first_seen.source_key
                       AND t.event_id = lf_issue_first_seen.event_id
                       AND t.record_date >= '2000-01-01'
                 )
                 WHERE (
                     SELECT MIN(t2.record_date)
                     FROM lf_top_issues t2
-                    WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                    WHERE COALESCE(t2.source_key, UPPER(t2.source_name)) = lf_issue_first_seen.source_key
                       AND t2.event_id = lf_issue_first_seen.event_id
                       AND t2.record_date >= '2000-01-01'
                 ) < lf_issue_first_seen.first_seen
@@ -606,6 +821,16 @@ internal static class SchemaUpgrader
             watermarkRow.Content = currentMaxRecordId.ToString();
             watermarkRow.UpdatedAt = DateTime.Now;
             watermarkRow.Version++;
+        }
+
+        // 若完成標記存在卻又有來源鍵尚未回填的 top issue，這次 seed 可能新增了
+        // legacy UPPER(source_name) 首見日列；讓下一輪來源鍵回填重新檢查。正常 ready
+        // 後的新列都有 source_key，因此不會因每次 seed 都重新掃描全表。
+        var rekeyDone = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenSourceKeyRekeyDoneBlobKey);
+        if (rekeyDone?.Content == IssueFirstSeenSourceKeyRekeyVersion &&
+            ctx.TopIssues.Any(t => t.SourceKey == null && t.RecordId > watermark))
+        {
+            ctx.Blobs.Remove(rekeyDone);
         }
 
         ctx.SaveChanges();
@@ -725,6 +950,7 @@ internal static class SchemaUpgrader
             date TEXT NOT NULL,
             log_name TEXT NOT NULL,
             source TEXT NOT NULL,
+            source_key TEXT NULL,
             event_id INTEGER NOT NULL,
             entry_type INTEGER NOT NULL,
             event_time TEXT NOT NULL,
@@ -741,6 +967,7 @@ internal static class SchemaUpgrader
             date datetime2 NOT NULL,
             log_name nvarchar(255) NOT NULL,
             source nvarchar(255) NOT NULL,
+            source_key nvarchar(255) NULL,
             event_id int NOT NULL,
             entry_type int NOT NULL,
             event_time datetime2 NOT NULL,

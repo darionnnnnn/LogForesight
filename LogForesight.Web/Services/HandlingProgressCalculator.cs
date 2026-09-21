@@ -50,7 +50,7 @@ public class HandlingProgressCalculator
     public int OpenCaseCount(WebHost host, DailyAnalysisRecord? record)
     {
         if (record == null || record.TopIssues.Count == 0) return 0;
-        var openKeys = _cases.GetOpenForHost(host.HostName).Select(c => c.IssueKey).ToHashSet(StringComparer.Ordinal);
+        var openKeys = _cases.GetOpenForHost(host.HostName).Select(c => c.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
         return record.TopIssues.Count(i => openKeys.Contains(IssueSignatureKey.For(i)));
     }
 }

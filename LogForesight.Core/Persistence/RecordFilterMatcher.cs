@@ -39,7 +39,7 @@ public static class RecordFilterMatcher
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Source) &&
-            !record.TopIssues.Any(i => string.Equals(i.Source, filter.Source, StringComparison.OrdinalIgnoreCase)))
+            !record.TopIssues.Any(i => SourceKeyComparer.Instance.Equals(i.Source, filter.Source)))
         {
             return false;
         }

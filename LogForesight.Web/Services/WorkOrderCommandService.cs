@@ -463,11 +463,18 @@ public class WorkOrderCommandService
 
         // 4. 衝突：一次取剩餘主機的進行中案件
         var withMembers = hosts.Where(h => h.Resolved.Members.Count > 0).ToList();
-        var existing = new Dictionary<(string HostName, string IssueKey), IssueCase>();
+        var existing = new Dictionary<(string HostName, string IssueKey), IssueCase>(HostIssueSignatureKeyComparer.Instance);
         if (withMembers.Count > 0)
         {
-            foreach (var openCase in _cases.GetOpenMany(withMembers.Select(h => h.Resolved.Host.HostName).ToList(), source, eventId))
-                existing.TryAdd((openCase.HostName.ToUpperInvariant(), openCase.IssueKey), openCase);
+            foreach (var group in _cases.GetOpenMany(withMembers.Select(h => h.Resolved.Host.HostName).ToList(), source, eventId)
+                .GroupBy(c => (c.HostName.ToUpperInvariant(), c.IssueKey), HostIssueSignatureKeyComparer.Instance))
+            {
+                existing[group.Key] = group
+                    .OrderByDescending(c => c.UpdatedAt)
+                    .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
+                    .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+                    .First();
+            }
         }
         IssueCase? ExistingOf(WorkOrderMember m) =>
             existing.TryGetValue((m.HostName.ToUpperInvariant(), m.IssueKey), out var c) ? c : null;
@@ -588,7 +595,7 @@ public class WorkOrderCommandService
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
         var noise = _noiseMarks.GetAll()
             .Select(m => (m.HostName.ToUpperInvariant(), m.IssueKey))
-            .ToHashSet();
+            .ToHashSet(HostIssueSignatureKeyComparer.Instance);
         var label = $"{source} {eventId}";
 
         return occurrences
@@ -601,7 +608,7 @@ public class WorkOrderCommandService
                     return new ResolvedHost(host, new List<WorkOrderMember>(), NoiseExcluded: false, ManuallyExcluded: true);
 
                 var all = g
-                    .GroupBy(o => o.IssueKey, StringComparer.Ordinal)
+                    .GroupBy(o => o.IssueKey, IssueSignatureKeyComparer.Instance)
                     .Select(k => k.OrderByDescending(o => o.LastSeen).First())
                     .OrderBy(o => o.IssueKey, StringComparer.Ordinal)
                     .ToList();

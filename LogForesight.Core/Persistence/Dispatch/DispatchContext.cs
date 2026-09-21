@@ -111,7 +111,7 @@ public sealed class DispatchContext
         foreach (var mark in noiseMarks.GetAll())
         {
             if (!noiseByHost.TryGetValue(mark.HostName, out var keys))
-                noiseByHost[mark.HostName] = keys = new HashSet<string>(StringComparer.Ordinal);
+                noiseByHost[mark.HostName] = keys = new HashSet<string>(IssueSignatureKeyComparer.Instance);
             keys.Add(mark.IssueKey);
         }
 
@@ -124,7 +124,7 @@ public sealed class DispatchContext
             if (!continuityByHost.TryGetValue(c.HostName, out var byIssue))
                 continuityByHost[c.HostName] = byIssue = new();
 
-            var key = (EfWorkOrderStore.SourceKeyOf(c.SourceName), c.EventId.Value);
+            var key = (WorkOrderIssueKey.SourceKeyOf(c.SourceName), c.EventId.Value);
             if (!byIssue.TryGetValue(key, out var existing) || c.ClosedAt.Value > existing.ClosedAt)
                 byIssue[key] = (c.ClosedAt.Value, c.HandlerId.Value);
         }
@@ -200,12 +200,16 @@ public sealed class DispatchContext
     /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案者</summary>
     private static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
-            .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
-            .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
+            .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
+            .Select(g => g.OrderByDescending(c => c.CreatedAt)
+                .ThenByDescending(c => c.UpdatedAt)
+                .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
+                .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+                .First())
             .Where(c => c.Status is IssueHandlingStatuses.WontFix
                 or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
             .Select(c => c.IssueKey)
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(IssueSignatureKeyComparer.Instance);
 
     /// <summary>登記一張進行中單（真的建單後，或試跑時的負數 id 虛擬單）</summary>
     public void RegisterOrder(WorkOrder order)
@@ -260,7 +264,7 @@ public sealed class DispatchContext
         _chosen.TryGetValue(IssueKeyOf(source, eventId), out var set) ? set : new HashSet<long>();
 
     private static (string SourceKey, int EventId) IssueKeyOf(string source, int eventId) =>
-        (EfWorkOrderStore.SourceKeyOf(source), eventId);
+        (WorkOrderIssueKey.SourceKeyOf(source), eventId);
 
     /// <summary>多問題單（問題欄為 null）不進索引</summary>
     private static void AddToIndex(Dictionary<(string SourceKey, int EventId), List<WorkOrder>> index, WorkOrder order)

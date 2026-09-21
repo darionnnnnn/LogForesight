@@ -1,4 +1,5 @@
 using NLog;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Services;
 
@@ -20,12 +21,15 @@ public class TopIssueBackfillHostedService : BackgroundService
     private readonly BackgroundWorkGate _gate;
 
     private readonly TopIssueBackfiller _backfiller;
+    private readonly StorageBackend _backend;
 
-    public TopIssueBackfillHostedService(TopIssueBackfiller backfiller, DataVersionStamp dataVersion, BackgroundWorkGate gate)
+    public TopIssueBackfillHostedService(
+        TopIssueBackfiller backfiller, StorageBackend backend, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
         _gate = gate;
         _dataVersion = dataVersion;
         _backfiller = backfiller;
+        _backend = backend;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -52,6 +56,10 @@ public class TopIssueBackfillHostedService : BackgroundService
                     try
                     {
                         _backfiller.Run(stoppingToken);
+                        if (!stoppingToken.IsCancellationRequested && _backfiller.SourceKeyProgress.Completed)
+                        {
+                            _backfiller.RunRiskySourceKeys(_backend.RiskyEventStore(), stoppingToken);
+                        }
                         // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
                         _dataVersion.Bump();
                     }

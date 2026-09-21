@@ -44,15 +44,15 @@ public class IssueHandlingRollupQuery
         IssueExclusion exclusion, IReadOnlyCollection<IssueAggregate> aggregates, DateTime from, DateTime to,
         IReadOnlyCollection<long>? visibleHostIds)
     {
-        if (aggregates.Count == 0) return new Dictionary<string, IssueHostStatusSets>();
+        if (aggregates.Count == 0) return new Dictionary<string, IssueHostStatusSets>(IssueSignatureKeyComparer.Instance);
 
         var issues = aggregates.Select(a => (a.Source, a.EventId)).Distinct().ToList();
         var occurrences = _aggregates.LatestOccurrences(exclusion, issues, from, to, visibleHostIds);
-        if (occurrences.Count == 0) return new Dictionary<string, IssueHostStatusSets>();
+        if (occurrences.Count == 0) return new Dictionary<string, IssueHostStatusSets>(IssueSignatureKeyComparer.Instance);
 
         var resolved = _statusResolver.Resolve(occurrences, from, to);
 
-        var byKey = new Dictionary<string, IssueHostStatusSets>(StringComparer.Ordinal);
+        var byKey = new Dictionary<string, IssueHostStatusSets>(IssueSignatureKeyComparer.Instance);
         foreach (var r in resolved)
         {
             if (!byKey.TryGetValue(r.Occurrence.IssueKey, out var sets))

@@ -150,7 +150,7 @@ public class AiController : ControllerBase
 
         var parsedDate = ParseRequiredDate(date);
         var detail = _recordsDetail.GetDetail(hostId, parsedDate);
-        var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == issueKey);
+        var issue = detail.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(i.IssueKey, issueKey));
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
         return ApiResponse<AiTextDto?>.Ok(await _ai.InterpretIssueAsync(issue, detail.HostName, detail.Date));
@@ -168,7 +168,7 @@ public class AiController : ControllerBase
 
         var parsedDate = ParseRequiredDate(request.Date);
         var detail = _recordsDetail.GetDetail(request.HostId, parsedDate);
-        var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == request.IssueKey);
+        var issue = detail.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(i.IssueKey, request.IssueKey));
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
         ValidateChatMessages(request.Messages);

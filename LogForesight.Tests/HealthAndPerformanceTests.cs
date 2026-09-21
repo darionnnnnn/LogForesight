@@ -115,6 +115,20 @@ public class HealthServiceTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(dto.Version));
     }
 
+    [Fact]
+    public void 健康詳情露出獨立風險事件來源鍵回填進度()
+    {
+        var backfiller = _backend.TopIssueBackfiller();
+        backfiller.RunRiskySourceKeys(_backend.RiskyEventStore(), CancellationToken.None);
+
+        var dto = new HealthService(
+            _backend, new SchedulerRunState(), backfiller, NewMailService(), NewFreshnessService()).GetDetail();
+
+        Assert.True(dto.RiskySourceKeyBackfillComplete);
+        Assert.Equal(0, dto.RiskySourceKeyBackfillDone);
+        Assert.Equal(0, dto.RiskySourceKeyBackfillTotal);
+    }
+
     /// <summary>
     /// 匿名端點**只有三個欄位**。這條測試存在的理由是防止日後有人「順手」把診斷資訊
     /// 加進 liveness——連線字串、資料表、使用者數都是可用來探查系統的資訊，
