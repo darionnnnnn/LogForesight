@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Models.Dto;
@@ -162,6 +163,26 @@ public class SetPrtgManualMapRequest
     public long DeviceObjid { get; set; }
     public long HostId { get; set; }
     public string? Note { get; set; }
+}
+
+/// <summary>批次設定 PRTG 人工主機對應請求</summary>
+public class SetPrtgManualMapBatchRequest
+{
+    public long HostId { get; set; }
+    public List<long> DeviceObjids { get; set; } = new();
+    [StringLength(512, ErrorMessage = "指派說明不可超過 512 字")]
+    public string? Note { get; set; }
+}
+
+/// <summary>批次設定 PRTG 人工主機對應回應</summary>
+public class PrtgManualMapBatchResultDto
+{
+    public List<long> SucceededIds { get; set; } = new();
+    public long? FailedDeviceObjid { get; set; }
+    public List<long> NotProcessedIds { get; set; } = new();
+    public string? FailureMessage { get; set; }
+    public string? AuditWarning { get; set; }
+    public string? RemapWarning { get; set; }
 }
 
 /// <summary>PRTG 人工主機對應項目</summary>

@@ -509,6 +509,55 @@ function renderPrtgFreshness(items) {
 
 let conflictPage = 1;
 let conflictPageSize = loadPageSize('prtg-conflicts');
+const selectedConflictDeviceObjids = new Set();
+let currentConflictItems = [];
+
+function clearConflictSelection(silent = false) {
+    const hadSelection = selectedConflictDeviceObjids.size > 0;
+    selectedConflictDeviceObjids.clear();
+    updateConflictBatchBar();
+    const selectAll = document.getElementById('prtg-conflict-select-all');
+    if (selectAll) {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+    }
+    if (!silent && hadSelection) {
+        toast('換頁或重新整理已清空選取項目，避免隱藏選取。', 'info');
+    }
+}
+
+function updateConflictBatchBar() {
+    const count = selectedConflictDeviceObjids.size;
+    const countEl = document.getElementById('prtg-conflict-selected-count');
+    if (countEl) {
+        countEl.textContent = `已選 ${count} 台`;
+    }
+    const submitBtn = document.getElementById('prtg-conflict-batch-submit');
+    if (submitBtn) {
+        submitBtn.disabled = (count === 0);
+    }
+
+    const selectAll = document.getElementById('prtg-conflict-select-all');
+    if (selectAll) {
+        if (currentConflictItems.length === 0) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        } else {
+            const pageObjids = currentConflictItems.map(i => i.deviceObjid);
+            const selectedOnPage = pageObjids.filter(id => selectedConflictDeviceObjids.has(id));
+            if (selectedOnPage.length === pageObjids.length) {
+                selectAll.checked = true;
+                selectAll.indeterminate = false;
+            } else if (selectedOnPage.length > 0) {
+                selectAll.checked = false;
+                selectAll.indeterminate = true;
+            } else {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+            }
+        }
+    }
+}
 
 function renderConflictsLoading() {
     const tbody = document.getElementById('prtg-mirror-conflicts-body');
@@ -516,7 +565,7 @@ function renderConflictsLoading() {
     tbody.replaceChildren();
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 5;
+    td.colSpan = 6;
     td.className = 'text-muted text-center py-2';
     td.textContent = '載入中…';
     tr.appendChild(td);
@@ -529,7 +578,7 @@ function renderConflictsError(errorMessage) {
     tbody.replaceChildren();
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 5;
+    td.colSpan = 6;
     td.className = 'text-danger text-center py-2';
     const textSpan = document.createElement('span');
     textSpan.textContent = `載入衝突清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
@@ -544,8 +593,12 @@ function renderConflictsError(errorMessage) {
     document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
 }
 
-async function refreshConflicts(page = conflictPage) {
+async function refreshConflicts(page = conflictPage, options = {}) {
+    const pageChanged = (page !== conflictPage);
     conflictPage = page;
+    if (!options.preserveSelection) {
+        clearConflictSelection(!pageChanged && options.silentClear === true);
+    }
     renderConflictsLoading();
     try {
         const res = await api.get(`/api/admin/settings/prtg-host-map?status=conflict&page=${conflictPage}&pageSize=${conflictPageSize}`, { silent: true });
@@ -553,11 +606,21 @@ async function refreshConflicts(page = conflictPage) {
         const totalPages = Math.ceil(total / conflictPageSize);
 
         if (conflictPage > totalPages && totalPages > 0) {
-            return refreshConflicts(totalPages);
+            return refreshConflicts(totalPages, options);
         }
 
-        renderConflicts((res && res.items) ? res.items : []);
+        currentConflictItems = (res && res.items) ? res.items : [];
+        if (options.preserveSelection) {
+            const visibleIds = new Set(currentConflictItems.map(i => i.deviceObjid));
+            const hiddenCount = [...selectedConflictDeviceObjids].filter(id => !visibleIds.has(id)).length;
+            for (const id of [...selectedConflictDeviceObjids]) {
+                if (!visibleIds.has(id)) selectedConflictDeviceObjids.delete(id);
+            }
+            if (hiddenCount > 0) toast(`${hiddenCount} 台裝置已不在目前頁，已取消選取。`, 'info');
+        }
+        renderConflicts(currentConflictItems);
         renderConflictPagination(totalPages);
+        updateConflictBatchBar();
     } catch (error) {
         renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
     }
@@ -571,7 +634,7 @@ function renderConflicts(items) {
     if (!items || items.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 5;
+        td.colSpan = 6;
         td.className = 'text-muted text-center py-2';
         td.textContent = '無衝突項目';
         tr.appendChild(td);
@@ -581,6 +644,25 @@ function renderConflicts(items) {
 
     for (const item of items) {
         const tr = document.createElement('tr');
+
+        const tdCheck = document.createElement('td');
+        tdCheck.className = 'text-center';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input prtg-conflict-row-check';
+        checkbox.value = String(item.deviceObjid);
+        checkbox.dataset.objid = String(item.deviceObjid);
+        checkbox.setAttribute('aria-label', `選取裝置 ${item.deviceObjid}`);
+        checkbox.checked = selectedConflictDeviceObjids.has(item.deviceObjid);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                selectedConflictDeviceObjids.add(item.deviceObjid);
+            } else {
+                selectedConflictDeviceObjids.delete(item.deviceObjid);
+            }
+            updateConflictBatchBar();
+        });
+        tdCheck.appendChild(checkbox);
 
         const tdDevice = document.createElement('td');
         tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
@@ -646,7 +728,7 @@ function renderConflicts(items) {
         }
         tdAction.appendChild(excludeBtn);
 
-        tr.append(tdDevice, tdIp, tdKind, tdNote, tdAction);
+        tr.append(tdCheck, tdDevice, tdIp, tdKind, tdNote, tdAction);
         tbody.appendChild(tr);
     }
 }
@@ -1213,6 +1295,132 @@ function bindAssignForm() {
     });
 }
 
+function populateBatchHostSelect(selectEl, hosts) {
+    if (!selectEl) return;
+    const currentVal = selectEl.value;
+    selectEl.innerHTML = '<option value="">請選擇目標主機…</option>';
+    for (const host of hosts) {
+        const option = document.createElement('option');
+        option.value = String(host.hostId);
+        option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
+        if (currentVal && option.value === currentVal) {
+            option.selected = true;
+        }
+        selectEl.appendChild(option);
+    }
+}
+
+async function ensureBatchHostsLoaded() {
+    const hostSelect = document.getElementById('prtg-conflict-batch-host');
+    if (!hostSelect) return;
+    if (cachedHosts && cachedHosts.length > 0) {
+        populateBatchHostSelect(hostSelect, cachedHosts);
+        return;
+    }
+    try {
+        cachedHosts = await api.get('/api/admin/hosts/all', { silent: true });
+        populateBatchHostSelect(hostSelect, cachedHosts || []);
+    } catch {
+        hostSelect.innerHTML = '<option value="">載入主機清單失敗</option>';
+    }
+}
+
+function bindConflictBatchControls() {
+    const selectAll = document.getElementById('prtg-conflict-select-all');
+    if (selectAll) {
+        selectAll.addEventListener('change', () => {
+            const shouldCheck = selectAll.checked;
+            for (const item of currentConflictItems) {
+                if (shouldCheck) {
+                    selectedConflictDeviceObjids.add(item.deviceObjid);
+                } else {
+                    selectedConflictDeviceObjids.delete(item.deviceObjid);
+                }
+            }
+            const rowCheckboxes = document.querySelectorAll('.prtg-conflict-row-check');
+            for (const cb of rowCheckboxes) {
+                cb.checked = shouldCheck;
+            }
+            updateConflictBatchBar();
+        });
+    }
+
+    const submitBtn = document.getElementById('prtg-conflict-batch-submit');
+    const hostSelect = document.getElementById('prtg-conflict-batch-host');
+    const noteInput = document.getElementById('prtg-conflict-batch-note');
+
+    if (submitBtn) {
+        submitBtn.addEventListener('click', async () => {
+            const selectedIds = Array.from(selectedConflictDeviceObjids);
+            if (selectedIds.length === 0) {
+                toast('請先勾選欲指派的裝置', 'warning');
+                return;
+            }
+
+            const hostIdVal = hostSelect?.value;
+            if (!hostIdVal) {
+                toast('請選擇目標主機', 'warning');
+                return;
+            }
+            const targetHostId = Number(hostIdVal);
+            const selectedHostText = hostSelect.options[hostSelect.selectedIndex]?.textContent || `主機 #${targetHostId}`;
+
+            const confirmed = await confirmAction({
+                message: `確認將已選取的 ${selectedIds.length} 台 PRTG 裝置指派給主機「${selectedHostText}」？`
+            });
+            if (!confirmed) return;
+
+            const note = noteInput?.value.trim() || null;
+            const restore = withBusy(submitBtn, '處理中');
+
+            try {
+                const res = await api.put('/api/admin/settings/prtg-manual-map/batch', {
+                    hostId: targetHostId,
+                    deviceObjids: selectedIds,
+                    note
+                });
+
+                const succeeded = res?.succeededIds || [];
+                const failedDeviceObjid = res?.failedDeviceObjid;
+                const failureMessage = res?.failureMessage;
+                const remapWarning = res?.remapWarning;
+
+                for (const id of succeeded) {
+                    selectedConflictDeviceObjids.delete(id);
+                }
+
+                if (!failedDeviceObjid) {
+                    toast(`已成功指派 ${succeeded.length} 台裝置`, 'success');
+                    if (noteInput) noteInput.value = '';
+                } else {
+                    const failMsg = `指派裝置 ${failedDeviceObjid} 失敗：${failureMessage || '儲存失敗'}。已成功 ${succeeded.length} 筆，其餘未處理。`;
+                    toast(failMsg, 'danger');
+                }
+
+                if (remapWarning) {
+                    toast(remapWarning, 'warning');
+                }
+                if (res?.auditWarning) {
+                    toast(res.auditWarning, 'warning');
+                }
+
+                await Promise.all([
+                    refreshPrtgMirror(),
+                    refreshConflicts(conflictPage, { preserveSelection: true }),
+                    refreshUnmatched(unmatchedPage),
+                    refreshIpExcludes()
+                ]);
+            } catch (error) {
+                toast(error && error.message ? error.message : '批次指派失敗', 'danger');
+                await refreshConflicts(conflictPage, { preserveSelection: true });
+            } finally {
+                restore();
+                updateConflictBatchBar();
+            }
+        });
+    }
+}
+
 async function refreshPrtgMirror() {
     try {
         const [mirrorData, manualMaps] = await Promise.all([
@@ -1713,9 +1921,11 @@ function init() {
     bindParamsForm();
     bindScopeControls();
     bindStructureSync();
+    bindConflictBatchControls();
     bindUnmatchedControls();
     initCalibration();
     loadSettings();
+    ensureBatchHostsLoaded();
     refreshPrtgMirror();
     refreshConflicts(1);
     refreshUnmatched(1);

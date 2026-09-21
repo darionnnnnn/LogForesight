@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.ComponentModel.DataAnnotations;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -78,6 +79,60 @@ public class PrtgUnmatchedMapUiTests : IDisposable
 
         Assert.True(dir != null, "找不到 LogForesight.sln，無法定位專案根目錄");
         return dir!.FullName;
+    }
+
+    private (long HostId, long[] DeviceIds) SeedBatchTargets()
+    {
+        var host = new HostStore(_backend.Blob("hosts")).Upsert(new WebHost
+        {
+            HostName = "batch-target", IpAddress = "10.30.1.20", Active = true
+        });
+        var ids = new long[] { 8101, 8102, 8103 };
+        _backend.PrtgStore().UpsertDevices(ids.Select(id => new PrtgDeviceRow
+        {
+            Objid = id, Name = $"device-{id}", Ip = $"10.30.1.{id - 8100}",
+            SyncedAt = DateTime.Now, CreatedAt = DateTime.Now
+        }).ToList(), DateTime.Now);
+        return (host.HostId, ids);
+    }
+
+    [Fact]
+    public void 批次人工對應_先驗證全部裝置再寫_且正常逐筆稽核()
+    {
+        var (hostId, ids) = SeedBatchTargets();
+        var badRequests = new[]
+        {
+            new SetPrtgManualMapBatchRequest { HostId = hostId },
+            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = new() { ids[0], ids[0] } },
+            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = new() { ids[0], 99999 } },
+            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = Enumerable.Range(1, 101).Select(i => (long)i).ToList() },
+            new SetPrtgManualMapBatchRequest { HostId = 99999, DeviceObjids = new() { ids[0] } },
+            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = new() { ids[0] }, Note = new string('字', 513) }
+        };
+        foreach (var request in badRequests)
+        {
+            Assert.Throws<DomainException>(() => _controller.SetPrtgManualMapBatch(request));
+            Assert.Empty(_backend.PrtgStore().GetManualMaps());
+            Assert.Empty(_audit.Entries);
+        }
+
+        var result = _controller.SetPrtgManualMapBatch(new SetPrtgManualMapBatchRequest
+        {
+            HostId = hostId, DeviceObjids = ids.ToList(), Note = "設備盤點後確認"
+        });
+        Assert.Equal(ids, result.Data!.SucceededIds);
+        Assert.Null(result.Data.FailedDeviceObjid);
+        Assert.Empty(result.Data.NotProcessedIds);
+        Assert.Equal(ids, _backend.PrtgStore().GetManualMaps().Select(m => m.DeviceObjid).OrderBy(x => x));
+        Assert.Equal(3, _audit.Entries.Count);
+        Assert.All(_audit.Entries, e => Assert.Equal(AuditActions.PrtgManualMapSet, e.Action));
+    }
+
+    [Fact]
+    public void 批次人工對應_說明長度的模型驗證也限制512字()
+    {
+        var request = new SetPrtgManualMapBatchRequest { Note = new string('字', 513) };
+        Assert.False(Validator.TryValidateObject(request, new ValidationContext(request), new List<ValidationResult>(), true));
     }
 
     [Fact]

@@ -1011,7 +1011,7 @@ public class SettingsController : ControllerBase
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
-        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
         var host = hostStore.Get(request.HostId);
         if (host == null || !host.Active || host.MergedInto != null)
             throw DomainException.Validation("指定的主機不存在或已停用。");
@@ -1055,6 +1055,119 @@ public class SettingsController : ControllerBase
             Note = request.Note,
             CreatedBy = saved?.CreatedBy ?? createdBy,
             CreatedAt = saved?.CreatedAt ?? row.CreatedAt,
+            RemapWarning = remapWarning
+        });
+    }
+
+    /// <summary>批次設定 PRTG 人工主機對應</summary>
+    [HttpPut("prtg-manual-map/batch")]
+    public ApiResponse<PrtgManualMapBatchResultDto> SetPrtgManualMapBatch([FromBody] SetPrtgManualMapBatchRequest request)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        if (request == null)
+            throw DomainException.Validation("請求內容不可為空。");
+
+        if (request.DeviceObjids == null || request.DeviceObjids.Count == 0)
+            throw DomainException.Validation("請提供至少一個欲指派的 PRTG 裝置。");
+
+        if (request.DeviceObjids.Any(id => id <= 0))
+            throw DomainException.Validation("PRTG 裝置編號必須為正數。");
+
+        if (request.DeviceObjids.Distinct().Count() != request.DeviceObjids.Count)
+            throw DomainException.Validation("欲指派的 PRTG 裝置清單包含重複項目。");
+
+        if (request.DeviceObjids.Count > 100)
+            throw DomainException.Validation("批次指派每次最多處理 100 筆裝置。");
+
+        if (request.Note?.Length > 512)
+            throw DomainException.Validation("指派說明不可超過 512 字。");
+
+        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Get(request.HostId);
+        if (host == null || !host.Active || host.MergedInto != null)
+            throw DomainException.Validation("指定的主機不存在或已停用。");
+
+        var store = _backend.PrtgStore();
+        var allDevices = store.GetAllDevices();
+        var existingDeviceIds = allDevices.Select(d => d.Objid).ToHashSet();
+        var unknownIds = request.DeviceObjids.Where(id => !existingDeviceIds.Contains(id)).ToList();
+        if (unknownIds.Count > 0)
+            throw DomainException.Validation($"指定的一或多個 PRTG 裝置不存在於裝置鏡像中：{string.Join(", ", unknownIds)}。");
+
+        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
+
+        var succeededIds = new List<long>();
+        long? failedDeviceObjid = null;
+        var notProcessedIds = new List<long>();
+        string? failureMessage = null;
+        var auditFailures = 0;
+
+        for (int i = 0; i < request.DeviceObjids.Count; i++)
+        {
+            var deviceObjid = request.DeviceObjids[i];
+            try
+            {
+                var row = new PrtgManualMapRow
+                {
+                    DeviceObjid = deviceObjid,
+                    HostId = request.HostId,
+                    Note = request.Note,
+                    CreatedBy = createdBy,
+                    CreatedAt = DateTime.Now
+                };
+                store.UpsertManualMap(row);
+                succeededIds.Add(deviceObjid);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "批次設定 PRTG 人工主機對應失敗，裝置 ID: {DeviceObjid}", deviceObjid);
+                failedDeviceObjid = deviceObjid;
+                failureMessage = "儲存裝置對應資料時發生伺服器錯誤。";
+                for (int j = i + 1; j < request.DeviceObjids.Count; j++)
+                    notProcessedIds.Add(request.DeviceObjids[j]);
+                break;
+            }
+
+            // 對應已落盤後，稽核故障不能把該裝置誤報為未成功。
+            try
+            {
+                _audit.Record(
+                    action: AuditActions.PrtgManualMapSet,
+                    summary: $"設定 PRTG device {deviceObjid} 人工對應到主機 {host.HostName}",
+                    targetKind: "prtg_manual_map",
+                    targetId: deviceObjid.ToString(),
+                    detail: new
+                    {
+                        DeviceObjid = deviceObjid,
+                        request.HostId,
+                        host.HostName,
+                        request.Note
+                    });
+
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG 人工對應已儲存，但稽核寫入失敗，裝置 ID: {DeviceObjid}", deviceObjid);
+                auditFailures++;
+            }
+        }
+
+        string? remapWarning = null;
+        if (succeededIds.Count > 0)
+        {
+            remapWarning = _mapRefresher?.TryRefreshToday();
+        }
+
+        return ApiResponse<PrtgManualMapBatchResultDto>.Ok(new PrtgManualMapBatchResultDto
+        {
+            SucceededIds = succeededIds,
+            FailedDeviceObjid = failedDeviceObjid,
+            NotProcessedIds = notProcessedIds,
+            FailureMessage = failureMessage,
+            AuditWarning = auditFailures > 0 ? $"有 {auditFailures} 筆對應已儲存，但稽核紀錄寫入失敗，請通知管理員檢查伺服器紀錄。" : null,
             RemapWarning = remapWarning
         });
     }
