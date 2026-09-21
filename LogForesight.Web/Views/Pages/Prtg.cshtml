@@ -479,10 +479,11 @@
         </div>
     </div>
 
-    <div class="lf-card mb-4">
-        <div class="lf-card__header">
+    <details class="lf-card mb-4" id="prtg-calibration-advanced">
+        <summary class="lf-card__header">
             <h2 class="lf-card__title">校準數值匯出</h2>
-        </div>
+            <span class="small text-muted">展開進階校準</span>
+        </summary>
         <div class="lf-card__body">
             <p class="text-muted mb-3">
                 本頁面用於評估下一輪設計 PRTG 值型規則與校準門檻所需的資料累積量是否足夠。當四項校準指標皆達標時，即可匯出校準數值封裝檔供開發端進行分析與規則調校。
@@ -623,12 +624,13 @@
                 </button>
             </div>
         </div>
-    </div>
+    </details>
 
-    <div class="lf-card">
-        <div class="lf-card__header">
+    <details class="lf-card d-none" id="prtg-data-transfer-advanced">
+        <summary class="lf-card__header">
             <h2 class="lf-card__title">資料搬運（開發用）</h2>
-        </div>
+            <span class="small text-muted">展開開發工具</span>
+        </summary>
         <div class="lf-card__body">
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
@@ -655,7 +657,7 @@
             <div id="prtg-import-result" class="small mb-2"></div>
             <div class="form-text">把正式機的 PRTG 鏡像資料搬到開發機供分析規則設計使用。匯入採自然鍵冪等寫入，重複匯入不會產生重複資料。</div>
         </div>
-    </div>
+    </details>
 </div>
 
 <div class="modal fade" id="prtg-assign-modal" tabindex="-1" aria-labelledby="prtg-assign-modal-title" aria-hidden="true">

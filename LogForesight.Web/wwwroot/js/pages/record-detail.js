@@ -19,6 +19,45 @@ const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
 
+function initRecordSections() {
+    const destinations = [
+        ['report-cards', 'record-evidence-main'],
+        ['alerts-card', 'record-evidence-side'],
+        ['coverage-card', 'record-evidence-side'],
+        ['chat-card', 'record-context-main'],
+        ['categories-card', 'record-context-side']
+    ];
+    for (const [sourceId, destinationId] of destinations) {
+        const source = document.getElementById(sourceId);
+        const destination = document.getElementById(destinationId);
+        if (source && destination) destination.appendChild(source);
+    }
+
+    const sections = ['record-evidence', 'record-context']
+        .map(id => document.getElementById(id)).filter(Boolean);
+    let printing = false;
+    let priorOpen = [];
+    for (const section of sections) {
+        const key = `lf.recordDetail.section.${section.id}`;
+        try { section.open = localStorage.getItem(key) === 'true'; } catch { /* 儲存空間不可用時維持預設收合 */ }
+        section.addEventListener('toggle', () => {
+            if (printing) return;
+            try { localStorage.setItem(key, String(section.open)); } catch { /* 無法保存偏好不影響操作 */ }
+        });
+    }
+    window.addEventListener('beforeprint', () => {
+        printing = true;
+        priorOpen = sections.map(section => section.open);
+        sections.forEach(section => { section.open = true; });
+    });
+    window.addEventListener('afterprint', () => {
+        sections.forEach((section, index) => { section.open = priorOpen[index]; });
+        requestAnimationFrame(() => { printing = false; });
+    });
+}
+
+initRecordSections();
+
 // 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
 // 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
 // 只在頁面首次載入時初始化一次：批次套用觸發的重載（onBatchSaved → load()）不能

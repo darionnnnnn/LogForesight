@@ -2,7 +2,7 @@
  * PRTG 維護（「系統管理 > PRTG 維護」頁）：連線設定、擷取參數、鏡像狀態與環境探測。
  */
 
-import { api } from '../core/api.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
@@ -1982,6 +1982,11 @@ function bindUnmatchedControls() {
 }
 
 function init() {
+    getCurrentUser().then(user => {
+        if (hasCapability(user, 'DevMonitor')) {
+            document.getElementById('prtg-data-transfer-advanced')?.classList.remove('d-none');
+        }
+    }).catch(() => {});
     bindPrtgTest();
     bindPrtgMirror();
     bindScopePurge();

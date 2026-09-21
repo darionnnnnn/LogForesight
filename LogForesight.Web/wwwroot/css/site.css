@@ -881,6 +881,15 @@ input:-webkit-autofill:active {
     gap: var(--lf-space-3);
 }
 
+summary.lf-card__header {
+    cursor: pointer;
+    list-style: none;
+}
+summary.lf-card__header::-webkit-details-marker { display: none; }
+summary.lf-card__header:focus-visible { outline: none; box-shadow: inset var(--lf-focus-ring); }
+summary.lf-card__header::after { content: '▾'; margin-left: auto; color: var(--lf-text-muted); transition: transform .15s ease; }
+details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
+
 .lf-card__title {
     display: flex;
     align-items: center;
