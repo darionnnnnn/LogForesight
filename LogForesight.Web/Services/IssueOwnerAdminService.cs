@@ -31,7 +31,7 @@ public class IssueOwnerAdminService
 
     public const int MaxMuteReasonLength = 500;
 
-    /// <summary>問題檔案 DTO 附帶的靜音歷程筆數（新到舊）</summary>
+    /// <summary>問題設定 DTO 附帶的靜音歷程筆數（新到舊）</summary>
     public const int MuteHistoryLimit = 10;
 
     public IssueOwnerAdminService(
@@ -155,7 +155,7 @@ public class IssueOwnerAdminService
 
     /// <summary>
     /// 設定機房結論（回饋十九輪批次F，§2 決策一）：統一標記勾選「之後自動套用」
-    /// （<see cref="IssueHandlingCommandService.BulkCloseIssue"/>）與問題檔案頁的「設定機房結論」
+    /// （<see cref="IssueHandlingCommandService.BulkCloseIssue"/>）與問題負責與靜音頁的「設定機房結論」
     /// 都走這裡——只有一份「保留既有負責人／備註，只改結論欄」的合併邏輯，避免兩個入口
     /// 各自 Upsert 一次、其中一個沒注意到要保留對方負責的欄位。
     /// </summary>
@@ -205,7 +205,7 @@ public class IssueOwnerAdminService
     {
         EnsureMaintain();
         var existing = _issueOwners.Get(source, eventId)
-                        ?? throw DomainException.NotFound("找不到這筆問題檔案。");
+                        ?? throw DomainException.NotFound("找不到這筆問題設定。");
 
         existing.ConclusionStatus = null;
         existing.ConclusionNote = string.Empty;
@@ -230,7 +230,7 @@ public class IssueOwnerAdminService
     /// <summary>
     /// 靜音問題：<see cref="SetIssueMuteRequest.Days"/> 與 <see cref="SetIssueMuteRequest.Until"/> 恰給一個。
     /// 區間 From＝今天、To＝今天＋Days−1 或 Until；今天已在某區間內→延長該區間（不新增），原因與操作者更新為本次。
-    /// 問題檔案不存在時建立（沒有負責人、沒有結論）。ExistingOrders="close" 需同時具 Assign 與 Handle，
+    /// 問題設定不存在時建立（沒有負責人、沒有結論）。ExistingOrders="close" 需同時具 Assign 與 Handle，
     /// 對進行中交辦單逐張以 wont_fix 代為結案；"pause"＝不動交辦單。
     /// </summary>
     public IssueOwnerDto SetMute(string source, int eventId, SetIssueMuteRequest request)
@@ -443,7 +443,7 @@ public class IssueOwnerAdminService
 
     /// <summary>
     /// 顯示用的問題標籤：Windows 顯示「{Source} ({EventId})」；Linux（EventId 恆為 0）只顯示「{Source}」，
-    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題檔案的鍵是 (Source, 0)，涵蓋該來源的
+    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題設定的鍵是 (Source, 0)，涵蓋該來源的
     /// 全部規則，任選其中一個 key 掛上去語意是錯的（且候選清單與已指派清單會長得不一樣）。
     /// </summary>
     public static string FormatDisplayLabel(string source, int eventId) =>

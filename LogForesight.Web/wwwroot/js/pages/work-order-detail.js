@@ -672,7 +672,7 @@ function handlerNameOf(userId) {
 
 function renderTimeline(timeline) {
     if (!timeline || timeline.length === 0) {
-        renderEmpty(timelineContainer, { title: '尚無歷程', hint: '此交辦單尚未有改派、回覆或結案等操作紀錄。' });
+        renderEmpty(timelineContainer, { title: '尚無歷程', hint: '此交辦單尚未有改派、回覆或結案等稽核紀錄。' });
         return;
     }
 

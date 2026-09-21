@@ -1,7 +1,7 @@
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 測試用 <see cref="NightlyDispatch"/> 組裝：案件／逐日列／歷程／主機／問題檔案 store 沿用呼叫端傳入的
+/// 測試用 <see cref="NightlyDispatch"/> 組裝：案件／逐日列／歷程／主機／問題負責與靜音 store 沿用呼叫端傳入的
 /// （與 <see cref="IssueCaseCoordinator"/> 同一組），交辦單與雜訊記憶用記憶體替身、候選池為空、系統設定取預設。
 /// 空候選池＝負責人規則與自動派工都找不到人，給「不測派工」的管線測試用。
 /// </summary>

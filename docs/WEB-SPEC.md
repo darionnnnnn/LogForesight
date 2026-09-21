@@ -371,7 +371,7 @@ GetIssueOwnedHostIds`，內部呼叫 `IIssueAggregateQuery.HostIdsFor` 反查 `l
 的郵件路由逐主機日判定，該日問題命中規則即通知問題負責人（**可多位**）、不再通知主機負責人；
 `DayHandlingCommandService.DefaultHandlerId` 的自動帶入處理人同樣先查問題負責人，但只在
 跨命中問題聯集去重後**恰一人**且未停用時帶入，多人不猜、落回主機負責人規則。
-管理頁 `/admin/issue-owners`（側欄「系統管理＞問題檔案」，`Maintain`）：
+管理頁 `/admin/issue-owners`（側欄「系統管理＞問題負責與靜音」，`Maintain`）：
 `IssueOwnersController` GET／GET recent-issues（近 30 天出現過的問題選擇器，依主機數排序）／
 PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
 (Source, EventId)，編輯時鍵鎖定只能改負責人與備註。
@@ -381,9 +381,9 @@ PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從�
 false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時必填）＋
 `ConcludedById`／`ConcludedByAccount`／`ConcludedAt`＋`AutoApply`（bool）。
 `IssueCaseCoordinator.AttachNewDay`（批次每天寫入新紀錄後掛接）的完整優先序見 §9.4b「夜間掛接」。
-與問題檔案相關的兩層：③ 命中一筆 `AutoApply=true` 的問題檔案結論 → 自動套用該結論，寫入
+與問題負責與靜音相關的兩層：③ 命中一筆 `AutoApply=true` 的問題負責與靜音結論 → 自動套用該結論，寫入
 `IssueHandling{ Status=ConclusionStatus, Note="〔機房結論〕"+ConclusionNote, CaseId=null }`，
-稽核動作碼 `HandlingActions.FleetApply`；⑤ 問題檔案有負責人 → 把這台主機掛進負責人的交辦單
+稽核動作碼 `HandlingActions.FleetApply`；⑤ 問題負責與靜音有負責人 → 把這台主機掛進負責人的交辦單
 （負責人已有此問題的進行中單就掛入，否則建一張 `origin=owner_rule` 的系統交辦單）——問題負責人
 即長期負責人。多位負責人時取負載最輕者；停用、無處理能力、暫停接單的負責人不選，全部不可用時落到 ⑥ 自動派工。
 **不再打擾**：同主機同問題最近一筆案件若被以 wont_fix／false_positive／known_noise 結案，
@@ -502,7 +502,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   勾選清單 `checkboxList`。後者可選 `filterable`（回饋二十七輪）：加一個即時篩選框
   （比對顯示名、不分大小寫）與捲動高度上限，供「負責人」這類數十人的清單使用；
   **篩選以隱藏（`d-none`）實作、不移除節點**——移除的話被篩掉的已勾選項目會連值一起消失
-  （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題檔案負責人與主機負責人兩處，
+  （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題負責與靜音負責人與主機負責人兩處，
   其餘呼叫端不傳此選項、行為與過去完全相同。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
 - `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
@@ -1495,7 +1495,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 `appended`），執行紀錄一行摘要（`NightlyDispatch.DescribeSummary`：建單數、掛入台數、無候選人台數、靜音略過、閘門略過與四項明細）；自動派工開著但派工池沒有可接單的成員時，每趟另記一則警告。派工脈絡建立失敗時整趟
 略過派工並計為 `unavailable`，不讓分析失敗。
 
-**靜音**（問題檔案 `IssueProfile.Mutes`，區間清單為唯一事實來源）：
+**靜音**（問題負責與靜音 `IssueProfile.Mutes`，區間清單為唯一事實來源）：
 - 設定 `PUT api/admin/issue-owners/{source}/{eventId}/mute { days（1～365）| until, reason（必填，≤500）,
   existingOrders: pause|close }`，到期日＝今天＋days−1；今天已在靜音中再設定＝重設迄日（可縮短），不新增區間。
   `DELETE …/mute` 提前解除：迄日改成昨天（起日為今天則刪除區間）。皆 `Maintain`；`existingOrders=close`
@@ -1506,7 +1506,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   效果：靜音中整個問題消失（含靜音前的日子）；到期後區間內的日子仍視同已有結論、區間前的未處理日子回到待辦；
   提前解除從解除當天起恢復。一天只剩靜音問題時日狀態推導為已處理（`DayStatusRule.Resolve`）。
 - `IIssueAggregateQuery` 每個方法第一個參數都是 `IssueExclusion`、**沒有預設值**（反射守門）：呼叫端必須明寫
-  `IssueExclusion.None` 或帶靜音；授權、校準、規則命中統計、問題檔案選擇器、詳情頁基準一律 `None`。
+  `IssueExclusion.None` 或帶靜音；授權、校準、規則命中統計、問題負責與靜音選擇器、詳情頁基準一律 `None`。
   SQL 只帶與查詢期間重疊的區間（`IssueExclusion.ForRange`）。日風險主機數來自分析當下的風險等級，
   靜音前被該問題拉高的日風險維持原值（與抑制同一取捨）。
 - 快取：`IssueExclusion.CacheToken`（今天＋全部區間）併入儀表板、排行、待辦快照的快取鍵，換日到期也失效。
@@ -1515,7 +1515,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 交辦單：問題目前靜音中的單推導為暫停。處理人清單與徽章預設排除，總覽預設列出並標「暫停」與靜音至；
   解除或到期後以「只看自靜音恢復」找得到（當天設定當天解除的例外：區間整段刪除，不留恢復紀錄）。靜音 modal 顯示該問題進行中的單數與台數，二選一「暫停，到期自動恢復」
   （預設）或「代為結案為不處理」。
-- 入口：依問題視角「靜音」、問題檔案頁（靜音／延長／解除）、總覽「靜音中」頁籤（延長／解除）。
+- 入口：依問題視角「靜音」、問題負責與靜音頁（靜音／延長／解除）、總覽「靜音中」頁籤（延長／解除）。
   modal 三句常駐提示：新資料不進待辦與告警、到期自動恢復；靜音前未處理的日子到期後會回來，永久結案用統一標記；
   只想對某些主機或群組噤聲用抑制。
 - 註腳：依問題視角（§9.2）、儀表板重點問題卡（§9.1）、報表問題排行（§9.6）、我的交辦（§9.4a）。
@@ -2780,7 +2780,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `POST ai-cancel`（寫端僅 Maintain，皆寫稽核 `schedule_*`）。網段輸入語法與 NetIQ
   匯入精靈一致（`NormalizeSubnetPrefix` 共用同一份，比對用 `CidrMatcher`）。
 
-### 9.11 `/audit` 操作紀錄（`ViewAudit`）
+### 9.11 `/audit` 稽核紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
   展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉。
 - API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`
@@ -2854,7 +2854,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IWorkOrderStore` | **表 `lf_work_orders`／`lf_work_order_events`**（交辦單與事件，§9.4b；清單、看板、處理人摘要皆單句 SQL 聚合） | Web＋批次 |
 | `IIssueAggregateQuery` | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護） | Web |
+| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題負責與靜音」頁維護） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |

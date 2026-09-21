@@ -454,7 +454,7 @@ public class IssueHandlingCommandService
         }
 
         // 機房結論自動套用（回饋十九輪批次F，§2 決策一）：這一次的統一標記只處理**既有**日子，
-        // 勾選「之後自動套用」時另外把問題檔案設成機房結論，讓之後新出現的主機日
+        // 勾選「之後自動套用」時另外把問題負責與靜音設成機房結論，讓之後新出現的主機日
         // （見 IssueCaseCoordinator.AttachNewDay）也自動套用同一個結論——兩件事分開落盤，
         // 前者是這次操作的結果，後者是「以後也這樣」的設定
         if (request.AutoApply)

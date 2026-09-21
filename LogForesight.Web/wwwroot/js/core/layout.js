@@ -39,10 +39,10 @@ const NAV_SECTIONS = [
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
-            // 問題檔案（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
+            // 問題負責與靜音（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
             // 以 (Source,EventId) 為鍵指派跨主機負責人＋記錄機房結論——放在主機／群組之後，
             // 同屬「誰負責什麼」這條動線
-            { href: '/admin/issue-owners', label: '問題檔案', icon: 'people', requires: 'Maintain' },
+            { href: '/admin/issue-owners', label: '問題負責與靜音', icon: 'people', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
             { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
             { href: '/admin/prtg', label: 'PRTG 維護', icon: 'diagram-3', requires: 'Maintain' },
@@ -56,7 +56,7 @@ const NAV_SECTIONS = [
             // admin/serverAdmin 的排程設定共用同一頁，serverAdmin 有 Maintain 卻沒有 DevMonitor，
             // 沒有這個入口就搆不到全新環境的排程初始設定）
             { href: '/runs', label: '排程作業', icon: 'activity', requires: ['DevMonitor', 'Maintain'] },
-            { href: '/audit', label: '操作紀錄', icon: 'journal-text', requires: 'ViewAudit' },
+            { href: '/audit', label: '稽核紀錄', icon: 'journal-text', requires: 'ViewAudit' },
             // 操作說明書：全登入角色皆可見入口，章節內容由 API 依權限過濾
             { href: '/help/manual', label: '操作說明書', icon: 'info-circle' }
         ]

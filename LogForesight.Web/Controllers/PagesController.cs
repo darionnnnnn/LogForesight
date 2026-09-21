@@ -111,7 +111,7 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Groups() => View();
 
-    /// <summary>問題檔案（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
+    /// <summary>問題負責與靜音（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
     /// 以 (Source,EventId) 為鍵指派跨主機的問題負責人，與主機負責人是相同概念、相同待遇——
     /// 優先於主機負責人（自動帶入處理人／郵件路由），並隱含具備第四條授權路徑（見
     /// VisibilityService／UserCapabilityResolver）。機房結論（§2 決策一）記錄機房對這個問題的

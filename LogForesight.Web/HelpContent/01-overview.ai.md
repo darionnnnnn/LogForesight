@@ -50,7 +50,7 @@ LogForesight 是一套專注於主機安全性與穩定性前兆偵測的分析�
 4. `ConfirmPermission`：可確認權限異動檢核（授權操作或標記可疑）。
 5. `Maintain`：可維護規則、告警抑制、主機、使用者、群組、Sentinel 與系統設定。
 6. `DevMonitor`：可檢視排程作業、AI 分析狀態、執行監控與除錯日誌。
-7. `ViewAudit`：可檢視系統操作紀錄與安全性稽核日誌。
+7. `ViewAudit`：可檢視系統稽核紀錄與安全性稽核日誌。
 
 ### 2. 四大角色能力映射（`RoleCapabilityMap`）
 - **`user`（一般使用者）**：`Handle`、`ConfirmPermission`（無 `ViewAll`，僅可見被授權群組或自己負責的主機）。
@@ -63,7 +63,7 @@ LogForesight 是一套專注於主機安全性與穩定性前兆偵測的分析�
 - 停用中的群組不計算能力。
 
 ### 4. 負責人隱含能力（`UserCapabilityResolver`）
-- 若使用者是任一**啟用中主機的負責人**，或是任一**問題檔案的負責人**，系統在計算其能力時會自動隱含 `user` 角色（賦予 `Handle` + `ConfirmPermission`），使其登入後具備處理所屬主機/問題的權限，但**不賦予 `ViewAll`**。
+- 若使用者是任一**啟用中主機的負責人**，或是任一**問題的負責人**，系統在計算其能力時會自動隱含 `user` 角色（賦予 `Handle` + `ConfirmPermission`），使其登入後具備處理所屬主機/問題的權限，但**不賦予 `ViewAll`**。
 
 ## 五層偵測管線架構（Five-Layer Detection Architecture）
 

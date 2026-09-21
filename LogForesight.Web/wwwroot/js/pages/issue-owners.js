@@ -1,5 +1,5 @@
 ﻿/**
- * 問題檔案維護（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）。
+ * 問題負責與靜音維護（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）。
  *
  * 以 (Source, EventId) 為鍵指派跨主機負責人——與主機負責人（hosts.js 的 #host-owners）
  * 是相同概念、相同管理模式，唯一差別是鍵從「主機」換成「問題」。優先於主機負責人：
@@ -161,7 +161,7 @@ async function loadMuteActions(rule, container) {
                 { title: '動作', render: row => row.action },
                 { title: '說明', render: row => row.summary }
             ],
-            empty: { title: '沒有靜音操作紀錄', hint: '下方仍可查看留存的靜音區間。' }
+            empty: { title: '沒有靜音稽核紀錄', hint: '下方仍可查看留存的靜音區間。' }
         });
     } catch {
         const message = document.createElement('span');
@@ -295,7 +295,7 @@ document.getElementById('issue-owner-new').addEventListener('click', () => openM
 
 function openModal(rule) {
     editingRule = rule;
-    document.getElementById('issue-owner-modal-title').textContent = rule ? '編輯問題檔案' : '新增問題檔案';
+    document.getElementById('issue-owner-modal-title').textContent = rule ? '編輯問題設定' : '新增問題設定';
 
     renderPicker(rule);
     setManualMode(!!rule && !recentIssues.some(o => matchesIssue(o, rule)));
@@ -329,7 +329,7 @@ function openModal(rule) {
 }
 
 /**
- * 機房結論區塊（回饋十九輪批次F）：新增規則時還沒有問題檔案可設定結論——負責人跟結論
+ * 機房結論區塊（回饋十九輪批次F）：新增規則時還沒有問題設定可填入結論——負責人跟結論
  * 是兩支獨立 API，沒存過負責人就沒有 (Source,EventId) 這個鍵讓結論掛上去，所以新增模式下
  * 整段隱藏，存好負責人、重新打開編輯才看得到。下拉維持空白＝這次儲存不動結論欄
  * （既有結論原封不動），選了狀態才會在送出時另外呼叫 SetConclusion。
@@ -494,7 +494,7 @@ form.addEventListener('submit', async event => {
                 autoApply: conclusionAutoApply.checked
             });
         }
-        toast('已儲存問題檔案', 'success');
+        toast('已儲存問題設定', 'success');
         modal.hide();
         await load();
     } catch {
@@ -507,8 +507,8 @@ form.addEventListener('submit', async event => {
 async function removeRule(rule) {
     const targetLabel = issueLabel(rule);
     const confirmed = await confirmAction({
-        title: '刪除問題檔案',
-        message: `確定要刪除「${targetLabel}」的問題檔案嗎？刪除後這個問題會落回主機負責人（若有設定）` +
+        title: '刪除問題設定',
+        message: `確定要刪除「${targetLabel}」的問題設定嗎？刪除後這個問題會落回主機負責人（若有設定）` +
             (rule.conclusionStatus ? '，機房結論也會一併移除。' : '。'),
         confirmText: '刪除',
         confirmVariant: 'danger'

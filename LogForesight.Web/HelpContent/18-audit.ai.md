@@ -2,10 +2,10 @@
 
 ## 頁面基本資訊與存取架構
 
-- **頁面路徑**：`/audit`（左側選單標籤為「操作紀錄」）。
+- **頁面路徑**：`/audit`（左側選單標籤為「稽核紀錄」）。
 - **存取權限**：需要 `ViewAudit` 能力（`Capability.ViewAudit`，admin 與 serverAdmin 角色具備）。
 - **後端端點**：
-  - 查詢操作紀錄：`GET /api/audit?from={from}&to={to}&actions={actions}&result={result}&dir={dir}&page={page}&pageSize={pageSize}`，對應 `AuditController.Query` 與 `AuditQueryService.Query`。
+  - 查詢稽核紀錄：`GET /api/audit?from={from}&to={to}&actions={actions}&result={result}&dir={dir}&page={page}&pageSize={pageSize}`，對應 `AuditController.Query` 與 `AuditQueryService.Query`。
   - 動作代碼與中文名稱字典：`GET /api/audit/actions`，對應 `AuditController.Actions` 與 `AuditQueryService.GetActionNames`。
 
 ## 資料模型與持久化設計
@@ -70,9 +70,9 @@
    - `group_delete`：刪除群組
    - `access_grant`：授予存取權
    - `access_revoke`：收回存取權
-6. **問題檔案**：
-   - `issue_owner_update`：設定問題檔案（負責人與機房結論變更）
-   - `issue_owner_delete`：刪除問題檔案
+6. **問題負責與靜音**：
+   - `issue_owner_update`：設定問題負責與靜音（負責人與機房結論變更）
+   - `issue_owner_delete`：刪除問題設定
 7. **資料匯入**：
    - `import_apply`：套用 CSV 匯入
    - `netiq_import_applied`：NetIQ 掃描匯入
@@ -119,7 +119,7 @@
      - 顯示白話中文摘要 `entry.summary`。
      - 若該筆紀錄包含 `detailJson`，右下方顯示「詳細」連結按鈕。點擊可展開摺疊的 `<pre class="report-text small">` 區塊，顯示美化排版後的 JSON 異動前後欄位差異。
   6. `來源 IP`：發起請求之客戶端 IP 位址（`ipAddress`）。
-- 無資料狀態：顯示「沒有符合條件的操作紀錄」，提示「請調整日期區間或動作條件。」。
+- 無資料狀態：顯示「沒有符合條件的稽核紀錄」，提示「請調整日期區間或動作條件。」。
 
 ### 3. 分頁控制項（`#audit-pager`）
 - 呼叫 `renderPagination` 渲染分頁列。
@@ -128,11 +128,11 @@
 
 ## 常見問答與邊界狀況（Q&A）
 
-- **Q: 為什麼在操作紀錄中找不到查看主機詳情或搜尋問題的紀錄？**
+- **Q: 為什麼在稽核紀錄中找不到查看主機詳情或搜尋問題的紀錄？**
   - **A**: 系統為了保持稽核日誌的高價值與高效能，設計原則上**僅記錄寫入類操作（新增、更新、刪除、指派、確認等）與身分安全性事件（登入、登出、權限被拒）**。日常的頁面瀏覽與查詢檢索屬於唯讀流量，不寫入稽核資料庫，避免重要軌跡被洗版。
 - **Q: 為什麼有些操作的帳號顯示為 `(system)`？**
   - **A**: `(system)` 代表該操作是由系統後台自動化程序所觸發，而非由某位登入使用者手動操作。例如：夜間排程分析自動將問題指派給唯一問題負責人、自動套用機房結論結案等。
-- **Q: 操作紀錄可以手動修改或刪除嗎？**
+- **Q: 稽核紀錄可以手動修改或刪除嗎？**
   - **A**: 不行。稽核日誌在架構上為 Append-only 設計，後端與資料存取層僅提供寫入與分頁查詢，沒有任何修改或刪除的端點與邏輯，以確保稽核證據力的完整與不可竄改。超過系統保留天數（`RetentionDays`）的紀錄則會由排程作業自動清理。
 - **Q: 「只看被拒的存取」通常用於什麼場景？**
   - **A**: 該按鈕用於資安事件排查。當儀表板上出現權限異常或收到可疑警報時，可一鍵篩選出所有因權限不足而被系統安全中介軟體（PermissionFilter）阻擋的請求（`Denied`），快速分析是否有非授權帳號嘗試存取受保護資源。

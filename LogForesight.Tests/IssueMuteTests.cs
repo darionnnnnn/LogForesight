@@ -256,7 +256,7 @@ public sealed class IssueMuteTests : IDisposable
     // ── 派工脈絡 ───────────────────────────────────────────────────────────
 
     [Fact]
-    public void 派工脈絡_Build由問題檔案填入區間_IsMuted對區間內日期為真()
+    public void 派工脈絡_Build由問題負責與靜音填入區間_IsMuted對區間內日期為真()
     {
         var owners = new FakeIssueOwnerStore();
         owners.Upsert(Profile((Today.AddDays(-3), Today.AddDays(-2)), (Today, Today.AddDays(1))));
@@ -343,7 +343,7 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
-    public void SetMute_問題檔案不存在時建立_無負責人無結論()
+    public void SetMute_問題設定不存在時建立_無負責人無結論()
     {
         var dto = Admin(Maintainer()).SetMute(Source, EventId,
             new SetIssueMuteRequest { Until = Today.AddDays(2), Reason = "搬機房", ExistingOrders = "pause" });
@@ -505,7 +505,7 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
-    public void 真實store_問題檔案已存在時_延長確實寫入()
+    public void 真實store_問題負責與靜音已存在時_延長確實寫入()
     {
         var store = RealStore();
         store.Upsert(new IssueProfile { SourceName = Source, EventId = EventId, Note = "既有" });
@@ -523,7 +523,7 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
-    public void 真實store_問題檔案已存在時_解除確實寫入()
+    public void 真實store_問題負責與靜音已存在時_解除確實寫入()
     {
         var store = RealStore();
         store.Upsert(new IssueProfile { SourceName = Source, EventId = EventId });

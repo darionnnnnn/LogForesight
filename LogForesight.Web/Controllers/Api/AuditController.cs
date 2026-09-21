@@ -8,7 +8,7 @@ using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 
 namespace LogForesight.Web.Controllers.Api;
 
-/// <summary>操作紀錄查閱（docs/WEB-SPEC.md §9.11）。需 ViewAudit 能力（admin / serverAdmin）</summary>
+/// <summary>稽核紀錄查閱（docs/WEB-SPEC.md §9.11）。需 ViewAudit 能力（admin / serverAdmin）</summary>
 [ApiController]
 [Route("api/audit")]
 [Permission(Capability.ViewAudit)]

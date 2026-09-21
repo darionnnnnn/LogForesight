@@ -1,5 +1,5 @@
 /**
- * 操作紀錄（docs/WEB-SPEC.md §9.11）。
+ * 稽核紀錄（docs/WEB-SPEC.md §9.11）。
  *
  * summary 由後端在寫入當下組成人話，這裡直接顯示——
  * 前端不從 detailJson 反推敘述（那份規則只該存在一處）。
@@ -104,7 +104,7 @@ function render() {
             currentPage = 1;
             search();
         },
-        empty: { title: '沒有符合條件的操作紀錄', hint: '請調整日期區間或動作條件。' }
+        empty: { title: '沒有符合條件的稽核紀錄', hint: '請調整日期區間或動作條件。' }
     });
 
     renderPager();

@@ -483,7 +483,7 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     }
 }
 
-/// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
+/// <summary>問題負責與靜音的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
 /// IssueOwnerStore 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
 internal class FakeIssueOwnerStore : IIssueOwnerStore
 {

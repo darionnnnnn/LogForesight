@@ -2,7 +2,7 @@ using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
 
-/// <summary>操作紀錄查閱（docs/WEB-SPEC.md §9.11）</summary>
+/// <summary>稽核紀錄查閱（docs/WEB-SPEC.md §9.11）</summary>
 public class AuditQueryService
 {
     private readonly AuditLogStore _store;

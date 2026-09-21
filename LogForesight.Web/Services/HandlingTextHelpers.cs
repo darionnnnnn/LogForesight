@@ -36,7 +36,7 @@ internal static class HandlingTextHelpers
     {
         HandlingActions.Assign => "指派處理人",
         HandlingActions.AutoAssign => "自動帶入處理人",
-        HandlingActions.OwnerAutoAssign => "依問題檔案自動派送",
+        HandlingActions.OwnerAutoAssign => "依問題負責人自動派送",
         HandlingActions.AutoDispatch => "系統自動派工",
         HandlingActions.WorkOrderAttach => "交辦單續掛",
         HandlingActions.FleetApply => "套用機房結論",

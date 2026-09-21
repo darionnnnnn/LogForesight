@@ -185,7 +185,7 @@ public class IssueExclusionTests : IDisposable
     }
 
     [Fact]
-    public void 提供者_同版本同日只讀一次問題檔案()
+    public void 提供者_同版本同日只讀一次問題負責與靜音()
     {
         var store = new CountingOwnerStore();
         store.Inner.Upsert(Profile("cron", 7, (Today.AddDays(-1), Today.AddDays(1))));

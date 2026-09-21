@@ -1260,9 +1260,9 @@ public class HandlingServiceTests : IDisposable
     }
 
     /// <summary>勾選「之後自動套用」（回饋十九輪批次F，§2 決策一）：統一標記除了處理既有日子，
-    /// 還要把問題檔案設成機房結論，供之後新出現的主機日自動套用</summary>
+    /// 還要把問題負責與靜音設成機房結論，供之後新出現的主機日自動套用</summary>
     [Fact]
-    public void 統一標記_勾選自動套用時設定問題檔案的機房結論()
+    public void 統一標記_勾選自動套用時設定問題負責與靜音的機房結論()
     {
         var a = Issue("disk", 153);
         var day = Today.AddDays(-3);
@@ -1302,9 +1302,9 @@ public class HandlingServiceTests : IDisposable
         Assert.Empty(_cases.GetMany(new[] { _host.HostName }));
     }
 
-    /// <summary>不勾選時只處理既有日子，不建立／不動問題檔案的機房結論</summary>
+    /// <summary>不勾選時只處理既有日子，不建立／不動問題負責與靜音的機房結論</summary>
     [Fact]
-    public void 統一標記_不勾選自動套用時不動問題檔案()
+    public void 統一標記_不勾選自動套用時不動問題負責與靜音()
     {
         var a = Issue("disk", 153);
         var day = Today.AddDays(-3);

@@ -12,9 +12,9 @@ public interface IIssueExclusionSource
 
 /// <summary>
 /// <see cref="IIssueExclusionSource"/> 的實作（Singleton）：以 (資料版本戳, 今天) 為鍵快取一份
-/// <see cref="IssueExclusion"/>，鍵變了才重讀問題檔案。
+/// <see cref="IssueExclusion"/>，鍵變了才重讀問題負責與靜音。
 ///
-/// **內容與使用者無關**：靜音是全站同一份設定（問題檔案），不含任何授權維度，
+/// **內容與使用者無關**：靜音是全站同一份設定（問題負責與靜音），不含任何授權維度，
 /// 所以快取鍵不需要可見主機集合或 userId。設定靜音／解除走非 GET API，
 /// 由 <c>DataVersionStampPolicy</c> 推進版本戳；換日由 <c>today</c> 維度涵蓋。
 /// </summary>

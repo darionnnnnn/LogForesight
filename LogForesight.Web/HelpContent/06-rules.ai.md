@@ -39,7 +39,7 @@
 - `Id`（字串，必填，唯一主鍵）：
   - 內建規則固定以 `builtin-{類別}-{代表事件}` 命名（如 `builtin-storage-disk-io`）。
   - 自訂規則強制必須以 `custom-` 開頭（如 `custom-app-timeout`）。
-  - **永久性原則**：規則 `Id` 一經建立永不變更，作為歷史紀錄、問題檔案與抑制設定關聯之錨點。
+  - **永久性原則**：規則 `Id` 一經建立永不變更，作為歷史紀錄、問題負責與靜音與抑制設定關聯之錨點。
 - `Origin`（字串）：`builtin`（原廠內建）或 `custom`（使用者自訂）。
 - `Enabled`（布林值）：是否啟用。
 - `Category`（字串，8 大類別）：`storage`（儲存裝置）、`hardware`（硬體）、`security`（安全）、`service`（服務）、`backup`（備份）、`config`（設定）、`resource`（資源）、`other`（其他）。

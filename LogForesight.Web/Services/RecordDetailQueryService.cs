@@ -133,7 +133,7 @@ public class RecordDetailQueryService
                 .ToList();
         }
 
-        // 靜音資訊：判定取 exclusion（與讀取側排除同一份），區間細節取問題檔案；整份詳情各讀一次
+        // 靜音資訊：判定取 exclusion（與讀取側排除同一份），區間細節取問題負責與靜音；整份詳情各讀一次
         var exclusion = _exclusions.Current();
         var profilesByKey = _issueOwners.GetAll()
             .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))

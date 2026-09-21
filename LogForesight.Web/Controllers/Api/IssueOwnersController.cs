@@ -57,7 +57,7 @@ public class IssueOwnersController : ControllerBase
         return ApiResponse.Ok();
     }
 
-    /// <summary>設定機房結論（回饋十九輪批次F）——問題檔案頁的「設定機房結論」入口，
+    /// <summary>設定機房結論（回饋十九輪批次F）——問題負責與靜音頁的「設定機房結論」入口，
     /// 與依問題視角統一標記勾選「之後自動套用」共用同一個服務方法。</summary>
     [HttpPut("{source}/{eventId:int}/conclusion")]
     public ApiResponse<IssueOwnerDto> SetConclusion(string source, int eventId, [FromBody] SetIssueConclusionRequest request) =>
