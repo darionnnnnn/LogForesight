@@ -14,7 +14,7 @@
  */
 
 import { api, getDisplaySettings } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordsUrl } from '../core/paths.js';
 import { statCard, toast, guardLoad, renderLoading } from '../core/ui.js';
 import {
     formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, analysisAnchorLocal,
@@ -206,19 +206,19 @@ function renderKpi() {
             previous: kpi.totalIssuesPrevious,
             // 問題總數含低風險日的問題，下鑽顯式帶全部風險層級，
             // 免得問題查詢的「預設隱藏低風險」把數字對不上
-            url: `/records?riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`
+            url: recordsUrl({ riskLevels: '高,中,低', from: currentData.from, to: currentData.to })
         },
         {
             label: '高風險日',
             value: kpi.highRiskDays,
             previous: kpi.highRiskDaysPrevious,
-            url: `/records?riskLevels=${encodeURIComponent('高')}&from=${currentData.from}&to=${currentData.to}`
+            url: recordsUrl({ riskLevels: '高', from: currentData.from, to: currentData.to })
         },
         {
             label: '受影響主機',
             value: kpi.affectedHosts,
             previous: kpi.affectedHostsPrevious,
-            url: `/records?riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}`
+            url: recordsUrl({ riskLevels: '高,中', from: currentData.from, to: currentData.to })
         },
         {
             label: '涵蓋率缺口天數',
@@ -351,7 +351,7 @@ function renderTrendChart() {
         drillTo: point => {
             const day = points[point.index];
             const level = point.datasetIndex === 0 ? '高' : '中';
-            return `/records?riskLevels=${encodeURIComponent(level)}&from=${day.date}&to=${day.date}`;
+            return recordsUrl({ riskLevels: level, from: day.date, to: day.date });
         }
     });
 
@@ -411,9 +411,8 @@ function renderCategoryChart() {
             const severityValue = severityKeys[point.datasetIndex].severity;
             // 類型分布跨全部風險日統計（嚴重度是問題層級，與當日風險等級無關），
             // 下鑽顯式帶全部風險層級，否則點 Low 段會被預設隱藏低風險過濾成近乎空白
-            return `/records?categories=${category.category}&severity=${severityValue}` +
-                   `&riskLevels=${encodeURIComponent('高,中,低')}` +
-                   `&from=${currentData.from}&to=${currentData.to}`;
+            return recordsUrl({ categories: category.category, severity: severityValue,
+                                riskLevels: '高,中,低', from: currentData.from, to: currentData.to });
         }
     });
 
@@ -567,8 +566,8 @@ function renderIssueRankChart() {
         drillTo: point => {
             const issue = issues[point.index];   // 「其他」條是彙總，不下鑽
             return issue
-                ? `/records?view=issue&source=${encodeURIComponent(issue.source)}&eventId=${issue.eventId}` +
-                  `&riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`
+                ? recordsUrl({ view: 'issue', source: issue.source, eventId: issue.eventId,
+                               riskLevels: '高,中,低', from: currentData.from, to: currentData.to })
                 : null;
         }
     });
@@ -627,7 +626,7 @@ function renderIssueRankMeta() {
     subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
 
     if (currentData.issueOthers) {
-        viewAll.href = appUrl(`/records?view=issue&riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`);
+        viewAll.href = appUrl(recordsUrl({ view: 'issue', riskLevels: '高,中,低', from: currentData.from, to: currentData.to }));
         viewAll.classList.remove('d-none');
     } else {
         viewAll.classList.add('d-none');
@@ -644,8 +643,7 @@ function renderHostRankMeta() {
 
     // 有主機被 Top 10 擋在外面時才顯示「查看全部」，沒有就別給多餘的出口
     if (currentData.others) {
-        viewAll.href = appUrl(`/records?view=host&riskLevels=${encodeURIComponent('高,中')}`) +
-            `&from=${currentData.from}&to=${currentData.to}`;
+        viewAll.href = appUrl(recordsUrl({ view: 'host', riskLevels: '高,中', from: currentData.from, to: currentData.to }));
         viewAll.classList.remove('d-none');
     } else {
         viewAll.classList.add('d-none');
@@ -679,7 +677,7 @@ function renderRiskChart() {
         options: { plugins: { legend: { display: false } } },
         drillTo: point => {
             const level = point.index === 0 ? '高' : '中';
-            return `/records?riskLevels=${encodeURIComponent(level)}&from=${currentData.from}&to=${currentData.to}`;
+            return recordsUrl({ riskLevels: level, from: currentData.from, to: currentData.to });
         }
     });
 
@@ -687,9 +685,9 @@ function renderRiskChart() {
 
     charts.attachDoughnutLegend(legend, [
         { label: '高風險', value: high, color: risk['高'],
-            url: `/records?riskLevels=${encodeURIComponent('高')}&from=${currentData.from}&to=${currentData.to}` },
+            url: recordsUrl({ riskLevels: '高', from: currentData.from, to: currentData.to }) },
         { label: '中風險', value: medium, color: risk['中'],
-            url: `/records?riskLevels=${encodeURIComponent('中')}&from=${currentData.from}&to=${currentData.to}` }
+            url: recordsUrl({ riskLevels: '中', from: currentData.from, to: currentData.to }) }
     ]);
 }
 
@@ -725,14 +723,14 @@ function renderAffectedHostsChart() {
         },
         options: { plugins: { legend: { display: false } } },
         drillTo: point => point.index === 0
-            ? `/records?riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}`
+            ? recordsUrl({ riskLevels: '高,中', from: currentData.from, to: currentData.to })
             : null   // 「其餘」是彙總（沒問題的主機），沒有對應的下鑽清單
     });
     charts.setCenterText(wrapper, `${percent}%`);
 
     charts.attachDoughnutLegend(legend, [
         { label: '受影響', value: affected, color: risk['高'],
-            url: `/records?riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}` },
+            url: recordsUrl({ riskLevels: '高,中', from: currentData.from, to: currentData.to }) },
         { label: '其餘', value: remaining, color: status.neutral, url: null }
     ]);
 }
@@ -769,7 +767,7 @@ function renderHandlingProgressChart() {
         },
         options: { plugins: { legend: { display: false } } },
         drillTo: point => point.index === 1
-            ? `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}`
+            ? recordsUrl({ statuses: 'open,in_progress', riskLevels: '高,中', from: currentData.from, to: currentData.to })
             : null   // 「已處理」分散在各日，沒有單一篩選條件可以精確對應回這個數字，不下鑽
     });
     charts.setCenterText(wrapper, `${percent}%`);
@@ -777,7 +775,7 @@ function renderHandlingProgressChart() {
     charts.attachDoughnutLegend(legend, [
         { label: '已處理', value: handling.resolvedCount, color: status.success, url: null },
         { label: '未完成', value: remaining, color: status.neutral,
-            url: `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}` }
+            url: recordsUrl({ statuses: 'open,in_progress', riskLevels: '高,中', from: currentData.from, to: currentData.to }) }
     ]);
 }
 

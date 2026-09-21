@@ -162,11 +162,14 @@ public class HostAdminService
 
         var pageHosts = all.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         var items = pageHosts.Select(h => HostDtoMapper.ToDto(h, groups, users, _userDisplayNames)).ToList();
+        var now = DateTime.Now;
+        for (var i = 0; i < items.Count; i++)
+            items[i].IsSilent = IsSilent(pageHosts[i], now);
 
         // 未回報主機的 PRTG 現況提示：只算本頁，PRTG 未啟用時整段不算（PrtgHint 維持 null）
         if (_settings.Get().PrtgEnabled)
         {
-            var hints = ComputeSilentPrtgHints(_prtgStore, pageHosts, DateTime.Now);
+            var hints = ComputeSilentPrtgHints(_prtgStore, pageHosts, now);
             foreach (var dto in items)
             {
                 if (hints.Hints.TryGetValue(dto.HostId, out var hint))

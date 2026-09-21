@@ -521,27 +521,24 @@ function sourceCell(host) {
 }
 
 /**
- * 最近回報時間：超過 2 天沒回報就標紅。
+ * 最近回報時間：未回報由伺服器與清單篩選共用的判定標紅。
  * 這正是「沒告警 ≠ 沒問題」的一種——批次沒跑就不會有任何風險紀錄，
  * 畫面上必須看得出是「真的沒事」還是「根本沒在看」。
  *
- * 新主機寬限期（與後端 HostAdminService.NewHostGracePeriod 一致，24 小時）：
- * 剛匯入的主機在第一次批次跑完前 lastReportAt 必為空，寬限期內不標紅，
- * 否則整批匯入會讓畫面一次冒出一片刺眼的紅字，而那些主機根本還沒到該被檢查的時間。
+ * 新主機寬限期亦由同一後端判定，避免頁面與篩選對同一台主機說法不同。
  */
 function lastReportCell(host) {
     const span = document.createElement('span');
 
     if (!host.lastReportAt) {
-        const hoursOld = (Date.now() - new Date(host.createdAt).getTime()) / 3600000;
-        span.className = hoursOld > 24 ? 'text-danger' : 'text-muted';
+        span.className = host.isSilent ? 'text-danger' : 'text-muted';
         span.textContent = '尚未回報';
         return span;
     }
 
     const days = (Date.now() - new Date(host.lastReportAt).getTime()) / 86400000;
     span.textContent = formatDateTime(host.lastReportAt);
-    if (days > 2) {
+    if (host.isSilent) {
         span.className = 'text-danger fw-semibold';
         span.title = `已 ${Math.floor(days)} 天沒有回報`;
     }

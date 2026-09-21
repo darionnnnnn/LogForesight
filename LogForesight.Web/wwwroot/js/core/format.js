@@ -9,15 +9,11 @@
 import { icon } from './ui.js';
 
 /**
- * 風險類別的中文名（後端回傳英文列舉字串）。集中在這裡，取代先前散在 4 個頁面模組的
- * 各自副本——同一個對照表複製多份，遲早有頁面漏改（新增類別時尤其）。
+ * 風險類別的中文名由版面從 Core 的 IssueCategoryNames 提供；JS 不再維護翻譯副本。
  */
-export const CATEGORY_NAMES = {
-    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
-    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
-};
+export const CATEGORY_NAMES = window.LF_LABELS?.categories ?? {};
 
-/** 類別固定顯示順序（依 CATEGORY_NAMES 定義順序） */
+/** 類別固定顯示順序（由伺服器字典順序決定） */
 export const CATEGORY_ORDER = Object.keys(CATEGORY_NAMES);
 
 /** 類別英文列舉 → 中文名，查無回原字串 */
@@ -58,7 +54,7 @@ const SEVERITY_VARIANT = {
  * 一律維持英文；只有畫面文字改中文。不帶「風險」後綴，避免和日風險等級的
  * 「高風險/中風險/低風險」（riskBadge）字面撞在一起——兩者色系也不同。
  */
-export const SEVERITY_NAMES = { High: '高', Medium: '中', Low: '低' };
+export const SEVERITY_NAMES = window.LF_LABELS?.severities ?? {};
 
 /** 嚴重度英文列舉 → 中文名，查無回原字串 */
 export function severityName(severity) {
@@ -69,7 +65,7 @@ export function severityName(severity) {
  * 嚴重度合法值，由重到輕（docs/archive/HISTORY.md S11）。取代 record-detail.js／
  * settings.js 各自維護的同值陣列——兩份copy遲早有一份漏改（新增嚴重度時尤其）。
  */
-export const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
+export const SEVERITY_ORDER = Object.keys(SEVERITY_NAMES);
 
 /**
  * 「重大」徽章（docs/archive/HISTORY.md #1，B1 三級化）：命中規則帶

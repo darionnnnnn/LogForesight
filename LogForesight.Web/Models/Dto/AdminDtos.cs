@@ -95,6 +95,7 @@ public class UserAssignmentHistoryDto
 
     /// <summary>建案時間與建案者帳號（誰把這件事交辦給他）</summary>
     public DateTime CreatedAt { get; set; }
+
     public string CreatedByAccount { get; set; } = string.Empty;
 
     public DateTime? ClosedAt { get; set; }
@@ -320,6 +321,9 @@ public class HostDto
 
     /// <summary>建立時間——「未回報」告警的寬限期依據，剛匯入的主機不該立刻被當成無回報（定案 9）</summary>
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>與主機清單篩選共用的未回報判定。</summary>
+    public bool IsSilent { get; set; }
 
     public List<long> GroupIds { get; set; } = new();
     public List<string> GroupNames { get; set; } = new();

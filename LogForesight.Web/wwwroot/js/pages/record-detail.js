@@ -7,7 +7,7 @@
  */
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
@@ -1948,7 +1948,7 @@ function renderCategories(detail) {
         // 跨日：帶條件回問題查詢（§8.4），次要動作、圖示連結不搶主視線
         const cross = document.createElement('a');
         cross.className = 'lf-no-print ms-2 text-muted';
-        cross.href = appUrl(`/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`);
+        cross.href = appUrl(recordsUrl({ categories: category.category, riskLevels: '高,中,低', from: detail.date, to: detail.date }));
         cross.title = '在問題查詢中看這一類（可跨日）';
         cross.appendChild(icon('search'));
 
