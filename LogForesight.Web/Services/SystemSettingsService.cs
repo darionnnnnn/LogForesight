@@ -1384,6 +1384,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgSensorTypeCategoryOverrides = s.PrtgSensorTypeCategoryOverrides,
         PrtgValueFetchScope = s.PrtgValueFetchScope,
         PrtgFetchStrategy = s.PrtgFetchStrategy,
+        ValueFetchScopeApplies = s.PrtgFetchStrategy == LogForesight.Core.Service.PrtgFetchStrategy.Aggressive,
         PrtgValueFetchExtraHosts = s.PrtgValueFetchExtraHosts,
         PrtgResourceGuardEnabled = s.PrtgResourceGuardEnabled,
         PrtgResourceGuardSensorObjids = s.PrtgResourceGuardSensorObjids,

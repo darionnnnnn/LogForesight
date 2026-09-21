@@ -33,9 +33,18 @@ export function toScopeSelectValue(prtgEnabled, prtgValueFetchScope) {
         ? prtgValueFetchScope
         : 'triggered';
 }
+/** 數值取數對象在保守策略下不適用的提示文字：排程頁卡片與維護頁共用。 */
+export function prtgScopeInapplicableText(isRunsCard = false) {
+    return isRunsCard
+        ? '不適用（保守策略，數值由快照供應）'
+        : '保守策略下不適用';
+}
 
-/** 模組狀態的顯示文字：關閉時只說未啟用，啟用時把生效的數值取數對象一起說出來。 */
-export function prtgModuleStateText(prtgEnabled, prtgValueFetchScope) {
+/** 模組狀態的顯示文字：關閉時只說未啟用，啟用時把生效的數值取數對象一起說出來（保守策略時顯示不適用）。 */
+export function prtgModuleStateText(prtgEnabled, prtgValueFetchScope, prtgFetchStrategy = null) {
     if (!prtgEnabled) return '未啟用';
-    return `已啟用（數值取數對象：${PRTG_SCOPE_LABEL[toScopeSelectValue(true, prtgValueFetchScope)]}）`;
+    const scopeText = prtgFetchStrategy && prtgFetchStrategy !== 'aggressive'
+        ? prtgScopeInapplicableText(true)
+        : PRTG_SCOPE_LABEL[toScopeSelectValue(true, prtgValueFetchScope)];
+    return `已啟用（數值取數對象：${scopeText}）`;
 }

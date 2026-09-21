@@ -36,7 +36,10 @@ public sealed record PrtgSnapshotStatus(
 public class PrtgSnapshotHostedService : BackgroundService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(60);
+    private readonly TimeSpan _pollInterval;
+    private readonly SemaphoreSlim _wakeSignal = new(0, 1);
+    private volatile bool _scopeRefreshRequested;
 
     private static readonly Regex IntervalRegex = new(@"^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$", RegexOptions.Compiled);
 
@@ -135,7 +138,24 @@ public class PrtgSnapshotHostedService : BackgroundService
         ISentinelStore sentinelStore,
         PrtgProbeRunState probeState,
         IHostApplicationLifetime lifetime)
+        : this(systemSettingsStore, storageBackend, schedulerRunState, structureSyncService, backfillService,
+               hostStore, sentinelStore, probeState, lifetime, DefaultPollInterval)
     {
+    }
+
+    public PrtgSnapshotHostedService(
+        ISystemSettingsStore systemSettingsStore,
+        StorageBackend storageBackend,
+        SchedulerRunState schedulerRunState,
+        PrtgStructureSyncService structureSyncService,
+        PrtgBackfillService backfillService,
+        IHostStore hostStore,
+        ISentinelStore sentinelStore,
+        PrtgProbeRunState probeState,
+        IHostApplicationLifetime lifetime,
+        TimeSpan pollInterval)
+    {
+        _pollInterval = pollInterval;
         _hosts = hostStore ?? throw new ArgumentNullException(nameof(hostStore));
         _probeState = probeState ?? throw new ArgumentNullException(nameof(probeState));
         _sentinels = sentinelStore ?? throw new ArgumentNullException(nameof(sentinelStore));
@@ -155,6 +175,22 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
 
         _lifetime.ApplicationStopping.Register(OnStopping);
+    }
+
+    /// <summary>
+    /// 要求在輪詢等待中喚醒並執行範圍補抓（新主機對應或改 IP 後呼叫）。
+    /// </summary>
+    public virtual void RequestScopeRefresh()
+    {
+        _scopeRefreshRequested = true;
+        try
+        {
+            _wakeSignal.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // 已有等待中的信號
+        }
     }
 
     /// <summary>
@@ -178,7 +214,8 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+            var initialWait = _pollInterval < TimeSpan.FromSeconds(10) ? _pollInterval : TimeSpan.FromSeconds(10);
+            await _wakeSignal.WaitAsync(initialWait, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -189,7 +226,15 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             try
             {
-                await TickAsync(stoppingToken);
+                if (_scopeRefreshRequested)
+                {
+                    _scopeRefreshRequested = false;
+                    await ScopeRefreshTickAsync(stoppingToken);
+                }
+                else
+                {
+                    await TickAsync(stoppingToken);
+                }
             }
             catch (Exception ex)
             {
@@ -198,12 +243,32 @@ public class PrtgSnapshotHostedService : BackgroundService
 
             try
             {
-                await Task.Delay(PollInterval, stoppingToken);
+                await _wakeSignal.WaitAsync(_pollInterval, stoppingToken);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
+        }
+    }
+
+    internal async Task ScopeRefreshTickAsync(CancellationToken ct = default)
+    {
+        var settings = _settingsStore.Get();
+        if (!settings.PrtgEnabled) return;
+        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings)) return;
+        if (_structureSync.IsRunning || _backfill.GetStatus().IsRunning ||
+            IsFetchRunningPrtgPhase() || _probeState.Snapshot().IsRunning)
+        {
+            // 保留更新請求，等下一輪再試，不自行喚醒造成忙碌迴圈。
+            _scopeRefreshRequested = true;
+            return;
+        }
+
+        var newlyBackfilled = await BackfillScopeSensorsAsync(settings, ct);
+        if (newlyBackfilled.Count > 0)
+        {
+            await FetchRecentStateChangesAsync(settings, newlyBackfilled, ct);
         }
     }
 
@@ -541,11 +606,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 的守門項就會把該裝置納入範圍，之後由結構同步持續刷新、不會被「未刷新即刪除」清掉。
     /// </para>
     /// </summary>
-    private async Task BackfillScopeSensorsAsync(SystemSettings settings, CancellationToken ct)
+    private async Task<IReadOnlyList<long>> BackfillScopeSensorsAsync(SystemSettings settings, CancellationToken ct)
     {
+        var newlyBackfilled = new List<long>();
         // 環境探測執行中不補抓：探測在量 PRTG 的回應時間與併發（步驟 9），疊上補抓的請求會讓量測失真。
         // 快照本身不受這道限制（它一輪只有少數請求，且探測的前置說明已涵蓋）。
-        if (_probeState.Snapshot().IsRunning) return;
+        if (_probeState.Snapshot().IsRunning) return newlyBackfilled;
 
         try
         {
@@ -581,7 +647,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     .OrderBy(id => id)
                     .ToList();
             }
-            if (scopePending.Count == 0 && missingOverride.Count == 0) return;
+            if (scopePending.Count == 0 && missingOverride.Count == 0) return newlyBackfilled;
 
             PrtgSensorBackfillResult result;
             List<long> pending;
@@ -593,7 +659,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     .Concat(scopePending.Where(id => !overrideDevices.Contains(id)).OrderBy(id => id))
                     .Take(MaxBackfillDevicesPerTick)
                     .ToList();
-                if (pending.Count == 0) return;
+                if (pending.Count == 0) return newlyBackfilled;
 
                 var fetch = new PrtgFetchService(client, store,
                     new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
@@ -620,6 +686,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             {
                 WriteOutput($"[PRTG快照] {result.FailedDevices.Count} 台新進取數範圍的裝置感測器補抓失敗，下次再試", LogLevel.Warn);
             }
+
+            newlyBackfilled = pending.Except(result.FailedDevices).Except(result.EmptyDevices).ToList();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -629,6 +697,32 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             // WriteOutput 的 Warn 會同時寫 Log.Warn
             WriteOutput($"[PRTG快照] 新進取數範圍裝置的感測器補抓失敗（不影響本輪快照）：{ex.Message}", LogLevel.Warn);
+        }
+
+        return newlyBackfilled;
+    }
+
+    private async Task FetchRecentStateChangesAsync(SystemSettings settings, IReadOnlyList<long> newlyBackfilled, CancellationToken ct)
+    {
+        try
+        {
+            var store = _backend.PrtgStore();
+            var client = GetClient(settings);
+            var fetch = new PrtgFetchService(client, store,
+                new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
+                PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+
+            var today = Now().Date;
+            var fromDate = today.AddDays(-1);
+            await fetch.FetchStateChangesRangeAsync(fromDate, today, newlyBackfilled, settings.PrtgFetchConcurrency, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            WriteOutput($"[PRTG快照] 新進裝置狀態變更補抓失敗（不影響快照）：{ex.Message}", LogLevel.Warn);
         }
     }
 

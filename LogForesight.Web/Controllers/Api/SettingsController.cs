@@ -158,6 +158,29 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgProbeResultDto>.Ok(new StartPrtgProbeResultDto { Started = true });
     }
 
+    /// <summary>
+    /// 停止進行中的環境探測。
+    /// </summary>
+    [HttpPost("prtg-probe/cancel")]
+    public ApiResponse<StartPrtgProbeResultDto> CancelPrtgProbe()
+    {
+        if (_prtgProbe == null)
+            throw DomainException.Validation("PRTG 探測服務未啟用。");
+
+        if (!_prtgProbe.TryCancel())
+            throw DomainException.Conflict("目前沒有進行中的環境探測。");
+
+        _audit.Record(
+            action: AuditActions.PrtgProbeCancel,
+            summary: "停止環境探測",
+            targetKind: "system_settings",
+            targetId: "prtg_probe",
+            detail: new { });
+
+        return ApiResponse<StartPrtgProbeResultDto>.Ok(
+            new StartPrtgProbeResultDto { Started = false });
+    }
+
     // ── PRTG 歷史回填（PRTG 第 1 輪批次E）────────────────────────────────────────
 
     [HttpGet("prtg-backfill/status")]

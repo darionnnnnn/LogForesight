@@ -125,25 +125,6 @@
             </div>
             <div class="lf-card__body">
                 <div class="mb-3">
-                    <label for="prtg-value-fetch-scope" class="form-label fw-semibold">PRTG 擷取（數值取數對象）</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="選擇任一數值取數對象即啟用 PRTG 擷取。數值取數對象只決定夜間要抓哪些主機的數值；感測器與狀態變更同步的是「監看裝置」（由主機對應算出的裝置集合），兩者不同。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <select class="form-select" id="prtg-value-fetch-scope">
-                        <option value="off">關閉（預設）</option>
-                        <option value="triggered">只抓觸發主機</option>
-                        <option value="all-mapped">全部已對應主機</option>
-                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
-                    </select>
-                    <div class="form-text">
-                        選擇任一數值取數對象即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
-                        環境探測與資源守門預覽不受影響。
-                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
-                    </div>
-                </div>
-
-                <div class="mb-3">
                     <label for="prtg-fetch-strategy" class="form-label fw-semibold">取數策略</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="保守：每 15 分鐘對 PRTG 查一次快照目標感測器的目前值（一天約 96 次，每 50 顆一個請求、依序送出，同時只有 1 個請求），夜間不逐顆查詢，數值全由快照供應。激進：每 5 分鐘一次（一天約 288 次），另在夜間對觸發主機逐顆查詢歷史值（每晚數百次、單次 5～70 秒），PRTG 負擔明顯較高。實際的快照目標感測器數與每日寫入列數，請按下方「估算規模」查看。兩種策略下快照連續失敗 3 次都會自動拉長間隔（上限 60 分鐘）。">
@@ -158,6 +139,30 @@
                     </div>
                     <div class="small text-warning mt-2 d-none" id="prtg-strategy-aggressive-hint">
                         激進策略每 5 分鐘對 PRTG 查一次快照目標感測器的目前值（每 50 顆一個請求），並在每晚對觸發主機逐顆查詢歷史值，PRTG 負載明顯較高。請先用保守策略觀察執行輸出裡的快照耗時與失敗數，確認 PRTG 承受得住再切換；切換後若看到快照間隔被自動拉長，代表 PRTG 已經回不來，請切回保守。
+                    </div>
+                </div>
+
+                <div class="small text-muted mb-3" id="prtg-strategy-scope-explanation">保守策略：夜間不逐顆查詢歷史值，數值由每 15 分鐘的快照供應（快照涵蓋全部監看裝置），數值取數對象不適用。激進策略：夜間依數值取數對象逐顆查詢。</div>
+
+                <div class="mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="prtg-value-fetch-scope" class="form-label fw-semibold mb-0">PRTG 擷取（數值取數對象）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="選擇任一數值取數對象即啟用 PRTG 擷取。數值取數對象只決定夜間要抓哪些主機的數值；感測器與狀態變更同步的是「監看裝置」（由主機對應算出的裝置集合），兩者不同。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                        <span class="small text-muted d-none" id="prtg-scope-inapplicable-hint">保守策略下不適用</span>
+                    </div>
+                    <select class="form-select mt-2" id="prtg-value-fetch-scope">
+                        <option value="off">關閉（預設）</option>
+                        <option value="triggered">只抓觸發主機</option>
+                        <option value="all-mapped">全部已對應主機</option>
+                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
+                    </select>
+                    <div class="form-text">
+                        選擇任一數值取數對象即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
+                        環境探測與資源守門預覽不受影響。
+                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
                     </div>
                 </div>
 
@@ -408,6 +413,7 @@
             </p>
             <div class="d-flex align-items-center gap-3 mb-3">
                 <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                <button type="button" class="btn btn-outline-danger d-none" id="prtg-probe-cancel">停止探測</button>
                 <div class="text-muted small" id="prtg-probe-status"></div>
             </div>
             <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">

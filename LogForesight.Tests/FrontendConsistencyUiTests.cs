@@ -191,7 +191,13 @@ public class FrontendConsistencyUiTests
         var js = ReadJs("pages", file);
         var binder = ExtractBody(js, headerPattern);
 
-        foreach (var action in new[] { "start", "cancel" })
+        if (file == "runs.js")
+        {
+            Assert.DoesNotContain("prtg-structure-sync/start", binder);
+        }
+
+        var actions = file == "runs.js" ? new[] { "cancel" } : new[] { "start", "cancel" };
+        foreach (var action in actions)
         {
             var marker = $"prtg-structure-sync/{action}";
             var at = binder.IndexOf(marker, StringComparison.Ordinal);

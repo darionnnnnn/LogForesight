@@ -111,6 +111,7 @@ public class AuditQueryService
 
         [AuditActions.PrtgConnectionTest] = "測試 PRTG 連線",
         [AuditActions.PrtgProbeRun] = "執行 PRTG 環境探測",
+        [AuditActions.PrtgProbeCancel] = "停止環境探測",
         [AuditActions.PrtgBackfillRun] = "啟動 PRTG 歷史回填",
         [AuditActions.PrtgBackfillCancel] = "停止 PRTG 歷史回填",
         [AuditActions.PrtgStructureSyncRun] = "啟動 PRTG 同步結構與對應",

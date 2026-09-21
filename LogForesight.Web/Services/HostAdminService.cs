@@ -131,7 +131,8 @@ public class HostAdminService
         EfPrtgStore prtgStore,
         IPrtgHostMapRefresher mapRefresher,
         ISystemSettingsStore settings,
-        PermissionVersionStamp permissionVersion)
+        PermissionVersionStamp permissionVersion,
+        PrtgSnapshotHostedService snapshotService)
     {
         _permissionVersion = permissionVersion;
         _settings = settings;
@@ -144,10 +145,12 @@ public class HostAdminService
         _audit = audit;
         _userDisplayNames = userDisplayNames;
         _prtgStore = prtgStore;
+        _snapshotService = snapshotService ?? throw new ArgumentNullException(nameof(snapshotService));
     }
 
     private readonly IPrtgHostMapRefresher _mapRefresher;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly PrtgSnapshotHostedService _snapshotService;
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
     {
@@ -418,6 +421,17 @@ public class HostAdminService
         // 在主機寫入**之後**才重算，且失敗不影響儲存結果——只把警告帶進回應
         // （比照人工對應端點的 RemapWarning，見 PrtgHostMapRefresher 的說明）
         var remapWarning = needsRemap ? _mapRefresher.TryRefreshToday() : null;
+
+        if (needsRemap && remapWarning == null)
+        {
+            var isNewWithIp = isNew && !string.IsNullOrWhiteSpace(request.IpAddress);
+            var isIpChanged = !isNew && ipChanged;
+            var becameActive = activeChanged && request.Active;
+            if (isNewWithIp || isIpChanged || becameActive)
+            {
+                _snapshotService.RequestScopeRefresh();
+            }
+        }
 
         var dto = HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
         dto.RemapWarning = remapWarning;

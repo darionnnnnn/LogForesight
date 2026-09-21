@@ -168,6 +168,7 @@ public static class AuditActions
 
     // PRTG API 探測（PRTG 第 1 輪批次B-3）：對 PRTG 的主動查詢操作
     public const string PrtgProbeRun = "prtg_probe_run";
+    public const string PrtgProbeCancel = "prtg_probe_cancel";
 
     // PRTG 歷史回填（PRTG 第 1 輪批次E）
     public const string PrtgBackfillRun = "prtg_backfill_run";

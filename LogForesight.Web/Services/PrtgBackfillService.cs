@@ -29,60 +29,6 @@ public class PrtgBackfillRunState : PrtgProbeRunState
     private int _stateChangesTotal;
     private bool _readingStateChanges;
 
-    /// <summary>本趟的取消來源；沒有執行中時為 null。在 _progressLock 內先搶執行權（基底自有一把鎖）再建立它，IsRunning 一轉 true 就一定有東西可取消。</summary>
-    private CancellationTokenSource? _cts;
-
-    /// <summary>最近一趟是否被使用者停止（新一趟開始時歸零）。</summary>
-    public bool Cancelled
-    {
-        get { lock (_progressLock) return _cancelled; }
-    }
-
-    private bool _cancelled;
-
-    /// <summary>
-    /// 搶執行權並建立本趟的取消來源。已在執行中回 false。
-    /// 取鎖順序固定是 _progressLock → 基底鎖（TryBegin／Snapshot／EndRun 各自持有基底鎖），基底不會回呼本類別，不會反向。
-    /// </summary>
-    public bool TryBeginRun(out CancellationToken token)
-    {
-        lock (_progressLock)
-        {
-            if (!TryBegin())
-            {
-                token = default;
-                return false;
-            }
-            _cts = new CancellationTokenSource();
-            _cancelled = false;
-            token = _cts.Token;
-            return true;
-        }
-    }
-
-    /// <summary>要求停止進行中的回填；沒有執行中時回 false。</summary>
-    public bool TryCancel()
-    {
-        lock (_progressLock)
-        {
-            if (_cts == null || !Snapshot().IsRunning) return false;
-            _cts.Cancel();
-            return true;
-        }
-    }
-
-    /// <summary>結束本趟：記住是否被停止、釋放並清空取消來源，再結束執行狀態。</summary>
-    public void FinishRun(bool success, bool cancelled)
-    {
-        lock (_progressLock)
-        {
-            _cancelled = cancelled;
-            _cts?.Dispose();
-            _cts = null;
-        }
-        EndRun(success);
-    }
-
     public void ResetProgress()
     {
         lock (_progressLock)

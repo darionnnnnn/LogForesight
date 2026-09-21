@@ -9,7 +9,8 @@ namespace LogForesight.Web.Services;
 /// <summary>單次 PRTG probe 的快照，供狀態 API 一次性讀出</summary>
 public record PrtgProbeSnapshot(
     bool IsRunning, DateTime? StartedAt, DateTime? CompletedAt,
-    bool? Success, string? LatestMessage, IReadOnlyList<string> Output);
+    bool? Success, string? LatestMessage, IReadOnlyList<string> Output,
+    bool Cancelled = false);
 
 /// <summary>
 /// PRTG probe 的行程內單例執行狀態＋併發 1 的 gate。
@@ -24,6 +25,57 @@ public class PrtgProbeRunState
     private DateTime? _completedAt;
     private bool? _success;
     private string? _latestMessage;
+
+    private CancellationTokenSource? _cts;
+    private bool _cancelled;
+
+    /// <summary>最近一趟是否被使用者停止（新一趟開始時歸零）。</summary>
+    public bool Cancelled
+    {
+        get { lock (_lock) return _cancelled; }
+    }
+
+    /// <summary>
+    /// 搶執行權並建立本趟的取消來源。已在執行中回 false。
+    /// </summary>
+    public bool TryBeginRun(out CancellationToken token)
+    {
+        lock (_lock)
+        {
+            if (!TryBegin())
+            {
+                token = default;
+                return false;
+            }
+            _cts = new CancellationTokenSource();
+            _cancelled = false;
+            token = _cts.Token;
+            return true;
+        }
+    }
+
+    /// <summary>要求停止進行中的探測；沒有執行中時回 false。</summary>
+    public bool TryCancel()
+    {
+        lock (_lock)
+        {
+            if (_cts == null || !_isRunning) return false;
+            _cts.Cancel();
+            return true;
+        }
+    }
+
+    /// <summary>結束本趟：記住是否被停止、釋放並清空取消來源，再結束執行狀態。</summary>
+    public void FinishRun(bool success, bool cancelled)
+    {
+        lock (_lock)
+        {
+            _cancelled = cancelled;
+            _cts?.Dispose();
+            _cts = null;
+        }
+        EndRun(success);
+    }
 
     public bool TryBegin()
     {
@@ -66,7 +118,7 @@ public class PrtgProbeRunState
         {
             return new PrtgProbeSnapshot(
                 _isRunning, _startedAt, _completedAt, _success,
-                _latestMessage, _output.ToList());
+                _latestMessage, _output.ToList(), _cancelled);
         }
     }
 }
@@ -120,9 +172,12 @@ public class PrtgProbeService
             CompletedAt = s.CompletedAt,
             Success = s.Success,
             LatestMessage = s.LatestMessage,
-            Output = s.Output
+            Output = s.Output,
+            Cancelled = s.Cancelled
         };
     }
+
+    public bool TryCancel() => _state.TryCancel();
 
     /// <param name="error">拒絕原因；成功時為 null。</param>
     /// <param name="isConflict">true＝被互斥擋下（回填執行中／探測已在執行中），呼叫端該回 409；
@@ -152,7 +207,7 @@ public class PrtgProbeService
             return false;
         }
 
-        if (!_state.TryBegin())
+        if (!_state.TryBeginRun(out var ct))
         {
             error = "探測已在執行中。";
             isConflict = true;
@@ -168,7 +223,7 @@ public class PrtgProbeService
         catch (Exception ex)
         {
             _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
-            _state.EndRun(false);
+            _state.FinishRun(false, false);
             error = $"初始化 PRTG 連線失敗：{ex.Message}";
             return false;
         }
@@ -176,11 +231,12 @@ public class PrtgProbeService
         _ = Task.Run(async () =>
         {
             var success = false;
+            var cancelled = false;
             try
             {
                 using (client)
                 {
-                    success = await PrtgProbeRunner.RunAsync(client, console);
+                    success = await PrtgProbeRunner.RunAsync(client, console, ct);
 
                     // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），
                     // 而且不影響 success：它是附加資訊，不是探測的成敗條件。
@@ -189,7 +245,11 @@ public class PrtgProbeService
                         try
                         {
                             await PrtgProbeSiteCheck.RunAsync(client, console, _backend.PrtgStore(), _hosts, s, _sentinels.GetAll(),
-                                new PrtgLiveGuardSource(client, CancellationToken.None, console));
+                                new PrtgLiveGuardSource(client, ct, console), ct);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        {
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -198,6 +258,13 @@ public class PrtgProbeService
                     }
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                cancelled = true;
+                success = false;
+                console.WriteLine();
+                console.WriteLine("探測已由使用者停止。");
+            }
             catch (Exception ex)
             {
                 console.WriteLine($"探測過程發生未預期錯誤：{ex.Message}");
@@ -205,7 +272,7 @@ public class PrtgProbeService
             }
             finally
             {
-                _state.EndRun(success);
+                _state.FinishRun(success, cancelled);
             }
         });
 

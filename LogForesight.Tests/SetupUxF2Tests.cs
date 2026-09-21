@@ -18,8 +18,14 @@ namespace LogForesight.Tests;
 public class SetupUxF2Tests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
+    private readonly string _snapshotDir = Path.Combine(Path.GetTempPath(), "lf-setup-snapshot-" + Guid.NewGuid().ToString("N"));
 
-    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose()
+    {
+        _fx.Dispose();
+        if (Directory.Exists(_snapshotDir)) Directory.Delete(_snapshotDir, recursive: true);
+        GC.SuppressFinalize(this);
+    }
 
     // ── 1. NetIQ 匯入分組 ────────────────────────────────────────────────────
 
@@ -110,6 +116,17 @@ public class SetupUxF2Tests : IDisposable
     private (HostAdminService Service, PermissionVersionStamp Stamp) CreateHostAdmin()
     {
         var stamp = new PermissionVersionStamp(_fx.Blob(PermissionVersionStamp.BlobKey));
+        Directory.CreateDirectory(_snapshotDir);
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_snapshotDir, "snapshot.db")}" }, _snapshotDir);
+        var syncState = new PrtgStructureSyncRunState();
+        var lifetime = new FakeHostApplicationLifetime();
+        var statusStore = new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
+        var backfillState = new PrtgBackfillRunState();
+        var structureSync = new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, syncState, new SchedulerRunState(), _hosts, statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
+        var probeState = new PrtgProbeRunState();
+        var backfill = new PrtgBackfillService(new FakeSystemSettingsStore(), backend, backfillState, probeState, _hosts, new SchedulerRunState(), syncState, new FakeSentinelStore(), structureSync);
+        var snapshotService = new PrtgSnapshotHostedService(new FakeSystemSettingsStore(), backend, new SchedulerRunState(), structureSync, backfill, _hosts, new FakeSentinelStore(), probeState, lifetime);
+
         var service = new HostAdminService(
             _hosts, _hostGroups, _users,
             new FakeNetiqServerCatalog("SENTINEL-A"),
@@ -118,7 +135,8 @@ public class SetupUxF2Tests : IDisposable
             new UserDisplayNameService(new FakeSystemSettingsStore()),
             new EfPrtgStore(_fx.NewContext),
             new NoopMapRefresher(),
-            new FakeSystemSettingsStore(), stamp);
+            new FakeSystemSettingsStore(), stamp,
+            snapshotService);
         return (service, stamp);
     }
 

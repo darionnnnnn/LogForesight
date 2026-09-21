@@ -12,7 +12,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
-import { PRTG_SCOPE_OFF, toScopeSelectValue } from '../core/prtg-scope-labels.js';
+import { PRTG_SCOPE_OFF, toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
@@ -197,6 +197,16 @@ function syncStrategyHint() {
     const isAggressive = (select ? select.value : '') === 'aggressive';
     document.getElementById('prtg-strategy-aggressive-hint')
         ?.classList.toggle('d-none', !isAggressive);
+
+    const scopeSelect = document.getElementById('prtg-value-fetch-scope');
+    const inapplicableHint = document.getElementById('prtg-scope-inapplicable-hint');
+    if (scopeSelect) {
+        scopeSelect.disabled = !isAggressive;
+    }
+    if (inapplicableHint) {
+        inapplicableHint.textContent = prtgScopeInapplicableText(false);
+        inapplicableHint.classList.toggle('d-none', isAggressive);
+    }
 }
 
 /**
@@ -1066,9 +1076,15 @@ function renderPrtgProbeStatus(status) {
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
     const startButton = document.getElementById('prtg-probe-start');
+    const cancelBtn = document.getElementById('prtg-probe-cancel');
     const statusEl = document.getElementById('prtg-probe-status');
 
     if (!outputEl || !copyButton || !startButton || !statusEl) return;
+
+    if (cancelBtn) {
+        cancelBtn.classList.toggle('d-none', !status.isRunning);
+        if (!status.isRunning) cancelBtn.disabled = false;
+    }
 
     const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
     outputEl.value = outputText;
@@ -1088,8 +1104,10 @@ function renderPrtgProbeStatus(status) {
         statusEl.textContent = '';
         return;
     }
-    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
-        (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+    const outcomeText = status.cancelled
+        ? '已停止'
+        : (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ${outcomeText}`;
 }
 
 async function refreshPrtgProbeStatus() {
@@ -1116,6 +1134,7 @@ async function refreshPrtgProbeStatus() {
 
 function bindPrtgProbe() {
     const startButton = document.getElementById('prtg-probe-start');
+    const cancelBtn = document.getElementById('prtg-probe-cancel');
     const copyButton = document.getElementById('prtg-probe-copy');
     const outputEl = document.getElementById('prtg-probe-output');
     if (!startButton || !copyButton || !outputEl) return;
@@ -1137,6 +1156,19 @@ function bindPrtgProbe() {
             // 啟動失敗（如尚未設定連線位址、與回填互斥）：訊息要讓使用者看得到，不能靜默
             startButton.disabled = false;
             toast(error?.message || '無法啟動 PRTG 探測。', 'danger');
+        }
+    });
+
+    cancelBtn?.addEventListener('click', async () => {
+        const restore = withBusy(cancelBtn, '停止中');
+        try {
+            await api.post('/api/admin/settings/prtg-probe/cancel', {});
+            toast('已送出停止探測要求', 'success');
+            await refreshPrtgProbeStatus();
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
+        } finally {
+            restore();
         }
     });
 

@@ -744,10 +744,10 @@ async function loadSchedule() {
     applyScheduleOptions(options);
     if (settings) {
         // 啟用開關在 PRTG 維護頁「擷取參數」的數值取數對象下拉，本頁只顯示狀態
-        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope);
+        prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
+        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope, prtgFetchStrategy);
         // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
         prtgConnectionConfigured = hasPrtgConnection(settings);
-        prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -1397,10 +1397,6 @@ async function refreshPrtgSyncStatus() {
         const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
         renderPrtgSyncSummary(status);
 
-        const btn = document.getElementById('prtg-sync-start');
-        // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
-        if (btn) btn.disabled = status.isRunning || prtgModuleEnabled !== true;
-
         // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
         // 這裡會動 d-none，而 data-maintain-only 的隱藏也是靠 d-none——沒有 Maintain 時
         // 不能碰它，否則輪詢會把唯讀使用者看不到的停止鈕重新露出來。
@@ -1422,25 +1418,6 @@ async function refreshPrtgSyncStatus() {
 }
 
 function bindPrtgSync() {
-    const btn = document.getElementById('prtg-sync-start');
-    btn?.addEventListener('click', async () => {
-        // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
-        if (prtgModuleEnabled !== true) {
-            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇數值取數對象。', 'warning');
-            return;
-        }
-        const restore = withBusy(btn, '啟動中');
-        try {
-            await api.post('/api/admin/settings/prtg-structure-sync/start', {});
-            toast('已開始同步結構與對應', 'success');
-            await refreshPrtgSyncStatus();
-        } catch {
-            // 錯誤已由 api.js 顯示
-        } finally {
-            restore();
-        }
-    });
-
     const cancelBtn = document.getElementById('prtg-sync-cancel');
     cancelBtn?.addEventListener('click', async () => {
         const restore = withBusy(cancelBtn, '停止中');
@@ -1457,23 +1434,17 @@ function bindPrtgSync() {
 }
 
 /** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
-function renderPrtgModuleState(enabled, scope) {
+function renderPrtgModuleState(enabled, scope, strategy = prtgFetchStrategy) {
     prtgModuleEnabled = enabled;
     const el = document.getElementById('prtg-module-state');
     if (el) {
         // 啟用時把生效範圍一起說出來——「已啟用」三個字看不出夜間到底會抓哪些主機
-        el.textContent = prtgModuleStateText(enabled, scope);
+        el.textContent = prtgModuleStateText(enabled, scope, strategy);
         el.classList.toggle('text-muted', !enabled);
     }
 
-    // 未啟用時同步與回填一定被後端拒絕（PrtgStructureSyncService／PrtgBackfillService），
-    // 讓兩顆鈕灰掉並指出開關在哪，比按下去看紅字有用。
+    // 未啟用時指路
     document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled === true);
-    for (const id of ['prtg-sync-start', 'prtg-backfill-start']) {
-        const btn = document.getElementById(id);
-        // 與同檔其餘六處一致：只認明確的啟用，其他一律當未啟用（回饋第 45 輪終檢補上的第七處）
-        if (btn) btn.disabled = enabled !== true;
-    }
 }
 
 /**
@@ -1892,22 +1863,12 @@ function confirmRunWithPrtgValues(days, segment) {
 let prtgBackfillPollTimer = null;
 
 function renderPrtgBackfillStatus(status) {
-    const outputEl = document.getElementById('prtg-backfill-output');
-    const copyButton = document.getElementById('prtg-backfill-copy');
-    const startButton = document.getElementById('prtg-backfill-start');
     const statusEl = document.getElementById('prtg-backfill-status');
     const wrapEl = document.getElementById('prtg-backfill-progress-wrap');
     const barEl = document.getElementById('prtg-backfill-progress-bar');
     const textEl = document.getElementById('prtg-backfill-progress-text');
 
-    if (!outputEl || !copyButton || !startButton || !statusEl) return;
-
-    const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
-    outputEl.value = outputText;
-    if (outputText) {
-        outputEl.scrollTop = outputEl.scrollHeight;
-    }
-    copyButton.disabled = !outputText;
+    if (!statusEl) return;
 
     const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
     // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
@@ -1946,13 +1907,10 @@ function renderPrtgBackfillStatus(status) {
     }
 
     if (status.isRunning) {
-        startButton.disabled = true;
         setSpinnerText(statusEl, `回填中…${elapsedSinceText(status.startedAt)}${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
-    // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
-    startButton.disabled = prtgModuleEnabled !== true;
     if (!status.completedAt) {
         statusEl.textContent = '';
         return;
@@ -1988,36 +1946,6 @@ async function refreshPrtgBackfillStatus() {
 }
 
 function bindPrtgBackfill() {
-    const startButton = document.getElementById('prtg-backfill-start');
-    const copyButton = document.getElementById('prtg-backfill-copy');
-    const outputEl = document.getElementById('prtg-backfill-output');
-
-    startButton?.addEventListener('click', async () => {
-        // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
-        if (prtgModuleEnabled !== true) {
-            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇數值取數對象。', 'warning');
-            return;
-        }
-        const ok = await confirmAction({
-            title: '確認執行 PRTG 歷史資料回填',
-            message: '回填會逐日擷取歷史監控數據與狀態變更，請確認目前為離峰時間。是否確定開始？',
-            confirmText: '開始回填',
-            confirmVariant: 'primary'
-        });
-        if (!ok) return;
-
-        startButton.disabled = true;
-        try {
-            await api.post('/api/admin/settings/prtg-backfill/start', {}, { silent: true });
-            toast('已開始執行 PRTG 歷史回填', 'success');
-            await refreshPrtgBackfillStatus();
-        } catch (error) {
-            // 啟動失敗（如尚未設定連線位址、與探測互斥）：訊息要讓使用者看得到，不能靜默
-            startButton.disabled = false;
-            toast(error?.message || '無法啟動 PRTG 歷史回填。', 'danger');
-        }
-    });
-
     const cancelBtn = document.getElementById('prtg-backfill-cancel');
     cancelBtn?.addEventListener('click', async () => {
         const restore = withBusy(cancelBtn, '停止中');
@@ -2029,15 +1957,6 @@ function bindPrtgBackfill() {
             // 錯誤已由 api.js 顯示
         } finally {
             restore();
-        }
-    });
-
-    copyButton?.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(outputEl.value);
-            toast('已複製回填輸出', 'success');
-        } catch {
-            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
         }
     });
 }

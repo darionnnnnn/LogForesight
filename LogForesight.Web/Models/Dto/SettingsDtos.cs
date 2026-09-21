@@ -177,6 +177,9 @@ public class SystemSettingsDto
     /// <summary>PRTG 取數策略（conservative／aggressive）</summary>
     public string PrtgFetchStrategy { get; set; } = "";
 
+    /// <summary>數值取數對象是否適用（取數策略為激進時為 true）</summary>
+    public bool ValueFetchScopeApplies { get; set; }
+
     /// <summary>triggered-plus-list 模式額外納入的主機名稱</summary>
     public List<string> PrtgValueFetchExtraHosts { get; set; } = new();
 

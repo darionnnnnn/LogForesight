@@ -218,7 +218,8 @@ public class HostDetailController : ControllerBase
                 Ip = r.Ip,
                 MapStatus = r.MapStatus,
                 Note = r.Note,
-                Sensors = sensors
+                Sensors = sensors,
+                SensorCount = sensors.Count
             });
         }
 

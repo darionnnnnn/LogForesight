@@ -139,7 +139,7 @@ public class PrtgAdminPageUiTests
 
         // 回填與每日擷取、模組狀態、結構同步一起放在 PRTG 狀態卡（回饋第 40 輪批次A）
         Assert.Contains("prtg-status-card", cshtmlContent);
-        Assert.Contains("prtg-backfill-start", cshtmlContent);
+        Assert.DoesNotContain("prtg-backfill-start", cshtmlContent);
 
         var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
         Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");

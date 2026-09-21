@@ -51,7 +51,7 @@
             <div class="small text-muted lf-run-message" id="schedule-latest-message"></div>
 
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions" data-maintain-only>
-                <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-run-now">立即執行</button>
+                <button type="button" class="btn btn-sm btn-primary" id="schedule-run-now">立即執行</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-stop">停止執行</button>
             </div>
         </div>
@@ -155,22 +155,11 @@
                （每一行都有 [PRTG] 前綴）。 *@
 
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions">
-                <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-sync-start" data-maintain-only>同步結構與對應</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-sync-cancel" data-maintain-only>停止同步</button>
-                <button type="button" class="btn btn-sm btn-primary" id="prtg-backfill-start" data-maintain-only>開始回填</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-backfill-cancel" data-maintain-only>停止回填</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-output-toggle"
-                        data-bs-toggle="collapse" data-bs-target="#prtg-backfill-output-wrap"
-                        aria-expanded="false" aria-controls="prtg-backfill-output-wrap">詳細輸出</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-copy" disabled>複製</button>
             </div>
 
-            @* 輸出預設收合：它是全頁最高的單一元素，展開著會把這張卡撐得比另外兩張長一倍 *@
-            <div class="collapse mt-2" id="prtg-backfill-output-wrap">
-                <label for="prtg-backfill-output" class="form-label small fw-semibold">回填輸出</label>
-                <textarea class="form-control font-monospace small" id="prtg-backfill-output" rows="10" readonly
-                          placeholder="尚未執行過回填。"></textarea>
-            </div>
+            <div class="small text-muted mt-3">結構同步會在每次執行時自動進行；要補過去日的數值，用「立即執行」時勾選「一併補齊 PRTG 數值」，或到 PRTG 維護頁。<a href="@Url.Content("~/admin/prtg")" class="ms-1">前往 PRTG 維護</a></div>
         </div>
     </section>
 </div>

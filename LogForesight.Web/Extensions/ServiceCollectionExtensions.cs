@@ -480,7 +480,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<PrtgStructureSyncService>();
 
         // PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
-        services.AddSingleton<PrtgSnapshotHostedService>();
+        services.AddSingleton(sp => new PrtgSnapshotHostedService(
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<StorageBackend>(),
+            sp.GetRequiredService<SchedulerRunState>(),
+            sp.GetRequiredService<PrtgStructureSyncService>(),
+            sp.GetRequiredService<PrtgBackfillService>(),
+            sp.GetRequiredService<IHostStore>(),
+            sp.GetRequiredService<ISentinelStore>(),
+            sp.GetRequiredService<PrtgProbeRunState>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            TimeSpan.FromSeconds(60)));
         services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
 
         // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：

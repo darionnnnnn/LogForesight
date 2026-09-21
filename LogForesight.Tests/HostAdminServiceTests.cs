@@ -18,8 +18,15 @@ public class HostAdminServiceTests : IDisposable
     private readonly FakeHostGroupStore _groups = new();
     private readonly RecordingAuditService _audit = new();
     private readonly EfSqliteFixture _fx = new();
+    private readonly string _snapshotDir = Path.Combine(Path.GetTempPath(), "lf-host-snapshot-" + Guid.NewGuid().ToString("N"));
 
-    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose()
+    {
+        _snapshotService?.Dispose();
+        _fx.Dispose();
+        if (Directory.Exists(_snapshotDir)) Directory.Delete(_snapshotDir, recursive: true);
+        GC.SuppressFinalize(this);
+    }
 
     /// <summary>記錄「重算今天的 PRTG 對應」被叫了幾次，供斷言觸發條件（docs/PRTG-SPEC.md §4）。</summary>
     private sealed class CountingMapRefresher : IPrtgHostMapRefresher
@@ -37,6 +44,40 @@ public class HostAdminServiceTests : IDisposable
     }
 
     private readonly CountingMapRefresher _mapRefresher = new();
+    private readonly StorageBackend _backend;
+    private readonly CountingSnapshotService _snapshotService;
+
+    public HostAdminServiceTests()
+    {
+        Directory.CreateDirectory(_snapshotDir);
+        _backend = new StorageBackend(new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_snapshotDir, "snapshot.db")}" }, _snapshotDir);
+        _snapshotService = new CountingSnapshotService(_backend, _hosts);
+    }
+
+    private sealed class CountingSnapshotService : PrtgSnapshotHostedService
+    {
+        public int Calls { get; private set; }
+
+        public CountingSnapshotService(StorageBackend backend, IHostStore hostStore)
+            : base(
+                new FakeSystemSettingsStore(),
+                backend,
+                new SchedulerRunState(),
+                new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new FakeHostApplicationLifetime()),
+                new PrtgBackfillService(new FakeSystemSettingsStore(), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(), null!),
+                hostStore,
+                new FakeSentinelStore(),
+                new PrtgProbeRunState(),
+                new FakeHostApplicationLifetime())
+        {
+        }
+
+        public override void RequestScopeRefresh()
+        {
+            Calls++;
+            base.RequestScopeRefresh();
+        }
+    }
 
     private HostAdminService Create() => new(
         _hosts,
@@ -48,7 +89,8 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         new EfPrtgStore(_fx.NewContext),
         _mapRefresher,
-        new FakeSystemSettingsStore(), TestPermissionStamps.Shared);
+        new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
+        _snapshotService);
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -60,7 +102,8 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
         _mapRefresher,
-        new FakeSystemSettingsStore(), TestPermissionStamps.Shared);
+        new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
+        _snapshotService);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -752,7 +795,8 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
         _mapRefresher,
-        settings, TestPermissionStamps.Shared);
+        settings, TestPermissionStamps.Shared,
+        _snapshotService);
 
     [Fact]
     public void GetHosts_未回報主機PRTG提示_down_up_nomap與正常主機null_sensor只查一次()

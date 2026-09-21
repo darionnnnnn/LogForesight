@@ -11,6 +11,7 @@ public class PrtgProbeStatusDto
     public bool? Success { get; set; }
     public string? LatestMessage { get; set; }
     public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
+    public bool Cancelled { get; set; }
 }
 
 /// <summary>啟動 PRTG 探測回應</summary>
@@ -259,6 +260,7 @@ public class HostPrtgDeviceDto
     public string? MapStatus { get; set; }
     public string? Note { get; set; }
     public List<HostPrtgSensorDto> Sensors { get; set; } = new();
+    public int SensorCount { get; set; }
 }
 
 /// <summary>主機對應 PRTG 裝置的感測器資訊</summary>
