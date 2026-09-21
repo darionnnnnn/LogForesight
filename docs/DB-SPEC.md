@@ -137,7 +137,9 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 歷史資料的補齊由背景服務 `IssueFirstSeenSeedHostedService` 呼叫
 `SchemaUpgrader.MergeIssueFirstSeenSeed`（自 `lf_top_issues` 合併）。**閘門是浮水印**：
 以 `lf_top_issues` 目前的最大 `record_id` 存進 blob（鍵 `issue_first_seen_watermark`），
-啟動時比對相同就整段跳過——那兩段 SQL 是 `GROUP BY UPPER(source_name), event_id` 的全表掃，
+啟動時比對相同就整段跳過——來源鍵回填尚未完成時，兩段合併查詢以
+`COALESCE(source_key, UPPER(source_name))` 作為來源鍵並依 `event_id` 分組；回填完成後直接
+使用 `source_key`，`source_name` 只作舊列相容 fallback。這些查詢在需要補齊時仍可能是全表掃，
 千萬列級環境下不能每次重啟都跑一遍（回饋二十輪 C）。合併吃分析等級的 300 秒逾時
 （不是前景的 60 秒），失敗每 30 分重試最多 3 次後停止，狀態經
 `/api/health/detail` 申報並在三次失敗時反映為降級——補不完的症狀是老問題被
@@ -204,6 +206,7 @@ lf_top_issues                                        -- LogIssueSignature 的**�
   record_date       date NOT NULL                     -- 去正規化自父列（期間跨度／出現密度）
   log_name          nvarchar(255) NOT NULL DEFAULT ''
   source_name       nvarchar(255) NOT NULL            -- 'source' 是 Oracle 慣用字，改名避開
+  source_key        nvarchar(255) NULL                 -- SourceKeyOf 正規化鍵；舊列背景回填期間可為 NULL
   event_id          int NOT NULL
   entry_type        int NOT NULL DEFAULT 0            -- EventLogEntryType 的**整數值**（不是字串）
   event_key         nvarchar(255) NOT NULL DEFAULT '' -- 完整簽章第五段（
@@ -217,9 +220,16 @@ lf_top_issues                                        -- LogIssueSignature 的**�
                                                      --   依問題視角的說明欄直接查此欄不解 JSON）
 ```
 
-`lf_top_issues` 目前**沒有** `source_key` 欄位，來源正規化仍由既有查詢／首見日路徑處理；
-因此本節不把 K 的來源鍵、回填完成旗標或新索引寫成已存在。`source_key` 現況只列在
-`lf_issue_first_seen` 的主鍵，以及 `lf_issue_cases`／`lf_work_orders` 的可空欄位與索引。
+`lf_top_issues` 與 `lf_risky_events` 都有可空的 `source_key`；後者仍保留 `source` 作為舊列
+相容路徑。兩表的 K 回填都由背景工作每批 500 列處理，`lf_risky_events` 在 top issues
+回填與首見日重整完成後才開始，但兩條 readiness 不合併。
+
+`IIssueAggregateQuery` 的就緒條件是 **top issues 的 `source_key` 回填完成 +
+`lf_issue_first_seen` 舊鍵重整標記完成**；`IRiskyEventStore` 的就緒條件只有 **risky events
+的 `source_key` 回填完成**。一條未就緒不阻塞另一條，也不可用另一條的完成狀態代替。
+兩條正規化都使用 `WorkOrderIssueKey.SourceKeyOf`；原有 `IssueSignatureKey.For` 維持不變。
+目前僅完成 SQLite 定向驗證，SQL Server 的 DDL、索引、NULL 語意、回填與兩條 readiness
+切換仍需實機確認。
 
 **趨勢與呈現欄不在本表**：`Trend`／`PreviousDayCount`／`HistoryDailyAverage`／`DaysSeen`／
 `FirstSeen`／`LastSeen`／`DistinctMessageCount`／`SampleMessages`／`KeyDetails`／
@@ -369,9 +379,11 @@ AI 問答已降為未來選項（決策：先把報告顯示與查詢做好，�
 ```
 lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢
 lf_issue_first_seen: PK(source_key, event_id)
-lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
+lf_top_issues:     (record_id)；(source_key, event_id, record_date) — 來源問題聚合
+                   (event_id, source_name) — 舊相容路徑的跨主機查詢
                    (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
                    (event_id, record_date) — 問題彙總「event_id IN + 日期範圍」的等值前導索引
+lf_risky_events:   (host_id, date, source_key, event_id) — 風險事件依主機／日期／問題查詢
 lf_blobs:          PK(blob_key)；`version` — 整份型 store 的快取失效權杖
 lf_log_lines:      PK(log_key, seq)；(log_key, created_at) — append-only JSONL
 lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)

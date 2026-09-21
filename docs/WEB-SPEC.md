@@ -932,6 +932,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     （「N 天前」／「昨日仍在發生」）回答，不與機房首見欄語意重複。
   - 資料來源走 `IIssueAggregateQuery`（`lf_top_issues` 的 GROUP BY），不把整段期間的
     紀錄撈回記憶體聚合；與報表問題排行共用 `IssueRankingBuilder`，兩頁數字必然一致。
+  - `IIssueAggregateQuery` 的來源鍵就緒是獨立閘門：`lf_top_issues.source_key` 背景每批 500
+    列回填，並且 `lf_issue_first_seen` 舊鍵重整標記完成後才可切換新鍵路徑。這條閘門只管
+    問題聚合；`lf_risky_events` 的回填雖在其後開始，沒有與本查詢合併的讀取閘門。
+    正規化使用 `WorkOrderIssueKey.SourceKeyOf`，`IssueSignatureKey.For` 維持原行為。
   - 主機數以**存活主機 id** 計——合併過的主機不再被算成兩台。
   - **全部主機都已有結論的問題退出清單**（背景見 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6）：不佔用重點清單版面，但卡底誠實顯示
     「另有 N 個問題已有結論（未列入）」——悄悄少幾筆會被誤讀成「問題變少了」。
@@ -1341,6 +1345,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （尚無歷史）伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
   規則命中／趨勢異常簽章的原始事件，`RiskyEventSelector` 選取、每簽章 50／每主機日 500 筆
   上限、逐則截 2000 字，保留天數見 §9.9b 資料保留），毫秒級、**本機直讀與 NetIQ 主機皆有**，
+  `IRiskyEventStore` 只在自身的 `source_key` 回填完成後宣告就緒；這條閘門不等待
+  `IIssueAggregateQuery`，也不被它反向阻塞。兩張表的來源鍵回填各自每批 500 列，risky
+  events 的回填在 top issues 那一輪之後開始。
   依事件時間新到舊取 20 則；暫存查無（超過保留期、功能上線前分析的日子、不符入庫資格）才
   fallback 既有的 **Sentinel 即時查詢**：向該主機所屬 Sentinel 查回當日此問題的原始事件（最新 20 則、逐則截
   500 字），開關在 §9.9a NetIQ 維護頁（`NetiqOptions.ChatLiveFetchEnabled`），全站併發上限 1、

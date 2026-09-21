@@ -258,11 +258,6 @@
 - **AI 設定頁的「測試連線」**：三種 provider 各自的連線驗證形狀不同（本機端點無金鑰、OpenAI 官方
   要金鑰、Azure 要 deployment），本輪只做儲存驗證（缺必填欄位即回驗證錯誤）。真的打一次
   chat/completions 回範例 JSON 才叫測試連線，留待需求明確時做。
-- **`lf_top_issues` 缺持久化的大小寫正規化來源鍵**：首見日合併的兩段 SQL 與
-  `EfIssueAggregateQuery` 數處都用 `UPPER(source_name)` 比對／分組，`(event_id, source_name)`
-  索引因此無法 seek。加一個寫入時就存大寫的 `source_key` 欄位＋索引可讓這些查詢 sargable。
-  本輪（二十輪 C）加了浮水印閘門後，那兩段 SQL 只在資料真的變動時才跑，成本從「每次重啟」
-  降成「有新資料時一次」，改 schema＋回填千萬列的風險已不成比例；等真的量到瓶頸再做。
 - **依問題視角的白話說明只對 Windows 規則有效**：`KnownIssueCatalog.FindRule` 是
   Windows 專用（Linux 規則要靠 program＋訊息內容比對，見 `FindLinuxRule`），而問題清單這層
   只有 (來源, EventId)，湊不出 Linux 規則的比對條件。Linux 問題因此不會顯示白話說明——

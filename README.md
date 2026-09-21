@@ -589,9 +589,12 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 設定鍵的完整欄位、限制與安全欄杆以 [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) §7、
 [docs/WEB-SPEC.md](docs/WEB-SPEC.md) §9.9b 為準。
 
-**來源鍵現況**：`lf_top_issues` 目前仍以 `source_name` 保存來源，沒有已完成的 `source_key`
-欄位；`source_key` 只在現行首見日與交辦相關資料表的既有欄位中使用。K 的正規化與回填仍在
-隔離驗收，待整合到主分支後再補本文件的欄位與升級說明。
+**來源鍵現況**：`lf_top_issues` 與 `lf_risky_events` 已新增可空的 `source_key`。兩者都由
+背景工作每批 500 列回填；`lf_risky_events` 的回填在 top issues 那一輪完成後開始，但兩條
+就緒狀態分開判定。問題聚合 `IIssueAggregateQuery` 只有在 top issues 回填與
+`lf_issue_first_seen` 舊鍵重整標記都完成後才切換新鍵路徑；`IRiskyEventStore` 只等待
+risky events 自身回填完成，不使用聯合讀取閘門。正規化入口是 `WorkOrderIssueKey.SourceKeyOf`，
+原有 `IssueSignatureKey.For` 維持不變。SQL Server 的 DDL、索引與背景回填仍需實機確認。
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
