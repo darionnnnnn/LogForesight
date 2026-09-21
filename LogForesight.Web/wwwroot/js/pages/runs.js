@@ -8,7 +8,7 @@
 import { api, getAiAvailable, getCurrentUser, hasCapability } from '../core/api.js';
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
-    renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
+    renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
@@ -287,7 +287,7 @@ async function renderDayDetailInto(cell, date) {
     try {
         hosts = await api.get(`/api/runs/day/${date}`);
     } catch {
-        renderEmpty(listEl, { title: '載入當日明細失敗' });
+        renderError(listEl, { message: '載入當日明細失敗', onRetry: () => renderDayDetailInto(cell, date) });
         return;
     }
 
@@ -464,17 +464,17 @@ function detailButton(runId) {
 
 // ── 執行詳情（改 modal，§2：取代舊版跳到頁面最下方的 run-detail-card）──────────────
 
-async function showDetail(runId) {
-    const body = document.createElement('div');
+async function showDetail(runId, retryBody = null) {
+    const body = retryBody ?? document.createElement('div');
     renderLoading(body, 5);
-    showDetailModal({ title: '執行詳情', body, size: 'modal-xl' });
+    if (!retryBody) showDetailModal({ title: '執行詳情', body, size: 'modal-xl' });
 
     let detail;
     try {
         detail = await api.get(`/api/runs/${runId}`);
     } catch {
         body.replaceChildren();
-        renderEmpty(body, { title: '載入執行詳情失敗' });
+        renderError(body, { message: '載入執行詳情失敗', onRetry: () => showDetail(runId, body) });
         return;
     }
 

@@ -14,7 +14,7 @@
 import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
-    renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
+    renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
     headerWithHelp, icon
 } from '../core/ui.js';
@@ -797,7 +797,7 @@ async function renderIssueOccurrences(cell, group) {
     try {
         result = await api.get(`/api/records?${params}`, { silent: true });
     } catch {
-        renderEmpty(wrap, { title: '載入受影響主機失敗' });
+        renderError(wrap, { message: '載入受影響主機失敗', onRetry: () => renderIssueOccurrences(cell, group) });
         return;
     }
 

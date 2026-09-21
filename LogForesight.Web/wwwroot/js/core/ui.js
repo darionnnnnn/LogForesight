@@ -887,6 +887,29 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
     container.replaceChildren(el);
 }
 
+/** 載入失敗與真正沒有資料分開呈現；重試保持在原位置，不丟失使用者所在的視角。 */
+export function renderError(container, { message = '載入失敗，請再試一次。', onRetry } = {}) {
+    const el = document.createElement('div');
+    el.className = 'lf-error';
+    el.setAttribute('role', 'alert');
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold';
+    title.textContent = message;
+    el.appendChild(title);
+
+    if (typeof onRetry === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-outline-danger mt-2';
+        button.textContent = '重試';
+        button.addEventListener('click', () => onRetry());
+        el.appendChild(button);
+    }
+
+    container.replaceChildren(el);
+}
+
 /**
  * 頁面載入流程的失敗收斂（docs/archive/FEEDBACK-10-PLAN.md §4）。
  *

@@ -2021,6 +2021,15 @@ a.lf-calendar__cell:focus-visible {
     margin-bottom: var(--lf-space-1);
 }
 
+.lf-error {
+    padding: var(--lf-space-4);
+    border: 1px solid var(--lf-danger);
+    border-radius: var(--lf-radius-sm);
+    color: var(--lf-danger-text);
+    background: var(--lf-danger-soft);
+    text-align: center;
+}
+
 .lf-skeleton {
     height: 1rem;
     border-radius: var(--lf-radius-sm);

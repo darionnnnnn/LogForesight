@@ -10,6 +10,7 @@ import {
     renderPagination,
     renderLoading,
     renderEmpty,
+    renderError,
     guardLoad,
     toast,
     confirmActionWithReason,
@@ -903,11 +904,7 @@ async function loadAll() {
         renderTimeline(timeline);
     } catch (error) {
         if (error?.status === 403) {
-            renderEmpty(headerContainer, {
-                title: '沒有權限',
-                hint: error.message || '您沒有權限檢視這張交辦單。',
-                icon: 'exclamation-triangle'
-            });
+            renderError(headerContainer, { message: error.message || '您沒有權限檢視這張交辦單。' });
             const wrap = document.createElement('div');
             wrap.className = 'mt-3';
             const a = document.createElement('a');
