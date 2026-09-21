@@ -99,7 +99,7 @@ public class IssueCaseCoordinatorAutoAssignTests
 
         var log = _handlingLog.GetLogs(Host, today).Single(l => l.IssueKey == IssueKey);
         Assert.Equal(HandlingActions.OwnerAutoAssign, log.Action);
-        Assert.Equal("系統依問題負責人自動派送", log.Note);
+        Assert.Equal("系統依問題檔案自動派送", log.Note);
         Assert.Null(log.ActorId);
     }
 
