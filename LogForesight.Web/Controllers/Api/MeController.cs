@@ -41,6 +41,26 @@ public class MeController : ControllerBase
         return ApiResponse<NotePhrasesDto>.Ok(Resolve());
     }
 
+    /// <summary>管理者初始設定引導是否已關閉</summary>
+    [HttpGet("setup-guide")]
+    public ApiResponse<SetupGuideDto> GetSetupGuide()
+    {
+        var hidden = _currentUser.UserId > 0 && _prefs.Get(_currentUser.UserId).SetupGuideHidden;
+        return ApiResponse<SetupGuideDto>.Ok(new SetupGuideDto { Hidden = hidden });
+    }
+
+    /// <summary>更新管理者初始設定引導偏好</summary>
+    [HttpPut("setup-guide")]
+    public ApiResponse<SetupGuideDto> SetSetupGuide([FromBody] SetSetupGuideRequest request)
+    {
+        if (_currentUser.UserId <= 0)
+            throw DomainException.Validation("此帳號沒有個人偏好可儲存。");
+
+        var hidden = request.Hidden;
+        _prefs.SetSetupGuideHidden(_currentUser.UserId, hidden);
+        return ApiResponse<SetupGuideDto>.Ok(new SetupGuideDto { Hidden = _prefs.Get(_currentUser.UserId).SetupGuideHidden });
+    }
+
     private NotePhrasesDto Resolve()
     {
         var own = _currentUser.UserId > 0 ? _prefs.Get(_currentUser.UserId).NotePhrases : new List<string>();
@@ -48,6 +68,16 @@ public class MeController : ControllerBase
             ? new NotePhrasesDto { Phrases = own, IsDefault = false }
             : new NotePhrasesDto { Phrases = _settings.Get().DefaultNotePhrases, IsDefault = true };
     }
+}
+
+public class SetupGuideDto
+{
+    public bool Hidden { get; set; }
+}
+
+public class SetSetupGuideRequest
+{
+    public bool Hidden { get; set; }
 }
 
 public class NotePhrasesDto

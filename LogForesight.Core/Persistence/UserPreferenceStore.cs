@@ -5,6 +5,9 @@ public class UserPreferences
 {
     /// <summary>個人常用語；空清單＝沿用全站預設（<c>SystemSettings.DefaultNotePhrases</c>）</summary>
     public List<string> NotePhrases { get; set; } = new();
+
+    /// <summary>是否已關閉／隱藏管理者初始設定引導</summary>
+    public bool SetupGuideHidden { get; set; } = false;
 }
 
 /// <summary>
@@ -19,16 +22,47 @@ public class UserPreferenceStore : JsonBlobSingleton<Dictionary<long, UserPrefer
     public UserPreferences Get(long userId) =>
         Get().TryGetValue(userId, out var prefs) ? prefs : new UserPreferences();
 
-    /// <summary>原子讀改寫個人常用語；空清單＝刪除個人清單（回到全站預設）</summary>
+    /// <summary>原子讀改寫個人常用語；空清單且無其他偏好時移除個人 entry</summary>
     public void SetNotePhrases(long userId, List<string> phrases) =>
         Update(all =>
         {
             if (phrases.Count == 0)
             {
-                all.Remove(userId);
+                if (all.TryGetValue(userId, out var existing))
+                {
+                    existing.NotePhrases.Clear();
+                    if (!existing.SetupGuideHidden)
+                        all.Remove(userId);
+                }
                 return;
             }
-            all[userId] = new UserPreferences { NotePhrases = phrases.ToList() };
+
+            if (all.TryGetValue(userId, out var pref))
+            {
+                pref.NotePhrases = phrases.ToList();
+            }
+            else
+            {
+                all[userId] = new UserPreferences { NotePhrases = phrases.ToList() };
+            }
+        });
+
+    /// <summary>原子讀改寫初始設定引導偏好；hidden=false 且無常用語時移除個人 entry</summary>
+    public void SetSetupGuideHidden(long userId, bool hidden) =>
+        Update(all =>
+        {
+            if (all.TryGetValue(userId, out var pref))
+            {
+                pref.SetupGuideHidden = hidden;
+                if (!hidden && (pref.NotePhrases == null || pref.NotePhrases.Count == 0))
+                {
+                    all.Remove(userId);
+                }
+            }
+            else if (hidden)
+            {
+                all[userId] = new UserPreferences { SetupGuideHidden = true };
+            }
         });
 }
 
