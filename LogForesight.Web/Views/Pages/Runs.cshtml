@@ -359,17 +359,13 @@
                     <div class="mb-3">
                         <label for="run-now-backfill" class="form-label">回望天數（選填）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-backfill-help"
-                                data-bs-content="檢查最近幾天內的日子：沒有分析紀錄的補跑，已有紀錄的依下方「執行模式」重新分析。本機主機與 NetIQ 主機都適用。只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機留空時回補趨勢窗口內的缺漏日）。">
+                                data-bs-content="正在載入有效回望上限…">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <input type="number" class="form-control form-control-sm lf-input-narrow" id="run-now-backfill" min="1" />
                     </div>
                     <div class="mb-3">
                         <label for="run-now-rerun-mode" class="form-label">執行模式</label>
-                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-rerun-mode-help"
-                                data-bs-content="「只補跑失敗或未執行」僅補跑缺漏或失敗日，不影響既有結果；其餘模式為重新分析，會刪除選定日子的既有分析結果（含 AI 判讀與深度分析）後重新產生。「重新分析未處理」只重跑無人處理過的日子；「重新分析未處理與處理中」加上處理中日子；「全部重新分析」則重跑所有日子（含已結案）。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                        </button>
                         <select class="form-select form-select-sm" id="run-now-rerun-mode">
                             <option value="None" selected>只補跑失敗或未執行（預設）</option>
                             <option value="Unhandled">重新分析未處理的日子</option>
@@ -377,6 +373,17 @@
                             <option value="All">全部重新分析（含已處理完的）</option>
                         </select>
                         <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm table-bordered small mb-0" aria-label="執行模式影響對照">
+                                <thead><tr><th scope="col">模式</th><th scope="col">會重建什麼</th><th scope="col">保留什麼</th><th scope="col">何時使用</th></tr></thead>
+                                <tbody>
+                                    <tr><th scope="row">只補跑失敗或未執行</th><td>缺漏或失敗日</td><td>已有的成功結果與處理結論</td><td>日常補缺</td></tr>
+                                    <tr><th scope="row">重新分析未處理</th><td>未處理日的分析、AI 判讀與深度分析</td><td>已指派、已完成的日子</td><td>規則更新後，重算尚未處理的問題</td></tr>
+                                    <tr><th scope="row">重新分析未處理與處理中</th><td>未處理與處理中日的分析結果</td><td>已完成的日子與處理結論</td><td>要一併更新尚在處理的工作</td></tr>
+                                    <tr><th scope="row">全部重新分析</th><td>所有選定日的分析結果</td><td>處理結論；問題不再出現時原紀錄可能失去對應</td><td>完整重算，確認影響後再用</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                     <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
