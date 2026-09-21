@@ -8,11 +8,12 @@ import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
-    collectLines, numberOr, renderTable
+    collectLines, numberOr, renderTable, renderError
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { PRTG_SCOPE_OFF, toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
+import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
@@ -226,7 +227,13 @@ function bindScopeControls() {
     if (select) select.addEventListener('change', syncScopeFields);
 
     const strategySelect = document.getElementById('prtg-fetch-strategy');
-    if (strategySelect) strategySelect.addEventListener('change', syncStrategyHint);
+    if (strategySelect) strategySelect.addEventListener('change', () => {
+        syncStrategyHint();
+        const aggressive = strategySelect.value === 'aggressive';
+        document.getElementById('prtg-fetch-concurrency').value = aggressive ? '4' : '2';
+        document.getElementById('prtg-timeout-seconds').value = aggressive ? '120' : '60';
+        document.getElementById('prtg-strategy-suggested-hint')?.classList.remove('d-none');
+    });
 
     const button = document.getElementById('prtg-scope-estimate-btn');
     const result = document.getElementById('prtg-scope-estimate-result');
@@ -422,6 +429,14 @@ function bindParamsForm() {
             await api.put('/api/admin/settings/prtg', payload);
             toast('已儲存', 'success');
             await loadSettings();
+            if (enabled && await confirmAction({
+                title: '擷取參數已儲存',
+                message: '要現在同步 PRTG 結構與主機對應嗎？這會讓新主機較快進入監看範圍。',
+                confirmText: '現在同步',
+                confirmVariant: 'primary'
+            })) {
+                document.getElementById('prtg-structure-sync-btn')?.click();
+            }
         } catch {
             // 錯誤訊息已由 api.js 以 toast 顯示
         } finally {
@@ -1633,6 +1648,62 @@ function bindPrtgProbe() {
     });
 }
 
+function bindProbeWhitelistFill() {
+    const button = document.getElementById('prtg-sensor-whitelist-probe-fill-btn');
+    const input = document.getElementById('prtg-sensor-type-whitelist');
+    if (!button || !input) return;
+    button.addEventListener('click', async () => {
+        const restore = withBusy(button, '讀取中');
+        try {
+            const status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
+            if (status.isRunning || !status.completedAt) {
+                toast('請先完成一次 PRTG 環境探測，再帶入觀察到的感測器類型。', 'warning');
+                return;
+            }
+            const types = parseProbeSensorTypes(status.output);
+            if (types.length === 0) {
+                toast('這次探測沒有取得可用的 Type 分布，原白名單未變更。', 'warning');
+                return;
+            }
+            if (input.value.trim() && !await confirmAction({
+                title: '取代目前的白名單？',
+                message: `探測共觀察到 ${types.length} 種類型。這會取代目前輸入的內容，但不會自動儲存。`,
+                confirmText: '帶入類型',
+                confirmVariant: 'primary'
+            })) return;
+            input.value = types.join('\n');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            toast(`已帶入 ${types.length} 種抽樣類型，請確認內容再儲存。`, 'success');
+        } catch (error) {
+            toast(error?.message || '無法讀取環境探測結果。', 'danger');
+        } finally {
+            restore();
+        }
+    });
+}
+
+async function refreshScheduleWarning() {
+    const banner = document.getElementById('prtg-schedule-banner');
+    if (!banner) return;
+    try {
+        const status = await api.get('/api/admin/schedule/status', { silent: true });
+        banner.replaceChildren();
+        if (status.scheduleEnabled) return;
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-warning';
+        alert.setAttribute('role', 'status');
+        alert.append('排程尚未啟用；快照可能持續取值，但每日規則評估不會自動執行。');
+        const link = document.createElement('a');
+        link.href = appUrl('/runs#settings');
+        link.className = 'alert-link ms-2';
+        link.textContent = '前往排程設定';
+        alert.appendChild(link);
+        banner.appendChild(alert);
+    } catch {
+        renderError(banner, { message: '無法確認排程是否啟用。', onRetry: refreshScheduleWarning });
+    }
+}
+
 // ── PRTG 資料搬運（任務G）──────────────────────────────────────────────
 
 function bindPrtgDataTransfer() {
@@ -1915,6 +1986,7 @@ function init() {
     bindPrtgMirror();
     bindScopePurge();
     bindPrtgProbe();
+    bindProbeWhitelistFill();
     bindAssignForm();
     bindPrtgDataTransfer();
     bindConnectionForm();
@@ -1933,6 +2005,7 @@ function init() {
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();
     refreshPrtgRuleBanner();
+    refreshScheduleWarning();
 }
 
 init();

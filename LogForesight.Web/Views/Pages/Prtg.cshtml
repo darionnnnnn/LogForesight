@@ -3,6 +3,7 @@
 }
 
 <div id="prtg-rule-banner"></div>
+<div id="prtg-schedule-banner"></div>
 
 <ul class="nav nav-tabs mb-3" id="prtg-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="connection" type="button">連線</button></li>
@@ -140,6 +141,7 @@
                     <div class="small text-warning mt-2 d-none" id="prtg-strategy-aggressive-hint">
                         激進策略每 5 分鐘對 PRTG 查一次快照目標感測器的目前值（每 50 顆一個請求），並在每晚對觸發主機逐顆查詢歷史值，PRTG 負載明顯較高。請先用保守策略觀察執行輸出裡的快照耗時與失敗數，確認 PRTG 承受得住再切換；切換後若看到快照間隔被自動拉長，代表 PRTG 已經回不來，請切回保守。
                     </div>
+                    <div class="small text-info mt-2 d-none" id="prtg-strategy-suggested-hint">已帶入建議設定（併發請求數與逾時秒數），仍可依環境需求修改。</div>
                 </div>
 
                 <div class="small text-muted mb-3" id="prtg-strategy-scope-explanation">保守策略：夜間不逐顆查詢歷史值，數值由每 15 分鐘的快照供應（快照涵蓋全部監看裝置），數值取數對象不適用。激進策略：夜間依數值取數對象逐顆查詢。</div>
@@ -199,13 +201,19 @@
                 </div>
 
                 <div class="mb-3">
-                    <label for="prtg-sensor-type-whitelist" class="form-label">擷取數值的 sensor type 白名單</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <div class="d-flex align-items-center gap-1">
+                            <label for="prtg-sensor-type-whitelist" class="form-label mb-0">擷取數值的 sensor type 白名單</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-sensor-whitelist-probe-fill-btn">從環境探測填入</button>
+                    </div>
                     <textarea class="form-control lf-mono" id="prtg-sensor-type-whitelist" rows="6"
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
+                    <div class="form-text">探測抽樣僅為估算值，填入後請確認內容再儲存。</div>
                 </div>
 
                 <div class="mb-3">
@@ -266,7 +274,7 @@
                             </div>
                         </div>
                         <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-sm btn-primary" id="prtg-structure-sync-btn">同步結構與對應</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-structure-sync-btn">同步結構與對應</button>
                             <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-structure-sync-cancel-btn">停止同步</button>
                         </div>
                     </div>
@@ -350,7 +358,7 @@
                                 <label for="prtg-conflict-batch-note" class="small text-muted mb-0">說明：</label>
                                 <input type="text" class="form-control form-control-sm" id="prtg-conflict-batch-note" placeholder="可選說明" maxlength="512" style="width: auto; min-width: 160px;" />
                             </div>
-                            <button type="button" class="btn btn-sm btn-primary" id="prtg-conflict-batch-submit" disabled>一次送出</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-conflict-batch-submit" disabled>一次送出</button>
                         </div>
                         <div class="table-responsive">
                             <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
@@ -481,7 +489,7 @@
             </p>
 
             <div class="d-flex align-items-center gap-3 mb-4">
-                <button type="button" class="btn btn-primary" id="calibration-calc-btn">
+                <button type="button" class="btn btn-outline-primary" id="calibration-calc-btn">
                     <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                     重新計算
                 </button>
