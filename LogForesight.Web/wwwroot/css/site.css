@@ -518,6 +518,8 @@ input:-webkit-autofill:active {
     align-self: flex-start;
 }
 
+.lf-mobile-menu-toggle { display: none; }
+
 /* ── 品牌區塊（側欄／登入頁共用，Views/Shared/_Brand.cshtml）──────────────────
    兩處原本各有一份結構與樣式（平行複製），改為同一份：尺寸差異全部收斂成
    .lf-brand--sidebar／--login 覆寫的四個變數，結構與對齊規則只有一套。
@@ -2186,34 +2188,53 @@ a.lf-calendar__cell:focus-visible {
     .lf-sidebar {
         width: 100%;
         flex: 0 0 auto;
-        /* 窄螢幕側欄變成頂部橫向捲動列，不需要（也不該）貼齊視窗高度 */
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
         position: static;
         height: auto;
     }
 
-    .lf-sidebar__nav {
-        display: flex;
-        align-items: center;
-        overflow-x: auto;
-        padding: 0;
+    .lf-mobile-menu-toggle {
+        display: block;
+        margin-right: var(--lf-space-3);
+        padding: .45rem .75rem;
+        border: 1px solid var(--lf-sidebar-fg);
+        border-radius: var(--lf-radius-sm);
+        background: transparent;
+        color: var(--lf-sidebar-fg-strong);
     }
 
-    /* 分組標籤在橫向列沒有意義，收起 */
-    .lf-sidebar__section {
+    .lf-mobile-menu-toggle:focus-visible { outline: 2px solid var(--lf-sidebar-fg-strong); outline-offset: 2px; }
+
+    .lf-sidebar__nav {
         display: none;
+        grid-column: 1 / -1;
+        overflow-x: hidden;
+        max-height: 60vh;
+        padding: var(--lf-space-2);
     }
+
+    .lf-sidebar.is-mobile-open .lf-sidebar__nav { display: block; }
+
+    .lf-sidebar__section {
+        display: block;
+    }
+    .lf-sidebar__section--toggle { display: flex; }
 
     .lf-sidebar__link {
         margin: 0;
         border-radius: 0;
-        border-bottom: 3px solid transparent;
-        white-space: nowrap;
+        white-space: normal;
     }
 
     .lf-sidebar__link.is-active {
         background: var(--lf-sidebar-hover-bg);
-        border-bottom-color: var(--lf-primary-hover);
+        border-left: 3px solid var(--lf-primary-hover);
     }
+
+    .lf-sidebar__footer { display: none; grid-column: 1 / -1; }
+    .lf-sidebar.is-mobile-open .lf-sidebar__footer { display: block; }
 }
 
 /* ── 權限異動明細的結構化 key/value 呈現（WEB-SPEC §9.5）─────────────────── */

@@ -34,6 +34,7 @@
     <div class="lf-layout">
         <aside class="lf-sidebar lf-no-print">
             <partial name="_Brand" model="brand" view-data='new ViewDataDictionary(ViewData) { ["BrandVariant"] = "sidebar", ["BrandHref"] = Url.Content("~/") }' />
+            <button type="button" class="lf-mobile-menu-toggle" id="lf-mobile-menu" aria-controls="lf-nav" aria-expanded="false">選單</button>
             <nav class="lf-sidebar__nav" id="lf-nav"></nav>
             <div class="lf-sidebar__footer">
                 <div class="lf-sidebar__user">

@@ -79,6 +79,7 @@ async function init() {
 
     checkSetupReturnParam();
     renderNav(user);
+    bindMobileMenu();
     renderCurrentUser(user);
     bindLogout(user);
     initHelpPopovers();
@@ -90,6 +91,29 @@ async function init() {
         const { toast } = await import('./ui.js');
         toast('目前尚未指派任何 admin 成員，請至「使用者」頁將管理者加入 admin 群組。', 'warning', 10000);
     }
+}
+
+function bindMobileMenu() {
+    const toggle = document.getElementById('lf-mobile-menu');
+    const sidebar = document.querySelector('.lf-sidebar');
+    if (!toggle || !sidebar) return;
+    const close = () => {
+        sidebar.classList.remove('is-mobile-open');
+        toggle.setAttribute('aria-expanded', 'false');
+    };
+    toggle.addEventListener('click', () => {
+        const opened = sidebar.classList.toggle('is-mobile-open');
+        toggle.setAttribute('aria-expanded', String(opened));
+    });
+    document.getElementById('lf-nav')?.addEventListener('click', event => {
+        if (event.target.closest('a')) close();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && sidebar.classList.contains('is-mobile-open')) {
+            close();
+            toggle.focus();
+        }
+    });
 }
 
 function renderNav(user) {
