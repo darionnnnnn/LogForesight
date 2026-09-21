@@ -1397,7 +1397,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
 
 點任何處理人姓名（問題查詢明細／依主機／依問題視角
-的處理人欄、詳情頁處理面板、詳情頁案件徽章）都連到此頁；導覽「監控作業」區另加「我的交辦」
+的處理人欄、詳情頁處理面板、詳情頁案件徽章）都連到此頁；側欄直接提供「我的交辦」
 （`requires: null`，前端依目前登入者導向自己的 `/handlers/{userId}`）——不新增 Capability，
 處理人姓名本來就全站可見，此頁未洩漏新資訊；**資料以檢視者的可見範圍過濾**（不是被看者的），
 與全站查詢頁一致。被查看的使用者已停用時頁面照常顯示，名字後綴「（已停用）」。
@@ -2038,7 +2038,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
-  八個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  九個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
@@ -2047,6 +2047,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   驗證（保留天數大小關係、AD 伺服器必填）在丟出 toast 前先切到欄位所在頁籤
   （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
+- **系統健康頁籤**：顯示「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+  新鮮度只把排程觸發的取數執行算入成功判定，排除 `BatchRun.JobType == ai`；過期狀態可按
+  「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
+  正常徽章只表示目前檢查結果，不代表 NetIQ／PRTG 外部資料一定完整；外部資料需分別到
+  「排程作業」與「PRTG 維護 > 環境探測」確認。
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
   1. **層級與顯示**：以按鈕反白選擇
@@ -2245,7 +2250,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      最大耗時與最近一次發生時間，依最大耗時由大到小；只有單一最慢值時，
      管理者知道「最慢 7 秒」卻不知道是哪幾支慢、各慢幾次，無從決定要去看哪一頁。
      埋點涵蓋紀錄查詢、問題彙總、處理狀態、blob、PRTG 鏡像、行式日誌（稽核／執行紀錄）
-     與權限異動這幾個 store 的對外查詢方法。設定頁「資料保留」面板顯示這份清單，
+     與權限異動這幾個 store 的對外查詢方法。設定頁「系統健康」面板顯示這份清單，
      **清單為空時顯示「尚無慢查詢」**而不是一張空表。
 
      **信件內容廣泛化**：明細行移除 `Headline`／`RiskBasis`
@@ -2291,15 +2296,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
   （PRTG 相關端點見 §9.9e）
 
-### 9.9c `/help/manual` 操作說明書＋AI 提問（`Maintain`，實驗性）
+### 9.9c `/help/manual` 操作說明書＋AI 提問（所有已登入者；AI 提問需 `Maintain`）
 
-- **選單位置**：側欄「系統」分組最下方（僅 `Maintain` 顯示，選單顯示與頁面
-  `[Permission(Capability.Maintain)]` 雙閘，比照既有 admin 頁）。
+- **選單位置**：側欄「系統」分組最下方。操作說明書本身對所有已登入者顯示；章節依
+  manifest 的 `requires` 過濾，維護章節與首次啟動精靈連結需 `Maintain`。AI 提問端點另需
+  `Maintain`，不因說明書放寬而開放。
 - **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`icon`／
   `keywords[]`／`related[]`／`type`／`href`；`icon` 對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
   `type`／`href` 欄位：`type` 省略時預設 `"markdown"`（既有章節零改動），
   `type="link"` 的章節（目前只有第一項「首次啟動精靈」，`href="/setup"`）沒有 Markdown 檔，
-  前端渲染成導引卡）＋ 19 個章節 Markdown 檔（清單共 20 項＝19 md＋1 link），全部以
+  前端渲染成導引卡）＋ 23 個章節 Markdown 檔（清單共 24 項＝23 md＋1 link），全部以
   **內嵌資源**編進組件（csproj 的
   `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
   以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
@@ -2314,7 +2320,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     有 `aiFile` 就用詳細版，沒有則 fallback 回使用者版。
     `GetManual()` 只塞 `Content`，**AI 版不會外洩到前端**；
     選節計分（`HelpChapterScorer`）與 `HelpQaService` 組 prompt 時用的都是 `ContentForAi`。
-  - 目前 19 章全數具備 `aiFile`。
+  - 目前 23 章全數具備 `aiFile`；其中包含「PRTG 維護」、「資源守門」、「系統健康」與
+    「我的交辦：三分鐘上手」。章節內的導覽、頁籤與按鈕名稱必須以目前頁面實際文案為準。
+    說明書守門的基準是 `wwwroot/js/core/layout.js` 的導覽 `label`、對應 View 的
+    `ViewData["Title"]`／可見標題與實際按鈕文字；測試應把 manifest `title` 當待比對值，
+    不得只在 manifest 與 manifest 互相比對而放過舊名稱。`issue-owners` 的 manifest 標題是
+    「問題負責與靜音」，須與 I5 導覽與頁面標題一致。
   - 網址 hash＝章節 id 時直接開該章（`/help/manual#alert-tools` 是規則頁與設定頁決策表的「完整說明」出口）。
 - 精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
   `SetupWizardStateStore.Hidden`）——章節快取本身維持與狀態無關。
@@ -2374,7 +2385,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。
-- API：`GET api/help/manual`、`GET api/help/ask-available`、`POST api/help/ask`（`Maintain`）。
+- API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`、
+  `POST api/help/ask`（後兩者 `Maintain`）。
 
 ### 9.9d `/setup` 首次啟動精靈（`Maintain`）
 
@@ -2395,8 +2407,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9e `/admin/prtg` PRTG 維護（`Maintain`）
 
-PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
-動態工作（同步結構與對應、歷史回填）在排程作業頁——功能依性質分置，不散落各頁。
+PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
+排程作業頁只顯示動態狀態、進度與執行中的停止鈕；不提供同步／回填啟動按鈕。
 **總開關是本頁「擷取參數」首欄下拉的一部分**：啟用與取數範圍是同一個決定，拆成兩處只會讓人設了範圍卻忘了開。
 
 四個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
@@ -2452,7 +2464,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
-排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status|cancel`（歷史回填）。
+排程作業頁只輪詢 §9.10 所列的同步／回填狀態與停止端點；歷史回填的啟動仍從 PRTG 維護頁進入。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
 「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。
 
@@ -2506,16 +2518,17 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **取數執行**：本機與 NetIQ 兩條軌、最新訊息、立即執行／停止。
   - **AI 分析**：待補件數、閒置原因、背景補跑窗口、立即補跑／強制重新分析。
     **沒有啟用開關**——AI 服務設定好就一律啟用（見下方「AI 跟隨取數」）。
-  - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍；未啟用時附連結指向維護頁「擷取參數」，
-    同步與回填兩顆鈕閘住，見 docs/PRTG-SPEC.md §5a）、結構同步摘要（§5a）、每日擷取軌、歷史回填軌與操作。
+  - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍；未啟用時附連結指向維護頁「擷取參數」）、
+    結構同步摘要、每日擷取軌、歷史回填軌與停止狀態。啟動「同步結構與對應」與「歷史回填」的
+    操作入口在 PRTG 維護頁；本頁只保留執行中的停止鈕與前往維護頁連結，見 docs/PRTG-SPEC.md §5a。
     模組狀態與閘只在頁面載入時讀一次設定——在另一分頁改了開關，本頁要重新整理才會跟上；
     點擊時有第二道檢查、後端有第三道，所以不會誤送，只是反向（剛啟用、本頁仍灰）要重整。
     這張卡**刻意沒有「最新訊息」列**：狀態 API 的 `latestMessage` 是整趟共用的最後一行，
     取數卡已在顯示，再放一次只是重複；PRTG 分路的輸出看執行詳情（每行有 `[PRTG]` 前綴）。
 - **動作鈕互斥**：執行中只顯示「停止」，閒置只顯示啟動類（立即執行／立即補跑 AI／強制重新分析），
   以 `d-none` 切換而非 `disabled`——兩顆並排時使用者得自己判斷哪顆有效，灰掉的鈕仍佔位、讀起來像壞了。
-  PRTG 卡的兩顆啟動鈕（同步／回填）沒有對應的停止鈕可換，維持 `disabled`；
-  同步與回填的停止鈕各是獨立一顆，只在各自執行中出現（見下方「停止鈕」）；沒有 `Maintain` 時永遠隱藏，輪詢不得把它翻出來。
+  PRTG 卡不提供同步／回填的啟動鈕；同步與回填的停止鈕各是獨立一顆，只在各自執行中出現（見下方「停止鈕」）。
+  沒有 `Maintain` 時永遠隱藏，輪詢不得把它翻出來。
 - **互斥判斷跨卡，不只看自己那張卡**。AI 卡兩顆啟動鈕的隱藏條件是三個因子的 OR：
   1. AI 自己執行中；
   2. **取數排程執行中**——此時待補會被 AI 的資料完整性閘門擋住，補跑只是空跑一輪，

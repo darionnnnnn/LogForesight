@@ -23,7 +23,7 @@
 
 | 規則 | 原因 |
 |---|---|
-| **資料表一律 `lf_` 前綴**、索引 `ix_lf_` 前綴；識別字全小寫 snake_case、**長度 ≤ 30 字元**（含前綴，最長 `lf_record_handling_log` = 22 ✓）、避開兩家保留字 | 前綴避免與公司共用 DB 中其他系統的表衝突、一眼可辨識歸屬；Oracle 12.2 之前識別字上限 30 bytes。大小寫說明：未加引號時 SQL Server 預設不分大小寫、Oracle 一律轉大寫（實體名即 `LF_...`），文件以小寫書寫、DDL 不加引號，兩家行為一致 |
+| **資料表一律 `lf_` 前綴**、索引 `ix_lf_` 前綴；識別字全小寫 snake_case、**長度 ≤ 30 字元**、避開兩家保留字 | 前綴避免與公司共用 DB 中其他系統的表衝突、一眼可辨識歸屬；Oracle 12.2 之前識別字上限 30 bytes。大小寫說明：未加引號時 SQL Server 預設不分大小寫、Oracle 一律轉大寫（實體名即 `LF_...`），文件以小寫書寫、DDL 不加引號，兩家行為一致 |
 | 型別只用兩家共通的抽象：`bigint` / `int` / `nvarchar(n)` / `text(大文字)` / `date` / `timestamp` / `bool` | 對應表見下；建表 DDL 等 DB 定案後由此機械翻譯 |
 | 布林一律 `bool`（SQL Server `BIT`／Oracle `NUMBER(1)`+CHECK）；**三態布林用 nullable**（如 `security_log_available`：NULL=未嘗試） | 兩家都沒有共通的原生 BOOLEAN（Oracle 23ai 才有，不可假設） |
 | 巢狀/清單資料存 **JSON 文字欄**（`text`），**不用**任何一家的 JSON 原生型別與 JSON 函式 | 解析在應用層做（同一套 System.Text.Json 模型）；避免綁死單一 DB 的 JSON 查詢語法 |
@@ -44,39 +44,26 @@
 
 ## 資料表設計（欄位級）
 
-設計原則：**每張表都是現有 C# 模型的一比一投影**（`DailyAnalysisRecord`、`LogIssueSignature`、
-`WeeklyCheckupResult`、`PermissionChangeRecord`、深析 `DeepDiveItem`），JSONL→DB 匯入器因此是
-機械化轉換，不需要任何語意判斷。
+現況原則：本節只列目前 `LfDbContext`／`SchemaUpgrader` 實際建立或使用的實體表；整份 JSON
+文件仍以 `lf_blobs` 一列保存，append-only JSONL 則以 `lf_log_lines` 逐行保存。早期設計中曾
+預留的主機、使用者、類別彙總、深析、週體檢、完整問答與風險日處理歷程表，均不視為現行實體表。
+欄位若尚未從 blob／content_json 抽出，文件以實際存放位置描述，不把設計草圖當成 DDL。
+
+目前實體表清單：`lf_blobs`、`lf_log_lines`、`lf_daily_records`、`lf_top_issues`、
+`lf_issue_handling`、`lf_issue_cases`、`lf_work_orders`、`lf_work_order_events`、
+`lf_record_handling`、`lf_issue_first_seen`、`lf_risky_events`、`lf_permission_changes`、
+`lf_reports`、`lf_prtg_devices`、`lf_prtg_sensors`、`lf_prtg_state_changes`、
+`lf_prtg_values`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`。
 
 ### 主機與授權（Web「只看自己負責的主機」的基礎）
 
 ```
-lf_hosts
-  host_id        bigint PK
-  host_name      nvarchar(255)  UNIQUE NOT NULL   -- 本機=Environment.MachineName；NetIQ=Sentinel 主機名
-  ip_address     nvarchar(45)   NULL              -- 最近已知 IP（45 字元容納 IPv6）
-  ip_updated_at  timestamp      NULL
-  netiq_server   nvarchar(50)   NULL              -- 所屬 Sentinel 的 Name（路由/顯示屬性，非識別鍵；本機為 NULL）
-  role_desc      nvarchar(500)                    -- 對應 HostRoles / ServerDescription
-  source         nvarchar(20)   NOT NULL          -- 'local' | 'netiq'
-  active         bool           NOT NULL
-  merged_into    bigint NULL FK → lf_hosts           -- 人工綁定後的墓碑指標（見「主機識別」節）
-  last_report_at timestamp                        -- 最近一筆分析寫入時間（「無回報主機」告警的依據）
-
-lf_users
-  user_id        bigint PK
-  account        nvarchar(255)  UNIQUE NOT NULL   -- AD 帳號（驗證交給 AD/SSO，本表只做對應與授權）
-  display_name   nvarchar(255)
-  email          nvarchar(255)
-  is_admin       bool NOT NULL                    -- true = 可看全部主機（維運主管/資安）
-  active         bool NOT NULL
-  last_login_at  timestamp NULL                   -- 最近一次登入成功；null = 從未登入
-                                                  -- （詳見 docs/archive/FEEDBACK-11-PLAN.md §3；
-                                                  --  JSON 後端缺欄容忍、零遷移。唯一寫入點
-                                                  --  IUserStore.TouchLogin，刻意不走 Upsert）
+lf_hosts、lf_users 不是現行實體表。
+主機資料與使用者／群組／授權資料仍由 `lf_blobs` 的 `hosts`、`users`、`groups`、`permissions`
+等 blob key 保存；主機的處理狀態、問題案件、交辦單與 PRTG 對應才分別落在下方列出的實體表。
 ```
 
-授權模型：可見主機由群組授權矩陣、主機負責人、問題負責人、案件授與四條路徑聯集決定
+授權模型：可見主機由群組授權矩陣、主機負責人、問題負責人、交辦單授與四條路徑聯集決定
 （表與規則見 [WEB-SPEC.md](WEB-SPEC.md) §7.1、§10.1）；持有 `ViewAll` 能力者看全部。
 **授權過濾在查詢層強制**（所有 Web API 的查詢都先 join 授權表），AI 問答的 context 組裝也走
 同一條路——非管理員的問答不可能拿到別人主機的資料（見 AI 問答章節）。
@@ -86,9 +73,14 @@ lf_users
 ```
 lf_daily_records                                     -- ↔ DailyAnalysisRecord
   record_id        bigint PK
-  host_id          bigint FK → lf_hosts NOT NULL
+  host_id          bigint NOT NULL                    -- 主機識別值；主機主檔在 lf_blobs，不設資料庫 FK
+  host_name        nvarchar(255) NOT NULL             -- 未登記／跨來源比對時的現值
   record_date      date NOT NULL
   risk_level       nvarchar(10) NOT NULL          -- 高/中/低
+  has_correlation  bool NOT NULL DEFAULT 0
+  weekly_checkup_date date NULL
+  content_json     text NOT NULL
+  detail_pruned    bool NOT NULL DEFAULT 0
   error_count      int NOT NULL
   warning_count    int NOT NULL
   audit_count      int NOT NULL
@@ -113,7 +105,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
                                                      -- ai_pending）的回填版本號，0=舊列尚未回填、
                                                      -- 由 DailyRecordBackfiller 背景補齊（同
                                                      -- lf_top_issues 既有的回填機制）
-  UNIQUE (host_id, record_date)
+  -- 主鍵與查詢索引由現行 EF schema 建立；不宣稱 host_id＋日期是唯一鍵
 ```
 
 ```
@@ -225,71 +217,28 @@ lf_top_issues                                        -- LogIssueSignature 的**�
                                                      --   依問題視角的說明欄直接查此欄不解 JSON）
 ```
 
+`lf_top_issues` 目前**沒有** `source_key` 欄位，來源正規化仍由既有查詢／首見日路徑處理；
+因此本節不把 K 的來源鍵、回填完成旗標或新索引寫成已存在。`source_key` 現況只列在
+`lf_issue_first_seen` 的主鍵，以及 `lf_issue_cases`／`lf_work_orders` 的可空欄位與索引。
+
 **趨勢與呈現欄不在本表**：`Trend`／`PreviousDayCount`／`HistoryDailyAverage`／`DaysSeen`／
 `FirstSeen`／`LastSeen`／`DistinctMessageCount`／`SampleMessages`／`KeyDetails`／
 `LoginFailureDetails` 皆由 `content_json` round-trip 保真，需要它們的查詢一律走詳情頁路徑
 （`RecordDetailQueryService`），**不可假設 SQL 端取得**。
 
-```
-lf_record_alerts                                     -- ↔ TrendAlerts / CorrelationAlerts（+未來 fleet）
-  alert_id       bigint PK
-  record_id      bigint FK → lf_daily_records NOT NULL
-  kind           nvarchar(20) NOT NULL            -- 'trend' | 'correlation' | 'fleet'
-  alert_text     nvarchar(1000) NOT NULL
+`lf_record_alerts`、`lf_record_categories` 不是現行實體表。趨勢告警、關聯告警與類別彙總
+仍在 `lf_daily_records.content_json`，報表與問題查詢依現行 query service 從 JSON 與
+`lf_top_issues` 組裝；不要依本文件舊草圖撰寫 DDL 或查詢這兩張表。
 
-lf_record_categories                                 -- 當日的「類別彙總」（寫入時由 lf_top_issues 算好）
-  record_id      bigint FK → lf_daily_records NOT NULL
-  category       nvarchar(20) NOT NULL            -- Storage/Hardware/Security/Service/Resource/Backup/Config/Other
-  issue_count    int NOT NULL                     -- 該類別當日簽章數
-  total_events   int NOT NULL                     -- 該類別當日事件總筆數
-  max_severity   nvarchar(10) NOT NULL            -- 該類別當日最高嚴重度
-  critical_count int NOT NULL DEFAULT 0           -- ↓ Web 報表需求新增：各嚴重度簽章數分解
-  high_count     int NOT NULL DEFAULT 0           --   （「類別×嚴重度」堆疊圖與下鑽篩選直接查此表，
-  medium_count   int NOT NULL DEFAULT 0           --    不掃 lf_top_issues；見 WEB-SPEC.md §10.4）
-  low_count      int NOT NULL DEFAULT 0
-  PK (record_id, category)
-```
+### 深入分析與每週體檢
 
-`lf_record_categories` 是為「進畫面就篩選風險類型」與主管儀表板新增的**彙總表**：
-「風險類型」的篩選與統計若每次都掃 `lf_top_issues` 再聚合，畫面一開就是全表掃描；
-這張表在批次寫入時一次算好（write-once，資料本來就不會變），
-「本週儲存裝置類 Critical 有幾台/幾天」變成一個索引查詢。這延續整個專案的原則：
-**能確定性預先算好的東西不要留到查詢時算**——批次端如此，DB 端也如此。
+`lf_deep_dive_analyses` 與 `lf_weekly_checkups` 不是現行實體表。深入分析內容與週體檢結果
+留在現行的報告／每日紀錄 JSON 或其對應 blob；若要查詢，使用 WEB-SPEC 所列的現行 API，
+不要新增這兩張表。
 
-> 增補：Web 報表的「類別×嚴重度」堆疊圖需要嚴重度分解，增列四個
-> `*_count` 欄（見上）。彙總計算定義為 Core 的純函數（`CategoryAggregator`），
-> SQL 寫入路徑與 JSONL 查詢期聚合共用同一份——與 `RecordStorageShaper` 同一套
-> 單點原則（一致性機制 #4），分析邏輯不受影響。詳見 WEB-SPEC.md §10.4。
-
-### 深入分析（本次規劃的關鍵新增——AI 問答與跨主機查詢需要結構化）
-
-先前「深析只存報告全文」的延後決策**被新需求推翻**：Web 問答要能「把某主機某天的深析結果
-餵給 AI 當 context」、查詢要能「跨主機找提到同一根因的分析」，鎖在 txt 裡都做不到。
+### 權限異動
 
 ```
-lf_deep_dive_analyses                                -- ↔ RiskReportService.DeepDiveItem
-  analysis_id    bigint PK
-  record_id      bigint FK → lf_daily_records NOT NULL
-  category       nvarchar(20) NOT NULL            -- 該次深析呼叫的類別
-  seq            int NOT NULL                     -- 類別內排序（依嚴重程度）
-  problem        nvarchar(1000) NOT NULL
-  impact         nvarchar(2000)
-  likely_causes_json text                         -- List<string>
-  next_steps_json    text                         -- List<string>
-```
-
-### 每週體檢與權限異動
-
-```
-lf_weekly_checkups                                   -- ↔ WeeklyCheckupResult
-  checkup_id     bigint PK
-  host_id        bigint FK → lf_hosts NOT NULL
-  checkup_date   date NOT NULL
-  has_findings   bool NOT NULL
-  conclusion     nvarchar(2000) NOT NULL
-  report_id      bigint NULL FK → lf_reports
-  UNIQUE (host_id, checkup_date)
-
 lf_permission_changes                                -- ↔ PermissionChangeRecord ＋ 人工確認狀態（同一列）
   id                   bigint PK IDENTITY
   change_id            nvarchar(64) NOT NULL            -- GUID("N")，對外識別用；唯一性由下方索引保證（DDL 無 UNIQUE 子句）
@@ -412,34 +361,19 @@ AI 問答已降為未來選項（決策：先把報告顯示與查詢做好，�
 > 本節設計對應的是跨日、存 DB、開 session 的完整問答，兩者是不同功能；完整版重啟時本設計依然適用。
 > 精簡版已依本節「範例訊息以資料圍欄框住、system prompt 重申非指令」的 injection 預警實作。
 
-```
-lf_qa_sessions
-  session_id     bigint PK
-  user_id        bigint FK → lf_users NOT NULL
-  host_id        bigint FK → lf_hosts NOT NULL       -- 一個對話限定一台主機（授權與 context 都單純）
-  title          nvarchar(200)                    -- 首個問題截斷生成
-  started_at     timestamp NOT NULL
-
-lf_qa_messages
-  message_id     bigint PK
-  session_id     bigint FK → lf_qa_sessions NOT NULL
-  seq            int NOT NULL
-  role           nvarchar(10) NOT NULL            -- 'user' | 'assistant'
-  content        text NOT NULL
-  context_dates  nvarchar(200) NULL               -- assistant 回合：本次 context 取用的日期範圍（稽核用）
-  prompt_tokens  int NULL                         -- assistant 回合：實際 prompt 估算（容量觀測）
-  created_at     timestamp NOT NULL
-  UNIQUE (session_id, seq)
-```
+`lf_qa_sessions`、`lf_qa_messages` 也不是現行實體表。現行 AI 對話是單日單一問題的
+不持久化流程，transcript 由前端持有，不在 DB 建 session/message 表。
 
 ### 索引
 
 ```
-lf_daily_records:  UNIQUE(host_id, record_date)；(record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢
+lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢
 lf_issue_first_seen: PK(source_key, event_id)
 lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
                    (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
                    (event_id, record_date) — 問題彙總「event_id IN + 日期範圍」的等值前導索引
+lf_blobs:          PK(blob_key)；`version` — 整份型 store 的快取失效權杖
+lf_log_lines:      PK(log_key, seq)；(log_key, created_at) — append-only JSONL
 lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
                    -- 另有 created_at 欄：僅新增列時落、更新不覆寫，舊列為 NULL；
                    -- 目前無消費端，是 MTTA 成效指標（docs/BACKLOG.md）的資料基礎
@@ -451,12 +385,8 @@ lf_work_orders:    (handler_id, closed_at)；(source_key, event_id, closed_at)�
                    部分唯一 (handler_id, source_key, event_id) WHERE closed_at IS NULL AND source_key IS NOT NULL
 lf_work_order_events: (work_order_id, created_at)
 lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
-lf_deep_dive_analyses: (record_id)
-lf_record_alerts:  (record_id)
 lf_reports:        (host_id, report_date)
 lf_permission_changes: 見上方定義區塊（不在此重列，避免兩份索引清單各自演化）
-lf_weekly_checkups: UNIQUE(host_id, checkup_date)
-lf_qa_messages:    UNIQUE(session_id, seq)
 lf_prtg_manual_map: PK(device_objid)；(host_id) — 人工主機對應（長期有效，不列入保留期清理）
 lf_prtg_ip_excludes: PK(ip) — IP 排除清單（該 IP 底下的 device 不做主機對應、不取數；長期有效，不列入保留期清理）
 
@@ -570,7 +500,6 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | lf_work_orders | 一個問題 × 一位處理人一張進行中單 | 進行中數十～數百張；已結案隨保留期，千～萬列級 |
 | lf_work_order_events | 每張單的建立、追加、改派、回覆等事件 | 單數的數倍到十數倍，萬～十萬列級 |
 | handling_log（保留 730 天） | 每次標記／指派一列，批次標記亦逐筆記錄 | **唯一以稽核年限成長的一張**，6000 台屬千萬列級 |
-| lf_record_categories/alerts | 各數百萬列/年 | 各 <1,000 萬列 |
 | lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 2GB/年 | ~4~5GB |
 
 這個量級對 SQL Server / Oracle 仍屬輕鬆，靠既有索引即可。配套不變：
@@ -587,32 +516,32 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | 情境 | 查詢路徑 |
 |---|---|
 | **主篩選**：我的主機＋日期區間＋風險層級 | 可見主機集合（WEB-SPEC §7.1）→ `lf_daily_records` WHERE host_id IN (...) AND record_date BETWEEN ... AND risk_level IN (...) |
-| **主篩選**：＋風險類型 | 上式 join `lf_record_categories` WHERE category IN (...)（可再加 max_severity 條件） |
+| **主篩選**：＋風險類型 | 上式讀 `lf_top_issues.category` 聚合（類別彙總未抽成實體表） |
 | 我負責的主機現況總覽 | 每台 host 取 `lf_daily_records` 最新一筆（risk_level、summary、data_incomplete、uncovered 標記） |
-| **主管儀表板**：本日/本週各風險類型的數量與緊急程度 | `lf_record_categories` join `lf_daily_records`（日期範圍）GROUP BY category → issue_count 加總、max_severity 分布、涉及主機數 |
+| **主管儀表板**：本日/本週各風險類型的數量與緊急程度 | `lf_top_issues` join `lf_daily_records`（日期範圍）GROUP BY category → 筆數、嚴重度分布、涉及主機數 |
 | **主管儀表板**：高風險主機排行 | `lf_daily_records` WHERE 日期範圍 GROUP BY host_id，依風險日數/最高風險排序 |
-| **主管儀表板**：未處理／逾期清單 | `lf_record_handling` WHERE status IN ('open','in_progress') [AND due_date < 今天] join `lf_daily_records`/`lf_hosts`（授權範圍內） |
-| 風險日的處理歷程 | `lf_record_handling_log` WHERE record_id ORDER BY created_at（指派→查修→結案的完整敘事） |
-| 單一主機風險時間軸 | `lf_daily_records` WHERE host_id + 日期範圍，點開某天載入 `lf_top_issues`/`lf_record_alerts`/`lf_deep_dive_analyses` |
+| **主管儀表板**：未處理／逾期清單 | `lf_record_handling` WHERE status IN ('open','in_progress') [AND due_date < 今天]，主機／使用者資料由 `lf_blobs` 授權快照套用 |
+| 風險日的處理歷程 | `lf_log_lines` WHERE `log_key='handling_log'`，依序號或時間排序（完整敘事） |
+| 單一主機風險時間軸 | `lf_daily_records` WHERE host_id + 日期範圍，點開某天載入 `lf_top_issues` 與 `content_json` |
 | **看完整報告（畫面直接顯示）** | `lf_daily_records.report_id` → `lf_reports.content`（純文字含框線符號，前端以等寬字型/`<pre>` 呈現即可，不需轉換） |
 | 權限異動檢核 | `lf_permission_changes` WHERE status='pending'（授權範圍內的主機），可再依類別／關鍵字／網段／時間篩選 |
-| 跨主機同類問題（管理員） | `lf_top_issues` WHERE event_id=153 join `lf_daily_records`/`lf_hosts`，依日期分布 |
-| 週體檢發現 | `lf_weekly_checkups` WHERE has_findings=1 |
+| 跨主機同類問題（管理員） | `lf_top_issues` WHERE event_id=153 join `lf_daily_records`，依日期分布；主機授權由現行 blob 快照套用 |
+| 週體檢發現 | 從現行報告／每日紀錄 JSON 讀取；沒有 `lf_weekly_checkups` 實體表 |
 
-索引補充（配合主篩選與儀表板）：`lf_record_categories (category, record_id)`；
-`lf_daily_records (record_date, risk_level)` 已列。
+索引補充（配合主篩選與儀表板）：`lf_daily_records (record_date, risk_level)` 已列；
+類別篩選走 `lf_top_issues` 現有索引與 query service，沒有另建 `lf_record_categories`。
 
 ## AI 問答設計（⏸ 未來選項——設計保留，資源允許時再啟動）
 
 **流程**：使用者選主機（僅授權清單）→ 後端組 context → 同一個 KoboldCpp endpoint →
-回覆存 `lf_qa_messages`。Web 應用自己實作對 AI 的呼叫（複用 `AIService`＋`PromptBudget`，
+回覆只在前端 transcript 暫存，不寫入 `lf_qa_messages`。Web 應用自己實作對 AI 的呼叫（複用 `AIService`＋`PromptBudget`，
 見下方「專案結構調整」）。
 
 **Context 組裝規則**（確定性程式組裝，AI 只回答——與批次端同一哲學）：
 
-1. 主機角色（`lf_hosts.role_desc`）
+1. 主機角色（由 `lf_blobs` 的主機／授權快照取得）
 2. 最新一筆 `lf_daily_records` 的完整結構化內容（summary、風險、告警、lf_top_issues 重點行、
-   該日 `lf_deep_dive_analyses` 全部——這正是「處理方式」問題的答案素材）
+   詳情 JSON 內的深入分析內容——這正是「處理方式」問題的答案素材）
 3. 近 14 天每日一行統計（risk_level、錯誤/警告數、重點簽章）——與批次 prompt 的歷史區同格式
 4. 最近一次週體檢結論
 5. 對話歷史：保留最近 N 輪、每則截斷
@@ -628,7 +557,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 不衝突；**週六全量體檢期間（1~3 小時）互動問答會排隊**——先接受此限制（週六上 Web 查詢的
 機率低），若實際成為痛點再演進：佇列加優先權（互動插隊、批次讓行）或第二個模型實例。
 
-**安全**：Web 用的 DB 帳號唯讀（`qa_*` 表除外）；授權過濾在查詢層，AI 拿到的 context
+**安全**：Web 用的 DB 帳號唯讀；授權過濾在查詢層，AI 拿到的 context
 永遠只來自該使用者有權的主機；AI 沒有任何工具/行動能力，純問答。
 
 ## Schema 升級機制（已落實）
@@ -673,24 +602,15 @@ lf_record_handling                                   -- 風險日處理狀態（
                  -- 'open'(未處理) | 'in_progress'(處理中) | 'resolved'(已處理)
                  -- | 'wont_fix'(評估後決定不處理——說明寫在 note)
                  -- | 'false_positive'(誤報) | 'known_noise'(已知雜訊)
-  handler_id     bigint NULL FK → lf_users           -- 處理人員：可指派；未指派時依問題負責人／主機負責人唯一者自動帶入（WEB-SPEC §7.1）
+  handler_id     bigint NULL                         -- 處理人員 id；使用者主檔在 lf_blobs，不設資料庫 FK
   due_date       date NULL                        -- 預計完成日（儀表板「逾期未處理」的依據）
   note           nvarchar(1000) NULL              -- 處理說明：為何不處理/已更換硬體等
   updated_at     timestamp NOT NULL
-
-lf_record_handling_log                               -- 處理歷程（append-only，保留完整敘事）
-  log_id         bigint PK
-  record_id      bigint FK → lf_daily_records NOT NULL
-  status         nvarchar(20) NOT NULL
-  handler_id     bigint NULL FK → lf_users
-  note           nvarchar(1000) NULL
-  created_at     timestamp NOT NULL
 ```
 
-**為什麼快照＋歷程兩張表**：處理說明會隨事件演進（指派 → 查修中 → 換了硬體 → 結案），
-單一 note 欄位每次更新就把前一段說明蓋掉，「後續查看快速了解」會只剩最後一句。
-`lf_record_handling_log` 每次狀態/說明異動追加一列，完整敘事保留；`lf_record_handling`
-是當前快照，讓儀表板的「未處理清單」「逾期清單」不用每次都撈歷程算最新狀態。
+**處理歷程不另建表**：`lf_record_handling` 是當前快照；狀態／說明異動的 append-only
+歷程以 `lf_log_lines` 的 `log_key='handling_log'` 保存。儀表板查快照，詳情頁再按
+`record_id` 讀完整敘事。
 
 - 主管儀表板從「有哪些風險」升級成「有哪些風險**還沒人處理**」＋「哪些**已逾期**」
   （status IN ('open','in_progress') AND due_date < 今天）
@@ -700,7 +620,7 @@ lf_record_handling_log                               -- 處理歷程（append-on
   跨日追蹤以**案件**（一台主機 × 一個問題）為單位，派工與回覆以**交辦單**（一個問題 × 一批主機 ×
   一位處理人）為單位。本系統的處理鏈是處理狀態的唯一事實來源，不外接工單系統——外接只會多一份
   會漂移的副本。逐日列仍是儀表板、報表與清單唯一的投影面，案件與交辦單都只是協調紀錄。
-- 索引：`lf_record_handling (status)`、`(due_date)`
+- 索引：`lf_record_handling (status)`、`(due_date)`；歷程走 `lf_log_lines` 的 `(log_key, created_at)`。
 
 ```
 lf_issue_cases                                       -- 問題案件：一台主機 × 一個問題的跨日處理歸屬
@@ -776,12 +696,10 @@ SQLite 卻視 NULL 為相異照常寫入——兩後端行為分岔。兩後端�
 環境中大量是 VM，`hw_uuid` 在 VM 重建時會變，不是可靠的比對依據，因此不建自動比對機制，
 採**純人工綁定**：
 
-- `lf_hosts` 存 `host_name`（識別鍵）＋ `ip_address`（最近已知 IP，人在辨認新舊主機時
-  最實用的線索——顯示在主機清單上讓人看，不做任何程式比對）
-- **綁定操作**：Web 管理功能上，在新主機頁面**輸入（或從停用主機清單選取）舊主機的 ID**
-  → 確認後執行合併：子表（lf_daily_records 等）的 host_id 重指到新主機，
-  舊列標 `merged_into`＋`active=false` 留墓碑，歷史可追溯「這台曾經叫什麼」
-- 綁定錯了可反向修復（墓碑還在，重指回去即可），但仍建議確認後再按
+- 主機主檔、IP、群組與授權快照保存在 `lf_blobs` 的現行 key；目前沒有 `lf_hosts` 或 `lf_users` 實體表。
+- `lf_daily_records`、`lf_reports`、PRTG 對應與處理表保留必要的 `host_id`／`host_name` 欄位供查詢與顯示，
+  這些欄位不宣稱對不存在的主機表設 FK。
+- 新舊主機的合併、停用與授權映射由現行主機／群組／授權 store 管理；不要依早期 `lf_hosts` 墓碑表草圖新增 DDL。
 
 判斷成本留給人、機制只做「執行合併」這一件事——schema 面只需要 `merged_into` 一個欄位。
 
@@ -802,8 +720,8 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 
 | 項目 | 判斷 |
 |---|---|
-| 機房總覽（Phase 3 的 fleet summary） | 屆時依「只增不改」新增 `lf_fleet_summaries(summary_date UNIQUE, content, ...)` 一張表即可；跨主機關聯訊號已由 `lf_record_alerts.kind='fleet'` 預留 |
-| 主機頻道覆蓋清單（Phase 3） | 屆時在 `lf_hosts` 加 nullable 欄位（如 `channels_json`）即可，符合只增不改 |
+| 機房總覽（Phase 3 的 fleet summary） | 屆時依「只增不改」新增 `lf_fleet_summaries(summary_date UNIQUE, content, ...)` 一張表即可；跨主機關聯訊號目前仍由每日紀錄 JSON 保存 |
+| 主機頻道覆蓋清單（Phase 3） | 屆時在主機 blob 的 JSON 或新增專用表，依實際查詢量決定；不預設存在 `lf_hosts` 欄位 |
 | 通知管道（Phase 4）與 Web 整合 | 通知內容附 Web 報告連結（`report_id` 為穩定識別），屆時自然銜接，schema 已支援 |
 | 匯出報表（月報 Excel 等） | 主管若需要，從結構化層產生；未來選項，不影響 schema |
 | 儀表板「緊急程度」排序定義 | 風險層級 → 有無關聯訊號 → 類別最高嚴重度，全部可從現有欄位計算，不需新欄位 |

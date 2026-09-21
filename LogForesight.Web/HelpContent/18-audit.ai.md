@@ -70,8 +70,8 @@
    - `group_delete`：刪除群組
    - `access_grant`：授予存取權
    - `access_revoke`：收回存取權
-6. **問題負責與靜音**：
-   - `issue_owner_update`：設定問題負責與靜音（負責人與機房結論變更）
+6. **問題設定**：
+   - `issue_owner_update`：設定問題負責人與機房結論（問題設定變更）
    - `issue_owner_delete`：刪除問題設定
 7. **資料匯入**：
    - `import_apply`：套用 CSV 匯入

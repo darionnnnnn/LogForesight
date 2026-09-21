@@ -134,6 +134,22 @@ PRTG 的裝置與感測器鏡像原本只有夜間排程會更新，主機對應
 **資源守門的設定搬家**：從 PRTG 維護頁移到「系統管理 > 設定 > 資源守門」頁籤
 （它同時節制 NetIQ 取數與 PRTG 擷取兩路）。既有設定值不受影響，維護頁留有指路連結。
 
+**導覽與操作入口同步**：處理人側欄與通知回入口現在使用「我的交辦」；管理者的交辦總覽仍是
+「交辦總覽」。`/runs` 的 PRTG 卡只顯示模組、同步、回填與停止狀態，啟動「同步結構與對應」或
+「歷史回填」請到「系統管理 > PRTG 維護」；排程作業頁的「立即執行」若勾選「一併補齊 PRTG
+數值」才會依該次要求補值。
+
+**PRTG 範圍與清理的安全欄杆**：`lf_prtg_devices` 是完整監看裝置鏡像，`lf_prtg_sensors` 依「數值取數對象」
+保存 sensor 鏡像。結構同步與主機對應全部成功、監看裝置範圍非空且完整、裝置鏡像本趟成功更新，並通過既有監看裝置數
+基準的縮小保護時，會立即清除取數範圍外的 `lf_prtg_values` 與 `lf_prtg_state_changes`；這些歷史列不是等保留期才清。
+範圍計算失敗、空結果、部分處理、裝置鏡像未成功更新、首次沒有基準或監看裝置數驟減時不自動清除；
+到 PRTG 維護頁的「監看範圍外資料」先預覽，再按「確認清除」。資源守門使用的裝置與 sensor 也要保留。
+
+**補跑與新環境檢查**：排程錯過窗口只在結束後 4 小時內自動補跑一次；AI 服務設定完成後由取數
+結果自動跟隨判讀，沒有獨立的 AI 排程開關。首次啟動精靈會要求確認儲存、認證、排程與外部
+取數前提；部署完成後到「系統健康」確認新鮮度，再到「稽核紀錄」查詢時指定起日，避免把預設
+範圍外的舊紀錄誤當成不存在。
+
 **保留鍵合併**：舊版的「詳情保留天數」與「風險 log 暫存保留天數」已合併為單一的
 「原始事件內容保留天數」（`RawEventRetentionDays`）。升級時自動取兩舊值中**較小者**遷移
 （本來會被刪的資料不該因升級變成不刪）；若兩舊值不同且你想要的是較大值，升級後到設定頁改回來。
@@ -557,6 +573,26 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 （`appsettings.json` 沒有 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段，
 這些設定一律以 DB 的設定頁為準——見 docs/WEB-SPEC.md §12。）
 
+本輪與 PRTG／守門／健康檢查相關的設定摘要如下；「手動動作」欄是升級或首次啟用時是否需要
+管理者另做一次操作：
+
+| 設定或頁面 | 預設值 | 手動動作 |
+|---|---|---|
+| PRTG 擷取（`PrtgEnabled`／取數範圍） | 關閉 | 要使用 PRTG 時到「PRTG 維護 > 擷取參數」設定連線、選取範圍並儲存 |
+| `PrtgFetchStrategy` | `conservative` | 不需要；要對觸發主機逐顆補歷史值時另選激進策略或啟動回填 |
+| `PrtgResourceGuardEnabled` | `false` | 不需要；啟用前先在「資源守門」預覽 sensor 與當下值 |
+| `PrtgResourceGuardCpuPercent`／`MemoryFreePercent` | `85`／`10` | 不需要；現場應核對 sensor 語意與門檻方向 |
+| `PrtgResourceGuardCheckSeconds`／`PauseMinutes`／`Strikes`／`MaxPauseMinutes` | `60`／`5`／`2`／`120` | 不需要 |
+| 排程錯過窗口補跑 | 開啟，結束後 4 小時內一次 | IIS／服務若曾停機，先查「系統健康」與「排程作業」再決定是否手動執行 |
+| 加密金鑰檔 `keys\lf-crypto.key` | 首次啟動自動產生（使用 `LF_CRYPTO_KEY` 時不產生） | 必須備份；搬遷時與資料庫一起還原並確認執行帳號 ACL |
+
+設定鍵的完整欄位、限制與安全欄杆以 [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) §7、
+[docs/WEB-SPEC.md](docs/WEB-SPEC.md) §9.9b 為準。
+
+**來源鍵現況**：`lf_top_issues` 目前仍以 `source_name` 保存來源，沒有已完成的 `source_key`
+欄位；`source_key` 只在現行首見日與交辦相關資料表的既有欄位中使用。K 的正規化與回填仍在
+隔離驗收，待整合到主分支後再補本文件的欄位與升級說明。
+
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
@@ -819,7 +855,9 @@ log 每天歸檔：當天內容在 `web.log`，跨日時歸檔成 `archive\web-y
 |---|---|
 | [docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md) | 偵測與 AI 內部規格：五層偵測、監控訊號清單、趨勢／關聯判定、體檢、小模型策略、AI 穩定性設計 |
 | [docs/WEB-SPEC.md](docs/WEB-SPEC.md) | Web 查詢/維護介面的完整規格：架構、分層、驗證授權、API 慣例、前端慣例、各頁面規格 |
+| [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) | PRTG 連線、鏡像、取數範圍、回填、環境探測、資源守門與狀態變更規格 |
 | [docs/DB-SPEC.md](docs/DB-SPEC.md) | 資料庫欄位級規格：資料表設計、索引、保留策略、Schema 升級機制 |
+| [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) | 全站色票、字型、元件、頁面骨架、說明文字與操作人員用詞規範 |
 | [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) | Sentinel REST API 參考：認證、事件查詢、欄位對應、查詢 payload |
 | [docs/RULES-SPEC.md](docs/RULES-SPEC.md) | 規則外部化與告警抑制機制（主機／群組／全站）：語意邊界、規則模型、seed／匯入政策 |
 | [docs/LINUX-RULES.md](docs/LINUX-RULES.md) | Linux 規則面現況：規則模型、主機 OS 標記、目前的種子規則清單 |
