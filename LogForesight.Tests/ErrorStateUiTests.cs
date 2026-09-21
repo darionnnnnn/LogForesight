@@ -30,6 +30,12 @@ public class ErrorStateUiTests
         Assert.Contains("onRetry: () => showDetail(runId, body)", runs);
         Assert.Contains("if (!retryBody) showDetailModal", runs);
         Assert.DoesNotContain("renderEmpty(body, { title: '載入執行詳情失敗'", runs);
+
+        var settings = Read("LogForesight.Web/wwwroot/js/pages/settings.js");
+        Assert.Contains("onRetry: () => loadHealthTab({ refresh: true })", settings);
+        Assert.Contains("onRetry: loadSetupGuideHealth", settings);
+        Assert.Contains("onRetry: loadLoginThrottle", settings);
+        Assert.DoesNotContain("renderEmpty(host, { title: '無法載入", settings);
     }
 
     [Fact]

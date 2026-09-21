@@ -7,7 +7,7 @@ import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
-    guardLoad, renderSpinner, renderEmpty
+    guardLoad, renderSpinner, renderEmpty, renderError
 } from '../core/ui.js';
 import {
     formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
@@ -649,8 +649,8 @@ async function loadHealthTab({ refresh = false } = {}) {
     try {
         detail = await fetchHealthDetail({ refresh });
     } catch {
-        renderEmpty(document.getElementById('health-freshness'), {
-            title: '無法載入系統健康資訊', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle'
+        renderError(document.getElementById('health-freshness'), {
+            message: '無法載入系統健康資訊', onRetry: () => loadHealthTab({ refresh: true })
         });
         await setupGuideTask;
         return;
@@ -669,7 +669,7 @@ async function loadSetupGuideHealth() {
     try {
         guide = await api.get('/api/me/setup-guide', { silent: true });
     } catch {
-        renderEmpty(host, { title: '無法載入初始設定狀態', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle' });
+        renderError(host, { message: '無法載入初始設定狀態', onRetry: loadSetupGuideHealth });
         return;
     }
     renderSetupGuideHealth(guide);
@@ -712,7 +712,7 @@ async function loadLoginThrottle() {
     try {
         entries = await api.get('/api/health/login-throttle', { silent: true });
     } catch {
-        renderEmpty(host, { title: '無法載入登入暫停清單', hint: '請稍後重新切換此頁籤再試。', icon: 'exclamation-triangle' });
+        renderError(host, { message: '無法載入登入暫停清單', onRetry: loadLoginThrottle });
         return;
     }
     renderTable(host, {
