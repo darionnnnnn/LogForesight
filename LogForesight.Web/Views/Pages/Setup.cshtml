@@ -150,6 +150,54 @@
     </div>
 </template>
 
+<template id="setup-ai-template">
+    <div class="lf-card mt-3" id="setup-ai-form">
+        <div class="lf-card__body">
+            <div class="alert alert-info py-2 px-3 small mb-3">
+                <strong>說明：</strong>AI 服務為選填項目。若未配置 AI 服務，仍可使用規則與統計分析；白話摘要等 AI 功能則暫時無法使用。
+            </div>
+            <div class="mb-3">
+                <label for="setup-ai-provider" class="form-label small fw-semibold">服務提供者</label>
+                <select class="form-select form-select-sm" id="setup-ai-provider">
+                    <option value="Local">本機 OpenAI 相容端點</option>
+                    <option value="OpenAi">OpenAI 官方</option>
+                    <option value="AzureOpenAi">Azure OpenAI</option>
+                </select>
+                <div class="form-text small text-muted" id="setup-ai-provider-hint"></div>
+            </div>
+            <div class="mb-3" id="setup-ai-base-url-wrap">
+                <label for="setup-ai-base-url" class="form-label small fw-semibold" id="setup-ai-base-url-label">API 位址</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-base-url" placeholder="http://localhost:8080" />
+                <div class="form-text small text-muted" id="setup-ai-base-url-hint"></div>
+            </div>
+            <div class="mb-3" id="setup-ai-model-wrap">
+                <label for="setup-ai-model" class="form-label small fw-semibold" id="setup-ai-model-label">模型名稱</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-model" placeholder="local-model" />
+                <div class="form-text small text-muted" id="setup-ai-model-hint">選填，預設 local-model。</div>
+            </div>
+            <div class="mb-3 d-none" id="setup-ai-azure-deployment-wrap">
+                <label for="setup-ai-azure-deployment" class="form-label small fw-semibold">部署名稱（Deployment Name）</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-azure-deployment" placeholder="例如 gpt-4o" />
+                <div class="form-text small text-muted">Azure OpenAI 建立的模型部署名稱。</div>
+            </div>
+            <div class="mb-3 d-none" id="setup-ai-azure-api-version-wrap">
+                <label for="setup-ai-azure-api-version" class="form-label small fw-semibold">API 版本</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-azure-api-version" placeholder="2024-10-21" value="2024-10-21" />
+                <div class="form-text small text-muted">Azure OpenAI API 版本，預設 2024-10-21。</div>
+            </div>
+            <div class="mb-3" id="setup-ai-api-key-wrap">
+                <label for="setup-ai-api-key" class="form-label small fw-semibold" id="setup-ai-api-key-label">API 金鑰</label>
+                <input type="password" class="form-control form-control-sm" id="setup-ai-api-key" autocomplete="off" placeholder="留空＝沿用既有金鑰" />
+                <div class="form-text small text-muted" id="setup-ai-api-key-hint"></div>
+            </div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn btn-sm btn-primary" id="setup-ai-save-test-btn">儲存並測試</button>
+                <span class="small" id="setup-ai-feedback"></span>
+            </div>
+        </div>
+    </div>
+</template>
+
 @section Scripts {
     <script type="module" src="~/js/pages/setup.js" asp-append-version="true"></script>
 }
