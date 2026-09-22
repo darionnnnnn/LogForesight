@@ -30,6 +30,10 @@ public class WorkOrderReplyController : ControllerBase
     public ApiResponse<WorkOrderReplyResultDto> Reply(long id, [FromBody] WorkOrderReplyRequest request) =>
         ApiResponse<WorkOrderReplyResultDto>.Ok(_service.Reply(id, request));
 
+    [HttpPut("{id:long}/due-date")]
+    public ApiResponse<WorkOrderDueDateResultDto> ChangeDueDate(long id, [FromBody] WorkOrderDueDateRequest request) =>
+        ApiResponse<WorkOrderDueDateResultDto>.Ok(_service.ChangeDueDate(id, request));
+
     [HttpPost("reply-many")]
     public ApiResponse<WorkOrderReplyManyResultDto> ReplyMany([FromBody] WorkOrderReplyManyRequest request) =>
         ApiResponse<WorkOrderReplyManyResultDto>.Ok(_service.ReplyMany(request));

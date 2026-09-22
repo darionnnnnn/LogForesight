@@ -86,9 +86,13 @@ public class HandlingServiceTests : IDisposable
         var admins = groups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
         _users.Upsert(new WebUser { Account = "admin1", Email = "admin1@test.local", Active = true, GroupIds = new List<long> { admins.GroupId } });
         _settings.Update(s => s.MailEnabled = true);
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(_fx.Blob("schedule_options")));
         return new MailNotificationService(
             _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
-            new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners);
+            new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
+            freshness, _issueOwners);
     }
 
     private HandlingServiceFacade CreateWithMail(MailNotificationService mail, params Capability[] capabilities)
@@ -612,7 +616,8 @@ public class HandlingServiceTests : IDisposable
         service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
         {
             IssueKey = IssueSignatureKey.For(b),
-            Status = IssueHandlingStatuses.WontFix
+            Status = IssueHandlingStatuses.WontFix,
+            Note = "評估後不處理"
         });
 
         var todo = service.GetTodo(new[] { record });
@@ -1255,9 +1260,9 @@ public class HandlingServiceTests : IDisposable
     }
 
     /// <summary>勾選「之後自動套用」（回饋十九輪批次F，§2 決策一）：統一標記除了處理既有日子，
-    /// 還要把問題檔案設成機房結論，供之後新出現的主機日自動套用</summary>
+    /// 還要把問題負責與靜音設成機房結論，供之後新出現的主機日自動套用</summary>
     [Fact]
-    public void 統一標記_勾選自動套用時設定問題檔案的機房結論()
+    public void 統一標記_勾選自動套用時設定問題負責與靜音的機房結論()
     {
         var a = Issue("disk", 153);
         var day = Today.AddDays(-3);
@@ -1297,9 +1302,9 @@ public class HandlingServiceTests : IDisposable
         Assert.Empty(_cases.GetMany(new[] { _host.HostName }));
     }
 
-    /// <summary>不勾選時只處理既有日子，不建立／不動問題檔案的機房結論</summary>
+    /// <summary>不勾選時只處理既有日子，不建立／不動問題負責與靜音的機房結論</summary>
     [Fact]
-    public void 統一標記_不勾選自動套用時不動問題檔案()
+    public void 統一標記_不勾選自動套用時不動問題負責與靜音()
     {
         var a = Issue("disk", 153);
         var day = Today.AddDays(-3);
@@ -1938,7 +1943,7 @@ public class HandlingServiceTests : IDisposable
             new AlwaysVisibleService(_hosts), currentUser, _audit,
             new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings, new FixedIssueExclusionSource(IssueExclusion.None)),
             new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
-            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator, TestPermissionStamps.Shared),
             displayNames);
         return (service, orders, coordinator);
     }

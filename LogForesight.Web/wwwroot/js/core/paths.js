@@ -22,6 +22,17 @@ export function appUrl(path) {
     return BASE + path;
 }
 
+/** 問題查詢下鑽路徑。參數只在這裡編碼；呼叫端寫入 href 時才套 appUrl。 */
+export function recordsUrl(filters = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+        if (value === null || value === undefined || value === '') continue;
+        params.set(key, String(value));
+    }
+    const query = params.toString();
+    return query ? `/records?${query}` : '/records';
+}
+
 /**
  * 目前頁面在 app 內的路徑（已去掉掛載前綴），供路由比對用。
  * 直接比對 `location.pathname` 在子 Application 下會失準，而且是**靜默失效**不是 404：

@@ -1,4 +1,5 @@
 using NLog;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Services;
 
@@ -17,12 +18,18 @@ public class TopIssueBackfillHostedService : BackgroundService
     private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly TopIssueBackfiller _backfiller;
+    private readonly BackgroundWorkGate _gate;
 
-    public TopIssueBackfillHostedService(TopIssueBackfiller backfiller, DataVersionStamp dataVersion)
+    private readonly TopIssueBackfiller _backfiller;
+    private readonly StorageBackend _backend;
+
+    public TopIssueBackfillHostedService(
+        TopIssueBackfiller backfiller, StorageBackend backend, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
+        _gate = gate;
         _dataVersion = dataVersion;
         _backfiller = backfiller;
+        _backend = backend;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -40,20 +47,34 @@ public class TopIssueBackfillHostedService : BackgroundService
 
         // 同步工作丟到 thread pool：BackgroundService 的 ExecuteAsync 在返回第一個 await 之前
         // 是站台啟動流程的一部分，直接同步跑會把啟動擋住——正是這個類別要避免的事
-        await Task.Run(() =>
+        // 經共用節流閘排隊：同一時間只跑一支背景回填，取數排程執行中時先讓路
+        try
         {
-            try
-            {
-                _backfiller.Run(stoppingToken);
-                // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                _dataVersion.Bump();
-            }
-            catch (Exception ex)
-            {
-                // 回填失敗不影響站台運作（聚合數字偏低，但畫面會標示統計中）——
-                // 記 log 讓它查得到，不要讓背景例外變成未處理例外把行程帶走
-                Log.Error(ex, "[SQL] lf_top_issues 聚合欄回填失敗：{Msg}", ex.Message);
-            }
-        }, stoppingToken);
+            await _gate.RunAsync("問題聚合欄回填",
+                () => Task.Run(() =>
+                {
+                    try
+                    {
+                        _backfiller.Run(stoppingToken);
+                        if (!stoppingToken.IsCancellationRequested && _backfiller.SourceKeyProgress.Completed)
+                        {
+                            _backfiller.RunRiskySourceKeys(_backend.RiskyEventStore(), stoppingToken);
+                        }
+                        // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
+                        _dataVersion.Bump();
+                    }
+                    catch (Exception ex)
+                    {
+                        // 回填失敗不影響站台運作（聚合數字偏低，但畫面會標示統計中）——
+                        // 記 log 讓它查得到，不要讓背景例外變成未處理例外把行程帶走
+                        Log.Error(ex, "[SQL] lf_top_issues 聚合欄回填失敗：{Msg}", ex.Message);
+                    }
+                }, stoppingToken),
+                stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 站台關閉時仍在排隊（或排隊中被取消），下次啟動接續
+        }
     }
 }

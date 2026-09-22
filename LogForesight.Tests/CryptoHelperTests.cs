@@ -19,7 +19,7 @@ public class CryptoHelperTests
     {
         var cipher = CryptoHelper.Encrypt("x");
 
-        Assert.StartsWith("enc:v1:", cipher);
+        Assert.StartsWith("enc:v2:", cipher);
         Assert.True(CryptoHelper.IsEncrypted(cipher));
     }
 
@@ -172,11 +172,118 @@ public class CryptoHelperKeyResolutionTests
     public void 兩把金鑰都解不開時_仍拋出例外()
     {
         var thirdKey = Enumerable.Range(100, 32).Select(i => (byte)i).ToArray();
-        var validCipher = CryptoHelper.EncryptWith(thirdKey, "x");
+        var validCipher = CryptoHelper.EncryptV1With(thirdKey, "x");
 
         var combined = Convert.FromBase64String(validCipher["enc:v1:".Length..]);
         var corruptedCipher = "enc:v1:" + Convert.ToBase64String(combined[..^1]);
 
         Assert.ThrowsAny<Exception>(() => CryptoHelper.DecryptWith(OtherKey, corruptedCipher));
+    }
+}
+
+/// <summary>
+/// enc:v2（AES-256-GCM）格式、TryDecrypt 與 NeedsRewrap。
+/// TryDecrypt 會設行程層級的失敗旗標，因此放進 CryptoKeyState 集合並在開頭重設。
+/// </summary>
+[Collection("CryptoKeyState")]
+public class CryptoHelperV2Tests : IDisposable
+{
+    private static readonly byte[] OtherKey = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+
+    public CryptoHelperV2Tests() => CryptoHelper.ResetForTests();
+
+    public void Dispose() => CryptoHelper.ResetForTests();
+
+    [Fact]
+    public void v2加密後解密_取回原始明碼()
+    {
+        var cipher = CryptoHelper.EncryptWith(OtherKey, "v2-secret 中文");
+
+        Assert.StartsWith("enc:v2:", cipher);
+        Assert.Equal("v2-secret 中文", CryptoHelper.DecryptWith(OtherKey, cipher));
+    }
+
+    [Fact]
+    public void v2用錯金鑰解_200把不同金鑰全部擲例外()
+    {
+        var cipher = CryptoHelper.EncryptWith(OtherKey, "secret");
+        var returned = 0;
+        for (var i = 0; i < 200; i++)
+        {
+            var wrongKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                CryptoHelper.DecryptWith(wrongKey, cipher);
+                returned++;
+            }
+            catch (System.Security.Cryptography.CryptographicException)
+            {
+                // 預期：驗證失敗
+            }
+        }
+
+        Assert.Equal(0, returned);
+    }
+
+    [Fact]
+    public void v2解不開時_不退回內嵌金鑰()
+    {
+        var cipher = CryptoHelper.EncryptWith(CryptoHelper.EmbeddedKeyForTests, "secret");
+
+        Assert.ThrowsAny<System.Security.Cryptography.CryptographicException>(() => CryptoHelper.DecryptWith(OtherKey, cipher));
+    }
+
+    [Fact]
+    public void v1舊密文仍可解()
+    {
+        var v1 = CryptoHelper.EncryptV1With(CryptoHelper.EmbeddedKeyForTests, "legacy");
+
+        Assert.StartsWith("enc:v1:", v1);
+        Assert.True(CryptoHelper.IsEncrypted(v1));
+        Assert.Equal("legacy", CryptoHelper.Decrypt(v1));
+        Assert.Equal("legacy", CryptoHelper.DecryptWith(CryptoHelper.EmbeddedKeyForTests, v1));
+    }
+
+    [Fact]
+    public void TryDecrypt_錯金鑰回false且設失敗旗標()
+    {
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+        var cipher = CryptoHelper.EncryptWith(OtherKey, "secret");   // 現用金鑰是內嵌金鑰，與 OtherKey 不同
+
+        var ok = CryptoHelper.TryDecrypt(cipher, out var plain);
+
+        Assert.False(ok);
+        Assert.Equal("", plain);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void TryDecrypt_非密文原樣回true_密文成功解開()
+    {
+        Assert.True(CryptoHelper.TryDecrypt("plain", out var a));
+        Assert.Equal("plain", a);
+        Assert.True(CryptoHelper.TryDecrypt(null, out var b));
+        Assert.Equal("", b);
+        Assert.True(CryptoHelper.TryDecrypt(CryptoHelper.Encrypt("x"), out var c));
+        Assert.Equal("x", c);
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void NeedsRewrap_v1為true_v2與明文為false()
+    {
+        Assert.True(CryptoHelper.NeedsRewrap(CryptoHelper.EncryptV1With(CryptoHelper.EmbeddedKeyForTests, "x")));
+        Assert.False(CryptoHelper.NeedsRewrap(CryptoHelper.EncryptWith(OtherKey, "x")));
+        Assert.False(CryptoHelper.NeedsRewrap("plain"));
+        Assert.False(CryptoHelper.NeedsRewrap(""));
+        Assert.False(CryptoHelper.NeedsRewrap(null));
+    }
+
+    [Fact]
+    public void 未呼叫UseKeyFile_金鑰來源為內嵌()
+    {
+        // 真實環境變數若有設定，來源必為 env（本測試不碰環境變數，只驗兩者擇一）
+        var expected = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("LF_CRYPTO_KEY")) ? "embedded" : "env";
+        Assert.Equal(expected, CryptoHelper.KeySource);
     }
 }

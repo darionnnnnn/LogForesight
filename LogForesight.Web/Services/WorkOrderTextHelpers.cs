@@ -15,6 +15,7 @@ internal static class WorkOrderTextHelpers
         WorkOrderEventActions.AdminClosed => "代為結案",
         WorkOrderEventActions.Closed => "結案",
         WorkOrderEventActions.Replied => "已回覆",
+        WorkOrderEventActions.DueDateChanged => "修改期限",
         _ => action
     };
 }

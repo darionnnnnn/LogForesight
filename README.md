@@ -134,6 +134,22 @@ PRTG 的裝置與感測器鏡像原本只有夜間排程會更新，主機對應
 **資源守門的設定搬家**：從 PRTG 維護頁移到「系統管理 > 設定 > 資源守門」頁籤
 （它同時節制 NetIQ 取數與 PRTG 擷取兩路）。既有設定值不受影響，維護頁留有指路連結。
 
+**導覽與操作入口同步**：處理人側欄與通知回入口現在使用「我的交辦」；管理者的交辦總覽仍是
+「交辦總覽」。`/runs` 的 PRTG 卡只顯示模組、同步、回填與停止狀態，啟動「同步結構與對應」或
+「歷史回填」請到「系統管理 > PRTG 維護」；排程作業頁的「立即執行」若勾選「一併補齊 PRTG
+數值」才會依該次要求補值。
+
+**PRTG 範圍與清理的安全欄杆**：`lf_prtg_devices` 是完整監看裝置鏡像，`lf_prtg_sensors` 依「數值取數對象」
+保存 sensor 鏡像。結構同步與主機對應全部成功、監看裝置範圍非空且完整、裝置鏡像本趟成功更新，並通過既有監看裝置數
+基準的縮小保護時，會立即清除取數範圍外的 `lf_prtg_values` 與 `lf_prtg_state_changes`；這些歷史列不是等保留期才清。
+範圍計算失敗、空結果、部分處理、裝置鏡像未成功更新、首次沒有基準或監看裝置數驟減時不自動清除；
+到 PRTG 維護頁的「監看範圍外資料」先預覽，再按「確認清除」。資源守門使用的裝置與 sensor 也要保留。
+
+**補跑與新環境檢查**：排程錯過窗口只在結束後 4 小時內自動補跑一次；AI 服務設定完成後由取數
+結果自動跟隨判讀，沒有獨立的 AI 排程開關。首次啟動精靈會要求確認儲存、認證、排程與外部
+取數前提；部署完成後到「系統健康」確認新鮮度，再到「稽核紀錄」查詢時指定起日，避免把預設
+範圍外的舊紀錄誤當成不存在。
+
 **保留鍵合併**：舊版的「詳情保留天數」與「風險 log 暫存保留天數」已合併為單一的
 「原始事件內容保留天數」（`RawEventRetentionDays`）。升級時自動取兩舊值中**較小者**遷移
 （本來會被刪的資料不該因升級變成不刪）；若兩舊值不同且你想要的是較大值，升級後到設定頁改回來。
@@ -557,6 +573,29 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 （`appsettings.json` 沒有 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段，
 這些設定一律以 DB 的設定頁為準——見 docs/WEB-SPEC.md §12。）
 
+本輪與 PRTG／守門／健康檢查相關的設定摘要如下；「手動動作」欄是升級或首次啟用時是否需要
+管理者另做一次操作：
+
+| 設定或頁面 | 預設值 | 手動動作 |
+|---|---|---|
+| PRTG 擷取（`PrtgEnabled`／取數範圍） | 關閉 | 要使用 PRTG 時到「PRTG 維護 > 擷取參數」設定連線、選取範圍並儲存 |
+| `PrtgFetchStrategy` | `conservative` | 不需要；要對觸發主機逐顆補歷史值時另選激進策略或啟動回填 |
+| `PrtgResourceGuardEnabled` | `false` | 不需要；啟用前先在「資源守門」預覽 sensor 與當下值 |
+| `PrtgResourceGuardCpuPercent`／`MemoryFreePercent` | `85`／`10` | 不需要；現場應核對 sensor 語意與門檻方向 |
+| `PrtgResourceGuardCheckSeconds`／`PauseMinutes`／`Strikes`／`MaxPauseMinutes` | `60`／`5`／`2`／`120` | 不需要 |
+| 排程錯過窗口補跑 | 開啟，結束後 4 小時內一次 | IIS／服務若曾停機，先查「系統健康」與「排程作業」再決定是否手動執行 |
+| 加密金鑰檔 `keys\lf-crypto.key` | 首次啟動自動產生（使用 `LF_CRYPTO_KEY` 時不產生） | 必須備份；搬遷時與資料庫一起還原並確認執行帳號 ACL |
+
+設定鍵的完整欄位、限制與安全欄杆以 [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) §7、
+[docs/WEB-SPEC.md](docs/WEB-SPEC.md) §9.9b 為準。
+
+**來源鍵現況**：`lf_top_issues` 與 `lf_risky_events` 已新增可空的 `source_key`。兩者都由
+背景工作每批 500 列回填；`lf_risky_events` 的回填在 top issues 那一輪完成後開始，但兩條
+就緒狀態分開判定。問題聚合 `IIssueAggregateQuery` 只有在 top issues 回填與
+`lf_issue_first_seen` 舊鍵重整標記都完成後才切換新鍵路徑；`IRiskyEventStore` 只等待
+risky events 自身回填完成，不使用聯合讀取閘門。正規化入口是 `WorkOrderIssueKey.SourceKeyOf`，
+原有 `IssueSignatureKey.For` 維持不變。SQL Server 的 DDL、索引與背景回填仍需實機確認。
+
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
@@ -623,12 +662,27 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 
 | 環境變數 | 對應設定 | 用途 |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | — | 設為 `Production`——`WebAppSettings.Validate()` 的多項 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只在 Production 生效 |
+| `ASPNETCORE_ENVIRONMENT` | — | 正式站台設為 `Production`（未設定時預設就是 Production）。`WebAppSettings.Validate()` 的 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只有 `Development` 放行，其餘任何值都會擋下啟動 |
 | `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
 | `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
-| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定，**使用雲端 AI provider（OpenAI 官方／Azure OpenAI）時必須設定**：保護的是真實的雲端 API 憑證 |
+| `LF_CRYPTO_KEY` | — | 密碼欄位（Sentinel、PRTG、SMTP、AI API 金鑰）加密用（base64、解碼後需恰為 32 bytes）。**選填**：未設定時站台第一次啟動會自動產生金鑰檔 `Storage:DataRoot\keys\lf-crypto.key`（見下方「密碼欄位的金鑰檔」）。有設定時以環境變數為準、不產生金鑰檔 |
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
+
+### 密碼欄位的金鑰檔
+
+站台第一次啟動時，若沒有設定 `LF_CRYPTO_KEY`，會在 `Storage:DataRoot\keys\lf-crypto.key` 產生一把站台專屬金鑰，
+並把資料庫中舊格式的密碼欄位重新加密。啟動 log 會印出「密文金鑰來源」。
+
+- **金鑰檔要另外備份，而且不要和資料庫放在一起**：只拿到資料庫備份的人解不開密碼，這正是它的用途。
+  還原到新主機時，資料庫與金鑰檔要**一起**搬；只搬資料庫，設定頁與「系統健康」頁籤會顯示「金鑰檔與資料庫不相符」，
+  需要還原正確的金鑰檔，或在設定頁重新輸入 PRTG／SMTP／AI／Sentinel 的密碼。
+- **權限**：金鑰檔的存取權限會限縮為「建立它的帳號＋Administrators」。請讓站台第一次啟動就用正式的執行帳號
+  （IIS 應用程式集區身分或 Windows 服務帳號）；若先用管理員手動啟動過，之後服務會讀不到金鑰檔而無法啟動——
+  在該檔「內容 › 安全性」加入執行帳號的讀取權限即可。
+- **降版**：升級後的密文是新格式，舊版程式解不開。要降版時先設定 `LF_CRYPTO_KEY` 為金鑰檔內容（同一把金鑰）
+  仍不足以讓舊版讀新格式——降版後需在設定頁重新輸入各密碼欄位。升級前請先備份資料庫。
+- 資料搬運（PRTG 維護頁的匯出／匯入）不含任何密碼欄位，不受金鑰影響。
 
 ### 登入不了時的診斷順序
 
@@ -663,7 +717,14 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。
 3. IIS 管理員：在網站底下「新增應用程式」，別名填 `LogForesight`、實體路徑指向發行目錄。
 4. 應用程式集區設為 **無受控程式碼**（.NET CLR 版本），身分需要對 `Storage:DataRoot`
-   與 `logs\` 有讀寫權限。
+   （含其下的 `keys\` 金鑰目錄）與 `logs\` 有讀寫權限。
+5. **應用程式集區必須常駐**——排程、AI 分析、PRTG 快照都跑在站台行程裡，IIS 預設閒置 20 分鐘
+   就回收行程，夜間沒人開頁面時排程窗口會整段錯過：
+   - 應用程式集區「進階設定」：**啟動模式＝AlwaysRunning**、**閒置逾時（分鐘）＝0**、
+     **定期回收的固定時間間隔＝0**（停用定期回收；需要回收時改設在白天的特定時間）。
+   - 應用程式「進階設定」：**預先載入已啟用＝True**（需安裝「應用程式初始化」IIS 功能）。
+   - 站台仍有漏跑時（停機、手動回收），「錯過窗口時自動補跑」（排程設定，預設開）會在窗口結束後
+     4 小時內補跑一次；超過 4 小時不自動補，系統健康頁籤與全站告示會提示資料過期。
 
 **不需要設定 `Server:PathBase`**——in-process 託管時掛載路徑自動辨識，前端也會跟著
 補前綴（見 docs/WEB-SPEC.md §8.1a）；何時才要手動填見設定表該列。
@@ -688,6 +749,11 @@ D:\LogForesight\
 
 單一部署單位，`Storage:DataRoot` 留空即可（預設為執行檔目錄），不需要另外規劃第二個目錄
 給批次程式使用。
+
+SQLite 使用 WAL 日誌模式（`Storage:SqliteWal`，預設 true）：資料庫目錄會多出
+`logforesight.db-wal`、`logforesight.db-shm` 兩個檔。**備份時三個檔一起備份**（或先停站再備份），
+只複製 `.db` 會遺失最近尚未寫回主檔的交易。要退回舊的日誌模式，在 `appsettings.json` 的
+`Storage` 區段加 `"SqliteWal": false` 後重啟。
 
 > **升級注意**：舊版把 `logforesight.db` 放在 `Storage:DataRoot` 直下。升級後預設落點改為
 > 底下的 `Db\`，站台會在新位置建立空資料庫，舊檔留在原地不動。要沿用既有資料，請在啟動前
@@ -792,7 +858,9 @@ log 每天歸檔：當天內容在 `web.log`，跨日時歸檔成 `archive\web-y
 |---|---|
 | [docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md) | 偵測與 AI 內部規格：五層偵測、監控訊號清單、趨勢／關聯判定、體檢、小模型策略、AI 穩定性設計 |
 | [docs/WEB-SPEC.md](docs/WEB-SPEC.md) | Web 查詢/維護介面的完整規格：架構、分層、驗證授權、API 慣例、前端慣例、各頁面規格 |
+| [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) | PRTG 連線、鏡像、取數範圍、回填、環境探測、資源守門與狀態變更規格 |
 | [docs/DB-SPEC.md](docs/DB-SPEC.md) | 資料庫欄位級規格：資料表設計、索引、保留策略、Schema 升級機制 |
+| [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) | 全站色票、字型、元件、頁面骨架、說明文字與操作人員用詞規範 |
 | [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) | Sentinel REST API 參考：認證、事件查詢、欄位對應、查詢 payload |
 | [docs/RULES-SPEC.md](docs/RULES-SPEC.md) | 規則外部化與告警抑制機制（主機／群組／全站）：語意邊界、規則模型、seed／匯入政策 |
 | [docs/LINUX-RULES.md](docs/LINUX-RULES.md) | Linux 規則面現況：規則模型、主機 OS 標記、目前的種子規則清單 |

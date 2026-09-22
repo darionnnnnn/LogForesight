@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using NLog;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -13,6 +15,7 @@ public sealed class EfJsonLogStore
     private readonly Func<LfDbContext> _contextFactory;
     private readonly string _key;
     private readonly object _lock = new();
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>
     /// 慢操作監控（可選相依，與 <see cref="EfJsonBlobStore"/> 同一套）。
@@ -63,6 +66,34 @@ public sealed class EfJsonLogStore
             .Select(l => l.Line)
             .Take(count)
             .ToList();
+    }
+
+    /// <summary>
+    /// 續號起點＝尾端 <paramref name="lines"/> 行裡**解析得出來的最大** id（執行紀錄、處理歷程、稽核、匯入紀錄共用）。
+    ///
+    /// 不取「最後一行」：那一行剛好損毀就會從 1 重新續號；並行附加（結束列帶開始時配的 id）
+    /// 或批次插入（seq 不保證照清單順序）時，最後一行也不一定是最大號——兩者都會與既有紀錄重號。
+    /// 全部無法解析才回 0 並記 Warn：那代表尾端整段損毀，值得被看見而不是安靜地重號。
+    /// 仍是索引 (log_key, seq) 的同一次反向 seek，不整表讀回。
+    /// </summary>
+    public long ProbeMaxId<T>(Func<T, long> idOf, int lines, string what, JsonSerializerOptions options) where T : class
+    {
+        var tail = ReadLastLines(lines);
+        if (tail.Count == 0) return 0;
+
+        long? max = null;
+        foreach (var line in tail)
+        {
+            var parsed = JsonLogParser.Parse<T>(new[] { line }, options);
+            if (parsed.Count == 0) continue;
+            var id = idOf(parsed[0]);
+            if (max == null || id > max) max = id;
+        }
+        if (max != null) return max.Value;
+
+        Log.Warn("[{Key}] {What}最後 {Count} 行都無法解析，續號自 0 起算——可能與既有紀錄重號，請檢查 lf_log_lines 的內容。",
+            _key, what, tail.Count);
+        return 0;
     }
 
     /// <summary>附加一行（O(1)）</summary>

@@ -1,11 +1,15 @@
 ﻿/**
  * 處理人員工作頁 `/handlers/{userId}`：處理人的工作單位是**交辦單**（一張單＝一個問題 ×
- * 一批主機），所以主體是交辦單清單；「依主機」的逐案件平鋪與「被指派的風險日」各自留一個頁籤。
+ * 一批主機），主區塊只有交辦單清單，列上就能「回覆」；「依主機」與「被指派的風險日」
+ * 收進下方進階檢視，第一次展開才載入（workload API 只在那時呼叫）。
  *
  * 授權：全登入角色可查看任何人，資料以**檢視者**的可見範圍過濾（後端 WorkOrderQueryService／
  * HandlingService.GetHandlerWorkload），與全站查詢頁同一套模型，不新增能力。
- * 回覆只有「該單處理人本人且具 Handle」能做（後端 403 把關），前端據此顯示或隱藏按鈕——
- * 見 canReply，回覆按鈕與勾選框都吃這個旗標。
+ * 回覆與改期限只有「該單處理人本人且具 Handle」能做（後端 403 把關），前端據此顯示或隱藏——
+ * 見 canReply，回覆按鈕、勾選框與期限連結都吃這個旗標。
+ *
+ * 回覆後就地更新（DESIGN-SYSTEM §6b）：只重打摘要與目前這一頁（refreshAfterReply），
+ * 保留勾選、展開與捲動位置；勾選跨頁累積，改變篩選條件才清除。
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
@@ -13,15 +17,16 @@ import { appUrl } from '../core/paths.js';
 import {
     renderLoading,
     renderTable,
+    renderEmpty,
     renderPagination,
-    bindTabs,
     statCard,
     guardLoad,
     loadPageSize,
-    savePageSize
+    savePageSize,
+    toast
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -36,6 +41,16 @@ const statusSelect = document.getElementById('handler-wo-status');
 const sortSelect = document.getElementById('handler-wo-sort');
 const pausedCheckbox = document.getElementById('handler-wo-paused');
 const replyOrdersBtn = document.getElementById('handler-wo-reply');
+const selectedCountEl = document.getElementById('handler-wo-selected');
+const advancedEl = document.getElementById('handler-advanced');
+
+const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
+
+// 剛回覆而結案的列先淡化多久再重繪（讓人看得到「這張結案了」，不是突然消失）
+const DONE_ROW_DELAY_MS = 1200;
+
+// 處理人可排定的期限最遠天數（與後端 WorkOrderReplyService.MaxDueDateDays 相同）
+const MAX_DUE_DATE_DAYS = 90;
 
 // 來源名稱對照（同 work-orders.js）
 const ORIGIN_LABELS = {
@@ -70,36 +85,87 @@ const MEMBER_PAGE_SIZE = 50;
 
 let includeResolvedDays = false;
 let currentUser = null;
+let isSelf = false;                // 檢視自己的頁
 let canReply = false;              // 本人檢視自己的頁且具 Handle
 let summary = null;                // work-orders/summary
 let orderPage = 1;
+let orderTotalPages = 1;
+let currentRows = [];              // 目前這一頁的單（清單排序），「下一張」依此找
 const selectedOrderIds = new Set();
-const orderRowsById = new Map();   // 目前這一頁的單，供「回覆選取的單」算台數
+const orderRowsById = new Map();   // 目前這一頁的單
+const selectedOrderMeta = new Map(); // 勾選中的單在勾選當下的台數與問題名稱（換頁後仍算得出台數）
+const handledOrderIds = new Set(); // 這次在頁上回覆過的單：「下一張」跳過
+let lastRefresh = Promise.resolve();
+let advancedLoaded = false;
 
 async function load() {
     renderLoading(kpiEl, 1);
     renderLoading(ordersEl, 5);
-    renderLoading(casesEl, 3);
-    renderLoading(daysEl, 3);
-    selectedOrderIds.clear();
 
     const user = currentUser ?? await getCurrentUser();
     currentUser = user;
-    canReply = user?.userId === userId && hasCapability(user, 'Handle');
-    replyOrdersBtn.classList.toggle('d-none', !canReply);
+    isSelf = user?.userId === userId;
+    canReply = isSelf && hasCapability(user, 'Handle');
 
-    const [workload, summaryData] = await Promise.all([
-        api.get(`/api/handlers/${userId}/workload?includeResolvedDays=${includeResolvedDays}`),
-        api.get(`/api/handlers/${userId}/work-orders/summary`)
-    ]);
-    summary = summaryData;
-
-    renderHeader(workload);
-    renderKpi(summaryData);
-    renderCases(workload.cases);
-    renderDays(workload.days);
+    summary = await api.get(`/api/handlers/${userId}/work-orders/summary`);
+    renderHeader(summary);
+    renderKpi(summary);
 
     await loadOrders();
+
+    const orderParam = new URLSearchParams(location.search).get('order');
+    const targetOrderId = orderParam ? parseInt(orderParam, 10) : null;
+    if (targetOrderId && !isNaN(targetOrderId)) {
+        await locateOrder(targetOrderId);
+    }
+}
+
+/**
+ * 網址 ?order= 定位：通知信、風險日詳情的提示都帶著單號進來。
+ * 本頁有就捲過去、標亮、展開成員；沒有就先確認這張單仍是我的進行中單，再改看「全部」重找。
+ */
+async function locateOrder(targetOrderId) {
+    if (highlightOrderRow(targetOrderId)) {
+        clearOrderParam();
+        return;
+    }
+
+    let detail = null;
+    try {
+        detail = await api.get(`/api/work-orders/${targetOrderId}`, { silent: true });
+    } catch {
+        // 不存在或無權檢視：視同不在清單中
+    }
+    if (detail && detail.viewerIsHandler && !detail.closedAt) {
+        statusSelect.value = 'all';
+        orderPage = 1;
+        await loadOrders();
+        if (!highlightOrderRow(targetOrderId)) {
+            location.href = appUrl(`/work-orders/${targetOrderId}`);
+            return;
+        }
+    } else {
+        toast(`交辦單 #${targetOrderId} 已不在你的清單中`, 'info');
+    }
+    clearOrderParam();
+}
+
+/** 列在本頁：捲到、標亮、展開成員面板；不在本頁回 false */
+function highlightOrderRow(workOrderId) {
+    const tr = orderRowEl(workOrderId);
+    if (!tr) return false;
+    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    tr.classList.add('lf-row--highlight');
+    expandOrderRow(workOrderId);
+    return true;
+}
+
+function clearOrderParam() {
+    const url = new URL(location.href);
+    if (url.searchParams.has('order')) {
+        url.searchParams.delete('order');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
 }
 
 function renderHeader(data) {
@@ -139,21 +205,18 @@ function renderKpi(data) {
 
     for (const c of cards) {
         const col = document.createElement('div');
-        col.className = 'col-3';
+        col.className = 'col-6 col-md-3';
         col.appendChild(statCard({ value: formatNumber(c.value), label: c.label, variant: c.variant }));
         kpiEl.appendChild(col);
     }
 }
 
-// ── 交辦單頁籤 ─────────────────────────────────────────────────────────────
+// ── 交辦單清單 ─────────────────────────────────────────────────────────────
 
 /** 交辦單清單的請求序號（同 work-orders.js）：慢回來的舊請求不可蓋掉新篩選的結果 */
 let ordersLoadSeq = 0;
 
-async function loadOrders() {
-    const seq = ++ordersLoadSeq;
-    renderLoading(ordersEl, 5);
-
+function ordersUrl() {
     const pageSize = loadPageSize('handler-work-orders');
     const params = new URLSearchParams({
         status: statusSelect.value,
@@ -163,10 +226,107 @@ async function loadOrders() {
     });
     // 未勾選時不帶 paused：處理人視角的預設本來就是排除暫停單（後端決定）
     if (pausedCheckbox.checked) params.set('paused', 'only');
+    return `/api/handlers/${userId}/work-orders?${params}`;
+}
 
-    const data = await api.get(`/api/handlers/${userId}/work-orders?${params}`);
+async function loadOrders() {
+    const seq = ++ordersLoadSeq;
+    renderLoading(ordersEl, 5);
+
+    const data = await api.get(ordersUrl());
     if (seq !== ordersLoadSeq) return;
     renderOrders(data);
+}
+
+/**
+ * 回覆成功後的就地更新：只重打摘要（KPI）與目前這一頁，不呼叫 workload、不顯示骨架列；
+ * 重繪後恢復勾選（扣掉已結案的單）、先前展開的列與視窗捲動位置。
+ * 進階檢視若已展開順便重載；收合中則標記過期，下次展開才重載。
+ */
+async function refreshAfterReply({ keepExpandedId = null } = {}) {
+    const expanded = expandedOrderIds();
+    if (keepExpandedId != null) expanded.add(keepExpandedId);
+    const scrollY = window.scrollY;
+
+    const seq = ++ordersLoadSeq;
+    const [summaryData, data] = await Promise.all([
+        api.get(`/api/handlers/${userId}/work-orders/summary`),
+        api.get(ordersUrl())
+    ]);
+    if (seq !== ordersLoadSeq) return;
+
+    summary = summaryData;
+    renderKpi(summaryData);
+    for (const row of data.items || []) {
+        if (row.closedAt) unselectOrder(row.workOrderId);   // 結案處理：已結案的單不能再回覆
+    }
+    renderOrders(data);
+    for (const id of expanded) expandOrderRow(id);
+    window.scrollTo(0, scrollY);
+
+    if (advancedLoaded) {
+        if (advancedEl.open) guardLoad([casesEl, daysEl], loadAdvanced);
+        else advancedLoaded = false;
+    }
+}
+
+/** 回覆成功後排程就地更新；單因此結案且目前看的是「進行中」時，先淡化該列再重繪（不阻塞） */
+function scheduleRefresh(workOrderId, closed, keepExpandedId = null) {
+    const refresh = () => guardLoad(ordersEl, () => refreshAfterReply({ keepExpandedId }));
+    if (!(closed && statusSelect.value === 'active')) return refresh();
+
+    const tr = orderRowEl(workOrderId);
+    if (tr) tr.classList.add('lf-row--done');
+    return new Promise(resolve => {
+        setTimeout(() => resolve(refresh()), DONE_ROW_DELAY_MS);
+    });
+}
+
+/** 列的 tr：單號連結帶 data-wo-id */
+function orderRowEl(workOrderId) {
+    const anchor = ordersEl.querySelector(`a[data-wo-id="${workOrderId}"]`);
+    return anchor ? anchor.closest('tr') : null;
+}
+
+function expandedOrderIds() {
+    const ids = new Set();
+    for (const anchor of ordersEl.querySelectorAll('a[data-wo-id]')) {
+        if (anchor.closest('tr').getAttribute('aria-expanded') === 'true') ids.add(Number(anchor.dataset.woId));
+    }
+    return ids;
+}
+
+/** 展開某列的成員面板；carry 只供本次下一張回覆，手動回覆的 null 會清掉舊 carry。 */
+const pendingReplyCarry = new Map();
+
+function expandOrderRow(workOrderId, carry = null) {
+    const tr = orderRowEl(workOrderId);
+    if (!tr) return null;
+    if (carry) pendingReplyCarry.set(workOrderId, carry);
+    else pendingReplyCarry.delete(workOrderId);
+    if (tr.getAttribute('aria-expanded') !== 'true') tr.click();
+    const panel = tr.nextElementSibling.querySelector('.handler-wo-member-panel');
+    if (panel) {
+        panel._replyCarry = carry;
+        pendingReplyCarry.delete(workOrderId);
+    }
+    return panel;
+}
+
+function selectOrder(row) {
+    selectedOrderIds.add(row.workOrderId);
+    selectedOrderMeta.set(row.workOrderId, { active: row.counts.active, issueLabel: row.issueLabel });
+}
+
+function unselectOrder(id) {
+    selectedOrderIds.delete(id);
+    selectedOrderMeta.delete(id);
+}
+
+/** 勾選中的單的台數與問題名稱：本頁的用最新列，不在本頁的用勾選當下記的那份 */
+function selectedInfo(id) {
+    const row = orderRowsById.get(id);
+    return row ? { active: row.counts.active, issueLabel: row.issueLabel } : selectedOrderMeta.get(id);
 }
 
 /** 問題欄（同 work-orders.js） */
@@ -188,12 +348,13 @@ function renderIssueCell(issueLabelText, plainExplanationText) {
 
 function renderOrders(data) {
     const rows = data.items || [];
+    currentRows = rows;
+    orderTotalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
     orderRowsById.clear();
     for (const row of rows) orderRowsById.set(row.workOrderId, row);
-    // 換頁／換篩選後，勾選中但已不在畫面上的單要跟著消失，否則按鈕數字對不上看得到的列
-    for (const id of [...selectedOrderIds]) {
-        if (!orderRowsById.has(id)) selectedOrderIds.delete(id);
-    }
+    // 勾選跨頁保留：不在本頁的勾選不刪（按鈕旁另外交代「含其他頁 M 張」）
+    // 可勾選的列（未結案）：全選與全選框的勾選狀態都只看這些
+    const selectable = rows.filter(r => !r.closedAt);
 
     const columns = [];
 
@@ -206,13 +367,14 @@ function renderOrders(data) {
                 chk.type = 'checkbox';
                 chk.className = 'form-check-input';
                 chk.title = '全選本頁交辦單';
-                chk.checked = rows.length > 0 && rows.every(r => selectedOrderIds.has(r.workOrderId));
+                chk.checked = selectable.length > 0 && selectable.every(r => selectedOrderIds.has(r.workOrderId));
+                chk.disabled = selectable.length === 0;
                 chk.addEventListener('change', () => {
-                    for (const r of rows) {
-                        if (chk.checked) selectedOrderIds.add(r.workOrderId);
-                        else selectedOrderIds.delete(r.workOrderId);
+                    for (const r of selectable) {
+                        if (chk.checked) selectOrder(r);
+                        else unselectOrder(r.workOrderId);
                     }
-                    for (const rc of ordersEl.querySelectorAll('.handler-wo-select')) {
+                    for (const rc of ordersEl.querySelectorAll('.handler-wo-select:not(:disabled)')) {
                         rc.checked = chk.checked;
                     }
                     updateReplyOrdersBtn();
@@ -225,12 +387,17 @@ function renderOrders(data) {
                 chk.className = 'form-check-input handler-wo-select';
                 chk.checked = selectedOrderIds.has(row.workOrderId);
                 chk.addEventListener('click', event => event.stopPropagation());
+                if (row.closedAt) {
+                    chk.disabled = true;
+                    chk.title = '已結案的交辦單無法回覆';
+                    return chk;
+                }
                 chk.addEventListener('change', () => {
-                    if (chk.checked) selectedOrderIds.add(row.workOrderId);
-                    else selectedOrderIds.delete(row.workOrderId);
+                    if (chk.checked) selectOrder(row);
+                    else unselectOrder(row.workOrderId);
                     const selectAll = ordersEl.querySelector('thead input[type="checkbox"]');
                     if (selectAll) {
-                        selectAll.checked = rows.length > 0 && rows.every(r => selectedOrderIds.has(r.workOrderId));
+                        selectAll.checked = selectable.length > 0 && selectable.every(r => selectedOrderIds.has(r.workOrderId));
                     }
                     updateReplyOrdersBtn();
                 });
@@ -247,6 +414,7 @@ function renderOrders(data) {
                 const a = document.createElement('a');
                 a.href = appUrl('/work-orders/' + row.workOrderId);
                 a.textContent = '#' + row.workOrderId;
+                a.dataset.woId = String(row.workOrderId);
                 return a;
             }
         },
@@ -255,7 +423,7 @@ function renderOrders(data) {
             render: row => renderIssueCell(row.issueLabel, row.plainExplanation)
         },
         {
-            title: '成員',
+            title: '主機',
             render: row => {
                 const wrap = document.createElement('div');
                 const counts = row.counts || {};
@@ -299,7 +467,7 @@ function renderOrders(data) {
         {
             title: '期限',
             className: 'text-nowrap',
-            render: row => (row.dueDate ? formatDate(row.dueDate) : '—')
+            render: row => dueDateCell(row)
         },
         {
             title: '來源',
@@ -312,13 +480,36 @@ function renderOrders(data) {
         }
     );
 
-    renderTable(ordersEl, {
-        columns,
-        rows,
-        // 成員清單要另打一支 API，用 lazy 的 onRowExpand（首次展開才取），不是 rowDetail
-        onRowExpand: (row, cell) => buildMemberPanel(row, cell),
-        empty: { title: '目前沒有符合條件的交辦單' }
-    });
+    if (canReply) {
+        columns.push({
+            title: '',
+            className: 'text-end',
+            render: row => {
+                if (row.closedAt) return '';
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-sm btn-outline-primary text-nowrap';
+                btn.textContent = '回覆';
+                btn.addEventListener('click', () => replyOrder(row, null));
+                return btn;
+            }
+        });
+    }
+
+    if (rows.length === 0) {
+        renderOrdersEmpty();
+    } else {
+        renderTable(ordersEl, {
+            columns,
+            rows,
+            // 成員清單要另打一支 API，用 lazy 的 onRowExpand（首次展開才取），不是 rowDetail
+            onRowExpand: (row, cell) => {
+                const carry = pendingReplyCarry.get(row.workOrderId) || null;
+                pendingReplyCarry.delete(row.workOrderId);
+                buildMemberPanel(row, cell, carry);
+            }
+        });
+    }
 
     renderPagination(ordersPagerEl, {
         page: data.page,
@@ -339,6 +530,29 @@ function renderOrders(data) {
     updateReplyOrdersBtn();
 }
 
+/**
+ * 空狀態分流：本人頁看「進行中」而且一張都沒有時，要分得出「沒被授權任何主機」與「真的沒工作」；
+ * 其他篩選（含只看暫停）沿用一般文字。
+ */
+function renderOrdersEmpty() {
+    if (!(isSelf && statusSelect.value === 'active' && !pausedCheckbox.checked)) {
+        renderEmpty(ordersEl, { title: '目前沒有符合條件的交辦單', hint: '請調整狀態篩選或取消勾選「只看暫停」。' });
+        return;
+    }
+    if (summary.visibleHostCount === 0) {
+        renderEmpty(ordersEl, { title: '尚未被授權任何主機', hint: '請聯絡系統管理員為你設定主機群組授權。' });
+        return;
+    }
+    renderEmpty(ordersEl, { title: '目前沒有被指派的工作', hint: '目前沒有進行中的交辦單；可前往總覽儀表板查看最新狀況。' });
+    const link = document.createElement('a');
+    link.href = appUrl('/');
+    link.textContent = '前往總覽儀表板';
+    const actionEl = document.createElement('div');
+    actionEl.className = 'mt-2';
+    actionEl.appendChild(link);
+    ordersEl.firstElementChild.appendChild(actionEl);
+}
+
 function renderPausedNote() {
     // 勾「只看暫停的單」時表格列的就是那些單，再寫「另有 N 張」會自相矛盾
     const paused = pausedCheckbox.checked ? 0 : (summary?.pausedWorkOrders ?? 0);
@@ -349,32 +563,227 @@ function renderPausedNote() {
 function updateReplyOrdersBtn() {
     replyOrdersBtn.classList.toggle('d-none', !canReply);
     replyOrdersBtn.disabled = selectedOrderIds.size === 0;
+
+    const total = selectedOrderIds.size;
+    const offPage = [...selectedOrderIds].filter(id => !orderRowsById.has(id)).length;
+    selectedCountEl.textContent = offPage > 0 ? `已選 ${total} 張（含其他頁 ${offPage} 張）` : `已選 ${total} 張`;
+    selectedCountEl.classList.toggle('d-none', !canReply || total === 0);
 }
 
 replyOrdersBtn.addEventListener('click', () => {
     if (selectedOrderIds.size === 0) return;
 
-    const workOrderIds = [...selectedOrderIds];
-    const hosts = workOrderIds.reduce((sum, id) => sum + (orderRowsById.get(id)?.counts?.active ?? 0), 0);
+    let workOrderIds = [...selectedOrderIds];
+    const infos = workOrderIds.map(selectedInfo).filter(Boolean);
+    const hosts = infos.reduce((sum, info) => sum + info.active, 0);
+    // 選取的單都是同一個問題才帶問題名稱，不同問題混在一起時只帶主機數
+    const labels = new Set(infos.map(info => info.issueLabel));
+    const [onlyLabel] = labels;
+    const aiContext = labels.size === 1 && onlyLabel ? { issueLabel: onlyLabel, hostCount: hosts } : { hostCount: hosts };
 
     openWorkOrderReplyModal({
         title: '回覆選取的交辦單',
         targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
+        draftKey: workOrdersDraftKey(workOrderIds),
+        aiContext,
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);
+            // 回覆成功的單已處理完：取消勾選並記為處理過（「下一張」跳過）
+            for (const id of result.succeeded || []) {
+                unselectOrder(id);
+                handledOrderIds.add(id);
+            }
+            // 部分失敗：只留失敗與未處理的單；彈窗保持開著（說明不必重打），再按送出就只送剩下的單。
+            // 擲出例外讓彈窗不關閉、不清草稿（issue-status-reply 的 submit 失敗路徑只還原按鈕）；清單在背景就地更新
+            if (result.failedWorkOrderId != null) {
+                workOrderIds = [result.failedWorkOrderId, ...(result.notProcessed || [])];
+                lastRefresh = scheduleRefresh(null, false);
+                throw new Error('partial');
+            }
         },
-        onApplied: () => guardLoad([kpiEl, ordersEl, casesEl, daysEl], load)
+        onApplied: () => {
+            lastRefresh = scheduleRefresh(null, false);
+        }
     });
 });
 
+// ── 列上的「回覆」與下一張 ─────────────────────────────────────────────────
+
+/**
+ * 列上的「回覆」：只剩一台進行中 → 直接開單張回覆彈窗；多台 → 展開成員面板讓人勾選這次處理好的主機。
+ * carry＝由「送出並回覆下一張」帶過來的上一張內容（沿用狀態、可帶入說明）。
+ */
+async function replyOrder(row, carry) {
+    if (row.counts.active === 1) {
+        const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '1' });
+        let member;
+        try {
+            const data = await api.get(`/api/work-orders/${row.workOrderId}/members?${params}`);
+            [member] = data.items || [];
+        } catch {
+            return;   // api.js 已出過錯誤 toast
+        }
+        if (!member) {
+            toast('這張單已沒有進行中的主機', 'info');
+            return;
+        }
+        openSingleReply(row, member, carry);
+        return;
+    }
+
+    const panel = expandOrderRow(row.workOrderId, carry);
+    if (!panel) return;
+    if (!panel.querySelector('.handler-wo-member-hint')) {
+        const hint = document.createElement('div');
+        hint.className = 'lf-hint mb-2 handler-wo-member-hint';
+        hint.textContent = '勾選這次處理好的主機後按「回覆選取的主機」；全部處理好可按「全選」';
+        panel.prepend(hint);
+    }
+    panel.focus();
+}
+
+function openSingleReply(row, member, carry) {
+    let closedNow = false;
+    openWorkOrderReplyModal({
+        title: `回覆交辦單 #${row.workOrderId}`,
+        targetText: `主機 ${member.hostName}`,
+        draftKey: `order:${row.workOrderId}:cases:${member.caseId}`,
+        aiContext: { issueLabel: row.issueLabel, hostCount: 1 },
+        reuseIssueKey: member.issueKey || null,
+        initialStatus: carry ? carry.status : undefined,
+        previousNote: carry ? carry.note : null,
+        submit: async payload => {
+            const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: [member.caseId], ...payload });
+            toastReplyResult(result);
+            closedNow = result.workOrderClosed;
+        },
+        onApplied: () => {
+            handledOrderIds.add(row.workOrderId);
+            lastRefresh = scheduleRefresh(row.workOrderId, closedNow);
+        },
+        onNext: payload => openNextOrder(row.workOrderId, payload)
+    });
+}
+
+/** 可當「下一張」的單：進行中、這次沒回覆過、沒被勾選（勾選的要走批次） */
+function isNextCandidate(row, fromId) {
+    return row.workOrderId !== fromId && !row.closedAt
+        && !handledOrderIds.has(row.workOrderId) && !selectedOrderIds.has(row.workOrderId);
+}
+
+/**
+ * 下一張＝目前清單排序中本張之後第一張候選；本頁沒有 → 等就地更新完，先看補進本頁的單，
+ * 再換下一頁取第一張；都沒有就告知處理完。
+ */
+async function openNextOrder(fromId, carry) {
+    const index = currentRows.findIndex(r => r.workOrderId === fromId);
+    const seen = new Set(currentRows.map(r => r.workOrderId));
+    const next = currentRows.slice(index + 1).find(r => isNextCandidate(r, fromId));
+    if (next) {
+        replyOrder(next, carry);
+        return;
+    }
+
+    await lastRefresh;
+    const joined = currentRows.find(r => !seen.has(r.workOrderId) && isNextCandidate(r, fromId));
+    if (joined) {
+        replyOrder(joined, carry);
+        return;
+    }
+
+    for (let page = orderPage + 1; page <= orderTotalPages; page++) {
+        orderPage = page;
+        await guardLoad(ordersEl, loadOrders);
+        const first = currentRows.find(r => isNextCandidate(r, fromId));
+        if (first) {
+            replyOrder(first, carry);
+            return;
+        }
+    }
+    toast('清單中的交辦單都已處理完', 'info');
+}
+
+// ── 期限就地修改 ───────────────────────────────────────────────────────────
+
+function isoDate(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** 期限欄：本人且未結案時可點（無期限顯示「設定期限」），點了就地換成日期欄＋儲存／取消 */
+function dueDateCell(row) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-wrap align-items-center gap-1';
+
+    const showValue = () => {
+        const text = row.dueDate ? formatDate(row.dueDate) : '—';
+        if (!canReply || row.closedAt) {
+            wrap.replaceChildren(document.createTextNode(text));
+            return;
+        }
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'btn btn-link btn-sm p-0 text-nowrap';
+        link.textContent = row.dueDate ? text : '設定期限';
+        link.title = '修改這張單的期限';
+        link.addEventListener('click', showEditor);
+        wrap.replaceChildren(link);
+    };
+
+    const showEditor = () => {
+        const today = new Date();
+        const max = new Date();
+        max.setDate(max.getDate() + MAX_DUE_DATE_DAYS);
+
+        const input = document.createElement('input');
+        input.type = 'date';
+        input.className = 'form-control form-control-sm w-auto';
+        input.min = isoDate(today);
+        input.max = isoDate(max);
+        input.value = row.dueDate ? String(row.dueDate).slice(0, 10) : '';
+        input.setAttribute('aria-label', '期限');
+
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'btn btn-sm btn-outline-primary';
+        save.textContent = '儲存';
+
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn btn-sm btn-outline-secondary';
+        cancel.textContent = '取消';
+        cancel.addEventListener('click', showValue);
+
+        save.addEventListener('click', async () => {
+            save.disabled = true;
+            try {
+                const result = await api.put(`/api/work-orders/${row.workOrderId}/due-date`, { dueDate: input.value || null });
+                row.dueDate = result.dueDate;
+                toast('已更新期限', 'success');
+                showValue();
+            } catch {
+                save.disabled = false;   // api.js 已出過錯誤 toast；留在編輯狀態讓人改
+            }
+        });
+
+        wrap.replaceChildren(input, save, cancel);
+        input.focus();
+    };
+
+    showValue();
+    return wrap;
+}
+
 /**
  * 展開列：該單的成員（主機）清單，可勾選後只回覆選取的幾台。
- * 勾選狀態是這一次展開的區域狀態——重新載入整頁時整張表重建，自然歸零。
+ * 勾選狀態是這一次展開的區域狀態——就地更新重繪列時自然歸零。
  */
-function buildMemberPanel(row, cell) {
+function buildMemberPanel(row, cell, carry = null) {
     const box = document.createElement('div');
-    box.className = 'p-2';
+    box.className = 'p-2 handler-wo-member-panel';
+    box.tabIndex = -1;
+    box._replyCarry = carry;
 
     const bar = document.createElement('div');
     bar.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
@@ -411,11 +820,12 @@ function buildMemberPanel(row, cell) {
     box.append(bar, tableBox, pagerBox, noteEl);
     cell.replaceChildren(box);
 
-    const selectedCaseIds = new Set();
+    // 勾選的主機：caseId → 問題簽章（全部相同時回覆彈窗才能「沿用此問題上次的說明」）
+    const selectedCases = new Map();
     let memberPage = 1;
 
     const updateReplyHostsBtn = () => {
-        replyHostsBtn.disabled = selectedCaseIds.size === 0;
+        replyHostsBtn.disabled = selectedCases.size === 0;
     };
 
     async function loadMembers() {
@@ -431,8 +841,8 @@ function buildMemberPanel(row, cell) {
 
     function renderMembers(data) {
         const items = data.items || [];
-        for (const id of [...selectedCaseIds]) {
-            if (!items.some(i => i.caseId === id)) selectedCaseIds.delete(id);
+        for (const id of [...selectedCases.keys()]) {
+            if (!items.some(i => i.caseId === id)) selectedCases.delete(id);
         }
 
         noteEl.textContent = data.hiddenMemberCount > 0
@@ -451,12 +861,12 @@ function buildMemberPanel(row, cell) {
                     chk.className = 'form-check-input';
                     chk.title = '全選本頁主機';
                     const selectable = items.filter(i => !i.closedAt);
-                    chk.checked = selectable.length > 0 && selectable.every(i => selectedCaseIds.has(i.caseId));
+                    chk.checked = selectable.length > 0 && selectable.every(i => selectedCases.has(i.caseId));
                     chk.disabled = selectable.length === 0;
                     chk.addEventListener('change', () => {
                         for (const item of selectable) {
-                            if (chk.checked) selectedCaseIds.add(item.caseId);
-                            else selectedCaseIds.delete(item.caseId);
+                            if (chk.checked) selectedCases.set(item.caseId, item.issueKey);
+                            else selectedCases.delete(item.caseId);
                         }
                         for (const rc of tableBox.querySelectorAll('.handler-wo-member-select')) {
                             rc.checked = chk.checked;
@@ -470,14 +880,14 @@ function buildMemberPanel(row, cell) {
                     const chk = document.createElement('input');
                     chk.type = 'checkbox';
                     chk.className = 'form-check-input handler-wo-member-select';
-                    chk.checked = selectedCaseIds.has(item.caseId);
+                    chk.checked = selectedCases.has(item.caseId);
                     chk.addEventListener('change', () => {
-                        if (chk.checked) selectedCaseIds.add(item.caseId);
-                        else selectedCaseIds.delete(item.caseId);
+                        if (chk.checked) selectedCases.set(item.caseId, item.issueKey);
+                        else selectedCases.delete(item.caseId);
                         const selectAll = tableBox.querySelector('thead input[type="checkbox"]');
                         if (selectAll) {
                             const selectable = items.filter(i => !i.closedAt);
-                            selectAll.checked = selectable.length > 0 && selectable.every(i => selectedCaseIds.has(i.caseId));
+                            selectAll.checked = selectable.length > 0 && selectable.every(i => selectedCases.has(i.caseId));
                         }
                         updateReplyHostsBtn();
                     });
@@ -532,7 +942,7 @@ function buildMemberPanel(row, cell) {
         renderTable(tableBox, {
             columns,
             rows: items,
-            empty: { title: '沒有符合條件的成員' }
+            empty: { title: '沒有符合條件的主機', hint: '請切換上方的處理狀態篩選條件。' }
         });
 
         renderPagination(pagerBox, {
@@ -549,31 +959,52 @@ function buildMemberPanel(row, cell) {
 
     memberStatus.addEventListener('change', () => {
         memberPage = 1;
-        selectedCaseIds.clear();
+        selectedCases.clear();
         updateReplyHostsBtn();
         guardLoad(tableBox, loadMembers);
     });
 
     replyHostsBtn.addEventListener('click', () => {
-        if (selectedCaseIds.size === 0) return;
-        const caseIds = [...selectedCaseIds];
+        if (selectedCases.size === 0) return;
+        const caseIds = [...selectedCases.keys()];
+        const issueKeys = new Set(selectedCases.values());
         const total = row.counts?.total ?? 0;
+        let closedNow = false;
 
         openWorkOrderReplyModal({
             title: `回覆交辦單 #${row.workOrderId}`,
             targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
+            draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
+            aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },
+            // 勾選的主機都是同一個問題簽章才能沿用上次的說明
+            reuseIssueKey: issueKeys.size === 1 ? [...issueKeys][0] : null,
+            initialStatus: box._replyCarry ? box._replyCarry.status : undefined,
+            previousNote: box._replyCarry ? box._replyCarry.note : null,
             submit: async payload => {
                 const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload });
                 toastReplyResult(result);
+                closedNow = result.workOrderClosed;
             },
-            onApplied: () => guardLoad([kpiEl, ordersEl, casesEl, daysEl], load)
+            onApplied: () => {
+                handledOrderIds.add(row.workOrderId);
+                lastRefresh = scheduleRefresh(row.workOrderId, closedNow, row.workOrderId);
+            }
         });
     });
 
     guardLoad(tableBox, loadMembers);
 }
 
-// ── 依主機頁籤（逐案件平鋪）───────────────────────────────────────────────
+// ── 進階檢視：依主機、被指派的風險日（第一次展開才載入）──────────────────
+
+async function loadAdvanced() {
+    advancedLoaded = true;
+    renderLoading(casesEl, 3);
+    renderLoading(daysEl, 3);
+    const workload = await api.get(`/api/handlers/${userId}/workload?includeResolvedDays=${includeResolvedDays}`);
+    renderCases(workload.cases);
+    renderDays(workload.days);
+}
 
 function renderCases(cases) {
     renderTable(casesEl, {
@@ -591,8 +1022,6 @@ function renderCases(cases) {
     });
 }
 
-// ── 被指派的風險日頁籤 ─────────────────────────────────────────────────────
-
 function renderDays(days) {
     renderTable(daysEl, {
         columns: [
@@ -606,7 +1035,7 @@ function renderDays(days) {
         rowHref: d => `/records/${d.hostId}/${d.date}`,
         empty: {
             title: includeResolvedDays ? '沒有被指派的風險日' : '目前沒有未結案的風險日',
-            hint: includeResolvedDays ? '' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'
+            hint: includeResolvedDays ? '目前無任何指派至此處理人的風險日紀錄。' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'
         }
     });
 }
@@ -636,9 +1065,13 @@ function hostLink(item) {
 
 // ── 事件綁定與初始化 ───────────────────────────────────────────────────────
 
+/** 篩選、排序、只看暫停變更：回第一頁並清除全部勾選（勾選是對「這個條件下的清單」做的） */
 const onOrderFilterChange = () => {
     orderPage = 1;
+    const hadSelection = selectedOrderIds.size > 0;
     selectedOrderIds.clear();
+    selectedOrderMeta.clear();
+    if (hadSelection) toast('篩選條件已變更，已清除勾選', 'info');
     guardLoad(ordersEl, loadOrders);
 };
 statusSelect.addEventListener('change', onOrderFilterChange);
@@ -647,9 +1080,23 @@ pausedCheckbox.addEventListener('change', onOrderFilterChange);
 
 document.getElementById('toggle-resolved-days').addEventListener('change', event => {
     includeResolvedDays = event.target.checked;
-    guardLoad([kpiEl, ordersEl, casesEl, daysEl], load);
+    guardLoad([casesEl, daysEl], loadAdvanced);
 });
 
-bindTabs(document.getElementById('handler-tabs'));
+advancedEl.addEventListener('toggle', () => {
+    try {
+        localStorage.setItem(ADVANCED_OPEN_KEY, advancedEl.open ? '1' : '0');
+    } catch {
+        // 本機儲存區不可用（隱私模式等）：不記住展開狀態，不影響功能
+    }
+    if (advancedEl.open && !advancedLoaded) guardLoad([casesEl, daysEl], loadAdvanced);
+});
 
-guardLoad([kpiEl, ordersEl, casesEl, daysEl], load);
+try {
+    // 設定 open 會觸發 toggle 事件，由上面的監聽負責第一次載入
+    if (localStorage.getItem(ADVANCED_OPEN_KEY) === '1') advancedEl.open = true;
+} catch {
+    // 本機儲存區不可用：維持預設收合
+}
+
+guardLoad([kpiEl, ordersEl], load);

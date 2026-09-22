@@ -50,6 +50,16 @@ public class RunRequest
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
     public string? Trigger { get; init; }
+
+    /// <summary>
+    /// 補跑說明（非 null＝這趟是補跑，內容是要寫進里程碑的白話說明）。
+    /// </summary>
+    public string? CatchUpNote { get; init; }
+
+    /// <summary>
+    /// 本趟結束前接續補齊 PRTG 逐小時數值的天數（0＝不接續）。只有手動立即執行勾選時才非 0，夜間排程一律 0。
+    /// </summary>
+    public int PrtgBackfillDays { get; init; }
 }
 
 /// <summary>本機逐日分析的單日摘要（批次E）：執行結果總表與計數用，不持有分析內容。</summary>
@@ -97,6 +107,28 @@ public interface IRunConsole
 }
 
 /// <summary>
+/// 把執行輸出同時交給原本的 console 與執行紀錄（<see cref="BatchRunRecorder.Message"/>）。
+/// 不放寬 NLog 層級：那會把 EF／HttpClient 的 Info 全寫進資料庫。
+/// </summary>
+internal sealed class RecordingRunConsole : IRunConsole
+{
+    private readonly IRunConsole _inner;
+    private readonly BatchRunRecorder _recorder;
+
+    public RecordingRunConsole(IRunConsole inner, BatchRunRecorder recorder)
+    {
+        _inner = inner;
+        _recorder = recorder;
+    }
+
+    public void WriteLine(string message = "")
+    {
+        _inner.WriteLine(message);
+        _recorder.Message(message);
+    }
+}
+
+/// <summary>
 /// 執行進度回報（docs/archive/FEEDBACK-8-PLAN.md #2）：粒度是「主機日」（done/total），分本機／NetIQ
 /// 兩階段回報，取代原本只有一行 <see cref="IRunConsole.WriteLine"/> 訊息、看不出量化進度的狀況。
 /// NetIQ 段 total 隨平行掃描各 Sentinel 逐步累加（見 <c>NetiqPipelineService</c>）——只會變大、
@@ -124,11 +156,13 @@ public class AnalysisOrchestrator
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly IDispatchCandidateSource _candidateSource;
+    private readonly Action? _permissionVersionBump;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
-    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource)
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null)
     {
         _candidateSource = candidateSource;
+        _permissionVersionBump = permissionVersionBump;
     }
 
     /// <summary>
@@ -170,10 +204,14 @@ public class AnalysisOrchestrator
     /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）；未接上時為 null＝行為不變。
     /// 只往下傳給 PRTG 路徑，不影響本機與 NetIQ 兩路。
     /// </param>
+    /// <param name="prtgBackfillTail">
+    /// 同一趟接續補 PRTG 數值的執行者（Web 端的回填服務）；只在 <see cref="RunRequest.PrtgBackfillDays"/> &gt; 0 時使用。
+    /// </param>
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
         RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null,
-        IPrtgStructureSyncGate? structureSyncGate = null)
+        IPrtgStructureSyncGate? structureSyncGate = null,
+        IPrtgBackfillTail? prtgBackfillTail = null)
     {
         var runStopwatch = Stopwatch.StartNew();
         var result = new OrchestratorResult();
@@ -227,551 +265,444 @@ public class AnalysisOrchestrator
             // 把取消權杖交給 recorder：優雅停止時 OperationCanceledException 會直接離開本 using 範圍，
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
-                onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"));
+                onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
+                catchUp: request.CatchUpNote != null);
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
-
-            var eventLogService = new EventLogService();
-            IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-            var aiService = new AIService(settings.Ai, dumper,
-                new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
-            var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
-
-            // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
-            // 照常執行，只是不呼叫 AI），不再逐日嘗試打逾時再降級——那樣會讓整晚的排程被逾時
-            // ×重試拖得又慢又沒意義。settings.Ai 在呼叫本方法前已套用過 DB 覆寫
-            // （RuntimeSettingsResolver.ApplySystemSettingsOverrides，見呼叫端），此處讀到的
-            // BaseUrl 就是本次執行的事實值。
-            var useAi = settings.Ai.IsConfigured;
-            if (!useAi)
+            if (request.CatchUpNote != null)
             {
-                console.WriteLine("\nℹ AI 未設定：本次以統計模式執行（規則分類、趨勢比對、跨 log 關聯照常進行，" +
-                                   "僅白話摘要與體檢敘事從缺；設定「系統管理 > 設定 > AI 服務」後下次執行自動恢復）。");
-                runRecorder.Milestone("AI 未設定，本次以統計模式執行");
+                runRecorder.Milestone(request.CatchUpNote);
             }
 
-            // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
-            // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
-            // 同時取回主機 PK——那是分析紀錄與主機的關聯鍵（docs/archive/HISTORY.md），
-            // 所以這段必須排在分析服務、以及本機歸戶的歷史 store 建立之前。
-            // 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
-            // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
-            // 失敗不得中斷分析：此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
-            //
-            // 以下三段都操作同一批主機/Sentinel 資料，共用同一組 store 實例。
-            var hostStore = new HostStore(backend.Blob("hosts"));
-            var sentinelStore = new SentinelStore(backend.Blob("sentinels"));
+            // 執行輸出也寫進執行紀錄（Logger="Output"）：NLog target 只收 Warn 以上，
+            // 「PRTG 未啟用，略過」「夜間派工摘要」這類最有指路價值的白話訊息不經這層就隔天看不到。
+            // 自此以後一律用 runConsole；只有 recorder 建立前與最外層兩個 catch 仍用原 console。
+            var runConsole = new RecordingRunConsole(console, runRecorder);
 
-            // SentinelId 回填（docs/archive/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
-            // 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
+            // 內層防護：最外層 catch 執行時 using 的 recorder 已 Dispose（target 已卸除），
+            // 致命原因要在這裡趁 recorder 還活著親自寫進紀錄，否則詳情裡看不到失敗原因。
             try
             {
-                var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);
-                if (backfill.BackfilledCount > 0)
-                    console.WriteLine($"  已回填 {backfill.BackfilledCount} 台主機的 SentinelId" +
-                        (backfill.UnresolvedCount > 0 ? $"（另有 {backfill.UnresolvedCount} 台對不到現存 Sentinel，維持待歸屬）" : "。"));
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "SentinelId 回填失敗（不影響本次分析）：{0}", ex.Message);
-            }
+                var eventLogService = new EventLogService();
+                IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
+                var aiService = new AIService(settings.Ai, dumper,
+                    new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
+                var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 
-            // Sentinel 生命週期：Sentinel 被刪除時，停用其所屬 NetIQ 主機。
-            // 排在 Touch 之前——不停用的孤兒主機會變成「看起來在監控、實際沒人看」的靜默黑洞。
-            try
-            {
-                var sentinelIds = sentinelStore.GetAll().Select(s => s.SentinelId).ToList();
-                var sweep = NetiqOrphanSweeper.Sweep(hostStore, sentinelIds);
-                if (sweep.OrphanedCount > 0)
-                    console.WriteLine($"  ⚠ 偵測到 Sentinel 已被刪除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "Sentinel 孤兒主機掃描失敗（不影響本次分析）：{0}", ex.Message);
-            }
-
-            long currentHostId = 0;
-            List<long> currentHostGroupIds = new();
-            try
-            {
-                var touched = hostStore.Touch(currentHost, DateTime.Now);
-                currentHostId = touched.HostId;
-                currentHostGroupIds = touched.GroupIds;
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
-                console.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
-            }
-
-            // 到期抑制通知（回饋十三輪 F 移到這裡）：Group／Site 範圍的判定需要本機的群組成員資格，
-            // 上面 Touch 完成後才拿得到（新主機或註冊失敗時 currentHostGroupIds 為空——
-            // 只影響「還屬於哪些群組」，Host／Site 範圍的到期判定不受影響）。
-            var allSuppressions = suppressionStore.LoadAll();
-            var expiredSuppressions = SuppressionFilter.ExpiredForHost(allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
-            if (expiredSuppressions.Count > 0)
-            {
-                // 同目標跨範圍並存時的語意修正（回饋十四輪 C1，回饋十五輪體檢批G 泛型化到抑制四型，
-                // 見 SuppressionFilter.StillSuppressedElsewhere 的文件）：只看到期的那一筆會誤導
-                // 使用者以為解除它就能恢復告警。
-                var stillSuppressedTargets = SuppressionFilter.StillSuppressedElsewhere(
-                    allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
-
-                foreach (var expired in expiredSuppressions)
+                // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
+                // 照常執行，只是不呼叫 AI），不再逐日嘗試打逾時再降級——那樣會讓整晚的排程被逾時
+                // ×重試拖得又慢又沒意義。settings.Ai 在呼叫本方法前已套用過 DB 覆寫
+                // （RuntimeSettingsResolver.ApplySystemSettingsOverrides，見呼叫端），此處讀到的
+                // BaseUrl 就是本次執行的事實值。
+                var useAi = settings.Ai.IsConfigured;
+                if (!useAi)
                 {
-                    // 非 Rule 型的 RuleId 恆為空字串（回饋十五輪體檢批G 修正）：顯示身分改用
-                    // TargetLabel（建立時擷取的人話標籤，見 RuleSuppression.TargetLabel 文件），
-                    // 否則這行訊息對 Signature/Correlation/Volume 三型會印出空白，看不出是哪個目標到期。
-                    var label = expired.TargetType == SuppressionTargetTypes.Rule
-                        ? expired.RuleId
-                        : expired.TargetLabel ?? expired.TargetType;
-
-                    console.WriteLine($"  ℹ 抑制已到期，恢復告警：{label}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
-                                      $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）" +
-                                      (stillSuppressedTargets.Contains(SuppressionFilter.TargetIdentity(expired))
-                                          ? "（此設定仍受其他範圍的抑制生效中，解除這筆不會恢復告警）"
-                                          : ""));
-                }
-            }
-
-            // 歷史 store 綁定「本機」識別：缺日判定與趨勢基準只看這台主機自己的紀錄。
-            var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
-            var historyService = backend.RecordStore(ownerHost);
-
-            var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
-            var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
-                settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
-                hostGroupIds: currentHostGroupIds);
-            // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
-            // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
-            var riskyEventStore = backend.RiskyEventStore();
-            var permissionMonitor = new PermissionMonitorService(settings.Permissions,
-                new PermissionSnapshotStore(backend.Blob("permission_snapshot")));
-            var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore, currentHostGroupIds);
-
-            // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
-            // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。
-            // 走與 Web 端**同一組真表 store**（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
-            // 這三份自 blob 改真表之後，批次端若還構造舊的 blob store，就會變成
-            // 「批次寫 blob、Web 讀資料表」——兩邊各看到一半的處理狀態，而且不會報錯。
-            var caseCoordinator = new IssueCaseCoordinator(
-                backend.IssueCaseStore(),
-                backend.IssueHandlingStore(),
-                backend.RecordHandlingStore(),
-                backend.RecordStore(),
-                hostStore,
-                new IssueOwnerStore(backend.Blob("issue_owners")));
-
-            // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
-            //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
-            console.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFolders.Count} 個資料夾 + 本機 Administrators 群組）...");
-            var permissionCheck = permissionMonitor.Check();
-            if (permissionCheck.Alerts.Count > 0)
-            {
-                console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-                console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
-                foreach (var alert in permissionCheck.Alerts)
-                {
-                    console.WriteLine($"  ║  - {alert}");
-                }
-                console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-
-                console.WriteLine("\n  被異動項目明細（請逐項人工確認是否為正常異動）：");
-                for (int i = 0; i < permissionCheck.Details.Count; i++)
-                {
-                    var d = permissionCheck.Details[i];
-                    console.WriteLine($"    {i + 1}. {d.Target}｜{d.ChangeType}");
-                    console.WriteLine($"       異動前：{d.Before}");
-                    console.WriteLine($"       異動後：{d.After}");
+                    runConsole.WriteLine("\nℹ AI 未設定：本次以統計模式執行（規則分類、趨勢比對、跨 log 關聯照常進行，" +
+                                       "僅白話摘要與體檢敘事從缺；設定「系統管理 > 設定 > AI 服務」後下次執行自動恢復）。");
+                    runRecorder.Milestone("AI 未設定，本次以統計模式執行");
                 }
 
-                var reportSb = new System.Text.StringBuilder();
-                reportSb.AppendLine("LogForesight 權限異動報告");
-                reportSb.AppendLine($"檢查時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                reportSb.AppendLine();
-                reportSb.AppendLine("■ 異動告警");
-                foreach (var alert in permissionCheck.Alerts)
-                {
-                    reportSb.AppendLine($"- {alert}");
-                }
-                reportSb.AppendLine();
-                reportSb.AppendLine("■ 被異動項目明細（請逐項人工確認是否為正常/授權的異動）");
-                for (int i = 0; i < permissionCheck.Details.Count; i++)
-                {
-                    var d = permissionCheck.Details[i];
-                    reportSb.AppendLine($"{i + 1}. 對象：{d.Target}");
-                    reportSb.AppendLine($"   異動類型：{d.ChangeType}");
-                    reportSb.AppendLine($"   異動前：{d.Before}");
-                    reportSb.AppendLine($"   異動後：{d.After}");
-                    reportSb.AppendLine("   └ 請確認：此異動是否為您或授權人員的操作？若否，可能為入侵或誤設定，建議立即調查。");
-                    reportSb.AppendLine();
-                }
+                // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
+                // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
+                // 同時取回主機 PK——那是分析紀錄與主機的關聯鍵（docs/archive/HISTORY.md），
+                // 所以這段必須排在分析服務、以及本機歸戶的歷史 store 建立之前。
+                // 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
+                // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
+                // 失敗不得中斷分析：此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
+                //
+                // 以下三段都操作同一批主機/Sentinel 資料，共用同一組 store 實例。
+                var hostStore = new HostStore(backend.Blob("hosts"));
+                var sentinelStore = new SentinelStore(backend.Blob("sentinels"));
 
-                var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
-                await reportSink.WriteAsync(ReportKind.Permission,
-                    new HostKey { HostId = currentHostId, HostName = currentHost }, permissionFileName, reportSb.ToString());
-                console.WriteLine("  📄 權限異動報告（含逐項明細）已產生，可於「權限異動檢核」頁檢視。");
-
-                // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與報告全文是既有輸出、
-                // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動檢核」逐筆確認。
+                // SentinelId 回填（docs/archive/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
+                // 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
                 try
                 {
-                    var permissionChangeStore = backend.PermissionChanges();
-                    var detectedAt = DateTime.Now;
+                    var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);
+                    if (backfill.BackfilledCount > 0)
+                        runConsole.WriteLine($"  已回填 {backfill.BackfilledCount} 台主機的 SentinelId" +
+                            (backfill.UnresolvedCount > 0 ? $"（另有 {backfill.UnresolvedCount} 台對不到現存 Sentinel，維持待歸屬）" : "。"));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "SentinelId 回填失敗（不影響本次分析）：{0}", ex.Message);
+                }
 
-                    permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
+                // Sentinel 生命週期：Sentinel 被刪除時，停用其所屬 NetIQ 主機。
+                // 排在 Touch 之前——不停用的孤兒主機會變成「看起來在監控、實際沒人看」的靜默黑洞。
+                try
+                {
+                    var sentinelIds = sentinelStore.GetAll().Select(s => s.SentinelId).ToList();
+                    var sweep = NetiqOrphanSweeper.Sweep(hostStore, sentinelIds, _permissionVersionBump);
+                    if (sweep.OrphanedCount > 0)
+                        runConsole.WriteLine($"  ⚠ 偵測到 Sentinel 已被刪除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "Sentinel 孤兒主機掃描失敗（不影響本次分析）：{0}", ex.Message);
+                }
+
+                long currentHostId = 0;
+                List<long> currentHostGroupIds = new();
+                try
+                {
+                    var touched = hostStore.Touch(currentHost, DateTime.Now);
+                    currentHostId = touched.HostId;
+                    currentHostGroupIds = touched.GroupIds;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
+                    runConsole.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
+                }
+                if (currentHostId == 0)
+                {
+                    // HostId=0 的列會讓涵蓋到它的清單查詢退回記憶體分頁，值得在執行輸出上被看見
+                    runConsole.WriteLine("  ⚠ 本機主機未能登記，這趟本機分析結果會以未對應主機的形式寫入（清單查詢會變慢），請檢查主機清單。");
+                }
+
+                // 到期抑制通知（回饋十三輪 F 移到這裡）：Group／Site 範圍的判定需要本機的群組成員資格，
+                // 上面 Touch 完成後才拿得到（新主機或註冊失敗時 currentHostGroupIds 為空——
+                // 只影響「還屬於哪些群組」，Host／Site 範圍的到期判定不受影響）。
+                var allSuppressions = suppressionStore.LoadAll();
+                var expiredSuppressions = SuppressionFilter.ExpiredForHost(allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
+                if (expiredSuppressions.Count > 0)
+                {
+                    // 同目標跨範圍並存時的語意修正（回饋十四輪 C1，回饋十五輪體檢批G 泛型化到抑制四型，
+                    // 見 SuppressionFilter.StillSuppressedElsewhere 的文件）：只看到期的那一筆會誤導
+                    // 使用者以為解除它就能恢復告警。
+                    var stillSuppressedTargets = SuppressionFilter.StillSuppressedElsewhere(
+                        allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
+
+                    foreach (var expired in expiredSuppressions)
                     {
-                        ChangeId = Guid.NewGuid().ToString("N"),
-                        HostName = currentHost,
-                        DetectedAt = detectedAt,
-                        Target = detail.Target,
-                        ChangeType = detail.ChangeType,
-                        Category = detail.Category,
-                        IsPrivilegedTarget = detail.IsPrivilegedTarget,
-                        InitiatorAccount = detail.InitiatorAccount,
-                        TargetAccount = detail.TargetAccount,
-                        Before = detail.Before,
-                        After = detail.After,
-                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty,
-                        Source = PermissionChangeSources.Local
-                    }));
+                        // 非 Rule 型的 RuleId 恆為空字串（回饋十五輪體檢批G 修正）：顯示身分改用
+                        // TargetLabel（建立時擷取的人話標籤，見 RuleSuppression.TargetLabel 文件），
+                        // 否則這行訊息對 Signature/Correlation/Volume 三型會印出空白，看不出是哪個目標到期。
+                        var label = expired.TargetType == SuppressionTargetTypes.Rule
+                            ? expired.RuleId
+                            : expired.TargetLabel ?? expired.TargetType;
 
-                    console.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn(ex, "權限異動的結構化寫入失敗（不影響本次分析與既有報告）：{0}", ex.Message);
-                    console.WriteLine($"  ⚠ 權限異動的結構化寫入失敗（既有報告不受影響）：{ex.Message}");
-                }
-            }
-            else
-            {
-                console.WriteLine("  未偵測到權限異動。");
-            }
-
-            // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長。
-            //
-            // **一律用未限縮的 RecordStore()，不要用上面的 historyService**（SCALE-3000 S2-3b）：
-            // historyService 綁定「本機」識別（缺日判定與趨勢基準只看本機），而 NetIQ 機房
-            // 數千台主機的紀錄不屬於本機。這裡若用它，保留期對絕大多數資料等於從來沒有生效——
-            // 這正是 2026-08-16 以前的實際情況，而 docs/DB-SPEC.md 的保留策略表寫的是全表適用，
-            // 文件與實作長期不一致。實測（RetentionScopeBenchmarks）：500 台 × 200 天的資料集，
-            // 限縮到本機可清 0 筆、未限縮 39,500 筆。
-            //
-            // 限縮語意本身沒有錯，錯的是拿它來清理——store 該誠實，所以只改呼叫端。
-            //
-            // 兩層保留期（S2）：先刪整列，再把「留著但已過詳情保留期」的 content_json 清空。
-            // **順序不可反**：先清詳情再刪列，等於為即將被刪的列白做一次 UPDATE。
-            var allHostRecords = backend.RecordStore();
-
-            var pruned = allHostRecords.Prune(retention.RetentionDays);
-            if (pruned > 0)
-            {
-                console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
-            }
-
-            try
-            {
-                var detailPruned = allHostRecords.PruneDetails(retention.RawEventRetentionDays);
-                if (detailPruned > 0)
-                {
-                    console.WriteLine($"已清除 {detailPruned} 筆超過 {retention.RawEventRetentionDays} 天的紀錄詳情" +
-                                      "（統計與問題清單保留，僅原始樣本訊息不可再查看）。");
+                        runConsole.WriteLine($"  ℹ 抑制已到期，恢復告警：{label}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
+                                          $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）" +
+                                          (stillSuppressedTargets.Contains(SuppressionFilter.TargetIdentity(expired))
+                                              ? "（此設定仍受其他範圍的抑制生效中，解除這筆不會恢復告警）"
+                                              : ""));
+                    }
                 }
 
-                // 積壓申報：單次清除有上限（見 EfAnalysisRecordStore.MaxPruneRowsPerRun），
-                // 首次啟用時的積壓會分多晚排掉。沒有這行的話，使用者看到「清了還有」會以為壞掉。
-                var remaining = allHostRecords.CountPrunableRecords(retention.RetentionDays);
-                if (remaining > 0)
+                // 歷史 store 綁定「本機」識別：缺日判定與趨勢基準只看這台主機自己的紀錄。
+                var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
+                var historyService = backend.RecordStore(ownerHost);
+
+                var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
+                var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
+                    settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
+                    hostGroupIds: currentHostGroupIds);
+                // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
+                // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
+                var riskyEventStore = backend.RiskyEventStore();
+                var permissionMonitor = new PermissionMonitorService(settings.Permissions,
+                    new PermissionSnapshotStore(backend.Blob("permission_snapshot")));
+                var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore, currentHostGroupIds);
+
+                // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
+                // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。
+                // 走與 Web 端**同一組真表 store**（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
+                // 這三份自 blob 改真表之後，批次端若還構造舊的 blob store，就會變成
+                // 「批次寫 blob、Web 讀資料表」——兩邊各看到一半的處理狀態，而且不會報錯。
+                var caseCoordinator = new IssueCaseCoordinator(
+                    backend.IssueCaseStore(),
+                    backend.IssueHandlingStore(),
+                    backend.RecordHandlingStore(),
+                    backend.RecordStore(),
+                    hostStore,
+                    new IssueOwnerStore(backend.Blob("issue_owners")));
+
+                // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
+                //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
+                runConsole.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFolders.Count} 個資料夾 + 本機 Administrators 群組）...");
+                var permissionCheck = permissionMonitor.Check();
+                if (permissionCheck.Alerts.Count > 0)
                 {
-                    // 只報筆數的話，「陸續清完」與「卡住了」在畫面上分不出來——
-                    // 依單次上限估出還要幾次執行，使用者才知道是明天還是下個月
-                    var perRun = EfAnalysisRecordStore.MaxPruneRowsPerRun;
-                    var estimatedRuns = (remaining + perRun - 1) / perRun;
-                    var msg = $"尚有 {remaining} 筆過期紀錄超出本次清除上限（每次上限 {perRun} 筆），" +
-                              $"預估還需約 {estimatedRuns} 次執行清完。";
-                    console.WriteLine($"  ℹ {msg}");
-                    runRecorder.Milestone(msg);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "詳情清除或積壓申報失敗（不影響本次分析）：{0}", ex.Message);
-            }
+                    runConsole.WriteLine("  ╔══════════════════════════════════════════════════╗");
+                    runConsole.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
+                    foreach (var alert in permissionCheck.Alerts)
+                    {
+                        runConsole.WriteLine($"  ║  - {alert}");
+                    }
+                    runConsole.WriteLine("  ╚══════════════════════════════════════════════════╝");
 
-            // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）
-            try
-            {
-                var runLogPruned = (batchRunStore?.Prune(retention.RunLogRetentionDays) ?? 0) +
-                                    new ImportLogStore(backend.LogStore("import_logs")).Prune(retention.RunLogRetentionDays);
-                if (runLogPruned > 0)
-                    console.WriteLine($"已清除 {runLogPruned} 筆超過 {retention.RunLogRetentionDays} 天的執行歷程／匯入紀錄。");
+                    runConsole.WriteLine("\n  被異動項目明細（請逐項人工確認是否為正常異動）：");
+                    for (int i = 0; i < permissionCheck.Details.Count; i++)
+                    {
+                        var d = permissionCheck.Details[i];
+                        runConsole.WriteLine($"    {i + 1}. {d.Target}｜{d.ChangeType}");
+                        runConsole.WriteLine($"       異動前：{d.Before}");
+                        runConsole.WriteLine($"       異動後：{d.After}");
+                    }
 
-                var auditPruned = new AuditLogStore(backend.LogStore("audit")).Prune(retention.AuditRetentionDays);
-                if (auditPruned > 0)
-                    console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
+                    var reportSb = new System.Text.StringBuilder();
+                    reportSb.AppendLine("LogForesight 權限異動報告");
+                    reportSb.AppendLine($"檢查時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                    reportSb.AppendLine();
+                    reportSb.AppendLine("■ 異動告警");
+                    foreach (var alert in permissionCheck.Alerts)
+                    {
+                        reportSb.AppendLine($"- {alert}");
+                    }
+                    reportSb.AppendLine();
+                    reportSb.AppendLine("■ 被異動項目明細（請逐項人工確認是否為正常/授權的異動）");
+                    for (int i = 0; i < permissionCheck.Details.Count; i++)
+                    {
+                        var d = permissionCheck.Details[i];
+                        reportSb.AppendLine($"{i + 1}. 對象：{d.Target}");
+                        reportSb.AppendLine($"   異動類型：{d.ChangeType}");
+                        reportSb.AppendLine($"   異動前：{d.Before}");
+                        reportSb.AppendLine($"   異動後：{d.After}");
+                        reportSb.AppendLine("   └ 請確認：此異動是否為您或授權人員的操作？若否，可能為入侵或誤設定，建議立即調查。");
+                        reportSb.AppendLine();
+                    }
 
-                // 權限異動檢核（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
-                // 跟稽核紀錄同一個保留天數
-                var permPruned = backend.PermissionChanges()
-                    .Prune(retention.AuditRetentionDays);
-                if (permPruned > 0)
-                    console.WriteLine($"已清除 {permPruned} 筆超過 {retention.AuditRetentionDays} 天的權限異動紀錄。");
+                    var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
+                    await reportSink.WriteAsync(ReportKind.Permission,
+                        new HostKey { HostId = currentHostId, HostName = currentHost }, permissionFileName, reportSb.ToString());
+                    runConsole.WriteLine("  📄 權限異動報告（含逐項明細）已產生，可於「權限異動檢核」頁檢視。");
 
-                // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
-                var riskyEventPruned = riskyEventStore.Prune(retention.RawEventRetentionDays);
-                if (riskyEventPruned > 0)
-                    console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RawEventRetentionDays} 天的風險 log 暫存。");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
-            }
+                    // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與報告全文是既有輸出、
+                    // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動檢核」逐筆確認。
+                    try
+                    {
+                        var permissionChangeStore = backend.PermissionChanges();
+                        var detectedAt = DateTime.Now;
 
-            // 1b-2. 清理處理狀態三表與處理歷程（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
-            //
-            // **必須排在上面的分析紀錄清理（步驟 1）之後**：那一步決定了哪些日期的分析紀錄還在，
-            // 這裡刪的正是「紀錄已經不在、卻還留著的處理狀態」。順序反過來的話，
-            // 這一輪會漏掉剛被判定過期的那幾天，要等到下次執行才補上。
-            //
-            // 三個對象、三種保留天數，理由各自不同（見各 store 的 Prune 註解）：
-            //   問題／日處理狀態 → RetentionDays（跟著分析紀錄，它們是紀錄的附屬狀態）
-            //   已結案的案件     → RetentionDays（同上，但判準是結案時間，不是事件日期）
-            //   處理歷程         → AuditRetentionDays（追責證據，性質接近稽核）
-            try
-            {
-                var issueHandlingPruned = backend.IssueHandlingStore().Prune(retention.RetentionDays);
-                var recordHandlingStore = backend.RecordHandlingStore();
-                var dayHandlingPruned = recordHandlingStore.Prune(retention.RetentionDays);
-                var casePruned = backend.IssueCaseStore().Prune(retention.RetentionDays);
-                var workOrderPruned = backend.WorkOrderStore().PruneClosed(retention.RetentionDays);
+                        permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
+                        {
+                            ChangeId = Guid.NewGuid().ToString("N"),
+                            HostName = currentHost,
+                            DetectedAt = detectedAt,
+                            Target = detail.Target,
+                            ChangeType = detail.ChangeType,
+                            Category = detail.Category,
+                            IsPrivilegedTarget = detail.IsPrivilegedTarget,
+                            InitiatorAccount = detail.InitiatorAccount,
+                            TargetAccount = detail.TargetAccount,
+                            Before = detail.Before,
+                            After = detail.After,
+                            AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty,
+                            Source = PermissionChangeSources.Local
+                        }));
 
-                var handlingPruned = issueHandlingPruned + dayHandlingPruned + casePruned + workOrderPruned;
-                if (handlingPruned > 0)
-                    console.WriteLine($"已清除 {handlingPruned} 筆超過 {retention.RetentionDays} 天的處理狀態" +
-                                      $"（問題 {issueHandlingPruned}／日 {dayHandlingPruned}／已結案 {casePruned}／交辦單 {workOrderPruned}）。");
-
-                var handlingLogPruned = recordHandlingStore.PruneLogs(retention.AuditRetentionDays);
-                if (handlingLogPruned > 0)
-                    console.WriteLine($"已清除 {handlingLogPruned} 筆超過 {retention.AuditRetentionDays} 天的處理歷程。");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
-            }
-
-            // 1c. 清理過期的報告全文（風險／週檢／權限異動）——保留期是獨立設定
-            // ReportRetentionDays，但上限受 RetentionDays 約束（見 RuntimeSettingsResolver）
-            try
-            {
-                var reportsPruned = backend.ReportStore().Prune(retention.ReportRetentionDays);
-                if (reportsPruned > 0)
-                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.ReportRetentionDays} 天的報告全文（風險／週檢／權限異動）。");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "報告全文清理失敗（不影響本次分析）：{0}", ex.Message);
-            }
-
-            try
-            {
-                var prtgPruned = backend.PrtgStore().Prune(retention.PrtgRetentionDays);
-                if (prtgPruned > 0)
-                    console.WriteLine($"已清除 {prtgPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 鏡像資料。");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "PRTG 鏡像資料清理失敗（不影響本次分析）：{0}", ex.Message);
-            }
-
-            try
-            {
-                var diagPruned = FilePromptDumper.Prune(retention.RunLogRetentionDays);
-                if (diagPruned > 0)
-                    console.WriteLine($"已清除 {diagPruned} 個超過 {retention.RunLogRetentionDays} 天的 AI 診斷傾印檔。");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "AI 診斷傾印檔清理失敗（不影響本次分析）：{0}", ex.Message);
-            }
-
-            var yesterday = DateTime.Today.AddDays(-1);
-
-            // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
-            // 2000 台規模下本機回補多天時，NetIQ 機房分析原本要空等本機跑完才能開始，兩者其實
-            // 互不依賴（不同主機、不同資料列）。NetIQ pipeline 內部本來就用 Parallel.ForEachAsync
-            // 平行跑多個 Sentinel worker，這裡是把本機也當成「多一個並行 worker」。
-            //
-            // **runCtx 只建一份、兩路共用同一個實例**（尤其 CaseCoordinator／RiskyEventStore／
-            // RunRecorder）——共用是刻意的，但**歷程序號已不再依賴它**：
-            // EfRecordHandlingStore.AppendLog 每次寫入都重讀 DB 尾端取得起點，不留記憶體快取，
-            // 所以多個實例並存也不會撞號（Web 端 Singleton 與這裡自建的 backend 本來就是兩份，
-            // 舊的快取寫法在那個邊界上已經會重號）。同理 BatchRunRecorder
-            // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
-            // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
-            // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。
-            // PRTG finding 登錄簿：兩路共用同一個實例。PRTG 路徑算完規則後發佈，
-            // 兩條寫入路徑在紀錄剛落地時就地併入該主機的 finding（docs/PRTG-SPEC.md §9）。
-            var prtgFindings = new PrtgFindingsRegistry();
-
-            // 夜間派工：一趟一份派工脈絡與 NightlyDispatch，三路共用（互斥由脈絡的 Gate 負責）。
-            // 系統設定在這裡讀一次，下方資源守門沿用同一個變數
-            var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
-            DispatchCandidatePool candidatePool;
-            try
-            {
-                candidatePool = _candidateSource.Build();
-            }
-            catch (Exception ex)
-            {
-                // 錯誤處理：候選人快照失敗時以空池執行——負責人規則與自動派工都找不到人而略過，續掛仍照常
-                Log.Error(ex, "派工候選人快照失敗，本趟不派工");
-                candidatePool = new DispatchCandidatePool
-                {
-                    ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
-                };
-            }
-            if (systemSettings.AutoDispatchEnabled && candidatePool.ActivePoolMemberCount == 0)
-            {
-                // 開關開著卻派不出任何單：設定頁只在儲存當下提醒一次，之後群組或成員異動造成的空池要在每趟執行紀錄現身
-                Log.Warn("自動派工已開啟，但派工池沒有可接單的成員（池成員 {Pool} 人、未暫停 0 人），本趟自動派工不會派出任何單",
-                    candidatePool.PoolMemberCount);
-            }
-            var workOrderStore = backend.WorkOrderStore();
-            var issueCaseStore = backend.IssueCaseStore();
-            DispatchContext dispatchContext;
-            try
-            {
-                dispatchContext = DispatchContext.Build(
-                    candidatePool, new IssueOwnerStore(backend.Blob("issue_owners")), workOrderStore, issueCaseStore,
-                    new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, DateTime.Now);
-            }
-            catch (Exception ex)
-            {
-                // 錯誤處理：派工是附加步驟，讀不到派工資料（例如問題檔案 blob 損毀）不可拖垮整趟分析
-                Log.Error(ex, "派工脈絡建立失敗，本趟不派工");
-                dispatchContext = DispatchContext.CreateUnavailable(issueCaseStore);
-            }
-            var workOrderCoordinator = new WorkOrderCoordinator(
-                workOrderStore, issueCaseStore, backend.IssueHandlingStore(), caseCoordinator,
-                backend.RecordHandlingStore(), hostStore);
-            var nightlyDispatch = new NightlyDispatch(workOrderCoordinator, dispatchContext, hostStore);
-
-            var runCtx = new AnalysisRunContext(
-                request, settings, retention, console, ct, eventLogService, caseCoordinator,
-                riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch);
-
-            // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
-            // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
-            // 前綴（見 HostDayPostProcessor 呼叫點）不受影響，維持原樣。只換 Console 這一個欄位，
-            // CaseCoordinator／RiskyEventStore／RunRecorder 仍是上面那個共用實例——見上方說明。
-            var localCtx = runCtx with { Console = new PrefixedRunConsole(console, "[本機] ") };
-
-            // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料；
-            // IncludeLocal=false（回饋十八輪批次D，排程設定「分析本機主機」關閉）整段跳過，
-            // 只印一行讓執行詳情看得出是設定行為、不是漏跑（不是「未執行」）。
-            Task localTask;
-            if (request.Scope == RunScope.NetiqHosts)
-            {
-                localTask = Task.CompletedTask;
-            }
-            else if (!request.IncludeLocal)
-            {
-                console.WriteLine("\n本機分析已停用（排程設定「分析本機主機」關閉），本次僅執行 NetIQ 機房分析。");
-                runRecorder.Milestone("本機分析已停用（排程設定），本次僅執行 NetIQ 機房分析");
-                localTask = Task.CompletedTask;
-            }
-            else
-            {
-                localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
-            }
-
-            // 資源守門（docs/PRTG-SPEC.md §12）：建構走 TryCreate 這個唯一入口——守門自己的建構失敗
-            // （密文損毀、鏡像表或 Sentinel 清單讀取失敗）不能讓整趟批次在啟動前就掛掉，失敗＝本趟不守門。
-            // 未啟用或認證不齊時回 null 且零成本。NetIQ 與 PRTG 兩路共用同一個實例。
-            using var resourceGuard = PrtgResourceGuard.TryCreate(
-                systemSettings, backend.PrtgStore(), sentinelStore, runRecorder, console, progress);
-
-            // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
-            //    NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套 LogAnalysisService。LocalOnly
-            //    範圍（Phase 3 手動觸發只跑本機）跳過這段。
-            var netiqTask = request.Scope != RunScope.LocalOnly
-                ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService, resourceGuard)
-                : Task.CompletedTask;
-
-            var analysisTask = Task.WhenAll(localTask, netiqTask);
-            var prtgDays = BuildPrtgDays(request, retention, DateTime.Today);
-            var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, resourceGuard, structureSyncGate);
-
-            // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
-            // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
-            // 下次執行的缺漏日回補機制會自動補上失敗的那一路。NetIQ 與 PRTG 路徑本來就有自己的內部
-            // try/catch 吞掉非取消例外，只有取消會穿透；本機路徑
-            // 沒有這層保護，維持「本機出問題就是整趟失敗」的既有嚴格度（本機通常只有一台，
-            // 出問題多半是環境性的，值得當硬失敗訊號，不像 NetIQ/PRTG 是外部系統失聯不該拖累其他主機）。
-            try
-            {
-                await Task.WhenAll(analysisTask, prtgTask);
-            }
-            finally
-            {
-                // 三路匯合（含任一路擲例外）：已寫入的交辦單成員都要補記 appended 事件並彙總，否則失敗那一趟留痕不完整；
-                // 收尾本身失敗只記警告
-                try
-                {
-                    var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
-                    runCtx.Result.DispatchSummary = dispatchSummary;
-                    // 走 console 才進得了執行紀錄（Log.Info 不進）；管理者隔天要從這一行看出「昨晚派了什麼、為什麼沒派」
-                    console.WriteLine("\n" + NightlyDispatch.DescribeSummary(dispatchSummary));
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn(ex, "夜間派工收尾失敗（交辦單成員已寫入，只缺本趟 appended 事件）");
-                }
-            }
-
-            // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
-            if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
-            {
-                console.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
-                var checkupStopwatch = Stopwatch.StartNew();
-                var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays,
-                    settings.Analysis.ServerDescription, host: new HostKey { HostId = currentHostId, HostName = currentHost }, useAi: useAi);
-
-                if (!checkup.Completed)
-                {
-                    console.WriteLine($"  ⚠ 體檢未完成（{checkup.Conclusion}），未寫入歷史，下次執行將自動重試。");
+                        runConsole.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(ex, "權限異動的結構化寫入失敗（不影響本次分析與既有報告）：{0}", ex.Message);
+                        runConsole.WriteLine($"  ⚠ 權限異動的結構化寫入失敗（既有報告不受影響）：{ex.Message}");
+                    }
                 }
                 else
                 {
-                    historyService.AttachWeeklyCheckup(yesterday, checkup);
+                    runConsole.WriteLine("  未偵測到權限異動。");
+                }
 
-                    if (checkup.HasFindings)
+                RetentionPruner.Run(backend, retention, runConsole, batchRunStore);
+
+                var yesterday = DateTime.Today.AddDays(-1);
+
+                // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
+                // 2000 台規模下本機回補多天時，NetIQ 機房分析原本要空等本機跑完才能開始，兩者其實
+                // 互不依賴（不同主機、不同資料列）。NetIQ pipeline 內部本來就用 Parallel.ForEachAsync
+                // 平行跑多個 Sentinel worker，這裡是把本機也當成「多一個並行 worker」。
+                //
+                // **runCtx 只建一份、兩路共用同一個實例**（尤其 CaseCoordinator／RiskyEventStore／
+                // RunRecorder）——共用是刻意的，但**歷程序號已不再依賴它**：
+                // EfRecordHandlingStore.AppendLog 每次寫入都重讀 DB 尾端取得起點，不留記憶體快取，
+                // 所以多個實例並存也不會撞號（Web 端 Singleton 與這裡自建的 backend 本來就是兩份，
+                // 舊的快取寫法在那個邊界上已經會重號）。同理 BatchRunRecorder
+                // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
+                // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
+                // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。
+                // PRTG finding 登錄簿：兩路共用同一個實例。PRTG 路徑算完規則後發佈，
+                // 兩條寫入路徑在紀錄剛落地時就地併入該主機的 finding（docs/PRTG-SPEC.md §9）。
+                var prtgFindings = new PrtgFindingsRegistry();
+
+                // 夜間派工：一趟一份派工脈絡與 NightlyDispatch，三路共用（互斥由脈絡的 Gate 負責）。
+                // 系統設定在這裡讀一次，下方資源守門沿用同一個變數
+                var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                DispatchCandidatePool candidatePool;
+                try
+                {
+                    candidatePool = _candidateSource.Build();
+                }
+                catch (Exception ex)
+                {
+                    // 錯誤處理：候選人快照失敗時以空池執行——負責人規則與自動派工都找不到人而略過，續掛仍照常
+                    Log.Error(ex, "派工候選人快照失敗，本趟不派工");
+                    candidatePool = new DispatchCandidatePool
                     {
-                        console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
-                        if (checkup.ReportFile != null)
-                        {
-                            console.WriteLine("  📄 體檢報告已產生，可於該日的分析紀錄詳情檢視。");
-                        }
+                        ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
+                    };
+                }
+                if (systemSettings.AutoDispatchEnabled && candidatePool.ActivePoolMemberCount == 0)
+                {
+                    // 開關開著卻派不出任何單：設定頁只在儲存當下提醒一次，之後群組或成員異動造成的空池要在每趟執行紀錄現身
+                    Log.Warn("自動派工已開啟，但派工池沒有可接單的成員（池成員 {Pool} 人、未暫停 0 人），本趟自動派工不會派出任何單",
+                        candidatePool.PoolMemberCount);
+                }
+                var workOrderStore = backend.WorkOrderStore();
+                var issueCaseStore = backend.IssueCaseStore();
+                DispatchContext dispatchContext;
+                try
+                {
+                    dispatchContext = DispatchContext.Build(
+                        candidatePool, new IssueOwnerStore(backend.Blob("issue_owners")), workOrderStore, issueCaseStore,
+                        new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, DateTime.Now);
+                }
+                catch (Exception ex)
+                {
+                    // 錯誤處理：派工是附加步驟，讀不到派工資料（例如問題檔案 blob 損毀）不可拖垮整趟分析
+                    Log.Error(ex, "派工脈絡建立失敗，本趟不派工");
+                    dispatchContext = DispatchContext.CreateUnavailable(issueCaseStore);
+                }
+                var workOrderCoordinator = new WorkOrderCoordinator(
+                    workOrderStore, issueCaseStore, backend.IssueHandlingStore(), caseCoordinator,
+                    backend.RecordHandlingStore(), hostStore);
+                var nightlyDispatch = new NightlyDispatch(workOrderCoordinator, dispatchContext, hostStore);
+
+                var runCtx = new AnalysisRunContext(
+                    request, settings, retention, runConsole, ct, eventLogService, caseCoordinator,
+                    riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch);
+
+                // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
+                // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
+                // 前綴（見 HostDayPostProcessor 呼叫點）不受影響，維持原樣。只換 Console 這一個欄位，
+                // CaseCoordinator／RiskyEventStore／RunRecorder 仍是上面那個共用實例——見上方說明。
+                var localCtx = runCtx with { Console = new PrefixedRunConsole(runConsole, "[本機] ") };
+
+                // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料；
+                // IncludeLocal=false（回饋十八輪批次D，排程設定「分析本機主機」關閉）整段跳過，
+                // 只印一行讓執行詳情看得出是設定行為、不是漏跑（不是「未執行」）。
+                Task localTask;
+                if (request.Scope == RunScope.NetiqHosts)
+                {
+                    localTask = Task.CompletedTask;
+                }
+                else if (!request.IncludeLocal)
+                {
+                    runConsole.WriteLine("\n本機分析已停用（排程設定「分析本機主機」關閉），本次僅執行 NetIQ 機房分析。");
+                    runRecorder.Milestone("本機分析已停用（排程設定），本次僅執行 NetIQ 機房分析");
+                    localTask = Task.CompletedTask;
+                }
+                else
+                {
+                    localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
+                }
+
+                // 資源守門（docs/PRTG-SPEC.md §12）：建構走 TryCreate 這個唯一入口——守門自己的建構失敗
+                // （密文損毀、鏡像表或 Sentinel 清單讀取失敗）不能讓整趟批次在啟動前就掛掉，失敗＝本趟不守門。
+                // 未啟用或認證不齊時回 null 且零成本。NetIQ 與 PRTG 兩路共用同一個實例。
+                using var resourceGuard = PrtgResourceGuard.TryCreate(
+                    systemSettings, backend.PrtgStore(), sentinelStore, runRecorder, runConsole, progress);
+
+                // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
+                //    NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套 LogAnalysisService。LocalOnly
+                //    範圍（Phase 3 手動觸發只跑本機）跳過這段。
+                var netiqTask = request.Scope != RunScope.LocalOnly
+                    ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService, resourceGuard)
+                    : Task.CompletedTask;
+
+                var analysisTask = Task.WhenAll(localTask, netiqTask);
+                var prtgDays = BuildPrtgDays(request, retention, DateTime.Today);
+                // 指定主機更新：PRTG 也只處理那幾台主機的監看裝置（partial 範圍不做任何「沒刷新到就清」）
+                var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
+                var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, structureSyncGate);
+
+                // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
+                // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
+                // 下次執行的缺漏日回補機制會自動補上失敗的那一路。NetIQ 與 PRTG 路徑本來就有自己的內部
+                // try/catch 吞掉非取消例外，只有取消會穿透；本機路徑
+                // 沒有這層保護，維持「本機出問題就是整趟失敗」的既有嚴格度（本機通常只有一台，
+                // 出問題多半是環境性的，值得當硬失敗訊號，不像 NetIQ/PRTG 是外部系統失聯不該拖累其他主機）。
+                try
+                {
+                    await Task.WhenAll(analysisTask, prtgTask);
+                }
+                finally
+                {
+                    // 三路匯合（含任一路擲例外）：已寫入的交辦單成員都要補記 appended 事件並彙總，否則失敗那一趟留痕不完整；
+                    // 收尾本身失敗只記警告
+                    try
+                    {
+                        var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
+                        runCtx.Result.DispatchSummary = dispatchSummary;
+                        // 走 console 才進得了執行紀錄（Log.Info 不進）；管理者隔天要從這一行看出「昨晚派了什麼、為什麼沒派」
+                        runConsole.WriteLine("\n" + NightlyDispatch.DescribeSummary(dispatchSummary));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(ex, "夜間派工收尾失敗（交辦單成員已寫入，只缺本趟 appended 事件）");
+                    }
+                }
+
+                // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
+                if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
+                {
+                    runConsole.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
+                    var checkupStopwatch = Stopwatch.StartNew();
+                    var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays,
+                        settings.Analysis.ServerDescription, host: new HostKey { HostId = currentHostId, HostName = currentHost }, useAi: useAi);
+
+                    if (!checkup.Completed)
+                    {
+                        runConsole.WriteLine($"  ⚠ 體檢未完成（{checkup.Conclusion}），未寫入歷史，下次執行將自動重試。");
                     }
                     else
                     {
-                        console.WriteLine($"  體檢完成，無累積性異常。（{checkup.Conclusion}）");
+                        historyService.AttachWeeklyCheckup(yesterday, checkup);
+
+                        if (checkup.HasFindings)
+                        {
+                            runConsole.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
+                            if (checkup.ReportFile != null)
+                            {
+                                runConsole.WriteLine("  📄 體檢報告已產生，可於該日的分析紀錄詳情檢視。");
+                            }
+                        }
+                        else
+                        {
+                            runConsole.WriteLine($"  體檢完成，無累積性異常。（{checkup.Conclusion}）");
+                        }
                     }
+                    runConsole.WriteLine($"  ⏱ 體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
+                    Log.Info("體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
+                        yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
                 }
-                console.WriteLine($"  ⏱ 體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
-                Log.Info("體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
-                    yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
+
+                // 7. 接續補 PRTG 數值（立即執行勾選時）：放在分析、派工、體檢都完成之後，是本趟的附加段——
+                //    成敗不影響整趟判定；取消照一般取消處理（例外穿透到下方 catch）。
+                //    回填不能等這趟結束後另開：回填入口會被「取數執行中」擋下，而那個旗標要到這趟結束才放開。
+                if (request.PrtgBackfillDays > 0 && prtgBackfillTail != null)
+                {
+                    runRecorder.Milestone($"接續補 PRTG 數值 {request.PrtgBackfillDays} 天");
+                    var tailOk = await prtgBackfillTail.RunTailAsync(request.PrtgBackfillDays, prtgHostIds, runConsole, ct);
+                    runRecorder.Milestone(tailOk ? "PRTG 數值補齊完成" : "PRTG 數值補齊未完成（原因見上方輸出）");
+                }
+
+                runConsole.WriteLine($"\n歷史資料庫：{historyService.Location}");
+                runConsole.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
+                runConsole.WriteLine("--- 執行結束 ---");
+                Log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
+                runRecorder.Milestone("執行結束");
+                runRecorder.Finish(exitCode: 0);
+
+                result.Elapsed = runStopwatch.Elapsed;
+                return result;
             }
-
-            console.WriteLine($"\n歷史資料庫：{historyService.Location}");
-            console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
-            console.WriteLine("--- 執行結束 ---");
-            Log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
-            runRecorder.Milestone("執行結束");
-            runRecorder.Finish(exitCode: 0);
-
-            result.Elapsed = runStopwatch.Elapsed;
-            return result;
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                runRecorder.Fatal(ex);
+                throw;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -796,6 +727,29 @@ public class AnalysisOrchestrator
             result.Elapsed = runStopwatch.Elapsed;
             return result;
         }
+    }
+
+    /// <summary>
+    /// 只做保留期清除、不跑分析：給分析當天沒有執行（排程停用、停擺、錯過窗口）時由排程輪詢補做，
+    /// 否則保留期就等於沒有生效。StorageBackend 與執行紀錄 store 的建立方式與 <see cref="RunAsync"/> 相同；
+    /// 不建立執行紀錄（BatchRunRecorder）——這不是一趟分析執行。
+    /// </summary>
+    public Task RunRetentionOnlyAsync(AppSettings settings, string dataRoot, RetentionOptions retention, IRunConsole console)
+    {
+        var backend = new StorageBackend(settings.Storage, dataRoot, AnalysisMaxPoolSize);
+
+        BatchRunStore? batchRunStore = null;
+        try
+        {
+            batchRunStore = new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "執行紀錄儲存初始化失敗（執行歷程本次不清除）：{0}", ex.Message);
+        }
+
+        RetentionPruner.Run(backend, retention, console, batchRunStore);
+        return Task.CompletedTask;
     }
 
 

@@ -45,7 +45,7 @@ public class PathBaseTests
         var middleware = new ActiveUserMiddleware(_ => Task.CompletedTask);
         var context = ContextWith(pathBase, "/records");
 
-        await middleware.InvokeAsync(context, FakeCurrentUser.ForUser(user.UserId), _users, Settings);
+        await AuthTestKit.InvokeMiddleware(middleware, context, FakeCurrentUser.ForUser(user.UserId), _users, Settings);
 
         Assert.Equal(StatusCodes.Status302Found, context.Response.StatusCode);
         Assert.Equal(expectedLocation, context.Response.Headers.Location.ToString());
@@ -61,7 +61,7 @@ public class PathBaseTests
         // Request.Path 是扣掉 PathBase 之後的值，所以 /api 前綴判定仍然成立
         var context = ContextWith("/LogForesight", "/api/records");
 
-        await middleware.InvokeAsync(context, FakeCurrentUser.ForUser(user.UserId), _users, Settings);
+        await AuthTestKit.InvokeMiddleware(middleware, context, FakeCurrentUser.ForUser(user.UserId), _users, Settings);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.True(string.IsNullOrEmpty(context.Response.Headers.Location.ToString()));

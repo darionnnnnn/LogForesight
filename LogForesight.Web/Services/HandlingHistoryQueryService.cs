@@ -177,7 +177,7 @@ public class HandlingHistoryQueryService
     {
         if (handling?.HandlerId != null) return true;
         if (record.TopIssues.Count == 0) return false;
-        var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+        var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(IssueSignatureKeyComparer.Instance);
         if (!openCasesDict.TryGetValue(HostNameKey.Of(hostName), out var hostCases))
         {
             return false;

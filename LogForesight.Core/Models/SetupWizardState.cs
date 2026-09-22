@@ -7,6 +7,9 @@ namespace LogForesight.Core.Models;
 /// </summary>
 public class SetupWizardState
 {
+    /// <summary>步驟清單版本（回饋五十輪批次F-1a）：舊版為 0 或 1（7 步），本版為 2（10 步）。</summary>
+    public int StepsVersion { get; set; } = 0;
+
     /// <summary>使用者明確跳過的步驟 id（見 SetupReadinessService 的步驟清單）。
     /// 跳過可逆——精靈頁隨時可以「取消跳過」。</summary>
     public HashSet<string> SkippedSteps { get; set; } = new();

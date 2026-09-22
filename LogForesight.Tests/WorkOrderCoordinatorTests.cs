@@ -375,6 +375,12 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(Bob, b.HandlerId);
         Assert.Equal(Alice, done.HandlerId);
         Assert.Equal(2, w.HandlingLog.Logs.Count(l => l.Action == HandlingActions.CaseReassign));
+        Assert.All(w.HandlingLog.Logs.Where(l => l.Action == HandlingActions.CaseReassign), log =>
+        {
+            Assert.Equal(Alice, log.PreviousHandlerId);
+            Assert.Equal(Bob, log.HandlerId);
+            Assert.Contains(log.CaseId, new[] { "a", "b" });
+        });
         var evt = w.Orders.ListEvents(id).Single();
         Assert.Equal(WorkOrderEventActions.Reassigned, evt.Action);
         Assert.Equal($"{Alice}→{Bob}", evt.Note);

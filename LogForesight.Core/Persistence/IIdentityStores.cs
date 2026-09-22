@@ -33,8 +33,16 @@ public interface IUserStore
     /// <see cref="WebUser"/> 的呼叫端（使用者頁儲存、批次新增）都不會帶這個欄位，
     /// 交給 Upsert 就會在每次編輯使用者時把上次登入時間靜默清掉——
     /// 與 owners.csv 曾漏抄 SentinelId 同一種失敗模式，用意圖精準的方法避開。
+    /// 寫到使用者清單之外（見 <see cref="GetLastLogins"/>），**不改使用者清單**：
+    /// 每次登入都改寫整份清單會讓使用者快取在登入尖峰反覆失效。
     /// </summary>
     void TouchLogin(long userId, DateTime at);
+
+    /// <summary>
+    /// 全部使用者的最後登入時間（userId → 時間）。登入時間存在使用者清單之外，
+    /// 升級前寫在 <see cref="WebUser.LastLoginAt"/> 的舊值不在這裡，呼叫端查不到時自行退回該欄。
+    /// </summary>
+    IReadOnlyDictionary<long, DateTime> GetLastLogins();
 
     /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
     /// 這裡是它的唯一寫入點</summary>

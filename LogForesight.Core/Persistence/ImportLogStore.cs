@@ -47,7 +47,8 @@ public class ImportLogStore : IImportLogStore
     public ImportLogStore(EfJsonLogStore log)
     {
         _log = log;
-        _lastId = ReadAll().LastOrDefault()?.ImportId ?? 0;
+        // 續號起點以尾端反向 seek 取得、不整表讀回（Singleton store 的建構式＝站台啟動路徑）
+        _lastId = _log.ProbeMaxId<ImportLogEntry>(e => e.ImportId, BatchRunStore.IdProbeLines, "匯入紀錄", LfJsonOptions.Compact);
     }
 
     public void Append(ImportLogEntry entry)
@@ -59,10 +60,10 @@ public class ImportLogStore : IImportLogStore
         }
     }
 
+    /// <summary>只讀尾端 count×2 行：匯入紀錄依時間附加，最新的一定在尾端；多讀一倍容忍損毀行</summary>
     public List<ImportLogEntry> GetRecent(int count) =>
-        ReadAll().OrderByDescending(e => e.CreatedAt).Take(count).ToList();
+        JsonLogParser.Parse<ImportLogEntry>(_log.ReadLastLines(count * 2), LfJsonOptions.Compact)
+            .OrderByDescending(e => e.CreatedAt).Take(count).ToList();
 
     public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
-
-    private List<ImportLogEntry> ReadAll() => JsonLogParser.Parse<ImportLogEntry>(_log.ReadLines(), LfJsonOptions.Compact);
 }

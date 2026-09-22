@@ -51,10 +51,10 @@ public static class PrtgProbeSiteCheck
                 // 靜音 console：守門自動偵測的警告是給同步流程看的，混進探測輸出會蓋掉這一段的結論
                 scope = PrtgScopeDevices.Compute(
                     store, hostStore, new PrtgMirrorGuardSource(store), settings, sentinels,
-                    new SilentConsole(), new PrtgAddressResolver());
+                    new SilentConsole(), new PrtgAddressResolver(), hostIds: null);
 
                 var inScope = scope.DeviceObjids;
-                console.WriteLine($"     取數範圍：{inScope.Count} 台裝置（對應 {scope.Mapped}、衝突 {scope.Conflict}、人工 {scope.Manual}、守門 {scope.Guard}）");
+                console.WriteLine($"     監看裝置：{inScope.Count} 台（對應 {scope.Mapped}、衝突 {scope.Conflict}、人工 {scope.Manual}、守門 {scope.Guard}）");
 
                 // 範圍外的感測器＝下次結構同步成功後會被過期清除的那一批
                 var outOfScope = sensors.Count(s => !inScope.Contains(s.DeviceObjid));

@@ -1,3 +1,6 @@
+using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Persistence;
+
 namespace LogForesight.Web.Models.Dto;
 
 /// <summary>PRTG 探測（probe）狀態，供前端輪詢用</summary>
@@ -9,6 +12,7 @@ public class PrtgProbeStatusDto
     public bool? Success { get; set; }
     public string? LatestMessage { get; set; }
     public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
+    public bool Cancelled { get; set; }
 }
 
 /// <summary>啟動 PRTG 探測回應</summary>
@@ -77,6 +81,80 @@ public class PrtgMirrorStatusDto
     public int SnapshotConsecutiveFailures { get; set; }
     public bool SnapshotBackingOff { get; set; }
     public string? SnapshotSkipReason { get; set; }
+    /// <summary>各類資料最後一次成功擷取的紀錄（鏡像頁「擷取紀錄」表）</summary>
+    public List<PrtgFreshnessDto> Freshness { get; set; } = new();
+}
+
+/// <summary>
+/// PRTG 單一類別資料的擷取新鮮度（鏡像頁與系統健康頁共用）。
+/// 資料時間推導的「最後同步」在連續擷取 0 筆時不會變、看起來正常；這裡是擷取本身的紀錄。
+/// </summary>
+public class PrtgFreshnessDto
+{
+    /// <summary>devices｜sensors｜state_changes｜snapshot｜values</summary>
+    public string Category { get; set; } = string.Empty;
+    public DateTime LastSuccessAt { get; set; }
+    public int LastCount { get; set; }
+    /// <summary>連續取得 0 筆的次數（畫面「連續 N 次取得 0 筆」的 N）</summary>
+    public int ZeroStreak { get; set; }
+    public bool Suspicious { get; set; }
+
+    private static readonly string[] CategoryOrder =
+    {
+        PrtgFreshnessStore.Devices, PrtgFreshnessStore.Sensors, PrtgFreshnessStore.StateChanges,
+        PrtgFreshnessStore.Snapshot, PrtgFreshnessStore.Values
+    };
+
+    /// <summary>依固定類別順序列出已有紀錄的類別（從未成功擷取過的類別不列）</summary>
+    public static List<PrtgFreshnessDto> FromStore(PrtgFreshnessStore store)
+    {
+        var all = store.GetAll();
+        return CategoryOrder
+            .Where(all.ContainsKey)
+            .Select(c => new PrtgFreshnessDto
+            {
+                Category = c,
+                LastSuccessAt = all[c].LastSuccessAt,
+                LastCount = all[c].LastCount,
+                ZeroStreak = all[c].ZeroStreak,
+                Suspicious = PrtgFreshnessStore.IsSuspicious(all[c])
+            })
+            .ToList();
+    }
+}
+
+/// <summary>監看範圍外資料清除的預覽（PRTG 維護頁「鏡像狀態」頁籤）</summary>
+public class PrtgScopePurgePreviewDto
+{
+    /// <summary>false＝範圍不可信或資料存放區未啟用，<see cref="ErrorMessage"/> 說明原因，不可確認清除</summary>
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    /// <summary>目前的監看裝置數</summary>
+    public int MonitoredDevices { get; set; }
+    /// <summary>將刪除的數值列數</summary>
+    public int Values { get; set; }
+    /// <summary>將刪除的狀態變更列數</summary>
+    public int StateChanges { get; set; }
+    /// <summary>受影響裝置數（感測器鏡像對得到裝置的部分）</summary>
+    public int AffectedDevices { get; set; }
+    /// <summary>受影響裝置前 20 台的名稱（外部字串，前端一律 textContent）</summary>
+    public List<string> TopDeviceNames { get; set; } = new();
+    /// <summary>感測器鏡像已沒有、對不到裝置的 sensor 數（它們的列同樣會被刪）</summary>
+    public int UnknownSensors { get; set; }
+    /// <summary>最近一次自動清除被擋下的原因（縮小保護／無基準）；成功清除後為 null</summary>
+    public string? BlockedReason { get; set; }
+    public DateTime? BlockedAt { get; set; }
+    /// <summary>基準（上次成功清除）時間；null＝尚無基準</summary>
+    public DateTime? BaselineAt { get; set; }
+    public int BaselineDeviceCount { get; set; }
+}
+
+/// <summary>監看範圍外資料清除的結果</summary>
+public class PrtgScopePurgeResultDto
+{
+    public int Values { get; set; }
+    public int StateChanges { get; set; }
+    public int MonitoredDevices { get; set; }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>
@@ -85,6 +163,26 @@ public class SetPrtgManualMapRequest
     public long DeviceObjid { get; set; }
     public long HostId { get; set; }
     public string? Note { get; set; }
+}
+
+/// <summary>批次設定 PRTG 人工主機對應請求</summary>
+public class SetPrtgManualMapBatchRequest
+{
+    public long HostId { get; set; }
+    public List<long> DeviceObjids { get; set; } = new();
+    [StringLength(512, ErrorMessage = "指派說明不可超過 512 字")]
+    public string? Note { get; set; }
+}
+
+/// <summary>批次設定 PRTG 人工主機對應回應</summary>
+public class PrtgManualMapBatchResultDto
+{
+    public List<long> SucceededIds { get; set; } = new();
+    public long? FailedDeviceObjid { get; set; }
+    public List<long> NotProcessedIds { get; set; } = new();
+    public string? FailureMessage { get; set; }
+    public string? AuditWarning { get; set; }
+    public string? RemapWarning { get; set; }
 }
 
 /// <summary>PRTG 人工主機對應項目</summary>
@@ -128,6 +226,7 @@ public class PrtgConflictItemDto
     public string? Ip { get; set; }
     public string? HostName { get; set; }
     public string? Note { get; set; }
+    public string MapStatus { get; set; } = string.Empty;
     public string ConflictKind { get; set; } = string.Empty;
     public List<PrtgConflictDeviceDto> SameIpDevices { get; set; } = new();
     public List<PrtgCandidateHostDto> CandidateHosts { get; set; } = new();
@@ -183,6 +282,7 @@ public class HostPrtgDeviceDto
     public string? MapStatus { get; set; }
     public string? Note { get; set; }
     public List<HostPrtgSensorDto> Sensors { get; set; } = new();
+    public int SensorCount { get; set; }
 }
 
 /// <summary>主機對應 PRTG 裝置的感測器資訊</summary>

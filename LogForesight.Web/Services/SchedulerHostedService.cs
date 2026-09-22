@@ -7,7 +7,7 @@ namespace LogForesight.Web.Services;
 /// <summary>
 /// 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.4）：週期輪詢
 /// <see cref="ScheduleOptionsStore"/>，命中執行窗口且該窗口本次尚未觸發過
-/// （<see cref="ScheduleCalculator.ShouldTriggerNow"/>，同一函式天生涵蓋服務啟動時的漏跑補償——
+/// （<see cref="ScheduleCalculator.ShouldTriggerNow"/>，只在重新啟動時仍落在窗口內才會補觸發；錯過整個窗口不會補——
 /// 啟動後第一次輪詢就是在檢查「現在是否該觸發」，跟平常輪詢問的是同一個問題）時觸發一次
 /// <see cref="AnalysisOrchestrator"/> 完整執行。也是手動觸發 API（<see cref="TriggerRunAsync"/>）
 /// 的執行載體，兩種觸發來源共用同一個 <see cref="SchedulerRunState"/> 單一執行 gate與
@@ -33,9 +33,11 @@ public class SchedulerHostedService : BackgroundService
     private readonly DataVersionStamp _dataVersion;
     private readonly AnalysisOrchestrator _orchestrator;
     private readonly PrtgStructureSyncService _structureSync;
+    private readonly PrtgBackfillService _prtgBackfill;
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
+    private Task? _lastMailTask;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -45,6 +47,7 @@ public class SchedulerHostedService : BackgroundService
         SchedulerRunState runState,
         AnalysisOrchestrator orchestrator,
         PrtgStructureSyncService structureSync,
+        PrtgBackfillService prtgBackfill,
         NamedMutexGate mutexGate,
         MailNotificationService mail,
         IHostApplicationLifetime lifetime,
@@ -58,6 +61,7 @@ public class SchedulerHostedService : BackgroundService
         _dataVersion = dataVersion;
         _orchestrator = orchestrator;
         _structureSync = structureSync;
+        _prtgBackfill = prtgBackfill;
         _mutexGate = mutexGate;
         _mail = mail;
         _lifetime = lifetime;
@@ -82,12 +86,15 @@ public class SchedulerHostedService : BackgroundService
         {
             try
             {
-                await TickAsync();
+                await TickAsync(stoppingToken);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "排程輪詢發生未預期錯誤（不影響下次輪詢）");
             }
+
+            // 排程判斷之後（不論排程是否啟用）：分析當天沒跑時單獨補做保留清除；內部自行 try/catch
+            await RunRetentionIfDueAsync();
 
             try
             {
@@ -100,12 +107,24 @@ public class SchedulerHostedService : BackgroundService
         }
     }
 
-    private async Task TickAsync()
+    private async Task TickAsync(CancellationToken stoppingToken)
     {
         // 每日／每週定時彙總（回饋十五輪批次D）：獨立於排程分析窗口之外，即使排程本身未啟用
         // 也照常檢查——通知的時間軸是「使用者想幾點收到摘要」，不是「排程窗口設在幾點」。
         // 內部自行 try/catch 到底且成功寄送與否都不影響下方的排程判斷，緊接著跑不需要額外保護。
-        await _mail.CheckAndSendDailyWeeklyAsync(DateTime.Now);
+        // 上一次寄送尚未結束時跳過本次寄送且不等待；整段寄送設 5 分鐘上限，逾時不再等待直接繼續排程判斷。
+        if (_lastMailTask == null || _lastMailTask.IsCompleted)
+        {
+            _lastMailTask = _mail.CheckAndSendDailyWeeklyAsync(DateTime.Now, stoppingToken);
+            try
+            {
+                await _lastMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (TimeoutException)
+            {
+                Log.Warn("每日／每週彙總寄送超過 5 分鐘未返回，本次輪詢不再等待");
+            }
+        }
 
         var options = _scheduleOptionsStore.Get();
 
@@ -134,14 +153,58 @@ public class SchedulerHostedService : BackgroundService
         if (!options.Enabled) return;
 
         var now = DateTime.Now;
-        var recentScheduleTriggerTimes = _batchRunStore
-            .GetRecentRuns(RecentRunsLookbackDays, null)
-            .Where(r => r.Trigger == "schedule")
-            .Select(r => r.StartedAt);
+        var recentScheduleTriggerTimes = GetScheduleTriggerTimes(
+            _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
+            _runState.RecentScheduleAttempts);
 
-        if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
+        if (ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes))
+        {
+            await TriggerRunAsync(ComposeScheduledRequest());
+            return;
+        }
 
-        await TriggerRunAsync(ComposeScheduledRequest());
+        // 補跑只在「剛過完一個窗口的 N 小時內」才有可能：先用不讀資料庫的條件擋掉一天中絕大多數的輪詢，
+        // 才去讀涵蓋回望上限的長期紀錄（算缺口天數需要找到窗口之前最後一次觸發，可能是好幾天前）
+        var lastEnded = ScheduleCalculator.LastEndedWindowInstance(now, options.Windows);
+        if (options.AutoCatchUp && lastEnded != null && now - lastEnded.Value.End <= ScheduleCalculator.AutoCatchUpMaxDelay)
+        {
+            var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_systemSettingsStore.Get().RetentionDays);
+            var longTriggerTimes = GetScheduleTriggerTimes(
+                    _batchRunStore.GetRecentRuns(effectiveLimit + 1, null),
+                    _runState.RecentScheduleAttempts)
+                .ToList();
+            recentScheduleTriggerTimes = longTriggerTimes;
+            var missed = ScheduleCalculator.FindMissedWindow(now, options.Windows, longTriggerTimes, ScheduleCalculator.AutoCatchUpMaxDelay);
+            if (missed.HasValue)
+            {
+                var (start, end) = missed.Value;
+                var triggerTimes = recentScheduleTriggerTimes as IReadOnlyCollection<DateTime> ?? recentScheduleTriggerTimes.ToList();
+                var earlier = triggerTimes
+                    .Where(t => t < start)
+                    .OrderByDescending(t => t)
+                    .Cast<DateTime?>()
+                    .FirstOrDefault();
+
+                var days = earlier.HasValue
+                    ? Math.Clamp((now.Date - earlier.Value.Date).Days, 1, effectiveLimit)
+                    : 1;
+
+                var catchUpNote = $"補跑：上一個排程窗口（{start:MM-dd HH:mm}～{end:MM-dd HH:mm}）未執行，本趟回望 {days} 天";
+                Log.Info(catchUpNote);
+
+                var scheduledReq = ComposeScheduledRequest();
+                var catchUpReq = new RunRequest
+                {
+                    Scope = scheduledReq.Scope,
+                    HostIds = scheduledReq.HostIds,
+                    BackfillOverride = days,
+                    CatchUpNote = catchUpNote,
+                    Trigger = scheduledReq.Trigger
+                };
+
+                await TriggerRunAsync(catchUpReq);
+            }
+        }
     }
 
     /// <summary>
@@ -165,10 +228,9 @@ public class SchedulerHostedService : BackgroundService
 
         // **這個窗口已經跑過就不算被佔用**：22:00 觸發、22:40 跑完，23:00 有人按立即執行——
         // 少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
-        var scheduledTriggerTimes = _batchRunStore
-            .GetRecentRuns(RecentRunsLookbackDays, null)
-            .Where(r => r.Trigger == "schedule")
-            .Select(r => r.StartedAt);
+        var scheduledTriggerTimes = GetScheduleTriggerTimes(
+            _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
+            _runState.RecentScheduleAttempts);
 
         if (ScheduleCalculator.WindowAlreadyTriggered(now, windowStart.Value, scheduledTriggerTimes)) return;
 
@@ -181,6 +243,21 @@ public class SchedulerHostedService : BackgroundService
             Log.Info(text);
             _runState.ReportMessage(text);
         }
+    }
+
+    /// <summary>
+    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的 StartedAt，
+    /// 並與記憶體中最近的排程觸發嘗試時間聯集。
+    /// </summary>
+    internal static IEnumerable<DateTime> GetScheduleTriggerTimes(
+        IEnumerable<BatchRun> runs,
+        IEnumerable<DateTime> inMemoryTriggerTimes)
+    {
+        var persistentTimes = runs
+            .Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi)
+            .Select(r => r.StartedAt);
+
+        return persistentTimes.Union(inMemoryTriggerTimes);
     }
 
     /// <summary>
@@ -216,7 +293,9 @@ public class SchedulerHostedService : BackgroundService
         RerunMode = request.RerunMode,
         DebugDump = scheduleOptions.DebugDump,
         IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
-        Trigger = request.Trigger
+        Trigger = request.Trigger,
+        CatchUpNote = request.CatchUpNote,
+        PrtgBackfillDays = request.PrtgBackfillDays
     };
 
     public async Task<bool> TriggerRunAsync(RunRequest request)
@@ -251,15 +330,13 @@ public class SchedulerHostedService : BackgroundService
                 {
                     startSignal.TrySetResult(true);
 
-                    var settings = BuildAppSettings();
-                    var dataRoot = settings.Storage.ResolveDataRoot();
-                    var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
+                    var (settings, dataRoot, retention) = ResolveRunSettings();
 
                     var console = new WebRunConsole(_runState);
                     var progress = new WebRunProgress(_runState);
                     var result = await _orchestrator.RunAsync(
                         effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress,
-                        structureSyncGate: _structureSync);
+                        structureSyncGate: _structureSync, prtgBackfillTail: _prtgBackfill);
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
@@ -340,4 +417,71 @@ public class SchedulerHostedService : BackgroundService
     {
         Storage = _webSettings.Storage
     };
+
+    /// <summary>分析執行與單獨保留清除共用的設定組裝：出廠值＋DB 覆寫、資料根目錄、保留期</summary>
+    private (AppSettings Settings, string DataRoot, RetentionOptions Retention) ResolveRunSettings()
+    {
+        var settings = BuildAppSettings();
+        var dataRoot = settings.Storage.ResolveDataRoot();
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
+        return (settings, dataRoot, retention);
+    }
+
+    /// <summary>單獨保留清除的起始時刻：過了中午當天仍沒有任何保留清除（分析沒跑）才補做</summary>
+    private static readonly TimeSpan RetentionOnlyNotBefore = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// 已確認「今天做過保留清除」的日期。記在記憶體是為了不必每分鐘都建一次 StorageBackend
+    /// （建構時會做 schema 確認）去讀 retention_state；確認過一次當天就不再讀。
+    /// </summary>
+    private DateTime? _retentionConfirmedDate;
+
+    /// <summary>
+    /// 分析沒跑的日子單獨執行保留清除（排程停用、停擺、錯過窗口時保留期仍要生效）。
+    /// 條件：沒有執行中、現在已過中午、今天還沒做過保留清除。拿不到執行鎖就這次略過，下次輪詢再試。
+    /// 訊息只寫 NLog，不進執行狀態卡（這不是一趟分析執行）。例外只記警告，不影響下一次輪詢。
+    /// </summary>
+    private async Task RunRetentionIfDueAsync()
+    {
+        var now = DateTime.Now;
+        if (_runState.IsRunning || now.TimeOfDay < RetentionOnlyNotBefore || _retentionConfirmedDate == now.Date) return;
+
+        try
+        {
+            var (settings, dataRoot, retention) = ResolveRunSettings();
+            var lastRun = RetentionPruner.LastRunDate(new StorageBackend(settings.Storage, dataRoot));
+            // 24 小時內有取數執行開始過＝它本身就會（或已經）做保留清除（例如昨晚 22:00 的排程），
+            // 今天不必另外單獨清一次；排程停擺或停用時這個條件不成立，才由這裡接手
+            var fetchRanRecently = _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null)
+                .Any(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt >= now.AddHours(-24));
+            if (lastRun == now.Date || fetchRanRecently)
+            {
+                _retentionConfirmedDate = now.Date;
+                return;
+            }
+
+            var acquired = await _mutexGate.RunExclusiveAsync(async () =>
+            {
+                Log.Info("今天尚未執行保留清除（分析未執行），開始單獨執行保留清除。");
+                await _orchestrator.RunRetentionOnlyAsync(settings, dataRoot, retention, new NLogRunConsole());
+                _retentionConfirmedDate = now.Date;
+            }, MutexTimeout);
+
+            if (!acquired)
+                Log.Info("單獨保留清除取得執行鎖逾時（可能有其他執行個體正在跑），本次略過。");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "單獨保留清除失敗（下次輪詢再試）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>只寫 NLog 的 console：單獨保留清除的訊息不進執行狀態卡</summary>
+    private sealed class NLogRunConsole : IRunConsole
+    {
+        public void WriteLine(string message = "")
+        {
+            if (!string.IsNullOrWhiteSpace(message)) Log.Info(message.Trim());
+        }
+    }
 }

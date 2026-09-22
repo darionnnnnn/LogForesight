@@ -190,7 +190,7 @@ public class IssueRankingBuilder
             {
                 previous.TryGetValue(IssueProfile.KeyOf(a.Source, a.EventId), out var prev);
                 var rollup = LookupRollup(handlingByIssue, a);
-                var baselineKey = (SourceKey: a.Source.ToUpperInvariant(), a.EventId);
+                var baselineKey = (SourceKey: WorkOrderIssueKey.SourceKeyOf(a.Source), a.EventId);
                 baselines.TryGetValue(baselineKey, out var baseline);
                 fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
                 var resolvedFleetFirstSeen = firstSeenInFleet == default ? a.FirstSeen : firstSeenInFleet;

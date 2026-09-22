@@ -38,7 +38,7 @@ public static class DayHandlingDerivation
         IssueExclusion exclusion,
         DateTime recordDate)
     {
-        var handledKeys = issueHandlings.Select(h => h.IssueKey).ToHashSet(StringComparer.Ordinal);
+        var handledKeys = issueHandlings.Select(h => h.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
         var counted = new List<LogIssueSignature>();
         var mutedCounted = 0;
         foreach (var i in issues)
@@ -55,7 +55,7 @@ public static class DayHandlingDerivation
         var closedKeys = issueHandlings
             .Where(h => IssueHandlingStatuses.IsClosed(h.Status))
             .Select(h => h.IssueKey)
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(IssueSignatureKeyComparer.Instance);
 
         // 問題層級也能明確標成「處理中」（批次套用改版）：即使還沒有任何問題結案，
         // 只要有一個被標成 in_progress，這一天就不該再算 open——有人已經在動它了。

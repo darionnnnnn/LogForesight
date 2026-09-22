@@ -41,7 +41,9 @@ public class ComposeEffectiveRequestTests
             HostIds = new[] { 7L, 9L },
             BackfillOverride = 45,
             OnlyMissingOrFailed = true,
-            Trigger = "manual:tester"
+            Trigger = "manual:tester",
+            PrtgBackfillDays = 3,
+            CatchUpNote = "補跑：上一個排程窗口未執行，本趟回望 2 天"
         };
 
         var effective = SchedulerHostedService.ComposeEffectiveRequest(request, Options(false, true));
@@ -51,6 +53,15 @@ public class ComposeEffectiveRequestTests
         Assert.Equal(45, effective.BackfillOverride);
         Assert.True(effective.OnlyMissingOrFailed);
         Assert.Equal("manual:tester", effective.Trigger);
+        Assert.Equal(3, effective.PrtgBackfillDays);
+        Assert.Equal("補跑：上一個排程窗口未執行，本趟回望 2 天", effective.CatchUpNote);
+    }
+
+    /// <summary>夜間排程一律不接續補 PRTG 數值（只有手動立即執行勾選時才接續）。</summary>
+    [Fact]
+    public void 夜間排程請求不接續補PRTG數值()
+    {
+        Assert.Equal(0, SchedulerHostedService.ComposeScheduledRequest().PrtgBackfillDays);
     }
 
     /// <summary>DebugDump／IncludeLocal 一律以排程設定為準，覆寫呼叫端傳入的值。</summary>

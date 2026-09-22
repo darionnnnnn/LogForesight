@@ -21,6 +21,9 @@ public class SystemSettingsDto
     /// <summary>顯示中的日風險等級（高/中/低，docs/archive/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
+    /// <summary>全站預設常用語（回饋第 50 輪 C-4），一行一條</summary>
+    public List<string> DefaultNotePhrases { get; set; } = new();
+
     public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
     public string AiBaseUrl { get; set; } = "";
     public string AiModel { get; set; } = "local-model";
@@ -174,6 +177,9 @@ public class SystemSettingsDto
     /// <summary>PRTG 取數策略（conservative／aggressive）</summary>
     public string PrtgFetchStrategy { get; set; } = "";
 
+    /// <summary>數值取數對象是否適用（取數策略為激進時為 true）</summary>
+    public bool ValueFetchScopeApplies { get; set; }
+
     /// <summary>triggered-plus-list 模式額外納入的主機名稱</summary>
     public List<string> PrtgValueFetchExtraHosts { get; set; } = new();
 
@@ -230,6 +236,9 @@ public class UpdateSystemSettingsRequest
     /// <summary>顯示中的日風險等級（docs/archive/FEEDBACK-3-PLAN.md #8）；驗證要求必含「高」，
     /// 見 SystemSettingsService.Update</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
+
+    /// <summary>全站預設常用語（回饋第 50 輪 C-4）：去空白與重複後最多 20 條、每條最多 200 字</summary>
+    public List<string> DefaultNotePhrases { get; set; } = new();
 
     public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
 

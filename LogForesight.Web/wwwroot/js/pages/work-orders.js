@@ -336,7 +336,7 @@ function renderActiveTable(data) {
     renderTable(activeListContainer, {
         columns,
         rows: data.items,
-        empty: { title: '沒有符合條件的交辦單' }
+        empty: { title: '沒有符合條件的交辦單', hint: '請調整狀態、群組或勾選條件，或至「待派」頁籤查看可建立交辦的問題。' }
     });
 
     renderPagination(activePagerContainer, {
@@ -424,7 +424,7 @@ function renderLoadBoardTable(data) {
     renderTable(loadContainer, {
         columns,
         rows,
-        empty: { title: '尚無資料' }
+        empty: { title: '尚無資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無案件負載資料。' }
     });
 }
 
@@ -541,7 +541,7 @@ function renderGapsTable(data) {
     renderTable(gapsContainer, {
         columns,
         rows: data.rows,
-        empty: { title: '沒有符合條件的問題' }
+        empty: { title: '沒有符合條件的問題', hint: '目前區間內所有問題皆已指派交辦，或請調整上方的起訖日期。' }
     });
 
     renderPagination(gapsPagerContainer, {
@@ -639,7 +639,7 @@ function reloadMuted() {
 
 function renderMutedTable(rows, pausedCounts) {
     if (rows.length === 0) {
-        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題' });
+        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題', hint: '目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可在問題詳情中設定靜音。' });
         return;
     }
 

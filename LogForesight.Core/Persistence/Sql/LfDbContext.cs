@@ -116,7 +116,7 @@ public class LfDbContext : DbContext
             // 新 DB 則由 EnsureCreated 直接建好，兩條路徑最終 schema 相同
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
             e.HasIndex(x => new { x.LogKey, x.Seq });
-            e.HasIndex(x => new { x.LogKey, x.CreatedAt });
+            e.HasIndex(x => new { x.LogKey, x.CreatedAt }).HasDatabaseName("IX_lf_log_lines_log_key_created_at");
         });
 
         b.Entity<DailyRecordRow>(e =>
@@ -159,7 +159,7 @@ public class LfDbContext : DbContext
             // 錨定窗查詢（ReadRecent）與缺日判定（HasRecord）都以日期為主軸
             e.HasIndex(x => x.RecordDate);
             e.HasIndex(x => new { x.HostId, x.RecordDate });
-            e.HasIndex(x => x.ExtractVersion);   // DailyRecordBackfiller 的候選查詢
+            e.HasIndex(x => x.ExtractVersion).HasDatabaseName("IX_lf_daily_records_extract_version");   // DailyRecordBackfiller 的候選查詢
             e.HasIndex(x => new { x.AiPending, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_ai_pending_record_date"); // 全域待補查詢（批次C）
             // 可行動快照（ActionableOccurrences）的日層級篩選：risk_level IN (高/中) + 日期範圍。
             // 等值前導欄在前，範圍欄在後——只有 record_date 索引時整段期間都得逐列過濾 risk_level
@@ -173,6 +173,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.IssueId).HasColumnName("issue_id").ValueGeneratedOnAdd();
             e.Property(x => x.RecordId).HasColumnName("record_id");
             e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255);
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20);
             e.Property(x => x.SeverityRank).HasColumnName("severity_rank");
@@ -200,10 +201,11 @@ public class LfDbContext : DbContext
 
             e.HasIndex(x => x.RecordId);
             e.HasIndex(x => new { x.EventId, x.SourceName });   // 跨主機同簽章查詢
+            e.HasIndex(x => new { x.SourceKey, x.EventId, x.RecordDate }).HasDatabaseName("IX_lf_top_issues_source_key_event_date");
             e.HasIndex(x => x.Category);
             // 問題聚合的查詢形狀：期間 → 依簽章 GROUP BY
-            e.HasIndex(x => new { x.RecordDate, x.SourceName, x.EventId });
-            e.HasIndex(x => new { x.HostId, x.RecordDate });
+            e.HasIndex(x => new { x.RecordDate, x.SourceName, x.EventId }).HasDatabaseName("IX_lf_top_issues_date_signature");
+            e.HasIndex(x => new { x.HostId, x.RecordDate }).HasDatabaseName("IX_lf_top_issues_host_date");
             // 問題彙總查詢（HostIdsByIssue/LatestOccurrences/DailyHostCounts）的形狀是
             // event_id IN (…) + record_date 範圍：(record_date, …) 的前導欄是範圍等於掃整段期間，
             // 這裡補「等值前導」版本讓最佳化器能先縮到指定問題再吃日期範圍
@@ -253,9 +255,10 @@ public class LfDbContext : DbContext
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
             // 唯一鍵＝原 blob 的「同一 (主機, 日期, 問題) 只有一列」語意，由資料庫保證
-            e.HasIndex(x => new { x.HostNameKey, x.RecordDate, x.IssueKey }).IsUnique();
-            e.HasIndex(x => new { x.HostNameKey, x.RecordDate });   // GetForDay
-            e.HasIndex(x => x.CaseId);                              // GetByCase
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate, x.IssueKey }).IsUnique().HasDatabaseName("IX_lf_issue_handling_unique");
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate }).HasDatabaseName("IX_lf_issue_handling_host_date");   // GetForDay
+            e.HasIndex(x => x.CaseId).HasDatabaseName("IX_lf_issue_handling_case_id");   // GetByCase
+            e.HasIndex(x => new { x.IssueKey, x.UpdatedAt }).HasDatabaseName("IX_lf_issue_handling_issue_key_updated_at");   // GetLatestNote
         });
 
         b.Entity<IssueCaseRow>(e =>
@@ -279,8 +282,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
 
             // GetOpen／GetOpenForHost：同一 (主機, 問題簽章) 至多一個進行中案件的查詢形狀
-            e.HasIndex(x => new { x.HostNameKey, x.IssueKey, x.ClosedAt });
-            e.HasIndex(x => new { x.HandlerId, x.ClosedAt });   // GetOpenByHandler／GetByHandler
+            e.HasIndex(x => new { x.HostNameKey, x.IssueKey, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_host_issue_closed");
+            e.HasIndex(x => new { x.HandlerId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_handler_closed");   // GetOpenByHandler／GetByHandler
 
             // 交辦單成員（work_order_id）與依問題查（source_key 正規化大寫，同 lf_issue_first_seen 慣例）。
             // source_key：由 issue_key 解析；null＝尚未解析（等背景整併補）、''＝解析失敗（無法依問題查）
@@ -364,9 +367,9 @@ public class LfDbContext : DbContext
             e.Property(x => x.Note).HasColumnName("note");
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
 
-            e.HasIndex(x => new { x.HostNameKey, x.RecordDate }).IsUnique();
-            e.HasIndex(x => x.HandlerId);   // GetByHandler
-            e.HasIndex(x => x.Status);      // GetUnresolved
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate }).IsUnique().HasDatabaseName("IX_lf_record_handling_unique");
+            e.HasIndex(x => x.HandlerId).HasDatabaseName("IX_lf_record_handling_handler");   // GetByHandler
+            e.HasIndex(x => x.Status).HasDatabaseName("IX_lf_record_handling_status");      // GetUnresolved
         });
 
         b.Entity<IssueFirstSeenRow>(e =>
@@ -388,6 +391,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.Date).HasColumnName("date");
             e.Property(x => x.LogName).HasColumnName("log_name").HasMaxLength(255);
             e.Property(x => x.Source).HasColumnName("source").HasMaxLength(255);
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.EntryType).HasColumnName("entry_type");
             e.Property(x => x.EventTime).HasColumnName("event_time");
@@ -395,9 +399,11 @@ public class LfDbContext : DbContext
             e.Property(x => x.RuleId).HasColumnName("rule_id").HasMaxLength(64);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
+            e.HasIndex(x => new { x.HostId, x.Date, x.SourceKey, x.EventId })
+                .HasDatabaseName("IX_lf_risky_events_host_id_date_source_key_event_id");
             // AI 對話查詢形狀（host_id+date+source+event_id）；date 單獨一支供 Prune 清理
-            e.HasIndex(x => new { x.HostId, x.Date, x.Source, x.EventId });
-            e.HasIndex(x => x.Date);
+            e.HasIndex(x => new { x.HostId, x.Date, x.Source, x.EventId }).HasDatabaseName("IX_lf_risky_events_host_id_date_source_event_id");
+            e.HasIndex(x => x.Date).HasDatabaseName("IX_lf_risky_events_date");
         });
 
         b.Entity<PermissionChangeRow>(e =>
@@ -446,12 +452,12 @@ public class LfDbContext : DbContext
 
             // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeysForHost 走
             // (host_name_key, detected_at) 複合索引後才投影這一欄），而它又長到不適合當索引鍵。
-            e.HasIndex(x => x.ChangeId).IsUnique();
-            e.HasIndex(x => new { x.Status, x.DetectedAt });
-            e.HasIndex(x => x.DetectedAt);
-            e.HasIndex(x => new { x.HostNameKey, x.DetectedAt });
-            e.HasIndex(x => new { x.Category, x.Status });
-            e.HasIndex(x => x.CreatedAt);
+            e.HasIndex(x => x.ChangeId).IsUnique().HasDatabaseName("IX_lf_permission_changes_change_id");
+            e.HasIndex(x => new { x.Status, x.DetectedAt }).HasDatabaseName("IX_lf_permission_changes_status_detected_at");
+            e.HasIndex(x => x.DetectedAt).HasDatabaseName("IX_lf_permission_changes_detected_at");
+            e.HasIndex(x => new { x.HostNameKey, x.DetectedAt }).HasDatabaseName("IX_lf_permission_changes_host_detected");
+            e.HasIndex(x => new { x.Category, x.Status }).HasDatabaseName("IX_lf_permission_changes_category_status");
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_permission_changes_created_at");
         });
 
         b.Entity<ReportRow>(e =>
@@ -476,10 +482,10 @@ public class LfDbContext : DbContext
             // **host_name 必須納入鍵**：host_id = 0 是「未登記」的哨兵值而不是一台主機，
             // 兩台都還沒登記成功的主機在同一天會撞同一個鍵，只留 host_id 就會讓其中一台的
             // 報告覆蓋另一台——那正是本輪要修掉的檔名碰撞 bug 換個地方重演。
-            e.HasIndex(x => new { x.HostId, x.HostName, x.ReportDate, x.Kind }).IsUnique();
+            e.HasIndex(x => new { x.HostId, x.HostName, x.ReportDate, x.Kind }).IsUnique().HasDatabaseName("IX_lf_reports_host_date_kind");
             // 保留期清理依 created_at（不是 report_date）：重跑 100 天前的主機日時，
             // 依 report_date 清理會讓剛補出來的報告立刻消失。理由同 lf_permission_changes。
-            e.HasIndex(x => x.CreatedAt);
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_reports_created_at");
         });
 
         // ── PRTG 鏡像層資料表 ──────────────────────────────────────────
@@ -648,6 +654,8 @@ public class TopIssueRow
     public long IssueId { get; set; }
     public long RecordId { get; set; }
     public string SourceName { get; set; } = string.Empty;
+    /// <summary>依 WorkOrderIssueKey.SourceKeyOf 寫入；null 表示升級後尚待背景回填。</summary>
+    public string? SourceKey { get; set; }
     public int EventId { get; set; }
     public string Category { get; set; } = string.Empty;
     public int SeverityRank { get; set; }
@@ -690,6 +698,8 @@ public class RiskyEventRow
     public DateTime Date { get; set; }
     public string LogName { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+    /// <summary>依 WorkOrderIssueKey.SourceKeyOf 寫入；舊列在背景回填完成前為 null。</summary>
+    public string? SourceKey { get; set; }
     public int EventId { get; set; }
     public EventLogEntryType EntryType { get; set; }
     public DateTime EventTime { get; set; }

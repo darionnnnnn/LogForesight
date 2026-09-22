@@ -37,12 +37,12 @@ public sealed class IssueExclusion
         CacheToken = cacheToken;
     }
 
-    /// <summary>自問題檔案建立：收集所有有區間的問題，鍵為 (SourceName.ToUpperInvariant(), EventId)。</summary>
+    /// <summary>自問題檔案建立：收集所有有區間的問題，鍵為來源正規化鍵與 EventId。</summary>
     public static IssueExclusion From(IEnumerable<IssueProfile> profiles, DateTime today)
     {
         var day = today.Date;
         var spans = profiles
-            .SelectMany(p => p.Mutes.Select(m => new MuteSpan(p.SourceName.ToUpperInvariant(), p.EventId, m.From.Date, m.To.Date)))
+            .SelectMany(p => p.Mutes.Select(m => new MuteSpan(WorkOrderIssueKey.SourceKeyOf(p.SourceName), p.EventId, m.From.Date, m.To.Date)))
             // 排序讓 Spans 與 CacheToken 對同一份設定穩定（問題檔案的儲存順序不影響結果）
             .OrderBy(s => s.SourceKey, StringComparer.Ordinal)
             .ThenBy(s => s.EventId)
@@ -108,11 +108,11 @@ public sealed class IssueExclusion
     public const string CompositeKeySeparator = "#";
 
     /// <summary>
-    /// 問題組合鍵的唯一一份：「大寫來源#事件編號」（事件編號以 InvariantCulture 格式化）。
+    /// 問題組合鍵的唯一一份：「來源正規化鍵#事件編號」（事件編號以 InvariantCulture 格式化）。
     /// SQL 端的 <c>UPPER(source) + '#' + event_id</c> 與它逐字相同。
     /// </summary>
     public static string CompositeKey(string source, int eventId) =>
-        source.ToUpperInvariant() + CompositeKeySeparator + eventId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        WorkOrderIssueKey.SourceKeyOf(source) + CompositeKeySeparator + eventId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>目前靜音中問題的組合鍵（見 <see cref="CompositeKey"/>）。</summary>
     public IReadOnlyCollection<string> CurrentlyMutedCompositeKeys =>
@@ -121,13 +121,13 @@ public sealed class IssueExclusion
     private IReadOnlyCollection<string>? _currentlyMutedCompositeKeys;
 
     public bool IsCurrentlyMuted(string source, int eventId) =>
-        !IsEmpty && CurrentlyMuted.Contains((source.ToUpperInvariant(), eventId));
+        !IsEmpty && CurrentlyMuted.Contains((WorkOrderIssueKey.SourceKeyOf(source), eventId));
 
     /// <summary>單一規則的唯一記憶體實作（見類別註解）。日期判定呼叫 <see cref="MuteInterval.Covers"/>。</summary>
     public bool IsMuted(string source, int eventId, DateTime recordDate)
     {
         if (IsEmpty) return false;
-        var key = (source.ToUpperInvariant(), eventId);
+        var key = (WorkOrderIssueKey.SourceKeyOf(source), eventId);
         if (CurrentlyMuted.Contains(key)) return true;
         return _spansByKey.TryGetValue(key, out var spans) && spans.Any(s => MuteInterval.Covers(s.From, s.To, recordDate));
     }

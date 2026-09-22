@@ -46,7 +46,7 @@ public sealed class PrtgResourceGuardTests : IDisposable
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         return (client, handler);
     }
 
@@ -221,7 +221,7 @@ public sealed class PrtgResourceGuardTests : IDisposable
         {
             OnSend = (_, _) => throw new HttpRequestException("PRTG API 連線中斷")
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         var (recorder, _) = CreateRecorder();
         var console = new TestConsole();
         var settings = new SystemSettings
@@ -366,8 +366,8 @@ public sealed class PrtgResourceGuardTests : IDisposable
     /// <summary>
     /// 守門建構的故障隔離（體檢輪補）：`TryCreate` 是主流程唯一的建構入口，它任何一步擲例外
     /// 都會讓整趟夜間批次在啟動前就失敗——而守門的原則是「讀不到就放行」。
-    /// 用一個帶密文前綴但內容損毀的 token 讓 `PrtgClientFactory.Create` 的解密擲例外，
-    /// 斷言 TryCreate 回 null、不擲例外、且警告進了 Milestone 與 console。
+    /// 用一個帶密文前綴但內容損毀的 token：解不開的憑證等同未設定（CryptoHelper.TryDecrypt），
+    /// 斷言 TryCreate 回 null、不擲例外、且「認證未設定」警告進了 Milestone 與 console。
     /// </summary>
     [Fact]
     public void TryCreate_密文損毀時回null不擲例外且有警告()
@@ -381,8 +381,8 @@ public sealed class PrtgResourceGuardTests : IDisposable
         var guard = PrtgResourceGuard.TryCreate(settings, prtgStore, new EmptySentinelStore(), recorder, console, progress: null);
 
         Assert.Null(guard);
-        Assert.Contains(console.Lines, l => l.Contains("守門建構失敗"));
-        Assert.Contains(store.GetLogs(recorder.RunId), l => l.Message.Contains("守門建構失敗"));
+        Assert.Contains(console.Lines, l => l.Contains("認證未設定"));
+        Assert.Contains(store.GetLogs(recorder.RunId), l => l.Message.Contains("認證未設定"));
     }
 
     [Fact]

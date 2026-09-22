@@ -31,6 +31,8 @@ public interface IRecordHandlingStore
 
     /// <summary>單一風險日的完整處理歷程，依時間先後排序</summary>
     List<RecordHandlingLog> GetLogs(string hostName, DateTime date);
+    /// <summary>有明確原處理人證據的改派歷程，僅讀指定時間以後。</summary>
+    List<RecordHandlingLog> GetReassignments(long previousHandlerId, DateTime from);
 }
 
 /// <summary>
@@ -66,6 +68,21 @@ public interface IIssueHandlingStore
 
     /// <summary>清除某問題的標記（回到未處理）</summary>
     void Clear(string hostName, DateTime date, string issueKey);
+}
+
+/// <summary>
+/// 「沿用此問題上次的說明」的查詢（回饋第 50 輪 C-4）。由 <see cref="Sql.EfIssueHandlingStore"/> 實作；
+/// 獨立成窄介面是為了不讓 <see cref="IIssueHandlingStore"/> 的每個替身都得跟著實作一個用不到的方法。
+/// </summary>
+public interface IIssueNoteQuery
+{
+    /// <summary>
+    /// 此問題簽章最新一筆非空白說明（依 UpdatedAt 降冪）。
+    /// <paramref name="visibleHostNameKeys"/> 為 host_name_key 集合：null＝不限（全域可見者），
+    /// 非 null 時只在這些主機內找——空集合一律回 null。
+    /// </summary>
+    (string HostName, DateTime RecordDate, string Note, DateTime UpdatedAt)? GetLatestNote(
+        string issueKey, IReadOnlyCollection<string>? visibleHostNameKeys);
 }
 
 /// <summary>

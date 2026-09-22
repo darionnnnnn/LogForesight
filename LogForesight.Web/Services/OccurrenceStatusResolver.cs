@@ -57,11 +57,11 @@ public class OccurrenceStatusResolver
             if (!hostsById.TryGetValue(occurrence.HostId, out var host)) continue;
 
             var openCase = openCasesByHost.TryGetValue(host.HostName, out var cases)
-                ? cases.FirstOrDefault(c => string.Equals(c.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
+                ? cases.FirstOrDefault(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, occurrence.IssueKey))
                 : null;
             var handling = openCase == null && handlingsByHost.TryGetValue(host.HostName, out var rows)
                 ? rows.FirstOrDefault(h =>
-                    h.Date.Date == occurrence.LastSeen.Date && string.Equals(h.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
+                    h.Date.Date == occurrence.LastSeen.Date && IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, occurrence.IssueKey))
                 : null;
 
             var status = IssueGroupStatusResolver.Resolve(

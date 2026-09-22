@@ -11,11 +11,12 @@ namespace LogForesight.Tests;
 public class HelpContentServiceTests
 {
     private readonly HelpContentService _service = new();
+    private static readonly HashSet<LogForesight.Web.Auth.Capability> AdminCapabilities = new() { LogForesight.Web.Auth.Capability.Maintain };
 
     [Fact]
     public void 精靈導引卡在第一項且type與href正確()
     {
-        var manual = _service.GetManual(hideSetupWizard: false);
+        var manual = _service.GetManual(AdminCapabilities, hideSetupWizard: false);
 
         var first = manual.Chapters[0];
         Assert.Equal("setup-wizard", first.Id);
@@ -27,8 +28,8 @@ public class HelpContentServiceTests
     [Fact]
     public void Hidden時精靈導引卡被濾掉_其餘章節不受影響()
     {
-        var visible = _service.GetManual(hideSetupWizard: false);
-        var hidden = _service.GetManual(hideSetupWizard: true);
+        var visible = _service.GetManual(AdminCapabilities, hideSetupWizard: false);
+        var hidden = _service.GetManual(AdminCapabilities, hideSetupWizard: true);
 
         Assert.Equal(visible.Chapters.Count - 1, hidden.Chapters.Count);
         Assert.DoesNotContain(hidden.Chapters, c => c.Id == "setup-wizard");
@@ -43,7 +44,7 @@ public class HelpContentServiceTests
     [Fact]
     public void 既有Markdown章節_Type預設markdown且內容非空()
     {
-        var markdownChapters = _service.GetManual().Chapters.Where(c => c.Id != "setup-wizard").ToList();
+        var markdownChapters = _service.GetManual(AdminCapabilities).Chapters.Where(c => c.Id != "setup-wizard").ToList();
 
         Assert.NotEmpty(markdownChapters);
         Assert.All(markdownChapters, c =>
@@ -87,7 +88,7 @@ public class HelpContentServiceTests
     [Fact]
     public void GetManual回傳的章節只帶使用者版內容()
     {
-        var manual = _service.GetManual();
+        var manual = _service.GetManual(AdminCapabilities);
 
         foreach (var dto in manual.Chapters.Where(c => c.Id != "setup-wizard"))
         {

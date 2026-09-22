@@ -78,7 +78,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         return (client, handler);
     }
 
@@ -106,7 +106,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 回填不跑結構同步、sensor 清單來自鏡像——沒預置的話整趟是「0 個 sensor 的空跑」，
         // 這個測試就變成在替「空跑報成功」背書（換模型體檢抓到的假通過形狀）
@@ -176,7 +176,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 回填不跑結構同步，sensor 清單改從鏡像讀——先把結構準備好，才是真實的回填前提
         store.UpsertSensors(new List<PrtgSensorRow>
@@ -199,7 +199,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 預置鏡像，讓失敗真的來自 PRTG 回 503，而不是「鏡像為空」的入口防線
         store.UpsertSensors(new List<PrtgSensorRow>
@@ -219,7 +219,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var (client, _) = CreateClient(_ => JsonResponse("{}"));
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, 2, console, CancellationToken.None, Array.Empty<long>());
         var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, 2, console, CancellationToken.None, Array.Empty<long>());
@@ -258,7 +258,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 預置鏡像：鏡像為空時 FetchDayAsync 在入口就短路，走不到會回報 sensor 進度的數值階段
         store.UpsertSensors(new List<PrtgSensorRow>
@@ -302,7 +302,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 預置鏡像 sensor（回填不跑結構同步）；沒預置的話整趟空跑，「不寫對應」會變成恆真斷言
         store.UpsertSensors(new List<PrtgSensorRow>
@@ -343,7 +343,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         store.UpsertSensors(new List<PrtgSensorRow>
         {
@@ -402,7 +402,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(
             fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>(),
@@ -457,7 +457,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(
             fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>(),
@@ -506,7 +506,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(
             fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>(),
@@ -544,7 +544,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         store.UpsertSensors(new List<PrtgSensorRow>
         {
@@ -598,7 +598,7 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 預置 4 個 sensor
         store.UpsertSensors(new List<PrtgSensorRow>
@@ -731,7 +731,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, new long[] { 1001, 1002 }, store, records);
 
@@ -763,7 +763,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
@@ -786,7 +786,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
@@ -808,7 +808,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, new long[] { 1001 }, store, records);
 
@@ -839,7 +839,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             }
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-        var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, cts.Token, Array.Empty<long>(), store, records));
@@ -910,7 +910,8 @@ public class PrtgBackfillRunnerTests : IDisposable
             }, DateTime.Now);
             Service = new PrtgBackfillService(
                 Settings, Backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore());
+                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore(),
+                new PrtgStructureSyncService(Settings, Backend, SyncState, Scheduler, new HostStore(Backend.Blob("hosts")), new PrtgStructureSyncStatusStore(Backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
         }
 
         public void AddMap(string status) =>

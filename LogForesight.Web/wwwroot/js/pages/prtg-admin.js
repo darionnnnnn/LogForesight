@@ -2,17 +2,18 @@
  * PRTG 維護（「系統管理 > PRTG 維護」頁）：連線設定、擷取參數、鏡像狀態與環境探測。
  */
 
-import { api } from '../core/api.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
-    collectLines, numberOr
+    collectLines, numberOr, renderTable, renderError
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
-import { PRTG_SCOPE_OFF, toScopeSelectValue } from '../core/prtg-scope-labels.js';
+import { PRTG_SCOPE_OFF, toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
+import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
@@ -173,7 +174,7 @@ async function loadPrtgSettings() {
 }
 
 /**
- * 取數範圍切換：只有「觸發主機＋指定清單」需要主機名稱輸入框；
+ * 數值取數對象切換：只有「觸發主機＋指定清單」需要主機名稱輸入框；
  * 選「關閉」時連「估算規模」都沒有意義（不會取數），一併藏起來。
  * 用 classList 切換而非 style.display（同本頁認證方式切換的既有作法）。
  */
@@ -197,6 +198,16 @@ function syncStrategyHint() {
     const isAggressive = (select ? select.value : '') === 'aggressive';
     document.getElementById('prtg-strategy-aggressive-hint')
         ?.classList.toggle('d-none', !isAggressive);
+
+    const scopeSelect = document.getElementById('prtg-value-fetch-scope');
+    const inapplicableHint = document.getElementById('prtg-scope-inapplicable-hint');
+    if (scopeSelect) {
+        scopeSelect.disabled = !isAggressive;
+    }
+    if (inapplicableHint) {
+        inapplicableHint.textContent = prtgScopeInapplicableText(false);
+        inapplicableHint.classList.toggle('d-none', isAggressive);
+    }
 }
 
 /**
@@ -216,7 +227,13 @@ function bindScopeControls() {
     if (select) select.addEventListener('change', syncScopeFields);
 
     const strategySelect = document.getElementById('prtg-fetch-strategy');
-    if (strategySelect) strategySelect.addEventListener('change', syncStrategyHint);
+    if (strategySelect) strategySelect.addEventListener('change', () => {
+        syncStrategyHint();
+        const aggressive = strategySelect.value === 'aggressive';
+        document.getElementById('prtg-fetch-concurrency').value = aggressive ? '4' : '2';
+        document.getElementById('prtg-timeout-seconds').value = aggressive ? '120' : '60';
+        document.getElementById('prtg-strategy-suggested-hint')?.classList.remove('d-none');
+    });
 
     const button = document.getElementById('prtg-scope-estimate-btn');
     const result = document.getElementById('prtg-scope-estimate-result');
@@ -243,7 +260,7 @@ function bindScopeControls() {
             }
 
             if (snapshotResult) {
-                const snapBase = `快照（不受取數範圍影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
+                const snapBase = `快照（不受數值取數對象影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
                 if (res.snapshotWarning) {
                     snapshotResult.className = 'text-warning small d-block';
                     snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}`;
@@ -412,6 +429,14 @@ function bindParamsForm() {
             await api.put('/api/admin/settings/prtg', payload);
             toast('已儲存', 'success');
             await loadSettings();
+            if (enabled && await confirmAction({
+                title: '擷取參數已儲存',
+                message: '要現在同步 PRTG 結構與主機對應嗎？這會讓新主機較快進入監看範圍。',
+                confirmText: '現在同步',
+                confirmVariant: 'primary'
+            })) {
+                document.getElementById('prtg-structure-sync-btn')?.click();
+            }
         } catch {
             // 錯誤訊息已由 api.js 以 toast 顯示
         } finally {
@@ -467,28 +492,152 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-ip-exclude-count', formatNumber(data.ipExcludeCount || 0));
     setTxt('prtg-mirror-whitelist-count', formatNumber(data.whitelistSensorCount));
     setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
+
+    renderPrtgFreshness(data.freshness ?? []);
+}
+
+/** 鏡像頁「擷取紀錄」：各類資料最後一次成功擷取；連續取得 0 筆的列加警示 */
+function renderPrtgFreshness(items) {
+    const el = document.getElementById('prtg-mirror-freshness');
+    if (!el) return;
+    renderTable(el, {
+        columns: [
+            { title: '類別', render: f => prtgFreshnessLabel(f.category) },
+            { title: '最後成功', render: f => formatDateTime(f.lastSuccessAt) },
+            {
+                title: '取得筆數',
+                render: f => {
+                    if (!f.suspicious) return formatNumber(f.lastCount);
+                    const warn = document.createElement('span');
+                    warn.className = 'text-warning fw-semibold';
+                    warn.textContent = `${formatNumber(f.lastCount)}（連續 ${f.zeroStreak} 次取得 0 筆）`;
+                    return warn;
+                }
+            }
+        ],
+        rows: items,
+        empty: { title: '尚無擷取紀錄', hint: '結構同步、快照或取數成功完成後會記錄在這裡。' }
+    });
 }
 
 // ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
 
 let conflictPage = 1;
 let conflictPageSize = loadPageSize('prtg-conflicts');
+const selectedConflictDeviceObjids = new Set();
+let currentConflictItems = [];
 
-async function refreshConflicts(page = conflictPage) {
+function clearConflictSelection(silent = false) {
+    const hadSelection = selectedConflictDeviceObjids.size > 0;
+    selectedConflictDeviceObjids.clear();
+    updateConflictBatchBar();
+    const selectAll = document.getElementById('prtg-conflict-select-all');
+    if (selectAll) {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+    }
+    if (!silent && hadSelection) {
+        toast('換頁或重新整理已清空選取項目，避免隱藏選取。', 'info');
+    }
+}
+
+function updateConflictBatchBar() {
+    const count = selectedConflictDeviceObjids.size;
+    const countEl = document.getElementById('prtg-conflict-selected-count');
+    if (countEl) {
+        countEl.textContent = `已選 ${count} 台`;
+    }
+    const submitBtn = document.getElementById('prtg-conflict-batch-submit');
+    if (submitBtn) {
+        submitBtn.disabled = (count === 0);
+    }
+
+    const selectAll = document.getElementById('prtg-conflict-select-all');
+    if (selectAll) {
+        if (currentConflictItems.length === 0) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        } else {
+            const pageObjids = currentConflictItems.map(i => i.deviceObjid);
+            const selectedOnPage = pageObjids.filter(id => selectedConflictDeviceObjids.has(id));
+            if (selectedOnPage.length === pageObjids.length) {
+                selectAll.checked = true;
+                selectAll.indeterminate = false;
+            } else if (selectedOnPage.length > 0) {
+                selectAll.checked = false;
+                selectAll.indeterminate = true;
+            } else {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+            }
+        }
+    }
+}
+
+function renderConflictsLoading() {
+    const tbody = document.getElementById('prtg-mirror-conflicts-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.className = 'text-muted text-center py-2';
+    td.textContent = '載入中…';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function renderConflictsError(errorMessage) {
+    const tbody = document.getElementById('prtg-mirror-conflicts-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.className = 'text-danger text-center py-2';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = `載入衝突清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
+    retryBtn.textContent = '重試';
+    retryBtn.addEventListener('click', () => refreshConflicts(conflictPage));
+    td.append(textSpan, retryBtn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
+}
+
+async function refreshConflicts(page = conflictPage, options = {}) {
+    const pageChanged = (page !== conflictPage);
     conflictPage = page;
+    if (!options.preserveSelection) {
+        clearConflictSelection(!pageChanged && options.silentClear === true);
+    }
+    renderConflictsLoading();
     try {
         const res = await api.get(`/api/admin/settings/prtg-host-map?status=conflict&page=${conflictPage}&pageSize=${conflictPageSize}`, { silent: true });
         const total = (res && res.total) ? res.total : 0;
         const totalPages = Math.ceil(total / conflictPageSize);
 
         if (conflictPage > totalPages && totalPages > 0) {
-            return refreshConflicts(totalPages);
+            return refreshConflicts(totalPages, options);
         }
 
-        renderConflicts((res && res.items) ? res.items : []);
+        currentConflictItems = (res && res.items) ? res.items : [];
+        if (options.preserveSelection) {
+            const visibleIds = new Set(currentConflictItems.map(i => i.deviceObjid));
+            const hiddenCount = [...selectedConflictDeviceObjids].filter(id => !visibleIds.has(id)).length;
+            for (const id of [...selectedConflictDeviceObjids]) {
+                if (!visibleIds.has(id)) selectedConflictDeviceObjids.delete(id);
+            }
+            if (hiddenCount > 0) toast(`${hiddenCount} 台裝置已不在目前頁，已取消選取。`, 'info');
+        }
+        renderConflicts(currentConflictItems);
         renderConflictPagination(totalPages);
-    } catch {
-        // 失敗時不干擾整體頁面
+        updateConflictBatchBar();
+    } catch (error) {
+        renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
     }
 }
 
@@ -500,7 +649,7 @@ function renderConflicts(items) {
     if (!items || items.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 5;
+        td.colSpan = 6;
         td.className = 'text-muted text-center py-2';
         td.textContent = '無衝突項目';
         tr.appendChild(td);
@@ -510,6 +659,25 @@ function renderConflicts(items) {
 
     for (const item of items) {
         const tr = document.createElement('tr');
+
+        const tdCheck = document.createElement('td');
+        tdCheck.className = 'text-center';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input prtg-conflict-row-check';
+        checkbox.value = String(item.deviceObjid);
+        checkbox.dataset.objid = String(item.deviceObjid);
+        checkbox.setAttribute('aria-label', `選取裝置 ${item.deviceObjid}`);
+        checkbox.checked = selectedConflictDeviceObjids.has(item.deviceObjid);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                selectedConflictDeviceObjids.add(item.deviceObjid);
+            } else {
+                selectedConflictDeviceObjids.delete(item.deviceObjid);
+            }
+            updateConflictBatchBar();
+        });
+        tdCheck.appendChild(checkbox);
 
         const tdDevice = document.createElement('td');
         tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
@@ -565,6 +733,7 @@ function renderConflicts(items) {
                     await Promise.all([
                         refreshPrtgMirror(),
                         refreshConflicts(conflictPage),
+                        refreshUnmatched(unmatchedPage),
                         refreshIpExcludes()
                     ]);
                 } catch (error) {
@@ -574,7 +743,7 @@ function renderConflicts(items) {
         }
         tdAction.appendChild(excludeBtn);
 
-        tr.append(tdDevice, tdIp, tdKind, tdNote, tdAction);
+        tr.append(tdCheck, tdDevice, tdIp, tdKind, tdNote, tdAction);
         tbody.appendChild(tr);
     }
 }
@@ -599,12 +768,215 @@ function renderConflictPagination(totalPages) {
     });
 }
 
+// ── PRTG 未對應清單 ──────────────────────────────────────────────────
+
+let unmatchedPage = 1;
+let unmatchedPageSize = loadPageSize('prtg-unmatched');
+
+function renderUnmatchedLoading() {
+    const tbody = document.getElementById('prtg-unmatched-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-muted text-center py-2';
+    td.textContent = '載入中…';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function renderUnmatchedError(errorMessage) {
+    const tbody = document.getElementById('prtg-unmatched-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-danger text-center py-2';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = `載入未對應清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
+    retryBtn.textContent = '重試';
+    retryBtn.addEventListener('click', () => refreshUnmatched(unmatchedPage));
+    td.append(textSpan, retryBtn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    document.getElementById('prtg-unmatched-pagination')?.replaceChildren();
+}
+
+async function refreshUnmatched(page = unmatchedPage) {
+    unmatchedPage = page;
+    renderUnmatchedLoading();
+    try {
+        const res = await api.get(`/api/admin/settings/prtg-host-map?status=unmatched&page=${unmatchedPage}&pageSize=${unmatchedPageSize}`, { silent: true });
+        const total = (res && res.total) ? res.total : 0;
+        const totalPages = Math.ceil(total / unmatchedPageSize);
+
+        if (unmatchedPage > totalPages && totalPages > 0) {
+            return refreshUnmatched(totalPages);
+        }
+
+        renderUnmatched((res && res.items) ? res.items : []);
+        renderUnmatchedPagination(totalPages);
+    } catch (error) {
+        renderUnmatchedError(error && error.message ? error.message : '載入未對應清單失敗');
+    }
+}
+
+function renderUnmatched(items) {
+    const tbody = document.getElementById('prtg-unmatched-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+
+    if (!items || items.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'text-muted text-center py-2';
+        td.textContent = '無未對應項目';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    for (const item of items) {
+        const tr = document.createElement('tr');
+
+        const tdDevice = document.createElement('td');
+        tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
+
+        const tdIp = document.createElement('td');
+        tdIp.className = 'font-monospace';
+        tdIp.textContent = item.ip || '-';
+
+        const tdKind = document.createElement('td');
+        const kindBadge = document.createElement('span');
+        if (item.conflictKind === 'multi-device') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '同 IP 多裝置';
+        } else if (item.conflictKind === 'multi-host') {
+            kindBadge.className = 'badge bg-info text-dark';
+            kindBadge.textContent = 'IP 對多主機';
+        } else if (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched') {
+            kindBadge.className = 'badge bg-secondary';
+            kindBadge.textContent = '未對應';
+        } else {
+            kindBadge.className = 'badge bg-secondary';
+            kindBadge.textContent = item.conflictKind || '-';
+        }
+        tdKind.appendChild(kindBadge);
+
+        const tdNote = document.createElement('td');
+        tdNote.className = 'text-muted';
+        tdNote.textContent = item.note || '-';
+
+        const tdAction = document.createElement('td');
+        const assignBtn = document.createElement('button');
+        assignBtn.type = 'button';
+        assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
+        assignBtn.textContent = '指派';
+        assignBtn.addEventListener('click', () => openAssignModal(item));
+        tdAction.appendChild(assignBtn);
+
+        const excludeBtn = document.createElement('button');
+        excludeBtn.type = 'button';
+        excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
+        excludeBtn.textContent = '排除此 IP';
+        if (!item.ip) {
+            excludeBtn.disabled = true;
+            excludeBtn.title = '此 device 沒有 IP';
+        } else {
+            excludeBtn.addEventListener('click', async () => {
+                const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
+                const confirmed = await confirmAction({
+                    message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
+                });
+                if (!confirmed) return;
+                try {
+                    const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null });
+                    toast('已排除此 IP', 'success');
+                    notifyRemapWarning(res);
+                    await Promise.all([
+                        refreshPrtgMirror(),
+                        refreshConflicts(conflictPage),
+                        refreshUnmatched(unmatchedPage),
+                        refreshIpExcludes()
+                    ]);
+                } catch (error) {
+                    toast(error && error.message ? error.message : '排除失敗', 'danger');
+                }
+            });
+        }
+        tdAction.appendChild(excludeBtn);
+
+        tr.append(tdDevice, tdIp, tdKind, tdNote, tdAction);
+        tbody.appendChild(tr);
+    }
+}
+
+function renderUnmatchedPagination(totalPages) {
+    const container = document.getElementById('prtg-unmatched-pagination');
+    if (!container) return;
+
+    renderPagination(container, {
+        page: unmatchedPage,
+        totalPages,
+        onPage: page => {
+            refreshUnmatched(page);
+        },
+        pageSize: unmatchedPageSize,
+        onPageSize: size => {
+            unmatchedPageSize = size;
+            savePageSize('prtg-unmatched', size);
+            refreshUnmatched(1);
+        },
+        pageSizeOptions: PAGE_SIZE_OPTIONS
+    });
+}
+
+function renderIpExcludesLoading() {
+    const tbody = document.getElementById('prtg-ip-excludes-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-muted text-center py-2';
+    td.textContent = '載入中…';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function renderIpExcludesError(errorMessage) {
+    const tbody = document.getElementById('prtg-ip-excludes-body');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'text-danger text-center py-2';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = `載入 IP 排除清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
+    retryBtn.textContent = '重試';
+    retryBtn.addEventListener('click', () => refreshIpExcludes());
+    td.append(textSpan, retryBtn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
 async function refreshIpExcludes() {
+    renderIpExcludesLoading();
     try {
         const items = await api.get('/api/admin/settings/prtg-ip-excludes', { silent: true });
         renderIpExcludes(items || []);
-    } catch {
-        // 失敗時不干擾整體頁面
+    } catch (error) {
+        renderIpExcludesError(error && error.message ? error.message : '載入 IP 排除清單失敗');
     }
 }
 
@@ -658,6 +1030,7 @@ function renderIpExcludes(items) {
                 await Promise.all([
                     refreshPrtgMirror(),
                     refreshConflicts(conflictPage),
+                    refreshUnmatched(unmatchedPage),
                     refreshIpExcludes()
                 ]);
             } catch (error) {
@@ -727,6 +1100,7 @@ function renderManualMaps(items) {
                 await Promise.all([
                     refreshPrtgMirror(),
                     refreshConflicts(conflictPage),
+                    refreshUnmatched(unmatchedPage),
                     refreshIpExcludes()
                 ]);
             } catch (error) {
@@ -925,6 +1299,7 @@ function bindAssignForm() {
             await Promise.all([
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
+                refreshUnmatched(unmatchedPage),
                 refreshIpExcludes()
             ]);
         } catch (error) {
@@ -933,6 +1308,132 @@ function bindAssignForm() {
             restore();
         }
     });
+}
+
+function populateBatchHostSelect(selectEl, hosts) {
+    if (!selectEl) return;
+    const currentVal = selectEl.value;
+    selectEl.innerHTML = '<option value="">請選擇目標主機…</option>';
+    for (const host of hosts) {
+        const option = document.createElement('option');
+        option.value = String(host.hostId);
+        option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
+        if (currentVal && option.value === currentVal) {
+            option.selected = true;
+        }
+        selectEl.appendChild(option);
+    }
+}
+
+async function ensureBatchHostsLoaded() {
+    const hostSelect = document.getElementById('prtg-conflict-batch-host');
+    if (!hostSelect) return;
+    if (cachedHosts && cachedHosts.length > 0) {
+        populateBatchHostSelect(hostSelect, cachedHosts);
+        return;
+    }
+    try {
+        cachedHosts = await api.get('/api/admin/hosts/all', { silent: true });
+        populateBatchHostSelect(hostSelect, cachedHosts || []);
+    } catch {
+        hostSelect.innerHTML = '<option value="">載入主機清單失敗</option>';
+    }
+}
+
+function bindConflictBatchControls() {
+    const selectAll = document.getElementById('prtg-conflict-select-all');
+    if (selectAll) {
+        selectAll.addEventListener('change', () => {
+            const shouldCheck = selectAll.checked;
+            for (const item of currentConflictItems) {
+                if (shouldCheck) {
+                    selectedConflictDeviceObjids.add(item.deviceObjid);
+                } else {
+                    selectedConflictDeviceObjids.delete(item.deviceObjid);
+                }
+            }
+            const rowCheckboxes = document.querySelectorAll('.prtg-conflict-row-check');
+            for (const cb of rowCheckboxes) {
+                cb.checked = shouldCheck;
+            }
+            updateConflictBatchBar();
+        });
+    }
+
+    const submitBtn = document.getElementById('prtg-conflict-batch-submit');
+    const hostSelect = document.getElementById('prtg-conflict-batch-host');
+    const noteInput = document.getElementById('prtg-conflict-batch-note');
+
+    if (submitBtn) {
+        submitBtn.addEventListener('click', async () => {
+            const selectedIds = Array.from(selectedConflictDeviceObjids);
+            if (selectedIds.length === 0) {
+                toast('請先勾選欲指派的裝置', 'warning');
+                return;
+            }
+
+            const hostIdVal = hostSelect?.value;
+            if (!hostIdVal) {
+                toast('請選擇目標主機', 'warning');
+                return;
+            }
+            const targetHostId = Number(hostIdVal);
+            const selectedHostText = hostSelect.options[hostSelect.selectedIndex]?.textContent || `主機 #${targetHostId}`;
+
+            const confirmed = await confirmAction({
+                message: `確認將已選取的 ${selectedIds.length} 台 PRTG 裝置指派給主機「${selectedHostText}」？`
+            });
+            if (!confirmed) return;
+
+            const note = noteInput?.value.trim() || null;
+            const restore = withBusy(submitBtn, '處理中');
+
+            try {
+                const res = await api.put('/api/admin/settings/prtg-manual-map/batch', {
+                    hostId: targetHostId,
+                    deviceObjids: selectedIds,
+                    note
+                });
+
+                const succeeded = res?.succeededIds || [];
+                const failedDeviceObjid = res?.failedDeviceObjid;
+                const failureMessage = res?.failureMessage;
+                const remapWarning = res?.remapWarning;
+
+                for (const id of succeeded) {
+                    selectedConflictDeviceObjids.delete(id);
+                }
+
+                if (!failedDeviceObjid) {
+                    toast(`已成功指派 ${succeeded.length} 台裝置`, 'success');
+                    if (noteInput) noteInput.value = '';
+                } else {
+                    const failMsg = `指派裝置 ${failedDeviceObjid} 失敗：${failureMessage || '儲存失敗'}。已成功 ${succeeded.length} 筆，其餘未處理。`;
+                    toast(failMsg, 'danger');
+                }
+
+                if (remapWarning) {
+                    toast(remapWarning, 'warning');
+                }
+                if (res?.auditWarning) {
+                    toast(res.auditWarning, 'warning');
+                }
+
+                await Promise.all([
+                    refreshPrtgMirror(),
+                    refreshConflicts(conflictPage, { preserveSelection: true }),
+                    refreshUnmatched(unmatchedPage),
+                    refreshIpExcludes()
+                ]);
+            } catch (error) {
+                toast(error && error.message ? error.message : '批次指派失敗', 'danger');
+                await refreshConflicts(conflictPage, { preserveSelection: true });
+            } finally {
+                restore();
+                updateConflictBatchBar();
+            }
+        });
+    }
 }
 
 async function refreshPrtgMirror() {
@@ -946,6 +1447,71 @@ async function refreshPrtgMirror() {
     } catch {
         // 失敗時不干擾整體頁面
     }
+    await refreshScopePurge();
+}
+
+// ── 監看範圍外資料（預覽＋確認清除）────────────────────────────────────
+
+function renderScopePurge(preview) {
+    const btn = document.getElementById('prtg-scope-purge-btn');
+    const blockedEl = document.getElementById('prtg-scope-purge-blocked');
+    const summaryEl = document.getElementById('prtg-scope-purge-summary');
+    const devicesEl = document.getElementById('prtg-scope-purge-devices');
+    if (!btn || !blockedEl || !summaryEl || !devicesEl) return;
+
+    // 自動清除被擋下的原因（縮小保護／第一次）：外部來源無關的站內字串，仍一律 textContent
+    blockedEl.textContent = preview.blockedReason
+        ? `夜間自動清除未執行（${formatDateTime(preview.blockedAt)}）：${preview.blockedReason}`
+        : '';
+    blockedEl.classList.toggle('d-none', !preview.blockedReason);
+
+    if (!preview.success) {
+        summaryEl.textContent = preview.errorMessage || '目前無法預覽。';
+        devicesEl.textContent = '';
+        btn.disabled = true;
+        return;
+    }
+
+    const baseline = preview.baselineAt
+        ? `基準：${formatDateTime(preview.baselineAt)} 清除時 ${formatNumber(preview.baselineDeviceCount)} 台`
+        : '尚無基準（還沒清除過）';
+    summaryEl.textContent = `監看裝置 ${formatNumber(preview.monitoredDevices)} 台；範圍外數值 ${formatNumber(preview.values)} 筆、`
+        + `狀態變更 ${formatNumber(preview.stateChanges)} 筆，涉及 ${formatNumber(preview.affectedDevices)} 台裝置`
+        + (preview.unknownSensors > 0 ? `及 ${formatNumber(preview.unknownSensors)} 顆鏡像已無的感測器` : '')
+        + `。${baseline}`;
+    const names = Array.isArray(preview.topDeviceNames) ? preview.topDeviceNames : [];
+    devicesEl.textContent = names.length > 0
+        ? `裝置：${names.join('、')}${preview.affectedDevices > names.length ? ' 等' : ''}`
+        : '';
+    btn.disabled = preview.values + preview.stateChanges === 0;
+}
+
+async function refreshScopePurge() {
+    try {
+        renderScopePurge(await api.get('/api/admin/settings/prtg-scope-purge/preview', { silent: true }));
+    } catch {
+        // 失敗時不干擾整體頁面
+    }
+}
+
+function bindScopePurge() {
+    const btn = document.getElementById('prtg-scope-purge-btn');
+    btn?.addEventListener('click', async () => {
+        const confirmed = await confirmAction({
+            message: '確定要清除監看範圍外的 PRTG 數值與狀態變更嗎？刪除後無法復原（重新納入監看的裝置只能靠回填補回保留期內的資料）。'
+        });
+        if (!confirmed) return;
+        const restore = withBusy(btn, '清除中');
+        try {
+            const res = await api.post('/api/admin/settings/prtg-scope-purge/confirm', {});
+            toast(`已清除數值 ${formatNumber(res.values)} 筆、狀態變更 ${formatNumber(res.stateChanges)} 筆`, 'success');
+        } catch {
+            // 錯誤已由 api.js 顯示
+        } finally {
+            restore();
+        }
+        await refreshScopePurge();
+    });
 }
 
 function bindPrtgMirror() {
@@ -956,6 +1522,7 @@ function bindPrtgMirror() {
             await Promise.all([
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
+                refreshUnmatched(unmatchedPage),
                 refreshIpExcludes()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
@@ -975,9 +1542,15 @@ function renderPrtgProbeStatus(status) {
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
     const startButton = document.getElementById('prtg-probe-start');
+    const cancelBtn = document.getElementById('prtg-probe-cancel');
     const statusEl = document.getElementById('prtg-probe-status');
 
     if (!outputEl || !copyButton || !startButton || !statusEl) return;
+
+    if (cancelBtn) {
+        cancelBtn.classList.toggle('d-none', !status.isRunning);
+        if (!status.isRunning) cancelBtn.disabled = false;
+    }
 
     const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
     outputEl.value = outputText;
@@ -988,7 +1561,7 @@ function renderPrtgProbeStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
-        setSpinnerText(statusEl, `探測中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `探測中…${elapsedSinceText(status.startedAt)}${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
@@ -997,8 +1570,10 @@ function renderPrtgProbeStatus(status) {
         statusEl.textContent = '';
         return;
     }
-    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ` +
-        (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+    const outcomeText = status.cancelled
+        ? '已停止'
+        : (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+    statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ${outcomeText}`;
 }
 
 async function refreshPrtgProbeStatus() {
@@ -1025,6 +1600,7 @@ async function refreshPrtgProbeStatus() {
 
 function bindPrtgProbe() {
     const startButton = document.getElementById('prtg-probe-start');
+    const cancelBtn = document.getElementById('prtg-probe-cancel');
     const copyButton = document.getElementById('prtg-probe-copy');
     const outputEl = document.getElementById('prtg-probe-output');
     if (!startButton || !copyButton || !outputEl) return;
@@ -1049,6 +1625,19 @@ function bindPrtgProbe() {
         }
     });
 
+    cancelBtn?.addEventListener('click', async () => {
+        const restore = withBusy(cancelBtn, '停止中');
+        try {
+            await api.post('/api/admin/settings/prtg-probe/cancel', {});
+            toast('已送出停止探測要求', 'success');
+            await refreshPrtgProbeStatus();
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示
+        } finally {
+            restore();
+        }
+    });
+
     copyButton.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(outputEl.value);
@@ -1057,6 +1646,62 @@ function bindPrtgProbe() {
             toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
         }
     });
+}
+
+function bindProbeWhitelistFill() {
+    const button = document.getElementById('prtg-sensor-whitelist-probe-fill-btn');
+    const input = document.getElementById('prtg-sensor-type-whitelist');
+    if (!button || !input) return;
+    button.addEventListener('click', async () => {
+        const restore = withBusy(button, '讀取中');
+        try {
+            const status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
+            if (status.isRunning || !status.completedAt) {
+                toast('請先完成一次 PRTG 環境探測，再帶入觀察到的感測器類型。', 'warning');
+                return;
+            }
+            const types = parseProbeSensorTypes(status.output);
+            if (types.length === 0) {
+                toast('這次探測沒有取得可用的 Type 分布，原白名單未變更。', 'warning');
+                return;
+            }
+            if (input.value.trim() && !await confirmAction({
+                title: '取代目前的白名單？',
+                message: `探測共觀察到 ${types.length} 種類型。這會取代目前輸入的內容，但不會自動儲存。`,
+                confirmText: '帶入類型',
+                confirmVariant: 'primary'
+            })) return;
+            input.value = types.join('\n');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            toast(`已帶入 ${types.length} 種抽樣類型，請確認內容再儲存。`, 'success');
+        } catch (error) {
+            toast(error?.message || '無法讀取環境探測結果。', 'danger');
+        } finally {
+            restore();
+        }
+    });
+}
+
+async function refreshScheduleWarning() {
+    const banner = document.getElementById('prtg-schedule-banner');
+    if (!banner) return;
+    try {
+        const status = await api.get('/api/admin/schedule/status', { silent: true });
+        banner.replaceChildren();
+        if (status.scheduleEnabled) return;
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-warning';
+        alert.setAttribute('role', 'status');
+        alert.append('排程尚未啟用；快照可能持續取值，但每日規則評估不會自動執行。');
+        const link = document.createElement('a');
+        link.href = appUrl('/runs#settings');
+        link.className = 'alert-link ms-2';
+        link.textContent = '前往排程設定';
+        alert.appendChild(link);
+        banner.appendChild(alert);
+    } catch {
+        renderError(banner, { message: '無法確認排程是否啟用。', onRetry: refreshScheduleWarning });
+    }
 }
 
 // ── PRTG 資料搬運（任務G）──────────────────────────────────────────────
@@ -1211,7 +1856,7 @@ function bindStructureSync() {
     btn?.addEventListener('click', async () => {
         // 按鈕已依模組狀態灰掉，這裡是輪詢競態時的第二道（後端還有第三道）
         if (!prtgEnabled) {
-            toast('PRTG 擷取未啟用，請先在「擷取參數」頁籤選擇取數範圍。', 'warning');
+            toast('PRTG 擷取未啟用，請先在「擷取參數」頁籤選擇數值取數對象。', 'warning');
             return;
         }
         const restore = withBusy(btn, '啟動中');
@@ -1243,21 +1888,129 @@ function bindStructureSync() {
     });
 }
 
+// 規則未套用提示：內建規則有新版本未套用，或沒有任何啟用中的 PRTG 規則時，夜間 PRTG 評估會不完整
+async function refreshPrtgRuleBanner() {
+    const [status, rules] = await Promise.all([
+        api.get('/api/rules/import-status', { silent: true }).catch(() => null),
+        api.get('/api/rules', { silent: true }).catch(() => null)
+    ]);
+    const banner = document.getElementById('prtg-rule-banner');
+    if (!banner) return;
+    banner.replaceChildren();
+    const hasUpdate = status != null && status.hasUpdate === true;
+    const noPrtgRules = Array.isArray(rules) && !rules.some(r =>
+        r.enabled && String(r.platform).toLowerCase() === 'prtg' && r.prtgRuleCode);
+    if (!hasUpdate && !noPrtgRules) return;
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-warning';
+    // 兩種原因給不同的話：沒有任何啟用中的 PRTG 規則時整晚零評估，比「有新版未套用」嚴重
+    alert.appendChild(document.createTextNode(noPrtgRules
+        ? '規則庫沒有任何啟用中的 PRTG 規則，PRTG 狀態不會產生任何問題訊號。請套用內建規則更新或啟用 PRTG 規則。'
+        : '內建規則有新版本尚未套用，PRTG 規則評估可能不完整。'));
+    const link = document.createElement('a');
+    link.href = appUrl('/admin/rules');
+    link.className = 'ms-2';
+    link.textContent = '前往規則維護';
+    alert.appendChild(link);
+    banner.appendChild(alert);
+}
+
+function bindUnmatchedControls() {
+    const badge = document.getElementById('prtg-mirror-map-unmatched');
+    const section = document.getElementById('prtg-unmatched-section');
+    const collapseEl = document.getElementById('prtg-unmatched-collapse');
+    const toggleBtn = document.getElementById('prtg-unmatched-toggle-btn');
+
+    const ensureExpanded = () => {
+        if (!collapseEl) return;
+        if (window.bootstrap?.Collapse) {
+            const inst = window.bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+            inst.show();
+        } else {
+            collapseEl.classList.add('show');
+        }
+        if (toggleBtn) {
+            toggleBtn.textContent = '收合';
+            toggleBtn.setAttribute('aria-expanded', 'true');
+        }
+    };
+
+    if (toggleBtn && collapseEl) {
+        toggleBtn.addEventListener('click', () => {
+            if (window.bootstrap?.Collapse) {
+                const inst = window.bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+                inst.toggle();
+            } else {
+                const isShown = collapseEl.classList.contains('show');
+                if (isShown) {
+                    collapseEl.classList.remove('show');
+                    toggleBtn.textContent = '展開';
+                    toggleBtn.setAttribute('aria-expanded', 'false');
+                } else {
+                    collapseEl.classList.add('show');
+                    toggleBtn.textContent = '收合';
+                    toggleBtn.setAttribute('aria-expanded', 'true');
+                }
+            }
+        });
+
+        collapseEl.addEventListener('shown.bs.collapse', () => {
+            toggleBtn.textContent = '收合';
+            toggleBtn.setAttribute('aria-expanded', 'true');
+        });
+        collapseEl.addEventListener('hidden.bs.collapse', () => {
+            toggleBtn.textContent = '展開';
+            toggleBtn.setAttribute('aria-expanded', 'false');
+        });
+    }
+
+    if (badge && section) {
+        const jumpToUnmatched = () => {
+            ensureExpanded();
+            section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            section.focus();
+        };
+
+        badge.addEventListener('click', jumpToUnmatched);
+        badge.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                jumpToUnmatched();
+            }
+        });
+    }
+}
+
 function init() {
+    getCurrentUser().then(user => {
+        if (hasCapability(user, 'DevMonitor')) {
+            document.getElementById('prtg-data-transfer-advanced')?.classList.remove('d-none');
+        }
+    }).catch(() => {});
     bindPrtgTest();
     bindPrtgMirror();
+    bindScopePurge();
     bindPrtgProbe();
+    bindProbeWhitelistFill();
     bindAssignForm();
     bindPrtgDataTransfer();
     bindConnectionForm();
     bindParamsForm();
     bindScopeControls();
     bindStructureSync();
+    bindConflictBatchControls();
+    bindUnmatchedControls();
     initCalibration();
     loadSettings();
+    ensureBatchHostsLoaded();
     refreshPrtgMirror();
+    refreshConflicts(1);
+    refreshUnmatched(1);
+    refreshIpExcludes();
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();
+    refreshPrtgRuleBanner();
+    refreshScheduleWarning();
 }
 
 init();

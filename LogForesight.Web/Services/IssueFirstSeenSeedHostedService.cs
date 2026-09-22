@@ -20,14 +20,16 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
     public const int RetryIntervalMinutes = 30;
 
     private readonly StorageBackend _backend;
+    private readonly BackgroundWorkGate _gate;
 
     internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(20);
     internal TimeSpan RetryInterval { get; set; } = TimeSpan.FromMinutes(RetryIntervalMinutes);
 
     public IssueFirstSeenSeedProgress Progress { get; } = new();
 
-    public IssueFirstSeenSeedHostedService(StorageBackend backend, DataVersionStamp dataVersion)
+    public IssueFirstSeenSeedHostedService(StorageBackend backend, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
+        _gate = gate;
         _dataVersion = dataVersion;
         _backend = backend;
     }
@@ -57,23 +59,34 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
             // canceled task，await 就丟 TaskCanceledException——那不在委派內的 catch 範圍，
             // BackgroundService 預設會當成未處理例外把站台停掉。取消由外層 while 條件與
             // Task.Delay 負責，合併本身跑到一半不能中斷（那是一段 SQL）
-            await Task.Run(() =>
+            // 經共用節流閘排隊：只包這一次合併嘗試，重試等待期間不佔住閘門
+            try
             {
-                try
-                {
-                    outcome = _backend.MergeIssueFirstSeenSeed();
-                    // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                    _dataVersion.Bump();
-                }
-                catch (Exception ex)
-                {
-                    Progress.Failures++;
-                    Progress.LastError = ex.Message;
-                    Progress.State = IssueFirstSeenSeedStates.Failed;
-                    Log.Error(ex, "[SQL] lf_issue_first_seen 冪等合併失敗（第 {Failures}/{Max} 次）：{Msg}",
-                        Progress.Failures, MaxRetries, ex.Message);
-                }
-            });
+                await _gate.RunAsync("首見日合併",
+                    () => Task.Run(() =>
+                    {
+                        try
+                        {
+                            outcome = _backend.MergeIssueFirstSeenSeed();
+                            // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
+                            _dataVersion.Bump();
+                        }
+                        catch (Exception ex)
+                        {
+                            Progress.Failures++;
+                            Progress.LastError = ex.Message;
+                            Progress.State = IssueFirstSeenSeedStates.Failed;
+                            Log.Error(ex, "[SQL] lf_issue_first_seen 冪等合併失敗（第 {Failures}/{Max} 次）：{Msg}",
+                                Progress.Failures, MaxRetries, ex.Message);
+                        }
+                    }),
+                    stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // 站台關閉時仍在排隊：不當成失敗，下次啟動接續
+                return;
+            }
 
             if (outcome != null)
             {

@@ -24,20 +24,23 @@ public class IssueOwnerAdminService
     private readonly IUserDisplayNameService _displayNameService;
     private readonly IWorkOrderStore _workOrders;
     private readonly WorkOrderCoordinator _workOrderCoordinator;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     /// <summary>靜音天數上限（含自訂截止日距今天的上限）</summary>
     public const int MaxMuteDays = 365;
 
     public const int MaxMuteReasonLength = 500;
 
-    /// <summary>問題檔案 DTO 附帶的靜音歷程筆數（新到舊）</summary>
+    /// <summary>問題設定 DTO 附帶的靜音歷程筆數（新到舊）</summary>
     public const int MuteHistoryLimit = 10;
 
     public IssueOwnerAdminService(
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
         ICurrentUser currentUser, IUserDisplayNameService displayNameService,
-        IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator)
+        IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator,
+        PermissionVersionStamp permissionVersion)
     {
+        _permissionVersion = permissionVersion;
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
         _users = users;
@@ -136,6 +139,8 @@ public class IssueOwnerAdminService
             // 靜音區間同理：編輯負責人不可洗掉既有靜音
             Mutes = before?.Mutes ?? new List<MuteInterval>()
         });
+        // 問題負責人隱含 User 角色能力：負責人清單一變就推進權限版本
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
@@ -150,7 +155,7 @@ public class IssueOwnerAdminService
 
     /// <summary>
     /// 設定機房結論（回饋十九輪批次F，§2 決策一）：統一標記勾選「之後自動套用」
-    /// （<see cref="IssueHandlingCommandService.BulkCloseIssue"/>）與問題檔案頁的「設定機房結論」
+    /// （<see cref="IssueHandlingCommandService.BulkCloseIssue"/>）與問題負責與靜音頁的「設定機房結論」
     /// 都走這裡——只有一份「保留既有負責人／備註，只改結論欄」的合併邏輯，避免兩個入口
     /// 各自 Upsert 一次、其中一個沒注意到要保留對方負責的欄位。
     /// </summary>
@@ -200,7 +205,7 @@ public class IssueOwnerAdminService
     {
         EnsureMaintain();
         var existing = _issueOwners.Get(source, eventId)
-                        ?? throw DomainException.NotFound("找不到這筆問題檔案。");
+                        ?? throw DomainException.NotFound("找不到這筆問題設定。");
 
         existing.ConclusionStatus = null;
         existing.ConclusionNote = string.Empty;
@@ -225,7 +230,7 @@ public class IssueOwnerAdminService
     /// <summary>
     /// 靜音問題：<see cref="SetIssueMuteRequest.Days"/> 與 <see cref="SetIssueMuteRequest.Until"/> 恰給一個。
     /// 區間 From＝今天、To＝今天＋Days−1 或 Until；今天已在某區間內→延長該區間（不新增），原因與操作者更新為本次。
-    /// 問題檔案不存在時建立（沒有負責人、沒有結論）。ExistingOrders="close" 需同時具 Assign 與 Handle，
+    /// 問題設定不存在時建立（沒有負責人、沒有結論）。ExistingOrders="close" 需同時具 Assign 與 Handle，
     /// 對進行中交辦單逐張以 wont_fix 代為結案；"pause"＝不動交辦單。
     /// </summary>
     public IssueOwnerDto SetMute(string source, int eventId, SetIssueMuteRequest request)
@@ -369,6 +374,7 @@ public class IssueOwnerAdminService
         var ownerNames = existing.OwnerUserIds.Select(id => usersById.TryGetValue(id, out var u) ? u.Account : id.ToString()).ToList();
 
         _issueOwners.Delete(source, eventId);
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.IssueOwnerDelete,
@@ -432,12 +438,12 @@ public class IssueOwnerAdminService
 
     private static IssueMuteDto ToMuteDto(MuteInterval m) => new()
     {
-        From = m.From, To = m.To, Reason = m.Reason, ByAccount = m.ByAccount
+        From = m.From, To = m.To, Reason = m.Reason, ByAccount = m.ByAccount, At = m.At
     };
 
     /// <summary>
     /// 顯示用的問題標籤：Windows 顯示「{Source} ({EventId})」；Linux（EventId 恆為 0）只顯示「{Source}」，
-    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題檔案的鍵是 (Source, 0)，涵蓋該來源的
+    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題設定的鍵是 (Source, 0)，涵蓋該來源的
     /// 全部規則，任選其中一個 key 掛上去語意是錯的（且候選清單與已指派清單會長得不一樣）。
     /// </summary>
     public static string FormatDisplayLabel(string source, int eventId) =>

@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace LogForesight.Web.Models.Dto;
 
-/// <summary>問題檔案（回饋十八輪批次F 建立「問題負責人」管理頁、回饋十九輪批次F 擴充機房結論）</summary>
+/// <summary>問題負責與靜音（回饋十八輪批次F 建立「問題負責人」管理頁、回饋十九輪批次F 擴充機房結論）</summary>
 public class IssueOwnerDto
 {
     public string SourceName { get; set; } = string.Empty;
@@ -52,8 +52,11 @@ public class IssueOwnerDto
 }
 
 /// <summary>問題靜音區間（From／To 為日期，含首尾）</summary>
+public sealed record IssueMuteActionDto(DateTime At, string ByAccount, string Action, string Summary);
+
 public class IssueMuteDto
 {
+    public DateTime At { get; set; }
     public DateTime From { get; set; }
     public DateTime To { get; set; }
     public string Reason { get; set; } = string.Empty;
@@ -86,7 +89,7 @@ public class SaveIssueOwnerRequest
 
 /// <summary>
 /// 設定機房結論（回饋十九輪批次F）：統一標記勾選「之後自動套用」（見 <see cref="LogForesight.Web.Services.IssueHandlingCommandService.BulkCloseIssue"/>）
-/// 與問題檔案頁各自的入口都收斂到 <see cref="LogForesight.Web.Services.IssueOwnerAdminService.SetConclusion"/>——
+/// 與問題負責與靜音頁各自的入口都收斂到 <see cref="LogForesight.Web.Services.IssueOwnerAdminService.SetConclusion"/>——
 /// 只有一份「保留既有負責人／備註，只改結論欄」的合併邏輯。
 /// </summary>
 public class SetIssueConclusionRequest

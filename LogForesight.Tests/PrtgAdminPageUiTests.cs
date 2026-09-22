@@ -139,7 +139,7 @@ public class PrtgAdminPageUiTests
 
         // 回填與每日擷取、模組狀態、結構同步一起放在 PRTG 狀態卡（回饋第 40 輪批次A）
         Assert.Contains("prtg-status-card", cshtmlContent);
-        Assert.Contains("prtg-backfill-start", cshtmlContent);
+        Assert.DoesNotContain("prtg-backfill-start", cshtmlContent);
 
         var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
         Assert.True(File.Exists(runsJsPath), $"找不到檔案: {runsJsPath}");
@@ -352,7 +352,7 @@ public class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void BindTabs簽章支援選用Hash且不監聽HashChange()
+    public void BindTabs簽章支援選用Hash且只在Hash開啟時監聽HashChange()
     {
         var root = FindRepoRoot();
         var uiJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "ui.js");
@@ -363,9 +363,17 @@ public class PrtgAdminPageUiTests
         Assert.Contains("export function bindTabs(tabsEl, { onChange, hash = false } = {})", uiJs);
         // 且該函式內含 history.replaceState
         Assert.Contains("history.replaceState", uiJs);
-        // 不含 addEventListener('hashchange'
-        Assert.DoesNotContain("addEventListener('hashchange'", uiJs);
-        Assert.DoesNotContain("addEventListener(\"hashchange\"", uiJs);
+
+        // hashchange 監聽只能掛在 if (hash) 區塊內：已在本頁時點同頁深連結（告示列「確認並靜音」）
+        // 只改 hash 不重載，要跟著切頁籤；沒開 hash 的頁不得受網址 hash 影響
+        var start = uiJs.IndexOf("export function bindTabs(", StringComparison.Ordinal);
+        var end = uiJs.IndexOf("\nexport ", start + 1, StringComparison.Ordinal);
+        var body = uiJs.Substring(start, (end < 0 ? uiJs.Length : end) - start);
+        var hashBlock = body.IndexOf("if (hash) {", StringComparison.Ordinal);
+        var listener = body.IndexOf("addEventListener('hashchange'", StringComparison.Ordinal);
+        Assert.True(hashBlock >= 0, "bindTabs 應有 if (hash) 區塊");
+        Assert.True(listener > hashBlock, "hashchange 監聽應位於 if (hash) 區塊內");
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(body, "hashchange").Count);
     }
 
     [Fact]
@@ -413,7 +421,7 @@ public class PrtgAdminPageUiTests
         }
 
         Assert.Equal(
-            new[] { "prtg-admin.js", "work-orders.js" },
+            new[] { "prtg-admin.js", "settings.js", "work-orders.js" },
             filesWithHashTrue.OrderBy(f => f, StringComparer.Ordinal).ToArray());
     }
 
@@ -754,7 +762,7 @@ public class PrtgAdminPageUiTests
         var settingsJs = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "settings.js"));
         Assert.Contains("prtg-guard.js", settingsJs);
         Assert.Contains("collectGuardPayload()", settingsJs);
-        Assert.Contains("loadGuardFields(current)", settingsJs);
+        Assert.Contains("loadGuardFields(settings)", settingsJs);   // 整頁套用設定 applySettings(settings) 內呼叫
         Assert.Contains("bindGuardPreview()", settingsJs);
     }
 

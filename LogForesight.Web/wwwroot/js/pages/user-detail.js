@@ -136,7 +136,7 @@ function renderKpi(detail, workload) {
         { value: detail.visibleHosts.length, label: '可見主機' },
         // 這兩張來自 workload（檢視者範圍），與左右兩張的母體不同，必須講出來
         { value: workload.openCaseCount, label: '處理中案件', hint: scopeNote, viewerScoped: true },
-        { value: detail.assignmentHistory.filter(h => h.closed).length, label: '已結案案件' },
+        { value: detail.assignmentHistory.filter(h => h.closed && h.status !== 'reassigned').length, label: '已結案案件' },
         {
             value: workload.overdueCount,
             label: '逾期',
@@ -226,7 +226,7 @@ function renderOpenWork(workload) {
         ],
         rows: workload.cases,
         rowHref: c => `/records/${c.hostId}/${c.lastLinkedDate}`,
-        empty: { title: '目前沒有進行中案件', hint: '' }
+        empty: { title: '目前沒有進行中案件', hint: '被指派問題並建立案件後，會顯示在這裡。' }
     });
 
     // 未結案風險日：workload 帶回近 30 天已結案的日子，這裡只留推導後未結案的。
@@ -249,12 +249,12 @@ function renderOpenWork(workload) {
         ],
         rows: openDays,
         rowHref: d => `/records/${d.hostId}/${d.date}`,
-        empty: { title: '目前沒有未結案的風險日', hint: '' }
+        empty: { title: '目前沒有未結案的風險日', hint: '所有指派的風險日皆已結案，或尚未被指派任何風險日。' }
     });
 }
 
 function renderClosedWork(history) {
-    const closed = history.filter(h => h.closed);
+    const closed = history.filter(h => h.closed && h.status !== 'reassigned');
 
     renderTable(document.getElementById('user-closed-work'), {
         columns: [
@@ -305,8 +305,14 @@ function renderAssignmentHistory(history) {
 function historyStatusCell(item) {
     const wrap = document.createElement('span');
     wrap.className = 'd-flex gap-1 align-items-center flex-wrap';
+    const isReassigned = item.status === 'reassigned';
     wrap.appendChild(badge(item.statusText, item.closed ? 'secondary' : 'primary'));
-    if (item.closed && item.closedAt) {
+    if (isReassigned && item.closedAt) {
+        const when = document.createElement('span');
+        when.className = 'text-muted small';
+        when.textContent = `改派於 ${formatDateTime(item.closedAt)}`;
+        wrap.appendChild(when);
+    } else if (item.closed && item.closedAt) {
         const when = document.createElement('span');
         when.className = 'text-muted small';
         when.textContent = `結案於 ${formatDateTime(item.closedAt)}`;

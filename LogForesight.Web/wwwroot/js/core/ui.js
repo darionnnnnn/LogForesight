@@ -149,15 +149,19 @@ export function bindTabs(tabsEl, { onChange, hash = false } = {}) {
     };
 
     if (hash) {
-        const initialHash = (location.hash || '').replace(/^#/, '');
-        if (initialHash) {
+        const activateFromHash = () => {
+            const current = (location.hash || '').replace(/^#/, '');
+            if (!current) return;
             for (const btn of tabsEl.querySelectorAll('[data-tab]')) {
-                if (btn.dataset.tab === initialHash) {
+                if (btn.dataset.tab === current) {
                     activateTab(btn, false);
                     break;
                 }
             }
-        }
+        };
+        activateFromHash();
+        // 已在本頁時點到同頁的深連結（例如全站告示列的「確認並靜音」）只改 hash 不重載，要跟著切頁籤
+        window.addEventListener('hashchange', activateFromHash);
     }
 
     tabsEl.addEventListener('click', event => {
@@ -339,10 +343,12 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
                     <div class="modal-body"><p class="mb-0"></p></div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="button" class="btn btn-${confirmVariant}" data-lf-confirm></button>
+                        <button type="button" class="btn" data-lf-confirm></button>
                     </div>
                 </div>
             </div>`;
+        // 變動值不進 innerHTML 樣板字串（FrontendConsistencyUiTests 守門）：class 以 classList 補
+        el.querySelector('[data-lf-confirm]').classList.add(`btn-${confirmVariant}`);
         el.querySelector('.modal-title').textContent = title;
         const body = el.querySelector('.modal-body p');
         body.textContent = message;
@@ -391,10 +397,11 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="button" class="btn btn-${confirmVariant}" data-lf-confirm></button>
+                        <button type="button" class="btn" data-lf-confirm></button>
                     </div>
                 </div>
             </div>`;
+        el.querySelector('[data-lf-confirm]').classList.add(`btn-${confirmVariant}`);
         el.querySelector('.modal-title').textContent = title;
         el.querySelector('.modal-body p').textContent = message;
         el.querySelector('[data-lf-reason-label]').textContent = reasonLabel;
@@ -443,10 +450,10 @@ export function showDetailModal({ title = '', body, size, fullscreen = false, on
     const titleId = `lf-modal-title-${Math.random().toString(36).slice(2, 10)}`;
     el.setAttribute('aria-labelledby', titleId);
     el.innerHTML = `
-        <div class="modal-dialog modal-dialog-scrollable${fullscreen ? ' modal-fullscreen' : (size ? ` ${size}` : '')}">
+        <div class="modal-dialog modal-dialog-scrollable">
             <div class="modal-content" tabindex="-1">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="${titleId}"></h5>
+                    <h5 class="modal-title"></h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body"></div>
@@ -455,7 +462,13 @@ export function showDetailModal({ title = '', body, size, fullscreen = false, on
                 </div>
             </div>
         </div>`;
-    el.querySelector('.modal-title').textContent = title;
+    // 變動值（尺寸 class、標題 id）不進 innerHTML 樣板字串，以 classList／setAttribute 補上
+    const dialogEl = el.querySelector('.modal-dialog');
+    if (fullscreen) dialogEl.classList.add('modal-fullscreen');
+    else if (size) dialogEl.classList.add(...String(size).split(/\s+/).filter(Boolean));
+    const titleEl = el.querySelector('.modal-title');
+    titleEl.setAttribute('id', titleId);
+    titleEl.textContent = title;
     if (body) el.querySelector('.modal-body').appendChild(body);
 
     document.body.appendChild(el);
@@ -869,6 +882,29 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
         const hintEl = document.createElement('div');
         hintEl.textContent = hint;
         el.appendChild(hintEl);
+    }
+
+    container.replaceChildren(el);
+}
+
+/** 載入失敗與真正沒有資料分開呈現；重試保持在原位置，不丟失使用者所在的視角。 */
+export function renderError(container, { message = '載入失敗，請再試一次。', onRetry } = {}) {
+    const el = document.createElement('div');
+    el.className = 'lf-error';
+    el.setAttribute('role', 'alert');
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold';
+    title.textContent = message;
+    el.appendChild(title);
+
+    if (typeof onRetry === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-outline-danger mt-2';
+        button.textContent = '重試';
+        button.addEventListener('click', () => onRetry());
+        el.appendChild(button);
     }
 
     container.replaceChildren(el);
@@ -1351,7 +1387,10 @@ export function withBusy(button, busyText) {
     const original = button.innerHTML;
     button.disabled = true;
     if (busyText) {
-        button.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${busyText}`;
+        // DOM 組裝：busyText 走文字節點，不當 HTML 解析
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        button.replaceChildren(spinner, document.createTextNode(busyText));
     }
     return () => {
         button.disabled = false;

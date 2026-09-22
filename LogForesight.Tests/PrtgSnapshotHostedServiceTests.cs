@@ -45,10 +45,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _hostStore = hostStore;
         var statusStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         _backfillState = new PrtgBackfillRunState();
-        _structureSync = new PrtgStructureSyncService(_settingsStore, _backend, _syncState, _schedulerRunState, hostStore, statusStore, _backfillState, new FakeSentinelStore(), _lifetime);
+        _structureSync = new PrtgStructureSyncService(_settingsStore, _backend, _syncState, _schedulerRunState, hostStore, statusStore, _backfillState, new FakeSentinelStore(), new DataVersionStamp(), _lifetime);
 
         _probeState = new PrtgProbeRunState();
-        _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore, _schedulerRunState, _syncState, new FakeSentinelStore());
+        _backfill = new PrtgBackfillService(_settingsStore, _backend, _backfillState, _probeState, hostStore, _schedulerRunState, _syncState, new FakeSentinelStore(), _structureSync);
 
         _stubHandler = new StubHandler();
 
@@ -85,7 +85,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _probeState,
             _lifetime);
 
-        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
+        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
         if (console != null)
         {
             service.Console = console;
@@ -1137,8 +1137,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         var settings = _settingsStore.Get();
         var scope = PrtgScopeDevices.Compute(store, _hostStore, new PrtgMirrorGuardSource(store), settings,
-            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver());
-        Assert.Contains(77L, scope.DeviceObjids);
+            Array.Empty<Sentinel>(), new TestConsole(), new PrtgAddressResolver(), hostIds: null);
+        // 本測試未啟用資源守門：守門裝置不入監看，但在清除時的保留集合裡
+        Assert.Contains(77L, scope.PreserveDeviceObjids);
     }
 
     [Fact]
@@ -1228,7 +1229,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.ClientFactory = () =>
         {
             if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("模擬補抓失敗");
-            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler);
+            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
         };
 
         await service.TickAsync();

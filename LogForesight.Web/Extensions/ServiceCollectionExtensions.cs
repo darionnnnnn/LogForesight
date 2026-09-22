@@ -1,4 +1,6 @@
+using System.Net.Http;
 using System.Text;
+
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -30,7 +32,11 @@ public static class ServiceCollectionExtensions
         // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
         services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
 
-        services.AddSingleton<IUserStore>(sp => new UserStore(sp.GetRequiredService<StorageBackend>().Blob("users")));
+        services.AddSingleton<IUserStore>(sp =>
+        {
+            var backend = sp.GetRequiredService<StorageBackend>();
+            return new UserStore(backend.Blob("users"), backend.Blob("user_last_login"));
+        });
         services.AddSingleton<IUserGroupStore>(sp => new UserGroupStore(sp.GetRequiredService<StorageBackend>().Blob("user_groups")));
         services.AddSingleton<IHostStore>(sp => new HostStore(sp.GetRequiredService<StorageBackend>().Blob("hosts")));
         services.AddSingleton<IHostGroupStore>(sp => new HostGroupStore(sp.GetRequiredService<StorageBackend>().Blob("host_groups")));
@@ -58,13 +64,16 @@ public static class ServiceCollectionExtensions
         // 會撞上 .NET 的 2 GB 單一物件上限。介面不變，呼叫端零修改。
         services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
         services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
+        services.AddSingleton<IIssueNoteQuery>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
         services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
         services.AddSingleton<IWorkOrderStore>(sp => sp.GetRequiredService<StorageBackend>().WorkOrderStore());
 
         // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
         services.AddSingleton<IIssueAggregateQuery>(sp =>
-            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(sp.GetRequiredService<IHostStore>()));
+            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(
+                sp.GetRequiredService<IHostStore>(),
+                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton(sp => new WorkOrderBackfiller(sp.GetRequiredService<StorageBackend>().WorkOrderStore()));
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
@@ -90,8 +99,16 @@ public static class ServiceCollectionExtensions
         // 郵件通知寄送狀態（回饋十五輪批次D）：每日/每週摘要的「上次寄送日」＋緊急通知的去重鍵
         services.AddSingleton<MailNotifyStateStore>(sp => new MailNotifyStateStore(sp.GetRequiredService<StorageBackend>().Blob("mail_notify_state")));
 
+        // 每使用者偏好（回饋第 50 輪 C-4，目前只有個人常用語）：獨立 blob，不進使用者清單
+        services.AddSingleton<UserPreferenceStore>(sp => new UserPreferenceStore(sp.GetRequiredService<StorageBackend>().Blob("user_prefs")));
+
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
-        services.AddSingleton<IRiskyEventStore>(sp => sp.GetRequiredService<StorageBackend>().RiskyEventStore());
+        services.AddSingleton<IRiskyEventStore>(sp =>
+        {
+            var backfiller = sp.GetRequiredService<TopIssueBackfiller>();
+            return sp.GetRequiredService<StorageBackend>().RiskyEventStore(
+                () => backfiller.RiskySourceKeyProgress.Completed);
+        });
 
         return services;
     }
@@ -102,6 +119,11 @@ public static class ServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddSingleton<JwtTokenService>();
         services.AddSingleton<ServerAdminAuthenticator>();
+        services.AddSingleton<LoginThrottle>();   // 行程內節流狀態，必須是 Singleton 才跨請求累計
+        // 權限版本號與登出撤銷清單都是跨請求共享狀態，必須是 Singleton
+        services.AddSingleton<PermissionVersionStamp>(sp =>
+            new PermissionVersionStamp(sp.GetRequiredService<StorageBackend>().Blob(PermissionVersionStamp.BlobKey)));
+        services.AddSingleton<RevokedTokens>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
@@ -240,6 +262,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
         services.AddScoped<IssueOwnerAdminService>();
+        services.AddSingleton<IAiProbeService>(sp =>
+        {
+            var settings = sp.GetRequiredService<ISystemSettingsStore>();
+            var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
+            var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            return new AiProbeService(settings, http);
+        });
         services.AddScoped<SetupReadinessService>();
 
         // Sentinel 名單改由 Web 維護（docs/archive/HISTORY.md 定案 1），讀寫都經 ISentinelStore
@@ -274,6 +303,10 @@ public static class ServiceCollectionExtensions
         // 操作說明書（回饋十五輪批次E）：內容編譯進組件、執行期間不變，Singleton＋Lazy 延後載入
         services.AddSingleton<HelpContentService>();
         services.AddScoped<HelpQaService>();
+
+        // 處理說明 AI 整理（回饋第 50 輪批次C-3）：節流窗口要全站共用，Singleton
+        services.AddScoped<HandlingNoteAiService>();
+        services.AddSingleton<HandlingNoteTidyThrottle>();
 
         // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
@@ -329,6 +362,7 @@ public static class ServiceCollectionExtensions
 
         // 健康檢查（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）：Singleton——它只讀 StorageBackend
         // 與 SchedulerRunState 兩個既有的行程內單例，沒有請求範圍狀態
+        services.AddSingleton<ScheduleFreshnessService>();
         services.AddSingleton<HealthService>();
 
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
@@ -379,9 +413,13 @@ public static class ServiceCollectionExtensions
         // TriggerRunAsync（手動觸發），不能只當背景服務、必須也能被其他地方解析取得。
         // AnalysisOrchestrator／NamedMutexGate 皆無狀態依賴，改由 DI 注入而非各自 new——
         // 讓 SchedulerHostedService 的執行路徑可用測試替身注入驗證。
-        services.AddSingleton<AnalysisOrchestrator>();
+        services.AddSingleton<AnalysisOrchestrator>(sp => new AnalysisOrchestrator(
+            sp.GetRequiredService<IDispatchCandidateSource>(),
+            () => { sp.GetRequiredService<PermissionVersionStamp>().Bump(); }));
         services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
+        // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路
+        services.AddSingleton(sp => new BackgroundWorkGate(sp.GetRequiredService<SchedulerRunState>(), TimeSpan.FromSeconds(30)));
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
@@ -460,7 +498,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<PrtgStructureSyncService>();
 
         // PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
-        services.AddSingleton<PrtgSnapshotHostedService>();
+        services.AddSingleton(sp => new PrtgSnapshotHostedService(
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<StorageBackend>(),
+            sp.GetRequiredService<SchedulerRunState>(),
+            sp.GetRequiredService<PrtgStructureSyncService>(),
+            sp.GetRequiredService<PrtgBackfillService>(),
+            sp.GetRequiredService<IHostStore>(),
+            sp.GetRequiredService<ISentinelStore>(),
+            sp.GetRequiredService<PrtgProbeRunState>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            TimeSpan.FromSeconds(60)));
         services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
 
         // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：

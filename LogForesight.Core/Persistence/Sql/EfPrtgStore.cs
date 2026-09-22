@@ -447,33 +447,45 @@ public sealed class EfPrtgStore
     public int ReplaceHostMapForDate(DateTime mapDate, IReadOnlyList<PrtgHostMapRow> rows)
     {
         var targetDate = mapDate.Date;
-        using (var ctx = _contextFactory())
-        {
-            ctx.PrtgHostMaps.Where(m => m.MapDate == targetDate).ExecuteDelete();
-        }
-
-        if (rows == null || rows.Count == 0) return 0;
-
+        var list = rows?.ToList() ?? new List<PrtgHostMapRow>();
         var now = DateTime.Now;
-        return BatchWrite(rows, (ctx, batch) =>
+
+        // 刪除與全部寫入放在同一個交易：刪完、寫入前行程被回收或寫入中途失敗時整批回滾，
+        // 不會留下「該日對應整批消失」的空日。SQL Server 開了連線重試，自開交易必須包在執行策略內。
+        using var ctx = _contextFactory();
+        var strategy = ctx.Database.CreateExecutionStrategy();
+        return strategy.Execute(() =>
         {
-            foreach (var item in batch)
+            ctx.ChangeTracker.Clear();
+            using var tx = ctx.Database.BeginTransaction();
+            ctx.PrtgHostMaps.Where(m => m.MapDate == targetDate).ExecuteDelete();
+
+            var written = 0;
+            for (var offset = 0; offset < list.Count; offset += UpsertBatchSize)
             {
-                ctx.PrtgHostMaps.Add(new PrtgHostMapRow
+                var count = Math.Min(UpsertBatchSize, list.Count - offset);
+                foreach (var item in list.GetRange(offset, count))
                 {
-                    MapDate = targetDate,
-                    DeviceObjid = item.DeviceObjid,
-                    Ip = item.Ip,
-                    HostId = item.HostId,
-                    HostName = item.HostName,
-                    MapStatus = item.MapStatus,
-                    Note = item.Note,
-                    CreatedAt = item.CreatedAt != default ? item.CreatedAt : now
-                });
+                    ctx.PrtgHostMaps.Add(new PrtgHostMapRow
+                    {
+                        MapDate = targetDate,
+                        DeviceObjid = item.DeviceObjid,
+                        Ip = item.Ip,
+                        HostId = item.HostId,
+                        HostName = item.HostName,
+                        MapStatus = item.MapStatus,
+                        Note = item.Note,
+                        CreatedAt = item.CreatedAt != default ? item.CreatedAt : now
+                    });
+                }
+
+                ctx.SaveChanges();
+                ctx.ChangeTracker.Clear();
+                written += count;
             }
 
-            ctx.SaveChanges();
-            return batch.Count;
+            tx.Commit();
+            return written;
         });
     }
 
@@ -584,21 +596,32 @@ public sealed class EfPrtgStore
     /// <summary>
     /// 清除本趟感測器同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即取數範圍外或 PRTG 端已不存在的感測器，回傳刪除數。
     /// 只動 <c>lf_prtg_sensors</c>；狀態變更、數值與快照表一律不碰（交給保留期）。
-    /// 刻意不做裝置那種「過半不刪」保險：縮圈到取數範圍後的第一趟本來就會刪掉九成以上，
-    /// 而感測器鏡像只是 PRTG 的複本、不掛人工資料，誤刪了下一趟同步即可重建。
-    /// 呼叫端必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
+    /// 本方法不複製範圍縮小／無基準門檻；呼叫端必須先以 <see cref="PrtgScopePurge.CheckScope"/>
+    /// 與 <see cref="PrtgScopePurge.CheckShrink"/> 通過同一套清除保護，再呼叫本方法。
+    /// 呼叫端也必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
     /// <para>
     /// <paramref name="graceDeviceObjids"/>＝本趟「查詢成功但回 0 顆」的裝置。PRTG 偶發回空陣列時，一次就把整台的感測器刪光
     /// 會讓當晚對那台主機的規則評估無聲失效；所以這些裝置底下 <c>SyncedAt &gt;= graceSince</c> 的列本趟先留著（回傳 GraceKept 供出聲）。
     /// 下一趟仍回 0 顆時，那些列的 SyncedAt 已早於 graceSince，照常刪除——PRTG 上真的移除了全部感測器的裝置最多多留一趟。
     /// </para>
     /// </summary>
+    /// <param name="preserveDeviceObjids">
+    /// 一律保留的裝置（<see cref="PrtgScopeResult.PreserveDeviceObjids"/>：守門未啟用時的守門與 corehealth 裝置）。
+    /// 它們不在監看範圍、本趟不會被刷新，但守門自動偵測要靠它們的感測器鏡像。
+    /// </param>
     public (int Deleted, int GraceKept) DeleteSensorsNotSyncedSince(
-        DateTime syncStartedAt, IReadOnlyCollection<long> graceDeviceObjids, DateTime graceSince)
+        DateTime syncStartedAt, IReadOnlyCollection<long> graceDeviceObjids, DateTime graceSince,
+        IReadOnlyCollection<long> preserveDeviceObjids)
     {
         using var __perf = _performance.Measure("prtg:DeleteStaleSensors");
         using var ctx = _contextFactory();
         var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
+        // 守門裝置數量級很小（幾台），IN 清單不會撞參數上限
+        if (preserveDeviceObjids.Count > 0)
+        {
+            var preserve = preserveDeviceObjids.ToList();
+            stale = stale.Where(s => !preserve.Contains(s.DeviceObjid));
+        }
         if (graceDeviceObjids.Count == 0)
             return (stale.ExecuteDelete(), 0);
 
@@ -607,6 +630,108 @@ public sealed class EfPrtgStore
         var kept = stale.Count(s => grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince);
         var deleted = stale.Where(s => !(grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince)).ExecuteDelete();
         return (deleted, kept);
+    }
+
+    /// <summary>範圍外清除的基準（blob <see cref="PrtgScopeBaselineStore.BlobKey"/>），與鏡像共用同一個連線工廠</summary>
+    public PrtgScopeBaselineStore ScopeBaseline() =>
+        new(new EfJsonBlobStore(_contextFactory, PrtgScopeBaselineStore.BlobKey, _performance));
+
+    /// <summary>
+    /// 範圍外清除要刪的 sensor objid：數值與狀態變更表出現過、且對不到 <paramref name="keepDeviceObjids"/> 的 sensor。
+    /// 兩表沒有裝置欄位，以感測器鏡像的 sensor→裝置 判斷；鏡像中已沒有的 sensor（先前已被清出感測器鏡像的範圍外裝置、
+    /// 或 PRTG 端已刪除）視為範圍外。objid 本身就是保留裝置的列（裝置層級訊息）不刪。
+    /// </summary>
+    private static (List<long> Sensors, Dictionary<long, long> SensorDevice) OutOfScopeSensorObjids(
+        LfDbContext ctx, IReadOnlySet<long> keepDeviceObjids)
+    {
+        if (keepDeviceObjids.Count == 0)
+            throw new ArgumentException("保留裝置集合不得為空（等於清光全部數值與狀態變更）。", nameof(keepDeviceObjids));
+
+        var sensorDevice = ctx.PrtgSensors.AsNoTracking()
+            .Select(s => new { s.Objid, s.DeviceObjid })
+            .ToList()
+            .GroupBy(s => s.Objid)
+            .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
+
+        var candidates = ctx.PrtgValues.Select(v => v.SensorObjid).Distinct().ToList();
+        candidates.AddRange(ctx.PrtgStateChanges.Select(c => c.SensorObjid).Distinct().ToList());
+
+        var sensors = candidates
+            .Distinct()
+            .Where(id => !keepDeviceObjids.Contains(id)
+                         && !(sensorDevice.TryGetValue(id, out var dev) && keepDeviceObjids.Contains(dev)))
+            .OrderBy(id => id)
+            .ToList();
+        return (sensors, sensorDevice);
+    }
+
+    /// <summary>範圍外清除的預覽（只用 COUNT，不讀回資料列）</summary>
+    public PrtgOutOfScopePreview PreviewOutOfScopeData(IReadOnlySet<long> keepDeviceObjids, int topDevices)
+    {
+        using var __perf = _performance.Measure("prtg:PreviewOutOfScope");
+        using var ctx = _contextFactory();
+        var (sensors, sensorDevice) = OutOfScopeSensorObjids(ctx, keepDeviceObjids);
+
+        var values = 0;
+        var stateChanges = 0;
+        for (var offset = 0; offset < sensors.Count; offset += DeviceQueryBatchSize)
+        {
+            var batch = sensors.GetRange(offset, Math.Min(DeviceQueryBatchSize, sensors.Count - offset));
+            values += ctx.PrtgValues.Count(v => batch.Contains(v.SensorObjid));
+            stateChanges += ctx.PrtgStateChanges.Count(c => batch.Contains(c.SensorObjid));
+        }
+
+        var devices = sensors
+            .Where(sensorDevice.ContainsKey)
+            .Select(id => sensorDevice[id])
+            .Distinct()
+            .OrderBy(id => id)
+            .ToList();
+        var knownSensors = sensors.Count(sensorDevice.ContainsKey);
+
+        var top = devices.Take(topDevices).ToList();
+        var names = GetDeviceNamesByObjids(top);
+        return new PrtgOutOfScopePreview(
+            values, stateChanges, devices.Count,
+            top.Select(id => names.TryGetValue(id, out var n) ? $"{n}（{id}）" : id.ToString()).ToList(),
+            sensors.Count - knownSensors);
+    }
+
+    /// <summary>
+    /// 刪除 <c>lf_prtg_values</c> 與 <c>lf_prtg_state_changes</c> 中裝置不在 <paramref name="keepDeviceObjids"/> 的列（判定見
+    /// <see cref="OutOfScopeSensorObjids"/>），分批刪、不設單次上限，回傳各表筆數。
+    /// 呼叫端必須先確認範圍可信（<see cref="PrtgScopePurge.CheckScope"/>）。
+    /// </summary>
+    public (int Values, int StateChanges) DeleteOutOfScopeData(IReadOnlySet<long> keepDeviceObjids)
+    {
+        using var __perf = _performance.Measure("prtg:DeleteOutOfScope");
+        List<long> sensors;
+        using (var ctx = _contextFactory())
+        {
+            sensors = OutOfScopeSensorObjids(ctx, keepDeviceObjids).Sensors;
+        }
+
+        var values = 0;
+        var stateChanges = 0;
+        for (var offset = 0; offset < sensors.Count; offset += DeviceQueryBatchSize)
+        {
+            var batch = sensors.GetRange(offset, Math.Min(DeviceQueryBatchSize, sensors.Count - offset));
+            values += BatchedPrune.Run<long>(
+                _contextFactory,
+                (ctx, take) => ctx.PrtgValues.Where(v => batch.Contains(v.SensorObjid))
+                    .OrderBy(v => v.Id).Select(v => v.Id).Take(take).ToList(),
+                (ctx, ids) => ctx.PrtgValues.Where(v => ids.Contains(v.Id)).ExecuteDelete(),
+                _ => 0,
+                "PRTG 監看範圍外數值", int.MaxValue);
+            stateChanges += BatchedPrune.Run<long>(
+                _contextFactory,
+                (ctx, take) => ctx.PrtgStateChanges.Where(c => batch.Contains(c.SensorObjid))
+                    .OrderBy(c => c.Id).Select(c => c.Id).Take(take).ToList(),
+                (ctx, ids) => ctx.PrtgStateChanges.Where(c => ids.Contains(c.Id)).ExecuteDelete(),
+                _ => 0,
+                "PRTG 監看範圍外狀態變更", int.MaxValue);
+        }
+        return (values, stateChanges);
     }
 
     /// <summary>
@@ -781,19 +906,8 @@ public sealed class EfPrtgStore
         int maxLookbackDays = 30, DateTime? anchor = null)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapWithDate");
-        if (maxLookbackDays <= 0)
-        {
-            return (null, new List<PrtgHostMapRow>());
-        }
-
-        var anchorDate = (anchor ?? DateTime.Today).Date;
-        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
-
         using var ctx = _contextFactory();
-        var latestDate = ctx.PrtgHostMaps
-            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
-            .Max(m => (DateTime?)m.MapDate);
-
+        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor);
         if (latestDate == null)
         {
             return (null, new List<PrtgHostMapRow>());
@@ -827,19 +941,8 @@ public sealed class EfPrtgStore
         long hostId, int maxLookbackDays = 30, DateTime? anchor = null)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapForHost");
-        if (maxLookbackDays <= 0)
-        {
-            return (null, new List<PrtgHostMapRow>());
-        }
-
-        var anchorDate = (anchor ?? DateTime.Today).Date;
-        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
-
         using var ctx = _contextFactory();
-        var latestDate = ctx.PrtgHostMaps
-            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
-            .Max(m => (DateTime?)m.MapDate);
-
+        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor);
         if (latestDate == null)
         {
             return (null, new List<PrtgHostMapRow>());
@@ -851,6 +954,50 @@ public sealed class EfPrtgStore
             .ToList();
 
         return (latestDate.Value, rows);
+    }
+
+    /// <summary>
+    /// 多台版的 <see cref="GetLatestHostMapForHost"/>：同一個「最近一次對應」的日期，
+    /// 第二趟只取 <paramref name="hostIds"/> 內主機的列（host_id IN (...)）。
+    /// 主機清單每頁只需要本頁未回報主機的對應，不必讀回整日對應表。
+    /// hostIds 為空時直接回空清單，不查資料庫。
+    /// </summary>
+    public List<PrtgHostMapRow> GetLatestHostMapForHosts(
+        IReadOnlyCollection<long> hostIds, int maxLookbackDays = 30)
+    {
+        using var __perf = _performance.Measure("prtg:GetLatestHostMapForHosts");
+        if (hostIds.Count == 0)
+        {
+            return new List<PrtgHostMapRow>();
+        }
+
+        using var ctx = _contextFactory();
+        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor: null);
+        if (latestDate == null)
+        {
+            return new List<PrtgHostMapRow>();
+        }
+
+        var ids = hostIds.Distinct().ToList();
+        return ctx.PrtgHostMaps
+            .AsNoTracking()
+            .Where(m => m.MapDate == latestDate.Value && m.HostId.HasValue && ids.Contains(m.HostId.Value))
+            .ToList();
+    }
+
+    /// <summary>單台／多台版共用：回看窗內最近一個有對應資料的日期，無資料或窗長不合法回 null。</summary>
+    private static DateTime? FindLatestHostMapDate(LfDbContext ctx, int maxLookbackDays, DateTime? anchor)
+    {
+        if (maxLookbackDays <= 0)
+        {
+            return null;
+        }
+
+        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
+        return ctx.PrtgHostMaps
+            .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
+            .Max(m => (DateTime?)m.MapDate);
     }
 
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
@@ -1452,4 +1599,11 @@ public sealed record PrtgSampledCoverage(int SensorCount, double? AverageCoverag
 /// SkippedBySafety＝過期列超過一半而觸發安全保險、一列都沒刪。
 /// </summary>
 public sealed record PrtgStaleDeleteResult(int Total, int Stale, int Deleted, bool SkippedBySafety);
+
+/// <summary>
+/// 範圍外清除預覽：將刪除的數值列數、狀態變更列數、受影響裝置數（感測器鏡像對得到的）與前幾台裝置名稱；
+/// <paramref name="UnknownSensors"/>＝感測器鏡像已沒有、對不到裝置的 sensor 數（它們的列同樣會被刪）。
+/// </summary>
+public sealed record PrtgOutOfScopePreview(
+    int Values, int StateChanges, int AffectedDevices, IReadOnlyList<string> TopDeviceNames, int UnknownSensors);
 

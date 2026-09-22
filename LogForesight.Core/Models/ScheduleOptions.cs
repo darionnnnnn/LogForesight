@@ -42,6 +42,14 @@ public class ScheduleOptions
     /// </summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
+    /// <summary>錯過窗口時是否自動補跑</summary>
+    public bool AutoCatchUp { get; set; } = true;
+
+    /// <summary>排程最近一次由停用改為啟用的時間（null＝升級前就已啟用或從未記錄，視為很久以前）。
+    /// 新鮮度判定用它排除「剛啟用還沒跑過」的站台——不用 <see cref="UpdatedAt"/>：任何設定儲存或確認靜音都會刷新它，
+    /// 那會讓過期判定每次重新計時 48 小時。</summary>
+    public DateTime? EnabledAt { get; set; }
+
     // AI 分析沒有獨立的啟用開關：AI 服務只要設定好就一律啟用。
     // 取數執行一發佈當日 PRTG finding 就立刻開跑，其餘時間在 AiWindows 內背景消化積壓。
     // 舊設定 blob 裡殘留的 aiEnabled 欄位由反序列化忽略，升級不需要任何動作。
@@ -54,4 +62,7 @@ public class ScheduleOptions
 
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
+
+    /// <summary>資料新鮮度過期提醒的靜音截止日（任務 A-3）</summary>
+    public DateTime? FreshnessAckUntil { get; set; }
 }

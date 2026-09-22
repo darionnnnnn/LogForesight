@@ -7,9 +7,12 @@ import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
-    guardLoad, renderSpinner
+    guardLoad, renderSpinner, renderEmpty, renderError
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import {
+    formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
+    prtgFreshnessLabel, statusBadge, toLocalDateString
+} from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
 
@@ -67,20 +70,29 @@ async function load() {
 
 async function loadSettings() {
     current = await api.get('/api/admin/settings');
-    renderSeverityChecks(current.unhandledSeverities);
-    renderDisplayModeButtons(current.severityDisplayMode);
-    renderDayRiskLevelChecks(current.visibleDayRiskLevels);
-    renderAiFields(current);
-    renderAdFields(current);
-    renderAnalysisFields(current);
-    renderRetentionFields(current);
-    renderMailFields(current);
-    renderBrandFields(current);
-    loadGuardFields(current);
-    renderUpdatedAt(current);
+    applySettings(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
     loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
     loadDispatchPoolWarning(); // 獨立打，失敗靜默
+}
+
+/**
+ * 整頁套用設定：所有頁籤的欄位一次重繪。載入與存檔成功後都走這一支——
+ * 存檔後只重繪部分頁籤會讓沒重繪的頁籤停在送出前的輸入（例如資料保留、資源守門）。
+ */
+function applySettings(settings) {
+    renderSeverityChecks(settings.unhandledSeverities);
+    renderDisplayModeButtons(settings.severityDisplayMode);
+    renderDayRiskLevelChecks(settings.visibleDayRiskLevels);
+    document.getElementById('default-note-phrases').value = (settings.defaultNotePhrases ?? []).join('\n');
+    renderAiFields(settings);
+    renderAdFields(settings);
+    renderAnalysisFields(settings);
+    renderRetentionFields(settings);
+    renderMailFields(settings);
+    renderBrandFields(settings);
+    loadGuardFields(settings);
+    renderUpdatedAt(settings);
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -597,11 +609,7 @@ async function loadDispatchPoolWarning() {
 async function loadBackfillStatus() {
     const el = document.getElementById('backfill-status');
     try {
-        const detail = await api.get('/api/health/detail', { silent: true });
-
-        // 同一次 /api/health/detail 也帶著資料層慢查詢清單，順手渲染（不必為它多打一次）
-        renderSlowQueries(detail.topSlowOperations);
-
+        const detail = await fetchHealthDetail();
         if (!detail.backfillInProgress) return;
 
         el.textContent = `問題聚合欄背景回填進行中（${detail.backfillDone} / ${detail.backfillTotal}）——` +
@@ -613,23 +621,256 @@ async function loadBackfillStatus() {
 }
 
 /**
- * 慢查詢區塊的容器。頁面骨架裡沒有這個節點（它是純維運資訊，不佔靜態版面），
- * 第一次要顯示時才建在「資料保留」面板的回填狀態之後——那裡已經是 /api/health/detail
- * 的既有讀取點，維運資訊集中在同一處比另開一頁好找。
+ * /api/health/detail 的單一讀取點：資料保留面板的回填狀態與系統健康頁籤共用同一次回應，
+ * 不重複打。失敗時清掉快取，下次切到健康頁籤可以重試；refresh 用於確認靜音後重新載入。
  */
+let healthDetailPromise = null;
+function fetchHealthDetail({ refresh = false } = {}) {
+    if (refresh || !healthDetailPromise) {
+        const pending = api.get('/api/health/detail', { silent: true });
+        pending.catch(() => { if (healthDetailPromise === pending) healthDetailPromise = null; });
+        healthDetailPromise = pending;
+    }
+    return healthDetailPromise;
+}
+
+/** 慢查詢區塊的容器：系統健康頁籤「慢查詢」卡片內的靜態節點 */
 function resolveSlowQueryHost() {
-    const existing = document.getElementById('slow-query-status');
-    if (existing) return existing;
+    return document.getElementById('slow-query-status');
+}
 
-    const anchorEl = document.getElementById('backfill-status');
-    if (!anchorEl) return null;
+/**
+ * 系統健康頁籤：切到該頁籤（或 #health 深連結進站）時才呼叫。
+ * 三個區塊都來自同一次 /api/health/detail。
+ */
+async function loadHealthTab({ refresh = false } = {}) {
+    const setupGuideTask = loadSetupGuideHealth();
+    let detail;
+    try {
+        detail = await fetchHealthDetail({ refresh });
+    } catch {
+        renderError(document.getElementById('health-freshness'), {
+            message: '無法載入系統健康資訊', onRetry: () => loadHealthTab({ refresh: true })
+        });
+        await setupGuideTask;
+        return;
+    }
+    renderFreshness(detail.scheduleFreshness);
+    renderSlowQueries(detail.topSlowOperations);
+    renderBackgroundJobs(detail);
+    await Promise.all([loadLoginThrottle(), setupGuideTask]);
+}
 
-    const host = document.createElement('div');
-    host.id = 'slow-query-status';
-    host.className = 'alert alert-secondary';
-    host.setAttribute('role', 'status');
-    anchorEl.insertAdjacentElement('afterend', host);
-    return host;
+/** 初始設定引導偏好：hidden 時顯示「重新顯示初始設定引導」按鈕，未 hidden 顯示提示文字 */
+async function loadSetupGuideHealth() {
+    const host = document.getElementById('health-setup-guide');
+    if (!host) return;
+    let guide;
+    try {
+        guide = await api.get('/api/me/setup-guide', { silent: true });
+    } catch {
+        renderError(host, { message: '無法載入初始設定狀態', onRetry: loadSetupGuideHealth });
+        return;
+    }
+    renderSetupGuideHealth(guide);
+}
+
+function renderSetupGuideHealth(guide) {
+    const host = document.getElementById('health-setup-guide');
+    if (!host) return;
+    if (guide?.hidden) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline-secondary btn-sm';
+        btn.textContent = '重新顯示初始設定引導';
+        btn.addEventListener('click', async () => {
+            const restore = withBusy(btn, '更新中…');
+            try {
+                await api.put('/api/me/setup-guide', { hidden: false });
+                toast('已重新顯示初始設定引導', 'success');
+                await loadSetupGuideHealth();
+            } catch {
+                // api.js 已顯示錯誤
+            } finally {
+                restore();
+            }
+        });
+        host.replaceChildren(btn);
+    } else {
+        const text = document.createElement('span');
+        text.className = 'text-muted small';
+        text.textContent = '引導會在初始設定完成前顯示';
+        host.replaceChildren(text);
+    }
+}
+
+/** 登入暫停：列出被登入節流暫停的帳號與 IP，可逐筆解除 */
+async function loadLoginThrottle() {
+    const host = document.getElementById('health-login-throttle');
+    if (!host) return;
+    let entries;
+    try {
+        entries = await api.get('/api/health/login-throttle', { silent: true });
+    } catch {
+        renderError(host, { message: '無法載入登入暫停清單', onRetry: loadLoginThrottle });
+        return;
+    }
+    renderTable(host, {
+        columns: [
+            { key: 'key', title: '對象' },
+            { key: 'kind', title: '類型', render: r => (r.kind === 'ip' ? 'IP' : '帳號') },
+            { key: 'blockedUntil', title: '解除時間', render: r => formatDateTime(r.blockedUntil) },
+            { key: 'action', title: '', render: r => loginThrottleClearButton(r.key) }
+        ],
+        rows: entries ?? [],
+        empty: { title: '目前沒有被暫停的帳號或 IP', hint: '所有帳號與來源 IP 目前皆處於正常可登入狀態。' }
+    });
+}
+
+function loginThrottleClearButton(key) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-outline-secondary btn-sm';
+    btn.textContent = '解除';
+    btn.addEventListener('click', async () => {
+        const restore = withBusy(btn, '解除中…');
+        try {
+            await api.delete(`/api/health/login-throttle/${encodeURIComponent(key)}`);
+            toast(`已解除 ${key} 的登入暫停`, 'success');
+            await loadLoginThrottle();
+        } catch {
+            // api.js 已顯示錯誤
+        } finally {
+            restore();
+        }
+    });
+    return btn;
+}
+
+/** 排程資料新鮮度：啟用狀態、最近一次成功、狀態徽章；過期且未確認時露出確認靜音列 */
+function renderFreshness(freshness) {
+    const host = document.getElementById('health-freshness');
+    const ackRow = document.getElementById('health-ack-row');
+    if (!host) return;
+    const f = freshness ?? {};
+
+    let badge;
+    if (f.acked) badge = statusBadge(`已確認，靜音至 ${formatDate(f.ackedUntil)}`, 'secondary');
+    else if (f.stale) badge = statusBadge('過期', 'warning');
+    else badge = statusBadge('正常', 'success');
+
+    const line = (label, value) => {
+        const row = document.createElement('div');
+        row.className = 'mb-1';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'text-muted me-2';
+        labelEl.textContent = label;
+        row.append(labelEl, value);
+        return row;
+    };
+    host.replaceChildren(
+        line('排程', f.scheduleEnabled ? '已啟用' : '未啟用'),
+        line('最近一次成功更新', f.lastSuccessAt ? formatDateTime(f.lastSuccessAt) : '近 14 天沒有成功紀錄'),
+        line('狀態', badge)
+    );
+
+    const needAck = !!f.stale && !f.acked;
+    ackRow?.classList.toggle('d-none', !needAck);
+    if (needAck) {
+        const input = document.getElementById('health-ack-until');
+        const offsetDay = days => {
+            const d = new Date();
+            d.setDate(d.getDate() + days);
+            return toLocalDateString(d);
+        };
+        input.min = offsetDay(1);
+        input.max = offsetDay(30);
+        input.value = offsetDay(1);
+    }
+}
+
+/** 背景工作：分析、回填、兩項遷移、首見日合併、暫停的郵件收件人（兩欄表） */
+function renderBackgroundJobs(detail) {
+    const withError = (state, error) => (error ? `${state || '未知'}（錯誤：${error}）` : (state || '未知'));
+    const suspended = detail.suspendedMailRecipients ?? [];
+    const rows = [
+        {
+            item: '分析執行',
+            status: detail.analysisRunning
+                ? `執行中${detail.analysisPhase ? `（${detail.analysisPhase}）` : ''}`
+                : '未執行'
+        },
+        {
+            item: '問題聚合欄回填',
+            status: detail.backfillInProgress
+                ? `進行中（${formatNumber(detail.backfillDone)} / ${formatNumber(detail.backfillTotal)}）`
+                : '無進行中的回填'
+        },
+        {
+            item: '來源名稱鍵回填',
+            status: detail.sourceKeyBackfillComplete ? '完成' :
+                `進行中（${formatNumber(detail.sourceKeyBackfillDone ?? 0)} / ${formatNumber(detail.sourceKeyBackfillTotal ?? 0)}）`
+        },
+        { item: '處理狀態遷移', status: withError(detail.migrationState, detail.migrationError) },
+        { item: '權限異動遷移', status: withError(detail.permissionChangeMigrationState, detail.permissionChangeMigrationError) },
+        {
+            item: '首見日合併',
+            status: `${withError(detail.issueFirstSeenSeedState, detail.issueFirstSeenSeedError)}，失敗 ${formatNumber(detail.issueFirstSeenSeedFailures ?? 0)} 次`
+        },
+        { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' },
+        { item: '密碼欄位加密', status: cryptoStatus(detail) }
+    ];
+    // PRTG 擷取：未啟用時後端回 null、不加這列；曾有資料卻連續多次取得 0 筆的類別列出來
+    if (Array.isArray(detail.prtgFreshness)) {
+        const suspicious = detail.prtgFreshness.filter(f => f.suspicious);
+        rows.push({
+            item: 'PRTG 擷取',
+            status: suspicious.length > 0
+                ? suspicious.map(f => `${prtgFreshnessLabel(f.category)} 連續 ${f.zeroStreak} 次取得 0 筆`).join('、')
+                : '正常'
+        });
+    }
+    renderTable(document.getElementById('health-background'), {
+        columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
+        rows
+    });
+    const preview = detail.sourceMergePreview ?? [];
+    if (preview.length > 0) {
+        const note = document.createElement('p');
+        note.className = 'small text-muted mt-2';
+        note.textContent = `來源大小寫合併預覽（最多 50 組）：${preview.map(g =>
+            `${g.names.join('／')}（Event ID ${g.eventId}）`).join('；')}`;
+        document.getElementById('health-background').appendChild(note);
+    }
+}
+
+/** 密碼欄位加密：金鑰不相符或曾有密文解不開時顯示警示，否則顯示金鑰來源 */
+function cryptoStatus(detail) {
+    if (detail.cryptoKeyMismatch || detail.cryptoDecryptFailure) return '部分密碼無法解密，請重新輸入（見 log）';
+    const sourceLabels = { env: '環境變數', file: '金鑰檔', embedded: '內嵌（不建議）' };
+    return `金鑰來源：${sourceLabels[detail.cryptoKeySource] ?? (detail.cryptoKeySource || '未知')}`;
+}
+
+/** 「確認並靜音」：成功後 toast 並重新載入系統健康頁籤 */
+function bindFreshnessAck() {
+    const btn = document.getElementById('health-ack-btn');
+    btn?.addEventListener('click', async () => {
+        const until = document.getElementById('health-ack-until').value;
+        if (!until) {
+            toast('請選擇靜音到哪一天', 'warning');
+            return;
+        }
+        const restore = withBusy(btn, '確認中…');
+        try {
+            await api.post('/api/health/freshness-ack', { until });
+            toast(`已確認，靜音至 ${until}`, 'success');
+            await loadHealthTab({ refresh: true });
+        } catch {
+            // api.js 已顯示錯誤
+        } finally {
+            restore();
+        }
+    });
 }
 
 /** 慢查詢區塊的文字（清單為空時顯示這一句，而不是一張空表） */
@@ -850,12 +1091,72 @@ function activateTabForElement(el) {
     document.querySelector(`#settings-tabs [data-tab="${panelName}"]`)?.click();
 }
 
+/**
+ * 讀數字欄：空白回 null，不轉成 0——後端數字欄不收 null，所以送出前由
+ * {@link findInvalidNumberFields} 擋下空白；萬一漏網，送 null 也會被後端拒絕，而不是靜默存成 0。
+ */
+function readNumber(id) {
+    const raw = document.getElementById(id).value.trim();
+    return raw === '' ? null : Number(raw);
+}
+
+/** 送出前逐一檢查表單內的數字欄（空白、超出 min/max、格式不符），回傳 [{ el, message }] */
+function findInvalidNumberFields(form) {
+    const invalid = [];
+    for (const input of form.querySelectorAll('input[type="number"]')) {
+        const { validity } = input;
+        if (input.value.trim() === '' || validity.badInput) {
+            invalid.push({ el: input, message: '請輸入數值' });
+        } else if (validity.rangeUnderflow || validity.rangeOverflow) {
+            invalid.push({ el: input, message: `請輸入 ${input.min}～${input.max} 之間的數值` });
+        } else if (!validity.valid) {
+            invalid.push({ el: input, message: '數值格式不符' });
+        }
+    }
+    return invalid;
+}
+
+function clearFieldError(el) {
+    el.classList.remove('is-invalid');
+    if (el.nextElementSibling?.classList.contains('lf-field-error')) el.nextElementSibling.remove();
+}
+
+/**
+ * 欄位錯誤的呈現（§6b 表單驗證錯誤）：每個欄位紅框＋下方 invalid-feedback，
+ * 切到第一個錯誤欄位所在的頁籤（收合在「進階設定」裡就展開）並 focus，toast 只留一則摘要。
+ */
+function showFieldErrors(errors) {
+    for (const { el, message } of errors) {
+        clearFieldError(el);
+        el.classList.add('is-invalid');
+        const feedback = document.createElement('div');
+        feedback.className = 'invalid-feedback lf-field-error';
+        feedback.setAttribute('role', 'alert');
+        feedback.textContent = message;
+        el.after(feedback);
+        el.addEventListener('input', () => clearFieldError(el), { once: true });
+    }
+    const first = errors[0].el;
+    activateTabForElement(first);
+    const details = first.closest('details');
+    if (details) details.open = true;
+    first.focus();
+    toast(`有 ${errors.length} 個欄位需要修正`, 'warning');
+}
+
 function bindForm() {
     const form = document.getElementById('settings-form');
     const saveButton = document.getElementById('settings-save');
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
+
+        // 表單是 novalidate：數字欄空白或超出範圍要自己擋，否則空白會被當成 0 送出
+        const invalidFields = findInvalidNumberFields(form);
+        if (invalidFields.length > 0) {
+            showFieldErrors(invalidFields);
+            return;
+        }
 
         const severities = collectSeverities();
         if (severities.length === 0) {
@@ -864,18 +1165,18 @@ function bindForm() {
             return;
         }
 
-        const initialHistoryDays = Number(document.getElementById('initial-history-days').value);
-        const retentionDays = Number(document.getElementById('retention-days').value);
+        const initialHistoryDays = readNumber('initial-history-days');
+        const retentionDays = readNumber('retention-days');
         if (retentionDays < initialHistoryDays) {
             activateTabForElement(document.getElementById('retention-days'));
             toast('歷史資料保留天數不可小於首次執行回補天數。', 'warning');
             return;
         }
 
-        const rawEventRetentionDays = Number(document.getElementById('raw-event-retention-days').value);
-        const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
-        const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
-        const reportRetentionDays = Number(document.getElementById('report-retention-days').value);
+        const rawEventRetentionDays = readNumber('raw-event-retention-days');
+        const runLogRetentionDays = readNumber('run-log-retention-days');
+        const auditRetentionDays = readNumber('audit-retention-days');
+        const reportRetentionDays = readNumber('report-retention-days');
         if (rawEventRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('raw-event-retention-days'));
             toast('原始事件內容保留天數不可大於歷史資料保留天數。', 'warning');
@@ -1017,6 +1318,7 @@ function bindForm() {
                 unhandledSeverities: severities,
                 severityDisplayMode: collectDisplayMode(),
                 visibleDayRiskLevels: collectDayRiskLevels(),
+                defaultNotePhrases: collectLines('default-note-phrases'),
                 aiProvider,
                 aiBaseUrl,
                 aiModel,
@@ -1036,33 +1338,33 @@ function bindForm() {
                 adSearchFilter: document.getElementById('ad-search-filter').value.trim(),
                 accountDisplayRules: document.getElementById('account-display-rules').value,
                 // AI 進階參數（§12）
-                aiTimeoutSeconds: Number(document.getElementById('ai-timeout-seconds').value),
-                aiRetryCount: Number(document.getElementById('ai-retry-count').value),
-                aiRetryDelaySeconds: Number(document.getElementById('ai-retry-delay-seconds').value),
-                aiJsonRetryCount: Number(document.getElementById('ai-json-retry-count').value),
-                aiMaxTokens: Number(document.getElementById('ai-max-tokens').value),
-                aiDeepDiveMaxTokens: Number(document.getElementById('ai-deep-dive-max-tokens').value),
-                aiFrequencyPenalty: Number(document.getElementById('ai-frequency-penalty').value),
-                aiPresencePenalty: Number(document.getElementById('ai-presence-penalty').value),
+                aiTimeoutSeconds: readNumber('ai-timeout-seconds'),
+                aiRetryCount: readNumber('ai-retry-count'),
+                aiRetryDelaySeconds: readNumber('ai-retry-delay-seconds'),
+                aiJsonRetryCount: readNumber('ai-json-retry-count'),
+                aiMaxTokens: readNumber('ai-max-tokens'),
+                aiDeepDiveMaxTokens: readNumber('ai-deep-dive-max-tokens'),
+                aiFrequencyPenalty: readNumber('ai-frequency-penalty'),
+                aiPresencePenalty: readNumber('ai-presence-penalty'),
                 aiExtraRequestFieldsJson: document.getElementById('ai-extra-request-fields').value.trim(),
                 // token 用量單價（跟著整頁 form 儲存）
-                aiInputPricePerMillion: Number(document.getElementById('ai-input-price').value) || 0,
-                aiOutputPricePerMillion: Number(document.getElementById('ai-output-price').value) || 0,
+                aiInputPricePerMillion: readNumber('ai-input-price'),
+                aiOutputPricePerMillion: readNumber('ai-output-price'),
                 // 分析參數（§12）
                 serverDescription: document.getElementById('server-description').value.trim(),
-                checkupIntervalDays: Number(document.getElementById('checkup-interval-days').value),
+                checkupIntervalDays: readNumber('checkup-interval-days'),
                 watchedFolders: collectLines('watched-folders'),
                 analysisChannels: collectLines('analysis-channels'),
                 permissionOperatorFields: collectLines('perm-operator-fields'),
                 permissionMemberFields: collectLines('perm-member-fields'),
                 permissionGroupFields: collectLines('perm-group-fields'),
                 permissionObjectFields: collectLines('perm-object-fields'),
-                importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
-                importMaxRows: Number(document.getElementById('import-max-rows').value),
+                importMaxFileSizeKb: readNumber('import-max-file-size-kb'),
+                importMaxRows: readNumber('import-max-rows'),
                 // 郵件通知（回饋十五輪批次D）
                 mailEnabled,
                 smtpServer,
-                smtpPort: Number(document.getElementById('smtp-port').value),
+                smtpPort: readNumber('smtp-port'),
                 smtpUseTls: document.getElementById('smtp-use-tls').checked,
                 smtpAccount: document.getElementById('smtp-account').value.trim(),
                 smtpPassword: document.getElementById('smtp-password').value || null,
@@ -1089,13 +1391,8 @@ function bindForm() {
                 brandIconDataUri: brandIconDataUri
             });
             toast('已儲存設定', 'success');
-            renderAiFields(current);
-            renderAdFields(current);
-            renderAnalysisFields(current);
-            renderMailFields(current);
-            renderBrandFields(current);
+            applySettings(current);
             applyBrandToSidebar(current);
-            renderUpdatedAt(current);
             unsaved?.clear();
         } catch {
             // 錯誤訊息已由 api.js 以 toast 顯示（與其餘頁面同一套）；這裡吞掉是為了不留下
@@ -1104,6 +1401,30 @@ function bindForm() {
             restore();
         }
     });
+}
+
+/**
+ * 「進階設定」收合區（§6b 資訊密度）：純調校參數預設收合，記住使用者的展開選擇。
+ * localStorage 可能被停用或滿了，讀寫都包 try/catch——記不住只是每次回到預設收合。
+ */
+const ADVANCED_STORAGE_PREFIX = 'lf.settings.advanced.';
+
+function bindAdvancedSections() {
+    for (const details of document.querySelectorAll('#settings-form details[data-advanced]')) {
+        const key = ADVANCED_STORAGE_PREFIX + details.id;
+        try {
+            details.open = localStorage.getItem(key) === 'open';
+        } catch {
+            // 讀不到＝維持預設收合
+        }
+        details.addEventListener('toggle', () => {
+            try {
+                localStorage.setItem(key, details.open ? 'open' : 'closed');
+            } catch {
+                // 寫不進去＝下次回到預設收合
+            }
+        });
+    }
 }
 
 /**
@@ -1250,12 +1571,17 @@ document.getElementById('ad-servers')?.addEventListener('input', renderAdStatus)
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
-bindTabs(document.getElementById('settings-tabs'));
+bindTabs(document.getElementById('settings-tabs'), {
+    hash: true,
+    onChange: name => { if (name === 'health') loadHealthTab(); }
+});
+bindFreshnessAck();
+bindAdvancedSections();
 // 資源守門的「預覽／自動偵測」兩顆鈕（docs/PRTG-SPEC.md §12）
 bindGuardPreview();
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
-        '#mail-test-btn, #mail-test-result'
+        '#mail-test-btn, #mail-test-result, #health-ack-until, #health-ack-btn'
 });
 load();
 renderAlertToolsTable(document.getElementById('auto-dispatch-alert-tools'));

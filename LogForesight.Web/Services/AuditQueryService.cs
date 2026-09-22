@@ -2,7 +2,7 @@ using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
 
-/// <summary>操作紀錄查閱（docs/WEB-SPEC.md §9.11）</summary>
+/// <summary>稽核紀錄查閱（docs/WEB-SPEC.md §9.11）</summary>
 public class AuditQueryService
 {
     private readonly AuditLogStore _store;
@@ -16,19 +16,20 @@ public class AuditQueryService
         _displayNameService = displayNameService;
     }
 
-    public PagedResult<AuditEntryDto> Query(AuditQuery query)
+    public AuditPageDto Query(AuditQuery query)
     {
         var result = _store.Query(query);
 
         // 一次載入做字典（docs/archive/FEEDBACK-8-PLAN.md #6）：單頁筆數有限，不必逐筆查
         var byAccount = _users.GetAll().ToDictionary(u => u.Account, u => _displayNameService.Of(u.DisplayName), StringComparer.OrdinalIgnoreCase);
 
-        return new PagedResult<AuditEntryDto>
+        return new AuditPageDto
         {
             Items = result.Items.Select(e => ToDto(e, byAccount)).ToList(),
             Page = result.Page,
             PageSize = result.PageSize,
-            Total = result.Total
+            Total = result.Total,
+            DefaultRangeApplied = result.DefaultRangeApplied
         };
     }
 
@@ -44,6 +45,8 @@ public class AuditQueryService
         [AuditActions.Logout] = "登出",
         [AuditActions.LoginFailed] = "登入失敗",
         [AuditActions.SessionExpired] = "工作階段逾期",
+        [AuditActions.LoginThrottled] = "登入嘗試過多暫停",
+        [AuditActions.LoginThrottleCleared] = "解除登入暫停",
         ["access_denied"] = "權限不足被拒",
 
         [AuditActions.HandlingAssign] = "指派處理人",
@@ -56,6 +59,7 @@ public class AuditQueryService
         [AuditActions.WorkOrderSplit] = "交辦單拆分",
         [AuditActions.WorkOrderCancel] = "取消交辦",
         [AuditActions.WorkOrderAdminClose] = "代為結案",
+        [AuditActions.WorkOrderDueDate] = "修改交辦單期限",
         [AuditActions.WorkOrderAutoDispatchRun] = "立即派工",
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",
@@ -101,15 +105,18 @@ public class AuditQueryService
         [AuditActions.ScheduleOptionsUpdate] = "更新排程設定",
         [AuditActions.ScheduleManualRun] = "手動觸發分析",
         [AuditActions.ScheduleManualCancel] = "取消執行中的分析",
+        [AuditActions.HealthFreshnessAck] = "確認資料過期提醒",
 
         [AuditActions.NetiqProbeRun] = "執行 NetIQ API 診斷",
 
         [AuditActions.PrtgConnectionTest] = "測試 PRTG 連線",
         [AuditActions.PrtgProbeRun] = "執行 PRTG 環境探測",
+        [AuditActions.PrtgProbeCancel] = "停止環境探測",
         [AuditActions.PrtgBackfillRun] = "啟動 PRTG 歷史回填",
         [AuditActions.PrtgBackfillCancel] = "停止 PRTG 歷史回填",
         [AuditActions.PrtgStructureSyncRun] = "啟動 PRTG 同步結構與對應",
         [AuditActions.PrtgStructureSyncCancel] = "停止 PRTG 同步結構與對應",
+        [AuditActions.PrtgScopePurge] = "清除監看範圍外的 PRTG 資料",
         [AuditActions.PrtgManualMapSet] = "設定 PRTG 人工主機對應",
         [AuditActions.PrtgManualMapDelete] = "刪除 PRTG 人工主機對應",
         [AuditActions.PrtgIpExcludeSet] = "設定 PRTG IP 排除",
@@ -119,6 +126,7 @@ public class AuditQueryService
         [AuditActions.PrtgSettingsUpdate] = "更新 PRTG 設定",
 
         [AuditActions.CalibrationExport] = "匯出校準數值",
+        [AuditActions.AiNoteTidy] = "AI 整理處理說明",
 
         [AuditActions.IssueOwnerUpdate] = "設定問題負責人",
         [AuditActions.IssueOwnerDelete] = "刪除問題負責人",

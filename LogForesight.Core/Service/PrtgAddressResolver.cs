@@ -20,8 +20,17 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
     private readonly Func<string, IPAddress[]> _dnsLookup;
     private readonly Dictionary<string, string?> _cache = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>正式建構子，使用真正的 DNS 解析。</summary>
-    public PrtgAddressResolver() : this(DnsLookupWithTimeout)
+    /// <summary>正式建構子，使用真正的 DNS 解析與系統時鐘。</summary>
+    public PrtgAddressResolver() : this(SystemDnsAsync, TimeProvider.System)
+    {
+    }
+
+    /// <summary>
+    /// 逾時保護路徑的注入點：非同步 DNS 查詢與逾時計時器的時間來源皆必填。
+    /// 測試以替身 DNS（卡到被取消為止）與手動時鐘驗證「逾時即返回、不擲例外」，不依賴真實 DNS 與真實等待。
+    /// </summary>
+    internal PrtgAddressResolver(Func<string, CancellationToken, Task<IPAddress[]>> dnsAsync, TimeProvider timeProvider)
+        : this(host => DnsLookupWithTimeout(dnsAsync, timeProvider, host))
     {
     }
 
@@ -74,7 +83,10 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
     }
 
     /// <summary>DNS 解析逾時。來源位址只有幾筆、裝置側已由候選判定與守門預算減量，1 秒足夠。</summary>
-    private static readonly TimeSpan DnsTimeout = TimeSpan.FromSeconds(1);
+    internal static readonly TimeSpan DnsTimeout = TimeSpan.FromSeconds(1);
+
+    private static Task<IPAddress[]> SystemDnsAsync(string host, CancellationToken ct) =>
+        Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, ct);
 
     /// <summary>
     /// 對主機名稱進行 DNS 解析（帶逾時保護，只查 IPv4）。
@@ -85,13 +97,13 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
     /// 介面維持同步簽章（改 async 連動主機對應與守門全部呼叫端，見 docs/BACKLOG.md），
     /// 這裡同步等待非同步結果；解析失敗或逾時一律視為找不到，不擲例外。
     /// </summary>
-    private static IPAddress[] DnsLookupWithTimeout(string host)
+    private static IPAddress[] DnsLookupWithTimeout(
+        Func<string, CancellationToken, Task<IPAddress[]>> dnsAsync, TimeProvider timeProvider, string host)
     {
         try
         {
-            using var cts = new CancellationTokenSource(DnsTimeout);
-            return Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cts.Token)
-                .GetAwaiter().GetResult();
+            using var cts = new CancellationTokenSource(DnsTimeout, timeProvider);
+            return dnsAsync(host, cts.Token).GetAwaiter().GetResult();
         }
         catch (Exception)
         {

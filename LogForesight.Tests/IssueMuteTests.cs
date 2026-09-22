@@ -53,7 +53,7 @@ public sealed class IssueMuteTests : IDisposable
 
     private IssueOwnerAdminService Admin(ICurrentUser user, IIssueOwnerStore? store = null) =>
         new(store ?? _owners, new FakeIssueAggregateQuery(), _users, _audit, user,
-            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared);
 
     private static ICurrentUser Maintainer() => FakeCurrentUser.ForUser(5, Capability.Maintain);
 
@@ -256,7 +256,7 @@ public sealed class IssueMuteTests : IDisposable
     // ── 派工脈絡 ───────────────────────────────────────────────────────────
 
     [Fact]
-    public void 派工脈絡_Build由問題檔案填入區間_IsMuted對區間內日期為真()
+    public void 派工脈絡_Build由問題負責與靜音填入區間_IsMuted對區間內日期為真()
     {
         var owners = new FakeIssueOwnerStore();
         owners.Upsert(Profile((Today.AddDays(-3), Today.AddDays(-2)), (Today, Today.AddDays(1))));
@@ -301,7 +301,9 @@ public sealed class IssueMuteTests : IDisposable
         yield return new object?[] { 3, DateTime.Today.AddDays(3) };
         yield return new object?[] { null, null };
         yield return new object?[] { null, DateTime.Today.AddDays(-1) };
-        yield return new object?[] { null, DateTime.Today.AddDays(366) };
+        // MemberData 可能在午夜前探索、午夜後才執行；用明確超出上限的 400 天，
+        // 避免原本 366 天在跨日時縮成合法的 365 天而偶發失敗。
+        yield return new object?[] { null, DateTime.Today.AddDays(400) };
     }
 
     [Theory]
@@ -341,7 +343,7 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
-    public void SetMute_問題檔案不存在時建立_無負責人無結論()
+    public void SetMute_問題設定不存在時建立_無負責人無結論()
     {
         var dto = Admin(Maintainer()).SetMute(Source, EventId,
             new SetIssueMuteRequest { Until = Today.AddDays(2), Reason = "搬機房", ExistingOrders = "pause" });
@@ -503,7 +505,7 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
-    public void 真實store_問題檔案已存在時_延長確實寫入()
+    public void 真實store_問題負責與靜音已存在時_延長確實寫入()
     {
         var store = RealStore();
         store.Upsert(new IssueProfile { SourceName = Source, EventId = EventId, Note = "既有" });
@@ -521,7 +523,7 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
-    public void 真實store_問題檔案已存在時_解除確實寫入()
+    public void 真實store_問題負責與靜音已存在時_解除確實寫入()
     {
         var store = RealStore();
         store.Upsert(new IssueProfile { SourceName = Source, EventId = EventId });

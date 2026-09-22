@@ -8,7 +8,7 @@ using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 
 namespace LogForesight.Web.Controllers.Api;
 
-/// <summary>操作紀錄查閱（docs/WEB-SPEC.md §9.11）。需 ViewAudit 能力（admin / serverAdmin）</summary>
+/// <summary>稽核紀錄查閱（docs/WEB-SPEC.md §9.11）。需 ViewAudit 能力（admin / serverAdmin）</summary>
 [ApiController]
 [Route("api/audit")]
 [Permission(Capability.ViewAudit)]
@@ -22,7 +22,7 @@ public class AuditController : ControllerBase
     }
 
     [HttpGet]
-    public ApiResponse<PagedResult<AuditEntryDto>> Query(
+    public ApiResponse<AuditPageDto> Query(
         [FromQuery] string? from,
         [FromQuery] string? to,
         [FromQuery] long? userId,
@@ -55,7 +55,7 @@ public class AuditController : ControllerBase
             query.Result = auditResult;
         }
 
-        return ApiResponse<PagedResult<AuditEntryDto>>.Ok(_service.Query(query));
+        return ApiResponse<AuditPageDto>.Ok(_service.Query(query));
     }
 
     [HttpGet("actions")]

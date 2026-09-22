@@ -25,13 +25,13 @@ public class IssueOwnedHostIdsCache
     public const int TtlSeconds = IssueRankingCache.TtlSeconds;
 
     /// <summary>條目上限：同 <see cref="SummaryCache"/>——鍵含使用者與設定維度，組合無限，
-    /// 超過上限整批清掉，重算付得起。</summary>
-    private const int MaxEntries = 64;
+    /// 滿了逐筆淘汰（先清過期、再清最久沒被存取的），不整批清空。</summary>
+    private const int MaxEntries = 256;
 
     private readonly DataVersionStamp _stamp;
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
-    private readonly Dictionary<string, (HashSet<long> HostIds, DateTime CachedAt)> _entries = new();
+    private readonly Dictionary<string, (HashSet<long> HostIds, DateTime CachedAt, DateTime LastAccess)> _entries = new();
 
     /// <summary>上一次看到的版本戳：版本一推進，所有舊鍵都已經死掉（鍵含版本戳），
     /// 直接整批清掉，免得死條目佔著上限。</summary>
@@ -66,6 +66,7 @@ public class IssueOwnedHostIdsCache
             else if (_entries.TryGetValue(key, out var entry)
                      && (_now() - entry.CachedAt).TotalSeconds < TtlSeconds)
             {
+                _entries[key] = entry with { LastAccess = _now() };
                 return new HashSet<long>(entry.HostIds);
             }
         }
@@ -76,10 +77,29 @@ public class IssueOwnedHostIdsCache
 
         lock (_lock)
         {
-            if (_entries.Count >= MaxEntries) _entries.Clear();
-            _entries[key] = (new HashSet<long>(value), _now());
+            var now = _now();
+            if (!_entries.ContainsKey(key)) EvictForInsert(now);
+            _entries[key] = (new HashSet<long>(value), now, now);
         }
 
         return new HashSet<long>(value);
+    }
+
+    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除逾時項目，仍滿就逐筆移除最後存取時間最舊的一筆。
+    /// （版本推進時的整批清空在 GetOrAdd 開頭，與這裡無關。）</summary>
+    private void EvictForInsert(DateTime now)
+    {
+        if (_entries.Count < MaxEntries) return;
+
+        var expired = _entries
+            .Where(e => (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
+            .Select(e => e.Key)
+            .ToList();
+        foreach (var k in expired) _entries.Remove(k);
+
+        while (_entries.Count >= MaxEntries)
+        {
+            _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
+        }
     }
 }

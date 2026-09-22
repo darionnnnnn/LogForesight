@@ -122,17 +122,23 @@ public class IdentityService
         // 上次登入時間（§3）：只有這一個寫入點。serverAdmin 不經這裡（它不在 lf_users）
         _users.TouchLogin(user.UserId, DateTime.Now);
 
-        var capabilities = ResolveCapabilities(user);
+        var identity = CreateTokenIdentity(user);
         _audit.RecordAuth(AuditActions.Login, account, user.UserId,
             $"登入成功（{_provider.Name}）", AuditResult.Ok);
 
-        return LoginOutcome.Ok(new TokenIdentity(
-            UserId: user.UserId,
-            Account: user.Account,
-            DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
-            Capabilities: capabilities,
-            IsServerAdmin: false));
+        return LoginOutcome.Ok(identity);
     }
+
+    /// <summary>
+    /// 一般使用者的 token 身分（能力當下重算）。登入與 ActiveUserMiddleware 的權限版本換發共用這一份，
+    /// 兩條路徑簽出來的 token 內容才不會漂移。
+    /// </summary>
+    public TokenIdentity CreateTokenIdentity(WebUser user) => new(
+        UserId: user.UserId,
+        Account: user.Account,
+        DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
+        Capabilities: ResolveCapabilities(user),
+        IsServerAdmin: false);
 
     /// <summary>
     /// AD 登入自動補顯示名稱與 Email（docs/archive/HISTORY.md #8）：批次新增使用者
@@ -165,9 +171,20 @@ public class IdentityService
         var beforeDisplayName = user.DisplayName;
         var beforeEmail = user.Email;
 
-        if (newDisplayName != null) user.DisplayName = newDisplayName;
-        if (newEmail != null) user.Email = newEmail;
-        var saved = _users.Upsert(user);
+        // 先複製再改：使用者清單有快取，FindByAccount 回傳的是快取裡的共用物件，
+        // 就地改會讓其他請求在寫入完成前就看到未存檔的值（寫入失敗時更是永久錯值）
+        var updated = new WebUser
+        {
+            UserId = user.UserId,
+            Account = user.Account,
+            DisplayName = newDisplayName ?? user.DisplayName,
+            Email = newEmail ?? user.Email,
+            Active = user.Active,
+            GroupIds = user.GroupIds.ToList(),
+            LastLoginAt = user.LastLoginAt,
+            DispatchPaused = user.DispatchPaused
+        };
+        var saved = _users.Upsert(updated);
 
         // 登入流程此時尚未建立已登入身分（Cookie 要到 Controller 回應才寫入），
         // 用 RecordAuth（明確指定帳號／UserId）而非 Record（會讀「目前登入者」，此刻是 anonymous）

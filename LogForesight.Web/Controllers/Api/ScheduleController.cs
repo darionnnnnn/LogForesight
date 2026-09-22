@@ -81,10 +81,12 @@ public class ScheduleController : ControllerBase
 
         var saved = _optionsStore.Update(o =>
         {
+            if (request.Enabled && !o.Enabled) o.EnabledAt = DateTime.Now;
             o.Enabled = request.Enabled;
             o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
             o.LocalAnalysisEnabled = request.LocalAnalysisEnabled;
+            o.AutoCatchUp = request.AutoCatchUp;
             o.AiWindows = request.AiWindows;
             o.AiConcurrency = Math.Clamp(request.AiConcurrency, 1, 8);
             o.UpdatedByAccount = _currentUser.Account;
@@ -95,6 +97,7 @@ public class ScheduleController : ControllerBase
             summary: $"更新排程設定：{(saved.Enabled ? "已啟用" : "未啟用")}、{saved.Windows.Count} 個執行窗口" +
                      (saved.DebugDump ? "，AI 診斷傾印開啟中" : "") +
                      (saved.LocalAnalysisEnabled ? "" : "，本機分析已停用") +
+                     (saved.AutoCatchUp ? "" : "，錯過窗口不自動補跑") +
                      $"，AI 分析：{saved.AiWindows.Count} 個背景補跑窗口、併發 {saved.AiConcurrency}",
             targetKind: "schedule",
             detail: new
@@ -103,6 +106,7 @@ public class ScheduleController : ControllerBase
                 saved.Windows,
                 saved.DebugDump,
                 saved.LocalAnalysisEnabled,
+                saved.AutoCatchUp,
                 saved.AiWindows,
                 saved.AiConcurrency
             });
@@ -244,7 +248,7 @@ public class ScheduleController : ControllerBase
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
 
-        var runRequest = ToRunRequest(request, runScope, hostIds, _currentUser.Account);
+        var runRequest = ToRunRequest(request, runScope, hostIds, _currentUser.Account, _settingsStore.Get());
 
         // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C）；
         // 留空代表沿用 NetIQ 維護頁設定的回望天數
@@ -259,7 +263,8 @@ public class ScheduleController : ControllerBase
                      (request.Segment != null ? $"「{request.Segment}」" : "") +
                      (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") +
                      (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") +
-                     rerunSummary + "）",
+                     rerunSummary +
+                     (runRequest.PrtgBackfillDays > 0 ? $"，接續補 PRTG 數值 {runRequest.PrtgBackfillDays} 天" : "") + "）",
             targetKind: "schedule",
             detail: new
             {
@@ -268,7 +273,8 @@ public class ScheduleController : ControllerBase
                 request.HostId,
                 request.BackfillDays,
                 request.OnlyMissingOrFailed,
-                request.RerunMode
+                request.RerunMode,
+                request.IncludePrtgValues
             });
 
         var started = await _scheduler.TriggerRunAsync(runRequest);
@@ -284,15 +290,22 @@ public class ScheduleController : ControllerBase
     /// 同型的漏抄曾讓 <see cref="RunRequest.OnlyMissingOrFailed"/> 靜默失效（API 設了、稽核也印了、
     /// 執行端收不到）。新增 <see cref="TriggerRunRequest"/> 欄位時必須同步這裡。
     /// </summary>
+    /// <param name="settings">決定「一併補 PRTG 數值」是否生效：PRTG 已啟用、取數策略為保守、回望天數 &gt; 1。</param>
     internal static RunRequest ToRunRequest(
-        TriggerRunRequest request, RunScope runScope, IReadOnlyList<long>? hostIds, string account) => new()
+        TriggerRunRequest request, RunScope runScope, IReadOnlyList<long>? hostIds, string account, SystemSettings settings) => new()
     {
         Scope = runScope,
         HostIds = hostIds,
         BackfillOverride = request.BackfillDays,
         OnlyMissingOrFailed = request.OnlyMissingOrFailed,
         RerunMode = request.RerunMode,
-        Trigger = $"manual:{account}"
+        Trigger = $"manual:{account}",
+        // 激進策略本來就逐顆取數值，不需接續；回望 1 天（只有昨天）交給快照與觸發式取數
+        PrtgBackfillDays = request.IncludePrtgValues && settings.PrtgEnabled &&
+                           PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy) == PrtgFetchStrategy.Conservative &&
+                           request.BackfillDays is int days && days > 1
+            ? days
+            : 0
     };
 
     [HttpPost("cancel")]
@@ -326,29 +339,7 @@ public class ScheduleController : ControllerBase
                 return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), _optionsStore.Get().LocalAnalysisEnabled);
 
             case "segment":
-                if (string.IsNullOrWhiteSpace(segment))
-                    throw DomainException.Validation("請輸入要執行的網段。");
-
-                // 輸入語法與 NetIQ 匯入精靈一致（前綴 192.168.0 或 CIDR 192.168.0.0/24），
-                // 共用同一份 NormalizeSubnetPrefix；比對主機清單改用 CidrMatcher（同一套邏輯的
-                // 另一個消費端——精靈用正規化後的前綴組 Sentinel 查詢字串，這裡組本地萬用字元比對）
-                string normalizedPrefix;
-                try
-                {
-                    normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(segment);
-                }
-                catch (ArgumentException ex)
-                {
-                    throw DomainException.Validation(ex.Message);
-                }
-                var range = CidrMatcher.Parse($"{normalizedPrefix}.*")!;
-
-                var netiqList = HostListSelection.FromStore(_hosts, _sentinels);
-                var matchedTargets = netiqList.ByServer.Values
-                    .SelectMany(v => v)
-                    .Where(t => CidrMatcher.Matches(range, t.IpAddress))
-                    .ToList();
-                return (RunScope.NetiqHosts, matchedTargets.Select(t => t.HostId).ToList(), false);
+                return (RunScope.NetiqHosts, ResolveSegmentHostIds(segment, _hosts, _sentinels), false);
 
             case "host":
                 if (hostId is not { } id) throw DomainException.Validation("請指定要更新的主機。");
@@ -376,6 +367,35 @@ public class ScheduleController : ControllerBase
             default:
                 throw DomainException.Validation($"範圍「{scope}」不合法，僅接受 all/segment/host。");
         }
+    }
+
+    /// <summary>
+    /// 網段範圍 → 會被查詢的 NetIQ 主機 HostId（立即執行與 PRTG 數值估算端點共用）。
+    /// </summary>
+    internal static List<long> ResolveSegmentHostIds(string? segment, IHostStore hosts, ISentinelStore sentinels)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+            throw DomainException.Validation("請輸入要執行的網段。");
+
+        // 輸入語法與 NetIQ 匯入精靈一致（前綴 192.168.0 或 CIDR 192.168.0.0/24），
+        // 共用同一份 NormalizeSubnetPrefix；比對主機清單改用 CidrMatcher（同一套邏輯的
+        // 另一個消費端——精靈用正規化後的前綴組 Sentinel 查詢字串，這裡組本地萬用字元比對）
+        string normalizedPrefix;
+        try
+        {
+            normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(segment);
+        }
+        catch (ArgumentException ex)
+        {
+            throw DomainException.Validation(ex.Message);
+        }
+        var range = CidrMatcher.Parse($"{normalizedPrefix}.*")!;
+
+        return HostListSelection.FromStore(hosts, sentinels).ByServer.Values
+            .SelectMany(v => v)
+            .Where(t => CidrMatcher.Matches(range, t.IpAddress))
+            .Select(t => t.HostId)
+            .ToList();
     }
 
     private static string ScopeText(string scope) => scope switch
@@ -488,6 +508,7 @@ public class ScheduleController : ControllerBase
         Windows = options.Windows,
         DebugDump = options.DebugDump,
         LocalAnalysisEnabled = options.LocalAnalysisEnabled,
+        AutoCatchUp = options.AutoCatchUp,
         AiWindows = options.AiWindows,
         AiConcurrency = options.AiConcurrency,
         NextAiTriggerTime = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)

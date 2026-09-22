@@ -107,9 +107,9 @@ public class DayHandlingCommandService
         if (request.DueDate.HasValue && request.DueDate.Value.Date < DateTime.Today)
             throw DomainException.Validation("預計完成日不可早於今天。");
 
-        // 無法處理必填原因（回饋十八輪批次G，與問題層級 ValidateIssueStatus 同一條規則）
-        if (request.Status == HandlingStatuses.Escalated && string.IsNullOrWhiteSpace(request.Note))
-            throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
+        // 必填說明（無法處理／不處理）與問題層級同一份規則：日層級值域是問題層級的子集，
+        // 上面已擋掉日層級不存在的狀態，這裡只借用共用驗證的其餘條件
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing: false, request.Note);
 
         var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date, record);
         var previousStatus = existing.Status;
@@ -191,9 +191,9 @@ public class DayHandlingCommandService
         // 建案（docs/archive/FEEDBACK-4-PLAN.md §2/Q1）：指派給人時，對當日「未處理計算」等級內、
         // 未結案、無進行中案件的每個問題建案並回溯關聯歷史——落實 2.1「同主機同問題只由
         // 一個人處理」。取消指派（handlerId=null）不建案，那不是「開始有人處理」的動作。
-        var (casesCreated, skippedHandlerNames, reassignedCount) = handlerId.HasValue
+        var (casesCreated, skippedHandlerNames, reassignedCount, createdOrders) = handlerId.HasValue
             ? BuildCasesForDay(host, date, record, handlerId.Value, reassign)
-            : (0, new List<string>(), 0);
+            : (0, new List<string>(), 0, new List<(long WorkOrderId, string IssueLabel)>());
 
         _audit.Record(
             action: AuditActions.HandlingAssign,
@@ -229,6 +229,33 @@ public class DayHandlingCommandService
         if (handler != null && !_capabilities.Resolve(handler).Contains(Capability.Handle))
             dto.AssigneeCannotHandle = true;
 
+        if (_mail != null && handler != null && handler.UserId != _currentUser.UserId && createdOrders.Count > 0 && !string.IsNullOrWhiteSpace(handler.Email))
+        {
+            WorkOrderNotice notice;
+            if (createdOrders.Count == 1)
+            {
+                var o = createdOrders[0];
+                notice = new WorkOrderNotice(
+                    WorkOrderNoticeKinds.Created, o.WorkOrderId, o.IssueLabel, null,
+                    1, new[] { host.HostName }, null, null,
+                    handler.Account, handler.Email, _currentUser.Account, null);
+            }
+            else
+            {
+                var allLabels = string.Join("、", createdOrders.Select(o => o.IssueLabel));
+                var orderListText = string.Join("\n", createdOrders.Select(o => $"  - 單號 {o.WorkOrderId}：{o.IssueLabel}"));
+                var note = $"本次共建立 {createdOrders.Count} 張交辦單：\n{orderListText}";
+
+                notice = new WorkOrderNotice(
+                    WorkOrderNoticeKinds.Created, createdOrders[0].WorkOrderId,
+                    $"共 {createdOrders.Count} 項問題（{allLabels}）", null,
+                    1, new[] { host.HostName }, note, null,
+                    handler.Account, handler.Email, _currentUser.Account, null);
+            }
+
+            _ = _mail.NotifyWorkOrderAsync(notice);
+        }
+
         return dto;
     }
 
@@ -237,12 +264,18 @@ public class DayHandlingCommandService
     /// 不該自動變成有人要處理的案件，已結案的問題也不建案。已有進行中案件的問題保留原處理人
     /// （Q2），回傳略過清單（去重的處理人姓名）供呼叫端提示「已由 ○○○ 的案件涵蓋」。
     /// </summary>
-    private (int Created, List<string> SkippedHandlerNames, int Reassigned) BuildCasesForDay(
+    private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders) BuildCasesForDay(
         WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
     {
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var dayIssueHandlings = _issueStore.GetForDay(host.HostName, date)
-            .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
+            .GroupBy(h => h.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(h => h.UpdatedAt)
+                    .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
         var actor = new WorkOrderActor
         {
             ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
@@ -253,6 +286,7 @@ public class DayHandlingCommandService
         var created = 0;
         var reassigned = 0;
         var skippedHandlerIds = new HashSet<long>();
+        var createdOrders = new List<(long WorkOrderId, string IssueLabel)>();
 
         foreach (var issue in record.TopIssues)
         {
@@ -289,6 +323,11 @@ public class DayHandlingCommandService
 
             created += outcome.NewCases;
             reassigned += outcome.Reassigned;
+            if (outcome.CreatedOrder && outcome.WorkOrderId > 0)
+            {
+                createdOrders.Add((outcome.WorkOrderId, HandlingTextHelpers.IssueLabel(issue)));
+            }
+
             foreach (var conflict in outcome.SkippedConflicts)
             {
                 // 既有語意：進行中案件沒有處理人時不列入略過名單
@@ -304,7 +343,7 @@ public class DayHandlingCommandService
             })
             .ToList();
 
-        return (created, skippedNames, reassigned);
+        return (created, skippedNames, reassigned, createdOrders);
     }
 
     /// <summary>

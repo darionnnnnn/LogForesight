@@ -158,6 +158,29 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgProbeResultDto>.Ok(new StartPrtgProbeResultDto { Started = true });
     }
 
+    /// <summary>
+    /// 停止進行中的環境探測。
+    /// </summary>
+    [HttpPost("prtg-probe/cancel")]
+    public ApiResponse<StartPrtgProbeResultDto> CancelPrtgProbe()
+    {
+        if (_prtgProbe == null)
+            throw DomainException.Validation("PRTG 探測服務未啟用。");
+
+        if (!_prtgProbe.TryCancel())
+            throw DomainException.Conflict("目前沒有進行中的環境探測。");
+
+        _audit.Record(
+            action: AuditActions.PrtgProbeCancel,
+            summary: "停止環境探測",
+            targetKind: "system_settings",
+            targetId: "prtg_probe",
+            detail: new { });
+
+        return ApiResponse<StartPrtgProbeResultDto>.Ok(
+            new StartPrtgProbeResultDto { Started = false });
+    }
+
     // ── PRTG 歷史回填（PRTG 第 1 輪批次E）────────────────────────────────────────
 
     [HttpGet("prtg-backfill/status")]
@@ -384,6 +407,41 @@ public class SettingsController : ControllerBase
             SnapshotRetentionDays = snapshotRetentionDays,
             SnapshotRowsAtRetention = snapshotRowsAtRetention,
             SnapshotWarning = snapshotWarning
+        });
+    }
+
+    /// <summary>粗估用的每次 historicdata 查詢平均秒數（暫定）。</summary>
+    private const double PrtgValueQuerySeconds = 1.5;
+
+    /// <summary>
+    /// 立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估：目前監看裝置上的白名單感測器數 × 天數。
+    /// 帶 segment 時只算那個網段的主機（與立即執行的網段範圍同一套解析）。
+    /// </summary>
+    [HttpGet("prtg-estimate")]
+    public ApiResponse<PrtgValuesEstimateDto> EstimatePrtgValues([FromQuery] int days, [FromQuery] string? segment = null)
+    {
+        if (days < 1)
+            throw DomainException.Validation("天數必須大於等於 1。");
+        if (_backend == null || _hosts == null)
+            throw DomainException.Validation("資料存放區未啟用，無法估算。");
+
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        var sentinels = new SentinelStore(_backend.Blob("sentinels"));
+        var hostIds = segment == null ? null : ScheduleController.ResolveSegmentHostIds(segment, _hosts, sentinels);
+
+        var store = _backend.PrtgStore();
+        var scope = PrtgScopeDevices.Compute(
+            store, _hosts, new PrtgMirrorGuardSource(store), settings, sentinels.GetAll(),
+            new ResourceGuardWarningConsole(), new PrtgAddressResolver(), hostIds);
+        var sensors = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, scope.DeviceObjids.ToList()).Count;
+        var queries = (long)sensors * days;
+        var concurrency = Math.Max(1, settings.PrtgFetchConcurrency);
+
+        return ApiResponse<PrtgValuesEstimateDto>.Ok(new PrtgValuesEstimateDto
+        {
+            Sensors = sensors,
+            Queries = queries,
+            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60)
         });
     }
 
@@ -622,7 +680,109 @@ public class SettingsController : ControllerBase
             SnapshotIntervalMinutes = snapshotIntervalMinutes,
             SnapshotConsecutiveFailures = snapshotConsecutiveFailures,
             SnapshotBackingOff = snapshotBackingOff,
-            SnapshotSkipReason = snapshotSkipReason
+            SnapshotSkipReason = snapshotSkipReason,
+            Freshness = PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
+        });
+    }
+
+    // ── 監看範圍外資料清除（docs/PRTG-SPEC.md §3c）────────────────────────────
+
+    /// <summary>受影響裝置名稱最多列幾台</summary>
+    private const int ScopePurgeTopDevices = 20;
+
+    /// <summary>
+    /// 以目前設定重新計算全站監看裝置，並套用範圍可信的判斷（規則 1）。
+    /// 人工確認沒有「本趟」，裝置鏡像的條件以「裝置鏡像非空」判斷。預覽與確認共用這一份。
+    /// </summary>
+    private (EfPrtgStore Store, PrtgScopeResult? Scope, string? Blocked) ComputeScopeForPurge(StorageBackend backend)
+    {
+        var store = backend.PrtgStore();
+        PrtgScopeResult? scope = null;
+        try
+        {
+            var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            scope = PrtgScopeDevices.Compute(
+                store, new HostStore(backend.Blob("hosts")), new PrtgMirrorGuardSource(store), settings,
+                new SentinelStore(backend.Blob("sentinels")).GetAll(), new ResourceGuardWarningConsole(), new PrtgAddressResolver(),
+                hostIds: null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "監看裝置計算失敗，不提供範圍外清除");
+        }
+        var blocked = PrtgScopePurge.CheckScope(scope, store.GetMirrorSummary().DeviceCount > 0);
+        return (store, scope, blocked);
+    }
+
+    [HttpGet("prtg-scope-purge/preview")]
+    public ApiResponse<PrtgScopePurgePreviewDto> PreviewPrtgScopePurge()
+    {
+        if (_backend == null)
+        {
+            return ApiResponse<PrtgScopePurgePreviewDto>.Ok(new PrtgScopePurgePreviewDto
+            {
+                ErrorMessage = "資料存放區未啟用，無法預覽。"
+            });
+        }
+
+        var (store, scope, blocked) = ComputeScopeForPurge(_backend);
+        var baseline = store.ScopeBaseline().Get();
+        var dto = new PrtgScopePurgePreviewDto
+        {
+            MonitoredDevices = scope?.DeviceObjids.Count ?? 0,
+            BlockedReason = baseline.BlockedReason,
+            BlockedAt = baseline.BlockedAt,
+            BaselineAt = baseline.HasBaseline ? baseline.At : null,
+            BaselineDeviceCount = baseline.DeviceCount
+        };
+        if (blocked != null)
+        {
+            dto.ErrorMessage = $"{blocked}，目前不能清除範圍外資料。";
+            return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
+        }
+
+        var preview = store.PreviewOutOfScopeData(PrtgScopePurge.KeepSet(scope!), ScopePurgeTopDevices);
+        dto.Success = true;
+        dto.Values = preview.Values;
+        dto.StateChanges = preview.StateChanges;
+        dto.AffectedDevices = preview.AffectedDevices;
+        dto.TopDeviceNames = preview.TopDeviceNames.ToList();
+        dto.UnknownSensors = preview.UnknownSensors;
+        return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
+    }
+
+    [HttpPost("prtg-scope-purge/confirm")]
+    public ApiResponse<PrtgScopePurgeResultDto> ConfirmPrtgScopePurge()
+    {
+        if (_backend == null)
+            throw DomainException.Validation("資料存放區未啟用，無法清除。");
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用，無法判斷是否有其他 PRTG 作業執行中。");
+
+        // 與取數、結構同步、回填互斥：它們正在寫鏡像，範圍與資料都還在變
+        var conflict = _prtgBackfill.ScopePurgeConflict();
+        if (conflict != null)
+            throw DomainException.Conflict(conflict);
+
+        var (store, scope, blocked) = ComputeScopeForPurge(_backend);
+        if (blocked != null)
+            throw DomainException.Validation($"{blocked}，目前不能清除範圍外資料。");
+
+        var (values, stateChanges) = store.DeleteOutOfScopeData(PrtgScopePurge.KeepSet(scope!));
+        PrtgScopePurge.RecordBaseline(store, scope!.DeviceObjids.Count);
+
+        _audit.Record(
+            action: AuditActions.PrtgScopePurge,
+            summary: $"清除監看範圍外的 PRTG 資料：數值 {values} 筆、狀態變更 {stateChanges} 筆",
+            targetKind: "system_settings",
+            targetId: "prtg_scope_purge",
+            detail: new { values, stateChanges, monitoredDevices = scope.DeviceObjids.Count });
+
+        return ApiResponse<PrtgScopePurgeResultDto>.Ok(new PrtgScopePurgeResultDto
+        {
+            Values = values,
+            StateChanges = stateChanges,
+            MonitoredDevices = scope.DeviceObjids.Count
         });
     }
 
@@ -633,9 +793,11 @@ public class SettingsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
-        if (!string.Equals(status, "conflict", StringComparison.OrdinalIgnoreCase))
+        var isConflict = string.Equals(status, PrtgMapStatus.Conflict, StringComparison.OrdinalIgnoreCase);
+        var isUnmatched = string.Equals(status, PrtgMapStatus.Unmatched, StringComparison.OrdinalIgnoreCase);
+        if (!isConflict && !isUnmatched)
         {
-            throw DomainException.Validation("目前僅支援 status=conflict 查詢。");
+            throw DomainException.Validation("status 僅支援 conflict 或 unmatched 查詢。");
         }
 
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
@@ -652,15 +814,17 @@ public class SettingsController : ControllerBase
         var store = _backend.PrtgStore();
         var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
 
+        var targetStatus = isConflict ? PrtgMapStatus.Conflict : PrtgMapStatus.Unmatched;
+
         // 依 DeviceObjid 排序後才分頁：GetLatestHostMapWithDate 的查詢沒有 ORDER BY，
         // 未排序就分頁時同一列可能在兩頁重複出現、也可能整列被跳過。
-        var conflictRows = hostMaps
-            .Where(m => m.MapStatus == PrtgMapStatus.Conflict)
+        var filteredRows = hostMaps
+            .Where(m => string.Equals(m.MapStatus, targetStatus, StringComparison.OrdinalIgnoreCase))
             .OrderBy(m => m.DeviceObjid)
             .ToList();
 
-        var total = conflictRows.Count;
-        var pagedRows = conflictRows
+        var total = filteredRows.Count;
+        var pagedRows = filteredRows
             .Skip((normPage - 1) * normPageSize)
             .Take(normPageSize)
             .ToList();
@@ -700,7 +864,15 @@ public class SettingsController : ControllerBase
             var sameDevices = deviceIndex.ByNormIp(normIp);
 
             var isMultiDevice = sameDevices.Count > 1;
-            var conflictKind = isMultiDevice ? "multi-device" : "multi-host";
+            string conflictKind;
+            if (isUnmatched)
+            {
+                conflictKind = "unmatched";
+            }
+            else
+            {
+                conflictKind = isMultiDevice ? "multi-device" : "multi-host";
+            }
 
             List<PrtgConflictDeviceDto> sameIpDevices;
             if (isMultiDevice)
@@ -752,6 +924,7 @@ public class SettingsController : ControllerBase
                 Ip = row.Ip,
                 HostName = isMultiDevice ? null : row.HostName,
                 Note = row.Note,
+                MapStatus = row.MapStatus ?? targetStatus,
                 ConflictKind = conflictKind,
                 SameIpDevices = sameIpDevices,
                 CandidateHosts = candidateHosts
@@ -838,7 +1011,7 @@ public class SettingsController : ControllerBase
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
-        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
         var host = hostStore.Get(request.HostId);
         if (host == null || !host.Active || host.MergedInto != null)
             throw DomainException.Validation("指定的主機不存在或已停用。");
@@ -882,6 +1055,119 @@ public class SettingsController : ControllerBase
             Note = request.Note,
             CreatedBy = saved?.CreatedBy ?? createdBy,
             CreatedAt = saved?.CreatedAt ?? row.CreatedAt,
+            RemapWarning = remapWarning
+        });
+    }
+
+    /// <summary>批次設定 PRTG 人工主機對應</summary>
+    [HttpPut("prtg-manual-map/batch")]
+    public ApiResponse<PrtgManualMapBatchResultDto> SetPrtgManualMapBatch([FromBody] SetPrtgManualMapBatchRequest request)
+    {
+        if (_backend == null)
+            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
+
+        if (request == null)
+            throw DomainException.Validation("請求內容不可為空。");
+
+        if (request.DeviceObjids == null || request.DeviceObjids.Count == 0)
+            throw DomainException.Validation("請提供至少一個欲指派的 PRTG 裝置。");
+
+        if (request.DeviceObjids.Any(id => id <= 0))
+            throw DomainException.Validation("PRTG 裝置編號必須為正數。");
+
+        if (request.DeviceObjids.Distinct().Count() != request.DeviceObjids.Count)
+            throw DomainException.Validation("欲指派的 PRTG 裝置清單包含重複項目。");
+
+        if (request.DeviceObjids.Count > 100)
+            throw DomainException.Validation("批次指派每次最多處理 100 筆裝置。");
+
+        if (request.Note?.Length > 512)
+            throw DomainException.Validation("指派說明不可超過 512 字。");
+
+        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Get(request.HostId);
+        if (host == null || !host.Active || host.MergedInto != null)
+            throw DomainException.Validation("指定的主機不存在或已停用。");
+
+        var store = _backend.PrtgStore();
+        var allDevices = store.GetAllDevices();
+        var existingDeviceIds = allDevices.Select(d => d.Objid).ToHashSet();
+        var unknownIds = request.DeviceObjids.Where(id => !existingDeviceIds.Contains(id)).ToList();
+        if (unknownIds.Count > 0)
+            throw DomainException.Validation($"指定的一或多個 PRTG 裝置不存在於裝置鏡像中：{string.Join(", ", unknownIds)}。");
+
+        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
+
+        var succeededIds = new List<long>();
+        long? failedDeviceObjid = null;
+        var notProcessedIds = new List<long>();
+        string? failureMessage = null;
+        var auditFailures = 0;
+
+        for (int i = 0; i < request.DeviceObjids.Count; i++)
+        {
+            var deviceObjid = request.DeviceObjids[i];
+            try
+            {
+                var row = new PrtgManualMapRow
+                {
+                    DeviceObjid = deviceObjid,
+                    HostId = request.HostId,
+                    Note = request.Note,
+                    CreatedBy = createdBy,
+                    CreatedAt = DateTime.Now
+                };
+                store.UpsertManualMap(row);
+                succeededIds.Add(deviceObjid);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "批次設定 PRTG 人工主機對應失敗，裝置 ID: {DeviceObjid}", deviceObjid);
+                failedDeviceObjid = deviceObjid;
+                failureMessage = "儲存裝置對應資料時發生伺服器錯誤。";
+                for (int j = i + 1; j < request.DeviceObjids.Count; j++)
+                    notProcessedIds.Add(request.DeviceObjids[j]);
+                break;
+            }
+
+            // 對應已落盤後，稽核故障不能把該裝置誤報為未成功。
+            try
+            {
+                _audit.Record(
+                    action: AuditActions.PrtgManualMapSet,
+                    summary: $"設定 PRTG device {deviceObjid} 人工對應到主機 {host.HostName}",
+                    targetKind: "prtg_manual_map",
+                    targetId: deviceObjid.ToString(),
+                    detail: new
+                    {
+                        DeviceObjid = deviceObjid,
+                        request.HostId,
+                        host.HostName,
+                        request.Note
+                    });
+
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG 人工對應已儲存，但稽核寫入失敗，裝置 ID: {DeviceObjid}", deviceObjid);
+                auditFailures++;
+            }
+        }
+
+        string? remapWarning = null;
+        if (succeededIds.Count > 0)
+        {
+            remapWarning = _mapRefresher?.TryRefreshToday();
+        }
+
+        return ApiResponse<PrtgManualMapBatchResultDto>.Ok(new PrtgManualMapBatchResultDto
+        {
+            SucceededIds = succeededIds,
+            FailedDeviceObjid = failedDeviceObjid,
+            NotProcessedIds = notProcessedIds,
+            FailureMessage = failureMessage,
+            AuditWarning = auditFailures > 0 ? $"有 {auditFailures} 筆對應已儲存，但稽核紀錄寫入失敗，請通知管理員檢查伺服器紀錄。" : null,
             RemapWarning = remapWarning
         });
     }

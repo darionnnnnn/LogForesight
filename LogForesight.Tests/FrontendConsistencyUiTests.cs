@@ -191,7 +191,13 @@ public class FrontendConsistencyUiTests
         var js = ReadJs("pages", file);
         var binder = ExtractBody(js, headerPattern);
 
-        foreach (var action in new[] { "start", "cancel" })
+        if (file == "runs.js")
+        {
+            Assert.DoesNotContain("prtg-structure-sync/start", binder);
+        }
+
+        var actions = file == "runs.js" ? new[] { "cancel" } : new[] { "start", "cancel" };
+        foreach (var action in actions)
         {
             var marker = $"prtg-structure-sync/{action}";
             var at = binder.IndexOf(marker, StringComparison.Ordinal);
@@ -292,15 +298,19 @@ public class FrontendConsistencyUiTests
     }
 
     [Fact]
-    public void C7_Pages底下不得以含插值的樣板字串指派innerHTML()
+    public void C7_Pages與Core底下不得以含插值的樣板字串指派innerHTML()
     {
-        var pagesDir = JsDir("pages");
-        Assert.True(Directory.Exists(pagesDir), $"找不到目錄: {pagesDir}");
+        // core 也要掃：core 的共用元件（modal 工廠、按鈕忙碌狀態）被全站呼叫，
+        // 參數來自各頁，一處插值等於全站都有注入點。目前無允許清單。
+        var dirs = new[] { JsDir("pages"), JsDir("core") };
+        foreach (var dir in dirs)
+            Assert.True(Directory.Exists(dir), $"找不到目錄: {dir}");
 
         // 整檔比對（不逐行）：跨行樣板字串也要抓；涵蓋 +=、outerHTML 與 insertAdjacentHTML
         var pattern = new Regex(@"((inner|outer)HTML\s*\+?=\s*|insertAdjacentHTML\s*\([^`]*)`[^`]*\$\{", RegexOptions.Singleline);
-        var offenders = Directory.GetFiles(pagesDir, "*.js", SearchOption.AllDirectories)
-            .Select(f => (file: Path.GetFileName(f), text: File.ReadAllText(f)))
+        var offenders = dirs
+            .SelectMany(dir => Directory.GetFiles(dir, "*.js", SearchOption.AllDirectories))
+            .Select(f => (file: Path.GetRelativePath(JsDir(), f), text: File.ReadAllText(f)))
             .Where(x => pattern.IsMatch(x.text))
             .Select(x => x.file)
             .ToList();

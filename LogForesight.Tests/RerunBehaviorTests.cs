@@ -80,7 +80,7 @@ public class RerunBehaviorTests : IDisposable
             RerunMode = RerunMode.All
         };
 
-        var runRequest = ScheduleController.ToRunRequest(dto, RunScope.Full, new[] { 3L }, "tester");
+        var runRequest = ScheduleController.ToRunRequest(dto, RunScope.Full, new[] { 3L }, "tester", new SystemSettings());
 
         Assert.Equal(RunScope.Full, runRequest.Scope);
         Assert.Equal(new[] { 3L }, runRequest.HostIds);
@@ -97,7 +97,10 @@ public class RerunBehaviorTests : IDisposable
         {
             nameof(TriggerRunRequest.Scope),      // 由 ResolveScope 轉成 RunScope
             nameof(TriggerRunRequest.Segment),    // 只用於解析主機清單
-            nameof(TriggerRunRequest.HostId)      // 同上
+            nameof(TriggerRunRequest.HostId),     // 同上
+            // 這是條件選項，會依 PRTG 啟用狀態、取數策略與回望天數轉成
+            // RunRequest.PrtgBackfillDays；RunNowPrtgValuesTests 逐條驗證其真實映射。
+            nameof(TriggerRunRequest.IncludePrtgValues)
         };
         var properties = typeof(TriggerRunRequest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanWrite && !mappedElsewhere.Contains(p.Name))
@@ -112,7 +115,7 @@ public class RerunBehaviorTests : IDisposable
             if (value is null) continue;
 
             property.SetValue(dto, value);
-            var runRequest = ScheduleController.ToRunRequest(dto, RunScope.Full, null, "t");
+            var runRequest = ScheduleController.ToRunRequest(dto, RunScope.Full, null, "t", new SystemSettings());
 
             var target = typeof(RunRequest).GetProperties()
                 .FirstOrDefault(p => p.Name == property.Name

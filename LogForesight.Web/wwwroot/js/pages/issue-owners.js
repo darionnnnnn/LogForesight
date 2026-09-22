@@ -1,5 +1,5 @@
 ﻿/**
- * 問題檔案維護（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）。
+ * 問題負責與靜音維護（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）。
  *
  * 以 (Source, EventId) 為鍵指派跨主機負責人——與主機負責人（hosts.js 的 #host-owners）
  * 是相同概念、相同管理模式，唯一差別是鍵從「主機」換成「問題」。優先於主機負責人：
@@ -11,7 +11,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad } from '../core/ui.js';
+import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
@@ -134,8 +134,97 @@ function renderList() {
             title: '尚未指派任何問題負責人',
             hint: '按右上角「新增規則」開始指派——問題負責人是長期負責人，該問題之後每天出現時會自動建案指派給他，郵件通知也優先看這裡。'
         },
-        stickyLastColumn: true
+        stickyLastColumn: true,
+        onRowExpand: (rule, cell) => {
+            const actions = document.createElement('div');
+            cell.appendChild(actions);
+            cell.appendChild(renderMuteHistoryDetail(rule));
+            loadMuteActions(rule, actions);
+        }
     });
+}
+
+async function loadMuteActions(rule, container) {
+    renderLoading(container);
+    try {
+        const rows = await api.get(`/api/admin/issue-owners/${encodeURIComponent(rule.sourceName)}/${rule.eventId}/mute-history`, { silent: true });
+        const heading = document.createElement('p');
+        heading.className = 'fw-semibold mt-3';
+        heading.textContent = '最近 10 筆靜音操作（保留期間內）';
+        const table = document.createElement('div');
+        container.replaceChildren(heading, table);
+        renderTable(table, {
+            rows,
+            columns: [
+                { title: '時間', render: row => formatDateTime(row.at) },
+                { title: '操作者', render: row => row.byAccount || '—' },
+                { title: '動作', render: row => row.action },
+                { title: '說明', render: row => row.summary }
+            ],
+            empty: { title: '沒有靜音稽核紀錄', hint: '下方仍可查看留存的靜音區間。' }
+        });
+    } catch {
+        const message = document.createElement('span');
+        message.textContent = '載入靜音操作失敗。';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn btn-sm btn-outline-secondary';
+        retry.textContent = '重試';
+        retry.addEventListener('click', () => loadMuteActions(rule, container));
+        container.replaceChildren(message, retry);
+    }
+}
+
+function renderMuteHistoryDetail(rule) {
+    const wrap = document.createElement('div');
+    wrap.className = 'p-3 bg-light border-top';
+
+    const header = document.createElement('div');
+    header.className = 'fw-semibold mb-2 text-secondary small';
+    header.textContent = '留存的靜音區間';
+    wrap.appendChild(header);
+
+    const tableContainer = document.createElement('div');
+    wrap.appendChild(tableContainer);
+
+    const history = rule.muteHistory ?? [];
+    if (history.length === 0) {
+        renderEmpty(tableContainer, { title: '沒有靜音紀錄', hint: '此問題過去未曾設定過靜音區間。', icon: 'bell-slash' });
+        return wrap;
+    }
+
+    renderTable(tableContainer, {
+        columns: [
+            {
+                title: '時間',
+                className: 'text-nowrap',
+                render: m => m.at ? formatDateTime(m.at) : (m.from ? formatDateTime(m.from).slice(0, 10) : '—')
+            },
+            {
+                title: '操作者',
+                className: 'text-nowrap',
+                render: m => m.byAccount || '—'
+            },
+            {
+                title: '開始日',
+                className: 'text-nowrap',
+                render: m => m.from ? formatDateTime(m.from).slice(0, 10) : '—'
+            },
+            {
+                title: '到期日',
+                className: 'text-nowrap',
+                render: m => m.to ? formatDateTime(m.to).slice(0, 10) : '—'
+            },
+            {
+                title: '理由',
+                render: m => m.reason || '—'
+            }
+        ],
+        rows: history,
+        empty: { title: '沒有靜音紀錄', hint: '此問題過去未曾設定過靜音區間。' }
+    });
+
+    return wrap;
 }
 
 function renderMuted(text) {
@@ -206,7 +295,7 @@ document.getElementById('issue-owner-new').addEventListener('click', () => openM
 
 function openModal(rule) {
     editingRule = rule;
-    document.getElementById('issue-owner-modal-title').textContent = rule ? '編輯問題檔案' : '新增問題檔案';
+    document.getElementById('issue-owner-modal-title').textContent = rule ? '編輯問題設定' : '新增問題設定';
 
     renderPicker(rule);
     setManualMode(!!rule && !recentIssues.some(o => matchesIssue(o, rule)));
@@ -240,7 +329,7 @@ function openModal(rule) {
 }
 
 /**
- * 機房結論區塊（回饋十九輪批次F）：新增規則時還沒有問題檔案可設定結論——負責人跟結論
+ * 機房結論區塊（回饋十九輪批次F）：新增規則時還沒有問題設定可填入結論——負責人跟結論
  * 是兩支獨立 API，沒存過負責人就沒有 (Source,EventId) 這個鍵讓結論掛上去，所以新增模式下
  * 整段隱藏，存好負責人、重新打開編輯才看得到。下拉維持空白＝這次儲存不動結論欄
  * （既有結論原封不動），選了狀態才會在送出時另外呼叫 SetConclusion。
@@ -405,7 +494,7 @@ form.addEventListener('submit', async event => {
                 autoApply: conclusionAutoApply.checked
             });
         }
-        toast('已儲存問題檔案', 'success');
+        toast('已儲存問題設定', 'success');
         modal.hide();
         await load();
     } catch {
@@ -418,8 +507,8 @@ form.addEventListener('submit', async event => {
 async function removeRule(rule) {
     const targetLabel = issueLabel(rule);
     const confirmed = await confirmAction({
-        title: '刪除問題檔案',
-        message: `確定要刪除「${targetLabel}」的問題檔案嗎？刪除後這個問題會落回主機負責人（若有設定）` +
+        title: '刪除問題設定',
+        message: `確定要刪除「${targetLabel}」的問題設定嗎？刪除後這個問題會落回主機負責人（若有設定）` +
             (rule.conclusionStatus ? '，機房結論也會一併移除。' : '。'),
         confirmText: '刪除',
         confirmVariant: 'danger'

@@ -12,10 +12,13 @@ public class DailyRecordBackfillHostedService : BackgroundService
     private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    private readonly BackgroundWorkGate _gate;
+
     private readonly DailyRecordBackfiller _backfiller;
 
-    public DailyRecordBackfillHostedService(DailyRecordBackfiller backfiller, DataVersionStamp dataVersion)
+    public DailyRecordBackfillHostedService(DailyRecordBackfiller backfiller, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
+        _gate = gate;
         _dataVersion = dataVersion;
         _backfiller = backfiller;
     }
@@ -32,18 +35,28 @@ public class DailyRecordBackfillHostedService : BackgroundService
             return;
         }
 
-        await Task.Run(() =>
+        // 經共用節流閘排隊：同一時間只跑一支背景回填，取數排程執行中時先讓路
+        try
         {
-            try
-            {
-                _backfiller.Run(stoppingToken);
-                // 回填改寫了儀表板聚合的抽出欄，快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                _dataVersion.Bump();
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "[SQL] lf_daily_records 抽出欄回填失敗：{Msg}", ex.Message);
-            }
-        }, stoppingToken);
+            await _gate.RunAsync("每日紀錄抽出欄回填",
+                () => Task.Run(() =>
+                {
+                    try
+                    {
+                        _backfiller.Run(stoppingToken);
+                        // 回填改寫了儀表板聚合的抽出欄，快取要失效（體檢輪）：背景服務不走 HTTP 管線
+                        _dataVersion.Bump();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "[SQL] lf_daily_records 抽出欄回填失敗：{Msg}", ex.Message);
+                    }
+                }, stoppingToken),
+                stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 站台關閉時仍在排隊（或排隊中被取消），下次啟動接續
+        }
     }
 }

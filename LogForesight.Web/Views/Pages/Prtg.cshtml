@@ -2,6 +2,9 @@
     ViewData["Title"] = "PRTG 維護";
 }
 
+<div id="prtg-rule-banner"></div>
+<div id="prtg-schedule-banner"></div>
+
 <ul class="nav nav-tabs mb-3" id="prtg-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="connection" type="button">連線</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="params" type="button">擷取參數</button></li>
@@ -123,25 +126,6 @@
             </div>
             <div class="lf-card__body">
                 <div class="mb-3">
-                    <label for="prtg-value-fetch-scope" class="form-label fw-semibold">PRTG 擷取</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="選擇任一範圍即啟用 PRTG 擷取。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <select class="form-select" id="prtg-value-fetch-scope">
-                        <option value="off">關閉（預設）</option>
-                        <option value="triggered">只抓觸發主機</option>
-                        <option value="all-mapped">全部已對應主機</option>
-                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
-                    </select>
-                    <div class="form-text">
-                        選擇任一範圍即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
-                        環境探測與資源守門預覽不受影響。
-                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
-                    </div>
-                </div>
-
-                <div class="mb-3">
                     <label for="prtg-fetch-strategy" class="form-label fw-semibold">取數策略</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="保守：每 15 分鐘對 PRTG 查一次快照目標感測器的目前值（一天約 96 次，每 50 顆一個請求、依序送出，同時只有 1 個請求），夜間不逐顆查詢，數值全由快照供應。激進：每 5 分鐘一次（一天約 288 次），另在夜間對觸發主機逐顆查詢歷史值（每晚數百次、單次 5～70 秒），PRTG 負擔明顯較高。實際的快照目標感測器數與每日寫入列數，請按下方「估算規模」查看。兩種策略下快照連續失敗 3 次都會自動拉長間隔（上限 60 分鐘）。">
@@ -156,6 +140,31 @@
                     </div>
                     <div class="small text-warning mt-2 d-none" id="prtg-strategy-aggressive-hint">
                         激進策略每 5 分鐘對 PRTG 查一次快照目標感測器的目前值（每 50 顆一個請求），並在每晚對觸發主機逐顆查詢歷史值，PRTG 負載明顯較高。請先用保守策略觀察執行輸出裡的快照耗時與失敗數，確認 PRTG 承受得住再切換；切換後若看到快照間隔被自動拉長，代表 PRTG 已經回不來，請切回保守。
+                    </div>
+                    <div class="small text-info mt-2 d-none" id="prtg-strategy-suggested-hint">已帶入建議設定（併發請求數與逾時秒數），仍可依環境需求修改。</div>
+                </div>
+
+                <div class="small text-muted mb-3" id="prtg-strategy-scope-explanation">保守策略：夜間不逐顆查詢歷史值，數值由每 15 分鐘的快照供應（快照涵蓋全部監看裝置），數值取數對象不適用。激進策略：夜間依數值取數對象逐顆查詢。</div>
+
+                <div class="mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="prtg-value-fetch-scope" class="form-label fw-semibold mb-0">PRTG 擷取（數值取數對象）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="選擇任一數值取數對象即啟用 PRTG 擷取。數值取數對象只決定夜間要抓哪些主機的數值；感測器與狀態變更同步的是「監看裝置」（由主機對應算出的裝置集合），兩者不同。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                        <span class="small text-muted d-none" id="prtg-scope-inapplicable-hint">保守策略下不適用</span>
+                    </div>
+                    <select class="form-select mt-2" id="prtg-value-fetch-scope">
+                        <option value="off">關閉（預設）</option>
+                        <option value="triggered">只抓觸發主機</option>
+                        <option value="all-mapped">全部已對應主機</option>
+                        <option value="triggered-plus-list">觸發主機＋指定清單</option>
+                    </select>
+                    <div class="form-text">
+                        選擇任一數值取數對象即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
+                        環境探測與資源守門預覽不受影響。
+                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
                     </div>
                 </div>
 
@@ -192,13 +201,19 @@
                 </div>
 
                 <div class="mb-3">
-                    <label for="prtg-sensor-type-whitelist" class="form-label">擷取數值的 sensor type 白名單</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <div class="d-flex align-items-center gap-1">
+                            <label for="prtg-sensor-type-whitelist" class="form-label mb-0">擷取數值的 sensor type 白名單</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="一行一個 PRTG sensor type，不分大小寫。只有白名單內的 type 會擷取數值資料。留空代表不限制（會對全部 sensor 取數，大型環境不建議）。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-sensor-whitelist-probe-fill-btn">從環境探測填入</button>
+                    </div>
                     <textarea class="form-control lf-mono" id="prtg-sensor-type-whitelist" rows="6"
                               placeholder="SNMP Disk Free&#10;SNMP CPU Load"></textarea>
+                    <div class="form-text">探測抽樣僅為估算值，填入後請確認內容再儲存。</div>
                 </div>
 
                 <div class="mb-3">
@@ -259,12 +274,12 @@
                             </div>
                         </div>
                         <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-sm btn-primary" id="prtg-structure-sync-btn">同步結構與對應</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-structure-sync-btn">同步結構與對應</button>
                             <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-structure-sync-cancel-btn">停止同步</button>
                         </div>
                     </div>
                     <div class="small text-warning mt-2 d-none" id="prtg-structure-sync-disabled-hint">
-                        PRTG 擷取未啟用，無法同步。請到「擷取參數」頁籤選擇取數範圍。
+                        PRTG 擷取未啟用，無法同步。請到「擷取參數」頁籤選擇數值取數對象。
                     </div>
                     <div class="small mt-2" id="prtg-structure-sync-status">上次同步：載入中…</div>
                     <div class="small text-muted" id="prtg-structure-sync-progress"></div>
@@ -279,7 +294,7 @@
                     </div>
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="text-muted small">鏡像感測器數（取數範圍內）</div>
+                            <div class="text-muted small">鏡像感測器數（監看裝置）</div>
                             <div class="fs-5 fw-semibold" id="prtg-mirror-sensor-count">-</div>
                             <div class="text-muted small" id="prtg-mirror-last-sensor-sync">最後同步：-</div>
                         </div>
@@ -293,6 +308,24 @@
                         </div>
                     </div>
                 </div>
+                <div class="border rounded p-3 mb-3">
+                    <div class="fw-semibold small mb-2">擷取紀錄</div>
+                    <div class="form-text text-muted mb-2">各類資料最後一次成功擷取的時間與取得筆數；曾經有資料卻連續多次取得 0 筆時標示警示。</div>
+                    <div id="prtg-mirror-freshness"></div>
+                </div>
+
+                <div class="border rounded p-3 mb-3" id="prtg-scope-purge">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                        <span class="fw-semibold small">監看範圍外資料</span>
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="prtg-scope-purge-btn" disabled>確認清除</button>
+                    </div>
+                    <div class="form-text text-muted mb-2">
+                        不屬於任何監看裝置的數值與狀態變更。夜間同步會自動清除；監看裝置數驟減或第一次時不自動清，需在這裡確認。
+                    </div>
+                    <div class="small text-warning d-none" id="prtg-scope-purge-blocked" role="status"></div>
+                    <div class="small" id="prtg-scope-purge-summary">載入中…</div>
+                    <div class="small text-muted" id="prtg-scope-purge-devices"></div>
+                </div>
 
                 <div class="border rounded p-3 mb-3">
                     <div class="d-flex align-items-center justify-content-between mb-2">
@@ -302,19 +335,38 @@
                     <div class="d-flex flex-wrap gap-4 small mb-2">
                         <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
                         <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
-                        <div>未對應（PRTG 獨有）：<span class="badge bg-secondary" id="prtg-mirror-map-unmatched">0</span></div>
+                        <div>未對應（PRTG 獨有）：<button type="button" class="badge bg-secondary border-0 text-decoration-none" id="prtg-mirror-map-unmatched" style="cursor: pointer;" aria-label="跳至未對應清單" title="跳至未對應清單">0</button></div>
                         <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
                     </div>
                     <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
 
-                    <div class="mb-3">
-                        <div class="small fw-semibold text-warning mb-1">對應衝突清單</div>
+                    <div class="mb-3" id="prtg-conflicts-section">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <div class="small fw-semibold text-warning">對應衝突清單</div>
+                        </div>
+                        <div class="p-2 mb-2 bg-light border rounded d-flex flex-wrap align-items-center gap-2" id="prtg-conflict-batch-bar">
+                            <span class="small fw-semibold text-secondary" id="prtg-conflict-selected-count">已選 0 台</span>
+                            <div class="d-flex align-items-center gap-1">
+                                <label for="prtg-conflict-batch-host" class="small text-muted mb-0">目標主機：</label>
+                                <select class="form-select form-select-sm" id="prtg-conflict-batch-host" style="width: auto; min-width: 180px;">
+                                    <option value="">請選擇目標主機…</option>
+                                </select>
+                            </div>
+                            <div class="d-flex align-items-center gap-1">
+                                <label for="prtg-conflict-batch-note" class="small text-muted mb-0">說明：</label>
+                                <input type="text" class="form-control form-control-sm" id="prtg-conflict-batch-note" placeholder="可選說明" maxlength="512" style="width: auto; min-width: 160px;" />
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-conflict-batch-submit" disabled>一次送出</button>
+                        </div>
                         <div class="table-responsive">
                             <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
                                 <thead class="table-light">
                                     <tr>
+                                        <th style="width: 40px;" class="text-center">
+                                            <input type="checkbox" class="form-check-input" id="prtg-conflict-select-all" title="全選目前頁" aria-label="全選目前頁" />
+                                        </th>
                                         <th style="width: 200px;">Device</th>
                                         <th style="width: 140px;">IP</th>
                                         <th style="width: 130px;">衝突型別</th>
@@ -323,11 +375,39 @@
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-mirror-conflicts-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無衝突項目</td></tr>
+                                    <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
                                 </tbody>
                             </table>
                         </div>
                         <div id="prtg-conflicts-pagination" class="mt-2"></div>
+                    </div>
+
+                    <div class="mt-4" id="prtg-unmatched-section" tabindex="-1">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <div class="small fw-semibold text-secondary">未對應清單（PRTG 獨有）</div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="prtg-unmatched-toggle-btn" aria-expanded="true" aria-controls="prtg-unmatched-collapse">
+                                收合
+                            </button>
+                        </div>
+                        <div class="collapse show" id="prtg-unmatched-collapse">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-0 small" id="prtg-unmatched-table">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width: 200px;">Device</th>
+                                            <th style="width: 140px;">IP</th>
+                                            <th style="width: 130px;">型別</th>
+                                            <th>說明</th>
+                                            <th style="width: 160px;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="prtg-unmatched-body">
+                                        <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="prtg-unmatched-pagination" class="mt-2"></div>
+                        </div>
                     </div>
 
                     <div class="mt-4">
@@ -365,7 +445,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="prtg-ip-excludes-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無排除 IP</td></tr>
+                                    <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -388,6 +468,7 @@
             </p>
             <div class="d-flex align-items-center gap-3 mb-3">
                 <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                <button type="button" class="btn btn-outline-danger d-none" id="prtg-probe-cancel">停止探測</button>
                 <div class="text-muted small" id="prtg-probe-status"></div>
             </div>
             <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
@@ -398,17 +479,18 @@
         </div>
     </div>
 
-    <div class="lf-card mb-4">
-        <div class="lf-card__header">
+    <details class="lf-card mb-4" id="prtg-calibration-advanced">
+        <summary class="lf-card__header">
             <h2 class="lf-card__title">校準數值匯出</h2>
-        </div>
+            <span class="small text-muted">展開進階校準</span>
+        </summary>
         <div class="lf-card__body">
             <p class="text-muted mb-3">
                 本頁面用於評估下一輪設計 PRTG 值型規則與校準門檻所需的資料累積量是否足夠。當四項校準指標皆達標時，即可匯出校準數值封裝檔供開發端進行分析與規則調校。
             </p>
 
             <div class="d-flex align-items-center gap-3 mb-4">
-                <button type="button" class="btn btn-primary" id="calibration-calc-btn">
+                <button type="button" class="btn btn-outline-primary" id="calibration-calc-btn">
                     <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                     重新計算
                 </button>
@@ -542,12 +624,13 @@
                 </button>
             </div>
         </div>
-    </div>
+    </details>
 
-    <div class="lf-card">
-        <div class="lf-card__header">
+    <details class="lf-card d-none" id="prtg-data-transfer-advanced">
+        <summary class="lf-card__header">
             <h2 class="lf-card__title">資料搬運（開發用）</h2>
-        </div>
+            <span class="small text-muted">展開開發工具</span>
+        </summary>
         <div class="lf-card__body">
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
@@ -574,7 +657,7 @@
             <div id="prtg-import-result" class="small mb-2"></div>
             <div class="form-text">把正式機的 PRTG 鏡像資料搬到開發機供分析規則設計使用。匯入採自然鍵冪等寫入，重複匯入不會產生重複資料。</div>
         </div>
-    </div>
+    </details>
 </div>
 
 <div class="modal fade" id="prtg-assign-modal" tabindex="-1" aria-labelledby="prtg-assign-modal-title" aria-hidden="true">

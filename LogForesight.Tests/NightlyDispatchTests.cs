@@ -189,9 +189,9 @@ public class NightlyDispatchTests
         Assert.Equal(1, dispatch.FlushRun(DateTime.Now).SkipCounts[WorkOrderDispatcher.SkipSuppressed]);
     }
 
-    /// <summary>靜音區間由問題檔案經 DispatchContext.Build 填入：紀錄日在區間內→⓪ 略過，不建單；區間外照常派</summary>
+    /// <summary>靜音區間由問題負責與靜音經 DispatchContext.Build 填入：紀錄日在區間內→⓪ 略過，不建單；區間外照常派</summary>
     [Fact]
-    public void 靜音中問題_Build由問題檔案填入區間_夜間派工略過()
+    public void 靜音中問題_Build由問題負責與靜音填入區間_夜間派工略過()
     {
         AddHost("SRV-01");
         _candidates.Add(new DispatchCandidate { UserId = 7, Account = "owner7", InPool = false });

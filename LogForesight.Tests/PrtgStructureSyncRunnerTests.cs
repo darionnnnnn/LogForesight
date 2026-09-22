@@ -50,7 +50,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
     private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder)
     {
         var handler = new StubHandler { OnSend = responder };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler);
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         return (client, handler);
     }
 
@@ -88,7 +88,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(StructureResponder);
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
             var today = new DateTime(2026, 9, 9);
 
             var status = await PrtgStructureSyncRunner.RunAsync(
@@ -129,7 +129,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(_ => throw new HttpRequestException("PRTG 連不上"));
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
@@ -161,7 +161,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(StructureResponder);
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
@@ -195,7 +195,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
                 : StructureResponder(req));
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
@@ -221,7 +221,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var (client, _) = CreateClient(StructureResponder);
         using (client)
         {
-            var fetchService = new PrtgFetchService(client, store, console, new Dictionary<string, string>());
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
@@ -235,7 +235,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
             Assert.Equal(0, status.MapUnmatched);
             Assert.Equal(0, status.MapSkippedNoIp + status.MapSkippedExcluded + status.MapSkippedManualSibling);
             Assert.Single(store.GetHostMapForDate(today));
-            Assert.Contains(console.Lines, l => l.Contains("[範圍] 取數範圍：1 台裝置"));
+            Assert.Contains(console.Lines, l => l.Contains("[範圍] 監看裝置：1 台裝置"));
         }
     }
 }

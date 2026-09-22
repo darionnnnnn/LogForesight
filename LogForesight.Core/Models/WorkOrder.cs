@@ -122,6 +122,7 @@ public static class WorkOrderEventActions
     public const string AdminClosed = "admin_closed";
     public const string Closed = "closed";
     public const string Replied = "replied";
+    public const string DueDateChanged = "due_date_changed";
 }
 
 /// <summary>單張交辦單的成員案件計數</summary>

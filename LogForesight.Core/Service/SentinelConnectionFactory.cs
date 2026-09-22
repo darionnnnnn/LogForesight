@@ -13,7 +13,8 @@ public static class SentinelConnectionFactory
         Name = s.Name,
         BaseUrl = s.BaseUrl,
         Username = s.Username,
-        Password = CryptoHelper.IsEncrypted(s.PasswordEnc) ? CryptoHelper.Decrypt(s.PasswordEnc) : s.PasswordEnc,
+        // 明文原樣回傳；解不開（金鑰不符）當成未設定，不讓取數整趟失敗
+        Password = CryptoHelper.TryDecrypt(s.PasswordEnc, out var password) ? password : "",
         UseEsmDirectory = s.UseEsmDirectory,
         Os = s.Os
     };

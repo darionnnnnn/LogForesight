@@ -23,12 +23,12 @@ public class IssueRankingCache
     public const int TtlSeconds = 30;
 
     /// <summary>條目上限：鍵含日期區間與授權範圍，理論組合無限，不設上限就是慢速記憶體洩漏。
-    /// 超過時整批清掉——這是快取不是儲存，重算的代價本來就付得起。</summary>
-    private const int MaxEntries = 64;
+    /// 滿了逐筆淘汰（先清過期、再清最久沒被存取的），不整批清空——多人同時使用時整批清會讓命中率趨近 0。</summary>
+    private const int MaxEntries = 256;
 
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
-    private readonly Dictionary<string, (List<IssueRankingDto> Items, DateTime CachedAt)> _entries = new();
+    private readonly Dictionary<string, (List<IssueRankingDto> Items, DateTime CachedAt, DateTime LastAccess)> _entries = new();
 
     public IssueRankingCache(Func<DateTime>? now = null) => _now = now ?? (() => DateTime.Now);
 
@@ -48,11 +48,13 @@ public class IssueRankingCache
         lock (_lock)
         {
             if (!_entries.TryGetValue(key, out var entry)) return null;
-            if ((_now() - entry.CachedAt).TotalSeconds >= TtlSeconds)
+            var now = _now();
+            if ((now - entry.CachedAt).TotalSeconds >= TtlSeconds)
             {
                 _entries.Remove(key);
                 return null;
             }
+            _entries[key] = entry with { LastAccess = now };
             return new List<IssueRankingDto>(entry.Items);
         }
     }
@@ -61,8 +63,26 @@ public class IssueRankingCache
     {
         lock (_lock)
         {
-            if (_entries.Count >= MaxEntries) _entries.Clear();
-            _entries[key] = (new List<IssueRankingDto>(items), _now());
+            var now = _now();
+            if (!_entries.ContainsKey(key)) EvictForInsert(now);
+            _entries[key] = (new List<IssueRankingDto>(items), now, now);
+        }
+    }
+
+    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除逾時項目，仍滿就逐筆移除最後存取時間最舊的一筆。</summary>
+    private void EvictForInsert(DateTime now)
+    {
+        if (_entries.Count < MaxEntries) return;
+
+        var expired = _entries
+            .Where(e => (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
+            .Select(e => e.Key)
+            .ToList();
+        foreach (var k in expired) _entries.Remove(k);
+
+        while (_entries.Count >= MaxEntries)
+        {
+            _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
         }
     }
 }

@@ -15,7 +15,7 @@ public class HelpQaServiceTests
     private readonly HelpContentService _content = new();
     private readonly FakeWebAi _ai = new();
 
-    private HelpQaService Create() => new(_content, _ai);
+    private HelpQaService Create() => new(_content, _ai, FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain));
 
     [Fact]
     public async Task AI未設定時直接回傳null不呼叫AI()

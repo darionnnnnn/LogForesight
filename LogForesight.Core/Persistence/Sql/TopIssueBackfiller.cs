@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -34,6 +35,15 @@ public sealed class TopIssueBackfiller
 
     public TopIssueBackfillProgress Progress { get; private set; } = new();
 
+    /// <summary>來源鍵回填進度；只在全部完成後才能將查詢切到索引路徑。</summary>
+    public TopIssueBackfillProgress SourceKeyProgress { get; private set; } = new();
+    private int _issueSourceKeyReady;
+    /// <summary>來源鍵與舊首見日鍵均已遷移，查詢才可切換到新索引路徑。</summary>
+    public bool IssueSourceKeyReady => Volatile.Read(ref _issueSourceKeyReady) == 1;
+    /// <summary>風險事件來源鍵回填進度；與 lf_top_issues 的進度及 readiness gate 分開。</summary>
+    public TopIssueBackfillProgress RiskySourceKeyProgress { get; private set; } = new();
+    public IReadOnlyList<SourceMergePreview> SourceMergePreview { get; private set; } = Array.Empty<SourceMergePreview>();
+
     /// <summary>還沒回填的問題列數（0＝已完成）</summary>
     public int CountPending()
     {
@@ -47,10 +57,13 @@ public sealed class TopIssueBackfiller
     /// </summary>
     public void Run(CancellationToken cancellationToken)
     {
+        Volatile.Write(ref _issueSourceKeyReady, 0);
         var pending = CountPending();
         if (pending == 0)
         {
             Progress = new TopIssueBackfillProgress { Completed = true };
+            RunSourceKeys(cancellationToken);
+            RekeyIssueFirstSeen(cancellationToken);
             return;
         }
 
@@ -72,6 +85,111 @@ public sealed class TopIssueBackfiller
 
         if (remaining == 0) Log.Info("[SQL] lf_top_issues 聚合欄回填完成：{Done} 列", done);
         else Log.Info("[SQL] lf_top_issues 聚合欄回填中止（站台關閉），剩餘 {Remaining} 列，下次啟動接續", remaining);
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            RunSourceKeys(cancellationToken);
+            RekeyIssueFirstSeen(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// 在問題來源鍵完成後，由共用背景回填服務呼叫，分批補齊 <c>lf_risky_events.source_key</c>。
+    /// 進度獨立記錄，因為兩張表的既有列數與回填生命週期不同。
+    /// </summary>
+    public void RunRiskySourceKeys(EfRiskyEventStore riskyEvents, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(riskyEvents);
+
+        using (var ctx = _contextFactory())
+        {
+            var total = ctx.RiskyEvents.Count();
+            var pending = ctx.RiskyEvents.Count(x => x.SourceKey == null);
+            RiskySourceKeyProgress = new TopIssueBackfillProgress
+            {
+                Total = total,
+                Done = total - pending,
+                Completed = pending == 0
+            };
+            if (pending == 0 || cancellationToken.IsCancellationRequested) return;
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            int processed;
+            try
+            {
+                processed = riskyEvents.BackfillSourceKeysBatch(BatchSize, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            if (processed == 0) break;
+        }
+
+        using var verify = _contextFactory();
+        var remaining = verify.RiskyEvents.Count(x => x.SourceKey == null);
+        var totalRows = verify.RiskyEvents.Count();
+        RiskySourceKeyProgress = new TopIssueBackfillProgress
+        {
+            Total = totalRows,
+            Done = totalRows - remaining,
+            Completed = remaining == 0
+        };
+    }
+
+    private void RunSourceKeys(CancellationToken cancellationToken)
+    {
+        using (var ctx = _contextFactory())
+        {
+            var pending = ctx.TopIssues.Count(x => x.SourceKey == null);
+            SourceKeyProgress = new TopIssueBackfillProgress { Total = pending, Completed = pending == 0 };
+            if (pending == 0) return;
+
+            // 僅讀去重的名稱組；與實際回填使用相同正規化規則，避免 SQLite UPPER 的 Unicode 差異。
+            // SQL Server 預設 CI collation 會在 DISTINCT 前吞掉僅大小寫不同的名稱。
+            // 明確以 binary collation 去重，否則「合併預覽」恰好漏掉要預覽的組。
+            var names = ctx.Database.IsSqlite()
+                ? ctx.TopIssues.AsNoTracking().Select(x => new {
+                    SourceName = EF.Functions.Collate(x.SourceName, "BINARY"), x.EventId }).Distinct().ToList()
+                : ctx.TopIssues.AsNoTracking().Select(x => new {
+                    SourceName = EF.Functions.Collate(x.SourceName, "Latin1_General_100_BIN2"), x.EventId }).Distinct().ToList();
+            SourceMergePreview = names
+                .GroupBy(x => (WorkOrderIssueKey.SourceKeyOf(x.SourceName), x.EventId))
+                .Where(g => g.Select(x => x.SourceName).Distinct(StringComparer.Ordinal).Skip(1).Any())
+                .Select(g => new SourceMergePreview(g.Key.Item1, g.Key.EventId,
+                    g.Select(x => x.SourceName).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray()))
+                .Take(50).ToArray();
+        }
+
+        var total = SourceKeyProgress.Total;
+        var done = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            using var ctx = _contextFactory();
+            var batch = ctx.TopIssues.Where(x => x.SourceKey == null)
+                .OrderBy(x => x.IssueId).Take(BatchSize).ToList();
+            if (batch.Count == 0) break;
+            foreach (var row in batch) row.SourceKey = WorkOrderIssueKey.SourceKeyOf(row.SourceName);
+            ctx.SaveChanges();
+            done += batch.Count;
+            SourceKeyProgress = new TopIssueBackfillProgress { Total = total, Done = Math.Min(done, total) };
+        }
+        using (var ctx = _contextFactory())
+        {
+            var remaining = ctx.TopIssues.Count(x => x.SourceKey == null);
+            SourceKeyProgress = new TopIssueBackfillProgress {
+                Total = total, Done = total - remaining, Completed = remaining == 0
+            };
+        }
+    }
+
+    private void RekeyIssueFirstSeen(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested || !SourceKeyProgress.Completed) return;
+        SchemaUpgrader.RekeyIssueFirstSeenToSourceKeys(_contextFactory);
+        Volatile.Write(ref _issueSourceKeyReady, 1);
     }
 
     /// <summary>回填一批；回傳本批處理的問題列數（0＝沒有待處理的了）</summary>
@@ -145,6 +263,8 @@ public sealed class TopIssueBackfiller
         }
     }
 }
+
+public sealed record SourceMergePreview(string SourceKey, int EventId, IReadOnlyList<string> Names);
 
 /// <summary>回填進度（供 /api/health/detail 與畫面的「統計中」標示）</summary>
 public sealed class TopIssueBackfillProgress

@@ -141,20 +141,64 @@ public class PrtgAddressResolverTests
     }
 
     /// <summary>
-    /// 真 DNS 路徑：<c>.invalid</c> 是 RFC 2606 保留網域，正常解析器都會失敗，離線也一樣。
-    /// 驗證的是「不擲例外、且不會拖到舊的 2 秒以上」；**不斷言回 null**——
-    /// 有 NXDOMAIN 劫持的網路會給 <c>.invalid</c> 一個假 IP，那是網路的事不是程式的事。
+    /// 正式解析路徑（逾時保護）：替身 DNS 模擬「解析器一直不回」，只有被取消才結束；
+    /// 手動時鐘在 DNS 被呼叫時讓逾時計時器到期。驗證逾時計時器是 1 秒、到期即取消查詢、
+    /// 不擲例外、回 null，且不必真的等待。
+    /// 不走真實 DNS 與真實計時器：全套負載下執行緒池飢餓會讓逾時回呼晚到而偶發紅燈。
     /// </summary>
     [Fact]
-    [Trait("Category", "Network")]
     public void Resolve_真DNS解析保留網域_回null且在逾時內返回()
     {
-        var resolver = new PrtgAddressResolver();
+        var clock = new FireOnDemandTimeProvider();
+        var lookups = new List<string>();
+        var resolver = new PrtgAddressResolver(async (host, ct) =>
+        {
+            lookups.Add(host);
+            clock.FireAll();
+            await Task.Delay(Timeout.Infinite, ct);
+            return Array.Empty<IPAddress>();
+        }, clock);
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        _ = resolver.Resolve("nonexistent-host.invalid");
+        var result = resolver.Resolve("nonexistent-host.invalid");
 
         sw.Stop();
+        Assert.Null(result);
+        Assert.Equal(new[] { "nonexistent-host.invalid" }, lookups);
+        Assert.Equal(new[] { PrtgAddressResolver.DnsTimeout }, clock.DueTimes);
+        Assert.True(clock.DueTimes.Single() < TimeSpan.FromSeconds(3), $"逾時 {clock.DueTimes.Single()}");
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"耗時 {sw.Elapsed}");
+    }
+
+    /// <summary>手動時鐘：記下每個計時器的到期時間與回呼，<see cref="FireAll"/> 時一次觸發，其餘時間永不到期。</summary>
+    private sealed class FireOnDemandTimeProvider : TimeProvider
+    {
+        private readonly List<(TimerCallback Callback, object? State)> _timers = new();
+
+        public List<TimeSpan> DueTimes { get; } = new();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_timers)
+            {
+                _timers.Add((callback, state));
+                DueTimes.Add(dueTime);
+            }
+            return new NeverTimer();
+        }
+
+        public void FireAll()
+        {
+            List<(TimerCallback Callback, object? State)> due;
+            lock (_timers) due = _timers.ToList();
+            foreach (var (callback, state) in due) callback(state);
+        }
+
+        private sealed class NeverTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 }

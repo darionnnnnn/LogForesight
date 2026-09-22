@@ -67,6 +67,7 @@ public class MailNotificationService
     private readonly IAnalysisRecordQuery _records;
     private readonly IRecordHandlingStore _handlings;
     private readonly MailNotifyStateStore _state;
+    private readonly ScheduleFreshnessService _freshness;
 
     /// <summary>問題負責人規則（回饋十八輪批次F）：郵件路由優先於主機負責人。
     /// 可為 null——測試組裝不注入時，路由靜默落回既有的「只通知主機負責人」行為。</summary>
@@ -93,6 +94,7 @@ public class MailNotificationService
         IAnalysisRecordQuery records,
         IRecordHandlingStore handlings,
         MailNotifyStateStore state,
+        ScheduleFreshnessService freshness,
         IIssueOwnerStore? issueOwners = null,
         IIssueAggregateQuery? issueAggregates = null,
         MailIssueDigest? issueDigest = null)
@@ -107,6 +109,7 @@ public class MailNotificationService
         _handlings = handlings;
         _issueAggregates = issueAggregates;
         _state = state;
+        _freshness = freshness;
         _issueOwners = issueOwners;
         _issueDigest = issueDigest;
     }
@@ -430,7 +433,9 @@ public class MailNotificationService
         var bodyBuilder = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(bodyIntro)) bodyBuilder.AppendLine(bodyIntro).AppendLine();
         bodyBuilder.AppendLine("這是 LogForesight 的測試郵件，收到即代表 SMTP 設定正確可用。");
-        await _sender.SendAsync(connection, new MailMessageSpec(from, recipients, subject, bodyBuilder.ToString()), ct);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+        await _sender.SendAsync(connection, new MailMessageSpec(from, recipients, subject, bodyBuilder.ToString()), timeoutCts.Token);
     }
 
     /// <summary>設定頁儲存郵件設定時呼叫（回饋十七輪批次B-1）：收件人地址若已改正，
@@ -534,10 +539,10 @@ public class MailNotificationService
 
     private SmtpConnectionSpec ResolveConnection(SystemSettings settings) => new(
         settings.SmtpServer, settings.SmtpPort, settings.SmtpUseTls, settings.SmtpAccount,
-        // 先判斷才解密：Decrypt 對非本格式的值會擲例外，會讓整批每日／每週寄信失敗
+        // TryDecrypt：非密文原樣回傳；解不開（金鑰不符）當成未設定，不讓整批每日／每週寄信失敗
         string.IsNullOrEmpty(settings.SmtpPasswordEnc) ? null
-            : CryptoHelper.IsEncrypted(settings.SmtpPasswordEnc) ? CryptoHelper.Decrypt(settings.SmtpPasswordEnc)
-            : settings.SmtpPasswordEnc);
+            : CryptoHelper.TryDecrypt(settings.SmtpPasswordEnc, out var smtpPassword) ? smtpPassword
+            : null);
 
     private static string ExpandTemplate(string template, string host, string date, string risk, string type, string summary) =>
         template
@@ -1085,11 +1090,63 @@ public class MailNotificationService
             }
         }
 
+        // 排程資料過期警示（任務 A-3）
+        var freshness = _freshness.GetScheduleFreshness(now);
+        string? freshnessAlert = null;
+        if (freshness.Stale && !freshness.Acked)
+        {
+            var state = _state.Get();
+            var today = now.ToString("yyyy-MM-dd");
+            var shouldAlert = false;
+
+            if (!state.FreshnessAlertActive)
+            {
+                shouldAlert = true;
+                _state.Update(s =>
+                {
+                    s.FreshnessAlertActive = true;
+                    s.LastFreshnessAlertDate = today;
+                });
+            }
+            else
+            {
+                var daysDiff = DateTime.TryParse(state.LastFreshnessAlertDate, out var lastDate)
+                    ? (now.Date - lastDate.Date).TotalDays
+                    : 7;
+                if (daysDiff >= 7)
+                {
+                    shouldAlert = true;
+                    _state.Update(s =>
+                    {
+                        s.LastFreshnessAlertDate = today;
+                    });
+                }
+            }
+
+            if (shouldAlert)
+            {
+                var lastSuccessText = freshness.LastSuccessAt.HasValue
+                    ? freshness.LastSuccessAt.Value.ToString("yyyy-MM-dd HH:mm")
+                    : "近 14 天沒有紀錄";
+                freshnessAlert = $"⚠ 排程資料已超過 48 小時沒有成功更新（最近一次成功：{lastSuccessText}）。以下摘要可能不完整，請系統管理員至站台「排程作業」頁檢查。";
+            }
+        }
+        else
+        {
+            var state = _state.Get();
+            if (state.FreshnessAlertActive)
+            {
+                _state.Update(s => s.FreshnessAlertActive = false);
+            }
+        }
+
         var issueRowsCache = new Dictionary<string, List<MailIssueRow>>();
         (string Subject, string Body) BuildMessage(RecipientView view)
         {
             var issueRows = BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds);
-            var body = new StringBuilder(BuildDigestBody(settings, windowText, issueRows));
+            var body = new StringBuilder();
+            if (freshnessAlert != null) body.AppendLine(freshnessAlert).AppendLine();
+            body.Append(BuildDigestBody(settings, windowText, issueRows));
             if (unresolvedLine != null) body.AppendLine().AppendLine(unresolvedLine);
             if (mutedSection != null) body.AppendLine().AppendLine(mutedSection);
             return (subject, body.ToString());

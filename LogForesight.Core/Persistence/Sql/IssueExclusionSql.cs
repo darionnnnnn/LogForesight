@@ -11,8 +11,8 @@ namespace LogForesight.Core.Persistence.Sql;
 /// 形狀（靜音列）：
 /// <code>
 /// event_id IN (全部靜音鍵的 EventId)
-/// AND ( UPPER(source)#event_id IN (目前靜音中的鍵)
-///       OR CASE WHEN UPPER(source)#event_id IN (區間 1 的鍵) AND record_date BETWEEN F1 AND T1 THEN 1
+/// AND ( source_key#event_id IN (目前靜音中的鍵)
+///       OR CASE WHEN source_key#event_id IN (區間 1 的鍵) AND record_date BETWEEN F1 AND T1 THEN 1
 ///               WHEN ...                                                                     THEN 1
 ///               ELSE 0 END = 1 )
 /// </code>
@@ -21,7 +21,7 @@ namespace LogForesight.Core.Persistence.Sql;
 /// 同一種運算子的巢狀 AND／OR 攤平成一長串（實測 <c>NOT (...)</c> 經 De Morgan 後變成 N 個 AND 串接），
 /// C# 端的平衡樹到了資料庫端又變回線性鏈；SQLite 對左深運算式樹有深度上限（500 個鍵時擲
 /// 「Expression tree is too large (maximum depth 1000)」）。改成：
-///   - 鍵以「大寫來源#EventId」組合字串一次 IN 比對，鍵數再多都只是一個 IN 清單；
+///   - 鍵以「來源鍵#EventId」組合字串一次 IN 比對，鍵數再多都只是一個 IN 清單；
 ///   - 已到期區間依 (From, To) 分組，每組一個 CASE WHEN 分支——CASE 的 WHEN 清單是平的，不累積深度；
 ///   - 最外層先以 event_id IN 粗篩，讓只看靜音列（<see cref="OnlyMuted"/>）的查詢可以走 event_id 索引。
 /// 常數以 <see cref="Expression.Constant(object)"/> 內嵌成 SQL 字面值，不佔參數（避開 SQL Server 2100 參數上限）。
@@ -35,24 +35,27 @@ public static class IssueExclusionSql
     private static readonly MethodInfo IntContains = EnumerableContains(typeof(int));
 
     /// <summary>排除靜音列；<see cref="IssueExclusion.IsEmpty"/> 時原樣回傳。</summary>
-    public static IQueryable<TopIssueRow> Apply(IQueryable<TopIssueRow> q, IssueExclusion exclusion)
+    public static IQueryable<TopIssueRow> Apply(
+        IQueryable<TopIssueRow> q, IssueExclusion exclusion, bool sourceKeyReady = false)
     {
         if (exclusion.IsEmpty) return q;
-        return q.Where(Build(exclusion, negate: true));
+        return q.Where(Build(exclusion, negate: true, sourceKeyReady));
     }
 
     /// <summary>只留靜音列；<see cref="IssueExclusion.IsEmpty"/> 時回傳恆假的查詢。</summary>
-    public static IQueryable<TopIssueRow> OnlyMuted(IQueryable<TopIssueRow> q, IssueExclusion exclusion)
+    public static IQueryable<TopIssueRow> OnlyMuted(
+        IQueryable<TopIssueRow> q, IssueExclusion exclusion, bool sourceKeyReady = false)
     {
         if (exclusion.IsEmpty) return q.Where(_ => false);
-        return q.Where(Build(exclusion, negate: false));
+        return q.Where(Build(exclusion, negate: false, sourceKeyReady));
     }
 
     /// <summary>
     /// 只留「目前靜音中」問題的列：組合鍵 IN，不看日期。
     /// <see cref="IssueExclusion.CurrentlyMuted"/> 為空時回傳恆假的查詢。
     /// </summary>
-    public static IQueryable<TopIssueRow> OnlyCurrentlyMuted(IQueryable<TopIssueRow> q, IssueExclusion exclusion)
+    public static IQueryable<TopIssueRow> OnlyCurrentlyMuted(
+        IQueryable<TopIssueRow> q, IssueExclusion exclusion, bool sourceKeyReady = false)
     {
         if (exclusion.CurrentlyMuted.Count == 0) return q.Where(_ => false);
         var x = Expression.Parameter(typeof(TopIssueRow), "x");
@@ -61,7 +64,7 @@ public static class IssueExclusionSql
         var keys = CurrentKeys(exclusion);
         var body = Expression.AndAlso(
             Expression.Call(IntContains, Expression.Constant(eventIds), eventId),
-            Expression.Call(StringContains, Expression.Constant(keys), Composite(x, eventId)));
+            Expression.Call(StringContains, Expression.Constant(keys), Composite(x, eventId, sourceKeyReady)));
         return q.Where(Expression.Lambda<Func<TopIssueRow, bool>>(body, x));
     }
 
@@ -71,19 +74,22 @@ public static class IssueExclusionSql
     private static string[] CurrentKeys(IssueExclusion exclusion) =>
         exclusion.CurrentlyMutedCompositeKeys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
 
-    private static Expression Composite(ParameterExpression x, Expression eventId) =>
+    private static Expression Composite(ParameterExpression x, Expression eventId, bool sourceKeyReady) =>
         Expression.Add(
             Expression.Add(
-                Expression.Call(Expression.Property(x, nameof(TopIssueRow.SourceName)), ToUpperMethod),
+                sourceKeyReady
+                    ? Expression.Property(x, nameof(TopIssueRow.SourceKey))
+                    : Expression.Call(Expression.Property(x, nameof(TopIssueRow.SourceName)), ToUpperMethod),
                 Expression.Constant(IssueExclusion.CompositeKeySeparator), ConcatMethod),
             Expression.Call(eventId, IntToStringMethod), ConcatMethod);
 
-    private static Expression<Func<TopIssueRow, bool>> Build(IssueExclusion exclusion, bool negate)
+    private static Expression<Func<TopIssueRow, bool>> Build(
+        IssueExclusion exclusion, bool negate, bool sourceKeyReady)
     {
         var x = Expression.Parameter(typeof(TopIssueRow), "x");
         var eventId = Expression.Property(x, nameof(TopIssueRow.EventId));
         var recordDate = Expression.Property(x, nameof(TopIssueRow.RecordDate));
-        var composite = Composite(x, eventId);
+        var composite = Composite(x, eventId, sourceKeyReady);
 
         var eventIds = exclusion.Spans.Select(s => s.EventId).Distinct().OrderBy(id => id).ToArray();
         Expression muted = Expression.Call(IntContains, Expression.Constant(eventIds), eventId);

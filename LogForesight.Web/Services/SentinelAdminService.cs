@@ -1,4 +1,5 @@
 using LogForesight.Web.Models;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -12,12 +13,16 @@ public class SentinelAdminService
     private readonly ISentinelStore _sentinels;
     private readonly IHostStore _hosts;
     private readonly IAuditService _audit;
+    private readonly PermissionVersionStamp _permissionVersion;
 
-    public SentinelAdminService(ISentinelStore sentinels, IHostStore hosts, IAuditService audit)
+    public SentinelAdminService(
+        ISentinelStore sentinels, IHostStore hosts, IAuditService audit,
+        PermissionVersionStamp permissionVersion)
     {
         _sentinels = sentinels;
         _hosts = hosts;
         _audit = audit;
+        _permissionVersion = permissionVersion;
     }
 
     public List<SentinelDto> GetSentinels()
@@ -38,6 +43,7 @@ public class SentinelAdminService
         var name = request.Name.Trim();
         if (name.Length == 0)
             throw DomainException.Validation("請輸入 Sentinel 名稱。");
+        SystemSettingsService.RejectSecretQuery(request.BaseUrl);
 
         var duplicate = _sentinels.FindByName(name);
         var isNew = request.SentinelId == 0;
@@ -106,17 +112,23 @@ public class SentinelAdminService
         //
         // 一次 MutateBatch 完成整批（回饋十七輪批次D）：原本逐台 Upsert 各自整份 blob
         // 讀改寫，轄下主機一多就是明顯的 N+1。
+        var permissionChanged = false;
         var affected = _hosts.MutateBatch(hosts =>
         {
             var count = 0;
             foreach (var host in hosts.Where(h => h.SentinelId == sentinelId && h.Active && h.MergedInto == null))
             {
+                if (host.OwnerUserIds.Count > 0)
+                    permissionChanged = true;
                 host.Active = false;
                 host.OrphanedFromSentinel = host.NetiqServer;
                 count++;
             }
             return count;
         });
+
+        if (permissionChanged)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.SentinelDelete,
@@ -184,9 +196,10 @@ public class SentinelAdminService
             var existing = _sentinels.Get(request.SentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
             if (string.IsNullOrEmpty(existing.PasswordEnc))
                 throw DomainException.Validation("這台 Sentinel 尚未設定密碼，請先輸入密碼再測試連線。");
-            password = CryptoHelper.IsEncrypted(existing.PasswordEnc)
-                ? CryptoHelper.Decrypt(existing.PasswordEnc)
-                : existing.PasswordEnc;
+            // 解不開（金鑰不符）等同未設定密碼：回驗證訊息，不讓測試連線 500
+            if (!CryptoHelper.TryDecrypt(existing.PasswordEnc, out var savedPassword))
+                throw DomainException.Validation("這台 Sentinel 已儲存的密碼無法解密（金鑰不符），請重新輸入密碼再測試連線。");
+            password = savedPassword;
         }
         else
         {

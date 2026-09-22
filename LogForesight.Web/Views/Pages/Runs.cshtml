@@ -51,7 +51,7 @@
             <div class="small text-muted lf-run-message" id="schedule-latest-message"></div>
 
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions" data-maintain-only>
-                <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-run-now">立即執行</button>
+                <button type="button" class="btn btn-sm btn-primary" id="schedule-run-now">立即執行</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-stop">停止執行</button>
             </div>
         </div>
@@ -107,7 +107,7 @@
     </section>
 
     @* PRTG：模組狀態、結構同步狀態、每日擷取進度、歷史回填四件事集中在這張卡。
-       啟用開關在 PRTG 維護頁「擷取參數」的取數範圍下拉，這裡只顯示狀態並指路。
+       啟用開關在 PRTG 維護頁「擷取參數」的數值取數對象下拉，這裡只顯示狀態並指路。
        每日擷取是三路並行的第三路，進度軌從取數卡搬過來——那條軌的內容全是 PRTG 的事。 *@
     <section class="lf-card" id="prtg-status-card">
         <div class="lf-card__header">
@@ -118,10 +118,10 @@
                 <span class="lf-kv__label">模組狀態</span>
                 <span class="lf-kv__value" id="prtg-module-state">載入中…</span>
             </div>
-            @* 未啟用時指路：開關與取數範圍是維護頁「擷取參數」的同一個下拉，
+            @* 未啟用時指路：開關與數值取數對象是維護頁「擷取參數」的同一個下拉，
                卡片上只說「未啟用」的話，使用者會在這頁到處找開關。 *@
             <div class="small text-warning d-none" id="prtg-disabled-hint">
-                到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇取數範圍即可啟用；
+                到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇數值取數對象即可啟用；
                 未啟用時無法同步結構與回填。
             </div>
             <div class="lf-kv">
@@ -155,22 +155,11 @@
                （每一行都有 [PRTG] 前綴）。 *@
 
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions">
-                <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-sync-start" data-maintain-only>同步結構與對應</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-sync-cancel" data-maintain-only>停止同步</button>
-                <button type="button" class="btn btn-sm btn-primary" id="prtg-backfill-start" data-maintain-only>開始回填</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-backfill-cancel" data-maintain-only>停止回填</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-output-toggle"
-                        data-bs-toggle="collapse" data-bs-target="#prtg-backfill-output-wrap"
-                        aria-expanded="false" aria-controls="prtg-backfill-output-wrap">詳細輸出</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-backfill-copy" disabled>複製</button>
             </div>
 
-            @* 輸出預設收合：它是全頁最高的單一元素，展開著會把這張卡撐得比另外兩張長一倍 *@
-            <div class="collapse mt-2" id="prtg-backfill-output-wrap">
-                <label for="prtg-backfill-output" class="form-label small fw-semibold">回填輸出</label>
-                <textarea class="form-control font-monospace small" id="prtg-backfill-output" rows="10" readonly
-                          placeholder="尚未執行過回填。"></textarea>
-            </div>
+            <div class="small text-muted mt-3">結構同步會在每次執行時自動進行；要補過去日的數值，用「立即執行」時勾選「一併補齊 PRTG 數值」，或到 PRTG 維護頁。<a href="@Url.Content("~/admin/prtg")" class="ms-1">前往 PRTG 維護</a></div>
         </div>
     </section>
 </div>
@@ -270,6 +259,15 @@
                     </button>
                 </div>
 
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="schedule-auto-catchup" data-maintain-only />
+                    <label class="form-check-label" for="schedule-auto-catchup">錯過窗口時自動補跑</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="站台在排程窗口期間沒有執行（停機、IIS 閒置回收）時，於窗口結束後 4 小時內自動補跑一次，回望天數涵蓋漏掉的日子。關閉後不會自動補跑，可在排程作業頁手動立即執行。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                </div>
+
                 <label class="form-label small fw-semibold">執行窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
@@ -361,17 +359,13 @@
                     <div class="mb-3">
                         <label for="run-now-backfill" class="form-label">回望天數（選填）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-backfill-help"
-                                data-bs-content="檢查最近幾天內的日子：沒有分析紀錄的補跑，已有紀錄的依下方「執行模式」重新分析。本機主機與 NetIQ 主機都適用。只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機留空時回補趨勢窗口內的缺漏日）。">
+                                data-bs-content="正在載入有效回望上限…">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <input type="number" class="form-control form-control-sm lf-input-narrow" id="run-now-backfill" min="1" />
                     </div>
                     <div class="mb-3">
                         <label for="run-now-rerun-mode" class="form-label">執行模式</label>
-                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-rerun-mode-help"
-                                data-bs-content="「只補跑失敗或未執行」僅補跑缺漏或失敗日，不影響既有結果；其餘模式為重新分析，會刪除選定日子的既有分析結果（含 AI 判讀與深度分析）後重新產生。「重新分析未處理」只重跑無人處理過的日子；「重新分析未處理與處理中」加上處理中日子；「全部重新分析」則重跑所有日子（含已結案）。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                        </button>
                         <select class="form-select form-select-sm" id="run-now-rerun-mode">
                             <option value="None" selected>只補跑失敗或未執行（預設）</option>
                             <option value="Unhandled">重新分析未處理的日子</option>
@@ -379,6 +373,17 @@
                             <option value="All">全部重新分析（含已處理完的）</option>
                         </select>
                         <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm table-bordered small mb-0" aria-label="執行模式影響對照">
+                                <thead><tr><th scope="col">模式</th><th scope="col">會重建什麼</th><th scope="col">保留什麼</th><th scope="col">何時使用</th></tr></thead>
+                                <tbody>
+                                    <tr><th scope="row">只補跑失敗或未執行</th><td>缺漏或失敗日</td><td>已有的成功結果與處理結論</td><td>日常補缺</td></tr>
+                                    <tr><th scope="row">重新分析未處理</th><td>未處理日的分析、AI 判讀與深度分析</td><td>已指派、已完成的日子</td><td>規則更新後，重算尚未處理的問題</td></tr>
+                                    <tr><th scope="row">重新分析未處理與處理中</th><td>未處理與處理中日的分析結果</td><td>已完成的日子與處理結論</td><td>要一併更新尚在處理的工作</td></tr>
+                                    <tr><th scope="row">全部重新分析</th><td>所有選定日的分析結果</td><td>處理結論；問題不再出現時原紀錄可能失去對應</td><td>完整重算，確認影響後再用</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                     <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>

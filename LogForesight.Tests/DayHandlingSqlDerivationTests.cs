@@ -98,6 +98,19 @@ public class DayHandlingSqlDerivationTests : IDisposable
         ctx.SaveChanges();
     }
 
+    [Fact]
+    public void 完整簽章來源大小寫不同_逐日SQL投影仍沿用處理結論()
+    {
+        var day = new DateTime(2026, 8, 1);
+        Add(1, "A", day, RiskLevels.High, Issue("évent", 153, severity: IssueSeverity.High));
+        AddIssueHandling("A", day, Issue("ÉVENT", 153, severity: IssueSeverity.High),
+            IssueHandlingStatuses.Resolved);
+
+        var result = Assert.Single(Query().DeriveDayHandling(IssueExclusion.None, day, day,
+            null, new HashSet<IssueSeverity> { IssueSeverity.High }, Array.Empty<long>()));
+        Assert.Equal(HandlingStatuses.Resolved, result.DayStatus);
+    }
+
     private void AddIssueCase(string host, LogIssueSignature issue, DateTime? closedAt = null, long? handlerId = null)
     {
         using var ctx = _fx.NewContext();

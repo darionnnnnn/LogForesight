@@ -168,11 +168,11 @@ public class PrtgProbeSiteCheckTests : IDisposable
     }
 
     private static async Task<TestConsole> RunAsync(EfPrtgStore store, StubPrtg stub, SystemSettings? settings = null,
-        StubGuardSource? guard = null, List<Sentinel>? sentinels = null)
+        StubGuardSource? guard = null, List<Sentinel>? sentinels = null, IHostStore? hostStore = null)
     {
         var console = new TestConsole();
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub);
-        await PrtgProbeSiteCheck.RunAsync(client, console, store, new FakeHostStore(),
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        await PrtgProbeSiteCheck.RunAsync(client, console, store, hostStore ?? new FakeHostStore(),
             settings ?? new SystemSettings(), sentinels ?? new List<Sentinel>(), guard ?? new StubGuardSource());
         return console;
     }
@@ -316,7 +316,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         var console = await RunAsync(store, stub, new SystemSettings { PrtgUrl = "https://10.9.9.9" }, guard);
 
         Assert.Contains("守門偵測無法完成（模擬感測器全表逾時）", console.Text);
-        Assert.Contains("取數範圍：2 台裝置（對應 2、衝突 0、人工 0、守門 0）", console.Text);
+        Assert.Contains("監看裝置：2 台（對應 2、衝突 0、人工 0、守門 0）", console.Text);
         Assert.Contains("結論 ✓ 範圍內裝置逐台查詢狀態變更可用", console.Text);
         Assert.Contains("估算：範圍 2 台、併發 2——", console.Text);
     }
@@ -342,7 +342,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         var console = await RunAsync(store, stub);
 
         Assert.Contains("══════════ 站台對照 ══════════", console.Lines);
-        Assert.Contains("取數範圍：2 台裝置（對應 2、衝突 0、人工 0、守門 0）", console.Text);
+        Assert.Contains("監看裝置：2 台（對應 2、衝突 0、人工 0、守門 0）", console.Text);
         Assert.Contains("鏡像現況：裝置 3 台、感測器 7 顆，其中範圍外 3 顆", console.Text);
         Assert.Contains("感測器 7 顆，其中範圍外 3 顆", console.Text);
         Assert.Contains("下次結構同步成功後會清除", console.Text);
@@ -377,7 +377,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
 
         var console = await RunAsync(store, stub);
 
-        Assert.Contains("取數範圍：0 台裝置", console.Text);
+        Assert.Contains("監看裝置：0 台", console.Text);
         Assert.Contains("取數範圍是空的", console.Text);
         Assert.Contains("略過（取數範圍是空的）", console.Text);
         Assert.Empty(stub.RequestedUrls);
@@ -403,10 +403,13 @@ public class PrtgProbeSiteCheckTests : IDisposable
             CreatedAt = now
         });
         var stub = new StubPrtg();
+        // 人工對應只收目標主機存在且啟用中的列
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts => hosts.Add(new WebHost { HostId = 1, HostName = "srv-1", IpAddress = "10.0.0.1", Active = true }));
 
-        var console = await RunAsync(store, stub);
+        var console = await RunAsync(store, stub, hostStore: hostStore);
 
-        Assert.Contains("取數範圍：1 台裝置（對應 0、衝突 0、人工 1、守門 0）", console.Text);
+        Assert.Contains("監看裝置：1 台（對應 0、衝突 0、人工 1、守門 0）", console.Text);
         Assert.Contains("下次同步不會清除感測器鏡像", console.Text);
         Assert.DoesNotContain("取數範圍是空的", console.Text);
     }

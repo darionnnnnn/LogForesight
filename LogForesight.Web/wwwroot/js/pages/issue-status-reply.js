@@ -9,7 +9,8 @@
  */
 
 import { api, getCurrentUser } from '../core/api.js';
-import { toast, withBusy, showDetailModal } from '../core/ui.js';
+import { toast, withBusy, showDetailModal, confirmAction } from '../core/ui.js';
+import { attachNoteEditor } from '../core/note-editor.js';
 
 /** escalated：「我處理不了，需要上報」——非結案，後端會即時通知 admin 群組決定結案或重新指派 */
 const STATUS_OPTIONS = [
@@ -29,10 +30,21 @@ const STATUS_OPTIONS = [
  * @param {(payload: {status: string, note: string|null, dueDate: string|null}) => Promise<any>} options.submit
  *        呼叫端提供的送出函式；成功與否的訊息由呼叫端自己出
  * @param {() => void} [options.onApplied] 送出成功後的重新載入
+ * @param {string} options.draftKey 草稿識別（必填）：可區分回覆對象的字串，下次打開同一批對象會還原草稿
+ * @param {{issueLabel?: string, hostCount?: number}} [options.aiContext] 「AI 整理」的問題脈絡；
+ *        一次回覆多張不同問題的單時不帶 issueLabel
+ * @param {string|null} [options.reuseIssueKey] 「沿用此問題上次的說明」的完整問題簽章；
+ *        沒有單一明確的簽章（例如一次回覆多張單）時傳 null，不顯示沿用連結
+ * @param {(payload: {status: string, note: string|null, dueDate: string|null}) => void} [options.onNext]
+ *        有值時在「送出」旁多一顆「送出並回覆下一張」：送出成功後關閉彈窗並以這次送出的內容呼叫它；
+ *        送出失敗或必填沒過時停在原彈窗
+ * @param {string} [options.initialStatus] 狀態下拉的初始值（「下一張」沿用上一張的狀態）；不傳＝第一個選項
+ * @param {string|null} [options.previousNote] 上一張的說明：有值時說明欄上方顯示「帶入上一張的說明」連結
  */
-export function openWorkOrderReplyModal({ title, targetText, submit, onApplied }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote }) {
     const body = document.createElement('div');
     const form = document.createElement('form');
+    form.noValidate = true;   // 超過字數的 customValidity 走下方手動驗證，不跳原生泡泡
 
     const hint = document.createElement('div');
     hint.className = 'lf-hint mb-3';
@@ -50,6 +62,9 @@ export function openWorkOrderReplyModal({ title, targetText, submit, onApplied }
         el.textContent = option.label;
         statusSelect.appendChild(el);
     }
+    if (initialStatus && STATUS_OPTIONS.some(option => option.value === initialStatus)) {
+        statusSelect.value = initialStatus;
+    }
     form.append(statusLabel, statusSelect);
 
     const noteLabel = document.createElement('label');
@@ -58,7 +73,26 @@ export function openWorkOrderReplyModal({ title, targetText, submit, onApplied }
     const noteInput = document.createElement('textarea');
     noteInput.className = 'form-control form-control-sm mb-3';
     noteInput.rows = 3;
-    form.append(noteLabel, noteInput);
+    form.append(noteLabel);
+    // 下一張：說明預設清空，上一張的說明改成一鍵帶入（不同單的說明不一定能照抄）
+    let previousNoteLink = null;
+    if (previousNote) {
+        previousNoteLink = document.createElement('button');
+        previousNoteLink.type = 'button';
+        previousNoteLink.className = 'btn btn-link btn-sm p-0 mb-1 d-block';
+        previousNoteLink.textContent = '帶入上一張的說明';
+        form.appendChild(previousNoteLink);
+    }
+    form.appendChild(noteInput);
+    const noteEditor = attachNoteEditor(noteInput, {
+        draftKey: `wo-reply:${draftKey}`,
+        ai: { context: () => aiContext },
+        reuse: { issueKey: () => reuseIssueKey },
+        phrases: true
+    });
+    if (previousNoteLink) {
+        previousNoteLink.addEventListener('click', () => noteEditor.setValue(previousNote));
+    }
 
     // 處理中的預計完成日／觀察中的觀察至日期共用同一個欄位（後端同一個 DueDate）
     const dueLabel = document.createElement('label');
@@ -83,17 +117,38 @@ export function openWorkOrderReplyModal({ title, targetText, submit, onApplied }
     submitBtn.textContent = '送出';
     form.appendChild(submitBtn);
 
-    form.addEventListener('submit', async event => {
-        event.preventDefault();
+    let nextBtn = null;
+    if (onNext) {
+        nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'btn btn-sm btn-outline-primary ms-2';
+        nextBtn.textContent = '送出並回覆下一張';
+        form.appendChild(nextBtn);
+        nextBtn.addEventListener('click', () => send(nextBtn, true));
+    }
 
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        send(submitBtn, false);
+    });
+
+    /** 驗證→送出→關閉；goNext＝成功後接著開下一張（失敗或必填沒過都停在原彈窗） */
+    async function send(button, goNext) {
         // 「不處理」必須說明理由——與風險日詳情的規則一致（那裡也是不處理→說明必填）
         if (statusSelect.value === 'wont_fix' && !noteInput.value.trim()) {
             toast('標記為「不處理」時請填寫說明', 'warning');
+            noteInput.focus();
             return;
         }
         // 「無法處理」必填原因：管理員收到上報通知要據此決定結案或改派
         if (statusSelect.value === 'escalated' && !noteInput.value.trim()) {
             toast('標記為「無法處理」時請填寫原因，管理員將據此決定結案或重新指派', 'warning');
+            noteInput.focus();
+            return;
+        }
+        if (!noteInput.checkValidity()) {
+            toast(noteInput.validationMessage, 'warning');   // 超過字數上限（attachNoteEditor 設的）
+            noteInput.focus();
             return;
         }
         if (statusSelect.value === 'observing' && !dueInput.value) {
@@ -101,23 +156,56 @@ export function openWorkOrderReplyModal({ title, targetText, submit, onApplied }
             return;
         }
 
-        const restore = withBusy(submitBtn, '送出中');
+        const payload = {
+            status: statusSelect.value,
+            note: noteInput.value.trim() || null,
+            dueDate: dueInput.value || null
+        };
+        const restore = withBusy(button, '送出中');
+        if (nextBtn) {
+            submitBtn.disabled = true;
+            nextBtn.disabled = true;
+        }
         try {
-            await submit({
-                status: statusSelect.value,
-                note: noteInput.value.trim() || null,
-                dueDate: dueInput.value || null
-            });
-
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
-            onApplied?.();
+            await submit(payload);
         } catch {
             restore();
+            submitBtn.disabled = false;
+            if (nextBtn) nextBtn.disabled = false;
+            return;
         }
-    });
+
+        noteEditor.clearDraft();
+        closeConfirmed = true;
+        // 下一張等這個彈窗完全關閉才開：兩個 modal 的淡出／淡入交疊時，前一個收尾會拿掉頁面的捲動鎖定
+        if (goNext) modalEl.addEventListener('hidden.bs.modal', () => onNext(payload), { once: true });
+        body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+        onApplied?.();
+    }
 
     body.appendChild(form);
     showDetailModal({ title, body });
+
+    // 關閉保護（DESIGN-SYSTEM §6b）：Esc／點遮罩／關閉鈕都走 hide.bs.modal，說明欄有字時先問
+    let closeConfirmed = false;
+    const modalEl = body.closest('.modal');
+    modalEl?.addEventListener('hide.bs.modal', async event => {
+        if (closeConfirmed || !noteInput.value.trim()) return;
+        event.preventDefault();
+        const confirmed = await confirmAction({
+            title: '放棄未送出的處理說明？',
+            message: '草稿已自動保留，下次打開同一張單會還原。',
+            confirmText: '關閉'
+        });
+        if (!confirmed) return;
+        closeConfirmed = true;
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+    });
+}
+
+/** 回覆多張交辦單的草稿識別：單號排序後以逗號連接，同一批單不論勾選順序都對到同一份草稿 */
+export function workOrdersDraftKey(workOrderIds) {
+    return `orders:${[...workOrderIds].sort((a, b) => a - b).join(',')}`;
 }
 
 /** 單張交辦單回覆的成功訊息（POST /api/work-orders/{id}/reply 的回應） */
@@ -129,10 +217,19 @@ export function toastReplyResult(result) {
     }
 }
 
-/** 多張交辦單回覆的成功訊息（POST /api/work-orders/reply-many 的回應） */
+/**
+ * 多張交辦單回覆的結果訊息（POST /api/work-orders/reply-many 的回應）。
+ * 寫入中途某張失敗時後端停在那張、回 200：成功的已寫入，改顯示警告交代失敗與未處理。
+ */
 export function toastReplyManyResult(result) {
-    const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
-    toast(`已回覆 ${result.workOrders} 張單共 ${result.cases} 台${closed}`, 'success');
+    if (result.failedWorkOrderId != null) {
+        const notProcessed = result.notProcessed?.length ?? 0;
+        toast(`已完成 ${result.succeeded?.length ?? 0} 張；#${result.failedWorkOrderId} 失敗：${result.failureMessage || '未知原因'}；`
+            + `尚有 ${notProcessed} 張未處理，已保留勾選可直接重送。`, 'warning');
+    } else {
+        const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
+        toast(`已回覆 ${result.workOrders} 張單共 ${result.cases} 台${closed}`, 'success');
+    }
     if (result.daySyncPendingCases > 0) {
         toast('逐日同步在背景進行', 'info');
     }
@@ -170,6 +267,10 @@ export async function openIssueStatusReplyModal(group, onApplied) {
     openWorkOrderReplyModal({
         title: `回覆處理狀態：${group.source} (${group.eventId})`,
         targetText: `${orders.length} 張單共 ${hosts} 台`,
+        draftKey: workOrdersDraftKey(workOrderIds),
+        aiContext: { issueLabel: `${group.source} (${group.eventId})`, hostCount: hosts },
+        // 依問題視角只有 Source＋EventId、沒有完整簽章（同一事件可能分屬多個簽章），不顯示沿用
+        reuseIssueKey: null,
         submit: async payload => {
             const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
             toastReplyManyResult(result);

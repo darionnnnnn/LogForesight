@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Configuration;
@@ -23,6 +25,7 @@ public class SetupReadinessServiceTests : IDisposable
     private readonly FakeSystemSettingsStore _settings = new();
     private readonly FakeSentinelStore _sentinels = new();
     private readonly FakeGroupAccessStore _groupAccess = new();
+    private readonly FakeAiProbeService _aiProbe = new();
 
     public SetupReadinessServiceTests()
     {
@@ -40,21 +43,30 @@ public class SetupReadinessServiceTests : IDisposable
 
     private SetupReadinessService Create()
     {
-        var health = new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService());
+        var appSettings = new WebAppSettings { Auth = new AuthSettings { Provider = "Stub", ServerAdmin = new ServerAdminSettings() } };
+        var freshness = new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")), new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+        var health = new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService(), freshness);
         var identity = new IdentityService(
             _users, _groups, _hosts, new StubAuthenticationProvider(),
-            new ServerAdminAuthenticator(new WebAppSettings { Auth = new AuthSettings { ServerAdmin = new ServerAdminSettings() } }),
+            new ServerAdminAuthenticator(appSettings),
             new RecordingAuditService(), new UserCapabilityResolver(_groups, _hosts));
         return new SetupReadinessService(
-            health, identity, _settings, _sentinels, _hosts, _groupAccess,
+            health, identity, _settings, _sentinels, _hosts, _groupAccess, _groups,
             new ScheduleOptionsStore(_backend.Blob("schedule_options")),
-            new SetupWizardStateStore(_backend.Blob("setup_wizard_state")));
+            new SetupWizardStateStore(_backend.Blob("setup_wizard_state")),
+            appSettings,
+            new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
+            _aiProbe);
     }
 
-    private MailNotificationService NewMailService() => new(
-        _settings, new FakeSmtpMailSender(), _hosts, _users,
-        _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-        new MailNotifyStateStore(_backend.Blob("mail_notify_state")));
+    private MailNotificationService NewMailService()
+    {
+        var freshness = new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")), new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+        return new(
+            _settings, new FakeSmtpMailSender(), _hosts, _users,
+            _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
+            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness);
+    }
 
     private void EnsureAdmin()
     {
@@ -79,20 +91,19 @@ public class SetupReadinessServiceTests : IDisposable
         Assert.False(status.AllSettled);
     }
 
-    /// <summary>AiBaseUrl 出廠預設非空（localhost:8080）——沒特別清空時這一步天生就是完成狀態，
-    /// 與 AnalysisOrchestrator 判斷 useAi 的 settings.Ai.IsConfigured 同一套語意。</summary>
     [Fact]
-    public void AI步驟_出廠預設值視為已完成()
+    public void AI步驟_探活成功時視為已完成()
     {
+        _aiProbe.LatestResult = new AiProbeResult(true, AiProbeStatus.Ready, "OK", DateTime.Now);
         var status = Create().GetStatus();
 
         Assert.True(status.Steps.Single(s => s.Id == "ai").Done);
     }
 
     [Fact]
-    public void AI步驟_清空位址時視為未完成()
+    public void AI步驟_探活未執行或失敗時視為未完成()
     {
-        _settings.Update(s => s.AiBaseUrl = "");
+        _aiProbe.LatestResult = new AiProbeResult(false, AiProbeStatus.Failed, "連線失敗", DateTime.Now);
 
         var status = Create().GetStatus();
 
@@ -108,9 +119,15 @@ public class SetupReadinessServiceTests : IDisposable
     }
 
     [Fact]
-    public void 郵件步驟_啟用且有SMTP伺服器時完成()
+    public void 郵件步驟_啟用且有SMTP伺服器與觸發與收件人時完成()
     {
-        _settings.Update(s => { s.MailEnabled = true; s.SmtpServer = "smtp.local"; });
+        _settings.Update(s =>
+        {
+            s.MailEnabled = true;
+            s.SmtpServer = "smtp.local";
+            s.MailDailyEnabled = true;
+            s.MailRecipients = new List<string> { "admin@example.com" };
+        });
 
         Assert.True(Create().GetStatus().Steps.Single(s => s.Id == "mail").Done);
     }
@@ -118,7 +135,12 @@ public class SetupReadinessServiceTests : IDisposable
     [Fact]
     public void 郵件步驟_啟用但未設SMTP時未完成()
     {
-        _settings.Update(s => s.MailEnabled = true);
+        _settings.Update(s =>
+        {
+            s.MailEnabled = true;
+            s.MailDailyEnabled = true;
+            s.MailRecipients = new List<string> { "admin@example.com" };
+        });
 
         Assert.False(Create().GetStatus().Steps.Single(s => s.Id == "mail").Done);
     }
@@ -212,6 +234,7 @@ public class SetupReadinessServiceTests : IDisposable
         new ScheduleOptionsStore(_backend.Blob("schedule_options")).Update(o => o.Enabled = true);
         var owner = _users.Upsert(new WebUser { Account = "owner1", Active = true });
         _hosts.Upsert(new WebHost { HostName = "H1", Active = true, OwnerUserIds = new List<long> { owner.UserId } });
+        _aiProbe.LatestResult = new AiProbeResult(true, AiProbeStatus.Ready, "OK", DateTime.Now);
 
         var service = Create();
         service.SetSkipped("mail", true);

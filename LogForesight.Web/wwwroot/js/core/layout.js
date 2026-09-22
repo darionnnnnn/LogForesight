@@ -8,8 +8,9 @@
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
-import { formatUserName, formatNumber } from './format.js';
+import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
+import { clearAllDraftsForUser } from './note-editor.js';
 
 /**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
@@ -19,12 +20,11 @@ const NAV_SECTIONS = [
     {
         label: '監控作業',
         items: [
+            // 動態 href：連到「自己」的處理人工作頁——處理人每天的起點，擺在第一位。
+            // ServerAdmin 帳號 userId=0，沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
+            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
             { href: '/', label: '總覽儀表板', icon: 'speedometer2', requires: null },
             { href: '/records', label: '問題查詢', icon: 'search', requires: null },
-            // 動態 href（docs/archive/FEEDBACK-4-PLAN.md §6）：連到「自己」的處理人工作頁——
-            // 處理人員每天上工的起點，不該藏在別的頁面連結後面。ServerAdmin 帳號 userId=0，
-            // 沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
-            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
             { href: '/work-orders', label: '交辦總覽', icon: 'inbox', requires: ['Assign', 'ViewAll'] },
             { href: '/permission-changes', label: '權限異動檢核', icon: 'clipboard-check', requires: 'ConfirmPermission' },
             { href: '/reports', label: '報表', icon: 'file-earmark-text', requires: null }
@@ -39,10 +39,10 @@ const NAV_SECTIONS = [
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
-            // 問題檔案（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
+            // 問題負責與靜音（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
             // 以 (Source,EventId) 為鍵指派跨主機負責人＋記錄機房結論——放在主機／群組之後，
             // 同屬「誰負責什麼」這條動線
-            { href: '/admin/issue-owners', label: '問題檔案', icon: 'people', requires: 'Maintain' },
+            { href: '/admin/issue-owners', label: '問題負責與靜音', icon: 'people', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
             { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
             { href: '/admin/prtg', label: 'PRTG 維護', icon: 'diagram-3', requires: 'Maintain' },
@@ -56,10 +56,9 @@ const NAV_SECTIONS = [
             // admin/serverAdmin 的排程設定共用同一頁，serverAdmin 有 Maintain 卻沒有 DevMonitor，
             // 沒有這個入口就搆不到全新環境的排程初始設定）
             { href: '/runs', label: '排程作業', icon: 'activity', requires: ['DevMonitor', 'Maintain'] },
-            { href: '/audit', label: '操作紀錄', icon: 'journal-text', requires: 'ViewAudit' },
-            // 操作說明書（docs/archive/FEEDBACK-15-PLAN.md 批次E）：刻意放側欄最下方——
-            // 僅 Maintain 顯示，不是日常監控/管理動線的一部分，擺最後才不會擠掉更常用的項目
-            { href: '/help/manual', label: '操作說明書', icon: 'info-circle', requires: 'Maintain' }
+            { href: '/audit', label: '稽核紀錄', icon: 'journal-text', requires: 'ViewAudit' },
+            // 操作說明書：全登入角色皆可見入口，章節內容由 API 依權限過濾
+            { href: '/help/manual', label: '操作說明書', icon: 'info-circle' }
         ]
     }
 ];
@@ -78,17 +77,43 @@ async function init() {
         return;   // 401 已由 api.js 導向登入頁
     }
 
+    checkSetupReturnParam();
     renderNav(user);
+    bindMobileMenu();
     renderCurrentUser(user);
-    bindLogout();
+    bindLogout(user);
     initHelpPopovers();
-    renderSetupReturnBanner();
     refreshRunActivity();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）
+    loadHealthBanner(user);
+    loadSetupGuide(user);
 
     if (user.needsAdminSetup) {
         const { toast } = await import('./ui.js');
         toast('目前尚未指派任何 admin 成員，請至「使用者」頁將管理者加入 admin 群組。', 'warning', 10000);
     }
+}
+
+function bindMobileMenu() {
+    const toggle = document.getElementById('lf-mobile-menu');
+    const sidebar = document.querySelector('.lf-sidebar');
+    if (!toggle || !sidebar) return;
+    const close = () => {
+        sidebar.classList.remove('is-mobile-open');
+        toggle.setAttribute('aria-expanded', 'false');
+    };
+    toggle.addEventListener('click', () => {
+        const opened = sidebar.classList.toggle('is-mobile-open');
+        toggle.setAttribute('aria-expanded', String(opened));
+    });
+    document.getElementById('lf-nav')?.addEventListener('click', event => {
+        if (event.target.closest('a')) close();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && sidebar.classList.contains('is-mobile-open')) {
+            close();
+            toggle.focus();
+        }
+    });
 }
 
 function renderNav(user) {
@@ -310,7 +335,7 @@ function renderCurrentUser(user) {
     el.title = el.textContent;
 }
 
-function bindLogout() {
+function bindLogout(user) {
     const button = document.getElementById('lf-logout');
     if (!button) return;
 
@@ -318,6 +343,8 @@ function bindLogout() {
         button.disabled = true;
         try {
             await api.post('/api/auth/logout');
+            // 主動登出才清草稿；工作階段逾時被導回登入頁不清（重新登入後要能還原）
+            clearAllDraftsForUser(user.userId);
         } finally {
             location.href = appUrl('/login');
         }
@@ -350,50 +377,257 @@ function applyFontScale(scale) {
     }
 }
 
+let isFromSetup = false;
+
+function checkSetupReturnParam() {
+    try {
+        const params = new URLSearchParams(location.search);
+        if (params.get('from') === 'setup') {
+            isFromSetup = true;
+            params.delete('from');
+            const cleanQuery = params.toString();
+            history.replaceState(null, '', location.pathname + (cleanQuery ? `?${cleanQuery}` : '') + location.hash);
+        }
+    } catch {
+        // 靜默
+    }
+}
+
+// ── 頁頂提醒協調器 ────────────────────────────────────────────────────────────
+
+export const ALERT_PRIORITIES = {
+    health: 400,
+    run: 300,
+    'case-sync': 200,
+    setup: 100
+};
+
 /**
- * 回到啟動精靈提示列（回饋十八輪批次H）：從精靈頁「前往設定」點過來時（?from=setup），
- * 在頁頂顯示一條可關閉的提示，點擊回 /setup。集中在 layout.js 而不是逐頁各寫一份——
- * 每個目標頁（設定／使用者／群組／NetIQ／排程）都可能是精靈的跳轉目的地，
- * 這裡是所有頁面共同載入的入口，單點處理不必修改每一個目標頁。
- *
- * 清掉 URL 上的 from 參數（history.replaceState）：同 login.js 的 returnUrl 處理慣例——
- * 重新整理或分享這個網址不該一直帶著「你是從精靈來的」這個一次性狀態。
+ * 提醒排序純函式（可測）。
+ * 輸入來源清單（字串陣列、含 key 的物件陣列或物件字典），輸出最高兩條 visibleKeys 與超出數量 hiddenCount。
  */
-function renderSetupReturnBanner() {
-    const params = new URLSearchParams(location.search);
-    if (params.get('from') !== 'setup') return;
+export function resolveAlerts(sources) {
+    if (!sources) return { visibleKeys: [], hiddenCount: 0 };
+    let keys = [];
+    if (Array.isArray(sources)) {
+        for (const item of sources) {
+            if (typeof item === 'string') {
+                if (ALERT_PRIORITIES[item] !== undefined) keys.push(item);
+            } else if (item && typeof item === 'object' && item.key) {
+                const val = item.node !== undefined ? item.node : (item.active !== undefined ? item.active : true);
+                if (val && ALERT_PRIORITIES[item.key] !== undefined) {
+                    keys.push(item.key);
+                }
+            }
+        }
+    } else if (typeof sources === 'object') {
+        for (const [k, v] of Object.entries(sources)) {
+            if (v && ALERT_PRIORITIES[k] !== undefined) {
+                keys.push(k);
+            }
+        }
+    }
+    keys = [...new Set(keys)];
+    keys.sort((a, b) => (ALERT_PRIORITIES[b] ?? 0) - (ALERT_PRIORITIES[a] ?? 0));
+    const visibleKeys = keys.slice(0, 2);
+    const hiddenCount = Math.max(0, keys.length - 2);
+    return { visibleKeys, hiddenCount };
+}
 
-    params.delete('from');
-    const cleanQuery = params.toString();
-    history.replaceState(null, '', location.pathname + (cleanQuery ? `?${cleanQuery}` : '') + location.hash);
+const activeAlerts = new Map();
 
-    const banner = document.getElementById('lf-setup-return-banner');
-    if (!banner) return;
+/**
+ * 來源登記／移除：node 為 null 代表該來源無提醒。
+ */
+export function registerAlert(key, node) {
+    if (node) {
+        activeAlerts.set(key, node);
+    } else {
+        activeAlerts.delete(key);
+    }
+    coordinateAlerts();
+}
 
-    banner.replaceChildren();
-    banner.className = 'alert alert-info d-flex align-items-center justify-content-between mb-0 rounded-0 lf-no-print';
+function coordinateAlerts() {
+    const topContainer = document.getElementById('lf-top-alerts');
+    if (!topContainer) return;
+    const summaryEl = document.getElementById('lf-alerts-summary');
 
-    const text = document.createElement('span');
-    text.textContent = '設定完成後，可以回到啟動精靈繼續下一步。';
-    banner.appendChild(text);
+    const activeKeys = Array.from(activeAlerts.keys());
+    const { visibleKeys, hiddenCount } = resolveAlerts(activeKeys);
+
+    const containers = {
+        setup: document.getElementById('lf-setup-return-banner'),
+        health: document.getElementById('lf-health-banner'),
+        run: document.getElementById('lf-run-activity-banner')
+    };
+
+    let caseSyncContainer = document.getElementById('lf-case-sync-banner');
+    if (!caseSyncContainer) {
+        caseSyncContainer = document.createElement('div');
+        caseSyncContainer.id = 'lf-case-sync-banner';
+        caseSyncContainer.className = 'lf-no-print';
+    }
+    containers['case-sync'] = caseSyncContainer;
+
+    for (const key of visibleKeys) {
+        const node = activeAlerts.get(key);
+        const container = containers[key];
+        if (container && node) {
+            container.replaceChildren(node);
+            container.classList.remove('d-none');
+            topContainer.appendChild(container);
+        }
+    }
+
+    if (summaryEl) {
+        if (hiddenCount > 0) {
+            summaryEl.textContent = `另有 ${hiddenCount} 則提醒`;
+            summaryEl.className = 'text-muted small py-1 px-1 mb-2 lf-no-print';
+            summaryEl.classList.remove('d-none');
+            topContainer.appendChild(summaryEl);
+        } else {
+            summaryEl.textContent = '';
+            summaryEl.classList.add('d-none');
+        }
+    }
+
+    for (const [key, container] of Object.entries(containers)) {
+        if (!visibleKeys.includes(key) && container) {
+            container.replaceChildren();
+            if (key === 'setup') container.classList.add('d-none');
+            topContainer.appendChild(container);
+        }
+    }
+}
+
+// ── 初始設定引導（回饋五十輪批次F-1c）────────────────────────────────────────
+
+function setupGuideSessionKey(user) {
+    return `lf.setupGuide.dismissed.${user?.userId ?? 0}`;
+}
+
+function isSetupGuideDismissed(user) {
+    try {
+        return sessionStorage.getItem(setupGuideSessionKey(user)) === 'true';
+    } catch {
+        return false;
+    }
+}
+
+function setSetupGuideDismissed(user) {
+    try {
+        sessionStorage.setItem(setupGuideSessionKey(user), 'true');
+    } catch {
+        // sessionStorage 異常時靜默
+    }
+}
+
+/**
+ * 初始設定引導：只有具 Maintain 能力時才查詢，否則零呼叫直接返回。
+ */
+async function loadSetupGuide(user) {
+    if (!hasCapability(user, 'Maintain')) {
+        registerAlert('setup', null);
+        return;
+    }
+
+    if (isSetupGuideDismissed(user)) {
+        registerAlert('setup', null);
+        return;
+    }
+
+    let status = null;
+    let guidePref = null;
+    try {
+        const [statusRes, guideRes] = await Promise.all([
+            api.get('/api/admin/setup/status', { silent: true }),
+            api.get('/api/me/setup-guide', { silent: true })
+        ]);
+        status = statusRes;
+        guidePref = guideRes;
+    } catch {
+        registerAlert('setup', null);
+        return;
+    }
+
+    const allSettled = Boolean(status?.allSettled ?? status?.AllSettled);
+    const hidden = Boolean(guidePref?.hidden ?? guidePref?.Hidden);
+
+    if (allSettled || hidden || isSetupGuideDismissed(user)) {
+        registerAlert('setup', null);
+        return;
+    }
+
+    const steps = status?.steps ?? status?.Steps ?? [];
+    const nextStep = steps.find(s => !s.done && !s.skipped);
+    if (!nextStep && !isFromSetup) {
+        registerAlert('setup', null);
+        return;
+    }
+
+    const settledCount = steps.filter(s => s.done || s.skipped).length;
+    const totalCount = steps.length;
+
+    const bar = document.createElement('div');
+    bar.className = 'alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 mb-3';
+    bar.setAttribute('role', 'status');
+
+    const content = document.createElement('div');
+    if (isFromSetup) {
+        const text = document.createElement('span');
+        text.textContent = '設定完成後可回到啟動精靈';
+        content.appendChild(text);
+    } else {
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = `初始設定 ${settledCount}/${totalCount} 完成——下一步：${nextStep.title}`;
+        content.appendChild(titleSpan);
+
+        if (nextStep.detail) {
+            const detailSpan = document.createElement('div');
+            detailSpan.className = 'text-muted small';
+            detailSpan.textContent = nextStep.detail;
+            content.appendChild(detailSpan);
+        }
+    }
+    bar.appendChild(content);
 
     const actions = document.createElement('div');
     actions.className = 'd-flex align-items-center gap-2';
 
-    const backLink = document.createElement('a');
-    backLink.href = appUrl('/setup');
-    backLink.className = 'btn btn-sm btn-primary';
-    backLink.textContent = '返回啟動精靈';
-    actions.appendChild(backLink);
+    const link = document.createElement('a');
+    link.href = appUrl(isFromSetup || !nextStep?.id ? '/setup' : `/setup#${encodeURIComponent(nextStep.id)}`);
+    link.className = 'btn btn-sm btn-primary';
+    link.textContent = isFromSetup ? '返回啟動精靈' : '繼續設定';
+    actions.appendChild(link);
 
-    const dismiss = document.createElement('button');
-    dismiss.type = 'button';
-    dismiss.className = 'btn-close';
-    dismiss.setAttribute('aria-label', '關閉');
-    dismiss.addEventListener('click', () => banner.classList.add('d-none'));
-    actions.appendChild(dismiss);
+    const hideBtn = document.createElement('button');
+    hideBtn.type = 'button';
+    hideBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted';
+    hideBtn.textContent = '不再顯示';
+    hideBtn.addEventListener('click', async () => {
+        try {
+            await api.put('/api/me/setup-guide', { hidden: true });
+            registerAlert('setup', null);
+        } catch {
+            // api.js 已顯示錯誤；保留提醒，避免把未成功儲存誤呈現成永久關閉。
+        }
+    });
+    actions.appendChild(hideBtn);
 
-    banner.appendChild(actions);
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'btn-close';
+    closeBtn.setAttribute('aria-label', '關閉');
+    closeBtn.addEventListener('click', () => {
+        setSetupGuideDismissed(user);
+        registerAlert('setup', null);
+    });
+    actions.appendChild(closeBtn);
+
+    bar.appendChild(actions);
+
+    registerAlert('setup', bar);
 }
 
 // ── 全站執行中告示（回饋四十五輪批次A3）──────────────────────────────────────
@@ -438,6 +672,41 @@ async function refreshRunActivity() {
 }
 
 /**
+ * 告示的畫面：向提醒協調器登記執行中狀態與逐日同步狀態。
+ */
+function renderRunActivity(activity) {
+    if (activity?.isRunning) {
+        const bar = document.createElement('div');
+        bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2 mb-3';
+        bar.setAttribute('role', 'status');       // 進行中狀態用 status（polite），不是 alert——
+        bar.setAttribute('aria-live', 'polite');  // 這不是需要打斷讀屏的緊急訊息
+
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm flex-shrink-0';
+        spinner.setAttribute('aria-hidden', 'true');
+        bar.appendChild(spinner);
+
+        // 有分母才講「第 N/M」——total=0 代表還在掃描/清理階段，這時報進度是假的
+        const progressText = activity.total > 0
+            ? `分析進行中（第 ${formatNumber(activity.done)}／${formatNumber(activity.total)} ${activity.unitText || ''}）`
+            : '分析進行中';
+        // 觸發者只有後端給得出來時才講（排程自動跑時是「排程」，有人按的話是那個人）
+        const triggerText = activity.triggerText ? `，由${activity.triggerText}觸發` : '';
+
+        const text = document.createElement('span');
+        text.textContent = `${progressText}${triggerText}，畫面回應可能較慢。資料仍是完整的，分析完成後會自動恢復。`;
+        bar.appendChild(text);
+
+        registerAlert('run', bar);
+    } else {
+        registerAlert('run', null);
+    }
+
+    const syncBar = caseDaySyncBar(activity);
+    registerAlert('case-sync', syncBar);
+}
+
+/**
  * 逐日同步待處理的告示條；沒有待處理時回 null。
  *
  * 這是與分析執行無關的背景工作，所以不掛 spinner、也不受執行狀態影響——沒有在執行時
@@ -459,44 +728,53 @@ function caseDaySyncBar(activity) {
 }
 
 /**
- * 告示的畫面：分析執行中一條、逐日同步待處理一條（兩條都在時分析那條在上），
- * 兩者皆無則一律清空（容器不帶 margin/padding，清空即零高度）
+ * 排程資料過期告示：只有能處理它的人（Maintain／DevMonitor）才查，進頁查一次、不輪詢。
+ * 過期且尚未確認靜音時顯示一條；其餘情況向協調器移除。
  */
-function renderRunActivity(activity) {
-    const container = document.getElementById('lf-run-activity-banner');
-    if (!container) return;
+async function loadHealthBanner(user) {
+    if (!hasCapability(user, 'Maintain') && !hasCapability(user, 'DevMonitor')) {
+        registerAlert('health', null);
+        return;
+    }
 
-    const syncBar = caseDaySyncBar(activity);
-
-    if (!activity?.isRunning) {
-        container.replaceChildren(...(syncBar ? [syncBar] : []));
+    let freshness;
+    try {
+        freshness = await api.get('/api/health/freshness', { silent: true });
+    } catch {
+        registerAlert('health', null);
+        return;
+    }
+    if (!freshness?.stale || freshness.acked) {
+        registerAlert('health', null);
         return;
     }
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2 mb-3';
-    bar.setAttribute('role', 'status');       // 進行中狀態用 status（polite），不是 alert——
-    bar.setAttribute('aria-live', 'polite');  // 這不是需要打斷讀屏的緊急訊息
-
-    const spinner = document.createElement('span');
-    spinner.className = 'spinner-border spinner-border-sm flex-shrink-0';
-    spinner.setAttribute('aria-hidden', 'true');
-    bar.appendChild(spinner);
-
-    // 有分母才講「第 N/M」——total=0 代表還在掃描/清理階段，這時報進度是假的
-    const progressText = activity.total > 0
-        ? `分析進行中（第 ${formatNumber(activity.done)}／${formatNumber(activity.total)} ${activity.unitText || ''}）`
-        : '分析進行中';
-    // 觸發者只有後端給得出來時才講（排程自動跑時是「排程」，有人按的話是那個人）
-    const triggerText = activity.triggerText ? `，由${activity.triggerText}觸發` : '';
+    bar.className = 'alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2 mb-3';
+    bar.setAttribute('role', 'status');
 
     const text = document.createElement('span');
-    text.textContent = `${progressText}${triggerText}，畫面回應可能較慢。資料仍是完整的，分析完成後會自動恢復。`;
-    bar.appendChild(text);
+    const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
+    text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。`;
 
-    container.replaceChildren(...(syncBar ? [bar, syncBar] : [bar]));
+    const runsLink = document.createElement('a');
+    runsLink.href = appUrl('/runs');
+    runsLink.textContent = '查看排程作業';
+
+    bar.append(text, runsLink);
+
+    // 確認靜音在設定頁、需要 Maintain：只有 DevMonitor 的人看得到告示，但不給他進不去的連結
+    if (hasCapability(user, 'Maintain')) {
+        const ackLink = document.createElement('a');
+        ackLink.href = appUrl('/admin/settings#health');
+        ackLink.textContent = '確認並靜音';
+        bar.appendChild(ackLink);
+    }
+    registerAlert('health', bar);
 }
 
-initFontScale();
-initBrandAlign();
-init();
+if (typeof window !== 'undefined' && window.document) {
+    initFontScale();
+    initBrandAlign();
+    init();
+}

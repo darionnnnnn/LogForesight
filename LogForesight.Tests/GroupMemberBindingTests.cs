@@ -14,7 +14,7 @@ public class GroupMemberBindingTests
 
     private GroupAdminService Create() => new(
         new FakeUserGroupStore(), _hostGroups, _access,
-        new FakeUserStore(), _hosts, new RecordingAuditService());
+        new FakeUserStore(), _hosts, new RecordingAuditService(), TestPermissionStamps.Shared);
 
     private long AddGroup(string name) => _hostGroups.Upsert(new HostGroup { GroupName = name }).GroupId;
 

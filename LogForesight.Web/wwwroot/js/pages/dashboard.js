@@ -7,9 +7,9 @@
  */
 
 import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
+import { formatNumber, formatDateTime, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 import { bindRangeChips, setActiveChip } from '../core/date-range.js';
@@ -40,12 +40,12 @@ async function load() {
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
-    renderBanner(data);
+    renderBanner(data, user);
     renderKpi(data, user, displaySettings, myBadge);
     renderCategories(data);
     renderTopIssues(data);
     renderHosts(data);
-    renderGroupRisk(data);
+    renderGroupRisk(data, user);
 
     loadAiFocus();   // AI 今日焦點：非同步、失敗靜默，不擋主畫面
 }
@@ -159,8 +159,20 @@ function renderServerAdminGuide() {
 }
 
 /** 全綠時明確說「沒事」——空白畫面無法讓人分辨「沒問題」與「沒載入」 */
-function renderBanner(data) {
+function renderBanner(data, user) {
     const container = document.getElementById('dashboard-banner');
+
+    // 可見主機為 0 的一般使用者：不是「沒事」而是「沒有權限」，說清楚原因與找誰
+    // （具 Maintain 者自己就能設定授權，不需要這句）
+    if (data.totalHosts === 0 && !hasCapability(user, 'Maintain')) {
+        const hint = document.createElement('div');
+        hint.className = 'lf-hint mb-3';
+        hint.setAttribute('role', 'status');
+        hint.append(icon('info-circle'), document.createTextNode(
+            '你目前沒有任何主機的檢視權限，所以這裡沒有資料。請聯絡系統管理員為你設定部門群組授權。'));
+        container.replaceChildren(hint);
+        return;
+    }
 
     if (data.highRiskDays > 0 || data.mediumRiskDays > 0) {
         container.replaceChildren();
@@ -191,7 +203,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
             // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/archive/HISTORY.md #5）；
             // 顯示範圍另受「日風險等級顯示」設定影響（docs/archive/FEEDBACK-3-PLAN.md #8）
             hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
-            url: `/records?riskLevels=${encodeURIComponent('高')}&from=${data.from}&to=${data.to}`
+            url: recordsUrl({ riskLevels: '高', from: data.from, to: data.to })
         }
     ];
 
@@ -201,7 +213,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
             value: data.mediumRiskDays,
             variant: data.mediumRiskDays > 0 ? 'warning' : 'secondary',
             hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
-            url: `/records?riskLevels=${encodeURIComponent('中')}&from=${data.from}&to=${data.to}`
+            url: recordsUrl({ riskLevels: '中', from: data.from, to: data.to })
         });
     }
 
@@ -234,7 +246,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         variant: data.issueTodo.overdueIssueCount > 0 ? 'danger' : (data.issueTodo.openIssueCount > 0 ? 'warning' : 'secondary'),
         // 三級全帶＝不按問題嚴重度篩：這張卡數的是「未處理問題」不分嚴重度，
         // 依問題視角的 chip 是嚴重度語意，只帶高中會把低嚴重度的未處理問題濾掉
-        url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`,
+        url: recordsUrl({ view: 'issue', statuses: 'open', riskLevels: '高,中,低', from: data.from, to: data.to }),
         extra: todoExtra
     });
 
@@ -328,7 +340,7 @@ function renderCategories(data) {
         // 落在依問題視角——與 renderTopIssues 的下鑽連結（見下方，同一個 view=issue 慣例）
         // 保持一致，否則帶著 categories 參數進頁會被 §10 的「帶參數預設回明細」規則接住，
         // 使用者點一個問題類別的卡片，看到的卻是逐筆明細而非依問題分組。
-        link.href = appUrl(`/records?view=issue&categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`);
+        link.href = appUrl(recordsUrl({ view: 'issue', categories: category.category, riskLevels: '高,中,低', from: data.from, to: data.to }));
 
         // 嚴重度驅動顯著性：命中「重大」旗標加紅邊、High 加黃邊（§8.2 原則 1；
         // docs/archive/HISTORY.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
@@ -427,8 +439,8 @@ function renderTopIssues(data) {
         ],
         rows: data.topIssues,
         // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
-        rowHref: i => `/records?view=issue&source=${encodeURIComponent(i.source)}&eventId=${i.eventId}` +
-                      `&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`,
+        rowHref: i => recordsUrl({ view: 'issue', source: i.source, eventId: i.eventId,
+                                  riskLevels: '高,中,低', from: data.from, to: data.to }),
         empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
     });
 }
@@ -711,7 +723,8 @@ function hostLink(host) {
 }
 
 /** 依群組風險概況（§5.4 D-4）：點列導向問題查詢並帶群組篩選，兩千台規模的主要動線是「先群組後下鑽」 */
-function renderGroupRisk(data) {
+function renderGroupRisk(data, user) {
+    const canMaintain = hasCapability(user, 'Maintain');
     renderTable(document.getElementById('dashboard-group-risk'), {
         columns: [
             { title: '群組', render: g => g.groupName },
@@ -721,10 +734,41 @@ function renderGroupRisk(data) {
             { title: '未處理', className: 'text-end', render: g => formatNumber(g.unhandledCount) }
         ],
         rows: data.groupRisk,
-        rowHref: g => `/records?groupIds=${g.groupId}&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`,
-        empty: { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
+        rowHref: g => recordsUrl({ groupIds: g.groupId, riskLevels: '高,中', from: data.from, to: data.to }),
+        empty: canMaintain
+            ? { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
+            : { title: '尚未設定任何主機群組', hint: '請聯絡系統管理員建立主機群組並指派主機。' }
     });
 }
+
+/**
+ * 資料時間：進頁查一次 /api/health/freshness（不隨期間切換重打），失敗靜默留空。
+ * 過期且未確認時改警示色，並附上可聯絡的系統管理員（後端只在檢視者不能自己處理時才給名單）。
+ */
+async function loadFreshness() {
+    const el = document.getElementById('dashboard-freshness');
+    if (!el) return;
+    let f;
+    try {
+        f = await api.get('/api/health/freshness', { silent: true });
+    } catch {
+        return;
+    }
+    if (!f.scheduleEnabled && !f.lastSuccessAt) {
+        el.textContent = '';
+        return;
+    }
+
+    const warn = !!f.stale && !f.acked;
+    const contacts = f.adminContacts ?? [];
+    let text = `資料最近更新：${f.lastSuccessAt ? formatDateTime(f.lastSuccessAt) : '近 14 天無紀錄'}`;
+    if (warn && contacts.length > 0) text += `，請聯絡系統管理員：${contacts.join('、')}`;
+    el.textContent = text;
+    el.classList.toggle('text-muted', !warn);
+    el.classList.toggle('text-warning-emphasis', warn);
+}
+
+loadFreshness();
 
 const rangeChips = bindRangeChips({
     markActive: true,

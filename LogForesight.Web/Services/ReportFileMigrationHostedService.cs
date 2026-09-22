@@ -14,10 +14,13 @@ public class ReportFileMigrationHostedService : BackgroundService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    private readonly BackgroundWorkGate _gate;
+
     private readonly StorageBackend _backend;
 
-    public ReportFileMigrationHostedService(StorageBackend backend)
+    public ReportFileMigrationHostedService(StorageBackend backend, BackgroundWorkGate gate)
     {
+        _gate = gate;
         _backend = backend;
     }
 
@@ -34,17 +37,27 @@ public class ReportFileMigrationHostedService : BackgroundService
         }
 
         // 同步工作丟到 thread pool：避免阻塞啟動流程
-        await Task.Run(() =>
+        // 經共用節流閘排隊：同一時間只跑一支背景回填，取數排程執行中時先讓路
+        try
         {
-            try
-            {
-                _backend.ReportFileMigrator.Run(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                // 舊報告搬不進來不影響站台任何其他功能，也不影響今晚新產生的報告
-                Log.Error(ex, "[SQL] 既有報告檔遷移失敗（不影響新報告）：{Msg}", ex.Message);
-            }
-        }, stoppingToken);
+            await _gate.RunAsync("報告檔遷移",
+                () => Task.Run(() =>
+                {
+                    try
+                    {
+                        _backend.ReportFileMigrator.Run(stoppingToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        // 舊報告搬不進來不影響站台任何其他功能，也不影響今晚新產生的報告
+                        Log.Error(ex, "[SQL] 既有報告檔遷移失敗（不影響新報告）：{Msg}", ex.Message);
+                    }
+                }, stoppingToken),
+                stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 站台關閉時仍在排隊（或排隊中被取消），下次啟動接續
+        }
     }
 }

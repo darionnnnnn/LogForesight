@@ -1,3 +1,4 @@
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -15,6 +16,7 @@ public class GroupAdminService
     private readonly IUserStore _users;
     private readonly IHostStore _hosts;
     private readonly IAuditService _audit;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     public GroupAdminService(
         IUserGroupStore userGroups,
@@ -22,8 +24,10 @@ public class GroupAdminService
         IGroupAccessStore access,
         IUserStore users,
         IHostStore hosts,
-        IAuditService audit)
+        IAuditService audit,
+        PermissionVersionStamp permissionVersion)
     {
+        _permissionVersion = permissionVersion;
         _userGroups = userGroups;
         _hostGroups = hostGroups;
         _access = access;
@@ -84,6 +88,8 @@ public class GroupAdminService
             Builtin = existing?.Builtin ?? false,
             Active = request.Active
         });
+        // 既有群組的角色／啟停改了，成員的能力跟著變（新群組還沒有成員，不影響任何人）
+        if (existing != null) _permissionVersion.Bump();
 
         _audit.Record(
             action: existing == null ? AuditActions.GroupCreate : AuditActions.GroupUpdate,
@@ -112,6 +118,7 @@ public class GroupAdminService
 
         _userGroups.Delete(groupId);
         _access.SetForUserGroup(groupId, Array.Empty<long>());
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.GroupDelete,

@@ -366,7 +366,7 @@ internal class WeeklyCheckupService
                 {
                     // 物件版重載（含 EventKey 第五段，理由同 LogAnalysisService 的標記邏輯）
                     SuppressionTargetTypes.Signature => window.SelectMany(d => d.TopIssues)
-                        .Where(i => string.Equals(IssueSignatureKey.For(i), s.SignatureKey, StringComparison.OrdinalIgnoreCase))
+                        .Where(i => IssueSignatureKeyComparer.Instance.Equals(IssueSignatureKey.For(i), s.SignatureKey))
                         .Sum(i => i.Count),
                     // 舊紀錄無 CorrelationAlertRefs（回饋十五輪 A 之前寫入），這裡會低估、不會誤報——
                     // 與專案一貫的零遷移降級原則一致，寧可少算也不編造一個查無來源的數字
@@ -403,7 +403,7 @@ internal class WeeklyCheckupService
                         && s.MuteFrom.Value.Date <= day
                         && s.MuteTo.Value.Date >= day && s.MuteTo.Value.Date <= day.AddDays(ExpiringMuteWindowDays))
             .Select(s => (Mute: s, Count: window.SelectMany(d => d.TopIssues)
-                .Where(i => i.EventId == s.EventId && string.Equals(i.Source, s.SourceName, StringComparison.OrdinalIgnoreCase))
+                .Where(i => i.EventId == s.EventId && SourceKeyComparer.Instance.Equals(i.Source, s.SourceName))
                 .Sum(i => i.Count)))
             .Where(x => x.Count > 0)
             .ToList();

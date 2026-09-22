@@ -31,7 +31,7 @@ public static class PrtgProbeRunner
             {
                 console.WriteLine("     無法判讀版本");
             }
-        });
+        }, ct);
 
         if (!allOk)
         {
@@ -54,7 +54,7 @@ public static class PrtgProbeRunner
             sensorCount = senTable.TotalTreesize ?? senTable.Rows.Count;
 
             console.WriteLine($"     Device 總數：{deviceCount}，Sensor 總數：{sensorCount}");
-        });
+        }, ct);
 
         if (!allOk)
         {
@@ -159,7 +159,7 @@ public static class PrtgProbeRunner
             });
 
             console.WriteLine($"     [總結] 不重複 type 數量：{groups.Count} 種；{string.Join("，", thresholdSummaries)}");
-        });
+        }, ct);
 
         if (!allOk)
         {
@@ -208,7 +208,7 @@ public static class PrtgProbeRunner
             var pct = total > 0 ? (withDep * 100.0 / total) : 0.0;
             console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）");
             console.WriteLine("     （註：PRTG 預設每個 sensor 相依於父物件，此比例含預設值，不代表人工維護的相依拓撲）");
-        });
+        }, ct);
 
         if (!allOk)
         {
@@ -242,7 +242,7 @@ public static class PrtgProbeRunner
             var validGroupNames = parsedGroups.Rows.Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
             var top20 = validGroupNames.Take(20).ToList();
             console.WriteLine($"     群組總數：{totalGrp}，前 20 個群組名稱：{string.Join("，", top20)}");
-        });
+        }, ct);
 
         if (!allOk)
         {
@@ -336,7 +336,7 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     其中無法判定（打壞的 IP 或含備註）者：{invalidCount} 台——不會被解析也對不到主機，建議到 PRTG 修正：" +
                                   string.Join("、", invalidSamples) + (invalidCount > invalidSamples.Count ? "…" : ""));
             }
-        });
+        }, ct);
 
         if (!allOk)
         {
@@ -375,7 +375,7 @@ public static class PrtgProbeRunner
             }
 
             return Task.CompletedTask;
-        });
+        }, ct);
 
         var sampleDeviceIds = PickSampleDevices(sensorSamples);
 
@@ -384,6 +384,7 @@ public static class PrtgProbeRunner
         // 環境會讓分頁永遠收不斂。這一步每個 content 只做四次 count=5 的小查詢（三次位移＋一次排序對照），
         // messages 以單一裝置查詢（因為 id=0 在大型環境會逾時），結果純供人工判讀，任何一筆失敗
         // 都只印出原因、不把整趟探測算失敗。
+        ct.ThrowIfCancellationRequested();
         console.WriteLine("[8] 分頁語意診斷（table.json 的 start 位移是否被遵守）");
         await DiagnosePagingAsync(client, console, "devices", "", ct);
         await DiagnosePagingAsync(client, console, "sensors", "", ct);
@@ -398,6 +399,7 @@ public static class PrtgProbeRunner
 
         // 步驟 9：效能量測（不影響探測成敗）——量「分頁放大有沒有效」「只取 objid 省多少」「併發開到幾級還不排隊」。
         // 三個子量測各自 try/catch，任何失敗只印原因、不把整趟探測算失敗。
+        ct.ThrowIfCancellationRequested();
         console.WriteLine("[9] 效能量測（table.json 分頁大小、objid-only、historicdata 併發）");
         console.WriteLine("     本步驟會發 87 次 historicdata 與最多 19 次 table.json，供後續決定分頁大小、併發上限與值的取得方式");
 
@@ -1442,13 +1444,18 @@ public static class PrtgProbeRunner
         return head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
     }
 
-    private static async Task<bool> StepAsync(IRunConsole console, int index, string title, Func<Task> action)
+    private static async Task<bool> StepAsync(IRunConsole console, int index, string title, Func<Task> action, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         console.WriteLine($"[{index}] {title}");
         try
         {
             await action();
             return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

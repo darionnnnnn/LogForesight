@@ -700,7 +700,7 @@ public class WorkOrderDispatcherTests
     }
 
     /// <summary>
-    /// 派工脈絡建立失敗時（例如問題檔案 blob 損毀）夜間分析改用不可用脈絡：任何問題都略過並計為 unavailable，
+    /// 派工脈絡建立失敗時（例如問題負責與靜音 blob 損毀）夜間分析改用不可用脈絡：任何問題都略過並計為 unavailable，
     /// 而且完全不讀資料——閘門 4 的「不再打擾」會逐主機讀案件，若排在不可用判斷之前，資料來源故障時一樣會擲例外。
     /// </summary>
     [Fact]

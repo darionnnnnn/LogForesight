@@ -716,10 +716,10 @@ function renderPrtgDevices(container, data) {
         devHeader.append(devTitle, devMeta);
         devCard.appendChild(devHeader);
 
-        if (!device.sensors || device.sensors.length === 0) {
+        if (!device.sensors || device.sensors.length === 0 || device.sensorCount === 0) {
             const noSensors = document.createElement('div');
             noSensors.className = 'text-muted small';
-            noSensors.textContent = '此裝置的感測器清單尚未取得（新對應的裝置會在數分鐘內自動補上）。';
+            noSensors.textContent = 'PRTG 資料準備中：新對應的裝置正在補抓感測器，通常幾分鐘內完成。';
             devCard.appendChild(noSensors);
         } else {
             const table = document.createElement('table');

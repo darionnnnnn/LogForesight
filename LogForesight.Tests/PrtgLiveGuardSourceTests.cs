@@ -33,7 +33,7 @@ public class PrtgLiveGuardSourceTests
     private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder)
     {
         var handler = new StubHandler { OnSend = responder };
-        return (new PrtgClient("https://prtg.example.com", "token123", 30, true, handler), handler);
+        return (new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", ""), handler);
     }
 
     private static string DevicePage(int start, int count, int? treesize = null) =>

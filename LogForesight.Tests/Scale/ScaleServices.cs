@@ -41,7 +41,7 @@ internal sealed class ScaleServices
         var backend = data.Backend;
 
         Hosts = new HostStore(backend.Blob("hosts"));
-        var users = new UserStore(backend.Blob("users"));
+        var users = new UserStore(backend.Blob("users"), backend.Blob("users_last_login"));
         var userGroups = new UserGroupStore(backend.Blob("user_groups"));
         var hostGroups = new HostGroupStore(backend.Blob("host_groups"));
         var access = new GroupAccessStore(backend.Blob("group_access"));
@@ -93,7 +93,7 @@ internal sealed class ScaleServices
 
         WorkOrders = new WorkOrderCoordinator(WorkOrderStore, Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames,
-            WorkOrderStore, WorkOrders);
+            WorkOrderStore, WorkOrders, TestPermissionStamps.Shared);
 
         var capabilities = new UserCapabilityResolver(userGroups, Hosts, issueOwners);
         var auditService = new RecordingAuditService();
@@ -109,6 +109,9 @@ internal sealed class ScaleServices
         var suppressions = new SuppressionStore(backend.Blob("suppressions"));
         var mailSender = new FakeSmtpMailSender();
         var mailState = new MailNotifyStateStore(backend.Blob("mail_notify_state"));
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(backend.Blob("schedule_options")));
         _mail = new MailNotificationService(
             settingsStore,
             mailSender,
@@ -119,6 +122,7 @@ internal sealed class ScaleServices
             recordStore,
             recordHandling,
             mailState,
+            freshness,
             issueOwners,
             aggregates);
 
@@ -160,6 +164,7 @@ internal sealed class ScaleServices
             WorkOrders,
             currentUser,
             auditService,
-            displayNames);
+            displayNames,
+            _mail);
     }
 }

@@ -41,6 +41,7 @@ public static class PrtgStructureSyncRunner
         var syncFailures = 0;
         PrtgHostMapResult? mapResult = null;
         string? mapError = null;
+        PrtgFetchResult? syncResult = null;
 
         try
         {
@@ -76,11 +77,12 @@ public static class PrtgStructureSyncRunner
                     {
                         console.WriteLine("結構同步沒有取得任何裝置（未進行主機對應，既有對應結果保持不變）");
                     }
-                    return PrtgScopeDevices.Compute(prtgStore, hostStore, guardSource, settings, sentinels, console, resolver);
+                    return PrtgScopeDevices.Compute(prtgStore, hostStore, guardSource, settings, sentinels, console, resolver, hostIds: null);
                 },
                 syncStructure: true, fetchValues: false,
                 progress: (stage, done, total) => progress?.Invoke(stage, done, total));
 
+            syncResult = fetchResult;
             status.Devices = fetchResult.Devices;
             status.Sensors = fetchResult.Sensors;
             syncFailures = fetchResult.Failures;
@@ -158,6 +160,11 @@ public static class PrtgStructureSyncRunner
             {
                 status.ErrorMessage = $"結構同步有 {syncFailures} 個階段失敗，鏡像可能不完整。";
                 console.WriteLine($"⚠ 結構同步有 {syncFailures} 個階段失敗，主機對應已依現有鏡像完成，但結果可能不完整。");
+            }
+            else
+            {
+                // 同步與對應全部成功才考慮清除監看範圍外的數值與狀態變更（其餘保護在 PrtgScopePurge 內）
+                PrtgScopePurge.RunAfterStructureSync(prtgStore, syncResult!.Scope, syncResult.DevicesRefreshed, console);
             }
         }
 

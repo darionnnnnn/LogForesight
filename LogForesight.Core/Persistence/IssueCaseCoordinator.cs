@@ -210,10 +210,24 @@ public class IssueCaseCoordinator
         if (issues.Count == 0) return new CaseAttachResult(0, Array.Empty<LogIssueSignature>());
 
         var openCases = _cases.GetOpenForHost(hostName);
-        var casesByIssueKey = openCases.ToDictionary(c => c.IssueKey, StringComparer.Ordinal);
+        var casesByIssueKey = openCases
+            .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(c => c.UpdatedAt)
+                    .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
+                    .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
 
         var existingForDay = _issueHandlings.GetForDay(hostName, date)
-            .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
+            .GroupBy(h => h.IssueKey, IssueSignatureKeyComparer.Instance)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(h => h.UpdatedAt)
+                    .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                    .First(),
+                IssueSignatureKeyComparer.Instance);
 
         // fleet 結論索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
         // 不是逐問題查）。負責人派工改由交辦單派工（NightlyDispatch）處理，這裡只收 AutoApply 結論
@@ -287,7 +301,7 @@ public class IssueCaseCoordinator
 
         // 仍沒有當日列、也沒有進行中案件的問題交給派工（依問題鍵去重、保持輸入順序）
         var unassigned = new List<LogIssueSignature>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<string>(IssueSignatureKeyComparer.Instance);
         foreach (var issue in issues)
         {
             var key = IssueSignatureKey.For(issue);
@@ -331,6 +345,7 @@ public class IssueCaseCoordinator
             IssueKey = issueKey,
             IssueLabel = openCase.IssueLabel,
             Note = "變更案件處理人",
+            CaseId = openCase.CaseId, PreviousHandlerId = previousHandlerId, HandlerId = newHandlerId,
             ActorId = actorId,
             ActorAccount = actorAccount,
             Action = HandlingActions.CaseReassign,
@@ -353,8 +368,13 @@ public class IssueCaseCoordinator
 
         var existingByDate = _issueHandlings
             .GetMany(new[] { hostName }, candidates.Min(), candidates.Max())
-            .Where(h => string.Equals(h.IssueKey, issueKey, StringComparison.Ordinal))
-            .ToDictionary(h => h.Date.Date);
+            .Where(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, issueKey))
+            .GroupBy(h => h.Date.Date)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(h => h.UpdatedAt)
+                    .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                    .First());
 
         return candidates
             .Where(d => IsOverwritable(existingByDate.GetValueOrDefault(d)))
@@ -506,7 +526,7 @@ public class IssueCaseCoordinator
         // 候選日（取消模式不查）：全部案件主機的別名合併成一次查詢，命中再依別名 id 歸回案件主機
         var hostKeys = new Dictionary<long, HostKey>();
         var ownerIdsByAliasId = new Dictionary<long, HashSet<long>>();
-        var issueKeys = new HashSet<string>(StringComparer.Ordinal);
+        var issueKeys = new HashSet<string>(IssueSignatureKeyComparer.Instance);
         foreach (var (issueCase, intent) in work)
         {
             if (intent.Mode == CaseDayModes.Cancel) continue;
@@ -522,7 +542,7 @@ public class IssueCaseCoordinator
         }
 
         // （案件主機 id, 問題鍵）→ 候選日。host_id=0 的舊列無法歸回特定主機，批次路徑不採用
-        var candidatesByOwner = new Dictionary<(long HostId, string IssueKey), HashSet<DateTime>>();
+        var candidatesByOwner = new Dictionary<(long HostId, string IssueKey), HashSet<DateTime>>(HostIssueIdKeyComparer.Instance);
         if (hostKeys.Count > 0 && issueKeys.Count > 0)
         {
             foreach (var hit in _records.IssueDaysFor(hostKeys.Values.ToList(), issueKeys.ToList()))
@@ -657,8 +677,13 @@ public class IssueCaseCoordinator
         if (owned == null) return byDate;
         foreach (var row in owned)
         {
-            if (string.Equals(row.HostName, issueCase.HostName, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(row.IssueKey, issueCase.IssueKey, StringComparison.Ordinal))
+            if (!string.Equals(row.HostName, issueCase.HostName, StringComparison.OrdinalIgnoreCase)
+                || !IssueSignatureKeyComparer.Instance.Equals(row.IssueKey, issueCase.IssueKey)) continue;
+
+            if (!byDate.TryGetValue(row.Date.Date, out var current)
+                || row.UpdatedAt > current.UpdatedAt
+                || (row.UpdatedAt == current.UpdatedAt
+                    && string.CompareOrdinal(row.IssueKey, current.IssueKey) < 0))
                 byDate[row.Date.Date] = row;
         }
         return byDate;
@@ -748,11 +773,22 @@ public class IssueCaseCoordinator
 
         public bool Equals((string HostName, string IssueKey) x, (string HostName, string IssueKey) y) =>
             StringComparer.OrdinalIgnoreCase.Equals(x.HostName, y.HostName)
-            && StringComparer.Ordinal.Equals(x.IssueKey, y.IssueKey);
+            && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
 
         public int GetHashCode((string HostName, string IssueKey) key) =>
             HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.HostName),
-                StringComparer.Ordinal.GetHashCode(key.IssueKey));
+                IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
+    }
+
+    private sealed class HostIssueIdKeyComparer : IEqualityComparer<(long HostId, string IssueKey)>
+    {
+        public static readonly HostIssueIdKeyComparer Instance = new();
+
+        public bool Equals((long HostId, string IssueKey) x, (long HostId, string IssueKey) y) =>
+            x.HostId == y.HostId && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
+
+        public int GetHashCode((long HostId, string IssueKey) key) =>
+            HashCode.Combine(key.HostId, IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
     }
 
     private static IssueCase CreateOpenCase(

@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 問題檔案負責人自動派工（夜間掛接接上交辦單派工）：
+/// 問題負責與靜音負責人自動派工（夜間掛接接上交辦單派工）：
 /// 掛接 ①②③ 不動；其餘問題由 <see cref="NightlyDispatch"/> 依派工決策建交辦單＋案件＋當日一列。
 /// 負責人規則改為「每位負責人此問題一張單、多位負責人選負載最輕者」，並受派工閘門（含不再打擾）約束。
 /// </summary>
@@ -61,7 +61,7 @@ public class IssueCaseCoordinatorAutoAssignTests
         _issueProfiles.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = userIds.ToList() });
 
     [Fact]
-    public void 派工_問題檔案兩位負責人_建一張owner_rule單給負載最輕者並掛當日一列()
+    public void 派工_問題負責與靜音兩位負責人_建一張owner_rule單給負載最輕者並掛當日一列()
     {
         Users(101, 102);
         Owners(101, 102);

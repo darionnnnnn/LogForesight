@@ -331,6 +331,9 @@ internal class FakeUserStore : IUserStore
         if (user != null) user.LastLoginAt = at;
     }
 
+    // 替身把登入時間留在 WebUser.LastLoginAt（UserAdminService 查不到字典時退回的舊欄位），這裡回空
+    public IReadOnlyDictionary<long, DateTime> GetLastLogins() => new Dictionary<long, DateTime>();
+
     public void SetDispatchPaused(long userId, bool paused)
     {
         var user = Get(userId);
@@ -480,7 +483,7 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     }
 }
 
-/// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
+/// <summary>問題負責與靜音的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
 /// IssueOwnerStore 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
 internal class FakeIssueOwnerStore : IIssueOwnerStore
 {

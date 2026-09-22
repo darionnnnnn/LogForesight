@@ -155,6 +155,12 @@ public class SystemSettingsService : ISystemSettingsService
         if (!dayRiskLevels.Contains(RiskLevels.High))
             throw DomainException.Validation("「高風險日」為必要顯示項目，無法取消勾選。");
 
+        // 全站預設常用語（回饋第 50 輪 C-4）：與個人清單同一套上限，超出直接擋
+        var defaultNotePhrases = NotePhraseRules.Normalize(request.DefaultNotePhrases);
+        var phraseError = NotePhraseRules.Validate(defaultNotePhrases);
+        if (phraseError != null)
+            throw DomainException.Validation("預設常用語：" + phraseError);
+
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
 
@@ -256,9 +262,9 @@ public class SystemSettingsService : ISystemSettingsService
 
         // 郵件通知（回饋十五輪批次D）：任一路觸發啟用時，收件人與寄件人是硬性前提——
         // 沒有收件人的通知設定等於沒設定，儲存當下就該擋，而不是等到排程觸發時才在 log 裡默默失敗
-        var mailRecipients = NormalizeLines(request.MailRecipients);
-        var anyMailTriggerEnabled = request.MailOnRunCompleted || request.MailDailyEnabled ||
-                                     request.MailWeeklyEnabled || request.MailUrgentEnabled;
+        var mailRecipients = SystemSettingsMailHelper.NormalizeRecipients(request.MailRecipients);
+        var anyMailTriggerEnabled = SystemSettingsMailHelper.HasAnyTriggerEnabled(
+            request.MailOnRunCompleted, request.MailDailyEnabled, request.MailWeeklyEnabled, request.MailUrgentEnabled);
         if (request.MailEnabled && anyMailTriggerEnabled)
         {
             if (string.IsNullOrWhiteSpace(request.SmtpServer))
@@ -272,11 +278,11 @@ public class SystemSettingsService : ISystemSettingsService
         // 建 MailAddress 才炸、又被 SendSafeAsync 靜默吞掉只記 log——使用者會以為通知設好了
         // 卻永遠收不到信，這正是「儲存當下就該擋」最有價值的一類錯誤
         if (!string.IsNullOrWhiteSpace(request.MailFrom) &&
-            !System.Net.Mail.MailAddress.TryCreate(request.MailFrom.Trim(), out _))
+            !SystemSettingsMailHelper.IsValidEmail(request.MailFrom))
             throw DomainException.Validation($"寄件人「{request.MailFrom.Trim()}」不是合法的電子郵件位址。");
         foreach (var recipient in mailRecipients)
         {
-            if (!System.Net.Mail.MailAddress.TryCreate(recipient, out _))
+            if (!SystemSettingsMailHelper.IsValidEmail(recipient))
                 throw DomainException.Validation($"收件人「{recipient}」不是合法的電子郵件位址。");
         }
         if (!RiskLevels.All.Contains(request.MailMinRiskLevel))
@@ -296,6 +302,8 @@ public class SystemSettingsService : ISystemSettingsService
         if (matchedProvider == null)
             throw DomainException.Validation("AI 服務提供者不合法。");
         aiProvider = matchedProvider;
+        RejectSecretQuery(request.AiBaseUrl);
+        RejectSecretQuery(request.SmtpServer);
 
         var hasApiKey = HasEffectiveSecret(request.AiApiKey, before.AiApiKeyEnc, request.ClearAiApiKey);
 
@@ -335,6 +343,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.UnhandledSeverities = severities;
             s.SeverityDisplayMode = request.SeverityDisplayMode;
             s.VisibleDayRiskLevels = dayRiskLevels;
+            s.DefaultNotePhrases = defaultNotePhrases;
             s.AiProvider = aiProvider;
             s.AiBaseUrl = request.AiBaseUrl.Trim();
             if (request.ClearAiApiKey)
@@ -475,8 +484,8 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels,
-                    before.AiProvider, before.AiBaseUrl, before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
+                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.DefaultNotePhrases,
+                    before.AiProvider, AiBaseUrl = UrlSecrets.Mask(before.AiBaseUrl), before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.RawEventRetentionDays, before.ReportRetentionDays,
                     before.WatchedFolders, before.ServerDescription, before.CheckupIntervalDays, before.AnalysisChannels,
@@ -486,7 +495,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
                     before.MailOnRunCompleted, before.MailDailyEnabled, before.MailDailyTime,
                     before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled,
-                    before.PrtgEnabled, before.PrtgUrl, before.PrtgAuthMode, before.PrtgUsername,
+                    before.PrtgEnabled, PrtgUrl = UrlSecrets.Mask(before.PrtgUrl), before.PrtgAuthMode, before.PrtgUsername,
                     before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
                     before.PrtgResourceGuardEnabled,
@@ -508,8 +517,8 @@ public class SystemSettingsService : ISystemSettingsService
                 },
                 After = new
                 {
-                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels,
-                    saved.AiProvider, saved.AiBaseUrl, saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
+                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.DefaultNotePhrases,
+                    saved.AiProvider, AiBaseUrl = UrlSecrets.Mask(saved.AiBaseUrl), saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.RawEventRetentionDays, saved.ReportRetentionDays,
                     saved.WatchedFolders, saved.ServerDescription, saved.CheckupIntervalDays, saved.AnalysisChannels,
@@ -519,7 +528,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
                     saved.MailOnRunCompleted, saved.MailDailyEnabled, saved.MailDailyTime,
                     saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled,
-                    saved.PrtgEnabled, saved.PrtgUrl, saved.PrtgAuthMode, saved.PrtgUsername,
+                    saved.PrtgEnabled, PrtgUrl = UrlSecrets.Mask(saved.PrtgUrl), saved.PrtgAuthMode, saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
                     saved.PrtgResourceGuardEnabled,
@@ -647,7 +656,7 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.PrtgUrl,
+                    PrtgUrl = UrlSecrets.Mask(before.PrtgUrl),
                     before.PrtgAuthMode,
                     before.PrtgUsername,
                     before.PrtgIgnoreSslErrors,
@@ -675,7 +684,7 @@ public class SystemSettingsService : ISystemSettingsService
                 },
                 After = new
                 {
-                    saved.PrtgUrl,
+                    PrtgUrl = UrlSecrets.Mask(saved.PrtgUrl),
                     saved.PrtgAuthMode,
                     saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors,
@@ -915,7 +924,7 @@ public class SystemSettingsService : ISystemSettingsService
             summary: "執行 PRTG 測試連線",
             targetKind: "system_settings",
             targetId: "prtg_test",
-            detail: new { Url = url, AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
+            detail: new { Url = UrlSecrets.Mask(url), AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
 
         try
         {
@@ -953,27 +962,24 @@ public class SystemSettingsService : ISystemSettingsService
     {
         var enc = _store.Get().PrtgApiTokenEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文（同 SentinelConnectionFactory 的相容寫法）
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // TryDecrypt：匯入或手動編輯 blob 的路徑上這欄可能是明文（原樣回傳）；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     private string? DecryptSavedPrtgPassword()
     {
         var enc = _store.Get().PrtgPasswordEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // TryDecrypt：匯入或手動編輯 blob 的路徑上這欄可能是明文（原樣回傳）；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     private string? DecryptSavedPrtgPasshash()
     {
         var enc = _store.Get().PrtgPasshashEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 先判斷才解密：CryptoHelper.Decrypt 對非本格式的值會擲例外，而這個欄位在
-        // 匯入或手動編輯 blob 的路徑上有可能是明文
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // TryDecrypt：匯入或手動編輯 blob 的路徑上這欄可能是明文（原樣回傳）；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     /// <summary>
@@ -986,9 +992,8 @@ public class SystemSettingsService : ISystemSettingsService
     {
         var enc = _store.Get().SmtpPasswordEnc;
         if (string.IsNullOrEmpty(enc)) return null;
-        // 守衛同 DecryptSavedPrtgApiToken：Decrypt 對非本格式的值會擲例外，
-        // 匯入或手動編輯 blob 的路徑上這欄有可能是明文
-        return CryptoHelper.IsEncrypted(enc) ? CryptoHelper.Decrypt(enc) : enc;
+        // 同 DecryptSavedPrtgApiToken：明文原樣回傳；解不開當成未設定
+        return CryptoHelper.TryDecrypt(enc, out var plain) ? plain : null;
     }
 
     /// <summary>
@@ -1017,6 +1022,16 @@ public class SystemSettingsService : ISystemSettingsService
             .Select(v => v!)
             .Distinct()
             .ToList();
+
+    /// <summary>
+    /// 位址欄位不得夾帶密碼／金鑰參數：位址會進稽核、例外訊息與回應，夾在網址上的憑證會沿著這些路徑外流。
+    /// 判定規則只有 <see cref="UrlSecrets.ContainsSecretQuery"/> 一份，這裡只負責擲出統一訊息。
+    /// </summary>
+    internal static void RejectSecretQuery(string? url)
+    {
+        if (UrlSecrets.ContainsSecretQuery(url))
+            throw DomainException.Validation("網址不可包含密碼或金鑰參數，請改填專用的密碼／金鑰欄位。");
+    }
 
     private static bool IsValidHttpUrl(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
@@ -1149,6 +1164,7 @@ public class SystemSettingsService : ISystemSettingsService
         List<string>? effectivePrtgSensorTypeWhitelist = null,
         string? effectivePrtgFetchStrategy = null)
     {
+        RejectSecretQuery(effectivePrtgUrl);
         ValidatePrtgValueFetchScope(effectivePrtgValueFetchScope, effectivePrtgSensorTypeWhitelist);
         ValidatePrtgFetchStrategy(effectivePrtgFetchStrategy);
 
@@ -1282,6 +1298,7 @@ public class SystemSettingsService : ISystemSettingsService
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
+        DefaultNotePhrases = s.DefaultNotePhrases,
         AiProvider = AiProviders.Normalize(s.AiProvider),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
@@ -1367,6 +1384,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgSensorTypeCategoryOverrides = s.PrtgSensorTypeCategoryOverrides,
         PrtgValueFetchScope = s.PrtgValueFetchScope,
         PrtgFetchStrategy = s.PrtgFetchStrategy,
+        ValueFetchScopeApplies = s.PrtgFetchStrategy == LogForesight.Core.Service.PrtgFetchStrategy.Aggressive,
         PrtgValueFetchExtraHosts = s.PrtgValueFetchExtraHosts,
         PrtgResourceGuardEnabled = s.PrtgResourceGuardEnabled,
         PrtgResourceGuardSensorObjids = s.PrtgResourceGuardSensorObjids,

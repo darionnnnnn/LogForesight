@@ -302,6 +302,15 @@ public class PrtgHostMapEndpointTests : IDisposable
         hostStore.Upsert(new WebHost { HostId = 3, HostName = "Inactive-Server", IpAddress = "10.0.1.3", Active = false });
         hostStore.Upsert(new WebHost { HostId = 4, HostName = "Merged-Server", IpAddress = "10.0.1.4", Active = true, MergedInto = 1 });
 
+        var syncState = new PrtgStructureSyncRunState();
+        var lifetime = new FakeHostApplicationLifetime();
+        var statusStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
+        var backfillState = new PrtgBackfillRunState();
+        var structureSync = new PrtgStructureSyncService(new FakeSystemSettingsStore(), _backend, syncState, new SchedulerRunState(), hostStore, statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
+        var probeState = new PrtgProbeRunState();
+        var backfill = new PrtgBackfillService(new FakeSystemSettingsStore(), _backend, backfillState, probeState, hostStore, new SchedulerRunState(), syncState, new FakeSentinelStore(), structureSync);
+        var snapshotService = new PrtgSnapshotHostedService(new FakeSystemSettingsStore(), _backend, new SchedulerRunState(), structureSync, backfill, hostStore, new FakeSentinelStore(), probeState, lifetime);
+
         var service = new HostAdminService(
             hostStore,
             new FakeHostGroupStore(),
@@ -312,7 +321,8 @@ public class PrtgHostMapEndpointTests : IDisposable
             new UserDisplayNameService(new FakeSystemSettingsStore()),
             _backend.PrtgStore(),
             new PrtgHostMapRefresher(new FakeSystemSettingsStore(), _backend),
-            new FakeSystemSettingsStore());
+            new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
+            snapshotService);
 
         var list = service.GetAllActiveHostOptions();
 
@@ -485,7 +495,7 @@ public class PrtgHostMapEndpointTests : IDisposable
             settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState,
             new HostStore(_backend.Blob("hosts")),
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-            new PrtgBackfillRunState(), new FakeSentinelStore());
+            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
 
         var controller = new SettingsController(
             new StubSystemSettingsService(),

@@ -271,6 +271,15 @@ public class NetiqImportResultDto
     public int Added { get; set; }
     public int Updated { get; set; }
     public int Revived { get; set; }
+
+    /// <summary>本次勾選且已落盤的主機台數</summary>
+    public int ImportedCount { get; set; }
+
+    /// <summary>這些主機（依實際落盤狀態）分布在幾個不同群組</summary>
+    public int GroupCount { get; set; }
+
+    /// <summary>這些主機中未分組的台數</summary>
+    public int UngroupedCount { get; set; }
 }
 
 // ── 連線與節流參數（「系統管理 > NetIQ 維護」頁）───────────────────────────

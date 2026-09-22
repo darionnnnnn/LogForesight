@@ -1,5 +1,5 @@
 /**
- * 操作紀錄（docs/WEB-SPEC.md §9.11）。
+ * 稽核紀錄（docs/WEB-SPEC.md §9.11）。
  *
  * summary 由後端在寫入當下組成人話，這裡直接顯示——
  * 前端不從 detailJson 反推敘述（那份規則只該存在一處）。
@@ -86,6 +86,8 @@ function render() {
     document.getElementById('audit-count').textContent =
         lastResult.total > 0 ? `共 ${lastResult.total} 筆` : '';
 
+    renderDefaultRangeNotice(lastResult.defaultRangeApplied === true);
+
     renderTable(document.getElementById('audit-list'), {
         columns: [
             { title: '時間', sortKey: 'occurredAt', sortDefaultDir: 'desc', render: e => formatDateTime(e.occurredAt) },
@@ -102,7 +104,7 @@ function render() {
             currentPage = 1;
             search();
         },
-        empty: { title: '沒有符合條件的操作紀錄', hint: '請調整日期區間或動作條件。' }
+        empty: { title: '沒有符合條件的稽核紀錄', hint: '請調整日期區間或動作條件。' }
     });
 
     renderPager();
@@ -143,6 +145,23 @@ function summaryCell(entry) {
     }
 
     return wrap;
+}
+
+/**
+ * 有篩選條件卻沒指定起日時，後端只查近 90 天——在清單上方說明，免得使用者以為更舊的紀錄不存在。
+ * 提示列放在清單容器之外（renderTable 會整個重畫清單容器），只建一次、之後切換顯示。
+ */
+function renderDefaultRangeNotice(applied) {
+    let notice = document.getElementById('audit-default-range');
+    if (!notice) {
+        notice = document.createElement('div');
+        notice.id = 'audit-default-range';
+        notice.className = 'text-muted small px-3 pt-2';
+        notice.textContent = '未指定起日，僅顯示近 90 天的紀錄。';
+        const list = document.getElementById('audit-list');
+        list.parentNode.insertBefore(notice, list);
+    }
+    notice.hidden = !applied;
 }
 
 function renderPager() {

@@ -5,6 +5,7 @@ using LogForesight.Web.Extensions;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Middleware;
 using LogForesight.Web.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 using NLog;
 using NLog.Web;
 
@@ -58,7 +59,8 @@ try
     // （本站台自己的輸出目錄）——console 批次專案已隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md
     // §1.5），Web 排程／立即執行是現在唯一的分析執行途徑，資料本來就該落在 Web 自己的目錄下，
     // 不需要再另外推算「批次輸出目錄」。開發者若要讀別處的資料，在設定檔明確填 DataRoot 即可。
-    settings.Validate(builder.Environment.IsProduction());
+    // 只有 Development 放行出廠公開值與 Stub：環境名稱設成 Staging／Test 等值時一律從嚴
+    settings.Validate(strict: !builder.Environment.IsDevelopment(), builder.Environment.EnvironmentName);
     builder.Services.AddSingleton(settings);
 
     // 資料根目錄健檢（誠實申報，「沒告警 ≠ 沒問題」的原則）：
@@ -103,14 +105,21 @@ try
     // ── 啟動時的資料準備 ──────────────────────────────────────────────────────
     using (var scope = app.Services.CreateScope())
     {
+        // 密文金鑰準備（金鑰檔、指紋比對、v1→v2 重加密）必須最先做：之後任何服務都可能解密
+        CryptoKeyBootstrapper.Run(
+            scope.ServiceProvider.GetRequiredService<StorageBackend>(),
+            dataRoot,
+            scope.ServiceProvider.GetRequiredService<ISystemSettingsStore>(),
+            scope.ServiceProvider.GetRequiredService<ISentinelStore>());
+
         var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
 
-        // 開箱測試管理員（§1）：僅測試模式（Provider=Stub）且非 Production 才 seed——Stub 免密碼，
+        // 開箱測試管理員（§1）：僅測試模式（Provider=Stub）且環境為 Development 才 seed——Stub 免密碼，
         // 建一個 admin 成員即可直接登入測全站，補足「只能以最小權限的 serverAdmin 登入」的落差。
-        // Production 用 Stub 啟動會被 Validate 擋下，這裡的環境判斷是第二道保險。
+        // 非 Development 用 Stub 啟動會被 Validate 擋下，這裡的環境判斷是第二道保險。
         if (string.Equals(settings.Auth.Provider, "Stub", StringComparison.OrdinalIgnoreCase)
-            && !app.Environment.IsProduction())
+            && app.Environment.IsDevelopment())
         {
             identity.SeedTestAdmin("demo-admin", "測試管理員");
         }
@@ -155,6 +164,22 @@ try
     }
 
     // ── 管線 ─────────────────────────────────────────────────────────────────
+    // 反向代理轉送標頭：必須是管線第一個，之後的 middleware 與登入節流看到的
+    // RemoteIpAddress 才是真實來源。只信任設定列出的代理 IP——清空預設值（預設信任迴路位址），
+    // 否則任何人都能自己帶 X-Forwarded-For 偽造來源 IP 繞過節流。未設定＝完全不處理。
+    if (settings.Server.TrustedProxies.Count > 0)
+    {
+        var forwarded = new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+        };
+        forwarded.KnownNetworks.Clear();
+        forwarded.KnownProxies.Clear();
+        foreach (var proxy in settings.Server.TrustedProxies)
+            forwarded.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
+        app.UseForwardedHeaders(forwarded);
+    }
+
     // 掛載前綴：IIS 以子 Application 掛載時 ASP.NET Core 會自動填 Request.PathBase，
     // 這個設定只給「Kestrel 直曝但前面有反向代理加了前綴」的情境，以及本機驗證前綴行為用。
     // 必須排在所有 middleware 之前——之後才註冊的東西看到的 Path 才是扣掉前綴的。

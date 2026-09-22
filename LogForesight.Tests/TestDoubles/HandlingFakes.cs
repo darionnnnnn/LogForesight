@@ -50,7 +50,7 @@ internal class HandlingServiceFacade
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, store, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
-            audit, currentUser, displayNames, workOrderStore, workOrders);
+            audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared);
         _day = new DayHandlingCommandService(
             store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
             displayNames, mail, issueOwners);
@@ -512,6 +512,10 @@ internal class FakeSystemSettingsStore : ISystemSettingsStore
 
 internal class FakeHandlingStore : IRecordHandlingStore
 {
+    public List<RecordHandlingLog> GetReassignments(long previousHandlerId, DateTime from) =>
+        _logs.Where(l => l.Action == HandlingActions.CaseReassign && l.PreviousHandlerId == previousHandlerId &&
+                         l.CaseId != null && l.CreatedAt >= from)
+            .OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.LogId).ToList();
     private readonly List<RecordHandling> _handlings = new();
     private readonly List<RecordHandlingLog> _logs = new();
     private long _nextLogId = 1;
@@ -570,4 +574,18 @@ internal class FakeHandlingStore : IRecordHandlingStore
                 l.Date.Date == date.Date)
             .OrderBy(l => l.LogId)
             .ToList();
+}
+
+internal class FakeAiProbeService : IAiProbeService
+{
+    public AiProbeResult LatestResult { get; set; } = new(false, AiProbeStatus.NotProbed, "AI 尚未探活", DateTime.MinValue);
+
+    public Func<CancellationToken, Task<AiProbeResult>>? OnRefresh { get; set; }
+
+    public Task<AiProbeResult> RefreshAsync(CancellationToken ct = default)
+    {
+        if (OnRefresh != null)
+            return OnRefresh(ct);
+        return Task.FromResult(LatestResult);
+    }
 }

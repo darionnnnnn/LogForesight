@@ -56,5 +56,5 @@ public class NoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
 
     private static bool Same(NoiseMark mark, string hostName, string issueKey) =>
         string.Equals(mark.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(mark.IssueKey, issueKey, StringComparison.Ordinal);
+        IssueSignatureKeyComparer.Instance.Equals(mark.IssueKey, issueKey);
 }

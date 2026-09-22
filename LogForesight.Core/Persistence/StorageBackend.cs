@@ -90,7 +90,7 @@ public class StorageBackend
             // 只能在每次連線開啟時重設——理由與各 PRAGMA 取值見 SqlitePragmaInterceptor
             options = new DbContextOptionsBuilder<LfDbContext>()
                 .UseSqlite(cs)
-                .AddInterceptors(new SqlitePragmaInterceptor())
+                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal))
                 .Options;
             _dbDesc = $"Sqlite（{cs}）";
         }
@@ -189,8 +189,9 @@ public class StorageBackend
     public EfAnalysisRecordStore RecordStore(HostKey? ownerHost = null) =>
         new(_dbFactory, _dbDesc, ownerHost, Performance);
 
-    /// <summary>風險 log 暫存 store</summary>
-    public EfRiskyEventStore RiskyEventStore() => new(_dbFactory);
+    /// <summary>風險 log 暫存 store；ready 為 null 時維持舊的 Source UPPER 查詢路徑。</summary>
+    public EfRiskyEventStore RiskyEventStore(Func<bool>? sourceKeyReady = null) =>
+        new(_dbFactory, sourceKeyReady);
 
     // ── 處理狀態三表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）──────────────────────
     // 這三個過去是 Blob("issue_handling") 等整份型 store，現在走真表；
@@ -226,7 +227,8 @@ public class StorageBackend
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
     /// 呼叫端另外持有——本類別不擁有主機清單的生命週期。</summary>
-    public EfIssueAggregateQuery IssueAggregateQuery(IHostStore hosts) => new(_dbFactory, hosts, Performance);
+    public EfIssueAggregateQuery IssueAggregateQuery(IHostStore hosts, Func<bool>? sourceKeyReady = null) =>
+        new(_dbFactory, hosts, Performance, sourceKeyReady);
 
     /// <summary>
     /// 處理狀態自 blob 搬進真表的遷移器（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。

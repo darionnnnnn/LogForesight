@@ -173,8 +173,11 @@ public sealed class HandlingBlobMigrator
         if (items.Count == 0) return 0;
 
         var deduped = items
-            .GroupBy(h => (HostNameKey.Of(h.HostName), h.Date.Date, h.IssueKey))
-            .Select(g => g.Last())
+            .GroupBy(h => (HostNameKey: HostNameKey.Of(h.HostName), Date: h.Date.Date, h.IssueKey),
+                IssueHandlingNaturalKeyComparer.Instance)
+            .Select(g => g.OrderByDescending(h => h.UpdatedAt)
+                .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
+                .First())
             .ToList();
         if (deduped.Count != items.Count)
             Log.Warn("[SQL] issue_handling 遷移：{Dup} 筆重複鍵已保留最後一筆", items.Count - deduped.Count);
@@ -183,10 +186,10 @@ public sealed class HandlingBlobMigrator
         var existing = ctx.IssueHandlings.AsNoTracking()
             .Select(r => new { r.HostNameKey, r.RecordDate, r.IssueKey })
             .ToList()
-            .Select(r => (r.HostNameKey, r.RecordDate, r.IssueKey))
-            .ToHashSet();
+            .Select(r => (HostNameKey: r.HostNameKey, Date: r.RecordDate, r.IssueKey))
+            .ToHashSet(IssueHandlingNaturalKeyComparer.Instance);
         deduped = deduped
-            .Where(h => !existing.Contains((HostNameKey.Of(h.HostName), h.Date.Date, h.IssueKey)))
+            .Where(h => !existing.Contains((HostNameKey: HostNameKey.Of(h.HostName), Date: h.Date.Date, h.IssueKey)))
             .ToList();
         if (deduped.Count == 0) return 0;
 
@@ -300,5 +303,27 @@ public sealed class HandlingBlobMigrator
                 $"處理狀態遷移失敗：blob「{key}」無法解析（{ex.Message}）。" +
                 "資料未被修改，請確認 lf_blobs 的內容後重新啟動。", ex);
         }
+    }
+
+    /// <summary>
+    /// 遷移自然鍵的 provider-neutral comparer。主機與日期先由 SQL/資料模型限縮，
+    /// 完整 IssueKey 只在 C# 用同一 comparer 比較；不改遷入列保留的原始 IssueKey 字面。
+    /// </summary>
+    private sealed class IssueHandlingNaturalKeyComparer :
+        IEqualityComparer<(string HostNameKey, DateTime Date, string IssueKey)>
+    {
+        public static readonly IssueHandlingNaturalKeyComparer Instance = new();
+
+        public bool Equals((string HostNameKey, DateTime Date, string IssueKey) x,
+            (string HostNameKey, DateTime Date, string IssueKey) y) =>
+            StringComparer.Ordinal.Equals(x.HostNameKey, y.HostNameKey)
+            && x.Date == y.Date
+            && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
+
+        public int GetHashCode((string HostNameKey, DateTime Date, string IssueKey) key) =>
+            HashCode.Combine(
+                StringComparer.Ordinal.GetHashCode(key.HostNameKey),
+                key.Date,
+                IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
     }
 }

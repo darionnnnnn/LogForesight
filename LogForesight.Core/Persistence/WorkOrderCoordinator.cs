@@ -24,6 +24,19 @@ public class WorkOrderCoordinator
 
     private const string ReassignLogNote = "變更案件處理人";
 
+    /// <summary>夜間派工略過原因：交辦單在派工途中已結案（取消、代為結案、移入他單）</summary>
+    public const string SkipOrderClosedMidrun = "order_closed_midrun";
+
+    /// <summary>夜間派工計數：交辦單在派工途中已改派，成員依單目前的處理人掛入</summary>
+    public const string HandlerChangedMidrun = "handler_changed_midrun";
+
+    /// <summary>
+    /// 行程內互斥：Web 操作與夜間派工在同一行程、都經過本類別。會改變單狀態（結案）或處理人的公開方法，
+    /// 以及夜間寫成員，「讀單狀態→寫入」整段在鎖內，避免夜間把成員掛進剛被取消／結案的單或以舊處理人寫入。
+    /// Monitor 可重入（Reply 內呼叫 RecomputeClosure 不會自鎖）。
+    /// </summary>
+    private static readonly object OrderMutationLock = new();
+
     private readonly IWorkOrderStore _orders;
     private readonly IIssueCaseStore _cases;
     private readonly IIssueHandlingStore _issueHandlings;
@@ -55,6 +68,11 @@ public class WorkOrderCoordinator
     /// 新建的單在成員處理失敗且零成員時自動以 cancelled 關閉，再重拋。
     /// </summary>
     public WorkOrderMemberOutcome Create(WorkOrderCreateRequest req)
+    {
+        lock (OrderMutationLock) return CreateLocked(req);
+    }
+
+    private WorkOrderMemberOutcome CreateLocked(WorkOrderCreateRequest req)
     {
         if (req.Members.Count == 0)
             throw new ArgumentException("WorkOrderCoordinator：交辦單至少要有一個成員。", nameof(req));
@@ -127,6 +145,11 @@ public class WorkOrderCoordinator
 
     /// <summary>追加成員（2.2）：單不存在或已結案擲 InvalidOperationException</summary>
     public WorkOrderMemberOutcome Append(long workOrderId, List<WorkOrderMember> members, bool reassignConflicts, WorkOrderActor actor)
+    {
+        lock (OrderMutationLock) return AppendLocked(workOrderId, members, reassignConflicts, actor);
+    }
+
+    private WorkOrderMemberOutcome AppendLocked(long workOrderId, List<WorkOrderMember> members, bool reassignConflicts, WorkOrderActor actor)
     {
         var order = GetActive(workOrderId);
 
@@ -232,7 +255,7 @@ public class WorkOrderCoordinator
 
             var parsed = IssueSignatureKey.TryParseSignature(member.IssueKey);
             if (parsed == null || parsed.Value.EventId != eventId
-                || !string.Equals(parsed.Value.Source, source, StringComparison.OrdinalIgnoreCase))
+                || !SourceKeyComparer.Instance.Equals(parsed.Value.Source, source))
                 throw new InvalidOperationException(
                     $"WorkOrderCoordinator：成員「{member.HostName}」的問題簽章與交辦單 {orderLabel} 的問題不符。");
         }
@@ -299,6 +322,11 @@ public class WorkOrderCoordinator
     /// </summary>
     public WorkOrderMoveResult Reassign(long workOrderId, long newHandlerId, WorkOrderActor actor)
     {
+        lock (OrderMutationLock) return ReassignLocked(workOrderId, newHandlerId, actor);
+    }
+
+    private WorkOrderMoveResult ReassignLocked(long workOrderId, long newHandlerId, WorkOrderActor actor)
+    {
         var order = GetActive(workOrderId);
         var previous = order.HandlerId;
         if (newHandlerId == previous)
@@ -357,6 +385,11 @@ public class WorkOrderCoordinator
     /// </summary>
     public WorkOrderMoveResult Split(long workOrderId, IReadOnlyCollection<string> caseIds, long newHandlerId, WorkOrderActor actor)
     {
+        lock (OrderMutationLock) return SplitLocked(workOrderId, caseIds, newHandlerId, actor);
+    }
+
+    private WorkOrderMoveResult SplitLocked(long workOrderId, IReadOnlyCollection<string> caseIds, long newHandlerId, WorkOrderActor actor)
+    {
         if (caseIds.Count == 0)
             throw new ArgumentException("WorkOrderCoordinator：拆單至少要選一個案件。", nameof(caseIds));
 
@@ -408,6 +441,7 @@ public class WorkOrderCoordinator
     private void ReassignCases(IReadOnlyList<IssueCase> cases, long newHandlerId, long workOrderId, WorkOrderActor actor)
     {
         if (cases.Count == 0) return;
+        var previousHandlers = cases.ToDictionary(c => c.CaseId, c => c.HandlerId);
 
         foreach (var issueCase in cases)
         {
@@ -423,6 +457,7 @@ public class WorkOrderCoordinator
             {
                 HostName = issueCase.HostName, Date = issueCase.LastLinkedDate, Status = issueCase.Status,
                 IssueKey = issueCase.IssueKey, IssueLabel = issueCase.IssueLabel, Note = ReassignLogNote,
+                CaseId = issueCase.CaseId, PreviousHandlerId = previousHandlers[issueCase.CaseId], HandlerId = newHandlerId,
                 ActorId = actor.ActorId, ActorAccount = actor.ActorAccount,
                 Action = HandlingActions.CaseReassign, CreatedAt = actor.OccurredAt
             });
@@ -437,6 +472,11 @@ public class WorkOrderCoordinator
     /// 撞部分唯一索引時採用既有單、不寫 created；成員數由 <see cref="RecordNightlyAppended"/> 記。
     /// </summary>
     public (WorkOrder Order, bool Created) EnsureNightlyOrder(DispatchDecision decision, LogIssueSignature issue, DateTime occurredAt)
+    {
+        lock (OrderMutationLock) return EnsureNightlyOrderLocked(decision, issue, occurredAt);
+    }
+
+    private (WorkOrder Order, bool Created) EnsureNightlyOrderLocked(DispatchDecision decision, LogIssueSignature issue, DateTime occurredAt)
     {
         if (decision.Kind != DispatchDecisionKind.CreateFor)
             throw new ArgumentException("WorkOrderCoordinator：夜間建單的決策必須是 CreateFor。", nameof(decision));
@@ -458,20 +498,50 @@ public class WorkOrderCoordinator
     /// <summary>
     /// 夜間派工寫成員：每個成員建一件進行中案件與當日一列（只掛當日，不回溯歷史——不走
     /// <see cref="IssueCaseCoordinator.SubmitCaseDays"/>），歷程動作依決策步驟。案件、逐日列各一次 SaveMany。
+    ///
+    /// 派工脈絡是開跑時的快照，途中管理者可能取消／代為結案／改派。鎖內先一次查出目前進行中的單再逐一判斷：
+    ///   - 單已不在進行中（結案、取消、移入他單）→ 該成員不寫入（回傳 null，呼叫端計 <see cref="SkipOrderClosedMidrun"/>）。
+    ///     不必另外補救：問題沒被寫成案件，下一次夜間派工會把它當成未指派的問題重新評估。
+    ///   - 單的處理人與成員記錄的不同（途中改派）→ 照寫入該單，但以單目前的處理人為準
+    ///     （回傳新處理人，呼叫端計 <see cref="HandlerChangedMidrun"/>）。
+    /// 回傳與 members 等長：每個成員實際寫入的處理人，null＝未寫入。
     /// </summary>
-    public void WriteNightlyMembers(
+    public IReadOnlyList<long?> WriteNightlyMembers(
         WebHost host, DateTime date,
         IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
         DateTime occurredAt)
     {
-        if (members.Count == 0) return;
+        lock (OrderMutationLock) return WriteNightlyMembersLocked(host, date, members, occurredAt);
+    }
+
+    private IReadOnlyList<long?> WriteNightlyMembersLocked(
+        WebHost host, DateTime date,
+        IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
+        DateTime occurredAt)
+    {
+        var written = new List<long?>(members.Count);
+        if (members.Count == 0) return written;
+
+        // 只重讀本批成員涉及的單（一個主機日通常只有個位數張）：每個主機日都讀全部進行中的單，
+        // 在數千台×數百張進行中單的站台上是整晚重複的全表讀
+        var activeHandlers = members.Select(m => m.WorkOrderId).Distinct()
+            .Select(id => _orders.Get(id))
+            .Where(o => o != null && o.ClosedAt == null)
+            .ToDictionary(o => o!.WorkOrderId, o => o!.HandlerId);
 
         var day = date.Date;
         var cases = new List<IssueCase>(members.Count);
         var rows = new List<IssueHandling>(members.Count);
         var logs = new List<RecordHandlingLog>(members.Count);
-        foreach (var (issue, workOrderId, handlerId, step) in members)
+        foreach (var (issue, workOrderId, _, step) in members)
         {
+            if (!activeHandlers.TryGetValue(workOrderId, out var handlerId))
+            {
+                written.Add(null);
+                continue;
+            }
+            written.Add(handlerId);
+
             var key = IssueSignatureKey.For(issue);
             var note = NightlyNoteOf(step);
             var caseId = Guid.NewGuid().ToString("n");
@@ -499,9 +569,13 @@ public class WorkOrderCoordinator
             });
         }
 
-        _cases.SaveMany(cases);
-        _issueHandlings.SaveMany(rows);
-        _handlingLog.AppendLogs(logs);
+        if (cases.Count > 0)
+        {
+            _cases.SaveMany(cases);
+            _issueHandlings.SaveMany(rows);
+            _handlingLog.AppendLogs(logs);
+        }
+        return written;
     }
 
     /// <summary>夜間派工一趟結束：對本趟有新增成員的單記一筆 appended 並推進 LastAppendedAt</summary>
@@ -541,6 +615,11 @@ public class WorkOrderCoordinator
     /// <summary>取消（2.6）：進行中成員標取消並結案，逐日列只把本案件擁有、未結案的日子調回 open</summary>
     public WorkOrderCloseResult Cancel(long workOrderId, string reason, WorkOrderActor actor)
     {
+        lock (OrderMutationLock) return CancelLocked(workOrderId, reason, actor);
+    }
+
+    private WorkOrderCloseResult CancelLocked(long workOrderId, string reason, WorkOrderActor actor)
+    {
         if (string.IsNullOrWhiteSpace(reason))
             throw new ArgumentException("WorkOrderCoordinator：取消交辦單要填原因。", nameof(reason));
 
@@ -569,6 +648,11 @@ public class WorkOrderCoordinator
     /// <summary>代為結案（2.7）：進行中成員全部標成指定的結案狀態</summary>
     public WorkOrderCloseResult AdminClose(long workOrderId, string status, string reason, WorkOrderActor actor)
     {
+        lock (OrderMutationLock) return AdminCloseLocked(workOrderId, status, reason, actor);
+    }
+
+    private WorkOrderCloseResult AdminCloseLocked(long workOrderId, string status, string reason, WorkOrderActor actor)
+    {
         if (!IssueHandlingStatuses.IsClosed(status))
             throw new ArgumentException($"WorkOrderCoordinator：代為結案的狀態「{status}」不是結案類。", nameof(status));
         if (string.IsNullOrWhiteSpace(reason))
@@ -578,7 +662,7 @@ public class WorkOrderCoordinator
         var members = ActiveMembers(workOrderId);
         var daySync = ApplyStatus(members, status, reason, null, actor);
 
-        CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, $"{status}：{reason}");
+        CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, EventNoteOf($"{status}：", reason, ""));
         return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
     }
 
@@ -588,6 +672,11 @@ public class WorkOrderCoordinator
     /// 成功後寫一筆 replied 事件（時間軸用；逐日明細仍由逐日歷程提供）。
     /// </summary>
     public WorkOrderReplyResult Reply(long workOrderId, IReadOnlyCollection<string>? caseIds, string status, string? note, DateTime? dueDate, WorkOrderActor actor)
+    {
+        lock (OrderMutationLock) return ReplyLocked(workOrderId, caseIds, status, note, dueDate, actor);
+    }
+
+    private WorkOrderReplyResult ReplyLocked(long workOrderId, IReadOnlyCollection<string>? caseIds, string status, string? note, DateTime? dueDate, WorkOrderActor actor)
     {
         if (!IssueHandlingStatuses.IsValid(status))
             throw new ArgumentException($"WorkOrderCoordinator：不支援的處理狀態「{status}」。", nameof(status));
@@ -617,6 +706,37 @@ public class WorkOrderCoordinator
     /// </summary>
     public void TouchReply(long workOrderId, DateTime occurredAt) => TryMarkReplied(workOrderId, occurredAt);
 
+    /// <summary>
+    /// 修改單的期限：只改單的 DueDate，不動任何成員狀態與說明；寫一筆 <see cref="WorkOrderEventActions.DueDateChanged"/> 事件。
+    /// 期限沒變回 false、不寫事件。單不存在或已結案擲 <see cref="InvalidOperationException"/>。
+    /// </summary>
+    public bool ChangeDueDate(long workOrderId, DateTime? dueDate, WorkOrderActor actor)
+    {
+        lock (OrderMutationLock) return ChangeDueDateLocked(workOrderId, dueDate, actor);
+    }
+
+    private bool ChangeDueDateLocked(long workOrderId, DateTime? dueDate, WorkOrderActor actor)
+    {
+        var newDate = dueDate?.Date;
+        DateTime? previous = null;
+        var changed = UpdateOrder(workOrderId, o =>
+        {
+            if (o.ClosedAt != null)
+                throw new InvalidOperationException($"交辦單 #{workOrderId} 已結案，無法修改期限。");
+            previous = o.DueDate;
+            if (o.DueDate?.Date == newDate) return false;
+            o.DueDate = newDate;
+            return true;
+        });
+        if (!changed) return false;
+
+        AppendEvent(workOrderId, WorkOrderEventActions.DueDateChanged, actor, 0,
+            $"期限 {DueDateText(previous)}→{DueDateText(newDate)}");
+        return true;
+    }
+
+    private static string DueDateText(DateTime? date) => date?.ToString("yyyy-MM-dd") ?? "無";
+
     /// <summary>推進 LastReplyAt（經併發重試）；單不存在或已結案回 false、不寫</summary>
     private bool TryMarkReplied(long workOrderId, DateTime occurredAt)
     {
@@ -632,10 +752,23 @@ public class WorkOrderCoordinator
     }
 
     /// <summary>回覆事件說明的唯一一份（<see cref="Reply"/> 用）</summary>
-    private static string ReplyNoteOf(string status, string? note, int caseCount) =>
+    internal static string ReplyNoteOf(string status, string? note, int caseCount) =>
         string.IsNullOrWhiteSpace(note)
             ? $"{status}（{caseCount} 台）"
-            : $"{status}：{note}（{caseCount} 台）";
+            : EventNoteOf($"{status}：", note, $"（{caseCount} 台）");
+
+    /// <summary>
+    /// 事件說明組字的唯一一份（回覆與代為結案共用）：事件表 Note 上限
+    /// <see cref="EfWorkOrderStore.NoteMaxLength"/>，store 寫入時從尾端截——會把狀態碼後的台數砍掉。
+    /// 這裡先截使用者說明的尾端並以「…」結尾，保證前綴與尾綴完整。
+    /// </summary>
+    private static string EventNoteOf(string prefix, string note, string suffix)
+    {
+        var room = EfWorkOrderStore.NoteMaxLength - prefix.Length - suffix.Length;
+        if (note.Length > room)
+            note = note[..Math.Max(0, room - 1)] + "…";
+        return prefix + note + suffix;
+    }
 
     /// <summary>
     /// 目標值規則的唯一一份（回覆與代為結案共用），與 <see cref="IssueCaseCoordinator.SyncStatus"/> 相同：
@@ -673,6 +806,11 @@ public class WorkOrderCoordinator
     /// 單不存在或已結案回 false（不重複記事件）。
     /// </summary>
     public bool RecomputeClosure(long workOrderId, DateTime occurredAt)
+    {
+        lock (OrderMutationLock) return RecomputeClosureLocked(workOrderId, occurredAt);
+    }
+
+    private bool RecomputeClosureLocked(long workOrderId, DateTime occurredAt)
     {
         var order = _orders.Get(workOrderId);
         if (order == null || order.ClosedAt != null) return false;
@@ -853,10 +991,10 @@ public class WorkOrderCoordinator
 
         public bool Equals((string HostName, string IssueKey) x, (string HostName, string IssueKey) y) =>
             StringComparer.OrdinalIgnoreCase.Equals(x.HostName, y.HostName)
-            && StringComparer.Ordinal.Equals(x.IssueKey, y.IssueKey);
+            && IssueSignatureKeyComparer.Instance.Equals(x.IssueKey, y.IssueKey);
 
         public int GetHashCode((string HostName, string IssueKey) key) =>
             HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.HostName),
-                StringComparer.Ordinal.GetHashCode(key.IssueKey));
+                IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
     }
 }

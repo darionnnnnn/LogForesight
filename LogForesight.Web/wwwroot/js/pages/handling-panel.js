@@ -13,6 +13,7 @@ import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
+import { attachNoteEditor } from '../core/note-editor.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
@@ -74,7 +75,9 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     // 被正常瀏覽的噪音淹沒後，真正的權限試探就再也看不出來了。
     const users = handling.canAssign ? await loadAssignableUsers() : [];
 
-    state = { hostId, date, handling, users, getSelection, onBatchSaved, options };
+    // 表單暫存只跟著同一個風險日：409 衝突重建、指派後重載都保留使用者剛填的內容；換主機或日期才清空
+    const formDraft = state?.hostId === hostId && state?.date === date ? state.formDraft : null;
+    state = { hostId, date, handling, users, getSelection, onBatchSaved, options, formDraft };
     render();
     await loadLogs(hostId, date);
 }
@@ -98,6 +101,19 @@ async function loadAssignableUsers() {
  * 「現在真正的狀態」，與清單頁看到的完全同源。derivedStatus 為 null（Update/Assign
  * 呼叫端未補算）時 fallback 用 statusText，不帶結案進度。
  */
+/**
+ * AI 整理的問題脈絡：只勾一個問題時帶它的名稱（取自左側問題列表那一列的標題），
+ * 勾多個或沒勾時不帶名稱；本面板是單一主機的風險日，主機數固定 1
+ */
+function aiNoteContext(selection) {
+    if (selection.size !== 1) return { hostCount: 1 };
+    const [issueKey] = selection;
+    const check = document.querySelector(`input[type="checkbox"][data-issue-key="${CSS.escape(issueKey)}"]`);
+    const title = check && check.closest('tr') && check.closest('tr').querySelector('.lf-issue-cell .fw-semibold');
+    const issueLabel = title ? title.textContent.trim() : '';
+    return issueLabel ? { issueLabel, hostCount: 1 } : { hostCount: 1 };
+}
+
 /** 面板內的一句提示（lf-hint 是全站既有的提示樣式） */
 function hintText(text) {
     const el = document.createElement('div');
@@ -295,8 +311,11 @@ function handlingForm() {
     const { handling, hostId, date, getSelection } = state;
     const selection = getSelection();
     const batchMode = selection.size > 0;
+    // 使用者已經動過表單（勾選問題會整張重建）：以暫存為初值，不依模式重設
+    const draft = state.formDraft;
 
     const form = document.createElement('form');
+    form.noValidate = true;   // 驗證只走下方手動一套（說明欄超過字數的 customValidity 不可觸發原生泡泡）
 
     const statusLabel = document.createElement('label');
     statusLabel.className = 'form-label small mb-1 text-muted';
@@ -312,7 +331,11 @@ function handlingForm() {
 
     // 狀態直選（取代下拉）：批次模式不預選，逼使用者明確選一個；日層級模式預選推導出的
     // 目前狀態（#6）——不用存的日層級快照，避免使用者一進面板就看到跟「目前狀態」欄位對不上的預選
-    let selectedStatus = batchMode ? null : (handling.derivedStatus ?? handling.status);
+    // 觀察中只在批次模式提供，見 OBSERVING_CHIP 的宣告理由
+    const availableChips = batchMode ? [...STATUS_CHIPS, OBSERVING_CHIP] : STATUS_CHIPS;
+    let selectedStatus = draft && availableChips.some(chip => chip.value === draft.status)
+        ? draft.status
+        : (batchMode ? null : (handling.derivedStatus ?? handling.status));
 
     const chipGroup = document.createElement('div');
     chipGroup.className = 'lf-toolbar__chips mb-3';
@@ -331,6 +354,7 @@ function handlingForm() {
                 const target = new Date();
                 target.setDate(target.getDate() + days);
                 dueInput.value = toLocalDateString(target);   // 本地日期（S12），不用 toISOString 的 UTC 日期
+                saveFormDraft();
             }
         }));
     }
@@ -339,7 +363,7 @@ function handlingForm() {
     dueInput.type = 'date';
     dueInput.className = 'form-control form-control-sm';
     dueInput.id = 'due-date';
-    dueInput.value = batchMode ? '' : (handling.dueDate ?? '');
+    dueInput.value = draft ? draft.dueDate : (batchMode ? '' : (handling.dueDate ?? ''));
 
     dueWrap.append(quickRow, dueInput);
 
@@ -364,7 +388,7 @@ function handlingForm() {
     observeInput.id = 'observe-days';
     observeInput.min = '1';
     observeInput.max = '90';
-    observeInput.value = '7';
+    observeInput.value = draft?.observeDays ?? '7';
     const observeHint = document.createElement('div');
     observeHint.className = 'form-text';
     observeHint.textContent = '觀察期間這個問題不再進入待辦，觀察到期後若仍在發生，會回到「處理中逾期」提醒。';
@@ -392,6 +416,7 @@ function handlingForm() {
     forgetNoiseCheck.type = 'checkbox';
     forgetNoiseCheck.className = 'form-check-input';
     forgetNoiseCheck.id = 'forget-noise';
+    forgetNoiseCheck.checked = draft?.forgetNoise ?? false;
     const forgetNoiseLabel = document.createElement('label');
     forgetNoiseLabel.className = 'form-check-label small';
     forgetNoiseLabel.htmlFor = 'forget-noise';
@@ -409,9 +434,51 @@ function handlingForm() {
     noteInput.className = 'form-control form-control-sm mb-3';
     noteInput.id = 'handling-note';
     noteInput.rows = 3;
-    noteInput.value = batchMode ? '' : (handling.note ?? '');
+    noteInput.value = draft ? draft.note : (batchMode ? '' : (handling.note ?? ''));
     noteInput.placeholder = '例如：已確認為每週維護重開機，屬正常現象';
     form.appendChild(noteInput);
+
+    const noteFeedback = document.createElement('div');
+    noteFeedback.className = 'invalid-feedback';
+    noteFeedback.setAttribute('role', 'alert');
+    form.appendChild(noteFeedback);
+
+    const noteEditor = attachNoteEditor(noteInput, {
+        draftKey: `record:${hostId}:${date}`,
+        ai: { context: () => aiNoteContext(getSelection()) },
+        // 沿用上次的說明：只在恰好勾一個問題時有明確的問題簽章
+        reuse: { issueKey: () => { const selection = getSelection(); return selection.size === 1 ? [...selection][0] : null; } },
+        phrases: true
+    });
+
+    /** 使用者對表單的輸入存進模組層暫存：勾選問題會整張重建，重建時以此為初值 */
+    function saveFormDraft() {
+        state.formDraft = {
+            status: selectedStatus,
+            note: noteInput.value,
+            dueDate: dueInput.value,
+            observeDays: observeInput.value,
+            forgetNoise: forgetNoiseCheck.checked
+        };
+    }
+
+    function showNoteError(message) {
+        noteFeedback.textContent = message;
+        noteInput.classList.add('is-invalid');
+        noteInput.focus();
+    }
+
+    form.addEventListener('input', () => {
+        noteInput.classList.remove('is-invalid');
+        saveFormDraft();
+    });
+    form.addEventListener('change', saveFormDraft);
+
+    /** 送出成功：表單暫存與本機草稿都作廢 */
+    function clearSubmitted() {
+        state.formDraft = null;
+        noteEditor.clearDraft();
+    }
 
     // 誤報且能維護規則時，提議調整規則（治本：規則本身可能過嚴）——
     // 沿用舊逐列面板的提示，批次模式下無法指向單一規則，改連到規則維護頁
@@ -424,9 +491,6 @@ function handlingForm() {
     ruleHint.appendChild(ruleLink);
     form.appendChild(ruleHint);
 
-    // 觀察中只在批次（問題層級）模式提供，見 OBSERVING_CHIP 的宣告理由
-    const availableChips = batchMode ? [...STATUS_CHIPS, OBSERVING_CHIP] : STATUS_CHIPS;
-
     function renderChips() {
         chipGroup.replaceChildren();
         for (const chip of availableChips) {
@@ -438,6 +502,7 @@ function handlingForm() {
                 selectedStatus = chip.value;
                 renderChips();
                 updateFieldsForStatus();
+                saveFormDraft();
             });
             chipGroup.appendChild(btn);
         }
@@ -451,7 +516,7 @@ function handlingForm() {
 
         const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { label: '說明（選填）', required: false };
         noteLabel.textContent = field.label;
-        noteInput.required = field.required;
+        noteInput.classList.remove('is-invalid');
     }
 
     renderChips();
@@ -472,7 +537,13 @@ function handlingForm() {
         }
         const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { required: false };
         if (field.required && !noteInput.value.trim()) {
-            noteInput.classList.add('is-invalid');
+            // 「不處理（評估後決定）」→「不處理」、「不處理原因（必填）」→「不處理原因」
+            const statusText = availableChips.find(chip => chip.value === selectedStatus).text.replace(/（.*）$/, '');
+            showNoteError(`標記為「${statusText}」時請填寫${field.label.replace(/（.*）$/, '')}`);
+            return;
+        }
+        if (!noteInput.checkValidity()) {
+            showNoteError(noteInput.validationMessage);   // 超過字數上限（attachNoteEditor 設的 customValidity）
             return;
         }
 
@@ -487,6 +558,7 @@ function handlingForm() {
                     dueDate: resolveDueDate(),
                     forgetNoise: forgetNoiseCheck.checked
                 });
+                clearSubmitted();
                 selection.clear();
                 // 帶回套用後的日狀態（#6）：後端已算好 DayStatus/Total/Closed，直接顯示，
                 // 不必等頁面重載才看到「這次套用完，這天現在算什麼狀態」
@@ -503,6 +575,7 @@ function handlingForm() {
                     note: noteInput.value.trim() || null,
                     dueDate: resolveDueDate()
                 });
+                clearSubmitted();
                 toast('已更新處理狀態', 'success');
                 await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
             }

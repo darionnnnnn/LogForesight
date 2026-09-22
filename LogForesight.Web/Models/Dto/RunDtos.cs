@@ -32,6 +32,15 @@ public class RunDaySummaryDto
     /// <summary>PRTG 擷取成果狀態（取該日取數類最後一筆，null＝舊紀錄或當日未執行 PRTG）</summary>
     public string? PrtgOutcome { get; set; }
 
+    /// <summary>該日 PRTG finding 數（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄為 null）</summary>
+    public int? PrtgFindings { get; set; }
+
+    /// <summary>該日 PRTG 觸發式取數目標 sensor 數（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄為 null）</summary>
+    public int? PrtgTargetSensors { get; set; }
+
+    /// <summary>該日 PRTG 結局原因（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄或無原因為 null）</summary>
+    public string? PrtgNote { get; set; }
+
     /// <summary>失敗（含異常中斷）的主機名，最多 10 台；其餘用 OtherFailedCount 表示</summary>
     public List<string> FailedHostNames { get; set; } = new();
     public int OtherFailedCount { get; set; }
@@ -108,7 +117,24 @@ public class RunDetailDto
     /// <summary>PRTG 觸發式取數問題主機數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgTriggeredHosts { get; set; }
 
+    /// <summary>PRTG 逐日統計（null＝舊紀錄或 PRTG 未產出）</summary>
+    public List<PrtgDayStatDto>? PrtgDays { get; set; }
+
     public List<RunLogDto> Logs { get; set; } = new();
+}
+
+/// <summary>執行詳情「PRTG 逐日」表的一列</summary>
+public class PrtgDayStatDto
+{
+    public DateTime Date { get; set; }
+    public string Outcome { get; set; } = string.Empty;
+    public int Findings { get; set; }
+    public int AttributedHosts { get; set; }
+    public bool MapAvailable { get; set; }
+    public int TriggerHosts { get; set; }
+    public int TargetSensors { get; set; }
+    public int FailedSensors { get; set; }
+    public string? Note { get; set; }
 }
 
 public class RunLogDto

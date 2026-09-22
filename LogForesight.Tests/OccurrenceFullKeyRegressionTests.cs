@@ -69,9 +69,13 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
         _handlerRole = _userGroups.Upsert(new UserGroup { GroupName = "處理人", Role = UserRole.User, Active = true });
         _settingsStore.Update(s => s.AutoDispatchEnabled = false);
 
+        var freshness = new ScheduleFreshnessService(
+            new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(_fixture.Blob("schedule_options")));
         _mail = new MailNotificationService(
             _settingsStore, _mailSender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
-            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), _issueOwners);
+            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
+            freshness, _issueOwners);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -84,7 +88,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
     private WorkOrderBoardService BoardService() => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, WorkOrderBoardService.DefaultMaxOccurrences);
+        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 

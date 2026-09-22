@@ -31,7 +31,7 @@ public static class SuppressionFilter
     /// <summary>靜音項目是否對 (source, eventId, recordDate) 生效：Source 不分大小寫、EventId 相等、紀錄日在區間內</summary>
     public static bool MuteMatches(RuleSuppression mute, string source, int eventId, DateTime recordDate) =>
         IsMute(mute) && mute.EventId == eventId &&
-        string.Equals(mute.SourceName, source, StringComparison.OrdinalIgnoreCase) &&
+        SourceKeyComparer.Instance.Equals(mute.SourceName, source) &&
         MuteCoversDate(mute, recordDate);
 
     /// <summary>
@@ -82,7 +82,39 @@ public static class SuppressionFilter
     /// 過去只有命中規則的簽章才有抑制掛載點。比對不分大小寫，理由同 <see cref="ToRuleIdSet"/>。</summary>
     public static HashSet<string> ToSignatureKeySet(List<RuleSuppression> suppressions) =>
         suppressions.Where(s => s.TargetType == SuppressionTargetTypes.Signature && !string.IsNullOrEmpty(s.SignatureKey))
-            .Select(s => s.SignatureKey!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(s => s.SignatureKey!).ToHashSet(SuppressedSignatureComparer.Instance);
+
+    // 抑制規則既有契約是整個簽章不分大小寫；一般處理鍵則只正規化 Source。
+    // 在這裡保留抑制的 LogName/EventKey 語意，Source 使用全站唯一的來源鍵規則。
+    private sealed class SuppressedSignatureComparer : IEqualityComparer<string>
+    {
+        public static readonly SuppressedSignatureComparer Instance = new();
+
+        public bool Equals(string? x, string? y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x == null || y == null) return false;
+            var left = IssueSignatureKey.TryParseFull(x);
+            var right = IssueSignatureKey.TryParseFull(y);
+            if (left == null || right == null) return StringComparer.OrdinalIgnoreCase.Equals(x, y);
+            return StringComparer.OrdinalIgnoreCase.Equals(left.Value.LogName, right.Value.LogName)
+                && SourceKeyComparer.Instance.Equals(left.Value.Source, right.Value.Source)
+                && left.Value.EventId == right.Value.EventId
+                && left.Value.EntryType == right.Value.EntryType
+                && StringComparer.OrdinalIgnoreCase.Equals(left.Value.EventKey, right.Value.EventKey);
+        }
+
+        public int GetHashCode(string value)
+        {
+            var parsed = IssueSignatureKey.TryParseFull(value);
+            if (parsed == null) return StringComparer.OrdinalIgnoreCase.GetHashCode(value);
+            return HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(parsed.Value.LogName),
+                SourceKeyComparer.Instance.GetHashCode(parsed.Value.Source),
+                parsed.Value.EventId, parsed.Value.EntryType,
+                StringComparer.OrdinalIgnoreCase.GetHashCode(parsed.Value.EventKey));
+        }
+    }
 
     /// <summary>把抑制項目投影成關聯模式 Id 集合（TargetType=Correlation，回饋十五輪 A-1）：
     /// 供 LogAnalysisService 把命中的關聯訊號從「要吵」的清單移到「已抑制」的清單。</summary>

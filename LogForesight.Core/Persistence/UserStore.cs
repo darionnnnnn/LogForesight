@@ -1,10 +1,22 @@
+using System.Text.Json;
 
 namespace LogForesight.Core.Persistence;
 
-/// <summary><see cref="IUserStore"/> 的實作（blob key=users，整份型）</summary>
+/// <summary>
+/// <see cref="IUserStore"/> 的實作（blob key=users，整份型；最後登入時間另存 blob key=user_last_login）。
+///
+/// 開快取：清單頁逐列、<c>ActiveUserMiddleware</c> 每個請求都會查使用者，不快取就是每次重讀＋反序列化整份清單。
+/// 最後登入時間因此搬出使用者清單——每次登入都改寫整份清單會讓版本前進、快取在登入尖峰反覆失效。
+/// 快取回傳的是共用物件：呼叫端不得就地修改（要改先複製）。
+/// </summary>
 public class UserStore : JsonBlobCollection<WebUser>, IUserStore
 {
-    public UserStore(EfJsonBlobStore blob) : base(blob) { }
+    private readonly EfJsonBlobStore _lastLogin;
+
+    public UserStore(EfJsonBlobStore blob, EfJsonBlobStore lastLogin) : base(blob, cached: true)
+    {
+        _lastLogin = lastLogin;
+    }
 
     public List<WebUser> GetAll() => Read();
 
@@ -54,15 +66,23 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
         });
     }
 
+    /// <summary>寫到 user_last_login（原子讀改寫），**不動使用者清單**——使用者清單的版本因此不前進、快取不失效</summary>
     public void TouchLogin(long userId, DateTime at)
     {
-        Mutate(users =>
+        _lastLogin.Mutate(raw =>
         {
-            var user = users.FirstOrDefault(u => u.UserId == userId);
-            if (user == null) return;
-            user.LastLoginAt = at;
+            var map = DeserializeLastLogins(raw);
+            map[userId] = at;
+            return (JsonSerializer.Serialize(map, LfJsonOptions.Compact), 0);
         });
     }
+
+    public IReadOnlyDictionary<long, DateTime> GetLastLogins() => DeserializeLastLogins(_lastLogin.Read());
+
+    private static Dictionary<long, DateTime> DeserializeLastLogins(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? new Dictionary<long, DateTime>()
+            : JsonSerializer.Deserialize<Dictionary<long, DateTime>>(json, LfJsonOptions.Compact) ?? new Dictionary<long, DateTime>();
 
     /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
     /// 這裡是它的唯一寫入點</summary>

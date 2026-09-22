@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using NLog;
 using LogForesight.Core.Persistence;
 
@@ -17,6 +20,12 @@ namespace LogForesight.Core.Persistence.Sql;
 internal static class SchemaUpgrader
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 升級器建立的索引名稱（AddIndexIfMissing／AddFilteredUniqueIndexIfMissing 呼叫時登記）。
+    /// 名稱都是常數，重複登記無副作用；移除重複索引時用它決定每組保留哪一個。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, byte> UpgraderIndexNames = new(StringComparer.OrdinalIgnoreCase);
 
     public static void Upgrade(LfDbContext ctx)
     {
@@ -41,6 +50,12 @@ internal static class SchemaUpgrader
         // 「檢查缺什麼→缺才補」冪等 DDL 補上整張表，新 DB 則由 EnsureCreated 直接建好、這裡 no-op。
         CreateTableIfMissing(ctx, isSqlite, "lf_risky_events",
             isSqlite ? SqliteCreateRiskyEventsTable : SqlServerCreateRiskyEventsTable);
+        // 舊列保留 NULL，交由 EfRiskyEventStore.BackfillSourceKeysBatch 在背景分批補齊；
+        // 未完成前查詢仍走 source + UPPER()，避免啟動時掃描整張暫存表。
+        AddColumnIfMissing(ctx, isSqlite, "lf_risky_events", "source_key",
+            isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
+            "IX_lf_risky_events_host_id_date_source_key_event_id", "host_id, date, source_key, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
             "IX_lf_risky_events_host_id_date_source_event_id", "host_id, date, source, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events", "IX_lf_risky_events_date", "date");
@@ -79,6 +94,9 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling",
             "IX_lf_issue_handling_host_date", "host_name_key, record_date");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling", "IX_lf_issue_handling_case_id", "case_id");
+        // 沿用此問題上次的說明（回饋第 50 輪 C-4）：依問題簽章取最新一筆說明
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling",
+            "IX_lf_issue_handling_issue_key_updated_at", "issue_key, updated_at");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_cases",
             isSqlite ? SqliteCreateIssueCases : SqlServerCreateIssueCases);
@@ -133,6 +151,11 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "known_issue", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "event_key",
             isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        // 來源名稱的寫入時計算鍵；舊列保留 NULL 供背景分批補齊，不在啟動閘掃全表。
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_key",
+            isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_top_issues", "IX_lf_top_issues_source_key_event_date",
+            "source_key, event_id, record_date");
 
         // 問題機房首見日（回饋十九輪批次B／G，↔ IssueFirstSeenRow）
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_first_seen",
@@ -264,6 +287,104 @@ internal static class SchemaUpgrader
             "IX_lf_issue_cases_issue_closed", "source_key, event_id, closed_at");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
             "IX_lf_issue_cases_day_sync_pending", "day_sync_pending");
+
+        // 最後一步：EF 預設命名與升級器命名並存時留下的重複索引（必須在所有 AddIndexIfMissing 之後，名稱才登記齊）。
+        // 這是空間與寫入效能的整理、不是正確性前提——任何失敗（特別是尚未實機驗證的 SQL Server 系統目錄查詢）只記 Warn，不得擋住站台啟動
+        try
+        {
+            RemoveDuplicateIndexes(ctx, isSqlite);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[SQL] 重複索引整理失敗（不影響站台運作，下次啟動再試）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>索引的比對形狀：欄位（含順序）＋唯一性</summary>
+    private sealed record IndexShape(string Name, bool Unique, string Columns);
+
+    /// <summary>
+    /// 移除重複索引（冪等）：同一張 lf_ 表中欄位（含順序）完全相同、唯一性相同、都不是部分索引、
+    /// 都不是 sqlite_autoindex_ 的索引為一組，保留升級器使用的名稱、其餘 DROP。
+    /// 組內沒有升級器名稱（無法判斷保留哪一個）→ 全部保留並 Warn。
+    /// SQL Server 只報告不移除：DDL 尚未在 SQL Server 實機驗證。
+    /// </summary>
+    private static void RemoveDuplicateIndexes(LfDbContext ctx, bool isSqlite)
+    {
+        var tables = isSqlite
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sqlite_master WHERE type = 'table' AND name LIKE 'lf\\_%' ESCAPE '\\'").ToList()
+            : ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sys.tables WHERE name LIKE 'lf[_]%'").ToList();
+
+        foreach (var table in tables)
+        {
+            var groups = (isSqlite ? ReadSqliteIndexes(ctx, table) : ReadSqlServerIndexes(ctx, table))
+                .GroupBy(i => (i.Unique, Columns: i.Columns.ToLowerInvariant()))
+                .Where(g => g.Count() > 1);
+
+            foreach (var group in groups)
+            {
+                var names = group.Select(i => i.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+                if (!isSqlite)
+                {
+                    Log.Warn("[SQL] schema 升級：{Table} 偵測到重複索引 {Indexes}，DDL 尚未在 SQL Server 實機驗證，不自動移除",
+                        table, string.Join(" 與 ", names));
+                    continue;
+                }
+
+                var keep = names.FirstOrDefault(n => UpgraderIndexNames.ContainsKey(n));
+                if (keep == null)
+                {
+                    Log.Warn("[SQL] schema 升級：{Table} 偵測到重複索引 {Indexes}，組內沒有升級器使用的名稱、無法判斷保留哪一個，全部保留",
+                        table, string.Join(" 與 ", names));
+                    continue;
+                }
+
+                foreach (var name in names.Where(n => !string.Equals(n, keep, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Log.Info("[SQL] schema 升級：{Table} 移除與 {Keep} 重複的索引 {Index}", table, keep, name);
+                    // 名稱來自系統目錄（非外部輸入），識別字不支援參數化
+                    var sql = "DROP INDEX \"" + name.Replace("\"", "\"\"") + "\"";
+                    ctx.Database.ExecuteSqlRaw(sql);
+                }
+            }
+        }
+    }
+
+    /// <summary>SQLite：PRAGMA index_list／index_info；排除部分索引、sqlite_autoindex_ 與含運算式欄的索引</summary>
+    private static List<IndexShape> ReadSqliteIndexes(LfDbContext ctx, string table)
+    {
+        var result = new List<IndexShape>();
+        var rows = ctx.Database.SqlQueryRaw<string>(
+            "SELECT name || '|' || \"unique\" || '|' || partial AS Value FROM pragma_index_list('" + table + "')").ToList();
+        foreach (var row in rows)
+        {
+            var parts = row.Split('|');
+            var name = parts[0];
+            if (parts[2] != "0" || name.StartsWith("sqlite_autoindex_", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var columns = ctx.Database.SqlQueryRaw<string>(
+                "SELECT ifnull(name, '') AS Value FROM pragma_index_info('" + name + "') ORDER BY seqno").ToList();
+            if (columns.Count == 0 || columns.Any(c => c.Length == 0)) continue;
+            result.Add(new IndexShape(name, parts[1] == "1", string.Join(",", columns)));
+        }
+        return result;
+    }
+
+    /// <summary>SQL Server：sys.indexes／sys.index_columns（只取鍵欄、依 key_ordinal）；排除篩選索引、主鍵、堆積</summary>
+    private static List<IndexShape> ReadSqlServerIndexes(LfDbContext ctx, string table)
+    {
+        var rows = ctx.Database.SqlQueryRaw<string>(
+            "SELECT i.name + '|' + CAST(i.is_unique AS varchar(1)) + '|' + " +
+            "STUFF((SELECT ',' + c.name FROM sys.index_columns ic " +
+            "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id " +
+            "WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal > 0 " +
+            "ORDER BY ic.key_ordinal FOR XML PATH('')), 1, 1, '') AS Value " +
+            "FROM sys.indexes i JOIN sys.tables t ON i.object_id = t.object_id " +
+            "WHERE t.name = {0} AND i.type > 0 AND i.is_primary_key = 0 AND i.has_filter = 0", table).ToList();
+        return rows.Select(r => r.Split('|'))
+            .Where(p => p.Length == 3 && p[2].Length > 0)
+            .Select(p => new IndexShape(p[0], p[1] == "1", p[2]))
+            .ToList();
     }
 
     /// <summary>
@@ -280,6 +401,7 @@ internal static class SchemaUpgrader
     private static void AddFilteredUniqueIndexIfMissing(
         LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, string filter)
     {
+        UpgraderIndexNames.TryAdd(indexName, 0);
         if (!TableExists(ctx, isSqlite, table)) return;
 
         if (IndexExists(ctx, isSqlite, table, indexName)) return;
@@ -368,6 +490,208 @@ internal static class SchemaUpgrader
 
     internal const string IssueFirstSeenWatermarkBlobKey = "issue_first_seen_watermark";
     internal const string IssueFirstSeenFullDoneBlobKey = "issue_first_seen_full_done";
+    internal const string IssueFirstSeenSourceKeyRekeyDoneBlobKey = "issue_first_seen_source_key_rekey_done";
+    private const string IssueFirstSeenSourceKeyRekeyVersion = "1";
+
+    /// <summary>
+    /// 將來源鍵回填前以 SQL <c>UPPER(source_name)</c> 寫入的首見日列，安全地
+    /// 合併到 <c>lf_top_issues.source_key</c> 的正規鍵。只接受能由現有 top issue
+    /// 列證明的對應；沒有 top issue 的舊列保留原樣。
+    /// </summary>
+    internal static int RekeyIssueFirstSeenToSourceKeys(Func<LfDbContext> contextFactory)
+    {
+        IExecutionStrategy strategy;
+        using (var probe = contextFactory())
+        {
+            // 成功標記是 durable gate：正常 hosted service 重啟只做這個索引欄位查詢，
+            // 不開交易、不載入 top_issues 或 issue_first_seen。
+            if (probe.Blobs.AsNoTracking().Any(x =>
+                    x.BlobKey == IssueFirstSeenSourceKeyRekeyDoneBlobKey &&
+                    x.Content == IssueFirstSeenSourceKeyRekeyVersion))
+            {
+                return 0;
+            }
+
+            strategy = probe.Database.CreateExecutionStrategy();
+        }
+
+        return strategy.Execute(() =>
+        {
+            using var ctx = contextFactory();
+            using var transaction = ctx.Database.BeginTransaction();
+
+            var done = ctx.Blobs.FirstOrDefault(x =>
+                x.BlobKey == IssueFirstSeenSourceKeyRekeyDoneBlobKey);
+            if (done?.Content == IssueFirstSeenSourceKeyRekeyVersion)
+            {
+                transaction.Commit();
+                return 0;
+            }
+
+            var topIssues = LoadDistinctSourceKeyTopIssues(ctx);
+            var mappings = BuildIssueFirstSeenSourceMappings(topIssues);
+            var existing = ctx.IssueFirstSeen.ToList();
+            var byKey = existing.ToDictionary(x => (x.SourceKey, x.EventId));
+            var pendingAdds = new List<IssueFirstSeenRow>();
+            var changed = 0;
+
+            foreach (var row in existing)
+            {
+                if (!mappings.TryGetValue((row.SourceKey, row.EventId), out var mapping) ||
+                    string.Equals(row.SourceKey, mapping.SourceKey, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var targetKey = (mapping.SourceKey, row.EventId);
+                if (byKey.TryGetValue(targetKey, out var target))
+                {
+                    if (row.FirstSeen < target.FirstSeen) target.FirstSeen = row.FirstSeen;
+                    target.SourceName = mapping.SourceName;
+                    ctx.IssueFirstSeen.Remove(row);
+                }
+                else
+                {
+                    ctx.IssueFirstSeen.Remove(row);
+                    target = new IssueFirstSeenRow
+                    {
+                        SourceKey = mapping.SourceKey,
+                        EventId = row.EventId,
+                        SourceName = mapping.SourceName,
+                        FirstSeen = row.FirstSeen
+                    };
+                    pendingAdds.Add(target);
+                    byKey.Add(targetKey, target);
+                }
+
+                changed++;
+            }
+
+            // 先落實刪除，再新增 canonical key。SQL Server 常見 CI collation 下，
+            // old/new 來源鍵可能被視為同一個 PK；同一個 SaveChanges 內若先 INSERT
+            // 會撞唯一鍵。兩步仍在同一 execution-strategy transaction 內，故不會留下半套結果。
+            ctx.SaveChanges();
+            foreach (var row in pendingAdds) ctx.IssueFirstSeen.Add(row);
+
+            if (done == null)
+            {
+                ctx.Blobs.Add(new BlobRow
+                {
+                    BlobKey = IssueFirstSeenSourceKeyRekeyDoneBlobKey,
+                    Content = IssueFirstSeenSourceKeyRekeyVersion,
+                    UpdatedAt = DateTime.Now,
+                    Version = 1
+                });
+            }
+            else
+            {
+                done.Content = IssueFirstSeenSourceKeyRekeyVersion;
+                done.UpdatedAt = DateTime.Now;
+                done.Version++;
+            }
+
+            ctx.SaveChanges();
+            transaction.Commit();
+            if (changed > 0)
+                Log.Info("[SQL] lf_issue_first_seen 來源鍵重鍵完成：合併 {Changed} 列", changed);
+            return changed;
+        });
+    }
+
+    private static List<IssueFirstSeenTopIssue> LoadDistinctSourceKeyTopIssues(LfDbContext ctx)
+    {
+        var query = ctx.TopIssues.AsNoTracking().Where(x => x.SourceKey != null);
+        if (ctx.Database.IsSqlite())
+        {
+            return query
+                .Select(x => new
+                {
+                    SourceName = EF.Functions.Collate(x.SourceName, "BINARY"),
+                    SourceKey = x.SourceKey!,
+                    x.EventId
+                })
+                .Distinct()
+                .ToList()
+                .Select(x => new IssueFirstSeenTopIssue(x.SourceName, x.SourceKey, x.EventId))
+                .ToList();
+        }
+
+        return query
+            .Select(x => new
+            {
+                SourceName = EF.Functions.Collate(x.SourceName, "Latin1_General_100_BIN2"),
+                SourceKey = x.SourceKey!,
+                x.EventId
+            })
+            .Distinct()
+            .ToList()
+            .Select(x => new IssueFirstSeenTopIssue(x.SourceName, x.SourceKey, x.EventId))
+            .ToList();
+    }
+
+    private static Dictionary<(string SourceKey, int EventId), IssueFirstSeenSourceMapping>
+        BuildIssueFirstSeenSourceMappings(IEnumerable<IssueFirstSeenTopIssue> topIssues)
+    {
+        var mappings = new Dictionary<(string SourceKey, int EventId), IssueFirstSeenSourceMapping>();
+        var ambiguous = new HashSet<(string SourceKey, int EventId)>();
+
+        foreach (var topIssue in topIssues)
+        {
+            var mapping = new IssueFirstSeenSourceMapping(topIssue.SourceKey, topIssue.SourceName);
+            foreach (var alias in LegacySourceKeyAliases(topIssue.SourceName, topIssue.SourceKey))
+            {
+                var key = (alias, (int)topIssue.EventId);
+                if (ambiguous.Contains(key)) continue;
+
+                if (!mappings.TryGetValue(key, out var previous))
+                {
+                    mappings.Add(key, mapping);
+                    continue;
+                }
+
+                if (!string.Equals(previous.SourceKey, mapping.SourceKey, StringComparison.Ordinal))
+                {
+                    mappings.Remove(key);
+                    ambiguous.Add(key);
+                }
+                else if (string.CompareOrdinal(mapping.SourceName, previous.SourceName) < 0)
+                {
+                    mappings[key] = mapping;
+                }
+            }
+        }
+
+        return mappings;
+    }
+
+    private static IEnumerable<string> LegacySourceKeyAliases(string sourceName, string sourceKey)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var alias in new[]
+        {
+            sourceName,
+            sourceName.ToUpperInvariant(),
+            sourceName.ToUpper(),
+            AsciiUpper(sourceName),
+            sourceKey
+        })
+        {
+            if (seen.Add(alias)) yield return alias;
+        }
+    }
+
+    private static string AsciiUpper(string value)
+    {
+        var chars = value.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            if (chars[i] is >= 'a' and <= 'z') chars[i] = (char)(chars[i] - ('a' - 'A'));
+        }
+        return new string(chars);
+    }
+
+    private readonly record struct IssueFirstSeenSourceMapping(string SourceKey, string SourceName);
+    private readonly record struct IssueFirstSeenTopIssue(string SourceName, string SourceKey, int EventId);
 
     internal static IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(LfDbContext ctx, bool force = false)
     {
@@ -407,14 +731,14 @@ internal static class SchemaUpgrader
             INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen)
             SELECT src.source_key, src.event_id, src.source_name, src.first_seen
             FROM (
-                SELECT UPPER(source_name) AS source_key,
+                SELECT COALESCE(source_key, UPPER(source_name)) AS source_key,
                        event_id           AS event_id,
                        MIN(source_name)   AS source_name,
                        MIN(record_date)   AS first_seen
                 FROM lf_top_issues
                 WHERE record_date >= '2000-01-01'
                   AND record_id > {0}
-                GROUP BY UPPER(source_name), event_id
+                GROUP BY COALESCE(source_key, UPPER(source_name)), event_id
             ) src
             WHERE NOT EXISTS (
                 SELECT 1 FROM lf_issue_first_seen fs
@@ -429,7 +753,7 @@ internal static class SchemaUpgrader
             SET first_seen = (
                 SELECT MIN(t.record_date)
                 FROM lf_top_issues t
-                WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                WHERE COALESCE(t.source_key, UPPER(t.source_name)) = lf_issue_first_seen.source_key
                   AND t.event_id = lf_issue_first_seen.event_id
                   AND t.record_date >= '2000-01-01'
                   AND t.record_id > {0}
@@ -437,7 +761,7 @@ internal static class SchemaUpgrader
             WHERE (
                 SELECT MIN(t2.record_date)
                 FROM lf_top_issues t2
-                WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                WHERE COALESCE(t2.source_key, UPPER(t2.source_name)) = lf_issue_first_seen.source_key
                   AND t2.event_id = lf_issue_first_seen.event_id
                   AND t2.record_date >= '2000-01-01'
                   AND t2.record_id > {0}
@@ -456,14 +780,14 @@ internal static class SchemaUpgrader
                 SET first_seen = (
                     SELECT MIN(t.record_date)
                     FROM lf_top_issues t
-                    WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                    WHERE COALESCE(t.source_key, UPPER(t.source_name)) = lf_issue_first_seen.source_key
                       AND t.event_id = lf_issue_first_seen.event_id
                       AND t.record_date >= '2000-01-01'
                 )
                 WHERE (
                     SELECT MIN(t2.record_date)
                     FROM lf_top_issues t2
-                    WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                    WHERE COALESCE(t2.source_key, UPPER(t2.source_name)) = lf_issue_first_seen.source_key
                       AND t2.event_id = lf_issue_first_seen.event_id
                       AND t2.record_date >= '2000-01-01'
                 ) < lf_issue_first_seen.first_seen
@@ -497,6 +821,16 @@ internal static class SchemaUpgrader
             watermarkRow.Content = currentMaxRecordId.ToString();
             watermarkRow.UpdatedAt = DateTime.Now;
             watermarkRow.Version++;
+        }
+
+        // 若完成標記存在卻又有來源鍵尚未回填的 top issue，這次 seed 可能新增了
+        // legacy UPPER(source_name) 首見日列；讓下一輪來源鍵回填重新檢查。正常 ready
+        // 後的新列都有 source_key，因此不會因每次 seed 都重新掃描全表。
+        var rekeyDone = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenSourceKeyRekeyDoneBlobKey);
+        if (rekeyDone?.Content == IssueFirstSeenSourceKeyRekeyVersion &&
+            ctx.TopIssues.Any(t => t.SourceKey == null && t.RecordId > watermark))
+        {
+            ctx.Blobs.Remove(rekeyDone);
         }
 
         ctx.SaveChanges();
@@ -616,6 +950,7 @@ internal static class SchemaUpgrader
             date TEXT NOT NULL,
             log_name TEXT NOT NULL,
             source TEXT NOT NULL,
+            source_key TEXT NULL,
             event_id INTEGER NOT NULL,
             entry_type INTEGER NOT NULL,
             event_time TEXT NOT NULL,
@@ -632,6 +967,7 @@ internal static class SchemaUpgrader
             date datetime2 NOT NULL,
             log_name nvarchar(255) NOT NULL,
             source nvarchar(255) NOT NULL,
+            source_key nvarchar(255) NULL,
             event_id int NOT NULL,
             entry_type int NOT NULL,
             event_time datetime2 NOT NULL,
@@ -979,6 +1315,7 @@ internal static class SchemaUpgrader
     private static void AddIndexIfMissing(
         LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false)
     {
+        UpgraderIndexNames.TryAdd(indexName, 0);
         // 同 AddColumnIfMissing：表不存在就跳過，不讓 CREATE INDEX 炸掉啟動
         if (!TableExists(ctx, isSqlite, table)) return;
 

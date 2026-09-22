@@ -570,6 +570,15 @@ public class AiAnalysisSchedulerTests : IDisposable
         var store = _backend.RecordStore();
         store.Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
 
+        // 閘門卡住假 AI：這趟執行在按下停止之前一定還在跑。不卡的話單筆待補瞬間跑完，
+        // 停止時已無可停止的對象（409），全套負載下偶發紅燈
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (prompt, ct) =>
+        {
+            await release.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
         var audit = new RecordingAuditService();
         var controller = new ScheduleController(
             optionsStore,
@@ -603,6 +612,10 @@ public class AiAnalysisSchedulerTests : IDisposable
         // 停止執行
         var cancelResp = controller.CancelAi();
         Assert.True(cancelResp.Success);
+
+        // 放行並等這趟收尾，背景工作不留到測試結束後還在碰資料庫
+        release.SetResult();
+        Assert.True(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
     }
 
     [Fact]

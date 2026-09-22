@@ -6,7 +6,14 @@ using LogForesight.Core.Persistence.Sql;
 namespace LogForesight.Core.Service;
 
 /// <summary>PRTG 每日擷取結果摘要。</summary>
-public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges, int Values, int Failures);
+public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges, int Values, int Failures)
+{
+    /// <summary>本趟算出的監看裝置；null＝計算擲例外（或提早返回沒算）。範圍外清除的保護判斷用。</summary>
+    public PrtgScopeResult? Scope { get; init; }
+
+    /// <summary>裝置鏡像本趟是否成功更新（同 scopeProvider 收到的引數）</summary>
+    public bool DevicesRefreshed { get; init; }
+}
 
 /// <summary>PRTG 狀態變更區間擷取結果摘要。</summary>
 public sealed record PrtgStateChangeRangeResult(
@@ -61,6 +68,7 @@ public sealed class PrtgFetchService
 
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
+    private readonly PrtgFreshnessStore _freshness;
     private readonly IRunConsole _console;
     private readonly PrtgResourceGuard? _guard;
     private readonly IReadOnlyDictionary<string, string> _categoryOverrides;
@@ -70,15 +78,22 @@ public sealed class PrtgFetchService
     /// <see cref="PrtgSensorTypeCategoryMap.ParseOverrides"/> 自目前設定解析出的 Map 傳入
     /// （錯誤行已被略過；設定層存檔時已擋，這裡只防禦舊資料）。
     /// </param>
-    public PrtgFetchService(PrtgClient client, EfPrtgStore store, IRunConsole console,
+    public PrtgFetchService(PrtgClient client, EfPrtgStore store, PrtgFreshnessStore freshness, IRunConsole console,
         IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null)
     {
         _client = client;
         _store = store;
+        _freshness = freshness;
         _console = console;
         _categoryOverrides = categoryOverrides;
         _guard = guard;
     }
+
+    /// <summary>
+    /// 記錄某類 PRTG 資料成功完成一次擷取（見 <see cref="PrtgFreshnessStore"/>）。
+    /// 觸發式取數與歷史回填沿用本服務的 store，不各自另建。
+    /// </summary>
+    public void RecordFreshness(string category, int count) => _freshness.Record(category, count);
 
     /// <summary>
     /// 執行指定日期的 PRTG 每日擷取。
@@ -127,7 +142,7 @@ public sealed class PrtgFetchService
             try
             {
                 scope = scopeProvider(devicesRefreshed);
-                _console.WriteLine($"[範圍] 取數範圍：{scope.DeviceObjids.Count} 台裝置（對應 {scope.Mapped}、衝突 {scope.Conflict}、人工 {scope.Manual}、守門 {scope.Guard}）");
+                _console.WriteLine($"[範圍] 監看裝置：{scope.DeviceObjids.Count} 台裝置（對應 {scope.Mapped}、衝突 {scope.Conflict}、人工 {scope.Manual}、守門 {scope.Guard}）");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -136,7 +151,7 @@ public sealed class PrtgFetchService
             catch (Exception ex)
             {
                 failures++;
-                _console.WriteLine($"[範圍] ✗ 取數範圍計算失敗：{ex.Message}");
+                _console.WriteLine($"[範圍] ✗ 監看裝置計算失敗：{ex.Message}");
             }
         }
 
@@ -179,6 +194,10 @@ public sealed class PrtgFetchService
                 {
                     failures++;
                     _console.WriteLine($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
+                }
+                else
+                {
+                    _freshness.Record(PrtgFreshnessStore.Devices, devicesCount);
                 }
                 devicesRefreshed = outcome.Converged && devicesCount > 0;
             }
@@ -234,8 +253,8 @@ public sealed class PrtgFetchService
             {
                 // 範圍計算失敗已在 ResolveScope 計過 failures，這裡不重複計；範圍為空則是設定面的結果，不算失敗
                 _console.WriteLine(scopeDevices == null
-                    ? "[階段 2/4] 取數範圍無法取得，略過感測器同步。"
-                    : "[階段 2/4] 取數範圍內沒有任何裝置，略過感測器同步。");
+                    ? "[階段 2/4] 監看裝置無法取得，略過感測器同步。"
+                    : "[階段 2/4] 沒有任何監看裝置，略過感測器同步。");
             }
             else
             {
@@ -258,6 +277,10 @@ public sealed class PrtgFetchService
                             var more = failedDevices.Count > 5 ? " 等" : "";
                             _console.WriteLine($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
                         }
+                        else
+                        {
+                            _freshness.Record(PrtgFreshnessStore.Sensors, sensorsCount);
+                        }
                         emptyDevices = empties;
                         sensorsRefreshed = failedDevices.Count == 0 && sensorsCount > 0;
                     }
@@ -278,6 +301,10 @@ public sealed class PrtgFetchService
                             // 數值表會安靜地少一大塊而看不出邊界在哪。
                             _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
                         }
+                        else
+                        {
+                            _freshness.Record(PrtgFreshnessStore.Sensors, sensorsCount);
+                        }
                         sensorsRefreshed = outcome.Converged && sensorsCount > 0;
                     }
                 }
@@ -292,22 +319,45 @@ public sealed class PrtgFetchService
                 }
             }
 
-            // 清除本趟沒被刷新的感測器（範圍外的、PRTG 端已刪的）：只有範圍非空、階段 2 無例外、
+            // 清除本趟沒被刷新的感測器（範圍外的、PRTG 端已刪的）：只有範圍可信、階段 2 無例外、
             // 全站模式已收斂／逐台模式零失敗、且有寫入時，「沒刷新到」才代表「不該留在鏡像」。
             // 必須在語意分類重算之前，免得替即將刪除的列白做工。
-            // 另一道保險：範圍內沒有任何對應成功的裝置時不清。感測器清除沒有裝置那種「過半不刪」（首次套用取數範圍本來就會刪九成以上），
-            // 而「主機主檔暫時讀到空清單 → 對應全數落空 → 範圍只剩守門裝置」會把整份鏡像清光；沒有對應成功的主機時鏡像留著也無害。
+            // 另一道保險：範圍內沒有任何對應成功的裝置時不清；「主機主檔暫時讀到空清單 → 對應全數落空 →
+            // 範圍只剩守門裝置」會把整份鏡像清光，沒有對應成功的主機時鏡像留著也無害。
+            // 指定主機更新只刷新了那幾台的感測器，其餘裝置「沒刷新到」不代表範圍外——清了就是把整份鏡像清光。
             if (sensorsRefreshed && scope!.Mapped == 0)
             {
                 sensorsRefreshed = false;
-                _console.WriteLine("[階段 2/4] 取數範圍內沒有任何對應成功的裝置，本趟不清除感測器鏡像。");
+                _console.WriteLine("[階段 2/4] 監看裝置中沒有任何對應成功的裝置，本趟不清除感測器鏡像。");
+            }
+            var sensorPurgeScopeReason = sensorsRefreshed
+                ? PrtgScopePurge.CheckScope(scope, devicesRefreshed)
+                : null;
+            if (sensorsRefreshed && sensorPurgeScopeReason != null)
+            {
+                sensorsRefreshed = false;
+                if (scope!.IsPartial)
+                    _console.WriteLine("[階段 2/4] 本趟只處理部分主機，不清除感測器鏡像。");
+                else
+                    _console.WriteLine($"[階段 2/4] {sensorPurgeScopeReason}，本趟不清除感測器鏡像。");
+            }
+            if (sensorsRefreshed)
+            {
+                var sensorPurgeShrinkReason = PrtgScopePurge.CheckShrink(
+                    scope!.DeviceObjids.Count, _store.ScopeBaseline().Get());
+                if (sensorPurgeShrinkReason != null)
+                {
+                    sensorsRefreshed = false;
+                    _console.WriteLine($"[階段 2/4] ⚠ {sensorPurgeShrinkReason}，本趟不清除感測器鏡像。");
+                }
             }
             if (sensorsRefreshed)
             {
                 try
                 {
                     var (deleted, graceKept) = _store.DeleteSensorsNotSyncedSince(
-                        sensorsSyncStartedAt, emptyDevices, sensorsSyncStartedAt - EmptyDeviceGrace);
+                        sensorsSyncStartedAt, emptyDevices, sensorsSyncStartedAt - EmptyDeviceGrace,
+                        scope!.PreserveDeviceObjids);
                     if (deleted > 0)
                         _console.WriteLine($"[階段 2/4] 已清除 {deleted} 個範圍外或 PRTG 端已不存在的感測器。");
                     if (graceKept > 0)
@@ -360,6 +410,11 @@ public sealed class PrtgFetchService
                 failures++;
                 _console.WriteLine($"[階段 3/4] ✗ {rangeResult.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
             }
+            else if (scope != null)
+            {
+                // 範圍無法取得時本階段是略過，不算一次成功的擷取
+                _freshness.Record(PrtgFreshnessStore.StateChanges, stateChangesCount);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -405,7 +460,11 @@ public sealed class PrtgFetchService
             _console.WriteLine("[階段 4/4] 數值擷取改由觸發式流程執行，本階段略過。");
         }
 
-        return new PrtgFetchResult(devicesCount, sensorsCount, stateChangesCount, valuesCount, failures);
+        return new PrtgFetchResult(devicesCount, sensorsCount, stateChangesCount, valuesCount, failures)
+        {
+            Scope = scope,
+            DevicesRefreshed = devicesRefreshed
+        };
     }
 
     /// <summary>
@@ -642,8 +701,8 @@ public sealed class PrtgFetchService
         {
             // 範圍計算失敗已在前面計過 failures，這裡不重複計；範圍為空是設定面的結果，不算失敗
             _console.WriteLine(scopeDeviceObjids == null
-                ? "[階段 3/4] 取數範圍無法取得，略過狀態變更同步。"
-                : "[階段 3/4] 取數範圍內沒有任何裝置，略過狀態變更同步。");
+                ? "[階段 3/4] 監看裝置無法取得，略過狀態變更同步。"
+                : "[階段 3/4] 沒有任何監看裝置，略過狀態變更同步。");
             return new PrtgStateChangeRangeResult(
                 WrittenByDay: new Dictionary<DateTime, int>(), TotalWritten: 0, ReadRows: 0, Pages: 0,
                 StoppedEarly: false, Converged: true, Error: null,

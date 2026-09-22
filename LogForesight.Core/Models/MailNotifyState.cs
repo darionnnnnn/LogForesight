@@ -27,4 +27,10 @@ public class MailNotifyState
     /// 達門檻即從本輪 coverage 排除（壞地址不再綁架整批標記），寄送成功則歸零，
     /// 熔斷（本輪未嘗試）不計入。設定頁儲存郵件設定時整份清空。</summary>
     public Dictionary<string, int> RecipientFailureStreaks { get; set; } = new();
+
+    /// <summary>是否處於排程資料過期警示中（任務 A-3）</summary>
+    public bool FreshnessAlertActive { get; set; }
+
+    /// <summary>最後一次在摘要信中加入資料過期警示的日期（yyyy-MM-dd，任務 A-3）</summary>
+    public string? LastFreshnessAlertDate { get; set; }
 }

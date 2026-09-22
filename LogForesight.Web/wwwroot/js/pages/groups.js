@@ -124,7 +124,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
             { title: '', className: 'text-end', render: g => groupActions('user', g) }
         ],
         rows: groups,
-        empty: { title: '（無）' }
+        empty: { title: '尚無群組', hint: '可透過右上角「新增群組」建立。' }
     });
     container.appendChild(table);
 }
@@ -158,6 +158,19 @@ function hostGroupNameCell(group) {
  */
 function renderMatrix() {
     const container = document.getElementById('access-matrix');
+
+    // 沒有部門群組＝一般使用者無從取得任何主機的檢視權限：指路到建立部門群組，不只說「沒有」
+    if (!userGroups.some(g => g.role === 'User')) {
+        renderEmpty(container, {
+            title: '還沒有部門群組',
+            hint: '一般使用者要透過部門群組取得主機的檢視權限。'
+        });
+        const actionWrap = document.createElement('div');
+        actionWrap.className = 'mt-3';
+        actionWrap.appendChild(button('建立部門群組', { variant: 'outline-primary', onClick: () => openModal('user', null) }));
+        container.querySelector('.lf-empty').appendChild(actionWrap);
+        return;
+    }
 
     if (matrix.userGroups.length === 0 || matrix.hostGroups.length === 0) {
         renderEmpty(container, {

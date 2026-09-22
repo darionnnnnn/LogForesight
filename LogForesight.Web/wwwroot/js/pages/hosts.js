@@ -11,6 +11,7 @@ import {
     checkboxList, button, loadPageSize, savePageSize, guardLoad
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { appUrl } from '../core/paths.js';
 
 const listContainer = document.getElementById('host-list');
 const queueContainer = document.getElementById('netiq-queues');
@@ -61,6 +62,7 @@ let unpolledIds = new Set();   // 其中今晚不會被輪巡的那些
 const selectedHosts = new Map();
 const batchGroupsModal = new bootstrap.Modal(document.getElementById('batch-groups-modal'));
 const batchTierModal = new bootstrap.Modal(document.getElementById('batch-tier-modal'));
+const batchOwnersModal = new bootstrap.Modal(document.getElementById('batch-owners-modal'));
 let headerCheckboxEl = null;   // 表頭全選 checkbox 的 DOM 參照，供逐列勾選後同步狀態
 
 async function load() {
@@ -519,27 +521,24 @@ function sourceCell(host) {
 }
 
 /**
- * 最近回報時間：超過 2 天沒回報就標紅。
+ * 最近回報時間：未回報由伺服器與清單篩選共用的判定標紅。
  * 這正是「沒告警 ≠ 沒問題」的一種——批次沒跑就不會有任何風險紀錄，
  * 畫面上必須看得出是「真的沒事」還是「根本沒在看」。
  *
- * 新主機寬限期（與後端 HostAdminService.NewHostGracePeriod 一致，24 小時）：
- * 剛匯入的主機在第一次批次跑完前 lastReportAt 必為空，寬限期內不標紅，
- * 否則整批匯入會讓畫面一次冒出一片刺眼的紅字，而那些主機根本還沒到該被檢查的時間。
+ * 新主機寬限期亦由同一後端判定，避免頁面與篩選對同一台主機說法不同。
  */
 function lastReportCell(host) {
     const span = document.createElement('span');
 
     if (!host.lastReportAt) {
-        const hoursOld = (Date.now() - new Date(host.createdAt).getTime()) / 3600000;
-        span.className = hoursOld > 24 ? 'text-danger' : 'text-muted';
+        span.className = host.isSilent ? 'text-danger' : 'text-muted';
         span.textContent = '尚未回報';
         return span;
     }
 
     const days = (Date.now() - new Date(host.lastReportAt).getTime()) / 86400000;
     span.textContent = formatDateTime(host.lastReportAt);
-    if (days > 2) {
+    if (host.isSilent) {
         span.className = 'text-danger fw-semibold';
         span.title = `已 ${Math.floor(days)} 天沒有回報`;
     }
@@ -827,6 +826,36 @@ function openBatchTierModal() {
     batchTierModal.show();
 }
 
+/**
+ * 批次指派負責人 modal（回饋第 50 輪批次F-2，形狀同 openBatchGroupsModal）：
+ * 頂部列出已勾選主機與現有負責人，使用者多選沿用編輯主機的 checkboxList（可篩選、只列啟用中）。
+ */
+function openBatchOwnersModal() {
+    const hosts = [...selectedHosts.values()].sort((a, b) => a.hostName.localeCompare(b.hostName, 'zh-TW'));
+
+    document.getElementById('batch-owners-hosts-label').textContent = `已勾選主機（${hosts.length} 台）`;
+    const list = document.getElementById('batch-owners-hosts');
+    list.replaceChildren();
+    for (const host of hosts) {
+        const row = document.createElement('div');
+        row.className = 'small mb-1';
+        const name = document.createElement('span');
+        name.className = 'me-2';
+        name.textContent = host.hostName;
+        row.append(name, badges(host.ownerNames, '未指定'));
+        list.appendChild(row);
+    }
+
+    document.getElementById('batch-owners-mode-add').checked = true;
+    checkboxList(document.getElementById('batch-owners-checks'), users.filter(u => u.active).map(u => ({
+        id: u.userId,
+        label: formatUserName(u.displayName, u.account),
+        checked: false
+    })), '尚無使用者，請先建立或匯入使用者。', { filterable: true });
+
+    batchOwnersModal.show();
+}
+
 /** 「取代」模式下若沒勾任何群組，套用後這些主機會全部變成未分組——先警告 */
 function updateReplaceWarning() {
     const mode = document.querySelector('input[name="batch-groups-mode"]:checked').value;
@@ -847,6 +876,8 @@ document.getElementById('batch-groups-checks').addEventListener('change', update
 
 document.getElementById('btn-batch-groups').addEventListener('click', openBatchGroupsModal);
 document.getElementById('btn-batch-tier').addEventListener('click', openBatchTierModal);
+document.getElementById('btn-batch-owners').addEventListener('click', openBatchOwnersModal);
+document.getElementById('link-owner-csv').href = appUrl('/admin/imports');
 document.getElementById('btn-select-all-matching')
     .addEventListener('click', event => selectAllMatching(event.currentTarget));
 document.getElementById('btn-clear-selection').addEventListener('click', () => {
@@ -905,6 +936,44 @@ document.getElementById('batch-tier-form').addEventListener('submit', async even
         selectedHosts.clear();
         batchTierModal.hide();
         await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+document.getElementById('batch-owners-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const ownerUserIds = selectedIds('batch-owners-checks');
+    const mode = document.querySelector('input[name="batch-owners-mode"]:checked').value;
+    if (ownerUserIds.length === 0 && mode !== 'replace') {
+        toast('請至少勾選一位使用者', 'warning');
+        return;
+    }
+    if (ownerUserIds.length === 0 && !await confirmAction({ message: `${selectedHosts.size} 台將變成沒有負責人，確定取代？` })) return;
+
+    const saveButton = document.getElementById('batch-owners-save');
+    const restore = withBusy(saveButton, '套用中');
+
+    try {
+        const result = await api.put('/api/admin/hosts/owners/batch', {
+            hostIds: [...selectedHosts.keys()],
+            ownerUserIds,
+            mode
+        });
+
+        // 就地更新：以回傳的主機列替換本頁與勾選中的同一台，保留勾選、頁碼與捲動位置
+        const updated = new Map(result.hosts.map(h => [h.hostId, h]));
+        currentPageHosts = currentPageHosts.map(h => updated.get(h.hostId) ?? h);
+        for (const id of selectedHosts.keys()) {
+            if (updated.has(id)) selectedHosts.set(id, updated.get(id));
+        }
+        render();
+
+        toast(`已更新 ${result.updatedCount} 台的負責人`, 'success');
+        batchOwnersModal.hide();
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {

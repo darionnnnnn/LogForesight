@@ -247,7 +247,7 @@ public class WebAppSettingsValidationTests
     {
         var settings = Baseline();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: true));
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(strict: true, "Production"));
         Assert.Contains("Jwt:SecretKey", ex.Message);
     }
 
@@ -256,7 +256,7 @@ public class WebAppSettingsValidationTests
     {
         var settings = Baseline();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: true));
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(strict: true, "Production"));
         Assert.Contains("Auth:ServerAdmin:PasswordHash", ex.Message);
     }
 
@@ -266,7 +266,7 @@ public class WebAppSettingsValidationTests
     {
         var settings = Baseline();
 
-        settings.Validate(isProduction: false);   // 不應拋例外
+        settings.Validate(strict: false, "Development");   // 不應拋例外
     }
 
     [Fact]
@@ -276,7 +276,7 @@ public class WebAppSettingsValidationTests
         settings.Jwt.SecretKey = "這是另外產生的至少三十二個位元組長的隨機字串內容測試用途";
         settings.Auth.ServerAdmin.PasswordHash = PasswordHasher.Hash("Production-Overridden-P@ssw0rd");
 
-        settings.Validate(isProduction: true);   // 不應拋例外
+        settings.Validate(strict: true, "Production");   // 不應拋例外
     }
 
     [Fact]
@@ -285,7 +285,7 @@ public class WebAppSettingsValidationTests
         var settings = Baseline();
         settings.Auth.ServerAdmin.PasswordHash = "MyPlainPassword123!";
 
-        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: false));
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(strict: false, "Development"));
         Assert.Contains("--hash-password", ex.Message);
         Assert.Contains("Auth:ServerAdmin:PasswordHash", ex.Message);
     }

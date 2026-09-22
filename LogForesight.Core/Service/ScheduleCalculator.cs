@@ -155,8 +155,8 @@ public static class ScheduleCalculator
     /// <summary>
     /// 現在是否該觸發一次排程執行：now 落在某個窗口內，且**那個窗口目前這次的實例**還沒有觸發過
     /// （<paramref name="recentScheduledTriggerTimes"/> 裡沒有任何一筆落在該實例的起訖區間）。
-    /// 同一個函式服務兩個呼叫端：常態輪詢（週期性檢查是否該觸發）與服務啟動時的漏跑補償
-    /// （docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）——語意完全相同，不需要兩套邏輯。
+    /// 同一個函式服務兩個呼叫端：常態輪詢（週期性檢查是否該觸發）與服務啟動時的補觸發
+    /// （只在重新啟動時仍落在窗口內才會補觸發；錯過整個窗口不會補）——語意完全相同，不需要兩套邏輯。
     /// </summary>
     public static bool ShouldTriggerNow(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<DateTime> recentScheduledTriggerTimes)
     {
@@ -179,4 +179,66 @@ public static class ScheduleCalculator
     public static bool WindowAlreadyTriggered(
         DateTime now, DateTime windowInstanceStart, IEnumerable<DateTime> scheduledTriggerTimes) =>
         scheduledTriggerTimes.Any(t => t >= windowInstanceStart && t <= now);
+
+    /// <summary>自動補跑的最大延遲（窗口結束後 4 小時內）</summary>
+    public static readonly TimeSpan AutoCatchUpMaxDelay = TimeSpan.FromHours(4);
+
+    /// <summary>
+    /// 回傳所有窗口中，結束時刻 &lt;= now 的最近一個窗口實例的（起, 訖），沒有則 null。
+    /// 跨午夜窗口（例 22:00→06:00）的實例訖＝隔天 06:00。窗口 Start/End 解析沿用 TryParseMinutes。
+    /// </summary>
+    public static (DateTime Start, DateTime End)? LastEndedWindowInstance(DateTime now, IEnumerable<ScheduleWindow> windows)
+    {
+        (DateTime Start, DateTime End)? latest = null;
+
+        foreach (var w in windows)
+        {
+            if (!TryParseMinutes(w.Start, out var start) || !TryParseMinutes(w.End, out var end) || start == end)
+                continue;
+
+            var candEnd = now.Date.AddMinutes(end);
+            var candStart = start < end ? now.Date.AddMinutes(start) : now.Date.AddDays(-1).AddMinutes(start);
+
+            var instance = candEnd <= now
+                ? (Start: candStart, End: candEnd)
+                : (Start: candStart.AddDays(-1), End: candEnd.AddDays(-1));
+
+            if (latest == null || instance.End > latest.Value.End || (instance.End == latest.Value.End && instance.Start > latest.Value.Start))
+            {
+                latest = instance;
+            }
+        }
+
+        return latest;
+    }
+
+    /// <summary>
+    /// 回傳需要補跑的窗口實例（起, 訖）或 null。規則全部成立才回傳：
+    /// 1. now 不在任何窗口內（在窗口內交給既有 ShouldTriggerNow）。
+    /// 2. LastEndedWindowInstance 不為 null。
+    /// 3. now - 訖 &lt;= maxDelay。
+    /// 4. scheduleTriggerTimes 中沒有任何一筆 &gt;= 該實例的起。
+    /// 5. scheduleTriggerTimes 至少有一筆（全新安裝、沒有任何歷史紀錄時不補跑）。
+    /// </summary>
+    public static (DateTime Start, DateTime End)? FindMissedWindow(
+        DateTime now,
+        IEnumerable<ScheduleWindow> windows,
+        IEnumerable<DateTime> scheduleTriggerTimes,
+        TimeSpan maxDelay)
+    {
+        var windowList = windows as IReadOnlyCollection<ScheduleWindow> ?? windows.ToList();
+        if (IsWithinAnyWindow(now, windowList)) return null;
+
+        var lastEnded = LastEndedWindowInstance(now, windowList);
+        if (lastEnded == null) return null;
+
+        var (start, end) = lastEnded.Value;
+        if (now - end > maxDelay) return null;
+
+        var triggerTimes = scheduleTriggerTimes as IReadOnlyCollection<DateTime> ?? scheduleTriggerTimes.ToList();
+        if (triggerTimes.Count == 0) return null;
+        if (triggerTimes.Any(t => t >= start)) return null;
+
+        return lastEnded;
+    }
 }

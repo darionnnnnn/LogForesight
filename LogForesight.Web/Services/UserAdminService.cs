@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -21,6 +23,9 @@ public class UserAdminService
     private readonly IAuditService _audit;
     private readonly UserCapabilityResolver _capabilities;
     private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly PermissionVersionStamp _permissionVersion;
+    private readonly IRecordHandlingStore _handlings;
+    private readonly ISystemSettingsStore _settings;
 
     public UserAdminService(
         IUserStore users,
@@ -31,8 +36,12 @@ public class UserAdminService
         IVisibilityService visibility,
         IAuditService audit,
         UserCapabilityResolver capabilities,
-        IUserDisplayNameService userDisplayNames)
+        IUserDisplayNameService userDisplayNames,
+        PermissionVersionStamp permissionVersion,
+        IRecordHandlingStore handlings,
+        ISystemSettingsStore settings)
     {
+        _permissionVersion = permissionVersion;
         _users = users;
         _groups = groups;
         _hosts = hosts;
@@ -42,6 +51,8 @@ public class UserAdminService
         _audit = audit;
         _capabilities = capabilities;
         _userDisplayNames = userDisplayNames;
+        _handlings = handlings;
+        _settings = settings;
     }
 
     public List<UserDto> GetUsers()
@@ -57,9 +68,12 @@ public class UserAdminService
                 ownedCounts[ownerId] = ownedCounts.GetValueOrDefault(ownerId) + 1;
         }
 
+        // 最後登入時間整份取一次，不逐列查
+        var lastLogins = _users.GetLastLogins();
+
         return _users.GetAll()
             .OrderBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
-            .Select(u => ToDto(u, groupsById, ownedCounts.GetValueOrDefault(u.UserId)))
+            .Select(u => ToDto(u, groupsById, lastLogins, ownedCounts.GetValueOrDefault(u.UserId)))
             .ToList();
     }
 
@@ -115,7 +129,7 @@ public class UserAdminService
 
         return new UserDetailDto
         {
-            User = ToDto(user, groupsById),
+            User = ToDto(user, groupsById, _users.GetLastLogins()),
             Groups = memberGroups.Select(g => new UserGroupDto
             {
                 GroupId = g.GroupId,
@@ -137,8 +151,10 @@ public class UserAdminService
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().HostId, StringComparer.OrdinalIgnoreCase);
 
-        return _cases.GetByHandler(userId)
-            .OrderByDescending(c => c.CreatedAt)
+        var myCases = _cases.GetByHandler(userId);
+        var myCaseIds = myCases.Select(c => c.CaseId).ToHashSet();
+
+        var result = myCases
             .Select(c => new UserAssignmentHistoryDto
             {
                 CaseId = c.CaseId,
@@ -156,6 +172,35 @@ public class UserAdminService
                 WorkOrderId = c.WorkOrderId
             })
             .ToList();
+
+        // 舊紀錄沒有原處理人時不猜測；一次讀取保留期內具有明確身分的改派事件。
+        var cutoff = DateTime.Today.AddDays(-Math.Max(1, _settings.Get().AuditRetentionDays));
+        var reassigned = _handlings.GetReassignments(userId, cutoff)
+            .Where(l => !myCaseIds.Contains(l.CaseId!))
+            .GroupBy(l => l.CaseId!)
+            .Select(g => g.First());
+        foreach (var log in reassigned)
+        {
+            var next = log.HandlerId.HasValue ? _users.Get(log.HandlerId.Value) : null;
+            var name = next == null ? "其他處理人" : _userDisplayNames.Of(next.DisplayName);
+            result.Add(new UserAssignmentHistoryDto
+            {
+                CaseId = log.CaseId!,
+                HostId = hostIdByName.TryGetValue(log.HostName, out var hostId) ? hostId : null,
+                HostName = log.HostName,
+                IssueLabel = log.IssueLabel ?? "",
+                Status = "reassigned",
+                StatusText = $"已改派給 {name}",
+                Closed = true,
+                CreatedAt = log.CreatedAt,
+                CreatedByAccount = log.ActorAccount,
+                ClosedAt = log.CreatedAt,
+                FirstLinkedDate = log.Date.ToString("yyyy-MM-dd"),
+                LastLinkedDate = log.Date.ToString("yyyy-MM-dd"),
+                NewHandler = name
+            });
+        }
+        return result.OrderByDescending(c => c.CreatedAt).ToList();
     }
 
     public UserDto SaveUser(SaveUserRequest request)
@@ -177,6 +222,7 @@ public class UserAdminService
             // 「更新顯示名稱」這種操作就有機會意外清掉某人的所有權限
             GroupIds = existing?.GroupIds ?? new List<long>()
         });
+        if (existing != null && existing.Active != user.Active) _permissionVersion.Bump();
 
         _audit.Record(
             action: isNew ? AuditActions.UserCreate : AuditActions.UserUpdate,
@@ -187,7 +233,7 @@ public class UserAdminService
             targetId: user.UserId.ToString(),
             detail: new { user.Account, user.DisplayName, user.Email, user.Active });
 
-        return ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId));
+        return ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId), _users.GetLastLogins());
     }
 
     public UserDto SetUserGroups(long userId, IEnumerable<long> groupIds)
@@ -204,6 +250,7 @@ public class UserAdminService
         var after = requested.Select(id => allGroups[id].GroupName).ToList();
 
         _users.SetGroups(userId, requested);
+        _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.UserUpdate,
@@ -212,7 +259,7 @@ public class UserAdminService
             targetId: userId.ToString(),
             detail: new { Before = before, After = after });
 
-        return ToDto(_users.Get(userId)!, allGroups);
+        return ToDto(_users.Get(userId)!, allGroups, _users.GetLastLogins());
     }
 
     /// <summary>一次新增的帳號上限，防手滑貼整份名冊——超過請分批處理</summary>
@@ -309,7 +356,8 @@ public class UserAdminService
     }
 
     private UserDto ToDto(
-        WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById, int ownedHostCount = 0) => new()
+        WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById,
+        IReadOnlyDictionary<long, DateTime> lastLogins, int ownedHostCount = 0) => new()
     {
         UserId = user.UserId,
         Account = user.Account,
@@ -318,7 +366,8 @@ public class UserAdminService
         Active = user.Active,
         GroupIds = user.GroupIds,
         GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName),
-        LastLoginAt = user.LastLoginAt,
+        // 最後登入時間存在使用者清單之外；查不到才用升級前留在清單裡的舊值（只讀、不再寫）
+        LastLoginAt = lastLogins.TryGetValue(user.UserId, out var lastLogin) ? lastLogin : user.LastLoginAt,
         OwnedHostCount = ownedHostCount,
         DispatchPaused = user.DispatchPaused
     };

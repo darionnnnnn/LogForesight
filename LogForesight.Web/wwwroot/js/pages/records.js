@@ -14,7 +14,7 @@
 import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
-    renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
+    renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
     headerWithHelp, icon
 } from '../core/ui.js';
@@ -797,12 +797,12 @@ async function renderIssueOccurrences(cell, group) {
     try {
         result = await api.get(`/api/records?${params}`, { silent: true });
     } catch {
-        renderEmpty(wrap, { title: '載入受影響主機失敗' });
+        renderError(wrap, { message: '載入受影響主機失敗', onRetry: () => renderIssueOccurrences(cell, group) });
         return;
     }
 
     if (!result.items.length) {
-        renderEmpty(wrap, { title: '此範圍內沒有可展開的主機日' });
+        renderEmpty(wrap, { title: '此範圍內沒有可展開的主機日', hint: '可能因目前的篩選條件或權限限制未包含此問題的主機日，可調整篩選或切換至明細視角。' });
         return;
     }
 
@@ -818,7 +818,7 @@ async function renderIssueOccurrences(cell, group) {
         ],
         rows: result.items,
         rowHref: r => `/records/${r.hostId}/${r.date}`,
-        empty: { title: '沒有資料' }
+        empty: { title: '沒有資料', hint: '查無符合目前條件的主機日。' }
     });
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
@@ -1184,7 +1184,7 @@ function issueAssignButton(group) {
 
 /**
  * 靜音（B-3）：把這個問題在一段期間內完全噤聲，到期自動恢復。modal 是共用元件
- * （問題檔案頁的「靜音／延長」走同一顆）。這裡沒有現成的 currentMute 可帶——
+ * （問題負責與靜音頁的「靜音／延長」走同一顆）。這裡沒有現成的 currentMute 可帶——
  * 依問題視角的列不含靜音區間，傳 null 就是「新設定一段靜音」的版面；
  * 後端在今天已靜音時本來就會延長，不會因此多出一段區間。
  */
@@ -1300,7 +1300,7 @@ function renderBulkCloseForm(body, group, preview) {
             { title: '狀態', render: h => bulkCloseStatusCell(h) }
         ],
         rows: preview.hosts,
-        empty: { title: '目前查詢範圍內沒有受影響的主機' }
+        empty: { title: '目前查詢範圍內沒有受影響的主機', hint: '所選問題在目前查詢範圍內沒有可批次套用結論的主機，請調整查詢條件後再試。' }
     });
     form.appendChild(table);
 

@@ -51,7 +51,7 @@ form.addEventListener('submit', async event => {
 
     const restore = withBusy(submitButton, '登入中');
     try {
-        await api.post('/api/auth/login', {
+        const result = await api.post('/api/auth/login', {
             account,
             password: passwordInput.value || null
         }, { silent: true });
@@ -61,15 +61,21 @@ form.addEventListener('submit', async event => {
         // returnUrl 存的是 app 內路徑（不含掛載前綴），用 appUrl 還原成真正的網址
         const params = new URLSearchParams(location.search);
         const returnUrl = params.get('returnUrl');
-        location.href = appUrl(isSafeReturnUrl(returnUrl) ? returnUrl : '/');
+        location.href = appUrl(isSafeReturnUrl(returnUrl) ? returnUrl : (result.landingPath || '/'));
     } catch (error) {
         showError(error.message);
         restore();
     }
 });
 
+// 只接受站內相對路徑：瀏覽器會把 '\' 當 '/'（'/\evil.com' ≡ '//evil.com'），
+// 所以任何反斜線都拒絕；含 '://' 的值也一律拒絕，不賭解析器怎麼讀
 function isSafeReturnUrl(url) {
-    return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//');
+    return typeof url === 'string'
+        && url.startsWith('/')
+        && !url.startsWith('//')
+        && !url.includes('\\')
+        && !url.includes('://');
 }
 
 function showError(message) {

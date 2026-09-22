@@ -37,6 +37,167 @@
     <div class="lf-card__body p-0" id="setup-steps"></div>
 </section>
 
+<template id="setup-ad-template">
+    <div class="card mt-3 border bg-light" id="setup-ad-form">
+        <div class="card-body">
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="setup-ad-auth-enabled" />
+                <label class="form-check-label fw-semibold" for="setup-ad-auth-enabled">啟用 AD 驗證</label>
+            </div>
+            <div class="mb-3">
+                <label for="setup-ad-servers" class="form-label small fw-semibold">AD 伺服器</label>
+                <textarea class="form-control form-control-sm" id="setup-ad-servers" rows="3" placeholder="一行一台，例如：&#10;dc1.corp.local&#10;dc2.corp.local"></textarea>
+                <div class="form-text small text-muted">一行一台 AD / LDAP 伺服器主機名稱或 IP。</div>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-ad-search-base" class="form-label small fw-semibold">查詢基準 DN（選填）</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-ad-search-base" placeholder="DC=corp,DC=local" />
+                </div>
+                <div class="col-sm-6">
+                    <label for="setup-ad-search-filter" class="form-label small fw-semibold">查詢過濾器（選填）</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-ad-search-filter" placeholder="(sAMAccountName={0})" />
+                </div>
+            </div>
+            <div class="card mb-3 border bg-white">
+                <div class="card-body p-2">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-sm-5">
+                            <label for="setup-ad-test-account" class="form-label small mb-1">測試帳號</label>
+                            <input type="text" class="form-control form-control-sm" id="setup-ad-test-account" />
+                        </div>
+                        <div class="col-sm-5">
+                            <label for="setup-ad-test-password" class="form-label small mb-1">測試密碼</label>
+                            <input type="password" class="form-control form-control-sm" id="setup-ad-test-password" autocomplete="off" />
+                        </div>
+                        <div class="col-sm-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100" id="setup-ad-test-btn">測試連線</button>
+                        </div>
+                    </div>
+                    <div class="mt-2 small" id="setup-ad-test-result"></div>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-primary" id="setup-ad-save-btn">儲存並繼續</button>
+                <span class="small" id="setup-ad-save-feedback"></span>
+            </div>
+        </div>
+    </div>
+</template>
+
+<template id="setup-mail-template">
+    <div class="lf-card mt-3" id="setup-mail-form">
+        <div class="lf-card__body">
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="setup-mail-enabled" />
+                <label class="form-check-label fw-semibold" for="setup-mail-enabled">啟用郵件通知</label>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-smtp-server" class="form-label small fw-semibold">SMTP 伺服器</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-smtp-server" placeholder="smtp.corp.local" />
+                </div>
+                <div class="col-sm-3">
+                    <label for="setup-smtp-port" class="form-label small fw-semibold">Port</label>
+                    <input type="number" class="form-control form-control-sm" id="setup-smtp-port" min="1" max="65535" value="25" />
+                </div>
+                <div class="col-sm-3 d-flex align-items-end">
+                    <div class="form-check mb-1">
+                        <input class="form-check-input" type="checkbox" id="setup-smtp-use-tls" />
+                        <label class="form-check-label small" for="setup-smtp-use-tls">使用 TLS</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-smtp-account" class="form-label small fw-semibold">SMTP 帳號（選填）</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-smtp-account" placeholder="留空＝匿名／不驗證" />
+                </div>
+                <div class="col-sm-6">
+                    <label for="setup-smtp-password" class="form-label small fw-semibold">SMTP 密碼（留空沿用）</label>
+                    <input type="password" class="form-control form-control-sm" id="setup-smtp-password" autocomplete="off" placeholder="留空＝沿用既有密碼" />
+                </div>
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label for="setup-mail-from" class="form-label small fw-semibold">寄件人</label>
+                    <input type="text" class="form-control form-control-sm" id="setup-mail-from" placeholder="logforesight@corp.local" />
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="setup-mail-recipients" class="form-label small fw-semibold">收件人</label>
+                <textarea class="form-control form-control-sm" id="setup-mail-recipients" rows="3" placeholder="一行一位，例如：&#10;admin@corp.local"></textarea>
+                <div class="form-text small text-muted">一行一位收件人電子郵件地址。</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold d-block">通知觸發</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="setup-mail-on-run-completed" />
+                    <label class="form-check-label small" for="setup-mail-on-run-completed">排程／手動執行結束後寄執行摘要</label>
+                </div>
+            </div>
+            <div class="p-3 mb-3 border rounded bg-light">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="setup-mail-test-btn">測試寄信</button>
+                    <span class="small" id="setup-mail-test-result"></span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-primary" id="setup-mail-save-btn">儲存並繼續</button>
+                <span class="small" id="setup-mail-save-feedback"></span>
+            </div>
+        </div>
+    </div>
+</template>
+
+<template id="setup-ai-template">
+    <div class="lf-card mt-3" id="setup-ai-form">
+        <div class="lf-card__body">
+            <div class="alert alert-info py-2 px-3 small mb-3">
+                <strong>說明：</strong>AI 服務為選填項目。若未配置 AI 服務，仍可使用規則與統計分析；白話摘要等 AI 功能則暫時無法使用。
+            </div>
+            <div class="mb-3">
+                <label for="setup-ai-provider" class="form-label small fw-semibold">服務提供者</label>
+                <select class="form-select form-select-sm" id="setup-ai-provider">
+                    <option value="Local">本機 OpenAI 相容端點</option>
+                    <option value="OpenAi">OpenAI 官方</option>
+                    <option value="AzureOpenAi">Azure OpenAI</option>
+                </select>
+                <div class="form-text small text-muted" id="setup-ai-provider-hint"></div>
+            </div>
+            <div class="mb-3" id="setup-ai-base-url-wrap">
+                <label for="setup-ai-base-url" class="form-label small fw-semibold" id="setup-ai-base-url-label">API 位址</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-base-url" placeholder="http://localhost:8080" />
+                <div class="form-text small text-muted" id="setup-ai-base-url-hint"></div>
+            </div>
+            <div class="mb-3" id="setup-ai-model-wrap">
+                <label for="setup-ai-model" class="form-label small fw-semibold" id="setup-ai-model-label">模型名稱</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-model" placeholder="local-model" />
+                <div class="form-text small text-muted" id="setup-ai-model-hint">選填，預設 local-model。</div>
+            </div>
+            <div class="mb-3 d-none" id="setup-ai-azure-deployment-wrap">
+                <label for="setup-ai-azure-deployment" class="form-label small fw-semibold">部署名稱（Deployment Name）</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-azure-deployment" placeholder="例如 gpt-4o" />
+                <div class="form-text small text-muted">Azure OpenAI 建立的模型部署名稱。</div>
+            </div>
+            <div class="mb-3 d-none" id="setup-ai-azure-api-version-wrap">
+                <label for="setup-ai-azure-api-version" class="form-label small fw-semibold">API 版本</label>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-azure-api-version" placeholder="2024-10-21" value="2024-10-21" />
+                <div class="form-text small text-muted">Azure OpenAI API 版本，預設 2024-10-21。</div>
+            </div>
+            <div class="mb-3" id="setup-ai-api-key-wrap">
+                <label for="setup-ai-api-key" class="form-label small fw-semibold" id="setup-ai-api-key-label">API 金鑰</label>
+                <input type="password" class="form-control form-control-sm" id="setup-ai-api-key" autocomplete="off" placeholder="留空＝沿用既有金鑰" />
+                <div class="form-text small text-muted" id="setup-ai-api-key-hint"></div>
+            </div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn btn-sm btn-primary" id="setup-ai-save-test-btn">儲存並測試</button>
+                <span class="small" id="setup-ai-feedback"></span>
+            </div>
+        </div>
+    </div>
+</template>
+
 @section Scripts {
     <script type="module" src="~/js/pages/setup.js" asp-append-version="true"></script>
 }

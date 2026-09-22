@@ -47,7 +47,7 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(), new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")),
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-            new PrtgBackfillRunState(), new FakeSentinelStore());
+            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
 
     private SettingsController CreateController(PrtgStructureSyncService? sync)
     {
@@ -121,7 +121,8 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
 
     private PrtgBackfillService CreateBackfillService(PrtgBackfillRunState state) =>
         new(_settingsStore, _backend, state, new PrtgProbeRunState(),
-            new HostStore(_backend.Blob("hosts")), new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore());
+            new HostStore(_backend.Blob("hosts")), new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(),
+            new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), new HostStore(_backend.Blob("hosts")), new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), state, new FakeSentinelStore(), new DataVersionStamp()));
 
     private SettingsController CreateBackfillController(PrtgBackfillService backfill)
     {

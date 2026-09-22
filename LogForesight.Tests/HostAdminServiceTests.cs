@@ -2,6 +2,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -18,8 +19,15 @@ public class HostAdminServiceTests : IDisposable
     private readonly FakeHostGroupStore _groups = new();
     private readonly RecordingAuditService _audit = new();
     private readonly EfSqliteFixture _fx = new();
+    private readonly string _snapshotDir = Path.Combine(Path.GetTempPath(), "lf-host-snapshot-" + Guid.NewGuid().ToString("N"));
 
-    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose()
+    {
+        _snapshotService?.Dispose();
+        _fx.Dispose();
+        if (Directory.Exists(_snapshotDir)) Directory.Delete(_snapshotDir, recursive: true);
+        GC.SuppressFinalize(this);
+    }
 
     /// <summary>記錄「重算今天的 PRTG 對應」被叫了幾次，供斷言觸發條件（docs/PRTG-SPEC.md §4）。</summary>
     private sealed class CountingMapRefresher : IPrtgHostMapRefresher
@@ -37,8 +45,42 @@ public class HostAdminServiceTests : IDisposable
     }
 
     private readonly CountingMapRefresher _mapRefresher = new();
+    private readonly StorageBackend _backend;
+    private readonly CountingSnapshotService _snapshotService;
 
-    private HostAdminService Create() => new(
+    public HostAdminServiceTests()
+    {
+        Directory.CreateDirectory(_snapshotDir);
+        _backend = new StorageBackend(new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_snapshotDir, "snapshot.db")}" }, _snapshotDir);
+        _snapshotService = new CountingSnapshotService(_backend, _hosts);
+    }
+
+    private sealed class CountingSnapshotService : PrtgSnapshotHostedService
+    {
+        public int Calls { get; private set; }
+
+        public CountingSnapshotService(StorageBackend backend, IHostStore hostStore)
+            : base(
+                new FakeSystemSettingsStore(),
+                backend,
+                new SchedulerRunState(),
+                new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new FakeHostApplicationLifetime()),
+                new PrtgBackfillService(new FakeSystemSettingsStore(), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(), null!),
+                hostStore,
+                new FakeSentinelStore(),
+                new PrtgProbeRunState(),
+                new FakeHostApplicationLifetime())
+        {
+        }
+
+        public override void RequestScopeRefresh()
+        {
+            Calls++;
+            base.RequestScopeRefresh();
+        }
+    }
+
+    private HostAdminService Create(PermissionVersionStamp? permissionVersion = null) => new(
         _hosts,
         _groups,
         new FakeUserStore(),
@@ -48,7 +90,8 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         new EfPrtgStore(_fx.NewContext),
         _mapRefresher,
-        new FakeSystemSettingsStore());
+        new FakeSystemSettingsStore(), permissionVersion ?? TestPermissionStamps.Shared,
+        _snapshotService);
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -60,7 +103,8 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
         _mapRefresher,
-        new FakeSystemSettingsStore());
+        new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
+        _snapshotService);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -632,6 +676,21 @@ public class HostAdminServiceTests : IDisposable
     }
 
     [Fact]
+    public void SaveHost_停用有負責人主機_推進權限版本()
+    {
+        var stamp = TestPermissionStamps.Create();
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "owned-host", Active = true, OwnerUserIds = new List<long> { 42 }
+        });
+
+        var before = stamp.Current;
+        Create(stamp).SaveHost(new SaveHostRequest { HostName = "owned-host", Active = false });
+
+        Assert.True(stamp.Current > before);
+    }
+
+    [Fact]
     public void 合併與解除合併都會重算今日對應()
     {
         // 已合併（有墓碑）的主機不參與對應，解除後又恢復資格——兩個方向都要重算
@@ -654,6 +713,22 @@ public class HostAdminServiceTests : IDisposable
         var beforeUnmerge = _mapRefresher.Calls;
         service.UnmergeHost(a.HostId);
         Assert.Equal(beforeUnmerge + 1, _mapRefresher.Calls);
+    }
+
+    [Fact]
+    public void MergeHost_來源有負責人_推進權限版本()
+    {
+        var stamp = TestPermissionStamps.Create();
+        var source = _hosts.Upsert(new WebHost
+        {
+            HostName = "owned-source", Active = true, OwnerUserIds = new List<long> { 42 }
+        });
+        var target = _hosts.Upsert(new WebHost { HostName = "merge-target", Active = true });
+
+        var before = stamp.Current;
+        Create(stamp).MergeHost(source.HostId, target.HostId);
+
+        Assert.True(stamp.Current > before);
     }
 
     /// <summary>
@@ -752,7 +827,8 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         prtgStore,
         _mapRefresher,
-        settings);
+        settings, TestPermissionStamps.Shared,
+        _snapshotService);
 
     [Fact]
     public void GetHosts_未回報主機PRTG提示_down_up_nomap與正常主機null_sensor只查一次()
@@ -831,5 +907,33 @@ public class HostAdminServiceTests : IDisposable
             .GetHosts(new HostSearchRequest()).Items);
 
         Assert.Equal(PrtgPresenceHint.Down, dto.PrtgHint);
+    }
+
+    [Fact]
+    public void ComputeSilentPrtgHints_對應表3台本頁只1台未回報_只查該台對應且提示不變()
+    {
+        // 對應表當日有 3 台主機的列（SILENT-DOWN／SILENT-UP ok、SILENT-NOMAP conflict、NORMAL ok 共 4 列）
+        var (down, up, noMap, normal) = SeedSilentPrtgScenario(_hosts, new EfPrtgStore(_fx.NewContext), DateTime.Now);
+        var monitor = new SqlPerformanceMonitor(thresholdMs: 0);
+        var store = new EfPrtgStore(_fx.NewContext, monitor);
+
+        // 本頁只有 down（未回報）與 normal（正常回報）
+        var (hints, stale) = HostAdminService.ComputeSilentPrtgHints(store, new[] { down, normal }, DateTime.Now);
+
+        Assert.Single(hints);
+        Assert.Equal(PrtgPresenceHint.Down, hints[down.HostId]);
+        Assert.False(stale);
+
+        // 走多台版、不走整表版
+        var ops = monitor.Snapshot().TopSlowOperations;
+        Assert.Equal(1, ops.Single(o => o.Operation == "prtg:GetLatestHostMapForHosts").Count);
+        Assert.DoesNotContain(ops, o => o.Operation == "prtg:GetLatestHostMapWithDate");
+
+        // 多台版只回傳被要求的主機列；空集合不查庫
+        var rows = store.GetLatestHostMapForHosts(new[] { down.HostId });
+        Assert.All(rows, r => Assert.Equal(down.HostId, r.HostId));
+        Assert.Single(rows);
+        Assert.Equal(2, store.GetLatestHostMapForHosts(new[] { up.HostId, noMap.HostId }).Count);
+        Assert.Empty(store.GetLatestHostMapForHosts(Array.Empty<long>()));
     }
 }

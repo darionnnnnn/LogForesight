@@ -44,7 +44,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(),
             schedulerState ?? new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")), StatusStore(), backfillState ?? new PrtgBackfillRunState(),
-            new FakeSentinelStore());
+            new FakeSentinelStore(), new DataVersionStamp());
 
     private void EnablePrtg()
     {

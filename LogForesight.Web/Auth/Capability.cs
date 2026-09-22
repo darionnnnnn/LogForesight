@@ -27,6 +27,6 @@ public enum Capability
     /// <summary>執行監控頁（批次執行狀態與診斷 log）</summary>
     DevMonitor,
 
-    /// <summary>操作紀錄查閱</summary>
+    /// <summary>稽核紀錄查閱</summary>
     ViewAudit
 }

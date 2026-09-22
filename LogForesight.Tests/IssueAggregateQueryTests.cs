@@ -30,6 +30,9 @@ public class IssueAggregateQueryTests : IDisposable
 
     private EfIssueAggregateQuery Query() => new(_fx.NewContext, _hosts);
 
+    private EfIssueAggregateQuery Query(bool sourceKeyReady) =>
+        new(_fx.NewContext, _hosts, null, () => sourceKeyReady);
+
     private static LogIssueSignature Issue(
         string source, int eventId, int count = 1,
         IssueSeverity severity = IssueSeverity.Low, bool elevates = false,
@@ -62,6 +65,49 @@ public class IssueAggregateQueryTests : IDisposable
             HostId = hostId, Host = host, Date = date, RiskLevel = riskLevel,
             TopIssues = issues.ToList()
         });
+
+    [Fact]
+    public void SourceKey回填完成後_聚合使用預先正規化鍵合併非ASCII大小寫來源()
+    {
+        var day = new DateTime(2026, 8, 1);
+        Add(1, "A", day, Issue("évent", 7, count: 2));
+        Add(2, "B", day, Issue("ÉVENT", 7, count: 3));
+
+        var legacy = Query().Aggregate(IssueExclusion.None, day, day, null);
+        Assert.Equal(2, legacy.Count);
+
+        var aggregate = Assert.Single(Query(sourceKeyReady: true).Aggregate(IssueExclusion.None, day, day, null));
+        Assert.Equal("ÉVENT", aggregate.Source);
+        Assert.Equal(5, aggregate.TotalCount);
+        Assert.Equal(2, aggregate.HostCount);
+    }
+
+    [Fact]
+    public void SourceKey切換前後_大小寫一致資料的全部聚合欄位相同()
+    {
+        var day = new DateTime(2026, 8, 1);
+        Add(1, "A", day, Issue("disk", 153, count: 2));
+        Add(1, "A", day.AddDays(1), Issue("disk", 153, count: 4));
+        Add(2, "B", day.AddDays(1), Issue("disk", 153, count: 3));
+
+        var oldResult = Assert.Single(Query(sourceKeyReady: false)
+            .Aggregate(IssueExclusion.None, day, day.AddDays(1), null));
+        var newResult = Assert.Single(Query(sourceKeyReady: true)
+            .Aggregate(IssueExclusion.None, day, day.AddDays(1), null));
+
+        Assert.Equal(oldResult.Source, newResult.Source);
+        Assert.Equal(oldResult.EventId, newResult.EventId);
+        Assert.Equal(oldResult.Category, newResult.Category);
+        Assert.Equal(oldResult.MaxSeverityRank, newResult.MaxSeverityRank);
+        Assert.Equal(oldResult.ElevatesDayRisk, newResult.ElevatesDayRisk);
+        Assert.Equal(oldResult.HostCount, newResult.HostCount);
+        Assert.Equal(oldResult.DayCount, newResult.DayCount);
+        Assert.Equal(oldResult.ActiveDays, newResult.ActiveDays);
+        Assert.Equal(oldResult.FirstSeen, newResult.FirstSeen);
+        Assert.Equal(oldResult.LastSeen, newResult.LastSeen);
+        Assert.Equal(oldResult.TotalCount, newResult.TotalCount);
+        Assert.Equal(oldResult.IssueKeys, newResult.IssueKeys);
+    }
 
     [Fact]
     public void 主機數與期間跨度()
@@ -1087,6 +1133,26 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Contains("SRC299#299", applied);
         Assert.Contains("SRC299#299", onlyMuted);
         Assert.Equal(ctx.TopIssues.ToQueryString(), IssueExclusionSql.Apply(ctx.TopIssues, IssueExclusion.None).ToQueryString());
+    }
+
+    [Fact]
+    public void 靜音排除_來源鍵回填完成後使用source_key索引欄位()
+    {
+        using var ctx = new LfDbContext(new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite("Data Source=:memory:")
+            .Options);
+        var exclusion = IssueExclusion.From(
+            new[] { new IssueProfile
+            {
+                SourceName = "évent",
+                EventId = 7,
+                Mutes = { new MuteInterval { From = new DateTime(2026, 8, 1), To = new DateTime(2026, 8, 2) } }
+            } }, new DateTime(2026, 8, 2));
+
+        var sql = IssueExclusionSql.Apply(ctx.TopIssues, exclusion, sourceKeyReady: true).ToQueryString();
+
+        Assert.Contains("source_key", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("upper(", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     // ── CountCurrentlyMutedIssues（批次 B-2b）─────────────────────────────

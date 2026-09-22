@@ -45,6 +45,11 @@ public class BatchRun
     public bool Stopped { get; set; }
 
     /// <summary>
+    /// 錯過窗口時自動補跑標示（null＝一般執行或舊紀錄，true＝補跑）。
+    /// </summary>
+    public bool? CatchUp { get; set; }
+
+    /// <summary>
     /// 作業類型（回饋三十五輪批次D）：null＝取數／分析執行（含舊紀錄，缺欄反序列化為 null）、
     /// <see cref="JobTypeAi"/>＝AI 分析排程的執行。執行總表（主機×日視角）只統計取數執行，
     /// AI 執行走執行紀錄的逐筆視角——它不是「哪台主機哪天跑了沒」的語意。
@@ -71,7 +76,7 @@ public class BatchRun
 
     /// <summary>
     /// PRTG 擷取成果狀態：<see cref="PrtgOutcomeDisabled"/> | <see cref="PrtgOutcomeSuccess"/> |
-    /// <see cref="PrtgOutcomePartial"/> | <see cref="PrtgOutcomeFailed"/>。null＝舊紀錄或本次未執行 PRTG。
+    /// <see cref="PrtgOutcomePartial"/> | <see cref="PrtgOutcomeFailed"/> | <see cref="PrtgOutcomeNoOutput"/>。null＝舊紀錄或本次未執行 PRTG。
     /// </summary>
     public string? PrtgOutcome { get; set; }
 
@@ -96,6 +101,9 @@ public class BatchRun
     /// <summary>PRTG 擷取失敗（<see cref="PrtgOutcome"/>）</summary>
     public const string PrtgOutcomeFailed = "failed";
 
+    /// <summary>階段全部成功，但本趟沒有任何可評估的對象（<see cref="PrtgOutcome"/>；原因見 <see cref="PrtgDayStat.Note"/>）</summary>
+    public const string PrtgOutcomeNoOutput = "no_output";
+
     /// <summary>逐日 PRTG 統計（null＝舊紀錄或未執行 PRTG）</summary>
     public List<PrtgDayStat>? PrtgDays { get; set; }
 }
@@ -109,7 +117,8 @@ public sealed record PrtgDayStat(
     bool MapAvailable,
     int TriggerHosts,
     int TargetSensors,
-    int FailedSensors);
+    int FailedSensors,
+    string? Note = null);
 
 /// <summary>
 /// 執行期間的診斷紀錄（↔ lf_batch_run_logs）。
@@ -155,7 +164,7 @@ public class BatchRunStore
     /// 下一趟配成 101，與既有的 101 撞號——撞號後兩趟執行被合併成一筆、診斷行整批錯掛。
     /// 32 行足以涵蓋「同時活著的執行數 × 2」再加上一段損毀容忍。
     /// </summary>
-    private const int IdProbeLines = 32;
+    internal const int IdProbeLines = 32;
 
     /// <summary>
     /// SQL 端依**附加時間**窄化時往前多放的緩衝天數。
@@ -188,32 +197,8 @@ public class BatchRunStore
 
         // 續號起點以反向 seek 取得，不再整份讀回——這裡是 Singleton store 的建構式，
         // 全撈等於站台啟動時同步讀十萬列並逐行解析。
-        _lastRunId = ProbeLastId<BatchRun>(_runs, r => r.RunId, "執行紀錄");
-        _lastLogId = ProbeLastId<BatchRunLog>(_logs, l => l.LogId, "執行診斷紀錄");
-    }
-
-    /// <summary>
-    /// 續號起點＝尾端 N 行裡**解析得出來的最大** id（理由見 <see cref="IdProbeLines"/>）。
-    /// 全部無法解析才回 0 並記 Warn——那代表尾端整段損毀，值得被看見而不是安靜地重號。
-    /// </summary>
-    private static long ProbeLastId<T>(EfJsonLogStore store, Func<T, long> idOf, string what) where T : class
-    {
-        var lines = store.ReadLastLines(IdProbeLines);
-        if (lines.Count == 0) return 0;
-
-        long? max = null;
-        foreach (var line in lines)
-        {
-            var parsed = JsonLogParser.Parse<T>(new[] { line }, LfJsonOptions.Compact);
-            if (parsed.Count == 0) continue;
-            var id = idOf(parsed[0]);
-            if (max == null || id > max) max = id;
-        }
-        if (max != null) return max.Value;
-
-        Log.Warn("[BatchRunStore] {What}最後 {Count} 行都無法解析，續號自 0 起算——可能與既有紀錄重號。",
-            what, lines.Count);
-        return 0;
+        _lastRunId = _runs.ProbeMaxId<BatchRun>(r => r.RunId, IdProbeLines, "執行紀錄", LfJsonOptions.Compact);
+        _lastLogId = _logs.ProbeMaxId<BatchRunLog>(l => l.LogId, IdProbeLines, "執行診斷紀錄", LfJsonOptions.Compact);
     }
 
     /// <summary>啟動時登記，回傳配發的 RunId</summary>
@@ -276,7 +261,7 @@ public class BatchRunStore
     /// 若它落在窗口內的 RunId 範圍之間卻沒找到（已被清除、或根本不存在——舊書籤、手改網址），
     /// 全撈也不會找到，只是把本輪要消滅的整份讀取變成每次查無此執行都付一次。
     /// 窗口內完全沒有列時無從判斷（可能是保留期拉長後長期未執行的站台），維持全撈一次。
-    /// 這條規則倚賴 RunId 單調遞增；唯一的例外是尾端整段損毀讓 <see cref="ProbeLastId{T}"/> 回 0
+    /// 這條規則倚賴 RunId 單調遞增；唯一的例外是尾端整段損毀讓 <see cref="EfJsonLogStore.ProbeMaxId{T}"/> 回 0
     /// 重新續號（那時已記 Warn），此後號碼較大的舊執行會被判成不存在——那是資料已損毀的後果，
     /// 不值得為它讓每次查無此執行都付整份讀取。RunId 從 1 起算，非正數直接視為不存在。
     /// </summary>
@@ -368,4 +353,36 @@ public class BatchRunStore
     /// <summary>附加時間落在範圍內的診斷紀錄行（SQL 端窄化，不保證精確）</summary>
     private List<BatchRunLog> ReadLogs(DateTime? from, DateTime? to) =>
         JsonLogParser.Parse<BatchRunLog>(_logs.ReadLines(from, to), LfJsonOptions.Compact);
+}
+
+/// <summary>
+/// 批次執行狀態判定（任務 A-3：由 RunMonitorService 抽出，作為全系統唯一的狀態判定）。
+/// </summary>
+public static class BatchRunStatus
+{
+    public const string Running = "running";
+    public const string Stuck = "stuck";
+    public const string Stopped = "stopped";
+    public const string Failed = "failed";
+    public const string Warning = "warning";
+    public const string Success = "success";
+
+    /// <summary>
+    /// 單筆 BatchRun 的狀態判定。
+    /// Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
+    /// 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來。
+    /// </summary>
+    public static string Compute(BatchRun run, DateTime now, TimeSpan stuckThreshold)
+    {
+        if (run.FinishedAt == null)
+            return now - run.StartedAt > stuckThreshold ? Stuck : Running;
+        if (run.Stopped) return Stopped;
+        if (run.ExitCode != 0) return Failed;
+        if (run.ErrorCount > 0) return Failed;
+        if (run.WarnCount > 0 || run.AiFailures > 0) return Warning;
+        return Success;
+    }
+
+    /// <summary>成功或有警告但完成，資料都確實更新了</summary>
+    public static bool UpdatedData(string status) => status is Success or Warning;
 }

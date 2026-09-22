@@ -63,7 +63,9 @@ public class WorkOrderCommandServiceTests : IDisposable
 
         _mail = new MailNotificationService(
             _settingsStore, _mailSender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
-            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), new FakeIssueOwnerStore());
+            new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
+            new ScheduleFreshnessService(new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
+            new FakeIssueOwnerStore());
 
         _service = new WorkOrderCommandService(
             _query, aggregates, coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, _visibility,

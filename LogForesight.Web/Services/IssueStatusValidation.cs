@@ -22,6 +22,11 @@ public static class IssueStatusValidation
         if (status == IssueHandlingStatuses.Escalated && string.IsNullOrWhiteSpace(note))
             throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
 
+        // 不處理必填理由：前端擋之外的後端防線。只有使用者請求路徑呼叫本函式——
+        // 夜間派工、機房結論自動套用、案件同步不經過這裡，不受此條影響
+        if (status == IssueHandlingStatuses.WontFix && string.IsNullOrWhiteSpace(note))
+            throw DomainException.Validation("標記為不處理時必須填寫理由。");
+
         // 觀察中一定要有觀察至日期（docs/archive/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
         // 前端固定送「今天 + N 天」（1~90 天），這裡防禦性驗證同一個範圍，不只信前端
         if (status == IssueHandlingStatuses.Observing)

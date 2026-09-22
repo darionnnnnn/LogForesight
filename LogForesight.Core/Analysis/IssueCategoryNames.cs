@@ -4,11 +4,17 @@ namespace LogForesight.Core.Analysis;
 /// 類別中文名的 C# 端**唯一**字典（回饋十九輪批次I 體檢收斂，即 docs/BACKLOG.md S13
 /// 「先把 C# 版搬到 Core」那一步）：原本批次報告（RiskReportService.CategoryZh）一份、
 /// 批次H 郵件又長出第三份，跨檔案的 switch 拷貝正是 S13 記錄的分歧風險。
-/// JS 端（format.js 的 CATEGORY_NAMES 等）仍是獨立拷貝——跨語言收斂需要 server-render
-/// meta 方案，見 S13 的後半，不在這次收斂範圍。
+/// 主版面將此字典提供給 format.js，前後端共用名稱。
 /// </summary>
 public static class IssueCategoryNames
 {
+    /// <summary>提供前端同一份翻譯，順序與既有畫面一致。</summary>
+    public static IReadOnlyDictionary<string, string> All { get; } =
+        new[] { IssueCategory.Storage, IssueCategory.Hardware, IssueCategory.Security,
+                IssueCategory.Service, IssueCategory.Backup, IssueCategory.Config,
+                IssueCategory.Resource, IssueCategory.Other }
+            .ToDictionary(category => category.ToString(), Zh);
+
     public static string Zh(IssueCategory category) => category switch
     {
         IssueCategory.Storage => "儲存裝置",

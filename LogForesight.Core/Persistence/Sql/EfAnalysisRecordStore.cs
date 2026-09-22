@@ -45,6 +45,31 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
     public string Location => _location;
 
+    /// <summary>
+    /// 單一主機日寫入的分段鎖（64 把，以 (hostId, date.Date) 雜湊取模選鎖）。
+    ///
+    /// 同一個主機日的「讀列 → 反序列化 → 改 → 序列化 → 寫回」可能被兩條路徑同時進行
+    /// （分析寫入與 PRTG finding 追加），後寫的一方會整段覆蓋 ContentJson，主列 JSON 與
+    /// lf_top_issues 子列就對不上。兩條路徑都在同一個行程內，所以用行程內鎖序列化即可。
+    /// 刻意不用併發權杖（rowversion／IsConcurrencyToken）：重跑是整批 ExecuteDelete 後再新增，
+    /// 不經過逐列的併發檢查，加了權杖也擋不住這種覆蓋。
+    /// </summary>
+    private static readonly object[] HostDayLocks = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();
+
+    /// <summary>取得某主機日對應的鎖；internal 僅供測試取得同一把鎖驗證互斥。</summary>
+    internal static object LockFor(long hostId, DateTime date) =>
+        HostDayLocks[(int)((uint)HashCode.Combine(hostId, date.Date) % (uint)HostDayLocks.Length)];
+
+    /// <summary>
+    /// 以 owner 條件找出該日紀錄所屬的主機 id（只讀主鍵欄，不讀內容），用來挑選主機日鎖；
+    /// 找不到回 null。真正的讀取與寫回在取得鎖之後重做。
+    /// </summary>
+    private long? FindOwnedHostId(DateTime date)
+    {
+        using var ctx = _contextFactory();
+        return OwnedRows(ctx).Where(r => r.RecordDate == date.Date).Select(r => (long?)r.HostId).FirstOrDefault();
+    }
+
     /// <summary>批次面讀取限縮到 owner 的紀錄（owner 為 null＝不分主機）：
     /// id 命中或名稱命中任一即算自己的，名稱比對不分大小寫。
     /// SQL 端 `=` 的大小寫語意依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、
@@ -72,6 +97,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         using var probe = _contextFactory();
         var strategy = probe.Database.CreateExecutionStrategy();
 
+        // 寫入主機日持有主機日鎖，與 AttachPrtgFindings 等「讀改寫」路徑互斥（理由見 HostDayLocks）
+        lock (LockFor(shaped.HostId, shaped.Date))
         strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
@@ -173,6 +200,22 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
     public void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup)
     {
+        var hostId = FindOwnedHostId(date);
+        if (hostId == null)
+        {
+            Log.Warn("[SQL] AttachWeeklyCheckup：找不到 {Date:yyyy-MM-dd} 的紀錄，略過", date);
+            return;
+        }
+
+        // 讀列 → 改 → 寫回整段持有主機日鎖（理由見 HostDayLocks）
+        lock (LockFor(hostId.Value, date))
+        {
+            AttachWeeklyCheckupLocked(date, checkup);
+        }
+    }
+
+    private void AttachWeeklyCheckupLocked(DateTime date, WeeklyCheckupResult checkup)
+    {
         using var ctx = _contextFactory();
         var row = OwnedRows(ctx).FirstOrDefault(r => r.RecordDate == date.Date);
         if (row == null)
@@ -192,6 +235,22 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     }
 
     public void AttachAiResult(DateTime date, AiOutcome outcome)
+    {
+        var hostId = FindOwnedHostId(date);
+        if (hostId == null)
+        {
+            Log.Warn("[SQL] AttachAiResult：找不到 {Date:yyyy-MM-dd} 的紀錄，略過", date);
+            return;
+        }
+
+        // 讀列 → 改 → 寫回整段持有主機日鎖（理由見 HostDayLocks）
+        lock (LockFor(hostId.Value, date))
+        {
+            AttachAiResultLocked(date, outcome);
+        }
+    }
+
+    private void AttachAiResultLocked(DateTime date, AiOutcome outcome)
     {
         using var ctx = _contextFactory();
         var row = OwnedRows(ctx).FirstOrDefault(r => r.RecordDate == date.Date);
@@ -260,6 +319,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var appended = false;
         var appendedCount = 0;
         var corroborated = 0;
+        try
+        {
+        // 在主機日鎖內重新讀取該列再合併寫入，與同主機日的分析寫入互斥（理由見 HostDayLocks）
+        lock (LockFor(hostId, date))
         strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
@@ -360,6 +423,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             appended = true;
             appendedCount = toAdd.Count;
         });
+        }
+        // SQL Server 上列被整批刪除後寫回，可能先插子列撞外鍵而拿到一般的 DbUpdateException（不是併發例外）——同樣視為列不存在
+        catch (DbUpdateException ex)
+        {
+            // 讀到列之後、寫回之前該主機日被整批刪除（DeleteDays 等不持鎖）：視同「該主機日不存在」
+            Log.Warn("[SQL] AttachPrtgFindings 主機 id={HostId} {Date:yyyy-MM-dd} 寫回時該列已不存在，略過：{Msg}",
+                hostId, date, ex.Message);
+            corroboratedCount = 0;
+            return false;
+        }
 
         if (appended) corroboratedCount = corroborated;
 
@@ -377,6 +450,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             RecordId = recordId,
             SourceName = issue.Source,
+            SourceKey = WorkOrderIssueKey.SourceKeyOf(issue.Source),
             EventId = issue.EventId,
             Category = issue.Category.ToString(),
             SeverityRank = (int)issue.Severity,
@@ -667,10 +741,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
         if (!string.IsNullOrWhiteSpace(filter.Source))
         {
-            // 與 OwnedRows 同一個 UPPER() 正規化理由：provider collation 不保證一致，
-            // 兩邊都正規化才與 RecordFilterMatcher 的 OrdinalIgnoreCase 逐位一致
-            var source = filter.Source.ToUpperInvariant();
-            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == source));
+            // 新列走寫入時計算的 source_key；尚未回填的舊列保留舊路徑，直到背景作業完成。
+            var source = WorkOrderIssueKey.SourceKeyOf(filter.Source);
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId &&
+                (t.SourceKey == source || (t.SourceKey == null && t.SourceName.ToUpper() == source))));
         }
 
         // 主機以 id 在 DB 端粗篩（高選擇度、便宜）；host_id=0 的舊列一律先撈出，
@@ -776,6 +850,25 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    /// <summary>
+    /// 最近一次 <see cref="QueryPage"/> 是否走 SQL 端分頁（false＝有命中的舊列、退回記憶體分頁）。
+    /// 只供測試觀察路徑，不影響行為；多執行緒下只代表「某一次」的結果。
+    /// </summary>
+    internal bool LastQueryPageUsedSqlPaging { get; private set; }
+
+    /// <summary>
+    /// 套用可下推篩選後，是否還有這次查詢可能命中的 HostId=0 舊列。
+    /// 沒有主機篩選時舊列一律算命中；有主機篩選時以 <see cref="HostMatcher"/> 同一個名稱比較語意判斷。
+    /// </summary>
+    private static bool HasMatchingLegacyRows(IQueryable<DailyRecordRow> filtered, RecordQueryFilter filter)
+    {
+        var legacy = filtered.Where(r => r.HostId == 0);
+        if (filter.Hosts == null) return legacy.Any();
+
+        var names = filter.Hosts.Select(k => k.HostName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return legacy.Select(r => r.HostName).Distinct().AsEnumerable().Any(names.Contains);
+    }
+
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var sw = Stopwatch.StartNew();
@@ -788,11 +881,22 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 這個殘餘條件存在時無法安全做 SQL 端真分頁——有這類舊列就整批撈回退回記憶體排序＋分頁，
         // 沒有就直接在 SQL 端 OFFSET/FETCH。這是本方法效能與正確性的分界點，
         // 契約測試（EfAnalysisRecordQueryTests）逐位比對兩條路徑與 Query() 結果一致。
-        var hasLegacyHostRows = ctx.DailyRecords.Any(r => r.HostId == 0);
+        //
+        // 舊列探測放在套用可下推篩選**之後**、而且只算「這次篩選真的可能命中的」舊列：
+        // 問整張表的話，只要表裡任何地方有一列 HostId=0（本機主機登記失敗時今天仍會產生），
+        // 全站每一次清單查詢都永遠走整窗撈回的慢路徑，與這次查的日期、主機完全無關。
+        // 有主機篩選時，ApplyPushableFilters 會把所有 HostId=0 的列留給記憶體比對名稱，
+        // 所以這裡只撈舊列的**名稱**（去重、量小）以與 HostMatcher 相同的 OrdinalIgnoreCase 比對，
+        // 不在 SQL 端比字串（同一個 collation 理由）。
         var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        var hasLegacyHostRows = HasMatchingLegacyRows(q, filter);
+        LastQueryPageUsedSqlPaging = !hasLegacyHostRows;
 
         if (!hasLegacyHostRows)
         {
+            // 留在 q 裡的 HostId=0 列（若有）名稱都不在主機篩選內，HostMatcher 本來就會排除，
+            // 在 SQL 端直接排除後分頁結果與 Query() 一致
+            q = q.Where(r => r.HostId != 0);
             var total = q.Count();
 
             // 表頭排序（date/host/risk）與預設「風險→關聯→日期」緊急程度排序共用同一個下推點；

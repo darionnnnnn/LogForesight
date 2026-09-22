@@ -111,7 +111,7 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Groups() => View();
 
-    /// <summary>問題檔案（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
+    /// <summary>問題負責與靜音（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
     /// 以 (Source,EventId) 為鍵指派跨主機的問題負責人，與主機負責人是相同概念、相同待遇——
     /// 優先於主機負責人（自動帶入處理人／郵件路由），並隱含具備第四條授權路徑（見
     /// VisibilityService／UserCapabilityResolver）。機房結論（§2 決策一）記錄機房對這個問題的
@@ -140,10 +140,8 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Settings() => View();
 
-    /// <summary>操作說明書（docs/archive/FEEDBACK-15-PLAN.md 批次E）：僅 Maintain 顯示，
-    /// 側欄選單顯示與此頁面級標註雙閘，比照既有 admin 頁慣例</summary>
+    /// <summary>操作說明書：全登入使用者皆可存取，章節內容由 API 依 Maintain 能力過濾。</summary>
     [HttpGet("/help/manual")]
-    [Permission(Capability.Maintain)]
     public IActionResult HelpManual() => View();
 
     /// <summary>首次啟動精靈（回饋十八輪批次H）：不進側欄——入口在教學文件清單第一項，

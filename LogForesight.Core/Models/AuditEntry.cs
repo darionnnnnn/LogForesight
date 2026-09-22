@@ -70,6 +70,10 @@ public static class AuditActions
     public const string LoginFailed = "login_failed";
     public const string SessionExpired = "session_expired";
 
+    // 登入節流（LoginThrottle）：同一次暫停只在第一次被擋時寫一筆
+    public const string LoginThrottled = "login_throttled";
+    public const string LoginThrottleCleared = "login_throttle_cleared";
+
     // 處理流程
     public const string HandlingAssign = "handling_assign";
     public const string HandlingStatus = "handling_status";
@@ -90,6 +94,7 @@ public static class AuditActions
     public const string WorkOrderCancel = "work_order_cancel";
     public const string WorkOrderAdminClose = "work_order_admin_close";
     public const string WorkOrderAutoDispatchRun = "work_order_auto_dispatch_run";
+    public const string WorkOrderDueDate = "work_order_due_date";
 
     // 權限異動確認
     public const string PermConfirmAuthorized = "perm_confirm_authorized";
@@ -151,6 +156,10 @@ public static class AuditActions
     public const string ScheduleManualRun = "schedule_manual_run";
     public const string ScheduleManualCancel = "schedule_manual_cancel";
 
+    // 健康檢查（任務 A-3）
+    /// <summary>確認資料過期提醒</summary>
+    public const string HealthFreshnessAck = "health_freshness_ack";
+
     // NetIQ API 診斷（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：對 Sentinel 的主動查詢操作
     public const string NetiqProbeRun = "netiq_probe_run";
 
@@ -159,12 +168,14 @@ public static class AuditActions
 
     // PRTG API 探測（PRTG 第 1 輪批次B-3）：對 PRTG 的主動查詢操作
     public const string PrtgProbeRun = "prtg_probe_run";
+    public const string PrtgProbeCancel = "prtg_probe_cancel";
 
     // PRTG 歷史回填（PRTG 第 1 輪批次E）
     public const string PrtgBackfillRun = "prtg_backfill_run";
     public const string PrtgBackfillCancel = "prtg_backfill_cancel";
     public const string PrtgStructureSyncRun = "prtg_structure_sync_run";
     public const string PrtgStructureSyncCancel = "prtg_structure_sync_cancel";
+    public const string PrtgScopePurge = "prtg_scope_purge";
 
     // PRTG 人工主機對應（PRTG 第 2 輪任務E-1）
     public const string PrtgManualMapSet = "prtg_manual_map_set";
@@ -184,6 +195,9 @@ public static class AuditActions
     // 校準數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A4）
     public const string CalibrationExport = "calibration_export";
 
+    /// <summary>處理說明 AI 整理（回饋第 50 輪批次C-3）：DetailJson 只含長度／問題名稱／結果，不含原文與輸出</summary>
+    public const string AiNoteTidy = "ai_note_tidy";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }
@@ -191,6 +205,7 @@ public static class AuditActions
 /// <summary>稽核查詢條件（全部為選用，null = 不限）</summary>
 public class AuditQuery
 {
+    public string? TargetId { get; set; }
     public DateTime? From { get; set; }
     public DateTime? To { get; set; }
     public long? UserId { get; set; }

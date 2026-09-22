@@ -8,10 +8,10 @@
 import { api, getAiAvailable, getCurrentUser, hasCapability } from '../core/api.js';
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
-    renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
+    renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText
 } from '../core/ui.js';
-import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
 
 /* 色值對齊 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
@@ -37,7 +37,9 @@ const PRTG_OUTCOME_META = {
     disabled: { text: '未啟用', bg: 'bg-secondary' },
     success: { text: '成功', bg: 'bg-success' },
     partial: { text: '部分失敗', bg: 'bg-warning text-dark' },
-    failed: { text: '失敗', bg: 'bg-danger' }
+    failed: { text: '失敗', bg: 'bg-danger' },
+    // 階段全部成功但沒有可評估的對象（無規則／鏡像空／無主機對應），原因在 prtgNote
+    no_output: { text: '無產出', bg: 'bg-warning text-dark' }
 };
 
 function renderPrtgBadge(outcome) {
@@ -47,6 +49,36 @@ function renderPrtgBadge(outcome) {
     badge.className = `badge ${meta.bg}`;
     badge.textContent = meta.text;
     return badge;
+}
+
+// 執行總表每日 PRTG 欄：徽章＋finding／sensor 數字；原因放徽章滑鼠提示並在下方小字顯示
+function renderPrtgDaySummaryCell(s) {
+    if (s.prtgOutcome == null) return document.createTextNode('—');
+    const badge = renderPrtgBadge(s.prtgOutcome);
+    if (!badge) return document.createTextNode('—');
+    const wrap = document.createElement('div');
+    const line = document.createElement('span');
+    line.className = 'd-inline-flex align-items-center gap-1';
+    line.appendChild(badge);
+    if (s.prtgFindings != null) {
+        const findings = document.createElement('small');
+        findings.textContent = `finding ${s.prtgFindings}`;
+        line.appendChild(findings);
+    }
+    if (s.prtgTargetSensors != null && s.prtgTargetSensors > 0) {
+        const sensors = document.createElement('small');
+        sensors.textContent = `sensor ${s.prtgTargetSensors}`;
+        line.appendChild(sensors);
+    }
+    wrap.appendChild(line);
+    if (s.prtgNote != null) {
+        badge.title = s.prtgNote;
+        const note = document.createElement('div');
+        note.className = 'small text-muted';
+        note.textContent = s.prtgNote;
+        wrap.appendChild(note);
+    }
+    return wrap;
 }
 
 function formatLocalBranch(analyzed, failed) {
@@ -176,13 +208,13 @@ function renderSummary(summaryPage) {
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
-            { title: 'PRTG', render: s => s.prtgOutcome != null ? (renderPrtgBadge(s.prtgOutcome) ?? document.createTextNode('—')) : document.createTextNode('—') },
+            { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
         // 點日期就地展開該天每台主機的狀態（§2）：懶載入，展開才 fetch，各列狀態獨立
         onRowExpand: (summary, cell) => renderDayDetailInto(cell, summary.date),
-        empty: { title: '尚無執行紀錄' }
+        empty: { title: '尚無執行紀錄', hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。' }
     });
 
     // 分頁控制（批次G）：總頁數由後端回傳，只有多頁時才顯示（renderPagination 自動判定）
@@ -255,7 +287,7 @@ async function renderDayDetailInto(cell, date) {
     try {
         hosts = await api.get(`/api/runs/day/${date}`);
     } catch {
-        renderEmpty(listEl, { title: '載入當日明細失敗' });
+        renderError(listEl, { message: '載入當日明細失敗', onRetry: () => renderDayDetailInto(cell, date) });
         return;
     }
 
@@ -272,7 +304,7 @@ async function renderDayDetailInto(cell, date) {
             rows: pageRows,
             sort: state.sort,
             onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; render(); },
-            empty: { title: '這天沒有任何主機資料' }
+            empty: { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
         });
 
         renderPagination(pagerEl, {
@@ -402,7 +434,7 @@ function renderRunListTable() {
             runListSort = { key, dir };
             renderRunListTable();
         },
-        empty: { title: '此期間沒有執行紀錄' }
+        empty: { title: '此期間沒有執行紀錄', hint: '請調整上方的查詢期間，或至排程設定確認執行週期。' }
     });
 }
 
@@ -432,17 +464,17 @@ function detailButton(runId) {
 
 // ── 執行詳情（改 modal，§2：取代舊版跳到頁面最下方的 run-detail-card）──────────────
 
-async function showDetail(runId) {
-    const body = document.createElement('div');
+async function showDetail(runId, retryBody = null) {
+    const body = retryBody ?? document.createElement('div');
     renderLoading(body, 5);
-    showDetailModal({ title: '執行詳情', body, size: 'modal-xl' });
+    if (!retryBody) showDetailModal({ title: '執行詳情', body, size: 'modal-xl' });
 
     let detail;
     try {
         detail = await api.get(`/api/runs/${runId}`);
     } catch {
         body.replaceChildren();
-        renderEmpty(body, { title: '載入執行詳情失敗' });
+        renderError(body, { message: '載入執行詳情失敗', onRetry: () => showDetail(runId, body) });
         return;
     }
 
@@ -459,13 +491,38 @@ async function showDetail(runId) {
     renderStats(statsRow, detail);
     body.appendChild(statsRow);
 
+    // PRTG 逐日：每個資料日的結局與取數數字（舊紀錄或 PRTG 未產出時沒有這張表）
+    if (Array.isArray(detail.prtgDays) && detail.prtgDays.length > 0) {
+        const prtgTitle = document.createElement('div');
+        prtgTitle.className = 'fw-semibold mb-2';
+        prtgTitle.textContent = 'PRTG 逐日';
+        const prtgEl = document.createElement('div');
+        prtgEl.className = 'mb-3';
+        body.append(prtgTitle, prtgEl);
+        renderTable(prtgEl, {
+            columns: [
+                { title: '日期', render: d => String(d.date).slice(0, 10) },
+                { title: '結局', render: d => renderPrtgBadge(d.outcome) ?? d.outcome },
+                { title: 'finding', render: d => formatNumber(d.findings) },
+                { title: '歸戶主機', render: d => formatNumber(d.attributedHosts) },
+                { title: '對應', render: d => (d.mapAvailable ? '有' : '無') },
+                { title: '觸發主機', render: d => formatNumber(d.triggerHosts) },
+                { title: '目標 sensor', render: d => formatNumber(d.targetSensors) },
+                { title: '失敗 sensor', render: d => formatNumber(d.failedSensors) },
+                { title: '說明', render: d => d.note || '—' }
+            ],
+            rows: detail.prtgDays
+        });
+    }
+
     // 等級過濾（原本在 cshtml 的 log-level-filter，改建在 modal 內）
     const filterWrap = document.createElement('div');
     filterWrap.className = 'd-flex justify-content-end mb-2';
     const levelSelect = document.createElement('select');
     levelSelect.className = 'form-select form-select-sm';
-    levelSelect.style.width = '130px';
-    for (const [value, text] of [['', '全部等級'], ['Warn', 'Warn 以上'], ['Error', 'Error 以上']]) {
+    levelSelect.style.width = '180px';
+    // 預設「重要紀錄」：執行輸出（Logger=Output）量大，預設隱藏，只看里程碑／警告／錯誤
+    for (const [value, text] of [['important', '重要紀錄'], ['', '全部（含執行輸出）'], ['Warn', 'Warn 以上'], ['Error', 'Error 以上']]) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = text;
@@ -480,15 +537,17 @@ async function showDetail(runId) {
     function renderLogs() {
         const level = levelSelect.value;
         const order = { Info: 0, Warn: 1, Error: 2, Fatal: 3 };
-        const filtered = level
-            ? detail.logs.filter(l => (order[l.level] ?? 0) >= (order[level] ?? 0))
-            : detail.logs;
+        const filtered = level === 'important'
+            ? detail.logs.filter(l => l.logger !== 'Output')
+            : level
+                ? detail.logs.filter(l => (order[l.level] ?? 0) >= (order[level] ?? 0))
+                : detail.logs;
 
         renderTable(logsEl, {
             columns: [
                 { title: '時間', render: l => formatDateTime(l.loggedAt) },
                 { title: '等級', render: l => logLevelBadge(l.level) },
-                { title: '來源', render: l => l.logger },
+                { title: '來源', render: l => logSourceText(l.logger) },
                 { title: '訊息', render: l => logMessageCell(l) }
             ],
             rows: filtered,
@@ -546,6 +605,13 @@ function formatDuration(seconds) {
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
     return `${Math.floor(minutes / 60)} 時 ${minutes % 60} 分`;
+}
+
+// 執行詳情「來源」欄：紀錄器內建的兩種來源顯示中文，其他（NLog logger 短名）照舊
+function logSourceText(logger) {
+    if (logger === 'Output') return '執行輸出';
+    if (logger === 'Milestone') return '里程碑';
+    return logger;
 }
 
 function logLevelBadge(level) {
@@ -677,11 +743,11 @@ async function loadSchedule() {
 
     applyScheduleOptions(options);
     if (settings) {
-        // 啟用開關在 PRTG 維護頁「擷取參數」的取數範圍下拉，本頁只顯示狀態
-        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope);
+        // 啟用開關在 PRTG 維護頁「擷取參數」的數值取數對象下拉，本頁只顯示狀態
+        prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
+        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope, prtgFetchStrategy);
         // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
         prtgConnectionConfigured = hasPrtgConnection(settings);
-        prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -702,6 +768,7 @@ function applyScheduleOptions(options) {
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
     document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || aiAvailable !== true);
     document.getElementById('schedule-local-analysis').checked = options.localAnalysisEnabled;
+    document.getElementById('schedule-auto-catchup').checked = options.autoCatchUp;
     localAnalysisEnabled = options.localAnalysisEnabled;
     const scopeAllLabel = document.getElementById('run-now-scope-all-label');
     if (scopeAllLabel) {
@@ -839,6 +906,7 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
             windows: scheduleWindows,
             debugDump: document.getElementById('schedule-debug-dump').checked,
             localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked,
+            autoCatchUp: document.getElementById('schedule-auto-catchup').checked,
             aiWindows: scheduleAiWindows,
             aiConcurrency: concurrencyVal
         });
@@ -861,7 +929,11 @@ let scheduleStatusTimer = null;
 async function refreshScheduleStatus() {
     const [status, aiStatus] = await Promise.all([
         api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
-        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null)
+        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
+        // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
+        // 兩者自帶錯誤吞掉，且快速計時器「執行中才開、已存在就不重建」，重複呼叫不會疊計時器
+        refreshPrtgSyncStatus(),
+        refreshPrtgBackfillStatus()
     ]);
     if (status) applyScheduleStatus(status);
     if (aiStatus) applyAiScheduleStatus(aiStatus);
@@ -1325,10 +1397,6 @@ async function refreshPrtgSyncStatus() {
         const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
         renderPrtgSyncSummary(status);
 
-        const btn = document.getElementById('prtg-sync-start');
-        // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
-        if (btn) btn.disabled = status.isRunning || prtgModuleEnabled !== true;
-
         // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
         // 這裡會動 d-none，而 data-maintain-only 的隱藏也是靠 d-none——沒有 Maintain 時
         // 不能碰它，否則輪詢會把唯讀使用者看不到的停止鈕重新露出來。
@@ -1350,25 +1418,6 @@ async function refreshPrtgSyncStatus() {
 }
 
 function bindPrtgSync() {
-    const btn = document.getElementById('prtg-sync-start');
-    btn?.addEventListener('click', async () => {
-        // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
-        if (prtgModuleEnabled !== true) {
-            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
-            return;
-        }
-        const restore = withBusy(btn, '啟動中');
-        try {
-            await api.post('/api/admin/settings/prtg-structure-sync/start', {});
-            toast('已開始同步結構與對應', 'success');
-            await refreshPrtgSyncStatus();
-        } catch {
-            // 錯誤已由 api.js 顯示
-        } finally {
-            restore();
-        }
-    });
-
     const cancelBtn = document.getElementById('prtg-sync-cancel');
     cancelBtn?.addEventListener('click', async () => {
         const restore = withBusy(cancelBtn, '停止中');
@@ -1385,23 +1434,17 @@ function bindPrtgSync() {
 }
 
 /** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
-function renderPrtgModuleState(enabled, scope) {
+function renderPrtgModuleState(enabled, scope, strategy = prtgFetchStrategy) {
     prtgModuleEnabled = enabled;
     const el = document.getElementById('prtg-module-state');
     if (el) {
         // 啟用時把生效範圍一起說出來——「已啟用」三個字看不出夜間到底會抓哪些主機
-        el.textContent = prtgModuleStateText(enabled, scope);
+        el.textContent = prtgModuleStateText(enabled, scope, strategy);
         el.classList.toggle('text-muted', !enabled);
     }
 
-    // 未啟用時同步與回填一定被後端拒絕（PrtgStructureSyncService／PrtgBackfillService），
-    // 讓兩顆鈕灰掉並指出開關在哪，比按下去看紅字有用。
+    // 未啟用時指路
     document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled === true);
-    for (const id of ['prtg-sync-start', 'prtg-backfill-start']) {
-        const btn = document.getElementById(id);
-        // 與同檔其餘六處一致：只認明確的啟用，其他一律當未啟用（回饋第 45 輪終檢補上的第七處）
-        if (btn) btn.disabled = enabled !== true;
-    }
 }
 
 /**
@@ -1697,24 +1740,32 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const goOn = await confirmAction({
             title: 'PRTG 尚未啟用',
             message: '這次執行不會做 PRTG 擷取（連線已設定，但擷取未啟用）。\n'
-                + '要啟用請到 PRTG 維護頁「擷取參數」選擇取數範圍。\n\n仍要開始執行嗎？',
+                + '要啟用請到 PRTG 維護頁「擷取參數」選擇數值取數對象。\n\n仍要開始執行嗎？',
             confirmText: '仍要開始',
             confirmVariant: 'primary'
         });
         if (!goOn) return;
     }
 
-    if (prtgModuleEnabled === true && scope === 'all' && days !== null && days > 1) {
-        const isAggressive = prtgFetchStrategy === 'aggressive';
-        const confirmed = await confirmAction({
-            title: isAggressive ? 'PRTG 將逐日查詢歷史值' : 'PRTG 回望範圍',
-            message: isAggressive
-                ? `PRTG 採激進策略：這次會對 ${days} 天的觸發主機逐顆查詢歷史值，可能耗時數小時並明顯增加 PRTG 負載。\n可先縮小回望天數，或到 PRTG 維護頁「擷取參數」改為保守策略。\n\n仍要開始執行嗎？`
-                : `PRTG 會補齊這 ${days} 天的狀態變更與規則評估，讓重跑的日子也帶到 PRTG 訊號。\n過去日的數值不在立即執行內取（保守策略），需要時請用下方 PRTG 卡的「開始回填」。\n\n仍要開始執行嗎？`,
-            confirmText: '仍要開始',
-            confirmVariant: 'primary'
-        });
-        if (!confirmed) return;
+    // 一併補齊 PRTG 逐小時數值：只有保守策略才問（激進本來就逐顆取），勾選結果隨請求送出，
+    // 後端在同一趟結束前接續回填（回填若等這趟結束後另開，會被「取數執行中」擋下）
+    let includePrtgValues = false;
+    if (prtgModuleEnabled === true && days !== null && days > 1) {
+        if (prtgFetchStrategy === 'aggressive') {
+            if (scope === 'all') {
+                const confirmed = await confirmAction({
+                    title: 'PRTG 將逐日查詢歷史值',
+                    message: `PRTG 採激進策略：這次會對 ${days} 天的觸發主機逐顆查詢歷史值，可能耗時數小時並明顯增加 PRTG 負載。\n可先縮小回望天數，或到 PRTG 維護頁「擷取參數」改為保守策略。\n\n仍要開始執行嗎？`,
+                    confirmText: '仍要開始',
+                    confirmVariant: 'primary'
+                });
+                if (!confirmed) return;
+            }
+        } else {
+            const answer = await confirmRunWithPrtgValues(days, scope === 'segment' ? segment : null);
+            if (!answer.confirmed) return;
+            includePrtgValues = answer.includePrtgValues;
+        }
     }
 
     const submitButton = document.getElementById('run-now-submit');
@@ -1725,7 +1776,8 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
             segment: scope === 'segment' ? segment : null,
             backfillDays: days,
             onlyMissingOrFailed,
-            rerunMode
+            rerunMode,
+            includePrtgValues
         });
         toast(result.message, result.started ? 'success' : 'warning');
         if (result.started) {
@@ -1739,28 +1791,84 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
     }
 });
 
+/**
+ * 保守策略的立即執行確認框：多一個預設勾選的「一併補齊這 N 天的 PRTG 逐小時數值」。
+ * confirmAction 不支援內嵌核取方塊（簽章不動），改用 showDetailModal 自組，版面比照 confirmAction。
+ * 估算取不到時只顯示不帶數字的勾選文字。
+ * @param {number} days 回望天數
+ * @param {string|null} segment 網段範圍（null＝全部主機）；估算只算那些主機
+ * @returns {Promise<{confirmed: boolean, includePrtgValues: boolean}>}
+ */
+function confirmRunWithPrtgValues(days, segment) {
+    return new Promise(resolve => {
+        const body = document.createElement('div');
+        const message = document.createElement('p');
+        message.style.whiteSpace = 'pre-line';
+        message.textContent = `PRTG 會補齊這 ${days} 天的狀態變更與規則評估，讓重跑的日子也帶到 PRTG 訊號。\n\n仍要開始執行嗎？`;
+
+        const check = document.createElement('div');
+        check.className = 'form-check mb-0';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'form-check-input';
+        input.id = 'run-now-include-prtg-values';
+        input.checked = true;
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        const baseText = `一併補齊這 ${days} 天的 PRTG 逐小時數值`;
+        label.textContent = baseText;
+        check.append(input, label);
+        body.append(message, check);
+
+        let confirmed = false;
+        showDetailModal({
+            title: 'PRTG 回望範圍',
+            body,
+            onClose: () => resolve({ confirmed, includePrtgValues: confirmed && input.checked })
+        });
+
+        // showDetailModal 只有「關閉」鈕：改成「取消」並補上確認鈕，與 confirmAction 同一組按鈕
+        const modalEl = body.closest('.modal');
+        modalEl.querySelector('.modal-dialog').classList.add('modal-dialog-centered');
+        const footer = modalEl.querySelector('.modal-footer');
+        footer.querySelector('[data-bs-dismiss="modal"]').textContent = '取消';
+        const okButton = document.createElement('button');
+        okButton.type = 'button';
+        okButton.className = 'btn btn-primary';
+        okButton.textContent = '仍要開始';
+        okButton.addEventListener('click', () => {
+            confirmed = true;
+            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        });
+        footer.appendChild(okButton);
+
+        const params = new URLSearchParams({ days: String(days) });
+        if (segment) params.set('segment', segment);
+        api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true })
+            .then(estimate => {
+                if (!estimate || !Number.isFinite(estimate.queries)) return;
+                const minutesText = estimate.minutes > 0 ? `，約 ${formatNumber(estimate.minutes)} 分鐘` : '';
+                label.textContent = `${baseText}（約 ${formatNumber(estimate.queries)} 次查詢${minutesText}）`;
+            })
+            .catch(() => {
+                // 取不到估算就不顯示數字，勾選照常可用
+            });
+    });
+}
+
 // ── PRTG 擷取開關與歷史回填 ─────────────────────────────────────────────────
 
 
 let prtgBackfillPollTimer = null;
 
 function renderPrtgBackfillStatus(status) {
-    const outputEl = document.getElementById('prtg-backfill-output');
-    const copyButton = document.getElementById('prtg-backfill-copy');
-    const startButton = document.getElementById('prtg-backfill-start');
     const statusEl = document.getElementById('prtg-backfill-status');
     const wrapEl = document.getElementById('prtg-backfill-progress-wrap');
     const barEl = document.getElementById('prtg-backfill-progress-bar');
     const textEl = document.getElementById('prtg-backfill-progress-text');
 
-    if (!outputEl || !copyButton || !startButton || !statusEl) return;
-
-    const outputText = Array.isArray(status.output) ? status.output.join('\n') : (status.output || '');
-    outputEl.value = outputText;
-    if (outputText) {
-        outputEl.scrollTop = outputEl.scrollHeight;
-    }
-    copyButton.disabled = !outputText;
+    if (!statusEl) return;
 
     const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
     // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
@@ -1799,13 +1907,10 @@ function renderPrtgBackfillStatus(status) {
     }
 
     if (status.isRunning) {
-        startButton.disabled = true;
-        setSpinnerText(statusEl, `回填中…${status.latestMessage ? ' ' + status.latestMessage : ''}`);
+        setSpinnerText(statusEl, `回填中…${elapsedSinceText(status.startedAt)}${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
-    // 未啟用時的閘由 renderPrtgModuleState 設定；這裡是輪詢，不能把它打開
-    startButton.disabled = prtgModuleEnabled !== true;
     if (!status.completedAt) {
         statusEl.textContent = '';
         return;
@@ -1841,36 +1946,6 @@ async function refreshPrtgBackfillStatus() {
 }
 
 function bindPrtgBackfill() {
-    const startButton = document.getElementById('prtg-backfill-start');
-    const copyButton = document.getElementById('prtg-backfill-copy');
-    const outputEl = document.getElementById('prtg-backfill-output');
-
-    startButton?.addEventListener('click', async () => {
-        // 按鈕已依模組狀態灰掉，這裡是兩個分頁狀態不同步時的第二道（後端還有第三道）
-        if (prtgModuleEnabled !== true) {
-            toast('PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。', 'warning');
-            return;
-        }
-        const ok = await confirmAction({
-            title: '確認執行 PRTG 歷史資料回填',
-            message: '回填會逐日擷取歷史監控數據與狀態變更，請確認目前為離峰時間。是否確定開始？',
-            confirmText: '開始回填',
-            confirmVariant: 'primary'
-        });
-        if (!ok) return;
-
-        startButton.disabled = true;
-        try {
-            await api.post('/api/admin/settings/prtg-backfill/start', {}, { silent: true });
-            toast('已開始執行 PRTG 歷史回填', 'success');
-            await refreshPrtgBackfillStatus();
-        } catch (error) {
-            // 啟動失敗（如尚未設定連線位址、與探測互斥）：訊息要讓使用者看得到，不能靜默
-            startButton.disabled = false;
-            toast(error?.message || '無法啟動 PRTG 歷史回填。', 'danger');
-        }
-    });
-
     const cancelBtn = document.getElementById('prtg-backfill-cancel');
     cancelBtn?.addEventListener('click', async () => {
         const restore = withBusy(cancelBtn, '停止中');
@@ -1882,15 +1957,6 @@ function bindPrtgBackfill() {
             // 錯誤已由 api.js 顯示
         } finally {
             restore();
-        }
-    });
-
-    copyButton?.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(outputEl.value);
-            toast('已複製回填輸出', 'success');
-        } catch {
-            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
         }
     });
 }

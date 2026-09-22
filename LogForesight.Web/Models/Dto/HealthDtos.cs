@@ -72,6 +72,17 @@ public class HealthDetailDto : HealthDto
     public int BackfillDone { get; set; }
     public int BackfillTotal { get; set; }
 
+    /// <summary>來源名稱鍵背景回填；完成前查詢維持舊路徑。</summary>
+    public bool SourceKeyBackfillComplete { get; set; }
+    public int SourceKeyBackfillDone { get; set; }
+    public int SourceKeyBackfillTotal { get; set; }
+    public List<SourceMergePreviewDto> SourceMergePreview { get; set; } = new();
+
+    /// <summary>風險事件來源名稱鍵背景回填；完成前 Web lookup 維持 legacy 查詢。</summary>
+    public bool RiskySourceKeyBackfillComplete { get; set; }
+    public int RiskySourceKeyBackfillDone { get; set; }
+    public int RiskySourceKeyBackfillTotal { get; set; }
+
     // ── 處理狀態的 blob → 真表遷移（升級時才會發生一次）────────────────────
     // 未完成時處理狀態是**唯讀**的（寫入被 MigrationGateMiddleware 擋下），
     // 這是唯一能看出「為什麼標記不了」的地方
@@ -118,4 +129,45 @@ public class HealthDetailDto : HealthDto
     /// <summary>因連續寄送失敗達門檻而暫停寄送的郵件收件人（回饋十七輪批次B-1）：
     /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();
+
+    // ── 密碼欄位加密 ─────────────────────────────────────────────────────
+
+    /// <summary>密文金鑰來源：env｜file｜embedded（見 CryptoHelper.KeySource）</summary>
+    public string CryptoKeySource { get; set; } = string.Empty;
+
+    /// <summary>啟動時金鑰指紋與資料庫記錄不符（還原 DB 沒一併還原金鑰檔等）</summary>
+    public bool CryptoKeyMismatch { get; set; }
+
+    /// <summary>本行程曾有密文解不開（該欄被當成未設定）</summary>
+    public bool CryptoDecryptFailure { get; set; }
+
+    /// <summary>排程資料新鮮度（任務 A-3）</summary>
+    public ScheduleFreshnessDto ScheduleFreshness { get; set; } = new();
+
+    /// <summary>PRTG 各類資料的擷取新鮮度；PRTG 未啟用時為 null（畫面不顯示「PRTG 擷取」列）</summary>
+    public List<PrtgFreshnessDto>? PrtgFreshness { get; set; }
+}
+
+public class SourceMergePreviewDto
+{
+    public string SourceKey { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public List<string> Names { get; set; } = new();
+}
+
+/// <summary>排程資料新鮮度（任務 A-3）</summary>
+public class ScheduleFreshnessDto
+{
+    public bool ScheduleEnabled { get; set; }
+    public DateTime? LastSuccessAt { get; set; }
+    public bool Stale { get; set; }
+    public DateTime? AckedUntil { get; set; }
+    public bool Acked { get; set; }
+    public List<string> AdminContacts { get; set; } = new();
+}
+
+/// <summary>確認資料過期提醒請求（任務 A-3）</summary>
+public class FreshnessAckRequest
+{
+    public DateTime Until { get; set; }
 }

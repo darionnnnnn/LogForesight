@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace LogForesight.Web.Models.Dto;
 
 /// <summary>風險日詳情頁對話（R7 精簡版）的一則訊息</summary>
@@ -17,4 +19,26 @@ public class ChatRequest
     public string Date { get; set; } = string.Empty;
     public string IssueKey { get; set; } = string.Empty;
     public List<ChatMessageDto> Messages { get; set; } = new();
+}
+
+/// <summary>處理說明「AI 整理」請求（回饋第 50 輪批次C-3）</summary>
+public class TidyNoteRequest
+{
+    [StringLength(4000)]
+    public string Text { get; set; } = string.Empty;
+
+    [StringLength(300)]
+    public string? IssueLabel { get; set; }
+
+    public int? HostCount { get; set; }
+}
+
+/// <summary>處理說明「AI 整理」回應：一律 HTTP 200，由旗標區分結果</summary>
+public class TidyNoteResponseDto
+{
+    public string? Text { get; set; }
+    public bool Truncated { get; set; }
+    public bool TooShort { get; set; }
+    public bool Unavailable { get; set; }
+    public bool Failed { get; set; }
 }

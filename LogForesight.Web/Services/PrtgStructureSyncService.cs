@@ -99,6 +99,9 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// </summary>
     private volatile bool _lastRunSucceeded;
 
+    /// <summary>同步成功寫入鏡像後推進資料版本戳，讓儀表板的 PRTG 失聯台數等快取即時失效。</summary>
+    private readonly DataVersionStamp _versionStamp;
+
     public PrtgStructureSyncService(
         ISystemSettingsStore settings,
         StorageBackend backend,
@@ -108,10 +111,12 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         PrtgStructureSyncStatusStore statusStore,
         PrtgBackfillRunState backfillState,
         ISentinelStore sentinels,
+        DataVersionStamp versionStamp,
         IHostApplicationLifetime? lifetime = null)
     {
         _backfillState = backfillState;
         _sentinels = sentinels;
+        _versionStamp = versionStamp;
         _lifetime = lifetime;
         // 站台關閉時中止同步：這條路徑會對 PRTG 做整棵樹的分頁查詢，
         // 沒有取消來源的話，PRTG 端卡住（TCP 半開、不回應）就會讓狀態永遠停在「執行中」，
@@ -276,11 +281,47 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             return false;
         }
 
+        if (!TryBeginSync(s, out var cts, out var client, out error, out isConflict))
+            return false;
+
+        _ = Task.Run(() => ExecuteAsync(s, client!, cts));
+        return true;
+    }
+
+    /// <summary>
+    /// 回填（手動或立即執行的接續）發現鏡像沒有感測器時，先在自己的背景工作裡做一次同步並等它結束。
+    /// 不走 <see cref="TryStart"/>：那條路會被「取數執行中」「回填執行中」擋下，而呼叫端正是其中之一。
+    /// 同步本身仍佔用同一個執行狀態（維護頁的同步狀態卡看得到進度、可以停止），與手動同步互斥。
+    /// </summary>
+    /// <returns>null＝同步成功；否則為失敗原因。</returns>
+    internal virtual async Task<string?> SyncForBackfillAsync(CancellationToken ct)
+    {
+        var s = _settings.Get();
+        if (!TryBeginSync(s, out var cts, out var client, out var error, out _))
+            return error;
+
+        // 回填被停止時一併停止同步
+        using var registration = ct.Register(Cancel);
+        var (success, failure) = await ExecuteAsync(s, client!, cts);
+        return success ? null : failure ?? "同步未成功";
+    }
+
+    /// <summary>
+    /// 搶執行權並建立 PRTG 連線（<see cref="TryStart"/> 與 <see cref="SyncForBackfillAsync"/> 共用）。
+    /// 成功時已佔住執行狀態，呼叫端必須接著呼叫 <see cref="ExecuteAsync"/>（它負責結束執行狀態）。
+    /// </summary>
+    private bool TryBeginSync(SystemSettings s, out CancellationTokenSource cts, out PrtgClient? client,
+        out string? error, out bool isConflict)
+    {
+        error = null;
+        isConflict = false;
+        client = null;
+
         // 取消來源先建好再搶執行權：IsRunning 一轉 true，停止鈕就按得下去，
         // _cts 若還是 null 那一下會落空——畫面說「已送出停止」而同步照跑完整趟。
         // TryBegin 與指派之間仍有兩個指令的窗口，要完全關掉得讓執行狀態自己持有 cts
         //（SchedulerRunState.TryBeginRun 的做法），這裡的後果只是「再按一次」，不為此重構。
-        var cts = new CancellationTokenSource();
+        cts = new CancellationTokenSource();
         if (!_state.TryBegin())
         {
             cts.Dispose();
@@ -296,8 +337,6 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
 
         _state.ResetProgress();
 
-        var console = new PrtgStructureSyncConsole(_state);
-        PrtgClient? client;
         try
         {
             client = PrtgClientFactory.Create(s);
@@ -312,58 +351,67 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             return false;
         }
 
-        var prtgStore = _backend.PrtgStore();
-        var fetchService = new PrtgFetchService(client, prtgStore, console,
-            PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
-        var concurrency = s.PrtgFetchConcurrency;
-
-        _ = Task.Run(async () =>
-        {
-            var success = false;
-            try
-            {
-                using (client)
-                {
-                    var status = await PrtgStructureSyncRunner.RunAsync(
-                        fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
-                        concurrency, console, cts.Token,
-                        new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
-                        progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
-
-                    Persist(status);
-                    success = status.Success;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                console.WriteLine("同步已被取消（站台關閉或手動中止）。");
-                // 取消也要落地：不寫的話狀態卡會沿用上一筆「成功」的摘要，
-                // 而執行輸出（行程內狀態）在站台重啟後一起消失，這趟被腰斬就沒有任何痕跡。
-                Persist(new PrtgStructureSyncStatus
-                {
-                    CompletedAt = DateTime.Now,
-                    Success = false,
-                    ErrorMessage = "同步已被取消（站台關閉或手動中止）",
-                    MapDate = DateTime.Today
-                });
-                success = false;
-            }
-            catch (Exception ex)
-            {
-                console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
-                success = false;
-            }
-            finally
-            {
-                // 先寫旗標再結束執行狀態：等待方看到 IsRunning 轉 false 的下一刻就會讀它，
-                // 反過來寫會讓那一瞬間讀到上一趟的結果。
-                _lastRunSucceeded = success;
-                _state.EndRun(success);
-                _cts = null;
-                cts.Dispose();
-            }
-        });
-
         return true;
+    }
+
+    /// <summary>同步主體：跑完、落地結果並結束執行狀態。回傳（是否成功, 失敗原因）。</summary>
+    private async Task<(bool Success, string? Error)> ExecuteAsync(SystemSettings s, PrtgClient client, CancellationTokenSource cts)
+    {
+        var console = new PrtgStructureSyncConsole(_state);
+        var prtgStore = _backend.PrtgStore();
+        var success = false;
+        string? failure = null;
+        try
+        {
+            using (client)
+            {
+                var fetchService = new PrtgFetchService(client, prtgStore,
+                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
+                    PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
+
+                var status = await PrtgStructureSyncRunner.RunAsync(
+                    fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
+                    s.PrtgFetchConcurrency, console, cts.Token,
+                    new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
+                    progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
+
+                Persist(status);
+                success = status.Success;
+                failure = status.ErrorMessage;
+                if (success) _versionStamp.Bump();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            console.WriteLine("同步已被取消（站台關閉或手動中止）。");
+            // 取消也要落地：不寫的話狀態卡會沿用上一筆「成功」的摘要，
+            // 而執行輸出（行程內狀態）在站台重啟後一起消失，這趟被腰斬就沒有任何痕跡。
+            Persist(new PrtgStructureSyncStatus
+            {
+                CompletedAt = DateTime.Now,
+                Success = false,
+                ErrorMessage = "同步已被取消（站台關閉或手動中止）",
+                MapDate = DateTime.Today
+            });
+            success = false;
+            failure = "同步已被取消";
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
+            success = false;
+            failure = ex.Message;
+        }
+        finally
+        {
+            // 先寫旗標再結束執行狀態：等待方看到 IsRunning 轉 false 的下一刻就會讀它，
+            // 反過來寫會讓那一瞬間讀到上一趟的結果。
+            _lastRunSucceeded = success;
+            _state.EndRun(success);
+            _cts = null;
+            cts.Dispose();
+        }
+
+        return (success, failure);
     }
 }

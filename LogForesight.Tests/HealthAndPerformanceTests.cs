@@ -67,7 +67,10 @@ public class SqlPerformanceMonitorTests
     }
 }
 
-/// <summary>健康檢查端點的行為（匿名層與診斷層的資訊邊界）</summary>
+/// <summary>健康檢查端點的行為（匿名層與診斷層的資訊邊界）。
+/// 密文解密失敗旗標是行程層級 static（別的測試類別餵損毀密文就會設起來、讓狀態變 degraded），
+/// 因此放進不並行的 CryptoKeyState 集合並在建構時重設。</summary>
+[Collection("CryptoKeyState")]
 public class HealthServiceTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-health-" + Guid.NewGuid().ToString("N"));
@@ -75,6 +78,8 @@ public class HealthServiceTests : IDisposable
 
     public HealthServiceTests()
     {
+        CryptoHelper.ResetForTests();
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = false;
         Directory.CreateDirectory(_dir);
         _backend = new StorageBackend(
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "h.db")}" }, _dir);
@@ -87,14 +92,18 @@ public class HealthServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService());
+    private ScheduleFreshnessService NewFreshnessService() => new(
+        new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
+        new ScheduleOptionsStore(_backend.Blob("schedule_options")));
+
+    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService());
 
     /// <summary>HealthService 只用得到 GetSuspendedRecipients()（回饋十七輪批次B-1），
     /// 其餘相依給最小可用的替身即可</summary>
     private MailNotificationService NewMailService() => new(
         new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
         new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-        new MailNotifyStateStore(_backend.Blob("mail_notify_state")));
+        new MailNotifyStateStore(_backend.Blob("mail_notify_state")), NewFreshnessService());
 
     [Fact]
     public void 存活檢查_資料庫可達時回ok()
@@ -104,6 +113,20 @@ public class HealthServiceTests : IDisposable
         Assert.Equal(HealthStatuses.Ok, dto.Status);
         Assert.True(dto.StorageOk);
         Assert.False(string.IsNullOrWhiteSpace(dto.Version));
+    }
+
+    [Fact]
+    public void 健康詳情露出獨立風險事件來源鍵回填進度()
+    {
+        var backfiller = _backend.TopIssueBackfiller();
+        backfiller.RunRiskySourceKeys(_backend.RiskyEventStore(), CancellationToken.None);
+
+        var dto = new HealthService(
+            _backend, new SchedulerRunState(), backfiller, NewMailService(), NewFreshnessService()).GetDetail();
+
+        Assert.True(dto.RiskySourceKeyBackfillComplete);
+        Assert.Equal(0, dto.RiskySourceKeyBackfillDone);
+        Assert.Equal(0, dto.RiskySourceKeyBackfillTotal);
     }
 
     /// <summary>
@@ -148,6 +171,27 @@ public class HealthServiceTests : IDisposable
         Assert.False(dto.AnalysisRunning);
     }
 
+    [Fact]
+    public void 診斷檢查_金鑰不符或密文解不開時為degraded()
+    {
+        var clean = NewService().GetDetail();
+        Assert.False(clean.CryptoKeyMismatch);
+        Assert.False(clean.CryptoDecryptFailure);
+        Assert.False(string.IsNullOrEmpty(clean.CryptoKeySource));
+
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = true;
+        var mismatch = NewService().GetDetail();
+        Assert.Equal(HealthStatuses.Degraded, mismatch.Status);
+        Assert.True(mismatch.CryptoKeyMismatch);
+
+        LogForesight.Web.Services.CryptoKeyBootstrapper.KeyMismatch = false;
+        Assert.False(CryptoHelper.TryDecrypt(CryptoHelper.EncryptWith(new byte[32], "x"), out _));
+        var failure = NewService().GetDetail();
+        Assert.Equal(HealthStatuses.Degraded, failure.Status);
+        Assert.True(failure.CryptoDecryptFailure);
+        CryptoHelper.ResetForTests();
+    }
+
     /// <summary>分析執行中要看得出來——E1（夜間分析與 Web 同行程）時，這是「畫面為什麼變慢」的第一線索</summary>
     [Fact]
     public void 診斷檢查_反映分析執行狀態()
@@ -156,7 +200,7 @@ public class HealthServiceTests : IDisposable
         Assert.True(runState.TryBeginRun("manual", out _));
         runState.ReportProgress("分析主機", 30, 100);
 
-        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService()).GetDetail();
+        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService()).GetDetail();
 
         Assert.True(dto.AnalysisRunning);
         Assert.Equal("manual", dto.AnalysisTrigger);
@@ -187,7 +231,7 @@ public class HealthServiceTests : IDisposable
                 cmd.ExecuteNonQuery();
             }
 
-            var service = new IssueFirstSeenSeedHostedService(tempBackend, new DataVersionStamp())
+            var service = new IssueFirstSeenSeedHostedService(tempBackend, new DataVersionStamp(), new BackgroundWorkGate(new SchedulerRunState(), TimeSpan.FromMilliseconds(50)))
             {
                 InitialDelay = TimeSpan.Zero,
                 RetryInterval = TimeSpan.Zero
@@ -216,10 +260,10 @@ public class HealthServiceTests : IDisposable
     public void 健康檢查_診斷檢查含首見日合併狀態與降級反映()
     {
         var runState = new SchedulerRunState();
-        var seedService = new IssueFirstSeenSeedHostedService(_backend, new DataVersionStamp());
+        var seedService = new IssueFirstSeenSeedHostedService(_backend, new DataVersionStamp(), new BackgroundWorkGate(new SchedulerRunState(), TimeSpan.FromMilliseconds(50)));
 
         // 1. 初始/未開始狀態
-        var healthService = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), seedService);
+        var healthService = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService(), seedService);
         var detail1 = healthService.GetDetail();
         Assert.Equal(IssueFirstSeenSeedStates.NotStarted, detail1.IssueFirstSeenSeedState);
         Assert.Equal(0, detail1.IssueFirstSeenSeedFailures);

@@ -134,7 +134,7 @@ public class OwnerCsvImporterTests
     private readonly FakeHostStore _hosts = new();
     private readonly FakeUserStore _users = new();
 
-    private OwnerCsvImporter Importer => new(_hosts, _users);
+    private OwnerCsvImporter Importer => new(_hosts, _users, TestPermissionStamps.Shared);
 
     private static CsvTable Parse(string content) =>
         CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), 5000);
@@ -271,7 +271,7 @@ public class OwnerCsvImporterHostFieldTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private OwnerCsvImporter Importer => new(_hosts, _users);
+    private OwnerCsvImporter Importer => new(_hosts, _users, TestPermissionStamps.Shared);
 
     private static CsvTable Parse(string content) =>
         CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), 5000);
@@ -375,7 +375,7 @@ public class OwnerCsvImporterHostFieldTests : IDisposable
 public class RetiredImportKindTests
 {
     private ImportService Create() =>
-        new(new ICsvImporter[] { new OwnerCsvImporter(new FakeHostStore(), new FakeUserStore()) },
+        new(new ICsvImporter[] { new OwnerCsvImporter(new FakeHostStore(), new FakeUserStore(), TestPermissionStamps.Shared) },
             new RecordingAuditService(),
             new FakeImportLogStore(),
             FakeCurrentUser.WithCapabilities(),

@@ -19,7 +19,7 @@ namespace LogForesight.Core.Persistence.Sql;
 ///      現在由資料庫的唯一索引保證（更強：繞過 store 也破不了）。
 ///   3. 主機名比對不分大小寫——以 host_name_key 正規化欄位達成，見 <see cref="HostNameKey"/>。
 /// </summary>
-public sealed class EfIssueHandlingStore : IIssueHandlingStore
+public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
 {
     private readonly Func<LfDbContext> _contextFactory;
     private readonly SqlPerformanceMonitor? _performance;
@@ -94,6 +94,32 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
         return result;
     }
 
+    /// <summary>以主機範圍粗篩後在 C# 比較完整鍵；見 <see cref="IIssueNoteQuery.GetLatestNote"/></summary>
+    public (string HostName, DateTime RecordDate, string Note, DateTime UpdatedAt)? GetLatestNote(
+        string issueKey, IReadOnlyCollection<string>? visibleHostNameKeys)
+    {
+        using var ctx = _contextFactory();
+        var query = ctx.IssueHandlings.AsNoTracking()
+            .Where(h => h.Note != null && h.Note.Trim() != "");
+        if (visibleHostNameKeys != null)
+        {
+            if (visibleHostNameKeys.Count == 0) return null;
+            var keys = visibleHostNameKeys.Distinct(StringComparer.Ordinal).ToList();
+            query = query.Where(h => keys.Contains(h.HostNameKey));
+        }
+
+        // 沒有 source_key 欄可供 provider 中立查詢；不要用 UPPER()，SQLite 與 SQL Server
+        // 的 Unicode 大小寫規則不同。先用可見主機（若有）及 note 非空索引粗篩，再在 C#
+        // 用同一完整鍵 comparer。成本是 O(粗篩後列數)；有授權主機時受主機集合限制，
+        // 無主機限制時沒有安全的固定 Take 上限，否則可能漏掉真正最新的匹配列。
+        var row = query
+            .OrderByDescending(h => h.UpdatedAt)
+            .Select(h => new { h.HostName, h.RecordDate, h.IssueKey, h.Note, h.UpdatedAt })
+            .ToList()
+            .FirstOrDefault(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, issueKey));
+        return row == null ? null : (row.HostName, row.RecordDate, row.Note!, row.UpdatedAt);
+    }
+
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });
 
     /// <summary>
@@ -115,25 +141,48 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
         var minDate = list.Min(h => h.Date.Date);
         var maxDate = list.Max(h => h.Date.Date);
 
-        var existing = ctx.IssueHandlings
+        var existingByHostDay = ctx.IssueHandlings
             .Where(h => keys.Contains(h.HostNameKey) && h.RecordDate >= minDate && h.RecordDate <= maxDate)
             .ToList()
-            .ToDictionary(h => (h.HostNameKey, h.RecordDate, h.IssueKey));
+            .GroupBy(h => (h.HostNameKey, h.RecordDate))
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         foreach (var handling in list)
         {
             var rowKey = (HostNameKey.Of(handling.HostName), handling.Date.Date, handling.IssueKey);
-            existing.TryGetValue(rowKey, out var row);
+            var hostDayKey = (rowKey.Item1, rowKey.Item2);
+            if (!existingByHostDay.TryGetValue(hostDayKey, out var candidates))
+            {
+                candidates = new List<IssueHandlingRow>();
+                existingByHostDay[hostDayKey] = candidates;
+            }
+
+            var matching = candidates
+                .Where(r => IssueSignatureKeyComparer.Instance.Equals(r.IssueKey, handling.IssueKey))
+                .OrderByDescending(r => r.UpdatedAt)
+                .ThenBy(r => r.IssueKey, StringComparer.Ordinal)
+                .ThenBy(r => r.Id)
+                .ToList();
+            var row = matching.FirstOrDefault();
 
             // 空狀態＝清除標記：不留一列「狀態為空」的殭屍資料，直接回到未處理
             if (string.IsNullOrWhiteSpace(handling.Status))
             {
-                if (row != null)
+                foreach (var oldRow in matching)
                 {
-                    ctx.IssueHandlings.Remove(row);
-                    existing.Remove(rowKey);
+                    ctx.IssueHandlings.Remove(oldRow);
+                    candidates.Remove(oldRow);
                 }
                 continue;
+            }
+
+            // 舊資料可能在同一主機／日期留下多筆僅 Source 大小寫不同的列。
+            // 非空更新時保留 UpdatedAt 最新的那列，這次狀態套用到它，並在同一交易刪掉
+            // 其餘等價列，讓下一次讀取不再看到雙列；保留列的 IssueKey 原字不改。
+            foreach (var duplicate in matching.Skip(1))
+            {
+                ctx.IssueHandlings.Remove(duplicate);
+                candidates.Remove(duplicate);
             }
 
             if (row == null)
@@ -149,7 +198,7 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
                     CreatedAt = DateTime.Now
                 };
                 ctx.IssueHandlings.Add(row);
-                existing[rowKey] = row;
+                candidates.Add(row);
             }
 
             Apply(row, handling);
@@ -180,9 +229,17 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
         var day = date.Date;
 
         using var ctx = _contextFactory();
-        ctx.IssueHandlings
-            .Where(h => h.HostNameKey == key && h.RecordDate == day && h.IssueKey == issueKey)
-            .ExecuteDelete();
+        // 主機＋日期是有索引的窄範圍；完整 IssueKey 仍在 C# 比較，避免 provider
+        // 對 UPPER() 的 Unicode 實作差異，也讓清除能涵蓋 legacy 的大小寫異體列。
+        var ids = ctx.IssueHandlings.AsNoTracking()
+            .Where(h => h.HostNameKey == key && h.RecordDate == day)
+            .Select(h => new { h.Id, h.IssueKey })
+            .ToList()
+            .Where(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, issueKey))
+            .Select(h => h.Id)
+            .ToList();
+        if (ids.Count == 0) return;
+        ctx.IssueHandlings.Where(h => ids.Contains(h.Id)).ExecuteDelete();
     }
 
     private static void Apply(IssueHandlingRow row, IssueHandling handling)

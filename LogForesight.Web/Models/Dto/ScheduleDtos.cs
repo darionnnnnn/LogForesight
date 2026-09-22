@@ -13,6 +13,9 @@ public class ScheduleOptionsDto
     /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true，見 ScheduleOptions.LocalAnalysisEnabled。</summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
+    /// <summary>錯過窗口時是否自動補跑：預設 true，見 ScheduleOptions.AutoCatchUp。</summary>
+    public bool AutoCatchUp { get; set; } = true;
+
 
     /// <summary>AI 的背景補跑窗口（跟隨取數的即時分析不受此限制）</summary>
     public List<ScheduleWindow> AiWindows { get; set; } = new();
@@ -45,6 +48,9 @@ public class SaveScheduleOptionsRequest
 
     /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true。</summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
+
+    /// <summary>錯過窗口時是否自動補跑：預設 true。</summary>
+    public bool AutoCatchUp { get; set; } = true;
 
 
     /// <summary>AI 的背景補跑窗口（跟隨取數的即時分析不受此限制）</summary>
@@ -187,6 +193,25 @@ public class TriggerRunRequest
     /// </summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public RerunMode RerunMode { get; set; } = RerunMode.None;
+
+    /// <summary>
+    /// 一併補齊回望期間的 PRTG 逐小時數值（立即執行確認框的勾選，預設 false）。
+    /// 只在 PRTG 已啟用、取數策略為保守、回望天數 &gt; 1 時生效，見 ScheduleController.ToRunRequest。
+    /// </summary>
+    public bool IncludePrtgValues { get; set; }
+}
+
+/// <summary>立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估（GET api/admin/settings/prtg-estimate）。</summary>
+public class PrtgValuesEstimateDto
+{
+    /// <summary>監看裝置上符合 sensor type 白名單的感測器數</summary>
+    public int Sensors { get; set; }
+
+    /// <summary>感測器數 × 天數（每顆每天一次 historicdata 查詢）</summary>
+    public long Queries { get; set; }
+
+    /// <summary>以併發設定與每次查詢平均 1.5 秒粗估的分鐘數</summary>
+    public int Minutes { get; set; }
 }
 
 public class TriggerRunResultDto

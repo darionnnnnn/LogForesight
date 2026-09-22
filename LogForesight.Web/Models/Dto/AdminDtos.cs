@@ -86,15 +86,16 @@ public class UserAssignmentHistoryDto
     public string HostName { get; set; } = string.Empty;
     public string IssueLabel { get; set; } = string.Empty;
 
-    /// <summary>案件目前狀態（含結案類）</summary>
+    /// <summary>案件目前狀態（含結案類；改派時為 "reassigned"）</summary>
     public string Status { get; set; } = string.Empty;
     public string StatusText { get; set; } = string.Empty;
 
-    /// <summary>true＝案件已結案；false＝仍在此人名下進行中</summary>
+    /// <summary>true＝案件已結案（或已改派走）；false＝仍在此人名下進行中</summary>
     public bool Closed { get; set; }
 
     /// <summary>建案時間與建案者帳號（誰把這件事交辦給他）</summary>
     public DateTime CreatedAt { get; set; }
+
     public string CreatedByAccount { get; set; } = string.Empty;
 
     public DateTime? ClosedAt { get; set; }
@@ -105,6 +106,9 @@ public class UserAssignmentHistoryDto
 
     /// <summary>案件所屬交辦單；舊案件未整併時為 null</summary>
     public long? WorkOrderId { get; set; }
+
+    /// <summary>選填：若案件被改派，記錄新處理人顯示名稱</summary>
+    public string? NewHandler { get; set; }
 }
 
 public class SaveUserRequest
@@ -318,6 +322,9 @@ public class HostDto
     /// <summary>建立時間——「未回報」告警的寬限期依據，剛匯入的主機不該立刻被當成無回報（定案 9）</summary>
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>與主機清單篩選共用的未回報判定。</summary>
+    public bool IsSilent { get; set; }
+
     public List<long> GroupIds { get; set; } = new();
     public List<string> GroupNames { get; set; } = new();
     public List<long> OwnerUserIds { get; set; } = new();
@@ -407,6 +414,23 @@ public class HostTierBatchResultDto
 {
     public int UpdatedCount { get; set; }
     public List<SkippedHostDto> Skipped { get; set; } = new();
+}
+
+/// <summary>批次指派負責人（回饋第 50 輪批次F-2）</summary>
+public class SetOwnersBatchRequest
+{
+    public List<long> HostIds { get; set; } = new();
+    public List<long> OwnerUserIds { get; set; } = new();
+
+    /// <summary>"replace"（改為僅這些人）｜ "add"（加入）｜ "remove"（移除）</summary>
+    public string Mode { get; set; } = "add";
+}
+
+/// <summary>批次指派負責人的結果：附更新後的主機列，前端就地替換不整頁重載</summary>
+public class HostOwnersBatchResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<HostDto> Hosts { get; set; } = new();
 }
 
 public class SkippedHostDto

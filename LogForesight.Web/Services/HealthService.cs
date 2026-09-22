@@ -1,4 +1,5 @@
 using System.Reflection;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services.Mail;
@@ -23,6 +24,7 @@ public class HealthService
     private readonly SchedulerRunState _runState;
     private readonly TopIssueBackfiller _backfiller;
     private readonly MailNotificationService _mail;
+    private readonly ScheduleFreshnessService _freshness;
     private readonly IssueFirstSeenSeedHostedService? _firstSeenSeedService;
 
     public HealthService(
@@ -30,12 +32,14 @@ public class HealthService
         SchedulerRunState runState,
         TopIssueBackfiller backfiller,
         MailNotificationService mail,
+        ScheduleFreshnessService freshness,
         IssueFirstSeenSeedHostedService? firstSeenSeedService = null)
     {
         _backend = backend;
         _runState = runState;
         _backfiller = backfiller;
         _mail = mail;
+        _freshness = freshness;
         _firstSeenSeedService = firstSeenSeedService;
     }
 
@@ -55,12 +59,16 @@ public class HealthService
         };
     }
 
+    /// <summary>取得排程資料新鮮度（任務 A-3）</summary>
+    public ScheduleFreshnessDto GetScheduleFreshness(DateTime now) => _freshness.GetScheduleFreshness(now);
+
     public HealthDetailDto GetDetail()
     {
         var storageOk = ProbeStorage(out var storageError);
         var performance = _backend.Performance.Snapshot();
         var migration = _backend.HandlingMigrator.State;
         var permMigration = _backend.PermissionChangeMigrator.State;
+        var freshness = _freshness.GetScheduleFreshness(DateTime.Now);
 
         // 診斷頁只有一行進度可顯示：主／子軌取捨（子進度優先）由 LatestActivity 單點決定
         // （回饋十四輪 UI-6 體檢，與 /api/run-activity 同一個選擇邏輯）——只讀主進度的話，
@@ -70,11 +78,17 @@ public class HealthService
         var firstSeenProgress = _firstSeenSeedService?.Progress;
         var firstSeenFailed = firstSeenProgress?.IsFailed == true;
 
+        // 密碼欄位解不開時各功能只會靜默當成未設定——必須在這裡看得到
+        var cryptoKeyMismatch = CryptoKeyBootstrapper.KeyMismatch;
+        var cryptoDecryptFailure = CryptoHelper.DecryptFailureSeen;
+
         // 「慢操作占比過高」或「首見日合併連續失敗達上限」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
-        // 因此獨立成 degraded 狀態，而不是併進 ok
+        // 因此獨立成 degraded 狀態，而不是併進 ok。排程資料過期且未確認靜音時亦視為 degraded（任務 A-3）
         var degraded = (performance.TotalOperations > 0 &&
                        performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent)
-                       || firstSeenFailed;
+                       || firstSeenFailed
+                       || (freshness.Stale && !freshness.Acked)
+                       || cryptoKeyMismatch || cryptoDecryptFailure;
 
         return new HealthDetailDto
         {
@@ -82,6 +96,10 @@ public class HealthService
             Version = Version,
             StorageOk = storageOk,
             StorageError = storageError,
+            ScheduleFreshness = freshness,
+            PrtgFreshness = storageOk && new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgEnabled
+                ? PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
+                : null,
             SlowThresholdMs = performance.ThresholdMs,
             TotalOperations = performance.TotalOperations,
             SlowOperations = performance.SlowOperations,
@@ -112,6 +130,18 @@ public class HealthService
             BackfillInProgress = _backfiller.Progress.InProgress,
             BackfillDone = _backfiller.Progress.Done,
             BackfillTotal = _backfiller.Progress.Total,
+            SourceKeyBackfillComplete = _backfiller.IssueSourceKeyReady,
+            SourceKeyBackfillDone = _backfiller.SourceKeyProgress.Done,
+            SourceKeyBackfillTotal = _backfiller.SourceKeyProgress.Total,
+            RiskySourceKeyBackfillComplete = _backfiller.RiskySourceKeyProgress.Completed,
+            RiskySourceKeyBackfillDone = _backfiller.RiskySourceKeyProgress.Done,
+            RiskySourceKeyBackfillTotal = _backfiller.RiskySourceKeyProgress.Total,
+            SourceMergePreview = _backfiller.SourceMergePreview.Select(g => new SourceMergePreviewDto
+            {
+                SourceKey = g.SourceKey,
+                EventId = g.EventId,
+                Names = g.Names.ToList()
+            }).ToList(),
 
             // 遷移未完成時處理狀態是唯讀的——這是唯一能看出「為什麼標記不了」的地方
             MigrationState = migration.State,
@@ -131,7 +161,11 @@ public class HealthService
             IssueFirstSeenSeedFailures = firstSeenProgress?.Failures ?? 0,
             IssueFirstSeenSeedError = firstSeenProgress?.LastError,
 
-            SuspendedMailRecipients = _mail.GetSuspendedRecipients()
+            SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
+
+            CryptoKeySource = CryptoHelper.KeySource,
+            CryptoKeyMismatch = cryptoKeyMismatch,
+            CryptoDecryptFailure = cryptoDecryptFailure
         };
     }
 

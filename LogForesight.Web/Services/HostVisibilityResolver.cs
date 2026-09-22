@@ -69,7 +69,7 @@ internal static class HostVisibilityResolver
 
         var owned = issueOwners.GetAll()
             .Where(r => r.OwnerUserIds.Contains(userId))
-            .Select(r => (r.SourceName, r.EventId))
+            .Select(r => (Source: WorkOrderIssueKey.SourceKeyOf(r.SourceName), r.EventId))
             .ToList();
         if (owned.Count == 0) return new HashSet<long>();
 

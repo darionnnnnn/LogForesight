@@ -2,6 +2,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -87,9 +88,9 @@ public class HostAdminService
             return (hints, false);
         }
 
-        var silentSet = silentIds.ToHashSet();
-        var devicesByHost = prtgStore.GetLatestHostMap()
-            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && silentSet.Contains(m.HostId.Value))
+        // 只查本頁未回報主機的對應列，不讀回整日對應表
+        var devicesByHost = prtgStore.GetLatestHostMapForHosts(silentIds)
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .GroupBy(m => m.HostId!.Value)
             .ToDictionary(g => g.Key, g => g.Select(m => m.DeviceObjid).Distinct().ToList());
 
@@ -129,8 +130,11 @@ public class HostAdminService
         IUserDisplayNameService userDisplayNames,
         EfPrtgStore prtgStore,
         IPrtgHostMapRefresher mapRefresher,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        PermissionVersionStamp permissionVersion,
+        PrtgSnapshotHostedService snapshotService)
     {
+        _permissionVersion = permissionVersion;
         _settings = settings;
         _mapRefresher = mapRefresher;
         _hosts = hosts;
@@ -141,9 +145,12 @@ public class HostAdminService
         _audit = audit;
         _userDisplayNames = userDisplayNames;
         _prtgStore = prtgStore;
+        _snapshotService = snapshotService ?? throw new ArgumentNullException(nameof(snapshotService));
     }
 
     private readonly IPrtgHostMapRefresher _mapRefresher;
+    private readonly PermissionVersionStamp _permissionVersion;
+    private readonly PrtgSnapshotHostedService _snapshotService;
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
     {
@@ -155,11 +162,14 @@ public class HostAdminService
 
         var pageHosts = all.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         var items = pageHosts.Select(h => HostDtoMapper.ToDto(h, groups, users, _userDisplayNames)).ToList();
+        var now = DateTime.Now;
+        for (var i = 0; i < items.Count; i++)
+            items[i].IsSilent = IsSilent(pageHosts[i], now);
 
         // 未回報主機的 PRTG 現況提示：只算本頁，PRTG 未啟用時整段不算（PrtgHint 維持 null）
         if (_settings.Get().PrtgEnabled)
         {
-            var hints = ComputeSilentPrtgHints(_prtgStore, pageHosts, DateTime.Now);
+            var hints = ComputeSilentPrtgHints(_prtgStore, pageHosts, now);
             foreach (var dto in items)
             {
                 if (hints.Hints.TryGetValue(dto.HostId, out var hint))
@@ -402,6 +412,9 @@ public class HostAdminService
             // 「不該覆寫」的情況相反；做逐欄比對體檢時別把這裡一併「修」掉。
         });
 
+        if (activeChanged && existing!.OwnerUserIds.Count > 0)
+            _permissionVersion.Bump();
+
         _audit.Record(
             action: AuditActions.HostUpdate,
             summary: isNew
@@ -414,6 +427,17 @@ public class HostAdminService
         // 在主機寫入**之後**才重算，且失敗不影響儲存結果——只把警告帶進回應
         // （比照人工對應端點的 RemapWarning，見 PrtgHostMapRefresher 的說明）
         var remapWarning = needsRemap ? _mapRefresher.TryRefreshToday() : null;
+
+        if (needsRemap && remapWarning == null)
+        {
+            var isNewWithIp = isNew && !string.IsNullOrWhiteSpace(request.IpAddress);
+            var isIpChanged = !isNew && ipChanged;
+            var becameActive = activeChanged && request.Active;
+            if (isNewWithIp || isIpChanged || becameActive)
+            {
+                _snapshotService.RequestScopeRefresh();
+            }
+        }
 
         var dto = HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
         dto.RemapWarning = remapWarning;
@@ -549,11 +573,17 @@ public class HostAdminService
         var requested = userIds.Distinct().ToList();
 
         NameFormat.EnsureAllKnown(requested, allUsers, "使用者");
+        // 與批次指派同一標準擋停用使用者，但只擋「這次新加入」的：主機原本掛著的已停用負責人
+        // 若也擋，改其他負責人時整筆會被拒，使用者無從下手
+        var newlyInactive = requested.Except(host.OwnerUserIds).Where(id => !allUsers[id].Active)
+            .Select(id => allUsers[id].Account).ToList();
+        if (newlyInactive.Count > 0)
+            throw DomainException.Validation($"指定的使用者已停用：{NameFormat.Join(newlyInactive)}。");
 
         var before = host.OwnerUserIds.Select(id => allUsers.TryGetValue(id, out var u) ? u.Account : id.ToString()).ToList();
         var after = requested.Select(id => allUsers[id].Account).ToList();
 
-        _hosts.SetOwners(hostId, requested);
+        WriteOwners(new Dictionary<long, List<long>> { [hostId] = requested });
 
         _audit.Record(
             action: AuditActions.HostUpdate,
@@ -563,6 +593,84 @@ public class HostAdminService
             detail: new { Before = before, After = after });
 
         return HostDtoMapper.ToDto(_hosts.Get(hostId)!, _hostGroups.GetAll().ToDictionary(g => g.GroupId), allUsers, _userDisplayNames);
+    }
+
+    /// <summary>
+    /// 批次指派負責人（回饋第 50 輪批次F-2）：驗證同 <see cref="SetGroupsBatch"/>——模式不合、
+    /// 使用者不存在或已停用 → 400；主機任一台不存在或已併入其他主機 → 整批拒絕、零寫入。
+    /// 寫入與單台設定走同一支 <see cref="WriteOwners"/>（含權限版本推進），稽核整批一筆。
+    /// </summary>
+    public HostOwnersBatchResultDto SetOwnersBatch(IEnumerable<long> hostIds, IEnumerable<long> ownerUserIds, string mode)
+    {
+        if (mode != "replace" && mode != "add" && mode != "remove")
+            throw DomainException.Validation($"批次模式「{mode}」不合法，僅接受 replace、add 或 remove。");
+
+        var requestedHostIds = hostIds.Distinct().ToList();
+        if (requestedHostIds.Count == 0)
+            throw DomainException.Validation("請至少選擇一台主機。");
+
+        var allUsers = _users.GetAll().ToDictionary(u => u.UserId);
+        var requestedUserIds = ownerUserIds.Distinct().ToList();
+        NameFormat.EnsureAllKnown(requestedUserIds, allUsers, "使用者");
+        var inactive = requestedUserIds.Where(id => !allUsers[id].Active).Select(id => allUsers[id].Account).ToList();
+        if (inactive.Count > 0)
+            throw DomainException.Validation($"指定的使用者已停用：{NameFormat.Join(inactive)}。");
+        if (mode != "replace" && requestedUserIds.Count == 0)
+            throw DomainException.Validation("請至少選擇一位使用者。");
+
+        var hosts = requestedHostIds.Select(id => (Id: id, Host: _hosts.Get(id))).ToList();
+        var missing = hosts.Where(h => h.Host == null).Select(h => h.Id).ToList();
+        if (missing.Count > 0)
+            throw DomainException.Validation($"指定的主機不存在（ID：{string.Join("、", missing)}），整批未套用。");
+        var merged = hosts.Where(h => h.Host!.MergedInto != null).Select(h => h.Host!.HostName).ToList();
+        if (merged.Count > 0)
+            throw DomainException.Validation($"已併入其他主機，不能指派負責人：{NameFormat.Join(merged)}，整批未套用。");
+
+        var ownersByHost = hosts.ToDictionary(h => h.Id, h => mode switch
+        {
+            "replace" => requestedUserIds,
+            "add" => h.Host!.OwnerUserIds.Union(requestedUserIds).ToList(),
+            _ => h.Host!.OwnerUserIds.Except(requestedUserIds).ToList()
+        });
+        WriteOwners(ownersByHost);
+
+        var userNames = requestedUserIds.Select(id => allUsers[id].Account).ToList();
+        var hostNames = hosts.Select(h => h.Host!.HostName).ToList();
+        var modeText = mode switch { "replace" => "取代", "add" => "加入", _ => "移除" };
+        _audit.Record(
+            action: AuditActions.HostUpdate,
+            summary: $"批次{modeText}負責人「{NameFormat.Join(userNames)}」：共 {hosts.Count} 台主機（{NameFormat.Join(hostNames)}）",
+            targetKind: "host",
+            targetId: "batch",
+            detail: new
+            {
+                Mode = mode,
+                OwnerUserIds = requestedUserIds,
+                OwnerAccounts = userNames,
+                HostIds = requestedHostIds,
+                HostNames = hostNames
+            });
+
+        var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
+        return new HostOwnersBatchResultDto
+        {
+            UpdatedCount = hosts.Count,
+            Hosts = requestedHostIds.Select(id => HostDtoMapper.ToDto(_hosts.Get(id)!, groups, allUsers, _userDisplayNames)).ToList()
+        };
+    }
+
+    /// <summary>
+    /// 設定負責人的唯一寫入點（單台與批次共用）：一次 MutateBatch 寫完，再推進權限版本——
+    /// 主機負責人隱含 User 角色能力（UserCapabilityResolver）：負責人一變，相關的人能力就變。
+    /// </summary>
+    private void WriteOwners(IReadOnlyDictionary<long, List<long>> ownersByHost)
+    {
+        _hosts.MutateBatch(list =>
+        {
+            foreach (var host in list.Where(h => ownersByHost.ContainsKey(h.HostId)))
+                host.OwnerUserIds = ownersByHost[host.HostId].Distinct().ToList();
+        });
+        _permissionVersion.Bump();
     }
 
     public void MergeHost(long sourceHostId, long targetHostId)
@@ -584,6 +692,8 @@ public class HostAdminService
                 $"{target.HostName} 本身已併入其他主機，不能作為併入目標；請改以最終的那台主機為目標。");
 
         _hosts.Merge(sourceHostId, targetHostId);
+        if (source.OwnerUserIds.Count > 0)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostMerge,
@@ -608,6 +718,8 @@ public class HostAdminService
         var target = _hosts.Get(mergedIntoId);
 
         _hosts.Unmerge(hostId);
+        if (host.OwnerUserIds.Count > 0)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostUnmerge,

@@ -7,7 +7,7 @@
  */
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
@@ -18,6 +18,45 @@ import { reportCard } from '../core/report-view.js';
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
+
+function initRecordSections() {
+    const destinations = [
+        ['report-cards', 'record-evidence-main'],
+        ['alerts-card', 'record-evidence-side'],
+        ['coverage-card', 'record-evidence-side'],
+        ['chat-card', 'record-context-main'],
+        ['categories-card', 'record-context-side']
+    ];
+    for (const [sourceId, destinationId] of destinations) {
+        const source = document.getElementById(sourceId);
+        const destination = document.getElementById(destinationId);
+        if (source && destination) destination.appendChild(source);
+    }
+
+    const sections = ['record-evidence', 'record-context']
+        .map(id => document.getElementById(id)).filter(Boolean);
+    let printing = false;
+    let priorOpen = [];
+    for (const section of sections) {
+        const key = `lf.recordDetail.section.${section.id}`;
+        try { section.open = localStorage.getItem(key) === 'true'; } catch { /* 儲存空間不可用時維持預設收合 */ }
+        section.addEventListener('toggle', () => {
+            if (printing) return;
+            try { localStorage.setItem(key, String(section.open)); } catch { /* 無法保存偏好不影響操作 */ }
+        });
+    }
+    window.addEventListener('beforeprint', () => {
+        printing = true;
+        priorOpen = sections.map(section => section.open);
+        sections.forEach(section => { section.open = true; });
+    });
+    window.addEventListener('afterprint', () => {
+        sections.forEach((section, index) => { section.open = priorOpen[index]; });
+        requestAnimationFrame(() => { printing = false; });
+    });
+}
+
+initRecordSections();
 
 // 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
 // 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
@@ -455,7 +494,7 @@ function issueHistoryBody(history) {
     }
 
     if (history.cases.length === 0 && history.entries.length === 0) {
-        renderEmpty(wrap, { title: '查無先前處理紀錄' });
+        renderEmpty(wrap, { title: '查無先前處理紀錄', hint: '此問題在此主機過去未曾有結案或處理歷程。' });
     }
 
     return wrap;
@@ -664,7 +703,17 @@ function defaultUnhandledControl(issue) {
     badge.title = '低風險問題預設不處理；沒有實際落盤，可在此確認或調回未處理';
     wrap.appendChild(badge);
 
-    const confirmBtn = smallActionButton('確認不處理', () => setIssueStatus(issue, 'wont_fix', wrap, { note: null }));
+    // 「不處理」一律要理由（與處理表單、交辦單回覆同一條必填規則），預設不處理的確認也不例外
+    const confirmBtn = smallActionButton('確認不處理', async () => {
+        const reason = await confirmActionWithReason({
+            title: '確認不處理？',
+            message: '這個問題會標為「不處理」，請留下理由供日後回頭確認判斷依據。',
+            reasonLabel: '不處理的理由（必填）',
+            confirmText: '確認不處理',
+            confirmVariant: 'primary'
+        });
+        if (reason) await setIssueStatus(issue, 'wont_fix', wrap, { note: reason });
+    });
     const reopenBtn = smallActionButton('調回未處理', () => setIssueStatus(issue, 'open', wrap, { forgetNoise: false }));
     wrap.append(confirmBtn, reopenBtn);
     return wrap;
@@ -767,14 +816,19 @@ function statusLabel(issue) {
  * 那套推導邏輯只在後端算一次（單一事實來源），前端用哪個值必須問後端要。
  */
 async function setIssueStatus(issue, status, wrap, extra = {}) {
+    let result;
     try {
-        const result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
+        result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
             issueKey: issue.issueKey,
             status,
             note: extra.note ?? null,
             forgetNoise: !!extra.forgetNoise
         });
+    } catch {
+        return;   // api.js 已顯示錯誤訊息，不再重複 toast
+    }
 
+    try {
         const fresh = await api.get(`/api/records/${hostId}/${date}`, { silent: true });
         const updated = fresh.topIssues.find(i => i.issueKey === issue.issueKey);
         if (updated) Object.assign(issue, updated);
@@ -789,8 +843,9 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
         // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
         const caseNote = result?.caseSyncedDayCount > 0 ? `（已同步案件涵蓋的 ${result.caseSyncedDayCount} 天）` : '';
         toast((status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記') + caseNote, 'success');
-    } catch (error) {
-        toast(error?.message || '更新失敗', 'danger');
+    } catch {
+        // 標記已成立，失敗的是 silent 的重新取回：api.js 沒出過訊息，這裡要自己講
+        toast('已更新，但重新載入狀態失敗，請重新整理頁面', 'warning');
     }
 }
 
@@ -1071,6 +1126,39 @@ function renderSeverityFilter(detail) {
 }
 
 /**
+ * 處理人被帶到風險日詳情時，點出「這些問題其實是某張交辦單的一部分」——
+ * 到我的交辦可以一次回覆同一張單的所有主機，不必逐日逐主機處理。
+ * workOrderId 是該問題進行中案件所屬的交辦單（RecordDetailQueryService 以 openCase.WorkOrderId 填入）。
+ */
+function renderWorkOrderHint(detail, container) {
+    const myIssues = detail.topIssues.filter(i => i.caseHandlerId === currentUserId && i.workOrderId != null);
+    if (myIssues.length === 0) return;
+
+    const orderIds = [...new Set(myIssues.map(i => i.workOrderId))];
+    const shown = orderIds.slice(0, 3);
+    let orderText = shown.map(id => `#${id}`).join('、');
+    if (orderIds.length > 3) {
+        orderText += ` 等 ${orderIds.length} 張`;
+    }
+
+    const hintEl = document.createElement('div');
+    hintEl.className = 'lf-hint p-3 border-bottom';
+    hintEl.appendChild(icon('info-circle'));
+
+    const span = document.createElement('span');
+    span.textContent = `這一天有 ${myIssues.length} 個問題屬於你的交辦單（${orderText}）——到「我的交辦」可以一次回覆同一張單的所有主機。`;
+
+    const link = document.createElement('a');
+    link.href = appUrl(`/handlers/${currentUserId}?order=${orderIds[0]}`);
+    link.textContent = '前往我的交辦';
+    link.className = 'ms-1';
+    span.appendChild(link);
+
+    hintEl.appendChild(span);
+    container.appendChild(hintEl);
+}
+
+/**
  * 重點問題依類別分節，對齊報告 txt 的「■【類別】重點問題 N 項」——
  * 一天常同時有硬體＋資源＋服務的問題，合併成一張平面表會讓「這項屬於哪一類」
  * 從畫面上消失，儀表板分類卡下鑽進來就對不上自己點的類別。
@@ -1090,6 +1178,7 @@ function renderIssues(detail) {
     const highlighted = highlightedCategories();
     container.replaceChildren();
 
+    renderWorkOrderHint(detail, container);
     renderProgress();
 
     let shown = 0;
@@ -1610,7 +1699,7 @@ function renderAlerts(detail) {
 
     const hasSuppressed = detail.suppressedTrendAlerts?.length > 0 || detail.suppressedCorrelationAlerts?.length > 0;
     if (detail.correlationAlerts.length === 0 && detail.trendAlerts.length === 0 && !hasSuppressed) {
-        renderEmpty(container, { title: '無關聯或趨勢訊號' });
+        renderEmpty(container, { title: '無關聯或趨勢訊號', hint: '當日未偵測到跨事件關聯或異常趨勢告警。' });
         return;
     }
 
@@ -1828,7 +1917,7 @@ function renderCategories(detail) {
     const container = document.getElementById('detail-categories');
 
     if (detail.categories.length === 0) {
-        renderEmpty(container, { title: '無分類資料' });
+        renderEmpty(container, { title: '無分類資料', hint: '當日未偵測到任何類別的問題事件。' });
         return;
     }
 
@@ -1859,7 +1948,7 @@ function renderCategories(detail) {
         // 跨日：帶條件回問題查詢（§8.4），次要動作、圖示連結不搶主視線
         const cross = document.createElement('a');
         cross.className = 'lf-no-print ms-2 text-muted';
-        cross.href = appUrl(`/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`);
+        cross.href = appUrl(recordsUrl({ categories: category.category, riskLevels: '高,中,低', from: detail.date, to: detail.date }));
         cross.title = '在問題查詢中看這一類（可跨日）';
         cross.appendChild(icon('search'));
 

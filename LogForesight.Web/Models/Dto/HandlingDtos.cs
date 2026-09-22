@@ -271,7 +271,7 @@ public class BulkCloseIssueRequest
 
     /// <summary>
     /// 之後新出現的主機日是否自動套用這個結論（回饋十九輪批次F，§2 決策一）：勾選時同時把
-    /// (Source,EventId) 的問題檔案設成機房結論，見 IssueOwnerAdminService.SetConclusion——
+    /// (Source,EventId) 的問題負責與靜音設成機房結論，見 IssueOwnerAdminService.SetConclusion——
     /// 這一次的統一標記只處理**既有**日子，AutoApply 才是「以後也這樣」的開關。
     /// </summary>
     public bool AutoApply { get; set; }
@@ -487,7 +487,14 @@ public class PermissionChangeIdListDto
     public bool Truncated { get; set; }
 }
 
-// ── 操作紀錄（§9.11）───────────────────────────────────────────────────────
+// ── 稽核紀錄（§9.11）───────────────────────────────────────────────────────
+
+/// <summary>稽核分頁結果（§9.11）：共用 <see cref="PagedResult{T}"/> 之外多帶是否套用了預設起日</summary>
+public class AuditPageDto : PagedResult<AuditEntryDto>
+{
+    /// <summary>true＝有篩選條件但沒指定起日，只查了近 90 天</summary>
+    public bool DefaultRangeApplied { get; set; }
+}
 
 public class AuditEntryDto
 {

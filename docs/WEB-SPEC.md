@@ -223,7 +223,7 @@ LogForesight.Web/
 登入頁 POST /api/auth/login { account, password? }
   → IAuthenticationProvider.AuthenticateAsync(account, password)
       serverAdmin 帳號比對（任何 Provider 下優先檢查，見下方專節）
-      Stub 實作：lf_users 存在且 active 即通過（password 忽略）——僅供開發/前期測試
+      Stub 實作：`IUserStore` 的 `users` JSON blob 有該帳號且 active 即通過（password 忽略）——僅供開發/前期測試
       正式（§12 起）：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
         bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider
   → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
@@ -249,7 +249,7 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 
 **serverAdmin（本地救援/引導帳號）**：
 
-- `Auth.ServerAdmin` 定義一個**不存在於 `lf_users`** 的本地帳號，密碼由管理單位
+- `Auth.ServerAdmin` 定義一個**不在 `IUserStore`（`users` JSON blob）** 的本地帳號，密碼由管理單位
   **封存保管並定期變更**。用途：指派/移除 admin 群組成員——解掉「匯入使用者需要 admin、
   admin 又來自匯入」的引導問題，也是日後 **AD 停擺時的救援入口**（不依賴任何 Provider，
   Stub 或 Ad 模式下皆可登入；AD 尚未於設定頁設定時，它是唯一進得來的帳號）。
@@ -286,25 +286,31 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 Web 端不對 AD 帳號另建鎖定機制——一套鎖定原則、一個事實來源。已知副作用：對登入頁
 輸入他人帳號亂試可觸發該帳號的 AD 鎖定（內網環境接受此風險，稽核 `login_failed` 含來源 IP 可查）。
 
-JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`exp`。
-**能力進 token、主機授權範圍不進 token**——範圍每次請求由 `IVisibilityService` 即時解析
-（群組異動即時生效；能力異動最遲於 token 過期時生效，接受此延遲）。
+JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`pv`（簽發時的
+`PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
+`IVisibilityService` 即時解析。`ActiveUserMiddleware` 對一般使用者每個請求都從 `IUserStore` 檢查帳號仍為 active；
+serverAdmin 不在 `IUserStore`，不做這項檢查；一般使用者另比對 token 的 `pv` 與 `PermissionVersionStamp`，版本不符就重算能力、
+無感換發 token，並替換本請求的 principal。
+主機停用或合併造成的隱含授權變更也會推進同一權限版本。換發沿用原工作階段的 `jti` 與 `exp`（不延長登入期），
+寫入 Cookie 的 token 與本請求替換的 principal 使用同一個 `jti`。
 
-**上次登入時間**：登入成功時 `IdentityService`
-呼叫 `IUserStore.TouchLogin` 寫入 `WebUser.LastLoginAt`（唯一寫入點）。
-**刻意不併進 `Upsert`**——各處建構 `WebUser` 的呼叫端都不帶這個欄位，交給 Upsert 的逐欄
-覆寫會在每次編輯使用者時把它靜默清成 null（同 owners.csv 曾漏抄 SentinelId 的失敗模式）。
+**上次登入時間**：登入成功時 `IdentityService` 呼叫 `IUserStore.TouchLogin`，寫入
+`user_last_login` blob；讀取時優先使用該 blob，舊使用者資料中的 `WebUser.LastLoginAt` 僅作唯讀
+fallback，不再由登入流程寫入。**刻意不併進使用者 blob**——每次登入只改寫 `user_last_login`，
+避免改寫 `users` blob 使版本前進、快取在登入尖峰反覆失效。
 **刻意不從稽核反推**：稽核有保留天數，到期清理後會變成「登入過卻顯示從未登入」。
-serverAdmin 不在 `lf_users`，沒有這個欄位。
+serverAdmin 不在 `IUserStore`，沒有這個欄位。
 
 ### 6.3 逾期與登出
 
 - 效期 `Jwt.ExpireHours`（預設 8 小時），不做 refresh token（內網工具，過期重登入即可）。
-- **停用即時生效**：`ICurrentUser` 解析時逐請求檢查 `lf_users.active`，停用帳號立即 401，
-  不等 token 自然過期（能力異動仍接受 token 效期內的延遲，§6.2；停用是安全事件，不可延遲）。
+- **停用即時生效**：`ActiveUserMiddleware` 逐請求查 `IUserStore` 的 active 狀態，停用或不存在的帳號立即 401，
+  不等 token 自然過期。群組、使用者、主機停用／合併等影響能力或可見範圍的異動推進 `PermissionVersionStamp`；
+  下一個請求發現 `pv` 不符時，重算能力並依 §6.2 契約換發 token。
 - API 收到過期/無效 token → 401 ＋ 信封 error code `auth_expired`；前端攔截後導向登入頁。
   過期後首個被拒請求補記稽核 `session_expired`（誠實邊界：無法記錄「過期那一刻」）。
-- `POST /api/auth/logout`：清除 Cookie＋稽核 `logout`。
+- `POST /api/auth/logout`：以目前 JWT 的 `jti` 加入行程內 `RevokedTokens`，保留到該 token 原本的 `exp`，再清除 Cookie＋稽核
+  `logout`；只清 Cookie 不足以阻止已被複製的 token 重放。行程重啟會清空撤銷清單，剩餘效期仍由 JWT `exp` 結束。
 
 ### 6.4 CSRF 防護
 
@@ -371,7 +377,7 @@ GetIssueOwnedHostIds`，內部呼叫 `IIssueAggregateQuery.HostIdsFor` 反查 `l
 的郵件路由逐主機日判定，該日問題命中規則即通知問題負責人（**可多位**）、不再通知主機負責人；
 `DayHandlingCommandService.DefaultHandlerId` 的自動帶入處理人同樣先查問題負責人，但只在
 跨命中問題聯集去重後**恰一人**且未停用時帶入，多人不猜、落回主機負責人規則。
-管理頁 `/admin/issue-owners`（側欄「系統管理＞問題檔案」，`Maintain`）：
+管理頁 `/admin/issue-owners`（側欄「系統管理＞問題負責與靜音」，`Maintain`）：
 `IssueOwnersController` GET／GET recent-issues（近 30 天出現過的問題選擇器，依主機數排序）／
 PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
 (Source, EventId)，編輯時鍵鎖定只能改負責人與備註。
@@ -381,9 +387,9 @@ PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從�
 false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時必填）＋
 `ConcludedById`／`ConcludedByAccount`／`ConcludedAt`＋`AutoApply`（bool）。
 `IssueCaseCoordinator.AttachNewDay`（批次每天寫入新紀錄後掛接）的完整優先序見 §9.4b「夜間掛接」。
-與問題檔案相關的兩層：③ 命中一筆 `AutoApply=true` 的問題檔案結論 → 自動套用該結論，寫入
+與問題負責與靜音相關的兩層：③ 命中一筆 `AutoApply=true` 的問題負責與靜音結論 → 自動套用該結論，寫入
 `IssueHandling{ Status=ConclusionStatus, Note="〔機房結論〕"+ConclusionNote, CaseId=null }`，
-稽核動作碼 `HandlingActions.FleetApply`；⑤ 問題檔案有負責人 → 把這台主機掛進負責人的交辦單
+稽核動作碼 `HandlingActions.FleetApply`；⑤ 問題負責與靜音有負責人 → 把這台主機掛進負責人的交辦單
 （負責人已有此問題的進行中單就掛入，否則建一張 `origin=owner_rule` 的系統交辦單）——問題負責人
 即長期負責人。多位負責人時取負載最輕者；停用、無處理能力、暫停接單的負責人不選，全部不可用時落到 ⑥ 自動派工。
 **不再打擾**：同主機同問題最近一筆案件若被以 wont_fix／false_positive／known_noise 結案，
@@ -502,7 +508,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   勾選清單 `checkboxList`。後者可選 `filterable`（回饋二十七輪）：加一個即時篩選框
   （比對顯示名、不分大小寫）與捲動高度上限，供「負責人」這類數十人的清單使用；
   **篩選以隱藏（`d-none`）實作、不移除節點**——移除的話被篩掉的已勾選項目會連值一起消失
-  （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題檔案負責人與主機負責人兩處，
+  （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題負責與靜音負責人與主機負責人兩處，
   其餘呼叫端不傳此選項、行為與過去完全相同。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
 - `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
@@ -932,6 +938,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     （「N 天前」／「昨日仍在發生」）回答，不與機房首見欄語意重複。
   - 資料來源走 `IIssueAggregateQuery`（`lf_top_issues` 的 GROUP BY），不把整段期間的
     紀錄撈回記憶體聚合；與報表問題排行共用 `IssueRankingBuilder`，兩頁數字必然一致。
+  - `IIssueAggregateQuery` 的來源鍵就緒是獨立閘門：`lf_top_issues.source_key` 背景每批 500
+    列回填，並且 `lf_issue_first_seen` 舊鍵重整標記完成後才可切換新鍵路徑。這條閘門只管
+    問題聚合；`lf_risky_events` 的回填雖在其後開始，沒有與本查詢合併的讀取閘門。
+    正規化使用 `WorkOrderIssueKey.SourceKeyOf`，`IssueSignatureKey.For` 維持原行為。
   - 主機數以**存活主機 id** 計——合併過的主機不再被算成兩台。
   - **全部主機都已有結論的問題退出清單**（背景見 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6）：不佔用重點清單版面，但卡底誠實顯示
     「另有 N 個問題已有結論（未列入）」——悄悄少幾筆會被誤讀成「問題變少了」。
@@ -1341,6 +1351,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （尚無歷史）伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
   規則命中／趨勢異常簽章的原始事件，`RiskyEventSelector` 選取、每簽章 50／每主機日 500 筆
   上限、逐則截 2000 字，保留天數見 §9.9b 資料保留），毫秒級、**本機直讀與 NetIQ 主機皆有**，
+  `IRiskyEventStore` 只在自身的 `source_key` 回填完成後宣告就緒；這條閘門不等待
+  `IIssueAggregateQuery`，也不被它反向阻塞。兩張表的來源鍵回填各自每批 500 列，risky
+  events 的回填在 top issues 那一輪之後開始。
   依事件時間新到舊取 20 則；暫存查無（超過保留期、功能上線前分析的日子、不符入庫資格）才
   fallback 既有的 **Sentinel 即時查詢**：向該主機所屬 Sentinel 查回當日此問題的原始事件（最新 20 則、逐則截
   500 字），開關在 §9.9a NetIQ 維護頁（`NetiqOptions.ChatLiveFetchEnabled`），全站併發上限 1、
@@ -1397,7 +1410,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
 
 點任何處理人姓名（問題查詢明細／依主機／依問題視角
-的處理人欄、詳情頁處理面板、詳情頁案件徽章）都連到此頁；導覽「監控作業」區另加「我的交辦」
+的處理人欄、詳情頁處理面板、詳情頁案件徽章）都連到此頁；側欄直接提供「我的交辦」
 （`requires: null`，前端依目前登入者導向自己的 `/handlers/{userId}`）——不新增 Capability，
 處理人姓名本來就全站可見，此頁未洩漏新資訊；**資料以檢視者的可見範圍過濾**（不是被看者的），
 與全站查詢頁一致。被查看的使用者已停用時頁面照常顯示，名字後綴「（已停用）」。
@@ -1495,7 +1508,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 `appended`），執行紀錄一行摘要（`NightlyDispatch.DescribeSummary`：建單數、掛入台數、無候選人台數、靜音略過、閘門略過與四項明細）；自動派工開著但派工池沒有可接單的成員時，每趟另記一則警告。派工脈絡建立失敗時整趟
 略過派工並計為 `unavailable`，不讓分析失敗。
 
-**靜音**（問題檔案 `IssueProfile.Mutes`，區間清單為唯一事實來源）：
+**靜音**（問題負責與靜音 `IssueProfile.Mutes`，區間清單為唯一事實來源）：
 - 設定 `PUT api/admin/issue-owners/{source}/{eventId}/mute { days（1～365）| until, reason（必填，≤500）,
   existingOrders: pause|close }`，到期日＝今天＋days−1；今天已在靜音中再設定＝重設迄日（可縮短），不新增區間。
   `DELETE …/mute` 提前解除：迄日改成昨天（起日為今天則刪除區間）。皆 `Maintain`；`existingOrders=close`
@@ -1506,7 +1519,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   效果：靜音中整個問題消失（含靜音前的日子）；到期後區間內的日子仍視同已有結論、區間前的未處理日子回到待辦；
   提前解除從解除當天起恢復。一天只剩靜音問題時日狀態推導為已處理（`DayStatusRule.Resolve`）。
 - `IIssueAggregateQuery` 每個方法第一個參數都是 `IssueExclusion`、**沒有預設值**（反射守門）：呼叫端必須明寫
-  `IssueExclusion.None` 或帶靜音；授權、校準、規則命中統計、問題檔案選擇器、詳情頁基準一律 `None`。
+  `IssueExclusion.None` 或帶靜音；授權、校準、規則命中統計、問題負責與靜音選擇器、詳情頁基準一律 `None`。
   SQL 只帶與查詢期間重疊的區間（`IssueExclusion.ForRange`）。日風險主機數來自分析當下的風險等級，
   靜音前被該問題拉高的日風險維持原值（與抑制同一取捨）。
 - 快取：`IssueExclusion.CacheToken`（今天＋全部區間）併入儀表板、排行、待辦快照的快取鍵，換日到期也失效。
@@ -1515,7 +1528,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 交辦單：問題目前靜音中的單推導為暫停。處理人清單與徽章預設排除，總覽預設列出並標「暫停」與靜音至；
   解除或到期後以「只看自靜音恢復」找得到（當天設定當天解除的例外：區間整段刪除，不留恢復紀錄）。靜音 modal 顯示該問題進行中的單數與台數，二選一「暫停，到期自動恢復」
   （預設）或「代為結案為不處理」。
-- 入口：依問題視角「靜音」、問題檔案頁（靜音／延長／解除）、總覽「靜音中」頁籤（延長／解除）。
+- 入口：依問題視角「靜音」、問題負責與靜音頁（靜音／延長／解除）、總覽「靜音中」頁籤（延長／解除）。
   modal 三句常駐提示：新資料不進待辦與告警、到期自動恢復；靜音前未處理的日子到期後會回來，永久結案用統一標記；
   只想對某些主機或群組噤聲用抑制。
 - 註腳：依問題視角（§9.2）、儀表板重點問題卡（§9.1）、報表問題排行（§9.6）、我的交辦（§9.4a）。
@@ -2038,7 +2051,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
-  八個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  九個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
@@ -2047,6 +2060,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   驗證（保留天數大小關係、AD 伺服器必填）在丟出 toast 前先切到欄位所在頁籤
   （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
+- **系統健康頁籤**：顯示「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+  新鮮度只把排程觸發的取數執行算入成功判定，排除 `BatchRun.JobType == ai`；過期狀態可按
+  「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
+  正常徽章只表示目前檢查結果，不代表 NetIQ／PRTG 外部資料一定完整；外部資料需分別到
+  「排程作業」與「PRTG 維護 > 環境探測」確認。
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
   1. **層級與顯示**：以按鈕反白選擇
@@ -2245,7 +2263,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      最大耗時與最近一次發生時間，依最大耗時由大到小；只有單一最慢值時，
      管理者知道「最慢 7 秒」卻不知道是哪幾支慢、各慢幾次，無從決定要去看哪一頁。
      埋點涵蓋紀錄查詢、問題彙總、處理狀態、blob、PRTG 鏡像、行式日誌（稽核／執行紀錄）
-     與權限異動這幾個 store 的對外查詢方法。設定頁「資料保留」面板顯示這份清單，
+     與權限異動這幾個 store 的對外查詢方法。設定頁「系統健康」面板顯示這份清單，
      **清單為空時顯示「尚無慢查詢」**而不是一張空表。
 
      **信件內容廣泛化**：明細行移除 `Headline`／`RiskBasis`
@@ -2291,15 +2309,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
   （PRTG 相關端點見 §9.9e）
 
-### 9.9c `/help/manual` 操作說明書＋AI 提問（`Maintain`，實驗性）
+### 9.9c `/help/manual` 操作說明書＋AI 提問（所有已登入者；AI 提問需 `Maintain`）
 
-- **選單位置**：側欄「系統」分組最下方（僅 `Maintain` 顯示，選單顯示與頁面
-  `[Permission(Capability.Maintain)]` 雙閘，比照既有 admin 頁）。
+- **選單位置**：側欄「系統」分組最下方。操作說明書本身對所有已登入者顯示；章節依
+  manifest 的 `requires` 過濾，維護章節與首次啟動精靈連結需 `Maintain`。AI 提問端點另需
+  `Maintain`，不因說明書放寬而開放。
 - **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`icon`／
   `keywords[]`／`related[]`／`type`／`href`；`icon` 對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
   `type`／`href` 欄位：`type` 省略時預設 `"markdown"`（既有章節零改動），
   `type="link"` 的章節（目前只有第一項「首次啟動精靈」，`href="/setup"`）沒有 Markdown 檔，
-  前端渲染成導引卡）＋ 19 個章節 Markdown 檔（清單共 20 項＝19 md＋1 link），全部以
+  前端渲染成導引卡）＋ 23 個章節 Markdown 檔（清單共 24 項＝23 md＋1 link），全部以
   **內嵌資源**編進組件（csproj 的
   `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
   以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
@@ -2314,7 +2333,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     有 `aiFile` 就用詳細版，沒有則 fallback 回使用者版。
     `GetManual()` 只塞 `Content`，**AI 版不會外洩到前端**；
     選節計分（`HelpChapterScorer`）與 `HelpQaService` 組 prompt 時用的都是 `ContentForAi`。
-  - 目前 19 章全數具備 `aiFile`。
+  - 目前 23 章全數具備 `aiFile`；其中包含「PRTG 維護」、「資源守門」、「系統健康」與
+    「我的交辦：三分鐘上手」。章節內的導覽、頁籤與按鈕名稱必須以目前頁面實際文案為準。
+    說明書守門的基準是 `wwwroot/js/core/layout.js` 的導覽 `label`、對應 View 的
+    `ViewData["Title"]`／可見標題與實際按鈕文字；測試應把 manifest `title` 當待比對值，
+    不得只在 manifest 與 manifest 互相比對而放過舊名稱。`issue-owners` 的 manifest 標題是
+    「問題負責與靜音」，須與 I5 導覽與頁面標題一致。
   - 網址 hash＝章節 id 時直接開該章（`/help/manual#alert-tools` 是規則頁與設定頁決策表的「完整說明」出口）。
 - 精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
   `SetupWizardStateStore.Hidden`）——章節快取本身維持與狀態無關。
@@ -2374,7 +2398,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。
-- API：`GET api/help/manual`、`GET api/help/ask-available`、`POST api/help/ask`（`Maintain`）。
+- API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`、
+  `POST api/help/ask`（後兩者 `Maintain`）。
 
 ### 9.9d `/setup` 首次啟動精靈（`Maintain`）
 
@@ -2395,8 +2420,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.9e `/admin/prtg` PRTG 維護（`Maintain`）
 
-PRTG 整合的**靜態設定與唯讀狀態**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
-動態工作（同步結構與對應、歷史回填）在排程作業頁——功能依性質分置，不散落各頁。
+PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
+排程作業頁只顯示動態狀態、進度與執行中的停止鈕；不提供同步／回填啟動按鈕。
 **總開關是本頁「擷取參數」首欄下拉的一部分**：啟用與取數範圍是同一個決定，拆成兩處只會讓人設了範圍卻忘了開。
 
 四個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
@@ -2452,7 +2477,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
-排程作業頁的那一組另見 §9.10：`POST/GET api/admin/settings/prtg-backfill/start|status|cancel`（歷史回填）。
+排程作業頁只輪詢 §9.10 所列的同步／回填狀態與停止端點；歷史回填的啟動仍從 PRTG 維護頁進入。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
 「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。
 
@@ -2506,16 +2531,17 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **取數執行**：本機與 NetIQ 兩條軌、最新訊息、立即執行／停止。
   - **AI 分析**：待補件數、閒置原因、背景補跑窗口、立即補跑／強制重新分析。
     **沒有啟用開關**——AI 服務設定好就一律啟用（見下方「AI 跟隨取數」）。
-  - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍；未啟用時附連結指向維護頁「擷取參數」，
-    同步與回填兩顆鈕閘住，見 docs/PRTG-SPEC.md §5a）、結構同步摘要（§5a）、每日擷取軌、歷史回填軌與操作。
+  - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍；未啟用時附連結指向維護頁「擷取參數」）、
+    結構同步摘要、每日擷取軌、歷史回填軌與停止狀態。啟動「同步結構與對應」與「歷史回填」的
+    操作入口在 PRTG 維護頁；本頁只保留執行中的停止鈕與前往維護頁連結，見 docs/PRTG-SPEC.md §5a。
     模組狀態與閘只在頁面載入時讀一次設定——在另一分頁改了開關，本頁要重新整理才會跟上；
     點擊時有第二道檢查、後端有第三道，所以不會誤送，只是反向（剛啟用、本頁仍灰）要重整。
     這張卡**刻意沒有「最新訊息」列**：狀態 API 的 `latestMessage` 是整趟共用的最後一行，
     取數卡已在顯示，再放一次只是重複；PRTG 分路的輸出看執行詳情（每行有 `[PRTG]` 前綴）。
 - **動作鈕互斥**：執行中只顯示「停止」，閒置只顯示啟動類（立即執行／立即補跑 AI／強制重新分析），
   以 `d-none` 切換而非 `disabled`——兩顆並排時使用者得自己判斷哪顆有效，灰掉的鈕仍佔位、讀起來像壞了。
-  PRTG 卡的兩顆啟動鈕（同步／回填）沒有對應的停止鈕可換，維持 `disabled`；
-  同步與回填的停止鈕各是獨立一顆，只在各自執行中出現（見下方「停止鈕」）；沒有 `Maintain` 時永遠隱藏，輪詢不得把它翻出來。
+  PRTG 卡不提供同步／回填的啟動鈕；同步與回填的停止鈕各是獨立一顆，只在各自執行中出現（見下方「停止鈕」）。
+  沒有 `Maintain` 時永遠隱藏，輪詢不得把它翻出來。
 - **互斥判斷跨卡，不只看自己那張卡**。AI 卡兩顆啟動鈕的隱藏條件是三個因子的 OR：
   1. AI 自己執行中；
   2. **取數排程執行中**——此時待補會被 AI 的資料完整性閘門擋住，補跑只是空跑一輪，
@@ -2780,7 +2806,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `POST ai-cancel`（寫端僅 Maintain，皆寫稽核 `schedule_*`）。網段輸入語法與 NetIQ
   匯入精靈一致（`NormalizeSubnetPrefix` 共用同一份，比對用 `CidrMatcher`）。
 
-### 9.11 `/audit` 操作紀錄（`ViewAudit`）
+### 9.11 `/audit` 稽核紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
   展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉。
 - API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`
@@ -2854,7 +2880,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IWorkOrderStore` | **表 `lf_work_orders`／`lf_work_order_events`**（交辦單與事件，§9.4b；清單、看板、處理人摘要皆單句 SQL 聚合） | Web＋批次 |
 | `IIssueAggregateQuery` | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護） | Web |
+| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題負責與靜音」頁維護） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |

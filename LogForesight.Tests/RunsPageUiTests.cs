@@ -256,10 +256,9 @@ public class RunsPageUiTests
         Assert.DoesNotContain("style=\"height: 6px;\"", cshtml);
         Assert.DoesNotContain("style=\"max-width: 120px;\"", cshtml);
 
-        // 回填輸出預設收合（它是全頁最高的單一元素）
-        // 收合容器要真的掛上 collapse 行為，不是頁面任何一處出現 collapse 就算
-        Assert.Contains("class=\"collapse mt-2\" id=\"prtg-backfill-output-wrap\"", cshtml);
-        Assert.Contains("data-bs-target=\"#prtg-backfill-output-wrap\"", cshtml);
+        // 回填輸出容器已隨啟動按鈕移除
+        Assert.DoesNotContain("id=\"prtg-backfill-output-wrap\"", cshtml);
+        Assert.DoesNotContain("data-bs-target=\"#prtg-backfill-output-wrap\"", cshtml);
 
         // 頁籤與面板同層：頁籤結束標籤之後、第一個 data-panel 之前不得出現新的容器 div
         var tabsEnd = cshtml.IndexOf("</ul>", cshtml.IndexOf("id=\"runs-tabs\"", StringComparison.Ordinal), StringComparison.Ordinal);
@@ -330,12 +329,12 @@ public class RunsPageUiTests
         Assert.True(prtgCardStart > 0, "找不到 PRTG 狀態卡");
         var prtgCard = cshtml[prtgCardStart..];
 
-        // PRTG 軌與同步入口都在這張卡裡
+        // PRTG 軌與狀態都在這張卡裡，啟動按鈕已移除
         Assert.Contains("schedule-prtg-progress-wrap", prtgCard);
-        Assert.Contains("prtg-sync-start", prtgCard);
+        Assert.DoesNotContain("prtg-sync-start", prtgCard);
         Assert.Contains("prtg-sync-summary", prtgCard);
         Assert.Contains("prtg-module-state", prtgCard);
-        Assert.Contains("prtg-backfill-start", prtgCard);
+        Assert.DoesNotContain("prtg-backfill-start", prtgCard);
         Assert.Contains("prtg-sync-cancel", prtgCard);
 
         // 取數卡裡不該再有 PRTG 軌
@@ -389,14 +388,12 @@ public class RunsPageUiTests
         var root = FindRepoRoot();
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
 
-        // renderPrtgModuleState 一次設定兩顆
-        Assert.Contains("'prtg-sync-start', 'prtg-backfill-start'", js);
+        // renderPrtgModuleState 不再設定啟動按鈕（已移除）
+        Assert.DoesNotContain("'prtg-sync-start', 'prtg-backfill-start'", js);
         Assert.Contains("prtg-disabled-hint", js);
 
-        // 兩處輪詢各自也要看模組開關，否則會把閘打開
-        // 回饋四十五輪 A2/C4：三態收緊成只認明確 true（null 未知一律視為未啟用）
-        Assert.Contains("status.isRunning || prtgModuleEnabled !== true", js);
-        Assert.Contains("startButton.disabled = prtgModuleEnabled !== true", js);
+        // 啟動按鈕已自 runs.js 移除
+        Assert.DoesNotContain("startButton.disabled = prtgModuleEnabled !== true", js);
 
         // 立即執行前的提醒：只在「連線已設定但未啟用」時問，沒設定 PRTG 的站台不該每次被問
         Assert.Contains("prtgModuleEnabled !== true && prtgConnectionConfigured", js);
@@ -603,26 +600,28 @@ public class RunsPageUiTests
         var js = ReadRunsJs();
 
         Assert.Equal(0, CountOccurrences(js, "prtgModuleEnabled === false"));
-        Assert.Equal(6, CountOccurrences(js, "prtgModuleEnabled !== true"));
+        Assert.Equal(2, CountOccurrences(js, "prtgModuleEnabled !== true"));
         Assert.Equal(1, CountOccurrences(js, "prtgModuleEnabled === true"));
 
         // 判斷點總數（不含宣告與 renderPrtgModuleState 的指派）
         var judgements = System.Text.RegularExpressions.Regex.Matches(
             js, @"prtgModuleEnabled\s*(===|!==)\s*(true|false)").Count;
-        Assert.Equal(7, judgements);
+        Assert.Equal(3, judgements);
 
         // 輪詢寫入點與點擊時的第二道檢查都要改到
         var syncPoll = ExtractBlock(js, "async function refreshPrtgSyncStatus(");
         Assert.False(string.IsNullOrWhiteSpace(syncPoll), "擷取不到 refreshPrtgSyncStatus 主體");
-        Assert.Contains("prtgModuleEnabled !== true", syncPoll);
+        // 啟動已移往維護頁；正在執行的工作即使模組停用仍須能停止。
+        Assert.Contains("cancelBtn && canMaintainSchedule", syncPoll);
+        Assert.DoesNotContain("prtg-sync-start", syncPoll);
 
         var syncBind = ExtractBlock(js, "function bindPrtgSync(");
         Assert.False(string.IsNullOrWhiteSpace(syncBind), "擷取不到 bindPrtgSync 主體");
-        Assert.Contains("prtgModuleEnabled !== true", syncBind);
+        Assert.DoesNotContain("prtg-sync-start", syncBind);
 
         var backfillBind = ExtractBlock(js, "function bindPrtgBackfill(");
         Assert.False(string.IsNullOrWhiteSpace(backfillBind), "擷取不到 bindPrtgBackfill 主體");
-        Assert.Contains("prtgModuleEnabled !== true", backfillBind);
+        Assert.DoesNotContain("prtg-backfill-start", backfillBind);
     }
 
     /// <summary>C6：強制重跑 modal 在窗口內有新執行開始時停用確認鈕，且文案帶出觸發者。</summary>
