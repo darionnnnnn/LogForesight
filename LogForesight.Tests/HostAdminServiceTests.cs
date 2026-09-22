@@ -2,6 +2,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -79,7 +80,7 @@ public class HostAdminServiceTests : IDisposable
         }
     }
 
-    private HostAdminService Create() => new(
+    private HostAdminService Create(PermissionVersionStamp? permissionVersion = null) => new(
         _hosts,
         _groups,
         new FakeUserStore(),
@@ -89,7 +90,7 @@ public class HostAdminServiceTests : IDisposable
         new UserDisplayNameService(new FakeSystemSettingsStore()),
         new EfPrtgStore(_fx.NewContext),
         _mapRefresher,
-        new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
+        new FakeSystemSettingsStore(), permissionVersion ?? TestPermissionStamps.Shared,
         _snapshotService);
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
@@ -675,6 +676,21 @@ public class HostAdminServiceTests : IDisposable
     }
 
     [Fact]
+    public void SaveHost_停用有負責人主機_推進權限版本()
+    {
+        var stamp = TestPermissionStamps.Create();
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "owned-host", Active = true, OwnerUserIds = new List<long> { 42 }
+        });
+
+        var before = stamp.Current;
+        Create(stamp).SaveHost(new SaveHostRequest { HostName = "owned-host", Active = false });
+
+        Assert.True(stamp.Current > before);
+    }
+
+    [Fact]
     public void 合併與解除合併都會重算今日對應()
     {
         // 已合併（有墓碑）的主機不參與對應，解除後又恢復資格——兩個方向都要重算
@@ -697,6 +713,22 @@ public class HostAdminServiceTests : IDisposable
         var beforeUnmerge = _mapRefresher.Calls;
         service.UnmergeHost(a.HostId);
         Assert.Equal(beforeUnmerge + 1, _mapRefresher.Calls);
+    }
+
+    [Fact]
+    public void MergeHost_來源有負責人_推進權限版本()
+    {
+        var stamp = TestPermissionStamps.Create();
+        var source = _hosts.Upsert(new WebHost
+        {
+            HostName = "owned-source", Active = true, OwnerUserIds = new List<long> { 42 }
+        });
+        var target = _hosts.Upsert(new WebHost { HostName = "merge-target", Active = true });
+
+        var before = stamp.Current;
+        Create(stamp).MergeHost(source.HostId, target.HostId);
+
+        Assert.True(stamp.Current > before);
     }
 
     /// <summary>

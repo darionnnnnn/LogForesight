@@ -1,5 +1,6 @@
 ﻿using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -13,7 +14,8 @@ public class SentinelAdminServiceTests
     private readonly FakeSentinelStore _sentinels = new();
     private readonly RecordingAuditService _audit = new();
 
-    private SentinelAdminService Create() => new(_sentinels, _hosts, _audit);
+    private SentinelAdminService Create(PermissionVersionStamp? permissionVersion = null) =>
+        new(_sentinels, _hosts, _audit, permissionVersion ?? TestPermissionStamps.Shared);
 
     [Fact]
     public void 新增_密碼被加密且不回傳明碼()
@@ -94,16 +96,23 @@ public class SentinelAdminServiceTests
     [Fact]
     public void 刪除_轄下使用中主機停用並標記孤兒_主機列不刪除()
     {
-        var svc = Create();
+        var stamp = TestPermissionStamps.Create();
+        var svc = Create(stamp);
         var sentinel = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1" });
-        _hosts.Upsert(new WebHost { HostName = "10.1.2.1", Source = "netiq", SentinelId = sentinel.SentinelId, NetiqServer = "S1" });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.1", Source = "netiq", SentinelId = sentinel.SentinelId,
+            NetiqServer = "S1", OwnerUserIds = new List<long> { 42 }
+        });
 
+        var before = stamp.Current;
         svc.DeleteSentinel(sentinel.SentinelId);
 
         Assert.Null(_sentinels.Get(sentinel.SentinelId));
         var host = _hosts.FindByName("10.1.2.1")!;
         Assert.False(host.Active);
         Assert.Equal("S1", host.OrphanedFromSentinel);
+        Assert.True(stamp.Current > before);
     }
 
     [Fact]

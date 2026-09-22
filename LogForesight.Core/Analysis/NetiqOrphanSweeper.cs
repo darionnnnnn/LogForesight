@@ -32,7 +32,8 @@ public static class NetiqOrphanSweeper
     /// 掃描並停用孤兒主機。<paramref name="existingSentinelIds"/> 是 Sentinel store 目前
     /// 仍存在的 SentinelId 集合（不論 Active 與否——停用不算刪除，見類別註解）。
     /// </summary>
-    public static Result Sweep(IHostStore hosts, IReadOnlyCollection<long> existingSentinelIds)
+    public static Result Sweep(
+        IHostStore hosts, IReadOnlyCollection<long> existingSentinelIds, Action? permissionVersionBump = null)
     {
         var existing = existingSentinelIds.ToHashSet();
 
@@ -61,6 +62,7 @@ public static class NetiqOrphanSweeper
         }
 
         var orphanedNames = new List<string>();
+        var permissionChanged = false;
         hosts.MutateBatch(batch =>
         {
             var batchOrphans = batch
@@ -71,11 +73,15 @@ public static class NetiqOrphanSweeper
 
             foreach (var host in batchOrphans)
             {
+                permissionChanged |= host.OwnerUserIds.Count > 0;
                 host.Active = false;
                 host.OrphanedFromSentinel = host.NetiqServer;
                 orphanedNames.Add(host.HostName);
             }
         });
+
+        if (permissionChanged)
+            permissionVersionBump?.Invoke();
 
         Log.Warn("偵測到 Sentinel 已被刪除，停用所屬 NetIQ 主機 {Count} 台：{Hosts}",
             orphanedNames.Count, string.Join("、", orphanedNames));

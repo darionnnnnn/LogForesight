@@ -23,12 +23,14 @@ public class NetiqOrphanSweeperTests
         AddNetiq("10.1.2.11", sentinelId: 99, netiqServer: "SENTINEL-OLD");   // 99 已不存在於現存名單
         AddNetiq("10.1.2.12", sentinelId: 1, netiqServer: "SENTINEL-A");
 
-        var result = NetiqOrphanSweeper.Sweep(_hosts, new long[] { 1 });
+        var bumps = 0;
+        var result = NetiqOrphanSweeper.Sweep(_hosts, new long[] { 1 }, () => bumps++);
 
         Assert.Equal(1, result.OrphanedCount);
         var orphaned = _hosts.FindByName("10.1.2.11")!;
         Assert.False(orphaned.Active);
         Assert.Equal("SENTINEL-OLD", orphaned.OrphanedFromSentinel);
+        Assert.Equal(0, bumps);
         // 名單內的主機不動
         Assert.True(_hosts.FindByName("10.1.2.12")!.Active);
     }
@@ -90,6 +92,18 @@ public class NetiqOrphanSweeperTests
         Assert.Equal("SENTINEL-OLD", _hosts.FindByName("10.1.2.20")!.OrphanedFromSentinel);
         Assert.False(_hosts.FindByName("10.1.2.21")!.Active);
     }
+
+    [Fact]
+    public void 有負責人的孤兒主機停用_推進權限版本()
+    {
+        AddNetiq("10.1.2.22", sentinelId: 99, netiqServer: "SENTINEL-OLD");
+        _hosts.GetAll().Single(h => h.HostName == "10.1.2.22").OwnerUserIds = new List<long> { 7 };
+        var bumps = 0;
+
+        NetiqOrphanSweeper.Sweep(_hosts, new long[] { 1 }, () => bumps++);
+
+        Assert.Equal(1, bumps);
+    }
 }
 
 /// <summary>
@@ -108,7 +122,7 @@ public class NetiqDiscoveryServiceTests
 
     private NetiqDiscoveryService Create(FakeClient client, params SentinelServer[] servers) =>
         new(new FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
-            _importLogs, new FakeCurrentUser(), _audit);
+            _importLogs, new FakeCurrentUser(), _audit, TestPermissionStamps.Shared);
 
     private const string AnySubnet = "10.1.2";
 
@@ -307,7 +321,10 @@ public class NetiqDiscoveryServiceTests
             GroupIds = new List<long> { 5 }, OwnerUserIds = new List<long> { 9 }
         });
 
-        var outcome = NetiqImportApplier.Apply("SENTINEL-NEW", new[] { "10.1.2.11" }, _hosts, sentinels);
+        var bumps = 0;
+        var outcome = NetiqImportApplier.Apply(
+            "SENTINEL-NEW", new[] { "10.1.2.11" }, _hosts, sentinels,
+            permissionVersionBump: () => bumps++);
 
         Assert.Equal(1, outcome.Revived);
         var revived = _hosts.FindByName("10.1.2.11")!;
@@ -318,6 +335,28 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(newSentinel.SentinelId, revived.SentinelId);
         Assert.Equal(new[] { 5L }, revived.GroupIds);       // 群組保留
         Assert.Equal(new[] { 9L }, revived.OwnerUserIds);   // 負責人保留
+        Assert.Equal(1, bumps);
+    }
+
+    [Fact]
+    public void 套用_一般停用主機復活且有負責人_推進權限版本()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "SENTINEL-NEW" });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12", IpAddress = "10.1.2.12", Source = "netiq",
+            Active = false, OwnerUserIds = new List<long> { 10 }
+        });
+        var bumps = 0;
+
+        var outcome = NetiqImportApplier.Apply(
+            "SENTINEL-NEW", new[] { "10.1.2.12" }, _hosts, sentinels,
+            permissionVersionBump: () => bumps++);
+
+        Assert.Equal(1, outcome.Updated);
+        Assert.True(_hosts.FindByName("10.1.2.12")!.Active);
+        Assert.Equal(1, bumps);
     }
 
     // ── 掃描匯入的 OS（docs/LINUX-RULES.md §3：只套用在本次新增的主機）──────
@@ -573,7 +612,7 @@ public class NetiqDiscoveryServiceTests
         var svc = new NetiqDiscoveryService(
             new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("srv-dc01", "10.1.2.50")), _hosts, _hostGroups, sentinels,
-            _importLogs, new FakeCurrentUser(), _audit);
+            _importLogs, new FakeCurrentUser(), _audit, TestPermissionStamps.Shared);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
@@ -594,7 +633,7 @@ public class NetiqDiscoveryServiceTests
         var svc = new NetiqDiscoveryService(
             new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("10.1.2.50", "10.1.2.50")), _hosts, _hostGroups, sentinels,
-            _importLogs, new FakeCurrentUser(), _audit);
+            _importLogs, new FakeCurrentUser(), _audit, TestPermissionStamps.Shared);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
@@ -615,7 +654,7 @@ public class NetiqDiscoveryServiceTests
         var svc = new NetiqDiscoveryService(
             new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("掃描回報的不同名稱", "10.1.2.50")), _hosts, _hostGroups, sentinels,
-            _importLogs, new FakeCurrentUser(), _audit);
+            _importLogs, new FakeCurrentUser(), _audit, TestPermissionStamps.Shared);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });

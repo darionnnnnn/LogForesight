@@ -1,4 +1,5 @@
 using LogForesight.Web.Models;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -12,12 +13,16 @@ public class SentinelAdminService
     private readonly ISentinelStore _sentinels;
     private readonly IHostStore _hosts;
     private readonly IAuditService _audit;
+    private readonly PermissionVersionStamp _permissionVersion;
 
-    public SentinelAdminService(ISentinelStore sentinels, IHostStore hosts, IAuditService audit)
+    public SentinelAdminService(
+        ISentinelStore sentinels, IHostStore hosts, IAuditService audit,
+        PermissionVersionStamp permissionVersion)
     {
         _sentinels = sentinels;
         _hosts = hosts;
         _audit = audit;
+        _permissionVersion = permissionVersion;
     }
 
     public List<SentinelDto> GetSentinels()
@@ -107,17 +112,23 @@ public class SentinelAdminService
         //
         // 一次 MutateBatch 完成整批（回饋十七輪批次D）：原本逐台 Upsert 各自整份 blob
         // 讀改寫，轄下主機一多就是明顯的 N+1。
+        var permissionChanged = false;
         var affected = _hosts.MutateBatch(hosts =>
         {
             var count = 0;
             foreach (var host in hosts.Where(h => h.SentinelId == sentinelId && h.Active && h.MergedInto == null))
             {
+                if (host.OwnerUserIds.Count > 0)
+                    permissionChanged = true;
                 host.Active = false;
                 host.OrphanedFromSentinel = host.NetiqServer;
                 count++;
             }
             return count;
         });
+
+        if (permissionChanged)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.SentinelDelete,

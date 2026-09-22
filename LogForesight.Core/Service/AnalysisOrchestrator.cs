@@ -156,11 +156,13 @@ public class AnalysisOrchestrator
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly IDispatchCandidateSource _candidateSource;
+    private readonly Action? _permissionVersionBump;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
-    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource)
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null)
     {
         _candidateSource = candidateSource;
+        _permissionVersionBump = permissionVersionBump;
     }
 
     /// <summary>
@@ -330,7 +332,7 @@ public class AnalysisOrchestrator
                 try
                 {
                     var sentinelIds = sentinelStore.GetAll().Select(s => s.SentinelId).ToList();
-                    var sweep = NetiqOrphanSweeper.Sweep(hostStore, sentinelIds);
+                    var sweep = NetiqOrphanSweeper.Sweep(hostStore, sentinelIds, _permissionVersionBump);
                     if (sweep.OrphanedCount > 0)
                         runConsole.WriteLine($"  ⚠ 偵測到 Sentinel 已被刪除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
                 }

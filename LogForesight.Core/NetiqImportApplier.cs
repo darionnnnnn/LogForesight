@@ -7,7 +7,7 @@ namespace LogForesight.Core;
 /// </summary>
 public static class NetiqImportApplier
 {
-    public readonly record struct ApplyOutcome(int Added, int Updated, int Revived);
+    public readonly record struct ApplyOutcome(int Added, int Updated, int Revived, bool PermissionChanged);
 
     /// <param name="serverName">要寫入的 Sentinel 名稱(顯示快照)。</param>
     /// <param name="selectedIps">使用者勾選的 IP(＝HostName)。</param>
@@ -48,7 +48,8 @@ public static class NetiqImportApplier
         IReadOnlyDictionary<string, long?>? groupByIp = null,
         string? os = null,
         IReadOnlyDictionary<string, string>? displayNameByIp = null,
-        string? tier = null)
+        string? tier = null,
+        Action? permissionVersionBump = null)
     {
         var newHostOs = WebHost.NormalizeOs(os) ?? WebHost.OsWindows;
         var newHostTier = WebHost.NormalizeTier(tier) ?? WebHost.TierStandard;
@@ -58,8 +59,11 @@ public static class NetiqImportApplier
         // 一次 MutateBatch 完成整批（回饋十七輪批次D）：原本逐台 FindByName+Upsert，
         // 各自都是一次整份 blob 讀改寫（見 JsonBlobCollection.Mutate）——勾 500 台就是上千次
         // 序列化往返，這是掃描精靈匯入慢的主因（掃描本身的網路耗時另計）。
-        return hosts.MutateBatch(list =>
+        var outcome = hosts.MutateBatch(list =>
             ApplyToList(list, serverName, ips, sentinel?.SentinelId, newHostOs, groupByIp, displayNameByIp, newHostTier));
+        if (outcome.PermissionChanged)
+            permissionVersionBump?.Invoke();
+        return outcome;
     }
 
     /// <summary>
@@ -77,6 +81,7 @@ public static class NetiqImportApplier
         string newHostTier = WebHost.TierStandard)
     {
         int added = 0, updated = 0, revived = 0;
+        var permissionChanged = false;
         var nextId = hosts.Count == 0 ? 1 : hosts.Max(h => h.HostId) + 1;
 
         foreach (var ip in ips)
@@ -87,6 +92,7 @@ public static class NetiqImportApplier
             {
                 // 重疊復活：同 HostId 復活，歷史/群組/負責人零斷裂。
                 // 群組不動——這仍是「既有主機」，只是查詢重疊觸發復活，不是新登錄
+                permissionChanged |= !existing.Active && existing.OwnerUserIds.Count > 0;
                 existing.Active = true;
                 existing.SentinelId = sentinelId;
                 existing.NetiqServer = serverName;
@@ -96,6 +102,7 @@ public static class NetiqImportApplier
             else if (existing != null)
             {
                 // 既有使用中主機：群組不動
+                permissionChanged |= !existing.Active && existing.OwnerUserIds.Count > 0;
                 existing.SentinelId = sentinelId;
                 existing.NetiqServer = serverName;
                 existing.Active = true;
@@ -125,6 +132,6 @@ public static class NetiqImportApplier
             }
         }
 
-        return new ApplyOutcome(added, updated, revived);
+        return new ApplyOutcome(added, updated, revived, permissionChanged);
     }
 }

@@ -35,8 +35,8 @@ public class SetupUxF2Tests : IDisposable
 
     private NetiqDiscoveryService CreateNetiq(params (string Name, string Ip)[] found) =>
         new(new FakeNetiqServerCatalog(new SentinelServer { Name = "S1", BaseUrl = "https://x", Username = "u", Password = "p" }),
-            new FakeClient(found), _hosts, _hostGroups, new FakeSentinelStore(),
-            new FakeImportLogStore(), new FakeCurrentUser(), _audit);
+        new FakeClient(found), _hosts, _hostGroups, new FakeSentinelStore(),
+            new FakeImportLogStore(), new FakeCurrentUser(), _audit, TestPermissionStamps.Shared);
 
     [Fact]
     public async Task 匯入_新群組名稱空白_整批拒絕且零主機寫入()

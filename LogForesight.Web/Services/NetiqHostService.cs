@@ -1,3 +1,4 @@
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -29,6 +30,7 @@ public class NetiqHostService : INetiqHostService
     private readonly INetiqServerCatalog _servers;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _userDisplayNames;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     public NetiqHostService(
         IHostStore hosts,
@@ -37,7 +39,8 @@ public class NetiqHostService : INetiqHostService
         INetiqServerCatalog servers,
         IAuditService audit,
         IUserDisplayNameService userDisplayNames,
-        IPrtgHostMapRefresher mapRefresher)
+        IPrtgHostMapRefresher mapRefresher,
+        PermissionVersionStamp permissionVersion)
     {
         _mapRefresher = mapRefresher;
         _hosts = hosts;
@@ -46,6 +49,7 @@ public class NetiqHostService : INetiqHostService
         _servers = servers;
         _audit = audit;
         _userDisplayNames = userDisplayNames;
+        _permissionVersion = permissionVersion;
     }
 
     /// <summary>停用／啟用會改變主機是否參與 PRTG 對應（docs/PRTG-SPEC.md §4）。</summary>
@@ -102,6 +106,7 @@ public class NetiqHostService : INetiqHostService
         // 擋下來的話，汰換交接期間「新舊兩台短暫共用同一個 IP 紀錄」就無法登錄，
         // 反而逼使用者先破壞既有資料才能繼續。
         var existing = _hosts.FindByName(ip);
+        var permissionChanged = existing != null && !existing.Active && existing.OwnerUserIds.Count > 0;
 
         var saved = _hosts.Upsert(new WebHost
         {
@@ -118,6 +123,9 @@ public class NetiqHostService : INetiqHostService
             GroupIds = existing?.GroupIds ?? new List<long>(),
             OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
         });
+
+        if (permissionChanged)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostUpdate,
@@ -146,6 +154,7 @@ public class NetiqHostService : INetiqHostService
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
         var result = new BulkAddResultDto();
+        var permissionChanged = false;
         var seenIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var lines = (request.Lines ?? "").Split('\n');
 
@@ -168,6 +177,7 @@ public class NetiqHostService : INetiqHostService
             }
 
             var existing = _hosts.FindByName(parsed.IpAddress);
+            permissionChanged |= existing != null && !existing.Active && existing.OwnerUserIds.Count > 0;
 
             _hosts.Upsert(new WebHost
             {
@@ -193,6 +203,9 @@ public class NetiqHostService : INetiqHostService
             if (existing == null) result.AddedCount++;
             else result.UpdatedCount++;
         }
+
+        if (permissionChanged)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostUpdate,
@@ -221,6 +234,7 @@ public class NetiqHostService : INetiqHostService
     public HostDto SetActive(long hostId, bool active)
     {
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
+        var permissionChanged = host.Active != active && host.OwnerUserIds.Count > 0;
 
         _hosts.Upsert(new WebHost
         {
@@ -237,6 +251,9 @@ public class NetiqHostService : INetiqHostService
             GroupIds = host.GroupIds,
             OwnerUserIds = host.OwnerUserIds
         });
+
+        if (permissionChanged)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostUpdate,

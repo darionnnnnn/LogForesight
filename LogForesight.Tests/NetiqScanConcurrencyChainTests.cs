@@ -22,7 +22,8 @@ public class NetiqScanConcurrencyChainTests
     // 每個服務實例各自一份掃描狀態：全行程共用的那份會被其他測試類別進行中的掃描占住（「已有掃描進行中」）
     private NetiqDiscoveryService CreateService(FakeClient client, params SentinelServer[] servers) =>
         new(new FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
-            _importLogs, new FakeCurrentUser(), _audit, new NetiqDiscoveryService.ScanRegistry());
+            _importLogs, new FakeCurrentUser(), _audit, TestPermissionStamps.Shared,
+            new NetiqDiscoveryService.ScanRegistry());
 
     private static SentinelServer Discoverable(string name) =>
         new() { Name = name, BaseUrl = "https://x", Username = "u", Password = "p" };

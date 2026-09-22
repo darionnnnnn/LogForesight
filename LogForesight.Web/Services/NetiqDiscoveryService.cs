@@ -31,6 +31,7 @@ public class NetiqDiscoveryService
     private readonly IImportLogStore _importLogs;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
+    private readonly PermissionVersionStamp _permissionVersion;
 
     private static readonly TimeSpan ScanLifetime = TimeSpan.FromMinutes(30);
 
@@ -50,8 +51,9 @@ public class NetiqDiscoveryService
         ISentinelStore sentinels,
         IImportLogStore importLogs,
         ICurrentUser currentUser,
-        IAuditService audit)
-        : this(catalog, client, hosts, hostGroups, sentinels, importLogs, currentUser, audit, SharedRegistry)
+        IAuditService audit,
+        PermissionVersionStamp permissionVersion)
+        : this(catalog, client, hosts, hostGroups, sentinels, importLogs, currentUser, audit, permissionVersion, SharedRegistry)
     {
     }
 
@@ -68,6 +70,7 @@ public class NetiqDiscoveryService
         IImportLogStore importLogs,
         ICurrentUser currentUser,
         IAuditService audit,
+        PermissionVersionStamp permissionVersion,
         ScanRegistry registry)
     {
         _registry = registry;
@@ -79,6 +82,7 @@ public class NetiqDiscoveryService
         _importLogs = importLogs;
         _currentUser = currentUser;
         _audit = audit;
+        _permissionVersion = permissionVersion;
     }
 
     public string StartScan(string serverName, string subnetPrefix, ScanGranularity granularity = ScanGranularity.Slash24, int concurrency = 1)
@@ -342,7 +346,9 @@ public class NetiqDiscoveryService
         // 匯入耗時申報（回饋十七輪批次D-1，規劃明列）：批次化前逐台 FindByName+Upsert 是匯入慢
         // 的主因，落一筆台數＋毫秒的 log，之後有沒有改善（或再劣化）看得見。
         var applyStopwatch = Stopwatch.StartNew();
-        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp, request.Tier);
+        var outcome = NetiqImportApplier.Apply(
+            scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp, request.Tier,
+            () => { _permissionVersion.Bump(); });
         applyStopwatch.Stop();
         Log.Info("NetIQ 匯入套用完成：{Count} 台（新增 {Added}／更新 {Updated}／復活 {Revived}），耗時 {ElapsedMs}ms",
             wanted.Count, outcome.Added, outcome.Updated, outcome.Revived, applyStopwatch.ElapsedMilliseconds);

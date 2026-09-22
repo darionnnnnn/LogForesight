@@ -413,7 +413,9 @@ public static class ServiceCollectionExtensions
         // TriggerRunAsync（手動觸發），不能只當背景服務、必須也能被其他地方解析取得。
         // AnalysisOrchestrator／NamedMutexGate 皆無狀態依賴，改由 DI 注入而非各自 new——
         // 讓 SchedulerHostedService 的執行路徑可用測試替身注入驗證。
-        services.AddSingleton<AnalysisOrchestrator>();
+        services.AddSingleton<AnalysisOrchestrator>(sp => new AnalysisOrchestrator(
+            sp.GetRequiredService<IDispatchCandidateSource>(),
+            () => { sp.GetRequiredService<PermissionVersionStamp>().Bump(); }));
         services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
         // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路

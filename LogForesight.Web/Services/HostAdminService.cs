@@ -412,6 +412,9 @@ public class HostAdminService
             // 「不該覆寫」的情況相反；做逐欄比對體檢時別把這裡一併「修」掉。
         });
 
+        if (activeChanged && existing!.OwnerUserIds.Count > 0)
+            _permissionVersion.Bump();
+
         _audit.Record(
             action: AuditActions.HostUpdate,
             summary: isNew
@@ -689,6 +692,8 @@ public class HostAdminService
                 $"{target.HostName} 本身已併入其他主機，不能作為併入目標；請改以最終的那台主機為目標。");
 
         _hosts.Merge(sourceHostId, targetHostId);
+        if (source.OwnerUserIds.Count > 0)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostMerge,
@@ -713,6 +718,8 @@ public class HostAdminService
         var target = _hosts.Get(mergedIntoId);
 
         _hosts.Unmerge(hostId);
+        if (host.OwnerUserIds.Count > 0)
+            _permissionVersion.Bump();
 
         _audit.Record(
             action: AuditActions.HostUnmerge,

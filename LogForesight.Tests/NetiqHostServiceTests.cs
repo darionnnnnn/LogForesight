@@ -1,3 +1,4 @@
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -28,7 +29,7 @@ public class NetiqHostServiceTests
     private readonly CountingMapRefresher _mapRefresher = new();
 
     private NetiqHostService Create() =>
-        new(_hosts, new FakeHostGroupStore(), new FakeUserStore(), _servers, new RecordingAuditService(), new UserDisplayNameService(new FakeSystemSettingsStore()), _mapRefresher);
+        new(_hosts, new FakeHostGroupStore(), new FakeUserStore(), _servers, new RecordingAuditService(), new UserDisplayNameService(new FakeSystemSettingsStore()), _mapRefresher, TestPermissionStamps.Shared);
 
     // ── 單筆登錄 ──────────────────────────────────────────────────────────────
 
