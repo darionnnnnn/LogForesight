@@ -12,6 +12,7 @@
 
 | 檔案 | 內容一行摘要 |
 |---|---|
+| [FEEDBACK-50-PLAN.md](FEEDBACK-50-PLAN.md) | 初期設定與日常處理動線、穩定性、安全及 PRTG 範圍保護；5351 通過、10 略過，實機驗證限制見終檢輪。 |
 | `HISTORY.md` | 2026-07-20～07-28 期間 10 份規劃案的逐字彙整（初版擴充規劃、AI 角色、NetIQ 主機清單／Web 設定、SQL 儲存後端、規模化 2000 台、Web 回饋一二輪、共用標準、維運強化）。 |
 | `WEB-SCHEDULER-PLAN.md` | 排程 Web 化與風險 log 暫存（Phase 1~5），批次 console 專案退場的出處。 |
 | `FEEDBACK-3-PLAN.md` | 使用者實測回饋 8 項（批次／NetIQ 2 項＋Web 6 項）。 |
