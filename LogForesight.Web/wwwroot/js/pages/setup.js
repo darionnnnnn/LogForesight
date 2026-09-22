@@ -59,6 +59,18 @@ export function checkAiProbeResult(statusData) {
     };
 }
 
+/**
+ * 精靈步驟的深連結要把返回來源放在 hash 前面；否則 /settings#ad?from=setup
+ * 會讓頁籤名稱變成「ad?from=setup」，共用 bindTabs 就找不到 ad。
+ */
+export function buildSetupTargetUrl(targetUrl) {
+    const hashIndex = targetUrl.indexOf('#');
+    const path = hashIndex >= 0 ? targetUrl.slice(0, hashIndex) : targetUrl;
+    const hash = hashIndex >= 0 ? targetUrl.slice(hashIndex) : '';
+    const separator = path.includes('?') ? '&' : '?';
+    return appUrl(`${path}${separator}from=setup${hash}`);
+}
+
 const CLOUD_AI_DECLARATION = '分析時最多 500 則原始 log 訊息（可能含帳號名稱、來源 IP）會傳送至第三方服務。';
 
 /**
@@ -230,7 +242,7 @@ function renderSteps() {
         if (step.targetUrl && !step.done && step.id !== 'ad' && step.id !== 'mail' && step.id !== 'ai') {
             const goButton = document.createElement('a');
             goButton.className = 'btn btn-sm btn-primary';
-            goButton.href = appUrl(`${step.targetUrl}?from=setup`);
+            goButton.href = buildSetupTargetUrl(step.targetUrl);
             goButton.textContent = '前往設定';
             actions.appendChild(goButton);
         }

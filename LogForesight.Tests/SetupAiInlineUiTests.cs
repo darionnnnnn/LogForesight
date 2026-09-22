@@ -321,4 +321,30 @@ console.log('PASS_BUILD_AI_SETTINGS_PAYLOAD');
         var output = RunNode(jsCode);
         Assert.Contains("PASS_BUILD_AI_SETTINGS_PAYLOAD", output);
     }
+
+    [Fact]
+    public void 精靈深連結_來源參數在hash之前且設定頁籤仍能命中()
+    {
+        var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "setup.js");
+        var body = ExtractBody(js, @"export\s+function\s+buildSetupTargetUrl\s*\(");
+
+        var jsCode = @"function appUrl(path) { return '/base' + path; }
+function buildSetupTargetUrl(targetUrl) " + body + @"
+const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
+
+const target = buildSetupTargetUrl('/admin/settings#ad');
+const parsed = new URL(target, 'https://example.test');
+assert(parsed.pathname === '/base/admin/settings', 'settings path must be preserved');
+assert(parsed.search === '?from=setup', 'return source must be a query parameter');
+assert(parsed.hash === '#ad', 'settings tab hash must remain exactly ad');
+
+const schedule = new URL(buildSetupTargetUrl('/runs#settings'), 'https://example.test');
+assert(schedule.search === '?from=setup', 'schedule source must be a query parameter');
+assert(schedule.hash === '#settings', 'schedule tab hash must remain exactly settings');
+console.log('PASS_SETUP_DEEP_LINK');
+";
+
+        var output = RunNode(jsCode);
+        Assert.Contains("PASS_SETUP_DEEP_LINK", output);
+    }
 }

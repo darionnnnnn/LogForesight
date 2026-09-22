@@ -296,12 +296,21 @@ function expandedOrderIds() {
     return ids;
 }
 
-/** 展開某列的成員面板（已展開就不動）；回傳面板，列不在本頁回 null */
-function expandOrderRow(workOrderId) {
+/** 展開某列的成員面板；carry 只供本次下一張回覆，手動回覆的 null 會清掉舊 carry。 */
+const pendingReplyCarry = new Map();
+
+function expandOrderRow(workOrderId, carry = null) {
     const tr = orderRowEl(workOrderId);
     if (!tr) return null;
+    if (carry) pendingReplyCarry.set(workOrderId, carry);
+    else pendingReplyCarry.delete(workOrderId);
     if (tr.getAttribute('aria-expanded') !== 'true') tr.click();
-    return tr.nextElementSibling.querySelector('.handler-wo-member-panel');
+    const panel = tr.nextElementSibling.querySelector('.handler-wo-member-panel');
+    if (panel) {
+        panel._replyCarry = carry;
+        pendingReplyCarry.delete(workOrderId);
+    }
+    return panel;
 }
 
 function selectOrder(row) {
@@ -494,7 +503,11 @@ function renderOrders(data) {
             columns,
             rows,
             // 成員清單要另打一支 API，用 lazy 的 onRowExpand（首次展開才取），不是 rowDetail
-            onRowExpand: (row, cell) => buildMemberPanel(row, cell)
+            onRowExpand: (row, cell) => {
+                const carry = pendingReplyCarry.get(row.workOrderId) || null;
+                pendingReplyCarry.delete(row.workOrderId);
+                buildMemberPanel(row, cell, carry);
+            }
         });
     }
 
@@ -619,7 +632,7 @@ async function replyOrder(row, carry) {
         return;
     }
 
-    const panel = expandOrderRow(row.workOrderId);
+    const panel = expandOrderRow(row.workOrderId, carry);
     if (!panel) return;
     if (!panel.querySelector('.handler-wo-member-hint')) {
         const hint = document.createElement('div');
@@ -766,10 +779,11 @@ function dueDateCell(row) {
  * 展開列：該單的成員（主機）清單，可勾選後只回覆選取的幾台。
  * 勾選狀態是這一次展開的區域狀態——就地更新重繪列時自然歸零。
  */
-function buildMemberPanel(row, cell) {
+function buildMemberPanel(row, cell, carry = null) {
     const box = document.createElement('div');
     box.className = 'p-2 handler-wo-member-panel';
     box.tabIndex = -1;
+    box._replyCarry = carry;
 
     const bar = document.createElement('div');
     bar.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
@@ -964,6 +978,8 @@ function buildMemberPanel(row, cell) {
             aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },
             // 勾選的主機都是同一個問題簽章才能沿用上次的說明
             reuseIssueKey: issueKeys.size === 1 ? [...issueKeys][0] : null,
+            initialStatus: box._replyCarry ? box._replyCarry.status : undefined,
+            previousNote: box._replyCarry ? box._replyCarry.note : null,
             submit: async payload => {
                 const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload });
                 toastReplyResult(result);
