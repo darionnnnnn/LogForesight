@@ -24,6 +24,8 @@ public static class CryptoKeyBootstrapper
     private const string MutexName = "LogForesight-CryptoKeyBootstrap";
     private static readonly TimeSpan MutexTimeout = TimeSpan.FromSeconds(30);
 
+    internal const string MutexNameForTests = MutexName;
+
     private static volatile bool _keyMismatch;
 
     /// <summary>啟動時金鑰指紋與 DB 記錄不符（供健康頁顯示）。</summary>
@@ -37,15 +39,34 @@ public static class CryptoKeyBootstrapper
     public static string KeyFilePath(string dataRoot) => Path.Combine(dataRoot, "keys", "lf-crypto.key");
 
     public static void Run(StorageBackend backend, string dataRoot, ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
+        => RunWithTimeout(backend, dataRoot, settingsStore, sentinelStore, MutexTimeout);
+
+    internal static void RunForTests(
+        StorageBackend backend,
+        string dataRoot,
+        ISystemSettingsStore settingsStore,
+        ISentinelStore sentinelStore,
+        TimeSpan mutexTimeout)
+        => RunWithTimeout(backend, dataRoot, settingsStore, sentinelStore, mutexTimeout);
+
+    private static void RunWithTimeout(
+        StorageBackend backend,
+        string dataRoot,
+        ISystemSettingsStore settingsStore,
+        ISentinelStore sentinelStore,
+        TimeSpan mutexTimeout)
     {
         var path = KeyFilePath(dataRoot);
 
         // 同步版互斥：整段同步、無 await，取得與釋放在同一條執行緒（見 NamedMutexGate.RunExclusive）。
-        // 逾時仍會執行——金鑰檔以 CreateNew 建立、重加密只重寫 v1 欄位，兩者都冪等。
+        // 金鑰檔產生、指紋 claim 與密文重加密都必須在鎖內；逾時不可讓任何一項寫入繼續。
         var acquired = new NamedMutexGate(MutexName).RunExclusive(
-            () => RunCore(backend, path, settingsStore, sentinelStore), MutexTimeout);
+            () => RunCore(backend, path, settingsStore, sentinelStore), mutexTimeout,
+            runActionWhenNotAcquired: false);
         if (!acquired)
-            Log.Warn("[Crypto] 等待金鑰準備互斥逾時（{0} 秒），仍繼續執行。", MutexTimeout.TotalSeconds);
+            throw new InvalidOperationException(
+                $"無法在 {mutexTimeout.TotalSeconds:0.###} 秒內取得金鑰準備互斥；未執行任何金鑰或資料庫寫入，啟動已停止。" +
+                "請確認另一個 LogForesight 行程的啟動工作已完成後再重試。");
 
         Log.Info("密文金鑰來源：{0}；金鑰檔：{1}", CryptoHelper.KeySource, path);
     }
@@ -60,13 +81,9 @@ public static class CryptoKeyBootstrapper
 
         var fingerprint = CryptoHelper.KeyFingerprint;
         var blob = backend.Blob(FingerprintBlobKey);
-        var recorded = ReadFingerprint(blob.Read());
-        if (recorded == null)
-        {
-            var content = JsonSerializer.Serialize(new FingerprintRecord { Fingerprint = fingerprint, CreatedAt = DateTime.Now });
-            blob.Mutate<bool>(_ => (content, true));
-        }
-        else if (!string.Equals(recorded, fingerprint, StringComparison.OrdinalIgnoreCase))
+        var fingerprintCheck = ClaimOrValidateFingerprint(blob, fingerprint);
+        var recorded = fingerprintCheck.Recorded;
+        if (recorded != null)
         {
             KeyMismatch = true;
             Log.Error("金鑰檔與資料庫不相符（資料庫記錄的指紋 {0}，目前金鑰 {1}）：可能是還原資料庫時沒有一併還原金鑰檔，" +
@@ -80,6 +97,52 @@ public static class CryptoKeyBootstrapper
         if (rewrapped > 0)
             Log.Info("[Crypto] 已將 {0} 個舊格式（enc:v1）密碼欄位重新加密為 enc:v2。", rewrapped);
     }
+
+    /// <summary>
+    /// 在同一個 blob 原子操作內完成首次 claim 或既有指紋比較。
+    /// 回傳非 null 代表已有不同指紋；空 blob 才能寫入 claim。非空但損毀的內容直接失敗，
+    /// 不把它當成首次啟動覆寫。
+    /// </summary>
+    private static (string? Recorded, bool Claimed) ClaimOrValidateFingerprint(
+        EfJsonBlobStore blob,
+        string fingerprint)
+    {
+        try
+        {
+            var claimed = blob.Mutate<bool>(current =>
+            {
+                if (current is null || current.Length == 0)
+                {
+                    var content = JsonSerializer.Serialize(new FingerprintRecord
+                    {
+                        Fingerprint = fingerprint,
+                        CreatedAt = DateTime.Now
+                    });
+                    return (content, true);
+                }
+
+                var recorded = ReadFingerprint(current);
+                if (recorded == null)
+                    throw new InvalidOperationException(
+                        "資料庫中的金鑰指紋已損毀；啟動已停止，未覆寫原指紋。請還原正確資料庫備份或重新建立資料庫。");
+
+                if (!string.Equals(recorded, fingerprint, StringComparison.OrdinalIgnoreCase))
+                    throw new FingerprintMismatchException(recorded);
+
+                return (current, false);
+            });
+
+            return (null, claimed);
+        }
+        catch (FingerprintMismatchException ex)
+        {
+            return (ex.Recorded, false);
+        }
+    }
+
+    /// <summary>供定向競態測試呼叫同一個原子 claim 實作，不成為正式啟動 API。</summary>
+    internal static bool ClaimFingerprintForTests(EfJsonBlobStore blob, string fingerprint) =>
+        ClaimOrValidateFingerprint(blob, fingerprint).Claimed;
 
     private static void TryCreateKeyFile(string path)
     {
@@ -137,7 +200,7 @@ public static class CryptoKeyBootstrapper
         }
         catch (JsonException)
         {
-            // 內容損毀視為不存在，重寫目前指紋
+            // 呼叫端會把非空的損毀內容視為錯誤，不得當成首次啟動覆寫
             return null;
         }
     }
@@ -193,5 +256,12 @@ public static class CryptoKeyBootstrapper
     {
         public string Fingerprint { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
+    }
+
+    private sealed class FingerprintMismatchException : Exception
+    {
+        public FingerprintMismatchException(string recorded) : base("金鑰指紋不符") => Recorded = recorded;
+
+        public string Recorded { get; }
     }
 }

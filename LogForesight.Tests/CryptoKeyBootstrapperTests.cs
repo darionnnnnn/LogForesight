@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -158,6 +159,45 @@ public class CryptoKeyBootstrapperTests : IDisposable
     }
 
     [Fact]
+    public async Task 競爭claim_只有一個指紋成功寫入且不被後續覆蓋()
+    {
+        var fingerprints = Enumerable.Range(0, 20).Select(i => $"fp-{i:00}").ToArray();
+        var start = new ManualResetEventSlim(false);
+
+        var tasks = fingerprints.Select(fingerprint => Task.Run(() =>
+        {
+            start.Wait();
+            return CryptoKeyBootstrapper.ClaimFingerprintForTests(
+                _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey), fingerprint);
+        })).ToArray();
+
+        start.Set();
+        var claims = await Task.WhenAll(tasks);
+
+        var stored = _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).Read();
+        Assert.NotNull(stored);
+        using var document = JsonDocument.Parse(stored!);
+        var claimed = document.RootElement.GetProperty("Fingerprint").GetString();
+        Assert.Contains(claimed, fingerprints);
+        Assert.Single(claims, value => value);
+    }
+
+    [Fact]
+    public void 損毀指紋_不當成不存在且不覆寫()
+    {
+        const string corrupted = " ";
+        _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey)
+            .Mutate<bool>(_ => (corrupted, true));
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            CryptoKeyBootstrapper.ClaimFingerprintForTests(
+                _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey), "new-fingerprint"));
+
+        Assert.Contains("指紋已損毀", ex.Message);
+        Assert.Equal(corrupted, _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).Read());
+    }
+
+    [Fact]
     public void 金鑰檔格式錯誤_擲中文訊息()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(KeyPath)!);
@@ -166,5 +206,44 @@ public class CryptoKeyBootstrapperTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(Run);
         Assert.Contains("32 bytes", ex.Message);
         Assert.Contains("金鑰檔", ex.Message);
+    }
+
+    [Fact]
+    public async Task 互斥逾時_不建立金鑰且不寫入資料庫()
+    {
+        _settings.Update(s => s.SmtpPasswordEnc = LegacyV1("secret"));
+        var settingsVersion = _backend.Blob("system_settings").ReadVersion();
+        var fingerprintVersion = _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).ReadVersion();
+
+        var holderEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHolder = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holderTask = Task.Run(() =>
+        {
+            using var held = new Mutex(initiallyOwned: false, CryptoKeyBootstrapper.MutexNameForTests);
+            Assert.True(held.WaitOne());
+            holderEntered.SetResult();
+            releaseHolder.Task.GetAwaiter().GetResult();
+            held.ReleaseMutex();
+        });
+
+        await holderEntered.Task;
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                CryptoKeyBootstrapper.RunForTests(
+                    _backend, _dataRoot, _settings, _sentinels, TimeSpan.FromMilliseconds(50)));
+
+            Assert.Contains("未執行任何金鑰或資料庫寫入", ex.Message);
+            Assert.False(File.Exists(KeyPath));
+            Assert.Equal(settingsVersion, _backend.Blob("system_settings").ReadVersion());
+            Assert.Equal(fingerprintVersion, _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).ReadVersion());
+            Assert.Null(_backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).Read());
+            Assert.Equal("secret", CryptoHelper.DecryptWith(CryptoHelper.EmbeddedKeyForTests, _settings.Get().SmtpPasswordEnc));
+        }
+        finally
+        {
+            releaseHolder.SetResult();
+            await holderTask;
+        }
     }
 }

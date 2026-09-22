@@ -81,6 +81,14 @@ public class NamedMutexGate
     /// 回傳值供呼叫端記 log，讓這種情況在事後查得到。
     /// </summary>
     public bool RunExclusive(Action action, TimeSpan timeout)
+        => RunExclusive(action, timeout, runActionWhenNotAcquired: true);
+
+    /// <summary>
+    /// 在具名 Mutex 保護下執行 <paramref name="action"/>，並由呼叫端決定逾時後是否仍執行。
+    /// 預設的 <see cref="RunExclusive(Action, TimeSpan)"/> 語義維持不變；需要把互斥視為
+    /// 啟動安全前提的呼叫端可傳 <c>false</c>，此時取不到鎖只回傳 <c>false</c> 且不執行 action。
+    /// </summary>
+    public bool RunExclusive(Action action, TimeSpan timeout, bool runActionWhenNotAcquired)
     {
         using var mutex = new Mutex(initiallyOwned: false, _name);
 
@@ -94,6 +102,9 @@ public class NamedMutexGate
             // 同 RunExclusiveAsync：前一個持有者異常終止，鎖仍視為取得
             acquired = true;
         }
+
+        if (!acquired && !runActionWhenNotAcquired)
+            return false;
 
         try
         {
