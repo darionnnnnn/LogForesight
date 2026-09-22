@@ -581,17 +581,6 @@
 「依問題視角」展開受影響主機日——只有使用者手動清空日期欄位時才會不帶起始日期，
 此時範圍為近 90 天（帶狀態篩選時仍是整個保留期，規則見 WEB-SPEC §9.2）。**觸發時機**：使用者反映展開後看不到更早的出現。
 
-## 慢查詢：`LatestOccurrences` 的來源過濾未下推
-
-（**不下推的理由**：SQL 端要比對大小寫就得用 `UPPER()`，而 SQLite 的 `UPPER`
-只處理 ASCII、SQL Server 依定序而定，兩個後端行為分岔會讓粗篩靜默漏列——漏一筆就是「最近一次
-發生」算錯。要下推得先讓來源名稱在寫入時正規化。）
-
-`EfIssueAggregateQuery.LatestOccurrences` 先 `ToList()` 再於記憶體比對 `source_name`，
-`event_id` 選擇性不佳時會拉回大量列（實機量到 7 秒以上）。呼叫端是前景頁面
-（記錄列表與處理狀態彙總），不影響夜間批次。**觸發時機**：使用者反映該頁面慢，
-或執行詳情裡這支查詢的慢 SQL 警告變多時。
-
 ## PRTG 主機對應：名稱型裝置多且解析不到時每趟付 N 秒
 
 `PrtgHostMapper.MapForDate` 依 PRTG-SPEC §4 定案對每台名稱型 device 做 DNS（分組鍵要用解析後的 IP），
@@ -664,8 +653,11 @@
   修法方向是夜間寫成員前重讀單的狀態、改派與取消取同一把鎖或以版本戳重試。
 - **多單寫入沒有整體交易**：多單回覆在前置授權檢查通過後逐張寫入，中途某張擲例外時前面幾張已寫；靜音選「代為結案」時
   先存靜音、再逐張結案。兩者都不是授權問題，是一致性問題。**觸發時機**：回覆或靜音出現部分成功的回報。
-- **SQLite 的 `upper()` 只轉 ASCII**：SQL 端 `SourceName.ToUpper()` 與 C# 端 `ToUpperInvariant` 產生的鍵，在來源名稱含非 ASCII
-  字母時 SQLite 比對不到、SQL Server 比對得到。Windows 事件來源幾乎都是 ASCII。**觸發時機**：出現非 ASCII 的事件來源。
+- **SQLite 的 `upper()` 只轉 ASCII（僅剩 legacy fallback）**：來源鍵 readiness 完成後，問題聚合與風險事件查詢都走已回填的
+  `source_key`；尚未完成回填時，`EfIssueAggregateQuery` 的舊列分組／來源篩選、`EfRiskyEventStore.ApplySourceFilter`，以及
+  `SchemaUpgrader.MergeIssueFirstSeenSeed` 的 `COALESCE(source_key, UPPER(source_name))` 仍保留 SQL `UPPER()` 相容路徑。
+  非 ASCII 的舊列在 readiness 尚未完成時仍可能與 `WorkOrderIssueKey.SourceKeyOf` 不一致。**移除條件**：兩條 readiness
+  都持久化完成並刪除 legacy fallback；**觸發時機**：正式資料出現非 ASCII 來源且回填尚未完成。
 - **交辦單回填與協調層並行**：回填第二階段先查後寫，與協調層同時為同一（處理人, 問題）建單時撞唯一索引，該輪回填中止
   （下次啟動續跑，不壞資料）；第二階段一次讀入全部候選案件。**觸發時機**：升級時既有進行中案件達十萬級，或啟動回填反覆中止。
 - **待派試跑沒有模擬 ① 與 ③**：試跑不看「當日已有標記」與機房結論自動套用，「立即派工」可能替夜間會略過的出現點建單。

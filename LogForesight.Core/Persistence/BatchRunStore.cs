@@ -386,4 +386,3 @@ public static class BatchRunStatus
     /// <summary>成功或有警告但完成，資料都確實更新了</summary>
     public static bool UpdatedData(string status) => status is Success or Warning;
 }
-

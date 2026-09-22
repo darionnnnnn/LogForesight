@@ -223,7 +223,7 @@ LogForesight.Web/
 登入頁 POST /api/auth/login { account, password? }
   → IAuthenticationProvider.AuthenticateAsync(account, password)
       serverAdmin 帳號比對（任何 Provider 下優先檢查，見下方專節）
-      Stub 實作：lf_users 存在且 active 即通過（password 忽略）——僅供開發/前期測試
+      Stub 實作：`IUserStore` 的 `users` JSON blob 有該帳號且 active 即通過（password 忽略）——僅供開發/前期測試
       正式（§12 起）：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
         bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider
   → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
@@ -249,7 +249,7 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 
 **serverAdmin（本地救援/引導帳號）**：
 
-- `Auth.ServerAdmin` 定義一個**不存在於 `lf_users`** 的本地帳號，密碼由管理單位
+- `Auth.ServerAdmin` 定義一個**不在 `IUserStore`（`users` JSON blob）** 的本地帳號，密碼由管理單位
   **封存保管並定期變更**。用途：指派/移除 admin 群組成員——解掉「匯入使用者需要 admin、
   admin 又來自匯入」的引導問題，也是日後 **AD 停擺時的救援入口**（不依賴任何 Provider，
   Stub 或 Ad 模式下皆可登入；AD 尚未於設定頁設定時，它是唯一進得來的帳號）。
@@ -286,25 +286,31 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 Web 端不對 AD 帳號另建鎖定機制——一套鎖定原則、一個事實來源。已知副作用：對登入頁
 輸入他人帳號亂試可觸發該帳號的 AD 鎖定（內網環境接受此風險，稽核 `login_failed` 含來源 IP 可查）。
 
-JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`exp`。
-**能力進 token、主機授權範圍不進 token**——範圍每次請求由 `IVisibilityService` 即時解析
-（群組異動即時生效；能力異動最遲於 token 過期時生效，接受此延遲）。
+JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`pv`（簽發時的
+`PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
+`IVisibilityService` 即時解析。`ActiveUserMiddleware` 對一般使用者每個請求都從 `IUserStore` 檢查帳號仍為 active；
+serverAdmin 不在 `IUserStore`，不做這項檢查；一般使用者另比對 token 的 `pv` 與 `PermissionVersionStamp`，版本不符就重算能力、
+無感換發 token，並替換本請求的 principal。
+主機停用或合併造成的隱含授權變更也會推進同一權限版本。換發沿用原工作階段的 `jti` 與 `exp`（不延長登入期），
+寫入 Cookie 的 token 與本請求替換的 principal 使用同一個 `jti`。
 
-**上次登入時間**：登入成功時 `IdentityService`
-呼叫 `IUserStore.TouchLogin` 寫入 `WebUser.LastLoginAt`（唯一寫入點）。
-**刻意不併進 `Upsert`**——各處建構 `WebUser` 的呼叫端都不帶這個欄位，交給 Upsert 的逐欄
-覆寫會在每次編輯使用者時把它靜默清成 null（同 owners.csv 曾漏抄 SentinelId 的失敗模式）。
+**上次登入時間**：登入成功時 `IdentityService` 呼叫 `IUserStore.TouchLogin`，寫入
+`user_last_login` blob；讀取時優先使用該 blob，舊使用者資料中的 `WebUser.LastLoginAt` 僅作唯讀
+fallback，不再由登入流程寫入。**刻意不併進使用者 blob**——每次登入只改寫 `user_last_login`，
+避免改寫 `users` blob 使版本前進、快取在登入尖峰反覆失效。
 **刻意不從稽核反推**：稽核有保留天數，到期清理後會變成「登入過卻顯示從未登入」。
-serverAdmin 不在 `lf_users`，沒有這個欄位。
+serverAdmin 不在 `IUserStore`，沒有這個欄位。
 
 ### 6.3 逾期與登出
 
 - 效期 `Jwt.ExpireHours`（預設 8 小時），不做 refresh token（內網工具，過期重登入即可）。
-- **停用即時生效**：`ICurrentUser` 解析時逐請求檢查 `lf_users.active`，停用帳號立即 401，
-  不等 token 自然過期（能力異動仍接受 token 效期內的延遲，§6.2；停用是安全事件，不可延遲）。
+- **停用即時生效**：`ActiveUserMiddleware` 逐請求查 `IUserStore` 的 active 狀態，停用或不存在的帳號立即 401，
+  不等 token 自然過期。群組、使用者、主機停用／合併等影響能力或可見範圍的異動推進 `PermissionVersionStamp`；
+  下一個請求發現 `pv` 不符時，重算能力並依 §6.2 契約換發 token。
 - API 收到過期/無效 token → 401 ＋ 信封 error code `auth_expired`；前端攔截後導向登入頁。
   過期後首個被拒請求補記稽核 `session_expired`（誠實邊界：無法記錄「過期那一刻」）。
-- `POST /api/auth/logout`：清除 Cookie＋稽核 `logout`。
+- `POST /api/auth/logout`：以目前 JWT 的 `jti` 加入行程內 `RevokedTokens`，保留到該 token 原本的 `exp`，再清除 Cookie＋稽核
+  `logout`；只清 Cookie 不足以阻止已被複製的 token 重放。行程重啟會清空撤銷清單，剩餘效期仍由 JWT `exp` 結束。
 
 ### 6.4 CSRF 防護
 
