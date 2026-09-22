@@ -14,6 +14,11 @@ public record TokenIdentity(
     IReadOnlySet<Capability> Capabilities,
     bool IsServerAdmin);
 
+public sealed record IssuedToken(
+    string Token,
+    ClaimsPrincipal Principal,
+    DateTimeOffset ExpiresAt);
+
 /// <summary>
 /// JWT 簽發（docs/WEB-SPEC.md §6.1、§6.2）。
 ///
@@ -51,16 +56,16 @@ public class JwtTokenService
     /// 讓後段的授權判斷立即看到新能力（claims 與 <see cref="CreateToken"/> 共用 <see cref="BuildClaims"/>）。
     /// </summary>
     public ClaimsPrincipal CreatePrincipal(TokenIdentity identity) =>
-        new(new ClaimsIdentity(BuildClaims(identity), "Bearer", DisplayNameClaim, null));
+        CreateTokenAndPrincipal(identity, ExpiresAt()).Principal;
 
-    private List<Claim> BuildClaims(TokenIdentity identity)
+    private List<Claim> BuildClaims(TokenIdentity identity, string? jti = null)
     {
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, identity.UserId.ToString()),
             new(AccountClaim, identity.Account),
             new(DisplayNameClaim, identity.DisplayName),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Jti, jti ?? Guid.NewGuid().ToString()),
             new(PermissionVersionClaim, _permissionVersion.Current.ToString(System.Globalization.CultureInfo.InvariantCulture))
         };
 
@@ -75,16 +80,27 @@ public class JwtTokenService
 
     public string CreateToken(TokenIdentity identity)
     {
-        var claims = BuildClaims(identity);
+        return CreateTokenAndPrincipal(identity, ExpiresAt()).Token;
+    }
+
+    public IssuedToken CreateTokenAndPrincipal(
+        TokenIdentity identity, DateTimeOffset expiresAt, string? jti = null)
+    {
+        var claims = BuildClaims(identity, jti);
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SecretKey));
         var token = new JwtSecurityToken(
             issuer: _jwt.Issuer,
             audience: _jwt.Audience,
             claims: claims,
-            expires: ExpiresAt().UtcDateTime,
+            expires: expiresAt.UtcDateTime,
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        var handler = new JwtSecurityTokenHandler();
+        var tokenValue = handler.WriteToken(token);
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            handler.ReadJwtToken(tokenValue).Claims, "Bearer", DisplayNameClaim, null));
+
+        return new IssuedToken(tokenValue, principal, expiresAt);
     }
 }

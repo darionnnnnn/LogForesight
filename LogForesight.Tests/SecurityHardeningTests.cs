@@ -50,6 +50,28 @@ internal static class AuthTestKit
         stamp ??= TestPermissionStamps.Shared;
         groups ??= new FakeUserGroupStore();
         hosts ??= new FakeHostStore();
+        if (currentUser.IsAuthenticated && context.User.Identity?.IsAuthenticated != true)
+        {
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Sub, currentUser.UserId.ToString()),
+                new(JwtTokenService.AccountClaim, currentUser.Account),
+                new(JwtTokenService.DisplayNameClaim, currentUser.DisplayName),
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                new(JwtRegisteredClaimNames.Exp,
+                    DateTimeOffset.UtcNow.AddHours(settings.Jwt.ExpireHours).ToUnixTimeSeconds().ToString()),
+                new(JwtTokenService.PermissionVersionClaim,
+                    stamp.Current.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            };
+            claims.AddRange(currentUser.Capabilities.Select(capability =>
+                new Claim(JwtTokenService.CapabilityClaim, capability.ToString())));
+            if (currentUser.IsServerAdmin)
+                claims.Add(new Claim(JwtTokenService.ServerAdminClaim, "1"));
+
+            context.User = new ClaimsPrincipal(new ClaimsIdentity(
+                claims, "Bearer", JwtTokenService.DisplayNameClaim, null));
+        }
+
         return middleware.InvokeAsync(context, currentUser, users, settings,
             Identity(users, groups, hosts, settings), new JwtTokenService(settings, stamp), stamp, revoked ?? new RevokedTokens());
     }
@@ -154,7 +176,8 @@ public class SecurityHardeningTests
         {
             new(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new(JwtTokenService.AccountClaim, "DOMAIN\\wang"),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Exp, DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds().ToString())
         };
         if (pv != null) claims.Add(new Claim(JwtTokenService.PermissionVersionClaim, pv));
         claims.AddRange(capabilities.Select(c => new Claim(JwtTokenService.CapabilityClaim, c.ToString())));
@@ -228,6 +251,92 @@ public class SecurityHardeningTests
 
         Assert.Contains(context.Response.Headers.SetCookie, c => c != null && c.StartsWith($"{rig.Settings.Jwt.CookieName}=ey"));
         Assert.True(currentUser.Has(Capability.Maintain));
+    }
+
+    [Fact]
+    public async Task 刷新後principal與新cookie共用jti且保留原到期時間_同請求登出後新cookie回401()
+    {
+        var rig = new Rig();
+        var user = rig.AddAdmin();
+        var tokens = new JwtTokenService(rig.Settings, rig.Stamp);
+        rig.Stamp.Bump();
+        var originalExpiry = DateTimeOffset.UtcNow.AddMinutes(37);
+        var oldIssue = tokens.CreateTokenAndPrincipal(
+            new TokenIdentity(user.UserId, user.Account, user.DisplayName,
+                new HashSet<Capability>(), IsServerAdmin: false), originalExpiry);
+        rig.Stamp.Bump();
+
+        var (context, currentUser) = rig.Request(oldIssue.Principal);
+        Assert.True(await rig.Invoke(context, currentUser));
+
+        var refreshedCookie = context.Response.Headers.SetCookie
+            .First(value => value.StartsWith(rig.Settings.Jwt.CookieName + "=ey", StringComparison.Ordinal));
+        var refreshedToken = refreshedCookie[(rig.Settings.Jwt.CookieName.Length + 1)..].Split(';')[0];
+        var handler = new JwtSecurityTokenHandler();
+        var refreshedJwt = handler.ReadJwtToken(refreshedToken);
+        var refreshedExpiry = long.Parse(
+            refreshedJwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Exp).Value);
+
+        Assert.Equal(oldIssue.Principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value,
+            context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value);
+        Assert.Equal(context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value,
+            refreshedJwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Jti).Value);
+        Assert.Equal(oldIssue.ExpiresAt.ToUnixTimeSeconds(), refreshedExpiry);
+
+        var controller = new AuthController(AuthTestKit.Identity(rig.Users, rig.Groups, rig.Hosts, rig.Settings),
+            tokens, new FakeAuthenticationProvider(), currentUser, new RecordingAuditService(), rig.Settings,
+            new UserDisplayNameService(new FakeSystemSettingsStore()), new LoginThrottle(), rig.Revoked)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+        controller.Logout();
+
+        var refreshedPrincipal = new ClaimsPrincipal(new ClaimsIdentity(refreshedJwt.Claims, "Bearer"));
+        var (after, afterUser) = rig.Request(refreshedPrincipal);
+        Assert.False(await rig.Invoke(after, afterUser));
+        Assert.Equal(StatusCodes.Status401Unauthorized, after.Response.StatusCode);
+
+        var (oldAfter, oldAfterUser) = rig.Request(oldIssue.Principal);
+        Assert.False(await rig.Invoke(oldAfter, oldAfterUser));
+        Assert.Equal(StatusCodes.Status401Unauthorized, oldAfter.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("invalid")]
+    [InlineData("expired")]
+    public async Task 權限刷新exp缺失無效或已過期_回401且不換發(string mode)
+    {
+        var rig = new Rig();
+        var user = rig.AddAdmin();
+        rig.Stamp.Bump();
+        var principal = TokenPrincipal(user.UserId, "0");
+        var identity = (ClaimsIdentity)principal.Identity!;
+        identity.RemoveClaim(principal.FindFirst(JwtRegisteredClaimNames.Exp)!);
+        if (mode == "invalid")
+            identity.AddClaim(new Claim(JwtRegisteredClaimNames.Exp, "not-a-number"));
+        else if (mode == "expired")
+            identity.AddClaim(new Claim(JwtRegisteredClaimNames.Exp,
+                DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds().ToString()));
+
+        var (context, currentUser) = rig.Request(principal);
+        Assert.False(await rig.Invoke(context, currentUser));
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task 權限刷新缺jti_回401()
+    {
+        var rig = new Rig();
+        var user = rig.AddAdmin();
+        rig.Stamp.Bump();
+        var principal = TokenPrincipal(user.UserId, "0");
+        ((ClaimsIdentity)principal.Identity!).RemoveClaim(
+            principal.FindFirst(JwtRegisteredClaimNames.Jti)!);
+
+        var (context, currentUser) = rig.Request(principal);
+        Assert.False(await rig.Invoke(context, currentUser));
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
     }
 
     [Fact]

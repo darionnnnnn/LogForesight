@@ -1,5 +1,6 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using LogForesight.Web.Auth;
+using System.Security.Claims;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
@@ -36,8 +37,15 @@ public class ActiveUserMiddleware
     {
         if (currentUser.IsAuthenticated)
         {
+            var jti = context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+            if (string.IsNullOrWhiteSpace(jti))
+            {
+                await Reject(context, settings, "登入資訊無效，請重新登入。");
+                return;
+            }
+
             // 已登出的 token 比照停用處理（serverAdmin 也一樣：登出撤銷與帳號是否在 lf_users 無關）
-            if (revoked.IsRevoked(context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value))
+            if (revoked.IsRevoked(jti))
             {
                 await Reject(context, settings, "您已登出，請重新登入。");
                 return;
@@ -61,14 +69,43 @@ public class ActiveUserMiddleware
                 if (!string.Equals(tokenVersion, currentVersion, StringComparison.Ordinal))
                 {
                     var tokenIdentity = identity.CreateTokenIdentity(user);
+                    if (!TryGetExistingTokenExpiry(context.User, out var expiresAt))
+                    {
+                        await Reject(context, settings, "登入資訊已失效，請重新登入。");
+                        return;
+                    }
+
+                    var issued = tokens.CreateTokenAndPrincipal(tokenIdentity, expiresAt, jti);
                     AuthCookie.Append(context.Response, context.Request, settings.Jwt.CookieName,
-                        tokens.CreateToken(tokenIdentity), tokens.ExpiresAt());
-                    context.User = tokens.CreatePrincipal(tokenIdentity);
+                        issued.Token, issued.ExpiresAt);
+                    context.User = issued.Principal;
                 }
             }
         }
 
         await _next(context);
+    }
+
+    private static bool TryGetExistingTokenExpiry(ClaimsPrincipal principal, out DateTimeOffset expiresAt)
+    {
+        var value = principal.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+        if (long.TryParse(value, out var seconds))
+        {
+            try
+            {
+                expiresAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                expiresAt = default;
+                return false;
+            }
+
+            return expiresAt > DateTimeOffset.UtcNow;
+        }
+
+        expiresAt = default;
+        return false;
     }
 
     private static async Task Reject(HttpContext context, WebAppSettings settings, string message)
