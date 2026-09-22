@@ -263,9 +263,12 @@ public class PrtgScopeProtectionTests : IDisposable
         SeedMirror(_hostA);
         SeedOldSensors((299, 1), (701, 7));
         var console = new TestConsole();
-        var service = FetchService(FakeClient(Array.Empty<(long, string)>(),
+        var service = FetchService(FakeClient(new[] { (1L, "10.0.0.1"), (2L, "10.0.0.2"), (3L, "10.0.0.3"),
+            (4L, "10.0.0.4"), (5L, "10.0.0.5"), (7L, "10.0.0.7"), (8L, "10.0.0.8"), (9L, "10.0.0.9") },
             new[] { (201L, 1L), (202L, 2L), (203L, 3L), (205L, 5L) }), console);
         var settings = Settings(guardEnabled: false);
+        var expectedScope = Compute(settings, hostIds: null);
+        SetBaseline(expectedScope.DeviceObjids.Count);
 
         await service.FetchDayAsync(DateTime.Today, 2, CancellationToken.None,
             _ => Compute(settings, hostIds: null), fetchValues: false);

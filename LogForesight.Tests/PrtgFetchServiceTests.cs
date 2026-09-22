@@ -2392,15 +2392,20 @@ public class PrtgFetchServiceTests : IDisposable
 
     /// <summary>
     /// 感測器替身：帶 <c>id=</c> 的 sensors 請求只回該裝置的感測器（failingDevice 回 500）；
-    /// 不帶 <c>id=</c> 的回全部感測器。devices、messages 回空；historicdata 回一筆。
+    /// 不帶 <c>id=</c> 的回全部感測器。devices 預設回空（可指定成功回傳的裝置）；messages 回空；historicdata 回一筆。
     /// </summary>
     private static (PrtgClient Client, StubHandler Handler) CreateSensorScopeClient(
-        IReadOnlyList<FakeSensor> sensors, long? failingDevice = null)
+        IReadOnlyList<FakeSensor> sensors, long? failingDevice = null, IReadOnlyCollection<long>? devices = null)
     {
         return CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=devices"))
+            {
+                var rows = devices != null && url.Contains("start=0") ? devices : Array.Empty<long>();
+                return JsonResponse($"{{\"treesize\":{devices?.Count ?? 0},\"devices\":[" + string.Join(",", rows.Select(id =>
+                    $"{{\"objid\":{id},\"device\":\"D{id}\",\"host\":\"10.0.0.{id}\",\"status\":\"Up\",\"paused\":false}}")) + "]}");
+            }
             if (url.Contains("content=sensors"))
             {
                 var id = IdQuery(url);
@@ -2464,8 +2469,9 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         // 301：範圍外裝置 3；299：裝置 1 但 PRTG 這次沒回
         SeedOldSensors(store, (301, 3), (299, 1));
+        store.ScopeBaseline().Update(b => { b.DeviceCount = 2; b.At = DateTime.Now.AddDays(-1); });
         var console = new TestConsole();
-        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors);
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, devices: new long[] { 1, 2 });
         var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
@@ -2474,6 +2480,63 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(0, result.Failures);
         Assert.Equal(new long[] { 201, 202 }, MirrorSensorObjids());
         Assert.Contains(console.Lines, l => l.Contains("[階段 2/4] 已清除 2 個範圍外或 PRTG 端已不存在的感測器。"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_監看範圍異常縮小時不清除既有範圍外感測器()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (9901, 200));
+        store.ScopeBaseline().Update(b => { b.DeviceCount = 200; b.At = DateTime.Now.AddDays(-1); });
+
+        var devicesJson = "{\"treesize\":200,\"devices\":[" + string.Join(",", Enumerable.Range(1, 200).Select(id =>
+            $"{{\"objid\":{id},\"device\":\"D{id}\",\"host\":\"10.0.0.{id}\",\"status\":\"Up\",\"paused\":false}}")) + "]}";
+        var currentSensorJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":1,\"sensor\":\"Current\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}]}";
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devicesJson) : JsonResponse("{\"treesize\":200,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return HasIdQuery(url, 1) && url.Contains("start=0")
+                    ? JsonResponse(currentSensorJson)
+                    : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var console = new TestConsole();
+        var freshness = new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey));
+        var service = new PrtgFetchService(client, store, freshness, console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+            _ => new PrtgScopeResult(new HashSet<long> { 1 }, 1, 0, 0, 0), fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(1, result.Sensors);
+        var sensorFreshness = freshness.GetAll()[PrtgFreshnessStore.Sensors];
+        Assert.Equal(1, sensorFreshness.LastCount);
+        Assert.Equal(0, sensorFreshness.ZeroStreak);
+        Assert.Contains(201L, MirrorSensorObjids());
+        Assert.Equal(new long[] { 201, 9901 }, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("疑似主機清單或 DNS 異常") && l.Contains("不清除感測器鏡像"));
+    }
+
+    [Fact]
+    public async Task 感測器同步_沒有範圍基準時不清除既有範圍外感測器()
+    {
+        var store = CreateStore();
+        SeedOldSensors(store, (9901, 3));
+        var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, devices: new long[] { 1, 2 });
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
+            ScopeOf(1, 2), fetchValues: false);
+
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(2, result.Sensors);
+        Assert.Equal(new long[] { 201, 202, 9901 }, MirrorSensorObjids());
+        Assert.Contains(console.Lines, l => l.Contains("尚無監看裝置數基準") && l.Contains("不清除感測器鏡像"));
     }
 
     [Fact]
@@ -2533,11 +2596,12 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         // 裝置 2 本趟回 0 顆：302 昨天才刷新過（寬限內）→ 留；303 三天前刷新（連續回空）→ 清；裝置 3 範圍外 → 清
         SeedOldSensors(store, (302, 2), (301, 3));
+        store.ScopeBaseline().Update(b => { b.DeviceCount = 2; b.At = DateTime.Now.AddDays(-1); });
         store.UpsertSensors(new List<PrtgSensorRow>
         {
             new() { Objid = 303, DeviceObjid = 2, Name = "Old-303", SensorType = "ping" }
         }, DateTime.Now.AddDays(-3));
-        var (client, _) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A") });
+        var (client, _) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A") }, devices: new long[] { 1, 2 });
         var console = new TestConsole();
         var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 

@@ -596,9 +596,9 @@ public sealed class EfPrtgStore
     /// <summary>
     /// 清除本趟感測器同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即取數範圍外或 PRTG 端已不存在的感測器，回傳刪除數。
     /// 只動 <c>lf_prtg_sensors</c>；狀態變更、數值與快照表一律不碰（交給保留期）。
-    /// 刻意不做裝置那種「過半不刪」保險：縮圈到取數範圍後的第一趟本來就會刪掉九成以上，
-    /// 而感測器鏡像只是 PRTG 的複本、不掛人工資料，誤刪了下一趟同步即可重建。
-    /// 呼叫端必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
+    /// 本方法不複製範圍縮小／無基準門檻；呼叫端必須先以 <see cref="PrtgScopePurge.CheckScope"/>
+    /// 與 <see cref="PrtgScopePurge.CheckShrink"/> 通過同一套清除保護，再呼叫本方法。
+    /// 呼叫端也必須保證本趟感測器階段完整刷新了範圍內每一台裝置，否則「沒刷新到」不等於「不該留」。
     /// <para>
     /// <paramref name="graceDeviceObjids"/>＝本趟「查詢成功但回 0 顆」的裝置。PRTG 偶發回空陣列時，一次就把整台的感測器刪光
     /// 會讓當晚對那台主機的規則評估無聲失效；所以這些裝置底下 <c>SyncedAt &gt;= graceSince</c> 的列本趟先留著（回傳 GraceKept 供出聲）。

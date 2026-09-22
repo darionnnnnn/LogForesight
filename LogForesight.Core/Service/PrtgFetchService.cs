@@ -319,21 +319,37 @@ public sealed class PrtgFetchService
                 }
             }
 
-            // 清除本趟沒被刷新的感測器（範圍外的、PRTG 端已刪的）：只有範圍非空、階段 2 無例外、
+            // 清除本趟沒被刷新的感測器（範圍外的、PRTG 端已刪的）：只有範圍可信、階段 2 無例外、
             // 全站模式已收斂／逐台模式零失敗、且有寫入時，「沒刷新到」才代表「不該留在鏡像」。
             // 必須在語意分類重算之前，免得替即將刪除的列白做工。
-            // 另一道保險：範圍內沒有任何對應成功的裝置時不清。感測器清除沒有裝置那種「過半不刪」（首次套用取數範圍本來就會刪九成以上），
-            // 而「主機主檔暫時讀到空清單 → 對應全數落空 → 範圍只剩守門裝置」會把整份鏡像清光；沒有對應成功的主機時鏡像留著也無害。
+            // 另一道保險：範圍內沒有任何對應成功的裝置時不清；「主機主檔暫時讀到空清單 → 對應全數落空 →
+            // 範圍只剩守門裝置」會把整份鏡像清光，沒有對應成功的主機時鏡像留著也無害。
             // 指定主機更新只刷新了那幾台的感測器，其餘裝置「沒刷新到」不代表範圍外——清了就是把整份鏡像清光。
-            if (sensorsRefreshed && scope!.IsPartial)
-            {
-                sensorsRefreshed = false;
-                _console.WriteLine("[階段 2/4] 本趟只處理部分主機，不清除感測器鏡像。");
-            }
             if (sensorsRefreshed && scope!.Mapped == 0)
             {
                 sensorsRefreshed = false;
                 _console.WriteLine("[階段 2/4] 監看裝置中沒有任何對應成功的裝置，本趟不清除感測器鏡像。");
+            }
+            var sensorPurgeScopeReason = sensorsRefreshed
+                ? PrtgScopePurge.CheckScope(scope, devicesRefreshed)
+                : null;
+            if (sensorsRefreshed && sensorPurgeScopeReason != null)
+            {
+                sensorsRefreshed = false;
+                if (scope!.IsPartial)
+                    _console.WriteLine("[階段 2/4] 本趟只處理部分主機，不清除感測器鏡像。");
+                else
+                    _console.WriteLine($"[階段 2/4] {sensorPurgeScopeReason}，本趟不清除感測器鏡像。");
+            }
+            if (sensorsRefreshed)
+            {
+                var sensorPurgeShrinkReason = PrtgScopePurge.CheckShrink(
+                    scope!.DeviceObjids.Count, _store.ScopeBaseline().Get());
+                if (sensorPurgeShrinkReason != null)
+                {
+                    sensorsRefreshed = false;
+                    _console.WriteLine($"[階段 2/4] ⚠ {sensorPurgeShrinkReason}，本趟不清除感測器鏡像。");
+                }
             }
             if (sensorsRefreshed)
             {
