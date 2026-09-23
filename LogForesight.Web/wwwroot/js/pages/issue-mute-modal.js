@@ -251,12 +251,20 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
 
         const restore = withBusy(submitBtn, '送出中');
         try {
-            await api.put(
+            const result = await api.put(
                 `/api/admin/issue-owners/${encodeURIComponent(source)}/${eventId}/mute`,
                 { days, until: null, reason, existingOrders: existingOrdersValue });
 
+            const outcome = result?.muteCloseOutcome;
+            if (outcome?.failedWorkOrderId != null) {
+                toast(`已靜音，${outcome.succeeded?.length ?? 0} 張交辦單已結案；#${outcome.failedWorkOrderId} 失敗，另有 ${outcome.notProcessed?.length ?? 0} 張未處理。失敗的單可能已部分更新，請先核對再重試。${outcome.failureMessage ?? ''}`, 'warning');
+                onApplied?.();
+                restore();
+                return;
+            }
+
             const closedSuffix = existingOrdersValue === 'close'
-                ? `，${activeOrders.orders} 張交辦單已代為結案`
+                ? `，${outcome?.succeeded?.length ?? 0} 張交辦單已代為結案`
                 : '';
             toast(`已靜音『${issueLabel}』至 ${muteEndDate(days)}${closedSuffix}`, 'success');
 

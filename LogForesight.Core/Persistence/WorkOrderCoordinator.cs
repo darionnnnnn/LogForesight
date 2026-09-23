@@ -758,16 +758,17 @@ public class WorkOrderCoordinator
             : EventNoteOf($"{status}：", note, $"（{caseCount} 台）");
 
     /// <summary>
-    /// 事件說明組字的唯一一份（回覆與代為結案共用）：事件表 Note 上限
-    /// <see cref="EfWorkOrderStore.NoteMaxLength"/>，store 寫入時從尾端截——會把狀態碼後的台數砍掉。
-    /// 這裡先截使用者說明的尾端並以「…」結尾，保證前綴與尾綴完整。
+    /// 事件說明組字的唯一一份（回覆與代為結案共用）：先保留使用者原文，
+    /// 空間不足時依序省略台數與狀態前綴，避免時間軸比成員說明少字。
     /// </summary>
     private static string EventNoteOf(string prefix, string note, string suffix)
     {
-        var room = EfWorkOrderStore.NoteMaxLength - prefix.Length - suffix.Length;
-        if (note.Length > room)
-            note = note[..Math.Max(0, room - 1)] + "…";
-        return prefix + note + suffix;
+        var limit = EfWorkOrderStore.NoteMaxLength;
+        if (prefix.Length + note.Length + suffix.Length <= limit)
+            return prefix + note + suffix;
+        if (prefix.Length + note.Length <= limit)
+            return prefix + note;
+        return note.Length <= limit ? note : note[..limit];
     }
 
     /// <summary>

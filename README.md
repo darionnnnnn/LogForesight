@@ -107,7 +107,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 若不希望如此，請到「系統管理 > 設定 > AI 服務」清空設定。
 （存量校正回填未完成前不會搶跑，這道閘門不變。）
 
-**升級後請先執行一次「同步結構與對應」**（PRTG 維護頁的鏡像狀態頁籤，或排程作業頁的 PRTG 卡）。
+**升級後請先執行一次「同步結構與對應」**（PRTG 維護頁的鏡像狀態頁籤）。
 PRTG 的裝置與感測器鏡像原本只有夜間排程會更新，主機對應、資源守門的自動偵測、觸發式取數
 全都建立在它之上。剛啟用 PRTG、或剛在 PRTG 新增一批裝置時，不先同步就要等到隔天才對得上。
 
@@ -584,7 +584,11 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 | `PrtgResourceGuardCpuPercent`／`MemoryFreePercent` | `85`／`10` | 不需要；現場應核對 sensor 語意與門檻方向 |
 | `PrtgResourceGuardCheckSeconds`／`PauseMinutes`／`Strikes`／`MaxPauseMinutes` | `60`／`5`／`2`／`120` | 不需要 |
 | 排程錯過窗口補跑 | 開啟，結束後 4 小時內一次 | IIS／服務若曾停機，先查「系統健康」與「排程作業」再決定是否手動執行 |
+| `Storage:SqliteWal` | `true`（僅 SQLite） | 備份時包含 `.db`、`-wal`、`-shm`；需要回退時設為 `false` 並重啟 |
+| `Server:TrustedProxies` | 空清單 | 使用反向代理且要按來源 IP 節流登入時，填入可信代理的 IP |
 | 加密金鑰檔 `keys\lf-crypto.key` | 首次啟動自動產生（使用 `LF_CRYPTO_KEY` 時不產生） | 必須備份；搬遷時與資料庫一起還原並確認執行帳號 ACL |
+| 處理說明常用語 | 每人未設定時使用全站預設（出廠為空） | 管理者可在設定頁填全站預設；個人可自行儲存常用語 |
+| 排程新鮮度確認期限 | 未確認 | 過期告示需管理者在「設定 > 系統健康」確認並設定靜音期限 |
 
 設定鍵的完整欄位、限制與安全欄杆以 [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) §7、
 [docs/WEB-SPEC.md](docs/WEB-SPEC.md) §9.9b 為準。

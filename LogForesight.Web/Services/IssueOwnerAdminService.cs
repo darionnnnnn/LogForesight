@@ -1,6 +1,7 @@
 ﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using NLog;
 
 namespace LogForesight.Web.Services;
 
@@ -11,6 +12,7 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class IssueOwnerAdminService
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     /// <summary>問題選擇器的近期出現窗口——與問題負責人的授權路徑窗口（RetentionDays）刻意不同：
     /// 那是「保留期內都算負責人可見」的長窗口，這是「新增規則時該挑哪個問題」的短窗口，
     /// 30 天內出現過的問題才有指派的實務意義，太久沒出現的問題挑進來也只是雜訊。</summary>
@@ -293,18 +295,42 @@ public class IssueOwnerAdminService
         existing.Mutes = mutes;
         existing.UpdatedByAccount = _currentUser.Account;
 
+        // 在靜音寫入前固定本次對象；權限與請求驗證失敗時仍維持零寫入。
+        var ordersToClose = closeOrders ? _workOrders.GetActiveByIssue(sourceName, eventId).ToList() : new List<WorkOrder>();
         var saved = _issueOwners.Upsert(existing);
 
-        var closedCount = 0;
+        IssueMuteCloseOutcomeDto? closeOutcome = null;
         if (closeOrders)
         {
+            closeOutcome = new IssueMuteCloseOutcomeDto();
             var actor = new WorkOrderActor { ActorId = actorId, ActorAccount = _currentUser.Account, OccurredAt = now };
-            foreach (var order in _workOrders.GetActiveByIssue(sourceName, eventId))
+            foreach (var order in ordersToClose)
             {
-                _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor);
-                closedCount++;
+                try
+                {
+                    _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor);
+                }
+                catch (Exception ex)
+                {
+                    closeOutcome.FailedWorkOrderId = order.WorkOrderId;
+                    closeOutcome.FailureMessage = ex is DomainException ? ex.Message : "代為結案時發生未預期的錯誤。";
+                    closeOutcome.NotProcessed = ordersToClose.SkipWhile(o => o.WorkOrderId != order.WorkOrderId)
+                        .Skip(1).Select(o => o.WorkOrderId).ToList();
+                    Log.Error(ex, "靜音問題 {0}/{1} 代為結案停在交辦單 #{2}", sourceName, eventId, order.WorkOrderId);
+                    break;
+                }
+
+                closeOutcome.Succeeded.Add(order.WorkOrderId);
+                _audit.Record(
+                    action: AuditActions.WorkOrderAdminClose,
+                    summary: $"靜音問題「{sourceName} {eventId}」代為結案交辦單 #{order.WorkOrderId}",
+                    targetKind: "work_order",
+                    targetId: order.WorkOrderId.ToString(),
+                    detail: new { SourceName = sourceName, EventId = eventId, Reason = reason });
             }
         }
+
+        var closedCount = closeOutcome?.Succeeded.Count ?? 0;
 
         _audit.Record(
             action: AuditActions.IssueMute,
@@ -316,11 +342,14 @@ public class IssueOwnerAdminService
             detail: new
             {
                 SourceName = sourceName, EventId = eventId, interval.From, interval.To, Reason = reason,
-                Extended = extended, request.ExistingOrders, ClosedWorkOrders = closedCount
+                Extended = extended, request.ExistingOrders, ClosedWorkOrders = closedCount,
+                closeOutcome?.FailedWorkOrderId, closeOutcome?.NotProcessed
             });
 
         var usersById = _users.GetAll().ToDictionary(u => u.UserId);
-        return ToDto(saved, usersById, RecentAggregatesByKey());
+        var dto = ToDto(saved, usersById, RecentAggregatesByKey());
+        dto.MuteCloseOutcome = closeOutcome;
+        return dto;
     }
 
     /// <summary>

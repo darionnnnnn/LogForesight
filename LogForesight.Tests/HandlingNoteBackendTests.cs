@@ -12,7 +12,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 處理說明的後端把關：交辦單回覆／代為結案的長度上限（經 JSON 綁定＋DataAnnotations，
-/// 與 [ApiController] 自動回 400 同一條驗證）、回覆事件說明截斷保留前後綴、不處理必填理由、
+/// 與 [ApiController] 自動回 400 同一條驗證）、事件欄位優先保留使用者原文、不處理必填理由、
 /// 多單回覆中途失敗時已成功的單逐張稽核且回應交代成功／失敗／未處理。
 /// </summary>
 public class HandlingNoteBackendTests : IDisposable
@@ -135,14 +135,12 @@ public class HandlingNoteBackendTests : IDisposable
     // ── 回覆事件說明截斷 ──────────────────────────────────────────────────
 
     [Fact]
-    public void 回覆事件說明_1000字說明_截使用者說明尾端_前後綴完整()
+    public void 回覆事件說明_1000字說明_完整保留使用者原文()
     {
         var note = WorkOrderCoordinator.ReplyNoteOf("wont_fix", new string('x', 1000), 2);
 
         Assert.True(note.Length <= 1000, $"長度 {note.Length}");
-        Assert.StartsWith("wont_fix：", note);
-        Assert.EndsWith("（2 台）", note);
-        Assert.Contains("…（2 台）", note);
+        Assert.Equal(new string('x', 1000), note);
     }
 
     [Fact]
@@ -158,7 +156,7 @@ public class HandlingNoteBackendTests : IDisposable
     }
 
     [Fact]
-    public void 交辦單回覆_1000字說明_事件表說明保留台數()
+    public void 交辦單回覆_1000字說明_事件表完整保留原文()
     {
         var id = CreateOrder(153, "H1");
 
@@ -166,7 +164,7 @@ public class HandlingNoteBackendTests : IDisposable
 
         var evt = _orders.ListEvents(id).Single(e => e.Action == WorkOrderEventActions.Replied);
         Assert.True(evt.Note!.Length <= EfWorkOrderStore.NoteMaxLength);
-        Assert.EndsWith("…（1 台）", evt.Note);
+        Assert.Equal(new string('x', 1000), evt.Note);
     }
 
     // ── 不處理必填理由 ────────────────────────────────────────────────────

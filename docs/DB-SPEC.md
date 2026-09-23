@@ -16,31 +16,18 @@
 2. **主管**：一眼看出目前有哪些風險類型、數量、緊急程度
 3. **AI 問答為未來選項**：視屆時資源決定是否做；schema 保留設計但不圍繞它做任何取捨
 4. 保留策略見下方「保留策略」一節（現況已分四種期間，非單一統一年限）
-5. 全部設計維持雙 DB 可移植（SQL Server／Oracle）
+5. 現行雙後端為 SQLite 與 SQL Server
 6. Web 是獨立的查詢應用，讀同一個 DB
 
-## 雙 DB 可移植規則（所有表遵守）
+## 雙 DB 可移植規則（SQLite／SQL Server）
 
 | 規則 | 原因 |
 |---|---|
-| **資料表一律 `lf_` 前綴**、索引 `ix_lf_` 前綴；識別字全小寫 snake_case、**長度 ≤ 30 字元**、避開兩家保留字 | 前綴避免與公司共用 DB 中其他系統的表衝突、一眼可辨識歸屬；Oracle 12.2 之前識別字上限 30 bytes。大小寫說明：未加引號時 SQL Server 預設不分大小寫、Oracle 一律轉大寫（實體名即 `LF_...`），文件以小寫書寫、DDL 不加引號，兩家行為一致 |
-| 型別只用兩家共通的抽象：`bigint` / `int` / `nvarchar(n)` / `text(大文字)` / `date` / `timestamp` / `bool` | 對應表見下；建表 DDL 等 DB 定案後由此機械翻譯 |
-| 布林一律 `bool`（SQL Server `BIT`／Oracle `NUMBER(1)`+CHECK）；**三態布林用 nullable**（如 `security_log_available`：NULL=未嘗試） | 兩家都沒有共通的原生 BOOLEAN（Oracle 23ai 才有，不可假設） |
-| 巢狀/清單資料存 **JSON 文字欄**（`text`），**不用**任何一家的 JSON 原生型別與 JSON 函式 | 解析在應用層做（同一套 System.Text.Json 模型）；避免綁死單一 DB 的 JSON 查詢語法 |
-| 主鍵由 **ORM/應用層產生**（identity/sequence 由 provider 各自處理），程式碼不出現 DB 專屬語法 | EF Core 對兩家都會自動選對機制 |
-| **可空文字欄位**：空字串一律正規化為 NULL 再入庫 | Oracle 把 `''` 視為 NULL，不正規化的話兩家行為不一致 |
-| 不用 stored procedure / trigger / view 承載邏輯，全部在應用層 | 換 DB 零遷移成本；邏輯留在可測試的 C# |
-| 分頁/日期運算交給 ORM 產生 | OFFSET-FETCH 與 ROWNUM 語法不同，手寫 SQL 會分岔 |
-
-型別對應（實作時機械翻譯用）：
-
-| 抽象 | SQL Server | Oracle |
-|---|---|---|
-| bigint / int | BIGINT / INT | NUMBER(19) / NUMBER(10) |
-| nvarchar(n) | NVARCHAR(n) | NVARCHAR2(n) |
-| text | NVARCHAR(MAX) | NCLOB |
-| date / timestamp | DATE / DATETIME2 | DATE / TIMESTAMP |
-| bool | BIT | NUMBER(1) + CHECK (0,1) |
+| 資料表 `lf_`、索引 `ix_lf_` 前綴，識別字使用小寫 snake_case | 避免與同庫其他系統混淆；EF 模型與升級器共用命名 |
+| 長文字與巢狀資料由應用層序列化，存入文字欄位 | 不讓查詢依賴單一資料庫的 JSON 函式 |
+| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值 |
+| 主鍵、分頁及日期查詢交給 EF Core；少數升級 DDL 分 provider 實作 | 兩個後端的 SQL 語法與索引管理不同 |
+| 寫入多表時明訂交易邊界；SQL Server 的顯式交易由執行策略包住 | 避免部分寫入及重試策略與自開交易衝突 |
 
 ## 資料表設計（欄位級）
 
@@ -205,7 +192,7 @@ lf_top_issues                                        -- LogIssueSignature 的**�
                                                      -- （墓碑列＋存活列）被算成兩台
   record_date       date NOT NULL                     -- 去正規化自父列（期間跨度／出現密度）
   log_name          nvarchar(255) NOT NULL DEFAULT ''
-  source_name       nvarchar(255) NOT NULL            -- 'source' 是 Oracle 慣用字，改名避開
+  source_name       nvarchar(255) NOT NULL            -- 原始顯示名稱；比對使用 source_key
   source_key        nvarchar(255) NULL                 -- SourceKeyOf 正規化鍵；舊列背景回填期間可為 NULL
   event_id          int NOT NULL
   entry_type        int NOT NULL DEFAULT 0            -- EventLogEntryType 的**整數值**（不是字串）
@@ -514,7 +501,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | handling_log（保留 730 天） | 每次標記／指派一列，批次標記亦逐筆記錄 | **唯一以稽核年限成長的一張**，6000 台屬千萬列級 |
 | lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 2GB/年 | ~4~5GB |
 
-這個量級對 SQL Server / Oracle 仍屬輕鬆，靠既有索引即可。配套不變：
+這個量級可沿用現有索引；正式 SQL Server 的執行計畫仍需依實際資料量觀察。配套不變：
 
 - **Schema 演進採「只增不改」**：新版本只加欄位（nullable 或有預設值）、不改不刪既有欄位，
   舊資料永遠可讀；配合 EF Core migration 記錄版本。
@@ -749,7 +736,8 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 `lf_blobs` 每一列存一整份 JSON（key＝store 名稱）。`hosts`／`host_groups`／`group_access`
 三份隨主機數成長，3000 台的 `hosts` 約 4 MB，而 `IHostStore.GetAll()` 在單一 HTTP 請求內
 會被呼叫十餘次（`HostLookup`／`HostAliasIndex`／可見範圍解析各自都要）。
-`JsonBlobCollection` 因此對這三份、且只有這三份啟用讀取快取。
+`JsonBlobCollection` 對這三份啟用讀取快取；`users` 也使用版本探測式快取，
+避免每個授權檢查都重新反序列化整份使用者清單。
 單一物件型的 `JsonBlobSingleton` 家族（`system_settings`、`schedule_options`、`netiq_options`、
 `prtg_sync_status` 等）不走快取——每份都小，且讀取端不在請求熱路徑上。
 
@@ -765,8 +753,8 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 同一個 tick 內的兩次寫入會拿到相同戳記。主機清單是**授權可見範圍的來源**，
 漏一次更新等於使用者可能看到不該看到的主機。
 
-其餘 store（`users`、`sentinels`、`rules`…）不啟用快取：它們不隨主機數成長，
-加快取只是徒增失效正確性的風險面。
+最近登入時間獨立保存在 `user_last_login` blob，登入時不改寫 `users`，避免每次登入都讓使用者快取失效。
+其餘集合型 store（`sentinels`、`rules`…）不啟用讀取快取。
 
 **`IHostStore.DataVersion`**（回饋二十七輪）：把 `version` 對外曝光成主機清單的資料版本，
 供**上層**判定「用這份清單建出來的東西要不要重建」。目前唯一消費端是
@@ -782,6 +770,20 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 ＋每日列（保留 90 天，超過裁掉）。**累計與每日是兩套數字**：每日只供趨勢檢視，
 使用者問的「目前累計用了多少」要的是不隨裁切變小的那一個。不另開資料表的理由是它跟著 DB
 備份與搬遷走，且量小、寫入頻率等同 AI 呼叫頻率（已被請求佇列序列化）。不啟用讀取快取。
+
+現行其他小型狀態也使用 `lf_blobs`，不另建實體表：
+
+| blob key | 內容與用途 |
+|---|---|
+| `user_prefs` | 每位使用者的常用語及初始設定引導顯示偏好；全站預設常用語在 `system_settings` |
+| `permission_version` | 群組、主機負責人與問題負責人能力變動後的權限版本；請求時比對並刷新權限 |
+| `prtg_freshness` | 各 PRTG 資料類別的最後成功時間、筆數及連續零筆次數 |
+| `prtg_scope_baseline` | 監看裝置範圍外清除的上次基準及最近擋下原因 |
+| `user_last_login` | 與 `users` 分開寫入的最近登入時間，避免每次登入使使用者快取失效 |
+
+PRTG 衝突類型依最新裝置鏡像及主機對應即時計算，未另存 `conflict_kind` 欄；持久化會使主機 IP
+或鏡像變動後留下過期分類。回填依本次指定天數執行，沒有另設回填水位。
+AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記對象、字數與結果，不保存原文或輸出。
 
 兩條不可放寬的約束：
 

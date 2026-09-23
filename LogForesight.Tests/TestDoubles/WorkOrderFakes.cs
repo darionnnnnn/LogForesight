@@ -22,6 +22,9 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     /// <summary>接下來幾次 Save 要擲併發例外（注入用）</summary>
     public int FailNextSaves { get; set; }
 
+    /// <summary>指定一張單在儲存時失敗，驗證批次中途失敗的回報。</summary>
+    public long? FailSaveForId { get; set; }
+
     /// <summary>下一次 Insert 真正寫入前執行一次（模擬兩人同時建單）</summary>
     public Action? BeforeNextInsert { get; set; }
 
@@ -66,6 +69,8 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     public virtual void Save(WorkOrder order)
     {
         SaveCalls++;
+        if (order.WorkOrderId == FailSaveForId)
+            throw new DbUpdateConcurrencyException("注入的指定交辦單併發衝突");
         if (FailNextSaves > 0)
         {
             FailNextSaves--;

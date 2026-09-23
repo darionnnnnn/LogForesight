@@ -5,23 +5,12 @@
 > 本文件彙整目前**已知但刻意未做**的項目。每項附觸發條件或建議時機；
 > 沒有時程表——遇到相關需求或有餘裕時再排入。
 
-## 前端共用抽取（原 SHARED-STANDARDS-PLAN S13／S14，P3 選配）
+## 獨立背景工作的持久執行紀錄
 
-- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——**C# 端已收斂**：
-  `LogForesight.Core/Analysis/IssueCategoryNames` 是 C# 唯一字典，`RiskReportService.CategoryZh`
-  （txt 報告）與 `MailIssueRow.FormatLine`（郵件，批次H 曾短暫長出第三份拷貝、體檢時收斂）
-  皆委派它。**剩餘的是 JS 端**：`format.js` 的 `CATEGORY_NAMES`＋`rules.js` 一份局部拷貝，
-  跨語言無法靠編譯器對齊，目前用人工保持一致。方案：由 `_Layout.cshtml` server-render
-  `window.LF_META = {...}`（類別名/嚴重度名/風險等級）供 `format.js` 讀取、保留現值當
-  fallback。分歧風險目前低，晚做或不做皆可接受。
-
-- **S14 剩餘部分：前端下鑽 URL 組裝共用**——`/records?riskLevels=…&from=…&to=…` 的組裝在
-  `dashboard.js`／`reports.js`／`record-detail.js` 重複 10+ 處，尚未抽出共用的
-  `recordsUrl(params)` helper。
-  （S14 的另一半——KPI 卡渲染共用——已於 refactor/simplify-2026-07 分支 Phase 7 以
-  `core/ui.js` 的 `statCard()` 完成，取代 `dashboard.js`／`reports.js` 各自的 KPI 卡拼裝；
-  `dashboard.js` 的分類卡／未回報主機卡與 `imports.js` 的迷你統計格因結構真的不同
-  （無卡片外框、多圖示/徽章列）刻意未套用，避免為求一致而過度抽象。）
+- **PRTG 手動同步、回填與探測的逐行輸出目前只在各自的執行狀態中**；取數排程的
+  `BatchRunRecorder` 只記該趟分析流程。若維運需要在站台重啟後追查這三種獨立工作的逐行
+  過程，應為各工作定義自己的持久紀錄與保留期，不把它們混入其他取數趟次。
+  **觸發時機**：實機發生同步／回填／探測失敗，重啟後只剩總結、無法定位失敗步驟。
 
 ## 營運與規模擴充（原 OPS-HARDENING-PLAN §10 P2，未排期）
 

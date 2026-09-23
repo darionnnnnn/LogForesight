@@ -377,7 +377,7 @@ public sealed class IssueMuteTests : IDisposable
     {
         var order = CreateActiveOrder();
 
-        Admin(FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle))
+        var result = Admin(FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle))
             .SetMute(Source, EventId, new SetIssueMuteRequest { Days = 3, Reason = "換硬體", ExistingOrders = "close" });
 
         var closed = _orders.Get(order)!;
@@ -385,8 +385,32 @@ public sealed class IssueMuteTests : IDisposable
         Assert.Equal(WorkOrderCloseReasons.AdminClosed, closed.ClosedReason);
         Assert.Empty(_orders.GetActiveByIssue(Source, EventId));
         Assert.All(_cases.GetMany(new[] { "SRV-01" }), c => Assert.Equal(IssueHandlingStatuses.WontFix, c.Status));
-        var entry = Assert.Single(_audit.Entries);
-        Assert.Contains("代為結案進行中交辦單 1 張", entry.Summary);
+        Assert.Equal(new[] { order }, result.MuteCloseOutcome!.Succeeded);
+        Assert.Null(result.MuteCloseOutcome.FailedWorkOrderId);
+        Assert.Equal(2, _audit.Entries.Count);
+        Assert.Contains(_audit.Entries, e => e.Action == AuditActions.WorkOrderAdminClose && e.TargetId == order.ToString());
+        Assert.Contains(_audit.Entries, e => e.Action == AuditActions.IssueMute && e.Summary.Contains("代為結案進行中交辦單 1 張"));
+    }
+
+    [Fact]
+    public void SetMute_第二張代為結案失敗_回報已完成與失敗且逐張留稽核()
+    {
+        var first = CreateActiveOrder();
+        var second = CreateActiveOrder("SRV-02", 10);
+        _orders.FailSaveForId = second;
+
+        var result = Admin(FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle))
+            .SetMute(Source, EventId, new SetIssueMuteRequest { Days = 3, Reason = "設備維護", ExistingOrders = "close" });
+
+        Assert.NotNull(result.CurrentMute);
+        Assert.Equal(new[] { first }, result.MuteCloseOutcome!.Succeeded);
+        Assert.Equal(second, result.MuteCloseOutcome.FailedWorkOrderId);
+        Assert.Empty(result.MuteCloseOutcome.NotProcessed);
+        Assert.NotNull(_orders.Get(first)!.ClosedAt);
+        Assert.Null(_orders.Get(second)!.ClosedAt);
+        Assert.Contains(_audit.Entries, e => e.Action == AuditActions.WorkOrderAdminClose && e.TargetId == first.ToString());
+        Assert.DoesNotContain(_audit.Entries, e => e.Action == AuditActions.WorkOrderAdminClose && e.TargetId == second.ToString());
+        Assert.Contains(_audit.Entries, e => e.Action == AuditActions.IssueMute);
     }
 
     [Fact]
@@ -541,16 +565,16 @@ public sealed class IssueMuteTests : IDisposable
         Assert.Equal((Today.AddDays(-2), Today.AddDays(-1)), (m.From, m.To));
     }
 
-    private long CreateActiveOrder()
+    private long CreateActiveOrder(string hostName = "SRV-01", long handlerId = 9)
     {
-        _hosts.Upsert(new WebHost { HostName = "SRV-01", Active = true });
+        _hosts.Upsert(new WebHost { HostName = hostName, Active = true });
         var issue = Issue();
         return _coordinator.Create(new WorkOrderCreateRequest
         {
-            Source = Source, EventId = EventId, IssueLabel = "disk 153", HandlerId = 9,
+            Source = Source, EventId = EventId, IssueLabel = "disk 153", HandlerId = handlerId,
             Members = new List<WorkOrderMember>
             {
-                new() { HostName = "SRV-01", IssueKey = IssueSignatureKey.For(issue), IssueLabel = "disk 153", TriggerDate = Today.AddDays(-1) }
+                new() { HostName = hostName, IssueKey = IssueSignatureKey.For(issue), IssueLabel = "disk 153", TriggerDate = Today.AddDays(-1) }
             },
             Actor = new WorkOrderActor { ActorAccount = "boss", OccurredAt = DateTime.Now.AddHours(-1) }
         }).WorkOrderId;

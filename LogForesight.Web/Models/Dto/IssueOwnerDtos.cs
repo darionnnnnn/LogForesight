@@ -49,6 +49,17 @@ public class IssueOwnerDto
 
     /// <summary>靜音歷程（最近 10 筆，新到舊）</summary>
     public List<IssueMuteDto> MuteHistory { get; set; } = new();
+
+    /// <summary>本次靜音附帶的代為結案結果；一般查詢與只暫停交辦單時為 null。</summary>
+    public IssueMuteCloseOutcomeDto? MuteCloseOutcome { get; set; }
+}
+
+public class IssueMuteCloseOutcomeDto
+{
+    public List<long> Succeeded { get; set; } = new();
+    public long? FailedWorkOrderId { get; set; }
+    public string? FailureMessage { get; set; }
+    public List<long> NotProcessed { get; set; } = new();
 }
 
 /// <summary>問題靜音區間（From／To 為日期，含首尾）</summary>
