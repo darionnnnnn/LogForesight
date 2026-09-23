@@ -464,10 +464,11 @@
         </div>
         <div class="lf-card__body">
             <p class="text-muted small mb-3">
-                探測會唯讀讀取 PRTG 結構，用來確認 sensor 型別分布與主機對應可行性。
+                「小範圍資料流驗證」會從已對應主機挑一顆符合白名單的 sensor，讀取昨天一天的 PRTG 歷史數值，沿正式取值路徑寫入並讀回資料庫；只會更新該 sensor 當日數值，不會清除資料。「完整環境探測」則唯讀檢查全站結構與 API 能力。
             </p>
             <div class="d-flex align-items-center gap-3 mb-3">
-                <button type="button" class="btn btn-primary" id="prtg-probe-start">開始探測</button>
+                <button type="button" class="btn btn-primary" id="prtg-probe-flow-start">驗證小範圍資料流</button>
+                <button type="button" class="btn btn-outline-secondary" id="prtg-probe-start">完整環境探測</button>
                 <button type="button" class="btn btn-outline-danger d-none" id="prtg-probe-cancel">停止探測</button>
                 <div class="text-muted small" id="prtg-probe-status"></div>
             </div>

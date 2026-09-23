@@ -7,7 +7,7 @@ namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 環境探測的「站台對照」段：以本機鏡像與主機對應對照 PRTG，回答管理者升級前的三個問題——
-/// 取數範圍有多大、下次結構同步會清掉多少感測器、範圍內的裝置逐台查詢成不成立、大概要跑多久。
+/// 取數範圍有多大、多少感測器目前在範圍外、範圍內的裝置逐台查詢成不成立、大概要跑多久。
 ///
 /// 唯讀，不寫任何資料表；也不檢查 PrtgEnabled（探測本來就要能在啟用前跑），
 /// 所以鏡像與主機對應可能是空的，那是正常情況而不是錯誤。
@@ -24,7 +24,7 @@ public static class PrtgProbeSiteCheck
     {
         console.WriteLine();
         console.WriteLine("══════════ 站台對照 ══════════");
-        console.WriteLine("以本機鏡像與主機對應對照 PRTG：取數範圍有多大、下次同步會清掉什麼、範圍內的裝置逐台查詢成不成立。最多發 6 次 table.json，另以直接查 PRTG 取裝置與感測器全表各一次（守門偵測用，感測器那次在大型環境約需 1 分鐘）。");
+        console.WriteLine("以本機鏡像與主機對應對照 PRTG：取數範圍有多大、鏡像有多少感測器在範圍外、範圍內的裝置逐台查詢成不成立。最多發 6 次 table.json，另以直接查 PRTG 取裝置與感測器全表各一次（守門偵測用，感測器那次在大型環境約需 1 分鐘）。");
 
         // ── [S1] 取數範圍試算（純本機，不打 PRTG）────────────────────────────
         console.WriteLine("[S1] 取數範圍試算");
@@ -56,10 +56,10 @@ public static class PrtgProbeSiteCheck
                 var inScope = scope.DeviceObjids;
                 console.WriteLine($"     監看裝置：{inScope.Count} 台（對應 {scope.Mapped}、衝突 {scope.Conflict}、人工 {scope.Manual}、守門 {scope.Guard}）");
 
-                // 範圍外的感測器＝下次結構同步成功後會被過期清除的那一批
+                // 範圍外不等於必然清除；首次基準、大幅縮小與守門保留集合另有保護。
                 var outOfScope = sensors.Count(s => !inScope.Contains(s.DeviceObjid));
                 var mirrorLine = $"     鏡像現況：裝置 {devices.Count} 台、感測器 {sensors.Count} 顆，其中範圍外 {outOfScope} 顆";
-                if (outOfScope > 0) mirrorLine += "——下次結構同步成功後會清除";
+                if (outOfScope > 0) mirrorLine += "——是否清除仍受範圍基準、縮小保護與守門保留條件約束";
                 console.WriteLine(mirrorLine);
 
                 if (inScope.Count == 0)

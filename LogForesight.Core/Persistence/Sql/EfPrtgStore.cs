@@ -769,6 +769,18 @@ public sealed class EfPrtgStore
         return ctx.PrtgSensors.AsNoTracking().ToList();
     }
 
+    /// <summary>小範圍資料流驗證只讀候選裝置的鏡像，避免載入全站感測器。</summary>
+    public List<PrtgSensorRow> GetSensorsForDevices(IReadOnlyCollection<long> deviceObjids)
+    {
+        if (deviceObjids.Count == 0) return new List<PrtgSensorRow>();
+        var ids = deviceObjids.Take(20).ToArray();
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.AsNoTracking()
+            .Where(s => ids.Contains(s.DeviceObjid))
+            .OrderBy(s => s.DeviceObjid).ThenBy(s => s.Objid)
+            .ToList();
+    }
+
     /// <summary>單次 IN 查詢的 device objid 上限（SQL Server 參數上限 2100，留足餘裕）</summary>
     private const int DeviceQueryBatchSize = 500;
 
@@ -820,6 +832,16 @@ public sealed class EfPrtgStore
             .Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
             .OrderBy(v => v.SensorObjid)
             .ThenBy(v => v.PeriodStart)
+            .ToList();
+    }
+
+    /// <summary>讀回單一感測器一天的數值，避免驗證時掃描其他主機。</summary>
+    public List<PrtgValueRow> GetValuesForSensor(long sensorObjid, DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues.AsNoTracking()
+            .Where(v => v.SensorObjid == sensorObjid && v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .OrderBy(v => v.PeriodStart)
             .ToList();
     }
 

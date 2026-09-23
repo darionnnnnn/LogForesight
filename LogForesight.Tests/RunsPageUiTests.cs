@@ -32,6 +32,15 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void Prtg完工進度不得把結構同步台數說成Sensor取值數()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.DoesNotContain("已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor", js);
+        Assert.Contains("保守策略的數值由快照累積", js);
+    }
+
+    [Fact]
     public void RunsCshtml狀態文字預設包含載入中()
     {
         var root = FindRepoRoot();

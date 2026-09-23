@@ -414,7 +414,8 @@ public class PrtgRunsCardAndProbeTests : IDisposable
     {
         var probeState = new PrtgProbeRunState();
         var backfillState = new PrtgBackfillRunState();
-        var probeService = new PrtgProbeService(_settingsStore, probeState, backfillState, _backend, _hosts, _sentinels);
+        var probeService = new PrtgProbeService(_settingsStore, probeState, backfillState, _backend, _hosts, _sentinels,
+            new SchedulerRunState(), new PrtgStructureSyncRunState());
         var controller = CreateSettingsController(probeService);
 
         // 1. 沒有執行中呼叫 cancel → 回 409

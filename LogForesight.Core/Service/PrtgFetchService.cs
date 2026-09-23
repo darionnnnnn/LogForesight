@@ -946,6 +946,7 @@ public sealed class PrtgFetchService
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var totalValues = 0;
         var totalUnparsed = 0;
+        var totalOutsideDay = 0;
         var totalOaFallback = 0;
         var failedSensors = 0;
         var timedOutSensors = 0;
@@ -962,6 +963,9 @@ public sealed class PrtgFetchService
                 var query = $"api/historicdata.json?id={target.Objid}&avg=3600&sdate={sdate}&edate={edate}";
                 var json = await _client.GetJsonAsync(query, ct);
                 var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var oaFallback);
+                // 有些 PRTG 版本可能忽略 sdate/edate；不能因為 API 回了更多列就寫入請求日以外的資料。
+                var outsideDay = rows.RemoveAll(r => r.PeriodStart < day.Date || r.PeriodStart >= day.Date.AddDays(1));
+                if (outsideDay > 0) Interlocked.Add(ref totalOutsideDay, outsideDay);
                 if (unparsed > 0) Interlocked.Add(ref totalUnparsed, unparsed);
                 if (oaFallback > 0) Interlocked.Add(ref totalOaFallback, oaFallback);
                 if (rows.Count > 0)
@@ -1017,6 +1021,11 @@ public sealed class PrtgFetchService
         {
             _console.WriteLine($"  ⚠ 有 {totalUnparsed} 筆數值的時間欄位無法解析而略過"
                 + "（多半是 PRTG 伺服器的地區日期格式與本機不符，請比對 PRTG 的時間顯示設定）。");
+        }
+
+        if (totalOutsideDay > 0)
+        {
+            _console.WriteLine($"  ⚠ PRTG 回應含 {totalOutsideDay} 筆請求日期以外的數值，已略過而未寫入。");
         }
 
         return (totalValues, failedSensors);

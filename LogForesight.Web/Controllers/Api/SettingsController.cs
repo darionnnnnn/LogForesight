@@ -158,6 +158,27 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgProbeResultDto>.Ok(new StartPrtgProbeResultDto { Started = true });
     }
 
+    [HttpPost("prtg-probe/data-flow/start")]
+    public ApiResponse<StartPrtgProbeResultDto> StartPrtgDataFlowProbe()
+    {
+        if (_prtgProbe == null)
+            throw DomainException.Validation("PRTG 探測服務未啟用。");
+
+        if (!_prtgProbe.TryStartDataFlow(out var error, out var isConflict))
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動 PRTG 小範圍驗證。");
+
+        _audit.Record(
+            action: AuditActions.PrtgProbeRun,
+            summary: "執行 PRTG 小範圍資料流驗證",
+            targetKind: "system_settings",
+            targetId: "prtg_probe_data_flow",
+            detail: new { Scope = "one_host_one_sensor_one_day" });
+
+        return ApiResponse<StartPrtgProbeResultDto>.Ok(new StartPrtgProbeResultDto { Started = true });
+    }
+
     /// <summary>
     /// 停止進行中的環境探測。
     /// </summary>

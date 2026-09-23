@@ -287,7 +287,8 @@ public class ScheduleGuardStatusCodeTests : IDisposable
     private SettingsController CreateProbeController(PrtgBackfillRunState backfillState)
     {
         var probe = new PrtgProbeService(_settingsStore, new PrtgProbeRunState(), backfillState,
-            _backend, new FakeHostStore(), new FakeSentinelStore());
+            _backend, new FakeHostStore(), new FakeSentinelStore(),
+            new SchedulerRunState(), new PrtgStructureSyncRunState());
         var controller = new SettingsController(
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),

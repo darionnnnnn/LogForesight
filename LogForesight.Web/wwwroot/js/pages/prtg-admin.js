@@ -1542,6 +1542,7 @@ function renderPrtgProbeStatus(status) {
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
     const startButton = document.getElementById('prtg-probe-start');
+    const flowButton = document.getElementById('prtg-probe-flow-start');
     const cancelBtn = document.getElementById('prtg-probe-cancel');
     const statusEl = document.getElementById('prtg-probe-status');
 
@@ -1561,18 +1562,20 @@ function renderPrtgProbeStatus(status) {
 
     if (status.isRunning) {
         startButton.disabled = true;
+        if (flowButton) flowButton.disabled = true;
         setSpinnerText(statusEl, `探測中…${elapsedSinceText(status.startedAt)}${status.latestMessage ? ' ' + status.latestMessage : ''}`);
         return;
     }
 
     startButton.disabled = false;
+    if (flowButton) flowButton.disabled = false;
     if (!status.completedAt) {
         statusEl.textContent = '';
         return;
     }
     const outcomeText = status.cancelled
         ? '已停止'
-        : (status.success ? '✓ 完成' : '✗ 執行中發生錯誤');
+        : (status.success ? '✓ 完成' : '✗ 未通過，請查看輸出');
     statusEl.textContent = `上次執行：${formatDateTime(status.completedAt)} ${outcomeText}`;
 }
 
@@ -1600,12 +1603,13 @@ async function refreshPrtgProbeStatus() {
 
 function bindPrtgProbe() {
     const startButton = document.getElementById('prtg-probe-start');
+    const flowButton = document.getElementById('prtg-probe-flow-start');
     const cancelBtn = document.getElementById('prtg-probe-cancel');
     const copyButton = document.getElementById('prtg-probe-copy');
     const outputEl = document.getElementById('prtg-probe-output');
     if (!startButton || !copyButton || !outputEl) return;
 
-    startButton.addEventListener('click', async () => {
+    async function startProbe(dataFlow) {
         // 探測用的是「已儲存」的連線設定；表單連填都沒填時直接前置提示，不必打 API
         if (!document.getElementById('prtg-url')?.value.trim()) {
             toast('請先設定並儲存 PRTG 位址與認證資訊，再執行探測。', 'warning');
@@ -1614,16 +1618,21 @@ function bindPrtgProbe() {
 
         // 不用 withBusy：啟動成功後按鈕的 disabled 狀態交給輪詢狀態接管
         startButton.disabled = true;
+        if (flowButton) flowButton.disabled = true;
         try {
-            await api.post('/api/admin/settings/prtg-probe/start', {}, { silent: true });
-            toast('已開始探測 PRTG 環境', 'success');
+            const path = dataFlow ? '/api/admin/settings/prtg-probe/data-flow/start' : '/api/admin/settings/prtg-probe/start';
+            await api.post(path, {}, { silent: true });
+            toast(dataFlow ? '已開始小範圍資料流驗證' : '已開始探測 PRTG 環境', 'success');
             await refreshPrtgProbeStatus();
         } catch (error) {
             // 啟動失敗（如尚未設定連線位址、與回填互斥）：訊息要讓使用者看得到，不能靜默
             startButton.disabled = false;
+            if (flowButton) flowButton.disabled = false;
             toast(error?.message || '無法啟動 PRTG 探測。', 'danger');
         }
-    });
+    }
+    startButton.addEventListener('click', () => startProbe(false));
+    flowButton?.addEventListener('click', () => startProbe(true));
 
     cancelBtn?.addEventListener('click', async () => {
         const restore = withBusy(cancelBtn, '停止中');

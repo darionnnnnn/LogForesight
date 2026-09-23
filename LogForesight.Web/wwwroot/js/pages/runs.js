@@ -1333,17 +1333,14 @@ function renderScheduleProgress(status) {
     if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
         prtgCustomLabel = `${prtgPhaseLabel}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
     } else if (status.prtgCompleted) {
-        // 完工訊號帶著「取了幾台主機／幾個 sensor」（後端 prtg-done 的 done/total）。
-        // 三種情形要分得開：模組沒開、開了但什麼都沒抓到、抓到了。
-        // 全部混成「已完成」的話，使用者看不出該去開總開關還是該去查對應。
+        // prtg-done(0,0) 會保留前一階段的進度；那可能是「同步 20 台中的 20 台」，
+        // 不能把它解讀成「取了 20 個 sensor」。數值結果應讀執行詳情。
         if (prtgModuleEnabled !== true) {
             prtgCustomLabel = 'PRTG 擷取　未啟用';
-        } else if (status.prtgProgressTotal > 0) {
-            prtgCustomLabel = `PRTG 擷取　已完成：主機 ${formatNumber(status.prtgProgressDone)} 台／sensor ${formatNumber(status.prtgProgressTotal)} 個`;
+        } else if (prtgFetchStrategy === 'conservative') {
+            prtgCustomLabel = 'PRTG 擷取　已完成；保守策略的數值由快照累積，歷史數值請用回填';
         } else {
-            // 沒抓到的原因（沒有已對應主機／當天沒人出問題）在執行輸出裡有明確一行，
-            // 前端拿不到生效範圍，不在這裡猜。
-            prtgCustomLabel = 'PRTG 擷取　已完成（本次沒有取到數值，原因見執行詳情）';
+            prtgCustomLabel = 'PRTG 擷取　已完成；實際數值筆數與感測器數請看執行詳情';
         }
     }
 

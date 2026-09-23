@@ -1278,6 +1278,27 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchValuesForSensorsAsync_PRTG忽略日期時只寫入請求日()
+    {
+        var (client, _) = CreateClient(_ => JsonResponse("{\"histdata\":["
+            + "{\"datetime\":\"2026-08-29 23:00:00\",\"value_raw\":1},"
+            + "{\"datetime\":\"2026-08-30 01:00:00\",\"value_raw\":2},"
+            + "{\"datetime\":\"2026-08-31 00:00:00\",\"value_raw\":3}]}"));
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = new PrtgFetchService(client, store,
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            console, new Dictionary<string, string>());
+
+        var (written, failed) = await service.FetchValuesForSensorsAsync(
+            new DateTime(2026, 8, 30), new[] { 501L }, 1, CancellationToken.None);
+
+        Assert.Equal(1, written);
+        Assert.Equal(0, failed);
+        Assert.Single(store.GetValues(new DateTime(2026, 8, 29), new DateTime(2026, 9, 1)));
+    }
+
+    [Fact]
     public async Task FetchValuesForSensorsAsync_進度回呼回報6個sensor完成且單調遞增()
     {
         var (client, _) = CreateClient(req =>

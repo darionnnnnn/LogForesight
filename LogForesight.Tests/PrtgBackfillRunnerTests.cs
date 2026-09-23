@@ -48,6 +48,13 @@ public class PrtgBackfillRunnerTests : IDisposable
         };
     }
 
+    // 回填測試每天送不同 sdate；替身也必須回該日資料，否則日期防線會把固定日期的假資料正確略過。
+    private static string HistoricForRequest(string url, string template)
+    {
+        var requestedDay = url.Split("sdate=", StringSplitOptions.None)[1][..10];
+        return template.Replace("2026-08-30", requestedDay, StringComparison.Ordinal);
+    }
+
     private sealed class TestConsole : IRunConsole
     {
         public List<string> Lines { get; } = new();
@@ -100,7 +107,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -170,7 +177,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -252,7 +259,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -296,7 +303,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -337,7 +344,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -398,7 +405,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -453,7 +460,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -538,7 +545,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -592,7 +599,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             if (url.Contains("content=messages"))
                 return JsonResponse(msgJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(histJson);
+                return JsonResponse(HistoricForRequest(url, histJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
@@ -728,7 +735,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("content=messages")) return JsonResponse(EmptyMessagesJson);
-            if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
+            if (url.Contains("historicdata.json")) return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -760,7 +767,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("content=messages")) return JsonResponse(EmptyMessagesJson);
-            if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
+            if (url.Contains("historicdata.json")) return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -783,7 +790,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("content=messages")) return JsonResponse(EmptyMessagesJson);
-            if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
+            if (url.Contains("historicdata.json")) return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -805,7 +812,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains("content=messages")) return JsonResponse("Internal Server Error", HttpStatusCode.InternalServerError);
-            if (url.Contains("historicdata.json")) return JsonResponse(OneHourHistJson);
+            if (url.Contains("historicdata.json")) return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -835,7 +842,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             {
                 // 第 2 天開始取數值時使用者按停止
                 if (url.Contains($"sdate={day2:yyyy-MM-dd}")) cts.Cancel();
-                return JsonResponse(OneHourHistJson);
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             }
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });

@@ -145,6 +145,8 @@ public class PrtgProbeService
     // 必要相依，不設預設值：探測與回填會打同一台 PRTG，這道互斥是保護。
     // 做成可選參數的話，哪天有人漏注入，保護會靜默消失而不是編譯失敗。
     private readonly PrtgBackfillRunState _backfillState;
+    private readonly SchedulerRunState _schedulerState;
+    private readonly PrtgStructureSyncRunState _structureState;
     // 站台對照要對照的三個本機事實來源：鏡像、主機清單、Sentinel 清單。
     // 同樣不設預設值——漏注入的話這一段會靜默消失，而不是編譯失敗。
     private readonly StorageBackend _backend;
@@ -152,11 +154,14 @@ public class PrtgProbeService
     private readonly ISentinelStore _sentinels;
 
     public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState,
-        StorageBackend backend, IHostStore hosts, ISentinelStore sentinels)
+        StorageBackend backend, IHostStore hosts, ISentinelStore sentinels,
+        SchedulerRunState schedulerState, PrtgStructureSyncRunState structureState)
     {
         _settings = settings;
         _state = state;
         _backfillState = backfillState;
+        _schedulerState = schedulerState;
+        _structureState = structureState;
         _backend = backend;
         _hosts = hosts;
         _sentinels = sentinels;
@@ -179,10 +184,16 @@ public class PrtgProbeService
 
     public bool TryCancel() => _state.TryCancel();
 
+    public bool TryStartDataFlow(out string? error, out bool isConflict) =>
+        TryStartCore(dataFlow: true, out error, out isConflict);
+
     /// <param name="error">拒絕原因；成功時為 null。</param>
     /// <param name="isConflict">true＝被互斥擋下（回填執行中／探測已在執行中），呼叫端該回 409；
     /// false＝設定不齊，該回 400。與回填、結構同步的 TryStart 同一套。</param>
     public bool TryStart(out string? error, out bool isConflict)
+        => TryStartCore(dataFlow: false, out error, out isConflict);
+
+    private bool TryStartCore(bool dataFlow, out string? error, out bool isConflict)
     {
         error = null;
         isConflict = false;
@@ -203,6 +214,15 @@ public class PrtgProbeService
         if (_backfillState.Snapshot().IsRunning)
         {
             error = "回填執行中，請稍後再試。";
+            isConflict = true;
+            return false;
+        }
+
+        if (dataFlow && (_schedulerState.IsRunning || _structureState.Snapshot().IsRunning))
+        {
+            error = _schedulerState.IsRunning
+                ? "取數排程正在執行，請完成後再驗證小範圍資料流。"
+                : "結構同步正在執行，請完成後再驗證小範圍資料流。";
             isConflict = true;
             return false;
         }
@@ -236,11 +256,18 @@ public class PrtgProbeService
             {
                 using (client)
                 {
-                    success = await PrtgProbeRunner.RunAsync(client, console, ct);
+                    if (dataFlow)
+                    {
+                        success = await PrtgProbeDataFlowRunner.RunAsync(client, _backend, _hosts, s, console, ct);
+                    }
+                    else
+                    {
+                        success = await PrtgProbeRunner.RunAsync(client, console, ct);
+                    }
 
                     // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），
                     // 而且不影響 success：它是附加資訊，不是探測的成敗條件。
-                    if (success)
+                    if (success && !dataFlow)
                     {
                         try
                         {

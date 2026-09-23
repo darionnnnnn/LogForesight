@@ -345,7 +345,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         Assert.Contains("監看裝置：2 台（對應 2、衝突 0、人工 0、守門 0）", console.Text);
         Assert.Contains("鏡像現況：裝置 3 台、感測器 7 顆，其中範圍外 3 顆", console.Text);
         Assert.Contains("感測器 7 顆，其中範圍外 3 顆", console.Text);
-        Assert.Contains("下次結構同步成功後會清除", console.Text);
+        Assert.Contains("是否清除仍受範圍基準", console.Text);
     }
 
     [Fact]
@@ -560,6 +560,8 @@ public class PrtgProbeSiteCheckTests : IDisposable
         public StorageBackend Backend { get; }
         public SystemSettingsStore Settings { get; }
         public PrtgProbeService Service { get; }
+        public SchedulerRunState Scheduler { get; } = new();
+        public PrtgStructureSyncRunState Structure { get; } = new();
 
         public ServiceHarness()
         {
@@ -570,7 +572,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
                 _dir);
             Settings = new SystemSettingsStore(Backend.Blob("system_settings"));
             Service = new PrtgProbeService(Settings, new PrtgProbeRunState(), new PrtgBackfillRunState(),
-                Backend, new FakeHostStore(), new FakeSentinelStore());
+                Backend, new FakeHostStore(), new FakeSentinelStore(), Scheduler, Structure);
         }
 
         public void PointTo(int port) => Settings.Update(s =>
@@ -602,6 +604,24 @@ public class PrtgProbeSiteCheckTests : IDisposable
     }
 
     private sealed record PrtgProbeSnapshotOutput(bool? Success, string Text);
+
+    [Fact]
+    public void 小範圍驗證_取數或結構同步執行中拒絕啟動()
+    {
+        using var h = new ServiceHarness();
+        h.PointTo(12345);
+        Assert.True(h.Scheduler.TryBeginRun("manual:tester", out _));
+        Assert.False(h.Service.TryStartDataFlow(out var schedulerError, out var schedulerConflict));
+        Assert.True(schedulerConflict);
+        Assert.Contains("取數排程", schedulerError);
+        h.Scheduler.EndRun();
+
+        Assert.True(h.Structure.TryBeginRun(out _));
+        Assert.False(h.Service.TryStartDataFlow(out var structureError, out var structureConflict));
+        Assert.True(structureConflict);
+        Assert.Contains("結構同步", structureError);
+        h.Structure.FinishRun(false, false);
+    }
 
     private static int GetFreePort()
     {

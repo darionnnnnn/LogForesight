@@ -2468,7 +2468,7 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
   指派／排除／移除**寫入後同步重算當日對應**，否則那一列要等隔天夜間批次才消失，看起來像沒生效；
   重算失敗只回警告不讓操作失敗（人工對應本身已寫入，回報整體失敗會誘使管理者再按一次）。
 - **環境探測**：三張卡——環境探測、**校準數值匯出**（§9.9f）、**資料搬運（開發用）**
-  （docs/PRTG-SPEC.md §10）。探測背景執行＋前端每 2 秒輪詢，輸出以 `<textarea readonly>` 呈現
+  （docs/PRTG-SPEC.md §10）。探測卡有「驗證小範圍資料流」與「完整環境探測」兩個入口；前者只選一台已對應主機的一顆 sensor、一天歷史值，沿正式路徑寫入並讀回，後者唯讀檢查全站結構。兩者背景執行、共用停止與狀態，前端每 2 秒輪詢，輸出以 `<textarea readonly>` 呈現
   （頁籤本身就是入口，卡片不另設收合）。探測成功後同一份輸出接著印「站台對照」（取數範圍試算、範圍內實測、守門目標偵測，
   docs/PRTG-SPEC.md §6），因此探測比環境步驟本身多約一分鐘。
   **與歷史回填互斥**——都會打同一台 PRTG，任一執行中時另一個拒絕啟動。
@@ -2476,7 +2476,7 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
 API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `POST api/admin/settings/prtg-test`、`GET api/admin/settings/prtg-mirror`、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
-`POST api/admin/settings/prtg-probe/start`、`GET api/admin/settings/prtg-probe/status`、
+`POST api/admin/settings/prtg-probe/start`、`POST api/admin/settings/prtg-probe/data-flow/start`、`GET api/admin/settings/prtg-probe/status`、`POST api/admin/settings/prtg-probe/cancel`、
 `GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
 排程作業頁只輪詢 §9.10 所列的同步／回填狀態與停止端點；歷史回填的啟動仍從 PRTG 維護頁進入。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
@@ -2682,7 +2682,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
   `setInterval` 累積誤差）。
 - **執行進度條**：狀態卡在執行中顯示**三條**進度軌——
-  「本機分析／NetIQ 機房分析　x / y 主機日」與「PRTG 結構同步／數值取數／觸發式取數　x / y sensor」
+  「本機分析／NetIQ 機房分析　x / y 主機日」與「PRTG 結構同步 x / y 台／數值取數 x / y sensor」
   （PRTG 那條的標籤依當下 phase 變動）；前兩條粒度為主機日，
   經 Core 的 `IRunProgress`
   介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
@@ -2696,7 +2696,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-wait-sync`（等手動同步結束，§5a）／
   `prtg-sync`（結構同步的總稱，實際回報走三個 `prtg-sync-*` 子階段）／
   `prtg-values`（每日數值）／`prtg-triggered`（觸發式取數）／`prtg-done`（放在 finally，
-  成功失敗都送，**帶取數主機數與目標 sensor 數；保留數字並標記完成、不清空**）。分子逐 sensor 累加。
+  成功失敗都送，**帶取數主機數與目標 sensor 數；若目標 sensor 為 0，會保留前一階段的進度數字並標記完成**）。完成畫面不可把保留下來的結構同步台數當成已取值 sensor 數；保守策略應說明數值由快照累積，實際數值筆數指向執行詳情。
   **`ReportProgress` 的最後一個分支是 catch-all（寫進 NetIQ 主組）**——PRTG 的 phase
   必須顯式分支，否則會蓋掉 NetIQ 的進度條（已有反例測試釘住）。
   **PRTG 歷史回填**另有自己的進度（獨立狀態物件與端點，不走 `SchedulerRunState`）：
