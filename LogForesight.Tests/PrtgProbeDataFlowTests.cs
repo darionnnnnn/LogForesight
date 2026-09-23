@@ -23,7 +23,7 @@ public class PrtgProbeDataFlowTests : IDisposable
         _backend = new StorageBackend(new StorageSettings
         {
             Type = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}" 
+            ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}"
         }, _dir);
     }
 
