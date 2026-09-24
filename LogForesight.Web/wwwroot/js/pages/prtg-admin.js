@@ -54,6 +54,7 @@ function renderEffectiveness(summary) {
         ['建立交辦單', summary.workOrdersCreated, '所選期間建立、來源為 PRTG 的交辦單列數。'],
         ['曾有回覆的交辦單', summary.workOrdersReplied, '上述建立交辦單中 LastReplyAt 有值的列數，不限回覆日期。'],
         ['抑制的問題訊號', summary.suppressedFindings, '日期分析內容中標記為抑制的 PRTG 特徵數。'],
+        ['期間有靜音設定的問題', summary.mutedPrtgProfiles, '來源為 PRTG、靜音區間與所選日期重疊的問題檔案數；不代表該期間曾出現 finding。'],
         ['有 PRTG 佐證的主機日', summary.corroboratedHostDays, '含 PRTG 佐證參照或抑制佐證文字的主機日數。']
     ];
     for (const [label, value, description] of definitions) {
@@ -105,7 +106,7 @@ async function loadPrtgEffectiveness() {
         const summary = await api.get(`/api/prtg/effectiveness?${query.toString()}`, { silent: true });
         renderEffectiveness(summary);
         const hasCount = [summary.lowCoverageSampledHours, summary.prtgFindings, summary.casesCreated, summary.workOrdersCreated,
-            summary.workOrdersReplied, summary.suppressedFindings, summary.corroboratedHostDays]
+            summary.workOrdersReplied, summary.suppressedFindings, summary.mutedPrtgProfiles, summary.corroboratedHostDays]
             .some(value => value != null && value > 0);
         if (!hasCount) {
             status.textContent += ' 此期間沒有可計數的資料；若預期應有資料，請先查看環境探測與資料準備度。';

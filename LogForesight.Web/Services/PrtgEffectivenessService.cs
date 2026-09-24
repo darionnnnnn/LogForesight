@@ -14,8 +14,10 @@ public sealed class PrtgEffectivenessService
     public const int MaxWindowDays = 366;
     private const int MaxPayloadRecords = 10_000;
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly IIssueOwnerStore _issueOwners;
 
-    public PrtgEffectivenessService(Func<LfDbContext> contextFactory) => _contextFactory = contextFactory;
+    public PrtgEffectivenessService(Func<LfDbContext> contextFactory, IIssueOwnerStore issueOwners)
+    { _contextFactory = contextFactory; _issueOwners = issueOwners; }
 
     public PrtgEffectivenessSummary Get(DateTime? from = null, DateTime? through = null)
     {
@@ -76,9 +78,14 @@ public sealed class PrtgEffectivenessService
                     || (w.SourceKey == null && w.SourceName != null && w.SourceName.StartsWith("PRTG:"))));
         var workOrderCount = workOrders.Count();
         var replied = workOrders.Count(w => w.LastReplyAt != null);
+        // Mutes live in issue profiles, not dated finding rows. Count distinct PRTG profiles whose
+        // configured interval overlaps the requested dates; do not present this as muted findings.
+        var mutedProfiles = _issueOwners.GetAll().Count(profile =>
+            profile.SourceName.StartsWith("PRTG:", StringComparison.OrdinalIgnoreCase)
+            && profile.Mutes.Any(mute => mute.From.Date <= end && mute.To.Date >= start));
         return new PrtgEffectivenessSummary(start, end, days, findingCount, lowCoverageSampledHours, cases, workOrderCount, replied,
-            suppressed, payloadsReadable ? corroboratedDays : null,
-            "Findings count indexed PRTG TopIssue rows per host-day/signature. LowCoverageSampledHours counts observed lf_prtg_values hourly rows in the selected period with quality=sampled and coverage below the usable threshold; it does not count all missing values, missing hourly periods, disk sensor-days, or findings. Cases and work orders count rows created within the selected dates and whose normalized source begins PRTG:. Replied counts those same work orders with LastReplyAt set, regardless of reply date. Suppressed counts PRTG signatures flagged Suppressed in the dated DailyAnalysisRecord payload. Corroborated counts host-day records with a stored PRTG corroboration reference or suppressed corroboration text. These are separate denominators and are not a conversion funnel or resolution rate.",
+            suppressed, mutedProfiles, payloadsReadable ? corroboratedDays : null,
+            "Findings count indexed PRTG TopIssue rows per host-day/signature. LowCoverageSampledHours counts observed lf_prtg_values hourly rows in the selected period with quality=sampled and coverage below the usable threshold; it does not count all missing values, missing hourly periods, disk sensor-days, or findings. Cases and work orders count rows created within the selected dates and whose normalized source begins PRTG:. Replied counts those same work orders with LastReplyAt set, regardless of reply date. Suppressed counts PRTG signatures flagged Suppressed in the dated DailyAnalysisRecord payload. MutedPrtgProfiles counts distinct PRTG issue profiles with a mute interval overlapping the selected dates; it does not imply any finding occurred. Corroborated counts host-day records with a stored PRTG corroboration reference or suppressed corroboration text. These are separate denominators and are not a conversion funnel or resolution rate.",
             payloadsReadable
                 ? "Corroboration is counted per host-day, not per finding. Current suppression configuration is not used to reconstruct historical state."
                 : $"Suppression and corroboration are omitted because the payload record cap ({MaxPayloadRecords}) was exceeded or a dated analysis payload was missing/unreadable. Current suppression configuration is not used to reconstruct historical state.");
@@ -93,4 +100,4 @@ public sealed class PrtgEffectivenessService
 
 public sealed record PrtgEffectivenessSummary(DateTime From, DateTime Through, int WindowDays,
     int PrtgFindings, int LowCoverageSampledHours, int CasesCreated, int WorkOrdersCreated, int WorkOrdersReplied,
-    int? SuppressedFindings, int? CorroboratedHostDays, string MetricSemantics, string Limitations);
+    int? SuppressedFindings, int MutedPrtgProfiles, int? CorroboratedHostDays, string MetricSemantics, string Limitations);

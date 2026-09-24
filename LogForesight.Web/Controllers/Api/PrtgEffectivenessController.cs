@@ -15,8 +15,8 @@ public sealed class PrtgEffectivenessController : ControllerBase
     private readonly PrtgEffectivenessService _service;
 
     // StorageBackend is the application's registered owner of the provider-specific context factory.
-    public PrtgEffectivenessController(StorageBackend backend) =>
-        _service = new PrtgEffectivenessService(backend.CreateContext);
+    public PrtgEffectivenessController(StorageBackend backend, IIssueOwnerStore issueOwners) =>
+        _service = new PrtgEffectivenessService(backend.CreateContext, issueOwners);
 
     [HttpGet]
     public ActionResult<ApiResponse<PrtgEffectivenessSummary>> Get([FromQuery] DateTime? from = null,

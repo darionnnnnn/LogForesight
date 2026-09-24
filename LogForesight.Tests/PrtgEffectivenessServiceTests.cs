@@ -48,7 +48,7 @@ public sealed class PrtgEffectivenessServiceTests
             db.SaveChanges();
         }
 
-        var result = new PrtgEffectivenessService(fixture.NewContext).Get(day, day);
+        var result = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore()).Get(day, day);
 
         Assert.Equal(2, result.PrtgFindings);
         Assert.Equal(0, result.LowCoverageSampledHours);
@@ -56,6 +56,7 @@ public sealed class PrtgEffectivenessServiceTests
         Assert.Equal(2, result.WorkOrdersCreated);
         Assert.Equal(1, result.WorkOrdersReplied);
         Assert.Equal(1, result.SuppressedFindings);
+        Assert.Equal(0, result.MutedPrtgProfiles);
         Assert.Equal(1, result.CorroboratedHostDays);
         Assert.Contains("separate denominators", result.MetricSemantics);
     }
@@ -78,7 +79,7 @@ public sealed class PrtgEffectivenessServiceTests
             db.SaveChanges();
         }
 
-        var result = new PrtgEffectivenessService(fixture.NewContext).Get(from, through);
+        var result = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore()).Get(from, through);
 
         Assert.Equal(2, result.LowCoverageSampledHours);
         Assert.Contains("observed lf_prtg_values hourly rows", result.MetricSemantics);
@@ -89,9 +90,36 @@ public sealed class PrtgEffectivenessServiceTests
     public void RejectsReversedAndOverlongDateRanges()
     {
         using var fixture = new EfSqliteFixture();
-        var service = new PrtgEffectivenessService(fixture.NewContext);
+        var service = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore());
         Assert.Throws<ArgumentException>(() => service.Get(new DateTime(2026, 9, 2), new DateTime(2026, 9, 1)));
         Assert.Throws<ArgumentOutOfRangeException>(() => service.Get(new DateTime(2025, 1, 1), new DateTime(2026, 9, 1)));
+    }
+
+    [Fact]
+    public void CountsDistinctPrtgProfilesWithOverlappingMuteIntervalsWithoutClaimingFindingCount()
+    {
+        using var fixture = new EfSqliteFixture();
+        var profiles = new FakeIssueOwnerStore();
+        profiles.Upsert(new IssueProfile { SourceName = "PRTG:warning", EventId = 0, Mutes = new()
+        {
+            new() { From = new DateTime(2026, 9, 1), To = new DateTime(2026, 9, 12) },
+            new() { From = new DateTime(2026, 9, 10), To = new DateTime(2026, 9, 20) }
+        } });
+        profiles.Upsert(new IssueProfile { SourceName = "PRTG:down", EventId = 0, Mutes = new()
+        {
+            new() { From = new DateTime(2026, 8, 1), To = new DateTime(2026, 8, 31) }
+        } });
+        profiles.Upsert(new IssueProfile { SourceName = "System", EventId = 1, Mutes = new()
+        {
+            new() { From = new DateTime(2026, 9, 1), To = new DateTime(2026, 9, 30) }
+        } });
+
+        var result = new PrtgEffectivenessService(fixture.NewContext, profiles)
+            .Get(new DateTime(2026, 9, 10), new DateTime(2026, 9, 11));
+
+        Assert.Equal(1, result.MutedPrtgProfiles);
+        Assert.Equal(0, result.PrtgFindings);
+        Assert.Contains("does not imply any finding occurred", result.MetricSemantics);
     }
 
     [Fact]
@@ -116,6 +144,7 @@ public sealed class PrtgEffectivenessServiceTests
             }, dataRoot);
             using var provider = new ServiceCollection()
                 .AddSingleton(backend)
+                .AddSingleton<IIssueOwnerStore>(new FakeIssueOwnerStore())
                 .AddTransient<PrtgEffectivenessController>()
                 .BuildServiceProvider();
             var controller = provider.GetRequiredService<PrtgEffectivenessController>();
