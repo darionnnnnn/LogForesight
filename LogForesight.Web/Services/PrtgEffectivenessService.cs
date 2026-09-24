@@ -43,6 +43,7 @@ public sealed class PrtgEffectivenessService
         // Load only records already known to contain a PRTG finding, in bounded IN batches.
         int? suppressed = 0;
         var corroboratedDays = 0;
+        var prtgOnlyHostDays = 0;
         var payloadScopeComplete = recordIds.Length <= MaxPayloadRecords;
         var payloadsReadable = payloadScopeComplete;
         if (!payloadScopeComplete) suppressed = null;
@@ -60,6 +61,8 @@ public sealed class PrtgEffectivenessService
                     if (record == null) { payloadsReadable = false; continue; }
                     if (suppressed.HasValue)
                         suppressed += record.TopIssues.Count(i => PrtgFindingMapper.IsPrtg(i) && i.Suppressed);
+                    if (record.TopIssues.Count > 0 && record.TopIssues.All(PrtgFindingMapper.IsPrtg))
+                        prtgOnlyHostDays++;
                     if (record.CorrelationAlertRefs.Any(IsPrtgCorroboration)
                         || record.SuppressedCorrelationAlerts.Any(IsPrtgCorroboration)) corroboratedDays++;
                 }
@@ -84,8 +87,8 @@ public sealed class PrtgEffectivenessService
             profile.SourceName.StartsWith("PRTG:", StringComparison.OrdinalIgnoreCase)
             && profile.Mutes.Any(mute => mute.From.Date <= end && mute.To.Date >= start));
         return new PrtgEffectivenessSummary(start, end, days, findingCount, lowCoverageSampledHours, cases, workOrderCount, replied,
-            suppressed, mutedProfiles, payloadsReadable ? corroboratedDays : null,
-            "Findings count indexed PRTG TopIssue rows per host-day/signature. LowCoverageSampledHours counts observed lf_prtg_values hourly rows in the selected period with quality=sampled and coverage below the usable threshold; it does not count all missing values, missing hourly periods, disk sensor-days, or findings. Cases and work orders count rows created within the selected dates and whose normalized source begins PRTG:. Replied counts those same work orders with LastReplyAt set, regardless of reply date. Suppressed counts PRTG signatures flagged Suppressed in the dated DailyAnalysisRecord payload. MutedPrtgProfiles counts distinct PRTG issue profiles with a mute interval overlapping the selected dates; it does not imply any finding occurred. Corroborated counts host-day records with a stored PRTG corroboration reference or suppressed corroboration text. These are separate denominators and are not a conversion funnel or resolution rate.",
+            suppressed, mutedProfiles, payloadsReadable ? prtgOnlyHostDays : null, payloadsReadable ? corroboratedDays : null,
+            "Findings count indexed PRTG TopIssue rows per host-day/signature. LowCoverageSampledHours counts observed lf_prtg_values hourly rows in the selected period with quality=sampled and coverage below the usable threshold; it does not count all missing values, missing hourly periods, disk sensor-days, or findings. Cases and work orders count rows created within the selected dates and whose normalized source begins PRTG:. Replied counts those same work orders with LastReplyAt set, regardless of reply date. Suppressed counts PRTG signatures flagged Suppressed in the dated DailyAnalysisRecord payload. MutedPrtgProfiles counts distinct PRTG issue profiles with a mute interval overlapping the selected dates; it does not imply any finding occurred. PrtgOnlyHostDays counts dated host-day payloads with at least one TopIssue and every TopIssue from PRTG; lower-priority log evidence may still exist. Corroborated counts host-day records with a stored PRTG corroboration reference or suppressed corroboration text. These are separate denominators and are not a conversion funnel or resolution rate.",
             payloadsReadable
                 ? "Corroboration is counted per host-day, not per finding. Current suppression configuration is not used to reconstruct historical state."
                 : $"Suppression and corroboration are omitted because the payload record cap ({MaxPayloadRecords}) was exceeded or a dated analysis payload was missing/unreadable. Current suppression configuration is not used to reconstruct historical state.");
@@ -100,4 +103,4 @@ public sealed class PrtgEffectivenessService
 
 public sealed record PrtgEffectivenessSummary(DateTime From, DateTime Through, int WindowDays,
     int PrtgFindings, int LowCoverageSampledHours, int CasesCreated, int WorkOrdersCreated, int WorkOrdersReplied,
-    int? SuppressedFindings, int MutedPrtgProfiles, int? CorroboratedHostDays, string MetricSemantics, string Limitations);
+    int? SuppressedFindings, int MutedPrtgProfiles, int? PrtgOnlyHostDays, int? CorroboratedHostDays, string MetricSemantics, string Limitations);

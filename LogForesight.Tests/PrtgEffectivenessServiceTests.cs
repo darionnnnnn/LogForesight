@@ -57,8 +57,42 @@ public sealed class PrtgEffectivenessServiceTests
         Assert.Equal(1, result.WorkOrdersReplied);
         Assert.Equal(1, result.SuppressedFindings);
         Assert.Equal(0, result.MutedPrtgProfiles);
+        Assert.Equal(0, result.PrtgOnlyHostDays);
         Assert.Equal(1, result.CorroboratedHostDays);
         Assert.Contains("separate denominators", result.MetricSemantics);
+    }
+
+    [Fact]
+    public void CountsPrtgOnlyTopIssueHostDaysSeparatelyFromFindingRows()
+    {
+        using var fixture = new EfSqliteFixture();
+        var day = new DateTime(2026, 9, 10);
+        using (var db = fixture.NewContext())
+        {
+            var record = new DailyAnalysisRecord
+            {
+                Date = day,
+                TopIssues = new List<LogIssueSignature>
+                {
+                    PrtgIssue("PRTG:down", "prtg:down:11", false),
+                    PrtgIssue("PRTG:warning", "prtg:warning:12", false)
+                }
+            };
+            db.DailyRecords.Add(new DailyRecordRow
+            {
+                RecordId = 2, HostId = 2, HostName = "prtg-only", RecordDate = day,
+                ContentJson = JsonSerializer.Serialize(record)
+            });
+            db.TopIssues.AddRange(
+                Finding(2, day, "PRTG", "PRTG:down", "prtg:down:11"),
+                Finding(2, day, "PRTG", "PRTG:warning", "prtg:warning:12"));
+            db.SaveChanges();
+        }
+
+        var result = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore()).Get(day, day);
+
+        Assert.Equal(2, result.PrtgFindings);
+        Assert.Equal(1, result.PrtgOnlyHostDays);
     }
 
     [Fact]

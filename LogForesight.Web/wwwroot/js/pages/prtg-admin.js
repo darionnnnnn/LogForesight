@@ -50,6 +50,7 @@ function renderEffectiveness(summary) {
     const definitions = [
         ['低 coverage sampled 小時', summary.lowCoverageSampledHours, '已落盤 sampled 且 coverage 低於門檻的小時列數；不包含完全缺值。此指標不涵蓋所有磁碟不就緒原因。'],
         ['問題訊號', summary.prtgFindings, 'PRTG TopIssue 列數；依主機日／特徵計數。'],
+        ['僅有 PRTG 主要問題的主機日', summary.prtgOnlyHostDays, '該主機日的 TopIssue 全來自 PRTG；不表示沒有其他較低優先級日誌。'],
         ['建立案件', summary.casesCreated, '所選期間建立、來源為 PRTG 的案件列數。'],
         ['建立交辦單', summary.workOrdersCreated, '所選期間建立、來源為 PRTG 的交辦單列數。'],
         ['曾有回覆的交辦單', summary.workOrdersReplied, '上述建立交辦單中 LastReplyAt 有值的列數，不限回覆日期。'],
@@ -105,7 +106,7 @@ async function loadPrtgEffectiveness() {
         const query = new URLSearchParams({ from: fromInput.value, through: throughInput.value });
         const summary = await api.get(`/api/prtg/effectiveness?${query.toString()}`, { silent: true });
         renderEffectiveness(summary);
-        const hasCount = [summary.lowCoverageSampledHours, summary.prtgFindings, summary.casesCreated, summary.workOrdersCreated,
+        const hasCount = [summary.lowCoverageSampledHours, summary.prtgFindings, summary.prtgOnlyHostDays, summary.casesCreated, summary.workOrdersCreated,
             summary.workOrdersReplied, summary.suppressedFindings, summary.mutedPrtgProfiles, summary.corroboratedHostDays]
             .some(value => value != null && value > 0);
         if (!hasCount) {
