@@ -27,6 +27,9 @@ public static class PrtgCrossDay
         foreach (var sig in signatures)
         {
             if (!PrtgFindingMapper.IsPrtg(sig)) continue;
+            if (PrtgFindingMapper.TryGetRuleCode(sig.Source, out var ruleCode)
+                && string.Equals(ruleCode, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.OrdinalIgnoreCase))
+                continue;
 
             var window = new HashSet<DateTime>();
             if (hitDates.TryGetValue(sig.EventKey, out var all))

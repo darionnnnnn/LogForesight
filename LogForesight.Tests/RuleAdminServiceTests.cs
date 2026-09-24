@@ -2,6 +2,11 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using LogForesight.Web.Controllers.Api;
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -113,6 +118,294 @@ public class RuleAdminServiceTests
 
         service.SetEnabled(BuiltinId, true);
         Assert.True(_rules.Content.Rules.Single().Enabled);
+    }
+
+    [Fact]
+    public void RulesApi無法繞過磁碟規則啟用閘門()
+    {
+        var diskRule = new KnownIssueRule
+        {
+            Id = "builtin-disk-free-trend", Origin = "builtin", Enabled = false, Platform = "prtg",
+            PrtgRuleCode = "disk_free_trend", PrtgSensorCategory = "disk",
+            PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.Medium,
+            Description = "disk trend", CountThreshold = 1
+        };
+        _rules.Content.Rules.Add(diskRule);
+        var controller = new RulesController(Create());
+
+        var ex = Assert.Throws<DomainException>(() => controller.SetEnabled(diskRule.Id,
+            new SetRuleEnabledRequest { Enabled = true }));
+
+        Assert.Contains("無法啟用", ex.Message);
+        Assert.False(_rules.Content.Rules.Single(r => r.Id == diskRule.Id).Enabled);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 已啟用磁碟規則編輯時仍重新檢查就緒資格()
+    {
+        var diskRule = new KnownIssueRule
+        {
+            Id = "builtin-disk-free-trend", Origin = "builtin", Enabled = true, Platform = "prtg",
+            PrtgRuleCode = "disk_free_trend", PrtgSensorCategory = "disk",
+            PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.Medium,
+            Description = "disk trend", CountThreshold = 1,
+            PlainExplanation = "磁碟可用空間持續下降。", Impact = "可能耗盡。",
+            LikelyCauses = new[] { "容量不足" }, NextSteps = new[] { "確認磁碟容量" }
+        };
+        _rules.Content.Rules.Add(diskRule);
+        var request = new SaveRuleRequest
+        {
+            Id = diskRule.Id, Enabled = true, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
+            PrtgSensorCategory = "disk", PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional,
+            Category = "Storage", Severity = "Medium", Description = "updated disk trend", CountThreshold = 1,
+            PlainExplanation = "磁碟可用空間持續下降。", Impact = "可能耗盡。",
+            LikelyCauses = new() { "容量不足" }, NextSteps = new() { "確認磁碟容量" }
+        };
+
+        Assert.Throws<DomainException>(() => Create().SaveRule(request));
+
+        Assert.Equal("disk trend", _rules.Content.Rules.Single(r => r.Id == diskRule.Id).Description);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 草稿預覽沒有評估服務時失敗且不寫規則或稽核()
+    {
+        var before = _rules.Content.Rules.Select(r => r.Id).ToArray();
+        var request = new DiskTrendRulePreviewRequest
+        {
+            FromDate = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)),
+            ThroughDate = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)),
+            Rule = new SaveRuleRequest { Id = "draft", Platform = "prtg", PrtgRuleCode = "disk_free_trend", PrtgSensorCategory = "disk" }
+        };
+
+        Assert.Throws<DomainException>(() => Create().PreviewDiskTrend(request));
+
+        Assert.Equal(before, _rules.Content.Rules.Select(r => r.Id));
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 草稿預覽唯讀評估且不新增規則或稽核事件()
+    {
+        using var fx = new EfSqliteFixture();
+        var initialRules = KnownIssueSeed.CreateRules();
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = initialRules } };
+        var seedStore = new FakeRuleSeedStore();
+        seedStore.Sync(initialRules, KnownIssueSeed.Version);
+        var audit = new RecordingAuditService();
+        var settings = new FakeSystemSettingsStore();
+        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), new FakeHostStore(), settings,
+            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
+            new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey)));
+        var service = new RuleAdminService(ruleStore, seedStore, new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(), new FakeHostStore(),
+            new FakeIssueAggregateQuery(), assessment, settings);
+        var request = new DiskTrendRulePreviewRequest
+        {
+            FromDate = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)),
+            ThroughDate = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)),
+            Rule = new SaveRuleRequest
+            {
+                Id = "custom-disk-preview", Enabled = false, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
+                PrtgSensorCategory = "disk", PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional,
+                Category = "Storage", Severity = "High", Description = "preview only", CountThreshold = 1,
+                PlainExplanation = "磁碟可用空間持續下降。", Impact = "可能耗盡。",
+                LikelyCauses = new() { "容量不足" }, NextSteps = new() { "確認磁碟容量" }
+            }
+        };
+        var beforeRows = ruleStore.Content.Rules.Select(r => (r.Id, r.Enabled)).ToArray();
+
+        var preview = service.PreviewDiskTrend(request);
+
+        Assert.Empty(preview.Rows);
+        Assert.Equal(0, preview.DateSensorAssessmentRowCount);
+        Assert.Equal(0, preview.SuppressedCount);
+        Assert.Contains("當前設定估計", preview.SuppressionEstimateNote);
+        Assert.Contains("不含靜音／派工閘門", preview.SuppressionEstimateNote);
+        Assert.Equal(beforeRows, ruleStore.Content.Rules.Select(r => (r.Id, r.Enabled)).ToArray());
+        Assert.Empty(audit.Entries);
+        using var db = fx.NewContext();
+        Assert.Empty(db.PrtgValues);
+        Assert.Empty(db.PrtgHostMaps);
+    }
+
+    [Fact]
+    public void 草稿預覽足28日但趨勢最新日落後時標示Stale且不算命中()
+    {
+        using var fx = new EfSqliteFixture();
+        var previewDay = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
+        const long deviceId = 3101, sensorId = 4101;
+        using (var db = fx.NewContext())
+        {
+            db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
+            db.PrtgSensors.Add(new PrtgSensorRow { Objid = sensorId, DeviceObjid = deviceId,
+                Category = PrtgSensorCategories.Disk, SensorType = "SNMP Disk Free", Name = "Disk C:" });
+            var values = new List<PrtgValueRow>();
+            for (var offset = -28; offset <= 0; offset++)
+            {
+                var date = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+                db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId, MapDate = date.Date,
+                    HostId = 1, MapStatus = PrtgMapStatus.Ok });
+                for (var hour = 0; hour < 12; hour++)
+                    values.Add(new PrtgValueRow { SensorObjid = sensorId, PeriodStart = date.AddHours(hour),
+                        AvgValue = offset == 0 ? null : 18 - offset, MinValue = 18 - offset, MaxValue = 18 - offset,
+                        Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.Today });
+            }
+            db.PrtgValues.AddRange(values);
+            db.SaveChanges();
+        }
+
+        var evidence = new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
+        evidence.ConfirmManually(new PrtgDiskSemanticContext(sensorId, deviceId, 1, "SNMP Disk Free", "free", "Free", "%", 1,
+            "descending-danger"), 9, "Manually confirmed percent free channel.", DateTime.UtcNow,
+            PrtgDiskAssessmentService.ParserSemanticVersion);
+        var verifications = new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey));
+        verifications.Save(new PrtgDiskVerificationResult(sensorId, deviceId, 1, "SNMP Disk Free", "Verified",
+            "Typed channel values matched.", "free", "Free", "%", 1, "descending-danger", 1, true,
+            DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion));
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostName = "active", Active = true });
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
+        var rules = KnownIssueSeed.CreateRules();
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules } };
+        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings, evidence, verifications);
+        var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
+            hosts, new FakeIssueAggregateQuery(), assessment, settings);
+        var request = new DiskTrendRulePreviewRequest
+        {
+            FromDate = previewDay, ThroughDate = previewDay,
+            Rule = new SaveRuleRequest
+            {
+                Id = "stale-disk-preview", Enabled = false, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
+                PrtgSensorCategory = "disk", PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional,
+                Category = "Storage", Severity = "High", Description = "preview", CountThreshold = 1,
+                PlainExplanation = "磁碟趨勢", Impact = "可能耗盡", LikelyCauses = new() { "容量不足" },
+                NextSteps = new() { "檢查磁碟" }
+            }
+        };
+
+        var preview = service.PreviewDiskTrend(request);
+
+        var row = Assert.Single(preview.Rows);
+        Assert.Equal(28, row.ValidDayCount);
+        Assert.True(row.DataReady);
+        Assert.True(row.SemanticReady);
+        Assert.False(row.Eligible);
+        Assert.False(row.WouldHit);
+        Assert.Equal("StaleDataAsOf", row.ExclusionReason);
+        Assert.Equal(0, preview.HitCount);
+        Assert.Equal(0, preview.UniqueHitHostCount);
+        Assert.Equal(0, preview.UnsuppressedHitRowCount);
+        Assert.Equal(0, preview.SuppressedCount);
+        Assert.Empty(preview.SampleHits);
+    }
+
+    [Fact]
+    public void 長窗口預覽跨assessment批次與日期時offset不漏列不重複()
+    {
+        using var fx = new EfSqliteFixture();
+        var today = DateTime.Today;
+        using (var db = fx.NewContext())
+        {
+            for (var i = 0; i < 6; i++)
+            {
+                var deviceId = 3000 + i;
+                db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
+                db.PrtgSensors.Add(new PrtgSensorRow { Objid = 4000 + i, DeviceObjid = deviceId,
+                    Category = PrtgSensorCategories.Disk, SensorType = "snmpdiskfree", Name = $"disk-{i}" });
+                db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId, MapDate = today.AddDays(-1),
+                    HostId = 1, MapStatus = PrtgMapStatus.Ok });
+            }
+            db.SaveChanges();
+        }
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostName = "active", Active = true });
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
+        var seedRules = KnownIssueSeed.CreateRules();
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = seedRules } };
+        var seeds = new FakeRuleSeedStore();
+        seeds.Sync(seedRules, KnownIssueSeed.Version);
+        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
+            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
+        var service = new RuleAdminService(ruleStore, seeds, new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
+            hosts, new FakeIssueAggregateQuery(), assessment, settings);
+        var request = new DiskTrendRulePreviewRequest
+        {
+            FromDate = DateOnly.FromDateTime(today.AddDays(-36)), ThroughDate = DateOnly.FromDateTime(today.AddDays(-1)),
+            Offset = 4, Limit = 5,
+            Rule = new SaveRuleRequest
+            {
+                Id = "long-window-preview", Enabled = false, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
+                PrtgSensorCategory = "disk", PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional with { RecentWindowDays = 730 },
+                Category = "Storage", Severity = "High", Description = "preview", CountThreshold = 1,
+                PlainExplanation = "磁碟趨勢", Impact = "可能耗盡", LikelyCauses = new() { "容量不足" }, NextSteps = new() { "檢查磁碟" }
+            }
+        };
+
+        var page = service.PreviewDiskTrend(request);
+
+        Assert.Equal(216, page.DateSensorAssessmentRowCount);
+        Assert.True(page.HasMore);
+        Assert.Equal(new[] { 4004L, 4005L, 4000L, 4001L, 4002L }, page.Rows.Select(r => r.SensorObjid));
+        Assert.Equal(new[] { today.AddDays(-36), today.AddDays(-36), today.AddDays(-35), today.AddDays(-35), today.AddDays(-35) }
+            .Select(DateOnly.FromDateTime), page.Rows.Select(r => r.CompletedDate));
+    }
+
+    [Fact]
+    public void 三十六日單一磁碟候選可預覽且超過七百三十日拒絕()
+    {
+        using var fx = new EfSqliteFixture();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        const long deviceId = 3301, sensorId = 4301;
+        using (var db = fx.NewContext())
+        {
+            db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
+            db.PrtgSensors.Add(new PrtgSensorRow { Objid = sensorId, DeviceObjid = deviceId,
+                Category = PrtgSensorCategories.Disk, SensorType = "snmpdiskfree", Name = "Disk C:" });
+            db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId,
+                MapDate = today.AddDays(-1).ToDateTime(TimeOnly.MinValue), HostId = 1, MapStatus = PrtgMapStatus.Ok });
+            db.SaveChanges();
+        }
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostName = "disk-host", Active = true });
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
+        var rules = KnownIssueSeed.CreateRules();
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules } };
+        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
+            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
+        var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
+            hosts, new FakeIssueAggregateQuery(), assessment, settings);
+        var request = new DiskTrendRulePreviewRequest
+        {
+            FromDate = today.AddDays(-36), ThroughDate = today.AddDays(-1), Limit = 1,
+            Rule = new SaveRuleRequest
+            {
+                Id = "custom-36-day-preview", Enabled = false, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
+                PrtgSensorCategory = "disk", PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional with { RecentWindowDays = 36 },
+                Category = "Storage", Severity = "High", Description = "長窗口試算", CountThreshold = 1,
+                PlainExplanation = "磁碟趨勢", Impact = "可能耗盡", LikelyCauses = new() { "容量不足" },
+                NextSteps = new() { "檢查磁碟" }
+            }
+        };
+
+        var preview = service.PreviewDiskTrend(request);
+
+        Assert.Equal(36, preview.ThroughDate.DayNumber - preview.FromDate.DayNumber + 1);
+        Assert.Equal(36, preview.DateSensorAssessmentRowCount);
+        Assert.Equal(sensorId, Assert.Single(preview.Rows).SensorObjid);
+
+        request.FromDate = today.AddDays(-731);
+        Assert.Throws<DomainException>(() => service.PreviewDiskTrend(request));
     }
 
     /// <summary>「已修改」徽章指內容被改過；只停用/啟用不該掛上它——
@@ -914,6 +1207,7 @@ public class RuleAdminServiceTests
         Assert.Equal(3, site.RecentHitCount);      // flapping:9 不算進 down
         Assert.Equal(2, grouped.RecentHitCount);   // P3 不在群組內
         Assert.False(site.ApproximateForLinux);
+        Assert.True(site.ApproximateForPrtg);
     }
 
     // ── MatchOrder：比對順序可見化（回饋十五輪 B-1）─────────────────────────────

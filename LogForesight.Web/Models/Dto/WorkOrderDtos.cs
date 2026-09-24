@@ -362,6 +362,19 @@ public class WorkOrderMemberDto
     public bool DaySyncPending { get; set; }
     public bool Cancelled { get; set; }
     public DateTime? ClosedAt { get; set; }
+
+    /// <summary>同一主機與 PRTG sensor 的另一張進行中 Warning／磁碟趨勢交辦單；僅同處理人案件會回傳</summary>
+    public long? RelatedWorkOrderId { get; set; }
+
+    /// <summary>同主機同 sensor 最近 30 日已落盤的磁碟趨勢 finding</summary>
+    public WorkOrderDiskTrendEvidenceDto? DiskTrend { get; set; }
+}
+
+public class WorkOrderDiskTrendEvidenceDto
+{
+    public DateTime RecordDate { get; set; }
+    public string SensorId { get; set; } = string.Empty;
+    public string? Detail { get; set; }
 }
 
 public class WorkOrderMemberPageDto

@@ -527,6 +527,13 @@
        整頁在 settings-form 內，按鈕一律 type="button"，避免觸發表單送出 *@
     <div class="d-none" data-panel="health">
         <div class="lf-card mb-3">
+            <div class="lf-card__header"><h2 class="lf-card__title">PRTG 快照</h2></div>
+            <div class="lf-card__body">
+                <div id="health-prtg-snapshot" role="status" aria-live="polite"></div>
+                <p class="small mb-0 mt-2"><a href="@Url.Content("~/admin/prtg#mirror")">前往 PRTG 維護頁檢查鏡像</a></p>
+            </div>
+        </div>
+        <div class="lf-card mb-3">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">排程資料新鮮度</h2>
             </div>

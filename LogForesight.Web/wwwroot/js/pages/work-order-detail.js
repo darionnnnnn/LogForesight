@@ -615,10 +615,32 @@ function renderMembers(data) {
                 if (item.daySyncPending) notes.push('逐日同步中');
                 if (item.cancelled) notes.push('已取消');
                 if (item.closedAt) notes.push(`結案 ${formatDateTime(item.closedAt)}`);
+                const wrap = document.createElement('div');
+                wrap.className = 'd-flex flex-column align-items-start gap-1';
                 const span = document.createElement('span');
                 span.className = 'text-muted small';
-                span.textContent = notes.join('、') || '—';
-                return span;
+                span.textContent = notes.join('、') || (item.relatedWorkOrderId ? '' : '—');
+                if (span.textContent) wrap.appendChild(span);
+                if (item.relatedWorkOrderId) {
+                    const link = document.createElement('a');
+                    link.className = 'small';
+                    link.href = appUrl('/work-orders/' + item.relatedWorkOrderId);
+                    link.textContent = `同主機／sensor 關聯單 #${item.relatedWorkOrderId}`;
+                    wrap.appendChild(link);
+                }
+                if (item.diskTrend) {
+                    const evidence = document.createElement('div');
+                    evidence.className = 'small text-muted';
+                    evidence.textContent = `同感測器磁碟趨勢（${item.diskTrend.sensorId}）｜資料截至 ${formatDate(item.diskTrend.recordDate)}`;
+                    wrap.appendChild(evidence);
+                    if (item.diskTrend.detail) {
+                        const detail = document.createElement('div');
+                        detail.className = 'small';
+                        detail.textContent = item.diskTrend.detail;
+                        wrap.appendChild(detail);
+                    }
+                }
+                return wrap;
             }
         }
     );

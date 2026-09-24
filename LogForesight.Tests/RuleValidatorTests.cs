@@ -489,6 +489,21 @@ public class RuleValidatorTests
             NextSteps = nextSteps ?? new[] { "step" }
         };
 
+    private static KnownIssueRule PrtgDiskTrendRule(
+        string id = "custom-test-prtg-disk-trend",
+        PrtgDiskTrendThresholds? thresholds = null,
+        int prtgThreshold = 0,
+        string? sensorCategory = PrtgSensorCategories.Disk) => new()
+        {
+            Id = id, Origin = "custom", Enabled = true, Scope = "all", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = prtgThreshold,
+            PrtgDiskTrendThresholds = thresholds ?? PrtgDiskTrendThresholds.Provisional,
+            PrtgSensorCategory = sensorCategory,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High,
+            Description = "disk trend", PlainExplanation = "explanation", Impact = "impact",
+            LikelyCauses = new[] { "cause" }, NextSteps = new[] { "step" }
+        };
+
     [Fact]
     public void PRTG規則_欄位齊備時通過驗證()
     {
@@ -507,6 +522,58 @@ public class RuleValidatorTests
         Assert.Empty(outcome.ValidRules);
         Assert.Single(outcome.SkippedRules);
         Assert.Contains("PrtgRuleCode", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void PRTG磁碟趨勢規則_專用門檻齊備時通過且一般四種狀態規則仍通過()
+    {
+        var existingCodes = new[]
+        {
+            PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping,
+            PrtgRuleEvaluator.RuleWarning, PrtgRuleEvaluator.RuleSilent
+        };
+        var rules = existingCodes.Select((code, i) => PrtgRule(
+            id: $"state-{i}", prtgRuleCode: code, prtgThreshold: code == PrtgRuleEvaluator.RuleSilent ? 0 : 60)).ToList();
+        rules.Add(PrtgDiskTrendRule());
+
+        var outcome = RuleValidator.Validate(rules);
+
+        Assert.Equal(5, outcome.ValidRules.Count);
+        Assert.Empty(outcome.SkippedRules);
+        Assert.Contains(outcome.ValidRules, r => r.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend
+            && r.PrtgDiskTrendThresholds == PrtgDiskTrendThresholds.Provisional);
+        Assert.All(existingCodes, code => Assert.Contains(outcome.ValidRules, r => r.PrtgRuleCode == code));
+    }
+
+    [Fact]
+    public void PRTG磁碟趨勢規則_缺少或格式錯誤的專用門檻不合格()
+    {
+        var missing = new KnownIssueRule
+        {
+            Id = "missing", Origin = "custom", Enabled = true, Scope = "all", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 0,
+            PrtgDiskTrendThresholds = null, PrtgSensorCategory = PrtgSensorCategories.Disk,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High, Description = "disk trend",
+            PlainExplanation = "explanation", Impact = "impact", LikelyCauses = new[] { "cause" },
+            NextSteps = new[] { "step" }
+        };
+        var invalidRange = PrtgDiskTrendRule(id: "invalid-range", thresholds: new PrtgDiskTrendThresholds(101, 0.5, 30, 28, 35, 0.70));
+        var legacyThreshold = new KnownIssueRule
+        {
+            Id = "legacy-threshold", Origin = "custom", Enabled = true, Scope = "all", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 1,
+            PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional, PrtgSensorCategory = PrtgSensorCategories.Disk,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High, Description = "disk trend",
+            PlainExplanation = "explanation", Impact = "impact", LikelyCauses = new[] { "cause" }, NextSteps = new[] { "step" }
+        };
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { missing, invalidRange, legacyThreshold });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Equal(3, outcome.SkippedRules.Count);
+        Assert.All(outcome.SkippedRules, skipped => Assert.Contains("disk_free_trend", skipped.Reason));
+        Assert.Contains("PrtgDiskTrendThresholds", outcome.SkippedRules[0].Reason);
+        Assert.Contains("PrtgThreshold", outcome.SkippedRules[2].Reason);
     }
 
     [Fact]

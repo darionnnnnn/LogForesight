@@ -104,6 +104,21 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     public void Add(DailyAnalysisRecord record) => _records.Add(record);
 
+    List<DiskTrendEvidenceRecord> IAnalysisRecordQuery.QueryDiskTrendEvidence(
+        IReadOnlyCollection<(long HostId, string SensorId)> hostSensors, DateTime from, DateTime to) =>
+        hostSensors.Take(100).SelectMany(pair => _records.Where(r => r.HostId == pair.HostId
+                && r.Date.Date >= from.Date && r.Date.Date <= to.Date
+                && r.TopIssues.Any(i => i.Source == "PRTG:disk_free_trend" && i.LogName == "PRTG"
+                    && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
+                    && i.EventKey == $"prtg:disk_free_trend:{pair.SensorId}"))
+            .OrderByDescending(r => r.Date).Take(1)
+            .Select(r => new DiskTrendEvidenceRecord(r.HostId, r.Date, pair.SensorId,
+                r.TopIssues.First(i => i.Source == "PRTG:disk_free_trend" && i.LogName == "PRTG"
+                    && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
+                    && i.EventKey == $"prtg:disk_free_trend:{pair.SensorId}")
+                    .SampleMessages?.FirstOrDefault()?.Trim() is { Length: > 0 } detail
+                        ? detail[..Math.Min(detail.Length, 200)] : null))).ToList();
+
     public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues) =>
         AddRecord(hostName, date, "高", issues);
 

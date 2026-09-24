@@ -656,9 +656,38 @@ async function loadHealthTab({ refresh = false } = {}) {
         return;
     }
     renderFreshness(detail.scheduleFreshness);
+    renderPrtgSnapshotHealth(detail.prtgSnapshot);
     renderSlowQueries(detail.topSlowOperations);
     renderBackgroundJobs(detail);
     await Promise.all([loadLoginThrottle(), setupGuideTask]);
+}
+
+/** PRTG 快照健康摘要：使用 textContent，診斷文字視為不可信資料。 */
+function renderPrtgSnapshotHealth(snapshot) {
+    const host = document.getElementById('health-prtg-snapshot');
+    if (!host) return;
+    if (!snapshot) {
+        host.replaceChildren();
+        return;
+    }
+    const badge = document.createElement('span');
+    badge.className = `badge text-bg-${snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'secondary'} me-2`;
+    const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停' };
+    badge.textContent = labels[snapshot.state] ?? '待確認';
+    const message = document.createElement('span');
+    message.textContent = snapshot.message ?? '';
+    const children = [badge, message];
+    for (const hour of snapshot.recentHours ?? []) {
+        const line = document.createElement('div');
+        line.className = 'small text-muted mt-1';
+        const date = document.createElement('span');
+        date.textContent = `${formatDateTime(hour.hour)}：`;
+        const data = document.createElement('span');
+        data.textContent = `${hour.availableValues ?? 0} / ${hour.targets ?? 0} 個目標有可用值${hour.writeFailures ? `，寫入失敗 ${hour.writeFailures} 次` : ''}`;
+        line.append(date, data);
+        children.push(line);
+    }
+    host.replaceChildren(...children);
 }
 
 /** 初始設定引導偏好：hidden 時顯示「重新顯示初始設定引導」按鈕，未 hidden 顯示提示文字 */

@@ -319,7 +319,7 @@ public class HandlerWorkPageTests : IDisposable
         var caseStore = new FakeIssueCaseStore();
         var svc = new WorkOrderQueryService(new FakeWorkOrderStore(caseStore), caseStore, users, hosts, new FakeHostGroupStore(),
             new FakeRuleStore(), visibility, currentUser, new UserDisplayNameService(settings),
-            new FixedIssueExclusionSource(IssueExclusion.None), userGroups);
+            new FixedIssueExclusionSource(IssueExclusion.None), userGroups, new FakeAnalysisRecordQuery());
 
         var summary = svc.HandlerSummary(user.UserId);
 

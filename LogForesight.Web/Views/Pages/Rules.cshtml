@@ -193,7 +193,39 @@
                                 <option value="flapping">頻繁震盪 (flapping)</option>
                                 <option value="warning">持續 Warning (warning)</option>
                                 <option value="silent">沉默裝置 (silent)</option>
+                                <option value="disk_free_trend">磁碟可用空間趨勢 (disk_free_trend)</option>
                             </select>
+                        </div>
+                        <div class="col-12 d-none" id="rule-prtg-disk-trend-fields" data-platform-block="prtg">
+                            <div class="alert alert-warning py-2 mb-2" id="rule-prtg-disk-trend-info">
+                                此規則預設停用，只評估語意已確認且資料品質足夠的磁碟 sensor。資料不足會明確標示，不視為正常，也不產生告警。門檻目前均為暫定值，尚待實機資料校準。
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4"><label for="rule-prtg-trend-low-water" class="form-label">低水位（%）</label><input type="number" class="form-control" id="rule-prtg-trend-low-water" min="0" max="100" step="0.1" /><div class="form-text">0–100%；目前值低於此百分比才繼續判斷。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-decline" class="form-label">最低下降速度（百分點／日）</label><input type="number" class="form-control" id="rule-prtg-trend-decline" min="0.01" max="100" step="0.01" /><div class="form-text">大於 0，最多 100 百分點／日。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-depletion" class="form-label">最大預估耗盡時間（日）</label><input type="number" class="form-control" id="rule-prtg-trend-depletion" min="0.1" max="3650" step="0.1" /><div class="form-text">大於 0，最多 3650 日。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-min-days" class="form-label">最低有效資料天數（日）</label><input type="number" class="form-control" id="rule-prtg-trend-min-days" min="2" max="365" step="1" /><div class="form-text">2–365 日；資料不足時不會判為正常。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-window" class="form-label">近期分析視窗（日）</label><input type="number" class="form-control" id="rule-prtg-trend-window" min="2" max="730" step="1" /><div class="form-text">不得小於最低有效資料天數，最多 730 日。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-ratio" class="form-label">最低下降日比例（%）</label><input type="number" class="form-control" id="rule-prtg-trend-ratio" min="0.01" max="100" step="0.1" /><div class="form-text">大於 0 且不超過 100%；暫定 70%。</div></div>
+                            </div>
+                            <section class="border rounded p-3 mt-3" aria-labelledby="rule-disk-preview-title">
+                                <h3 class="h6" id="rule-disk-preview-title">未儲存門檻預覽</h3>
+                                <p class="small mb-2">預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。6 日資料不等於已驗證；資料超過 28 日也不等於語意已驗證。啟用時後端會再次檢查 28 日證據，目前正式站真實 28 日證據仍待確認。</p>
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-6 col-sm-3"><label class="form-label" for="rule-disk-preview-days">日期範圍（日）</label><input class="form-control" type="number" id="rule-disk-preview-days" min="1" max="730" value="6" /></div>
+                                    <div class="col-6 col-sm-3"><label class="form-label" for="rule-disk-preview-limit">每頁配對數</label><input class="form-control" type="number" id="rule-disk-preview-limit" min="1" max="100" value="25" /></div>
+                                    <div class="col-12 col-sm-6 d-flex gap-2">
+                                        <button type="button" class="btn btn-outline-secondary flex-fill" id="rule-disk-preview-previous" disabled>上一頁</button>
+                                        <span class="small text-center align-self-center flex-fill" id="rule-disk-preview-page" aria-live="polite">尚未試算</span>
+                                        <button type="button" class="btn btn-outline-secondary flex-fill" id="rule-disk-preview-next" disabled>下一頁</button>
+                                    </div>
+                                    <div class="col-12 col-sm-3"><button type="button" class="btn btn-primary w-100" id="rule-disk-preview-run">試算草稿</button></div>
+                                </div>
+                                <p class="form-text mb-0 mt-2">可用 Tab 鍵操作；窄螢幕下摘要與每筆配對會依畫面寬度換行。</p>
+                                <div class="small mt-2" id="rule-disk-preview-summary" role="status" aria-live="polite"></div>
+                                <div class="mt-2" id="rule-disk-preview-results"></div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="rule-prtg-trend-clear">清除預覽結果</button>
+                            </section>
                         </div>
                         <div class="col-md-6" id="rule-match-prtg-threshold" data-platform-block="prtg">
                             <label for="rule-prtg-threshold" class="form-label">門檻值</label>
@@ -310,6 +342,7 @@
                                     停用只關掉這條規則命中的分類與知識庫顯示，趨勢層／關聯層對同一事件的偵測不受影響——
                                     不是把這個事件從分析中整個拿掉。
                                 </div>
+                                <div class="form-text d-none" id="rule-disk-enable-guard">啟用前請查看草稿預覽的候選數與時間。後端儲存時會再次守衛；正式站 28 日證據仍待確認，短期預覽不能替代該證據。</div>
                             </div>
                         </div>
                     </div>

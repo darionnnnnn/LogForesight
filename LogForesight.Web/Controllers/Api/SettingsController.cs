@@ -33,6 +33,7 @@ public class SettingsController : ControllerBase
     private readonly IHostStore? _hosts;
     private readonly PrtgSnapshotHostedService? _snapshot;
     private readonly PrtgDeviceIndexCache? _deviceIndexCache;
+    private readonly PrtgDiskVerificationService? _diskVerification;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -45,7 +46,8 @@ public class SettingsController : ControllerBase
         StorageBackend? backend = null,
         IHostStore? hosts = null,
         PrtgSnapshotHostedService? snapshot = null,
-        PrtgDeviceIndexCache? deviceIndexCache = null)
+        PrtgDeviceIndexCache? deviceIndexCache = null,
+        PrtgDiskVerificationService? diskVerification = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -58,6 +60,7 @@ public class SettingsController : ControllerBase
         _backend = backend;
         _snapshot = snapshot;
         _deviceIndexCache = deviceIndexCache;
+        _diskVerification = diskVerification;
     }
 
     [HttpGet]
@@ -233,18 +236,60 @@ public class SettingsController : ControllerBase
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
     }
 
+    [HttpPost("prtg-backfill/selected/preview")]
+    public ApiResponse<PrtgSelectedBackfillPreviewDto> PreviewSelectedPrtgBackfill(
+        [FromBody] PrtgSelectedBackfillRequest request)
+    {
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用。");
+        return ApiResponse<PrtgSelectedBackfillPreviewDto>.Ok(_prtgBackfill.PreviewSelected(request));
+    }
+
+    [HttpPost("prtg-backfill/selected/start")]
+    public ApiResponse<StartPrtgSelectedBackfillResultDto> StartSelectedPrtgBackfill(
+        [FromBody] PrtgSelectedBackfillRequest request)
+    {
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用。");
+        if (!_prtgBackfill.TryStartSelected(request, out var preview, out var error, out var isConflict))
+            throw isConflict
+                ? DomainException.Conflict(error!)
+                : DomainException.Validation(error ?? "無法啟動指定範圍的 PRTG 回填。");
+
+        _audit.Record(
+            action: AuditActions.PrtgBackfillRun,
+            summary: $"執行指定主機 PRTG 數值回填（{preview.FromDate:yyyy-MM-dd}～{preview.ToDate:yyyy-MM-dd}，{preview.HostCount} 台主機）",
+            targetKind: "system_settings",
+            targetId: "prtg_backfill_selected",
+            detail: new
+            {
+                preview.FromDate,
+                preview.ToDate,
+                preview.HostIds,
+                preview.EstimatedRequests,
+                preview.DaysWithTargets
+            });
+
+        return ApiResponse<StartPrtgSelectedBackfillResultDto>.Ok(
+            new StartPrtgSelectedBackfillResultDto { Started = true, Preview = preview });
+    }
+
     /// <summary>
     /// 停止進行中的歷史回填：回填逐日打 PRTG，天數多時可跑上數小時；
     /// 沒有這顆鈕時唯一的中止方式是重啟站台。
     /// </summary>
     [HttpPost("prtg-backfill/cancel")]
-    public ApiResponse<StartPrtgBackfillResultDto> CancelPrtgBackfill()
+    public ApiResponse<StartPrtgBackfillResultDto> CancelPrtgBackfill(
+        [FromBody] CancelPrtgSelectedBackfillRequest? request = null)
     {
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
 
         // 沒有執行中就不是「停止成功」——回 409，與結構同步停止同一種語意。
-        if (!_prtgBackfill.TryCancel())
+        var cancelled = request?.RunId is { Length: > 0 } runId
+            ? _prtgBackfill.TryCancelSelected(runId)
+            : _prtgBackfill.TryCancel();
+        if (!cancelled)
             throw DomainException.Conflict("目前沒有進行中的歷史回填。");
 
         _audit.Record(
@@ -252,10 +297,22 @@ public class SettingsController : ControllerBase
             summary: "停止 PRTG 歷史回填",
             targetKind: "system_settings",
             targetId: "prtg_backfill",
-            detail: new { });
+            detail: new { request?.RunId });
 
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(
             new StartPrtgBackfillResultDto { Started = false });
+    }
+
+    [HttpPost("prtg-disk-verification/batch/start")]
+    public IActionResult StartPrtgDiskVerificationBatch([FromBody] PrtgDiskVerificationBatchStart request)
+    {
+        if (_diskVerification == null)
+            return BadRequest(ApiResponse.Fail("validation_failed", "磁碟語意驗證服務未啟用。"));
+        if (!_diskVerification.TryStartBatch(request, out var error))
+            return Conflict(ApiResponse.Fail("conflict", error ?? "磁碟語意驗證批次無法啟動。"));
+        _audit.Record("prtg_disk_semantic_batch_probe", $"啟動 {request.SensorObjids.Count} 顆磁碟感測器語意驗證批次。",
+            "prtg_sensor", detail: new { request.RequestId, request.SensorObjids, request.DataDate });
+        return Ok(ApiResponse.Ok());
     }
 
     // ── PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）───────────────────────

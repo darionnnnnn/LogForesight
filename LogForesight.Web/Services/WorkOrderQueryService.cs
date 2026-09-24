@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -30,6 +33,7 @@ public class WorkOrderQueryService
     private readonly IUserDisplayNameService _displayNames;
     private readonly IIssueExclusionSource _exclusions;
     private readonly IUserGroupStore _userGroups;
+    private readonly IAnalysisRecordQuery _records;
 
     /// <summary>「靜音到期恢復」的回看天數：最近一個已結束區間的迄日落在 [今天−7, 今天−1]</summary>
     private const int ResumedWindowDays = 7;
@@ -45,9 +49,11 @@ public class WorkOrderQueryService
         ICurrentUser currentUser,
         IUserDisplayNameService displayNames,
         IIssueExclusionSource exclusions,
-        IUserGroupStore userGroups)
+        IUserGroupStore userGroups,
+        IAnalysisRecordQuery records)
     {
         _userGroups = userGroups;
+        _records = records;
         _orders = orders;
         _cases = cases;
         _users = users;
@@ -229,6 +235,8 @@ public class WorkOrderQueryService
             WorkOrderId = id, Status = status, HostNameKeys = hostKeys, Page = page, PageSize = pageSize
         });
 
+        var relatedOrdersByCase = RelatedPrtgOrders(order, items);
+
         var hidden = 0;
         if (filtered)
         {
@@ -244,10 +252,8 @@ public class WorkOrderQueryService
             .ToDictionary(g => g.Key, g => g.First().HostId);
         var today = DateTime.Today;
 
-        return new WorkOrderMemberPageDto
+        var memberDtos = items.Select(c => new WorkOrderMemberDto
         {
-            Items = items.Select(c => new WorkOrderMemberDto
-            {
                 CaseId = c.CaseId,
                 HostId = hostIdByKey.TryGetValue(HostNameKey.Of(c.HostName), out var hostId) ? hostId : null,
                 HostName = c.HostName,
@@ -259,13 +265,132 @@ public class WorkOrderQueryService
                 LastLinkedDate = c.LastLinkedDate,
                 DaySyncPending = c.DaySyncPending,
                 Cancelled = c.Cancelled,
-                ClosedAt = c.ClosedAt
-            }).ToList(),
+                ClosedAt = c.ClosedAt,
+                RelatedWorkOrderId = relatedOrdersByCase.TryGetValue(c.CaseId, out var relatedId) ? relatedId : null
+        }).ToList();
+
+        AttachDiskTrendFindings(order, items, memberDtos);
+
+        return new WorkOrderMemberPageDto
+        {
+            Items = memberDtos,
             Total = total,
             HiddenMemberCount = hidden,
             Page = page,
             PageSize = pageSize
         };
+    }
+
+    /// <summary>Warning 進行中成員：從受限主機最近 30 日落盤資料補回已去重趨勢 finding 證據。</summary>
+    private void AttachDiskTrendFindings(WorkOrder order, IReadOnlyList<IssueCase> cases, List<WorkOrderMemberDto> members)
+    {
+        if (order.ClosedAt != null || order.EventId != 0
+            || !TryPrtgPairCode(order.SourceName, out var code) || code != "warning") return;
+
+        var byCase = members.ToDictionary(m => m.CaseId, StringComparer.Ordinal);
+        var targets = cases
+            .Where(c => c.ClosedAt == null && !c.Cancelled && c.HandlerId == order.HandlerId
+                && c.WorkOrderId == order.WorkOrderId
+                && TryPrtgCaseSensor(c.IssueKey, "warning", out _))
+            .Select(c => (Case: c, Member: byCase[c.CaseId], Sensor: PrtgSensor(c.IssueKey)))
+            .Where(x => x.Member.HostId is > 0 && x.Sensor.Length > 0)
+            .ToList();
+        if (targets.Count == 0) return;
+
+        var from = DateTime.Today.AddDays(-29);
+        var findings = _records.QueryDiskTrendEvidence(
+                targets.Select(x => (x.Member.HostId!.Value, x.Sensor)).Distinct().Take(100).ToArray(),
+                from, DateTime.Today)
+            .Where(x => x.HostId > 0 && targets.Any(t => t.Member.HostId == x.HostId
+                && string.Equals(t.Sensor, x.SensorId, StringComparison.Ordinal)))
+            .GroupBy(x => (x.HostId, Sensor: x.SensorId))
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.RecordDate).First());
+
+        foreach (var target in targets)
+        {
+            if (!findings.TryGetValue((target.Member.HostId!.Value, target.Sensor), out var latest)) continue;
+
+            target.Member.DiskTrend = new WorkOrderDiskTrendEvidenceDto
+            {
+                RecordDate = latest.RecordDate,
+                SensorId = target.Sensor,
+                Detail = latest.Detail
+            };
+        }
+    }
+
+    private static string PrtgSensor(string issueKey)
+    {
+        var signature = IssueSignatureKey.TryParseFull(issueKey);
+        if (signature == null) return string.Empty;
+        var parts = signature.Value.EventKey.Split(':');
+        return parts.Length == 3 ? parts[2] : string.Empty;
+    }
+
+    /// <summary>
+    /// 找出本頁案件在同主機、同 sensor 的 Warning／disk_free_trend 配對。只讀本頁可見主機，
+    /// 只連結同處理人的活動單；避免從關聯欄位洩漏隱藏主機或其他處理人的單號。
+    /// </summary>
+    private Dictionary<string, long> RelatedPrtgOrders(WorkOrder order, IReadOnlyList<IssueCase> pageCases)
+    {
+        var result = new Dictionary<string, long>(StringComparer.Ordinal);
+        if (order.ClosedAt != null || order.EventId != 0 || pageCases.Count == 0
+            || !TryPrtgPairCode(order.SourceName, out var orderCode))
+            return result;
+
+        var counterpartCode = orderCode == "warning" ? "disk_free_trend" : "warning";
+        var activeOrders = _orders.GetActiveByHandler(order.HandlerId)
+            .Where(o => o.EventId == 0
+                && TryPrtgPairCode(o.SourceName, out var candidateCode)
+                && candidateCode == counterpartCode)
+            .ToDictionary(o => o.WorkOrderId);
+        if (activeOrders.Count == 0) return result;
+
+        var hostNames = pageCases.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var activeCases = _cases.GetMany(hostNames)
+            .Where(c => c.ClosedAt == null && c.HandlerId == order.HandlerId
+                && c.WorkOrderId.HasValue && activeOrders.ContainsKey(c.WorkOrderId.Value))
+            .ToList();
+
+        foreach (var current in pageCases)
+        {
+            if (current.ClosedAt != null || current.HandlerId != order.HandlerId || current.WorkOrderId != order.WorkOrderId
+                || !TryPrtgCaseSensor(current.IssueKey, orderCode, out var sensorId)) continue;
+
+            var match = activeCases.FirstOrDefault(candidate =>
+                string.Equals(candidate.HostName, current.HostName, StringComparison.OrdinalIgnoreCase)
+                && TryPrtgCaseSensor(candidate.IssueKey, counterpartCode, out var otherSensorId)
+                && string.Equals(sensorId, otherSensorId, StringComparison.Ordinal));
+            if (match?.WorkOrderId is long relatedId) result[current.CaseId] = relatedId;
+        }
+
+        return result;
+    }
+
+    private static bool TryPrtgPairCode(string? source, out string code)
+    {
+        code = string.Empty;
+        if (!PrtgFindingMapper.TryGetRuleCode(source, out var parsed)) return false;
+        if (!string.Equals(parsed, "warning", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(parsed, "disk_free_trend", StringComparison.OrdinalIgnoreCase)) return false;
+        code = parsed.ToLowerInvariant();
+        return true;
+    }
+
+    private static bool TryPrtgCaseSensor(string? issueKey, string expectedCode, out string sensorId)
+    {
+        sensorId = string.Empty;
+        var signature = IssueSignatureKey.TryParseFull(issueKey);
+        if (signature == null
+            || !string.Equals(signature.Value.LogName, PrtgFindingMapper.PrtgLogName, StringComparison.OrdinalIgnoreCase)
+            || signature.Value.EventId != 0 || signature.Value.EntryType != EventLogEntryType.Warning
+            || !string.Equals(signature.Value.Source, $"PRTG:{expectedCode}", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parts = signature.Value.EventKey.Split(':');
+        if (parts.Length != 3 || !string.Equals(parts[0], "prtg", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(parts[1], expectedCode, StringComparison.OrdinalIgnoreCase) || parts[2].Length == 0) return false;
+        sensorId = parts[2];
+        return true;
     }
 
     public List<WorkOrderEventDto> Timeline(long id)

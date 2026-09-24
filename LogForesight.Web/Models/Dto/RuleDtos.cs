@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Web.Models.Dto;
 
@@ -32,6 +33,7 @@ public class RuleDto
     public int PrtgThreshold { get; set; }
     /// <summary>PRTG 規則適用的 sensor 分類；null＝不限分類</summary>
     public string? PrtgSensorCategory { get; set; }
+    public PrtgDiskTrendThresholds? PrtgDiskTrendThresholds { get; set; }
 
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
@@ -105,6 +107,7 @@ public class SaveRuleRequest
     public int PrtgThreshold { get; set; }
     /// <summary>PRTG 規則適用的 sensor 分類；null＝不限分類</summary>
     public string? PrtgSensorCategory { get; set; }
+    public PrtgDiskTrendThresholds? PrtgDiskTrendThresholds { get; set; }
 
     [Required]
     public string Category { get; set; } = string.Empty;
@@ -131,6 +134,68 @@ public class SaveRuleRequest
 public class SetRuleEnabledRequest
 {
     public bool Enabled { get; set; }
+}
+
+public sealed class DiskTrendRulePreviewRequest
+{
+    public DateOnly FromDate { get; set; }
+    public DateOnly ThroughDate { get; set; }
+    public int Offset { get; set; }
+    public int Limit { get; set; } = 100;
+    [Required] public SaveRuleRequest Rule { get; set; } = new();
+}
+
+public sealed class DiskTrendRulePreviewDto
+{
+    public DateOnly FromDate { get; set; }
+    public DateOnly ThroughDate { get; set; }
+    public int Offset { get; set; }
+    public int Limit { get; set; }
+    /// <summary>展平日期×sensor 後的總評估列數，不是唯一 sensor 數。</summary>
+    public int DateSensorAssessmentRowCount { get; set; }
+    /// <summary>以下計數只涵蓋本頁 Rows，避免把逐日分頁誤讀成全區間去重數。</summary>
+    public int AssessedCount { get; set; }
+    public int UniqueSensorCount { get; set; }
+    public int VerifiedCandidateCount { get; set; }
+    public int DataReadyCount { get; set; }
+    public int SemanticReadyCount { get; set; }
+    public int ApplicableCount { get; set; }
+    public int EligibleCount { get; set; }
+    public int HitCount { get; set; }
+    /// <summary>本頁命中列去重後的主機數；只代表目前樣本頁。</summary>
+    public int UniqueHitHostCount { get; set; }
+    /// <summary>本頁未被現行抑制的命中配對列數；受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量。</summary>
+    public int UnsuppressedHitRowCount { get; set; }
+    /// <summary>本頁草稿命中中，符合目前規則／簽章抑制的列數；非歷史交辦量。</summary>
+    public int? SuppressedCount { get; set; }
+    public bool SuppressionEstimateAvailable { get; set; } = true;
+    public string SuppressionEstimateNote { get; set; } = "當前設定估計：依本頁每列命中、主機與完整簽章套用目前抑制；不含靜音／派工閘門。";
+    public bool HasMore { get; set; }
+    public DateTime? LatestPreviewAt { get; set; }
+    public Dictionary<string, int> ExclusionCounts { get; set; } = new();
+    public List<DiskTrendPreviewSensorDto> Rows { get; set; } = new();
+    public List<DiskTrendPreviewSensorDto> SampleHits { get; set; } = new();
+}
+
+public sealed class DiskTrendPreviewSensorDto
+{
+    public long SensorObjid { get; set; }
+    public long DeviceObjid { get; set; }
+    public long HostId { get; set; }
+    public DateOnly CompletedDate { get; set; }
+    public bool VerifiedCandidate { get; set; }
+    public bool DataReady { get; set; }
+    public bool SemanticReady { get; set; }
+    public bool Applicable { get; set; }
+    public bool Eligible { get; set; }
+    public bool WouldHit { get; set; }
+    public bool SuppressedByCurrentSettings { get; set; }
+    public string? ExclusionReason { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public double? CurrentAvailablePercent { get; set; }
+    public int ValidDayCount { get; set; }
+    public int UsableHours { get; set; }
+    public double? EstimatedDaysToDepletion { get; set; }
 }
 
 /// <summary>儲存前驗證的結果——不合格時逐條回報，不寫入任何資料</summary>
@@ -248,6 +313,9 @@ public class SuppressionPreviewDto
     /// 合計而非精準對應這條規則（lf_top_issues 沒有存 Linux 的 EventKey，無法區分「同 program
     /// 命中不同規則」的情況），畫面應標註可能略高於實際數字</summary>
     public bool ApproximateForLinux { get; set; }
+
+    /// <summary>PRTG 歷史只按規則代碼聚合，缺少分類、sensor 與品質維度；數字是同代碼粗略估算。</summary>
+    public bool ApproximateForPrtg { get; set; }
 }
 
 /// <summary>規則的回復預設預覽：目前內容 vs 原廠種子</summary>

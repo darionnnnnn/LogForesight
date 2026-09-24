@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace LogForesight.Core.Persistence;
 
 /// <summary>
@@ -19,10 +21,13 @@ public sealed class DispatchContext
     private readonly List<WorkOrder> _registeredOrders = new();
     private readonly Dictionary<string, int> _skipCounts = new(StringComparer.Ordinal);
     private readonly IIssueCaseStore _cases;
+    private readonly IWorkOrderStore? _orders;
     private readonly Dictionary<string, HashSet<string>> _dismissedByHost = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<IssueCase>> _casesByHost = new(StringComparer.OrdinalIgnoreCase);
 
     private DispatchContext(
         IIssueCaseStore cases,
+        IWorkOrderStore? orders,
         DispatchCandidatePool pool,
         Dictionary<(string SourceUpper, int EventId), IssueProfile> profiles,
         Dictionary<(string SourceKey, int EventId), List<WorkOrder>> activeOrders,
@@ -34,6 +39,7 @@ public sealed class DispatchContext
         bool unavailable)
     {
         _cases = cases;
+        _orders = orders;
         Pool = pool;
         _profiles = profiles;
         _activeOrders = activeOrders;
@@ -129,7 +135,7 @@ public sealed class DispatchContext
                 byIssue[key] = (c.ClosedAt.Value, c.HandlerId.Value);
         }
 
-        return new DispatchContext(cases, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
+        return new DispatchContext(cases, orders, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
             settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false)
         {
             MuteIntervals = muteIntervals,
@@ -142,7 +148,7 @@ public sealed class DispatchContext
     /// 決策遇到它一律回 <see cref="WorkOrderDispatcher.SkipUnavailable"/>，不會觸碰任何資料來源。
     /// </summary>
     public static DispatchContext CreateUnavailable(IIssueCaseStore cases) =>
-        new(cases,
+        new(cases, null,
             new DispatchCandidatePool { ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0 },
             new Dictionary<(string SourceUpper, int EventId), IssueProfile>(),
             new Dictionary<(string SourceKey, int EventId), List<WorkOrder>>(),
@@ -168,11 +174,55 @@ public sealed class DispatchContext
     public bool IsDismissed(string hostName, string issueKey)
     {
         if (!_dismissedByHost.TryGetValue(hostName, out var keys))
-        {
-            keys = DismissedKeys(_cases.GetMany(new[] { hostName }));
-            _dismissedByHost[hostName] = keys;
-        }
+            _dismissedByHost[hostName] = keys = DismissedKeys(CasesFor(hostName));
         return keys.Contains(issueKey);
+    }
+
+    /// <summary>同主機、同 sensor 的 Warning 仍有活動案件且仍連到活動單時，磁碟趨勢已有可處理的工單。</summary>
+    internal long? ActiveWarningOrderForSensor(string hostName, LogIssueSignature trend)
+    {
+        if (!PrtgFindingMapper.IsPrtg(trend)
+            || !PrtgFindingMapper.TryGetRuleCode(trend.Source, out var code)
+            || !string.Equals(code, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase)
+            || !TryPrtgSensorId(trend.EventKey, code, out var sensorId)) return null;
+
+        foreach (var c in CasesFor(hostName))
+        {
+            if (c.ClosedAt != null || c.WorkOrderId is not long orderId
+                || IssueSignatureKey.TryParseFull(c.IssueKey) is not { } signature
+                || !string.Equals(signature.LogName, PrtgFindingMapper.PrtgLogName, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(signature.Source, "PRTG:warning", StringComparison.OrdinalIgnoreCase)
+                || signature.EventId != 0 || signature.EntryType != EventLogEntryType.Warning
+                || !TryPrtgSensorId(signature.EventKey, "warning", out var warningSensorId)
+                || !string.Equals(sensorId, warningSensorId, StringComparison.Ordinal)
+                || !IsOrderActive(orderId)) continue;
+
+            return orderId;
+        }
+        return null;
+    }
+
+    private bool IsOrderActive(long orderId) => _orders != null
+        ? _orders.Get(orderId) is { ClosedAt: null }
+        : _activeOrders.Values.SelectMany(x => x).Any(o => o.WorkOrderId == orderId && o.ClosedAt == null);
+
+    /// <summary>成員成功寫入後使 host case 快取失效，讓後續 DispatchDay 看見本趟新建或改連的案件。</summary>
+    internal void InvalidateCasesFor(string hostName) => _casesByHost.Remove(hostName);
+
+    private static bool TryPrtgSensorId(string? eventKey, string code, out string sensorId)
+    {
+        sensorId = string.Empty;
+        var prefix = $"prtg:{code}:";
+        if (eventKey == null || !eventKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        sensorId = eventKey[prefix.Length..];
+        return sensorId.Length > 0;
+    }
+
+    private List<IssueCase> CasesFor(string hostName)
+    {
+        if (!_casesByHost.TryGetValue(hostName, out var cases))
+            _casesByHost[hostName] = cases = _cases.GetMany(new[] { hostName });
+        return cases;
     }
 
     /// <summary>
@@ -192,8 +242,9 @@ public sealed class DispatchContext
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
         foreach (var hostName in pending)
         {
-            _dismissedByHost[hostName] = DismissedKeys(
-                casesByHost.TryGetValue(hostName, out var cases) ? cases : new List<IssueCase>());
+            var hostCases = casesByHost.TryGetValue(hostName, out var cases) ? cases : new List<IssueCase>();
+            _casesByHost[hostName] = hostCases;
+            _dismissedByHost[hostName] = DismissedKeys(hostCases);
         }
     }
 

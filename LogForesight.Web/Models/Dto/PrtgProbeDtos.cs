@@ -15,6 +15,12 @@ public class PrtgProbeStatusDto
     public bool Cancelled { get; set; }
 }
 
+public class CancelPrtgSelectedBackfillRequest
+{
+    [Required]
+    public string RunId { get; set; } = string.Empty;
+}
+
 /// <summary>啟動 PRTG 探測回應</summary>
 public class StartPrtgProbeResultDto
 {
@@ -47,6 +53,8 @@ public class PrtgBackfillStatusDto
     public bool ReadingStateChanges { get; set; }
     /// <summary>最近一趟是否被使用者停止</summary>
     public bool Cancelled { get; set; }
+    public string? RunId { get; set; }
+    public string? RunKind { get; set; }
 }
 
 /// <summary>啟動 PRTG 歷史回填回應</summary>

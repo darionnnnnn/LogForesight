@@ -2,6 +2,7 @@ using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
+using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -18,6 +19,35 @@ public record PrtgBackfillProgress(
 /// </summary>
 public class PrtgBackfillRunState : PrtgProbeRunState
 {
+    private readonly object _runIdentityLock = new();
+    private string? _runId;
+    private string? _runKind;
+
+    public (string? RunId, string? RunKind) GetRunIdentity()
+    {
+        lock (_runIdentityLock) return (_runId, _runKind);
+    }
+
+    public bool TryBeginIdentifiedRun(string runKind, out CancellationToken token)
+    {
+        lock (_runIdentityLock)
+        {
+            if (!TryBeginRun(out token)) return false;
+            _runId = Guid.NewGuid().ToString("N");
+            _runKind = runKind;
+            return true;
+        }
+    }
+
+    public bool TryCancelSelected(string? runId)
+    {
+        lock (_runIdentityLock)
+        {
+            if (string.IsNullOrWhiteSpace(runId) || _runKind != "selected" || _runId != runId) return false;
+            return TryCancel();
+        }
+    }
+
     private readonly object _progressLock = new();
 
     private int _daysDone;
@@ -108,6 +138,8 @@ public class PrtgBackfillConsole : IRunConsole
 /// </summary>
 public class PrtgBackfillService : IPrtgBackfillTail
 {
+    public const int SelectedBackfillMaxHosts = 5;
+    public const int SelectedBackfillMaxDays = 7;
     private readonly ISystemSettingsStore _settings;
     private readonly StorageBackend _backend;
     private readonly PrtgBackfillRunState _state;
@@ -150,6 +182,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
     {
         var s = _state.Snapshot();
         var p = _state.GetProgress();
+        var identity = _state.GetRunIdentity();
         return new PrtgBackfillStatusDto
         {
             IsRunning = s.IsRunning,
@@ -166,7 +199,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
             StateChangesRead = p.StateChangesRead,
             StateChangesTotal = p.StateChangesTotal,
             ReadingStateChanges = p.ReadingStateChanges,
-            Cancelled = _state.Cancelled
+            Cancelled = _state.Cancelled,
+            RunId = identity.RunId,
+            RunKind = identity.RunKind
         };
     }
 
@@ -188,6 +223,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     /// <summary>要求停止進行中的回填；沒有執行中回 false。</summary>
     public bool TryCancel() => _state.TryCancel();
+
+    public bool TryCancelSelected(string? runId) => _state.TryCancelSelected(runId);
 
     /// <summary>「（已 N 分鐘）」後綴；取不到開始時間時回空字串（兩道執行中閘門共用）。</summary>
     private static string ElapsedSuffix(DateTime? startedAt)
@@ -216,11 +253,141 @@ public class PrtgBackfillService : IPrtgBackfillTail
     public bool TryStart(out string? error, out bool isConflict)
     {
         var s = _settings.Get();
-        if (!TryPrepare(s, s.PrtgBackfillDays, blockWhenSchedulerRunning: true, out var run, out error, out isConflict))
+        if (!TryPrepare(s, s.PrtgBackfillDays, blockWhenSchedulerRunning: true, runKind: "full", out var run, out error, out isConflict))
             return false;
 
         _ = Task.Run(() => ExecuteAsync(run!, new PrtgBackfillConsole(_state), hostIds: null));
         return true;
+    }
+
+    /// <summary>預估指定主機與日期的數值請求量；只讀鏡像資料，不連線 PRTG。</summary>
+    public PrtgSelectedBackfillPreviewDto PreviewSelected(PrtgSelectedBackfillRequest request)
+    {
+        var settings = _settings.Get();
+        var (hostIds, from, to) = ValidateSelectedRequest(request, settings);
+        var maps = _backend.PrtgStore();
+        var requestCount = 0;
+        var daysWithTargets = 0;
+        var sampledTargetsByDay = new Dictionary<DateTime, long[]>();
+        for (var day = from; day <= to; day = day.AddDays(1))
+        {
+            var deviceIds = maps.GetHostMapForDate(day)
+                .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && hostIds.Contains(m.HostId.Value))
+                .Select(m => m.DeviceObjid).Distinct().ToArray();
+            var targets = maps.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, deviceIds);
+            if (targets.Count == 0) continue;
+            daysWithTargets++;
+            requestCount += targets.Count;
+            sampledTargetsByDay[day] = targets.Distinct().ToArray();
+        }
+
+        // Bound each IN query well below SQL Server's parameter limit. Query one selected day
+        // at a time so sampled rows cannot bleed across the requested historical-day targets.
+        const int readinessBatchSize = 500;
+        var sampledRowsToReplace = 0;
+        foreach (var (day, targets) in sampledTargetsByDay)
+        {
+            for (var offset = 0; offset < targets.Length; offset += readinessBatchSize)
+            {
+                var batch = targets.Skip(offset).Take(readinessBatchSize).ToArray();
+                sampledRowsToReplace += maps.GetReadinessValues(batch, day, day.AddDays(1))
+                    .Count(row => string.Equals(row.Quality, "sampled", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        return new PrtgSelectedBackfillPreviewDto
+        {
+            FromDate = from, ToDate = to, HostIds = hostIds.Order().ToArray(),
+            HostCount = hostIds.Count, DayCount = (to - from).Days + 1,
+            EstimatedRequests = requestCount, DaysWithTargets = daysWithTargets,
+            EstimatedSampledRowsToReplace = sampledRowsToReplace,
+            Message = requestCount == 0 ? "此範圍沒有可回填的歷史 sensor；不會發出 PRTG 請求。" : $"預估逐 sensor 發出 {requestCount} 次每日歷史查詢。"
+        };
+    }
+
+    /// <summary>重新計算範圍後啟動指定歷史值回填；空目標不會佔用執行狀態或呼叫 PRTG。</summary>
+    public bool TryStartSelected(PrtgSelectedBackfillRequest request, out PrtgSelectedBackfillPreviewDto preview,
+        out string? error, out bool isConflict)
+    {
+        preview = PreviewSelected(request);
+        error = null;
+        isConflict = false;
+        if (!preview.HasTargets)
+        {
+            error = preview.Message;
+            return false;
+        }
+
+        var settings = _settings.Get();
+        var days = preview.DayCount;
+        if (!TryPrepare(settings, days, blockWhenSchedulerRunning: true, runKind: "selected", out var run, out error, out isConflict,
+                requireRecentMapping: false))
+            return false;
+        var selectedPreview = preview;
+        _ = Task.Run(() => ExecuteSelectedAsync(run!, selectedPreview.FromDate, selectedPreview.ToDate, selectedPreview.HostIds));
+        return true;
+    }
+
+    private (HashSet<long> HostIds, DateTime From, DateTime To) ValidateSelectedRequest(
+        PrtgSelectedBackfillRequest request, SystemSettings settings)
+    {
+        if (request == null) throw DomainException.Validation("請指定回填主機與日期範圍。");
+        var ids = (request.HostIds ?? Array.Empty<long>()).Where(id => id > 0).Distinct().ToHashSet();
+        if (ids.Count == 0) throw DomainException.Validation("請至少選擇一台主機；空白選取不會轉成全站回填。");
+        if (ids.Count > SelectedBackfillMaxHosts) throw DomainException.Validation($"一次最多選擇 {SelectedBackfillMaxHosts} 台主機。");
+        var hosts = _hosts.GetAll().Where(h => ids.Contains(h.HostId)).ToDictionary(h => h.HostId);
+        if (hosts.Count != ids.Count || hosts.Values.Any(h => !h.Active || h.MergedInto.HasValue))
+            throw DomainException.Validation("所選主機不存在、未啟用或已合併，請重新選擇有效主機。");
+
+        var from = request.FromDate.Date;
+        var to = request.ToDate.Date;
+        var yesterday = DateTime.Today.AddDays(-1);
+        var retentionDays = Math.Min(settings.PrtgRetentionDays, settings.RetentionDays);
+        var oldest = yesterday.AddDays(-Math.Max(1, retentionDays) + 1);
+        if (from > to) throw DomainException.Validation("起始日期不得晚於結束日期。");
+        if (to > yesterday) throw DomainException.Validation("指定回填日期必須是昨天或更早。");
+        if (from < oldest) throw DomainException.Validation($"指定日期超出目前 {retentionDays} 天的資料保留範圍（最早可選 {oldest:yyyy-MM-dd}）。");
+        if ((to - from).Days + 1 > SelectedBackfillMaxDays)
+            throw DomainException.Validation($"一次最多回填 {SelectedBackfillMaxDays} 天。");
+        if (settings.PrtgSensorTypeWhitelist == null || settings.PrtgSensorTypeWhitelist.Count == 0)
+            throw DomainException.Validation("PRTG 感測器類型白名單為空，為避免查詢所有 sensor，局部回填已拒絕。");
+        return (ids, from, to);
+    }
+
+    private async Task ExecuteSelectedAsync(PreparedRun run, DateTime from, DateTime to, IReadOnlyCollection<long> hostIds)
+    {
+        var success = false;
+        var cancelled = false;
+        var console = new PrtgBackfillConsole(_state);
+        try
+        {
+            using (run.Client)
+            {
+                var store = _backend.PrtgStore();
+                var fetch = new PrtgFetchService(run.Client, store,
+                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
+                    PrtgSensorTypeCategoryMap.ParseOverrides(run.Settings.PrtgSensorTypeCategoryOverrides).Map);
+                console.WriteLine($"開始指定主機 PRTG 數值回填（{from:yyyy-MM-dd}～{to:yyyy-MM-dd}，主機 {hostIds.Count} 台）；不回填狀態、不補派歷史 finding。");
+                success = await PrtgBackfillRunner.RunValuesForHostsAsync(
+                    fetch, from, to, hostIds, run.Settings.PrtgFetchConcurrency,
+                    run.Settings.PrtgSensorTypeWhitelist, store, console, run.Token,
+                    (done, total, date) => _state.UpdateDay(done, total, date),
+                    (done, total) => _state.UpdateSensors(done, total));
+            }
+        }
+        catch (OperationCanceledException) when (run.Token.IsCancellationRequested)
+        {
+            cancelled = true;
+            success = false;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"指定主機回填發生未預期錯誤：{ex.Message}");
+        }
+        finally
+        {
+            _state.FinishRun(success, cancelled);
+        }
     }
 
     /// <summary>
@@ -230,11 +397,12 @@ public class PrtgBackfillService : IPrtgBackfillTail
     public async Task<bool> RunTailAsync(int days, IReadOnlyCollection<long>? hostIds, IRunConsole console, CancellationToken ct)
     {
         var s = _settings.Get();
-        if (!TryPrepare(s, days, blockWhenSchedulerRunning: false, out var run, out var error, out _))
+        if (!TryPrepare(s, days, blockWhenSchedulerRunning: false, runKind: "tail", out var run, out var error, out _))
         {
             console.WriteLine($"  ⚠ 接續補 PRTG 數值未執行：{error}");
             return false;
         }
+
 
         // 整趟被停止時一併停止回填；回填也可以在維護頁的狀態卡單獨停止
         bool success;
@@ -250,8 +418,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
     /// 兩條入口共用的擋門與啟動：通過時已佔住執行狀態並建立 PRTG 連線，呼叫端必須接著呼叫 <see cref="ExecuteAsync"/>。
     /// </summary>
     /// <param name="blockWhenSchedulerRunning">手動回填要避開取數執行；接續回填本身就是那一趟，不檢查。</param>
-    private bool TryPrepare(SystemSettings s, int days, bool blockWhenSchedulerRunning,
-        out PreparedRun? run, out string? error, out bool isConflict)
+    private bool TryPrepare(SystemSettings s, int days, bool blockWhenSchedulerRunning, string runKind,
+        out PreparedRun? run, out string? error, out bool isConflict, bool requireRecentMapping = true)
     {
         run = null;
         error = null;
@@ -303,13 +471,13 @@ public class PrtgBackfillService : IPrtgBackfillTail
         // 鏡像有東西時照舊在入口判斷對應：沒有任何主機對應時逐日目標 sensor 一律是 0 個，放行只會空跑並報成功。
         var prtgStore = _backend.PrtgStore();
         var needsStructureSync = prtgStore.GetSensorTargets().Count == 0;
-        if (!needsStructureSync && !HasAnyMapping(prtgStore, days))
+        if (requireRecentMapping && !needsStructureSync && !HasAnyMapping(prtgStore, days))
         {
             error = $"近 {MapGateWindow(days)} 天沒有任何 PRTG 主機對應，回填找不到要取數的主機。請先按「同步結構與對應」建立對應後再回填。";
             return false;
         }
 
-        if (!_state.TryBeginRun(out var runToken))
+        if (!_state.TryBeginIdentifiedRun(runKind, out var runToken))
         {
             error = "回填已在執行中。";
             isConflict = true;
