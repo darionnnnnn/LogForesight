@@ -212,11 +212,7 @@ F 的 Web 契約至少有三種清楚分離的操作：只讀的逐顆 readiness
 | F 語意驗證與持久證據 | 自動化驗收完成 | 有限單顆或最多五顆依序驗證、取消、15 分鐘行程內 requestId 去重、證據保存／失效及有理由人工確認；進度不被舊結果覆蓋 | 現場主頻道／單位及正式站台重啟實測 |
 | E 使用效果與文件 | 自動化驗收完成 | 指標分口徑顯示，低 coverage 僅計已落盤 sampled 小時列；PRTG 單獨主要問題另計 TopIssue 全為 PRTG 的主機日，靜音另計期間區間重疊的 PRTG 問題檔案，均不冒充 finding 數；指定文件依現況校正並保留實機待驗邊界 | 真實 finding 至回覆效果尚無足夠觀測 |
 
-整體驗收：`dotnet build LogForesight.sln -v q` 為 0 警告、0 錯誤；完整測試 `dotnet test LogForesight.Tests/LogForesight.Tests.csproj --no-build -v q` 為 **5598 通過、0 失敗、10 略過（共 5608），9 分 30 秒**；本輪變更的 `prtg-admin.js` 與 `rules.js` 語法檢查通過。SQL Server 僅驗證 EF `ToQueryString` provider 翻譯，未連線真實 SQL Server；模擬整合與 SQLite 測試不代表正式站台驗證。正式站台匯出目前約 6 天且 `Unit=null`；真實 PRTG 28 日資料、頻道／單位／方向、25% coverage 根因、預警效果與正式站台故障情境均仍待驗。快照診斷無逐 sensor identity 證據。規則持續預設停用，程式測試、候選解析或草稿試算不能替代實機證據。
-
-## 體檢交接
-
-本輪 A～F 程式由委派實作方完成；收尾由主代理獨立對照 `dev..feature/feedback-51`、PLAN 子契約與端到端動線。實作輪全套基線為 5598 通過／10 略過。收尾修正後的全套結果以併入 `dev` 後的終檢紀錄為準。
+整體驗收：`dotnet build LogForesight.sln -v q` 為 0 警告、0 錯誤；完整測試 `dotnet test LogForesight.Tests/LogForesight.Tests.csproj --no-build -v q` 為 **5600 通過、0 失敗、10 略過（共 5610），8 分 14 秒**；本輪變更的 `prtg-admin.js` 與 `rules.js` 語法檢查通過。SQL Server 僅驗證 EF `ToQueryString` provider 翻譯，未連線真實 SQL Server；模擬整合與 SQLite 測試不代表正式站台驗證。正式站台匯出目前約 6 天且 `Unit=null`；真實 PRTG 28 日資料、頻道／單位／方向、25% coverage 根因、預警效果與正式站台故障情境均仍待驗。快照診斷無逐 sensor identity 證據。規則持續預設停用，程式測試、候選解析或草稿試算不能替代實機證據。
 
 ## 體檢輪修正
 
@@ -225,3 +221,7 @@ F 的 Web 契約至少有三種清楚分離的操作：只讀的逐顆 readiness
 - **F 工作台試算文案錯寫 35 日上限**：單顆試算實際依已儲存規則的近期分析視窗、可達 730 日；已修正頁面文字，避免管理者以為超過 35 日就不能驗證。
 
 體檢重查 A 快照持久診斷、B 逐顆品質與證據、C 歷史對應及互斥、D 規則來源與 finding→案件／交辦、F 取消／持久證據、E 口徑與權限；沒有把 6 天測試匯出或 SQLite／EF 翻譯冒稱正式站台通過。長窗口 CPU 成本與跨行程關單競態在真實規模下仍需觀察，列入既有待驗範圍，不在收尾擴成第二套規則或排程。
+
+## 終檢紀錄（2026-09-24）
+
+逐項對照 A～F 的程式、API、畫面、測試與現行規格；E 指標口徑與 F 試算文案的三處缺漏已補齊。合併至 dev 後全套測試 5600 通過、0 失敗、10 略過；PRTG 前端語法與建置亦通過。未發現需另開第二套規則、排程或資料模型的需求。正式 PRTG 28 日資料、頻道／單位語意、25% coverage 根因、預警效果、真實 SQL Server 與正式站台故障情境仍待實機驗證，磁碟趨勢規則維持預設停用。

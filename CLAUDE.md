@@ -38,7 +38,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前整合基線 **5598 通過／0 失敗／10 略過（共 5608）**（2026-09-24，`dotnet test LogForesight.Tests/LogForesight.Tests.csproj --no-build -v q`，9 分 30 秒）；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前整合基線 **5600 通過／0 失敗／10 略過（共 5610）**（2026-09-24，`dotnet test LogForesight.Tests/LogForesight.Tests.csproj --no-build -v q`，8 分 14 秒）；
   略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑。文件／說明書批次可先跑定向的
   `dotnet test --filter FullyQualifiedName~HelpContentServiceTests` 與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
