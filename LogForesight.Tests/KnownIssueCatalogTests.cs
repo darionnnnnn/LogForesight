@@ -161,7 +161,8 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(ids.Count, ids.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(rules, r => Assert.StartsWith("builtin-", r.Id));
         Assert.All(rules, r => Assert.Equal("builtin", r.Origin));
-        Assert.All(rules, r => Assert.True(r.Enabled));
+        Assert.All(rules.Where(r => r.Id != "builtin-prtg-disk-free-trend"), r => Assert.True(r.Enabled));
+        Assert.False(rules.Single(r => r.Id == "builtin-prtg-disk-free-trend").Enabled);
         Assert.All(rules, r => Assert.Equal("all", r.Scope));
         Assert.All(rules, r => Assert.Null(r.MatchFilter));
     }
@@ -201,13 +202,13 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為7()
+    public void 種子版本為8()
     {
-        Assert.Equal(7, KnownIssueSeed.Version);
+        Assert.Equal(8, KnownIssueSeed.Version);
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共8條_總計100條()
+    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共9條_總計101條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
@@ -216,8 +217,8 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.Equal(64, windows.Count);
         Assert.Equal(28, linux.Count);
-        Assert.Equal(8, prtg.Count);
-        Assert.Equal(100, rules.Count);
+        Assert.Equal(9, prtg.Count);
+        Assert.Equal(101, rules.Count);
     }
 
     [Fact]
@@ -475,19 +476,26 @@ public class KnownIssueCatalogTests : IDisposable
             .ToList();
 
     [Fact]
-    public void 種子含八條PRTG規則且全部通過RuleValidator()
+    public void 種子含九條PRTG規則且全部通過RuleValidator()
     {
         var rules = KnownIssueSeed.CreateRules();
         var prtgRules = rules.Where(r => r.Platform == "prtg").ToList();
 
-        Assert.Equal(8, prtgRules.Count);
+        Assert.Equal(9, prtgRules.Count);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-down" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && r.PrtgThreshold == 60);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-flapping" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && r.PrtgThreshold == 5);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-warning" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleWarning && r.PrtgThreshold == 240);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-silent" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent && r.PrtgThreshold == 0);
 
+        var diskTrend = Assert.Single(prtgRules, r => r.Id == "builtin-prtg-disk-free-trend");
+        Assert.False(diskTrend.Enabled);
+        Assert.Equal(PrtgRuleEvaluator.RuleDiskFreeTrend, diskTrend.PrtgRuleCode);
+        Assert.Equal(0, diskTrend.PrtgThreshold);
+        Assert.Equal(PrtgSensorCategories.Disk, diskTrend.PrtgSensorCategory);
+        Assert.Equal(PrtgDiskTrendThresholds.Provisional, diskTrend.PrtgDiskTrendThresholds);
+
         var outcome = RuleValidator.Validate(prtgRules);
-        Assert.Equal(8, outcome.ValidRules.Count);
+        Assert.Equal(9, outcome.ValidRules.Count);
         Assert.Empty(outcome.SkippedRules);
         Assert.Empty(outcome.ShadowWarnings);
     }
@@ -502,8 +510,9 @@ public class KnownIssueCatalogTests : IDisposable
             Enabled = true,
             Scope = "all",
             Platform = "prtg",
-            PrtgRuleCode = PrtgRuleEvaluator.RuleDown,
-            PrtgThreshold = 120,
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend,
+            PrtgThreshold = 0,
+            PrtgDiskTrendThresholds = new PrtgDiskTrendThresholds(10, 5, 30, 28, 35, 0.70),
             Category = IssueCategory.Service,
             Severity = IssueSeverity.High,
             ElevatesDayRisk = true,
@@ -520,8 +529,9 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(original.Id, cloned.Id);
         Assert.False(cloned.Enabled);
         Assert.Equal("prtg", cloned.Platform);
-        Assert.Equal(PrtgRuleEvaluator.RuleDown, cloned.PrtgRuleCode);
-        Assert.Equal(120, cloned.PrtgThreshold);
+        Assert.Equal(PrtgRuleEvaluator.RuleDiskFreeTrend, cloned.PrtgRuleCode);
+        Assert.Equal(0, cloned.PrtgThreshold);
+        Assert.Equal(original.PrtgDiskTrendThresholds, cloned.PrtgDiskTrendThresholds);
     }
 
     // ── PlainExplanationFor：PRTG 簽章（task-46-A3）─────────────────────────────
@@ -618,7 +628,7 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Null(KnownIssueCatalog.PlainExplanationFor(rules, "sshd", 0));   // 兩條命中同 program：不給說明
     }
 
-    // ── seed v7：依 sensor 分類覆寫 ──────────────────────────────────
+    // ── seed v8：磁碟空間趨勢規則 ────────────────────────────────────
 
     [Fact]
     public void 種子全部規則通過RuleValidator()
@@ -629,6 +639,20 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.Empty(outcome.SkippedRules);
         Assert.Equal(rules.Count, outcome.ValidRules.Count);
+    }
+
+    [Fact]
+    public void 種子v8_新增預設停用的磁碟可用空間趨勢規則()
+    {
+        var trend = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-disk-free-trend");
+
+        Assert.False(trend.Enabled);
+        Assert.False(trend.ElevatesDayRisk);
+        Assert.Equal("prtg", trend.Platform);
+        Assert.Equal(PrtgRuleEvaluator.RuleDiskFreeTrend, trend.PrtgRuleCode);
+        Assert.Equal(0, trend.PrtgThreshold);
+        Assert.Equal(PrtgSensorCategories.Disk, trend.PrtgSensorCategory);
+        Assert.Equal(PrtgDiskTrendThresholds.Provisional, trend.PrtgDiskTrendThresholds);
     }
 
     [Fact]
@@ -664,7 +688,7 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     [Fact]
-    public void 種子v7_PRTG規則Description不含門檻數字()
+    public void 種子v8_PRTG規則Description不含門檻數字()
     {
         var prtgRules = KnownIssueSeed.CreateRules().Where(r => r.Platform == "prtg").ToList();
 

@@ -146,6 +146,30 @@ public class HealthDetailDto : HealthDto
 
     /// <summary>PRTG 各類資料的擷取新鮮度；PRTG 未啟用時為 null（畫面不顯示「PRTG 擷取」列）</summary>
     public List<PrtgFreshnessDto>? PrtgFreshness { get; set; }
+
+    /// <summary>PRTG 快照最近完整小時摘要；PRTG 未啟用時為 null。</summary>
+    public PrtgSnapshotHealthDto? PrtgSnapshot { get; set; }
+}
+
+/// <summary>系統健康頁使用的精簡快照診斷。</summary>
+public sealed class PrtgSnapshotHealthDto
+{
+    /// <summary>disabled｜no-targets｜healthy｜covered｜insufficient｜unknown｜paused</summary>
+    public string State { get; set; } = "unknown";
+    public int ConsecutiveAnomalousHours { get; set; }
+    public bool Warning { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string NextStepUrl { get; set; } = "/admin/prtg#mirror";
+    public List<PrtgSnapshotHourHealthDto> RecentHours { get; set; } = new();
+}
+
+public sealed class PrtgSnapshotHourHealthDto
+{
+    public DateTime Hour { get; set; }
+    public string State { get; set; } = string.Empty;
+    public int Targets { get; set; }
+    public int AvailableValues { get; set; }
+    public int WriteFailures { get; set; }
 }
 
 public class SourceMergePreviewDto

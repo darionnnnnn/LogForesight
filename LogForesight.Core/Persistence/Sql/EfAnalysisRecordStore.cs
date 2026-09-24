@@ -792,6 +792,99 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    /// <summary>
+    /// Disk 趨勢證據專用有界查詢：先在 lf_top_issues 對限定 host/date/signature 取每組最新 RecordId，
+    /// 再只讀這些主列的 JSON。全程固定批次查詢，不按主機或 sensor 發 N+1。
+    /// </summary>
+    public List<DiskTrendEvidenceRecord> QueryDiskTrendEvidence(
+        IReadOnlyCollection<(long HostId, string SensorId)> hostSensors, DateTime from, DateTime to)
+    {
+        var pairs = hostSensors.Where(p => p.HostId > 0 && !string.IsNullOrWhiteSpace(p.SensorId))
+            .Distinct().Take(100).ToArray();
+        if (pairs.Length == 0 || from.Date > to.Date) return new();
+
+        using var ctx = _contextFactory();
+        var keyedPairs = pairs.Select(p => (p.HostId, EventKey: $"prtg:disk_free_trend:{p.SensorId}")).ToArray();
+        var latestIds = BuildLatestDiskTrendRows(ctx, keyedPairs, from, to).ToList();
+        if (latestIds.Count == 0) return new();
+
+        var ids = latestIds.Select(x => x.RecordId).Distinct().ToArray();
+        var records = ctx.DailyRecords.AsNoTracking().Where(r => ids.Contains(r.RecordId))
+            .Select(r => new { r.RecordId, r.HostId, r.RecordDate, r.ContentJson }).ToList();
+        var byId = records.ToDictionary(r => r.RecordId);
+        var results = new List<DiskTrendEvidenceRecord>(latestIds.Count);
+        foreach (var latest in latestIds)
+        {
+            if (!byId.TryGetValue(latest.RecordId, out var row) || row.HostId != latest.HostId) continue;
+            var pair = pairs.FirstOrDefault(p => p.HostId == latest.HostId
+                && string.Equals($"prtg:disk_free_trend:{p.SensorId}", latest.EventKey, StringComparison.Ordinal));
+            if (pair.HostId <= 0) continue;
+            DailyAnalysisRecord? record;
+            try { record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson); }
+            catch (JsonException) { continue; }
+            if (record == null || record.HostId != pair.HostId || record.Date.Date != row.RecordDate.Date) continue;
+            var issue = record.TopIssues.FirstOrDefault(i =>
+                string.Equals(i.Source, "PRTG:disk_free_trend", StringComparison.Ordinal)
+                && string.Equals(i.LogName, "PRTG", StringComparison.Ordinal)
+                && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
+                && string.Equals(i.EventKey, latest.EventKey, StringComparison.Ordinal));
+            if (issue == null) continue;
+            var detail = issue.SampleMessages?.FirstOrDefault()?.Trim();
+            results.Add(new DiskTrendEvidenceRecord(pair.HostId, row.RecordDate, pair.SensorId,
+                string.IsNullOrEmpty(detail) ? null : detail[..Math.Min(detail.Length, 200)]));
+        }
+        return results;
+    }
+
+    internal static IQueryable<DiskTrendLatestRow> BuildLatestDiskTrendRows(
+        LfDbContext ctx, (long HostId, string EventKey)[] pairs, DateTime from, DateTime to)
+    {
+        const string sourceName = "PRTG:DISK_FREE_TREND";
+        const string logName = "PRTG";
+        var parameter = System.Linq.Expressions.Expression.Parameter(typeof(TopIssueRow), "t");
+        System.Linq.Expressions.Expression? pairMatch = null;
+        foreach (var pair in pairs)
+        {
+            var hostMatch = System.Linq.Expressions.Expression.Equal(
+                System.Linq.Expressions.Expression.Property(parameter, nameof(TopIssueRow.HostId)),
+                System.Linq.Expressions.Expression.Constant(pair.HostId));
+            var eventMatch = System.Linq.Expressions.Expression.Equal(
+                System.Linq.Expressions.Expression.Property(parameter, nameof(TopIssueRow.EventKey)),
+                System.Linq.Expressions.Expression.Constant(pair.EventKey));
+            var match = System.Linq.Expressions.Expression.AndAlso(hostMatch, eventMatch);
+            pairMatch = pairMatch == null ? match : System.Linq.Expressions.Expression.OrElse(pairMatch, match);
+        }
+        if (pairMatch == null) return ctx.TopIssues.Where(_ => false)
+            .Select(x => new DiskTrendLatestRow { HostId = x.HostId, EventKey = x.EventKey, RecordId = x.RecordId });
+        var pairPredicate = System.Linq.Expressions.Expression.Lambda<Func<TopIssueRow, bool>>(pairMatch, parameter);
+        var candidates = ctx.TopIssues.AsNoTracking().Where(pairPredicate).Where(x =>
+            x.RecordDate >= from.Date && x.RecordDate <= to.Date
+            && ((x.SourceKey == sourceName && x.SourceName == "PRTG:disk_free_trend")
+                || (x.SourceKey == null && x.SourceName == "PRTG:disk_free_trend"))
+            && x.LogName == logName && x.EventId == 0
+            && x.EntryType == (int)System.Diagnostics.EventLogEntryType.Warning);
+
+        var latestDates = candidates.GroupBy(t => new { t.HostId, t.EventKey })
+            .Select(g => new { g.Key.HostId, g.Key.EventKey, Date = g.Max(t => t.RecordDate) });
+        return from t in candidates
+               join d in latestDates on new { t.HostId, t.EventKey, t.RecordDate }
+                   equals new { d.HostId, d.EventKey, RecordDate = d.Date }
+               group t by new { t.HostId, t.EventKey } into g
+               select new DiskTrendLatestRow
+               {
+                   HostId = g.Key.HostId,
+                   EventKey = g.Key.EventKey,
+                   RecordId = g.Max(t => t.RecordId)
+               };
+    }
+
+    internal sealed class DiskTrendLatestRow
+    {
+        public long HostId { get; init; }
+        public string EventKey { get; init; } = string.Empty;
+        public long RecordId { get; init; }
+    }
+
     public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter)
     {
         var sw = Stopwatch.StartNew();

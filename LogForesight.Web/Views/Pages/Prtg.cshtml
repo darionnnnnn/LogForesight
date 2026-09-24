@@ -10,7 +10,61 @@
     <li class="nav-item"><button class="nav-link" data-tab="params" type="button">擷取參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="selected-backfill" type="button">指定主機補值</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="effectiveness" type="button">使用效果</button></li>
+    <li class="nav-item ms-sm-auto"><button class="nav-link small" data-tab="probe" type="button">前往探測與資料準備度</button></li>
 </ul>
+
+<div data-panel="effectiveness" class="d-none">
+    <section class="lf-card mb-4" id="prtg-effectiveness" aria-labelledby="prtg-effectiveness-title">
+        <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h2 class="lf-card__title" id="prtg-effectiveness-title">PRTG 使用效果</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="small text-muted">依所選日期統計既有資料。各項數字的計算對象不同，彼此不構成轉換流程；「—」代表資料不足以計算，不代表 0。</p>
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-12 col-sm-5 col-md-4"><label class="form-label" for="prtg-effectiveness-from">起始日期</label><input class="form-control" type="date" id="prtg-effectiveness-from" /></div>
+                <div class="col-12 col-sm-5 col-md-4"><label class="form-label" for="prtg-effectiveness-through">結束日期</label><input class="form-control" type="date" id="prtg-effectiveness-through" /></div>
+                    <div class="col-12 col-sm-auto"><button type="button" class="btn btn-primary" id="prtg-effectiveness-refresh">查詢</button></div>
+            </div>
+            <div id="prtg-effectiveness-status" class="small mb-3" role="status" aria-live="polite" aria-atomic="true">選擇日期後按「查詢」載入資料。</div>
+            <div id="prtg-effectiveness-error" class="mb-3" aria-live="polite"></div>
+            <div id="prtg-effectiveness-metrics" class="row g-2 d-none" aria-label="使用效果指標"></div>
+            <details class="small mt-3" id="prtg-effectiveness-details">
+                <summary>指標定義與限制</summary>
+                <p class="mt-2 mb-1" id="prtg-effectiveness-semantics"></p>
+                <p class="mb-0 text-muted" id="prtg-effectiveness-limitations"></p>
+            </details>
+        </div>
+    </section>
+</div>
+
+<div data-panel="selected-backfill" class="d-none">
+    <section class="lf-card" aria-labelledby="prtg-selected-backfill-title">
+        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-selected-backfill-title">指定主機歷史數值補值</h2></div>
+        <div class="lf-card__body">
+            <p class="small text-muted">只補指定主機與日期的 PRTG 歷史數值，不會重跑歷史 finding 評估，也不會建立或派送案件／交辦。最多選 5 台主機、最多 7 天。</p>
+            <div class="row g-3 mb-3">
+                <div class="col-12 col-lg-6">
+                    <label for="prtg-selected-backfill-search" class="form-label">搜尋已儲存主機</label>
+                    <input id="prtg-selected-backfill-search" class="form-control" type="search" autocomplete="off" aria-controls="prtg-selected-backfill-hosts" placeholder="輸入主機名稱或 IP" />
+                    <div class="form-text" id="prtg-selected-backfill-host-help">使用方向鍵、空白鍵或滑鼠選取，最多 5 台。</div>
+                    <div id="prtg-selected-backfill-hosts" class="border rounded mt-2 p-2" role="group" aria-describedby="prtg-selected-backfill-host-help" style="max-height: 16rem; overflow-y: auto;">
+                        <span class="small text-muted">載入主機清單中…</span>
+                    </div>
+                    <div class="small mt-1" id="prtg-selected-backfill-selection" aria-live="polite"></div>
+                </div>
+                <div class="col-12 col-lg-6"><div class="row g-3">
+                    <div class="col-12 col-sm-6"><label for="prtg-selected-backfill-from" class="form-label">起始日期</label><input id="prtg-selected-backfill-from" class="form-control" type="date" /></div>
+                    <div class="col-12 col-sm-6"><label for="prtg-selected-backfill-to" class="form-label">結束日期</label><input id="prtg-selected-backfill-to" class="form-control" type="date" /></div>
+                </div><div class="form-text mt-2">含起訖日；日期需在 PRTG 歷史保留範圍內。</div></div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mb-3"><button type="button" class="btn btn-outline-primary" id="prtg-selected-backfill-preview">預覽工作量</button><button type="button" class="btn btn-primary" id="prtg-selected-backfill-start" disabled>確認並開始補值</button></div>
+            <div id="prtg-selected-backfill-preview-result" aria-live="polite" aria-atomic="true"></div>
+            <div class="border rounded p-3 mt-3" id="prtg-selected-backfill-status" aria-live="polite"><div class="d-flex flex-wrap align-items-center gap-2"><span id="prtg-selected-backfill-status-text">讀取回填狀態中…</span><button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-selected-backfill-cancel">停止回填</button><button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-selected-backfill-status-retry">重新整理狀態</button></div><div class="small text-muted mt-1" id="prtg-selected-backfill-progress"></div></div>
+        </div>
+    </section>
+</div>
 
 <div data-panel="connection">
     <form id="prtg-connection-form">
@@ -251,6 +305,16 @@
 </div>
 
 <div data-panel="mirror" class="d-none">
+    <section class="lf-card mb-3" aria-labelledby="prtg-snapshot-diagnostics-title">
+        <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h2 class="lf-card__title" id="prtg-snapshot-diagnostics-title">快照最近 24 個完整小時</h2>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-snapshot-diagnostics-retry">重新載入</button>
+        </div>
+        <div class="lf-card__body">
+            <p class="small text-muted">只讀站內已保存資料，不會呼叫 PRTG。品質達標列數與診斷目標數是小時彙總，未逐顆核對；數值品質與快照執行成功分開顯示。無目標或資料未知不代表健康。</p>
+            <div id="prtg-snapshot-diagnostics" aria-live="polite" aria-atomic="false"></div>
+        </div>
+    </section>
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">鏡像狀態</h2>
@@ -458,13 +522,69 @@
 </div>
 
 <div data-panel="probe" class="d-none">
+    <section class="lf-card mb-4" id="prtg-disk-readiness" aria-labelledby="prtg-disk-readiness-title">
+        <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h2 class="lf-card__title" id="prtg-disk-readiness-title">磁碟值型資料準備度</h2>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-readiness-retry">重新整理</button>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small">唯讀檢視已儲存的磁碟感測器資料，不會呼叫 PRTG API，也不會啟動完整環境探測。</p>
+            <div id="prtg-readiness-summary" aria-live="polite" aria-atomic="true" class="mb-3">尚未載入。</div>
+            <div id="prtg-readiness-reasons" class="small mb-3"></div>
+            <div id="prtg-readiness-rows" class="d-grid gap-2" aria-live="polite"></div>
+            <nav class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3" aria-label="磁碟資料準備度分頁">
+                <span id="prtg-readiness-page-label" class="small text-muted"></span>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-readiness-prev" disabled>上一頁</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-readiness-next" disabled>下一頁</button>
+                </div>
+            </nav>
+        </div>
+    </section>
+    <section class="lf-card mb-4" id="prtg-disk-verification" aria-labelledby="prtg-disk-verification-title">
+        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-disk-verification-title" tabindex="-1">磁碟語意驗證</h2></div>
+        <div class="lf-card__body">
+            <p class="small text-muted">可維持單顆驗證，或選取最多 5 顆已對應、未暫停、白名單內且具備 28 日可用資料的磁碟感測器依序驗證昨天單日。批次共用探測互斥、可停止後續項目，逐顆保存結果；requestId 去重記憶最多保留 512 筆／15 分鐘，站台重啟後不保留。驗證不會自動確認未知頻道／單位，也不會啟用規則或派工。</p>
+            <div id="prtg-disk-verification-selection" class="mb-2" aria-live="polite">請由上方感測器列選擇「驗證這顆」。</div>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button type="button" class="btn btn-primary" id="prtg-disk-verification-start" disabled>驗證昨天語意</button>
+                <button type="button" class="btn btn-outline-primary" id="prtg-disk-verification-batch-start" disabled>依序驗證所選（0/5）</button>
+                <button type="button" class="btn btn-outline-secondary" id="prtg-disk-verification-refresh" disabled>更新狀態</button>
+                <button type="button" class="btn btn-outline-danger d-none" id="prtg-disk-verification-cancel">取消驗證</button>
+            </div>
+            <div id="prtg-disk-verification-status" class="border rounded p-3 mb-3" role="status" aria-live="polite" aria-atomic="true">尚未選取感測器。</div>
+            <div id="prtg-disk-verification-batch-results" class="small d-grid gap-1 mb-3" aria-live="polite"></div>
+            <div id="prtg-disk-verification-evidence" class="small d-grid gap-1 mb-3" aria-live="polite"></div>
+            <section class="border rounded p-3 mb-3" aria-labelledby="prtg-disk-rule-trial-title">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <h3 class="h6 mb-0" id="prtg-disk-rule-trial-title">同一感測器規則試算</h3>
+                    <a class="btn btn-sm btn-outline-secondary" href="@Url.Content("~/admin/rules")">編輯 disk_free_trend 規則</a>
+                </div>
+                <p class="small text-muted mt-2 mb-2">以最新完成日的已落地資料唯讀評估一顆感測器，最多 35 日；不呼叫 PRTG，也不建立 finding、case、派工或業務稽核紀錄。需先完成語意驗證。</p>
+                <div id="prtg-disk-rule-trial" class="small" role="status" aria-live="polite" aria-atomic="true">選取感測器後載入試算。</div>
+            </section>
+            <form id="prtg-disk-manual-form" class="border rounded p-3 d-none">
+                <h3 class="h6">人工覆核語意</h3>
+                <p class="small text-warning">請先在 PRTG 核對此頻道。提交代表你負責確認頻道確為可用／剩餘空間百分比及方向；系統會記錄操作者與理由。人工確認不會自動啟用規則。</p>
+                <div class="row g-3">
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-manual-channel-id">頻道 ID</label><input class="form-control" id="prtg-manual-channel-id" required maxlength="120"></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-manual-channel-name">頻道名稱</label><input class="form-control" id="prtg-manual-channel-name" required maxlength="120"></div>
+                    <div class="col-12 col-sm-6"><label class="form-label" for="prtg-manual-unit">單位（百分比）</label><input class="form-control" id="prtg-manual-unit" required value="%" maxlength="30"></div>
+                    <div class="col-12 col-sm-6"><label class="form-label" for="prtg-manual-scale">尺度</label><input class="form-control" id="prtg-manual-scale" type="number" min="0.000001" step="any" value="1" required></div>
+                    <div class="col-12"><label class="form-label" for="prtg-manual-direction">危險方向</label><select class="form-select" id="prtg-manual-direction" required><option value="descending-danger">數值越低越危險（可用空間下降）</option></select></div>
+                    <div class="col-12"><label class="form-label" for="prtg-manual-reason">覆核理由</label><textarea class="form-control" id="prtg-manual-reason" rows="2" maxlength="500" required></textarea></div>
+                </div>
+                <button type="submit" class="btn btn-outline-primary mt-3" id="prtg-manual-confirm" disabled>提交人工確認</button>
+            </form>
+        </div>
+    </section>
     <div class="lf-card mb-4" id="prtg-probe">
         <div class="lf-card__header">
             <h2 class="lf-card__title">環境探測</h2>
         </div>
         <div class="lf-card__body">
             <p class="text-muted small mb-3">
-                「小範圍資料流驗證」會從已對應主機挑一顆符合白名單的 sensor，讀取昨天一天的 PRTG 歷史數值，沿正式取值路徑寫入並讀回資料庫；只會更新該 sensor 當日數值，不會清除資料。「完整環境探測」則唯讀檢查全站結構與 API 能力。
+                「小範圍資料流驗證」會從已對應主機挑一顆符合白名單的 sensor，讀取昨天一天的 PRTG 歷史數值，沿正式取值路徑寫入並讀回資料庫；只證明 API→資料庫資料流，不證明頻道語意或 28 天趨勢。「完整環境探測」則唯讀檢查全站結構與 API 能力。校準匯出的四卡門檻也不是值型規則啟用門檻；驗證成功不會自動啟用規則。
             </p>
             <div class="d-flex align-items-center gap-3 mb-3">
                 <button type="button" class="btn btn-primary" id="prtg-probe-flow-start">驗證小範圍資料流</button>

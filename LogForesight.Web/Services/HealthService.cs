@@ -26,6 +26,7 @@ public class HealthService
     private readonly MailNotificationService _mail;
     private readonly ScheduleFreshnessService _freshness;
     private readonly IssueFirstSeenSeedHostedService? _firstSeenSeedService;
+    private readonly PrtgSnapshotHostedService? _snapshotService;
 
     public HealthService(
         StorageBackend backend,
@@ -33,7 +34,8 @@ public class HealthService
         TopIssueBackfiller backfiller,
         MailNotificationService mail,
         ScheduleFreshnessService freshness,
-        IssueFirstSeenSeedHostedService? firstSeenSeedService = null)
+        IssueFirstSeenSeedHostedService? firstSeenSeedService = null,
+        PrtgSnapshotHostedService? snapshotService = null)
     {
         _backend = backend;
         _runState = runState;
@@ -41,6 +43,7 @@ public class HealthService
         _mail = mail;
         _freshness = freshness;
         _firstSeenSeedService = firstSeenSeedService;
+        _snapshotService = snapshotService;
     }
 
     /// <summary>組建版本（Directory.Build.props 的 Version＋commit）</summary>
@@ -66,9 +69,41 @@ public class HealthService
     {
         var storageOk = ProbeStorage(out var storageError);
         var performance = _backend.Performance.Snapshot();
+        if (!storageOk)
+        {
+            // Storage-backed status providers can fail independently after the probe. Return the
+            // minimal diagnostic DTO here so a failed probe never triggers another database read.
+            return new HealthDetailDto
+            {
+                Status = HealthStatuses.Down,
+                Version = Version,
+                StorageOk = false,
+                StorageError = storageError,
+                SlowThresholdMs = performance.ThresholdMs,
+                TotalOperations = performance.TotalOperations,
+                SlowOperations = performance.SlowOperations,
+                SlowestMs = performance.SlowestMs,
+                SlowestOperation = performance.SlowestOperation,
+                LastSlowAt = performance.LastSlowAt,
+                TopSlowOperations = performance.TopSlowOperations
+                    .Select(o => new SlowOperationDto
+                    {
+                        Operation = o.Operation,
+                        Count = o.Count,
+                        MaxMs = o.MaxMs,
+                        LastAt = o.LastAt
+                    })
+                    .ToList(),
+                PrtgFreshness = null,
+                PrtgSnapshot = null
+            };
+        }
+
         var migration = _backend.HandlingMigrator.State;
         var permMigration = _backend.PermissionChangeMigrator.State;
         var freshness = _freshness.GetScheduleFreshness(DateTime.Now);
+        var prtgEnabled = new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgEnabled;
+        var prtgSnapshot = BuildPrtgSnapshotHealth(prtgEnabled, DateTime.Now);
 
         // 診斷頁只有一行進度可顯示：主／子軌取捨（子進度優先）由 LatestActivity 單點決定
         // （回饋十四輪 UI-6 體檢，與 /api/run-activity 同一個選擇邏輯）——只讀主進度的話，
@@ -88,18 +123,20 @@ public class HealthService
                        performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent)
                        || firstSeenFailed
                        || (freshness.Stale && !freshness.Acked)
+                       || prtgSnapshot?.Warning == true
                        || cryptoKeyMismatch || cryptoDecryptFailure;
 
         return new HealthDetailDto
         {
-            Status = !storageOk ? HealthStatuses.Down : degraded ? HealthStatuses.Degraded : HealthStatuses.Ok,
+            Status = degraded ? HealthStatuses.Degraded : HealthStatuses.Ok,
             Version = Version,
             StorageOk = storageOk,
             StorageError = storageError,
             ScheduleFreshness = freshness,
-            PrtgFreshness = storageOk && new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgEnabled
+            PrtgFreshness = prtgEnabled
                 ? PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
                 : null,
+            PrtgSnapshot = prtgSnapshot,
             SlowThresholdMs = performance.ThresholdMs,
             TotalOperations = performance.TotalOperations,
             SlowOperations = performance.SlowOperations,
@@ -167,6 +204,102 @@ public class HealthService
             CryptoKeyMismatch = cryptoKeyMismatch,
             CryptoDecryptFailure = cryptoDecryptFailure
         };
+    }
+
+    private PrtgSnapshotHealthDto? BuildPrtgSnapshotHealth(bool enabled, DateTime now)
+    {
+        if (!enabled) return new() { State = "disabled", Message = "PRTG 未啟用；快照不參與系統健康判定。" };
+        if (_snapshotService == null) return new() { State = "unknown", Message = "目前無法取得快照診斷資料。" };
+
+        try
+        {
+            return BuildPrtgSnapshotHealth(enabled, _snapshotService.Diagnostics.ReadRecent(now, 24));
+        }
+        catch
+        {
+            return new() { State = "unknown", Message = "快照診斷暫時無法讀取；不影響其他健康項目。" };
+        }
+    }
+
+    public static PrtgSnapshotHealthDto BuildPrtgSnapshotHealth(bool enabled, IReadOnlyList<PrtgSnapshotHourDiagnostic> recent)
+    {
+        if (!enabled) return new() { State = "disabled", Message = "PRTG 未啟用；快照不參與系統健康判定。" };
+        if (recent.Count == 0)
+            return new() { State = "unknown", Message = "尚無完整小時診斷資料。" };
+        try
+        {
+            var history = recent.TakeLast(24).ToArray();
+            var latest = history.TakeLast(2).ToArray();
+            var output = new PrtgSnapshotHealthDto
+            {
+                RecentHours = latest.Select(h => new PrtgSnapshotHourHealthDto
+                {
+                    Hour = h.Hour,
+                    State = h.State.ToString().ToLowerInvariant(),
+                    Targets = h.Targets,
+                    AvailableValues = h.AvailableValues,
+                    WriteFailures = h.WriteFailures
+                }).ToList()
+            };
+            if (latest.Length == 2 && latest.All(h => h.State == PrtgSnapshotHourState.NoTargets))
+            {
+                output.State = "no-targets";
+                output.Message = "目前沒有快照目標；這不代表資料健康或故障。";
+                return output;
+            }
+
+            bool expectedPause(PrtgSnapshotHourDiagnostic h) => h.Skips > 0 &&
+                (h.ReasonCodes.ContainsKey(PrtgSnapshotSkipReasonCodes.NightlyFetchPrtgPhase)
+                    || h.ReasonCodes.ContainsKey(PrtgSnapshotSkipReasonCodes.StructureSyncActive)
+                    || h.ReasonCodes.ContainsKey(PrtgSnapshotSkipReasonCodes.BackfillActive)
+                    || h.ReasonCodes.ContainsKey(PrtgSnapshotSkipReasonCodes.MaintenanceWindow)
+                    || h.ReasonCodes.ContainsKey(PrtgSnapshotSkipReasonCodes.MaintenanceConfirmed));
+            if (latest.Length == 2 && latest.All(expectedPause))
+            {
+                output.State = "paused";
+                output.Message = "快照在預期的互斥或已確認維護時段暫停，不列為失敗。";
+                return output;
+            }
+
+            bool startupPartial(PrtgSnapshotHourDiagnostic h) =>
+                h.Reasons.ContainsKey("startup-partial-hour");
+            var hasKnownTargets = history.Take(Math.Max(0, history.Length - 2)).Any(h => h.Targets > 0);
+            var anomalies = latest.Reverse().TakeWhile(h => !startupPartial(h) && !expectedPause(h) &&
+                ((h.Targets > 0 && (h.State == PrtgSnapshotHourState.Insufficient || h.WriteFailures > 0)) ||
+                 (hasKnownTargets && h.Targets == 0 && h.State == PrtgSnapshotHourState.Unknown))).Count();
+            output.ConsecutiveAnomalousHours = anomalies;
+            output.Warning = anomalies >= 2;
+            if (output.Warning)
+            {
+                output.State = "insufficient";
+                output.Message = "連續兩個完整小時快照資料不足或寫入失敗；可到 PRTG 維護頁鏡像區檢查目標與資料。";
+            }
+            else if (latest[^1].State == PrtgSnapshotHourState.Healthy)
+            {
+                output.State = "healthy";
+                output.Message = "最近完整小時的快照資料可用。";
+            }
+            else if (latest[^1].State == PrtgSnapshotHourState.OkCovered)
+            {
+                output.State = "covered";
+                output.Message = "數值已由完整歷史資料覆蓋；這不單獨證明快照執行成功。";
+            }
+            else if (latest[^1].State == PrtgSnapshotHourState.ReportedWriteCountMetTarget)
+            {
+                output.State = "reported-write-count-met-target";
+                output.Message = "回報寫入量達目標，逐顆覆蓋未證明。累計寫入列數可能因重試或覆寫而重複計數。";
+            }
+            else
+            {
+                output.State = "unknown";
+                output.Message = "完整小時資料不足以判定；暫不列為系統故障。";
+            }
+            return output;
+        }
+        catch
+        {
+            return new() { State = "unknown", Message = "快照診斷暫時無法讀取；不影響其他健康項目。" };
+        }
     }
 
     /// <summary>慢操作占比達此百分比即視為 degraded</summary>

@@ -49,6 +49,10 @@ public class RecordQueryFilter
 /// </summary>
 public interface IAnalysisRecordQuery
 {
+    /// <summary>取每個主機／PRTG disk 趨勢 sensor 最新一筆有界證據，不載入無關每日紀錄。</summary>
+    List<DiskTrendEvidenceRecord> QueryDiskTrendEvidence(
+        IReadOnlyCollection<(long HostId, string SensorId)> hostSensors, DateTime from, DateTime to);
+
     /// <summary>依條件查詢，依日期新到舊排序</summary>
     List<DailyAnalysisRecord> Query(RecordQueryFilter filter);
 
@@ -129,6 +133,9 @@ public interface IAnalysisRecordQuery
     /// </summary>
     List<IssueDayHit> IssueDaysFor(IReadOnlyCollection<HostKey> hosts, IReadOnlyCollection<string> issueKeys);
 }
+
+/// <summary>一個授權主機 sensor 的最新落盤趨勢證據。</summary>
+public sealed record DiskTrendEvidenceRecord(long HostId, DateTime RecordDate, string SensorId, string? Detail);
 
 /// <summary>批次候選日查詢的一筆命中：某主機某天出現某問題鍵（Date 只含日期部分）</summary>
 public sealed record IssueDayHit(long HostId, string IssueKey, DateTime Date);

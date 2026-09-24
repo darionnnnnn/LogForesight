@@ -178,6 +178,9 @@ public class StorageBackend
     /// </summary>
     public SqlPerformanceMonitor Performance { get; } = new();
 
+    /// <summary>建立使用此後端既有 provider 與連線設定的短生命週期 EF context。</summary>
+    public LfDbContext CreateContext() => _dbFactory();
+
     /// <summary>store 的底層 blob（整份 JSON 存 lf_blobs 一列，key 為鍵）</summary>
     public EfJsonBlobStore Blob(string key) => new(_dbFactory, key, Performance);
 

@@ -970,8 +970,15 @@ public class PrtgAdminPageUiTests
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "rules.js"));
         Assert.Contains("prtgSensorCategory: platform === 'prtg' ? (document.getElementById('rule-prtg-sensor-category').value || null) : null", js);
         Assert.Contains("document.getElementById('rule-prtg-sensor-category').value = rule?.prtgSensorCategory ?? '';", js);
-        Assert.Contains("document.getElementById('rule-prtg-code').addEventListener('change', applyPrtgSensorCategoryLock);", js);
-        Assert.Matches(@"isSilent\)\s*select\.value = '';\s*select\.disabled = isSilent;", js);
+        var categoryChangeStart = js.IndexOf(
+            "document.getElementById('rule-prtg-code').addEventListener('change',",
+            StringComparison.Ordinal);
+        Assert.True(categoryChangeStart >= 0, "PRTG 規則代碼應綁定 change 事件");
+        var categoryChangeEnd = js.IndexOf("});", categoryChangeStart, StringComparison.Ordinal);
+        Assert.True(categoryChangeEnd > categoryChangeStart, "change callback 應完整閉合");
+        Assert.Contains("applyPrtgSensorCategoryLock();", js[categoryChangeStart..categoryChangeEnd]);
+        Assert.Matches(@"if \(isSilent\)\s*select\.value = '';", js);
+        Assert.Contains("select.disabled = isSilent || isDiskTrend;", js);
     }
 
     [Fact]

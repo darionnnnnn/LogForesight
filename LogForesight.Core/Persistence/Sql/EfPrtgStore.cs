@@ -781,6 +781,165 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
+    /// <summary>候選 sensor 僅限 as-of 當日成功映射至啟用主機的 device，並在 SQL 端計數與分頁。</summary>
+    public (int Total, List<(long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> Rows) GetCurrentReadinessSensors(
+        IReadOnlyCollection<long> activeHostIds, DateTime mapDate, int offset, int take)
+    {
+        if (activeHostIds.Count == 0) return (0, new());
+        using var ctx = _contextFactory();
+        var query = from sensor in ctx.PrtgSensors.AsNoTracking()
+                    join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                    join map in ctx.PrtgHostMaps.AsNoTracking() on device.Objid equals map.DeviceObjid
+                    where sensor.Category == PrtgSensorCategories.Disk && map.MapDate == mapDate
+                        && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue
+                        && activeHostIds.Contains(map.HostId.Value)
+                    select new { Sensor = sensor, Device = device, HostId = map.HostId!.Value };
+        var total = query.Select(x => x.Sensor.Objid).Distinct().Count();
+        var rows = query.OrderBy(x => x.Sensor.Objid).Skip(offset).Take(take)
+            .Select(x => new { x.Sensor.Objid, x.Sensor.DeviceObjid, x.HostId, x.Sensor.Name,
+                x.Sensor.SensorType, x.Sensor.Category, x.Sensor.Unit, SensorPaused = x.Sensor.Paused,
+                DevicePaused = x.Device.Paused })
+            .ToList();
+        return (total, rows.Select(x => (x.Objid, x.DeviceObjid, x.HostId, x.Name, x.SensorType,
+            x.Category ?? "", x.Unit, x.SensorPaused, x.DevicePaused)).ToList());
+    }
+
+    /// <summary>SQL-filtered lookup for one current disk candidate; never materializes the full sensor set.</summary>
+    public (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)? GetCurrentReadinessSensorById(
+        long sensorObjid, IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate)
+    {
+        if (sensorObjid <= 0 || activeHostIds.Count == 0) return null;
+        using var ctx = _contextFactory();
+        var latest = ctx.PrtgHostMaps.AsNoTracking()
+            .Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
+            .GroupBy(m => m.DeviceObjid)
+            .Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
+        var row = (from sensor in ctx.PrtgSensors.AsNoTracking()
+                   join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                   join last in latest on device.Objid equals last.DeviceObjid
+                   join map in ctx.PrtgHostMaps.AsNoTracking() on new { last.DeviceObjid, last.MapDate } equals new { map.DeviceObjid, map.MapDate }
+                   where sensor.Objid == sensorObjid && sensor.Category == PrtgSensorCategories.Disk
+                       && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue
+                       && activeHostIds.Contains(map.HostId.Value)
+                   select new { sensor.Objid, sensor.DeviceObjid, HostId = map.HostId!.Value, sensor.Name,
+                       sensor.SensorType, sensor.Category, sensor.Unit, SensorPaused = sensor.Paused, DevicePaused = device.Paused })
+            .FirstOrDefault();
+        return row is null ? null : (row.Objid, row.DeviceObjid, row.HostId, row.Name, row.SensorType,
+            row.Category ?? "", row.Unit, row.SensorPaused, row.DevicePaused);
+    }
+
+    /// <summary>Compatibility overload; new callers should pass the explicit lookback start date.</summary>
+    public (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)? GetCurrentReadinessSensorById(
+        long sensorObjid, IReadOnlyCollection<long> activeHostIds, DateTime throughDate) =>
+        GetCurrentReadinessSensorById(sensorObjid, activeHostIds, throughDate, throughDate.Date.AddDays(-28));
+
+    /// <summary>Bounded disk candidates using each device's newest successful mapping in the lookback window.</summary>
+    public (int Total, List<(long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> Rows) GetLatestMappedReadinessSensors(
+        IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate, int take, int offset = 0)
+    {
+        if (activeHostIds.Count == 0 || take <= 0) return (0, new());
+        using var ctx = _contextFactory();
+        var latest = ctx.PrtgHostMaps.AsNoTracking()
+            .Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
+            .GroupBy(m => m.DeviceObjid)
+            .Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
+        var query = from sensor in ctx.PrtgSensors.AsNoTracking()
+                    join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                    join last in latest on device.Objid equals last.DeviceObjid
+                    join map in ctx.PrtgHostMaps.AsNoTracking() on new { last.DeviceObjid, last.MapDate } equals new { map.DeviceObjid, map.MapDate }
+                    where sensor.Category == PrtgSensorCategories.Disk && map.MapStatus == PrtgMapStatus.Ok
+                        && map.HostId.HasValue && activeHostIds.Contains(map.HostId.Value)
+                    select new { Sensor = sensor, Device = device, HostId = map.HostId!.Value };
+        var total = query.Select(x => x.Sensor.Objid).Distinct().Count();
+        var rows = query.OrderBy(x => x.Sensor.Objid).Skip(Math.Max(0, offset)).Take(take)
+            .Select(x => new { x.Sensor.Objid, x.Sensor.DeviceObjid, x.HostId, x.Sensor.Name, x.Sensor.SensorType,
+                x.Sensor.Category, x.Sensor.Unit, SensorPaused = x.Sensor.Paused, DevicePaused = x.Device.Paused }).ToList();
+        return (total, rows.Select(x => (x.Objid, x.DeviceObjid, x.HostId, x.Name, x.SensorType,
+            x.Category ?? "", x.Unit, x.SensorPaused, x.DevicePaused)).ToList());
+    }
+
+    /// <summary>
+    /// Global mirror counts computed by SQL COUNT aggregates; no sensor inventory is materialized.
+    /// The 30-day map range uses lf_prtg_host_map's (map_date, device_objid) primary-key index;
+    /// per-sensor hourly reads below use lf_prtg_values' unique (sensor_objid, period_start) index.
+    /// </summary>
+    public PrtgReadinessInventoryCounts GetReadinessInventoryCounts(IReadOnlyCollection<long> activeHostIds,
+        IReadOnlyCollection<string> whitelistedTypes, DateTime throughDate, DateTime fromDate)
+    {
+        using var ctx = _contextFactory();
+        var candidates = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
+        var inventory = BuildReadinessInventoryQuery(ctx, activeHostIds, whitelistedTypes, throughDate, fromDate);
+        var candidatesCount = candidates.Count();
+        var mappedCount = inventory.Count(x => x.ActiveMapped);
+        var whitelistCount = inventory.Count(x => x.Whitelisted);
+        var pausedCount = inventory.Count(x => x.Paused);
+        var conflictCount = inventory.Count(x => x.Conflict);
+        var unmappedCount = inventory.Count(x => x.Unmapped);
+        var disabledHostCount = inventory.Count(x => x.DisabledHost);
+        return new(candidatesCount, mappedCount, whitelistCount, pausedCount, conflictCount, unmappedCount, disabledHostCount);
+    }
+
+    internal static IQueryable<PrtgReadinessInventoryRow> BuildReadinessInventoryQuery(LfDbContext ctx,
+        IReadOnlyCollection<long> activeHostIds, IReadOnlyCollection<string> whitelistedTypes,
+        DateTime throughDate, DateTime fromDate)
+    {
+        var candidates = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
+        var latest = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
+            .GroupBy(m => m.DeviceObjid).Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
+        var inventory = from sensor in candidates
+                        join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                        join last in latest on device.Objid equals last.DeviceObjid into lastRows
+                        from last in lastRows.DefaultIfEmpty()
+                        join map in ctx.PrtgHostMaps.AsNoTracking() on new { DeviceObjid = device.Objid, MapDate = last == null ? (DateTime?)null : last.MapDate }
+                            equals new { map.DeviceObjid, MapDate = (DateTime?)map.MapDate } into mapRows
+                        from map in mapRows.DefaultIfEmpty()
+                        select new PrtgReadinessInventoryRow
+                        {
+                            Objid = sensor.Objid,
+                            ActiveMapped = map != null && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue && activeHostIds.Contains(map.HostId.Value),
+                            Whitelisted = whitelistedTypes.Contains(sensor.SensorType ?? ""),
+                            Paused = sensor.Paused || device.Paused,
+                            Conflict = map != null && map.MapStatus == PrtgMapStatus.Conflict,
+                            Unmapped = map == null || (map.MapStatus != PrtgMapStatus.Conflict &&
+                                (map.MapStatus != PrtgMapStatus.Ok || !map.HostId.HasValue)),
+                            DisabledHost = map != null && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue &&
+                                !activeHostIds.Contains(map.HostId.Value)
+                        };
+        return inventory;
+    }
+
+    public sealed record PrtgReadinessInventoryCounts(int CandidateSensors, int MappedActiveSensors,
+        int WhitelistedSensors, int PausedSensors, int ConflictSensors, int UnmappedSensors, int DisabledHostSensors);
+
+    internal sealed class PrtgReadinessInventoryRow
+    {
+        public long Objid { get; init; }
+        public bool ActiveMapped { get; init; }
+        public bool Whitelisted { get; init; }
+        public bool Paused { get; init; }
+        public bool Conflict { get; init; }
+        public bool Unmapped { get; init; }
+        public bool DisabledHost { get; init; }
+    }
+
+    /// <summary>只讀取指定 sensor 頁面的 28 日 hourly 列。</summary>
+    public List<PrtgValueRow> GetReadinessValues(IReadOnlyCollection<long> sensorObjids, DateTime from, DateTime to)
+    {
+        if (sensorObjids.Count == 0) return new();
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues.AsNoTracking().Where(v => sensorObjids.Contains(v.SensorObjid)
+            && v.PeriodStart >= from && v.PeriodStart < to).OrderBy(v => v.SensorObjid).ThenBy(v => v.PeriodStart).ToList();
+    }
+
+    /// <summary>讀取指定 sensor 頁面所在 device 的歷史每日 mapping，沒有日期列時維持缺席。</summary>
+    public List<PrtgHostMapRow> GetReadinessMaps(IReadOnlyCollection<long> deviceObjids, DateTime from, DateTime to)
+    {
+        if (deviceObjids.Count == 0) return new();
+        using var ctx = _contextFactory();
+        return ctx.PrtgHostMaps.AsNoTracking().Where(m => deviceObjids.Contains(m.DeviceObjid)
+            && m.MapDate >= from && m.MapDate < to).ToList();
+    }
+
     /// <summary>單次 IN 查詢的 device objid 上限（SQL Server 參數上限 2100，留足餘裕）</summary>
     private const int DeviceQueryBatchSize = 500;
 
@@ -1529,6 +1688,29 @@ public sealed class EfPrtgStore
             ? new PrtgSampledCoverage(result.SensorCount, result.AverageCoverage)
             : new PrtgSampledCoverage(0, null);
     }
+
+    /// <summary>在有限 PeriodStart 範圍內按小時彙總快照列品質。</summary>
+    public List<PrtgSnapshotValueCoverage> GetSnapshotValueCoverage(DateTime fromInclusive, DateTime toExclusive)
+    {
+        using var __perf = _performance.Measure("prtg:GetSnapshotValueCoverage");
+        using var ctx = _contextFactory();
+        return BuildSnapshotValueCoverageQuery(ctx.PrtgValues.AsNoTracking(), fromInclusive, toExclusive)
+            .AsEnumerable()
+            .Select(x => new PrtgSnapshotValueCoverage(x.Hour, x.SampledUsable, x.SampledLowCoverage, x.Ok, x.Usable))
+            .ToList();
+    }
+
+    internal static IQueryable<PrtgSnapshotValueCoverageProjection> BuildSnapshotValueCoverageQuery(
+        IQueryable<PrtgValueRow> values, DateTime fromInclusive, DateTime toExclusive) =>
+        values.Where(v => v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
+            .GroupBy(v => v.PeriodStart)
+            .Select(g => new PrtgSnapshotValueCoverageProjection(
+                g.Key,
+                g.Sum(v => v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0),
+                g.Sum(v => v.Quality == PrtgDataQuality.Sampled && v.Coverage < PrtgValueUsability.SampledMinCoverage ? 1 : 0),
+                g.Sum(v => v.Quality == PrtgDataQuality.Ok ? 1 : 0),
+                g.Sum(v => v.Quality == PrtgDataQuality.Ok ||
+                    v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0)));
 }
 
 /// <summary>
@@ -1615,6 +1797,8 @@ public sealed record PrtgTypeHourlyProfile(string SensorType, int Hour, double? 
 /// PRTG 快照取樣涵蓋指標
 /// </summary>
 public sealed record PrtgSampledCoverage(int SensorCount, double? AverageCoverage);
+public sealed record PrtgSnapshotValueCoverage(DateTime Hour, int SampledUsable, int SampledLowCoverage, int Ok, int Usable);
+internal sealed record PrtgSnapshotValueCoverageProjection(DateTime Hour, int SampledUsable, int SampledLowCoverage, int Ok, int Usable);
 
 /// <summary>
 /// 過期裝置清除結果。Total＝清除前鏡像裝置總數；Stale＝本趟沒刷新到的列數；

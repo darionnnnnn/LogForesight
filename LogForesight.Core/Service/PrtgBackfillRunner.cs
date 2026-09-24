@@ -18,6 +18,101 @@ public static class PrtgBackfillRunner
     // 主機對應為每日作業，歷史對應無法事後重建（歷史 IP 變動、主機異動無法考證），硬造反而是假資料。
 
     /// <summary>
+    /// 只回填明確日期區間及指定主機的 hourly 數值。每一天只採用該日有效的 Ok 主機對應，
+    /// 並只從這些裝置的鏡像 sensor 取數；沒有當日對應或符合白名單的 sensor 時回報略過。
+    /// </summary>
+    /// <returns>至少寫入一筆且全程沒有 sensor 失敗時回傳 true；無目標、部分失敗或全失敗回傳 false。</returns>
+    public static async Task<bool> RunValuesForHostsAsync(
+        PrtgFetchService fetchService,
+        DateTime fromDate,
+        DateTime toDate,
+        IReadOnlyCollection<long> hostIds,
+        int concurrency,
+        IReadOnlyCollection<string>? whitelist,
+        EfPrtgStore store,
+        IRunConsole console,
+        CancellationToken ct,
+        Action<int, int, DateTime?>? dayProgress = null,
+        Action<int, int>? sensorProgress = null)
+    {
+        ArgumentNullException.ThrowIfNull(fetchService);
+        ArgumentNullException.ThrowIfNull(hostIds);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(console);
+
+        var from = fromDate.Date;
+        var to = toDate.Date;
+        var selectedHosts = hostIds.Where(id => id > 0).ToHashSet();
+        if (from > to || selectedHosts.Count == 0 || concurrency <= 0)
+        {
+            console.WriteLine("局部回填範圍無效：請指定有效日期區間、至少一台有效主機及正併發數。");
+            return false;
+        }
+
+        var totalDays = (to - from).Days + 1;
+        var daysWithTargets = 0;
+        var skippedDays = 0;
+        var failedSensors = 0;
+        var written = 0;
+        console.WriteLine($"開始局部 PRTG 數值回填（{from:yyyy-MM-dd}～{to:yyyy-MM-dd}，指定主機 {selectedHosts.Count} 台）...");
+
+        for (var offset = 0; offset < totalDays; offset++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var day = from.AddDays(offset);
+            dayProgress?.Invoke(offset, totalDays, day);
+
+            var mapRows = store.GetHostMapForDate(day)
+                .Where(row => row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue && selectedHosts.Contains(row.HostId.Value))
+                .ToList();
+            if (mapRows.Count == 0)
+            {
+                skippedDays++;
+                sensorProgress?.Invoke(0, 0);
+                console.WriteLine($"局部回填 {day:yyyy-MM-dd} 略過：該日沒有指定主機的有效對應。");
+                continue;
+            }
+
+            var deviceIds = mapRows.Select(row => row.DeviceObjid).Distinct().ToArray();
+            var targets = store.GetValueFetchTargets(whitelist, deviceIds);
+            if (targets.Count == 0)
+            {
+                skippedDays++;
+                sensorProgress?.Invoke(0, 0);
+                console.WriteLine($"局部回填 {day:yyyy-MM-dd} 略過：指定主機的當日對應裝置沒有符合白名單的鏡像 sensor。");
+                continue;
+            }
+
+            daysWithTargets++;
+            try
+            {
+                var (dayWritten, dayFailed) = await fetchService.FetchValuesForSensorsAsync(
+                    day, targets, concurrency, ct,
+                    progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
+                written += dayWritten;
+                failedSensors += dayFailed;
+                console.WriteLine($"局部回填 {day:yyyy-MM-dd}：sensor {targets.Count} 個、數值 {dayWritten} 筆、失敗 {dayFailed} 個。");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failedSensors += targets.Count;
+                console.WriteLine($"局部回填 {day:yyyy-MM-dd} 失敗：{ex.Message}");
+            }
+        }
+
+        dayProgress?.Invoke(totalDays, totalDays, null);
+        if (written > 0)
+            fetchService.RecordFreshness(PrtgFreshnessStore.Values, written);
+
+        console.WriteLine($"局部數值回填完成：有目標 {daysWithTargets} 天、略過 {skippedDays} 天、寫入 {written} 筆、失敗 {failedSensors} 個 sensor。");
+        return daysWithTargets > 0 && written > 0 && failedSensors == 0;
+    }
+
+    /// <summary>
     /// 由近往遠逐日回填 PRTG 過去 N 天的數值與狀態變更。
     /// </summary>
     /// <param name="fetchService">單日擷取服務</param>

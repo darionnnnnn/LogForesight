@@ -55,6 +55,7 @@ public sealed class PrtgEvaluationResult : List<PrtgFinding>
 /// </summary>
 public static class PrtgRuleEvaluator
 {
+    public const string RuleDiskFreeTrend = "disk_free_trend";
     public const string RuleDown = "down";
     public const string RuleFlapping = "flapping";
     public const string RuleWarning = "warning";

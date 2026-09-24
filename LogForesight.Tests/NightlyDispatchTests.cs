@@ -42,6 +42,27 @@ public class NightlyDispatchTests
 
     private static string IssueKey => IssueSignatureKey.For(Issue());
 
+    private static LogIssueSignature PrtgFinding(string rule, string sensorId, bool suppressed = false) => new()
+    {
+        LogName = "PRTG", Source = $"PRTG:{rule}", EventId = 0,
+        EntryType = EventLogEntryType.Warning, EventKey = $"prtg:{rule}:{sensorId}",
+        Severity = IssueSeverity.High, Suppressed = suppressed
+    };
+
+    private void PrtgOwner(string source) => _owners.Upsert(new IssueProfile
+    {
+        SourceName = source, EventId = 0, OwnerUserIds = new List<long> { 7 }
+    });
+
+    private void AddPrtgCandidate()
+    {
+        _candidates.Add(new DispatchCandidate { UserId = 7, Account = "handler7", InPool = true,
+            VisibleHostIds = new HashSet<long> { _hosts.FindByName("SRV-01")!.HostId } });
+        _settings.AutoDispatchEnabled = true;
+        PrtgOwner("PRTG:warning");
+        PrtgOwner("PRTG:disk_free_trend");
+    }
+
     private (NightlyDispatch Dispatch, DispatchContext Ctx) Create()
     {
         var pool = new DispatchCandidatePool
@@ -65,6 +86,75 @@ public class NightlyDispatchTests
         HostDayPostProcessor.AttachCase(_caseCoordinator, dispatch, host, date, issues.ToList());
 
     // ── 行為 ────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void 同批同sensorWarning可派工_不論輸入順序只派Warning且趨勢簽章保留(bool trendFirst)
+    {
+        AddHost("SRV-01");
+        AddPrtgCandidate();
+        const string sensorId = "2001";
+        var warning = PrtgFinding("warning", sensorId);
+        var trend = PrtgFinding("disk_free_trend", sensorId);
+        var trendKey = IssueSignatureKey.For(trend);
+        _caseCoordinator.BuildCase("SRV-01", trendKey, trend.Source, DateTime.Today,
+            handlerId: 7, note: "既有趨勢案件", dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
+        var trendCaseId = _cases.GetOpen("SRV-01", trendKey)!.CaseId;
+        var (dispatch, _) = Create();
+
+        dispatch.DispatchDay("SRV-01", DateTime.Today,
+            trendFirst ? new[] { trend, warning } : new[] { warning, trend }, DateTime.Now);
+
+        var order = Assert.Single(_orders.All);
+        Assert.Equal("PRTG:warning", order.SourceName);
+        var warningKey = IssueSignatureKey.For(warning);
+        Assert.NotNull(_cases.GetOpen("SRV-01", warningKey));
+        Assert.Equal(trendCaseId, _cases.GetOpen("SRV-01", trendKey)!.CaseId);
+        Assert.Equal(trendKey, IssueSignatureKey.For(trend));
+        var summary = dispatch.FlushRun(DateTime.Now);
+        Assert.Equal(1, summary.CreatedOrders);
+        Assert.Equal(1, summary.AttachedMembers);
+        Assert.Equal(1, summary.SkipCounts["related_warning_active"]);
+    }
+
+    [Fact]
+    public void 同批Warning受抑制時_趨勢仍可正常派工()
+    {
+        AddHost("SRV-01");
+        AddPrtgCandidate();
+        const string sensorId = "2001";
+        var warning = PrtgFinding("warning", sensorId, suppressed: true);
+        var trend = PrtgFinding("disk_free_trend", sensorId);
+        var (dispatch, _) = Create();
+
+        dispatch.DispatchDay("SRV-01", DateTime.Today, new[] { warning, trend }, DateTime.Now);
+
+        Assert.Equal("PRTG:disk_free_trend", Assert.Single(_orders.All).SourceName);
+        var summary = dispatch.FlushRun(DateTime.Now);
+        Assert.Equal(1, summary.SkipCounts[WorkOrderDispatcher.SkipSuppressed]);
+        Assert.DoesNotContain("related_warning_active", summary.SkipCounts.Keys);
+        Assert.Equal(1, summary.AttachedMembers);
+    }
+
+    [Fact]
+    public void 前一個DispatchDay成功寫入Warning_同一context後續日期能看見案件與活動單()
+    {
+        AddHost("SRV-01");
+        AddPrtgCandidate();
+        const string sensorId = "2001";
+        var warning = PrtgFinding("warning", sensorId);
+        var trend = PrtgFinding("disk_free_trend", sensorId);
+        var (dispatch, _) = Create();
+
+        dispatch.DispatchDay("SRV-01", DateTime.Today.AddDays(-1), new[] { warning }, DateTime.Now);
+        dispatch.DispatchDay("SRV-01", DateTime.Today, new[] { trend }, DateTime.Now);
+
+        Assert.Single(_orders.All);
+        Assert.NotNull(_cases.GetOpen("SRV-01", IssueSignatureKey.For(warning)));
+        Assert.Null(_cases.GetOpen("SRV-01", IssueSignatureKey.For(trend)));
+        Assert.Equal(1, dispatch.FlushRun(DateTime.Now).SkipCounts["related_warning_active"]);
+    }
 
     [Fact]
     public void 同一趟兩台主機同一負責人問題_一張單兩件案件_收尾一筆appended且不重複()
@@ -105,6 +195,120 @@ public class NightlyDispatchTests
         Assert.Equal(0, second.CreatedOrders);
         Assert.Equal(0, second.AttachedMembers);
         Assert.Empty(second.PerHandler);
+    }
+
+    [Fact]
+    public void 同感測器Warning仍有活動交辦單_保留趨勢案件但不建立第二張交辦或通知()
+    {
+        AddHost("SRV-01");
+        _candidates.Add(new DispatchCandidate { UserId = 7, Account = "handler7", InPool = true,
+            VisibleHostIds = new HashSet<long> { _hosts.FindByName("SRV-01")!.HostId } });
+        _settings.AutoDispatchEnabled = true;
+
+        const string sensorId = "2001";
+        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
+        var orderId = _orders.Insert(new WorkOrder
+        {
+            SourceName = "PRTG:warning", EventId = 0, IssueLabel = "PRTG:warning", HandlerId = 7,
+            Origin = WorkOrderOrigins.AutoDispatch, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
+        });
+        _caseCoordinator.BuildCase("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
+            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
+        var warningCase = _cases.GetOpen("SRV-01", warningKey)!;
+        warningCase.WorkOrderId = orderId;
+        _cases.Save(warningCase);
+
+        var trend = new LogIssueSignature
+        {
+            LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
+            EntryType = EventLogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
+            Severity = IssueSeverity.High
+        };
+        var trendKey = IssueSignatureKey.For(trend);
+        _caseCoordinator.BuildCase("SRV-01", trendKey, trend.Source, DateTime.Today,
+            handlerId: 7, note: "既有趨勢案件", dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
+        var trendCase = _cases.GetOpen("SRV-01", trendKey)!;
+        var (dispatch, _) = Create();
+        dispatch.DispatchDay("SRV-01", DateTime.Today, new[] { trend }, DateTime.Now);
+
+        Assert.Equal(trendCase.CaseId, _cases.GetOpen("SRV-01", trendKey)!.CaseId);
+        Assert.Single(_orders.All);
+        var summary = dispatch.FlushRun(DateTime.Now);
+        Assert.Equal(orderId, Assert.Single(_orders.All).WorkOrderId);
+        Assert.Empty(summary.PerHandler);
+        Assert.Equal(1, summary.SkipCounts["related_warning_active"]);
+    }
+
+    [Fact]
+    public void 同sensorWarning工單屬於其他主機_趨勢仍可獨立派工()
+    {
+        AddHost("SRV-01");
+        AddHost("SRV-02");
+        _candidates.Add(new DispatchCandidate { UserId = 7, Account = "handler7", InPool = true,
+            VisibleHostIds = new HashSet<long> { _hosts.FindByName("SRV-01")!.HostId } });
+        _settings.AutoDispatchEnabled = true;
+        const string sensorId = "2001";
+        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
+        var orderId = _orders.Insert(new WorkOrder
+        {
+            SourceName = "PRTG:warning", EventId = 0, IssueLabel = "PRTG:warning", HandlerId = 7,
+            Origin = WorkOrderOrigins.AutoDispatch, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
+        });
+        _caseCoordinator.BuildCase("SRV-02", warningKey, "PRTG:warning", DateTime.Today,
+            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
+        var warningCase = _cases.GetOpen("SRV-02", warningKey)!;
+        warningCase.WorkOrderId = orderId;
+        _cases.Save(warningCase);
+        var trend = new LogIssueSignature
+        {
+            LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
+            EntryType = EventLogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
+            Severity = IssueSeverity.High
+        };
+        var (dispatch, _) = Create();
+        Attach(dispatch, "SRV-01", DateTime.Today, trend);
+
+        Assert.NotNull(_cases.GetOpen("SRV-01", IssueSignatureKey.For(trend)));
+        Assert.Equal(2, _orders.All.Count);
+        Assert.Single(dispatch.FlushRun(DateTime.Now).PerHandler[7], line => line.WorkOrderId != orderId);
+    }
+
+    [Fact]
+    public void 同感測器Warning案件已結案_磁碟趨勢可獨立自動派工()
+    {
+        AddHost("SRV-01");
+        _candidates.Add(new DispatchCandidate { UserId = 7, Account = "handler7", InPool = true,
+            VisibleHostIds = new HashSet<long> { _hosts.FindByName("SRV-01")!.HostId } });
+        _settings.AutoDispatchEnabled = true;
+        const string sensorId = "2001";
+        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
+        var orderId = _orders.Insert(new WorkOrder
+        {
+            SourceName = "PRTG:warning", EventId = 0, IssueLabel = "PRTG:warning", HandlerId = 7,
+            Origin = WorkOrderOrigins.AutoDispatch, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
+        });
+        _caseCoordinator.BuildCase("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
+            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
+        var warningCase = _cases.GetOpen("SRV-01", warningKey)!;
+        warningCase.WorkOrderId = orderId;
+        warningCase.ClosedAt = DateTime.Now;
+        warningCase.Status = IssueHandlingStatuses.Resolved;
+        _cases.Save(warningCase);
+
+        var trend = new LogIssueSignature
+        {
+            LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
+            EntryType = EventLogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
+            Severity = IssueSeverity.High
+        };
+        var (dispatch, _) = Create();
+        Attach(dispatch, "SRV-01", DateTime.Today, trend);
+
+        Assert.NotNull(_cases.GetOpen("SRV-01", IssueSignatureKey.For(trend)));
+        Assert.Equal(2, _orders.All.Count);
+        var summary = dispatch.FlushRun(DateTime.Now);
+        var trendLine = Assert.Single(summary.PerHandler[7], line => line.WorkOrderId != orderId);
+        Assert.DoesNotContain("Warning 交辦", trendLine.IssueLabel);
     }
 
     [Fact]

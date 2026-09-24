@@ -15,12 +15,318 @@ import { initCalibration } from './prtg-calibration.js';
 import { PRTG_SCOPE_OFF, toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 
-bindTabs(document.getElementById('prtg-tabs'), { hash: true });
+bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => { if (name === 'probe') queueMicrotask(loadDiskReadiness); } });
+
+function missingHourDate(windowStart, dayIndex, hour) {
+    const [year, month, day] = String(windowStart).slice(0, 10).split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    date.setDate(date.getDate() + dayIndex);
+    date.setHours(hour, 0, 0, 0);
+    return date;
+}
+
+function localDateInputValue(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function effectivenessRangeError(from, through) {
+    if (!from || !through) return '請選擇起始與結束日期。';
+    const days = Math.round((Date.parse(`${through}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
+    if (days < 1) return '起始日期不得晚於結束日期。';
+    if (days > 366) return '日期範圍最多 366 天（含起訖日）。';
+    return null;
+}
+
+function renderEffectiveness(summary) {
+    const metrics = document.getElementById('prtg-effectiveness-metrics');
+    const status = document.getElementById('prtg-effectiveness-status');
+    const semantics = document.getElementById('prtg-effectiveness-semantics');
+    const limitations = document.getElementById('prtg-effectiveness-limitations');
+    if (!metrics || !status || !semantics || !limitations) return;
+    metrics.replaceChildren();
+    const definitions = [
+        ['低 coverage sampled 小時', summary.lowCoverageSampledHours, '已落盤 sampled 且 coverage 低於門檻的小時列數；不包含完全缺值。此指標不涵蓋所有磁碟不就緒原因。'],
+        ['問題訊號', summary.prtgFindings, 'PRTG TopIssue 列數；依主機日／特徵計數。'],
+        ['建立案件', summary.casesCreated, '所選期間建立、來源為 PRTG 的案件列數。'],
+        ['建立交辦單', summary.workOrdersCreated, '所選期間建立、來源為 PRTG 的交辦單列數。'],
+        ['曾有回覆的交辦單', summary.workOrdersReplied, '上述建立交辦單中 LastReplyAt 有值的列數，不限回覆日期。'],
+        ['抑制的問題訊號', summary.suppressedFindings, '日期分析內容中標記為抑制的 PRTG 特徵數。'],
+        ['有 PRTG 佐證的主機日', summary.corroboratedHostDays, '含 PRTG 佐證參照或抑制佐證文字的主機日數。']
+    ];
+    for (const [label, value, description] of definitions) {
+        const column = document.createElement('div');
+        column.className = 'col-12 col-sm-6 col-lg-4';
+        const card = document.createElement('div');
+        card.className = 'border rounded p-3 h-100';
+        const heading = document.createElement('div');
+        heading.className = 'small text-muted';
+        heading.textContent = label;
+        const number = document.createElement('div');
+        number.className = 'fs-4 fw-semibold';
+        number.textContent = value == null ? '—' : formatNumber(value);
+        const note = document.createElement('div');
+        note.className = 'small text-muted mt-1';
+        note.textContent = value == null ? `${description}目前沒有可計數的資料；目前無法計算（非 0）。` : description;
+        card.append(heading, number, note);
+        column.appendChild(card);
+        metrics.appendChild(column);
+    }
+    metrics.classList.remove('d-none');
+    status.textContent = `${summary.from?.slice(0, 10) ?? ''} 至 ${summary.through?.slice(0, 10) ?? ''}，共 ${formatNumber(summary.windowDays)} 天。指標使用不同計算對象，請依各項說明解讀，彼此不共用分母。`;
+    semantics.textContent = summary.metricSemantics || '指標依各自的資料列與日期定義計算，彼此沒有共同分母。';
+    limitations.textContent = summary.limitations || '';
+}
+
+async function loadPrtgEffectiveness() {
+    const fromInput = document.getElementById('prtg-effectiveness-from');
+    const throughInput = document.getElementById('prtg-effectiveness-through');
+    const button = document.getElementById('prtg-effectiveness-refresh');
+    const status = document.getElementById('prtg-effectiveness-status');
+    const error = document.getElementById('prtg-effectiveness-error');
+    const metrics = document.getElementById('prtg-effectiveness-metrics');
+    if (!fromInput || !throughInput || !button || !status || !error || !metrics) return;
+    error.replaceChildren();
+    const rangeError = effectivenessRangeError(fromInput.value, throughInput.value);
+    if (rangeError) {
+        status.textContent = rangeError;
+        status.className = 'small mb-3 text-danger';
+        return;
+    }
+    button.disabled = true;
+    button.textContent = '載入中…';
+    status.className = 'small mb-3';
+    status.textContent = '正在讀取使用效果…';
+    error.replaceChildren();
+    try {
+        const query = new URLSearchParams({ from: fromInput.value, through: throughInput.value });
+        const summary = await api.get(`/api/prtg/effectiveness?${query.toString()}`, { silent: true });
+        renderEffectiveness(summary);
+        const hasCount = [summary.lowCoverageSampledHours, summary.prtgFindings, summary.casesCreated, summary.workOrdersCreated,
+            summary.workOrdersReplied, summary.suppressedFindings, summary.corroboratedHostDays]
+            .some(value => value != null && value > 0);
+        if (!hasCount) {
+            status.textContent += ' 此期間沒有可計數的資料；若預期應有資料，請先查看環境探測與資料準備度。';
+        }
+        status.className = 'small mb-3 text-muted';
+    } catch (exception) {
+        metrics.classList.add('d-none');
+        status.textContent = '使用效果載入失敗。';
+        status.className = 'small mb-3 text-danger';
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-danger py-2';
+        alert.setAttribute('role', 'alert');
+        const message = document.createElement('span');
+        message.textContent = exception?.message || '目前無法讀取資料。';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn btn-sm btn-outline-danger ms-2';
+        retry.textContent = '重試';
+        retry.addEventListener('click', loadPrtgEffectiveness);
+        alert.append(message, retry);
+        error.appendChild(alert);
+    } finally {
+        button.disabled = false;
+        button.textContent = '查詢';
+    }
+}
+
+function bindPrtgEffectiveness() {
+    const fromInput = document.getElementById('prtg-effectiveness-from');
+    const throughInput = document.getElementById('prtg-effectiveness-through');
+    const refresh = document.getElementById('prtg-effectiveness-refresh');
+    if (!fromInput || !throughInput || !refresh) return;
+    const today = new Date();
+    const firstDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
+    fromInput.value = localDateInputValue(firstDay);
+    throughInput.value = localDateInputValue(today);
+    refresh.addEventListener('click', loadPrtgEffectiveness);
+}
 
 /** 目前已儲存的 PRTG 擷取開關。鏡像頁籤的「同步結構與對應」關閉時要擋住（後端也會擋，這是提前告知）。 */
 let prtgEnabled = false;
 /** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
 let structureSyncRunning = false;
+let selectedBackfillTimer = null;
+let selectedBackfillPreview = null;
+const selectedBackfillHostIds = new Set();
+let pendingBackfillHostId = null;
+
+function selectedBackfillRequest() {
+    return {
+        hostIds: [...selectedBackfillHostIds].map(Number),
+        fromDate: document.getElementById('prtg-selected-backfill-from')?.value,
+        toDate: document.getElementById('prtg-selected-backfill-to')?.value
+    };
+}
+
+function selectedBackfillFormError(request) {
+    if (request.hostIds.length < 1 || request.hostIds.length > 5) return '請選擇 1 至 5 台主機。';
+    if (!request.fromDate || !request.toDate) return '請選擇起始與結束日期。';
+    const days = Math.round((Date.parse(`${request.toDate}T00:00:00Z`) - Date.parse(`${request.fromDate}T00:00:00Z`)) / 86400000) + 1;
+    if (days < 1) return '起始日期不得晚於結束日期。';
+    if (days > 7) return '日期範圍最多 7 天（含起訖日）。';
+    return null;
+}
+
+function renderSelectedBackfillHosts(hosts) {
+    const root = document.getElementById('prtg-selected-backfill-hosts');
+    if (!root) return;
+    root.replaceChildren();
+    const query = document.getElementById('prtg-selected-backfill-search')?.value.trim().toLocaleLowerCase() ?? '';
+    const filtered = (hosts || []).filter(host => `${host.hostName ?? ''} ${host.ipAddress ?? ''}`.toLocaleLowerCase().includes(query));
+    if (!filtered.length) {
+        const empty = document.createElement('span');
+        empty.className = 'small text-muted';
+        empty.textContent = hosts?.length ? '沒有符合的主機。' : '沒有可選的已儲存主機。';
+        root.appendChild(empty);
+        return;
+    }
+    for (const host of filtered) {
+        const id = String(host.hostId);
+        const label = document.createElement('label');
+        label.className = 'form-check d-flex gap-2 align-items-start py-1';
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input mt-1';
+        checkbox.type = 'checkbox';
+        checkbox.value = id;
+        checkbox.checked = selectedBackfillHostIds.has(id);
+        checkbox.disabled = !checkbox.checked && selectedBackfillHostIds.size >= 5;
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) selectedBackfillHostIds.add(id);
+            else selectedBackfillHostIds.delete(id);
+            selectedBackfillPreview = null;
+            document.getElementById('prtg-selected-backfill-start').disabled = true;
+            document.getElementById('prtg-selected-backfill-selection').textContent = `已選 ${selectedBackfillHostIds.size} / 5 台`;
+            renderSelectedBackfillHosts(cachedHosts || []);
+        });
+        const name = document.createElement('span');
+        name.textContent = `${host.hostName || '未命名主機'}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
+        label.append(checkbox, name);
+        root.appendChild(label);
+    }
+    document.getElementById('prtg-selected-backfill-selection').textContent = `已選 ${selectedBackfillHostIds.size} / 5 台`;
+}
+
+function renderSelectedBackfillPreview(preview) {
+    const root = document.getElementById('prtg-selected-backfill-preview-result');
+    root.replaceChildren();
+    const box = document.createElement('div');
+    box.className = preview.hasTargets ? 'alert alert-info' : 'alert alert-warning';
+    const estimate = document.createElement('p');
+    estimate.className = 'mb-1';
+    estimate.textContent = `主機 ${preview.hostCount} 台；日期 ${preview.dayCount} 天（${preview.fromDate?.slice(0, 10)}～${preview.toDate?.slice(0, 10)}）；有目標的主機日 ${preview.daysWithTargets}；預估 PRTG 請求 ${formatNumber(preview.estimatedRequests)} 次。`;
+    box.appendChild(estimate);
+    const replacementEstimate = document.createElement('p');
+    replacementEstimate.className = 'mb-1';
+    replacementEstimate.textContent = `可能被取代的 sampled 小時列（上限估計，非保證）：${formatNumber(preview.estimatedSampledRowsToReplace ?? 0)} 列。`;
+    box.appendChild(replacementEstimate);
+    const note = document.createElement('p');
+    note.className = 'mb-0 small';
+    note.textContent = preview.hasTargets ? (preview.message || '檢查範圍後，按「確認並開始補值」才會送出請求。') : (preview.message || '此範圍沒有可補值目標，不會啟動回填。');
+    box.appendChild(note);
+    root.appendChild(box);
+    document.getElementById('prtg-selected-backfill-start').disabled = !preview.hasTargets;
+}
+
+function renderSelectedBackfillStatus(status) {
+    const text = document.getElementById('prtg-selected-backfill-status-text');
+    const progress = document.getElementById('prtg-selected-backfill-progress');
+    const cancel = document.getElementById('prtg-selected-backfill-cancel');
+    if (!text || !progress || !cancel) return;
+    if (status.isRunning) {
+        text.textContent = status.latestMessage || 'PRTG 歷史回填執行中…';
+        progress.textContent = status.readingStateChanges
+            ? `讀取狀態變更 ${status.stateChangesRead} / ${status.stateChangesTotal}`
+            : `日期 ${status.daysDone} / ${status.daysTotal}${status.currentDate ? `；目前 ${String(status.currentDate).slice(0, 10)}` : ''}；感測器 ${status.sensorsDone} / ${status.sensorsTotal}`;
+        cancel.classList.toggle('d-none', status.runKind !== 'selected' || !status.runId);
+        if (!selectedBackfillTimer) selectedBackfillTimer = setInterval(refreshSelectedBackfillStatus, 2000);
+        return;
+    }
+    if (selectedBackfillTimer) { clearInterval(selectedBackfillTimer); selectedBackfillTimer = null; }
+    cancel.classList.add('d-none');
+    text.textContent = status.completedAt
+        ? `${status.cancelled ? '已停止' : status.success ? '回填完成' : '回填未完整成功'}：${status.latestMessage || ''}`
+        : '目前沒有執行中的歷史回填。';
+    progress.textContent = status.completedAt
+        ? `完成日期 ${status.daysDone} / ${status.daysTotal}；感測器 ${status.sensorsDone} / ${status.sensorsTotal}`
+        : '';
+}
+
+async function refreshSelectedBackfillStatus() {
+    try {
+        const status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+        renderSelectedBackfillStatus(status);
+    } catch (error) {
+        const root = document.getElementById('prtg-selected-backfill-status-text');
+        if (root) root.textContent = `無法讀取回填狀態：${error?.message || '請重新整理狀態。'}`;
+    }
+}
+
+function bindSelectedBackfill() {
+    const hostSearch = document.getElementById('prtg-selected-backfill-search');
+    if (!hostSearch) return;
+    hostSearch.addEventListener('input', () => renderSelectedBackfillHosts(cachedHosts || []));
+    hostSearch.addEventListener('keydown', event => {
+        if (event.key === 'ArrowDown') document.querySelector('#prtg-selected-backfill-hosts input:not(:disabled)')?.focus();
+    });
+    for (const id of ['prtg-selected-backfill-from', 'prtg-selected-backfill-to']) {
+        document.getElementById(id).addEventListener('change', () => {
+            selectedBackfillPreview = null;
+            document.getElementById('prtg-selected-backfill-start').disabled = true;
+        });
+    }
+    api.get('/api/admin/hosts/all', { silent: true }).then(hosts => {
+        cachedHosts = hosts || [];
+        if (pendingBackfillHostId != null) activateSelectedBackfillHost(pendingBackfillHostId);
+        renderSelectedBackfillHosts(cachedHosts);
+    }).catch(error => {
+        const root = document.getElementById('prtg-selected-backfill-hosts');
+        root.replaceChildren();
+        const message = document.createElement('span');
+        message.className = 'small text-danger';
+        message.textContent = `無法載入主機清單：${error?.message || '請重新整理頁面重試。'}`;
+        root.appendChild(message);
+    });
+    document.getElementById('prtg-selected-backfill-preview').addEventListener('click', async event => {
+        const request = selectedBackfillRequest();
+        const error = selectedBackfillFormError(request);
+        if (error) { toast(error, 'warning'); return; }
+        const restore = withBusy(event.currentTarget, '預覽中');
+        try {
+            selectedBackfillPreview = await api.post('/api/admin/settings/prtg-backfill/selected/preview', request, { silent: true });
+            renderSelectedBackfillPreview(selectedBackfillPreview);
+        } catch (e) { renderError(document.getElementById('prtg-selected-backfill-preview-result'), { message: e?.message || '預覽失敗。', onRetry: () => document.getElementById('prtg-selected-backfill-preview').click() }); }
+        finally { restore(); }
+    });
+    document.getElementById('prtg-selected-backfill-start').addEventListener('click', async () => {
+        const request = selectedBackfillRequest();
+        if (!selectedBackfillPreview || selectedBackfillFormError(request)) { toast('請先完成有效的預覽。', 'warning'); return; }
+        const confirmed = await confirmAction({ title: '確認指定範圍的歷史補值', message: `即將對 ${selectedBackfillPreview.hostCount} 台主機、${selectedBackfillPreview.dayCount} 天執行約 ${formatNumber(selectedBackfillPreview.estimatedRequests)} 次 PRTG 歷史數值請求。這只寫入數值，不會補跑 finding 或派送。`, confirmText: '開始補值', confirmVariant: 'primary' });
+        if (!confirmed) return;
+        const button = document.getElementById('prtg-selected-backfill-start');
+        const restore = withBusy(button, '啟動中');
+        try {
+            await api.post('/api/admin/settings/prtg-backfill/selected/start', request, { silent: true });
+            selectedBackfillPreview = null;
+            toast('已開始指定範圍的歷史數值補值。', 'success');
+            await refreshSelectedBackfillStatus();
+        } catch (e) { toast(e?.message || '無法啟動指定範圍回填，請確認條件後重試。', 'danger'); }
+        finally { restore(); }
+    });
+    document.getElementById('prtg-selected-backfill-cancel').addEventListener('click', async event => {
+        const status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+        if (!status.isRunning || status.runKind !== 'selected' || !status.runId) return;
+        const restore = withBusy(event.currentTarget, '停止中');
+        try { await api.post('/api/admin/settings/prtg-backfill/cancel', { runId: status.runId }); toast('已送出停止要求。', 'success'); }
+        catch (e) { toast(e?.message || '停止要求失敗，請重新整理狀態後重試。', 'danger'); }
+        finally { restore(); await refreshSelectedBackfillStatus(); }
+    });
+    document.getElementById('prtg-selected-backfill-status-retry').addEventListener('click', refreshSelectedBackfillStatus);
+    refreshSelectedBackfillStatus();
+}
 
 /** PRTG 認證方式切換：依選取模式切換 token / password / passhash 區塊顯示（只動 classList 不設 style.display） */
 function syncPrtgAuthFields() {
@@ -518,6 +824,58 @@ function renderPrtgFreshness(items) {
         rows: items,
         empty: { title: '尚無擷取紀錄', hint: '結構同步、快照或取數成功完成後會記錄在這裡。' }
     });
+}
+
+const snapshotStateLabels = {
+    'no-targets': '無目標',
+    'coverage-evidence': '有覆蓋率達標列；快照健康度未確認',
+    'ok-covered': '由歷史 ok 數值覆蓋；不代表快照成功',
+    'reported-write-count-met-target': '回報寫入量達目標，逐顆覆蓋未證明',
+    insufficient: '數值不足',
+    unknown: '資料未知'
+};
+const snapshotNextSteps = {
+    'no-targets': '確認 PRTG 啟用狀態與監看目標。',
+    'coverage-evidence': '另看成功／嘗試次數判讀快照執行；此彙總未逐顆核對目標。',
+    'ok-covered': '數值由歷史資料補足；請查看快照成功／嘗試與原因。',
+    'reported-write-count-met-target': '回報寫入量達目標但未逐顆確認；重試或覆寫可能造成重複計數。',
+    insufficient: '查看跳過或寫入失敗原因，並確認涵蓋率。',
+    unknown: '目前無法判定；確認快照是否啟用及診斷資料是否已累積。'
+};
+
+function renderSnapshotDiagnostics(hours) {
+    const host = document.getElementById('prtg-snapshot-diagnostics');
+    if (!host) return;
+    renderTable(host, {
+        columns: [
+            { title: '完整小時', render: row => formatDateTime(row.hour) },
+            { title: '狀態', render: row => snapshotStateLabels[row.state] ?? '資料未知' },
+            { title: '品質達標列／目標', render: row => `${formatNumber(row.availableValues)} / ${formatNumber(row.targets)}` },
+            { title: '成功／嘗試', render: row => `${formatNumber(row.successes)} / ${formatNumber(row.attempts)}` },
+            { title: '跳過／寫入失敗', render: row => `${formatNumber(row.skips)} / ${formatNumber(row.writeFailures)}` },
+            { title: '原因', render: row => Object.entries(row.reasons ?? {}).map(([reason, count]) => `${reason} (${formatNumber(count)})`).join('、') || '—' },
+            { title: '建議檢查', render: row => snapshotNextSteps[row.state] ?? snapshotNextSteps.unknown }
+        ],
+        rows: hours,
+        empty: { title: '尚無完整小時資料', hint: '資料累積後會顯示最近 24 個完整小時。' }
+    });
+    const tableRegion = host.querySelector('.lf-table-wrap');
+    if (tableRegion) {
+        tableRegion.tabIndex = 0;
+        tableRegion.setAttribute('role', 'region');
+        tableRegion.setAttribute('aria-label', '快照診斷表格，可水平捲動');
+    }
+}
+
+async function loadSnapshotDiagnostics() {
+    const host = document.getElementById('prtg-snapshot-diagnostics');
+    if (host) renderSpinner(host, '讀取快照診斷…');
+    try {
+        const response = await api.get('/api/prtg-snapshot-diagnostics', { silent: true });
+        renderSnapshotDiagnostics(response?.hours ?? []);
+    } catch {
+        if (host) renderError(host, { message: '快照診斷讀取失敗。請重新載入；不會呼叫 PRTG。', onRetry: loadSnapshotDiagnostics });
+    }
 }
 
 // ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
@@ -1538,6 +1896,383 @@ function bindPrtgMirror() {
 
 let prtgProbePollTimer = null;
 
+let diskReadinessPage = 1;
+let diskReadinessLoaded = false;
+let diskReadinessLoading = false;
+let diskVerificationSensor = null;
+let diskVerificationTimer = null;
+const selectedDiskVerificationIds = new Set();
+let pendingDiskSingleRequest = null;
+let pendingDiskBatchRequest = null;
+
+function pendingDiskRequestId(kind, signature) {
+    const slot = kind === 'batch' ? pendingDiskBatchRequest : pendingDiskSingleRequest;
+    if (slot?.signature === signature) return slot.requestId;
+    const next = { signature, requestId: crypto.randomUUID() };
+    if (kind === 'batch') pendingDiskBatchRequest = next; else pendingDiskSingleRequest = next;
+    return next.requestId;
+}
+
+function updateDiskBatchButton() {
+    const button = document.getElementById('prtg-disk-verification-batch-start');
+    if (!button) return;
+    button.textContent = `依序驗證所選（${selectedDiskVerificationIds.size}/5）`;
+    button.disabled = selectedDiskVerificationIds.size < 1 || selectedDiskVerificationIds.size > 5;
+}
+
+function activateSelectedBackfillHost(hostName) {
+    const name = String(hostName || '');
+    const normalized = name.trim().toLocaleLowerCase();
+    const host = (cachedHosts || []).find(item => String(item.hostName || '').trim().toLocaleLowerCase() === normalized);
+    if (!host) {
+        pendingBackfillHostId = name;
+        const search = document.getElementById('prtg-selected-backfill-search');
+        if (search) search.value = name;
+    }
+    else {
+        pendingBackfillHostId = null;
+        const id = String(host.hostId);
+        if (!selectedBackfillHostIds.has(id) && selectedBackfillHostIds.size >= 5) {
+            toast('已選滿 5 台主機；請先取消一台再加入這台。', 'warning');
+            const search = document.getElementById('prtg-selected-backfill-search');
+            if (search) search.value = host.hostName || '';
+            renderSelectedBackfillHosts(cachedHosts || []);
+            document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
+            return;
+        }
+        if (!selectedBackfillHostIds.has(id)) selectedBackfillHostIds.add(id);
+        const search = document.getElementById('prtg-selected-backfill-search');
+        if (search) search.value = '';
+        renderSelectedBackfillHosts(cachedHosts || []);
+    }
+    document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
+    if (!host) renderSelectedBackfillHosts(cachedHosts || []);
+    else [...document.querySelectorAll('#prtg-selected-backfill-hosts input[type="checkbox"]')]
+        .find(item => item.value === String(host.hostId))?.focus();
+}
+
+function readinessText(tag, value, className = '') {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    node.textContent = value == null || value === '' ? '—' : String(value);
+    return node;
+}
+
+function renderDiskReadiness(page) {
+    const summary = document.getElementById('prtg-readiness-summary');
+    const rows = document.getElementById('prtg-readiness-rows');
+    const reasons = document.getElementById('prtg-readiness-reasons');
+    if (!summary || !rows || !reasons) return;
+    summary.replaceChildren();
+    rows.replaceChildren();
+    reasons.replaceChildren();
+
+    const progress = readinessText('strong', `全局鏡像磁碟候選 ${page.globalMirrorCandidates} 顆`);
+    summary.append(progress,
+        readinessText('div', `目前映射至啟用主機 ${page.globallyMappedActive} 顆；白名單內 ${page.globallyWhitelisted} 顆；sensor/device 暫停 ${page.globallyPaused} 顆；最新對應衝突 ${page.globallyConflicted} 顆、未對應 ${page.globallyUnmapped} 顆、指向停用或合併主機 ${page.globallyDisabledHost} 顆。`),
+        readinessText('div', '分類可重疊，不能相加；資料/語意就緒為前100抽樣。'),
+        readinessText('div', page.readinessSummaryComputed
+            ? `${page.readinessSummaryCapped ? `資料就緒度（Sensor Objid 順序前 ${page.readinessSummaryCandidateCount} 顆候選抽樣）：` : `資料就緒度（全部 ${page.readinessSummaryCandidateCount} 顆已映射候選）：`}每日有效小時與 28 日均達標 ${page.dataReadyCount} 顆；語意已驗證 ${page.semanticVerifiedCount} 顆；可供試算 ${page.previewReadyCount} 顆。`
+            : '資料就緒、語意驗證與可試算摘要只在第 1 頁計算；返回第 1 頁可重新整理摘要。'),
+        readinessText('div', `目前逐列分頁 ${page.page} / ${page.pageCount}；本頁 ${page.dataReadyOnPage} 顆資料就緒、${page.semanticVerifiedOnPage} 顆語意已驗證。`));
+    if (page.readinessSummaryComputed)
+        summary.append(readinessText('div', `資料就緒度與可試算數依目前已映射候選計算；${page.readinessSummaryCapped ? `僅為前 ${page.readinessSummaryCandidateCount} 顆候選抽樣，不代表全局。` : '本次覆蓋全部已映射候選。'}`));
+    if (page.globalMirrorCandidates === 0) summary.append(readinessText('p', '全站鏡像目前沒有磁碟分類候選；請檢查結構同步與磁碟分類。', 'alert alert-info mt-2 mb-0'));
+    else if (page.candidateSensors === 0) summary.append(readinessText('p', page.emptyState || '目前沒有映射到啟用主機的磁碟候選；請檢查主機對應。', 'alert alert-info mt-2 mb-0'));
+
+    const reasonEntries = Object.entries(page.reasonCountsOnPage ?? {});
+    if (reasonEntries.length) {
+        reasons.append(readinessText('strong', '本頁逐列原因統計：'));
+        for (const [reason, count] of reasonEntries) reasons.append(readinessText('span', ` ${reason} ${count} 筆；`, 'me-2'));
+    }
+
+    for (const row of page.rows ?? []) {
+        const article = document.createElement('article');
+        article.className = 'border rounded p-3';
+        const title = document.createElement('h3');
+        title.className = 'h6 mb-2';
+        title.textContent = `${row.sensorName} (Sensor ${row.sensorObjid})`;
+        const details = document.createElement('div');
+        details.className = 'small d-grid gap-1';
+        const latest = row.latestUsableHour ? formatDateTime(row.latestUsableHour) : '尚無可用小時';
+        const mapped = Array.isArray(row.mappedHosts) && row.mappedHosts.length ? row.mappedHosts.join('、') : '未取得有效主機對應';
+        const values = [
+            `資料進度：${row.usableDays} / ${row.requiredDays} 天（每日至少 ${row.requiredHoursPerDay} 個可用小時；目前 ${row.usableHours} 小時）`,
+            `最新可用小時：${latest}`,
+            `映射主機：${mapped}；感測器類型 ${row.sensorType}（白名單資格依資料狀態與原因判讀）`,
+            `資料狀態：${row.status}；語意狀態：${row.semanticVerified ? '已驗證' : row.semanticLabel}`,
+            `原因：${row.reason}`
+        ];
+        for (const value of values) details.append(readinessText('div', value));
+        const missingDetails = document.createElement('details');
+        missingDetails.className = 'mt-1';
+        const missingSummary = document.createElement('summary');
+        missingSummary.textContent = '展開缺少的小時';
+        const missingList = readinessText('div', '展開後載入…', 'mt-1');
+        missingDetails.append(missingSummary, missingList);
+        missingDetails.addEventListener('toggle', () => {
+            if (!missingDetails.open || missingDetails.dataset.decoded === 'true') return;
+            const masks = Array.isArray(row.missingHourMasks) ? row.missingHourMasks : [];
+            const missing = [];
+            for (let dayIndex = 0; dayIndex < masks.length; dayIndex++) {
+                const mask = Number(masks[dayIndex]) >>> 0;
+                for (let hour = 0; hour < 24; hour++) {
+                    if ((mask & (1 << hour)) === 0) continue;
+                    const date = missingHourDate(row.missingHourWindowStart, dayIndex, hour);
+                    missing.push(formatDateTime(date));
+                }
+            }
+            missingList.textContent = missing.length ? `缺少 ${missing.length} 個小時：${missing.join('、')}` : '28 日窗口內沒有缺少的小時。';
+            missingDetails.dataset.decoded = 'true';
+        });
+        details.append(missingDetails);
+        const verify = document.createElement('button');
+        verify.type = 'button';
+        verify.className = 'btn btn-sm btn-outline-primary mt-2 align-self-start';
+        verify.textContent = '驗證這顆';
+        verify.setAttribute('aria-label', `選取 ${row.sensorName}（Sensor ${row.sensorObjid}）進行語意驗證`);
+        verify.addEventListener('click', () => selectDiskVerificationSensor(row));
+        const actions = document.createElement('div');
+        actions.className = 'd-flex flex-wrap align-items-center gap-2 mt-2';
+        actions.append(verify);
+        if (row.status === 'Ready') {
+            const label = document.createElement('label'); label.className = 'form-check d-flex align-items-center gap-2 mb-0';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox'; checkbox.className = 'form-check-input m-0';
+            checkbox.value = String(row.sensorObjid); checkbox.checked = selectedDiskVerificationIds.has(checkbox.value);
+            checkbox.disabled = !checkbox.checked && selectedDiskVerificationIds.size >= 5;
+            checkbox.setAttribute('aria-label', `加入批次驗證：${row.sensorName}（Sensor ${row.sensorObjid}）`);
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) selectedDiskVerificationIds.add(checkbox.value); else selectedDiskVerificationIds.delete(checkbox.value);
+                updateDiskBatchButton();
+                renderDiskReadiness(page);
+            });
+            label.append(checkbox, readinessText('span', '加入批次驗證（最多 5 顆）'));
+            actions.append(label);
+        }
+        const backfill = document.createElement('button');
+        backfill.type = 'button'; backfill.className = 'btn btn-sm btn-link p-0'; backfill.textContent = '到指定主機補值';
+        backfill.setAttribute('aria-label', `前往指定主機補值：${row.mappedHosts?.[0] || '對應主機'}`);
+        backfill.addEventListener('click', () => activateSelectedBackfillHost(row.mappedHosts?.[0]));
+        actions.append(backfill);
+        article.append(title, details, actions);
+        rows.append(article);
+    }
+
+    const label = document.getElementById('prtg-readiness-page-label');
+    if (label) label.textContent = `第 ${page.page} / ${Math.max(page.pageCount, 1)} 頁；候選感測器共 ${page.candidateSensors} 筆（總數），上方資料與原因計數僅統計本頁。`;
+    const prev = document.getElementById('prtg-readiness-prev');
+    const next = document.getElementById('prtg-readiness-next');
+    if (prev) prev.disabled = page.page <= 1;
+    if (next) next.disabled = page.page >= page.pageCount;
+}
+
+function selectedDiskSensorId() { return diskVerificationSensor?.sensorObjid ?? null; }
+
+async function refreshDiskRuleTrial() {
+    const id = selectedDiskSensorId();
+    const panel = document.getElementById('prtg-disk-rule-trial');
+    if (!panel || !id) return;
+    panel.textContent = '正在以最新完成日的已落地資料進行唯讀試算…';
+    try {
+        const trial = await api.get(`/api/prtg/disk-verification/${encodeURIComponent(id)}/rule-trial`, { silent: true });
+        const lines = [
+            trial.message,
+            `完成日：${trial.completedDay}；資料品質：${trial.dataQuality}（${trial.usableDays}/${trial.requiredDays} 天，${trial.usableHours} 個可用小時；每日需 ${trial.requiredHoursPerDay} 小時）`,
+            `語意：${trial.semanticVerified ? '已驗證' : '未驗證'}；排除原因：${trial.exclusion || '無'}`,
+            trial.ruleId ? `規則：${trial.ruleId}（${trial.ruleEnabled ? '啟用' : '停用；試算仍使用已儲存門檻'}）` : '規則：未設定',
+            trial.lowWaterPercent != null ? `門檻：低水位 ${trial.lowWaterPercent}%；下降至少 ${trial.minimumDeclinePerDay} 百分點／日；預估耗盡 ${trial.maximumDaysToDepletion} 日內` : null,
+            trial.currentAvailablePercent != null ? `趨勢：目前 ${trial.currentAvailablePercent}%；穩健下降 ${trial.declinePerDay ?? '—'} 百分點／日；預估 ${trial.estimatedDaysToDepletion ?? '—'} 日耗盡；預測命中：${trial.predictedHit ? '是' : '否'}` : '趨勢：目前沒有可用的完整趨勢估計',
+            `真實效果：${trial.message?.includes('real effect pending') ? '待觀察（尚無已證實的真實正向案例）' : trial.realPositiveStatus}`
+        ].filter(Boolean);
+        panel.replaceChildren(...lines.map(line => readinessText('div', line)));
+    } catch (error) {
+        panel.textContent = `唯讀規則試算失敗：${error?.message || '請重試。'}`;
+    }
+}
+
+function renderDiskVerificationResult(result) {
+    const status = document.getElementById('prtg-disk-verification-status');
+    const evidence = document.getElementById('prtg-disk-verification-evidence');
+    const form = document.getElementById('prtg-disk-manual-form');
+    if (!status || !evidence || !form) return;
+    evidence.replaceChildren();
+    if (!result) { status.textContent = '尚無語意驗證結果。'; form.classList.add('d-none'); return; }
+    const labels = { Verified: '語意已自動確認', NeedsManualReview: '候選需人工覆核', Mismatch: '資料不匹配', Failed: '驗證失敗，可重新驗證', TimedOut: '驗證逾時，可重新驗證', Cancelled: '驗證已取消，可重新驗證' };
+    status.textContent = `${labels[result.status] || result.status}：${result.summary || '無摘要'}${result.cancelled ? '（已取消）' : ''}`;
+    const fields = [
+        `驗證時間：${result.checkedAtUtc ? formatDateTime(result.checkedAtUtc) : '—'}`,
+        `資料日期：${result.dataDate || '—'}`,
+        `主頻道：${result.channelName || '—'}（ID ${result.channelIdentifier || '—'}）`,
+        `單位／尺度／方向：${result.unit || '—'}／${result.scale ?? '—'}／${result.direction || '—'}`,
+        `落地資料比對：${result.comparedPointCount ?? 0} 點；${result.valuesMatch === true ? '相符' : result.valuesMatch === false ? '不相符' : '未完成比對'}`,
+        `解析語意版本：${result.parserSemanticVersion || '—'}`
+    ];
+    for (const value of fields) evidence.append(readinessText('div', value));
+    const canReview = result.status === 'NeedsManualReview' && result.valuesMatch === true && (result.comparedPointCount ?? 0) > 0 && !result.cancelled;
+    form.classList.toggle('d-none', !canReview);
+    const id = document.getElementById('prtg-manual-channel-id');
+    const name = document.getElementById('prtg-manual-channel-name');
+    const unit = document.getElementById('prtg-manual-unit');
+    const scale = document.getElementById('prtg-manual-scale');
+    if (canReview) {
+        if (id) id.value = result.channelIdentifier || '';
+        if (name) name.value = result.channelName || '';
+        if (unit) unit.value = result.unit || '%';
+        if (scale) scale.value = result.scale ?? 1;
+    }
+    const confirm = document.getElementById('prtg-manual-confirm');
+    if (confirm) confirm.disabled = !canReview;
+}
+
+async function refreshDiskVerification() {
+    const id = selectedDiskSensorId();
+    if (!id) return;
+    const statusEl = document.getElementById('prtg-disk-verification-status');
+    try {
+        const [run, evidence] = await Promise.all([
+            api.get('/api/prtg/disk-verification', { silent: true }),
+            api.get(`/api/prtg/disk-verification/${encodeURIComponent(id)}/evidence`, { silent: true })
+        ]);
+        const selectedRun = { ...run, selectedResult: run.results?.find(x => x.sensorObjid === id) };
+        const running = run.isRunning;
+        const cancel = document.getElementById('prtg-disk-verification-cancel');
+        if (cancel) cancel.classList.toggle('d-none', !running);
+        const start = document.getElementById('prtg-disk-verification-start');
+        if (start) start.disabled = running;
+        if (running && statusEl) statusEl.textContent = run.isBatch
+            ? `批次驗證進行中：${run.batchCompleted}/${run.batchTotal} 顆已完成；目前 Sensor ${run.sensorObjid ?? '—'}。`
+            : `Sensor ${run.sensorObjid ?? id} 昨天單日語意比對進行中…`;
+        const batchResults = document.getElementById('prtg-disk-verification-batch-results');
+        if (batchResults) {
+            batchResults.replaceChildren();
+            if (run.isBatch || run.batchTotal > 1) {
+                batchResults.append(readinessText('strong', `批次進度：${run.batchCompleted}/${run.batchTotal}；站台重啟後進度不保留。`));
+                for (const item of run.results || []) batchResults.append(readinessText('div', `Sensor ${item.sensorObjid}：${item.status} — ${item.summary}`));
+            }
+        }
+        const evidenceList = document.getElementById('prtg-disk-verification-evidence');
+        if (running) evidenceList?.replaceChildren();
+        const valid = evidence.semantic;
+        const semantic = readinessText('div', `持久語意證據：${valid?.isValid ? '有效' : valid?.invalidReason || '尚未確認'}`);
+        evidenceList?.append(semantic);
+        if (running) {
+            document.getElementById('prtg-disk-manual-form')?.classList.add('d-none');
+            const manualConfirm = document.getElementById('prtg-manual-confirm');
+            if (manualConfirm) manualConfirm.disabled = true;
+            if (!diskVerificationTimer) diskVerificationTimer = setInterval(refreshDiskVerification, 2500);
+        } else {
+            if (diskVerificationTimer) { clearInterval(diskVerificationTimer); diskVerificationTimer = null; }
+            renderDiskVerificationResult(selectedRun.selectedResult);
+            if (run.requestId && pendingDiskSingleRequest?.requestId === run.requestId) pendingDiskSingleRequest = null;
+            if (run.requestId && pendingDiskBatchRequest?.requestId === run.requestId) pendingDiskBatchRequest = null;
+            refreshDiskRuleTrial();
+        }
+    } catch (error) {
+        if (statusEl) statusEl.textContent = `讀取驗證狀態失敗：${error?.message || '請重試。'}`;
+    }
+}
+
+function selectDiskVerificationSensor(row) {
+    diskVerificationSensor = row;
+    const selection = document.getElementById('prtg-disk-verification-selection');
+    if (selection) selection.textContent = `目前選取：${row.sensorName}（Sensor ${row.sensorObjid}；資料狀態：${row.status}；${row.usableDays}/${row.requiredDays} 天）`;
+    for (const id of ['prtg-disk-verification-start', 'prtg-disk-verification-refresh']) {
+        const button = document.getElementById(id); if (button) button.disabled = false;
+    }
+    const status = document.getElementById('prtg-disk-verification-status');
+    if (status) status.textContent = '正在讀取此感測器的持久驗證結果…';
+    refreshDiskVerification();
+    refreshDiskRuleTrial();
+    document.getElementById('prtg-disk-verification-title')?.focus();
+}
+
+function bindDiskVerification() {
+    document.getElementById('prtg-disk-verification-start')?.addEventListener('click', async event => {
+        const id = selectedDiskSensorId(); if (!id) return;
+        const button = event.currentTarget; button.disabled = true;
+        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+        const dataDate = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+        const requestId = pendingDiskRequestId('single', `${id}|${dataDate}`);
+        try { await api.post('/api/prtg/disk-verification/start', { sensorObjid: id, dataDate, requestId }); await refreshDiskVerification(); }
+        catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `無法啟動驗證：${error?.message || '請重試。'}`; button.disabled = false; }
+    });
+    document.getElementById('prtg-disk-verification-batch-start')?.addEventListener('click', async event => {
+        const ids = [...selectedDiskVerificationIds].map(Number);
+        if (ids.length < 1 || ids.length > 5) return;
+        const button = event.currentTarget; button.disabled = true;
+        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+        const dataDate = localDateInputValue(yesterday);
+        const requestId = pendingDiskRequestId('batch', `${ids.join(',')}|${dataDate}`);
+        const status = document.getElementById('prtg-disk-verification-status');
+        try {
+            await api.post('/api/admin/settings/prtg-disk-verification/batch/start', {
+                sensorObjids: ids, dataDate, requestId
+            });
+            if (status) status.textContent = `已依序啟動 ${ids.length} 顆感測器的昨天單日語意驗證；每顆結果會分別保存。`;
+            await refreshDiskVerification();
+        } catch (error) {
+            if (status) status.textContent = `批次無法啟動：${error?.message || '請確認選取項目與資料準備度。'}`;
+            updateDiskBatchButton();
+        }
+    });
+    document.getElementById('prtg-disk-verification-refresh')?.addEventListener('click', () => { refreshDiskVerification(); refreshDiskRuleTrial(); });
+    document.getElementById('prtg-disk-verification-cancel')?.addEventListener('click', async event => {
+        const button = event.currentTarget; button.disabled = true;
+        try { await api.post('/api/prtg/disk-verification/cancel', {}); const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = '已送出取消要求；正在等待 PRTG 請求中止並保存取消結果…'; await refreshDiskVerification(); }
+        catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `取消失敗：${error?.message || '請重試。'}`; }
+        finally { button.disabled = false; }
+    });
+    document.getElementById('prtg-disk-manual-form')?.addEventListener('submit', async event => {
+        event.preventDefault();
+        const id = selectedDiskSensorId(); const submit = document.getElementById('prtg-manual-confirm');
+        if (!id || !submit || submit.disabled) return;
+        submit.disabled = true;
+        const value = selector => document.querySelector(selector)?.value?.trim() || '';
+        try {
+            await api.post('/api/prtg/disk-verification/confirm', { sensorObjid: id, channelIdentifier: value('#prtg-manual-channel-id'), channelName: value('#prtg-manual-channel-name'), unit: value('#prtg-manual-unit'), scale: Number(value('#prtg-manual-scale')), direction: value('#prtg-manual-direction'), reason: value('#prtg-manual-reason') });
+            const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = '人工語意確認已保存並稽核；值型規則仍須在規則頁另行管理。';
+            await refreshDiskVerification();
+            await refreshDiskRuleTrial();
+        } catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `人工確認未保存：${error?.message || '請修正欄位或重新驗證。'}`; submit.disabled = false; }
+    });
+}
+
+async function loadDiskReadiness(force = false) {
+    if (diskReadinessLoading || (diskReadinessLoaded && !force)) return;
+    const root = document.getElementById('prtg-disk-readiness');
+    if (!root) return;
+    diskReadinessLoading = true;
+    const retry = document.getElementById('prtg-readiness-retry');
+    if (retry) retry.disabled = true;
+    document.getElementById('prtg-readiness-summary').textContent = '正在讀取已儲存的磁碟資料…';
+    try {
+        const result = await api.get(`/api/prtg/disk-readiness?page=${diskReadinessPage}&pageSize=20`, { silent: true });
+        renderDiskReadiness(result);
+        diskReadinessLoaded = true;
+    } catch (error) {
+        const summary = document.getElementById('prtg-readiness-summary');
+        summary.replaceChildren(readinessText('span', error?.message || '讀取磁碟資料準備度失敗。', 'text-danger'));
+        diskReadinessLoaded = false;
+    } finally {
+        diskReadinessLoading = false;
+        if (retry) retry.disabled = false;
+    }
+}
+
+function bindDiskReadiness() {
+    document.getElementById('prtg-readiness-retry')?.addEventListener('click', () => {
+        diskReadinessPage = 1;
+        loadDiskReadiness(true);
+    });
+    document.getElementById('prtg-readiness-prev')?.addEventListener('click', () => {
+        if (diskReadinessPage > 1) { diskReadinessPage--; diskReadinessLoaded = false; loadDiskReadiness(); }
+    });
+    document.getElementById('prtg-readiness-next')?.addEventListener('click', () => {
+        diskReadinessPage++; diskReadinessLoaded = false; loadDiskReadiness();
+    });
+}
+
 function renderPrtgProbeStatus(status) {
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
@@ -1991,6 +2726,9 @@ function bindUnmatchedControls() {
 }
 
 function init() {
+    document.getElementById('prtg-snapshot-diagnostics-retry')?.addEventListener('click', loadSnapshotDiagnostics);
+    bindSelectedBackfill();
+    bindPrtgEffectiveness();
     getCurrentUser().then(user => {
         if (hasCapability(user, 'DevMonitor')) {
             document.getElementById('prtg-data-transfer-advanced')?.classList.remove('d-none');
@@ -2000,6 +2738,8 @@ function init() {
     bindPrtgMirror();
     bindScopePurge();
     bindPrtgProbe();
+    bindDiskReadiness();
+    bindDiskVerification();
     bindProbeWhitelistFill();
     bindAssignForm();
     bindPrtgDataTransfer();
@@ -2013,6 +2753,7 @@ function init() {
     loadSettings();
     ensureBatchHostsLoaded();
     refreshPrtgMirror();
+    loadSnapshotDiagnostics();
     refreshConflicts(1);
     refreshUnmatched(1);
     refreshIpExcludes();

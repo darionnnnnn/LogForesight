@@ -31,6 +31,7 @@ public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThis
 /// </summary>
 public sealed class NightlyDispatch
 {
+    private const string SkipRelatedWarningActive = "related_warning_active";
     private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
     private readonly WorkOrderCoordinator _coordinator;
@@ -66,11 +67,44 @@ public sealed class NightlyDispatch
 
         lock (_ctx.Gate)
         {
-            var members = new List<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)>();
-            var recurrences = new List<bool>();
-            foreach (var issue in unassigned)
+            // 同批同 sensor 時先處理 Warning 並完成成員寫入；排序不依賴輸入順序。
+            // 只有成功寫入的 Warning 才能影響後續趨勢判斷。
+            var pairedWarnings = unassigned
+                .Where(IsPrtgWarning)
+                .Where(w => unassigned.Any(t => IsDiskTrend(t) && SameSensor(w, t)))
+                .ToList();
+            if (pairedWarnings.Count > 0)
             {
+                DispatchBatch(host, date, pairedWarnings, occurredAt);
+                unassigned = unassigned.Where(i => !pairedWarnings.Contains(i)).ToList();
+            }
+            DispatchBatch(host, date, unassigned, occurredAt);
+        }
+    }
+
+    private void DispatchBatch(WebHost host, DateTime date, IReadOnlyList<LogIssueSignature> issues, DateTime occurredAt)
+    {
+        if (issues.Count == 0) return;
+        var hostName = host.HostName;
+        var members = new List<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)>();
+        var recurrences = new List<bool>();
+        foreach (var issue in issues)
+        {
+                var relatedWarningOrderId = _ctx.ActiveWarningOrderForSensor(hostName, issue);
                 var decision = WorkOrderDispatcher.Decide(_ctx, host, issue, date.Date);
+                // Keep each trend finding/case intact, but an active same-host, same-sensor Warning
+                // already gives the handler an actionable order. Do this after normal gates so
+                // mute, suppression, ownership and dismissal retain their existing precedence.
+                if (relatedWarningOrderId != null && decision.Kind != DispatchDecisionKind.Skip)
+                {
+                    _ctx.Commit(new DispatchDecision
+                    {
+                        Kind = DispatchDecisionKind.Skip,
+                        SkipReason = SkipRelatedWarningActive
+                    }, issue.Source, issue.EventId);
+                    continue;
+                }
+
                 switch (decision.Kind)
                 {
                     case DispatchDecisionKind.Skip:
@@ -85,7 +119,7 @@ public sealed class NightlyDispatch
                             _ctx.RegisterOrder(order);
                         if (created) _createdOrders.Add(order.WorkOrderId);
                         _handlerByOrder[order.WorkOrderId] = order.HandlerId;
-                        _labelByOrder[order.WorkOrderId] = order.IssueLabel;
+                        _labelByOrder[order.WorkOrderId] = RelatedLabel(order.IssueLabel, relatedWarningOrderId);
 
                         decision = new DispatchDecision
                         {
@@ -98,13 +132,19 @@ public sealed class NightlyDispatch
                     }
                 }
 
+                if (relatedWarningOrderId is long warningOrderId && decision.WorkOrderId is long trendOrderId
+                    && !_labelByOrder.ContainsKey(trendOrderId))
+                    _labelByOrder[trendOrderId] = RelatedLabel(
+                        _ctx.ActiveOrdersFor(issue.Source, issue.EventId).FirstOrDefault(o => o.WorkOrderId == trendOrderId)?.IssueLabel
+                        ?? $"{issue.Source}/{issue.EventId}", warningOrderId);
+
                 members.Add((issue, decision.WorkOrderId!.Value, decision.HandlerId!.Value, decision.Step!));
                 recurrences.Add(decision.Recurrence);
                 _ctx.Commit(decision, issue.Source, issue.EventId);
-            }
+        }
 
-            // 途中已結案的單不寫入、途中改派的依新處理人寫入（判斷在 coordinator 鎖內，見 WriteNightlyMembers）
-            var writtenHandlers = _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
+        // 途中已結案的單不寫入、途中改派的依新處理人寫入（判斷在 coordinator 鎖內，見 WriteNightlyMembers）
+        var writtenHandlers = _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
 
             for (var i = 0; i < members.Count; i++)
             {
@@ -114,6 +154,7 @@ public sealed class NightlyDispatch
                     _midrunCounts[WorkOrderCoordinator.SkipOrderClosedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.SkipOrderClosedMidrun) + 1;
                     continue;
                 }
+                _ctx.InvalidateCasesFor(hostName);
                 if (handlerId != plannedHandlerId)
                     _midrunCounts[WorkOrderCoordinator.HandlerChangedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.HandlerChangedMidrun) + 1;
 
@@ -130,9 +171,36 @@ public sealed class NightlyDispatch
                         ? existing.IssueLabel
                         : $"{issue.Source}/{issue.EventId}";
                 }
-            }
         }
     }
+
+    private static bool IsPrtgWarning(LogIssueSignature issue) => PrtgFindingMapper.IsPrtg(issue)
+        && PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code)
+        && string.Equals(code, "warning", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDiskTrend(LogIssueSignature issue) => PrtgFindingMapper.IsPrtg(issue)
+        && PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code)
+        && string.Equals(code, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameSensor(LogIssueSignature warning, LogIssueSignature trend) =>
+        PrtgFindingMapper.TryGetRuleCode(warning.Source, out var warningCode)
+        && PrtgFindingMapper.TryGetRuleCode(trend.Source, out var trendCode)
+        && TrySensorId(warning.EventKey, warningCode, out var warningSensor)
+        && TrySensorId(trend.EventKey, trendCode, out var trendSensor)
+        && string.Equals(warningSensor, trendSensor, StringComparison.Ordinal);
+
+    private static bool TrySensorId(string? eventKey, string ruleCode, out string sensorId)
+    {
+        sensorId = string.Empty;
+        var prefix = $"prtg:{ruleCode}:";
+        if (eventKey == null || !eventKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        sensorId = eventKey[prefix.Length..];
+        return sensorId.Length > 0;
+    }
+
+    private static string RelatedLabel(string label, long? warningOrderId) => warningOrderId is long id
+        ? $"{label}（同感測器 Warning 交辦 #{id}）"
+        : label;
 
     /// <summary>
     /// 趟末寫進執行紀錄的一行摘要。略過原因用中文——代碼（gate_noise 之類）對看執行紀錄的管理者沒有意義。
@@ -153,6 +221,7 @@ public sealed class NightlyDispatch
         if (Count(WorkOrderCoordinator.HandlerChangedMidrun) > 0)
             text += $"；交辦單在派工途中已改派，已依新處理人掛入 {Count(WorkOrderCoordinator.HandlerChangedMidrun)} 台";
         if (Count(WorkOrderDispatcher.SkipUnavailable) > 0) text += "；派工資料讀取失敗，本趟未派工";
+        if (Count(SkipRelatedWarningActive) > 0) text += $"；已有同感測器 Warning 交辦 {Count(SkipRelatedWarningActive)} 台";
         return text;
     }
 

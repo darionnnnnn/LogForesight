@@ -176,6 +176,8 @@ public class RuleImporterTests
             Category = IssueCategory.Other, Severity = IssueSeverity.Low, ElevatesDayRisk = false,
             Description = "舊", CountThreshold = 1, PlainExplanation = "舊p", Impact = "舊i",
             LikelyCauses = new[] { "舊c" }, NextSteps = new[] { "舊s" },
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60, PrtgSensorCategory = "hardware",
+            PrtgDiskTrendThresholds = new PrtgDiskTrendThresholds(11, 0.6, 31, 29, 36, 0.71),
             ModifiedBy = 99, ModifiedAt = new DateTime(2020, 1, 1)
         };
         var seed = new KnownIssueRule
@@ -186,7 +188,8 @@ public class RuleImporterTests
             Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
             Description = "新", CountThreshold = 7, PlainExplanation = "新p", Impact = "新i",
             LikelyCauses = new[] { "新c" }, NextSteps = new[] { "新s" },
-            PrtgRuleCode = "down", PrtgThreshold = 45, PrtgSensorCategory = "disk"
+            PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 45,
+            PrtgDiskTrendThresholds = new PrtgDiskTrendThresholds(10, 5, 30, 28, 35, 0.70), PrtgSensorCategory = "disk"
         };
 
         var plan = RuleImportPlanner.BuildPlan(
@@ -421,6 +424,27 @@ public class RuleImporterTests
         Assert.Equal(30, Assert.Single(plan.ResultingRules).PrtgThreshold);
     }
 
+    [Fact]
+    public void PRTG磁碟趨勢規則只差巢狀門檻時判定為UpdatedBuiltin()
+    {
+        var existing = new List<KnownIssueRule> { PrtgDiskTrendBuiltin(new PrtgDiskTrendThresholds(10, 5, 30, 28, 35, 0.70)) };
+        var seed = new List<KnownIssueRule> { PrtgDiskTrendBuiltin(new PrtgDiskTrendThresholds(15, 7, 45, 30, 40, 0.80)) };
+
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: false);
+
+        Assert.Equal(RuleImportAction.UpdatedBuiltin, plan.Items[0].Action);
+        Assert.Equal(seed[0].PrtgDiskTrendThresholds, Assert.Single(plan.ResultingRules).PrtgDiskTrendThresholds);
+    }
+
+    private static KnownIssueRule PrtgDiskTrendBuiltin(PrtgDiskTrendThresholds thresholds) => new()
+    {
+        Id = "builtin-prtg-x", Origin = "builtin", Enabled = false, Scope = "all", Platform = "prtg",
+        PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 0,
+        PrtgDiskTrendThresholds = thresholds, PrtgSensorCategory = PrtgSensorCategories.Disk,
+        Category = IssueCategory.Storage, Severity = IssueSeverity.High, Description = "disk trend",
+        PlainExplanation = "p", Impact = "i", LikelyCauses = new[] { "c" }, NextSteps = new[] { "s" }
+    };
+
     /// <summary>
     /// 比對函式的欄位涵蓋率（反射逐欄）：對 KnownIssueRule 每個可讀屬性，建兩條只差該屬性的規則，
     /// BuildPlan 必須回報 UpdatedBuiltin。新增欄位卻沒同步 ContentEqualExceptEnabled 時這裡會紅。
@@ -477,6 +501,11 @@ public class RuleImporterTests
         }
         if (type == typeof(int[])) return ((int[])current!).Append(99999).ToArray();
         if (type == typeof(string[])) return ((string[])current!).Append("變").ToArray();
+        if (type == typeof(PrtgDiskTrendThresholds))
+        {
+            var thresholds = current as PrtgDiskTrendThresholds ?? PrtgDiskTrendThresholds.Provisional;
+            return thresholds with { LowWaterPercent = thresholds.LowWaterPercent + 1 };
+        }
         throw new InvalidOperationException($"未支援的欄位型別 {type}，請在測試補上差異值產生方式");
     }
 }

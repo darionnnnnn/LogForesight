@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -26,7 +28,7 @@ public class WorkOrderQueryServiceTests
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeHandlingStore _handlingLog = new();
     private readonly FakeAnalysisRecordQuery _records = new();
-    private readonly FakeWorkOrderStore _orders;
+    private readonly TrackingWorkOrderStore _orders;
     private readonly FakeSystemSettingsStore _settings = new();
     private readonly WorkOrderCoordinator _coordinator;
     /// <summary>靜音排除來源：暫停相關測試於呼叫 Service() 前替換</summary>
@@ -38,7 +40,7 @@ public class WorkOrderQueryServiceTests
 
     public WorkOrderQueryServiceTests()
     {
-        _orders = new FakeWorkOrderStore(_cases);
+        _orders = new TrackingWorkOrderStore(new FakeWorkOrderStore(_cases));
         var caseCoordinator = new IssueCaseCoordinator(_cases, _issueHandlings, _handlingLog, _records, _hosts, new FakeIssueOwnerStore());
         _coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, caseCoordinator, _handlingLog, _hosts);
 
@@ -49,9 +51,38 @@ public class WorkOrderQueryServiceTests
 
     private WorkOrderQueryService Service(ICurrentUser user, params long[] visibleHostIds) => new(
         _orders, _cases, _users, _hosts, _hostGroups, new FakeRuleStore(), new ScopedVisibility(visibleHostIds), user,
-        new UserDisplayNameService(_settings), _exclusionSource, _userGroups);
+        new UserDisplayNameService(_settings), _exclusionSource, _userGroups, _records);
 
     private static ICurrentUser As(long userId, params Capability[] caps) => FakeCurrentUser.ForUser(userId, caps);
+
+    private sealed class TrackingWorkOrderStore : IWorkOrderStore
+    {
+        private readonly IWorkOrderStore _inner;
+        public TrackingWorkOrderStore(IWorkOrderStore inner) => _inner = inner;
+        public bool ThrowOnGetAllActive { get; set; }
+        public List<long> GetActiveByHandlerCalls { get; } = new();
+        public WorkOrder? Get(long workOrderId) => _inner.Get(workOrderId);
+        public WorkOrder? GetActiveFor(long handlerId, string source, int eventId) => _inner.GetActiveFor(handlerId, source, eventId);
+        public List<WorkOrder> GetActiveByIssue(string source, int eventId) => _inner.GetActiveByIssue(source, eventId);
+        public List<WorkOrder> GetActiveByHandler(long handlerId)
+        {
+            GetActiveByHandlerCalls.Add(handlerId);
+            return _inner.GetActiveByHandler(handlerId);
+        }
+        public List<WorkOrder> GetAllActive() => ThrowOnGetAllActive
+            ? throw new InvalidOperationException("GetAllActive must not be used in this test.")
+            : _inner.GetAllActive();
+        public long Insert(WorkOrder order) => _inner.Insert(order);
+        public void Save(WorkOrder order) => _inner.Save(order);
+        public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
+        public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);
+        public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds) => _inner.CountMembers(workOrderIds);
+        public WorkOrderPage QueryOrders(WorkOrderQuery q) => _inner.QueryOrders(q);
+        public List<HandlerLoad> LoadBoard() => _inner.LoadBoard();
+        public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys) => _inner.HandlerSummary(handlerId, pausedKeys);
+        public List<long> FindActiveWithoutActiveMembers(int take) => _inner.FindActiveWithoutActiveMembers(take);
+        public int PruneClosed(int retentionDays) => _inner.PruneClosed(retentionDays);
+    }
 
     private long AddOrder(long handler, string source = Source, int eventId = EventId, DateTime? createdAt = null,
         DateTime? replied = null, DateTime? closed = null) =>
@@ -71,6 +102,23 @@ public class WorkOrderQueryServiceTests
             HandlerId = _orders.Get(orderId)!.HandlerId, DueDate = due, FirstLinkedDate = D2, LastLinkedDate = D2,
             CreatedAt = D2, CreatedByAccount = "admin", UpdatedAt = D2, ClosedAt = closed, WorkOrderId = orderId,
             DaySyncPending = pending
+        };
+        _cases.Save(c);
+        return c;
+    }
+
+    private IssueCase AddPrtgMember(long orderId, string host, string code, string sensor, DateTime? closed = null)
+    {
+        if (_hosts.FindByName(host) == null) _hosts.Upsert(new WebHost { HostName = host });
+        var issueKey = IssueSignatureKey.For("PRTG", $"PRTG:{code}", 0, EventLogEntryType.Warning,
+            $"prtg:{code}:{sensor}");
+        var c = new IssueCase
+        {
+            CaseId = $"{orderId}-{host}-{code}-{sensor}", HostName = host, IssueKey = issueKey,
+            IssueLabel = code, Status = IssueHandlingStatuses.InProgress,
+            HandlerId = _orders.Get(orderId)!.HandlerId, FirstLinkedDate = D2, LastLinkedDate = D2,
+            CreatedAt = D2, CreatedByAccount = "admin", UpdatedAt = D2, ClosedAt = closed,
+            WorkOrderId = orderId
         };
         _cases.Save(c);
         return c;
@@ -131,6 +179,144 @@ public class WorkOrderQueryServiceTests
     {
         var svc = Service(As(_stranger.UserId, Capability.Assign));
         Assert.Equal(ApiErrorCodes.NotFound, Assert.Throws<DomainException>(() => svc.Get(999)).Code);
+    }
+
+    [Fact]
+    public void 詳情_同處理人同主機同Sensor且兩單進行中_雙向顯示關聯單號()
+    {
+        var trendId = AddOrder(_alice.UserId, "PRTG:disk_free_trend", 0);
+        var warningId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        AddPrtgMember(trendId, "HOST-A", "disk_free_trend", "123");
+        AddPrtgMember(warningId, "HOST-A", "warning", "123");
+
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+        var trendMember = Assert.Single(svc.Members(trendId, "all", 1, 50).Items);
+        var warningMember = Assert.Single(svc.Members(warningId, "all", 1, 50).Items);
+
+        Assert.Equal(warningId, trendMember.RelatedWorkOrderId);
+        Assert.Equal(trendId, warningMember.RelatedWorkOrderId);
+    }
+
+    [Fact]
+    public void 詳情_關聯單只查目前處理人且不洩露其他處理人的單號()
+    {
+        var trendId = AddOrder(_alice.UserId, "PRTG:disk_free_trend", 0);
+        var aliceWarningId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        var bobWarningId = AddOrder(_bob.UserId, "PRTG:warning", 0);
+        AddPrtgMember(trendId, "HOST-A", "disk_free_trend", "123");
+        AddPrtgMember(aliceWarningId, "HOST-A", "warning", "456");
+        AddPrtgMember(bobWarningId, "HOST-A", "warning", "123");
+
+        _orders.ThrowOnGetAllActive = true;
+        var service = Service(As(_alice.UserId, Capability.Handle));
+
+        var member = Assert.Single(service.Members(trendId, "all", 1, 50).Items);
+
+        Assert.Equal(new[] { _alice.UserId }, _orders.GetActiveByHandlerCalls);
+        Assert.Null(member.RelatedWorkOrderId);
+        Assert.NotEqual(bobWarningId, member.RelatedWorkOrderId);
+    }
+
+    [Fact]
+    public void 詳情_警告單結案或主機Sensor處理人不同_不顯示關聯()
+    {
+        var trendId = AddOrder(_alice.UserId, "PRTG:disk_free_trend", 0);
+        var warningId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        var otherHandlerWarningId = AddOrder(_bob.UserId, "PRTG:warning", 0);
+        AddPrtgMember(trendId, "HOST-A", "disk_free_trend", "123");
+        AddPrtgMember(warningId, "HOST-A", "warning", "123", closed: DateTime.Now);
+        AddPrtgMember(warningId, "HOST-B", "warning", "123");
+        AddPrtgMember(warningId, "HOST-A", "warning", "456");
+        AddPrtgMember(otherHandlerWarningId, "HOST-A", "warning", "123");
+
+        var member = Assert.Single(Service(As(_alice.UserId, Capability.Handle))
+            .Members(trendId, "all", 1, 50).Items);
+
+        Assert.Null(member.RelatedWorkOrderId);
+    }
+
+    [Fact]
+    public void 成員_警告單即使沒有趨勢單仍顯示同主機同Sensor最近Finding()
+    {
+        var warningId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        var memberCase = AddPrtgMember(warningId, "HOST-TREND", "warning", "123");
+        var host = _hosts.FindByName("HOST-TREND")!;
+        var sample = "目前剩餘 12%，預估 8 天後耗盡";
+        _records.Add(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-1),
+            TopIssues = new() { new LogIssueSignature { LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
+                EntryType = EventLogEntryType.Warning, EventKey = "prtg:disk_free_trend:123", SampleMessages = new() { sample } } }
+        });
+        var otherHost = _hosts.Upsert(new WebHost { HostName = "HOST-OTHER" });
+        _records.Add(new DailyAnalysisRecord
+        {
+            HostId = otherHost.HostId, Host = otherHost.HostName, Date = DateTime.Today,
+            TopIssues = new() { new LogIssueSignature { EventKey = "prtg:disk_free_trend:123", SampleMessages = new() { "不可洩漏" } } }
+        });
+
+        var member = Assert.Single(Service(As(_alice.UserId, Capability.Handle)).Members(warningId, "all", 1, 50).Items);
+
+        Assert.Equal(memberCase.CaseId, member.CaseId);
+        Assert.Equal(host.HostId, member.HostId);
+        Assert.Equal(DateTime.Today.AddDays(-1), member.DiskTrend!.RecordDate);
+        Assert.Equal("123", member.DiskTrend.SensorId);
+        Assert.Equal(sample, member.DiskTrend.Detail);
+        Assert.Null(member.RelatedWorkOrderId);
+    }
+
+    [Fact]
+    public void 成員_無Finding或已結案警告單不顯示趨勢證據()
+    {
+        var activeWarning = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        AddPrtgMember(activeWarning, "HOST-NO-TREND", "warning", "123");
+        var closedWarning = AddOrder(_alice.UserId, "PRTG:warning", 0, closed: DateTime.Today);
+        AddPrtgMember(closedWarning, "HOST-NO-TREND", "warning", "123");
+
+        Assert.Null(Assert.Single(Service(As(_alice.UserId, Capability.Handle))
+            .Members(activeWarning, "all", 1, 50).Items).DiskTrend);
+        Assert.Null(Assert.Single(Service(As(_alice.UserId, Capability.Handle))
+            .Members(closedWarning, "all", 1, 50).Items).DiskTrend);
+    }
+
+    [Fact]
+    public void 成員_相同EventKey但來源不符不算趨勢證據()
+    {
+        var warningId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        AddPrtgMember(warningId, "HOST-FORGED", "warning", "123");
+        var host = _hosts.FindByName("HOST-FORGED")!;
+        _records.Add(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = DateTime.Today,
+            TopIssues = new() { new LogIssueSignature
+            {
+                LogName = "PRTG", Source = "PRTG:warning", EventId = 0,
+                EntryType = EventLogEntryType.Warning, EventKey = "prtg:disk_free_trend:123",
+                SampleMessages = new() { "must not attach" }
+            } }
+        });
+
+        var member = Assert.Single(Service(As(_alice.UserId, Capability.Handle))
+            .Members(warningId, "all", 1, 50).Items);
+
+        Assert.Null(member.DiskTrend);
+    }
+
+    [Fact]
+    public void 詳情_僅在可見成員主機上解析關聯()
+    {
+        var trendId = AddOrder(_alice.UserId, "PRTG:disk_free_trend", 0);
+        var warningId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        AddPrtgMember(trendId, "HOST-A", "disk_free_trend", "123");
+        AddPrtgMember(trendId, "HOST-HIDDEN", "disk_free_trend", "456");
+        AddPrtgMember(warningId, "HOST-HIDDEN", "warning", "456");
+        var hostA = _hosts.FindByName("HOST-A")!;
+
+        var page = Service(As(_stranger.UserId, Capability.Assign), hostA.HostId)
+            .Members(trendId, "all", 1, 50);
+
+        Assert.Equal(1, page.HiddenMemberCount);
+        Assert.Null(Assert.Single(page.Items).RelatedWorkOrderId);
     }
 
     // ── 成員可見範圍 ─────────────────────────────────────────────────────────

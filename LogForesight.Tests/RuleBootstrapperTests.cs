@@ -30,7 +30,7 @@ public class RuleBootstrapperContractTests : IDisposable
     }
 
     [Fact]
-    public void 檔案不存在時寫入內建種子且回傳全部啟用()
+    public void 檔案不存在時寫入內建種子且EnabledCount只計啟用規則()
     {
         var store = Store();
 
@@ -38,8 +38,11 @@ public class RuleBootstrapperContractTests : IDisposable
 
         Assert.True(store.Exists);
         Assert.False(result.UsedFallbackSeed);
-        Assert.Equal(KnownIssueSeed.CreateRules().Count, result.EnabledCount);
-        Assert.Equal(0, result.DisabledCount);
+        var seedRules = KnownIssueSeed.CreateRules();
+        Assert.Equal(seedRules.Count(r => r.Enabled), result.EnabledCount);
+        Assert.Equal(seedRules.Count(r => !r.Enabled), result.DisabledCount);
+        Assert.Contains(seedRules, r => r.Id == "builtin-prtg-disk-free-trend"
+            && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend && !r.Enabled);
         Assert.Equal(KnownIssueSeed.Version, result.SeedVersion);
         Assert.Null(result.UpdateHint); // 剛寫入的就是最新種子，不該提示有更新可匯入
     }
@@ -62,35 +65,61 @@ public class RuleBootstrapperContractTests : IDisposable
     public void 停用的規則不計入EnabledCount且不參與Classify()
     {
         var rules = KnownIssueSeed.CreateRules();
-        rules[0] = new KnownIssueRule
+        int disabledIndex = rules.FindIndex(r => r.Enabled && r.EventIds.Length > 0);
+        Assert.True(disabledIndex >= 0);
+        var ruleToDisable = rules[disabledIndex];
+        rules[disabledIndex] = new KnownIssueRule
         {
-            Id = rules[0].Id,
-            Origin = rules[0].Origin,
+            Id = ruleToDisable.Id,
+            Origin = ruleToDisable.Origin,
             Enabled = false, // 停用第一條規則
-            Scope = rules[0].Scope,
-            MatchAllEventIds = rules[0].MatchAllEventIds,
-            SourcePattern = rules[0].SourcePattern,
-            EventIds = rules[0].EventIds,
-            Category = rules[0].Category,
-            Severity = rules[0].Severity,
-            Description = rules[0].Description,
-            CountThreshold = rules[0].CountThreshold,
-            PlainExplanation = rules[0].PlainExplanation,
-            Impact = rules[0].Impact,
-            LikelyCauses = rules[0].LikelyCauses,
-            NextSteps = rules[0].NextSteps
+            Scope = ruleToDisable.Scope,
+            MatchAllEventIds = ruleToDisable.MatchAllEventIds,
+            SourcePattern = ruleToDisable.SourcePattern,
+            EventIds = ruleToDisable.EventIds,
+            Category = ruleToDisable.Category,
+            Severity = ruleToDisable.Severity,
+            Description = ruleToDisable.Description,
+            CountThreshold = ruleToDisable.CountThreshold,
+            PlainExplanation = ruleToDisable.PlainExplanation,
+            Impact = ruleToDisable.Impact,
+            LikelyCauses = ruleToDisable.LikelyCauses,
+            NextSteps = ruleToDisable.NextSteps
         };
-        var disabledRuleSourcePattern = rules[0].SourcePattern;
-        var disabledRuleEventId = rules[0].EventIds.Length > 0 ? rules[0].EventIds[0] : 0;
+        var disabledRuleSourcePattern = ruleToDisable.SourcePattern;
+        var disabledRuleEventId = ruleToDisable.EventIds[0];
 
         var store = Store();
         store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = KnownIssueSeed.Version, Rules = rules });
 
         var result = RuleBootstrapper.Run(store);
 
-        Assert.Equal(rules.Count - 1, result.EnabledCount);
-        Assert.Equal(1, result.DisabledCount);
+        Assert.Equal(rules.Count(r => r.Enabled), result.EnabledCount);
+        Assert.Equal(rules.Count(r => !r.Enabled), result.DisabledCount);
         Assert.Null(KnownIssueCatalog.FindRule(disabledRuleSourcePattern, disabledRuleEventId));
+
+        var disabledSignature = new LogIssueSignature
+        {
+            LogName = "System",
+            Source = disabledRuleSourcePattern,
+            EventId = disabledRuleEventId,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Count = 1
+        };
+        KnownIssueCatalog.Classify(disabledSignature);
+        Assert.Equal(IssueCategory.Other, disabledSignature.Category);
+
+        var enabledRule = rules.First(r => r.Enabled && r.EventIds.Length > 0);
+        var enabledSignature = new LogIssueSignature
+        {
+            LogName = "System",
+            Source = enabledRule.SourcePattern,
+            EventId = enabledRule.EventIds[0],
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Count = 1
+        };
+        KnownIssueCatalog.Classify(enabledSignature);
+        Assert.Equal(enabledRule.Category, enabledSignature.Category);
     }
 
     [Fact]

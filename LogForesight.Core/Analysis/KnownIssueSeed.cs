@@ -28,7 +28,8 @@ public static class KnownIssueSeed
     /// v7（依 sensor 分類覆寫）：新增四條帶 PrtgSensorCategory 的 PRTG 分類規則（down-availability、down-hardware、
     /// warning-disk、warning-hardware）；不限分類的 builtin-prtg-down 取消「重大」旗標（改由 availability 分類規則承擔）；
     /// 既有 PRTG 規則 Description 移除門檻數字（門檻可調，寫死在文字裡會與實際值不符）。</summary>
-    public const int Version = 7;
+    /// v8 新增預設停用的磁碟可用空間趨勢規則，使用獨立 PrtgDiskTrendThresholds 暫定門檻。
+    public const int Version = 8;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -1147,5 +1148,14 @@ public static class KnownIssueSeed
                 Impact = "硬體在警告狀態下持續運作可能加速劣化，最終導致非預期停機。",
                 LikelyCauses = new[] { "散熱不良或機房溫度偏高", "風扇轉速下降或單一電源失效", "RAID 背景重建或預測性故障警告" },
                 NextSteps = new[] { "登入硬體管理介面確認是哪個元件告警", "檢查機房溫度與機櫃氣流", "安排維護窗口更換預警元件" } },
+        new() { Id = "builtin-prtg-disk-free-trend", Origin = "builtin", Enabled = false, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 0,
+                PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional, PrtgSensorCategory = PrtgSensorCategories.Disk,
+                Category = IssueCategory.Storage, Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "磁碟可用空間持續下降，可能在處理期間內耗盡",
+                PlainExplanation = "近期可用空間持續下降，依目前趨勢估計可能在處理期間內耗盡；門檻仍待實機資料校準。",
+                Impact = "磁碟空間耗盡會使服務、資料庫與日誌寫入失敗。",
+                LikelyCauses = new[] { "日誌或資料持續成長", "備份或暫存檔累積", "磁碟容量不足" },
+                NextSteps = new[] { "確認磁碟可用百分比與趨勢資料", "找出近期成長目錄並清理可移除資料", "評估擴充容量或調整資料保留策略" } },
     };
 }

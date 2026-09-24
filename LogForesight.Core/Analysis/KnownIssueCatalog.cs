@@ -129,6 +129,9 @@ public class KnownIssueRule
     /// 承載不了分鐘數，也沒有「未達即不成立」的語意。</summary>
     public int PrtgThreshold { get; init; }
 
+    /// <summary>磁碟可用空間趨勢專用門檻；只供 disk_free_trend 使用，與分鐘／次數門檻完全分離。</summary>
+    public PrtgDiskTrendThresholds? PrtgDiskTrendThresholds { get; init; }
+
     /// <summary>PRTG 規則適用的 sensor 語意分類（見 <see cref="PrtgSensorCategories"/>）；null＝不限分類。
     /// 同一代碼可同時有不限分類的規則與分類規則，評估時分類相符者優先（見 PrtgRuleEvaluator）。
     /// silent 規則與非 prtg 規則恆為 null（由 RuleValidator 把關）。</summary>
@@ -211,6 +214,7 @@ public class KnownIssueRule
         MessagePatterns = MessagePatterns,
         PrtgRuleCode = PrtgRuleCode,
         PrtgThreshold = PrtgThreshold,
+        PrtgDiskTrendThresholds = PrtgDiskTrendThresholds,
         PrtgSensorCategory = PrtgSensorCategory,
         Category = Category,
         Severity = Severity,

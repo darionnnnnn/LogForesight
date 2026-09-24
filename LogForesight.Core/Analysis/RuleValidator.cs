@@ -89,6 +89,10 @@ public static class RuleValidator
         {
             return "PrtgSensorCategory 僅 prtg 規則可填，其他平台必須為空";
         }
+        if (rule.Platform != "prtg" && rule.PrtgDiskTrendThresholds != null)
+        {
+            return "PrtgDiskTrendThresholds 僅 prtg 規則可填，其他平台必須為空";
+        }
 
         if (rule.CountThreshold < 1)
         {
@@ -232,9 +236,21 @@ public static class RuleValidator
         if (rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDown &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleFlapping &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleWarning &&
-            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleSilent)
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleSilent &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDiskFreeTrend)
         {
-            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning} 或 {PrtgRuleEvaluator.RuleSilent}，實際為「{rule.PrtgRuleCode}」";
+            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning}、{PrtgRuleEvaluator.RuleSilent} 或 {PrtgRuleEvaluator.RuleDiskFreeTrend}，實際為「{rule.PrtgRuleCode}」";
+        }
+
+        if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend)
+        {
+            if (rule.PrtgThreshold != 0) return "disk_free_trend 不使用 PrtgThreshold，必須為 0";
+            if (rule.PrtgSensorCategory != PrtgSensorCategories.Disk) return "disk_free_trend 的 PrtgSensorCategory 必須是 disk";
+            if (!ValidDiskTrendThresholds(rule.PrtgDiskTrendThresholds)) return "disk_free_trend 必須提供有效的 PrtgDiskTrendThresholds（有限且在允許範圍內）";
+        }
+        else if (rule.PrtgDiskTrendThresholds != null)
+        {
+            return "PrtgDiskTrendThresholds 僅 disk_free_trend 可填";
         }
 
         if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && rule.PrtgThreshold < 1)
@@ -268,6 +284,14 @@ public static class RuleValidator
 
         return null;
     }
+
+    private static bool ValidDiskTrendThresholds(PrtgDiskTrendThresholds? t) => t != null
+        && double.IsFinite(t.LowWaterPercent) && t.LowWaterPercent is >= 0 and <= 100
+        && double.IsFinite(t.MinimumDeclinePercentagePointsPerDay) && t.MinimumDeclinePercentagePointsPerDay is > 0 and <= 100
+        && double.IsFinite(t.MaximumDaysToDepletion) && t.MaximumDaysToDepletion is > 0 and <= 3650
+        && t.MinimumValidDays is >= 2 and <= 365
+        && t.RecentWindowDays >= t.MinimumValidDays && t.RecentWindowDays <= 730
+        && double.IsFinite(t.MinimumDecliningDayRatio) && t.MinimumDecliningDayRatio is > 0 and <= 1;
 
     /// <summary>Lucene 裸 term 安全字元（見 <see cref="CheckLinuxFields"/> 的 ProgramPattern 檢查）：
     /// 英數字與 <c>_</c>／<c>.</c>／<c>-</c>，與 SentinelEventMapper 的 msg 前綴 program

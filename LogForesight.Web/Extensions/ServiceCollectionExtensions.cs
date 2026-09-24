@@ -393,6 +393,7 @@ public static class ServiceCollectionExtensions
 
         // 規則維護與執行監控
         services.AddScoped<RuleAdminService>();
+        services.AddScoped<PrtgDiskAssessmentService>();
         services.AddScoped<RunMonitorService>();
 
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
@@ -485,6 +486,13 @@ public static class ServiceCollectionExtensions
         // PRTG API 探測（probe，PRTG 第 1 輪批次B-3）：狀態單例與背景執行入口
         services.AddSingleton<PrtgProbeRunState>();
         services.AddSingleton<PrtgProbeService>();
+
+        // PRTG 磁碟語意驗證：與所有 PRTG 探測／回填／同步／快照共用執行 gate。
+        services.AddSingleton(sp => new PrtgDiskSemanticEvidenceStore(
+            sp.GetRequiredService<StorageBackend>().Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
+        services.AddSingleton(sp => new PrtgDiskVerificationResultStore(
+            sp.GetRequiredService<StorageBackend>().Blob(PrtgDiskVerificationResultStore.BlobKey)));
+        services.AddSingleton<PrtgDiskVerificationService>();
 
         // PRTG 歷史回填（PRTG 第 1 輪批次E）：狀態單例與背景執行入口
         services.AddSingleton<PrtgBackfillRunState>();

@@ -59,6 +59,10 @@ public static class PrtgRuleCatalog
             false,
             "該 device 的全部 sensor 皆無狀態，監控本身可能已失效",
             DefaultSilentThreshold),
+
+        [PrtgRuleEvaluator.RuleDiskFreeTrend] = new(
+            IssueCategory.Storage, IssueSeverity.High, false,
+            "磁碟可用空間持續下降，可能在處理期間內耗盡", 0),
     };
 
     /// <summary>依規則代碼查詢規則資訊</summary>

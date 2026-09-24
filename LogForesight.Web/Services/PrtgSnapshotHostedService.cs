@@ -96,6 +96,8 @@ public class PrtgSnapshotHostedService : BackgroundService
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;
     private readonly PrtgProbeRunState _probeState;
+    private readonly PrtgSnapshotDiagnosticsStore _diagnosticsStore;
+    public PrtgSnapshotDiagnosticsService Diagnostics { get; }
 
     /// <summary>服務持有的單一實例：DNS 快取跨輪有效，取數範圍計算不必每輪重新解析。</summary>
     private readonly PrtgAddressResolver _addressResolver = new();
@@ -165,6 +167,14 @@ public class PrtgSnapshotHostedService : BackgroundService
         _structureSync = structureSyncService ?? throw new ArgumentNullException(nameof(structureSyncService));
         _backfill = backfillService ?? throw new ArgumentNullException(nameof(backfillService));
         _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
+        _diagnosticsStore = new PrtgSnapshotDiagnosticsStore(_backend.Blob("prtg_snapshot_diagnostics_v1"), () =>
+        {
+            var current = _settingsStore.Get();
+            return Math.Min(current.PrtgRetentionDays, current.RetentionDays);
+        });
+        Diagnostics = new PrtgSnapshotDiagnosticsService(_diagnosticsStore,
+            (from, to) => _backend.PrtgStore().GetSnapshotValueCoverage(from, to));
+        RecordDiagnostic(Now(), "startup", "startup-partial-hour");
 
         var settings = _settingsStore.Get();
         _effectiveIntervalMinutes = PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes;
@@ -281,35 +291,35 @@ public class PrtgSnapshotHostedService : BackgroundService
         // 1. PrtgEnabled 為 false → 不跑。
         if (!settings.PrtgEnabled)
         {
-            NoteSkip("PRTG 擷取未啟用", trackPause: false);
+            NoteSkip(PrtgSnapshotSkipReasonCodes.PrtgDisabled, "PRTG 擷取未啟用", trackPause: false);
             return;
         }
 
         // 2. 連線設定不齊（PrtgUrl 空 或 PrtgClientFactory.HasUsableCredentials(settings) 為 false）→ 不跑。
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
-            NoteSkip("PRTG 連線設定不齊", trackPause: false);
+            NoteSkip(PrtgSnapshotSkipReasonCodes.ConnectionNotConfigured, "PRTG 連線設定不齊", trackPause: false);
             return;
         }
 
         // 3. 結構同步執行中（PrtgStructureSyncService.IsRunning）→ 不跑。
         if (_structureSync.IsRunning)
         {
-            NoteSkip("結構同步執行中，暫停快照");
+            NoteSkip(PrtgSnapshotSkipReasonCodes.StructureSyncActive, "結構同步執行中，暫停快照");
             return;
         }
 
         // 4. 歷史回填執行中（PrtgBackfillService 的狀態 IsRunning）→ 不跑。
         if (_backfill.GetStatus().IsRunning)
         {
-            NoteSkip("歷史回填執行中，暫停快照");
+            NoteSkip(PrtgSnapshotSkipReasonCodes.BackfillActive, "歷史回填執行中，暫停快照");
             return;
         }
 
         // 5. 取數執行正在 PRTG 階段（SchedulerRunState 的快照裡，進度 phase 以 prtg- 開頭）→ 不跑。
         if (IsFetchRunningPrtgPhase())
         {
-            NoteSkip("夜間取數正在 PRTG 階段，暫停快照");
+            NoteSkip(PrtgSnapshotSkipReasonCodes.NightlyFetchPrtgPhase, "夜間取數正在 PRTG 階段，暫停快照");
             return;
         }
 
@@ -356,9 +366,10 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 「未啟用／設定不齊」不算暫停（trackPause=false）：那段期間本來就沒有在取樣，
     /// 啟用當天印「暫停 43200 分鐘、coverage 偏低」是假訊息；要量的是取數、同步、回填佔用造成的暫停。
     /// </summary>
-    private void NoteSkip(string reason, bool trackPause = true)
+    private void NoteSkip(string reasonCode, string reason, bool trackPause = true)
     {
         _lastSkipReason = reason;
+        RecordDiagnostic(Now(), "skip", reason, _targetObjids?.Count ?? 0, reasonCode: reasonCode);
         if (trackPause) _skipSince ??= Now();
         else _skipSince = null;
     }
@@ -415,7 +426,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         else
         {
             var client = GetClient(settings);
+            RecordDiagnostic(now, "attempt", targets: targets.Count);
             var json = await client.GetJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000", ct);
+            RecordDiagnostic(now, "success", targets: targets.Count);
 
             var (treeSize, totalSensorsInResponse) = ParseSnapshotResponse(json, now, tally, _targetObjids ?? new HashSet<long>());
             if (treeSize.HasValue && treeSize.Value > 0 && totalSensorsInResponse < treeSize.Value)
@@ -457,9 +470,11 @@ public class PrtgSnapshotHostedService : BackgroundService
                 var batch = targets.Skip(i).Take(batchSize).ToList();
                 try
                 {
+                    RecordDiagnostic(now, "attempt", targets: targets.Count);
                     var json = await client.GetJsonAsync(
                         "api/table.json?content=sensors&columns=objid,lastvalue_raw,interval"
                         + PrtgResourceGuardProbe.BuildObjidFilter(batch), ct);
+                    RecordDiagnostic(now, "success", targets: targets.Count);
                     // 只收本批要求的 objid：PRTG 若忽略 filter_objid 會每批都回整站，
                     // 不擋的話同一顆感測器一輪會被重複累加幾十次，而「取回少於要求」的警告也不會響
                     ParseSnapshotResponse(json, now, tally, batch.ToHashSet());
@@ -812,10 +827,14 @@ public class PrtgSnapshotHostedService : BackgroundService
             try
             {
                 _backend.PrtgStore().MergeSampledValues(_pendingWrite);
+                foreach (var hourGroup in _pendingWrite.GroupBy(row => row.PeriodStart))
+                    RecordDiagnostic(hourGroup.Key, "persisted", sampled: hourGroup.Count());
                 _pendingWrite.Clear();
             }
             catch (Exception ex)
             {
+                foreach (var hourGroup in _pendingWrite.GroupBy(row => row.PeriodStart))
+                    RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetObjids?.Count ?? 0, hourGroup.Count());
                 var dropped = Math.Max(0, _pendingWrite.Count - MaxPendingWriteRows);
                 if (dropped > 0) _pendingWrite.RemoveRange(0, dropped);
                 var msg = $"快照樣本寫入資料庫失敗，{_pendingWrite.Count} 列留待下次重試"
@@ -918,6 +937,13 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             Log.Warn(ex, "PRTG 快照擷取紀錄寫入失敗");
         }
+    }
+
+    private void RecordDiagnostic(DateTime at, string outcome, string? reason = null, int targets = 0, int sampled = 0,
+        string? reasonCode = null)
+    {
+        try { _diagnosticsStore.Record(at, outcome, reason, targets, sampled, reasonCode); }
+        catch (Exception ex) { Log.Warn(ex, "PRTG 快照診斷統計寫入失敗（不影響取樣）"); }
     }
 
     private void RecordFailure(Exception ex)

@@ -159,6 +159,7 @@ public static class RuleImportPlanner
         a.MessagePatterns.SequenceEqual(b.MessagePatterns) &&
         a.PrtgRuleCode == b.PrtgRuleCode &&
         a.PrtgThreshold == b.PrtgThreshold &&
+        Equals(a.PrtgDiskTrendThresholds, b.PrtgDiskTrendThresholds) &&
         a.PrtgSensorCategory == b.PrtgSensorCategory &&
         a.Category == b.Category &&
         a.Severity == b.Severity &&

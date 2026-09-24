@@ -162,6 +162,32 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.True(readyAt < doneAt, "prtg-findings-ready 必須早於 prtg-done");
     }
 
+    [Fact]
+    public async Task 停用磁碟趨勢規則時不產生正式finding且仍正常宣告就緒()
+    {
+        Assert.DoesNotContain(KnownIssueCatalog.Rules, r =>
+            r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode && r.PrtgSensorCategory == PrtgSensorCategories.Disk);
+        Assert.Contains(KnownIssueSeed.CreateRules(), r =>
+            r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode && r.PrtgSensorCategory == PrtgSensorCategories.Disk && !r.Enabled);
+
+        // 無效 scheme 讓結構擷取階段立即失敗，後續規則與發布流程仍會繼續，不呼叫 PRTG。
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "ftp://invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+        });
+
+        var (ctx, console, progress, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null);
+
+        Assert.True(registry.IsReady);
+        Assert.DoesNotContain(console.Lines, line => line.Contains("磁碟趨勢正式評估完成"));
+        Assert.True(progress.Phases.IndexOf(RunPhases.PrtgFindingsReady) < progress.Phases.IndexOf(RunPhases.PrtgDone));
+    }
+
     /// <summary>可控的同步閘門：回報執行中，被等待後轉為閒置並記錄呼叫次數。</summary>
     private sealed class FakeStructureSyncGate : IPrtgStructureSyncGate
     {

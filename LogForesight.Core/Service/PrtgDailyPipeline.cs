@@ -359,6 +359,72 @@ internal static class PrtgDailyPipeline
                 }
             }
 
+            // 正式磁碟趨勢只讀取已落盤的日資料，且僅評估最新的已完成日。
+            // 它不等待本趟 triggered fetch，也不接觸 PRTG API；分頁上限由 assessment service 強制為 100。
+            if (newest.Date < DateTime.Today)
+            {
+                var diskRules = KnownIssueCatalog.Rules.Where(r =>
+                    string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(r.PrtgRuleCode, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(r.PrtgSensorCategory, PrtgSensorCategories.Disk, StringComparison.OrdinalIgnoreCase) && r.Enabled)
+                    .OrderBy(r => r.Id, StringComparer.Ordinal).ToArray();
+                if (diskRules.Length > 1)
+                {
+                    var warning = $"PRTG 磁碟趨勢規則有 {diskRules.Length} 筆相同代碼／disk 分類，正式評估採用 Id 最小的「{diskRules[0].Id}」。";
+                    Log.Warn(warning);
+                    prtgConsole.WriteLine("  ⚠ " + warning);
+                }
+
+                var diskRule = diskRules.FirstOrDefault();
+                if (diskRule != null)
+                {
+                    try
+                    {
+                        var assessment = new PrtgDiskAssessmentService(prtgStore, hostStore,
+                            new SystemSettingsStore(backend.Blob("system_settings")),
+                            new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
+                            new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)));
+                        var pageOffset = 0;
+                        var added = 0;
+                        var batchSize = PrtgDiskAssessmentService.EffectiveBatchSize(diskRule);
+                        while (true)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            var page = assessment.Assess(DateOnly.FromDateTime(newest), diskRule,
+                                PrtgDiskDecisionMode.Formal, batchSize,
+                                pageOffset, hostIds);
+                            foreach (var row in page.Rows)
+                            {
+                                if (row.Decision.Finding is not { } finding) continue;
+                                var findingsByHost = planned[newest].FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
+                                if (!findingsByHost.TryGetValue(row.CurrentHostId, out var hostFindings))
+                                    findingsByHost[row.CurrentHostId] = hostFindings = new List<LogIssueSignature>();
+                                hostFindings.Add(PrtgFindingMapper.ToSignature(finding, newest));
+                                added++;
+                                dayStates[newest].TriggerHosts.Add(row.CurrentHostId);
+                            }
+                            if (!page.HasMore) break;
+                            pageOffset += page.AssessedCount;
+                        }
+                        if (added > 0)
+                        {
+                            var latestPlan = planned[newest];
+                            latestPlan.FindingCount += added;
+                            latestPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
+                            dayStates[newest].Findings += added;
+                            dayStates[newest].AttributedHosts = latestPlan.FindingsByHost.Count;
+                            prtgConsole.WriteLine($"磁碟趨勢正式評估完成（{newest:yyyy-MM-dd}）：新增 finding {added} 筆。");
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "PRTG 磁碟趨勢評估失敗；既有狀態型 findings 繼續發布");
+                        prtgConsole.WriteLine("  ⚠ 磁碟趨勢評估失敗，既有狀態型 findings 照常發布：" + ex.Message);
+                    }
+                }
+            }
+
             // 跨日歷史：本趟全部日期的 EventKey 合併後一次查詢（查詢內部依 500 分批），各日再切自己的窗口。
             // 查詢失敗只影響標註與升級，不影響發佈與追加。
             var dbHitDates = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);

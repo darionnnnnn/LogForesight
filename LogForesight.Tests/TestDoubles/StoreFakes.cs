@@ -393,6 +393,21 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 
     public void Add(DailyAnalysisRecord record) => _records.Add(record);
 
+    public List<DiskTrendEvidenceRecord> QueryDiskTrendEvidence(
+        IReadOnlyCollection<(long HostId, string SensorId)> hostSensors, DateTime from, DateTime to) =>
+        hostSensors.SelectMany(pair => _records
+                .Where(r => r.HostId == pair.HostId && r.Date.Date >= from.Date && r.Date.Date <= to.Date
+                    && r.TopIssues.Any(i => i.Source == "PRTG:disk_free_trend" && i.LogName == "PRTG"
+                        && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
+                        && i.EventKey == $"prtg:disk_free_trend:{pair.SensorId}"))
+                .OrderByDescending(r => r.Date)
+                .Take(1)
+                .Select(r => new DiskTrendEvidenceRecord(r.HostId, r.Date,
+                    pair.SensorId, r.TopIssues.First(i => i.Source == "PRTG:disk_free_trend" && i.LogName == "PRTG"
+                        && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
+                        && i.EventKey == $"prtg:disk_free_trend:{pair.SensorId}").SampleMessages?.FirstOrDefault())))
+            .ToList();
+
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
     {
         LastFilter = filter;
