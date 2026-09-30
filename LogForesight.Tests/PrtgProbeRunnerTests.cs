@@ -62,11 +62,11 @@ public class PrtgProbeRunnerTests
                 {
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.2.98""}"));
                 }
-                if (url.Contains("content=devices") && url.Contains("count=1"))
+                if (url.Contains("content=devices") && url.Contains("count=1&"))
                 {
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": ""10"", ""devices"": [{""objid"": 1}]}"));
                 }
-                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                if (url.Contains("content=sensors") && url.Contains("count=1&"))
                 {
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": ""5"", ""sensors"": [{""objid"": 10}]}"));
                 }
@@ -161,9 +161,9 @@ public class PrtgProbeRunnerTests
                 var url = req.RequestUri!.ToString();
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""Version"": ""23.1""}"));
-                if (url.Contains("content=devices") && url.Contains("count=1"))
+                if (url.Contains("content=devices") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": []}"));
-                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                if (url.Contains("content=sensors") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 10, ""sensors"": []}"));
                 if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
                 {
@@ -213,9 +213,9 @@ public class PrtgProbeRunnerTests
                 var url = req.RequestUri!.ToString();
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""version"": ""22.4""}"));
-                if (url.Contains("content=devices") && url.Contains("count=1"))
+                if (url.Contains("content=devices") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 5, ""devices"": []}"));
-                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                if (url.Contains("content=sensors") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 5, ""sensors"": []}"));
                 if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""type"": ""ping""}]}"));
@@ -269,7 +269,7 @@ public class PrtgProbeRunnerTests
                 var url = req.RequestUri!.ToString();
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""20.1""}"));
-                if (url.Contains("count=1"))
+                if (url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
                 if (url.Contains("columns=objid,device,sensor,type,tags,unit"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""type"": ""ping""}]}"));
@@ -306,7 +306,7 @@ public class PrtgProbeRunnerTests
                 var url = req.RequestUri!.ToString();
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""23.4""}"));
-                if (url.Contains("count=1"))
+                if (url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 3, ""devices"": [], ""sensors"": []}"));
                 if (url.Contains("columns=objid,device,sensor,type,tags,unit"))
                 {
@@ -352,9 +352,9 @@ public class PrtgProbeRunnerTests
                 var url = req.RequestUri!.ToString();
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.1""}"));
-                if (url.Contains("content=devices") && url.Contains("count=1"))
+                if (url.Contains("content=devices") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 2, ""devices"": []}"));
-                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                if (url.Contains("content=sensors") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 4, ""sensors"": []}"));
                 if (url.Contains("columns=objid,device,sensor,type,tags,unit,lastvalue,parentid"))
                 {
@@ -424,7 +424,7 @@ public class PrtgProbeRunnerTests
                 var url = req.RequestUri!.ToString();
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""20.1""}"));
-                if (url.Contains("count=1"))
+                if (url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
                 if (url.Contains("columns=objid,device,sensor,type,tags,unit,lastvalue,parentid"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""type"": ""ping""}]}"));
@@ -494,9 +494,9 @@ public class PrtgProbeRunnerTests
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"treesize\": 12, \"{content}\": [{rows}]}}"));
                 }
 
-                if (url.Contains("content=devices") && url.Contains("count=1"))
+                if (url.Contains("content=devices") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"treesize\": {deviceTreesize}, \"devices\": [{{\"objid\": 1}}]}}"));
-                if (url.Contains("content=sensors") && url.Contains("count=1"))
+                if (url.Contains("content=sensors") && url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""sensors"": [{""objid"": 10}]}"));
                 if (url.Contains("content=sensors") && url.Contains("columns=objid,device,sensor,type,tags,unit"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""sensors"": [{""objid"": 101, ""device"": ""A"", ""sensor"": ""Ping"", ""type"": ""ping"", ""unit"": ""ms"", ""parentid"": 1}]}"));
@@ -645,7 +645,7 @@ public class PrtgProbeRunnerTests
         stub.OnSend = (req, ct) =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=sensors") && url.Contains("count=1"))
+            if (url.Contains("content=sensors") && url.Contains("count=1&"))
                 return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 3, ""sensors"": [{""objid"": 10}]}"));
             if (url.Contains("columns=objid,dependency"))
                 return Task.FromResult(JsonResponse(HttpStatusCode.OK,
@@ -659,6 +659,91 @@ public class PrtgProbeRunnerTests
 
         Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：1 / 3"));
         Assert.DoesNotContain(console.Lines, l => l.Contains("僅取樣到") && l.Contains("下列比例僅供參考"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟4逾時後繼續後續探測且不查全站五萬顆()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = async (req, ct) =>
+        {
+            if (req.RequestUri!.ToString().Contains("columns=objid,dependency"))
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                throw new InvalidOperationException("不應回到此處");
+            }
+            return await inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunCoreAsync(client, console, TimeSpan.FromMilliseconds(80));
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l.Contains("相依性樣本查詢逾時") && l.Contains("未驗證"));
+        Assert.Contains(console.Lines, l => l.StartsWith("[5] 群組樹概要"));
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("columns=objid,dependency&count=100&start=0"));
+        Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("columns=objid,dependency&count=50000"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟4分批查詢並回報每批進度()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("count=1&"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"":250,""sensors"":[{""objid"":1}]}"));
+            if (url.Contains("columns=objid,dependency"))
+            {
+                var start = int.Parse(url.Split("start=")[1].Split('&')[0]);
+                var count = Math.Min(100, 250 - start);
+                var rows = Enumerable.Range(start + 1, count)
+                    .Select(id => $"{{\"objid\":{id},\"dependency\":\"{(id == 1 ? "200" : "0")}\"}}");
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    $"{{\"treesize\":250,\"sensors\":[{string.Join(',', rows)}]}}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        Assert.True(await PrtgProbeRunner.RunAsync(client, console));
+        Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 1 批、100/250"));
+        Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 2 批、200/250"));
+        Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 3 批、250/250"));
+        Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：1 / 250"));
+        Assert.Equal(3, stub.RequestedUrls.Count(u => u.Contains("columns=objid,dependency&count=100&start=")));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟4忽略start時停止重複取樣()
+    {
+        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
+        var inner = stub.OnSend;
+        stub.OnSend = (req, ct) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=sensors") && url.Contains("count=1&"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"":250,""sensors"":[{""objid"":1}]}"));
+            if (url.Contains("columns=objid,dependency"))
+            {
+                var rows = Enumerable.Range(1, 100).Select(id => $"{{\"objid\":{id},\"dependency\":\"0\"}}");
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    $"{{\"treesize\":250,\"sensors\":[{string.Join(',', rows)}]}}"));
+            }
+            return inner(req, ct);
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        Assert.True(await PrtgProbeRunner.RunAsync(client, console));
+        Assert.Contains(console.Lines, l => l.Contains("分頁可能被忽略"));
+        Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：0 / 100") && l.Contains("未驗證"));
+        Assert.Equal(2, stub.RequestedUrls.Count(u => u.Contains("columns=objid,dependency&count=100&start=")));
     }
 
     [Fact]
@@ -723,7 +808,7 @@ public class PrtgProbeRunnerTests
 
                 if (url.Contains("/api/status.json"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.2.98""}"));
-                if (url.Contains("count=1"))
+                if (url.Contains("count=1&"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
                 if (url.Contains("columns=objid,device,sensor,type,tags,unit"))
                     return Task.FromResult(JsonResponse(HttpStatusCode.OK, step3Sensors));
