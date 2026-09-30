@@ -567,14 +567,14 @@ public class PrtgFindingsRegistryTests : IDisposable
 
         HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
 
-        Assert.Equal(RiskLevels.High, record.RiskLevel);
-        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
+        Assert.Equal(RiskLevels.Medium, record.RiskLevel);
+        Assert.NotEqual(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
         Assert.True(record.AiPending);
         var memoryRef = Assert.Single(record.CorrelationAlertRefs);
         Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, memoryRef.PatternId);
 
         var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
-        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+        Assert.Equal(RiskLevels.Medium, persisted.RiskLevel);
         Assert.Equal(record.CorrelationAlerts, persisted.CorrelationAlerts);
         Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, Assert.Single(persisted.CorrelationAlertRefs).PatternId);
         using var ctx = _fx.NewContext();
@@ -599,7 +599,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
 
         Assert.Empty(record.CorrelationAlerts);
-        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(record.SuppressedCorrelationAlerts));
+        Assert.StartsWith("【儲存異常同日訊號】", Assert.Single(record.SuppressedCorrelationAlerts));
         Assert.NotEqual(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
 
         var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));

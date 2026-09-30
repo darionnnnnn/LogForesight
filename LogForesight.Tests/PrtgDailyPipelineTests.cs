@@ -47,10 +47,12 @@ public class PrtgDailyPipelineTests : IDisposable
     {
         public List<string> Phases { get; } = new();
         public List<(string Phase, int Done, int Total)> Reports { get; } = new();
+        public Action<string, int, int>? OnReport { get; set; }
         public void Report(string phase, int done, int total)
         {
             Phases.Add(phase);
             Reports.Add((phase, done, total));
+            OnReport?.Invoke(phase, done, total);
         }
     }
 
@@ -102,6 +104,63 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
         Assert.Contains(RunPhases.PrtgDone, progress.Phases);
         Assert.Contains(console.Lines, l => l.Contains("PRTG 未啟用"));
+    }
+
+    [Fact]
+    public async Task 執行中停用PRTG_逐日開始前停止且不取消其他分析()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://127.0.0.1:1";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+        });
+        var (ctx, console, progress, registry) = CreateContext();
+        progress.OnReport = (phase, _, total) =>
+        {
+            if (phase == RunPhases.PrtgDateRange && total == 0)
+                new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgEnabled = false);
+        };
+        var otherAnalysis = Task.CompletedTask;
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) }, otherAnalysis, hostIds: null);
+
+        Assert.True(otherAnalysis.IsCompletedSuccessfully);
+        Assert.True(registry.IsReady);
+        Assert.Contains(console.Lines, line => line.Contains("停止後續 PRTG 工作"));
+        Assert.DoesNotContain(progress.Reports, report => report.Phase == RunPhases.PrtgDateRange && report.Total > 0);
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, run!.PrtgOutcome);
+    }
+
+    [Fact]
+    public async Task 執行中修改非PRTG設定_不中斷PRTG逐日分析()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://127.0.0.1:1";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+        });
+        var (ctx, console, progress, _) = CreateContext();
+        progress.OnReport = (phase, _, total) =>
+        {
+            if (phase == RunPhases.PrtgDateRange && total == 0)
+                new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.MailEnabled = !s.MailEnabled);
+        };
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) }, Task.CompletedTask, hostIds: null);
+
+        Assert.DoesNotContain(console.Lines, line => line.Contains("停止後續 PRTG 工作"));
+        Assert.Equal(2, progress.Reports.Count(report => report.Phase == RunPhases.PrtgDateRange && report.Total > 0));
     }
 
     /// <summary>
@@ -735,8 +794,10 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.NotEmpty(registry.For(host.HostId, day2));
     }
 
-    [Fact]
-    public async Task 過去日沿用最新歷史對應表()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 過去日沿用最新歷史對應表(bool hostActive)
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -752,6 +813,8 @@ public class PrtgDailyPipelineTests : IDisposable
         var day3 = DateTime.Today.AddDays(-3);
         var day1 = DateTime.Today.AddDays(-2);
         var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = hostActive, IpAddress = "192.168.1.101" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -765,7 +828,7 @@ public class PrtgDailyPipelineTests : IDisposable
             {
                 MapDate = day3,
                 DeviceObjid = 1,
-                HostId = 101,
+                HostId = host.HostId,
                 HostName = "SRV-TEST",
                 MapStatus = PrtgMapStatus.Ok,
                 CreatedAt = DateTime.Now
@@ -786,11 +849,17 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, _, _, registry) = CreateContext();
 
         await PrtgDailyPipeline.RunAsync(
-            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            ctx, _backend, hostStore,
             new[] { day, day1 }, Task.CompletedTask, hostIds: null, guard: null);
 
         // day-1 評估時成功取用 day-3 的對應表，找到主機並完成 finding 歸屬
-        var findings = registry.For(101, day1);
+        var findings = registry.For(host.HostId, day1);
+        if (!hostActive)
+        {
+            Assert.Empty(findings);
+            Assert.Empty(_backend.PrtgObservationStore().ReadPage([host.HostId], day1, day1, 0, 100));
+            return;
+        }
         Assert.Single(findings);
         Assert.Equal("prtg:down:2001", findings[0].EventKey);
     }
@@ -1319,8 +1388,11 @@ public class PrtgDailyPipelineTests : IDisposable
         });
     }
 
-    [Fact]
-    public async Task 預設白名單不含Ping_PingDown仍進規則評估產生Down()
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task 預設白名單不含Ping_PingDown仍進規則評估產生Down(bool hasLogRecord, bool outsideSelectedScope)
     {
         EnableConservativePrtgWithDefaultWhitelist();
         Assert.DoesNotContain(SystemSettings.DefaultPrtgSensorTypeWhitelist,
@@ -1346,7 +1418,7 @@ public class PrtgDailyPipelineTests : IDisposable
         MapDeviceToHost(day, 1, host);
 
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
-        hostRecordStore.Append(new DailyAnalysisRecord
+        if (hasLogRecord) hostRecordStore.Append(new DailyAnalysisRecord
         {
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
         });
@@ -1354,12 +1426,26 @@ public class PrtgDailyPipelineTests : IDisposable
         var (ctx, _, _, registry) = CreateContext();
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { today, day }, Task.CompletedTask, hostIds: null, guard: null);
+            new[] { today, day }, Task.CompletedTask, hostIds: outsideSelectedScope ? Array.Empty<long>() : null, guard: null);
+
+        if (outsideSelectedScope)
+        {
+            Assert.Empty(registry.For(host.HostId, day));
+            Assert.Empty(_backend.PrtgObservationStore().ReadPage([host.HostId], day, day, 0, 100));
+            Assert.Empty(hostRecordStore.ReadRecent(day, 1));
+            return;
+        }
 
         // 連通性分類 → 挑到 availability 規則（門檻 30、重大）→ 日風險「高」
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
         Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
-        Assert.Equal(RiskLevels.High, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
+        if (hasLogRecord)
+            Assert.Equal(RiskLevels.High, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
+        else
+            Assert.Empty(hostRecordStore.ReadRecent(day, 1));
+        var observation = Assert.Single(_backend.PrtgObservationStore().ReadPage([host.HostId], day, day, 0, 100));
+        Assert.Equal(2001, observation.SensorObjid);
+        Assert.Null(observation.SourceGeneration);
     }
 
     [Fact]
@@ -1550,11 +1636,11 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     /// <summary>
-    /// 長期 Down 不再拉高日風險：資料庫已有連續 13 天的 down（重大規則 availability），
-    /// 當日第 14 天的 finding 不帶重大旗標，執行輸出計入長期 Down。
+    /// 長期 Down 仍維持故障風險：資料庫已有連續 13 天的 down（重大規則 availability），
+    /// 當日第 14 天仍帶重大旗標，執行輸出計入長期 Down。
     /// </summary>
     [Fact]
-    public async Task 資料庫已有連續13日Down_當日視為長期Down不拉高日風險()
+    public async Task 資料庫已有連續13日Down_當日仍維持故障風險()
     {
         EnableConservativePrtgWithDefaultWhitelist();
 
@@ -1607,12 +1693,11 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
         Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
-        Assert.False(sig.ElevatesDayRisk);
-        Assert.Contains("已連續 14 日，建議在 PRTG 暫停該 sensor 或建立抑制", sig.SampleMessages[0]);
+        Assert.True(sig.ElevatesDayRisk);
+        Assert.Contains("已連續 14 日，故障尚未恢復，請確認處置狀態", sig.SampleMessages[0]);
 
         var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        // 長期 Down 關掉重大旗標且嚴重度封頂「中」→ 不再拉日風險，維持原本的「低」
-        Assert.Equal(RiskLevels.Low, record.RiskLevel);
+        Assert.Equal(RiskLevels.High, record.RiskLevel);
         Assert.Contains(console.Lines, l => l.Contains("長期 Down 1 筆"));
     }
 
@@ -1662,7 +1747,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
         Assert.Equal(CorrelationPatternIds.PrtgOutageCorroborated, Assert.Single(record.CorrelationAlertRefs).PatternId);
-        Assert.StartsWith("【失聯獲 PRTG 證實】", Assert.Single(record.CorrelationAlerts));
+        Assert.StartsWith("【關機與監測異常同日訊號】", Assert.Single(record.CorrelationAlerts));
         Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("跨來源佐證（補追加階段）1 筆"));
     }
 
@@ -1722,7 +1807,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
         Assert.Empty(record.CorrelationAlerts);
-        Assert.StartsWith("【失聯獲 PRTG 證實】", Assert.Single(record.SuppressedCorrelationAlerts));
+        Assert.StartsWith("【關機與監測異常同日訊號】", Assert.Single(record.SuppressedCorrelationAlerts));
         Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("跨來源佐證（補追加階段）0 筆"));
     }
 }

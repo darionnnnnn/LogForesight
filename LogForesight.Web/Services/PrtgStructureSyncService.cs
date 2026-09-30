@@ -357,6 +357,8 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// <summary>同步主體：跑完、落地結果並結束執行狀態。回傳（是否成功, 失敗原因）。</summary>
     private async Task<(bool Success, string? Error)> ExecuteAsync(SystemSettings s, PrtgClient client, CancellationTokenSource cts)
     {
+        using var operation = new PrtgOperationScope(s, _settings.Get, cts.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        client.OperationCheckpoint = operation.Checkpoint;
         var console = new PrtgStructureSyncConsole(_state);
         var prtgStore = _backend.PrtgStore();
         var success = false;
@@ -365,13 +367,14 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         {
             using (client)
             {
+                operation.Checkpoint();
                 var fetchService = new PrtgFetchService(client, prtgStore,
                     new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
                     PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
 
                 var status = await PrtgStructureSyncRunner.RunAsync(
                     fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
-                    s.PrtgFetchConcurrency, console, cts.Token,
+                    s.PrtgFetchConcurrency, console, operation.Token,
                     new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
                     progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
 
@@ -383,14 +386,15 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         }
         catch (OperationCanceledException)
         {
-            console.WriteLine("同步已被取消（站台關閉或手動中止）。");
+            var reason = operation.SettingsChanged ? "PRTG 設定已變更，同步停止；已完成資料保留" : "同步已被取消（站台關閉或手動中止）";
+            console.WriteLine(reason);
             // 取消也要落地：不寫的話狀態卡會沿用上一筆「成功」的摘要，
             // 而執行輸出（行程內狀態）在站台重啟後一起消失，這趟被腰斬就沒有任何痕跡。
             Persist(new PrtgStructureSyncStatus
             {
                 CompletedAt = DateTime.Now,
                 Success = false,
-                ErrorMessage = "同步已被取消（站台關閉或手動中止）",
+                ErrorMessage = reason,
                 MapDate = DateTime.Today
             });
             success = false;

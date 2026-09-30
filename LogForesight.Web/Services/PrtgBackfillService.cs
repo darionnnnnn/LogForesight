@@ -356,6 +356,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     private async Task ExecuteSelectedAsync(PreparedRun run, DateTime from, DateTime to, IReadOnlyCollection<long> hostIds)
     {
+        using var operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        run.Client.OperationCheckpoint = operation.Checkpoint;
         var success = false;
         var cancelled = false;
         var console = new PrtgBackfillConsole(_state);
@@ -363,6 +365,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         {
             using (run.Client)
             {
+                operation.Checkpoint();
                 var store = _backend.PrtgStore();
                 var fetch = new PrtgFetchService(run.Client, store,
                     new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
@@ -370,12 +373,12 @@ public class PrtgBackfillService : IPrtgBackfillTail
                 console.WriteLine($"開始指定主機 PRTG 數值回填（{from:yyyy-MM-dd}～{to:yyyy-MM-dd}，主機 {hostIds.Count} 台）；不回填狀態、不補派歷史 finding。");
                 success = await PrtgBackfillRunner.RunValuesForHostsAsync(
                     fetch, from, to, hostIds, run.Settings.PrtgFetchConcurrency,
-                    run.Settings.PrtgSensorTypeWhitelist, store, console, run.Token,
+                    run.Settings.PrtgSensorTypeWhitelist, store, console, operation.Token,
                     (done, total, date) => _state.UpdateDay(done, total, date),
                     (done, total) => _state.UpdateSensors(done, total));
             }
         }
-        catch (OperationCanceledException) when (run.Token.IsCancellationRequested)
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
         {
             cancelled = true;
             success = false;
@@ -507,7 +510,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private async Task<bool> ExecuteAsync(PreparedRun run, IRunConsole console, IReadOnlyCollection<long>? hostIds)
     {
         var s = run.Settings;
-        var runToken = run.Token;
+        using var operation = new PrtgOperationScope(s, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        var runToken = operation.Token;
+        run.Client.OperationCheckpoint = operation.Checkpoint;
         var prtgStore = _backend.PrtgStore();
         var success = false;
         var cancelled = false;
@@ -515,6 +520,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         {
             using (run.Client)
             {
+                operation.Checkpoint();
                 if (run.NeedsStructureSync)
                 {
                     console.WriteLine("鏡像尚無感測器結構，先同步結構…");
@@ -569,6 +575,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         catch (OperationCanceledException) when (runToken.IsCancellationRequested)
         {
+            if (operation.SettingsChanged) console.WriteLine("PRTG 設定已變更，回填停止；已完成資料保留。");
             // 摘要已由 runner 印出（已停止：完成 x／N 天）
             cancelled = true;
             success = false;

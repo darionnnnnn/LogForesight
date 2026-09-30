@@ -1342,6 +1342,7 @@ function bindForm() {
         const restore = withBusy(saveButton, '儲存中');
         try {
             current = await api.put('/api/admin/settings', {
+                expectedRevision: current.revision,
                 // 資源守門（docs/PRTG-SPEC.md §12）：欄位定義與收集都在 prtg-guard.js，這裡只併入
                 ...collectGuardPayload(),
                 unhandledSeverities: severities,

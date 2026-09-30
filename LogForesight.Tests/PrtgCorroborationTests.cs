@@ -37,18 +37,18 @@ public class PrtgCorroborationTests
     };
 
     [Fact]
-    public void storage_磁碟153加硬體warning_命中高風險且依據為佐證模式()
+    public void storage_磁碟153加硬體warning_只保留同日線索不提高風險()
     {
         var record = Record(Event("disk", 153),
             Prtg(PrtgRuleEvaluator.RuleWarning, PrtgSensorCategories.Hardware, "[SRV] RAID 狀態 Warning"));
 
         var (risk, basis, added) = PrtgCorroboration.Apply(record, NoSuppression);
 
-        Assert.Equal(RiskLevels.High, risk);
-        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, basis);
+        Assert.Null(risk);
+        Assert.Null(basis);
         Assert.Equal(1, added);
         var text = Assert.Single(record.CorrelationAlerts);
-        Assert.StartsWith("【儲存故障雙重確認】", text);
+        Assert.StartsWith("【儲存異常同日訊號】", text);
         Assert.Contains("disk#153", text);
         Assert.Contains("[SRV] RAID 狀態 Warning", text);
         var reference = Assert.Single(record.CorrelationAlertRefs);
@@ -65,8 +65,8 @@ public class PrtgCorroborationTests
 
         var (risk, basis, _) = PrtgCorroboration.Apply(record, NoSuppression);
 
-        Assert.Equal(RiskLevels.High, risk);
-        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, basis);
+        Assert.Null(risk);
+        Assert.Null(basis);
     }
 
     [Fact]
@@ -79,16 +79,16 @@ public class PrtgCorroborationTests
     }
 
     [Fact]
-    public void capacity_srv2013加磁碟warning_命中中風險()
+    public void capacity_srv2013加磁碟warning_只保留同日線索()
     {
         var record = Record(Event("srv", 2013), Prtg(PrtgRuleEvaluator.RuleWarning, PrtgSensorCategories.Disk, "[SRV] C: 可用空間 Warning"));
 
         var (risk, basis, added) = PrtgCorroboration.Apply(record, NoSuppression);
 
-        Assert.Equal(RiskLevels.Medium, risk);
-        Assert.Equal(CorrelationPatternIds.PrtgCapacityCorroborated, basis);
+        Assert.Null(risk);
+        Assert.Null(basis);
         Assert.Equal(1, added);
-        Assert.Equal("【磁碟容量雙重確認】事件日誌回報磁碟空間即將不足，PRTG 磁碟可用空間 sensor 同日示警（[SRV] C: 可用空間 Warning）",
+        Assert.Equal("【容量異常同日訊號】事件日誌回報磁碟空間即將不足，PRTG 磁碟可用空間 sensor 同日示警（[SRV] C: 可用空間 Warning）；尚未確認為同一磁碟區",
             Assert.Single(record.CorrelationAlerts));
     }
 
@@ -120,16 +120,16 @@ public class PrtgCorroborationTests
     }
 
     [Fact]
-    public void outage_KernelPower41加連通性flapping_命中中風險()
+    public void outage_KernelPower41加連通性flapping_只保留同日線索()
     {
         var record = Record(Event("Microsoft-Windows-Kernel-Power", 41), Prtg(PrtgRuleEvaluator.RuleFlapping, PrtgSensorCategories.Availability, "[SRV] Ping 震盪"));
 
         var (risk, basis, added) = PrtgCorroboration.Apply(record, NoSuppression);
 
-        Assert.Equal(RiskLevels.Medium, risk);
-        Assert.Equal(CorrelationPatternIds.PrtgOutageCorroborated, basis);
+        Assert.Null(risk);
+        Assert.Null(basis);
         Assert.Equal(1, added);
-        Assert.Equal("【失聯獲 PRTG 證實】事件日誌記錄非預期關機，PRTG 同日觀測到主機失聯（[SRV] Ping 震盪），不是日誌誤報",
+        Assert.Equal("【關機與監測異常同日訊號】事件日誌記錄非預期關機，PRTG 連通性類 sensor 同日異常（[SRV] Ping 震盪）；尚未確認時間與探測對象相符",
             Assert.Single(record.CorrelationAlerts));
     }
 
@@ -138,7 +138,8 @@ public class PrtgCorroborationTests
     {
         var record = Record(Event("EventLog", 6008), Prtg(PrtgRuleEvaluator.RuleDown, PrtgSensorCategories.Availability));
 
-        Assert.Equal(CorrelationPatternIds.PrtgOutageCorroborated, PrtgCorroboration.Apply(record, NoSuppression).RiskBasis);
+        Assert.Equal(1, PrtgCorroboration.Apply(record, NoSuppression).Added);
+        Assert.Equal(CorrelationPatternIds.PrtgOutageCorroborated, Assert.Single(record.CorrelationAlertRefs).PatternId);
     }
 
     [Fact]
@@ -151,7 +152,7 @@ public class PrtgCorroborationTests
     }
 
     [Fact]
-    public void 同時命中storage與outage_風險取高且依據為會拉高的storage()
+    public void 同時命中storage與outage_保留兩項線索但不提高風險()
     {
         var record = Record(
             Event("Microsoft-Windows-Kernel-Power", 41),
@@ -161,8 +162,8 @@ public class PrtgCorroborationTests
 
         var (risk, basis, added) = PrtgCorroboration.Apply(record, NoSuppression);
 
-        Assert.Equal(RiskLevels.High, risk);
-        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, basis);
+        Assert.Null(risk);
+        Assert.Null(basis);
         Assert.Equal(2, added);
     }
 
@@ -177,7 +178,7 @@ public class PrtgCorroborationTests
         Assert.Equal((null, null, 0), result);
         Assert.Empty(record.CorrelationAlerts);
         Assert.Empty(record.CorrelationAlertRefs);
-        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(record.SuppressedCorrelationAlerts));
+        Assert.StartsWith("【儲存異常同日訊號】", Assert.Single(record.SuppressedCorrelationAlerts));
     }
 
     [Fact]
@@ -216,7 +217,7 @@ public class PrtgCorroborationTests
         var result = PrtgCorroboration.Apply(record, NoSuppression);
 
         Assert.Equal(1, result.Added);
-        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(record.CorrelationAlerts));
+        Assert.StartsWith("【儲存異常同日訊號】", Assert.Single(record.CorrelationAlerts));
         Assert.Empty(record.SuppressedCorrelationAlerts);
     }
 

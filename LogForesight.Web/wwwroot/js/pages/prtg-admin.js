@@ -12,10 +12,55 @@ import {
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
-import { PRTG_SCOPE_OFF, toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
+import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => { if (name === 'probe') queueMicrotask(loadDiskReadiness); } });
+
+const setupState = { settings: null, settingsLoading: true, connectionTest: null, probe: null, sync: null, rules: null, schedule: null };
+
+function renderSetupSummary() {
+    const summary = document.getElementById('prtg-setup-summary');
+    const steps = document.getElementById('prtg-setup-steps');
+    if (!summary || !steps) return;
+    const settings = setupState.settings;
+    if (!settings) {
+        summary.textContent = setupState.settingsLoading
+            ? '正在確認已儲存設定…'
+            : '無法確認已儲存設定；請重新載入頁面。';
+        steps.replaceChildren();
+        return;
+    }
+    const credential = settings.prtgAuthMode === 'password' ? settings.prtgHasPassword && settings.prtgUsername
+        : settings.prtgAuthMode === 'passhash' ? settings.prtgHasPasshash && settings.prtgUsername : settings.prtgHasApiToken;
+    const checks = [
+        { ok: Boolean(settings.prtgUrl && credential), label: '已儲存的連線位址與認證', next: '設定連線並儲存', tab: 'connection' },
+        { ok: setupState.connectionTest === true, label: '本次頁面連線測試', next: '執行連線測試；重新載入後需再確認', tab: 'connection' },
+        { ok: Boolean(settings.prtgEnabled), label: 'PRTG 擷取', next: '到擷取參數啟用並儲存', tab: 'params' },
+        { ok: !setupState.sync?.isRunning && setupState.sync?.lastSuccess === true && Boolean(setupState.sync?.lastCompletedAt), label: '上次結構與主機對應同步', next: setupState.sync?.isRunning ? '同步進行中，稍後確認結果' : '同步結構並檢查主機對應', tab: 'mirror' },
+        { ok: setupState.rules === true, label: 'PRTG 規則', next: '檢查並啟用 PRTG 規則', href: appUrl('/admin/rules') },
+        { ok: setupState.schedule === true, label: '每日排程', next: '前往排程設定檢查', href: appUrl('/runs#settings') }
+    ];
+    checks.splice(1, 0, {
+        ok: setupState.probe === true, label: '上次環境探測', next: setupState.probe === false ? '查看上次探測失敗原因並重試' : '執行環境探測，確認站台資料能力', tab: 'probe'
+    });
+    steps.replaceChildren();
+    for (const check of checks) {
+        const item = document.createElement('li');
+        item.append(document.createTextNode(`${check.ok ? '已確認' : '待確認'}：${check.label}。`));
+        if (!check.ok) {
+            const link = document.createElement(check.href ? 'a' : 'button');
+            if (check.href) link.href = check.href;
+            else { link.type = 'button'; link.className = 'btn btn-link btn-sm p-0 align-baseline'; link.addEventListener('click', () => document.querySelector(`#prtg-tabs [data-tab="${check.tab}"]`)?.click()); }
+            link.textContent = check.next;
+            item.appendChild(link);
+        }
+        steps.appendChild(item);
+    }
+    const pending = checks.filter(check => !check.ok).length;
+    summary.textContent = pending ? `尚有 ${pending} 項需確認；下列步驟依已儲存設定與最近一次狀態顯示。`
+        : '設定與最近一次檢查均已確認；請再到資料準備度與使用效果核對實際涵蓋，不能據此宣稱預警已可用。';
+}
 
 function missingHourDate(windowStart, dayIndex, hour) {
     const [year, month, day] = String(windowStart).slice(0, 10).split('-').map(Number);
@@ -433,9 +478,9 @@ function renderPrtgFields(settings) {
 
 
     prtgEnabled = Boolean(settings.prtgEnabled);
+    document.getElementById('prtg-enabled').checked = prtgEnabled;
     const scopeSelect = document.getElementById('prtg-value-fetch-scope');
     if (scopeSelect) {
-        // 「關閉」與三個範圍是同一個下拉：未啟用一律顯示關閉，啟用時顯示已存的範圍
         scopeSelect.value = toScopeSelectValue(prtgEnabled, settings.prtgValueFetchScope);
         syncScopeFields();
     }
@@ -476,23 +521,36 @@ async function loadSettings() {
 }
 
 async function loadPrtgSettings() {
-    const settings = await api.get('/api/admin/settings');
-    historyRetentionDays = settings.retentionDays;
-    renderPrtgFields(settings);
+    setupState.settingsLoading = true;
+    renderSetupSummary();
+    try {
+        const settings = await api.get('/api/admin/settings');
+        historyRetentionDays = settings.retentionDays;
+        if (setupState.settings?.updatedAt !== settings.updatedAt) setupState.connectionTest = null;
+        renderPrtgFields(settings);
+        setupState.settings = settings;
+    } catch (error) {
+        setupState.settings = null;
+        throw error;
+    } finally {
+        setupState.settingsLoading = false;
+        renderSetupSummary();
+    }
 }
 
 /**
  * 數值取數對象切換：只有「觸發主機＋指定清單」需要主機名稱輸入框；
- * 選「關閉」時連「估算規模」都沒有意義（不會取數），一併藏起來。
+ * 關閉擷取或保守策略時不用夜間數值範圍，一併藏起估算按鈕。
  * 用 classList 切換而非 style.display（同本頁認證方式切換的既有作法）。
  */
 function syncScopeFields() {
-    const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? PRTG_SCOPE_OFF;
-    const off = scope === PRTG_SCOPE_OFF;
+    const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
+    const off = !document.getElementById('prtg-enabled')?.checked;
+    const conservative = document.getElementById('prtg-fetch-strategy')?.value !== 'aggressive';
     document.getElementById('prtg-value-fetch-extra-hosts-group')
-        ?.classList.toggle('d-none', off || scope !== 'triggered-plus-list');
-    document.getElementById('prtg-scope-estimate-btn')?.classList.toggle('d-none', off);
-    if (off) {
+        ?.classList.toggle('d-none', off || conservative || scope !== 'triggered-plus-list');
+    document.getElementById('prtg-scope-estimate-btn')?.classList.toggle('d-none', off || conservative);
+    if (off || conservative) {
         document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
         document.getElementById('prtg-snapshot-estimate-result')?.replaceChildren();
     }
@@ -516,12 +574,13 @@ function syncStrategyHint() {
         inapplicableHint.textContent = prtgScopeInapplicableText(false);
         inapplicableHint.classList.toggle('d-none', isAggressive);
     }
+    syncScopeFields();
 }
 
 /**
  * 鏡像頁籤「同步結構與對應」的閘：擷取未啟用時同步一定被後端拒絕（PrtgStructureSyncService），
  * 讓按鈕直接灰掉並說去哪開，比按下去看紅字有用。以「已儲存的值」為準——
- * 下拉改了還沒存不算啟用，否則會讓人以為存過了。
+ * 開關改了還沒存不算啟用，否則會讓人以為存過了。
  */
 function syncStructureSyncGate() {
     const btn = document.getElementById('prtg-structure-sync-btn');
@@ -531,6 +590,7 @@ function syncStructureSyncGate() {
 }
 
 function bindScopeControls() {
+    document.getElementById('prtg-enabled')?.addEventListener('change', syncScopeFields);
     const select = document.getElementById('prtg-value-fetch-scope');
     if (select) select.addEventListener('change', syncScopeFields);
 
@@ -610,6 +670,15 @@ function bindPrtgTest() {
     const button = document.getElementById('prtg-test-btn');
     if (!button) return;
 
+    for (const id of ['prtg-url', 'prtg-auth-mode', 'prtg-username', 'prtg-api-token', 'prtg-password',
+        'prtg-passhash', 'prtg-clear-token', 'prtg-clear-password', 'prtg-clear-passhash',
+        'prtg-ignore-ssl', 'prtg-timeout-seconds']) {
+        document.getElementById(id)?.addEventListener('input', () => {
+            setupState.connectionTest = null;
+            renderSetupSummary();
+        });
+    }
+
     button.addEventListener('click', async () => {
         const url = document.getElementById('prtg-url').value.trim();
         if (!url) {
@@ -632,17 +701,49 @@ function bindPrtgTest() {
             }, { silent: true });
 
             const mark = result.success ? '✓' : '✗';
+            const saved = setupState.settings;
+            const matchesSaved = saved && url === saved.prtgUrl
+                && (document.getElementById('prtg-auth-mode')?.value ?? 'token') === (saved.prtgAuthMode || 'token')
+                && (document.getElementById('prtg-username')?.value.trim() ?? '') === (saved.prtgUsername ?? '')
+                && !document.getElementById('prtg-api-token')?.value
+                && !document.getElementById('prtg-password')?.value
+                && !document.getElementById('prtg-passhash')?.value
+                && !document.getElementById('prtg-clear-token')?.checked
+                && !document.getElementById('prtg-clear-password')?.checked
+                && !document.getElementById('prtg-clear-passhash')?.checked
+                && Boolean(document.getElementById('prtg-ignore-ssl')?.checked) === Boolean(saved.prtgIgnoreSslErrors)
+                && (Number(document.getElementById('prtg-timeout-seconds')?.value) || 60) === (saved.prtgTimeoutSeconds ?? 60);
+            setupState.connectionTest = result.success === true && matchesSaved;
+            renderSetupSummary();
             resultEl.className = result.success ? 'text-success small' : 'text-danger small';
             resultEl.textContent = result.elapsedMs != null
                 ? `${mark} ${result.message}（耗時 ${result.elapsedMs}ms）`
                 : `${mark} ${result.message}`;
+            if (result.success && !matchesSaved) resultEl.textContent += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
         } catch (error) {
+            setupState.connectionTest = false;
+            renderSetupSummary();
             resultEl.className = 'text-danger small';
             resultEl.textContent = `✗ ${error?.message || '測試連線失敗。'}`;
         } finally {
             restore();
         }
     });
+}
+
+async function savePrtgSettings(payload) {
+    try {
+        return await api.put('/api/admin/settings/prtg', {
+            ...payload, expectedRevision: setupState.settings?.revision
+        });
+    } catch (error) {
+        if (error.status === 409 && await confirmAction({
+            title: '設定已由其他作業更新',
+            message: '本次沒有儲存，您的輸入仍保留。重新載入會以最新設定取代目前輸入，是否重新載入？',
+            confirmText: '重新載入', cancelText: '保留目前輸入'
+        })) await loadSettings();
+        throw error;
+    }
 }
 
 function bindConnectionForm() {
@@ -679,7 +780,7 @@ function bindConnectionForm() {
                 clearPrtgApiToken: clearApiToken
             };
 
-            await api.put('/api/admin/settings/prtg', payload);
+            await savePrtgSettings(payload);
             toast('已儲存', 'success');
             await loadSettings();
         } catch {
@@ -713,10 +814,8 @@ function bindParamsForm() {
             const fetchConcurrency = Number(document.getElementById('prtg-fetch-concurrency').value) || 2;
             const backfillDays = Number(document.getElementById('prtg-backfill-days').value) || 30;
 
-            // 下拉的「關閉」對應 prtgEnabled=false，此時不送 prtgValueFetchScope——
-            // 範圍留著原值，下次重新啟用不必再選一次
-            const scopeValue = document.getElementById('prtg-value-fetch-scope')?.value ?? PRTG_SCOPE_OFF;
-            const enabled = scopeValue !== PRTG_SCOPE_OFF;
+            const scopeValue = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
+            const enabled = document.getElementById('prtg-enabled').checked;
             const fetchStrategy = document.getElementById('prtg-fetch-strategy')?.value || 'conservative';
 
             const payload = {
@@ -734,7 +833,7 @@ function bindParamsForm() {
                 ...(enabled ? { prtgValueFetchScope: scopeValue } : {})
             };
 
-            await api.put('/api/admin/settings/prtg', payload);
+            await savePrtgSettings(payload);
             toast('已儲存', 'success');
             await loadSettings();
             if (enabled && await confirmAction({
@@ -777,7 +876,7 @@ function renderPrtgMirror(data) {
     const snapEl = document.getElementById('prtg-mirror-snapshot');
     let snapText;
     if (!data.snapshotLastAt) {
-        snapText = '數值快照：尚未執行';
+        snapText = '數值快照：本次啟動後尚無成功取樣';
         snapEl?.classList.remove('text-warning');
     } else {
         snapText = `數值快照：最近 ${formatDateTime(data.snapshotLastAt)}，${formatNumber(data.snapshotSensors)} 顆，間隔 ${data.snapshotIntervalMinutes} 分鐘`;
@@ -790,7 +889,10 @@ function renderPrtgMirror(data) {
     }
     if (data.snapshotSkipReason) {
         snapText += `（目前暫停：${data.snapshotSkipReason}）`;
+        snapEl?.classList.add('text-warning');
     }
+    if (data.snapshotPendingSamples > 0)
+        snapText += `；等待寫入 ${formatNumber(data.snapshotPendingSamples)} 筆（含本小時樣本）`;
     setTxt('prtg-mirror-snapshot', snapText);
 
     setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
@@ -1807,6 +1909,15 @@ async function refreshPrtgMirror() {
     } catch {
         // 失敗時不干擾整體頁面
     }
+    const readinessEl = document.getElementById('prtg-observation-readiness');
+    if (readinessEl) {
+        try {
+            const preview = await api.get('/api/prtg/observation-readiness', { silent: true });
+            readinessEl.textContent = `獨立 PRTG 判定（近 30 日）：影子快照 ${formatNumber(preview.activeSnapshots)} 筆、僅在獨立快照 ${formatNumber(preview.independentSnapshots)} 筆、與舊日誌附掛重疊 ${formatNumber(preview.legacyOverlaps)} 筆。來源身分待確認 ${formatNumber(preview.unknownSourceGenerations)} 筆、資源身分待確認 ${formatNumber(preview.unknownResourceGenerations)} 筆。此處是遷移核對，尚未納入正式問題、交辦或通知。`;
+        } catch {
+            readinessEl.textContent = '獨立 PRTG 問題準備度目前無法讀取，請稍後重試。';
+        }
+    }
     await refreshScopePurge();
 }
 
@@ -2276,8 +2387,11 @@ function bindDiskReadiness() {
 }
 
 function renderPrtgProbeStatus(status) {
+    setupState.probe = status.isRunning ? null : (status.completedAt ? status.success === true && !status.cancelled : null);
+    renderSetupSummary();
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
+    const downloadButton = document.getElementById('prtg-probe-download');
     const startButton = document.getElementById('prtg-probe-start');
     const flowButton = document.getElementById('prtg-probe-flow-start');
     const cancelBtn = document.getElementById('prtg-probe-cancel');
@@ -2296,6 +2410,7 @@ function renderPrtgProbeStatus(status) {
         outputEl.scrollTop = outputEl.scrollHeight;
     }
     copyButton.disabled = !outputText;
+    if (downloadButton) downloadButton.disabled = !outputText || status.isRunning;
 
     if (status.isRunning) {
         startButton.disabled = true;
@@ -2321,6 +2436,8 @@ async function refreshPrtgProbeStatus() {
     try {
         status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
     } catch {
+        setupState.probe = null;
+        renderSetupSummary();
         return;
     }
     renderPrtgProbeStatus(status);
@@ -2343,6 +2460,7 @@ function bindPrtgProbe() {
     const flowButton = document.getElementById('prtg-probe-flow-start');
     const cancelBtn = document.getElementById('prtg-probe-cancel');
     const copyButton = document.getElementById('prtg-probe-copy');
+    const downloadButton = document.getElementById('prtg-probe-download');
     const outputEl = document.getElementById('prtg-probe-output');
     if (!startButton || !copyButton || !outputEl) return;
 
@@ -2392,6 +2510,16 @@ function bindPrtgProbe() {
             toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
         }
     });
+    downloadButton?.addEventListener('click', () => {
+        if (!outputEl.value || downloadButton.disabled) return;
+        const blob = new Blob([outputEl.value + '\n'], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `prtg-probe-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
 }
 
 function bindProbeWhitelistFill() {
@@ -2433,6 +2561,8 @@ async function refreshScheduleWarning() {
     if (!banner) return;
     try {
         const status = await api.get('/api/admin/schedule/status', { silent: true });
+        setupState.schedule = status.scheduleEnabled === true;
+        renderSetupSummary();
         banner.replaceChildren();
         if (status.scheduleEnabled) return;
         const alert = document.createElement('div');
@@ -2446,6 +2576,8 @@ async function refreshScheduleWarning() {
         alert.appendChild(link);
         banner.appendChild(alert);
     } catch {
+        setupState.schedule = null;
+        renderSetupSummary();
         renderError(banner, { message: '無法確認排程是否啟用。', onRetry: refreshScheduleWarning });
     }
 }
@@ -2527,6 +2659,8 @@ let structureSyncTimer = null;
  * 讓「裝置數／感測器數／對應結果」立刻反映這次同步的成果。
  */
 function renderStructureSyncStatus(status) {
+    setupState.sync = status;
+    renderSetupSummary();
     const statusEl = document.getElementById('prtg-structure-sync-status');
     const progressEl = document.getElementById('prtg-structure-sync-progress');
     const btn = document.getElementById('prtg-structure-sync-btn');
@@ -2593,7 +2727,8 @@ async function refreshStructureSyncStatus() {
             await refreshPrtgMirror();
         }
     } catch {
-        // 失敗時不干擾整體頁面
+        setupState.sync = null;
+        renderSetupSummary();
     }
 }
 
@@ -2646,6 +2781,8 @@ async function refreshPrtgRuleBanner() {
     const hasUpdate = status != null && status.hasUpdate === true;
     const noPrtgRules = Array.isArray(rules) && !rules.some(r =>
         r.enabled && String(r.platform).toLowerCase() === 'prtg' && r.prtgRuleCode);
+    setupState.rules = status != null && Array.isArray(rules) ? !noPrtgRules && !hasUpdate : null;
+    renderSetupSummary();
     if (!hasUpdate && !noPrtgRules) return;
     const alert = document.createElement('div');
     alert.className = 'alert alert-warning';

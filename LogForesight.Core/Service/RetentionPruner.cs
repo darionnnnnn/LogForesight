@@ -152,6 +152,9 @@ public static class RetentionPruner
         try
         {
             var prtgPruned = backend.PrtgStore().Prune(retention.PrtgRetentionDays);
+            var shadowPruned = backend.PrtgObservationStore().PruneShadow(retention.PrtgRetentionDays, DateTime.UtcNow);
+            if (shadowPruned > 0)
+                console.WriteLine($"已清除 {shadowPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 影子判定快照。");
             if (prtgPruned > 0)
                 console.WriteLine($"已清除 {prtgPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 鏡像資料。");
         }

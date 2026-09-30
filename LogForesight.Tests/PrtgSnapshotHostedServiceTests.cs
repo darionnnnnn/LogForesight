@@ -6,6 +6,7 @@ using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Xunit;
 
@@ -93,6 +94,112 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         return service;
     }
 
+    [Fact]
+    public async Task 快照未到整點強制重建服務_恢復累積樣本且停用後仍可寫回()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(
+            "{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}"));
+        var hour = DateTime.Today.AddHours(10);
+        var first = CreateService();
+        first.Now = () => hour.AddMinutes(5);
+        await first.TickAsync();
+        Assert.Empty(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
+
+        // 不呼叫 ApplicationStopping，等同程序在本小時內中斷。
+        _settingsStore.Update(s => { s.PrtgEnabled = false; s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive; });
+        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("停用後不得開新請求");
+        var restarted = CreateService();
+        restarted.Now = () => hour.AddHours(1);
+        await restarted.TickAsync();
+        var value = Assert.Single(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
+        Assert.Equal(10, value.AvgValue);
+        Assert.Equal(25, value.Coverage);
+        Assert.Equal(0, restarted.GetStatus().PendingSamples);
+    }
+
+    [Fact]
+    public async Task 提交後未清復原檔即中斷_重播沿用批次識別不重複加涵蓋率()
+    {
+        var hour = DateTime.Today.AddHours(10);
+        var batch = new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), new[]
+        {
+            new PrtgValueRow { SensorObjid = 501, PeriodStart = hour, AvgValue = 10, MinValue = 10,
+                MaxValue = 10, Coverage = 25, Quality = PrtgDataQuality.Sampled, CreatedAt = hour }
+        });
+        var journal = new PrtgSnapshotJournal(_backend);
+        journal.Save(PrtgSnapshotJournal.Endpoint(_settingsStore.Get().PrtgUrl),
+            Array.Empty<PrtgSnapshotAccumulator.CheckpointRow>(), new[] { batch }, hour);
+        _backend.PrtgStore().MergeSampledValues(batch.Rows, batch.Id);
+        _settingsStore.Update(s => s.PrtgEnabled = false);
+        var restarted = CreateService();
+        restarted.Now = () => hour.AddHours(1);
+        await restarted.TickAsync();
+        await restarted.TickAsync();
+        Assert.Equal(25, Assert.Single(_backend.PrtgStore().GetValues(hour, hour.AddHours(1))).Coverage);
+        Assert.Empty(journal.Load(PrtgSnapshotJournal.Endpoint(_settingsStore.Get().PrtgUrl), hour)!.Pending);
+    }
+
+    [Fact]
+    public async Task 復原檔損壞_不覆寫不開取數請求且顯示停止原因()
+    {
+        var journal = new PrtgSnapshotJournal(_backend);
+        Directory.CreateDirectory(Path.GetDirectoryName(journal.FilePath)!);
+        File.WriteAllText(journal.FilePath, "broken");
+        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("復原失敗不得開新請求");
+        var service = CreateService();
+        await service.TickAsync();
+        Assert.Contains("復原檔", service.GetStatus().LastSkipReason);
+        Assert.Contains("先備份並檢查", service.GetStatus().LastSkipReason);
+        Assert.DoesNotContain("BytePositionInLine", service.GetStatus().LastSkipReason);
+        Assert.Equal("broken", File.ReadAllText(journal.FilePath));
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+    }
+
+    [Fact]
+    public async Task 復原檔無法原子寫入_停止後續取數且不誤報PRTG失敗()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        var journal = new PrtgSnapshotJournal(_backend);
+        var hour = DateTime.Today.AddHours(10);
+        var service = CreateService();
+        service.Now = () => hour;
+        _stubHandler.OnSend = (_, _) =>
+        {
+            // 本輪初始 checkpoint 已寫入；模擬回應期間暫存路徑失去寫入能力。
+            Directory.CreateDirectory(journal.FilePath + ".tmp");
+            return Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10}]}"));
+        };
+        await service.TickAsync();
+        Assert.Null(service.GetStatus().LastSuccessAt);
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+        Assert.Contains("停止採集", service.GetStatus().LastSkipReason);
+        service.Now = () => hour.AddMinutes(20);
+        await service.TickAsync();
+        Assert.Single(_stubHandler.RequestedUrls);
+        Assert.Equal(1, service.GetStatus().PendingSamples);
+    }
+
+    [Fact]
+    public async Task 有舊來源待寫樣本時改網址_不重播不取數且保留原檔()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10}]}"));
+        var hour = DateTime.Today.AddHours(10);
+        var service = CreateService();
+        service.Now = () => hour;
+        await service.TickAsync();
+        var path = new PrtgSnapshotJournal(_backend).FilePath;
+        var original = File.ReadAllBytes(path);
+        _settingsStore.Update(s => s.PrtgUrl = "https://new-source.example.com");
+        service.Now = () => hour.AddHours(1);
+        await service.TickAsync();
+        Assert.Single(_stubHandler.RequestedUrls);
+        Assert.Contains("來源位址變更", service.GetStatus().LastSkipReason);
+        Assert.Empty(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
+        Assert.Equal(original, File.ReadAllBytes(path));
+    }
+
     private void SetupTargetSensors(
         IEnumerable<(long Objid, string SensorType)> targets,
         IEnumerable<(long Objid, string SensorType)>? nonTargets = null)
@@ -137,6 +244,45 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         }
 
         store.UpsertSensors(sensors, DateTime.Now);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task 快照回應時停用或改對應_停止後續批次且不誤記成功或連線失敗(bool changeMapping)
+    {
+        SetupTargetSensors(Enumerable.Range(1, 120).Select(id => ((long)id, "ping")).ToArray());
+        _stubHandler.OnSend = (_, _) =>
+        {
+            if (changeMapping) _backend.PrtgStore().UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 10, HostId = 2 });
+            else _settingsStore.Update(s => s.PrtgEnabled = false);
+            return Task.FromResult(JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":1,\"lastvalue_raw\":10,\"interval\":60}]}"));
+        };
+        using var parent = new CancellationTokenSource();
+        using var service = CreateService();
+        await service.TickAsync(parent.Token);
+        Assert.Single(_stubHandler.RequestedUrls);
+        Assert.Null(service.GetStatus().LastSuccessAt);
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+        Assert.Equal(0, service.Accumulator.SampleCount);
+        Assert.False(parent.IsCancellationRequested);
+        Assert.Contains("設定已變更", service.GetStatus().LastSkipReason);
+    }
+
+    [Fact]
+    public void 範圍版本_一般回報不變更_停用主機及人工對應會變更()
+    {
+        var host = _hostStore.Upsert(new WebHost { HostName = "scope-host", Active = true });
+        var reader = new PrtgScopeRevisionReader(_backend, _hostStore);
+        var original = reader.Read();
+        _hostStore.TouchNetiq(host.HostId, "更新顯示名稱", DateTime.Now);
+        Assert.Equal(original, reader.Read());
+        host.Active = false;
+        _hostStore.Upsert(host);
+        var inactive = reader.Read();
+        Assert.NotEqual(original, inactive);
+        _backend.PrtgStore().UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 10, HostId = host.HostId });
+        Assert.NotEqual(inactive, reader.Read());
     }
 
     private static HttpResponseMessage JsonResponse(string json, HttpStatusCode code = HttpStatusCode.OK)
@@ -194,6 +340,26 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         Assert.Empty(_stubHandler.RequestedUrls);
+    }
+
+    [Fact]
+    public async Task 同一小時縮小白名單_下一輪不再查已移除感測器()
+    {
+        SetupTargetSensors(new[] { (101L, "Ping"), (102L, "SNMP Traffic 64bit") });
+        _settingsStore.Update(s => s.PrtgSensorTypeWhitelist = new List<string> { "Ping", "SNMP Traffic 64bit" });
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+        var service = CreateService();
+        var clock = DateTime.Today.AddHours(10);
+        service.Now = () => clock;
+
+        await service.TickAsync();
+        Assert.Contains(102L, FilterObjids(SnapshotUrls().Last()));
+
+        _settingsStore.Update(s => s.PrtgSensorTypeWhitelist = new List<string> { "ping" });
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+
+        Assert.Equal(new[] { 101L }, FilterObjids(SnapshotUrls().Last()));
     }
 
     [Fact]
@@ -633,6 +799,39 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(701L, values[0].SensorObjid);
         Assert.Equal(PrtgDataQuality.Sampled, values[0].Quality);
         Assert.Equal(75.0, values[0].AvgValue);
+    }
+
+    [Fact]
+    public async Task 待寫樣本_資料庫恢復後即使停用PRTG仍補寫且狀態如實顯示()
+    {
+        var service = CreateService();
+        var hour = DateTime.Today.AddHours(8);
+        var rows = new[] { new PrtgValueRow
+        {
+            SensorObjid = 701,
+            PeriodStart = hour,
+            AvgValue = 42,
+            Coverage = 25,
+            Quality = PrtgDataQuality.Sampled,
+            CreatedAt = hour.AddMinutes(15)
+        } };
+        var dbOptions = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(_dir, "test.db")}").Options;
+        using (var ctx = new LfDbContext(dbOptions))
+            ctx.Database.ExecuteSqlRaw("DROP TABLE lf_prtg_values");
+
+        typeof(PrtgSnapshotHostedService)
+            .GetMethod("WriteSampledRows", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, new object[] { rows });
+        Assert.Equal(1, service.GetStatus().PendingSamples);
+
+        using (var ctx = new LfDbContext(dbOptions)) SchemaUpgrader.Upgrade(ctx);
+        _settingsStore.Update(s => s.PrtgEnabled = false);
+        await service.TickAsync();
+
+        Assert.Equal(0, service.GetStatus().PendingSamples);
+        Assert.Single(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
+        Assert.Empty(_stubHandler.RequestedUrls);
     }
 
     [Fact]

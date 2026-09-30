@@ -275,7 +275,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         value: data.silentHostsCount,
         variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
         hint: data.silentHostsPrtgDownCount > 0
-            ? `沒回報 ≠ 沒問題；其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台 PRTG 顯示失聯`
+            ? `沒回報 ≠ 沒問題；其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
             : '沒回報 ≠ 沒問題',
         url: '/admin/hosts?status=silent'
     });

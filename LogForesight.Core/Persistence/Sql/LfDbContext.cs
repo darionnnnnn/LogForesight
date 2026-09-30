@@ -79,6 +79,11 @@ public class LfDbContext : DbContext
     /// <summary>PRTG 每小時聚合數值（↔ lf_prtg_values）</summary>
     public DbSet<PrtgValueRow> PrtgValues => Set<PrtgValueRow>();
 
+    /// <summary>快照 sampled 批次提交識別，與值列在同一交易寫入。</summary>
+    public DbSet<PrtgSampledBatchRow> PrtgSampledBatches => Set<PrtgSampledBatchRow>();
+
+    public DbSet<PrtgObservationRow> PrtgObservations => Set<PrtgObservationRow>();
+
     /// <summary>PRTG 主機按日映射（↔ lf_prtg_host_map）</summary>
     public DbSet<PrtgHostMapRow> PrtgHostMaps => Set<PrtgHostMapRow>();
 
@@ -90,13 +95,43 @@ public class LfDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<PrtgObservationRow>(e =>
+        {
+            e.ToTable("lf_prtg_observations");
+            e.HasKey(x => x.SnapshotId);
+            e.Property(x => x.SnapshotId).HasColumnName("snapshot_id").HasMaxLength(64);
+            e.Property(x => x.DecisionKey).HasColumnName("decision_key").HasMaxLength(64).HasDefaultValue(string.Empty);
+            e.Property(x => x.ActiveKey).HasColumnName("active_key").HasMaxLength(64);
+            e.Property(x => x.HostId).HasColumnName("host_id");
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.DeviceObjid).HasColumnName("device_objid");
+            e.Property(x => x.SensorObjid).HasColumnName("sensor_objid");
+            e.Property(x => x.RuleCode).HasColumnName("rule_code").HasMaxLength(100);
+            e.Property(x => x.EventKey).HasColumnName("event_key").HasMaxLength(255).HasDefaultValue(string.Empty);
+            e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255).HasDefaultValue(string.Empty);
+            e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20).HasDefaultValue(string.Empty);
+            e.Property(x => x.SeverityRank).HasColumnName("severity_rank").HasDefaultValue(0);
+            e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
+            e.Property(x => x.Suppressed).HasColumnName("suppressed").HasDefaultValue(false);
+            e.Property(x => x.SourceGeneration).HasColumnName("source_generation").HasMaxLength(100);
+            e.Property(x => x.SourceHint).HasColumnName("source_hint").HasMaxLength(64).HasDefaultValue(string.Empty);
+            e.Property(x => x.ResourceGeneration).HasColumnName("resource_generation").HasMaxLength(100);
+            e.Property(x => x.QualityReason).HasColumnName("quality_reason").HasMaxLength(255);
+            e.Property(x => x.FormatVersion).HasColumnName("format_version");
+            e.Property(x => x.ContentJson).HasColumnName("content_json");
+            e.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc");
+            e.HasIndex(x => new { x.HostId, x.RecordDate }).HasDatabaseName("IX_lf_prtg_obs_host_date");
+            e.HasIndex(x => x.RecordedAtUtc).HasDatabaseName("IX_lf_prtg_obs_recorded");
+            e.HasIndex(x => x.ActiveKey).IsUnique().HasFilter("active_key IS NOT NULL").HasDatabaseName("IX_lf_prtg_obs_active");
+        });
+
         b.Entity<BlobRow>(e =>
         {
             e.ToTable("lf_blobs");
             e.HasKey(x => x.BlobKey);
             e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
             e.Property(x => x.Content).HasColumnName("content");
-            e.Property(x => x.Version).HasColumnName("version");
+            e.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
             // 樂觀鎖：UpdatedAt 當並發權杖。EfJsonBlobStore.Mutate 是「讀→改→寫」，
             // 沒有這個標記的話兩個行程各自讀到舊內容、後寫的整份蓋掉先寫的（更新遺失）——
             // 這正是 JSONL 檔案時代跨程序鎖檔要防的事故，換 DB 後要用資料庫的機制補上。
@@ -570,6 +605,15 @@ public class LfDbContext : DbContext
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_values_created");
         });
 
+        b.Entity<PrtgSampledBatchRow>(e =>
+        {
+            e.ToTable("lf_prtg_sampled_batches");
+            e.HasKey(x => x.BatchId);
+            e.Property(x => x.BatchId).HasColumnName("batch_id").HasMaxLength(36);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_batch_created");
+        });
+
         b.Entity<PrtgHostMapRow>(e =>
         {
             e.ToTable("lf_prtg_host_map");
@@ -1012,6 +1056,13 @@ public class PrtgValueRow
     public double? MaxValue { get; set; }
     public double? Coverage { get; set; }
     public string Quality { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>PRTG sampled 整批寫入的冪等識別。↔ lf_prtg_sampled_batches</summary>
+public class PrtgSampledBatchRow
+{
+    public string BatchId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
 }
 

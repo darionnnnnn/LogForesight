@@ -1,35 +1,28 @@
 /**
- * PRTG 擷取的「關閉＋三種數值取數對象」四值與顯示字串（docs/PRTG-SPEC.md §3a、§7）。
+ * PRTG 擷取的啟用狀態與三種數值取數對象顯示字串（docs/PRTG-SPEC.md §3a、§7）。
  *
- * 啟用與數值取數對象在畫面上是同一個下拉：選「關閉」＝ PrtgEnabled false，選任一對象＝ true 加該對象。
+ * 啟用由獨立開關控制，範圍下拉保留設定值；保守策略不使用夜間歷史值範圍。
  * 畫面用詞：這個設定叫「數值取數對象」；由主機對應算出、決定感測器與狀態變更同步範圍的裝置集合叫「監看裝置」，兩者不可混稱。
  * 後端仍是兩個欄位（PrtgEnabled 有七個消費端、PrtgValueFetchScope 有六個），這裡只負責 UI 的對應。
  *
  * 維護頁（載入／存檔的值對應）與排程作業頁（狀態顯示）共用這一份，兩頁各寫一份就會在改字時只改到一邊。
  */
 
-/** 「關閉」這個選項的值。不是後端的合法 scope，只存在於畫面上。 */
-export const PRTG_SCOPE_OFF = 'off';
-
 /**
  * 值 → 顯示字串。狀態文字用它，不重寫一份。
- * 下拉的 <option> 由 Prtg.cshtml 靜態產生（那邊的 off 寫「關閉（預設）」），
- * 這份是「狀態顯示」用的短標籤；`PrtgAdminPageUiTests` 鎖住兩邊的 value 集合一致。
+ * 下拉的 <option> 由 Prtg.cshtml 靜態產生；`PrtgAdminPageUiTests` 鎖住兩邊的 value 集合一致。
  */
 export const PRTG_SCOPE_LABEL = {
-    [PRTG_SCOPE_OFF]: '關閉',
     'triggered': '只抓觸發主機',
     'all-mapped': '全部已對應主機',
     'triggered-plus-list': '觸發主機＋指定清單'
 };
 
 /**
- * 後端的兩個欄位 → 下拉的單一值。
- * 未啟用時一律回 off（不管 scope 存的是什麼），啟用時回 scope（不合法時退回 triggered，同後端 Normalize）。
+ * 儲存的範圍 → 下拉值。關閉擷取時仍顯示上次範圍，重新啟用不需重選。
  */
-export function toScopeSelectValue(prtgEnabled, prtgValueFetchScope) {
-    if (!prtgEnabled) return PRTG_SCOPE_OFF;
-    return PRTG_SCOPE_LABEL[prtgValueFetchScope] && prtgValueFetchScope !== PRTG_SCOPE_OFF
+export function toScopeSelectValue(_prtgEnabled, prtgValueFetchScope) {
+    return PRTG_SCOPE_LABEL[prtgValueFetchScope]
         ? prtgValueFetchScope
         : 'triggered';
 }

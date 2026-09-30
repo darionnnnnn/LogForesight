@@ -4,7 +4,7 @@ namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 未回報主機的 PRTG 現況提示：用 PRTG 鏡像裡 sensor 的現況狀態，
-/// 分辨「主機真的離線」與「主機在線但日誌取數端出問題」。全站唯一的判定。
+/// 提示 PRTG 鏡像中的監測項目狀態；不據此診斷主機是否離線或 NetIQ 取數故障。
 /// </summary>
 public static class PrtgPresenceHint
 {

@@ -5,6 +5,7 @@ namespace LogForesight.Web.Models.Dto;
 
 public class SystemSettingsDto
 {
+    public string Revision { get; set; } = "legacy";
     // ── 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────────────────
     public string BrandName { get; set; } = "";
     public string BrandSubtitle { get; set; } = "";
@@ -214,6 +215,11 @@ public class AiAdvancedDefaultsDto
 
 public class UpdateSystemSettingsRequest
 {
+    /// <summary>表單載入時的版本；API 必填，過期拒絕覆寫。</summary>
+    [Required]
+    [StringLength(64)]
+    public string? ExpectedRevision { get; set; }
+
     // ── 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────────────────
     // 長度與圖示格式的實質驗證在 SystemSettingsService.Update（要回可讀的繁中訊息、
     // 且圖示要驗 base64 解碼後的真實大小，DataAnnotations 表達不了）。
@@ -511,6 +517,11 @@ public class UpdateSystemSettingsRequest
 /// </summary>
 public class UpdatePrtgSettingsRequest
 {
+    /// <summary>表單載入時的版本；API 必填，過期拒絕覆寫。</summary>
+    [Required]
+    [StringLength(64)]
+    public string? ExpectedRevision { get; set; }
+
     /// <summary>
     /// PRTG 擷取總開關。null＝本次請求未提供（沿用既有值）。
     /// 維護頁「擷取參數」的取數範圍下拉把「關閉」與三個範圍併成一個選單，

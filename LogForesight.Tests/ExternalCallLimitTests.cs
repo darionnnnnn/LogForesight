@@ -280,7 +280,7 @@ public class ExternalCallLimitTests : IDisposable
     }
 
     [Fact]
-    public async Task 快照_中間改PRTG網址會重建client()
+    public async Task 快照_舊來源樣本清空後改PRTG網址會重建client()
     {
         var (service, settings, handler) = NewSnapshotService();
         var clock = DateTime.Today.AddHours(10);
@@ -288,7 +288,13 @@ public class ExternalCallLimitTests : IDisposable
 
         await service.TickAsync();
         var afterFirst = handler.Calls;
+        // 舊來源待寫樣本先結算，避免在 objid 可重用的新來源下混寫。
+        settings.Update(s => s.PrtgEnabled = false);
+        clock = clock.AddHours(1);
+        await service.TickAsync();
+        Assert.Equal(0, service.GetStatus().PendingSamples);
         settings.Update(s => s.PrtgUrl = "https://prtg2.example.com");
+        settings.Update(s => s.PrtgEnabled = true);
         clock = clock.AddHours(1);
         await service.TickAsync();
 

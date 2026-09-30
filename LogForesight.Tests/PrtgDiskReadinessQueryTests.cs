@@ -15,6 +15,38 @@ public sealed class PrtgDiskReadinessQueryTests : IDisposable
     private readonly DateTime _asOf = new(2026, 9, 24);
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("DISK")]
+    public void 空白或大小寫不同的白名單與數值取數語意一致(string? configuredType)
+    {
+        SeedOneDiskWithHistory(7, 28);
+        var store = new EfPrtgStore(_fx.NewContext);
+        var service = Service(store, ActiveHost(7));
+        var settings = new SystemSettingsStore(_fx.Blob("system_settings"));
+        settings.Update(x => x.PrtgSensorTypeWhitelist = configuredType is null ? new() : new() { configuredType });
+
+        var result = service.Get(1, 20, _asOf);
+
+        Assert.Equal(1, result.GloballyWhitelisted);
+        Assert.Equal(28, Assert.Single(result.Rows).UsableDays);
+    }
+
+    [Fact]
+    public void SQLServerProvider_準備度白名單查詢可翻譯()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;")
+            .Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = EfPrtgStore.BuildReadinessInventoryQuery(ctx, new[] { 7L }, new[] { "DISK" },
+            _asOf, _asOf.AddDays(-30)).ToQueryString();
+
+        Assert.Contains("UPPER", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("disk", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void LatestMappingCandidatesIncludeYesterdayOkAndExcludeNewConflictOrInactiveHost()
     {

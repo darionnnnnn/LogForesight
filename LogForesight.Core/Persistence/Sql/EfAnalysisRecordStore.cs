@@ -316,6 +316,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         using var probe = _contextFactory();
         var strategy = probe.Database.CreateExecutionStrategy();
 
+        long? attemptedRecordId = null;
         var appended = false;
         var appendedCount = 0;
         var corroborated = 0;
@@ -340,6 +341,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 return;
             }
 
+            attemptedRecordId = row.RecordId;
             var record = Deserialize(row);
             var existingKeys = record.TopIssues
                 .Select(i => i.EventKey)
@@ -424,8 +426,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             appendedCount = toAdd.Count;
         });
         }
-        // SQL Server 上列被整批刪除後寫回，可能先插子列撞外鍵而拿到一般的 DbUpdateException（不是併發例外）——同樣視為列不存在
-        catch (DbUpdateException ex)
+        // 只有重新查證原父列確實消失才降級為不存在；其他約束／寫入失敗必須讓上層標記失敗。
+        catch (DbUpdateException ex) when (attemptedRecordId.HasValue && RecordWasRemoved(attemptedRecordId.Value))
         {
             // 讀到列之後、寫回之前該主機日被整批刪除（DeleteDays 等不持鎖）：視同「該主機日不存在」
             Log.Warn("[SQL] AttachPrtgFindings 主機 id={HostId} {Date:yyyy-MM-dd} 寫回時該列已不存在，略過：{Msg}",
@@ -443,6 +445,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
 
         return appended;
+    }
+
+    private bool RecordWasRemoved(long recordId)
+    {
+        using var context = _contextFactory();
+        return !context.DailyRecords.AsNoTracking().Any(r => r.RecordId == recordId);
     }
 
     private static TopIssueRow MapToTopIssueRow(long recordId, long hostId, DateTime recordDate, LogIssueSignature issue) =>

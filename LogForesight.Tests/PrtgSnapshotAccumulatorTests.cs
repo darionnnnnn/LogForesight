@@ -7,6 +7,29 @@ namespace LogForesight.Tests;
 public class PrtgSnapshotAccumulatorTests
 {
     [Fact]
+    public void 恢復後策略改變_涵蓋率仍採各樣本當時頻率()
+    {
+        var hour = DateTime.Today;
+        var first = new PrtgSnapshotAccumulator();
+        first.Add(1, hour, 10, sampleCoverage: 25);
+        var restored = new PrtgSnapshotAccumulator();
+        restored.Restore(first.Capture());
+        restored.Add(1, hour.AddMinutes(15), 20, sampleCoverage: 100.0 / 12);
+        var row = Assert.Single(restored.DrainAll(12, hour.AddHours(1)));
+        Assert.Equal(25 + 100.0 / 12, row.Coverage!.Value, precision: 8);
+        Assert.Equal(15, row.AvgValue);
+    }
+
+    [Fact]
+    public void 恢復資料缺採集時頻率_不得用新設定補算涵蓋率()
+    {
+        var hour = DateTime.Today;
+        var restored = new PrtgSnapshotAccumulator();
+        restored.Restore(new[] { new PrtgSnapshotAccumulator.CheckpointRow(hour, 1, 40, 4, 10, 10) });
+        Assert.Null(Assert.Single(restored.DrainAll(4, hour.AddHours(1))).Coverage);
+    }
+
+    [Fact]
     public void 同一小時三個樣本_平均極值與覆蓋率計算正確()
     {
         var acc = new PrtgSnapshotAccumulator();

@@ -13,6 +13,7 @@ public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges,
 
     /// <summary>裝置鏡像本趟是否成功更新（同 scopeProvider 收到的引數）</summary>
     public bool DevicesRefreshed { get; init; }
+
 }
 
 /// <summary>PRTG 狀態變更區間擷取結果摘要。</summary>

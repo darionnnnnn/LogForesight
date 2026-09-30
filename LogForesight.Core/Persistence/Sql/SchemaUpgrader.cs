@@ -244,6 +244,61 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_period", "period_start");
 
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
+            isSqlite ? SqliteCreatePrtgSampledBatches : SqlServerCreatePrtgSampledBatches);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
+            "IX_lf_prtg_batch_created", "created_at");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_observations", isSqlite ? """
+            CREATE TABLE lf_prtg_observations (
+                snapshot_id TEXT NOT NULL PRIMARY KEY, decision_key TEXT NOT NULL DEFAULT '', active_key TEXT NULL,
+                host_id INTEGER NOT NULL, record_date TEXT NOT NULL,
+                device_objid INTEGER NOT NULL, sensor_objid INTEGER NULL,
+                rule_code TEXT NOT NULL, event_key TEXT NOT NULL DEFAULT '', source_name TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '', severity_rank INTEGER NOT NULL DEFAULT 0,
+                elevates_day_risk INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0,
+                source_generation TEXT NULL, source_hint TEXT NOT NULL DEFAULT '', resource_generation TEXT NULL,
+                quality_reason TEXT NOT NULL, format_version INTEGER NOT NULL,
+                content_json TEXT NOT NULL, recorded_at_utc TEXT NOT NULL
+            )
+            """ : """
+            CREATE TABLE lf_prtg_observations (
+                snapshot_id nvarchar(64) NOT NULL PRIMARY KEY, decision_key nvarchar(64) NOT NULL DEFAULT '', active_key nvarchar(64) NULL,
+                host_id bigint NOT NULL, record_date datetime2 NOT NULL,
+                device_objid bigint NOT NULL, sensor_objid bigint NULL,
+                rule_code nvarchar(100) NOT NULL, event_key nvarchar(255) NOT NULL DEFAULT '', source_name nvarchar(255) NOT NULL DEFAULT '',
+                category nvarchar(20) NOT NULL DEFAULT '', severity_rank int NOT NULL DEFAULT 0,
+                elevates_day_risk bit NOT NULL DEFAULT 0, suppressed bit NOT NULL DEFAULT 0,
+                source_generation nvarchar(100) NULL, source_hint nvarchar(64) NOT NULL DEFAULT '', resource_generation nvarchar(100) NULL,
+                quality_reason nvarchar(255) NOT NULL, format_version int NOT NULL,
+                content_json nvarchar(max) NOT NULL, recorded_at_utc datetime2 NOT NULL
+            )
+            """);
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_hint",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "decision_key",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "active_key",
+            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "event_key",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_name",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "category",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(20) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "severity_rank",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "elevates_day_risk",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "suppressed",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
+            "IX_lf_prtg_obs_host_date", "host_id, record_date");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
+            "IX_lf_prtg_obs_recorded", "recorded_at_utc");
+        AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
+            "IX_lf_prtg_obs_active", "active_key", "active_key IS NOT NULL");
+
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_host_map",
             isSqlite ? SqliteCreatePrtgHostMap : SqlServerCreatePrtgHostMap);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_host_map",
@@ -1204,6 +1259,20 @@ internal static class SchemaUpgrader
             max_value float NULL,
             coverage float NULL,
             quality nvarchar(16) NOT NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgSampledBatches = """
+        CREATE TABLE lf_prtg_sampled_batches (
+            batch_id TEXT NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePrtgSampledBatches = """
+        CREATE TABLE lf_prtg_sampled_batches (
+            batch_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
             created_at datetime2 NOT NULL
         )
         """;

@@ -4,7 +4,7 @@ namespace LogForesight.Core.Service;
 
 /// <summary>
 /// PRTG finding 的跨日判定（純函式，唯一一份）：標註「近 14 日第 N 次、連續第 M 日」、
-/// 重複或連續時升一級嚴重度、連續太久的 down 視為沒人移除的死 sensor 而不再拉高日風險。
+/// 重複或連續時升一級嚴重度；長期 Down 保留故障風險，由通知層處理重複提醒。
 /// 不走 TrendAnalyzer——PRTG 規則是單日判定，跨日語意只在這裡補。
 /// </summary>
 public static class PrtgCrossDay
@@ -51,16 +51,6 @@ public static class PrtgCrossDay
 
             var isDown = PrtgFindingMapper.TryGetRuleCode(sig.Source, out var code)
                          && string.Equals(code, PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase);
-            if (isDown && consecutive >= PrtgRuleCatalog.ChronicDownDays)
-            {
-                // 不再拉日風險：關掉重大旗標，嚴重度封頂「中」（高嚴重度仍會把日風險拉到「中」）
-                sig.ElevatesDayRisk = false;
-                if (sig.Severity > IssueSeverity.Medium) sig.Severity = IssueSeverity.Medium;
-                AppendDetail(sig, $"；已連續 {consecutive} 日，建議在 PRTG 暫停該 sensor 或建立抑制");
-                chronic++;
-                continue;
-            }
-
             if (consecutive >= PrtgRuleCatalog.EscalateConsecutiveDays || hits >= PrtgRuleCatalog.EscalateHitsInWindow)
             {
                 var raised = sig.Severity switch
@@ -74,6 +64,11 @@ public static class PrtgCrossDay
                     sig.Severity = raised;
                     escalated++;
                 }
+            }
+            if (isDown && consecutive >= PrtgRuleCatalog.ChronicDownDays)
+            {
+                AppendDetail(sig, $"；已連續 {consecutive} 日，故障尚未恢復，請確認處置狀態");
+                chronic++;
             }
         }
 

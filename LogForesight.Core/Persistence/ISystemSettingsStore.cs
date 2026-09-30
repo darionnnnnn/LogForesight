@@ -20,7 +20,11 @@ public class SystemSettingsStore : JsonBlobSingleton<SystemSettings>, ISystemSet
     /// 每次 Get 仍反序列化出新物件，讀→改→寫的呼叫端（SystemSettingsService）不受影響。</summary>
     public SystemSettingsStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
-    protected override void Touch(SystemSettings value) => value.UpdatedAt = DateTime.Now;
+    protected override void Touch(SystemSettings value)
+    {
+        value.UpdatedAt = DateTime.Now;
+        value.Revision = Guid.NewGuid().ToString("N");
+    }
 
     /// <summary>
     /// 舊版 blob 存放的是 DetailRetentionDays 與 RiskyEventRetentionDays，升級後若不處理會悄悄退回出廠預設。

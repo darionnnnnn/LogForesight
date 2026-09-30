@@ -726,6 +726,7 @@ public class SettingsController : ControllerBase
         int snapshotConsecutiveFailures = 0;
         bool snapshotBackingOff = false;
         string? snapshotSkipReason = null;
+        int snapshotPendingSamples = 0;
 
         if (_snapshot != null)
         {
@@ -736,6 +737,7 @@ public class SettingsController : ControllerBase
             snapshotConsecutiveFailures = st.ConsecutiveFailures;
             snapshotBackingOff = st.IntervalMinutes > PrtgFetchStrategy.Profile(_settings.Get().PrtgFetchStrategy).SnapshotIntervalMinutes;
             snapshotSkipReason = st.LastSkipReason;
+            snapshotPendingSamples = st.PendingSamples;
         }
 
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
@@ -759,6 +761,7 @@ public class SettingsController : ControllerBase
             SnapshotConsecutiveFailures = snapshotConsecutiveFailures,
             SnapshotBackingOff = snapshotBackingOff,
             SnapshotSkipReason = snapshotSkipReason,
+            SnapshotPendingSamples = snapshotPendingSamples,
             Freshness = PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
         });
     }

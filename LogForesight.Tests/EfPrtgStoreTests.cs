@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Persistence.Sql;
 using Xunit;
@@ -16,6 +17,34 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
+
+    [Fact]
+    public void 縮短原始資料保留期_批次識別仍覆蓋安全重播期限()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgSampledBatches.AddRange(
+                new PrtgSampledBatchRow { BatchId = "recent", CreatedAt = DateTime.Today.AddDays(-20) },
+                new PrtgSampledBatchRow { BatchId = "expired", CreatedAt = DateTime.Today.AddDays(-33) });
+            ctx.SaveChanges();
+        }
+        CreateStore().Prune(7);
+        using var check = _fx.NewContext();
+        Assert.Equal("recent", Assert.Single(check.PrtgSampledBatches).BatchId);
+    }
+
+    private sealed class FailOnSecondSaveContext(DbContextOptions<LfDbContext> options, Func<bool> shouldFail)
+        : LfDbContext(options)
+    {
+        private int _saveCount;
+
+        public override int SaveChanges()
+        {
+            if (++_saveCount == 2 && shouldFail())
+                throw new InvalidOperationException("後一批模擬寫入失敗");
+            return base.SaveChanges();
+        }
+    }
 
     [Fact]
     public void UpsertDevices_新增與更新_同objid就地取代不重複()
@@ -843,6 +872,19 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     [Fact]
+    public void 範圍版本_修改失敗時對應及版本一併回滾()
+    {
+        var store = CreateStore();
+        store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 1001, HostId = 10 });
+        var before = _fx.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+        using (var ctx = _fx.NewContext())
+            ctx.Database.ExecuteSqlRaw("CREATE TRIGGER fail_mapping BEFORE UPDATE ON lf_prtg_manual_map BEGIN SELECT RAISE(ABORT, 'simulated mapping failure'); END;");
+        Assert.Throws<DbUpdateException>(() => store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 1001, HostId = 20 }));
+        Assert.Equal(10, Assert.Single(store.GetManualMaps()).HostId);
+        Assert.Equal(before, _fx.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion());
+    }
+
+    [Fact]
     public void GetManualMaps_無資料時回傳空清單_有資料時回傳全部()
     {
         var store = CreateStore();
@@ -1564,6 +1606,76 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(50.0, row.Coverage);
         Assert.Equal(PrtgDataQuality.Sampled, row.Quality);
         Assert.Equal(now, row.CreatedAt);
+    }
+
+    [Fact]
+    public void MergeSampledValues_後一批失敗_整輪回滾且重試不重複涵蓋率()
+    {
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+        var options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(connection).Options;
+        using (var setup = new LfDbContext(options)) setup.Database.EnsureCreated();
+
+        var fail = true;
+        var store = new EfPrtgStore(() => new FailOnSecondSaveContext(options, () => fail));
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var rows = Enumerable.Range(1, 501).Select(id => new PrtgValueRow
+        {
+            SensorObjid = id,
+            PeriodStart = period,
+            AvgValue = id,
+            Coverage = 25,
+            Quality = PrtgDataQuality.Sampled
+        }).ToList();
+
+        var batchId = Guid.NewGuid().ToString("N");
+        Assert.Throws<InvalidOperationException>(() => store.MergeSampledValues(rows, batchId));
+        using (var check = new LfDbContext(options))
+        {
+            Assert.Empty(check.PrtgValues);
+            Assert.Empty(check.PrtgSampledBatches);
+        }
+
+        fail = false;
+        Assert.Equal(501, store.MergeSampledValues(rows, batchId));
+        using var afterRetry = new LfDbContext(options);
+        Assert.Equal(501, afterRetry.PrtgValues.Count());
+        Assert.Single(afterRetry.PrtgSampledBatches);
+        Assert.All(afterRetry.PrtgValues.ToList(), row => Assert.Equal(25, row.Coverage));
+    }
+
+    [Fact]
+    public void MergeSampledValues_已提交但回應遺失_同批重試不重複加權()
+    {
+        var store = CreateStore();
+        var period = new DateTime(2026, 9, 11, 10, 0, 0);
+        var first = new[] { new PrtgValueRow
+        {
+            SensorObjid = 7001, PeriodStart = period, AvgValue = 20, Coverage = 25,
+            Quality = PrtgDataQuality.Sampled
+        } };
+        var batchId = Guid.NewGuid().ToString("N");
+
+        Assert.Equal(1, store.MergeSampledValues(first, batchId));
+        Assert.Equal(0, store.MergeSampledValues(first, batchId));
+        using (var check = _fx.NewContext())
+        {
+            var value = Assert.Single(check.PrtgValues);
+            Assert.Equal(25, value.Coverage);
+            Assert.Single(check.PrtgSampledBatches);
+        }
+
+        var next = new[] { new PrtgValueRow
+        {
+            SensorObjid = 7001, PeriodStart = period, AvgValue = 60, Coverage = 25,
+            Quality = PrtgDataQuality.Sampled
+        } };
+        Assert.Equal(1, store.MergeSampledValues(next, Guid.NewGuid().ToString("N")));
+        using var after = _fx.NewContext();
+        var merged = Assert.Single(after.PrtgValues);
+        Assert.Equal(50, merged.Coverage);
+        Assert.Equal(40, merged.AvgValue);
+        Assert.Equal(2, after.PrtgSampledBatches.Count());
     }
 
     [Fact]

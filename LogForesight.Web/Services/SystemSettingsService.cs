@@ -143,6 +143,8 @@ public class SystemSettingsService : ISystemSettingsService
     public SystemSettingsDto Update(UpdateSystemSettingsRequest request)
     {
         var before = _store.Get();
+        var expectedRevision = request.ExpectedRevision ?? before.Revision;
+        EnsureSettingsRevision(before, expectedRevision);
 
         var severities = NormalizeSeverities(request.UnhandledSeverities);
         if (severities.Count == 0)
@@ -337,6 +339,7 @@ public class SystemSettingsService : ISystemSettingsService
 
         var saved = _store.Update(s =>
         {
+            EnsureSettingsRevision(s, expectedRevision);
             s.BrandName = brandName;
             s.BrandSubtitle = brandSubtitle;
             s.BrandIconDataUri = brandIcon;
@@ -558,9 +561,17 @@ public class SystemSettingsService : ISystemSettingsService
         return ToDto(saved);
     }
 
+    private static void EnsureSettingsRevision(SystemSettings current, string expected)
+    {
+        if (!string.Equals(current.Revision, expected, StringComparison.Ordinal))
+            throw DomainException.Conflict("設定已由其他作業更新，本次未儲存。您的輸入仍保留，請重新載入最新設定後再修改。");
+    }
+
     public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request)
     {
         var before = _store.Get();
+        var expectedRevision = request.ExpectedRevision ?? before.Revision;
+        EnsureSettingsRevision(before, expectedRevision);
 
         var effectiveRetentionDays = before.RetentionDays;
         var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
@@ -612,6 +623,7 @@ public class SystemSettingsService : ISystemSettingsService
 
         var saved = _store.Update(s =>
         {
+            EnsureSettingsRevision(s, expectedRevision);
             if (request.PrtgUrl != null) s.PrtgUrl = request.PrtgUrl.Trim();
             if (request.PrtgAuthMode != null) s.PrtgAuthMode = request.PrtgAuthMode;
             WritePrtgCredentials(s, effectivePrtgAuthMode, effectivePrtgUsername,
@@ -1094,18 +1106,19 @@ public class SystemSettingsService : ISystemSettingsService
 
     /// <summary>
     /// 取數範圍的驗證（docs/PRTG-SPEC.md §3a）。
-    /// **`all-mapped` 搭配空白名單＝對全部 sensor 取數**——實機四萬多個 sensor，
-    /// 一晚跑不完且會壓垮 PRTG core，因此在存檔時就擋下，而不是等夜間批次才發現。
+    /// 激進策略執行時，**`all-mapped` 搭配空白名單＝對全部 sensor 取數**——實機四萬多個 sensor，
+    /// 一晚跑不完且會壓垮 PRTG core，因此在存檔時就擋下。保守或停用時此欄位只保留設定，
+    /// 不執行逐顆取數；轉回激進且啟用時重新驗證。
     /// 跨欄位檢查一律用 effective 值（請求值 ?? 已儲存值），只改其中一欄時上限才不會形同失效。
     /// </summary>
-    private static void ValidatePrtgValueFetchScope(string? scope, List<string>? whitelist)
+    private static void ValidatePrtgValueFetchScope(string? scope, List<string>? whitelist, bool nightlyExactValuesActive)
     {
         if (scope == null) return;
 
         if (!PrtgValueFetchScope.IsValid(scope))
             throw DomainException.Validation("取數範圍必須是 triggered、all-mapped 或 triggered-plus-list 其中之一。");
 
-        if (scope == PrtgValueFetchScope.AllMapped && (whitelist == null || whitelist.Count == 0))
+        if (nightlyExactValuesActive && scope == PrtgValueFetchScope.AllMapped && (whitelist == null || whitelist.Count == 0))
             throw DomainException.Validation(
                 "取數範圍設為「全部已對應主機」時，sensor type 白名單不可留空——留空等於對全部 sensor 取數，大型環境會壓垮 PRTG core。");
     }
@@ -1165,8 +1178,9 @@ public class SystemSettingsService : ISystemSettingsService
         string? effectivePrtgFetchStrategy = null)
     {
         RejectSecretQuery(effectivePrtgUrl);
-        ValidatePrtgValueFetchScope(effectivePrtgValueFetchScope, effectivePrtgSensorTypeWhitelist);
         ValidatePrtgFetchStrategy(effectivePrtgFetchStrategy);
+        ValidatePrtgValueFetchScope(effectivePrtgValueFetchScope, effectivePrtgSensorTypeWhitelist,
+            effectivePrtgEnabled && effectivePrtgFetchStrategy == PrtgFetchStrategy.Aggressive);
 
         if (effectivePrtgRetentionDays > effectiveRetentionDays)
             throw DomainException.Validation("PRTG 資料保留天數不可大於歷史資料保留天數。");
@@ -1394,6 +1408,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgResourceGuardPauseMinutes = s.PrtgResourceGuardPauseMinutes,
         PrtgResourceGuardStrikes = s.PrtgResourceGuardStrikes,
         PrtgResourceGuardMaxPauseMinutes = s.PrtgResourceGuardMaxPauseMinutes,
+        Revision = s.Revision,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)

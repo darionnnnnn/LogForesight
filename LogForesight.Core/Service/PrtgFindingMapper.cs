@@ -82,7 +82,9 @@ public static class PrtgFindingMapper
             DistinctMessageCount = 1,
             Category = finding.Rule.Category,
             Severity = finding.Rule.Severity,
-            ElevatesDayRisk = finding.Rule.ElevatesDayRisk && !finding.Acknowledged,
+            // PRTG 已確認只表示有人知悉；故障是否仍存在由狀態證據判定，
+            // 通知重複與靜音另由處置層處理，不因此降低日風險。
+            ElevatesDayRisk = finding.Rule.ElevatesDayRisk,
             KnownIssue = finding.Rule.Description,
             RuleId = finding.Rule.Id,
             // 跨來源佐證（PrtgCorroboration）靠它分辨 sensor 類型；silent（device 層）為 null

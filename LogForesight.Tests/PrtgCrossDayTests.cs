@@ -78,29 +78,29 @@ public class PrtgCrossDayTests
     }
 
     [Fact]
-    public void 長期Down原嚴重度為高時封頂為中()
+    public void 長期Down原嚴重度為高時維持風險()
     {
         var sig = Sig("down", IssueSeverity.High, elevates: true);
 
         var (_, chronic) = PrtgCrossDay.Apply(new[] { sig }, Hits(sig, Enumerable.Range(1, 13).ToArray()), Day);
 
         Assert.Equal(1, chronic);
-        Assert.False(sig.ElevatesDayRisk);
-        Assert.Equal(IssueSeverity.Medium, sig.Severity);
+        Assert.True(sig.ElevatesDayRisk);
+        Assert.Equal(IssueSeverity.High, sig.Severity);
     }
 
     [Fact]
-    public void Down連續14日視為長期Down_不拉高日風險且不升級()
+    public void Down連續14日仍維持升級與重大旗標()
     {
         var sig = Sig("down", IssueSeverity.Medium, elevates: true);
 
         var (escalated, chronic) = PrtgCrossDay.Apply(new[] { sig }, Hits(sig, Enumerable.Range(1, 13).ToArray()), Day);
 
-        Assert.Equal((0, 1), (escalated, chronic));
-        Assert.False(sig.ElevatesDayRisk);
-        Assert.Equal(IssueSeverity.Medium, sig.Severity);
+        Assert.Equal((1, 1), (escalated, chronic));
+        Assert.True(sig.ElevatesDayRisk);
+        Assert.Equal(IssueSeverity.High, sig.Severity);
         Assert.Contains("近 14 日第 14 次，連續第 14 日", sig.SampleMessages[0]);
-        Assert.EndsWith("；已連續 14 日，建議在 PRTG 暫停該 sensor 或建立抑制", sig.SampleMessages[0]);
+        Assert.EndsWith("；已連續 14 日，故障尚未恢復，請確認處置狀態", sig.SampleMessages[0]);
     }
 
     [Fact]

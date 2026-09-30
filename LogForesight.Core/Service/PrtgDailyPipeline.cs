@@ -21,6 +21,7 @@ namespace LogForesight.Core.Service;
 internal static class PrtgDailyPipeline
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     /// <param name="structureSyncGate">
     /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）。Core 不認識 Web 的服務，
     /// 由呼叫端注入；未接上時傳 null＝行為與沒有這個機制時完全相同。
@@ -73,6 +74,8 @@ internal static class PrtgDailyPipeline
         var sensorMirrorEmpty = false;
         var conservativeStrategy = false;
 
+        var parentToken = ct;
+        PrtgOperationScope? operation = null;
         try
         {
             var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
@@ -85,7 +88,13 @@ internal static class PrtgDailyPipeline
                 return;
             }
 
+            using var operationScope = new PrtgOperationScope(systemSettings,
+                () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read);
+            operation = operationScope;
+            ct = operationScope.Token;
+            operationScope.Checkpoint();
             using var client = PrtgClientFactory.Create(systemSettings);
+            client.OperationCheckpoint = operationScope.Checkpoint;
 
             var fetchService = new PrtgFetchService(client, backend.PrtgStore(),
                 new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), prtgConsole,
@@ -191,6 +200,8 @@ internal static class PrtgDailyPipeline
 
             syncStopwatch.Stop();
 
+            operationScope.Checkpoint();
+
             // 結構同步與主機對應都成功時，將狀態寫入 blob（保留手動同步時相同的結構資訊）
             // 任一條件不成立就不寫（保留上一次狀態），失敗只記 Log.Warn 不影響其他階段
             var nightlySyncStatus = BuildNightlySyncStatus(
@@ -271,10 +282,16 @@ internal static class PrtgDailyPipeline
             // 兩段式：處理最新一天的當下，較舊日期的 finding 還沒評估也還沒寫進資料庫，
             // 跨日判定只查資料庫會少算。所以先對全部日期評估並歸戶（不發佈），再逐日標註、抑制、發佈、追加。
             var planned = new Dictionary<DateTime, PrtgPlannedDay>();
+            // partial 同步會保留其他主機的鏡像；歸戶也必須套本趟主機範圍，
+            // 不能因舊鏡像仍在就替未選取、已停用或已合併主機保存新判定。
+            var evaluationHostIds = hostStore.GetAll()
+                .Where(h => h.Active && h.MergedInto == null && (hostIds == null || hostIds.Contains(h.HostId)))
+                .Select(h => h.HostId).ToHashSet();
 
             // 第一段（由近到遠）：主機對應、評估、映射成簽章、歸戶。不發佈、不追加。
             for (var i = 0; i < days.Count; i++)
             {
+                operationScope.Checkpoint();
                 // 逐日評估是整條路徑最耗時的段落（每天一次狀態變更查詢），進度在這裡報；第二段只發佈與追加，不再重報
                 ct.ThrowIfCancellationRequested();
                 progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
@@ -291,7 +308,7 @@ internal static class PrtgDailyPipeline
                     var deviceToHost = new Dictionary<long, long>();
                     foreach (var row in ResolveHostMapRows(day))
                     {
-                        if (row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue)
+                        if (row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue && evaluationHostIds.Contains(row.HostId.Value))
                         {
                             deviceToHost[row.DeviceObjid] = row.HostId.Value;
                         }
@@ -305,7 +322,6 @@ internal static class PrtgDailyPipeline
                     }
 
                     var changes = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
-
                     var findings = PrtgRuleEvaluator.Evaluate(
                         day, changes, sensorToDevice, sensorStatuses, prtgRules,
                         sensorNames, deviceNames, includeSilent: day == newest);
@@ -335,7 +351,9 @@ internal static class PrtgDailyPipeline
                                 hostFindings = new List<LogIssueSignature>();
                                 findingsByHost[hostId] = hostFindings;
                             }
-                            hostFindings.Add(PrtgFindingMapper.ToSignature(finding, day));
+                            var signature = PrtgFindingMapper.ToSignature(finding, day);
+                            hostFindings.Add(signature);
+                            plan.Observations.Add((hostId, finding, signature));
                             state.TriggerHosts.Add(hostId);
                         }
                     }
@@ -363,6 +381,7 @@ internal static class PrtgDailyPipeline
             // 它不等待本趟 triggered fetch，也不接觸 PRTG API；分頁上限由 assessment service 強制為 100。
             if (newest.Date < DateTime.Today)
             {
+                operationScope.Checkpoint();
                 var diskRules = KnownIssueCatalog.Rules.Where(r =>
                     string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(r.PrtgRuleCode, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase) &&
@@ -389,6 +408,7 @@ internal static class PrtgDailyPipeline
                         var batchSize = PrtgDiskAssessmentService.EffectiveBatchSize(diskRule);
                         while (true)
                         {
+                            operationScope.Checkpoint();
                             ct.ThrowIfCancellationRequested();
                             var page = assessment.Assess(DateOnly.FromDateTime(newest), diskRule,
                                 PrtgDiskDecisionMode.Formal, batchSize,
@@ -399,7 +419,9 @@ internal static class PrtgDailyPipeline
                                 var findingsByHost = planned[newest].FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
                                 if (!findingsByHost.TryGetValue(row.CurrentHostId, out var hostFindings))
                                     findingsByHost[row.CurrentHostId] = hostFindings = new List<LogIssueSignature>();
-                                hostFindings.Add(PrtgFindingMapper.ToSignature(finding, newest));
+                                var signature = PrtgFindingMapper.ToSignature(finding, newest);
+                                hostFindings.Add(signature);
+                                planned[newest].Observations.Add((row.CurrentHostId, finding, signature));
                                 added++;
                                 dayStates[newest].TriggerHosts.Add(row.CurrentHostId);
                             }
@@ -456,6 +478,7 @@ internal static class PrtgDailyPipeline
             // 第二段（由近到遠）：跨日標註 → 抑制標記 → 發佈 → 補追加與案件掛接
             for (var i = 0; i < days.Count; i++)
             {
+                operationScope.Checkpoint();
                 var day = days[i].Date;
                 var plan = planned[day];
 
@@ -504,6 +527,17 @@ internal static class PrtgDailyPipeline
                         suppressedPatternIdsByHost[hostId] = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
                     }
 
+                    // 先保存不依賴日誌紀錄的判定快照。影子資料尚未通過共同讀取切換，
+                    // 不據此建案／通知，也不把缺少來源身分與涵蓋證據的結果當作可信延續。
+                    var captured = 0;
+                    foreach (var group in plan.Observations.GroupBy(o => o.HostId))
+                    {
+                        operationScope.Checkpoint();
+                        captured += backend.PrtgObservationStore().Capture(group.Key, day, systemSettings.Revision,
+                            group.Select(o => (o.Finding, o.Signature)).ToArray(), systemSettings.PrtgUrl);
+                    }
+                    prtgConsole.WriteLine($"獨立 PRTG 判定快照：新增 {captured} 筆（影子保存，尚未納入正式問題查詢與交辦）。");
+
                     prtgFindings.Publish(day, findingsByHost.ToDictionary(
                         kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value), suppressedPatternIdsByHost);
 
@@ -516,6 +550,7 @@ internal static class PrtgDailyPipeline
 
                         foreach (var (hostId, hostFindings) in findingsByHost)
                         {
+                            operationScope.Checkpoint();
                             var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
                             var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
 
@@ -531,7 +566,7 @@ internal static class PrtgDailyPipeline
                         }
 
                         var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
-                                      $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台由分析路徑就地處理）";
+                                      $"本階段追加 {appendedHosts} 台、未追加 {pendingHosts} 台（可能由分析路徑處理；若當日沒有日誌分析紀錄，目前不會建立獨立 PRTG 問題）";
                         prtgConsole.WriteLine(summary);
                         runRecorder.Milestone(summary);
                     }
@@ -603,6 +638,7 @@ internal static class PrtgDailyPipeline
 
                     foreach (var day in days)
                     {
+                        operationScope.Checkpoint();
                         var state = dayStates[day];
                         var dayResult = await triggeredFetcher.RunAsync(
                             day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
@@ -655,6 +691,12 @@ internal static class PrtgDailyPipeline
             {
                 prtgOutcome = BatchRun.PrtgOutcomeSuccess;
             }
+        }
+        catch (OperationCanceledException) when (!parentToken.IsCancellationRequested && operation?.SettingsChanged == true)
+        {
+            prtgOutcome = BatchRun.PrtgOutcomePartial;
+            prtgConsole.WriteLine("PRTG 設定在執行中變更；已完成的資料保留，停止後續 PRTG 工作。NetIQ／本機分析繼續。");
+            runRecorder.Milestone("PRTG 設定在執行中變更，後續 PRTG 工作已停止");
         }
         catch (OperationCanceledException)
         {
@@ -792,6 +834,7 @@ internal static class PrtgDailyPipeline
     /// </summary>
     private sealed class PrtgPlannedDay
     {
+        public List<(long HostId, PrtgFinding Finding, LogIssueSignature Signature)> Observations { get; } = new();
         public Dictionary<long, List<LogIssueSignature>>? FindingsByHost;
         public int FindingCount;
         public int AcknowledgedCount;

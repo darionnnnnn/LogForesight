@@ -14,7 +14,7 @@ namespace LogForesight.Core.Persistence;
 /// <see cref="LogStore"/>／<see cref="RecordStore"/> 都重用同一個 DbContext 工廠，
 /// 不需要每次重新確認 schema。
 ///
-/// **全部資料走 SQL，無檔案**：分析紀錄以正規化列＋JSON 存（lf_daily_records/lf_top_issues），
+/// **業務資料走 SQL**（PRTG 暫存復原佇列除外）：分析紀錄以正規化列＋JSON 存（lf_daily_records/lf_top_issues），
 /// webdata 各 store 透過 <see cref="EfJsonBlobStore"/>（整份型 → lf_blobs）與
 /// <see cref="EfJsonLogStore"/>（append-only → lf_log_lines）走資料庫，store 業務邏輯不受
 /// 後端影響。LINQ 保持 provider 中立，SQLite 上跑合約測試驗證語意。
@@ -28,6 +28,9 @@ public class StorageBackend
 
     /// <summary>資料根目錄（升級前的 <c>export\</c> 報告檔落點，供一次性遷移掃描）</summary>
     private readonly string _dataRoot;
+
+    /// <summary>暫存恢復佇列使用的資料根目錄；業務資料仍以 SQL 為準。</summary>
+    public string DataRoot => _dataRoot;
 
     public const int ForegroundCommandTimeoutSeconds = 60;
     public const int AnalysisCommandTimeoutSeconds = 300;
@@ -218,6 +221,8 @@ public class StorageBackend
 
     /// <summary>PRTG 鏡像資料 store（↔ lf_prtg_* 五張表）</summary>
     public EfPrtgStore PrtgStore() => new(_dbFactory, Performance);
+
+    public EfPrtgObservationStore PrtgObservationStore() => new(_dbFactory);
 
     /// <summary>校準狀態判定與數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A）。
     /// 相依的三個 store／查詢由呼叫端持有——本類別只提供資料庫連線工廠。</summary>

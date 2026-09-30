@@ -844,17 +844,17 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Equal(1, corroborated);
         var read = Assert.Single(store.ReadRecent(date, 1));
         var text = Assert.Single(read.CorrelationAlerts);
-        Assert.StartsWith("【儲存故障雙重確認】", text);
+        Assert.StartsWith("【儲存異常同日訊號】", text);
         Assert.Contains("disk#153", text);
         Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, Assert.Single(read.CorrelationAlertRefs).PatternId);
-        Assert.Equal("高", read.RiskLevel);
-        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, read.RiskBasis);
+        Assert.Equal("中", read.RiskLevel); // 硬體 warning 本身為 High；同日配對不再額外拉高
+        Assert.NotEqual(CorrelationPatternIds.PrtgStorageCorroborated, read.RiskBasis);
         Assert.Equal(PrtgSensorCategories.Hardware, read.TopIssues.Single(i => i.EventKey == "prtg:warning:2001").PrtgSensorCategory);
 
         using var ctx = _fx.NewContext();
         var row = ctx.DailyRecords.Single(r => r.HostId == 101 && r.RecordDate == date.Date);
         Assert.True(row.HasCorrelation);
-        Assert.Equal("高", row.RiskLevel);
+        Assert.Equal("中", row.RiskLevel);
     }
 
     [Fact]
@@ -871,10 +871,27 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Equal(0, corroborated);
         var read = Assert.Single(store.ReadRecent(date, 1));
         Assert.Empty(read.CorrelationAlerts);
-        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(read.SuppressedCorrelationAlerts));
+        Assert.StartsWith("【儲存異常同日訊號】", Assert.Single(read.SuppressedCorrelationAlerts));
         Assert.NotEqual("高", read.RiskLevel);
 
         using var ctx = _fx.NewContext();
         Assert.False(ctx.DailyRecords.Single(r => r.HostId == 101 && r.RecordDate == date.Date).HasCorrelation);
     }
+    [Fact]
+    public void AttachPrtgFindings_一般寫入失敗不能偽裝成日紀錄不存在()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today;
+        store.Append(new DailyAnalysisRecord { HostId = 101, Host = "SRV", Date = date, RiskLevel = "低" });
+        using (var ctx = _fx.NewContext())
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(ctx.Database,
+                "CREATE TRIGGER fail_prtg_insert BEFORE INSERT ON lf_top_issues BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;");
+        var sig = PrtgFindingMapper.ToSignature(new PrtgFinding(1001, 2001, "down", "Down", 60, SeedDownRule), date);
+        Assert.Throws<Microsoft.EntityFrameworkCore.DbUpdateException>(() =>
+            store.AttachPrtgFindings(101, date, new[] { sig }, NoPatternIds, out _));
+        var record = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Empty(record.TopIssues);
+        Assert.Equal("低", record.RiskLevel);
+    }
+
 }

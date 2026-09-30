@@ -33,9 +33,46 @@ public class SystemSettingsServiceTests : IDisposable
                 _mailRecords, new FakeHandlingStore(),
                 MailState, Freshness), new FakeReportUsageQuery());
 
+    [Fact]
+    public void PRTG設定_舊表單版本不能覆寫新範圍()
+    {
+        var service = Create();
+        var loaded = service.Get();
+        _store.Update(s => { s.PrtgValueFetchScope = "all-mapped"; s.Revision = "new-version"; });
+        var error = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = loaded.Revision,
+            PrtgValueFetchScope = "triggered"
+        }));
+        Assert.Equal(ApiErrorCodes.Conflict, error.Code);
+        Assert.Equal("all-mapped", _store.Get().PrtgValueFetchScope);
+    }
+
+    [Fact]
+    public void PRTG設定_API缺版本拒絕避免盲目覆寫()
+    {
+        var request = new UpdatePrtgSettingsRequest { PrtgEnabled = false };
+        var errors = new List<ValidationResult>();
+        Assert.False(Validator.TryValidateObject(request, new ValidationContext(request), errors, true));
+        Assert.Contains(errors, e => e.MemberNames.Contains(nameof(request.ExpectedRevision)));
+    }
+
+    private void EnableAggressivePrtg()
+    {
+        _store.Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.example.local";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("test-token");
+            s.PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive;
+        });
+    }
+
     private static UpdateSystemSettingsRequest ValidRequest(
         int runLogRetentionDays = 120, int auditRetentionDays = 730, int rawEventRetentionDays = 120) => new()
     {
+        ExpectedRevision = "legacy",
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
         VisibleDayRiskLevels = new List<string> { "高", "中", "低" },
@@ -2456,6 +2493,7 @@ public class SystemSettingsServiceTests : IDisposable
     public void PrtgValueFetchScope_全部主機模式搭配空白名單被拒絕()
     {
         var service = Create();
+        EnableAggressivePrtg();
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {
@@ -2481,6 +2519,7 @@ public class SystemSettingsServiceTests : IDisposable
     public void PrtgValueFetchScope_已是全部主機模式時不得只清空白名單()
     {
         var service = Create();
+        EnableAggressivePrtg();
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {
             PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
@@ -2490,6 +2529,34 @@ public class SystemSettingsServiceTests : IDisposable
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {
             PrtgSensorTypeWhitelist = new List<string>()
+        }));
+        Assert.Contains("白名單", ex.Message);
+    }
+
+    [Fact]
+    public void PrtgValueFetchScope_保守策略保留全部主機與空白名單_切回激進時才阻擋()
+    {
+        var service = Create();
+        _store.Update(s =>
+        {
+            s.PrtgUrl = "https://prtg.example.local";
+            s.PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = LogForesight.Core.CryptoHelper.Encrypt("test-token");
+        });
+
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgEnabled = true,
+            PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Conservative,
+            PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
+            PrtgSensorTypeWhitelist = new List<string>()
+        });
+        Assert.True(service.Get().PrtgEnabled);
+        Assert.Equal(PrtgValueFetchScope.AllMapped, service.Get().PrtgValueFetchScope);
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
         }));
         Assert.Contains("白名單", ex.Message);
     }

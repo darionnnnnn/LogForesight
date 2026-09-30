@@ -97,6 +97,7 @@ public class PrtgRuleEvaluatorTests
         Assert.Contains("1440", f.Detail);
     }
 
+
     [Fact]
     public void 當日稍晚恢復Up_不算持續Down()
     {

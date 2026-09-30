@@ -33,18 +33,21 @@ public sealed class PrtgDiskAssessmentService
         var selected = selectedHostIds?.ToHashSet();
         var hosts = _hosts.GetAll().Where(h => h.Active && h.MergedInto == null && (selected is null || selected.Contains(h.HostId)))
             .ToDictionary(h => h.HostId);
+        // 歷史試算的候選對應只能看到目標完成日；使用執行當天會讓
+        // 固定日期的預覽隨時間變動，並可能把事後對應帶回過去。
+        var mappingThrough = day;
         int total;
         List<(long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> candidates;
         if (selectedSensorObjids is null)
         {
-            (total, candidates) = _store.GetLatestMappedReadinessSensors(hosts.Keys.ToArray(), DateTime.Today,
-                DateTime.Today.AddDays(-CandidateMappingLookbackDays), limit, offset);
+            (total, candidates) = _store.GetLatestMappedReadinessSensors(hosts.Keys.ToArray(), mappingThrough,
+                mappingThrough.AddDays(-CandidateMappingLookbackDays), limit, offset);
         }
         else
         {
             var scoped = selectedSensorObjids.Distinct().Where(id => id > 0)
-                .Select(id => _store.GetCurrentReadinessSensorById(id, hosts.Keys.ToArray(), DateTime.Today,
-                    DateTime.Today.AddDays(-CandidateMappingLookbackDays)))
+                .Select(id => _store.GetCurrentReadinessSensorById(id, hosts.Keys.ToArray(), mappingThrough,
+                    mappingThrough.AddDays(-CandidateMappingLookbackDays)))
                 .Where(x => x.HasValue).Select(x => x!.Value).OrderBy(x => x.Objid).ToList();
             total = scoped.Count;
             candidates = scoped.Skip(offset).Take(limit).ToList();
@@ -84,7 +87,7 @@ public sealed class PrtgDiskAssessmentService
             }
             var readiness = PrtgValueReadiness.Evaluate(new(sensor.Objid, sensor.DeviceObjid, sensor.Category,
                 hosts.ContainsKey(sensor.HostId), hosts.ContainsKey(sensor.HostId), sensor.Paused, sensor.DevicePaused,
-                whitelist.Contains(sensor.SensorType), stored?.Unit, stored?.MainChannelName, validity is { IsValid: true }, hours, dayMaps), day.AddDays(1));
+                (whitelist.Count == 0 || whitelist.Contains(sensor.SensorType)), stored?.Unit, stored?.MainChannelName, validity is { IsValid: true }, hours, dayMaps), day.AddDays(1));
             readiness = readiness with
             {
                 Reason = readiness.Reason + (string.IsNullOrWhiteSpace(sensor.Unit)

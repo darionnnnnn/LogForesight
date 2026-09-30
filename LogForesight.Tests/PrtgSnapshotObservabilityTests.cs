@@ -264,6 +264,7 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         Assert.NotNull(res.Data);
         Assert.NotNull(res.Data.SnapshotLastAt);
         Assert.Equal(2, res.Data.SnapshotSensors);
+        Assert.Equal(2, res.Data.SnapshotPendingSamples);
         Assert.False(res.Data.SnapshotBackingOff);
         Assert.Equal(15, res.Data.SnapshotIntervalMinutes);
         Assert.Equal(0, res.Data.SnapshotConsecutiveFailures);

@@ -367,7 +367,7 @@ function renderAdInlineForm(step) {
                 adSearchBase,
                 adSearchFilter
             };
-            await api.put('/api/admin/settings', payload);
+            await api.put('/api/admin/settings', { ...payload, expectedRevision: latest.revision });
             toast('已儲存 AD 驗證設定', 'success');
             await load();
             const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
@@ -553,7 +553,7 @@ function renderMailInlineForm(step) {
                 mailOnRunCompleted
             };
 
-            await api.put('/api/admin/settings', payload);
+            await api.put('/api/admin/settings', { ...payload, expectedRevision: latest.revision });
             toast('已儲存郵件通知設定', 'success');
             await load();
             const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
@@ -669,7 +669,7 @@ function renderAiInlineForm(step) {
                 azureApiVersion,
                 apiKey
             });
-            await api.put('/api/admin/settings', payload);
+            await api.put('/api/admin/settings', { ...payload, expectedRevision: latest.revision });
             settingsSnapshot = await api.get('/api/admin/settings');
 
             const newStatus = await api.get('/api/admin/setup/status');

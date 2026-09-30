@@ -54,6 +54,44 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 快照整點列必須整批提交。若前 500 列已寫而後一批失敗，呼叫端會保留整份清單重試；
+    /// 分批獨立提交會把前一批的 sampled coverage 再合併一次。
+    /// </summary>
+    private int BatchWriteAtomic<T>(IReadOnlyList<T> items, Func<LfDbContext, List<T>, int> writeBatch,
+        string? sampledBatchId = null)
+    {
+        if (items == null || items.Count == 0) return 0;
+
+        var list = items as List<T> ?? items.ToList();
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
+        return strategy.Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var transaction = ctx.Database.BeginTransaction();
+            if (sampledBatchId != null)
+            {
+                if (ctx.PrtgSampledBatches.Any(b => b.BatchId == sampledBatchId)) return 0;
+                ctx.PrtgSampledBatches.Add(new PrtgSampledBatchRow
+                {
+                    BatchId = sampledBatchId,
+                    CreatedAt = DateTime.Now
+                });
+            }
+            var total = 0;
+            for (var offset = 0; offset < list.Count; offset += UpsertBatchSize)
+            {
+                var count = Math.Min(UpsertBatchSize, list.Count - offset);
+                total += writeBatch(ctx, list.GetRange(offset, count));
+                // 每批已 SaveChanges，清掉追蹤列以免後續批次反覆掃描前批的 entity。
+                ctx.ChangeTracker.Clear();
+            }
+            transaction.Commit();
+            return total;
+        });
+    }
+
+    /// <summary>
     /// PRTG 裝置結構鏡像 upsert。自然鍵為 objid，已存在則就地更新描述性欄位，不存在則新增。
     /// 更新時 CreatedAt 保持原值不覆蓋（首次寫入時間）。
     /// </summary>
@@ -331,10 +369,16 @@ public sealed class EfPrtgStore
     /// 3. 既有列 Quality != sampled（如 ok 等精確值）→ 不動（精確值優先），該列不計入回傳數。
     /// 回傳實際寫入或合併的列數。
     /// </summary>
-    public int MergeSampledValues(IReadOnlyList<PrtgValueRow> values)
+    public int MergeSampledValues(IReadOnlyList<PrtgValueRow> values, string? sampledBatchId = null)
     {
+        if (sampledBatchId != null)
+        {
+            if (!Guid.TryParse(sampledBatchId, out var id))
+                throw new ArgumentException("快照批次識別必須是 GUID。", nameof(sampledBatchId));
+            sampledBatchId = id.ToString("N");
+        }
         var now = DateTime.Now;
-        return BatchWrite(values, (ctx, batch) =>
+        return BatchWriteAtomic(values, (ctx, batch) =>
         {
             var sensorIds = batch.Select(v => v.SensorObjid).Distinct().ToList();
             var minTime = batch.Min(v => v.PeriodStart);
@@ -437,7 +481,7 @@ public sealed class EfPrtgStore
 
             ctx.SaveChanges();
             return writtenOrMergedCount;
-        });
+        }, sampledBatchId);
     }
 
     /// <summary>
@@ -560,6 +604,23 @@ public sealed class EfPrtgStore
                 },
                 ctx => ctx.PrtgHostMaps.Count(m => m.CreatedAt < cutoff),
                 "PRTG 主機對應", maxRows - total, batchSize);
+        }
+
+        if (total < maxRows)
+        {
+            // 本地復原佇列最多重播 30 日；即使使用者縮短原始資料保留期，批次鍵也必須留得更久。
+            var batchCutoff = cutoff < DateTime.Today.AddDays(-32) ? cutoff : DateTime.Today.AddDays(-32);
+            total += BatchedPrune.Run<string>(
+                _contextFactory,
+                (ctx, take) => ctx.PrtgSampledBatches
+                    .Where(b => b.CreatedAt < batchCutoff)
+                    .OrderBy(b => b.CreatedAt)
+                    .Select(b => b.BatchId)
+                    .Take(take)
+                    .ToList(),
+                (ctx, ids) => ctx.PrtgSampledBatches.Where(b => ids.Contains(b.BatchId)).ExecuteDelete(),
+                ctx => ctx.PrtgSampledBatches.Count(b => b.CreatedAt < batchCutoff),
+                "PRTG sampled 批次識別", maxRows - total, batchSize);
         }
 
         return total;
@@ -883,6 +944,8 @@ public sealed class EfPrtgStore
         IReadOnlyCollection<long> activeHostIds, IReadOnlyCollection<string> whitelistedTypes,
         DateTime throughDate, DateTime fromDate)
     {
+        var whitelistIsUnrestricted = whitelistedTypes.Count == 0;
+        var normalizedTypes = whitelistedTypes.Select(t => t.ToUpperInvariant()).ToArray();
         var candidates = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
         var latest = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
             .GroupBy(m => m.DeviceObjid).Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
@@ -897,7 +960,7 @@ public sealed class EfPrtgStore
                         {
                             Objid = sensor.Objid,
                             ActiveMapped = map != null && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue && activeHostIds.Contains(map.HostId.Value),
-                            Whitelisted = whitelistedTypes.Contains(sensor.SensorType ?? ""),
+                            Whitelisted = whitelistIsUnrestricted || normalizedTypes.Contains((sensor.SensorType ?? "").ToUpper()),
                             Paused = sensor.Paused || device.Paused,
                             Conflict = map != null && map.MapStatus == PrtgMapStatus.Conflict,
                             Unmapped = map == null || (map.MapStatus != PrtgMapStatus.Conflict &&
@@ -1034,6 +1097,7 @@ public sealed class EfPrtgStore
             .ThenBy(r => r.ChangedAt)
             .ToList();
     }
+
 
     /// <summary>取得未暫停 sensor 的現況狀態（規則評估用）：objid、device、status、type、name、category。</summary>
     public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> GetSensorStatuses()
@@ -1181,6 +1245,31 @@ public sealed class EfPrtgStore
             .Max(m => (DateTime?)m.MapDate);
     }
 
+    public const string ScopeRevisionBlobKey = "prtg_scope_revision";
+
+    // 範圍修改及其版本在同一交易提交；其他程序不會看見新對應卻仍讀到舊版本。
+    private T WriteScopeChange<T>(Func<LfDbContext, T> change)
+    {
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var transaction = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            var stamp = ctx.Blobs.SingleOrDefault(b => b.BlobKey == ScopeRevisionBlobKey);
+            var result = change(ctx);
+            if (stamp == null)
+                ctx.Blobs.Add(new BlobRow { BlobKey = ScopeRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
+            else
+            {
+                stamp.Version++;
+                stamp.UpdatedAt = DateTime.Now;
+            }
+            ctx.SaveChanges();
+            transaction.Commit();
+            return result;
+        });
+    }
+
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
     public List<PrtgManualMapRow> GetManualMaps()
     {
@@ -1193,36 +1282,35 @@ public sealed class EfPrtgStore
     public void UpsertManualMap(PrtgManualMapRow row)
     {
         if (row == null) return;
-        using var ctx = _contextFactory();
-        var existing = ctx.PrtgManualMaps.FirstOrDefault(m => m.DeviceObjid == row.DeviceObjid);
-        if (existing != null)
+        WriteScopeChange(ctx =>
         {
-            existing.HostId = row.HostId;
-            existing.CreatedBy = row.CreatedBy;
-            existing.Note = row.Note;
-            // CreatedAt 保持原值
-        }
-        else
-        {
-            var newRow = new PrtgManualMapRow
+            var existing = ctx.PrtgManualMaps.FirstOrDefault(m => m.DeviceObjid == row.DeviceObjid);
+            if (existing != null)
             {
-                DeviceObjid = row.DeviceObjid,
-                HostId = row.HostId,
-                CreatedBy = row.CreatedBy,
-                Note = row.Note,
-                CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
-            };
-            ctx.PrtgManualMaps.Add(newRow);
-        }
-        ctx.SaveChanges();
+                existing.HostId = row.HostId;
+                existing.CreatedBy = row.CreatedBy;
+                existing.Note = row.Note;
+                // CreatedAt 保持原值
+            }
+            else
+            {
+                var newRow = new PrtgManualMapRow
+                {
+                    DeviceObjid = row.DeviceObjid,
+                    HostId = row.HostId,
+                    CreatedBy = row.CreatedBy,
+                    Note = row.Note,
+                    CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
+                };
+                ctx.PrtgManualMaps.Add(newRow);
+            }
+            return 0;
+        });
     }
 
     /// <summary>刪除一筆人工對應，回傳刪除筆數。</summary>
-    public int DeleteManualMap(long deviceObjid)
-    {
-        using var ctx = _contextFactory();
-        return ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete();
-    }
+    public int DeleteManualMap(long deviceObjid) =>
+        WriteScopeChange(ctx => ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete());
 
     /// <summary>讀取全部 IP 排除清單</summary>
     public List<PrtgIpExcludeRow> GetIpExcludes()
@@ -1242,26 +1330,28 @@ public sealed class EfPrtgStore
         var note = Truncate(row.Note, 512);
         var createdBy = Truncate(row.CreatedBy, 64);
 
-        using var ctx = _contextFactory();
-        var existing = ctx.PrtgIpExcludes.FirstOrDefault(e => e.Ip == normIp);
-        if (existing != null)
+        WriteScopeChange(ctx =>
         {
-            existing.CreatedBy = createdBy;
-            existing.Note = note;
-            // CreatedAt 保持原值
-        }
-        else
-        {
-            var newRow = new PrtgIpExcludeRow
+            var existing = ctx.PrtgIpExcludes.FirstOrDefault(e => e.Ip == normIp);
+            if (existing != null)
             {
-                Ip = normIp,
-                CreatedBy = createdBy,
-                Note = note,
-                CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
-            };
-            ctx.PrtgIpExcludes.Add(newRow);
-        }
-        ctx.SaveChanges();
+                existing.CreatedBy = createdBy;
+                existing.Note = note;
+                // CreatedAt 保持原值
+            }
+            else
+            {
+                var newRow = new PrtgIpExcludeRow
+                {
+                    Ip = normIp,
+                    CreatedBy = createdBy,
+                    Note = note,
+                    CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
+                };
+                ctx.PrtgIpExcludes.Add(newRow);
+            }
+            return 0;
+        });
     }
 
     /// <summary>
@@ -1271,22 +1361,10 @@ public sealed class EfPrtgStore
     public int DeleteIpExclude(string ip)
     {
         var trimmed = ip?.Trim();
-        var deleted = 0;
-
-        if (!string.IsNullOrEmpty(trimmed))
-        {
-            using var ctx = _contextFactory();
-            deleted = ctx.PrtgIpExcludes.Where(e => e.Ip == trimmed).ExecuteDelete();
-        }
-
-        var normIp = PrtgHostMapper.NormalizeIp(ip);
-        if (normIp != null && normIp != trimmed)
-        {
-            using var ctx = _contextFactory();
-            deleted += ctx.PrtgIpExcludes.Where(e => e.Ip == normIp).ExecuteDelete();
-        }
-
-        return deleted;
+        var normalized = PrtgHostMapper.NormalizeIp(ip);
+        if (string.IsNullOrEmpty(trimmed) && normalized == null) return 0;
+        return WriteScopeChange(ctx => ctx.PrtgIpExcludes
+            .Where(e => e.Ip == trimmed || (normalized != null && e.Ip == normalized)).ExecuteDelete());
     }
 
     private static string? Truncate(string? value, int maxLength) =>

@@ -89,6 +89,7 @@ public class PrtgMirrorStatusDto
     public int SnapshotConsecutiveFailures { get; set; }
     public bool SnapshotBackingOff { get; set; }
     public string? SnapshotSkipReason { get; set; }
+    public int SnapshotPendingSamples { get; set; }
     /// <summary>各類資料最後一次成功擷取的紀錄（鏡像頁「擷取紀錄」表）</summary>
     public List<PrtgFreshnessDto> Freshness { get; set; } = new();
 }

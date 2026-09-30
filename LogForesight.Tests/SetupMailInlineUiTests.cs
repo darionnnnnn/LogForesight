@@ -50,7 +50,7 @@ public class SetupMailInlineUiTests
         Assert.Contains("Number.isInteger(smtpPort)", body);
         Assert.Contains("smtpPort < 1 || smtpPort > 65535", body);
         Assert.Contains("smtpPassword: smtpPassword || null", body);
-        Assert.Contains("await api.put('/api/admin/settings', payload)", body);
+        Assert.Contains("await api.put('/api/admin/settings', { ...payload, expectedRevision: latest.revision })", body);
         Assert.Contains("await load()", body);
     }
 
