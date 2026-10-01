@@ -349,8 +349,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
     // ── 回饋十三輪 D：單一 Sentinel 內部的 client pool 併發 ──────────────────────
     // 51 台主機才會跨過 IpBatchSize=50，真的切出兩個批次——這是唯一能逼出「同一天內
-    // 多批次」路徑的方式，主機數不能再省。_client.Delay 給查詢一點耗時，讓平行呼叫
-    // 真的有機會重疊，不然即使程式碼有平行能力，跑太快也測不出峰值差異。
+    // 多批次」路徑的方式，主機數不能再省。每一天的兩個查詢互相等候，確認實際重疊；
+    // 不依賴執行機器能否在 20 毫秒內排入第二個查詢。
 
     /// <summary>MaxParallelQueriesPerServer 大於 1 時，同一天內的批次真的會平行送出查詢，
     /// 但峰值不超過設定值——client pool 正確節制並行度。不同天之間仍嚴格依序：第二天的任何
@@ -364,7 +364,23 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         {
             AddWindowsHost(sentinel, $"10.0.9.{i}", $"HOST-D-{i}");
         }
-        _client.Delay = TimeSpan.FromMilliseconds(20);
+        var gates = new Dictionary<DateTimeOffset, (int Arrived, TaskCompletionSource Gate)>();
+        var gateLock = new object();
+        _client.BeforeResponse = async (request, ct) =>
+        {
+            Task gate;
+            lock (gateLock)
+            {
+                if (!gates.TryGetValue(request.Start, out var entry))
+                    entry = (0, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+                entry.Arrived++;
+                gates[request.Start] = entry;
+                if (entry.Arrived == 2) entry.Gate.TrySetResult();
+                gate = entry.Gate.Task;
+            }
+            // 逾時只用來讓錯誤的序列化實作明確失敗，不用耗時斷言判斷平行度。
+            await gate.WaitAsync(TimeSpan.FromSeconds(60), ct);
+        };
         var options = new NetiqOptions { BackfillDays = 2, MaxParallelQueriesPerServer = 2 };
         var pipeline = MakePipeline(useAi: false, options: options);
 
