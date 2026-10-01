@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -18,7 +18,13 @@ public sealed record PrtgDiskRuleTrial(string Status, string Message, long Senso
     int UsableDays, int RequiredDays, int UsableHours, int RequiredHoursPerDay, string DataQuality,
     bool SemanticVerified, string? Exclusion, double? LowWaterPercent, double? MinimumDeclinePerDay,
     double? MaximumDaysToDepletion, double? CurrentAvailablePercent, double? DeclinePerDay,
-    double? EstimatedDaysToDepletion, bool PredictedHit, string RealPositiveStatus, string? RuleId, bool? RuleEnabled);
+    double? EstimatedDaysToDepletion, bool PredictedHit, string RealPositiveStatus, string? RuleId, bool? RuleEnabled)
+{
+    public string RulesFingerprint { get; init; } = "";
+    public string SettingsRevision { get; init; } = "";
+    public string SemanticVersion { get; init; } = "";
+    public DateTime AssessedAtUtc { get; init; }
+}
 
 public sealed class PrtgDiskVerificationService
 {
@@ -56,6 +62,12 @@ public sealed class PrtgDiskVerificationService
         if (sensorObjid <= 0) throw new ArgumentOutOfRangeException(nameof(sensorObjid));
         var completedDay = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
         var (content, usedFallback) = RuleBootstrapper.LoadContent(_ruleStore);
+        var settingsRevision = _settings.Get().Revision;
+        var rulesFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(content.Rules.OrderBy(r => r.Id, StringComparer.Ordinal)))));
+        PrtgDiskRuleTrial Stamp(PrtgDiskRuleTrial trial) => trial with {
+            RulesFingerprint = rulesFingerprint, SettingsRevision = settingsRevision,
+            SemanticVersion = ParserSemanticVersion, AssessedAtUtc = DateTime.UtcNow };
         var validation = RuleValidator.Validate(content.Rules);
         var diskRules = validation.ValidRules.Where(r =>
             string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
@@ -71,9 +83,9 @@ public sealed class PrtgDiskVerificationService
             .Assess(completedDay, rule, PrtgDiskDecisionMode.Preview, 1, 0, selectedSensorObjids: new[] { sensorObjid });
         var row = assessment.Rows.FirstOrDefault();
         if (row is null)
-            return new("sensor-unavailable", "所選感測器目前未對應至啟用主機，無法試算。", sensorObjid, completedDay,
+            return Stamp(new("sensor-unavailable", "所選感測器目前未對應至啟用主機，無法試算。", sensorObjid, completedDay,
                 0, PrtgValueReadiness.WindowDays, 0, PrtgValueReadiness.MinDailyUsableHours, "資料不可用", false,
-                "SensorUnavailable", null, null, null, null, null, null, false, "真實正向尚未觀察", rule?.Id, rule?.Enabled);
+                "SensorUnavailable", null, null, null, null, null, null, false, "真實正向尚未觀察", rule?.Id, rule?.Enabled));
         var ready = row.Readiness;
         var trend = row.Decision.Trend;
         var quality = ready.Status == PrtgValueReadinessStatus.Ready ? "28 日窗口每日達可用品質門檻" : ready.Status == PrtgValueReadinessStatus.InsufficientData
@@ -93,11 +105,11 @@ public sealed class PrtgDiskVerificationService
             _ => row.Decision.Reason
         };
         var thresholds = rule?.PrtgDiskTrendThresholds;
-        return new(status, message, sensorObjid, completedDay, ready.UsableDays, ready.RequiredDays, ready.UsableHours,
+        return Stamp(new(status, message, sensorObjid, completedDay, ready.UsableDays, ready.RequiredDays, ready.UsableHours,
             ready.RequiredHoursPerDay, quality, row.EvidenceValidity is { IsValid: true }, row.Decision.Exclusion.ToString(),
             thresholds?.LowWaterPercent, thresholds?.MinimumDeclinePercentagePointsPerDay, thresholds?.MaximumDaysToDepletion,
             trend?.CurrentAvailablePercent, trend?.RobustDeclinePercentagePointsPerDay, trend?.EstimatedDaysToDepletion,
-            row.Decision.WouldHit, "真實正向尚未觀察", rule?.Id, rule?.Enabled);
+            row.Decision.WouldHit, "真實正向尚未觀察", rule?.Id, rule?.Enabled));
     }
 
     public PrtgDiskVerificationStatus GetStatus(long? sensorObjid = null) => new(Volatile.Read(ref _ownsRun) != 0, _runningSensor,

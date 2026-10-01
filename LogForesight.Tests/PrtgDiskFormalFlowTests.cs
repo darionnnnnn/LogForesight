@@ -1,3 +1,6 @@
+﻿using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
 using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
@@ -13,6 +16,8 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
     private const long DeviceId = 8101;
     private const long SensorId = 8102;
     private long HostId = 8103;
+    private readonly HttpListener _listener = new();
+    private readonly string _url;
     private readonly string _dir;
     private readonly StorageBackend _backend;
     private readonly HostStore _hosts;
@@ -28,10 +33,30 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
         }, _dir);
         _hosts = new HostStore(_backend.Blob("hosts"));
         KnownIssueCatalog.Initialize(new List<KnownIssueRule> { DiskRule(enabled: true) });
+        var port = new TcpListener(IPAddress.Loopback, 0); port.Start();
+        var number = ((IPEndPoint)port.LocalEndpoint).Port; port.Stop();
+        _url = $"http://127.0.0.1:{number}";
+        _listener.Prefixes.Add(_url + "/"); _listener.Start();
+        _ = Task.Run(async () => {
+            while (_listener.IsListening) {
+                HttpListenerContext request;
+                try { request = await _listener.GetContextAsync(); } catch (Exception) { break; }
+                var content = request.Request.QueryString["content"];
+                object response = content == "channels" ? new { channels = new[] { new { objid="free", channel="Free", unit="%", scaling=1, primary=true } } }
+                    : content == "sensors" ? new { sensors = new[] { new { objid=SensorId, parentid=DeviceId, type="SNMP Disk Free", status="Up", cumsince="creation-1", sensor="Disk C: free" } } }
+                    : request.Request.Url!.AbsolutePath.Contains("historicdata") ? new { histdata = Enumerable.Range(0,24).Select(hour => new {
+                        datetime=_completedDay.AddHours(hour).ToString("yyyy-MM-dd HH:mm:ss"), datetime_raw=_completedDay.AddHours(hour).ToOADate(), value_raw=18.3 }).ToArray() }
+                    : new { messages = Array.Empty<object>() };
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+                request.Response.ContentType="application/json"; request.Response.ContentLength64=bytes.Length;
+                await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
+            }
+        });
     }
 
     public void Dispose()
     {
+        _listener.Stop(); _listener.Close();
         KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
@@ -49,7 +74,7 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
         Assert.True(findings.Count == 1, string.Join(Environment.NewLine, first.Lines));
         var finding = Assert.Single(findings);
         Assert.Equal("PRTG:disk_free_trend", finding.Source);
-        Assert.Equal($"prtg:disk_free_trend:{SensorId}", finding.EventKey);
+        Assert.Equal($"prtg:disk_free_trend:{SensorId}:fixture-source:fixture-resource", finding.EventKey);
         Assert.DoesNotContain("|", finding.EventKey);
         Assert.Equal("builtin-prtg-disk-free-trend", finding.RuleId);
         var issueCase = Assert.Single(_backend.IssueCaseStore().GetOpenForHost("DISK-HOST"));
@@ -91,10 +116,19 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
         Assert.Empty(_backend.WorkOrderStore().GetAllActive());
     }
 
+    [Fact]
+    public async Task 今日首次確認語意不可追認既有28日資料()
+    {
+        SeedDiskHistory(with28Days: true, descending: true); SeedTypedSemanticEvidence();
+        var run = await RunPipeline(newSemanticConfirmation: true);
+        Assert.Empty(run.Registry.For(HostId, _completedDay));
+        Assert.Empty(_backend.IssueCaseStore().GetOpenForHost("DISK-HOST"));
+    }
+
     private void SeedDiskHistory(bool with28Days, bool descending)
     {
         var now = DateTime.UtcNow;
-        var host = _hosts.Upsert(new WebHost { HostId = HostId, HostName = "DISK-HOST", Active = true, IpAddress = "192.0.2.81" });
+        var host = _hosts.Upsert(new WebHost { HostId = HostId, HostName = "DISK-HOST", Source = "netiq", Active = true, IpAddress = "192.0.2.81" });
         HostId = host.HostId;
         new IssueOwnerStore(_backend.Blob("issue_owners")).Upsert(new IssueProfile
         {
@@ -102,6 +136,7 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
         });
         _backend.RecordStore(new HostKey { HostId = HostId, HostName = "DISK-HOST" }).Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = "success", AiAnalyzed = false,
             Date = _completedDay, HostId = HostId, Host = "DISK-HOST", RiskLevel = RiskLevels.Low,
             RiskBasis = "formal flow fixture"
         });
@@ -150,12 +185,12 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
                 PrtgDiskAssessmentService.ParserSemanticVersion));
     }
 
-    private async Task<(PrtgFindingsRegistry Registry, List<string> Lines)> RunPipeline()
+    private async Task<(PrtgFindingsRegistry Registry, List<string> Lines)> RunPipeline(bool newSemanticConfirmation = false)
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
             s.PrtgEnabled = true;
-            s.PrtgUrl = "http://192.0.2.81:1";
+            s.PrtgUrl = _url;
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("offline-test-token");
             s.PrtgTimeoutSeconds = 1;
@@ -163,6 +198,22 @@ public sealed class PrtgDiskFormalFlowTests : IDisposable
             s.PrtgResourceGuardEnabled = false;
             s.PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free" };
         });
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        if (policyStore.Get().SourceGeneration.Length == 0)
+        {
+            policyStore.Update(p => { p.Revision="fixture"; p.CoreSystemId="core"; p.SourceGeneration="fixture-source";
+                p.EndpointHint=EfPrtgObservationStore.SourceHintFor(_url); p.ValidFrom=new DateTimeOffset(_completedDay.AddDays(-31));
+                p.HostIds=[HostId]; p.SensorIds=[SensorId]; p.SourceTimeZoneId=TimeZoneInfo.Local.Id; p.SourceCultureName="en-US"; });
+            new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix+SensorId)).Update(e => {
+                e.SensorId=SensorId; e.HostId=HostId; e.SourceGeneration="fixture-source"; e.ResourceGeneration="fixture-resource";
+                e.IdentityFingerprint=$"{DeviceId}|SNMP Disk Free|creation-1|map:{_backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()}";
+                e.MappingRevision=_backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+                e.ValidFrom=new DateTimeOffset(_completedDay.AddDays(-31));
+                e.DiskSemanticValidFrom=newSemanticConfirmation ? DateTimeOffset.Now : e.ValidFrom; e.DiskSemanticCheckedAt=DateTimeOffset.Now;
+                e.DiskSemanticFingerprint=JsonSerializer.Serialize(new { ChannelIdentifier="free", ChannelName="Free", Unit="%", Scale=(double?)1, Direction="descending-danger" });
+                e.Accept(e.ValidFrom, DateTimeOffset.Now,[new(SensorId,e.ValidFrom,"Up",e.SourceGeneration,e.ResourceGeneration)]);
+            });
+        }
         var console = new CapturingConsole();
         var registry = new PrtgFindingsRegistry();
         var coordinator = new IssueCaseCoordinator(_backend.IssueCaseStore(), _backend.IssueHandlingStore(),

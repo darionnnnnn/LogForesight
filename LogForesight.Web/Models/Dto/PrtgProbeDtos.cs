@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Models.Dto;
@@ -169,6 +169,7 @@ public class PrtgScopePurgeResultDto
 /// <summary>設定 PRTG 人工主機對應請求</summary>
 public class SetPrtgManualMapRequest
 {
+    public long? ExpectedScopeRevision { get; set; }
     public long DeviceObjid { get; set; }
     public long HostId { get; set; }
     public string? Note { get; set; }
@@ -177,6 +178,7 @@ public class SetPrtgManualMapRequest
 /// <summary>批次設定 PRTG 人工主機對應請求</summary>
 public class SetPrtgManualMapBatchRequest
 {
+    public long? ExpectedScopeRevision { get; set; }
     public long HostId { get; set; }
     public List<long> DeviceObjids { get; set; } = new();
     [StringLength(512, ErrorMessage = "指派說明不可超過 512 字")]
@@ -268,6 +270,7 @@ public class PrtgIpExcludeDto
 /// <summary>設定 PRTG IP 排除請求</summary>
 public class SetPrtgIpExcludeRequest
 {
+    public long? ExpectedScopeRevision { get; set; }
     public string Ip { get; set; } = string.Empty;
     public string? Note { get; set; }
 }

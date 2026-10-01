@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -59,6 +59,39 @@ public class PrtgDailyPipelineTests : IDisposable
     private (AnalysisRunContext Ctx, CollectingConsole Console, CollectingProgress Progress, PrtgFindingsRegistry Registry)
         CreateContext(CancellationToken ct = default)
     {
+        // 此組測試原本只造訊息列；正式判定現在需另外明列來源、資源及涵蓋。
+        // 固定樣本的涵蓋是測試輸入，不宣稱失敗的 HTTP 查詢提供了它。
+        var fixtureSensors = _backend.PrtgStore().GetSensorStatuses();
+        var fixtureHosts = new HostStore(_backend.Blob("hosts")).GetAll();
+        var fixtureSettings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        if (fixtureSensors.Count > 0 && Uri.TryCreate(fixtureSettings.PrtgUrl, UriKind.Absolute, out var fixtureUri) &&
+            fixtureUri.Scheme is "http" or "https")
+        {
+            new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
+            {
+                p.CoreSystemId = "fixture-core"; p.SourceGeneration = "test-source";
+                p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
+                p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(fixtureSettings.PrtgUrl);
+                p.ValidFrom = DateTimeOffset.Now.AddDays(-31); p.Revision = "fixture";
+                p.HostIds = fixtureHosts.Select(h => h.HostId).ToList(); p.SensorIds = fixtureSensors.Select(s => s.Objid).ToList();
+            });
+            var fixtureChanges = _backend.PrtgStore().GetStateChanges(DateTime.Today.AddDays(-30), DateTime.Today.AddDays(1));
+            foreach (var sensor in fixtureSensors)
+            {
+                var device = _backend.PrtgStore().GetAllDevices().First(d => d.Objid == sensor.DeviceObjid);
+                var host = fixtureHosts.FirstOrDefault(h => h.IpAddress == device.Ip);
+                if (host == null) continue;
+                new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e =>
+                {
+                    e.SensorId = sensor.Objid; e.HostId = host.HostId; e.SourceGeneration = "test-source";
+                    e.ResourceGeneration = "test-resource-" + sensor.Objid; e.IdentityFingerprint = "fixture";
+                    e.ValidFrom = DateTimeOffset.Now.AddDays(-31);
+                    e.Accept(new DateTimeOffset(DateTime.Today.AddDays(-30)), DateTimeOffset.Now,
+                        fixtureChanges.Where(c => c.SensorObjid == sensor.Objid).Select(c =>
+                            new PrtgTimedState(sensor.Objid, new DateTimeOffset(c.ChangedAt), c.Status, e.SourceGeneration, e.ResourceGeneration)));
+                });
+            }
+        }
         var console = new CollectingConsole();
         var progress = new CollectingProgress();
         var registry = new PrtgFindingsRegistry();
@@ -393,7 +426,7 @@ public class PrtgDailyPipelineTests : IDisposable
         });
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-MIRROR", Active = true, IpAddress = "192.168.1.150" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-MIRROR", Active = true, IpAddress = "192.168.1.150" });
         _backend.PrtgStore().UpsertDevices(new[] { new PrtgDeviceRow { Objid = 77, Name = "SRV-MIRROR", Ip = "192.168.1.150" } }, DateTime.Now);
 
         var (ctx, console, _, _) = CreateContext();
@@ -764,7 +797,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day2 = DateTime.Today.AddDays(-1);
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -814,7 +847,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day1 = DateTime.Today.AddDays(-2);
         var day = DateTime.Today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = hostActive, IpAddress = "192.168.1.101" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TEST", Active = hostActive, IpAddress = "192.168.1.101" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -861,11 +894,11 @@ public class PrtgDailyPipelineTests : IDisposable
             return;
         }
         Assert.Single(findings);
-        Assert.Equal("prtg:down:2001", findings[0].EventKey);
+        Assert.Equal("prtg:down:2001:test-source:test-resource-2001", findings[0].EventKey);
     }
 
     [Fact]
-    public async Task 多日執行沉默Device規則只在最新日生效()
+    public async Task 鏡像Unknown不能冒稱可信沉默故障()
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -882,7 +915,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day2 = DateTime.Today;
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-UNKNOWN", Active = true, IpAddress = "192.168.1.102" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-UNKNOWN", Active = true, IpAddress = "192.168.1.102" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -916,8 +949,8 @@ public class PrtgDailyPipelineTests : IDisposable
         // day1 不產生 silent finding
         Assert.DoesNotContain(registry.For(host.HostId, day1), f => f.EventKey.StartsWith("prtg:silent"));
 
-        // day2 產生 silent finding
-        Assert.Contains(registry.For(host.HostId, day2), f => f.EventKey.StartsWith("prtg:silent"));
+        // 鏡像 Unknown 只表示資料品質，不能據此發布故障。
+        Assert.Empty(registry.For(host.HostId, day2));
     }
 
     [Fact]
@@ -1039,7 +1072,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day = DateTime.Today.AddDays(-1);
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1072,6 +1105,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day,
             HostId = host.HostId,
             Host = host.HostName,
@@ -1102,7 +1136,7 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.True(downSig.Suppressed);
 
         var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        Assert.Contains(record.TopIssues, i => i.EventKey == "prtg:down:2001");
+        Assert.Contains(record.TopIssues, i => i.EventKey == "prtg:down:2001:test-source:test-resource-2001");
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
         Assert.DoesNotContain("prtg:down", record.RiskBasis ?? string.Empty);
         Assert.Contains(console.Lines, l => l.Contains("已抑制 1 筆"));
@@ -1129,7 +1163,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day = DateTime.Today.AddDays(-1);
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1151,6 +1185,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
         });
 
@@ -1202,6 +1237,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostStore = new HostStore(_backend.Blob("hosts"));
         var host = hostStore.Upsert(new WebHost
         {
+            Source = "netiq",
             HostName = "SRV-TEST",
             Active = true,
             IpAddress = "192.168.1.101",
@@ -1239,6 +1275,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day,
             HostId = host.HostId,
             Host = host.HostName,
@@ -1291,7 +1328,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day = DateTime.Today.AddDays(-1);
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TEST", Active = true, IpAddress = "192.168.1.101" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1327,7 +1364,7 @@ public class PrtgDailyPipelineTests : IDisposable
             Source = "PRTG:down",
             EventId = 0,
             EntryType = System.Diagnostics.EventLogEntryType.Warning,
-            EventKey = "prtg:down:2001"
+            EventKey = "prtg:down:2001:test-source:test-resource-2001"
         };
         var targetKey = IssueSignatureKey.For(targetSig);
 
@@ -1351,8 +1388,8 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var findings = registry.For(host.HostId, day);
         Assert.Equal(2, findings.Count);
-        var sig2001 = findings.Single(f => f.EventKey == "prtg:down:2001");
-        var sig2002 = findings.Single(f => f.EventKey == "prtg:down:2002");
+        var sig2001 = findings.Single(f => f.EventKey == "prtg:down:2001:test-source:test-resource-2001");
+        var sig2002 = findings.Single(f => f.EventKey == "prtg:down:2002:test-source:test-resource-2002");
 
         Assert.True(sig2001.Suppressed);
         Assert.False(sig2002.Suppressed);
@@ -1401,7 +1438,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var today = DateTime.Today;
         var day = today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-PING", Active = true, IpAddress = "192.168.1.111" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-PING", Active = true, IpAddress = "192.168.1.111" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1420,6 +1457,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         if (hasLogRecord) hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
         });
 
@@ -1437,7 +1475,7 @@ public class PrtgDailyPipelineTests : IDisposable
         }
 
         // 連通性分類 → 挑到 availability 規則（門檻 30、重大）→ 日風險「高」
-        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001:test-source:test-resource-2001");
         Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
         if (hasLogRecord)
             Assert.Equal(RiskLevels.High, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
@@ -1445,7 +1483,7 @@ public class PrtgDailyPipelineTests : IDisposable
             Assert.Empty(hostRecordStore.ReadRecent(day, 1));
         var observation = Assert.Single(_backend.PrtgObservationStore().ReadPage([host.HostId], day, day, 0, 100));
         Assert.Equal(2001, observation.SensorObjid);
-        Assert.Null(observation.SourceGeneration);
+        Assert.Equal("test-source", observation.SourceGeneration);
     }
 
     [Fact]
@@ -1455,7 +1493,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var day = DateTime.Today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-TRAFFIC", Active = true, IpAddress = "192.168.1.112" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TRAFFIC", Active = true, IpAddress = "192.168.1.112" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1473,6 +1511,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
         });
 
@@ -1481,21 +1520,21 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, hostStore,
             new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
-        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001:test-source:test-resource-2001");
         Assert.Equal("builtin-prtg-down", sig.RuleId);
         Assert.False(sig.ElevatesDayRisk);
         Assert.Equal(RiskLevels.Medium, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
     }
 
     [Fact]
-    public async Task 同裝置PingDown時TrafficDown被合併_執行輸出含已合併筆數()
+    public async Task 同裝置Ping與TrafficDown保留各sensor世代證據()
     {
         EnableConservativePrtgWithDefaultWhitelist();
 
         var today = DateTime.Today;
         var day = today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-FOLD", Active = true, IpAddress = "192.168.1.112" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-FOLD", Active = true, IpAddress = "192.168.1.112" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1521,9 +1560,10 @@ public class PrtgDailyPipelineTests : IDisposable
             new[] { today, day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var signatures = registry.For(host.HostId, day);
-        Assert.Contains(signatures, f => f.EventKey == "prtg:down:2001");
-        Assert.DoesNotContain(signatures, f => f.EventKey == "prtg:down:2002" || f.EventKey == "prtg:down:2003");
-        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("已合併 2 筆"));
+        Assert.Contains(signatures, f => f.EventKey == "prtg:down:2001:test-source:test-resource-2001");
+        Assert.Contains(signatures, f => f.EventKey == "prtg:down:2002:test-source:test-resource-2002");
+        Assert.Contains(signatures, f => f.EventKey == "prtg:down:2003:test-source:test-resource-2003");
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("已合併 0 筆"));
     }
 
     /// <summary>
@@ -1540,7 +1580,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day3 = DateTime.Today.AddDays(-3);
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-WARN", Active = true, IpAddress = "192.168.1.121" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-WARN", Active = true, IpAddress = "192.168.1.121" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1564,15 +1604,15 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, hostStore,
             new[] { day1, day2, day3 }, Task.CompletedTask, hostIds: null, guard: null);
 
-        var newestSig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001");
+        var newestSig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001:test-source:test-resource-2001");
         Assert.Contains("第 3 次，連續第 3 日", newestSig.SampleMessages[0]);
         Assert.Equal(IssueSeverity.High, newestSig.Severity);
 
-        var middleSig = Assert.Single(registry.For(host.HostId, day2), f => f.EventKey == "prtg:warning:2001");
+        var middleSig = Assert.Single(registry.For(host.HostId, day2), f => f.EventKey == "prtg:warning:2001:test-source:test-resource-2001");
         Assert.Contains("第 2 次，連續第 2 日", middleSig.SampleMessages[0]);
         Assert.Equal(IssueSeverity.Medium, middleSig.Severity);
 
-        var oldestSig = Assert.Single(registry.For(host.HostId, day3), f => f.EventKey == "prtg:warning:2001");
+        var oldestSig = Assert.Single(registry.For(host.HostId, day3), f => f.EventKey == "prtg:warning:2001:test-source:test-resource-2001");
         Assert.DoesNotContain("近 14 日", oldestSig.SampleMessages[0]);
 
         Assert.Equal(1, progress.Phases.Count(p => p == RunPhases.PrtgFindingsReady));
@@ -1592,7 +1632,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var day2 = DateTime.Today.AddDays(-2);
 
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-RERUN", Active = true, IpAddress = "192.168.1.123" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-RERUN", Active = true, IpAddress = "192.168.1.123" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1613,13 +1653,14 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day2, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low,
             TopIssues = new List<LogIssueSignature>
             {
                 new()
                 {
                     LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:warning", EventId = 0,
-                    EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:warning:2001",
+                    EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:warning:2001:test-source:test-resource-2001",
                     Count = 1, Severity = IssueSeverity.Medium
                 }
             }
@@ -1631,7 +1672,7 @@ public class PrtgDailyPipelineTests : IDisposable
             new[] { day1, day2 }, Task.CompletedTask, hostIds: null, guard: null);
 
         Assert.Empty(registry.For(host.HostId, day2));
-        var sig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001");
+        var sig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == "prtg:warning:2001:test-source:test-resource-2001");
         Assert.DoesNotContain("近 14 日", sig.SampleMessages[0]);
     }
 
@@ -1646,7 +1687,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var day = DateTime.Today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-DEAD", Active = true, IpAddress = "192.168.1.122" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-DEAD", Active = true, IpAddress = "192.168.1.122" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1666,6 +1707,7 @@ public class PrtgDailyPipelineTests : IDisposable
         {
             hostRecordStore.Append(new DailyAnalysisRecord
             {
+            LogSource = AnalysisLogSource.Netiq,
                 Date = day.AddDays(-n),
                 HostId = host.HostId,
                 Host = host.HostName,
@@ -1675,7 +1717,7 @@ public class PrtgDailyPipelineTests : IDisposable
                     new()
                     {
                         LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:down", EventId = 0,
-                        EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:down:2001",
+                        EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:down:2001:test-source:test-resource-2001",
                         Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = true
                     }
                 }
@@ -1683,6 +1725,7 @@ public class PrtgDailyPipelineTests : IDisposable
         }
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
         });
 
@@ -1691,7 +1734,7 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, hostStore,
             new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
-        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001:test-source:test-resource-2001");
         Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
         Assert.True(sig.ElevatesDayRisk);
         Assert.Contains("已連續 14 日，故障尚未恢復，請確認處置狀態", sig.SampleMessages[0]);
@@ -1712,7 +1755,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var day = DateTime.Today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-OUTAGE", Active = true, IpAddress = "192.168.1.123" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-OUTAGE", Active = true, IpAddress = "192.168.1.123" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1730,6 +1773,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low,
             TopIssues = new List<LogIssueSignature>
             {
@@ -1742,7 +1786,7 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, hostStore,
             new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
 
-        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001");
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == "prtg:down:2001:test-source:test-resource-2001");
         Assert.Equal(PrtgSensorCategories.Availability, sig.PrtgSensorCategory);
 
         var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
@@ -1762,7 +1806,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var day = DateTime.Today.AddDays(-1);
         var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { HostName = "SRV-OUTAGE2", Active = true, IpAddress = "192.168.1.124" });
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-OUTAGE2", Active = true, IpAddress = "192.168.1.124" });
 
         var prtgStore = _backend.PrtgStore();
         var now = DateTime.Now;
@@ -1780,6 +1824,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         hostRecordStore.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             Date = day, HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Low,
             TopIssues = new List<LogIssueSignature>
             {

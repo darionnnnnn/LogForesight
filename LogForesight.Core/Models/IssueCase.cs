@@ -24,6 +24,7 @@ public class IssueCase
 
     /// <summary>問題簽章的穩定鍵（見 <see cref="IssueSignatureKey.For"/>）</summary>
     public string IssueKey { get; set; } = string.Empty;
+    public PrtgCaseEvidence? PrtgEvidence { get; set; }
 
     /// <summary>「Source EventId」反正規化存下來（同 RecordHandlingLog.IssueLabel 理由：
     /// 案件是追責紀錄，不能因為規則改名或問題不再出現就查不回當時處理的是哪個問題）</summary>

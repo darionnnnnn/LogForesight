@@ -1,3 +1,4 @@
+﻿using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -10,6 +11,7 @@ namespace LogForesight.Web.Services;
 public class DashboardService
 {
     private readonly IVisibilityService _visibility;
+    private readonly StorageBackend? _backend;
     private readonly AuditLogStore _audit;
     private readonly ICurrentUser _currentUser;
     private readonly HandlingHistoryQueryService _handling;
@@ -39,8 +41,9 @@ public class DashboardService
         ISystemSettingsService systemSettings,
         SummaryCache summaryCache,
         EfPrtgStore prtgStore,
-        IIssueExclusionSource exclusions)
+        IIssueExclusionSource exclusions, StorageBackend? backend = null)
     {
+        _backend = backend;
         _prtgStore = prtgStore;
         _visibility = visibility;
         _audit = audit;
@@ -104,6 +107,15 @@ public class DashboardService
         var hostRiskAgg = nothingVisible
             ? new List<HostRiskAggregate>()
             : _aggregates.AggregateByHost(exclusion, from, anchor, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
+
+        dto.AnalyzedHostDays = hostRiskAgg.Sum(h => h.HighRiskDays + h.MediumRiskDays + h.LowRiskDays);
+        if (_backend != null)
+        {
+            var fullIds = visibleHostIds.Where(id => !_visibility.IsCaseGrantOnly(id)).ToArray();
+            using var db = _backend.CreateContext();
+            dto.PendingRiskReviewDays = db.DailyRecords.AsNoTracking().Count(r => fullIds.Contains(r.HostId) &&
+                r.RecordDate >= from && r.RecordDate <= anchor && (r.RiskReviewStatus == "pending" || r.RiskReviewStatus == "unavailable"));
+        }
 
         // 風險類型卡（回饋十九輪批次D、二十輪批次B）：SQL 端聚合，與報表共用同一個查詢方法，
         // 可見嚴重度傳入 visibleSeverities（與下鑽依問題查詢相同），並傳入 riskLevels；全部隱藏時短路為空

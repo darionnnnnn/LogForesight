@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -51,6 +51,22 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
         File.WriteAllText(journal.FilePath + ".tmp", "incomplete");
         var state = journal.Load("source", now)!;
         Assert.Equal(12, Assert.Single(state.Accumulator).Sum);
+    }
+
+    [Fact]
+    public void 同URL換Core或資源世代_拒絕舊待寫且不破壞原檔()
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p => p.SourceGeneration = "source-a");
+        var journal = new PrtgSnapshotJournal(_backend); var now = DateTime.Today;
+        journal.Save(PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"),
+            [new(now, 1, 12, 1, 12, 12)], [], now);
+        var original = File.ReadAllBytes(journal.FilePath);
+        _backend.Blob("prtg_resource_generation_revision").Mutate(_ => ("1", 0));
+        Assert.Throws<InvalidDataException>(() => journal.Load(PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"), now));
+        policy.Update(p => p.SourceGeneration = "source-b");
+        Assert.Throws<InvalidDataException>(() => journal.Load(PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"), now));
+        Assert.Equal(original, File.ReadAllBytes(journal.FilePath));
     }
 
     public void Dispose()

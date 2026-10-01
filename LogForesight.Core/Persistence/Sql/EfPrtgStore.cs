@@ -1,4 +1,4 @@
-using LogForesight.Core.Models;
+﻿using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 using NLog;
@@ -1248,7 +1248,7 @@ public sealed class EfPrtgStore
     public const string ScopeRevisionBlobKey = "prtg_scope_revision";
 
     // 範圍修改及其版本在同一交易提交；其他程序不會看見新對應卻仍讀到舊版本。
-    private T WriteScopeChange<T>(Func<LfDbContext, T> change)
+    private T WriteScopeChange<T>(Func<LfDbContext, T> change, long? expectedRevision = null)
     {
         using var probe = _contextFactory();
         return probe.Database.CreateExecutionStrategy().Execute(() =>
@@ -1256,6 +1256,8 @@ public sealed class EfPrtgStore
             using var ctx = _contextFactory();
             using var transaction = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
             var stamp = ctx.Blobs.SingleOrDefault(b => b.BlobKey == ScopeRevisionBlobKey);
+            if (expectedRevision.HasValue && (stamp?.Version ?? 0) != expectedRevision.Value)
+                throw new PrtgScopeConflictException();
             var result = change(ctx);
             if (stamp == null)
                 ctx.Blobs.Add(new BlobRow { BlobKey = ScopeRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
@@ -1279,7 +1281,7 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>新增或更新一筆人工對應。CreatedAt 首次建立時寫入，後續更新不覆蓋。</summary>
-    public void UpsertManualMap(PrtgManualMapRow row)
+    public void UpsertManualMap(PrtgManualMapRow row, long? expectedRevision = null)
     {
         if (row == null) return;
         WriteScopeChange(ctx =>
@@ -1305,12 +1307,12 @@ public sealed class EfPrtgStore
                 ctx.PrtgManualMaps.Add(newRow);
             }
             return 0;
-        });
+        }, expectedRevision);
     }
 
     /// <summary>刪除一筆人工對應，回傳刪除筆數。</summary>
-    public int DeleteManualMap(long deviceObjid) =>
-        WriteScopeChange(ctx => ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete());
+    public int DeleteManualMap(long deviceObjid, long? expectedRevision = null) =>
+        WriteScopeChange(ctx => ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete(), expectedRevision);
 
     /// <summary>讀取全部 IP 排除清單</summary>
     public List<PrtgIpExcludeRow> GetIpExcludes()
@@ -1321,7 +1323,7 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>新增或更新一筆 IP 排除。CreatedAt 首次建立時寫入，後續更新不覆蓋。</summary>
-    public void UpsertIpExclude(PrtgIpExcludeRow row)
+    public void UpsertIpExclude(PrtgIpExcludeRow row, long? expectedRevision = null)
     {
         if (row == null) return;
         var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
@@ -1351,20 +1353,20 @@ public sealed class EfPrtgStore
                 ctx.PrtgIpExcludes.Add(newRow);
             }
             return 0;
-        });
+        }, expectedRevision);
     }
 
     /// <summary>
     /// 刪除一筆 IP 排除，回傳刪除筆數。
     /// 同時以原始 trim 值與正規化值各嘗試一次，以相容舊的非 IP 排除列。
     /// </summary>
-    public int DeleteIpExclude(string ip)
+    public int DeleteIpExclude(string ip, long? expectedRevision = null)
     {
         var trimmed = ip?.Trim();
         var normalized = PrtgHostMapper.NormalizeIp(ip);
         if (string.IsNullOrEmpty(trimmed) && normalized == null) return 0;
         return WriteScopeChange(ctx => ctx.PrtgIpExcludes
-            .Where(e => e.Ip == trimmed || (normalized != null && e.Ip == normalized)).ExecuteDelete());
+            .Where(e => e.Ip == trimmed || (normalized != null && e.Ip == normalized)).ExecuteDelete(), expectedRevision);
     }
 
     private static string? Truncate(string? value, int maxLength) =>
@@ -1891,3 +1893,8 @@ public sealed record PrtgStaleDeleteResult(int Total, int Stale, int Deleted, bo
 public sealed record PrtgOutOfScopePreview(
     int Values, int StateChanges, int AffectedDevices, IReadOnlyList<string> TopDeviceNames, int UnknownSensors);
 
+
+public sealed class PrtgScopeConflictException : Exception
+{
+    public PrtgScopeConflictException() : base("PRTG 對應／排除範圍已被修改，請重新載入並核對後儲存。") { }
+}

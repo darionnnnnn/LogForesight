@@ -1,4 +1,4 @@
-using LogForesight.Core.Models;
+﻿using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Analysis;
@@ -95,6 +95,14 @@ internal static class PrtgDailyPipeline
             operationScope.Checkpoint();
             using var client = PrtgClientFactory.Create(systemSettings);
             client.OperationCheckpoint = operationScope.Checkpoint;
+            var monitoringPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+            var pilotReady = monitoringPolicy.Ready(systemSettings.PrtgUrl);
+            var requestedHostIds = hostIds;
+            if (pilotReady)
+                hostIds = monitoringPolicy.HostIds.Where(id => (requestedHostIds == null || requestedHostIds.Contains(id)) &&
+                    hostStore.GetAll().Any(h => h.HostId == id && h.Source == "netiq" && h.Active && h.MergedInto == null)).ToArray();
+            else
+                prtgConsole.WriteLine("尚未確認 Core 身分與試點清單；本趟只同步診斷資料，不發布正式 PRTG 判定。");
 
             var fetchService = new PrtgFetchService(client, backend.PrtgStore(),
                 new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), prtgConsole,
@@ -166,7 +174,7 @@ internal static class PrtgDailyPipeline
                         }
                         var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
                         var scope = PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
-                            systemSettings, sentinels, prtgConsole, resolver, hostIds);
+                            systemSettings, sentinels, prtgConsole, resolver, hostIds, includeGuardInPartial: requestedHostIds == null);
                         if (scope.IsPartial)
                         {
                             prtgConsole.WriteLine($"本趟 PRTG 只處理指定的 {hostIds!.Count} 台主機（{scope.DeviceObjids.Count} 台裝置）。");
@@ -285,8 +293,23 @@ internal static class PrtgDailyPipeline
             // partial 同步會保留其他主機的鏡像；歸戶也必須套本趟主機範圍，
             // 不能因舊鏡像仍在就替未選取、已停用或已合併主機保存新判定。
             var evaluationHostIds = hostStore.GetAll()
-                .Where(h => h.Active && h.MergedInto == null && (hostIds == null || hostIds.Contains(h.HostId)))
+                .Where(h => pilotReady && h.Active && h.MergedInto == null && (hostIds == null || hostIds.Contains(h.HostId)))
                 .Select(h => h.HostId).ToHashSet();
+            var timelineEvidence = new Dictionary<long, PrtgSensorTimelineEvidence>();
+            var currentMaps = ResolveHostMapRows(newest).Where(m => m.MapStatus == PrtgMapStatus.Ok &&
+                m.HostId.HasValue && evaluationHostIds.Contains(m.HostId.Value)).ToDictionary(m => m.DeviceObjid, m => m.HostId!.Value);
+            if (pilotReady)
+            {
+                var collector = new PrtgSensorTimelineCollector(backend, client);
+                var selectedSensors = sensorStatuses.Where(s => monitoringPolicy.SensorIds.Contains(s.Objid) && currentMaps.ContainsKey(s.DeviceObjid)).ToArray();
+                for (var index = 0; index < selectedSensors.Length; index++)
+                {
+                    operationScope.Checkpoint();
+                    var sensor = selectedSensors[index];
+                    timelineEvidence[sensor.Objid] = await collector.CollectAsync(sensor.Objid, currentMaps[sensor.DeviceObjid], monitoringPolicy, ct);
+                    prtgConsole.WriteLine($"狀態涵蓋 {index + 1}/{selectedSensors.Length}：sensor {sensor.Objid}，{timelineEvidence[sensor.Objid].QualityReason}");
+                }
+            }
 
             // 第一段（由近到遠）：主機對應、評估、映射成簽章、歸戶。不發佈、不追加。
             for (var i = 0; i < days.Count; i++)
@@ -316,15 +339,23 @@ internal static class PrtgDailyPipeline
                     state.MapAvailable = deviceToHost.Count > 0;
 
                     // 規則庫沒有 PRTG 規則：該日照樣發佈空結果（「算不出東西」與「還沒算完」要分得出來）
-                    if (!rulesAvailable)
+                    var applicableEvidence = timelineEvidence.Where(p => p.Value.SourceGeneration == monitoringPolicy.SourceGeneration &&
+                        sensorToDevice.TryGetValue(p.Key, out var device) &&
+                        deviceToHost.TryGetValue(device, out var mappedHost) && mappedHost == p.Value.HostId)
+                        .ToDictionary(p => p.Key, p => p.Value);
+                    foreach (var proof in applicableEvidence.Values)
                     {
-                        continue;
+                        var begin = new DateTimeOffset(day); var finish = begin.AddDays(1);
+                        var periods = proof.Periods(begin, finish);
+                        if (periods.Sum(p => (p.Through - p.From).TotalSeconds) >= (finish - begin).TotalSeconds &&
+                            periods.All(p => !string.Equals(p.Status, "Unknown", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            if (!plan.ReevaluatedResources.TryGetValue(proof.HostId, out var resources))
+                                plan.ReevaluatedResources[proof.HostId] = resources = new();
+                            resources[proof.SensorId] = proof.ResourceGeneration;
+                        }
                     }
-
-                    var changes = prtgStore.GetStateChanges(day.Date.AddDays(-1), day.Date.AddDays(1));
-                    var findings = PrtgRuleEvaluator.Evaluate(
-                        day, changes, sensorToDevice, sensorStatuses, prtgRules,
-                        sensorNames, deviceNames, includeSilent: day == newest);
+                    var findings = PrtgCoveredRuleEvaluator.Evaluate(day, sensorStatuses, applicableEvidence, prtgRules);
                     foreach (var warning in findings.DuplicateRuleWarnings)
                     {
                         if (reportedDuplicateRuleWarnings.Add(warning))
@@ -379,7 +410,7 @@ internal static class PrtgDailyPipeline
 
             // 正式磁碟趨勢只讀取已落盤的日資料，且僅評估最新的已完成日。
             // 它不等待本趟 triggered fetch，也不接觸 PRTG API；分頁上限由 assessment service 強制為 100。
-            if (newest.Date < DateTime.Today)
+            if (pilotReady && newest.Date < DateTime.Today)
             {
                 operationScope.Checkpoint();
                 var diskRules = KnownIssueCatalog.Rules.Where(r =>
@@ -403,6 +434,60 @@ internal static class PrtgDailyPipeline
                             new SystemSettingsStore(backend.Blob("system_settings")),
                             new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
                             new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)));
+                        // 逐 sensor 重新核對通道，當前語意只能從第一次確認開始累積，不能追認先前 28 日。
+                        var semanticStore = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
+                        foreach (var sensor in sensorStatuses.Where(s => monitoringPolicy.SensorIds.Contains(s.Objid) &&
+                            s.Category == PrtgSensorCategories.Disk && timelineEvidence.ContainsKey(s.Objid)))
+                        {
+                            operationScope.Checkpoint();
+                            var proof = timelineEvidence[sensor.Objid];
+                            // 落地數值目前以 Web 主機時區解析；異時區不可用來宣稱可信的 28 日趨勢。
+                            if (!TimeZoneInfo.FindSystemTimeZoneById(monitoringPolicy.SourceTimeZoneId).HasSameRules(TimeZoneInfo.Local))
+                            {
+                                timelineEvidence[sensor.Objid] = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid))
+                                    .Update(e => { e.DiskSemanticCheckedAt = null; e.QualityReason = "disk-timezone-not-supported"; });
+                                prtgConsole.WriteLine($"sensor {sensor.Objid} 來源與伺服器時區不同；磁碟趨勢暫不發布，狀態涵蓋另行判讀。");
+                                continue;
+                            }
+                            using var semanticBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                            semanticBudget.CancelAfter(TimeSpan.FromSeconds(20));
+                            try
+                            {
+                                var localStart = DateTime.SpecifyKind(newest.Date, DateTimeKind.Local);
+                                var points = prtgStore.GetValuesForSensor(sensor.Objid, localStart, localStart.AddDays(1))
+                                    .Where(v => v.AvgValue.HasValue && (v.Quality == PrtgDataQuality.Ok ||
+                                        v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                                    .Take(5).Select(v => new PrtgDiskSemanticPersistedPoint(
+                                        DateTime.SpecifyKind(v.PeriodStart, DateTimeKind.Local).ToUniversalTime(), v.AvgValue!.Value)).ToArray();
+                                var typed = await new PrtgDiskSemanticProbe(client).ProbeAsync(sensor.Objid,
+                                    localStart.ToUniversalTime(), localStart.AddDays(1).ToUniversalTime(), points, semanticBudget.Token);
+                                var now = DateTimeOffset.Now;
+                                var fingerprint = System.Text.Json.JsonSerializer.Serialize(new
+                                { typed.ChannelIdentifier, typed.ChannelName, typed.Unit, typed.Scale, typed.Direction });
+                                var stored = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e =>
+                                {
+                                    e.DiskSemanticCheckedAt = now;
+                                    if (typed.Status != PrtgDiskSemanticProbeStatus.Verified)
+                                    { e.DiskSemanticValidFrom = null; e.DiskSemanticFingerprint = ""; return; }
+                                    if (e.DiskSemanticFingerprint != fingerprint || e.DiskSemanticValidFrom == null)
+                                    { e.DiskSemanticFingerprint = fingerprint; e.DiskSemanticValidFrom = now; }
+                                });
+                                timelineEvidence[sensor.Objid] = stored;
+                                new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Save(new(
+                                    sensor.Objid, sensor.DeviceObjid, proof.HostId, sensor.SensorType, typed.Status.ToString(), typed.Summary,
+                                    typed.ChannelIdentifier, typed.ChannelName, typed.Unit, typed.Scale, typed.Direction,
+                                    typed.ComparedPointCount, typed.ValuesMatch, now.UtcDateTime, newest, PrtgDiskAssessmentService.ParserSemanticVersion));
+                                if (typed.Status == PrtgDiskSemanticProbeStatus.Verified)
+                                    semanticStore.RecordAutomatedVerification(new(sensor.Objid, sensor.DeviceObjid, proof.HostId, sensor.SensorType,
+                                        typed.ChannelIdentifier!, typed.ChannelName!, typed.Unit!, typed.Scale!.Value, typed.Direction!), true,
+                                        "正式評估前重新核對主通道與落地樣本；暖機期間不追認先前數值。", now.UtcDateTime, PrtgDiskAssessmentService.ParserSemanticVersion);
+                            }
+                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                            { timelineEvidence[sensor.Objid] = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e => e.DiskSemanticCheckedAt = null); prtgConsole.WriteLine($"sensor {sensor.Objid} 語意核對逾時；不發布磁碟趨勢。"); }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception ex)
+                            { timelineEvidence[sensor.Objid] = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e => e.DiskSemanticCheckedAt = null); Log.Warn(ex, "磁碟語意重新核對失敗 sensor={Sensor}", sensor.Objid); }
+                        }
                         var pageOffset = 0;
                         var added = 0;
                         var batchSize = PrtgDiskAssessmentService.EffectiveBatchSize(diskRule);
@@ -412,10 +497,37 @@ internal static class PrtgDailyPipeline
                             ct.ThrowIfCancellationRequested();
                             var page = assessment.Assess(DateOnly.FromDateTime(newest), diskRule,
                                 PrtgDiskDecisionMode.Formal, batchSize,
-                                pageOffset, hostIds);
+                                pageOffset, hostIds, monitoringPolicy.SensorIds);
                             foreach (var row in page.Rows)
                             {
+                                if (row.Decision.Exclusion == PrtgDiskDecisionExclusion.TrendNoHit && timelineEvidence.TryGetValue(row.SensorObjid, out var recovered) &&
+                                    recovered.DiskSemanticCheckedAt >= DateTimeOffset.Now.AddMinutes(-10) && recovered.DiskSemanticValidFrom != null &&
+                                    recovered.DiskSemanticValidFrom <= new DateTimeOffset(newest.AddDays(-27)) &&
+                                    monitoringPolicy.ValidFrom <= new DateTimeOffset(newest.AddDays(-27)) && recovered.QualityReason == "covered" &&
+                                    recovered.SourceGeneration == monitoringPolicy.SourceGeneration &&
+                                    recovered.MappingRevision == backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion())
+                                {
+                                    new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + row.SensorObjid))
+                                        .Update(e => e.DiskIncidentStartedAt = null);
+                                    recovered.DiskIncidentStartedAt = null;
+                                    if (!planned[newest].DiskReevaluatedResources.TryGetValue(row.CurrentHostId, out var resources))
+                                        planned[newest].DiskReevaluatedResources[row.CurrentHostId] = resources = new();
+                                    resources[row.SensorObjid] = recovered.ResourceGeneration;
+                                }
                                 if (row.Decision.Finding is not { } finding) continue;
+                                if (!timelineEvidence.TryGetValue(finding.SensorObjid!.Value, out var diskProof) ||
+                                    diskProof.QualityReason != "covered" || diskProof.MappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ||
+                                    diskProof.SourceGeneration != monitoringPolicy.SourceGeneration ||
+                                    diskProof.DiskSemanticValidFrom == null || diskProof.DiskSemanticCheckedAt == null ||
+                                    diskProof.DiskSemanticCheckedAt.Value < DateTimeOffset.Now.AddMinutes(-10) ||
+                                    diskProof.DiskSemanticValidFrom > new DateTimeOffset(newest.AddDays(-27)) ||
+                                    monitoringPolicy.ValidFrom > new DateTimeOffset(newest.AddDays(-27))) continue;
+                                var incident = diskProof.DiskIncidentStartedAt ?? new DateTimeOffset(newest.Date);
+                                new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + finding.SensorObjid))
+                                    .Update(e => e.DiskIncidentStartedAt ??= incident);
+                                finding = finding with { SourceGeneration = diskProof.SourceGeneration,
+                                    ResourceGeneration = diskProof.ResourceGeneration,
+                                    IncidentStartedAt = incident };
                                 var findingsByHost = planned[newest].FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
                                 if (!findingsByHost.TryGetValue(row.CurrentHostId, out var hostFindings))
                                     findingsByHost[row.CurrentHostId] = hostFindings = new List<LogIssueSignature>();
@@ -484,6 +596,23 @@ internal static class PrtgDailyPipeline
 
                 try
                 {
+                    foreach (var (hostId, resources) in plan.ReevaluatedResources)
+                    {
+                        operationScope.Checkpoint();
+                        var key = hostStore.GetAll().First(h => h.HostId == hostId);
+                        backend.RecordStore(new HostKey { HostId = hostId, HostName = key.HostName })
+                            .ReconcilePrtgStateFindings(hostId, day, resources, monitoringPolicy.SourceGeneration,
+                                (plan.FindingsByHost?.GetValueOrDefault(hostId) ?? []).Select(f => f.EventKey).ToHashSet());
+                    }
+                    foreach (var (hostId, resources) in plan.DiskReevaluatedResources)
+                    {
+                        operationScope.Checkpoint();
+                        var key = hostStore.GetAll().First(h => h.HostId == hostId);
+                        backend.RecordStore(new HostKey { HostId = hostId, HostName = key.HostName })
+                            .ReconcilePrtgStateFindings(hostId, day, resources, monitoringPolicy.SourceGeneration,
+                                (plan.FindingsByHost?.GetValueOrDefault(hostId) ?? []).Select(f => f.EventKey).ToHashSet(),
+                                new HashSet<string> { PrtgDiskRuleDecision.RuleCode });
+                    }
                     if (plan.FindingsByHost == null)
                     {
                         prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
@@ -534,9 +663,9 @@ internal static class PrtgDailyPipeline
                     {
                         operationScope.Checkpoint();
                         captured += backend.PrtgObservationStore().Capture(group.Key, day, systemSettings.Revision,
-                            group.Select(o => (o.Finding, o.Signature)).ToArray(), systemSettings.PrtgUrl);
+                            group.Select(o => (o.Finding, o.Signature)).ToArray(), systemSettings.PrtgUrl, runRecorder.RunId);
                     }
-                    prtgConsole.WriteLine($"獨立 PRTG 判定快照：新增 {captured} 筆（影子保存，尚未納入正式問題查詢與交辦）。");
+                    prtgConsole.WriteLine($"獨立 PRTG 判定快照：新增 {captured} 筆（可信版本等待合格 NetIQ 日紀錄補追加；未知品質只作診斷）。");
 
                     prtgFindings.Publish(day, findingsByHost.ToDictionary(
                         kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value), suppressedPatternIdsByHost);
@@ -834,6 +963,8 @@ internal static class PrtgDailyPipeline
     /// </summary>
     private sealed class PrtgPlannedDay
     {
+        public Dictionary<long, Dictionary<long, string>> ReevaluatedResources { get; } = new();
+        public Dictionary<long, Dictionary<long, string>> DiskReevaluatedResources { get; } = new();
         public List<(long HostId, PrtgFinding Finding, LogIssueSignature Signature)> Observations { get; } = new();
         public Dictionary<long, List<LogIssueSignature>>? FindingsByHost;
         public int FindingCount;

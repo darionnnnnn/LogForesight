@@ -16,9 +16,12 @@ internal static class MissingDateFinder
     {
         if (!requireAi)
         {
+            var retryDates = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
+                .Where(r => r.LogSource == AnalysisLogSource.Netiq && r.LatestNetiqAttemptStatus is "failed" or "running" or "partial")
+                .Select(r => r.Date.Date).ToHashSet();
             return Enumerable.Range(1, lookbackDays)
                 .Select(offset => DateTime.Today.AddDays(-offset))
-                .Where(date => !store.HasRecord(date))
+                .Where(date => !store.HasRecord(date) || retryDates.Contains(date))
                 .OrderBy(date => date)
                 .ToList();
         }
@@ -125,6 +128,7 @@ public static class HostDayPostProcessor
     public static bool NeedsBackfill(DailyAnalysisRecord? record, bool useAi)
     {
         if (record == null) return true;
+        if (record.LogSource == AnalysisLogSource.Netiq && record.LatestNetiqAttemptStatus is "failed" or "running" or "partial") return true;
         if (useAi && !record.AiPending && !record.AiAnalyzed && record.RiskLevel != RiskLevels.Low) return true;
         return false;
     }
@@ -147,6 +151,8 @@ public static class HostDayPostProcessor
     {
         // 帶日期比對：兩條寫入路徑都在逐日迴圈裡呼叫，而 PRTG 只評估了登錄簿發佈的那一天。
         // 回補多天缺漏日時，其餘日期在這裡就會拿到空清單。
+        if (!record.CanSupplementWithPrtg()) return 0;
+
         var findings = registry.For(hostId, record.Date);
         if (findings.Count == 0) return 0;
 
@@ -169,7 +175,16 @@ public static class HostDayPostProcessor
             // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
             // 會是「高」，資料庫裡卻還是「低」。唯一的例外是「補追加剛好先來過」：資料庫已經有了，
             // 記憶體這份仍要併入，執行摘要才與資料庫一致。
-            if (!attachedNow && !registry.WasAttached(hostId, record.Date)) return 0;
+            if (!attachedNow)
+            {
+                // 曾成功追加的旗標不能證明刪除／重建後的主列仍含這批問題。
+                // 以目前持久化紀錄確認，避免記憶體產生不存在於查詢面的案件素材。
+                var persisted = store.ReadRecent(record.Date, 1)
+                    .FirstOrDefault(r => r.HostId == hostId && r.Date.Date == record.Date.Date);
+                if (persisted == null || !persisted.CanSupplementWithPrtg()) return 0;
+                var persistedKeys = persisted.TopIssues.Select(i => i.EventKey).ToHashSet(StringComparer.Ordinal);
+                if (added.Any(i => !persistedKeys.Contains(i.EventKey))) return 0;
+            }
 
             record.TopIssues.AddRange(added);
 

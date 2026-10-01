@@ -21,6 +21,27 @@ public static class PrtgCorroboration
 
     private sealed record Hit(string PatternId, string Prefix, string Text);
 
+    /// <summary>判定修訂時重建本元件的線索；不動其他事件關聯。未傳抑制集合時沿用既有抑制。</summary>
+    public static (string? RiskLevel, string? RiskBasis, int Added) Refresh(
+        DailyAnalysisRecord record, IReadOnlySet<string>? suppressedPatternIds = null)
+    {
+        (string Id, string Prefix)[] owned = [
+            (CorrelationPatternIds.PrtgStorageCorroborated, StoragePrefix),
+            (CorrelationPatternIds.PrtgCapacityCorroborated, CapacityPrefix),
+            (CorrelationPatternIds.PrtgOutageCorroborated, OutagePrefix)];
+        var prior = record.CorrelationAlertRefs.Where(r => owned.Any(o => o.Id == r.PatternId))
+            .Select(r => r.PatternId).ToHashSet(StringComparer.Ordinal);
+        var suppression = suppressedPatternIds ?? owned.Where(o => record.SuppressedCorrelationAlerts
+            .Any(t => t.StartsWith(o.Prefix, StringComparison.Ordinal))).Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+        var priorTexts = record.CorrelationAlertRefs.Where(r => prior.Contains(r.PatternId)).Select(r => r.Text).ToHashSet();
+        bool Owns(string text) => priorTexts.Contains(text) || owned.Any(o => text.StartsWith(o.Prefix, StringComparison.Ordinal));
+        record.CorrelationAlerts.RemoveAll(Owns);
+        record.SuppressedCorrelationAlerts.RemoveAll(Owns);
+        record.CorrelationAlertRefs.RemoveAll(r => owned.Any(o => o.Id == r.PatternId));
+        Apply(record, suppression);
+        return (null, null, record.CorrelationAlertRefs.Count(r => owned.Any(o => o.Id == r.PatternId) && !prior.Contains(r.PatternId)));
+    }
+
     /// <summary>
     /// 對紀錄套用佐證判定，就地寫入 <see cref="DailyAnalysisRecord.CorrelationAlerts"/>／
     /// <see cref="DailyAnalysisRecord.CorrelationAlertRefs"/>（未抑制）或

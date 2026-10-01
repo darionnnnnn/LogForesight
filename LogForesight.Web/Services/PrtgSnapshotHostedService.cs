@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using LogForesight.Core;
@@ -458,6 +458,15 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
 
         var targets = (_targetObjids ?? new HashSet<long>()).OrderBy(id => id).ToList();
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        if (policy.Ready(settings.PrtgUrl))
+        {
+            var store = _backend.PrtgStore();
+            var guardSource = new PrtgMirrorGuardSource(store);
+            var guardSensors = settings.PrtgResourceGuardEnabled ? PrtgResourceGuardTargets.Resolve(
+                guardSource, settings, _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids.ToHashSet() : [];
+            targets = targets.Where(policy.SensorIds.Contains).Union(guardSensors).Order().ToList();
+        }
         lock (_pendingWrite)
         {
             if (_accumulator.Capture().Count + _pendingWrite.Sum(b => (long)b.Rows.Count) + targets.Count > PrtgSnapshotJournal.MaxRows ||
@@ -878,7 +887,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             try
             {
-                var endpoint = PrtgSnapshotJournal.Endpoint(settings.PrtgUrl);
+                var endpoint = PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl);
                 if (!_journalLoaded)
                 {
                     var state = _journal.Load(endpoint, Now());
@@ -893,7 +902,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 if (endpoint != _journalEndpoint)
                 {
                     if (_accumulator.SampleCount > 0 || _pendingWrite.Count > 0)
-                        throw new InvalidDataException("PRTG 來源位址變更，舊樣本保留待處理；不寫入新來源");
+                        throw new InvalidDataException("PRTG 來源位址變更、來源／資源世代或對應變更，舊樣本保留待處理；不寫入新身分");
                     _journalEndpoint = endpoint;
                 }
                 return true;

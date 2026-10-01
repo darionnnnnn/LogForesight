@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Text;
 
 using LogForesight.Core.Persistence.Sql;
@@ -368,6 +368,8 @@ public static class ServiceCollectionExtensions
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();
+        services.AddSingleton<PrtgSupplementReplay>();
+        services.AddHostedService<PrtgSupplementHostedService>();
 
         // 交辦單協調器：相依的 store 與 IssueCaseCoordinator 皆為 Singleton，本身沒有請求範圍狀態
         services.AddSingleton<WorkOrderCoordinator>();
@@ -404,6 +406,8 @@ public static class ServiceCollectionExtensions
         // OccurrenceStatusResolver 皆已是 Singleton
         services.AddSingleton<MailIssueDigest>();
         services.AddSingleton<MailNotificationService>();
+        services.AddSingleton(sp => new PrtgMonitoringPolicyStore(
+            sp.GetRequiredService<StorageBackend>().Blob(PrtgMonitoringPolicyStore.BlobKey)));
 
         // 派工候選人快照：Singleton，相依全是 Singleton store（能力／可見範圍規則留在 Web，Core 只吃快照）
         services.AddSingleton<IDispatchCandidateSource, DispatchCandidateSource>();
@@ -477,6 +481,7 @@ public static class ServiceCollectionExtensions
         // lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上
         services.AddSingleton<DailyRecordBackfiller>(sp => sp.GetRequiredService<StorageBackend>().DailyRecordBackfiller());
         services.AddHostedService<DailyRecordBackfillHostedService>();
+        services.AddHostedService<PrtgRiskReviewHostedService>();
 
         // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用

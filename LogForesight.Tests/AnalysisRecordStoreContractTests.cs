@@ -683,6 +683,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
 
         store.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = hostId,
             Host = "SRV-TEST",
             Date = date,
@@ -744,6 +745,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
 
         store.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = hostId,
             Host = "SRV-TEST",
             Date = date,
@@ -786,6 +788,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
 
         store.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = hostId,
             Host = "SRV-TEST",
             Date = date,
@@ -821,6 +824,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
     {
         store.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = hostId, Host = "SRV-TEST", Date = date, RiskLevel = "低",
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 4 } }
         });
@@ -882,7 +886,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
     {
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var date = DateTime.Today;
-        store.Append(new DailyAnalysisRecord { HostId = 101, Host = "SRV", Date = date, RiskLevel = "低" });
+        store.Append(new DailyAnalysisRecord { LogSource = AnalysisLogSource.Netiq, HostId = 101, Host = "SRV", Date = date, RiskLevel = "低" });
         using (var ctx = _fx.NewContext())
             Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(ctx.Database,
                 "CREATE TRIGGER fail_prtg_insert BEFORE INSERT ON lf_top_issues BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;");

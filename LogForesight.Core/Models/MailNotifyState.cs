@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Models;
+﻿namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 郵件通知的寄送狀態（↔ webdata blob，key=mail_notify_state，回饋十五輪批次D）：
@@ -7,6 +7,12 @@ namespace LogForesight.Core.Models;
 /// </summary>
 public class MailNotifyState
 {
+    /// <summary>PRTG 可行動問題的最後 SMTP 接受等級；持續故障不因換日重寄。</summary>
+    public Dictionary<string, int> PrtgUrgentAcceptedFacts { get; set; } = new();
+    public Dictionary<string, DateTime> PrtgUrgentFactSeenAtUtc { get; set; } = new();
+
+    /// <summary>先落庫再寄出的緊急通知意圖；SMTP 接受不等於信箱實收。</summary>
+    public Dictionary<string, MailUrgentIntent> UrgentOutbox { get; set; } = new();
     /// <summary>最後一次寄出每日摘要的日期（yyyy-MM-dd）；null＝從未寄過</summary>
     public string? LastDailySentDate { get; set; }
 
@@ -33,4 +39,17 @@ public class MailNotifyState
 
     /// <summary>最後一次在摘要信中加入資料過期警示的日期（yyyy-MM-dd，任務 A-3）</summary>
     public string? LastFreshnessAlertDate { get; set; }
+}
+
+public sealed class MailUrgentIntent
+{
+    public string Key { get; set; } = string.Empty;
+    public long HostId { get; set; }
+    public DateTime RecordDate { get; set; }
+    public string SettingsRevision { get; set; } = string.Empty;
+    public string Status { get; set; } = "pending";
+    public DateTime UpdatedAtUtc { get; set; }
+    public Dictionary<string, DateTime> SmtpAcceptedAtUtc { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> Recipients { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<string> ProblemKeys { get; set; } = new();
 }

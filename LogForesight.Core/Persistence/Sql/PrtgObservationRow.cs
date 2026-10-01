@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Persistence.Sql;
+﻿namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// 獨立保存 PRTG 判定快照；不依賴日誌日紀錄。影子版本尚不進正式問題／派工／通知。
@@ -30,4 +30,9 @@ public sealed class PrtgObservationRow
     public int FormatVersion { get; set; }
     public string ContentJson { get; set; } = string.Empty;
     public DateTime RecordedAtUtc { get; set; }
+    public string SupplementStatus { get; set; } = "shadow";
+    public DateTime? SupplementAttemptAtUtc { get; set; }
+    /// <summary>首次取得此判定的批次；舊資料未知保持 null，不參與內容去重。</summary>
+    public long? RunId { get; set; }
+    public long? SupplementParentRecordId { get; set; }
 }

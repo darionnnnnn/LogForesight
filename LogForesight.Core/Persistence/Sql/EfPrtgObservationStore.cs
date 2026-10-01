@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Analysis;
@@ -12,6 +12,7 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
 {
     public const int FormatVersion = 1;
     public const string PendingQuality = "source-resource-generation-and-coverage-unverified";
+    public const string CoveredQuality = "covered-state-v1";
 
     /// <summary>
     /// 同主機日整批原子保存。重跑相同內容不增加列；修訂保留前版，空結果不代表恢復。
@@ -20,7 +21,7 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
     /// </summary>
     public int Capture(long hostId, DateTime day, string settingsRevision,
         IReadOnlyList<(PrtgFinding Finding, LogIssueSignature Signature)> findings,
-        string? sourceUrl = null)
+        string? sourceUrl = null, long? runId = null)
     {
         if (hostId <= 0) throw new ArgumentOutOfRangeException(nameof(hostId));
         if (day != day.Date) throw new ArgumentException("判定日不可包含時間。", nameof(day));
@@ -33,26 +34,30 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
                 item.Finding.RuleCode.Length > 100)
                 throw new ArgumentException("觀察必須包含有效的 PRTG 資源與規則。", nameof(findings));
             // 不把 mapper 產生的 00:00／23:59 宣稱為來源時間；缺少來源區間的狀態明列於品質欄。
+            var covered = item.Finding.SourceGeneration != null && item.Finding.ResourceGeneration != null && item.Finding.IncidentStartedAt != null;
+            var quality = covered ? CoveredQuality : PendingQuality;
             var content = JsonSerializer.Serialize(new
             {
-                FormatVersion, HostId = hostId, Day = day, SettingsRevision = settingsRevision, SourceHint = sourceHint,
-                QualityReason = PendingQuality, Finding = item.Finding, Decision = item.Signature
+                FormatVersion = covered ? 2 : FormatVersion, HostId = hostId, Day = day, SettingsRevision = settingsRevision, SourceHint = sourceHint,
+                QualityReason = quality, Finding = item.Finding, Decision = item.Signature
             });
             var resource = item.Finding.SensorObjid.HasValue
                 ? $"sensor:{item.Finding.SensorObjid.Value}" : $"device:{item.Finding.DeviceObjid}";
-            var decisionParts = $"{sourceHint}|{hostId}|{resource}|{item.Finding.RuleCode.ToLowerInvariant()}|{day:yyyy-MM-dd}";
+            var decisionParts = $"{item.Finding.SourceGeneration ?? sourceHint}|{hostId}|{resource}|{item.Finding.ResourceGeneration}|{item.Finding.RuleCode.ToLowerInvariant()}|{day:yyyy-MM-dd}";
             var decisionKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(decisionParts)));
             return new PrtgObservationRow
             {
                 SnapshotId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))),
                 DecisionKey = decisionKey,
-                HostId = hostId, RecordDate = day, DeviceObjid = item.Finding.DeviceObjid,
+                RunId = runId, HostId = hostId, RecordDate = day, DeviceObjid = item.Finding.DeviceObjid,
                 SensorObjid = item.Finding.SensorObjid, RuleCode = item.Finding.RuleCode,
                 EventKey = item.Signature.EventKey, SourceName = item.Signature.Source,
                 Category = item.Signature.Category.ToString(), SeverityRank = (int)item.Signature.Severity,
                 ElevatesDayRisk = item.Signature.ElevatesDayRisk, Suppressed = item.Signature.Suppressed,
                 SourceHint = sourceHint,
-                FormatVersion = FormatVersion, QualityReason = PendingQuality, ContentJson = content,
+                SourceGeneration = item.Finding.SourceGeneration, ResourceGeneration = item.Finding.ResourceGeneration,
+                SupplementStatus = covered ? "pending" : "shadow",
+                FormatVersion = covered ? 2 : FormatVersion, QualityReason = quality, ContentJson = content,
                 RecordedAtUtc = DateTime.UtcNow
             };
         }).DistinctBy(r => r.SnapshotId).ToArray();
@@ -77,7 +82,8 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
                 if (changed.Length == 0) continue;
                 foreach (var row in changed)
                 {
-                    if (current.TryGetValue(row.DecisionKey, out var old)) old.ActiveKey = null;
+                    if (current.TryGetValue(row.DecisionKey, out var old))
+                    { old.ActiveKey = null; old.SupplementStatus = "superseded"; }
                 }
                 ctx.SaveChanges(); // 先釋出唯一 active_key，避免 EF 先 INSERT 再 UPDATE 的排序競爭。
                 var ids = changed.Select(r => r.SnapshotId).ToArray();
@@ -86,7 +92,8 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
                 var additions = changed.Where(r => !previous.ContainsKey(r.SnapshotId)).ToArray();
                 foreach (var row in changed)
                 {
-                    if (previous.TryGetValue(row.SnapshotId, out var old)) old.ActiveKey = row.DecisionKey;
+                    if (previous.TryGetValue(row.SnapshotId, out var old))
+                    { old.ActiveKey = row.DecisionKey; old.SupplementStatus = row.SupplementStatus; old.SupplementAttemptAtUtc = null; }
                     else row.ActiveKey = row.DecisionKey;
                 }
                 ctx.PrtgObservations.AddRange(additions);
@@ -163,6 +170,17 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
         var cutoff = utcNow.AddDays(-retentionDays);
         using var ctx = contextFactory();
         return ctx.PrtgObservations.Where(r => r.FormatVersion == 1 && r.RecordedAtUtc < cutoff).ExecuteDelete();
+    }
+
+    /// <summary>已完成的可信判定，僅在案件最小證據已保存後清理。未完成意圖不提前刪除。</summary>
+    public int PruneCompleted(int retentionDays, DateTime utcNow)
+    {
+        if (retentionDays <= 0 || utcNow.Kind != DateTimeKind.Utc) throw new ArgumentException("保留天數與 UTC 基準無效。");
+        var cutoff = utcNow.AddDays(-retentionDays);
+        using var ctx = contextFactory();
+        return ctx.PrtgObservations.Where(r => r.FormatVersion == 2 && r.RecordedAtUtc < cutoff &&
+            (r.SupplementStatus == "applied" || (r.ActiveKey == null && r.SupplementStatus == "superseded")) && !ctx.IssueCases.Any(c => c.IssueKey.EndsWith(r.EventKey) && c.PrtgEvidenceJson == null))
+            .ExecuteDelete();
     }
 }
 

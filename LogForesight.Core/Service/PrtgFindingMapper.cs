@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using LogForesight.Core.Analysis;
 
 namespace LogForesight.Core.Service;
@@ -12,6 +12,20 @@ namespace LogForesight.Core.Service;
 public static class PrtgFindingMapper
 {
     public const string PrtgLogName = "PRTG";
+    /// <summary>舊案件的顯示文字可讀化；不改案件鍵、儲存內容或原始稽核。</summary>
+    public static string DisplayStoredLabel(string label)
+    {
+        if (!label.StartsWith("PRTG:", StringComparison.OrdinalIgnoreCase)) return label;
+        var start = label.IndexOf("（prtg:", StringComparison.Ordinal);
+        if (start < 0 || !label.EndsWith('）')) return label;
+        var key = label[(start + 1)..^1];
+        if (key.Split(':') is not { Length: >= 5 } parts || !long.TryParse(parts[2], out var sensor) || sensor <= 0) return label;
+        return new LogIssueSignature { LogName = PrtgLogName, EventKey = key }.SourceEventLabel;
+    }
+
+    public static string Fingerprint(IEnumerable<LogIssueSignature> issues) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(issues.Where(IsPrtg).OrderBy(i => i.EventKey).ToArray()))));
 
     /// <summary>判定簽章是否源自 PRTG 規則（依 LogName == "PRTG"，不分大小寫）</summary>
     public static bool IsPrtg(LogIssueSignature? signature) =>
@@ -74,7 +88,12 @@ public static class PrtgFindingMapper
             Source = $"PRTG:{finding.RuleCode}",
             EventId = 0,
             EntryType = EventLogEntryType.Warning,
-            EventKey = $"prtg:{finding.RuleCode}:{targetObjid}",
+            EventKey = $"prtg:{finding.RuleCode}:{targetObjid}" +
+                (finding.SourceGeneration != null && finding.ResourceGeneration != null
+                    ? $":{finding.SourceGeneration}:{finding.ResourceGeneration}" : ""),
+            PrtgSourceGeneration = finding.SourceGeneration,
+            PrtgResourceGeneration = finding.ResourceGeneration,
+            PrtgIncidentStartedAt = finding.IncidentStartedAt,
             Count = 1,
             FirstSeen = "00:00",
             LastSeen = "23:59",

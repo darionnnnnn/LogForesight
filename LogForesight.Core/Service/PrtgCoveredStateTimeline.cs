@@ -66,8 +66,11 @@ public static class PrtgCoveredStateTimeline
                 if (change.At > cursor && status != null)
                     periods.Add(new PrtgCoveredStatePeriod(cursor, change.At, status, entered));
                 cursor = change.At;
+                var sameFault = status != null && change.Status != null &&
+                    (string.Equals(status, change.Status, StringComparison.OrdinalIgnoreCase) ||
+                     PrtgSensorStatuses.IsDown(status) && PrtgSensorStatuses.IsDown(change.Status));
                 status = change.Status;
-                entered = change.At;
+                if (!sameFault) entered = change.At;
             }
             if (cursor < span.Through && status != null)
                 periods.Add(new PrtgCoveredStatePeriod(cursor, span.Through, status, entered));

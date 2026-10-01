@@ -35,7 +35,7 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
                     .OrderBy(s => s.SentinelId).Select(s => new { s.SentinelId, s.Active, s.BaseUrl }));
                 _sentinelVersion = sentinelVersion;
             }
-            return $"{backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()}:{_sentinelFingerprint}:{_hostFingerprint}";
+            return $"{backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()}:{backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion()}:{backend.Blob("rules").ReadVersion()}:{_sentinelFingerprint}:{_hostFingerprint}";
         }
     }
 }

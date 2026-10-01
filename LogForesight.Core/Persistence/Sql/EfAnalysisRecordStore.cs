@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NLog;
@@ -50,9 +50,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     ///
     /// 同一個主機日的「讀列 → 反序列化 → 改 → 序列化 → 寫回」可能被兩條路徑同時進行
     /// （分析寫入與 PRTG finding 追加），後寫的一方會整段覆蓋 ContentJson，主列 JSON 與
-    /// lf_top_issues 子列就對不上。兩條路徑都在同一個行程內，所以用行程內鎖序列化即可。
-    /// 刻意不用併發權杖（rowversion／IsConcurrencyToken）：重跑是整批 ExecuteDelete 後再新增，
-    /// 不經過逐列的併發檢查，加了權杖也擋不住這種覆蓋。
+    /// lf_top_issues 子列就對不上。程序內鎖避免同一服務互撞；DB write_revision 另擋讀改寫的過期提交。
+    /// 重跑刪除再新增使用新的 RecordId，舊父列提交失敗後須重新核對父列，不能搬用舊結果。
+    /// 這些保護不代表支援多執行個體排程。
     /// </summary>
     private static readonly object[] HostDayLocks = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();
 
@@ -113,6 +113,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 HasCorrelation = shaped.CorrelationAlerts.Count > 0,
                 WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
                 ContentJson = JsonSerializer.Serialize(shaped),
+                RiskProjectionVersion = PrtgHistoricalRiskReview.Version,
+                RiskReviewStatus = shaped.RiskReview?.Status ?? "current",
                 CreatedAt = DateTime.Now,
                 // 讀取面 SQL 化的抽出欄（回饋十九輪批次B）：寫入時一併填好，語意同 lf_top_issues
                 // 既有聚合維度的分工。ExtractVersion 標記「這是目前版本寫入的新列」，
@@ -226,6 +228,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
 
         var record = Deserialize(row);
+        if (record.RiskReview != null) return; // 舊輸入產生的報告不得重新覆蓋風險複核後的現況。
         record.WeeklyCheckup = checkup;
         row.ContentJson = JsonSerializer.Serialize(record);
         row.WeeklyCheckupDate = checkup.CheckupDate.Date;
@@ -263,6 +266,17 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
 
         var record = Deserialize(row);
+        // 遷移可能發生在 AI 已取走舊輸入之後。歷史投影不能被該舊結果覆蓋。
+        // 明確重跑 NetIQ 會建立無 RiskReview 的新父列，才可再次接受 AI 結果。
+        if (record.RiskReview != null) return;
+        if (outcome.InputPrtgFingerprint != null && outcome.InputPrtgFingerprint != PrtgFindingMapper.Fingerprint(record.TopIssues))
+        {
+            record.AiPending = true; row.AiPending = true;
+            row.ContentJson = JsonSerializer.Serialize(record); ctx.SaveChanges();
+            return; // AI 期間補追加／修訂：保留現況，下一輪以新證據重跑。
+        }
+        if (record.TopIssues.Any(PrtgFindingMapper.IsPrtg))
+        { record.PrtgBaselineRiskLevel = null; record.PrtgBaselineRiskBasis = null; }
         record.Headline = outcome.Headline;
         record.Summary = outcome.Summary;
         record.TrendAssessment = outcome.TrendAssessment;
@@ -343,37 +357,52 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
             attemptedRecordId = row.RecordId;
             var record = Deserialize(row);
+            if (!record.CanSupplementWithPrtg()) return;
+
             var existingKeys = record.TopIssues
                 .Select(i => i.EventKey)
                 .Where(k => !string.IsNullOrEmpty(k))
                 .ToHashSet(StringComparer.Ordinal);
 
             var toAdd = new List<LogIssueSignature>();
+            var replacements = new List<LogIssueSignature>();
             foreach (var finding in findings)
             {
                 if (!string.IsNullOrEmpty(finding.EventKey) && existingKeys.Add(finding.EventKey))
                 {
                     toAdd.Add(finding);
                 }
+                else if (finding.PrtgSourceGeneration != null)
+                {
+                    var index = record.TopIssues.FindIndex(i => i.EventKey == finding.EventKey);
+                    if (index >= 0 && JsonSerializer.Serialize(record.TopIssues[index]) != JsonSerializer.Serialize(finding))
+                    { record.TopIssues[index] = finding; replacements.Add(finding); }
+                }
             }
 
-            if (toAdd.Count == 0)
+            if (toAdd.Count == 0 && replacements.Count == 0)
             {
                 return;
             }
 
             record.TopIssues.AddRange(toAdd);
+            if (record.PrtgBaselineRiskLevel == null && !record.TopIssues.Except(toAdd).Any(PrtgFindingMapper.IsPrtg))
+            { record.PrtgBaselineRiskLevel = record.RiskLevel; record.PrtgBaselineRiskBasis = record.RiskBasis; }
+            // 有明確 NetIQ 下限才可撤銷本輪 PRTG 加權；旧列缺下限時維持原風險待重評。
+            if (replacements.Count > 0 && record.PrtgBaselineRiskLevel != null)
+            { record.RiskLevel = record.PrtgBaselineRiskLevel; record.RiskBasis = record.PrtgBaselineRiskBasis; row.RiskLevel = record.RiskLevel; }
 
             // 風險單向上調（docs/PRTG-SPEC.md §9）：PRTG 規則的 ElevatesDayRisk／High 過去是死值
             // ——追加發生在風險計算之後，這個旗標從來沒有生效過，PRTG 命中只是附掛的問題列，
             // 不影響風險等級、郵件、待辦統計、AI 補跑判準。
             // 一律取 MoreSevere：PRTG 只是輔助訊號，看不到事件層的證據，絕不壓低既有等級。
-            var prtgRisk = PrtgFindingMapper.RiskFromFindings(toAdd);
+            var currentPrtg = record.TopIssues.Where(PrtgFindingMapper.IsPrtg).ToList();
+            var prtgRisk = PrtgFindingMapper.RiskFromFindings(currentPrtg);
             var elevated = RiskLevels.MoreSevere(record.RiskLevel, prtgRisk);
             if (elevated != record.RiskLevel)
             {
                 record.RiskLevel = elevated;
-                record.RiskBasis = PrtgFindingMapper.RiskBasisFrom(toAdd);
+                record.RiskBasis = PrtgFindingMapper.RiskBasisFrom(currentPrtg);
                 row.RiskLevel = elevated;
 
                 // 風險由低升為非低時這一天就「該有 AI」了（判準同 HostDayPostProcessor.NeedsBackfill）。
@@ -386,7 +415,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             }
 
             // 跨來源佐證（事件日誌 × PRTG 同日示警）：寫進關聯欄位，風險同樣只升不降，判準與上面一致
-            var corroboration = PrtgCorroboration.Apply(record, suppressedPatternIds);
+            var corroboration = PrtgCorroboration.Refresh(record, suppressedPatternIds);
             corroborated = corroboration.Added;
             if (corroboration.RiskLevel != null)
             {
@@ -419,11 +448,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     ctx.TopIssues.Add(MapToTopIssueRow(row.RecordId, row.HostId, row.RecordDate, issue));
                 }
             }
+            foreach (var issue in replacements)
+            {
+                ctx.TopIssues.Where(t => t.RecordId == row.RecordId && t.EventKey == issue.EventKey).ExecuteDelete();
+                ctx.TopIssues.Add(MapToTopIssueRow(row.RecordId, row.HostId, row.RecordDate, issue));
+            }
 
             ctx.SaveChanges();
             tx.Commit();
             appended = true;
-            appendedCount = toAdd.Count;
+            appendedCount = toAdd.Count + replacements.Count;
         });
         }
         // 只有重新查證原父列確實消失才降級為不存在；其他約束／寫入失敗必須讓上層標記失敗。
@@ -445,6 +479,62 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
 
         return appended;
+    }
+
+    /// <summary>只撤回已完整重評的同世代狀態判定；案件／人工結論保留，空回應與缺口不可呼叫。</summary>
+    public bool ReconcilePrtgStateFindings(long hostId, DateTime day, IReadOnlyDictionary<long, string> resources,
+        string sourceGeneration, IReadOnlySet<string> currentKeys, IReadOnlySet<string>? evaluatedRuleCodes = null)
+    {
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+        lock (LockFor(hostId, day))
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var row = ctx.DailyRecords.SingleOrDefault(r => r.HostId == hostId && r.RecordDate == day.Date);
+            if (row == null || row.DetailPruned) return false;
+            var record = Deserialize(row);
+            if (!record.CanSupplementWithPrtg()) return false;
+            var removed = record.TopIssues.Where(i => PrtgFindingMapper.IsPrtg(i) &&
+                i.PrtgSourceGeneration == sourceGeneration && !currentKeys.Contains(i.EventKey) &&
+                i.EventKey.Split(':') is { Length: >= 5 } parts &&
+                (evaluatedRuleCodes ?? new HashSet<string> { "down", "warning", "flapping" }).Contains(parts[1]) && long.TryParse(parts[2], out var sensor) &&
+                resources.TryGetValue(sensor, out var generation) && generation == i.PrtgResourceGeneration).ToArray();
+            if (removed.Length == 0) return false;
+            var keys = removed.Select(i => i.EventKey).ToArray();
+            record.TopIssues.RemoveAll(i => keys.Contains(i.EventKey));
+            PrtgCorroboration.Refresh(record);
+            row.HasCorrelation = record.CorrelationAlerts.Count > 0;
+            ctx.TopIssues.Where(i => i.RecordId == row.RecordId && keys.Contains(i.EventKey)).ExecuteDelete();
+            if (record.PrtgBaselineRiskLevel != null)
+            {
+                record.RiskLevel = RiskLevels.MoreSevere(record.PrtgBaselineRiskLevel,
+                    PrtgFindingMapper.RiskFromFindings(record.TopIssues));
+                record.RiskBasis = record.RiskLevel == record.PrtgBaselineRiskLevel ? record.PrtgBaselineRiskBasis
+                    : PrtgFindingMapper.RiskBasisFrom(record.TopIssues);
+            }
+            else if (record.RiskReview == null)
+            {
+                row.OriginalRiskContentJson ??= row.ContentJson;
+                record.RiskReview = new HistoricalRiskReview { Version = 1, Status = "pending",
+                    Reason = "可信 PRTG 重評後撤回舊判定；原 AI 或風險下限不可獨立還原，請重跑 NetIQ 分析。",
+                    OriginalRiskLevel = record.RiskLevel, OriginalRiskBasis = record.RiskBasis,
+                    OriginalHeadline = record.Headline, OriginalSummary = record.Summary, ReviewedAtUtc = DateTime.UtcNow };
+                row.RiskProjectionVersion = 1; row.RiskReviewStatus = "pending";
+            }
+            record.Headline = "PRTG 判定已修訂";
+            record.Summary = "已依完整涵蓋重新判定，撤回不再命中的問題；既有案件與人工結論保留。";
+            record.WeeklyCheckup = null;
+            record.AiAnalyzed = false; record.AiPending = false;
+            row.AiAnalyzed = false; row.AiPending = false; row.WeeklyCheckupDate = null;
+            row.RiskLevel = record.RiskLevel; row.Headline = record.Headline; row.ContentJson = JsonSerializer.Serialize(record);
+            ctx.PrtgObservations.Where(o => o.HostId == hostId && o.RecordDate == day.Date &&
+                o.ActiveKey != null && keys.Contains(o.EventKey)).ExecuteUpdate(u =>
+                    u.SetProperty(o => o.ActiveKey, (string?)null).SetProperty(o => o.SupplementStatus, "superseded"));
+            ctx.SaveChanges(); tx.Commit(); return true;
+        }
+        });
     }
 
     private bool RecordWasRemoved(long recordId)
@@ -644,6 +734,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 .Where(r => recordIds.Contains(r.RecordId))
                 .ExecuteUpdate(s => s
                     .SetProperty(p => p.ContentJson, string.Empty)
+                    .SetProperty(p => p.OriginalRiskContentJson, (string?)null)
+                    .SetProperty(p => p.WriteRevision, p => p.WriteRevision + 1)
                     .SetProperty(p => p.DetailPruned, true));
             total += updated;
         }
@@ -825,7 +917,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             if (!byId.TryGetValue(latest.RecordId, out var row) || row.HostId != latest.HostId) continue;
             var pair = pairs.FirstOrDefault(p => p.HostId == latest.HostId
-                && string.Equals($"prtg:disk_free_trend:{p.SensorId}", latest.EventKey, StringComparison.Ordinal));
+                && (string.Equals($"prtg:disk_free_trend:{p.SensorId}", latest.EventKey, StringComparison.Ordinal)
+                    || latest.EventKey.StartsWith($"prtg:disk_free_trend:{p.SensorId}:", StringComparison.Ordinal)));
             if (pair.HostId <= 0) continue;
             DailyAnalysisRecord? record;
             try { record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson); }
@@ -859,7 +952,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             var eventMatch = System.Linq.Expressions.Expression.Equal(
                 System.Linq.Expressions.Expression.Property(parameter, nameof(TopIssueRow.EventKey)),
                 System.Linq.Expressions.Expression.Constant(pair.EventKey));
-            var match = System.Linq.Expressions.Expression.AndAlso(hostMatch, eventMatch);
+            var generatedMatch = System.Linq.Expressions.Expression.Call(
+                System.Linq.Expressions.Expression.Property(parameter, nameof(TopIssueRow.EventKey)),
+                typeof(string).GetMethod(nameof(string.StartsWith), [typeof(string)])!,
+                System.Linq.Expressions.Expression.Constant(pair.EventKey + ":"));
+            var match = System.Linq.Expressions.Expression.AndAlso(hostMatch,
+                System.Linq.Expressions.Expression.OrElse(eventMatch, generatedMatch));
             pairMatch = pairMatch == null ? match : System.Linq.Expressions.Expression.OrElse(pairMatch, match);
         }
         if (pairMatch == null) return ctx.TopIssues.Where(_ => false)
@@ -1317,6 +1415,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 Date = row.RecordDate,
                 RiskLevel = row.RiskLevel,
                 AiPending = row.AiPending,
+                RiskReview = row.RiskReviewStatus is "pending" or "unavailable" ? new HistoricalRiskReview
+                { Version = row.RiskProjectionVersion, Status = "pending", Reason = "歷史風險待重評：詳情已精簡，無法重建獨立證據。" } : null,
                 DetailPruned = true
             };
         }

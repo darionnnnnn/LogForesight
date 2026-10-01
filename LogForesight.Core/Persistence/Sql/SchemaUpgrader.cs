@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -43,6 +43,12 @@ internal static class SchemaUpgrader
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "original_risk_content_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "write_revision", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "risk_projection_version", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "risk_review_status", isSqlite ? "TEXT NOT NULL DEFAULT 'unchecked'" : "nvarchar(24) NOT NULL DEFAULT 'unchecked'");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_risk_projection", "risk_projection_version, record_id");
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：這是 SQL 後端上線以來第一張
         // 「不是靠 EnsureCreated 建出來」的全新資料表——既有部署的 DB 已經存在，EnsureCreated
@@ -274,6 +280,15 @@ internal static class SchemaUpgrader
                 content_json nvarchar(max) NOT NULL, recorded_at_utc datetime2 NOT NULL
             )
             """);
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_status",
+            isSqlite ? "TEXT NOT NULL DEFAULT 'shadow'" : "nvarchar(32) NOT NULL DEFAULT 'shadow'");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "run_id",
+            isSqlite ? "INTEGER NULL" : "bigint NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_parent_record_id",
+            isSqlite ? "INTEGER NULL" : "bigint NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_attempt_at_utc",
+            isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations", "IX_lf_prtg_obs_supplement", "supplement_status, supplement_attempt_at_utc");
         AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_hint",
             isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
         AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "decision_key",
@@ -336,6 +351,7 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "cancelled",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_intent", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "prtg_evidence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
             "IX_lf_issue_cases_work_order_closed", "work_order_id, closed_at");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",

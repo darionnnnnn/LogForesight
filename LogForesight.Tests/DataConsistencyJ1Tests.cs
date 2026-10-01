@@ -117,6 +117,7 @@ public class DataConsistencyJ1Tests : IDisposable
     private static void AppendDay(EfAnalysisRecordStore store, long hostId, DateTime date) =>
         store.Append(new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = hostId,
             Host = "SRV-" + hostId,
             Date = date,

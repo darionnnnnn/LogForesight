@@ -69,7 +69,7 @@ public class PermissionFilter : IAuthorizationFilter
         }
         else
         {
-            context.Result = new RedirectResult("/access-denied");
+            context.Result = new RedirectResult($"{context.HttpContext.Request.PathBase}/access-denied");
         }
     }
 }

@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Models;
@@ -45,6 +45,14 @@ internal sealed class PrtgSnapshotJournal
             ? uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.SafeUnescaped).TrimEnd('/')
             : "";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    }
+
+    internal static string Binding(StorageBackend backend, string? url)
+    {
+        var source = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().SourceGeneration;
+        if (source.Length == 0) return Endpoint(url); // 舊診斷模式，不能因此取得正式信任。
+        var epoch = $"{Endpoint(url)}|{source}|{backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()}|{backend.Blob("prtg_resource_generation_revision").ReadVersion()}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(epoch)));
     }
 
     internal State? Load(string endpoint, DateTime now)

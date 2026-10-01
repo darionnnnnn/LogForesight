@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -168,6 +168,11 @@ public class RecordDetailQueryService
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
             RiskBasisText = FormatRiskBasis(record.RiskBasis),
+            RiskReview = caseGrantOnly ? null : record.RiskReview,
+            LogSource = caseGrantOnly ? null : record.LogSource.ToString(),
+            LatestNetiqAttemptStatus = caseGrantOnly ? null : record.LatestNetiqAttemptStatus,
+            LatestNetiqAttemptAtUtc = caseGrantOnly ? null : record.LatestNetiqAttemptAtUtc,
+            PrtgSupplementEligible = caseGrantOnly ? null : record.CanSupplementWithPrtg(),
             HiddenIssueCount = record.HiddenIssueCount,
             // 以下整日敘事在案件授與模式下一律清空（§7）——見上方裁剪處的說明
             Headline = caseGrantOnly ? "" : record.Headline,

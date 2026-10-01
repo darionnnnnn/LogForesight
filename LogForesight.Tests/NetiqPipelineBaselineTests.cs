@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace LogForesight.Tests;
 
@@ -121,6 +121,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var yesterday = DateTime.Today.AddDays(-1);
         var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
         var record = Assert.Single(store.ReadRecent(yesterday, 1));
+        Assert.Equal(AnalysisLogSource.Netiq, record.LogSource);
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
         Assert.False(record.AiAnalyzed);
     }
@@ -316,7 +317,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var secondResult = await pipeline2.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
         var secondCallQueries = _client.Requests.Count - firstCallQueries;
 
-        Assert.Equal(4, secondResult.HostDaysAnalyzed);
+        // 四個新缺日，加上一個昨日仍截斷的主機日；不把截斷紀錄冒稱可供 PRTG 補充的成功結果。
+        Assert.Equal(5, secondResult.HostDaysAnalyzed);
         Assert.True(secondCallQueries < firstCallQueries,
             $"第二次執行應該因為跨日記憶而少查詢很多次（第一次 {firstCallQueries} 次，第二次 {secondCallQueries} 次）");
     }

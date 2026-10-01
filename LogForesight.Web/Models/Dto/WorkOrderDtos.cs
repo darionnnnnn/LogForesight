@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace LogForesight.Web.Models.Dto;
 
@@ -347,6 +347,9 @@ public class WorkOrderDetailDto : WorkOrderRowDto
 
 public class WorkOrderMemberDto
 {
+    public LogForesight.Core.Models.PrtgCaseEvidence? PrtgEvidence { get; set; }
+    public string? PrtgEvidenceParentStatus { get; set; }
+    public string? PrtgEvidenceRecordPath { get; set; }
     public string CaseId { get; set; } = string.Empty;
 
     /// <summary>主機已不存在時 null</summary>

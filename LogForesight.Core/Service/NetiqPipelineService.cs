@@ -441,6 +441,7 @@ public class NetiqPipelineService
         var eventsByIp = new Dictionary<string, List<SentinelEvent>>(StringComparer.OrdinalIgnoreCase);
 
         SentinelSearchResult searchResult;
+        NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "running");
         try
         {
             searchResult = await client.SearchAsync(
@@ -465,6 +466,7 @@ public class NetiqPipelineService
         }
         catch (SentinelClientException ex)
         {
+            NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
             result.AddFailed(batch.Length);
@@ -576,6 +578,7 @@ public class NetiqPipelineService
         // 判定與本機路徑共用同一個函式，不各寫一份
         if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(events.Count, dataIncomplete, sourceDegraded: false))
         {
+            NetiqSourceAttempt.Mark(_backend, target.HostId, date, "retained-incomplete");
             result.AddRerunRetained();
             _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
@@ -607,6 +610,10 @@ public class NetiqPipelineService
             (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null, ct, hostOs: target.Os);
+
+            record.LogSource = AnalysisLogSource.Netiq;
+            record.LatestNetiqAttemptStatus = dataIncomplete ? "partial" : "success";
+            record.LatestNetiqAttemptAtUtc = DateTime.UtcNow;
 
             if (isRerun)
             {
@@ -660,6 +667,7 @@ public class NetiqPipelineService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            NetiqSourceAttempt.Mark(_backend, target.HostId, date, "failed");
             result.AddFailed();
             Log.Warn(ex, "[{Server}] [{Ip}] {Date} 分析失敗", sentinelName, target.IpAddress, date);
             _console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +

@@ -237,7 +237,11 @@ public class PrtgProbeService
         var console = new PrtgProbeConsole(_state);
         console.WriteLine($"探測模式：{(dataFlow ? "小範圍資料流" : "完整環境探測")}");
         console.WriteLine($"開始時間：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
-        console.WriteLine($"程式版本：{typeof(PrtgProbeService).Assembly.GetName().Version}");
+        var assembly = typeof(PrtgProbeService).Assembly;
+        var buildVersion = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString() ?? "unknown";
+        console.WriteLine($"程式版本：{buildVersion}");
         console.WriteLine($"設定版本：{s.Revision}；PRTG 啟用：{(s.PrtgEnabled ? "是" : "否")}；取數策略：{s.PrtgFetchStrategy}");
         console.WriteLine("輸出可能含主機名稱、IP 或 PRTG 訊息；分享前請先檢視並遮蔽。");
         console.WriteLine();

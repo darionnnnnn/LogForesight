@@ -1,7 +1,9 @@
 # 回饋第 52 輪規劃：PRTG 從取數到提前預警的全鏈體檢
 
-> 狀態：第二輪規劃中；第一輪改動保留。2026-09-29 使用者要求先補齊規劃再繼續開發，執行契約見 [第二輪補齊規劃](FEEDBACK-52-ROUND2-PLAN.md)。正式站台證據與 F1–F4 試點門檻仍待提供／定案。
-> 第二輪複查新增 Q3 已定案：PRTG Acknowledged 只表示知悉，不降低故障風險；細節及 V01–V10 驗收見第二輪文件。這項尚未實作，不能與已完成的 14 日風險修正混為一項。
+> **最新決策：2026-09-30 使用者要求以 NetIQ 為基礎，完全排除 PRTG-only。** 先前 C1 獨立建問題及其衍生共同查詢／獨立派工需求已取消，不再作本輪 TODO。有效契約與替代驗收矩陣見 [第二輪 NetIQ 主體修訂](FEEDBACK-52-ROUND2-PLAN.md#netiq-主體修訂本輪有效開發契約)。下方相關段落為先前決策紀錄；本輪重點改為 NetIQ 日紀錄內 PRTG 補充、晚到／重跑一致性、交辦通知及合併提前預警。
+
+> 狀態：2026-10-01 有效 NetIQ 範圍程式實作及隔離驗收已補齊；最終整合回歸、不同模型體檢及正式站台 F1–F4 尚待結案。執行與結案門檻見 [第二輪補齊規劃](FEEDBACK-52-ROUND2-PLAN.md) 的「實用程度結案門檻」。下方原始查核為當時基準，完成現況以第二輪實作紀錄為準。
+> Q3 已實作：PRTG Acknowledged 不再降低故障風險；歷史有效風險投影、持久補追加、案件／通知及日紀錄修訂已接通；原始需求 ID 回查見第二輪 PLAN 末尾。使用者已授權 commit／push 測試版本，正式站台由使用者手動驗收。
 >
 > 基準：`dev`／`d39c887`（2026-09-29）。工作區原有未追蹤 `artifacts/`，本輪不得改動。前次唯讀體檢執行 `dotnet test LogForesight.Tests/LogForesight.Tests.csproj --no-build -v q --filter 'FullyQualifiedName~PrtgRuleEvaluatorTests|FullyQualifiedName~PrtgDailyPipelineTests|FullyQualifiedName~PrtgDiskFormalFlowTests'`：69 通過、0 失敗；這是既有編譯產物的定向測試，不能當作實機或本輪修改後驗收。
 >
@@ -80,7 +82,7 @@
 - 記憶體就地追加及資料庫補追加共用登錄簿；新 finding 進風險、案件與 AI（`LogForesight.Core/Service/HostDayPostProcessor.cs:144-217`、`LogForesight.Core/Service/PrtgDailyPipeline.cs:507-545`）。已存在的 finding 不回寫，也不重算佐證（`docs/PRTG-SPEC.md:812-933`）。
 - **更正前稿併發敘述**：目前 `EfAnalysisRecordStore` 已有程序內 `HostDayLocks`，Append、AttachPrtgFindings、AI／週體檢回寫有鎖，主列與子列寫入有交易（`:57-61,100-105,210,246,324-330,421-422`）。不能僅憑 BACKLOG 就判定一般追加必然不一致。仍須重現驗證 DeleteDays 未持同鎖的刪除／重建空窗（`:430,537`）、先算後寫的舊資料覆蓋，以及若部署允許多程序時的鎖邊界；資料列版本是否必要，依重現結果與支援部署方式決定。
 
-### 已定案產品契約 C1
+### 舊 C1 決策紀錄（2026-09-30 已撤回，不再實作）
 
 - PRTG finding 即使沒有 NetIQ 日誌日紀錄，也要能形成獨立、可指派的監控問題；其來源、取數品質、日期與責任歸屬須清楚，不能偽造「NetIQ 當日已分析」紀錄或提升日誌涵蓋率。沿用既有案件／交辦與通知能力，但其入口與查詢須認得 PRTG-only 事實，不在 Core 複製 Web 權限規則。
 - **實作前核對的資料邊界**：`lf_top_issues.record_id` 非空且參照 `lf_daily_records`；`AttachPrtgFindings` 找不到 NetIQ 主機日就返回 false；案件合格日、問題彙總、郵件批次均以分析紀錄為入口。單純插入假 `DailyAnalysisRecord` 會使 `HasRecord`、`ReadRecent`、重跑選日、趨勢基準及涵蓋統計誤認 NetIQ 已分析。需讓 PRTG-only 觀察具有明確來源識別，並逐一核對上述讀取端、NetIQ 真紀錄晚到時的合併、保留期與刪除、主機改名／合併、重跑冪等；不可只讓案件表有一列卻在清單與通知消失。
@@ -331,4 +333,4 @@ R01 的程式缺陷已由 B3 修正；R04 的風險降級已由 D2 修正；R05 
 
 ### 2026-09-30 續作驗證
 
-快照已接受樣本與待寫批次增加本機復原檔、容量停止與來源防混寫；鏡像頁顯示待寫數量及繁中復原錯誤。全量回歸 5,633 通過／10 略過／0 失敗；之後的採樣策略涵蓋率與位元組預留修正另以定向 197 項全通過驗證。Chrome 隔離站台驗證損壞檔提示及原檔保留。S1 的完整來源／區間契約、S2–S3 獨立問題鏈、S4 通知、S5 歷史有效風險與 S6–S7 驗收仍未完成，詳第二輪 PLAN 末尾，維持實作中。
+快照已接受樣本與待寫批次增加本機復原檔、容量停止與來源防混寫；鏡像頁顯示待寫數量及繁中復原錯誤。全量回歸 5,633 通過／10 略過／0 失敗；之後的採樣策略涵蓋率與位元組預留修正另以定向 197 項全通過驗證。Chrome 隔離站台驗證損壞檔提示及原檔保留。這是當時驗收紀錄，後續完成狀態以第二輪 PLAN 的 2026-10-01 原需求 ID 回查及開發驗收交接為準；PRTG-only 正式模式依使用者取消。

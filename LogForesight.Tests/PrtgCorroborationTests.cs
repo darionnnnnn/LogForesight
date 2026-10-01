@@ -37,6 +37,26 @@ public class PrtgCorroborationTests
     };
 
     [Fact]
+    public void 修訂線索更新明細且維持抑制_不移除其他關聯()
+    {
+        var issue = Prtg(PrtgRuleEvaluator.RuleDown, PrtgSensorCategories.Hardware, "舊明細");
+        var record = Record(Event("disk", 153), issue);
+        record.CorrelationAlerts.Add("原事件關聯");
+        PrtgCorroboration.Apply(record, NoSuppression);
+        issue.SampleMessages = ["新明細"];
+        Assert.Equal(0, PrtgCorroboration.Refresh(record, NoSuppression).Added);
+        Assert.Contains("新明細", Assert.Single(record.CorrelationAlertRefs).Text);
+        PrtgCorroboration.Refresh(record, new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated });
+        Assert.Equal("原事件關聯", Assert.Single(record.CorrelationAlerts));
+        Assert.Single(record.SuppressedCorrelationAlerts);
+        PrtgCorroboration.Refresh(record);
+        Assert.Single(record.SuppressedCorrelationAlerts);
+        record.TopIssues.Remove(issue);
+        PrtgCorroboration.Refresh(record);
+        Assert.Empty(record.SuppressedCorrelationAlerts);
+    }
+
+    [Fact]
     public void storage_磁碟153加硬體warning_只保留同日線索不提高風險()
     {
         var record = Record(Event("disk", 153),

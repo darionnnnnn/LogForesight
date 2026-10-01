@@ -294,6 +294,29 @@ function renderHeader(detail) {
     }
 
     body.appendChild(top);
+    if (detail.logSource) {
+        const source = document.createElement('p'); source.className = 'small text-muted';
+        const status = detail.latestNetiqAttemptStatus ?? '已保存的分析結果';
+        source.textContent = `日誌來源：${detail.logSource}；最新 NetIQ 嘗試：${status}。${detail.prtgSupplementEligible
+            ? '此日可接受可信 PRTG 補充。' : '此日不能接受新的 PRTG 補充；原分析保留，請核對來源或補跑 NetIQ。'}`;
+        body.appendChild(source);
+    }
+    if (detail.riskReview) {
+        const review = document.createElement('div');
+        review.className = 'alert alert-warning small';
+        review.textContent = detail.riskReview.reason;
+        body.appendChild(review);
+        const history = document.createElement('details');
+        const label = document.createElement('summary');
+        label.textContent = `原始歷史判定（${detail.riskReview.originalRiskLevel}）；以下敘事已被修訂，不能作現行佐證`;
+        history.appendChild(label);
+        const oldText = document.createElement('p');
+        oldText.className = 'small text-muted';
+        oldText.textContent = [detail.riskReview.originalHeadline, detail.riskReview.originalSummary].filter(Boolean).join('；');
+        history.appendChild(oldText);
+        body.appendChild(history);
+    }
+
 
     // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
     // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），

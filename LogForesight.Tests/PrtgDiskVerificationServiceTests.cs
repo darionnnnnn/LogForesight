@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
@@ -74,6 +74,8 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         _ruleStore.Save(new RuleFileContent { Rules = new List<KnownIssueRule>() });
 
         var trial = _service.AssessRuleTrial(1);
+        Assert.NotEmpty(trial.RulesFingerprint); Assert.Equal(PrtgDiskVerificationService.ParserSemanticVersion, trial.SemanticVersion);
+        Assert.Equal(DateTimeKind.Utc, trial.AssessedAtUtc.Kind);
         Assert.Equal("no-configured-rule", trial.Status);
         Assert.Contains("沒有已儲存", trial.Message);
         Assert.Empty(_evidence.GetAll());

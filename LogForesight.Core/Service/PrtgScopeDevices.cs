@@ -41,7 +41,7 @@ public static class PrtgScopeDevices
         EfPrtgStore store, IHostStore hostStore, IPrtgResourceGuardSource guardSource,
         SystemSettings settings, IReadOnlyList<Sentinel> sentinels,
         IRunConsole console, IPrtgAddressResolver resolver,
-        IReadOnlyCollection<long>? hostIds)
+        IReadOnlyCollection<long>? hostIds, bool includeGuardInPartial = false)
     {
         var wanted = hostIds?.ToHashSet();
         bool HostWanted(long hostId) => wanted == null || wanted.Contains(hostId);
@@ -100,7 +100,7 @@ public static class PrtgScopeDevices
         all.UnionWith(conflict);
         all.UnionWith(manual);
 
-        var guardInScope = settings.PrtgResourceGuardEnabled && wanted == null;
+        var guardInScope = settings.PrtgResourceGuardEnabled && (wanted == null || includeGuardInPartial);
         var preserve = new HashSet<long>();
         if (guardInScope)
             all.UnionWith(guard);

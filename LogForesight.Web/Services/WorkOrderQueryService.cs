@@ -1,3 +1,4 @@
+﻿using LogForesight.Core.Service;
 using System.Diagnostics;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
@@ -255,6 +256,11 @@ public class WorkOrderQueryService
         var memberDtos = items.Select(c => new WorkOrderMemberDto
         {
                 CaseId = c.CaseId,
+                PrtgEvidence = c.PrtgEvidence,
+                PrtgEvidenceParentStatus = EvidenceParentStatus(c),
+                PrtgEvidenceRecordPath = c.PrtgEvidence != null && hostIdByKey.TryGetValue(HostNameKey.Of(c.HostName), out var evidenceHostId) &&
+                    _visibility.GetVisibleHostIds().Contains(evidenceHostId) && !_visibility.IsCaseGrantOnly(evidenceHostId)
+                    ? $"/records/{evidenceHostId}/{c.PrtgEvidence.RecordDate:yyyy-MM-dd}" : null,
                 HostId = hostIdByKey.TryGetValue(HostNameKey.Of(c.HostName), out var hostId) ? hostId : null,
                 HostName = c.HostName,
                 IssueKey = c.IssueKey,
@@ -279,6 +285,17 @@ public class WorkOrderQueryService
             Page = page,
             PageSize = pageSize
         };
+    }
+
+    private string? EvidenceParentStatus(IssueCase issueCase)
+    {
+        if (issueCase.PrtgEvidence == null) return null;
+        var host = _hosts.FindByName(issueCase.HostName);
+        if (host == null) return "host-deleted";
+        var parent = _records.GetOne([new HostKey { HostId = host.HostId, HostName = host.HostName }], issueCase.PrtgEvidence.RecordDate);
+        if (parent == null) return "deleted-or-not-retained";
+        if (parent.DetailPruned) return "detail-pruned";
+        return parent.TopIssues.Any(i => i.EventKey == issueCase.PrtgEvidence.EventKey) ? "available" : "reanalysed-without-finding";
     }
 
     /// <summary>Warning 進行中成員：從受限主機最近 30 日落盤資料補回已去重趨勢 finding 證據。</summary>
@@ -324,7 +341,7 @@ public class WorkOrderQueryService
         var signature = IssueSignatureKey.TryParseFull(issueKey);
         if (signature == null) return string.Empty;
         var parts = signature.Value.EventKey.Split(':');
-        return parts.Length == 3 ? parts[2] : string.Empty;
+        return parts.Length >= 3 ? parts[2] : string.Empty;
     }
 
     /// <summary>
@@ -387,7 +404,7 @@ public class WorkOrderQueryService
             || !string.Equals(signature.Value.Source, $"PRTG:{expectedCode}", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parts = signature.Value.EventKey.Split(':');
-        if (parts.Length != 3 || !string.Equals(parts[0], "prtg", StringComparison.OrdinalIgnoreCase)
+        if (parts.Length < 3 || !string.Equals(parts[0], "prtg", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(parts[1], expectedCode, StringComparison.OrdinalIgnoreCase) || parts[2].Length == 0) return false;
         sensorId = parts[2];
         return true;
@@ -433,7 +450,7 @@ public class WorkOrderQueryService
         dto.WorkOrderId = o.WorkOrderId;
         dto.Source = o.SourceName;
         dto.EventId = o.EventId;
-        dto.IssueLabel = o.IssueLabel;
+        dto.IssueLabel = PrtgFindingMapper.DisplayStoredLabel(o.IssueLabel);
         dto.PlainExplanation = o.SourceName != null && o.EventId != null
             ? KnownIssueCatalog.PlainExplanationFor(rules, o.SourceName, o.EventId.Value)
             : null;
