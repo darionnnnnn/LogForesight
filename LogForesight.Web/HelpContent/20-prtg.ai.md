@@ -1,4 +1,4 @@
-﻿# PRTG 維護（AI 檢索版）
+# PRTG 維護（AI 檢索版）
 
 PRTG 維護頁有「連線」、「擷取參數」、「鏡像狀態」、「環境探測」、「指定主機補值」和「使用效果」六個頁籤，權限為 Maintain。PRTG 取數下拉同時控制模組開關與取數範圍；資源守門在「系統管理 > 設定 > 資源守門」，因為它也節制 NetIQ 取數。
 
@@ -22,3 +22,5 @@ PRTG 維護頁有「連線」、「擷取參數」、「鏡像狀態」、「環
 - 磁碟須同來源／資源／typed 語意暖機涵蓋 28 日，且來源時區與 Web 伺服器一致；未知與 no-hit 都不能宣稱資源健康。只有可信完整重評能撤回舊 finding，案件人工結論仍保留。
 - 補追加、案件及通知有持久重試，過期只摘要。每名收件人前重查規則、靜音、scope、權限與 SMTP；結果不明允許同身分重寄。歷史弱佐證不升級，待重評可分頁下鑽；AI 舊輸入結果不能覆寫新 PRTG 證據。
 - 匯入只診斷，不搬信任與處置；保留／快照隔離／升級回退操作以使用者說明「保留與復原」為準。現場效益由獨立事故四基準與人工驗收證明，測試數不能證明 1＋1＞2。
+
+Acceptance default segment includes build, parser semantics and visible pilot resource/mapping/disk semantic warm-up fingerprints. Resource or semantic changes split evidence groups; routine probe timestamps do not. Preserve historical incident segments when reviewing old evidence. SMTP acceptance timestamps never imply mailbox delivery.

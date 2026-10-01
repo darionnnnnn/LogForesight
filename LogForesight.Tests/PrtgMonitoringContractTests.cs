@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -44,6 +44,27 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     private static PrtgMonitoringRequest Request(string revision = "") => new()
     { Revision = revision, IdentityConfirmed = true, CoreSystemId = "fixture-core", SourceTimeZoneId = TimeZoneInfo.Local.Id,
         SourceCultureName = "en-US", HostIds = [1], SensorIds = [100] };
+    [Fact]
+    public void 預設驗收分組隨資源語意修訂改變_日常探測時間不切段()
+    {
+        Controller().Put(Request());
+        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        var proof = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100));
+        proof.Update(p => { p.HostId = 1; p.SensorId = 100; p.ResourceGeneration = "r1"; p.DiskSemanticFingerprint = "semantic1"; });
+        string Segment()
+        {
+            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "label", Outcome = "unknown" };
+            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
+        }
+        var first = Segment();
+        proof.Update(p => p.DiskSemanticCheckedAt = DateTimeOffset.Now);
+        Assert.Equal(first, Segment());
+        proof.Update(p => p.DiskSemanticFingerprint = "semantic2");
+        var semantic = Segment(); Assert.NotEqual(first, semantic);
+        proof.Update(p => p.ResourceGeneration = "r2");
+        Assert.NotEqual(semantic, Segment());
+    }
+
     [Fact]
     public void 預防事故可以不填未發生時間_必填介入與前後量測_不能冒稱實際發生()
     {

@@ -17,6 +17,20 @@ public sealed class PrtgAcceptanceController(StorageBackend backend, IVisibility
     ICurrentUser user, IAuditService audit) : ControllerBase
 {
     private const string LabelPrefix = "prtg_acceptance_labels_";
+    private string CurrentSegment()
+    {
+        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var visible = visibility.GetVisibleHostIds().Where(id => !visibility.IsCaseGrantOnly(id)).ToHashSet();
+        var identities = policy.SensorIds.Order().Select(id => new PrtgSensorTimelineStore(
+            backend.Blob(PrtgSensorTimelineStore.Prefix + id)).Get()).Where(p => visible.Contains(p.HostId))
+            .Select(p => new { p.SensorId, p.SourceGeneration, p.ResourceGeneration, p.MappingRevision,
+                p.DiskSemanticFingerprint, p.DiskSemanticValidFrom });
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(identities)))).ToLowerInvariant();
+        var build = typeof(PrtgAcceptanceController).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        return $"{settings.Revision}|{policy.Revision}|{backend.Blob("rules").ReadVersion()}|{PrtgDiskAssessmentService.ParserSemanticVersion}|{build}|{hash}";
+    }
     [HttpGet("export")]
     public IActionResult Export([FromQuery] DateTime from, [FromQuery] DateTime through)
     {
@@ -70,7 +84,7 @@ public sealed class PrtgAcceptanceController(StorageBackend backend, IVisibility
             Timelines = sensors, Labels = labels, TimingSummary = PrtgAcceptanceComparison.TimingSummary(labels), Timings = PrtgAcceptanceComparison.Timings(labels), Comparison = PrtgAcceptanceComparison.Evaluate(labels),
             Segments = labels.GroupBy(i => i.Segment).Select(g => new { Segment = g.Key, Comparison = PrtgAcceptanceComparison.Evaluate(g.ToArray()), TimingSummary = PrtgAcceptanceComparison.TimingSummary(g.ToArray()) }),
             Limitations = "僅含可見試點；無站台效益門檻或獨立事故標籤時不能宣稱實用。請先遮蔽 Core 身分與資源識別再對外提供。鏡像數量與已取得資料不等於全站完整。",
-            LabelTemplate = new PrtgAcceptanceIncident { IncidentId = "現場獨立事故識別", EvidenceReference = "工單／事故報告／原生 PRTG 告警對照", Segment = $"{settings.Revision}|{policy.Revision}|{backend.Blob("rules").ReadVersion()}" }
+            LabelTemplate = new PrtgAcceptanceIncident { IncidentId = "現場獨立事故識別", EvidenceReference = "工單／事故報告／原生 PRTG 告警對照", Segment = CurrentSegment() }
         };
         audit.Record("prtg_acceptance_export", "匯出可見 NetIQ 試點的取數、判定與人工事故比對證據。", "prtg", null);
         return File(JsonSerializer.SerializeToUtf8Bytes(data, new JsonSerializerOptions { WriteIndented = true }),
@@ -110,7 +124,7 @@ public sealed class PrtgAcceptanceController(StorageBackend backend, IVisibility
             incident.CombinedActionableAt, incident.CombinedEvidenceAvailableAt, incident.DispositionAt }.Any(t => t > now))
             return BadRequest(ApiResponse.Fail("validation_failed", "驗收時間不能在未來；未知請留空。"));
         if (string.IsNullOrWhiteSpace(incident.Segment))
-            incident.Segment = $"{new SystemSettingsStore(backend.Blob("system_settings")).Get().Revision}|{new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision}|{backend.Blob("rules").ReadVersion()}";
+            incident.Segment = CurrentSegment();
         incident.ReviewedBy = user.UserId.ToString(); incident.ReviewedAt = DateTimeOffset.UtcNow;
         backend.Blob(LabelPrefix + incident.HostId).Mutate(json =>
         {
