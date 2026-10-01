@@ -1,4 +1,4 @@
-namespace LogForesight.Web.Models.Dto;
+﻿namespace LogForesight.Web.Models.Dto;
 
 /// <summary>
 /// 問題查詢「依問題」視角的分頁結果（回饋二十輪 B2）：在既有分頁結果上附加去重主機總數，
@@ -233,6 +233,11 @@ public class RecordDetailDto
     /// <summary>日風險等級的判定依據說明（docs/archive/HISTORY.md #11），已轉為白話文字；
     /// null＝舊紀錄（本欄位問世前寫入），前端顯示通用說明。</summary>
     public string? RiskBasisText { get; set; }
+    public LogForesight.Core.Models.HistoricalRiskReview? RiskReview { get; set; }
+    public string? LogSource { get; set; }
+    public string? LatestNetiqAttemptStatus { get; set; }
+    public DateTime? LatestNetiqAttemptAtUtc { get; set; }
+    public bool? PrtgSupplementEligible { get; set; }
 
     /// <summary>因全站嚴重度顯示設定被隱藏的問題數（0＝無隱藏或非 SiteHidden 模式）；
     /// 風險等級判定不受此設定影響，這個數字只用來解釋「為什麼看到的問題比判定依據少」</summary>

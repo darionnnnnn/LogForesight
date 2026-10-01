@@ -640,6 +640,23 @@ function renderMembers(data) {
                         wrap.appendChild(detail);
                     }
                 }
+                if (item.prtgEvidence) {
+                    const evidence = document.createElement('details');
+                    const label = document.createElement('summary');
+                    label.textContent = `PRTG 建案證據｜${formatDate(item.prtgEvidence.recordDate)}`;
+                    const detail = document.createElement('p');
+                    detail.className = 'small text-wrap';
+                    const parentLabels = { available: item.prtgEvidenceRecordPath ? '原分析仍可查閱' : '原分析仍保留；您的權限僅限此案件證據', 'host-deleted': '主機已刪除',
+                        'deleted-or-not-retained': '原分析已刪除或超過保留期', 'detail-pruned': '原分析詳情已精簡',
+                        'reanalysed-without-finding': '原日期已重新分析，目前不含此判定' };
+                    detail.textContent = `${item.prtgEvidence.summary}（品質：${item.prtgEvidence.quality}）。${parentLabels[item.prtgEvidenceParentStatus] || '原分析狀態未知'}。這是建案時保留的證據；目前狀態請查最新分析紀錄。`;
+                    evidence.append(label, detail);
+                    if (item.prtgEvidenceRecordPath && item.prtgEvidenceParentStatus === 'available') {
+                        const link = document.createElement('a'); link.href = appUrl(item.prtgEvidenceRecordPath);
+                        link.textContent = '查看原日期分析與 PRTG 補充問題'; evidence.append(link);
+                    }
+                    wrap.appendChild(evidence);
+                }
                 return wrap;
             }
         }

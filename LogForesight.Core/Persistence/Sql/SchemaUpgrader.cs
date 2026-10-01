@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -43,6 +43,12 @@ internal static class SchemaUpgrader
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "original_risk_content_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "write_revision", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "risk_projection_version", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "risk_review_status", isSqlite ? "TEXT NOT NULL DEFAULT 'unchecked'" : "nvarchar(24) NOT NULL DEFAULT 'unchecked'");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_risk_projection", "risk_projection_version, record_id");
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：這是 SQL 後端上線以來第一張
         // 「不是靠 EnsureCreated 建出來」的全新資料表——既有部署的 DB 已經存在，EnsureCreated
@@ -244,6 +250,70 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_period", "period_start");
 
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
+            isSqlite ? SqliteCreatePrtgSampledBatches : SqlServerCreatePrtgSampledBatches);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
+            "IX_lf_prtg_batch_created", "created_at");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_observations", isSqlite ? """
+            CREATE TABLE lf_prtg_observations (
+                snapshot_id TEXT NOT NULL PRIMARY KEY, decision_key TEXT NOT NULL DEFAULT '', active_key TEXT NULL,
+                host_id INTEGER NOT NULL, record_date TEXT NOT NULL,
+                device_objid INTEGER NOT NULL, sensor_objid INTEGER NULL,
+                rule_code TEXT NOT NULL, event_key TEXT NOT NULL DEFAULT '', source_name TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '', severity_rank INTEGER NOT NULL DEFAULT 0,
+                elevates_day_risk INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0,
+                source_generation TEXT NULL, source_hint TEXT NOT NULL DEFAULT '', resource_generation TEXT NULL,
+                quality_reason TEXT NOT NULL, format_version INTEGER NOT NULL,
+                content_json TEXT NOT NULL, recorded_at_utc TEXT NOT NULL
+            )
+            """ : """
+            CREATE TABLE lf_prtg_observations (
+                snapshot_id nvarchar(64) NOT NULL PRIMARY KEY, decision_key nvarchar(64) NOT NULL DEFAULT '', active_key nvarchar(64) NULL,
+                host_id bigint NOT NULL, record_date datetime2 NOT NULL,
+                device_objid bigint NOT NULL, sensor_objid bigint NULL,
+                rule_code nvarchar(100) NOT NULL, event_key nvarchar(255) NOT NULL DEFAULT '', source_name nvarchar(255) NOT NULL DEFAULT '',
+                category nvarchar(20) NOT NULL DEFAULT '', severity_rank int NOT NULL DEFAULT 0,
+                elevates_day_risk bit NOT NULL DEFAULT 0, suppressed bit NOT NULL DEFAULT 0,
+                source_generation nvarchar(100) NULL, source_hint nvarchar(64) NOT NULL DEFAULT '', resource_generation nvarchar(100) NULL,
+                quality_reason nvarchar(255) NOT NULL, format_version int NOT NULL,
+                content_json nvarchar(max) NOT NULL, recorded_at_utc datetime2 NOT NULL
+            )
+            """);
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_status",
+            isSqlite ? "TEXT NOT NULL DEFAULT 'shadow'" : "nvarchar(32) NOT NULL DEFAULT 'shadow'");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "run_id",
+            isSqlite ? "INTEGER NULL" : "bigint NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_parent_record_id",
+            isSqlite ? "INTEGER NULL" : "bigint NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_attempt_at_utc",
+            isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations", "IX_lf_prtg_obs_supplement", "supplement_status, supplement_attempt_at_utc");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_hint",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "decision_key",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "active_key",
+            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "event_key",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_name",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "category",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(20) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "severity_rank",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "elevates_day_risk",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "suppressed",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
+            "IX_lf_prtg_obs_host_date", "host_id, record_date");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
+            "IX_lf_prtg_obs_recorded", "recorded_at_utc");
+        AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
+            "IX_lf_prtg_obs_active", "active_key", "active_key IS NOT NULL");
+
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_host_map",
             isSqlite ? SqliteCreatePrtgHostMap : SqlServerCreatePrtgHostMap);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_host_map",
@@ -281,6 +351,7 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "cancelled",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_intent", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "prtg_evidence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
             "IX_lf_issue_cases_work_order_closed", "work_order_id, closed_at");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
@@ -1204,6 +1275,20 @@ internal static class SchemaUpgrader
             max_value float NULL,
             coverage float NULL,
             quality nvarchar(16) NOT NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreatePrtgSampledBatches = """
+        CREATE TABLE lf_prtg_sampled_batches (
+            batch_id TEXT NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePrtgSampledBatches = """
+        CREATE TABLE lf_prtg_sampled_batches (
+            batch_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
             created_at datetime2 NOT NULL
         )
         """;

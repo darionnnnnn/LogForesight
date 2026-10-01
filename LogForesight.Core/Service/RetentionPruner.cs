@@ -1,3 +1,4 @@
+﻿using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using NLog;
 
@@ -152,6 +153,30 @@ public static class RetentionPruner
         try
         {
             var prtgPruned = backend.PrtgStore().Prune(retention.PrtgRetentionDays);
+            var shadowPruned = backend.PrtgObservationStore().PruneShadow(retention.PrtgRetentionDays, DateTime.UtcNow);
+            shadowPruned += backend.PrtgObservationStore().PruneCompleted(retention.PrtgRetentionDays, DateTime.UtcNow);
+            // 已選試點及未完成有效判定仍保留身分證據；只清理無引用的過期診斷／退役 sensor。
+            var selected = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().SensorIds
+                .Select(id => PrtgSensorTimelineStore.Prefix + id).ToArray();
+            using (var ctx = backend.CreateContext())
+            {
+                var cutoff = DateTime.Now.AddDays(-retention.PrtgRetentionDays);
+                var keys = ctx.Blobs.Where(b => b.UpdatedAt < cutoff &&
+                    (b.BlobKey.StartsWith("prtg_import_diagnostic_") ||
+                     (b.BlobKey.StartsWith(PrtgSensorTimelineStore.Prefix) && !selected.Contains(b.BlobKey))))
+                    .OrderBy(b => b.UpdatedAt).Take(100).Select(b => b.BlobKey).ToArray();
+                var candidateSensors = keys.Where(k => k.StartsWith(PrtgSensorTimelineStore.Prefix))
+                    .Select(k => long.TryParse(k[PrtgSensorTimelineStore.Prefix.Length..], out var id) ? (long?)id : null)
+                    .Where(id => id != null).ToArray();
+                var unfinishedSensors = ctx.PrtgObservations.Where(o => o.ActiveKey != null &&
+                    o.SupplementStatus != "applied" && candidateSensors.Contains(o.SensorObjid)).Select(o => o.SensorObjid).Distinct().ToArray()
+                    .Select(id => PrtgSensorTimelineStore.Prefix + id).ToHashSet();
+                var disposable = keys.Where(k => !unfinishedSensors.Contains(k)).ToArray();
+                var diagnostics = ctx.Blobs.Where(b => disposable.Contains(b.BlobKey)).ExecuteDelete();
+                if (diagnostics > 0) console.WriteLine($"已清除 {diagnostics} 份過期 PRTG 診斷包／無待辦引用的退役感測器證據（單輪最多 100 份）。");
+            }
+            if (shadowPruned > 0)
+                console.WriteLine($"已清除 {shadowPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 判定快照。");
             if (prtgPruned > 0)
                 console.WriteLine($"已清除 {prtgPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 鏡像資料。");
         }

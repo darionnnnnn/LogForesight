@@ -79,6 +79,93 @@ public class PrtgFindingsRegistryTests : IDisposable
         Assert.Empty(PrtgFindingsRegistry.Empty.For(101, DateTime.Today));
     }
 
+    [Theory]
+    [InlineData(AnalysisLogSource.Unknown, false)]
+    [InlineData(AnalysisLogSource.Local, false)]
+    [InlineData(AnalysisLogSource.Netiq, true)]
+    public void Prtg補充資格依持久化來源_低風險精簡不丟來源(AnalysisLogSource source, bool eligible)
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = DateTime.Today,
+            LogSource = source, RiskLevel = "低",
+            TopIssues = new() { new() { LogName = "System", Source = "disk", EventId = 7 } }
+        };
+        store.Append(record);
+        var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
+        Assert.Equal(source, persisted.LogSource);
+        Assert.Equal(eligible, persisted.CanSupplementWithPrtg());
+        var registry = new PrtgFindingsRegistry();
+        PublishToday(registry, ByHost(101, Finding(2001)));
+        Assert.Equal(eligible ? 1 : 0,
+            HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101));
+        Assert.Equal(eligible ? 2 : 1, record.TopIssues.Count);
+        Assert.Equal(eligible ? 2 : 1, Assert.Single(store.ReadRecent(DateTime.Today, 1)).TopIssues.Count);
+    }
+
+    [Theory]
+    [InlineData(AnalysisLogSource.Unknown)]
+    [InlineData(AnalysisLogSource.Local)]
+    public void 資料庫直接補追加不得繞過Netiq來源資格(AnalysisLogSource source)
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = DateTime.Today,
+            LogSource = source, RiskLevel = "低"
+        };
+        store.Append(record);
+        var signature = Finding(2001);
+        Assert.False(store.AttachPrtgFindings(101, DateTime.Today, new[] { signature }, NoPatternIds, out _));
+        Assert.Empty(Assert.Single(store.ReadRecent(DateTime.Today, 1)).TopIssues);
+        using var ctx = _fx.NewContext();
+        Assert.Empty(ctx.TopIssues);
+    }
+
+    [Fact]
+    public void 曾追加成功後主列被本機紀錄取代_不得憑舊旗標改記憶體()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = DateTime.Today,
+            LogSource = AnalysisLogSource.Netiq, RiskLevel = "低"
+        };
+        store.Append(record);
+        var registry = new PrtgFindingsRegistry();
+        PublishToday(registry, ByHost(101, Finding(2001)));
+        Assert.True(registry.AttachExclusive(101, record.Date,
+            () => store.AttachPrtgFindings(101, record.Date, new[] { Finding(2001) }, NoPatternIds, out _)));
+        store.DeleteDays(new[] { record.Date });
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = record.Date,
+            LogSource = AnalysisLogSource.Local, RiskLevel = "低"
+        });
+        Assert.Equal(0, HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101));
+        Assert.Empty(record.TopIssues);
+        Assert.Empty(Assert.Single(store.ReadRecent(record.Date, 1)).TopIssues);
+    }
+
+    [Fact]
+    public void Netiq成功查詢零事件_仍能補追加PRTG且重試不重複()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var record = new DailyAnalysisRecord
+        {
+            HostId = 101, Host = "SRV-TEST", Date = DateTime.Today,
+            LogSource = AnalysisLogSource.Netiq, RiskLevel = "低"
+        };
+        store.Append(record);
+        var registry = new PrtgFindingsRegistry();
+        PublishToday(registry, ByHost(101, Finding(2001)));
+        Assert.Equal(1, HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101));
+        for (var attempt = 0; attempt < 5; attempt++)
+            Assert.Equal(0, HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101));
+        Assert.Single(Assert.Single(store.ReadRecent(record.Date, 1)).TopIssues);
+    }
+
     [Fact]
     public void AttachPrtgFindings_同時併入記憶體紀錄與資料庫()
     {
@@ -88,6 +175,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var date = DateTime.Today;
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = date,
@@ -114,6 +202,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = DateTime.Today,
@@ -137,6 +226,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var date = DateTime.Today;
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = date,
@@ -161,6 +251,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 999,
             Host = "SRV-OTHER",
             Date = DateTime.Today,
@@ -181,6 +272,7 @@ public class PrtgFindingsRegistryTests : IDisposable
     {
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = DateTime.Today,
@@ -328,6 +420,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var olderDay = DateTime.Today.AddDays(-3);
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = olderDay,
@@ -360,6 +453,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var oldDay = DateTime.Today.AddDays(-10);
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = oldDay,
@@ -391,6 +485,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         // 刻意不 Append：資料庫裡沒有這個主機日
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101,
             Host = "SRV-TEST",
             Date = DateTime.Today,
@@ -557,6 +652,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101, Host = "SRV-TEST", Date = DateTime.Today, RiskLevel = RiskLevels.Low, AiAnalyzed = false,
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 2 } }
         };
@@ -567,14 +663,14 @@ public class PrtgFindingsRegistryTests : IDisposable
 
         HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
 
-        Assert.Equal(RiskLevels.High, record.RiskLevel);
-        Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
+        Assert.Equal(RiskLevels.Medium, record.RiskLevel);
+        Assert.NotEqual(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
         Assert.True(record.AiPending);
         var memoryRef = Assert.Single(record.CorrelationAlertRefs);
         Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, memoryRef.PatternId);
 
         var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));
-        Assert.Equal(RiskLevels.High, persisted.RiskLevel);
+        Assert.Equal(RiskLevels.Medium, persisted.RiskLevel);
         Assert.Equal(record.CorrelationAlerts, persisted.CorrelationAlerts);
         Assert.Equal(CorrelationPatternIds.PrtgStorageCorroborated, Assert.Single(persisted.CorrelationAlertRefs).PatternId);
         using var ctx = _fx.NewContext();
@@ -587,6 +683,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
         var record = new DailyAnalysisRecord
         {
+            LogSource = AnalysisLogSource.Netiq,
             HostId = 101, Host = "SRV-TEST", Date = DateTime.Today, RiskLevel = RiskLevels.Low, AiAnalyzed = false,
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 2 } }
         };
@@ -599,7 +696,7 @@ public class PrtgFindingsRegistryTests : IDisposable
         HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
 
         Assert.Empty(record.CorrelationAlerts);
-        Assert.StartsWith("【儲存故障雙重確認】", Assert.Single(record.SuppressedCorrelationAlerts));
+        Assert.StartsWith("【儲存異常同日訊號】", Assert.Single(record.SuppressedCorrelationAlerts));
         Assert.NotEqual(CorrelationPatternIds.PrtgStorageCorroborated, record.RiskBasis);
 
         var persisted = Assert.Single(store.ReadRecent(DateTime.Today, 1));

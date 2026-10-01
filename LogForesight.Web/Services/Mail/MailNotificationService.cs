@@ -1,3 +1,4 @@
+﻿using System.Text.Json;
 using System.Text;
 using NLog;
 
@@ -30,6 +31,7 @@ namespace LogForesight.Web.Services.Mail;
 /// </summary>
 public class MailNotificationService
 {
+    private readonly StorageBackend? _prtgBackend;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>執行摘要／每日週報信，明細行數上限（回饋十六輪批次A-5）：2000 台規模下
@@ -83,6 +85,7 @@ public class MailNotificationService
     /// _issueOwners／_issueAggregates 的既有慣例，測試不注入時問題優先區塊靜默留空，
     /// 不影響其餘欄位（統計行／熔斷／可見範圍過濾等既有行為完全不變）。</summary>
     private readonly MailIssueDigest? _issueDigest;
+    private readonly PrtgMonitoringPolicyStore? _prtgMonitoring;
 
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
@@ -97,7 +100,7 @@ public class MailNotificationService
         ScheduleFreshnessService freshness,
         IIssueOwnerStore? issueOwners = null,
         IIssueAggregateQuery? issueAggregates = null,
-        MailIssueDigest? issueDigest = null)
+        MailIssueDigest? issueDigest = null, PrtgMonitoringPolicyStore? prtgMonitoring = null, StorageBackend? prtgBackend = null)
     {
         _settingsStore = settingsStore;
         _sender = sender;
@@ -112,6 +115,8 @@ public class MailNotificationService
         _freshness = freshness;
         _issueOwners = issueOwners;
         _issueDigest = issueDigest;
+        _prtgMonitoring = prtgMonitoring;
+        _prtgBackend = prtgBackend;
     }
 
     // ── 對外三路觸發 ──────────────────────────────────────────────────────
@@ -192,6 +197,21 @@ public class MailNotificationService
     /// 呼叫多次）。時刻比對用「現在 &gt;= 設定時刻」而非精準相等——輪詢間隔與伺服器負載都可能
     /// 讓精準比對錯過那一分鐘，>= 加上「今天還沒寄過」的狀態防重複，兩者合起來才是可靠的每日觸發。
     /// </summary>
+    public async Task RetryPendingUrgentAsync(CancellationToken ct = default)
+    {
+        var day = DateTime.Today.AddDays(-1);
+        if (!_state.Get().UrgentOutbox.Values.Any(i => i.RecordDate.Date == day && i.Status != "smtp-accepted")) return;
+        await _notifyGate.WaitAsync(ct);
+        try
+        {
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled || !settings.MailUrgentEnabled) return;
+            var records = _records.Query(new RecordQueryFilter { Hosts = null, From = day, To = day, RiskLevels = new[] { RiskLevels.High } });
+            await SendUrgentNotificationsAsync(settings, records, BuildContext(), day, day, ct);
+        }
+        finally { _notifyGate.Release(); }
+    }
+
     public async Task CheckAndSendDailyWeeklyAsync(DateTime now, CancellationToken ct = default)
     {
         try
@@ -200,6 +220,7 @@ public class MailNotificationService
             // SchedulerHostedService.TickAsync 的排程窗口判斷之前呼叫且沒有自己的 try/catch
             // （文件註解宣稱「內部自行 try/catch 到底...不需要額外保護」），一旦 Get() 拋例外，
             // 整個 TickAsync 連同下方排程窗口判斷都會被跳過，等於通知路徑間接卡住了排程觸發。
+            await RetryPendingUrgentAsync(ct);
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled) return;
 
@@ -475,7 +496,16 @@ public class MailNotificationService
             _state.Update(s =>
             {
                 if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
-                if (urgent) foreach (var key in keys) s.UrgentSentKeys.Add(key);
+                if (urgent)
+                {
+                    foreach (var key in keys) s.UrgentSentKeys.Add(key);
+                    foreach (var record in _records.Query(new RecordQueryFilter { From = from, To = to }))
+                    {
+                        s.UrgentSentKeys.Add(UrgentRecordKey(record));
+                        foreach (var fact in PrtgUrgentFacts(record))
+                        { s.PrtgUrgentAcceptedFacts[fact.Key] = fact.Value; s.PrtgUrgentFactSeenAtUtc[fact.Key] = DateTime.UtcNow; }
+                    }
+                }
             });
         }
         catch (Exception ex)
@@ -592,9 +622,9 @@ public class MailNotificationService
     /// **永久失效收件人排除**（回饋十七輪批次B-1）：連續失敗達門檻的收件人不進清單，不嘗試寄送。
     /// </summary>
     private (List<string> Order, Dictionary<string, RecipientView> Views) ResolvePerRecipient(
-        SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx)
+        SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, bool includeSuspended = false)
     {
-        var suspended = new HashSet<string>(GetSuspendedRecipients(), StringComparer.OrdinalIgnoreCase);
+        var suspended = includeSuspended ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : new HashSet<string>(GetSuspendedRecipients(), StringComparer.OrdinalIgnoreCase);
 
         var globalRecipients = settings.MailRecipients
             .Where(r => !string.IsNullOrWhiteSpace(r))
@@ -716,36 +746,175 @@ public class MailNotificationService
     private async Task SendUrgentNotificationsAsync(
         SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct)
     {
-        var highRisk = records.Where(r => r.RiskLevel == RiskLevels.High).ToList();
-        if (highRisk.Count == 0) return;
-
+        // 固定本輪起點，避免 store 回傳共用物件時設定修改連帶改掉比較基準。
+        settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(settings))!;
         var state = _state.Get();
-        var pending = highRisk.Where(r => !state.UrgentSentKeys.Contains(RecordKey(r))).ToList();
+        var policyRevision = _prtgMonitoring?.Get().Revision;
+        var scopeReader = _prtgBackend == null ? null : new PrtgScopeRevisionReader(_prtgBackend, _hosts);
+        var scopeRevision = scopeReader?.Read();
+        _state.Update(s =>
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-Math.Max(14, settings.RetentionDays));
+            foreach (var fact in records.SelectMany(PrtgUrgentFacts)) s.PrtgUrgentFactSeenAtUtc[fact.Key] = DateTime.UtcNow;
+            foreach (var key in s.UrgentOutbox.Where(p => p.Value.RecordDate < cutoff.Date).Select(p => p.Key).ToArray())
+                s.UrgentOutbox.Remove(key);
+            foreach (var key in s.PrtgUrgentAcceptedFacts.Keys.Where(k =>
+                !s.PrtgUrgentFactSeenAtUtc.TryGetValue(k, out var seen) || seen < cutoff).ToArray())
+            { s.PrtgUrgentAcceptedFacts.Remove(key); s.PrtgUrgentFactSeenAtUtc.Remove(key); }
+        });
+        var pending = records.Where(r => r.RiskLevel == RiskLevels.High && r.RiskReview?.Status != "pending")
+            .Where(r => !state.UrgentSentKeys.Contains(UrgentRecordKey(r)))
+            .Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg) || r.CanSupplementWithPrtg())
+            .Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg) ||
+                r.Date.Date == DateTime.Today.AddDays(-1)) // 過期補充只進摘要，不回溯即時通知。
+            .Where(r => PrtgUrgentFacts(r).Count == 0 ||
+                PrtgUrgentFacts(r).Any(f => f.Value > state.PrtgUrgentAcceptedFacts.GetValueOrDefault(f.Key)) ||
+                r.TopIssues.Any(i => !PrtgFindingMapper.IsPrtg(i) && !i.Suppressed && i.ElevatesDayRisk))
+            .ToList();
         if (pending.Count == 0) return;
-
-        var (order, views) = ResolvePerRecipient(settings, pending, ctx);
-
-        // 沒人可收（全域清單空且無負責人 email，或全數因連續失敗被排除）：這批 pending 完全
-        // 不標記，設定補齊後下次執行自動補寄——修掉「先啟用通知、後填收件人」那幾天永久漏寄的
-        // 路徑（回饋十六輪體檢發現2b）
+        var (order, views) = ResolvePerRecipient(settings, pending, ctx, includeSuspended: true);
+        if (pending.All(r => r.TopIssues.Any(PrtgFindingMapper.IsPrtg)))
+            order.RemoveAll(email => views[email].Detail is not { Count: > 0 });
+        _state.Update(s =>
+        {
+            foreach (var record in pending)
+            {
+                var key = UrgentRecordKey(record);
+                if (!s.UrgentOutbox.TryGetValue(key, out var intent))
+                    s.UrgentOutbox[key] = intent = new MailUrgentIntent
+                    {
+                        Key = key, HostId = record.HostId, RecordDate = record.Date,
+                        SettingsRevision = settings.Revision, ProblemKeys = record.TopIssues.Select(i => i.EventKey).ToList()
+                    };
+                intent.Status = "pending";
+                intent.UpdatedAtUtc = DateTime.UtcNow;
+                foreach (var email in order.Where(e => views[e].Detail?.Any(r => r.HostId == record.HostId && r.Date == record.Date) == true))
+                    intent.Recipients[email] = "pending";
+                if (intent.Recipients.Count == 0) intent.Status = "no-qualified-recipient";
+            }
+        });
         if (order.Count == 0) return;
-
-        // 全站聚合統計行（回饋十七輪體檢輪修正）：與 SendRunSummaryAsync 的 statsLine 同樣用
-        // 未經可見範圍過濾的 pending.Count，每位收件人共用同一句，不因各自 Detail 的子集而縮水。
-        // MarkSent 的 zero-coverage fallback（見其文件說明）前提是「coverage 為空的 record 仍會
-        // 被統計行如實反映」——這個前提只有在統計行是全站聚合時才成立；先前這裡的統計行是用
-        // 已過濾後的 view.Detail 現算，收件人看得到部分主機、看不到的那些主機就連統計數字都
-        // 沒被提及，卻仍被標記成已通知，是真實的靜默漏寄。
         var globalStatsLine = $"本次執行共 {pending.Count} 筆高風險主機日達門檻";
+        var attemptedKeys = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var issueRowsCache = new Dictionary<string, List<MailIssueRow>>();
         (string Subject, string Body) BuildMessage(RecipientView view) =>
-            BuildUrgentMessage(settings, globalStatsLine, view.Detail, BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds), ctx);
+            BuildUrgentMessage(settings, globalStatsLine, view.Detail, BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds), BuildContext());
 
-        // 標記語意：涵蓋此 record 的信全部寄成功才標記已寄（回饋十六輪體檢發現2a 的根修）——
-        // 寧可讓已收到的人下次重複收到，也不漏寄。放在 SendPerRecipientAsync 的 finally 裡
-        // 執行（見其文件說明）：取消例外中斷迴圈時，中斷前已寄成的部分仍要落地標記。
-        await SendPerRecipientAsync(settings, order, views, BuildMessage, RecordKey, ct,
-            onComplete: (success, coverage) => MarkSent(settings, pending, success, coverage, s => s.UrgentSentKeys));
+        RecipientView? Recheck(string email, RecipientView original)
+        {
+            var currentSettings = _settingsStore.Get();
+            var policy = _prtgMonitoring?.Get();
+            if (!currentSettings.MailEnabled || !currentSettings.MailUrgentEnabled ||
+                currentSettings.SmtpServer != settings.SmtpServer || currentSettings.SmtpPort != settings.SmtpPort ||
+                currentSettings.SmtpUseTls != settings.SmtpUseTls || currentSettings.SmtpAccount != settings.SmtpAccount ||
+                currentSettings.SmtpPasswordEnc != settings.SmtpPasswordEnc || currentSettings.MailFrom != settings.MailFrom ||
+                GetSuspendedRecipients().Contains(email, StringComparer.OrdinalIgnoreCase)) return null;
+            var liveContext = BuildContext();
+            var currentRecords = _records.Query(new RecordQueryFilter { From = from, To = to, Hosts = null, RiskLevels = (currentSettings.MailOnRunCompleted ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }) });
+            var allowedKeys = (original.Detail ?? new()).Select(UrgentRecordKey).ToHashSet(StringComparer.Ordinal);
+            var (_, liveViews) = ResolvePerRecipient(currentSettings, currentRecords, liveContext, includeSuspended: true);
+            if (!liveViews.TryGetValue(email, out var liveView)) return null;
+            if (liveView.Detail == null) return original.Detail == null ? liveView : null;
+            var visible = liveView.VisibleHostIds;
+            var detail = liveView.Detail.Where(r => allowedKeys.Contains(UrgentRecordKey(r)))
+                .Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg) ||
+                    (currentSettings.PrtgEnabled && PrtgOperationScope.SameSettings(settings, currentSettings) &&
+                     (policy == null || policy.Revision == policyRevision && policy.Ready(currentSettings.PrtgUrl) &&
+                        policy.HostIds.Contains(r.HostId) && r.TopIssues.Where(PrtgFindingMapper.IsPrtg).All(i =>
+                            i.PrtgSourceGeneration == policy.SourceGeneration && i.EventKey.Split(':') is { Length: >= 3 } parts &&
+                            long.TryParse(parts[2], out var sensorId) && policy.SensorIds.Contains(sensorId) &&
+                            CurrentResource(r.HostId, sensorId, i))) &&
+                     (scopeReader == null || scopeReader.Read() == scopeRevision) &&
+                     r.CanSupplementWithPrtg() && liveContext.Host(r.HostId) is { Active: true, MergedInto: null }))
+                .ToList();
+            return detail.Count == 0 && original.Detail?.Count > 0 ? null : new RecipientView(detail, visible);
+        }
+        bool CurrentResource(long hostId, long sensorId, LogIssueSignature issue)
+        {
+            if (_prtgBackend == null) return true;
+            var host = _hosts.GetAll().FirstOrDefault(h => h.HostId == hostId);
+            if (host == null || host.Source != "netiq") return false;
+            var rules = new KnownIssueRuleStore(_prtgBackend.Blob("rules"));
+            if (!rules.Exists) return false;
+            {
+                var current = rules.Load().Content?.Rules.FirstOrDefault(r => r.Id == issue.RuleId && r.Enabled && r.Platform == "prtg");
+                if (current == null) return false;
+                using var db = _prtgBackend.CreateContext();
+                var json = db.PrtgObservations.Where(o => o.ActiveKey != null && o.HostId == hostId && o.EventKey == issue.EventKey)
+                    .OrderByDescending(o => o.RecordDate).Select(o => o.ContentJson).FirstOrDefault();
+                if (json == null) return false;
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var rule = doc.RootElement.GetProperty("Finding").GetProperty("Rule").Deserialize<KnownIssueRule>();
+                if (System.Text.Json.JsonSerializer.Serialize(rule) != System.Text.Json.JsonSerializer.Serialize(current)) return false;
+            }
+            var suppressionStore = new MuteAwareSuppressionStore(new SuppressionStore(_prtgBackend.Blob("suppressions")), _issueOwners ?? new IssueOwnerStore(_prtgBackend.Blob("issue_owners")));
+            var suppressions = suppressionStore.LoadAll();
+            var copy = System.Text.Json.JsonSerializer.Deserialize<LogIssueSignature>(System.Text.Json.JsonSerializer.Serialize(issue))!;
+            SuppressionFilter.MarkSuppressed([copy], SuppressionFilter.ActiveForHost(suppressions, host.HostName, host.GroupIds, DateTime.Now),
+                SuppressionFilter.MutesOf(suppressions), DateTime.Today.AddDays(-1));
+            if (copy.Suppressed) return false;
+            var evidence = new PrtgSensorTimelineStore(_prtgBackend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Get();
+            return evidence.HostId == hostId && evidence.SourceGeneration == issue.PrtgSourceGeneration &&
+                evidence.ResourceGeneration == issue.PrtgResourceGeneration && evidence.MappingRevision ==
+                _prtgBackend.Blob(LogForesight.Core.Persistence.Sql.EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+        }
+        await SendPerRecipientAsync(settings, order, views, BuildMessage, UrgentRecordKey, ct,
+            onComplete: (success, coverage) =>
+            {
+                MarkSent(settings, pending.Where(r => r.TopIssues.Any(PrtgFindingMapper.IsPrtg)).ToList(), success, coverage,
+                    s => s.UrgentSentKeys, UrgentRecordKey, allowZeroCoverage: false);
+                MarkSent(settings, pending.Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg)).ToList(), success, coverage,
+                    s => s.UrgentSentKeys, UrgentRecordKey);
+                _state.Update(s =>
+                {
+                    foreach (var record in pending)
+                    {
+                        var key = UrgentRecordKey(record);
+                        var intent = s.UrgentOutbox[key];
+                        var expected = coverage.GetValueOrDefault(key) ?? new();
+                        foreach (var email in expected)
+                            intent.Recipients[email] = success.TryGetValue(email, out var ok) ? (ok ? "smtp-accepted" : "failed-or-not-sent") : "not-sent";
+                        intent.Status = expected.Count == 0 ? "no-qualified-recipient" :
+                            expected.All(e => success.GetValueOrDefault(e)) ? "smtp-accepted" : "pending";
+                        intent.UpdatedAtUtc = DateTime.UtcNow;
+                        if (intent.Status == "smtp-accepted")
+                            foreach (var fact in PrtgUrgentFacts(record)) s.PrtgUrgentAcceptedFacts[fact.Key] = fact.Value;
+                    }
+                });
+            }, recheck: Recheck,
+            onRecipientStarting: (email, detail) => _state.Update(s =>
+            {
+                attemptedKeys[email] = (detail ?? new()).Select(UrgentRecordKey).ToHashSet(StringComparer.Ordinal);
+                foreach (var key in (detail ?? new()).Select(UrgentRecordKey))
+                    if (s.UrgentOutbox.TryGetValue(key, out var intent))
+                    {
+                        intent.Recipients[email] = "sending-result-unknown";
+                        intent.UpdatedAtUtc = DateTime.UtcNow;
+                    }
+            }),
+            onRecipientResult: (email, accepted) => _state.Update(s =>
+            {
+                foreach (var intent in (attemptedKeys.GetValueOrDefault(email) ?? new()).Select(k => s.UrgentOutbox[k])
+                    .Where(i => i.Recipients.ContainsKey(email) && i.Status == "pending"))
+                {
+                    intent.Recipients[email] = accepted ? "smtp-accepted" : "failed-or-unknown";
+                    if (accepted) intent.SmtpAcceptedAtUtc[email] = DateTime.UtcNow;
+                    intent.UpdatedAtUtc = DateTime.UtcNow;
+                }
+            }));
+    }
+
+    private static Dictionary<string, int> PrtgUrgentFacts(DailyAnalysisRecord record) => record.TopIssues
+        .Where(i => PrtgFindingMapper.IsPrtg(i) && !i.Suppressed && i.ElevatesDayRisk)
+        .GroupBy(i => $"{record.HostId}|{i.EventKey}|{i.PrtgIncidentStartedAt:O}")
+        .ToDictionary(g => g.Key, g => g.Max(i => (int)i.Severity + 10));
+
+    private static string UrgentRecordKey(DailyAnalysisRecord record)
+    {
+        var facts = PrtgUrgentFacts(record);
+        if (facts.Count == 0) return RecordKey(record);
+        var value = string.Join(";", facts.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => $"{f.Key}:{f.Value}"));
+        return RecordKey(record) + "|prtg:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
     /// <summary>涵蓋此 record 的收件人全部成功才標記；coverage 為空（沒有任何收件人可見這台
@@ -753,7 +922,7 @@ public class MailNotificationService
     /// 每輪重算白做工——統計行已如實反映它的存在（回饋十七輪批次B-4）。</summary>
     private void MarkSent(SystemSettings settings, List<DailyAnalysisRecord> records,
         Dictionary<string, bool> success, Dictionary<string, List<string>> coverage,
-        Func<MailNotifyState, HashSet<string>> keys)
+        Func<MailNotifyState, HashSet<string>> keys, Func<DailyAnalysisRecord, string>? recordKey = null, bool allowZeroCoverage = true)
     {
         var anySuccess = success.Values.Any(ok => ok);
         _state.Update(s =>
@@ -761,10 +930,10 @@ public class MailNotificationService
             var set = keys(s);
             foreach (var record in records)
             {
-                var key = RecordKey(record);
+                var key = (recordKey ?? RecordKey)(record);
                 var coveredBy = coverage.TryGetValue(key, out var emails) ? emails : new List<string>();
                 var allCoveredSucceeded = coveredBy.Count > 0 && coveredBy.All(e => success.TryGetValue(e, out var ok) && ok);
-                if (allCoveredSucceeded || (coveredBy.Count == 0 && anySuccess))
+                if (allCoveredSucceeded || (allowZeroCoverage && coveredBy.Count == 0 && anySuccess))
                 {
                     set.Add(key);
                 }
@@ -788,7 +957,9 @@ public class MailNotificationService
         SystemSettings settings, List<string> order, Dictionary<string, RecipientView> views,
         Func<RecipientView, (string Subject, string Body)> buildMessage,
         Func<DailyAnalysisRecord, string> recordKey, CancellationToken ct,
-        Action<Dictionary<string, bool>, Dictionary<string, List<string>>>? onComplete = null)
+        Action<Dictionary<string, bool>, Dictionary<string, List<string>>>? onComplete = null,
+        Func<string, RecipientView, RecipientView?>? recheck = null, Action<string, bool>? onRecipientResult = null,
+        Action<string, List<DailyAnalysisRecord>?>? onRecipientStarting = null)
     {
         // recordKey → 涵蓋到它明細的收件人清單（只有看得到明細的收件人才算涵蓋；純統計信
         // 不涵蓋任何一筆特定 record，見呼叫端對 coverage 為空的處理）
@@ -823,9 +994,24 @@ public class MailNotificationService
                     continue;
                 }
 
-                var (mailSubject, body) = buildMessage(views[email]);
+                var checkedView = recheck == null ? views[email] : recheck(email, views[email]);
+                if (checkedView == null)
+                {
+                    recipientSuccess[email] = false;
+                    continue;
+                }
+                // 重查後只讓目前仍可見的主機問題計入本封成功涵蓋。
+                if (recheck != null)
+                {
+                    var keysNow = (checkedView.Detail ?? new()).Select(recordKey).ToHashSet(StringComparer.Ordinal);
+                    foreach (var pair in coverage.Where(p => p.Value.Contains(email) && !keysNow.Contains(p.Key)))
+                        pair.Value.Remove(email);
+                }
+                var (mailSubject, body) = buildMessage(checkedView);
+                onRecipientStarting?.Invoke(email, checkedView.Detail);
                 var success = await SendSafeAsync(settings, new List<string> { email }, mailSubject, body, ct);
                 recipientSuccess[email] = success;
+                onRecipientResult?.Invoke(email, success);
                 streakDeltas[email] = success;
 
                 if (success)
@@ -1168,7 +1354,7 @@ public class MailNotificationService
     private static bool IsBeforeCutoff(string key, DateTime cutoff)
     {
         var parts = key.Split('|');
-        return parts.Length == 2 && DateTime.TryParse(parts[1], out var date) && date < cutoff;
+        return parts.Length >= 2 && DateTime.TryParse(parts[1], out var date) && date < cutoff;
     }
 
     /// <summary>

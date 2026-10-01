@@ -342,6 +342,9 @@ public class SystemSettings
     /// <summary>交辦單郵件：建立／改派／取消時通知處理人，並於夜間派工後寄每位處理人的摘要。需同時開啟 MailEnabled。</summary>
     public bool MailNotifyWorkOrders { get; set; }
 
+    /// <summary>持久設定版本；舊資料為 legacy，成功儲存後換新識別。</summary>
+    public string Revision { get; set; } = "legacy";
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

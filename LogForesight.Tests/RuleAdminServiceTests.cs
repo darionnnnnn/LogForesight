@@ -7,6 +7,7 @@ using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -319,8 +320,10 @@ public class RuleAdminServiceTests
                 db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
                 db.PrtgSensors.Add(new PrtgSensorRow { Objid = 4000 + i, DeviceObjid = deviceId,
                     Category = PrtgSensorCategories.Disk, SensorType = "snmpdiskfree", Name = $"disk-{i}" });
-                db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId, MapDate = today.AddDays(-1),
-                    HostId = 1, MapStatus = PrtgMapStatus.Ok });
+                // 歷史試算只讀當時已存在的對應；每 20 天留一筆，涵蓋 30 天回看窗口。
+                foreach (var offset in new[] { -36, -16, -1 })
+                    db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId, MapDate = today.AddDays(offset),
+                        HostId = 1, MapStatus = PrtgMapStatus.Ok });
             }
             db.SaveChanges();
         }
@@ -370,8 +373,9 @@ public class RuleAdminServiceTests
             db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
             db.PrtgSensors.Add(new PrtgSensorRow { Objid = sensorId, DeviceObjid = deviceId,
                 Category = PrtgSensorCategories.Disk, SensorType = "snmpdiskfree", Name = "Disk C:" });
-            db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId,
-                MapDate = today.AddDays(-1).ToDateTime(TimeOnly.MinValue), HostId = 1, MapStatus = PrtgMapStatus.Ok });
+            foreach (var offset in new[] { -36, -16, -1 })
+                db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId,
+                    MapDate = today.AddDays(offset).ToDateTime(TimeOnly.MinValue), HostId = 1, MapStatus = PrtgMapStatus.Ok });
             db.SaveChanges();
         }
         var hosts = new FakeHostStore();
@@ -404,6 +408,13 @@ public class RuleAdminServiceTests
         Assert.Equal(36, preview.DateSensorAssessmentRowCount);
         Assert.Equal(sensorId, Assert.Single(preview.Rows).SensorObjid);
 
+        using (var db = fx.NewContext())
+            db.PrtgHostMaps.Where(m => m.MapDate < today.AddDays(-1).ToDateTime(TimeOnly.MinValue)).ExecuteDelete();
+        request.ThroughDate = today.AddDays(-36);
+        var pastWithoutMapping = service.PreviewDiskTrend(request);
+        Assert.Equal(0, pastWithoutMapping.DateSensorAssessmentRowCount);
+
+        request.ThroughDate = today.AddDays(-1);
         request.FromDate = today.AddDays(-731);
         Assert.Throws<DomainException>(() => service.PreviewDiskTrend(request));
     }

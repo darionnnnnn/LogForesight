@@ -8,6 +8,41 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public sealed class PrtgSnapshotAccumulator
 {
+    public sealed record CheckpointRow(DateTime Hour, long SensorObjid, double Sum, int Count, double Min, double Max,
+        double? Coverage = null);
+
+    public IReadOnlyList<CheckpointRow> Capture()
+    {
+        lock (_lock)
+            return _buckets.SelectMany(b => b.Value.Select(s =>
+                new CheckpointRow(b.Key, s.Key, s.Value.Sum, s.Value.Count, s.Value.Min, s.Value.Max, s.Value.Coverage))).ToArray();
+    }
+
+    public void Restore(IReadOnlyList<CheckpointRow> rows)
+    {
+        // 先驗證完整份資料，錯誤時不得留下半份還原狀態。
+        var buckets = new Dictionary<DateTime, Dictionary<long, SensorAggregate>>();
+        long count = 0;
+        foreach (var row in rows)
+        {
+            if (row == null || row.Count <= 0 || !double.IsFinite(row.Sum) || !double.IsFinite(row.Min) ||
+                !double.IsFinite(row.Max) || row.Min > row.Max || row.Hour.Ticks % TimeSpan.TicksPerHour != 0 ||
+                (row.Coverage.HasValue && (!double.IsFinite(row.Coverage.Value) || row.Coverage < 0)))
+                throw new InvalidDataException("PRTG 快照恢復資料無效");
+            if (!buckets.TryGetValue(row.Hour, out var bucket)) buckets[row.Hour] = bucket = new();
+            if (!bucket.TryAdd(row.SensorObjid, new SensorAggregate(row)))
+                throw new InvalidDataException("PRTG 快照恢復資料有重複感測器小時");
+            count += row.Count;
+            if (count > int.MaxValue) throw new InvalidDataException("PRTG 快照恢復樣本數超出上限");
+        }
+        lock (_lock)
+        {
+            _buckets.Clear();
+            foreach (var bucket in buckets) _buckets.Add(bucket.Key, bucket.Value);
+            _sampleCount = (int)count;
+        }
+    }
+
     private readonly object _lock = new();
     private readonly Dictionary<DateTime, Dictionary<long, SensorAggregate>> _buckets = new();
     private int _sampleCount;
@@ -42,7 +77,8 @@ public sealed class PrtgSnapshotAccumulator
     /// <param name="sensorObjid">PRTG 感測器 objid</param>
     /// <param name="sampleTime">取樣時間</param>
     /// <param name="value">量測數值</param>
-    public void Add(long sensorObjid, DateTime sampleTime, double value)
+    /// <param name="sampleCoverage">採集當時一筆樣本的涵蓋率貢獻；不依重啟後的新策略重算。</param>
+    public void Add(long sensorObjid, DateTime sampleTime, double value, double? sampleCoverage = null)
     {
         var hour = new DateTime(sampleTime.Year, sampleTime.Month, sampleTime.Day, sampleTime.Hour, 0, 0, DateTimeKind.Unspecified);
 
@@ -60,7 +96,7 @@ public sealed class PrtgSnapshotAccumulator
                 hourBucket[sensorObjid] = agg;
             }
 
-            agg.Add(value);
+            agg.Add(value, sampleCoverage);
             _sampleCount++;
         }
     }
@@ -132,7 +168,7 @@ public sealed class PrtgSnapshotAccumulator
 
     private static PrtgValueRow ToRow(long sensorObjid, DateTime hour, SensorAggregate agg, int expectedSamplesPerHour, DateTime now)
     {
-        double? coverage = expectedSamplesPerHour <= 0
+        double? coverage = agg.Coverage.HasValue ? Math.Min(100, agg.Coverage.Value) : agg.UnknownRestoredCoverage || expectedSamplesPerHour <= 0
             ? null
             : Math.Min(100.0, agg.Count * 100.0 / expectedSamplesPerHour);
 
@@ -151,14 +187,27 @@ public sealed class PrtgSnapshotAccumulator
 
     private sealed class SensorAggregate
     {
+        public SensorAggregate() { }
+        public SensorAggregate(CheckpointRow row)
+        {
+            Sum = row.Sum;
+            Count = row.Count;
+            Min = row.Min;
+            Max = row.Max;
+            Coverage = row.Coverage;
+            UnknownRestoredCoverage = !row.Coverage.HasValue;
+        }
         public double Sum { get; private set; }
         public int Count { get; private set; }
         public double Min { get; private set; }
         public double Max { get; private set; }
+        public double? Coverage { get; private set; } = 0;
+        public bool UnknownRestoredCoverage { get; }
 
-        public void Add(double value)
+        public void Add(double value, double? coverage)
         {
             Sum += value;
+            Coverage = Coverage.HasValue && coverage.HasValue ? Coverage.Value + coverage.Value : null;
             if (Count == 0)
             {
                 Min = value;

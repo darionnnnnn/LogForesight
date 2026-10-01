@@ -484,8 +484,8 @@ function prtgHintBadge(host) {
     let text;
     let variant;
     switch (host.prtgHint) {
-        case 'down': text = 'PRTG：主機失聯'; variant = 'danger'; break;
-        case 'up': text = 'PRTG：主機在線，問題在日誌取數端'; variant = 'warning'; break;
+        case 'down': text = 'PRTG 鏡像：監測項目異常，請查感測器'; variant = 'danger'; break;
+        case 'up': text = 'PRTG 鏡像：有監測項目正常，未回報原因待查'; variant = 'warning'; break;
         case 'unknown': text = 'PRTG：無資料'; variant = 'secondary'; break;
         case 'no-map': text = '無 PRTG 對應'; variant = 'secondary'; break;
         default: return null;

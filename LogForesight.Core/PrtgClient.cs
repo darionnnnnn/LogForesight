@@ -35,6 +35,16 @@ public sealed class PrtgClient : IDisposable
     private string? _credentialFailure;
     private bool _disposed;
 
+    /// <summary>作業開始前設定；HTTP 發送前及回應後的安全取消點（含認證交換）。</summary>
+    public Action? OperationCheckpoint { private get; set; }
+
+    private void Checkpoint(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        OperationCheckpoint?.Invoke();
+        ct.ThrowIfCancellationRequested();
+    }
+
     /// <summary>
     /// 單一回應的緩衝上限：256 MB。回應會整包讀成字串，沒有上限時一次過大的取數範圍會把站台記憶體吃光；
     /// 超過就擲 <see cref="PrtgClientException"/> 要使用者縮小範圍。
@@ -185,6 +195,7 @@ public sealed class PrtgClient : IDisposable
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                Checkpoint(ct);
                 resp = await _http.SendAsync(request, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -205,6 +216,7 @@ public sealed class PrtgClient : IDisposable
 
             using (resp)
             {
+                Checkpoint(ct);
                 if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
                     throw FailCredentials("PRTG 帳號或密碼錯誤。");
@@ -268,6 +280,7 @@ public sealed class PrtgClient : IDisposable
     /// </summary>
     public async Task<string> GetJsonAsync(string relativePathAndQuery, CancellationToken ct = default)
     {
+        Checkpoint(ct);
         // 帳號類認證（password／passhash）的憑證失敗要黏住：每個 sensor 的數值擷取各自
         // 呼叫一次這個方法，帳號或 passhash 不對時不擋的話就是「sensor 數 × 認證失敗」，
         // 足以觸發 PRTG 端的帳號鎖定。token 模式不黏——token 失效不會鎖任何帳號。
@@ -282,6 +295,7 @@ public sealed class PrtgClient : IDisposable
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            Checkpoint(ct);
             resp = await _http.SendAsync(request, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -302,6 +316,7 @@ public sealed class PrtgClient : IDisposable
 
         using (resp)
         {
+            Checkpoint(ct);
             if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 var message = _usesUsernameAuth

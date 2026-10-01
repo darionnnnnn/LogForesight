@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using LogForesight.Core;
@@ -19,7 +19,7 @@ namespace LogForesight.Web.Services;
 /// <param name="LastSensorCount">上次成功快照處理的感測器數量</param>
 /// <param name="IntervalMinutes">目前生效間隔（含退避後）</param>
 /// <param name="ConsecutiveFailures">連續失敗次數</param>
-/// <param name="PendingSamples">累積器中待寫出的總樣本數量</param>
+/// <param name="PendingSamples">累積器中的樣本及已結算但待資料庫重試的列數</param>
 /// <param name="LastSkipReason">快照跳過原因（若因前置條件未滿足暫停）</param>
 public sealed record PrtgSnapshotStatus(
     DateTime? LastSuccessAt,
@@ -52,10 +52,14 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private readonly PrtgSnapshotAccumulator _accumulator = new();
 
-    /// <summary>已從累積器取出、但還沒寫成功的整點列（資料庫暫時寫不進去時暫存，見 WriteSampledRows）。</summary>
-    private readonly List<PrtgValueRow> _pendingWrite = new();
-    /// <summary>待寫清單的上限：資料庫長時間寫不進去時捨棄最舊的列，不讓記憶體無限長。約 10 小時 × 2 萬顆。</summary>
-    private const int MaxPendingWriteRows = 200_000;
+    /// <summary>每次 Drain 都有獨立穩定 ID；提交結果不明時原批重試，不能把新列混入同一 ID。</summary>
+    private readonly PrtgSnapshotJournal _journal;
+    private bool _journalLoaded;
+    private string? _journalEndpoint;
+    private string? _journalError;
+    private sealed class JournalWriteException : IOException { }
+    private readonly List<PrtgSnapshotJournal.Batch> _pendingWrite = new();
+
     /// <summary>最近一次從設定算出的每小時期望樣本數（見 ExpectedSamplesPerHour）。</summary>
     private int _expectedSamplesPerHour;
 
@@ -79,6 +83,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private static readonly TimeSpan PauseReportThreshold = TimeSpan.FromMinutes(15);
 
     private DateTime? _targetRefreshHour;
+    private string? _targetWhitelistFingerprint;
     private HashSet<long>? _targetObjids;
     private Dictionary<long, string>? _sensorTypes;
 
@@ -121,6 +126,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     /// <summary>目前重用中的 PRTG client 與建立它時的設定指紋（見 <see cref="GetClient"/>）</summary>
     private PrtgClient? _client;
+    private Action? _operationCheckpoint;
     private string? _clientFingerprint;
     internal IRunConsole? Console { get; set; }
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
@@ -163,6 +169,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         _sentinels = sentinelStore ?? throw new ArgumentNullException(nameof(sentinelStore));
         _settingsStore = systemSettingsStore ?? throw new ArgumentNullException(nameof(systemSettingsStore));
         _backend = storageBackend ?? throw new ArgumentNullException(nameof(storageBackend));
+        _journal = new PrtgSnapshotJournal(_backend);
         _schedulerRunState = schedulerRunState ?? throw new ArgumentNullException(nameof(schedulerRunState));
         _structureSync = structureSyncService ?? throw new ArgumentNullException(nameof(structureSyncService));
         _backfill = backfillService ?? throw new ArgumentNullException(nameof(backfillService));
@@ -211,14 +218,18 @@ public class PrtgSnapshotHostedService : BackgroundService
     private static int ExpectedSamplesPerHour(SystemSettings settings) =>
         Math.Max(1, 60 / Math.Max(1, PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes));
 
-    public PrtgSnapshotStatus GetStatus() =>
-        new(
+    public PrtgSnapshotStatus GetStatus()
+    {
+        int pendingRows;
+        lock (_pendingWrite) pendingRows = _pendingWrite.Sum(batch => batch.Rows.Count);
+        return new(
             LastSuccessAt: _lastSuccessAt,
             LastSensorCount: _lastSensorCount,
             IntervalMinutes: _effectiveIntervalMinutes,
             ConsecutiveFailures: _consecutiveFailures,
-            PendingSamples: _accumulator.SampleCount,
+            PendingSamples: _accumulator.SampleCount + pendingRows,
             LastSkipReason: _lastSkipReason);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -260,6 +271,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 break;
             }
         }
+        _journal.Dispose(); // 輪詢確實結束後才釋放跨程序擁有權。
     }
 
     internal async Task ScopeRefreshTickAsync(CancellationToken ct = default)
@@ -275,18 +287,48 @@ public class PrtgSnapshotHostedService : BackgroundService
             return;
         }
 
-        var newlyBackfilled = await BackfillScopeSensorsAsync(settings, ct);
-        if (newlyBackfilled.Count > 0)
+        await WithOperationScopeAsync(settings, ct, async token =>
         {
-            await FetchRecentStateChangesAsync(settings, newlyBackfilled, ct);
+            var newlyBackfilled = await BackfillScopeSensorsAsync(settings, token);
+            if (newlyBackfilled.Count > 0)
+                await FetchRecentStateChangesAsync(settings, newlyBackfilled, token);
+        });
+    }
+
+    private async Task WithOperationScopeAsync(SystemSettings settings, CancellationToken parent, Func<CancellationToken, Task> work)
+    {
+        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent, new PrtgScopeRevisionReader(_backend, _hosts).Read, "快照與範圍補抓");
+        _operationCheckpoint = operation.Checkpoint;
+        try
+        {
+            operation.Checkpoint();
+            await work(operation.Token);
+            operation.CompletedStage("本輪快照／補抓工作已返回");
+        }
+        catch (OperationCanceledException) when (!parent.IsCancellationRequested && operation.SettingsChanged)
+        {
+            _targetRefreshHour = null;
+            _lastSkipReason = "PRTG 設定已變更，本輪快照停止；已取得的樣本保留";
+            WriteOutput(_lastSkipReason, LogLevel.Info);
+        }
+        finally
+        {
+            _operationCheckpoint = null;
+            if (_client != null) _client.OperationCheckpoint = null;
         }
     }
 
     internal async Task TickAsync(CancellationToken ct = default)
     {
         var settings = _settingsStore.Get();
-        // 記住最近一次讀到的期望樣本數：站台停止時不再讀設定（關機路徑上資料庫未必還在）
+        // 新樣本保存採集時的涵蓋率；此值也供尚未帶涵蓋率的程序內累積列結算使用。
         _expectedSamplesPerHour = ExpectedSamplesPerHour(settings);
+
+        // 已結算的舊樣本是採集事實；即使之後停用 PRTG，資料庫恢復時仍須先補寫。
+        // 這裡只重試待寫列，不開新的 PRTG 工作。
+        if (!RestoreJournal(settings)) return;
+        FlushAccumulator(Now(), all: false);
+        if (_journalError != null) return;
 
         // 1. PrtgEnabled 為 false → 不跑。
         if (!settings.PrtgEnabled)
@@ -344,20 +386,23 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         // 7. 快照之前先補抓新進取數範圍、鏡像還沒有感測器的裝置（自帶 try/catch，不進退避）。
         //    跟著快照間隔走、不每分鐘跑：取數範圍計算要讀整份對應與鏡像，沒必要比快照更頻繁。
-        await BackfillScopeSensorsAsync(settings, ct);
-
-        try
+        await WithOperationScopeAsync(settings, ct, async token =>
         {
-            await ExecuteSnapshotAsync(settings, now, ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            RecordFailure(ex);
-        }
+            await BackfillScopeSensorsAsync(settings, token);
+            try
+            {
+                await ExecuteSnapshotAsync(settings, now, token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (JournalWriteException) { /* 待寫錯誤已有獨立狀態，不算 PRTG 連線失敗。 */ }
+            catch (Exception ex)
+            {
+                RecordFailure(ex);
+            }
+        });
     }
 
     /// <summary>
@@ -407,12 +452,32 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         // 先確保目標集合是新的，才知道要查哪些感測器、走分批還是全站
         var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-        if (_targetRefreshHour == null || _targetRefreshHour.Value != currentHour || _targetObjids == null)
+        var whitelistFingerprint = WhitelistFingerprint(settings.PrtgSensorTypeWhitelist);
+        if (_targetRefreshHour == null || _targetRefreshHour.Value != currentHour || _targetObjids == null ||
+            _targetWhitelistFingerprint != whitelistFingerprint)
         {
             RefreshTargets(settings, now, currentHour);
         }
 
         var targets = (_targetObjids ?? new HashSet<long>()).OrderBy(id => id).ToList();
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        if (policy.Ready(settings.PrtgUrl))
+        {
+            var store = _backend.PrtgStore();
+            var guardSource = new PrtgMirrorGuardSource(store);
+            var guardSensors = settings.PrtgResourceGuardEnabled ? PrtgResourceGuardTargets.Resolve(
+                guardSource, settings, _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids.ToHashSet() : [];
+            targets = targets.Where(policy.SensorIds.Contains).Union(guardSensors).Order().ToList();
+        }
+        lock (_pendingWrite)
+        {
+            if (_accumulator.Capture().Count + _pendingWrite.Sum(b => (long)b.Rows.Count) + targets.Count > PrtgSnapshotJournal.MaxRows ||
+                _journal.SavedBytes + ((long)targets.Count + 1) * PrtgSnapshotJournal.ReservedBytesPerRow > PrtgSnapshotJournal.MaxBytes)
+            {
+                JournalFailed(new InvalidDataException("待寫空間不足以容納下一輪快照；等待資料庫恢復"));
+                return;
+            }
+        }
         var tally = new SnapshotTally();
 
         if (targets.Count == 0)
@@ -430,7 +495,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             var json = await client.GetJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000", ct);
             RecordDiagnostic(now, "success", targets: targets.Count);
 
-            var (treeSize, totalSensorsInResponse) = ParseSnapshotResponse(json, now, tally, _targetObjids ?? new HashSet<long>());
+            var (treeSize, totalSensorsInResponse) = ParseAndCheckpoint(json, now, tally, _targetObjids ?? new HashSet<long>());
             if (treeSize.HasValue && treeSize.Value > 0 && totalSensorsInResponse < treeSize.Value)
             {
                 var msg = $"[PRTG快照] 只取到 {totalSensorsInResponse} 個感測器（總數 {treeSize.Value}），快照結果可能被截斷。";
@@ -446,7 +511,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         RecordSuccess(settings, tally.Added, now);
 
-        WriteSampledRows(_accumulator.DrainBefore(currentHour, ExpectedSamplesPerHour(settings), now));
+        FlushAccumulator(now, all: false);
     }
 
     /// <summary>
@@ -477,13 +542,14 @@ public class PrtgSnapshotHostedService : BackgroundService
                     RecordDiagnostic(now, "success", targets: targets.Count);
                     // 只收本批要求的 objid：PRTG 若忽略 filter_objid 會每批都回整站，
                     // 不擋的話同一顆感測器一輪會被重複累加幾十次，而「取回少於要求」的警告也不會響
-                    ParseSnapshotResponse(json, now, tally, batch.ToHashSet());
+                    ParseAndCheckpoint(json, now, tally, batch.ToHashSet());
                     requested += batch.Count;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
                     throw;
                 }
+                catch (JournalWriteException) { throw; }
                 catch (Exception ex)
                 {
                     failedBatches++;
@@ -573,7 +639,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 lastValueRaw = vStr;
         }
 
-        if (!lastValueRaw.HasValue) return;
+        if (!lastValueRaw.HasValue || !double.IsFinite(lastValueRaw.Value)) return;
 
         string? intervalStr = null;
         if (el.TryGetProperty("interval", out var intProp))
@@ -598,7 +664,9 @@ public class PrtgSnapshotHostedService : BackgroundService
             sampleValue = lastValueRaw.Value;
         }
 
-        _accumulator.Add(objid.Value, now, sampleValue);
+        if (!double.IsFinite(sampleValue)) return;
+        _accumulator.Add(objid.Value, now, sampleValue,
+            _expectedSamplesPerHour > 0 ? 100.0 / _expectedSamplesPerHour : null);
         tally.Added++;
     }
 
@@ -813,35 +881,129 @@ public class PrtgSnapshotHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 把已從累積器取出的整點列寫進資料庫。寫入失敗時列留在待寫清單、下次再試——
-    /// 取出的列在累積器裡已經不存在，讓例外往上丟等於整個小時的樣本無聲消失；
-    /// 這也不是 PRTG 的失敗，不能進退避計數。
+    /// 首輪恢復已落盤樣本；之後阻止不同來源位址的樣本混寫。
     /// </summary>
+    private bool RestoreJournal(SystemSettings settings)
+    {
+        lock (_pendingWrite)
+        {
+            try
+            {
+                _journal.AcquireOwnership();
+                var endpoint = PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl);
+                if (!_journalLoaded)
+                {
+                    var state = _journal.Load(endpoint, Now());
+                    if (state != null)
+                    {
+                        _accumulator.Restore(state.Accumulator);
+                        _pendingWrite.AddRange(state.Pending);
+                    }
+                    _journalEndpoint = endpoint;
+                    _journalLoaded = true;
+                }
+                if (endpoint != _journalEndpoint)
+                {
+                    if (_accumulator.SampleCount > 0 || _pendingWrite.Count > 0)
+                        throw new InvalidDataException("PRTG 來源位址變更、來源／資源世代或對應變更，舊樣本保留待處理；不寫入新身分");
+                    _journalEndpoint = endpoint;
+                }
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            {
+                JournalFailed(ex);
+                return false;
+            }
+        }
+    }
+
+    private bool SaveJournal()
+    {
+        try
+        {
+            _journal.Save(_journalEndpoint!, _accumulator.Capture(), _pendingWrite, Now());
+            _journalError = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        {
+            JournalFailed(ex);
+            return false;
+        }
+    }
+
+    private void JournalFailed(Exception ex)
+    {
+        var detail = ex switch
+        {
+            JsonException => "復原檔格式不完整或已損壞；請維護管理者先備份並檢查，勿直接刪除。",
+            UnauthorizedAccessException => "服務帳號無法存取復原目錄；請檢查資料目錄的讀寫與替換權限。",
+            InvalidDataException => ex.Message,
+            _ => "本機待寫檔案無法讀寫；請檢查磁碟空間、檔案鎖定與服務帳號權限。"
+        };
+        var reason = $"快照待寫復原檔無法使用，已停止採集並保留資料：{detail}";
+        if (_journalError != reason)
+        {
+            WriteOutput(reason, LogLevel.Warn);
+            Log.Warn(ex, "PRTG 快照復原檔失敗詳細原因");
+        }
+        _journalError = reason;
+        _lastSkipReason = reason;
+        RecordDiagnostic(Now(), "write-failure", "local-journal-unavailable", _targetObjids?.Count ?? 0);
+    }
+
+    private void FlushAccumulator(DateTime now, bool all)
+    {
+        lock (_pendingWrite)
+        {
+            var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+            WriteSampledRows(all ? _accumulator.DrainAll(_expectedSamplesPerHour, now)
+                : _accumulator.DrainBefore(hour, _expectedSamplesPerHour, now));
+        }
+    }
+
+    private (long? TreeSize, int Total) ParseAndCheckpoint(string json, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
+    {
+        lock (_pendingWrite)
+        {
+            var result = ParseSnapshotResponse(json, now, tally, accept);
+            if (!SaveJournal()) throw new JournalWriteException();
+            return result;
+        }
+    }
+
+    /// <summary>結算列先記入復原檔再提交 SQL，資料庫失敗保留穩定批次 ID。</summary>
     private void WriteSampledRows(IReadOnlyList<PrtgValueRow> rows)
     {
         lock (_pendingWrite)
         {
-            _pendingWrite.AddRange(rows);
+            if (!_journalLoaded && !RestoreJournal(_settingsStore.Get())) return;
+            if (rows.Count > 0) _pendingWrite.Add(new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), rows.ToArray()));
+            if (!SaveJournal()) return;
             if (_pendingWrite.Count == 0) return;
 
-            try
+            foreach (var pending in _pendingWrite.ToArray())
             {
-                _backend.PrtgStore().MergeSampledValues(_pendingWrite);
-                foreach (var hourGroup in _pendingWrite.GroupBy(row => row.PeriodStart))
-                    RecordDiagnostic(hourGroup.Key, "persisted", sampled: hourGroup.Count());
-                _pendingWrite.Clear();
-            }
-            catch (Exception ex)
-            {
-                foreach (var hourGroup in _pendingWrite.GroupBy(row => row.PeriodStart))
-                    RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetObjids?.Count ?? 0, hourGroup.Count());
-                var dropped = Math.Max(0, _pendingWrite.Count - MaxPendingWriteRows);
-                if (dropped > 0) _pendingWrite.RemoveRange(0, dropped);
-                var msg = $"快照樣本寫入資料庫失敗，{_pendingWrite.Count} 列留待下次重試"
-                          + (dropped > 0 ? $"（已超過待寫上限，最舊的 {dropped} 列捨棄）" : "")
-                          + $"：{ex.Message}";
-                WriteOutput(msg, LogLevel.Warn);
-                Log.Error(ex, "PRTG 快照樣本寫入資料庫失敗");
+                try
+                {
+                    var merged = _backend.PrtgStore().MergeSampledValues(pending.Rows, pending.Id);
+                    if (merged > 0)
+                        foreach (var hourGroup in pending.Rows.GroupBy(row => row.PeriodStart))
+                            RecordDiagnostic(hourGroup.Key, "persisted", sampled: hourGroup.Count());
+                    _pendingWrite.Remove(pending);
+                    if (!SaveJournal()) return;
+                }
+                catch (Exception ex)
+                {
+                    foreach (var hourGroup in pending.Rows.GroupBy(row => row.PeriodStart))
+                        RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetObjids?.Count ?? 0, hourGroup.Count());
+                    var queuedRows = _pendingWrite.Sum(batch => batch.Rows.Count);
+                    var msg = $"快照樣本寫入資料庫失敗，{queuedRows} 列留待下次重試：{ex.Message}";
+                    WriteOutput(msg, LogLevel.Warn);
+                    Log.Error(ex, "PRTG 快照樣本寫入資料庫失敗");
+                    break;
+                }
             }
         }
     }
@@ -867,7 +1029,15 @@ public class PrtgSnapshotHostedService : BackgroundService
             .ToDictionary(g => g.Key, g => g.First().SensorType);
 
         _targetRefreshHour = currentHour;
+        _targetWhitelistFingerprint = WhitelistFingerprint(settings.PrtgSensorTypeWhitelist);
     }
+
+    private static string WhitelistFingerprint(IReadOnlyCollection<string>? whitelist) =>
+        string.Join("\n", (whitelist ?? Array.Empty<string>())
+            .Select(value => value.Trim().ToUpperInvariant())
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal));
 
     private static double ParseIntervalSeconds(string? intervalStr, ref int unparsedCount)
     {
@@ -982,7 +1152,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         try
         {
             var now = Now();
-            WriteSampledRows(_accumulator.DrainAll(_expectedSamplesPerHour, now));
+            if (!RestoreJournal(_settingsStore.Get())) return;
+            if (_journalLoaded) FlushAccumulator(now, all: true);
         }
         catch (Exception ex)
         {
@@ -1014,6 +1185,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             _client = created;
             _clientFingerprint = fingerprint;
         }
+        _client.OperationCheckpoint = _operationCheckpoint;
         return _client;
     }
 
@@ -1021,12 +1193,15 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         await base.StopAsync(cancellationToken);
         DisposeClient();
+        if (ExecuteTask == null || ExecuteTask.IsCompleted) _journal.Dispose();
     }
 
     public override void Dispose()
     {
         DisposeClient();
         base.Dispose();
+        if (ExecuteTask == null || ExecuteTask.IsCompleted) _journal.Dispose();
+        else _ = ExecuteTask.ContinueWith(_ => _journal.Dispose(), TaskScheduler.Default);
     }
 
     private void DisposeClient()

@@ -47,6 +47,8 @@ public class LogAnalysisServiceSplitTests : IDisposable
 
         var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: true);
 
+        Assert.Equal(AnalysisLogSource.Local, record.LogSource);
+        Assert.Equal(AnalysisLogSource.Local, Assert.Single(history.ReadRecent(record.Date, 1)).LogSource);
         Assert.Equal("高", record.RiskLevel);
 
         // 報告要歸到這個分析服務綁定的主機：升級前這裡完全沒把主機傳下去，

@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using System.ComponentModel.DataAnnotations;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -102,12 +102,12 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         var (hostId, ids) = SeedBatchTargets();
         var badRequests = new[]
         {
-            new SetPrtgManualMapBatchRequest { HostId = hostId },
-            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = new() { ids[0], ids[0] } },
-            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = new() { ids[0], 99999 } },
-            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = Enumerable.Range(1, 101).Select(i => (long)i).ToList() },
-            new SetPrtgManualMapBatchRequest { HostId = 99999, DeviceObjids = new() { ids[0] } },
-            new SetPrtgManualMapBatchRequest { HostId = hostId, DeviceObjids = new() { ids[0] }, Note = new string('字', 513) }
+            new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), HostId = hostId },
+            new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), HostId = hostId, DeviceObjids = new() { ids[0], ids[0] } },
+            new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), HostId = hostId, DeviceObjids = new() { ids[0], 99999 } },
+            new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), HostId = hostId, DeviceObjids = Enumerable.Range(1, 101).Select(i => (long)i).ToList() },
+            new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), HostId = 99999, DeviceObjids = new() { ids[0] } },
+            new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), HostId = hostId, DeviceObjids = new() { ids[0] }, Note = new string('字', 513) }
         };
         foreach (var request in badRequests)
         {
@@ -117,7 +117,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         }
 
         var result = _controller.SetPrtgManualMapBatch(new SetPrtgManualMapBatchRequest
-        {
+        { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(),
             HostId = hostId, DeviceObjids = ids.ToList(), Note = "設備盤點後確認"
         });
         Assert.Equal(ids, result.Data!.SucceededIds);
@@ -131,7 +131,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
     [Fact]
     public void 批次人工對應_說明長度的模型驗證也限制512字()
     {
-        var request = new SetPrtgManualMapBatchRequest { Note = new string('字', 513) };
+        var request = new SetPrtgManualMapBatchRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), Note = new string('字', 513) };
         Assert.False(Validator.TryValidateObject(request, new ValidationContext(request), new List<ValidationResult>(), true));
     }
 

@@ -10,8 +10,13 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public static class PrtgProbeRunner
 {
-    public static async Task<bool> RunAsync(PrtgClient client, IRunConsole console, CancellationToken ct = default)
+    public static Task<bool> RunAsync(PrtgClient client, IRunConsole console, CancellationToken ct = default) =>
+        RunCoreAsync(client, console, TimeSpan.FromSeconds(15), ct);
+
+    internal static async Task<bool> RunCoreAsync(PrtgClient client, IRunConsole console,
+        TimeSpan dependencyBudget, CancellationToken ct = default)
     {
+        if (dependencyBudget <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(dependencyBudget));
         console.WriteLine("══════════ PRTG 環境探測（Probe） ══════════");
         console.WriteLine("唯讀呼叫 PRTG API，產出環境結構統計供後續分析層設計參考。");
         console.WriteLine();
@@ -171,42 +176,92 @@ public static class PrtgProbeRunner
         // 步驟 4：相依性（dependency）使用程度
         allOk &= await StepAsync(console, 4, "相依性（Dependency）使用程度", async () =>
         {
-            string depJson;
-            try
+            // 相依性只供環境概況。小批查詢逐批報進度；即使 PRTG 長時間不回應，
+            // 時間／頁數上限也讓後面的資料能力探測能繼續。
+            const int pageSize = 100;
+            const int maxPages = 10;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var total = 0;
+            var withDep = 0;
+            var incomplete = false;
+            var timedOut = false;
+            var seenSensorIds = new HashSet<long>();
+            console.WriteLine($"     每批 {pageSize} 顆，最多 {maxPages} 批／{dependencyBudget.TotalSeconds:0.#} 秒；超出會標示部分樣本。");
+            for (var page = 0; page < maxPages && (sensorCount <= 0 || total < sensorCount); page++)
             {
-                depJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,dependency&count=50000", ct);
-            }
-            catch (PrtgClientException ex) when (ex.Message.Contains("400") || ex.Message.Contains("dependency", StringComparison.OrdinalIgnoreCase))
-            {
-                console.WriteLine("     此 PRTG 版本不支援 dependency 欄位查詢，略過此步驟");
-                return;
+                ct.ThrowIfCancellationRequested();
+                var remaining = dependencyBudget - watch.Elapsed;
+                if (remaining <= TimeSpan.Zero) { timedOut = true; break; }
+                var requestBudget = remaining < TimeSpan.FromSeconds(8) ? remaining : TimeSpan.FromSeconds(8);
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                budget.CancelAfter(requestBudget);
+                string depJson;
+                try
+                {
+                    depJson = await client.GetJsonAsync(
+                        $"/api/table.json?content=sensors&columns=objid,dependency&count={pageSize}&start={page * pageSize}",
+                        budget.Token).WaitAsync(requestBudget.Add(TimeSpan.FromSeconds(1)), ct);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested &&
+                                           (budget.IsCancellationRequested || ex is TimeoutException) &&
+                                           ex is OperationCanceledException or PrtgClientException or TimeoutException)
+                {
+                    budget.Cancel();
+                    timedOut = true;
+                    break;
+                }
+                catch (PrtgClientException ex) when (ex.Message.Contains("400") || ex.Message.Contains("dependency", StringComparison.OrdinalIgnoreCase))
+                {
+                    console.WriteLine("     此 PRTG 版本不支援 dependency 欄位查詢，略過此步驟");
+                    return;
+                }
+
+                // 沒設 dependency 的 sensor 這一欄是缺的：保留在分母中。
+                var parsedDeps = ParseTable(depJson, "sensors", el => new PrtgDependencySample(
+                    long.TryParse(GetStringProperty(el, "objid"), out var id) ? id : null,
+                    GetStringProperty(el, "dependency") ?? string.Empty));
+                if (parsedDeps.CorruptedCount > 0)
+                    console.WriteLine($"     ⚠ 第 {page + 1} 批有 {parsedDeps.CorruptedCount} 筆無法解析");
+                if (parsedDeps.Rows.Count == 0 && parsedDeps.CorruptedCount >= 1)
+                {
+                    console.WriteLine($"     ⚠ 回應無法解析：長度 {System.Text.Encoding.UTF8.GetByteCount(depJson)} bytes，開頭：{Head200(depJson)}");
+                    incomplete = true;
+                    break;
+                }
+                var duplicateIds = 0;
+                foreach (var row in parsedDeps.Rows)
+                {
+                    if (row.SensorObjid is long id && !seenSensorIds.Add(id))
+                    {
+                        duplicateIds++;
+                        continue;
+                    }
+                    if (row.SensorObjid == null) incomplete = true;
+                    total++;
+                    if (HasDependency(row.Dependency)) withDep++;
+                }
+                console.WriteLine($"     相依性進度：已查 {page + 1} 批、{total}/{sensorCount} 顆。");
+                if (parsedDeps.CorruptedCount > 0) incomplete = true;
+                if (duplicateIds > 0)
+                {
+                    console.WriteLine($"     ⚠ 第 {page + 1} 批與前批有 {duplicateIds} 筆重複 objid，分頁可能被忽略；停止相依性取樣。");
+                    incomplete = true;
+                    break;
+                }
+                if (parsedDeps.Rows.Count < pageSize) break;
             }
 
-            // 沒設 dependency 的 sensor 這一欄是缺的：回空字串讓它留在分母裡，
-            // 回 null 會被 ParseTable 當成損壞列剔除，分母縮水後截斷警告會在沒截斷時誤報。
-            var parsedDeps = ParseTable(depJson, "sensors", el => GetStringProperty(el, "dependency") ?? string.Empty);
-
-            if (parsedDeps.CorruptedCount > 0)
-            {
-                console.WriteLine($"     ⚠ 有 {parsedDeps.CorruptedCount} 筆無法解析");
-            }
-
-            // 0 列＋有損壞筆數＝整份回應沒被解析（不是 JSON、或根不是物件）。
-            // 只印「無法解析」看不出回了什麼，把長度與開頭印出來才分得出錯誤頁、登入頁與空回應。
-            if (parsedDeps.Rows.Count == 0 && parsedDeps.CorruptedCount >= 1)
-            {
-                console.WriteLine($"     ⚠ 回應無法解析：長度 {System.Text.Encoding.UTF8.GetByteCount(depJson)} bytes，開頭：{Head200(depJson)}");
-            }
-
-            var withDep = parsedDeps.Rows.Count(d => HasDependency(d));
-            var total = parsedDeps.Rows.Count;
-            // 與另外兩處單次大 count 同一道截斷偵測：取樣不齊時下面的比例是拿部分樣本算的
+            if (timedOut)
+                console.WriteLine("     ⚠ 相依性樣本查詢逾時，結果標為未驗證；繼續後續探測。");
             if (sensorCount > 0 && total < sensorCount)
             {
-                console.WriteLine($"     ⚠ 警告：Sensor 總數為 {sensorCount} 筆，本次查詢僅取樣到 {total} 筆，下列比例僅供參考");
+                if (total == pageSize * maxPages && !incomplete && !timedOut)
+                    console.WriteLine($"     前 {total} 顆樣本／全站 {sensorCount} 顆；下列比例不代表全站。");
+                else
+                    console.WriteLine($"     ⚠ 警告：Sensor 總數為 {sensorCount} 筆，本次查詢僅取樣到 {total} 筆，下列比例僅供參考");
             }
             var pct = total > 0 ? (withDep * 100.0 / total) : 0.0;
-            console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）");
+            console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）{(total < sensorCount || incomplete || timedOut ? "；部分樣本／未驗證" : "")}");
             console.WriteLine("     （註：PRTG 預設每個 sensor 相依於父物件，此比例含預設值，不代表人工維護的相依拓撲）");
         }, ct);
 
@@ -1465,6 +1520,8 @@ public static class PrtgProbeRunner
     }
 
     private sealed record SensorTypeSample(string Type, string? Unit, int? ParentId, long? Objid = null, string? Status = null);
+
+    private sealed record PrtgDependencySample(long? SensorObjid, string Dependency);
 
     private sealed record DeviceHostSample(int? Objid, string? Host);
 

@@ -1,10 +1,21 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace LogForesight.Core.Models;
 
 public class DailyAnalysisRecord
 {
+    public string? PrtgBaselineRiskLevel { get; set; }
+    public string? PrtgBaselineRiskBasis { get; set; }
     public DateTime Date { get; set; }
+
+    /// <summary>寫入當下的日誌來源。舊紀錄為 Unknown，不依目前主機設定猜測歷史來源。</summary>
+    public AnalysisLogSource LogSource { get; set; }
+    public string? LatestNetiqAttemptStatus { get; set; }
+    public DateTime? LatestNetiqAttemptAtUtc { get; set; }
+
+    /// <summary>只有明確由 NetIQ 分析產生且保有詳情的主機日可接受 PRTG 補充。</summary>
+    public bool CanSupplementWithPrtg() => LogSource == AnalysisLogSource.Netiq && !DetailPruned &&
+        (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == "success");
 
     /// <summary>
     /// 產生本筆紀錄的主機 PK（↔ lf_daily_records.host_id）。**這是紀錄與主機的關聯鍵**——
@@ -59,6 +70,9 @@ public class DailyAnalysisRecord
     public List<string> SuppressedCorrelationAlerts { get; set; } = new();
 
     public string RiskLevel { get; set; } = string.Empty;
+
+    /// <summary>歷史風險修訂；原始敘事不作現行 AI 或通知輸入。</summary>
+    public HistoricalRiskReview? RiskReview { get; set; }
 
     /// <summary>
     /// 日風險等級的判定依據代碼（docs/archive/HISTORY.md #11）：null＝本欄位問世前寫入的
@@ -204,7 +218,8 @@ public sealed record AiOutcome(
     List<string> ScreeningNotes,
     string? ReportFile,
     List<CategoryDeepDive> DeepDives,
-    List<string>? UncoveredChecksAddendum = null);
+    List<string>? UncoveredChecksAddendum = null,
+    string? InputPrtgFingerprint = null);
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive
@@ -253,4 +268,12 @@ public class WeeklyCheckupResult
     /// </summary>
     [JsonIgnore]
     public bool Completed { get; set; } = true;
+}
+
+/// <summary>主機日的實際分析來源；零事件的成功查詢仍保留來源。</summary>
+public enum AnalysisLogSource
+{
+    Unknown = 0,
+    Local = 1,
+    Netiq = 2
 }

@@ -180,7 +180,7 @@ public class PrtgFindingMapperTests
     }
 
     [Fact]
-    public void ToSignature_Acknowledged為true時簽章ElevatesDayRisk降為false()
+    public void ToSignature_Acknowledged不降低故障風險()
     {
         var downRule = new KnownIssueRule
         {
@@ -193,7 +193,8 @@ public class PrtgFindingMapperTests
         };
         var ackFinding = new PrtgFinding(1001, 2001, "down", "Detail 已於 PRTG 確認", 90, downRule, Acknowledged: true);
         var ackSig = PrtgFindingMapper.ToSignature(ackFinding, TestDay);
-        Assert.False(ackSig.ElevatesDayRisk);
+        Assert.True(ackSig.ElevatesDayRisk);
+        Assert.Equal(RiskLevels.High, PrtgFindingMapper.RiskFromFindings(new[] { ackSig }));
 
         var unackFinding = new PrtgFinding(1001, 2001, "down", "Detail", 90, downRule, Acknowledged: false);
         var unackSig = PrtgFindingMapper.ToSignature(unackFinding, TestDay);

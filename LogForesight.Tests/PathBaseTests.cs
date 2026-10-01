@@ -22,6 +22,25 @@ namespace LogForesight.Tests;
 /// </summary>
 public class PathBaseTests
 {
+    [Theory]
+    [InlineData("/LogForesight", "/LogForesight/access-denied")]
+    [InlineData("", "/access-denied")]
+    public void 權限不足的頁面保留掛載前綴_API仍回403(string pathBase, string expected)
+    {
+        var context = ContextWith(pathBase, "/admin/prtg");
+        var action = new Microsoft.AspNetCore.Mvc.ActionContext(context,
+            new Microsoft.AspNetCore.Routing.RouteData(), new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor());
+        var authorization = new Microsoft.AspNetCore.Mvc.Filters.AuthorizationFilterContext(action, []);
+        var filter = new LogForesight.Web.Filters.PermissionFilter([Capability.Maintain],
+            FakeCurrentUser.WithCapabilities(Capability.Handle), new RecordingAuditService());
+        filter.OnAuthorization(authorization);
+        Assert.Equal(expected, Assert.IsType<Microsoft.AspNetCore.Mvc.RedirectResult>(authorization.Result).Url);
+        context.Request.Path = "/api/prtg/acceptance/incidents";
+        authorization.Result = null;
+        filter.OnAuthorization(authorization);
+        Assert.Equal(403, Assert.IsType<Microsoft.AspNetCore.Mvc.ObjectResult>(authorization.Result).StatusCode);
+    }
+
     private readonly FakeUserStore _users = new();
     private static readonly WebAppSettings Settings = new();
 

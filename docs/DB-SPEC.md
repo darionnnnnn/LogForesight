@@ -3,7 +3,7 @@
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 >
 > 本文件是資料庫 schema 的現況欄位級定案：資料表設計、索引、保留策略、Web 查詢情境對應、
-> Schema 升級機制。**全部資料走 SQL**（`Storage.Type` 為 `Sqlite`／`SqlServer` 二選一，
+> Schema 升級機制。**業務資料走 SQL**（`Storage.Type` 為 `Sqlite`／`SqlServer` 二選一，
 > 無檔案後端）；實際落地的 provider 架構（EF Core、`lf_blobs`/`lf_log_lines` 抽象）見
 > WEB-SPEC.md §10.5。DB 選型與雙 DB 可移植規則不影響本文件任何已定案欄位。
 > 起草緣起、JSONL→DB 切換期的過渡機制與已完成的前置準備事項，見
@@ -40,7 +40,7 @@
 `lf_issue_handling`、`lf_issue_cases`、`lf_work_orders`、`lf_work_order_events`、
 `lf_record_handling`、`lf_issue_first_seen`、`lf_risky_events`、`lf_permission_changes`、
 `lf_reports`、`lf_prtg_devices`、`lf_prtg_sensors`、`lf_prtg_state_changes`、
-`lf_prtg_values`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`。
+`lf_prtg_values`、`lf_prtg_sampled_batches`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`。
 
 ### 主機與授權（Web「只看自己負責的主機」的基礎）
 
@@ -393,6 +393,7 @@ lf_prtg_devices:      (ip)
 lf_prtg_sensors:      (device_objid)；(sensor_type)
 lf_prtg_state_changes: (sensor_objid, changed_at)；(created_at)；(changed_at) — 不帶 sensor 條件的時間區間查詢
 lf_prtg_values:       UNIQUE(sensor_objid, period_start)；(created_at)；(period_start) — 同上
+lf_prtg_sampled_batches: PK(batch_id)；(created_at) — sampled 整批提交的重試冪等識別；與數值同交易寫入
 lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 ```
 
@@ -442,7 +443,7 @@ lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 | `ReportRetentionDays` | 180 | 報告全文：`lf_reports`（風險報告／體檢報告／權限異動報告），依 `created_at` 判定。**不可大於 `RetentionDays`**（前後端皆驗證，讀取端另取小）：報告全文存在資料庫，而超過 `RetentionDays` 之後對應的分析紀錄已被清除，那些報告在 Web 上不再有任何入口可點開，留著只是佔空間 |
-| `PrtgRetentionDays` | 180 | PRTG 鏡像資料：`lf_prtg_values`／`lf_prtg_state_changes`／`lf_prtg_host_map`，依 `created_at` 判定。**不可大於 `RetentionDays`**（寫入時驗證，讀取端 `RuntimeSettingsResolver` 另取小）。`lf_prtg_devices`／`lf_prtg_sensors` 是結構鏡像，不依保留期清，但同步成功後會刪除本趟沒刷新到的列，且 sensors 只含取數範圍內裝置（PRTG-SPEC §3c）；`lf_prtg_manual_map` 是人工指定的對應結果、`lf_prtg_ip_excludes` 是人工指定的排除範圍，兩者長期有效，**不清** |
+| `PrtgRetentionDays` | 180 | PRTG 鏡像資料：`lf_prtg_values`／`lf_prtg_sampled_batches`／`lf_prtg_state_changes`／`lf_prtg_host_map`，依 `created_at` 判定。**不可大於 `RetentionDays`**（寫入時驗證，讀取端 `RuntimeSettingsResolver` 另取小）。`lf_prtg_devices`／`lf_prtg_sensors` 是結構鏡像，不依保留期清，但同步成功後會刪除本趟沒刷新到的列，且 sensors 只含取數範圍內裝置（PRTG-SPEC §3c）；`lf_prtg_manual_map` 是人工指定的對應結果、`lf_prtg_ip_excludes` 是人工指定的排除範圍，兩者長期有效，**不清** |
 
 七個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），寫入時驗證；
 `RetentionDays`／`RunLogRetentionDays`／`AuditRetentionDays` 讀取端不 clamp，既有部署存過的
@@ -792,3 +793,56 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 - **快取命中時回傳淺複製，呼叫端不得修改清單內的物件。** 淺複製只保護清單本身
   （增刪排序安全），物件是共用參考。要改主機資料一律走 `MutateBatch`——
   它的 mutation 拿到的是當場從資料庫反序列化的全新清單，不是快取物件。
+
+### PRTG 第二輪併發補強
+
+- `lf_blobs.version` 同時作快取版本與 EF 併發權杖；保留既有 `updated_at` 檢查，不增加 schema 欄位。時間戳相同仍能偵測並行覆寫。
+- `system_settings` JSON 的 `revision` 每次成功更新換 GUID，舊資料讀取為 `legacy`；API 的預期版本在 `Mutate` 內比對，衝突不提交。
+- `prtg_scope_revision` blob 的版本與人工對應／IP 排除修改在同一 serializable 交易更新，供取數取消安全點使用。該版本是範圍修改識別，不是 PRTG Core 或 sensor 的來源世代。
+- `AttachPrtgFindings` 只有重新查證原父列不存在時才將 `DbUpdateException` 降級成未追加；其他寫入錯誤向上傳遞，交易回滾，避免錯誤被偽裝成缺日。
+
+## PRTG 快照復原暫存契約
+
+- 固定位置：`Storage:DataRoot/pending/prtg-snapshot/checkpoint.json`；同目錄 `.tmp` 是原子替換前的暫存。服務帳號須能建立、寫入、替換檔案；這是 SQL 不可用期間的恢復佇列，不是另一份可查詢業務資料。
+- 單檔最多 64 MiB、20 萬列（累積器 sensor-hour 與待寫列合計）；預留至少 128 MiB 加檔案系統餘裕以容納原檔及替換暫存。20 萬列約容納 2 萬顆感測器的 10 小時待寫資料；實際容量取列數與位元組上限先達者，正式規模的中斷容忍時間仍須量測。
+- 復原檔含版本、資料庫隨機識別、來源位址摘要、累積器 sum/count/min/max、採集時涵蓋率貢獻與待寫 sampled 列及穩定批次 ID；不存憑證或原始 HTTP 內容。`lf_blobs.prtg_snapshot_database_id` 儲存 JSON 字串識別，避免把其他資料庫的待寫批次寫入目前資料庫。複製資料庫會連同識別複製，搬運部署仍須避免多個工作者共用同一暫存目錄。
+- 每份已接受回應完成本機 flush 與原子替換後才可繼續；SQL 交易成功才從待寫檔移除批次。程序若在 SQL 提交後中斷，重播沿用 `lf_prtg_sampled_batches` 的 ID，不再次加權。暫存檔寫入失敗時停止後續採集；尚未成功記錄到復原檔的回應不能承諾重啟可恢復。
+- 自動重播限 30 日內；去重鍵至少保留 32 日，且不短於原始資料保留期。超期、損壞、來源／資料庫識別不符時保留檔案並顯示停止原因，不自動刪除或改綁來源。處理前備份原檔，確認原資料庫與來源；不得將未知來源的檔案直接複製到新站台重播。
+- 目前適用既有單一快照工作者部署；沒有因此宣稱多程序排程安全。來源位址摘要不等於可信 Core／sensor 世代，第二輪已加入人工 Core 身分、來源／對應／資源世代綁定，見下方現況；來源身分現場核對仍待驗。
+
+## PRTG 獨立判定影子儲存
+
+本節記錄仍保留的第一輪 v1 診斷格式；同表第二輪可信判定的欄位與補追加現況見下方第二輪章節。舊 v1 不追認來源信任。
+
+`lf_prtg_observations` 保存 v1 影子判定快照，沒有指向 `lf_daily_records` 的外鍵。`snapshot_id` 為內容 SHA-256；`decision_key` 是同主機日／來源提示／資源／規則的暫定鍵，唯一且非空的 `active_key` 指向目前有效版本。它們都不是可信事故身分。`host_id`、`record_date`、device／sensor objid、規則代碼是查驗維度，來源／資源世代未知時為 NULL。`source_hint` 是不含帳密及 query 的位址摘要，只提示明確換端點，不代表可信 Core 世代。`content_json` 包含原始 finding、當時規則物件與處理後簽章；不是原始狀態事件或可信涵蓋區間的替代品。`quality_reason` 明列來源、資源世代及涵蓋未驗證。
+
+同主機日整批交易寫入，300 列分批存檔但同一交易提交。相同內容重跑去重，判定改變保留前版；空結果不刪舊版、不代表恢復。`recorded_at_utc` 是本系統保存時間，不是來源事件時間。索引為 `(host_id, record_date)` 與 `(recorded_at_utc)`；SQLite／SQL Server 均有新增表的冪等升級路徑。
+
+影子查驗查詢必填可見主機集合，SQL 授權、日期篩選及排序後分頁，每頁最多 100 筆。管理者遷移預覽統計有效影子、舊附掛 PRTG 問題、重疊與身分缺口；沒有資料不能表示已就緒。影子 v1 不供正式問題、案件、AI 或通知讀取，亦不計入日誌覆蓋率。沒有案件引用的 v1 依保存時間及既有 `PrtgRetentionDays` 清理，未知新格式保留；正式格式切換前必須另加入案件證據保留與搬運契約。目前 PRTG 搬運 v1 不包含這張影子表。
+
+## NetIQ 主體 PRTG 補充（第二輪現況）
+
+- 日紀錄 JSON 保存 `LogSource`（Unknown／Local／Netiq）與最新 NetIQ 嘗試狀態／時間。只有未精簡、明確 Netiq 且最近嘗試成功的紀錄可補充；舊明確 Netiq 未記嘗試狀態者相容，Unknown 不猜測。
+- `lf_prtg_observations` v1 保持診斷；v2 有可信來源／資源／事故起點，可作 NetIQ 補追加輸入。`supplement_status`、`supplement_attempt_at_utc`、`supplement_parent_record_id` 保存待辦狀態；`run_id` 可空，追溯首次捕獲批次且不參與內容雜湊。SQLite／SQL Server 都以冪等新增欄位升級。有效快照唯一鍵不變，舊版改為 superseded；重新啟用舊快照回 pending。
+- 補追加每批最多 100 筆，先核對來源、範圍、對應、規則與 NetIQ 父紀錄，再經既有案件及 WorkOrderCoordinator。applied 在父日紀錄仍存在時不重複處理；父列刪除再建才重新掛接，保留案件身分。無合格父列保持 waiting-netiq，不新增假日紀錄。
+- `lf_issue_cases.prtg_evidence_json` 保存案件最小證據；父分析精簡／刪除／重建後仍可查。`lf_daily_records` 的 risk_projection_version、risk_review_status、original_risk_content_json 保存歷史有效投影及原始判定；證據不足保留原風險且列待重評。
+- `prtg_monitoring_policy` 保存人工確認 Core、來源時區／語系、來源世代與明列試點。`prtg_sensor_timeline_*` 保存同世代狀態區間、暖機與磁碟語意；不同身分不接續。快照 binding 含端點、來源世代、對應及資源世代修訂，不只比較 URL。
+- 範圍 PUT／DELETE 帶 expectedScopeRevision；交易內比對 `prtg_scope_revision.version`，過期不寫。批次逐筆帶續進版本，發生外部競爭則停止後續，回報已成功及未處理項目。
+- v1 診斷、已完成 v2 與被取代版本依 PRTG 保留期清理；有案件且最小證據未保存者保留。未完成有效意圖不刪。診斷匯入 blob／退役 timeline 每輪最多清理 100 份，已選 sensor 與未完成有效判定引用的 timeline 保留。
+- 匯入 v1／v2 只作隔離診斷，不復用跨站 host_id、對應、來源信任、案件或通知；使用者須重新確認並暖機。持久待寫檔復原與升級／回退步驟見使用者說明「保留與復原」。真正 SQL Server 升級／負載及現場故障演練仍須實機驗收。
+
+### 第二輪修訂一致性與驗收時間
+
+`lf_daily_records.write_revision` 是 bigint／SQLite INTEGER 併發權杖，預設 0；追蹤實體的同步／非同步 SaveChanges 以原修訂原子比對並遞增。詳情批次精簡亦推進修訂，避免舊連線把已精簡證據寫回。過期讀改寫由 DbUpdateConcurrencyException 拒絕，原交易回滾；工作可重試但不支援多實例排程。
+
+判定修訂及可信撤回同步重建 PRTG 弱佐證與 has_correlation，不移除其他 NetIQ 關聯。待補追加的規則刪除、停用或快照不同會標 rules-changed，等待重新評估，不套用舊門檻。
+
+緊急郵件意圖保存每收件人 SmtpAcceptedAtUtc；結果不明／失敗不製造接受時間。驗收匯出不帶收件人地址，只列接受時間與狀態數量，最多 1000 個意圖，超限 ScopeComplete=false。SMTP 接受、信箱實收與人工可行動時間各自記錄。人工事故分實際發生、介入預防、結果未知；預防不填虛構事故時間，不計實際提前量。
+
+### 復原格式 v2 與跨程序寫入保護
+
+新 checkpoint v2 的 `Checksum` 是把該欄置空後以固定 JSON 序列化整份 State，計算 SHA-256；包含 DB／binding、樣本、涵蓋貢獻與批次 ID。Load 先驗 checksum，再驗身分／內容／容量。合法 JSON 變值也會拒絕，原檔不刪。v1 未帶完整性證明一律停止並保留；不得自動補簽或視作已驗證。
+
+升級前停服務，先以舊版正常提交待寫批次，再保存一致備份；確認舊佇列已空後，備份隔離舊格式快照目錄再啟動新版。即使 v1 佇列已空，新版也不自動補簽，保留檔案時會安全停止快照。需管理者選擇回到匹配舊程式／資料庫／來源核對並清空舊佇列，或備份隔離整個快照目錄、記錄涵蓋缺口後啟動新採集。原資料保持可供人工查證，不承諾未知格式自動追回 SQL。不得只改版本／checksum／來源識別來強迫重播。核對後也沒有提供 v1 自動轉換工具。
+
+`.lock` 檔案以 OS FileShare 寫入排他保護整個快照工作者生命週期；存檔另比對 Load／Save 時整檔 SHA-256 摘要，拒絕過期覆寫。鎖定檔存在不代表程序仍持有鎖，程序退出由 OS 釋放；勿手動刪鎖繞過存活工作者。無 lease 的工作者停止快照恢復／採集／提交；讀取診斷不取得寫入權。空佇列換 binding 可保存，尚有待寫樣本的搬址即使管理者批准來源延續仍保守停止，須按備份／原來源重放流程處理。來源延續不直接改綁舊數值批次。

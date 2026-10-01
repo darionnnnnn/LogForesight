@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -371,6 +371,7 @@ public class LogAnalysisService
         var record = new DailyAnalysisRecord
         {
             Date = targetDate.Date,
+            LogSource = AnalysisLogSource.Local,
             HostId = _hostId,
             Host = _host,
             ErrorCount = errorCount,
@@ -438,6 +439,7 @@ public class LogAnalysisService
     /// </summary>
     internal async Task<AiOutcome> CompleteAiAsync(AiWorkItem item, CancellationToken ct = default)
     {
+        var inputPrtgFingerprint = PrtgFindingMapper.Fingerprint(item.Issues);
         var history = _historyService.ReadRecent(item.TargetDate, item.HistoryDays);
         var tailIssues = AnalysisPromptBuilder.GetTailIssues(item.Issues);
         bool lowRisk = item.RuleRisk == RiskLevels.Low;
@@ -522,7 +524,7 @@ public class LogAnalysisService
         var reportFile = await GenerateReportIfActionableAsync(scratch, item.Logs, item.ActiveSuppressions, ct);
 
         return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis,
-            aiAnalyzed, screenedTailCount, screeningNotes, reportFile, scratch.DeepDives);
+            aiAnalyzed, screenedTailCount, screeningNotes, reportFile, scratch.DeepDives, InputPrtgFingerprint: inputPrtgFingerprint);
     }
 
     /// <summary>
@@ -547,6 +549,7 @@ public class LogAnalysisService
     /// </summary>
     public async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
+        var inputPrtgFingerprint = PrtgFindingMapper.Fingerprint(pendingRecord.TopIssues);
         var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
         // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，
         // 見本方法 XML 文件），空字串不影響 prompt 組裝，也不會被誤判成任何已知模式（不落在
@@ -622,7 +625,7 @@ public class LogAnalysisService
 
         return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis, aiAnalyzed,
             pendingRecord.ScreenedTailCount, pendingRecord.ScreeningNotes,
-            reportFile, deepDives, uncoveredChecksAddendum);
+            reportFile, deepDives, uncoveredChecksAddendum, inputPrtgFingerprint);
     }
 
     /// <summary>

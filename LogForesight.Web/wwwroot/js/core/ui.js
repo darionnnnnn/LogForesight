@@ -329,7 +329,7 @@ export function toast(message, type = 'info', delay = 4000) {
  * message 必須**具體描述影響**（「將刪除規則 custom-xxx 及其 3 筆抑制設定」），
  * 不是「確定嗎？」——使用者要有足夠資訊才做得了決定。
  */
-export function confirmAction({ title = '請確認', message, confirmText = '確定', confirmVariant = 'danger' }) {
+export function confirmAction({ title = '請確認', message, confirmText = '確定', cancelText = '取消', confirmVariant = 'danger' }) {
     return new Promise(resolve => {
         const el = document.createElement('div');
         el.className = 'modal fade';
@@ -342,7 +342,7 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
                     </div>
                     <div class="modal-body"><p class="mb-0"></p></div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-lf-cancel>取消</button>
                         <button type="button" class="btn" data-lf-confirm></button>
                     </div>
                 </div>
@@ -354,6 +354,7 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
         body.textContent = message;
         body.style.whiteSpace = 'pre-line';   // 呼叫端用換行字元排條列，textContent 不會自己換行
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
+        el.querySelector('[data-lf-cancel]').textContent = cancelText;
 
         document.body.appendChild(el);
         const modal = new bootstrap.Modal(el);

@@ -612,18 +612,21 @@ public class PrtgAdminPageUiTests
         Assert.Contains("id=\"prtg-value-fetch-extra-hosts\"", cshtml);
         Assert.Contains("id=\"prtg-scope-estimate-btn\"", cshtml);
 
-        // 「關閉」與三個模式併成同一個下拉（回饋第 41 輪批次F）：選任一範圍即啟用
-        Assert.Contains("value=\"off\"", cshtml);
+        // 啟用與夜間歷史值範圍分開，保守策略不阻擋啟用。
+        Assert.Contains("id=\"prtg-enabled\"", cshtml);
         Assert.Contains("value=\"triggered\"", cshtml);
-        // 「關閉」必須是第一個選項：它是預設值，排在後面會讓沒存過設定的站台看起來像已啟用
         var scopeSelectStart = cshtml.IndexOf("id=\"prtg-value-fetch-scope\"", StringComparison.Ordinal);
         Assert.True(scopeSelectStart >= 0, "找不到取數範圍下拉");
         var firstOption = cshtml.IndexOf("<option", scopeSelectStart, StringComparison.Ordinal);
-        Assert.Contains("value=\"off\"", cshtml.Substring(firstOption, 40));
+        Assert.Contains("value=\"triggered\"", cshtml.Substring(firstOption, 45));
+        Assert.DoesNotContain("value=\"off\"", cshtml[scopeSelectStart..cshtml.IndexOf("</select>", scopeSelectStart, StringComparison.Ordinal)]);
         Assert.Contains("value=\"all-mapped\"", cshtml);
         Assert.Contains("value=\"triggered-plus-list\"", cshtml);
-        // 啟用旗標要跟著存，否則選了範圍也不會啟用
+        // 啟用旗標由開關儲存，範圍值不得暗中決定開關。
         Assert.Contains("prtgEnabled:", js);
+        Assert.Contains("const enabled = document.getElementById('prtg-enabled').checked;", js);
+        Assert.DoesNotContain("scopeValue !== PRTG_SCOPE_OFF", js);
+        Assert.Contains("document.getElementById('prtg-enabled').checked = prtgEnabled;", js);
         Assert.Contains("prtg-scope-labels.js", js);
 
         // 自動偵測必須帶 forceAuto，否則覆寫清單非空時只會把手填值原樣吐回來
@@ -677,13 +680,12 @@ public class PrtgAdminPageUiTests
 
         var labelStart = labels.IndexOf("PRTG_SCOPE_LABEL = {", StringComparison.Ordinal);
         var labelEnd = labels.IndexOf("};", labelStart, StringComparison.Ordinal);
-        var labelKeys = System.Text.RegularExpressions.Regex.Matches(labels[labelStart..labelEnd], @"(?:\[PRTG_SCOPE_OFF\]|'([a-z0-9_-]+)')\s*:")
-            .Select(m => m.Groups[1].Success ? m.Groups[1].Value : "off").OrderBy(v => v).ToArray();
+        var labelKeys = System.Text.RegularExpressions.Regex.Matches(labels[labelStart..labelEnd], @"'([a-z0-9_-]+)'\s*:")
+            .Select(m => m.Groups[1].Value).OrderBy(v => v).ToArray();
 
         Assert.Equal(optionValues, labelKeys);
 
-        // 「off」在前端是常數、在後端 estimate 端點是字面——兩邊要同一個值
-        Assert.Contains("PRTG_SCOPE_OFF = 'off'", labels);
+        // 舊 URL 帶 scope=off 仍由後端拒絕，不成為可儲存的夜間取數範圍。
         var controller = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Controllers", "Api", "SettingsController.cs"));
         Assert.Contains("string.Equals(scope, \"off\"", controller);
     }

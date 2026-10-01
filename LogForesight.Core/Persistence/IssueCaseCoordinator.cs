@@ -44,6 +44,22 @@ public class IssueCaseCoordinator
     private readonly IHostStore _hosts;
     private readonly IIssueOwnerStore _issueProfiles;
 
+    public PrtgCaseEvidence? CapturePrtgEvidence(string hostName, DateTime day, string issueKey)
+    {
+        var signature = IssueSignatureKey.TryParseFull(issueKey);
+        if (signature == null || signature.Value.LogName != PrtgFindingMapper.PrtgLogName) return null;
+        var host = _hosts.FindByName(hostName);
+        if (host == null) return null;
+        var record = _records.GetOne([new HostKey { HostId = host.HostId, HostName = hostName }], day);
+        var issue = record?.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == issueKey);
+        if (issue == null) return null;
+        var text = issue.SampleMessages.FirstOrDefault() ?? issue.KnownIssue ?? "";
+        return new(day.Date, issue.EventKey, issue.PrtgSourceGeneration, issue.PrtgResourceGeneration,
+            issue.PrtgIncidentStartedAt, issue.PrtgSourceGeneration == null ? "legacy-unverified" :
+                PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code) && code == "disk_free_trend" ? "typed-disk-semantic-v1" : "covered-state-v1",
+            text.Length <= 1000 ? text : text[..1000]);
+    }
+
     public IssueCaseCoordinator(
         IIssueCaseStore cases,
         IIssueHandlingStore issueHandlings,
@@ -106,11 +122,13 @@ public class IssueCaseCoordinator
         }
         _issueHandlings.SaveMany(toSave);
 
-        _cases.Save(CreateOpenCase(
+        var newCase = CreateOpenCase(
             caseId, hostName, issueKey, issueLabel,
             handlerId, note, dueDate,
             eligibleDays[0], eligibleDays[^1],
-            occurredAt, actorAccount));
+            occurredAt, actorAccount);
+        newCase.PrtgEvidence = CapturePrtgEvidence(hostName, triggerDate, issueKey);
+        _cases.Save(newCase);
 
         return new CaseBuildResult(Created: true, CaseId: caseId, ExistingHandlerId: null, LinkedDayCount: toSave.Count);
     }
@@ -245,6 +263,11 @@ public class IssueCaseCoordinator
 
             if (casesByIssueKey.TryGetValue(key, out var openCase))
             {
+                if (openCase.PrtgEvidence == null && issue.LogName == PrtgFindingMapper.PrtgLogName)
+                {
+                    openCase.PrtgEvidence = CapturePrtgEvidence(hostName, date, key);
+                    if (openCase.PrtgEvidence != null) casesToSave.Add(openCase);
+                }
                 toSave.Add(new IssueHandling
                 {
                     HostName = hostName, Date = date, IssueKey = key, Status = openCase.Status,

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -66,6 +66,17 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
         Assert.DoesNotContain(result, x => x.HostId == 11 && x.SensorId == "456");
         Assert.DoesNotContain(result, x => x.HostId == 22 && x.SensorId == "123");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(10), $"SQLite scoped evidence query took {timer.Elapsed}.");
+    }
+
+    [Fact]
+    public void 新來源資源世代識別可查證且不誤配相似sensor編號()
+    {
+        var day = DateTime.Today;
+        Append(11, "H", day, "123:source:resource", "generation evidence");
+        Append(11, "H", day, "1234:source:resource", "wrong sensor");
+        var result = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory")
+            .QueryDiskTrendEvidence([(11L, "123")], day, day);
+        Assert.Equal("generation evidence", Assert.Single(result).Detail);
     }
 
     private void Append(long hostId, string host, DateTime date, string sensor, string detail,

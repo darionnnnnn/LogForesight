@@ -1,4 +1,4 @@
-using LogForesight.Core.Analysis;
+﻿using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -399,7 +399,8 @@ public class AiAnalysisHostedService : BackgroundService
                             // 高嚴重度關聯訊號組進 prompt、趨勢警示整批消失。輕量投影只做
                             // 佇列與排序，進到要花一次 AI 呼叫的這裡，多讀一列完整資料不算成本。
                             var full = _recordQuery.GetOne(new[] { hostKey }, record.Date);
-                            if (full == null || full.DetailPruned)
+                            if (full == null || full.DetailPruned || full.RiskReview != null ||
+                                full.TopIssues.Any(LogForesight.Core.Service.PrtgFindingMapper.IsPrtg) && !full.CanSupplementWithPrtg())
                             {
                                 // 紀錄已消失（保留期清理）或詳情已清（AI 輸入無法重建）：跳過，
                                 // 查詢端已排除 detail_pruned，這裡是取到殘根時的防禦

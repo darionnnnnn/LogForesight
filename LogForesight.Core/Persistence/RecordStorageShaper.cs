@@ -23,6 +23,9 @@ internal static class RecordStorageShaper
         return new DailyAnalysisRecord
         {
             Date = record.Date,
+            LogSource = record.LogSource,
+            LatestNetiqAttemptStatus = record.LatestNetiqAttemptStatus,
+            LatestNetiqAttemptAtUtc = record.LatestNetiqAttemptAtUtc,
             HostId = record.HostId,
             Host = record.Host,
             ErrorCount = record.ErrorCount,
@@ -31,6 +34,9 @@ internal static class RecordStorageShaper
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
             RiskLevel = record.RiskLevel,
+            PrtgBaselineRiskLevel = record.PrtgBaselineRiskLevel,
+            PrtgBaselineRiskBasis = record.PrtgBaselineRiskBasis,
+            RiskReview = record.RiskReview,
             RiskBasis = record.RiskBasis,
             Headline = record.Headline,
             Summary = record.Summary,
@@ -64,6 +70,9 @@ internal static class RecordStorageShaper
                 // 精簡後遺失 EventKey，「同 program 不同規則」併回同一組——同 KnownIssue/RuleId
                 // 那一類「新增欄位漏抄進精簡投影」的既有教訓
                 EventKey = i.EventKey,
+                PrtgSourceGeneration = i.PrtgSourceGeneration,
+                PrtgResourceGeneration = i.PrtgResourceGeneration,
+                PrtgIncidentStartedAt = i.PrtgIncidentStartedAt,
                 Count = i.Count,
                 FirstSeen = i.FirstSeen,
                 LastSeen = i.LastSeen,

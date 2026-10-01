@@ -31,6 +31,9 @@ internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
     /// 多個平行呼叫可能剛好序列化執行也測不出峰值差異——給一個小延遲讓呼叫真的有機會重疊。</summary>
     public TimeSpan Delay { get; set; } = TimeSpan.Zero;
 
+    /// <summary>可選的非同步閘門，讓併發測試以明確訊號協調查詢，而不依賴短暫延遲。</summary>
+    public Func<SentinelSearchRequest, CancellationToken, Task>? BeforeResponse { get; set; }
+
     /// <summary>觀察到的「同時執行中」SearchAsync 呼叫數峰值——驗證呼叫端有沒有真的平行送出查詢，
     /// 以及有沒有超過呼叫端自己設定的並行度上限（回饋十三輪 D，client pool）。</summary>
     public int PeakConcurrency { get; private set; }
@@ -47,6 +50,7 @@ internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
         }
         try
         {
+            if (BeforeResponse != null) await BeforeResponse(request, ct);
             if (Delay > TimeSpan.Zero) await Task.Delay(Delay, ct);
             return ApplyStreaming(request, Responder(request));
         }

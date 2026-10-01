@@ -1,4 +1,4 @@
-using LogForesight.Core.Service;
+﻿using LogForesight.Core.Service;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
@@ -1719,6 +1719,146 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent7 = Assert.Single(_sender.Sent);
         Assert.Contains("超過 48 小時沒有成功更新", sent7.Message.Body);
+    }
+
+    private static LogIssueSignature ActionablePrtg(DateTimeOffset? start = null) => new()
+    {
+        LogName = "PRTG", Source = "PRTG:down", EventId = 0,
+        EventKey = "prtg:down:10:core:resource", ElevatesDayRisk = true,
+        Severity = IssueSeverity.High, PrtgSourceGeneration = "core", PrtgResourceGeneration = "resource",
+        PrtgIncidentStartedAt = start ?? new DateTimeOffset(Yesterday.AddHours(1))
+    };
+
+    [Theory]
+    [InlineData("rule")]
+    [InlineData("mute")]
+    [InlineData("transport")]
+    public async Task 正式來源寄第一人後改規則靜音或SMTP_第二人安全停止且恢復後可重試(string change)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-mail-live-" + Guid.NewGuid());
+        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, directory);
+        CreateViewAllAccount("ops@test.local"); CreateViewAllAccount("second@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.PrtgUrl = "https://fixture.example"; s.MailRecipients.Add("second@test.local"); });
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p => { p.Revision = "policy"; p.CoreSystemId = "core"; p.SourceGeneration = "core";
+            p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
+            p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor("https://fixture.example");
+            p.HostIds = [host.HostId]; p.SensorIds = [10]; p.ValidFrom = DateTimeOffset.Now.AddDays(-3); });
+        var rules = new KnownIssueRuleStore(backend.Blob("rules"));
+        var rule = new KnownIssueRule { Id = "down", Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
+            Severity = IssueSeverity.High, ElevatesDayRisk = true };
+        rules.Save(new RuleFileContent { Rules = [rule] });
+        var finding = new PrtgFinding(1, 10, "down", "trusted", 60, rule)
+        { SourceGeneration = "core", ResourceGeneration = "resource", IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)) };
+        var signature = PrtgFindingMapper.ToSignature(finding, Yesterday);
+        backend.PrtgObservationStore().Capture(host.HostId, Yesterday, "r1", [(finding, signature)]);
+        new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + 10)).Update(e =>
+        { e.HostId = host.HostId; e.SourceGeneration = "core"; e.ResourceGeneration = "resource";
+            e.MappingRevision = backend.Blob(LogForesight.Core.Persistence.Sql.EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(); });
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: signature);
+        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
+        var owners = new IssueOwnerStore(backend.Blob("issue_owners"));
+        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, owners, _issueAggregates,
+            prtgMonitoring: policy, prtgBackend: backend);
+        _sender.OnSend = _ => {
+            if (change == "rule") { rules.Save(new RuleFileContent { Rules = [new KnownIssueRule { Id = "down", Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PrtgThreshold = 999 }] }); }
+            if (change == "mute") owners.Upsert(new IssueProfile { SourceName = signature.Source, EventId = 0,
+                Mutes = [new() { From = Yesterday, To = Yesterday }] });
+            if (change == "transport") _settingsStore.Update(s => s.SmtpServer = "changed.test.local");
+        };
+        await service.NotifyAfterRunAsync();
+        Assert.Single(_sender.Sent);
+        _sender.OnSend = null; rules.Save(new RuleFileContent { Rules = [rule] });
+        owners.Delete(signature.Source, 0); _settingsStore.Update(s => s.SmtpServer = "smtp.test.local");
+        await service.RetryPendingUrgentAsync();
+        Assert.Contains(_sender.Sent, sent => sent.Message.To.Contains("second@test.local"));
+    }
+
+    [Fact]
+    public async Task PRTG晚到高風險不被同主機日先前已寄旗標遮住()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High);
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+        record.TopIssues.Add(ActionablePrtg());
+        await service.NotifyAfterRunAsync();
+        await service.NotifyAfterRunAsync();
+        Assert.Equal(2, _sender.Sent.Count);
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+        var sentIntent = state.UrgentOutbox.Values.Single(i => i.ProblemKeys.Count > 0);
+        Assert.Equal("smtp-accepted", sentIntent.Status);
+        Assert.Single(sentIntent.SmtpAcceptedAtUtc); Assert.All(sentIntent.SmtpAcceptedAtUtc.Values, at => Assert.Equal(DateTimeKind.Utc, at.Kind));
+    }
+
+    [Fact]
+    public async Task PRTG無合格明細收件人不能以統計信標記完成()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
+        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
+        await Create().NotifyAfterRunAsync();
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+        Assert.Empty(state.UrgentSentKeys);
+        Assert.Equal("no-qualified-recipient", Assert.Single(state.UrgentOutbox.Values).Status);
+    }
+
+    [Fact]
+    public async Task PRTG部分SMTP接受後重試保留相同意圖且不漏第二人()
+    {
+        CreateViewAllAccount("ops@test.local"); CreateViewAllAccount("second@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.MailRecipients.Add("second@test.local"); });
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
+        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
+        _sender.ThrowOnSendForRecipient = "second@test.local";
+        var service = Create(); await service.NotifyAfterRunAsync();
+        var before = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+        var key = Assert.Single(before.UrgentOutbox.Keys);
+        Assert.Empty(before.UrgentSentKeys);
+        Assert.Equal("smtp-accepted", before.UrgentOutbox[key].Recipients["ops@test.local"]);
+        _sender.ThrowOnSendForRecipient = null; await service.RetryPendingUrgentAsync();
+        var after = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+        Assert.Equal(key, Assert.Single(after.UrgentOutbox.Keys));
+        Assert.Equal("smtp-accepted", after.UrgentOutbox[key].Status);
+        Assert.Equal(3, _sender.Sent.Count);
+    }
+
+    [Fact]
+    public async Task PRTG寄送前撤銷第二人帳號不洩漏且不冒稱全部完成()
+    {
+        CreateViewAllAccount("ops@test.local"); var second = CreateViewAllAccount("second@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.MailRecipients.Add("second@test.local"); });
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
+        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
+        _sender.OnSend = _ => { second.Active = false; _users.Upsert(second); };
+        await Create().NotifyAfterRunAsync();
+        Assert.Single(_sender.Attempts);
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+        Assert.Empty(state.UrgentSentKeys);
+    }
+
+    [Fact]
+    public async Task PRTG可信恢復再發有新通知版本()
+    {
+        CreateViewAllAccount("ops@test.local"); var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
+        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
+        var service = Create(); await service.NotifyAfterRunAsync();
+        record.TopIssues[0].PrtgIncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(10));
+        await service.NotifyAfterRunAsync();
+        Assert.Equal(2, _sender.Sent.Count);
+        Assert.Equal(2, new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get().UrgentOutbox.Count);
     }
 }
 

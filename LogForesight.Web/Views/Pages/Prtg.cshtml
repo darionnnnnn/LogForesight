@@ -2,8 +2,61 @@
     ViewData["Title"] = "PRTG 維護";
 }
 
+<section class="lf-card mb-3" aria-labelledby="prtg-setup-title">
+    <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-setup-title">啟用準備</h2></div>
+    <div class="lf-card__body">
+        <p class="small text-muted mb-2">依已儲存設定與最近一次檢查結果顯示；設定齊全不代表站台資料完整或預警已驗證。</p>
+        <div id="prtg-setup-summary" role="status" aria-live="polite">正在確認 PRTG 啟用狀態…</div>
+        <ul id="prtg-setup-steps" class="small mb-0 mt-2"></ul>
+    </div>
+</section>
 <div id="prtg-rule-banner"></div>
 <div id="prtg-schedule-banner"></div>
+<section class="lf-card mb-3" aria-labelledby="prtg-monitoring-title">
+    <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-monitoring-title">正式判定試點與來源身分</h2></div>
+    <div class="lf-card__body">
+        <p class="small text-muted">先同步結構與主機對應，再選取 NetIQ 主機與 sensor。未確認範圍只保存診斷資料。Core System ID 請由 PRTG 管理介面核對；換 Core 或 sensor 重建後需重新暖機，今日身分不追認歷史。最多 50 台／100 顆。</p>
+        <form id="prtg-monitoring-form">
+            <label class="form-label" for="prtg-monitoring-core">Core System ID</label>
+            <input class="form-control mb-2" id="prtg-monitoring-core" maxlength="128" required />
+            <label class="form-label" for="prtg-monitoring-source-mode">來源變更處理</label>
+            <select class="form-select mb-2" id="prtg-monitoring-source-mode">
+                <option value="">來源未變更（只修改試點）</option>
+                <option value="new">新來源／重新暖機</option>
+                <option value="continue">同 Core 延續（須有核對證據）</option>
+                <option value="unknown">無法確認（停止正式判定）</option>
+            </select>
+            <label class="form-label" for="prtg-monitoring-continuity-evidence">延續的來源身分核對證據</label>
+            <input class="form-control mb-2" id="prtg-monitoring-continuity-evidence" maxlength="1000" placeholder="核對紀錄／工單位置；勿填帳密或 token" />
+            <label class="form-check"><input type="checkbox" class="form-check-input" id="prtg-monitoring-continuity-confirm" />我已核對變更前後為同 Core，來源時區、語系及資源身分保持一致。</label>
+            <button type="button" class="btn btn-outline-secondary my-2" id="prtg-monitoring-source-preview">預覽來源變更影響</button>
+            <div id="prtg-monitoring-source-impact" role="status" aria-live="polite"></div>
+            <label class="form-label" for="prtg-monitoring-zone">PRTG 回應時間的時區</label>
+            <input class="form-control mb-2" id="prtg-monitoring-zone" maxlength="128" placeholder="例如 Taipei Standard Time 或 Asia/Taipei" required />
+            <label class="form-label" for="prtg-monitoring-culture">PRTG 回應日期的語系</label>
+            <input class="form-control mb-2" id="prtg-monitoring-culture" maxlength="64" placeholder="例如 zh-TW、en-US" required />
+            <p class="small text-muted">需與 API 帳號看到的日期、時區一致；不以網頁使用者或 Web 伺服器語系猜測。更改後開始新暖機。</p>
+            <label class="form-label" for="prtg-monitoring-hosts">NetIQ 試點主機（可多選）</label>
+            <select class="form-select mb-2" id="prtg-monitoring-hosts" multiple size="5" required></select>
+            <div id="prtg-monitoring-sensors" class="border rounded p-2 mb-2" style="max-height:18rem;overflow:auto" aria-label="試點感測器"></div>
+            <label class="form-check"><input type="checkbox" class="form-check-input" id="prtg-monitoring-confirm" required />我已核對 Core 身分與所選資源；守門資源不因取數而自動參與業務判定。</label>
+            <button class="btn btn-primary mt-2" type="submit">儲存正式判定範圍</button>
+        </form>
+        <div id="prtg-monitoring-status" class="small mt-2" role="status" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary mt-2" id="prtg-monitoring-preview">預覽已儲存試點的實際作用範圍</button>
+        <div id="prtg-monitoring-preview-result" class="small mt-2" role="status" aria-live="polite"></div>
+    </div>
+</section>
+
+<section class="lf-card mb-3" aria-labelledby="prtg-operations-title">
+    <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-operations-title">補追加與通知處理狀態</h2></div>
+    <div class="lf-card__body">
+        <p class="small text-muted">只顯示可見主機。等待 NetIQ 的證據不建立正式問題；SMTP 接受不代表信箱實收。重試部分成功郵件可能重寄。</p>
+        <button type="button" class="btn btn-outline-secondary" id="prtg-operations-refresh">重新查詢</button>
+        <button type="button" class="btn btn-outline-primary" id="prtg-operations-retry">重試未完成工作</button>
+        <div id="prtg-operations-status" class="small mt-2" role="status" aria-live="polite"></div>
+    </div>
+</section>
 
 <ul class="nav nav-tabs mb-3" id="prtg-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="connection" type="button">連線</button></li>
@@ -35,6 +88,42 @@
                 <p class="mt-2 mb-1" id="prtg-effectiveness-semantics"></p>
                 <p class="mb-0 text-muted" id="prtg-effectiveness-limitations"></p>
             </details>
+            <hr />
+            <h3 class="h6">正式站台驗收證據</h3>
+            <p class="small text-muted">下載可見試點的來源、涵蓋、補追加及版本資料，再以獨立事故報告核對 NetIQ、原生 PRTG、簡單聯集與合併分析。空基準代表未知，不能算額外提前發現。下載後先遮蔽資源識別再對外提供。</p>
+            <button type="button" class="btn btn-outline-primary" id="prtg-acceptance-export">下載所選期間驗收證據包</button>
+            <div class="mt-3"><label class="form-label" for="prtg-acceptance-existing">既有事故查證（選取後載入，可補查未知結果）</label><select id="prtg-acceptance-existing" class="form-select"><option value="">新增查證</option></select><button id="prtg-acceptance-labels-refresh" type="button" class="btn btn-sm btn-outline-secondary mt-2">重新載入查證清單</button></div>
+            <form id="prtg-acceptance-label-form" class="mt-3">
+                <div class="row g-2">
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-incident-id">事故識別</label><input id="prtg-acceptance-incident-id" class="form-control" type="text" maxlength="128" required /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-host">NetIQ 主機</label><select id="prtg-acceptance-host" class="form-select" required><option value="">請選擇可見 NetIQ 主機</option></select></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-occurred">事故發生時間</label><input id="prtg-acceptance-occurred" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-evidence">證據連結或事故報告編號</label><input id="prtg-acceptance-evidence" class="form-control" type="text" maxlength="1000" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-reason">查證理由</label><input id="prtg-acceptance-reason" class="form-control" type="text" maxlength="1000" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-segment">試點／版本分組（空白使用目前設定）</label><input id="prtg-acceptance-segment" class="form-control" type="text" maxlength="512" /></div>
+                    <div class="col-12"><label class="form-label" for="prtg-acceptance-outcome">影響結果</label><select id="prtg-acceptance-outcome" class="form-select"><option value="occurred">已實際發生</option><option value="prevented">介入後避免影響（需前後量測）</option><option value="unknown">尚未觀察到結果</option></select></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-predicted">預測影響時間（與實際發生分開）</label><input id="prtg-acceptance-predicted" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-action">具體介入動作</label><input id="prtg-acceptance-action" class="form-control" maxlength="1000" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-before">介入前量測（含時間、資源與單位）</label><input id="prtg-acceptance-before" class="form-control" maxlength="1000" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-after">介入後量測（含時間、資源與單位）</label><input id="prtg-acceptance-after" class="form-control" maxlength="1000" /></div>
+                    <div class="col-12"><label class="form-label" for="prtg-acceptance-result">查證結果</label><select id="prtg-acceptance-result" class="form-select"><option value="">待查證</option><option value="true">確實需要處理</option><option value="false">誤報</option></select></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-netiq">NetIQ 可行動時間</label><input id="prtg-acceptance-netiq" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-native">原生 PRTG 可行動時間</label><input id="prtg-acceptance-native" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-union">簡單聯集可行動時間</label><input id="prtg-acceptance-union" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-combined">合併分析可行動時間</label><input id="prtg-acceptance-combined" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-available">合併證據當時可取得時間</label><input id="prtg-acceptance-available" class="form-control" type="datetime-local" /></div>
+                    <div class="col-12 col-md-6"><label class="form-label" for="prtg-acceptance-disposition">實際處理時間</label><input id="prtg-acceptance-disposition" class="form-control" type="datetime-local" /></div>
+                </div>
+                <div class="row g-2 mt-2">
+                    <div class="col-12 col-md-3"><label class="form-label" for="prtg-acceptance-cost-netiq">NetIQ查證耗時（分鐘）</label><input class="form-control" id="prtg-acceptance-cost-netiq" type="number" min="0" max="1000000" step="any" /></div>
+                    <div class="col-12 col-md-3"><label class="form-label" for="prtg-acceptance-cost-native">原生 PRTG查證耗時（分鐘）</label><input class="form-control" id="prtg-acceptance-cost-native" type="number" min="0" max="1000000" step="any" /></div>
+                    <div class="col-12 col-md-3"><label class="form-label" for="prtg-acceptance-cost-union">簡單聯集查證耗時（分鐘）</label><input class="form-control" id="prtg-acceptance-cost-union" type="number" min="0" max="1000000" step="any" /></div>
+                    <div class="col-12 col-md-3"><label class="form-label" for="prtg-acceptance-cost-combined">合併分析查證耗時（分鐘）</label><input class="form-control" id="prtg-acceptance-cost-combined" type="number" min="0" max="1000000" step="any" /></div>
+                </div>
+                <p class="small text-muted mt-2">時間以目前瀏覽器時區輸入。預防或尚未觀察案例不得填未發生的事故時間；預測提前量另列、不計實際提前預警。未知時間請留空，不代表該系統未發現。重用相同主機與事故識別會更新該筆查證。</p>
+                <button type="submit" class="btn btn-outline-secondary mt-2">保存事故查證</button>
+            </form>
+            <div id="prtg-acceptance-status" class="small mt-2" role="status" aria-live="polite"></div>
         </div>
     </section>
 </div>
@@ -200,24 +289,28 @@
 
                 <div class="small text-muted mb-3" id="prtg-strategy-scope-explanation">保守策略：夜間不逐顆查詢歷史值，數值由每 15 分鐘的快照供應（快照涵蓋全部監看裝置），數值取數對象不適用。激進策略：夜間依數值取數對象逐顆查詢。</div>
 
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="prtg-enabled" />
+                    <label class="form-check-label fw-semibold" for="prtg-enabled">啟用 PRTG 擷取</label>
+                    <div class="form-text">啟用後，依已對應的監看裝置同步感測器與狀態變更；夜間數值取數對象另由下方設定。儲存後才生效。</div>
+                </div>
+
                 <div class="mb-3">
                     <div class="d-flex align-items-center gap-2">
-                        <label for="prtg-value-fetch-scope" class="form-label fw-semibold mb-0">PRTG 擷取（數值取數對象）</label>
+                        <label for="prtg-value-fetch-scope" class="form-label fw-semibold mb-0">夜間數值取數對象</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="選擇任一數值取數對象即啟用 PRTG 擷取。數值取數對象只決定夜間要抓哪些主機的數值；感測器與狀態變更同步的是「監看裝置」（由主機對應算出的裝置集合），兩者不同。預設只抓當日出問題的主機（高／中風險或 PRTG 規則命中）——實機環境 sensor 數以萬計，全抓一晚跑不完，對從沒出過問題的主機取數也沒有分析價值。要為值型規則累積基線時才放寬。">
+                                data-bs-content="PRTG 擷取由上方開關控制。數值取數對象只決定激進策略夜間要抓哪些主機的歷史值；保守策略仍同步監看裝置的感測器與狀態變更，數值由快照供應。預設只抓當日出問題的主機。要為值型規則累積基線時才放寬，並先估算站台負載。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <span class="small text-muted d-none" id="prtg-scope-inapplicable-hint">保守策略下不適用</span>
                     </div>
                     <select class="form-select mt-2" id="prtg-value-fetch-scope">
-                        <option value="off">關閉（預設）</option>
                         <option value="triggered">只抓觸發主機</option>
                         <option value="all-mapped">全部已對應主機</option>
                         <option value="triggered-plus-list">觸發主機＋指定清單</option>
                     </select>
                     <div class="form-text">
-                        選擇任一數值取數對象即啟用 PRTG 擷取；關閉時夜間擷取、歷史回填與結構同步都不執行，
-                        環境探測與資源守門預覽不受影響。
+                        保守策略下此範圍不適用；切回激進策略時保留上次設定。關閉 PRTG 擷取時夜間擷取、歷史回填與結構同步都不執行，環境探測與資源守門預覽不受影響。
                         「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
                     </div>
                 </div>
@@ -405,6 +498,9 @@
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
                     </div>
                     <div class="form-text text-muted mb-3">這是每日實際會擷取數值的 sensor 量級。</div>
+                      <div class="small border rounded p-2 mb-3" id="prtg-risk-review" role="status">歷史風險重評：載入中…</div>
+                      <button class="btn btn-sm btn-outline-secondary mb-3" type="button" id="prtg-risk-review-retry">重試歷史風險重評（最多 100 筆）</button>
+                      <div class="small border rounded p-2 mb-3" id="prtg-observation-readiness" role="status">獨立 PRTG 問題準備度：載入中…</div>
 
                     <div class="mb-3" id="prtg-conflicts-section">
                         <div class="d-flex align-items-center justify-content-between mb-1">
@@ -592,10 +688,12 @@
                 <button type="button" class="btn btn-outline-danger d-none" id="prtg-probe-cancel">停止探測</button>
                 <div class="text-muted small" id="prtg-probe-status"></div>
             </div>
-            <label for="prtg-probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
-                探測輸出
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <label for="prtg-probe-output" class="form-label small fw-semibold mb-0">探測輸出</label>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
-            </label>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-download" disabled>下載探測結果</button>
+            </div>
+            <p class="text-muted small">下載後請先檢查主機名稱、IP 等環境資訊，再提供試點驗收使用。探測成功只代表本次取得的資料能力，請連同日期與來源設定版本一起核對。</p>
             <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
         </div>
     </div>

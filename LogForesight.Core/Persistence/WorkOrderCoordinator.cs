@@ -203,6 +203,7 @@ public class WorkOrderCoordinator
             {
                 CaseId = Guid.NewGuid().ToString("n"),
                 HostName = member.HostName, IssueKey = member.IssueKey, IssueLabel = member.IssueLabel,
+                PrtgEvidence = _caseCoordinator.CapturePrtgEvidence(member.HostName, day, member.IssueKey),
                 Status = IssueHandlingStatuses.InProgress, HandlerId = order.HandlerId,
                 Note = order.Note, DueDate = order.DueDate,
                 FirstLinkedDate = day, LastLinkedDate = day,
@@ -549,6 +550,7 @@ public class WorkOrderCoordinator
             cases.Add(new IssueCase
             {
                 CaseId = caseId, HostName = host.HostName, IssueKey = key, IssueLabel = issue.SourceEventLabel,
+                PrtgEvidence = _caseCoordinator.CapturePrtgEvidence(host.HostName, day, key),
                 Status = IssueHandlingStatuses.InProgress, HandlerId = handlerId, Note = note,
                 FirstLinkedDate = day, LastLinkedDate = day,
                 CreatedAt = occurredAt, UpdatedAt = occurredAt, CreatedByAccount = string.Empty,

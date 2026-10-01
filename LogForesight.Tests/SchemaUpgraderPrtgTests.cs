@@ -156,6 +156,28 @@ public class SchemaUpgraderPrtgTests : IDisposable
         Assert.Null(ex2);
     }
 
+    [Fact]
+    public void 既有資料庫_補上快照批次識別表且重跑仍可讀寫()
+    {
+        using (var ctx = _fx.NewContext())
+            ctx.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS lf_prtg_sampled_batches");
+
+        using (var ctx = _fx.NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+            SchemaUpgrader.Upgrade(ctx);
+            ctx.PrtgSampledBatches.Add(new PrtgSampledBatchRow
+            {
+                BatchId = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+        }
+
+        using var verify = _fx.NewContext();
+        Assert.Single(verify.PrtgSampledBatches);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -375,7 +397,9 @@ public class SchemaUpgraderPrtgTests : IDisposable
         "lf_prtg_values",
         "lf_prtg_host_map",
         "lf_prtg_manual_map",
-        "lf_prtg_ip_excludes"
+        "lf_prtg_ip_excludes",
+        "lf_prtg_sampled_batches",
+        "lf_prtg_observations"
     };
 
     private static HashSet<string> GetColumnNames(LfDbContext ctx, string table)

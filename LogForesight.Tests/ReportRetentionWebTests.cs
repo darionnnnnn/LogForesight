@@ -15,6 +15,7 @@ public class ReportRetentionWebTests
 {
     private static UpdateSystemSettingsRequest CreateValidRequest() => new()
     {
+        ExpectedRevision = "legacy",
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
         VisibleDayRiskLevels = new List<string> { "高", "中", "低" },

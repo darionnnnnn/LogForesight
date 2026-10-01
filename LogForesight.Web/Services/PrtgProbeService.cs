@@ -235,6 +235,16 @@ public class PrtgProbeService
         }
 
         var console = new PrtgProbeConsole(_state);
+        console.WriteLine($"探測模式：{(dataFlow ? "小範圍資料流" : "完整環境探測")}");
+        console.WriteLine($"開始時間：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
+        var assembly = typeof(PrtgProbeService).Assembly;
+        var buildVersion = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString() ?? "unknown";
+        console.WriteLine($"程式版本：{buildVersion}");
+        console.WriteLine($"設定版本：{s.Revision}；PRTG 啟用：{(s.PrtgEnabled ? "是" : "否")}；取數策略：{s.PrtgFetchStrategy}");
+        console.WriteLine("輸出可能含主機名稱、IP 或 PRTG 訊息；分享前請先檢視並遮蔽。");
+        console.WriteLine();
         PrtgClient? client = null;
         try
         {
@@ -250,19 +260,24 @@ public class PrtgProbeService
 
         _ = Task.Run(async () =>
         {
+            using var operation = new PrtgOperationScope(s, _settings.Get, ct,
+                new PrtgScopeRevisionReader(_backend, _hosts).Read, dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
+            client.OperationCheckpoint = operation.Checkpoint;
+            var runToken = operation.Token;
             var success = false;
             var cancelled = false;
             try
             {
                 using (client)
                 {
+                    operation.Checkpoint();
                     if (dataFlow)
                     {
-                        success = await PrtgProbeDataFlowRunner.RunAsync(client, _backend, _hosts, s, console, ct);
+                        success = await PrtgProbeDataFlowRunner.RunAsync(client, _backend, _hosts, s, console, runToken);
                     }
                     else
                     {
-                        success = await PrtgProbeRunner.RunAsync(client, console, ct);
+                        success = await PrtgProbeRunner.RunAsync(client, console, runToken);
                     }
 
                     // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），
@@ -272,9 +287,9 @@ public class PrtgProbeService
                         try
                         {
                             await PrtgProbeSiteCheck.RunAsync(client, console, _backend.PrtgStore(), _hosts, s, _sentinels.GetAll(),
-                                new PrtgLiveGuardSource(client, ct, console), ct);
+                                new PrtgLiveGuardSource(client, runToken, console), runToken);
                         }
-                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        catch (OperationCanceledException)
                         {
                             throw;
                         }
@@ -283,14 +298,15 @@ public class PrtgProbeService
                             console.WriteLine($"站台對照發生未預期錯誤：{ex.Message}");
                         }
                     }
+                    operation.CompletedStage("探測與站台對照已返回");
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (runToken.IsCancellationRequested)
             {
                 cancelled = true;
                 success = false;
                 console.WriteLine();
-                console.WriteLine("探測已由使用者停止。");
+                console.WriteLine(operation.SettingsChanged ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
             }
             catch (Exception ex)
             {

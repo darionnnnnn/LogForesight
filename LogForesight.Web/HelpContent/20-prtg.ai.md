@@ -16,3 +16,16 @@ PRTG 維護頁有「連線」、「擷取參數」、「鏡像狀態」、「環
 - 正式站台校準尚未完成：目前匯出約 6 天，且 sensor 單位為 null。真實 28 日有效資料、現場主要頻道／單位語意和預警效果都待實機核驗；程式解析與測試通過只證明軟體路徑。
 
 所有外部輪詢都必須有每次請求逾時、取消訊號與頁數／批次上限；局部回填停止只取消自己啟動的 run。正式 PRTG 28 日／頻道與 SQL Server 實機仍待驗；文件不把「等待直到外部系統回應」視為完成條件。
+
+- 第二輪現況：正式問題只補充明確成功的 NetIQ 主機日，零事件成功仍合格；本機、Unknown、失敗、執行中或缺日都不獨立建案。使用者新增決策優先於前述歷史說明。
+- 管理者必須在正式判定試點確認 Core、來源時區／語系及主機／sensor；來源與資源世代、逐顆 messages 涵蓋及前導狀態才可支持持續 Down。ACK／14 天不能降低故障風險。
+- 磁碟須同來源／資源／typed 語意暖機涵蓋 28 日，且來源時區與 Web 伺服器一致；未知與 no-hit 都不能宣稱資源健康。只有可信完整重評能撤回舊 finding，案件人工結論仍保留。
+- 補追加、案件及通知有持久重試，過期只摘要。每名收件人前重查規則、靜音、scope、權限與 SMTP；結果不明允許同身分重寄。歷史弱佐證不升級，待重評可分頁下鑽；AI 舊輸入結果不能覆寫新 PRTG 證據。
+- 匯入只診斷，不搬信任與處置；保留／快照隔離／升級回退操作以使用者說明「保留與復原」為準。現場效益由獨立事故四基準與人工驗收證明，測試數不能證明 1＋1＞2。
+
+Acceptance default segment includes build, parser semantics and visible pilot resource/mapping/disk semantic warm-up fingerprints. Resource or semantic changes split evidence groups; routine probe timestamps do not. Preserve historical incident segments when reviewing old evidence. SMTP acceptance timestamps never imply mailbox delivery.
+
+- 來源變更提供 new／continue／unknown 明確模式及唯讀影響預覽。continue 必須同 Core、時區與語系，附人工身分證據／確認；不是 API 自動信任。unknown 停止正式判定，new 重新暖機，憑證輪替不自動重設。既有案件／人工處置保留。
+- 實際作用範圍預覽共用正式主機資格與規則分類；列未對應／衝突／範圍／待 NetIQ／可信資料缺口，100 筆分頁、上限 500、總數及完整性明示。可評估不保證 finding／交辦／通知；preview 不取數、不解除磁碟當輪語意／28 日守門。
+- 作業版本列工作 ID、採用與期望設定／範圍摘要、最後完成階段、安全取消狀態；只限目前程序及最近 32 個結束作業。通知另列意圖設定／目前版本。重啟不能從這份記憶體列表推論歷史成功。
+- checkpoint v2 checksum、跨程序生命週期 lease 與過期寫入摘要比較已接線；v1 未知完整性保留並停止，不自動升級。升級／隔離依使用者版說明，不改識別強迫重播；同 Core 搬址亦不盲目改綁舊待寫數值。

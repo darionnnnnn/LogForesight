@@ -96,6 +96,9 @@ public sealed class PrtgEffectivenessService
 
     private static bool IsPrtgCorroboration(CorrelationAlertRef alert) => IsPrtgCorroboration(alert.PatternId);
     private static bool IsPrtgCorroboration(string text) => text.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase)
+        || text.StartsWith("【儲存異常同日訊號】", StringComparison.Ordinal)
+        || text.StartsWith("【容量異常同日訊號】", StringComparison.Ordinal)
+        || text.StartsWith("【關機與監測異常同日訊號】", StringComparison.Ordinal)
         || text.StartsWith("【儲存故障雙重確認】", StringComparison.Ordinal)
         || text.StartsWith("【磁碟容量雙重確認】", StringComparison.Ordinal)
         || text.StartsWith("【失聯獲 PRTG 證實】", StringComparison.Ordinal);

@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -18,7 +18,13 @@ public sealed record PrtgDiskRuleTrial(string Status, string Message, long Senso
     int UsableDays, int RequiredDays, int UsableHours, int RequiredHoursPerDay, string DataQuality,
     bool SemanticVerified, string? Exclusion, double? LowWaterPercent, double? MinimumDeclinePerDay,
     double? MaximumDaysToDepletion, double? CurrentAvailablePercent, double? DeclinePerDay,
-    double? EstimatedDaysToDepletion, bool PredictedHit, string RealPositiveStatus, string? RuleId, bool? RuleEnabled);
+    double? EstimatedDaysToDepletion, bool PredictedHit, string RealPositiveStatus, string? RuleId, bool? RuleEnabled)
+{
+    public string RulesFingerprint { get; init; } = "";
+    public string SettingsRevision { get; init; } = "";
+    public string SemanticVersion { get; init; } = "";
+    public DateTime AssessedAtUtc { get; init; }
+}
 
 public sealed class PrtgDiskVerificationService
 {
@@ -56,6 +62,12 @@ public sealed class PrtgDiskVerificationService
         if (sensorObjid <= 0) throw new ArgumentOutOfRangeException(nameof(sensorObjid));
         var completedDay = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
         var (content, usedFallback) = RuleBootstrapper.LoadContent(_ruleStore);
+        var settingsRevision = _settings.Get().Revision;
+        var rulesFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(content.Rules.OrderBy(r => r.Id, StringComparer.Ordinal)))));
+        PrtgDiskRuleTrial Stamp(PrtgDiskRuleTrial trial) => trial with {
+            RulesFingerprint = rulesFingerprint, SettingsRevision = settingsRevision,
+            SemanticVersion = ParserSemanticVersion, AssessedAtUtc = DateTime.UtcNow };
         var validation = RuleValidator.Validate(content.Rules);
         var diskRules = validation.ValidRules.Where(r =>
             string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
@@ -71,9 +83,9 @@ public sealed class PrtgDiskVerificationService
             .Assess(completedDay, rule, PrtgDiskDecisionMode.Preview, 1, 0, selectedSensorObjids: new[] { sensorObjid });
         var row = assessment.Rows.FirstOrDefault();
         if (row is null)
-            return new("sensor-unavailable", "所選感測器目前未對應至啟用主機，無法試算。", sensorObjid, completedDay,
+            return Stamp(new("sensor-unavailable", "所選感測器目前未對應至啟用主機，無法試算。", sensorObjid, completedDay,
                 0, PrtgValueReadiness.WindowDays, 0, PrtgValueReadiness.MinDailyUsableHours, "資料不可用", false,
-                "SensorUnavailable", null, null, null, null, null, null, false, "真實正向尚未觀察", rule?.Id, rule?.Enabled);
+                "SensorUnavailable", null, null, null, null, null, null, false, "真實正向尚未觀察", rule?.Id, rule?.Enabled));
         var ready = row.Readiness;
         var trend = row.Decision.Trend;
         var quality = ready.Status == PrtgValueReadinessStatus.Ready ? "28 日窗口每日達可用品質門檻" : ready.Status == PrtgValueReadinessStatus.InsufficientData
@@ -93,11 +105,11 @@ public sealed class PrtgDiskVerificationService
             _ => row.Decision.Reason
         };
         var thresholds = rule?.PrtgDiskTrendThresholds;
-        return new(status, message, sensorObjid, completedDay, ready.UsableDays, ready.RequiredDays, ready.UsableHours,
+        return Stamp(new(status, message, sensorObjid, completedDay, ready.UsableDays, ready.RequiredDays, ready.UsableHours,
             ready.RequiredHoursPerDay, quality, row.EvidenceValidity is { IsValid: true }, row.Decision.Exclusion.ToString(),
             thresholds?.LowWaterPercent, thresholds?.MinimumDeclinePercentagePointsPerDay, thresholds?.MaximumDaysToDepletion,
             trend?.CurrentAvailablePercent, trend?.RobustDeclinePercentagePointsPerDay, trend?.EstimatedDaysToDepletion,
-            row.Decision.WouldHit, "真實正向尚未觀察", rule?.Id, rule?.Enabled);
+            row.Decision.WouldHit, "真實正向尚未觀察", rule?.Id, rule?.Enabled));
     }
 
     public PrtgDiskVerificationStatus GetStatus(long? sensorObjid = null) => new(Volatile.Read(ref _ownsRun) != 0, _runningSensor,
@@ -147,10 +159,11 @@ public sealed class PrtgDiskVerificationService
                         await ProbeAndSaveAsync(sensor, request.DataDate, settings, ct);
                         anySuccess = true;
                     }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    catch (OperationCanceledException ex) when (ct.IsCancellationRequested || ex is PrtgScopeCancelledException)
                     {
                         cancelled = true;
-                        SaveOutcome(sensor, request.DataDate, "Cancelled", "語意驗證已由使用者停止。", true);
+                        SaveOutcome(sensor, request.DataDate, "Cancelled", "語意驗證已停止（使用者停止或設定／範圍已變更）。", true);
+                        break;
                     }
                     catch (Exception ex)
                     {
@@ -190,8 +203,8 @@ public sealed class PrtgDiskVerificationService
         {
             var success = false; var cancelled = false;
             try { await ProbeAndSaveAsync(sensor, request.DataDate, settings, ct); success = true; }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            { cancelled = true; SaveOutcome(sensor, request.DataDate, "Cancelled", "語意驗證已由使用者停止。", true); }
+            catch (OperationCanceledException ex) when (ct.IsCancellationRequested || ex is PrtgScopeCancelledException)
+            { cancelled = true; SaveOutcome(sensor, request.DataDate, "Cancelled", "語意驗證已停止（使用者停止或設定／範圍已變更）。", true); }
             catch (Exception ex)
             { SaveOutcome(sensor, request.DataDate, ex is TaskCanceledException or TimeoutException ? "TimedOut" : "Failed",
                 ex is TaskCanceledException or TimeoutException ? "PRTG 語意驗證逾時。" : "PRTG 語意驗證失敗或回應無法解析。"); }
@@ -259,6 +272,13 @@ public sealed class PrtgDiskVerificationService
     private async Task ProbeAndSaveAsync((long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused) sensor,
         DateTime date, SystemSettings settings, CancellationToken ct)
     {
+        using var operation = new PrtgOperationScope(settings, _settings.Get, ct,
+            () => System.Text.Json.JsonSerializer.Serialize(new { Maps = _store.GetLatestHostMap().Where(m => m.DeviceObjid == sensor.DeviceObjid),
+                Host = _hosts.GetAll().Where(h => h.HostId == sensor.HostId).Select(h => new { h.HostId, h.IpAddress, h.Active, h.MergedInto, h.Source }) }), "磁碟語意驗證", requireEnabled: false);
+        ct = operation.Token;
+        try
+        {
+        operation.Checkpoint();
         var localStart = DateTime.SpecifyKind(date.Date, DateTimeKind.Local);
         var points = _store.GetValuesForSensor(sensor.Objid, localStart, localStart.AddDays(1))
             .Where(v => v.AvgValue.HasValue && (v.Quality == PrtgDataQuality.Ok ||
@@ -266,9 +286,11 @@ public sealed class PrtgDiskVerificationService
             .Take(5).Select(v => new PrtgDiskSemanticPersistedPoint(
                 DateTime.SpecifyKind(v.PeriodStart, DateTimeKind.Local).ToUniversalTime(), v.AvgValue!.Value)).ToArray();
         using var client = PrtgClientFactory.Create(settings);
+        client.OperationCheckpoint = operation.Checkpoint;
         var result = await new PrtgDiskSemanticProbe(client).ProbeAsync(sensor.Objid,
             localStart.ToUniversalTime(), localStart.AddDays(1).ToUniversalTime(), points, ct);
         var checkedAtUtc = DateTime.UtcNow;
+        operation.Checkpoint();
         _results.Save(new PrtgDiskVerificationResult(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType,
             result.Status.ToString(), Safe(result.Summary) ?? "語意驗證完成，請查看型別化結果。", Safe(result.ChannelIdentifier), Safe(result.ChannelName),
             Safe(result.Unit), result.Scale, result.Direction, result.ComparedPointCount, result.ValuesMatch,
@@ -277,7 +299,14 @@ public sealed class PrtgDiskVerificationService
             result.Unit != null && result.Scale is > 0 && result.Direction != null)
             _evidence.RecordAutomatedVerification(Context(sensor, result.ChannelIdentifier, result.ChannelName, result.Unit,
                 result.Scale.Value, result.Direction), true, "PRTG 主頻道為明確百分比可用空間，且 historicdata 與已落地樣本一致。", checkedAtUtc, ParserSemanticVersion);
+        operation.CompletedStage("語意驗證結果已保存");
+        }
+        catch (OperationCanceledException ex) when (operation.Token.IsCancellationRequested)
+        { throw new PrtgScopeCancelledException(ex); }
     }
+
+    private sealed class PrtgScopeCancelledException(OperationCanceledException inner)
+        : OperationCanceledException("PRTG 作業已在安全邊界停止。", inner);
 
     private void SaveOutcome((long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused) sensor,
         DateTime date, string state, string message, bool cancelled = false) =>

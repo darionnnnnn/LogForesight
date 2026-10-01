@@ -61,7 +61,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
 
     private NetiqPipelineService MakePipeline(
         NetiqOptions? options = null, List<string>? consoleLines = null, IRiskyEventStore? riskyEventStore = null,
-        IRunProgress? progress = null)
+        IRunProgress? progress = null, PrtgFindingsRegistry? prtgFindings = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var reportSink = new FakeReportSink();
@@ -80,7 +80,34 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: riskyEventStore, rawEventRetentionDays: 14, useAi: true, progress: progress,
-            clientFactory: FakeSentinelSearchClientFactory.Single(_client));
+            clientFactory: FakeSentinelSearchClientFactory.Single(_client), prtgFindings: prtgFindings);
+    }
+
+    [Fact]
+    public async Task Netiq成功零事件也能補入PRTG_實際管線寫入來源並保留風險()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed
+        };
+        var day = DateTime.Today.AddDays(-1);
+        var registry = new PrtgFindingsRegistry();
+        var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+        var signature = PrtgFindingMapper.ToSignature(new PrtgFinding(1001, 2001, "down", "Down", 60, rule), day);
+        registry.Publish(day,
+            new Dictionary<long, IReadOnlyList<LogIssueSignature>> { [host.HostId] = new[] { signature } },
+            new Dictionary<long, IReadOnlySet<string>>());
+        var result = await MakePipeline(prtgFindings: registry)
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+        var record = Assert.Single(_backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName }).ReadRecent(day, 1));
+        Assert.Equal(AnalysisLogSource.Netiq, record.LogSource);
+        Assert.Equal(0, record.ErrorCount);
+        Assert.Equal(signature.EventKey, Assert.Single(record.TopIssues).EventKey);
+        Assert.Equal(RiskLevels.Medium, record.RiskLevel);
+        Assert.True(record.AiPending);
     }
 
     /// <summary>
@@ -111,6 +138,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         {
             Assert.True(r.AiPending);
             Assert.False(r.AiAnalyzed);
+            Assert.Equal(AnalysisLogSource.Netiq, r.LogSource);
             Assert.Equal("高", r.RiskLevel);
             Assert.Contains("排隊中", r.Headline);
         });

@@ -2,6 +2,8 @@
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 
+> PRTG 整合進度（2026-10-01）：第 52 輪程式／建置通過並依使用者要求收尾，現場資料流部分通過；完整現場驗收與實用性／雙來源增益尚未通過。下一輪規劃入口：[第 53 輪：PRTG 整合完全體版本](docs/FEEDBACK-53-PLAN.md)，尚未開始開發。
+
 分析 Windows Server 的 Event Log 與 Linux 主機的 syslog（經 NetIQ Sentinel 取數，
 規則面與取數管線皆已完備，見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)），
 **提早發現硬體故障前兆與入侵跡象**，在問題擴大前示警。

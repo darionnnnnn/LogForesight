@@ -1,3 +1,4 @@
+﻿using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -115,6 +116,30 @@ public class RetentionPrunerTests : IDisposable
             SqliteConnection.ClearAllPools();
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
         }
+    }
+
+    [Fact]
+    public void 過期診斷與退役證據清理_保留試點及未完成有效判定的證據()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-retention-prtg-" + Guid.NewGuid());
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, directory);
+        new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => p.SensorIds = [10]);
+        foreach (var key in new[] { "prtg_import_diagnostic_test", PrtgSensorTimelineStore.Prefix + 10,
+            PrtgSensorTimelineStore.Prefix + 11, PrtgSensorTimelineStore.Prefix + 12 }) backend.Blob(key).Mutate(_ => ("{}", true));
+        using (var db = backend.CreateContext())
+        {
+            db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_")).ExecuteUpdate(u => u.SetProperty(b => b.UpdatedAt, DateTime.Now.AddDays(-100)));
+            db.PrtgObservations.Add(new() { SnapshotId = "pending", ActiveKey = "pending", SensorObjid = 11,
+                FormatVersion = 2, SupplementStatus = "waiting-netiq", RecordedAtUtc = DateTime.UtcNow.AddDays(-100) });
+            db.SaveChanges();
+        }
+        RetentionPruner.Run(backend, new RetentionOptions { PrtgRetentionDays = 30 }, new NullConsole(), null);
+        using var result = backend.CreateContext();
+        Assert.False(result.Blobs.Any(b => b.BlobKey == "prtg_import_diagnostic_test"));
+        Assert.False(result.Blobs.Any(b => b.BlobKey == PrtgSensorTimelineStore.Prefix + 12));
+        Assert.True(result.Blobs.Any(b => b.BlobKey == PrtgSensorTimelineStore.Prefix + 10));
+        Assert.True(result.Blobs.Any(b => b.BlobKey == PrtgSensorTimelineStore.Prefix + 11));
+        Assert.Single(result.PrtgObservations);
     }
 
     private sealed class NullConsole : IRunConsole

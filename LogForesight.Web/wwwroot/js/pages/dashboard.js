@@ -174,6 +174,18 @@ function renderBanner(data, user) {
         return;
     }
 
+    if (data.totalHosts === 0 || data.analyzedHostDays === 0) {
+        const hint = document.createElement('div');
+        hint.className = 'lf-hint mb-3'; hint.setAttribute('role', 'status');
+        hint.textContent = data.totalHosts === 0 ? '尚無可見主機，請先設定 NetIQ 主機與授權。'
+            : '本期沒有可顯示的分析紀錄；尚無法判斷風險，請檢查取數與顯示範圍。';
+        container.replaceChildren(hint); return;
+    }
+    if (data.pendingRiskReviewDays > 0) {
+        const hint = document.createElement('div'); hint.className = 'lf-hint mb-3'; hint.setAttribute('role', 'status');
+        hint.textContent = `本期 ${data.pendingRiskReviewDays} 個主機日的風險待重評；保留原等級以免遺漏，不能視為已確認故障或正常。請由維護人員查閱 PRTG 歷史風險重評清單。`;
+        container.replaceChildren(hint); return;
+    }
     if (data.highRiskDays > 0 || data.mediumRiskDays > 0) {
         container.replaceChildren();
         return;
@@ -183,8 +195,8 @@ function renderBanner(data, user) {
     banner.className = 'lf-card lf-card--ok mb-3';
     banner.innerHTML = `
         <div class="lf-card__body text-center py-4">
-            <div class="fs-4 fw-semibold text-success mb-1">本期無風險訊號</div>
-            <div class="text-muted">規則、趨勢與關聯層皆未偵測到異常。</div>
+            <div class="fs-4 fw-semibold text-success mb-1">已分析資料未顯示風險訊號</div>
+            <div class="text-muted">僅代表目前可見的分析結果；未回報、涵蓋缺口與隱藏項目仍須檢查。</div>
         </div>`;
     container.replaceChildren(banner);
 }
@@ -275,7 +287,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         value: data.silentHostsCount,
         variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
         hint: data.silentHostsPrtgDownCount > 0
-            ? `沒回報 ≠ 沒問題；其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台 PRTG 顯示失聯`
+            ? `沒回報 ≠ 沒問題；其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
             : '沒回報 ≠ 沒問題',
         url: '/admin/hosts?status=silent'
     });
@@ -697,7 +709,7 @@ function renderHosts(data) {
             { title: '最新狀況', render: h => h.latestHeadline }
         ],
         rows: data.hostRanking,
-        empty: { title: '本期沒有風險主機', hint: '所有主機的分析結果皆為低風險。' }
+        empty: { title: '本期沒有風險主機', hint: '目前可見資料未列出風險主機；未回報或無分析紀錄不代表正常。' }
     });
 }
 

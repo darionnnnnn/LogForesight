@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -158,6 +158,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
 
         // 與原 blob 實作逐欄對齊：CaseId／HostName／IssueKey／IssueLabel／CreatedAt／
         // CreatedByAccount 是建案當下的事實，更新時不動
+        if (issueCase.PrtgEvidence != null) row.PrtgEvidenceJson ??= JsonSerializer.Serialize(issueCase.PrtgEvidence);
         row.Status = issueCase.Status;
         row.HandlerId = issueCase.HandlerId;
         row.Note = issueCase.Note;
@@ -203,6 +204,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
                 existing[issueCase.CaseId] = row;
             }
 
+            if (issueCase.PrtgEvidence != null) row.PrtgEvidenceJson ??= JsonSerializer.Serialize(issueCase.PrtgEvidence);
             row.Status = issueCase.Status;
             row.HandlerId = issueCase.HandlerId;
             row.Note = issueCase.Note;
@@ -453,6 +455,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         CaseId = row.CaseId,
         HostName = row.HostName,
         IssueKey = row.IssueKey,
+        PrtgEvidence = row.PrtgEvidenceJson == null ? null : JsonSerializer.Deserialize<PrtgCaseEvidence>(row.PrtgEvidenceJson),
         IssueLabel = row.IssueLabel,
         Status = row.Status,
         HandlerId = row.HandlerId,

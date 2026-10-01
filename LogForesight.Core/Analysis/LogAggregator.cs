@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
@@ -32,6 +32,9 @@ public class LogIssueSignature
     /// 未命中規則的 Linux 事件維持空字串，跟四元組聚合成 Other 類，語意與 Windows Other 一致。
     /// </summary>
     public string EventKey { get; set; } = string.Empty;
+    public string? PrtgSourceGeneration { get; set; }
+    public string? PrtgResourceGeneration { get; set; }
+    public DateTimeOffset? PrtgIncidentStartedAt { get; set; }
 
     /// <summary>
     /// 顯示用的「來源＋事件識別」文字（docs/archive/FEEDBACK-12-PLAN.md §4.3）：Windows 顯示既有的
@@ -42,9 +45,10 @@ public class LogIssueSignature
     /// 避免另存一份可能漂移的值（同 <see cref="DailyAnalysisRecord.HasCoverageGap"/> 的既有慣例）。
     /// </summary>
     [JsonIgnore]
-    public string SourceEventLabel => EventId == 0 && EventKey.Length > 0
-        ? $"{Source}（{EventKey}）"
-        : $"{Source} EventId {EventId}";
+    public string SourceEventLabel => LogName.Equals("PRTG", StringComparison.OrdinalIgnoreCase) &&
+        EventKey.Split(':') is { Length: >= 5 } parts
+        ? $"PRTG {parts[1] switch { "down" => "持續故障", "warning" => "持續警告", "flapping" => "反覆故障", "disk_free_trend" => "磁碟容量趨勢", _ => parts[1] }}（感測器 #{parts[2]}）"
+        : EventId == 0 && EventKey.Length > 0 ? $"{Source}（{EventKey}）" : $"{Source} EventId {EventId}";
 
     public int Count { get; set; }
 

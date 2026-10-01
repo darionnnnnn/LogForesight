@@ -24,6 +24,9 @@ public sealed record PrtgFinding(
     /// device 層（silent）與分類未知的 sensor 為 null。映射成簽章時寫進 <c>LogIssueSignature.PrtgSensorCategory</c>。
     /// </summary>
     public string? SensorCategory { get; init; }
+    public string? SourceGeneration { get; init; }
+    public string? ResourceGeneration { get; init; }
+    public DateTimeOffset? IncidentStartedAt { get; init; }
 }
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>

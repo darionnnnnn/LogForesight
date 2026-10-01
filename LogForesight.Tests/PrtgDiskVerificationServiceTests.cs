@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
@@ -46,6 +46,8 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         {
             db.PrtgDevices.Add(new PrtgDeviceRow { Objid = 2 });
             db.PrtgSensors.Add(new PrtgSensorRow { Objid = 1, DeviceObjid = 2, Category = PrtgSensorCategories.Disk, SensorType = "snmpdiskfree" });
+            // 試算目標是昨天；歷史候選只可使用目標日以前的對應，不能用今天的映射回填昨天。
+            db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = 2, MapDate = DateTime.Today.AddDays(-1), HostId = 1, MapStatus = PrtgMapStatus.Ok });
             db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = 2, MapDate = DateTime.Today, HostId = 1, MapStatus = PrtgMapStatus.Ok });
             db.SaveChanges();
         }
@@ -72,6 +74,8 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         _ruleStore.Save(new RuleFileContent { Rules = new List<KnownIssueRule>() });
 
         var trial = _service.AssessRuleTrial(1);
+        Assert.NotEmpty(trial.RulesFingerprint); Assert.Equal(PrtgDiskVerificationService.ParserSemanticVersion, trial.SemanticVersion);
+        Assert.Equal(DateTimeKind.Utc, trial.AssessedAtUtc.Kind);
         Assert.Equal("no-configured-rule", trial.Status);
         Assert.Contains("沒有已儲存", trial.Message);
         Assert.Empty(_evidence.GetAll());
@@ -188,7 +192,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             for (var offset = -5; offset <= 0; offset++)
             {
                 var day = end.AddDays(offset);
-                maps.Add(new() { DeviceObjid = sensor.DeviceObjid, MapDate = day.Date, HostId = 1, MapStatus = PrtgMapStatus.Ok });
+                if (day != end) maps.Add(new() { DeviceObjid = sensor.DeviceObjid, MapDate = day.Date, HostId = 1, MapStatus = PrtgMapStatus.Ok });
                 for (var hour = 0; hour < 12; hour++) values.Add(new()
                 {
                     SensorObjid = sensor.Objid, PeriodStart = day.Date.AddHours(hour), AvgValue = 70,
@@ -218,7 +222,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             for (var offset = -27; offset <= 0; offset++)
             {
                 var day = end.AddDays(offset);
-                maps.Add(new() { DeviceObjid = sensor.DeviceObjid, MapDate = day.Date, HostId = 1, MapStatus = PrtgMapStatus.Ok });
+                if (day != end) maps.Add(new() { DeviceObjid = sensor.DeviceObjid, MapDate = day.Date, HostId = 1, MapStatus = PrtgMapStatus.Ok });
                 for (var hour = 0; hour < 12; hour++) values.Add(new()
                 {
                     SensorObjid = sensor.Objid, PeriodStart = day.Date.AddHours(hour), AvgValue = 70,
@@ -287,7 +291,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         for (var offset = -(days - 1); offset <= 0; offset++)
         {
             var day = end.AddDays(offset);
-            maps.Add(new() { DeviceObjid = sensor.DeviceObjid, MapDate = day.Date, HostId = 1, MapStatus = PrtgMapStatus.Ok });
+            if (day != end) maps.Add(new() { DeviceObjid = sensor.DeviceObjid, MapDate = day.Date, HostId = 1, MapStatus = PrtgMapStatus.Ok });
             for (var hour = 0; hour < 12; hour++) values.Add(new()
             {
                 SensorObjid = sensor.Objid, PeriodStart = day.Date.AddHours(hour), AvgValue = valueForDay(offset + days - 1),
@@ -416,7 +420,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
 
         using (var db = _fx.NewContext())
         {
-            var map = db.PrtgHostMaps.Single();
+            var map = db.PrtgHostMaps.Single(row => row.MapDate == DateTime.Today);
             map.HostId = 99;
             db.SaveChanges();
         }

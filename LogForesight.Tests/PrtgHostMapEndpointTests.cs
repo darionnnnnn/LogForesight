@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -73,6 +73,23 @@ public class PrtgHostMapEndpointTests : IDisposable
         public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) => throw new NotSupportedException();
         public Task<TestMailResultDto> TestMail(TestMailRequest request) => throw new NotSupportedException();
         public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void 對應與排除共用原子版本_過期寫入與刪除不覆蓋另一管理者()
+    {
+        var store = _backend.PrtgStore();
+        var host = new HostStore(_backend.Blob("hosts")).Upsert(new() { HostName = "conflict", Active = true });
+        var loaded = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+        store.UpsertManualMap(new() { DeviceObjid = 123, HostId = host.HostId }, loaded);
+        var failure = Assert.Throws<DomainException>(() => _controller.SetPrtgIpExclude(new()
+        { Ip = "10.0.0.1", ExpectedScopeRevision = loaded }));
+        Assert.Equal(ApiErrorCodes.Conflict, failure.Code); Assert.Empty(store.GetIpExcludes());
+        Assert.Equal(ApiErrorCodes.Conflict, Assert.Throws<DomainException>(() => _controller.DeletePrtgManualMap(123, loaded)).Code);
+        Assert.Single(store.GetManualMaps());
+        Assert.Equal(ApiErrorCodes.ValidationFailed, Assert.Throws<DomainException>(() => _controller.SetPrtgIpExclude(new() { Ip = "10.0.0.1" })).Code);
+        Assert.Throws<PrtgScopeConflictException>(() => store.UpsertManualMap(new() { DeviceObjid = 123, HostId = 999 }, loaded));
+        Assert.Equal(host.HostId, Assert.Single(store.GetManualMaps()).HostId);
     }
 
     [Fact]
@@ -214,16 +231,16 @@ public class PrtgHostMapEndpointTests : IDisposable
     {
         // 空白 IP 擲驗證例外
         var exEmpty = Assert.Throws<DomainException>(() =>
-            _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest { Ip = "" }));
+            _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), Ip = "" }));
         Assert.Equal(ApiErrorCodes.ValidationFailed, exEmpty.Code);
 
         var exWhitespace = Assert.Throws<DomainException>(() =>
-            _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest { Ip = "   " }));
+            _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), Ip = "   " }));
         Assert.Equal(ApiErrorCodes.ValidationFailed, exWhitespace.Code);
 
         // PUT 之後 GET 讀得到且 IP 已正規化（前後去空白、轉小寫）
         var putRes = _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest
-        {
+        { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(),
             Ip = " 10.0.0.5 ",
             Note = "測試排除"
         });
@@ -245,7 +262,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Contains(_audit.Entries, a => a.Action == AuditActions.PrtgIpExcludeSet && a.TargetId == "10.0.0.5");
 
         // DELETE 之後讀不到
-        var delRes = _controller.DeletePrtgIpExclude(" 10.0.0.5 ");
+        var delRes = _controller.DeletePrtgIpExclude(" 10.0.0.5 ", _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion());
         Assert.True(delRes.Success);
         Assert.True(delRes.Data!.Deleted);
         Assert.Null(delRes.Data.RemapWarning);
@@ -282,7 +299,7 @@ public class PrtgHostMapEndpointTests : IDisposable
 
         // 透過端點 PUT 設定 IP 排除
         var putRes = _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest
-        {
+        { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(),
             Ip = targetIp,
             Note = "排除此 IP"
         });
@@ -447,7 +464,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         // （早期 Upsert 不驗證內容時存進去的）正規化會回 null。端點若先正規化再擋 null，
         // 那些列就永遠刪不掉，而 store 層的相容測試照樣全綠——這條守的是端點這一段。
         // 現行寫入路徑已不接受非 IP，所以這裡驗的是「請求能走到 store」而非刪除筆數。
-        var res = _controller.DeletePrtgIpExclude("prtg-old-name");
+        var res = _controller.DeletePrtgIpExclude("prtg-old-name", _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion());
 
         Assert.True(res.Success);
         Assert.False(res.Data!.Deleted);   // 這個測試庫裡沒有那筆，重點是沒有擲驗證例外
@@ -456,7 +473,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 刪除端點_空白仍然被擋下()
     {
-        Assert.Throws<DomainException>(() => _controller.DeletePrtgIpExclude("   "));
+        Assert.Throws<DomainException>(() => _controller.DeletePrtgIpExclude("   ", _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()));
     }
 
     /// <summary>合法 IP 帶 port 也要刪得掉（清單存的是正規化後的值）。</summary>
@@ -466,7 +483,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         var store = _backend.PrtgStore();
         store.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.8.8.9", CreatedBy = "admin", CreatedAt = DateTime.Now });
 
-        var res = _controller.DeletePrtgIpExclude("10.8.8.9:8080");
+        var res = _controller.DeletePrtgIpExclude("10.8.8.9:8080", _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion());
 
         Assert.True(res.Data!.Deleted);
         Assert.DoesNotContain(store.GetIpExcludes(), e => e.Ip == "10.8.8.9");

@@ -1,4 +1,4 @@
-using System.Text.Encodings.Web;
+﻿using System.Text.Encodings.Web;
 using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -34,6 +34,7 @@ public class SettingsController : ControllerBase
     private readonly PrtgSnapshotHostedService? _snapshot;
     private readonly PrtgDeviceIndexCache? _deviceIndexCache;
     private readonly PrtgDiskVerificationService? _diskVerification;
+    private readonly IVisibilityService? _visibility;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -47,7 +48,7 @@ public class SettingsController : ControllerBase
         IHostStore? hosts = null,
         PrtgSnapshotHostedService? snapshot = null,
         PrtgDeviceIndexCache? deviceIndexCache = null,
-        PrtgDiskVerificationService? diskVerification = null)
+        PrtgDiskVerificationService? diskVerification = null, IVisibilityService? visibility = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -61,6 +62,7 @@ public class SettingsController : ControllerBase
         _snapshot = snapshot;
         _deviceIndexCache = deviceIndexCache;
         _diskVerification = diskVerification;
+        _visibility = visibility;
     }
 
     [HttpGet]
@@ -726,6 +728,7 @@ public class SettingsController : ControllerBase
         int snapshotConsecutiveFailures = 0;
         bool snapshotBackingOff = false;
         string? snapshotSkipReason = null;
+        int snapshotPendingSamples = 0;
 
         if (_snapshot != null)
         {
@@ -736,6 +739,7 @@ public class SettingsController : ControllerBase
             snapshotConsecutiveFailures = st.ConsecutiveFailures;
             snapshotBackingOff = st.IntervalMinutes > PrtgFetchStrategy.Profile(_settings.Get().PrtgFetchStrategy).SnapshotIntervalMinutes;
             snapshotSkipReason = st.LastSkipReason;
+            snapshotPendingSamples = st.PendingSamples;
         }
 
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
@@ -759,6 +763,7 @@ public class SettingsController : ControllerBase
             SnapshotConsecutiveFailures = snapshotConsecutiveFailures,
             SnapshotBackingOff = snapshotBackingOff,
             SnapshotSkipReason = snapshotSkipReason,
+            SnapshotPendingSamples = snapshotPendingSamples,
             Freshness = PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
         });
     }
@@ -1022,9 +1027,22 @@ public class SettingsController : ControllerBase
     // ── PRTG 人工主機對應（PRTG 第 2 輪任務E-1）──────────────────────────────────
 
     /// <summary>取得全部 PRTG 人工主機對應清單（含主機名稱，供畫面顯示）</summary>
+    [HttpGet("prtg-scope-revision")]
+    public ApiResponse<long> GetPrtgScopeRevision()
+    { RequireFullPrtgTransferAccess(); return ApiResponse<long>.Ok(_backend?.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ?? 0); }
+
+    private static long RequireScopeRevision(long? revision) => revision is >= 0 ? revision.Value
+        : throw DomainException.Validation("缺少 PRTG 範圍版本，請重新載入頁面再儲存。");
+    private static T SavePrtgScope<T>(Func<T> action)
+    {
+        try { return action(); }
+        catch (PrtgScopeConflictException ex) { throw DomainException.Conflict(ex.Message); }
+    }
+
     [HttpGet("prtg-manual-map")]
     public ApiResponse<List<PrtgManualMapDto>> GetPrtgManualMaps()
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
         {
             return ApiResponse<List<PrtgManualMapDto>>.Ok(new List<PrtgManualMapDto>());
@@ -1086,6 +1104,7 @@ public class SettingsController : ControllerBase
     [HttpPut("prtg-manual-map")]
     public ApiResponse<PrtgManualMapDto> SetPrtgManualMap([FromBody] SetPrtgManualMapRequest request)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
@@ -1106,7 +1125,7 @@ public class SettingsController : ControllerBase
             CreatedBy = createdBy,
             CreatedAt = DateTime.Now
         };
-        store.UpsertManualMap(row);
+        SavePrtgScope(() => { store.UpsertManualMap(row, RequireScopeRevision(request.ExpectedScopeRevision)); return 0; });
 
         _audit.Record(
             action: AuditActions.PrtgManualMapSet,
@@ -1141,6 +1160,7 @@ public class SettingsController : ControllerBase
     [HttpPut("prtg-manual-map/batch")]
     public ApiResponse<PrtgManualMapBatchResultDto> SetPrtgManualMapBatch([FromBody] SetPrtgManualMapBatchRequest request)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
@@ -1177,6 +1197,9 @@ public class SettingsController : ControllerBase
         var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
         if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
 
+        var expectedScopeRevision = RequireScopeRevision(request.ExpectedScopeRevision);
+        if (_backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() != expectedScopeRevision)
+            throw DomainException.Conflict("PRTG 對應／排除範圍已被修改，請重新載入後核對。");
         var succeededIds = new List<long>();
         long? failedDeviceObjid = null;
         var notProcessedIds = new List<long>();
@@ -1196,14 +1219,15 @@ public class SettingsController : ControllerBase
                     CreatedBy = createdBy,
                     CreatedAt = DateTime.Now
                 };
-                store.UpsertManualMap(row);
+                store.UpsertManualMap(row, expectedScopeRevision);
+                expectedScopeRevision++;
                 succeededIds.Add(deviceObjid);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "批次設定 PRTG 人工主機對應失敗，裝置 ID: {DeviceObjid}", deviceObjid);
                 failedDeviceObjid = deviceObjid;
-                failureMessage = "儲存裝置對應資料時發生伺服器錯誤。";
+                failureMessage = ex is PrtgScopeConflictException ? ex.Message : "儲存裝置對應資料時發生伺服器錯誤。";
                 for (int j = i + 1; j < request.DeviceObjids.Count; j++)
                     notProcessedIds.Add(request.DeviceObjids[j]);
                 break;
@@ -1252,13 +1276,14 @@ public class SettingsController : ControllerBase
 
     /// <summary>刪除一筆 PRTG 人工主機對應</summary>
     [HttpDelete("prtg-manual-map/{deviceObjid:long}")]
-    public ApiResponse<PrtgDeleteResultDto> DeletePrtgManualMap(long deviceObjid)
+    public ApiResponse<PrtgDeleteResultDto> DeletePrtgManualMap(long deviceObjid, [FromQuery] long? expectedScopeRevision = null)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
         var store = _backend.PrtgStore();
-        var deleted = store.DeleteManualMap(deviceObjid);
+        var deleted = SavePrtgScope(() => store.DeleteManualMap(deviceObjid, RequireScopeRevision(expectedScopeRevision)));
 
         _audit.Record(
             action: AuditActions.PrtgManualMapDelete,
@@ -1282,6 +1307,7 @@ public class SettingsController : ControllerBase
     [HttpGet("prtg-ip-excludes")]
     public ApiResponse<List<PrtgIpExcludeDto>> GetPrtgIpExcludes()
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
         {
             return ApiResponse<List<PrtgIpExcludeDto>>.Ok(new List<PrtgIpExcludeDto>());
@@ -1306,6 +1332,7 @@ public class SettingsController : ControllerBase
     [HttpPut("prtg-ip-excludes")]
     public ApiResponse<PrtgIpExcludeDto> SetPrtgIpExclude([FromBody] SetPrtgIpExcludeRequest request)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
@@ -1327,7 +1354,7 @@ public class SettingsController : ControllerBase
             CreatedBy = createdBy,
             CreatedAt = DateTime.Now
         };
-        store.UpsertIpExclude(row);
+        SavePrtgScope(() => { store.UpsertIpExclude(row, RequireScopeRevision(request!.ExpectedScopeRevision)); return 0; });
 
         _audit.Record(
             action: AuditActions.PrtgIpExcludeSet, // prtg_ip_exclude_set
@@ -1356,8 +1383,9 @@ public class SettingsController : ControllerBase
 
     /// <summary>刪除一筆 PRTG IP 排除</summary>
     [HttpDelete("prtg-ip-excludes/{ip}")]
-    public ApiResponse<PrtgDeleteResultDto> DeletePrtgIpExclude(string ip)
+    public ApiResponse<PrtgDeleteResultDto> DeletePrtgIpExclude(string ip, [FromQuery] long? expectedScopeRevision = null)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
@@ -1369,7 +1397,7 @@ public class SettingsController : ControllerBase
             throw DomainException.Validation("要刪除的排除項目不能為空白。");
 
         var store = _backend.PrtgStore();
-        var deleted = store.DeleteIpExclude(raw);
+        var deleted = SavePrtgScope(() => store.DeleteIpExclude(raw, RequireScopeRevision(expectedScopeRevision)));
 
         // 稽核記使用者實際送出的值：正規化後的值可能與畫面上那筆不同（甚至是 null）
         _audit.Record(
@@ -1404,6 +1432,13 @@ public class SettingsController : ControllerBase
 
 
     // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
+    private void RequireFullPrtgTransferAccess()
+    {
+        if (_visibility == null || _hosts == null) return;
+        var visible = _visibility.GetVisibleHostIds();
+        if (_hosts.GetAll().Any(h => !visible.Contains(h.HostId) || _visibility.IsCaseGrantOnly(h.HostId)))
+            throw DomainException.Forbidden("全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作；受限角色請使用試點與驗收證據入口。");
+    }
 
     private static readonly JsonSerializerOptions PrtgDataJsonOptions = new()
     {
@@ -1416,6 +1451,7 @@ public class SettingsController : ControllerBase
     [HttpGet("prtg-export")]
     public IActionResult ExportPrtgData([FromQuery] string? from, [FromQuery] string? to)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
@@ -1433,7 +1469,7 @@ public class SettingsController : ControllerBase
             throw DomainException.Validation($"匯出期間不可超過 366 天（目前 {days} 天）。");
 
         var store = _backend.PrtgStore();
-        var package = PrtgDataTransfer.Export(store, fromDate, toDate);
+        var package = PrtgDataTransfer.Export(_backend, fromDate, toDate);
 
         var bytes = JsonSerializer.SerializeToUtf8Bytes(package, PrtgDataJsonOptions);
         var fileName = $"prtg-export-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.json";
@@ -1462,6 +1498,7 @@ public class SettingsController : ControllerBase
     [HttpPost("prtg-import")]
     public ApiResponse<PrtgImportResult> ImportPrtgData([FromForm] IFormFile? file)
     {
+        RequireFullPrtgTransferAccess();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 
@@ -1482,11 +1519,11 @@ public class SettingsController : ControllerBase
         if (package == null)
             throw DomainException.Validation("匯入檔案內容為空或格式不符。");
 
-        if (package.FormatVersion != PrtgDataTransfer.CurrentFormatVersion)
+        if (package.FormatVersion is not (1 or PrtgDataTransfer.CurrentFormatVersion))
             throw DomainException.Validation($"不支援的格式版本 {package.FormatVersion}（目前支援版本為 {PrtgDataTransfer.CurrentFormatVersion}）。");
 
         var store = _backend.PrtgStore();
-        var result = PrtgDataTransfer.Import(store, package);
+        var result = PrtgDataTransfer.Import(_backend, package);
 
         _audit.Record(
             action: AuditActions.PrtgDataImport,

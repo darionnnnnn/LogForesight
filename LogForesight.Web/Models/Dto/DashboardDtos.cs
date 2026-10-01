@@ -7,6 +7,8 @@ public class DashboardDto
     public string To { get; set; } = string.Empty;
 
     public int TotalHosts { get; set; }
+    public int AnalyzedHostDays { get; set; }
+    public int PendingRiskReviewDays { get; set; }
     public int HighRiskDays { get; set; }
     public int MediumRiskDays { get; set; }
 
@@ -286,6 +288,8 @@ public class ReportSummaryDto
     /// <summary>可見且啟用的主機總數（docs/archive/HISTORY.md #6）——與儀表板 TotalHosts 同一來源，
     /// 供「受影響主機占比」圖表當分母（Kpi.AffectedHosts / TotalHosts）</summary>
     public int TotalHosts { get; set; }
+    public int AnalyzedHostDays { get; set; }
+    public int PendingRiskReviewDays { get; set; }
 
     /// <summary>期間內高＋中風險日的處理彙總（docs/archive/HISTORY.md #6）——與儀表板待辦
     /// 同一套 HandlingHistoryQueryService.GetTodo 規則，供「處理進度」圖表（ResolvedCount / TotalCount）</summary>
