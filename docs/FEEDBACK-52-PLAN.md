@@ -2,7 +2,7 @@
 
 > **最新決策：2026-09-30 使用者要求以 NetIQ 為基礎，完全排除 PRTG-only。** 先前 C1 獨立建問題及其衍生共同查詢／獨立派工需求已取消，不再作本輪 TODO。有效契約與替代驗收矩陣見 [第二輪 NetIQ 主體修訂](FEEDBACK-52-ROUND2-PLAN.md#netiq-主體修訂本輪有效開發契約)。下方相關段落為先前決策紀錄；本輪重點改為 NetIQ 日紀錄內 PRTG 補充、晚到／重跑一致性、交辦通知及合併提前預警。
 
-> 狀態：2026-10-01 有效 NetIQ 範圍程式實作、逐項回查及隔離驗收已補齊；8f0c294 最終全量 5,728 通過／10 規模壓測略過／0 失敗。尚待不同模型體檢及正式站台 F1–F4；未以自動測試宣稱已達實用。執行與結案門檻見 [第二輪補齊規劃](FEEDBACK-52-ROUND2-PLAN.md) 的「實用程度結案門檻」。下方原始查核為當時基準，完成現況以第二輪實作紀錄為準。
+> 狀態：2026-10-01 核心流程已接通；8f0c294 全量 5,728 通過／10 規模壓測略過／0 失敗。使用者要求再次逐原始子條款比對後，確認 A01–A05 尚未補齊，撤回「所有程式項目完成」結論，詳見 [第二輪補齊規劃](FEEDBACK-52-ROUND2-PLAN.md) 末尾「原始子條款重新核對」。不同模型體檢及正式站台 F1–F4 另列未完成，未以自動測試宣稱已達實用。下方原始查核為當時基準，完成現況以第二輪最新紀錄為準。
 > Q3 已實作：PRTG Acknowledged 不再降低故障風險；歷史有效風險投影、持久補追加、案件／通知及日紀錄修訂已接通；原始需求 ID 回查見第二輪 PLAN 末尾。使用者已授權 commit／push 測試版本，正式站台由使用者手動驗收。
 >
 > 基準：`dev`／`d39c887`（2026-09-29）。工作區原有未追蹤 `artifacts/`，本輪不得改動。前次唯讀體檢執行 `dotnet test LogForesight.Tests/LogForesight.Tests.csproj --no-build -v q --filter 'FullyQualifiedName~PrtgRuleEvaluatorTests|FullyQualifiedName~PrtgDailyPipelineTests|FullyQualifiedName~PrtgDiskFormalFlowTests'`：69 通過、0 失敗；這是既有編譯產物的定向測試，不能當作實機或本輪修改後驗收。
