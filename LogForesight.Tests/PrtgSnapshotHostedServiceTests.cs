@@ -19,6 +19,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 {
     private readonly string _dir;
     private readonly StorageBackend _backend;
+    private readonly List<PrtgSnapshotHostedService> _services = [];
     private readonly SystemSettingsStore _settingsStore;
     private readonly SchedulerRunState _schedulerRunState;
     private readonly PrtgStructureSyncRunState _syncState;
@@ -67,6 +68,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var service in _services) service.Dispose();
         _stubHandler.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
@@ -91,6 +93,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             service.Console = console;
         }
+        _services.Add(service);
         return service;
     }
 
@@ -107,6 +110,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Empty(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
 
         // 不呼叫 ApplicationStopping，等同程序在本小時內中斷。
+        first.Dispose(); // 模擬程序退出釋放 OS 擁有權；不做關閉時結算。
         _settingsStore.Update(s => { s.PrtgEnabled = false; s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive; });
         _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("停用後不得開新請求");
         var restarted = CreateService();

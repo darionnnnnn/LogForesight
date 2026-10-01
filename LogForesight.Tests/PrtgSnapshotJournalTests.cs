@@ -54,6 +54,41 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
     }
 
     [Fact]
+    public void 合法JSON樣本遭修改與舊版無checksum_拒絕重播且保留原檔()
+    {
+        var now = DateTime.Today;
+        using var journal = new PrtgSnapshotJournal(_backend);
+        journal.Save("source", [new(now, 1, 12, 1, 12, 12)], [], now);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(journal.FilePath))!;
+        node["Accumulator"]![0]!["Sum"] = 13;
+        var changed = node.ToJsonString(); File.WriteAllText(journal.FilePath, changed);
+        Assert.Contains("checksum", Assert.Throws<InvalidDataException>(() => journal.Load("source", now)).Message);
+        Assert.Equal(changed, File.ReadAllText(journal.FilePath));
+        node["Version"] = 1; changed = node.ToJsonString(); File.WriteAllText(journal.FilePath, changed);
+        Assert.Contains("舊版", Assert.Throws<InvalidDataException>(() => journal.Load("source", now)).Message);
+        Assert.Equal(changed, File.ReadAllText(journal.FilePath));
+    }
+
+    [Fact]
+    public void 過期寫入者不能覆蓋已保存樣本_持有工作者時第二個不能接管()
+    {
+        var now = DateTime.Today;
+        using var first = new PrtgSnapshotJournal(_backend);
+        first.Save("source", [new(now, 1, 12, 1, 12, 12)], [], now);
+        using var second = new PrtgSnapshotJournal(_backend);
+        var stale = second.Load("source", now)!;
+        first.Save("source", [..stale.Accumulator, new(now, 2, 20, 1, 20, 20)], [], now);
+        Assert.Throws<InvalidDataException>(() => second.Save("source", [..stale.Accumulator, new(now, 3, 30, 1, 30, 30)], [], now));
+        Assert.Contains(first.Load("source", now)!.Accumulator, r => r.SensorObjid == 2);
+        first.AcquireOwnership();
+        Assert.Throws<IOException>(() => second.AcquireOwnership());
+        first.Dispose();
+        second.AcquireOwnership();
+        second.Load("source", now);
+        second.Save("source", [new(now, 2, 20, 1, 20, 20)], [], now);
+    }
+
+    [Fact]
     public void 同URL換Core或資源世代_拒絕舊待寫且不破壞原檔()
     {
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));

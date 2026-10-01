@@ -19,6 +19,18 @@
         <form id="prtg-monitoring-form">
             <label class="form-label" for="prtg-monitoring-core">Core System ID</label>
             <input class="form-control mb-2" id="prtg-monitoring-core" maxlength="128" required />
+            <label class="form-label" for="prtg-monitoring-source-mode">來源變更處理</label>
+            <select class="form-select mb-2" id="prtg-monitoring-source-mode">
+                <option value="">來源未變更（只修改試點）</option>
+                <option value="new">新來源／重新暖機</option>
+                <option value="continue">同 Core 延續（須有核對證據）</option>
+                <option value="unknown">無法確認（停止正式判定）</option>
+            </select>
+            <label class="form-label" for="prtg-monitoring-continuity-evidence">延續的來源身分核對證據</label>
+            <input class="form-control mb-2" id="prtg-monitoring-continuity-evidence" maxlength="1000" placeholder="核對紀錄／工單位置；勿填帳密或 token" />
+            <label class="form-check"><input type="checkbox" class="form-check-input" id="prtg-monitoring-continuity-confirm" />我已核對變更前後為同 Core，來源時區、語系及資源身分保持一致。</label>
+            <button type="button" class="btn btn-outline-secondary my-2" id="prtg-monitoring-source-preview">預覽來源變更影響</button>
+            <div id="prtg-monitoring-source-impact" role="status" aria-live="polite"></div>
             <label class="form-label" for="prtg-monitoring-zone">PRTG 回應時間的時區</label>
             <input class="form-control mb-2" id="prtg-monitoring-zone" maxlength="128" placeholder="例如 Taipei Standard Time 或 Asia/Taipei" required />
             <label class="form-label" for="prtg-monitoring-culture">PRTG 回應日期的語系</label>
@@ -31,6 +43,8 @@
             <button class="btn btn-primary mt-2" type="submit">儲存正式判定範圍</button>
         </form>
         <div id="prtg-monitoring-status" class="small mt-2" role="status" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary mt-2" id="prtg-monitoring-preview">預覽已儲存試點的實際作用範圍</button>
+        <div id="prtg-monitoring-preview-result" class="small mt-2" role="status" aria-live="polite"></div>
     </div>
 </section>
 

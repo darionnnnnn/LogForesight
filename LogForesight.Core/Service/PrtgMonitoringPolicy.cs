@@ -14,6 +14,8 @@ public sealed class PrtgMonitoringPolicy
     public List<long> HostIds { get; set; } = [];
     public List<long> SensorIds { get; set; } = [];
     public string ConfirmedBy { get; set; } = string.Empty;
+    public string ContinuityEvidenceReference { get; set; } = "";
+    public DateTimeOffset? ContinuityConfirmedAtUtc { get; set; }
     public string SourceTimeZoneId { get; set; } = "";
     public string SourceCultureName { get; set; } = "";
     public bool Ready(string url) => CoreSystemId.Length > 0 && SourceGeneration.Length > 0 &&

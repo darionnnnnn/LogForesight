@@ -1,4 +1,4 @@
-using NLog;
+﻿using NLog;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -357,7 +357,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// <summary>同步主體：跑完、落地結果並結束執行狀態。回傳（是否成功, 失敗原因）。</summary>
     private async Task<(bool Success, string? Error)> ExecuteAsync(SystemSettings s, PrtgClient client, CancellationTokenSource cts)
     {
-        using var operation = new PrtgOperationScope(s, _settings.Get, cts.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        using var operation = new PrtgOperationScope(s, _settings.Get, cts.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read, "結構同步");
         client.OperationCheckpoint = operation.Checkpoint;
         var console = new PrtgStructureSyncConsole(_state);
         var prtgStore = _backend.PrtgStore();
@@ -379,6 +379,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
                     progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
 
                 Persist(status);
+                operation.CompletedStage("結構同步結果已保存");
                 success = status.Success;
                 failure = status.ErrorMessage;
                 if (success) _versionStamp.Bump();

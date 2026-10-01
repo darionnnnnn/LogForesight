@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PRTG 維護（「系統管理 > PRTG 維護」頁）：連線設定、擷取參數、鏡像狀態與環境探測。
  */
 
@@ -2959,6 +2959,71 @@ if (monitoringForm) {
     const status = document.getElementById('prtg-monitoring-status');
     const hostSelect = document.getElementById('prtg-monitoring-hosts');
     const sensorBox = document.getElementById('prtg-monitoring-sensors');
+    const sourceMode = document.getElementById('prtg-monitoring-source-mode');
+    let sourcePreviewSignature = null;
+    function monitoringRequest() {
+        return { revision: monitoring.revision,
+            coreSystemId: document.getElementById('prtg-monitoring-core').value,
+            sourceTimeZoneId: document.getElementById('prtg-monitoring-zone').value,
+            sourceCultureName: document.getElementById('prtg-monitoring-culture').value,
+            sourceChangeMode: sourceMode.value,
+            continuityConfirmed: document.getElementById('prtg-monitoring-continuity-confirm').checked,
+            continuityEvidenceReference: document.getElementById('prtg-monitoring-continuity-evidence').value,
+            identityConfirmed: document.getElementById('prtg-monitoring-confirm').checked,
+            hostIds: [...hostSelect.selectedOptions].map(o => Number(o.value)),
+            sensorIds: [...sensorBox.querySelectorAll('input:checked')].map(c => Number(c.value)) };
+    }
+    function sourceSignature(request) {
+        return JSON.stringify([request.revision, request.coreSystemId, request.sourceTimeZoneId,
+            request.sourceCultureName, request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference]);
+    }
+    async function previewSource(request) {
+        const impact = await api.post('/api/prtg/monitoring/source-preview', request);
+        document.getElementById('prtg-monitoring-source-impact').textContent =
+            `${impact.message} 影響 ${impact.affectedHosts} 台／${impact.affectedSensors} 顆；保存觀察 ${impact.existingObservations} 筆，` +
+            `磁碟暖機 ${impact.warmingSensors} 顆，未結 PRTG 交辦 ${impact.openPrtgCases} 件。` +
+            `延續資格：${impact.continuationAllowed ? '可提出身分核對證據' : '不符合相同 Core／時間語意，禁止延續'}。`;
+        sourcePreviewSignature = sourceSignature(request);
+        return impact;
+    }
+    sourceMode.addEventListener('change', () => {
+        document.getElementById('prtg-monitoring-core').required = sourceMode.value !== 'unknown';
+    });
+    document.getElementById('prtg-monitoring-source-preview').addEventListener('click', async () => {
+        if (!monitoring) return;
+        try { await previewSource(monitoringRequest()); }
+        catch (error) { status.textContent = `影響預覽失敗：${error.message}`; }
+    });
+    let previewOffset = 0;
+    async function previewScope(reset = false) {
+        if (reset) previewOffset = 0;
+        const panel = document.getElementById('prtg-monitoring-preview-result');
+        try {
+            const data = await api.get(`/api/prtg/monitoring/preview?offset=${previewOffset}&limit=100`);
+            panel.replaceChildren();
+            const summary = document.createElement('p');
+            summary.textContent = `${data.day.slice(0, 10)}｜設定 ${data.settingsRevision}｜試點 ${data.policyRevision}｜` +
+                `顯示 ${data.offset + 1}–${data.offset + data.rows.length}／${data.total}。${data.limitations}`;
+            panel.append(summary);
+            const list = document.createElement('ul');
+            for (const row of data.rows) {
+                const item = document.createElement('li');
+                item.textContent = `${row.hostName || '未歸戶'}｜${row.sensorName} (#${row.objid})｜` +
+                    `評估設定：${row.configuredForEvaluation ? '允許' : '排除'}；規則：${row.ruleIds.join('、') || '無'}；` +
+                    `${row.disposition}；${row.notification}；${row.reasons.join('；') || '仍以正式當輪可信資料為準'}`;
+                list.append(item);
+            }
+            panel.append(list);
+            if (previewOffset > 0 || data.hasMore) {
+                for (const [text, next, allowed] of [['上一頁', previewOffset - 100, previewOffset > 0], ['下一頁', previewOffset + 100, data.hasMore]]) {
+                    const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-sm btn-outline-secondary me-2';
+                    button.textContent = text; button.disabled = !allowed;
+                    button.addEventListener('click', () => { previewOffset = next; previewScope(); }); panel.append(button);
+                }
+            }
+        } catch (error) { panel.textContent = `範圍預覽失敗：${error.message}`; }
+    }
+    document.getElementById('prtg-monitoring-preview').addEventListener('click', () => previewScope(true));
     function renderMonitoringSensors() {
         const hosts = new Set([...hostSelect.selectedOptions].map(o => Number(o.value)));
         sensorBox.replaceChildren();
@@ -2989,6 +3054,8 @@ if (monitoringForm) {
     async function loadMonitoring() {
         try {
             const response = await api.get('/api/prtg/monitoring'); monitoring = response;
+            sourceMode.value = ''; sourcePreviewSignature = null;
+            document.getElementById('prtg-monitoring-core').required = true;
             document.getElementById('prtg-monitoring-core').value = monitoring.coreSystemId;
             document.getElementById('prtg-monitoring-zone').value = monitoring.sourceTimeZoneId || monitoring.suggestedTimeZoneId;
             document.getElementById('prtg-monitoring-culture').value = monitoring.sourceCultureName || 'zh-TW';
@@ -3014,15 +3081,16 @@ if (monitoringForm) {
     hostSelect.addEventListener('change', renderMonitoringSensors);
     monitoringForm.addEventListener('submit', async event => {
         event.preventDefault(); if (!monitoring) return;
-        const button = monitoringForm.querySelector('button'); button.disabled = true;
+        const button = monitoringForm.querySelector('button[type="submit"]'); button.disabled = true;
         try {
-            await api.put('/api/prtg/monitoring', { revision: monitoring.revision,
-                coreSystemId: document.getElementById('prtg-monitoring-core').value,
-                sourceTimeZoneId: document.getElementById('prtg-monitoring-zone').value,
-                sourceCultureName: document.getElementById('prtg-monitoring-culture').value,
-                identityConfirmed: document.getElementById('prtg-monitoring-confirm').checked,
-                hostIds: [...hostSelect.selectedOptions].map(o => Number(o.value)),
-                sensorIds: [...sensorBox.querySelectorAll('input:checked')].map(c => Number(c.value)) });
+            const request = monitoringRequest();
+            if (sourcePreviewSignature !== sourceSignature(request)) {
+                const impact = await previewSource(request);
+                if (impact.changed) {
+                    status.textContent = '已列出來源變更影響；請核對處理方式及證據後再次儲存。'; return;
+                }
+            }
+            await api.put('/api/prtg/monitoring', request);
             await loadMonitoring();
         } catch (error) { status.textContent = `儲存失敗：${error.message}。設定衝突時請重新載入頁面。`; }
         finally { button.disabled = !monitoring?.canEdit; }
@@ -3045,12 +3113,21 @@ if (operationsStatus) {
             document.getElementById('prtg-operations-retry').disabled = !data.canRetry;
             operationsStatus.replaceChildren();
             const list = document.createElement('ul');
+            for (const operation of data.operationVersions || []) {
+                const row = document.createElement('li');
+                row.textContent = `${operation.kind}｜工作 ${operation.operationId}｜${operation.state}｜` +
+                    `設定採用 ${operation.adoptedSettingsRevision} → 期望 ${operation.expectedSettingsRevision}｜` +
+                    `範圍採用 ${operation.adoptedScopeRevision} → 期望 ${operation.expectedScopeRevision}｜` +
+                    `最後完成：${operation.lastCompletedStage}。`;
+                list.append(row);
+            }
             for (const group of data.supplements) {
                 const row = document.createElement('li'); row.textContent = `補追加：${labels[group.status] || group.status} ${group.count} 筆`; list.append(row);
             }
             for (const intent of data.notifications) {
                 const row = document.createElement('li');
                 row.textContent = `主機 #${intent.hostId}｜${intent.recordDate.slice(0, 10)}｜${labels[intent.status] || intent.status}｜` +
+                    `通知設定採用 ${intent.adoptedSettingsRevision || '未知'} → 期望 ${intent.expectedSettingsRevision}｜` +
                     intent.recipients.map(r => `${labels[r.status] || r.status} ${r.count} 位`).join('、');
                 list.append(row);
             }

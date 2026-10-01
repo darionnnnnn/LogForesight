@@ -19,6 +19,7 @@ public sealed class PrtgOperationsController(StorageBackend backend, IVisibility
     public IActionResult Get()
     {
         var visible = visibility.GetVisibleHostIds().Where(id => !visibility.IsCaseGrantOnly(id)).ToArray();
+        var settingsRevision = new SystemSettingsStore(backend.Blob("system_settings")).Get().Revision;
         using var db = backend.CreateContext();
         var supplements = db.PrtgObservations.AsNoTracking().Where(r => r.ActiveKey != null && visible.Contains(r.HostId))
             .GroupBy(r => r.SupplementStatus).Select(g => new { Status = g.Key, Count = g.Count() }).ToArray();
@@ -27,9 +28,11 @@ public sealed class PrtgOperationsController(StorageBackend backend, IVisibility
             .OrderByDescending(i => i.UpdatedAtUtc).Take(100).Select(i => new
             {
                 i.HostId, i.RecordDate, i.Status, i.UpdatedAtUtc,
+                AdoptedSettingsRevision = i.SettingsRevision, ExpectedSettingsRevision = settingsRevision,
                 Recipients = i.Recipients.Values.GroupBy(s => s).Select(g => new { Status = g.Key, Count = g.Count() })
             }).ToArray();
         return Ok(ApiResponse<object>.Ok(new { Supplements = supplements, Notifications = intents,
+            OperationVersions = PrtgOperationScope.ReadVersions(),
             CanRetry = hosts.GetAll().All(h => visible.Contains(h.HostId)),
             Semantics = "SMTP 接受不代表信箱實收；部分成功重試可能重寄，案件與通知識別保持一致。過期補追加只進摘要。" }));
     }

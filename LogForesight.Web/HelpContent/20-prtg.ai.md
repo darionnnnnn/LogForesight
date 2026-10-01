@@ -24,3 +24,8 @@ PRTG 維護頁有「連線」、「擷取參數」、「鏡像狀態」、「環
 - 匯入只診斷，不搬信任與處置；保留／快照隔離／升級回退操作以使用者說明「保留與復原」為準。現場效益由獨立事故四基準與人工驗收證明，測試數不能證明 1＋1＞2。
 
 Acceptance default segment includes build, parser semantics and visible pilot resource/mapping/disk semantic warm-up fingerprints. Resource or semantic changes split evidence groups; routine probe timestamps do not. Preserve historical incident segments when reviewing old evidence. SMTP acceptance timestamps never imply mailbox delivery.
+
+- 來源變更提供 new／continue／unknown 明確模式及唯讀影響預覽。continue 必須同 Core、時區與語系，附人工身分證據／確認；不是 API 自動信任。unknown 停止正式判定，new 重新暖機，憑證輪替不自動重設。既有案件／人工處置保留。
+- 實際作用範圍預覽共用正式主機資格與規則分類；列未對應／衝突／範圍／待 NetIQ／可信資料缺口，100 筆分頁、上限 500、總數及完整性明示。可評估不保證 finding／交辦／通知；preview 不取數、不解除磁碟當輪語意／28 日守門。
+- 作業版本列工作 ID、採用與期望設定／範圍摘要、最後完成階段、安全取消狀態；只限目前程序及最近 32 個結束作業。通知另列意圖設定／目前版本。重啟不能從這份記憶體列表推論歷史成功。
+- checkpoint v2 checksum、跨程序生命週期 lease 與過期寫入摘要比較已接線；v1 未知完整性保留並停止，不自動升級。升級／隔離依使用者版說明，不改識別強迫重播；同 Core 搬址亦不盲目改綁舊待寫數值。

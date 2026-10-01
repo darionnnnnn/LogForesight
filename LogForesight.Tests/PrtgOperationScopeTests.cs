@@ -9,6 +9,26 @@ namespace LogForesight.Tests;
 public class PrtgOperationScopeTests
 {
     [Fact]
+    public void 執行版本顯示期望差異與安全取消_不暴露憑證或來源網址()
+    {
+        var initial = new SystemSettings { PrtgEnabled = true, Revision = "before", PrtgUrl = "https://private.example", PrtgApiTokenEnc = "PRIVATE-TOKEN" };
+        var current = new SystemSettings { PrtgEnabled = true, Revision = "before", PrtgUrl = initial.PrtgUrl, PrtgApiTokenEnc = initial.PrtgApiTokenEnc };
+        var scopeRevision = "old-scope"; var kind = Guid.NewGuid().ToString("N");
+        using var scope = new PrtgOperationScope(initial, () => current, default, () => scopeRevision, kind);
+        scope.Checkpoint(); scope.CompletedStage("第一批提交完成");
+        scopeRevision = "new-scope"; current.Revision = "after";
+        var version = Assert.Single(PrtgOperationScope.ReadVersions().Where(v => v.Kind == kind));
+        Assert.Equal("before", version.AdoptedSettingsRevision); Assert.Equal("after", version.ExpectedSettingsRevision);
+        Assert.NotEqual(version.AdoptedScopeRevision, version.ExpectedScopeRevision);
+        Assert.Equal("等待安全取消點", version.State); Assert.Equal("第一批提交完成", version.LastCompletedStage);
+        var json = System.Text.Json.JsonSerializer.Serialize(version);
+        Assert.DoesNotContain("PRIVATE-TOKEN", json); Assert.DoesNotContain("private.example", json);
+        Assert.Throws<OperationCanceledException>(scope.Checkpoint);
+        scope.Dispose();
+        version = Assert.Single(PrtgOperationScope.ReadVersions().Where(v => v.Kind == kind));
+        Assert.NotNull(version.EndedAtUtc); Assert.Contains("已取消", version.State);
+    }
+    [Fact]
     public void 設定停用_只取消自己的作業_即使版本時間相同()
     {
         using var parent = new CancellationTokenSource();

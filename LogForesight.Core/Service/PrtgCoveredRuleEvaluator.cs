@@ -23,7 +23,7 @@ public static class PrtgCoveredRuleEvaluator
                 else periods.Add(period);
             }
             KnownIssueRule? Rule(string code) => rules.Where(r => r.PrtgRuleCode == code &&
-                (r.PrtgSensorCategory == null || string.Equals(r.PrtgSensorCategory, sensor.Category, StringComparison.OrdinalIgnoreCase)))
+                PrtgFormalEligibility.RuleCategoryMatches(r, sensor.Category))
                 .OrderByDescending(r => r.PrtgSensorCategory != null).ThenBy(r => r.Id, StringComparer.Ordinal).FirstOrDefault();
             void Add(string code, int magnitude, DateTimeOffset entered, bool ack = false)
             {

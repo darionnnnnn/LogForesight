@@ -271,6 +271,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 break;
             }
         }
+        _journal.Dispose(); // 輪詢確實結束後才釋放跨程序擁有權。
     }
 
     internal async Task ScopeRefreshTickAsync(CancellationToken ct = default)
@@ -296,12 +297,13 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private async Task WithOperationScopeAsync(SystemSettings settings, CancellationToken parent, Func<CancellationToken, Task> work)
     {
-        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent, new PrtgScopeRevisionReader(_backend, _hosts).Read, "快照與範圍補抓");
         _operationCheckpoint = operation.Checkpoint;
         try
         {
             operation.Checkpoint();
             await work(operation.Token);
+            operation.CompletedStage("本輪快照／補抓工作已返回");
         }
         catch (OperationCanceledException) when (!parent.IsCancellationRequested && operation.SettingsChanged)
         {
@@ -887,6 +889,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             try
             {
+                _journal.AcquireOwnership();
                 var endpoint = PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl);
                 if (!_journalLoaded)
                 {
@@ -1190,12 +1193,15 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         await base.StopAsync(cancellationToken);
         DisposeClient();
+        if (ExecuteTask == null || ExecuteTask.IsCompleted) _journal.Dispose();
     }
 
     public override void Dispose()
     {
         DisposeClient();
         base.Dispose();
+        if (ExecuteTask == null || ExecuteTask.IsCompleted) _journal.Dispose();
+        else _ = ExecuteTask.ContinueWith(_ => _journal.Dispose(), TaskScheduler.Default);
     }
 
     private void DisposeClient()

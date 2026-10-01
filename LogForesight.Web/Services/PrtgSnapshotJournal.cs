@@ -9,7 +9,7 @@ using LogForesight.Core.Service;
 namespace LogForesight.Web.Services;
 
 /// <summary>單一快照工作者的復原檔。先落盤再提交 SQL；SQL 批次鍵處理提交後當機的重播。</summary>
-internal sealed class PrtgSnapshotJournal
+internal sealed class PrtgSnapshotJournal : IDisposable
 {
     internal const int MaxRows = 200_000;
     internal const long MaxBytes = 64 * 1024 * 1024;
@@ -18,12 +18,34 @@ internal sealed class PrtgSnapshotJournal
     internal const int ReservedBytesPerRow = 512;
     internal sealed record Batch(string Id, IReadOnlyList<PrtgValueRow> Rows);
     internal sealed record State(int Version, string DatabaseId, string SourceEndpoint,
-        IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> Accumulator, IReadOnlyList<Batch> Pending);
+        IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> Accumulator, IReadOnlyList<Batch> Pending)
+    {
+        public string Checksum { get; init; } = "";
+    }
 
     private readonly StorageBackend _backend;
     internal string FilePath { get; }
     internal long SavedBytes { get; private set; }
     private string? _databaseId;
+    private FileStream? _ownership;
+    private string? _expectedDigest;
+    private bool _loaded;
+    private readonly object _gate = new();
+
+    /// <summary>工作者從恢復到停止持有同一把跨程序檔案鎖；不讓第二個工作者開新採集。</summary>
+    internal void AcquireOwnership()
+    {
+        lock (_gate) _ownership ??= OpenWriterLock();
+    }
+    private FileStream OpenWriterLock()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+        try { return new FileStream(FilePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read); }
+        catch (IOException ex) { throw new IOException("已有快照工作者持有復原佇列；本工作者停止採集，勿刪除鎖定檔。", ex); }
+    }
+    public void Dispose() { lock (_gate) { _ownership?.Dispose(); _ownership = null; } }
+    private static string Digest(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
+    private static string Checksum(State state) => Digest(JsonSerializer.SerializeToUtf8Bytes(state with { Checksum = "" }));
 
     internal PrtgSnapshotJournal(StorageBackend backend)
     {
@@ -57,20 +79,36 @@ internal sealed class PrtgSnapshotJournal
 
     internal State? Load(string endpoint, DateTime now)
     {
-        if (!File.Exists(FilePath)) return null;
+        lock (_gate)
+        {
+        if (!File.Exists(FilePath)) { _loaded = true; _expectedDigest = null; return null; }
         if (new FileInfo(FilePath).Length > MaxBytes) throw new InvalidDataException("快照復原檔超過容量上限，停止採集並保留檔案");
-        using var stream = File.OpenRead(FilePath);
-        var state = JsonSerializer.Deserialize<State>(stream) ?? throw new InvalidDataException("快照復原檔為空");
+        var bytes = File.ReadAllBytes(FilePath);
+        var state = JsonSerializer.Deserialize<State>(bytes) ?? throw new InvalidDataException("快照復原檔為空");
+        if (state.Version == 1) throw new InvalidDataException("舊版復原檔沒有完整性證明；保留原檔，請管理者備份並核對，不能自動重播或補簽 checksum。");
+        if (string.IsNullOrEmpty(state.Checksum) || state.Checksum.Length != 64 || state.Checksum != Checksum(state))
+            throw new InvalidDataException("快照復原檔 checksum 不符；停止採集並保留原檔。");
         Validate(state, endpoint, now);
-        SavedBytes = stream.Length;
+        _loaded = true; _expectedDigest = Digest(bytes);
+        SavedBytes = bytes.Length;
         return state;
+        }
     }
 
     internal void Save(string endpoint, IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> accumulator,
         IReadOnlyList<Batch> pending, DateTime now)
     {
-        var state = new State(1, DatabaseId, endpoint, accumulator, pending);
+        lock (_gate)
+        {
+        using var writeLock = _ownership == null ? OpenWriterLock() : null;
+        if (!_loaded && File.Exists(FilePath)) throw new InvalidDataException("儲存前必須先恢復目前 checkpoint；拒絕盲目覆寫。");
+        if (File.Exists(FilePath) && new FileInfo(FilePath).Length > MaxBytes)
+            throw new InvalidDataException("快照復原檔超過容量上限，停止採集並保留檔案");
+        var currentDigest = File.Exists(FilePath) ? Digest(File.ReadAllBytes(FilePath)) : null;
+        if (currentDigest != _expectedDigest) throw new InvalidDataException("checkpoint 已由其他寫入者變更；拒絕過期儲存並停止採集。");
+        var state = new State(2, DatabaseId, endpoint, accumulator, pending);
         Validate(state, endpoint, now);
+        state = state with { Checksum = Checksum(state) };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(state);
         if (bytes.LongLength > MaxBytes) throw new InvalidDataException("快照待寫資料達容量上限，停止採集");
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
@@ -84,11 +122,13 @@ internal sealed class PrtgSnapshotJournal
         if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
         else File.Move(temp, FilePath);
         SavedBytes = bytes.LongLength;
+        _loaded = true; _expectedDigest = Digest(bytes);
+        }
     }
 
     private void Validate(State state, string endpoint, DateTime now)
     {
-        if (state.Version != 1 || state.DatabaseId != DatabaseId)
+        if (state.Version != 2 || state.DatabaseId != DatabaseId)
             throw new InvalidDataException("快照復原檔的版本、資料庫或來源位址不符；保留資料並停止採集");
         if (state.Accumulator == null || state.Pending == null || state.Pending.Any(b => b == null || b.Rows == null) ||
             state.Accumulator.Count + state.Pending.Sum(b => (long)b.Rows.Count) > MaxRows)

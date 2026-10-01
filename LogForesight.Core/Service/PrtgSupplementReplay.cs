@@ -19,7 +19,7 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
         if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl)) return 0;
         using var operation = new PrtgOperationScope(settings,
             () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), cancellationToken,
-            new PrtgScopeRevisionReader(backend, hosts).Read);
+            new PrtgScopeRevisionReader(backend, hosts).Read, "補追加與派工");
         operation.Checkpoint();
         using var ctx = backend.CreateContext();
         var rows = ctx.PrtgObservations.AsNoTracking().Where(o => o.ActiveKey != null &&
@@ -85,6 +85,7 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                 catch (Exception ex) { NLog.LogManager.GetCurrentClassLogger().Warn(ex, "PRTG 補追加失敗 host={HostId} snapshot={SnapshotId}", row.HostId, row.SnapshotId); Mark(row, "retry", null); }
             }
         }
+        operation.CompletedStage("本批補追加／派工核對已返回");
         return applied;
     }
     private void Mark(PrtgObservationRow row, string status, long? parentId)

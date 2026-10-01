@@ -89,7 +89,7 @@ internal static class PrtgDailyPipeline
             }
 
             using var operationScope = new PrtgOperationScope(systemSettings,
-                () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read);
+                () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read, "每日評估");
             operation = operationScope;
             ct = operationScope.Token;
             operationScope.Checkpoint();
@@ -207,6 +207,7 @@ internal static class PrtgDailyPipeline
             }
 
             syncStopwatch.Stop();
+            operationScope.CompletedStage("來源同步已返回（詳見成功／失敗狀態）");
 
             operationScope.Checkpoint();
 
@@ -293,7 +294,7 @@ internal static class PrtgDailyPipeline
             // partial 同步會保留其他主機的鏡像；歸戶也必須套本趟主機範圍，
             // 不能因舊鏡像仍在就替未選取、已停用或已合併主機保存新判定。
             var evaluationHostIds = hostStore.GetAll()
-                .Where(h => pilotReady && h.Active && h.MergedInto == null && (hostIds == null || hostIds.Contains(h.HostId)))
+                .Where(h => PrtgFormalEligibility.HostAllowed(h, systemSettings, monitoringPolicy) && (hostIds == null || hostIds.Contains(h.HostId)))
                 .Select(h => h.HostId).ToHashSet();
             var timelineEvidence = new Dictionary<long, PrtgSensorTimelineEvidence>();
             var currentMaps = ResolveHostMapRows(newest).Where(m => m.MapStatus == PrtgMapStatus.Ok &&
@@ -726,6 +727,7 @@ internal static class PrtgDailyPipeline
 
             // 全部日期發佈完才送就緒訊號（一次）：AI 排程等的是「本趟範圍內的 finding 都到齊」
             progress?.Report(RunPhases.PrtgFindingsReady, 0, 0);
+            operationScope.CompletedStage("逐日判定與補追加已返回");
 
             // 觸發式數值取數
             if (!strategyProfile.NightlyExactValues)

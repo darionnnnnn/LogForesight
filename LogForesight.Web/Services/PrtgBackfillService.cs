@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -356,7 +356,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     private async Task ExecuteSelectedAsync(PreparedRun run, DateTime from, DateTime to, IReadOnlyCollection<long> hostIds)
     {
-        using var operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        using var operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read, "歷史補值");
         run.Client.OperationCheckpoint = operation.Checkpoint;
         var success = false;
         var cancelled = false;
@@ -376,6 +376,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     run.Settings.PrtgSensorTypeWhitelist, store, console, operation.Token,
                     (done, total, date) => _state.UpdateDay(done, total, date),
                     (done, total) => _state.UpdateSensors(done, total));
+                operation.CompletedStage("指定主機補值已返回");
             }
         }
         catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
@@ -510,7 +511,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private async Task<bool> ExecuteAsync(PreparedRun run, IRunConsole console, IReadOnlyCollection<long>? hostIds)
     {
         var s = run.Settings;
-        using var operation = new PrtgOperationScope(s, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read);
+        using var operation = new PrtgOperationScope(s, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read, "歷史補值");
         var runToken = operation.Token;
         run.Client.OperationCheckpoint = operation.Checkpoint;
         var prtgStore = _backend.PrtgStore();
@@ -571,6 +572,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     scope: s.PrtgValueFetchScope,
                     extraScopeHosts: scopeHostIds,
                     stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices));
+                operation.CompletedStage("歷史補值已返回");
             }
         }
         catch (OperationCanceledException) when (runToken.IsCancellationRequested)

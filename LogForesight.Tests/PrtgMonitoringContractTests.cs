@@ -87,9 +87,53 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         Assert.Equal(initial.Revision, store.Get().Revision);
         Assert.IsType<OkObjectResult>(Controller().Put(Request(initial.Revision)));
         Assert.Equal(initial.SourceGeneration, store.Get().SourceGeneration);
-        var next = Request(store.Get().Revision); next.SourceCultureName = "zh-TW";
+        var next = Request(store.Get().Revision); next.SourceCultureName = "zh-TW"; next.SourceChangeMode = "new";
         Assert.IsType<OkObjectResult>(Controller().Put(next));
         Assert.NotEqual(initial.SourceGeneration, store.Get().SourceGeneration);
+    }
+
+    [Fact]
+    public void 同Core搬址必須明確選擇_延續要證據_新Core與未知不能冒稱延續()
+    {
+        var controller = Controller(); Assert.IsType<OkObjectResult>(controller.Put(Request()));
+        var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var old = store.Get();
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgUrl = "https://moved.example");
+        var request = Request(old.Revision);
+        Assert.IsType<OkObjectResult>(controller.SourcePreview(request));
+        Assert.IsType<BadRequestObjectResult>(controller.Put(request));
+        request.SourceChangeMode = "continue";
+        Assert.IsType<BadRequestObjectResult>(controller.Put(request));
+        request.ContinuityConfirmed = true; request.ContinuityEvidenceReference = "管理者搬遷核對工單 123";
+        Assert.IsType<OkObjectResult>(controller.Put(request));
+        Assert.Equal(old.SourceGeneration, store.Get().SourceGeneration); Assert.Equal(old.ValidFrom, store.Get().ValidFrom);
+        Assert.Equal(request.ContinuityEvidenceReference, store.Get().ContinuityEvidenceReference);
+        request.Revision = store.Get().Revision; request.CoreSystemId = "replacement-core";
+        Assert.IsType<BadRequestObjectResult>(controller.Put(request));
+        request.SourceChangeMode = "new";
+        Assert.IsType<OkObjectResult>(controller.Put(request));
+        Assert.NotEqual(old.SourceGeneration, store.Get().SourceGeneration);
+        request.Revision = store.Get().Revision; request.SourceChangeMode = "unknown"; request.CoreSystemId = "";
+        Assert.IsType<OkObjectResult>(controller.Put(request));
+        Assert.False(store.Get().Ready("https://moved.example"));
+        Assert.IsType<ConflictObjectResult>(controller.SourcePreview(Request()));
+    }
+
+    [Fact]
+    public void 預覽未對應與試點排除_等待Netiq_沒有副作用_空權限零筆()
+    {
+        var controller = Controller(); Assert.IsType<OkObjectResult>(controller.Put(Request()));
+        _backend.PrtgStore().UpsertSensors([new() { Objid = 200, DeviceObjid = 99, Name = "Unmapped", SensorType = "ping" }], DateTime.Now);
+        var preview = Assert.IsType<OkObjectResult>(controller.Preview());
+        var json = JsonSerializer.Serialize(preview.Value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        Assert.Contains("尚無有效主機對應", json);
+        Assert.Contains("感測器未納入試點", json);
+        Assert.Contains("等待目標日 NetIQ 成功分析", json);
+        var restricted = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(Controller(new(1)).Preview()).Value);
+        Assert.DoesNotContain("Unmapped", restricted); Assert.DoesNotContain("PRIVATE", restricted);
+        var empty = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(Controller(new()).Preview()).Value);
+        Assert.Contains("\"Total\":0", empty);
+        Assert.IsType<BadRequestObjectResult>(controller.Preview(limit: 501));
+        using var db = _backend.CreateContext(); Assert.Empty(db.PrtgObservations); Assert.Empty(db.IssueCases); Assert.Empty(db.WorkOrders);
     }
     [Fact]
     public void 局部管理者不能覆寫含不可見主機的試點_案件例外不能設定整台主機()
