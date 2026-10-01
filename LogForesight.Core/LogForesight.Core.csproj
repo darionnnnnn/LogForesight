@@ -6,6 +6,12 @@
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
+    <ItemGroup>
+        <!-- 第 33 輪已退役的檔案報告後端。覆蓋式更新原始碼時可能殘留舊檔，
+             不讓 SDK 的預設 glob 將它們重新納入編譯；報告仍由 EfReportStore 寫入 SQL。 -->
+        <Compile Remove="Persistence/FileReportSink.cs;Service/ExportReportPruner.cs" />
+    </ItemGroup>
+
     <!--
       批次 exe 與 Web 共用的類別庫（docs/WEB-SPEC.md §2 Phase 0）。
       收錄：Models（資料模型）、Analysis（無狀態分析邏輯與規則驗證；2026-07-23 起亦含

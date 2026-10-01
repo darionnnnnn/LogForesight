@@ -559,3 +559,11 @@ V10 原子回查發現預設 Segment 尚缺 build／資源／語意；已加入�
 使用者先提供：新版完整環境探測文字、小範圍資料流文字、試點主機／sensor 數及去識別對應、部署 commit 與 DB 類型／日期、昨天 NetIQ 結果、PRTG readiness／語意頁面，以及使用效果頁下載的驗收證據包；不知道的欄位標未知，不包含帳密／token。已提供過的 2026-09-30 舊探測保留基準，不要求重做相同分析，但需要新版的差異與修正後結果。
 
 收到後由開發驗收者逐項回填 E1–E4 的實際狀態、指出缺哪份證據與可修復原因，提出／實作本輪缺陷修正並交可測版本；使用者以相同案例重驗。每個門檻附原始證據與驗收人，通過才移除對應現場 TODO。若目前仍不能測站台，先完成 E0 及隔離正反例，保留 E1–E4 未驗；不能改稱已完成全部驗收。
+
+## 2026-10-01 第 52 輪建置錯誤核對與修正
+
+使用者回報 FileReportSink.cs(7,33) CS0535：沒有實作 WriteAsync(ReportKind, HostKey, string, string, ReportMeta?)。核對基準 02628a6：本機 Solution Debug 可建置（0 錯誤／18 既有警告），目前追蹤檔案沒有 FileReportSink；該檔及 ExportReportPruner 已由第 33 輪 dc39c38 移除，實際報告輸出由 StorageBackend.ReportStore→EfReportStore 寫入 SQL，FakeReportSink 也符合現行介面。
+
+在本機 outputs/branch52-build-audit 的隔離 Core 副本放回退役的兩個原始檔，重現相同 FileReportSink.cs(7,33)／CS0535；這證明舊檔殘留被 SDK glob 納入即可觸發本錯誤，但未取得使用者出錯工作目錄的完整路徑，不能聲稱已檢查其現場檔案。修正 Core.csproj，明確排除 Persistence/FileReportSink.cs 與 Service/ExportReportPruner.cs，防止覆蓋式更新把退役報告後端重新編入。保留舊檔、不刪使用者資料，介面及 SQL 報告行為不變。
+
+隔離殘留副本修後 Rebuild：0 警告／0 錯誤；MSBuild Compile 清單確認舊 sink／pruner 未編入、EfReportStore 仍編入。正式工作區完整 Solution Debug／Release Rebuild 均成功：0 錯誤／18 既有測試編譯警告。證據：legacy-before.log、legacy-after.log、compile-items.json、solution-debug.log、solution-release.log；不讀 docs/archive、不處理 artifacts。本次驗收針對建置來源選擇，沒有 runtime／測試程式改動，未重新執行 13 分鐘全量；前次全量仍為功能回歸基準。
