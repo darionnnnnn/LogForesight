@@ -184,6 +184,20 @@ public class DataVersionStampPolicyTests
         Assert.Equal(1, stamp.Current);
     }
 
+    [Theory]
+    [InlineData("/api/admin/settings/prtg-import-transfers", 0)]
+    [InlineData("/api/admin/settings/prtg-import-transfers/123/chunks/0", 0)]
+    [InlineData("/api/admin/settings/prtg-import-transfers/123/complete", 0)]
+    [InlineData("/api/admin/settings/prtg-import-transfers/123/abandon", 0)]
+    [InlineData("/api/admin/settings/prtg-import-transfers-extra", 1)]
+    [InlineData("/api/prtg/monitoring", 1)]
+    public void DiagnosticTransfersDoNotEvictFormalCachesButRealSettingsStillDo(string path, long expected)
+    {
+        var (context, stamp) = Request("POST", path);
+        DataVersionStampPolicy.BumpIfNeeded(context);
+        Assert.Equal(expected, stamp.Current);
+    }
+
     /// <summary>GET 與失敗回應一律不推進（既有行為，不得被白名單改動連帶破壞）</summary>
     [Theory]
     [InlineData("GET", "/api/records", 200)]

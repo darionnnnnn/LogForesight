@@ -882,6 +882,24 @@ public class PrtgClientTests
         Assert.DoesNotContain("getpasshash.htm", req.Url);
     }
 
+    [Fact]
+    public async Task OperationCheckpoint_在取得預算前後與回應後皆會觸發()
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"))
+        };
+
+        var checkpointCount = 0;
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+        client.OperationCheckpoint = () => Interlocked.Increment(ref checkpointCount);
+
+        await client.GetJsonAsync("/api/table.json?content=sensors");
+
+        // 包含：方法開頭、取得預算後發送前、回應後至少三次 Checkpoint
+        Assert.True(checkpointCount >= 3);
+    }
+
     /// <summary>
     /// 把每次 SendAsync 的請求方法／URL／內容記錄下來，回應由測試以 <see cref="OnSend"/> 提供。
     /// 取代真實 <see cref="HttpClient"/> 連線，讓 PrtgClient 的協定邏輯可離線測試。
@@ -898,8 +916,11 @@ public class PrtgClientTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = request.Content != null ? await request.Content.ReadAsStringAsync(cancellationToken) : null;
-            Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.ToString(),
-                request.Headers.Authorization?.ToString(), body));
+            lock (Requests)
+            {
+                Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.ToString(),
+                    request.Headers.Authorization?.ToString(), body));
+            }
 
             return await OnSend(request, cancellationToken);
         }

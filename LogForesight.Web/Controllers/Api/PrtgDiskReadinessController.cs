@@ -14,9 +14,10 @@ namespace LogForesight.Web.Controllers.Api;
 public sealed class PrtgDiskReadinessController : ControllerBase
 {
     private readonly PrtgDiskReadinessQueryService _query;
-    public PrtgDiskReadinessController(EfPrtgStore store, IHostStore hosts, ISystemSettingsStore settings,
-        PrtgDiskSemanticEvidenceStore evidence, PrtgDiskVerificationResultStore verificationResults) =>
-        _query = new PrtgDiskReadinessQueryService(store, hosts, settings, evidence, verificationResults);
+    public PrtgDiskReadinessController(EfPrtgStore store, IHostStore? hosts, ISystemSettingsStore settings,
+        PrtgDiskSemanticEvidenceStore evidence, PrtgDiskVerificationResultStore verificationResults,
+        IVisibilityService? visibility = null, ICurrentUser? currentUser = null) =>
+        _query = new PrtgDiskReadinessQueryService(store, hosts, settings, evidence, verificationResults, visibility, currentUser);
 
     [HttpGet]
     public ApiResponse<PrtgDiskReadinessPage> Get([FromQuery] int page = 1, [FromQuery] int pageSize = 50) =>

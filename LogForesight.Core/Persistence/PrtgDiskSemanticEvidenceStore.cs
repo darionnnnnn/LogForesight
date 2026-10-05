@@ -52,11 +52,33 @@ public sealed class PrtgDiskSemanticEvidenceValidity
 public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary<long, PrtgDiskSemanticEvidence>>
 {
     public const string BlobKey = "prtg_disk_semantic_evidence";
+    internal const int MaximumSnapshotCharacters = 32 * 1024 * 1024;
     private static readonly Regex SecretMarker = new(@"(?i)(password|passwd|token|api[_ -]?key|authorization|cookie)\s*[:=]", RegexOptions.Compiled);
 
     public PrtgDiskSemanticEvidenceStore(EfJsonBlobStore blob) : base(blob) { }
 
     public IReadOnlyCollection<PrtgDiskSemanticEvidence> GetAll() => Get().Values.ToArray();
+
+    internal PrtgDiskSemanticEvidenceSnapshot CaptureSnapshot()
+    {
+        var read = ReadBoundedValueWithVersion(MaximumSnapshotCharacters);
+        foreach (var (key, evidence) in read.Value)
+            if (key <= 0 || evidence is null || evidence.SensorObjid != key ||
+                evidence.DeviceObjid <= 0 || evidence.HostId <= 0 ||
+                string.IsNullOrWhiteSpace(evidence.SensorType) ||
+                string.IsNullOrWhiteSpace(evidence.MainChannelIdentifier) ||
+                string.IsNullOrWhiteSpace(evidence.MainChannelName) ||
+                string.IsNullOrWhiteSpace(evidence.Unit) || !double.IsFinite(evidence.Scale) || evidence.Scale <= 0 ||
+                string.IsNullOrWhiteSpace(evidence.Direction) || !Enum.IsDefined(evidence.Source) ||
+                string.IsNullOrWhiteSpace(evidence.EvidenceSummary) || evidence.VerifiedAtUtc == default ||
+                evidence.VerifiedAtUtc.Kind != DateTimeKind.Utc ||
+                string.IsNullOrWhiteSpace(evidence.ParserSemanticVersion))
+                throw new InvalidDataException("磁碟語意證據 blob 含有空白或識別不一致的紀錄；拒絕部分使用。");
+        return new(read.Value, read.Version, read.DeserializeCount, read.SourceCharacters);
+    }
+
+    internal bool IsSnapshotCurrent(PrtgDiskSemanticEvidenceSnapshot snapshot) =>
+        snapshot.Version == ReadCurrentBlobVersion();
 
     public PrtgDiskSemanticEvidence? Get(long sensorObjid) =>
         Get().TryGetValue(sensorObjid, out var evidence) ? evidence : null;
@@ -111,6 +133,15 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
         string currentParserSemanticVersion)
     {
         var evidence = Get(sensorObjid);
+        return CheckValidity(evidence, sensorObjid, current, currentParserSemanticVersion);
+    }
+
+    internal PrtgDiskSemanticEvidenceValidity CheckValidity(
+        PrtgDiskSemanticEvidence? evidence,
+        long sensorObjid,
+        PrtgDiskSemanticContext? current,
+        string currentParserSemanticVersion)
+    {
         if (evidence is null) return Invalid("尚無語意證據。");
         if (current is null) return Invalid("目前 sensor／主機對應不存在。", evidence);
         try { ValidateContext(current); }
@@ -167,4 +198,21 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
 
     private static bool Same(string? left, string? right) =>
         string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
+}
+
+internal sealed class PrtgDiskSemanticEvidenceSnapshot
+{
+    private readonly Dictionary<long, PrtgDiskSemanticEvidence> _items;
+
+    internal PrtgDiskSemanticEvidenceSnapshot(Dictionary<long, PrtgDiskSemanticEvidence> items,
+        long version, int deserializeCount, int sourceCharacters)
+    { _items = items; Version = version; DeserializeCount = deserializeCount; SourceCharacters = sourceCharacters; }
+
+    internal long Version { get; }
+    internal int DeserializeCount { get; }
+    internal int SourceCharacters { get; }
+    internal int Count => _items.Count;
+    internal bool TryGetValue(long sensorObjid, out PrtgDiskSemanticEvidence? evidence) =>
+        _items.TryGetValue(sensorObjid, out evidence);
+    internal long[] GetSensorIds() => _items.Keys.OrderBy(id => id).ToArray();
 }

@@ -174,12 +174,12 @@ function renderAssessment(data) {
 
     // 2. PRTG 規則門檻
     renderCard('prtg-rule-thresholds', data.prtgRuleThresholds, [
-        ['DistinctCoverageDays', '變更涵蓋天數'],
+        ['DistinctCoverageDays', '可信完整涵蓋日數'],
         ['DownSensorDays', 'down sensor-日數'],
         ['FlappingSensorDays', 'flapping sensor-日數'],
         ['WarningSensorDays', 'warning sensor-日數'],
         ['SilentDeviceDays', 'silent device-日數'],
-        ['TotalRuleHits', '四條合計命中筆數']
+        ['TotalRuleHits', '現行門檻命中筆數']
     ]);
 
     // 3. 數值取得量級

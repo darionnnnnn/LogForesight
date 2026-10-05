@@ -20,8 +20,9 @@ namespace LogForesight.Core;
 /// 密文格式：
 ///   - <c>enc:v2:</c>＋base64(nonce(12)‖tag(16)‖ciphertext)，AES-256-GCM。<see cref="Encrypt"/> 一律產生 v2；
 ///     解密只用現用金鑰，驗證失敗必擲 <see cref="CryptographicException"/>（不會像 CBC 那樣錯金鑰偶爾回亂碼）。
-///   - <c>enc:v1:</c>＋base64(IV(16)‖ciphertext)，AES-256-CBC 舊格式：現用金鑰解不開時退回內嵌金鑰再試
-///     （金鑰輪替過渡期）。啟動時 CryptoKeyBootstrapper 會把 v1 重寫成 v2（<see cref="NeedsRewrap"/>）。
+///   - <c>enc:v1:</c>＋base64(IV(16)‖ciphertext)，AES-256-CBC 舊格式：以現用與內嵌金鑰候選解密，僅接受
+///     合法 UTF-8 且結果唯一或相同的明碼；兩候選都成功但結果不同時拒絕重寫（避免錯金鑰碰巧符合 PKCS7）。
+///     啟動時 CryptoKeyBootstrapper 會把可唯一解密的 v1 重寫成 v2（<see cref="NeedsRewrap"/>）。
 /// </summary>
 public static class CryptoHelper
 {
@@ -36,6 +37,7 @@ public static class CryptoHelper
     // 內嵌金鑰（fallback）：隨機產生的 32 bytes（AES-256）。v1 舊密文過渡期仍需要，不可移除。
     private static readonly byte[] EmbeddedKey = Convert.FromBase64String(
         "aXEQsH/zY6lrvkc/pJZDYwa8oAaiOwInIZWou5VlfWo=");
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private static readonly object StateLock = new();
     private static string? _keyFilePath;
@@ -300,26 +302,43 @@ public static class CryptoHelper
         var combined = Convert.FromBase64String(value[PrefixV1.Length..]);
         var iv = combined[..16];
         var cipherBytes = combined[16..];
+        var currentSucceeded = TryDecryptRaw(key, iv, cipherBytes, out var currentPlaintext);
+        if (key.SequenceEqual(EmbeddedKey))
+        {
+            if (currentSucceeded) return currentPlaintext;
+            throw new CryptographicException("enc:v1 密文無法以現用金鑰解密為合法 UTF-8。");
+        }
 
-        try
-        {
-            return DecryptRaw(key, iv, cipherBytes);
-        }
-        catch (CryptographicException) when (!key.SequenceEqual(EmbeddedKey))
-        {
-            // 金鑰輪替過渡期：現用金鑰解不開，可能是這筆密文還是內嵌金鑰時代寫入的，退回內嵌金鑰再試一次
-            return DecryptRaw(EmbeddedKey, iv, cipherBytes);
-        }
+        var embeddedSucceeded = TryDecryptRaw(EmbeddedKey, iv, cipherBytes, out var embeddedPlaintext);
+        if (currentSucceeded && embeddedSucceeded && !string.Equals(currentPlaintext, embeddedPlaintext, StringComparison.Ordinal))
+            throw new CryptographicException("enc:v1 密文可由多把金鑰解出不同明碼；拒絕選擇並重寫密文。");
+        if (currentSucceeded) return currentPlaintext;
+        if (embeddedSucceeded) return embeddedPlaintext;
+        throw new CryptographicException("enc:v1 密文無法以可信金鑰解密為合法 UTF-8。");
     }
 
-    private static string DecryptRaw(byte[] key, byte[] iv, byte[] cipherBytes)
+    private static bool TryDecryptRaw(byte[] key, byte[] iv, byte[] cipherBytes, out string plaintext)
     {
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.IV = iv;
+        try
+        {
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.IV = iv;
 
-        using var decryptor = aes.CreateDecryptor();
-        var plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
-        return Encoding.UTF8.GetString(plainBytes);
+            using var decryptor = aes.CreateDecryptor();
+            var plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
+            plaintext = StrictUtf8.GetString(plainBytes);
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            plaintext = "";
+            return false;
+        }
+        catch (DecoderFallbackException)
+        {
+            plaintext = "";
+            return false;
+        }
     }
 }

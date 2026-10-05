@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using NLog;
 
 namespace LogForesight.Core;
@@ -53,6 +54,7 @@ public sealed class PrtgClient : IDisposable
 
     internal TimeSpan Timeout => _http.Timeout;
     internal HttpMessageHandler Handler { get; }
+    public PrtgRequestBudget? Budget { get; }
 
     public PrtgClient(
         string baseUrl,
@@ -63,8 +65,10 @@ public sealed class PrtgClient : IDisposable
         string authMode,
         string usernameOrEmpty,
         string passwordOrEmpty,
-        string passhashOrEmpty)
+        string passhashOrEmpty,
+        PrtgRequestBudget? budget = null)
     {
+        Budget = budget;
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new PrtgClientException("PRTG 未設定連線位址。");
 
@@ -191,11 +195,17 @@ public sealed class PrtgClient : IDisposable
             var query = $"username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}";
             var uri = new Uri($"{_baseUrl}/api/getpasshash.htm?{query}", UriKind.Absolute);
 
+            Checkpoint(ct);
+            using var lease = Budget != null
+                ? await Budget.AcquireAsync(PrtgEndpointCategory.Other, ct)
+                : null;
+
             HttpResponseMessage resp;
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
                 Checkpoint(ct);
+                lease?.MarkRequestSent();
                 resp = await _http.SendAsync(request, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -227,7 +237,25 @@ public sealed class PrtgClient : IDisposable
                     throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
                 }
 
-                var text = await resp.Content.ReadAsStringAsync(ct);
+                string text;
+                try
+                {
+                    text = await resp.Content.ReadAsStringAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (HttpRequestException ex) when (IsOverCapacity(ex))
+                {
+                    throw OversizeException(ex);
+                }
+                catch (Exception ex)
+                {
+                    var sanitized = StripSecrets(ex.Message);
+                    throw new PrtgClientException($"讀取 PRTG passhash 回應失敗：{sanitized}", ex);
+                }
+
                 var trimmed = text.Trim();
 
                 if (trimmed.StartsWith('<'))
@@ -291,11 +319,19 @@ public sealed class PrtgClient : IDisposable
 
         var passhash = await EnsurePasshashAsync(ct);
         var uri = BuildUri(relativePathAndQuery, passhash);
+        var category = PrtgRequestBudget.Classify(relativePathAndQuery);
+
+        Checkpoint(ct);
+        using var lease = Budget != null
+            ? await Budget.AcquireAsync(category, ct)
+            : null;
+
         HttpResponseMessage resp;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             Checkpoint(ct);
+            lease?.MarkRequestSent();
             resp = await _http.SendAsync(request, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -339,7 +375,25 @@ public sealed class PrtgClient : IDisposable
                 throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
             }
 
-            var text = await resp.Content.ReadAsStringAsync(ct);
+            string text;
+            try
+            {
+                text = await resp.Content.ReadAsStringAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (HttpRequestException ex) when (IsOverCapacity(ex))
+            {
+                throw OversizeException(ex);
+            }
+            catch (Exception ex)
+            {
+                var sanitized = StripSecrets(ex.Message);
+                throw new PrtgClientException($"讀取 PRTG 回應內容失敗：{sanitized}", ex);
+            }
+
             var trimmed = text.Trim();
             if (trimmed.StartsWith('<'))
             {

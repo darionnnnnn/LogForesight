@@ -10,7 +10,7 @@ namespace LogForesight.Web.Services;
 public record PrtgProbeSnapshot(
     bool IsRunning, DateTime? StartedAt, DateTime? CompletedAt,
     bool? Success, string? LatestMessage, IReadOnlyList<string> Output,
-    bool Cancelled = false);
+    bool Cancelled = false, string? EvidenceJson = null);
 
 /// <summary>
 /// PRTG probe 的行程內單例執行狀態＋併發 1 的 gate。
@@ -25,6 +25,7 @@ public class PrtgProbeRunState
     private DateTime? _completedAt;
     private bool? _success;
     private string? _latestMessage;
+    private string? _evidenceJson;
 
     private CancellationTokenSource? _cts;
     private bool _cancelled;
@@ -60,6 +61,7 @@ public class PrtgProbeRunState
         lock (_lock)
         {
             if (_cts == null || !_isRunning) return false;
+            _evidenceJson = null;
             _cts.Cancel();
             return true;
         }
@@ -71,6 +73,7 @@ public class PrtgProbeRunState
         lock (_lock)
         {
             _cancelled = cancelled;
+            if (cancelled) _evidenceJson = null;
             _cts?.Dispose();
             _cts = null;
         }
@@ -88,6 +91,7 @@ public class PrtgProbeRunState
             _success = null;
             _latestMessage = null;
             _output.Clear();
+            _evidenceJson = null;
             return true;
         }
     }
@@ -99,6 +103,14 @@ public class PrtgProbeRunState
             if (!_isRunning) return;
             _output.Add(message);
             if (!string.IsNullOrWhiteSpace(message)) _latestMessage = message;
+        }
+    }
+
+    public void SetEvidenceJson(string? evidenceJson)
+    {
+        lock (_lock)
+        {
+            if (_isRunning) _evidenceJson = evidenceJson;
         }
     }
 
@@ -118,7 +130,7 @@ public class PrtgProbeRunState
         {
             return new PrtgProbeSnapshot(
                 _isRunning, _startedAt, _completedAt, _success,
-                _latestMessage, _output.ToList(), _cancelled);
+                _latestMessage, _output.ToList(), _cancelled, _evidenceJson);
         }
     }
 }
@@ -178,7 +190,8 @@ public class PrtgProbeService
             Success = s.Success,
             LatestMessage = s.LatestMessage,
             Output = s.Output,
-            Cancelled = s.Cancelled
+            Cancelled = s.Cancelled,
+            EvidenceJson = s.EvidenceJson
         };
     }
 
@@ -277,7 +290,38 @@ public class PrtgProbeService
                     }
                     else
                     {
-                        success = await PrtgProbeRunner.RunAsync(client, console, runToken);
+                        string storageProvider = "unknown";
+                        try
+                        {
+                            using var db = _backend.CreateContext();
+                            var pName = db.Database.ProviderName;
+                            if (pName != null)
+                            {
+                                if (pName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase)) storageProvider = "SqlServer";
+                                else if (pName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)) storageProvider = "Sqlite";
+                            }
+                        }
+                        catch
+                        {
+                            storageProvider = "unknown";
+                        }
+
+                        var evidenceContext = new PrtgProbeEvidenceContext
+                        {
+                            SchemaVersion = "1.0.0",
+                            BuildVersion = buildVersion,
+                            GeneratedAtUtc = DateTimeOffset.UtcNow,
+                            HostUtcOffset = DateTimeOffset.Now.ToString("zzz"),
+                            SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(s.PrtgUrl),
+                            SettingsRevision = s.Revision,
+                            SourceTimezone = "unknown",
+                            SourceLocale = "unknown",
+                            StorageProvider = storageProvider,
+                            RetentionDays = s.PrtgRetentionDays,
+                            ScopeSummary = "unknown",
+                            ReadinessSummary = "unknown"
+                        };
+                        success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, _state.SetEvidenceJson);
                     }
 
                     // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），

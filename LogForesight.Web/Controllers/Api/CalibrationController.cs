@@ -57,10 +57,11 @@ public class CalibrationController : ControllerBase
     {
         var summaryOnly = string.Equals(detail, "summary", StringComparison.OrdinalIgnoreCase);
 
-        // 強制重算：判定快取只以日期為鍵，設定（白名單、保留天數）剛改過時舊摘要會與
-        // 即時算出的資料集口徑不一致、稽核也會記到舊狀態。匯出是低頻操作，重算一次可接受；
-        // 隨後 BuildExportPackage 內的判定直接命中這次更新的快取，不會跑第二遍。
-        var summary = _calibrationService.AssessStatus(anchor: null, forceRefresh: true);
+        // 強制重算後再組封包；組裝會重新擷取設定與證據，最終匯出閘門和稽核都採封包內摘要。
+        _calibrationService.AssessStatus(anchor: null, forceRefresh: true);
+        var package = _calibrationService.BuildExportPackage(summaryOnly: summaryOnly);
+        // 匯出資格及稽核必須對應實際回傳封包；強制評估之後設定或證據仍可能變更。
+        var summary = package.Summary;
         var ineligible = new List<string>();
 
         if (summary.PrtgValueBaseline.Status is not (CalibrationStatus.Available or CalibrationStatus.Sufficient))
@@ -78,7 +79,6 @@ public class CalibrationController : ControllerBase
                 $"校準資料累積量未達標（{string.Join("、", ineligible)}），需全數達到「可用」以上才允許匯出；若確認要強制匯出請勾選「仍要匯出」。");
         }
 
-        var package = _calibrationService.BuildExportPackage(summaryOnly: summaryOnly);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(package, ExportJsonOptions);
         var fileName = summaryOnly
             ? $"calibration-{DateTime.Today:yyyyMMdd}-summary.json"

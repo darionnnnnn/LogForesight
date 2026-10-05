@@ -1,6 +1,8 @@
 ﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -40,6 +42,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private readonly TimeSpan _pollInterval;
     private readonly SemaphoreSlim _wakeSignal = new(0, 1);
     private volatile bool _scopeRefreshRequested;
+    private int _recentStateQueueHttpDeferred;
 
     private static readonly Regex IntervalRegex = new(@"^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$", RegexOptions.Compiled);
 
@@ -59,6 +62,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private string? _journalError;
     private sealed class JournalWriteException : IOException { }
     private readonly List<PrtgSnapshotJournal.Batch> _pendingWrite = new();
+    private int _pendingRows;
 
     /// <summary>最近一次從設定算出的每小時期望樣本數（見 ExpectedSamplesPerHour）。</summary>
     private int _expectedSamplesPerHour;
@@ -82,16 +86,16 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// <summary>暫停超過這個長度，恢復時才寫執行輸出。</summary>
     private static readonly TimeSpan PauseReportThreshold = TimeSpan.FromMinutes(15);
 
+    /// <summary>鏡像補抓與近期狀態查詢每輪必須讓出採樣；測試可縮短期限。</summary>
+    internal TimeSpan ScopeWorkBudget { get; set; } = TimeSpan.FromSeconds(30);
+
+    internal PrtgSamplingActivity SamplingActivity { get; set; } = PrtgSamplingActivity.Shared;
+
     private DateTime? _targetRefreshHour;
     private string? _targetWhitelistFingerprint;
     private HashSet<long>? _targetObjids;
     private Dictionary<long, string>? _sensorTypes;
 
-    /// <summary>
-    /// 目標顆數不超過它時以 filter_objid 分批查（每批 <see cref="PrtgResourceGuardProbe.MaxBatchSize"/> 顆），超過時改單發全站查詢。
-    /// 取這個值的理由：超過時分批請求數（40 個以上）的往返成本多於一次全站查詢；尚無實機數據佐證，有實測再調。
-    /// </summary>
-    internal const int FilteredSnapshotLimit = 2000;
 
     /// <summary>每輪範圍補抓最多處理的裝置數（由 objid 小到大），其餘留給下一輪。</summary>
     internal const int MaxBackfillDevicesPerTick = 50;
@@ -221,7 +225,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     public PrtgSnapshotStatus GetStatus()
     {
         int pendingRows;
-        lock (_pendingWrite) pendingRows = _pendingWrite.Sum(batch => batch.Rows.Count);
+        lock (_pendingWrite) pendingRows = _pendingRows;
         return new(
             LastSuccessAt: _lastSuccessAt,
             LastSensorCount: _lastSensorCount,
@@ -247,14 +251,12 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             try
             {
+                // 採樣優先；未完成的範圍更新不能一直占用整個服務迴圈。
+                await TickAsync(stoppingToken);
                 if (_scopeRefreshRequested)
                 {
                     _scopeRefreshRequested = false;
                     await ScopeRefreshTickAsync(stoppingToken);
-                }
-                else
-                {
-                    await TickAsync(stoppingToken);
                 }
             }
             catch (Exception ex)
@@ -289,10 +291,25 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         await WithOperationScopeAsync(settings, ct, async token =>
         {
-            var newlyBackfilled = await BackfillScopeSensorsAsync(settings, token);
-            if (newlyBackfilled.Count > 0)
-                await FetchRecentStateChangesAsync(settings, newlyBackfilled, token);
+            await RunBoundedScopeWorkAsync(token, async slice =>
+            {
+                await BackfillScopeSensorsAsync(settings, slice);
+                await FetchRecentStateChangesAsync(settings, slice);
+            });
         });
+    }
+
+    private async Task RunBoundedScopeWorkAsync(CancellationToken parent, Func<CancellationToken, Task> work)
+    {
+        using var slice = CancellationTokenSource.CreateLinkedTokenSource(parent);
+        slice.CancelAfter(ScopeWorkBudget);
+        try { await work(slice.Token); }
+        catch (OperationCanceledException) when (slice.IsCancellationRequested && !parent.IsCancellationRequested)
+        {
+            _scopeRefreshRequested = true;
+            _targetRefreshHour = null;
+            WriteOutput("[PRTG快照] 本輪範圍補抓已達期限，未完成項留待下一輪；繼續日常採樣。", LogLevel.Warn);
+        }
     }
 
     private async Task WithOperationScopeAsync(SystemSettings settings, CancellationToken parent, Func<CancellationToken, Task> work)
@@ -344,25 +361,25 @@ public class PrtgSnapshotHostedService : BackgroundService
             return;
         }
 
-        // 3. 結構同步執行中（PrtgStructureSyncService.IsRunning）→ 不跑。
-        if (_structureSync.IsRunning)
+        // 其他作業只可短暫讓出一個策略採樣間隔，不能讓採樣永久等待。
+        // 已有採樣時以最近嘗試為期限起點；首次啟動則從首次等待開始。
+        var maintenance = _structureSync.IsRunning
+            ? (PrtgSnapshotSkipReasonCodes.StructureSyncActive, "結構同步執行中，暫停快照")
+            : _backfill.GetStatus().IsRunning
+                ? (PrtgSnapshotSkipReasonCodes.BackfillActive, "歷史回填執行中，暫停快照")
+                : IsFetchRunningPrtgPhase()
+                    ? (PrtgSnapshotSkipReasonCodes.NightlyFetchPrtgPhase, "夜間取數正在 PRTG 階段，暫停快照")
+                    : ((string, string)?)null;
+        if (maintenance is { } busy)
         {
-            NoteSkip(PrtgSnapshotSkipReasonCodes.StructureSyncActive, "結構同步執行中，暫停快照");
-            return;
-        }
-
-        // 4. 歷史回填執行中（PrtgBackfillService 的狀態 IsRunning）→ 不跑。
-        if (_backfill.GetStatus().IsRunning)
-        {
-            NoteSkip(PrtgSnapshotSkipReasonCodes.BackfillActive, "歷史回填執行中，暫停快照");
-            return;
-        }
-
-        // 5. 取數執行正在 PRTG 階段（SchedulerRunState 的快照裡，進度 phase 以 prtg- 開頭）→ 不跑。
-        if (IsFetchRunningPrtgPhase())
-        {
-            NoteSkip(PrtgSnapshotSkipReasonCodes.NightlyFetchPrtgPhase, "夜間取數正在 PRTG 階段，暫停快照");
-            return;
+            var interval = TimeSpan.FromMinutes(Math.Max(1,
+                PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes));
+            var waitingFrom = _lastAttemptAt ?? _skipSince ?? Now();
+            if (Now() - waitingFrom < interval)
+            {
+                NoteSkip(busy.Item1, busy.Item2);
+                return;
+            }
         }
 
         NoteResumed();
@@ -384,11 +401,19 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         _lastAttemptAt = now;
 
+        // 採樣取得優先權時中止背景歷史頁；整個區段結束後才准入下一頁。
+        using var samplingPriority = SamplingActivity.BeginSampling();
+
         // 7. 快照之前先補抓新進取數範圍、鏡像還沒有感測器的裝置（自帶 try/catch，不進退避）。
         //    跟著快照間隔走、不每分鐘跑：取數範圍計算要讀整份對應與鏡像，沒必要比快照更頻繁。
         await WithOperationScopeAsync(settings, ct, async token =>
         {
-            await BackfillScopeSensorsAsync(settings, token);
+            // 維護仍在執行時只用已落地鏡像採樣，避免順便擴張補抓工作。
+            if (maintenance is null)
+                await RunBoundedScopeWorkAsync(token, async slice =>
+                {
+                    await BackfillScopeSensorsAsync(settings, slice);
+                });
             try
             {
                 await ExecuteSnapshotAsync(settings, now, token);
@@ -402,6 +427,10 @@ public class PrtgSnapshotHostedService : BackgroundService
             {
                 RecordFailure(ex);
             }
+            if (maintenance is null && !_probeState.Snapshot().IsRunning)
+                await RunBoundedScopeWorkAsync(token, slice => FetchRecentStateChangesAsync(settings, slice));
+            else
+                _scopeRefreshRequested = true;
         });
     }
 
@@ -471,7 +500,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         lock (_pendingWrite)
         {
-            if (_accumulator.Capture().Count + _pendingWrite.Sum(b => (long)b.Rows.Count) + targets.Count > PrtgSnapshotJournal.MaxRows ||
+            if (_accumulator.EntryCount + _pendingRows + targets.Count > PrtgSnapshotJournal.MaxRows ||
                 _journal.SavedBytes + ((long)targets.Count + 1) * PrtgSnapshotJournal.ReservedBytesPerRow > PrtgSnapshotJournal.MaxBytes)
             {
                 JournalFailed(new InvalidDataException("待寫空間不足以容納下一輪快照；等待資料庫恢復"));
@@ -484,23 +513,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             // 沒有目標：不打 PRTG，照樣記成功並寫出已到整點的列
         }
-        else if (targets.Count <= FilteredSnapshotLimit)
-        {
-            await FetchFilteredAsync(settings, targets, now, tally, ct);
-        }
         else
         {
-            var client = GetClient(settings);
-            RecordDiagnostic(now, "attempt", targets: targets.Count);
-            var json = await client.GetJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue_raw,interval&count=50000", ct);
-            RecordDiagnostic(now, "success", targets: targets.Count);
-
-            var (treeSize, totalSensorsInResponse) = ParseAndCheckpoint(json, now, tally, _targetObjids ?? new HashSet<long>());
-            if (treeSize.HasValue && treeSize.Value > 0 && totalSensorsInResponse < treeSize.Value)
-            {
-                var msg = $"[PRTG快照] 只取到 {totalSensorsInResponse} 個感測器（總數 {treeSize.Value}），快照結果可能被截斷。";
-                WriteOutput(msg, LogLevel.Warn);
-            }
+            await FetchFilteredAsync(settings, targets, now, tally, ct);
         }
 
         if (tally.UnparsedIntervals > 0)
@@ -577,7 +592,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 解析一份 table.json 回應並逐列累積（分批與全站兩種模式共用的唯一解析入口）。
+    /// 解析一份 table.json 回應並逐列累積（分批模式唯一解析入口）。
     /// </summary>
     /// <returns>回應的 treesize（沒有時 null）與 sensors 陣列長度</returns>
     private (long? TreeSize, int Total) ParseSnapshotResponse(string json, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
@@ -611,7 +626,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         return (treeSize, sensorsArr.GetArrayLength());
     }
 
-    /// <summary>單列：只收 accept 內的感測器（全站模式＝目標集合、分批模式＝本批要求的 objid），換算（流量類轉每小時量）後進累積器。</summary>
+    /// <summary>單列：只收 accept 內的感測器（本批要求的 objid），換算（流量類轉每小時量）後進累積器。</summary>
     private void AccumulateSensorRow(JsonElement el, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
     {
         long? objid = null;
@@ -670,7 +685,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         tally.Added++;
     }
 
-    /// <summary>一輪快照的計數（兩種模式共用）。欄位而非屬性：間隔解析以 ref 累加。</summary>
+    /// <summary>一輪快照的計數。欄位而非屬性：間隔解析以 ref 累加。</summary>
     private sealed class SnapshotTally
     {
         public int Matched;
@@ -713,6 +728,18 @@ public class PrtgSnapshotHostedService : BackgroundService
             var scope = PrtgScopeDevices.Compute(
                 store, _hosts, new PrtgMirrorGuardSource(store), settings, _sentinels.GetAll(),
                 SilentConsole, _addressResolver, hostIds: null);
+            var businessDeviceObjids = ComputeBusinessScopeDevices(store);
+            var sourceIdentityHash = SourceIdentityHash(settings);
+            var scopeRevision = new PrtgScopeRevisionReader(_backend, _hosts).Read();
+            var scopeVersionHash = ScopeVersionHash(scopeRevision);
+            var localToday = Now().Date;
+            var reconciliationAtUtc = DateTime.UtcNow;
+            var reconciled = store.ReconcileRecentStateChanges(businessDeviceObjids, sourceIdentityHash,
+                scopeVersionHash, localToday.AddDays(-1), localToday, reconciliationAtUtc);
+            if (reconciled > 0) Interlocked.Exchange(ref _recentStateQueueHttpDeferred, 1);
+            var stoppedQueue = store.ReadRecentStateChangeQueueStopSummary();
+            if (stoppedQueue?.AtUtc == reconciliationAtUtc && stoppedQueue.StoppedCount > 0)
+                WriteOutput($"[PRTG快照] 監看範圍變更，已停止 {stoppedQueue.StoppedCount} 台離開業務範圍的狀態補抓工作（{stoppedQueue.Reason}）。", LogLevel.Info);
 
             var mirrorSensors = store.GetAllSensors();
             var devicesWithSensors = mirrorSensors.Select(s => s.DeviceObjid).ToHashSet();
@@ -747,9 +774,15 @@ public class PrtgSnapshotHostedService : BackgroundService
                 var fetch = new PrtgFetchService(client, store,
                     new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
                     PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                var firstEnqueuedAtUtc = DateTime.UtcNow;
+                var queueItems = pending.Where(businessDeviceObjids.Contains).Distinct().ToDictionary(id => id,
+                    id => new PrtgRecentStateChangeQueueItem(id, localToday.AddDays(-1), localToday,
+                        sourceIdentityHash, scopeVersionHash, firstEnqueuedAtUtc, firstEnqueuedAtUtc,
+                        Attempts: 0, LeaseOwner: null, LeaseExpiresAtUtc: null, CompletedAtUtc: null));
                 // 補抓寫入的列 SyncedAt 是當下時間（沿用 mapper），晚於任何已開始的結構同步起點，
                 // 不會被那趟「未刷新即刪除」清掉
-                result = await fetch.BackfillSensorsForDevicesAsync(pending, settings.PrtgFetchConcurrency, ct);
+                result = await fetch.BackfillSensorsForDevicesAsync(pending, settings.PrtgFetchConcurrency, ct,
+                    requireCompleteDevice: true, recentStateQueueItems: queueItems);
             }
 
             foreach (var id in result.EmptyDevices) _confirmedEmptyDevices.Add(id);
@@ -785,28 +818,149 @@ public class PrtgSnapshotHostedService : BackgroundService
         return newlyBackfilled;
     }
 
-    private async Task FetchRecentStateChangesAsync(SystemSettings settings, IReadOnlyList<long> newlyBackfilled, CancellationToken ct)
+    private async Task FetchRecentStateChangesAsync(SystemSettings settings, CancellationToken ct)
     {
-        try
-        {
-            var store = _backend.PrtgStore();
-            var client = GetClient(settings);
-            var fetch = new PrtgFetchService(client, store,
-                new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
-                PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
-
-            var today = Now().Date;
-            var fromDate = today.AddDays(-1);
-            await fetch.FetchStateChangesRangeAsync(fromDate, today, newlyBackfilled, settings.PrtgFetchConcurrency, ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
+        try { await DrainRecentStateChangesAsync(settings, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            WriteOutput($"[PRTG快照] 新進裝置狀態變更補抓失敗（不影響快照）：{ex.Message}", LogLevel.Warn);
+            WriteOutput($"[PRTG快照] 狀態補抓佇列處理失敗（不影響快照）：{ex.Message}", LogLevel.Warn);
         }
+    }
+
+    private async Task DrainRecentStateChangesAsync(SystemSettings settings, CancellationToken ct)
+    {
+        var store = _backend.PrtgStore();
+        var businessDeviceObjids = ComputeBusinessScopeDevices(store);
+        var sourceIdentityHash = SourceIdentityHash(settings);
+        var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
+        var scopeRevision = scopeReader.Read();
+        var scopeVersionHash = ScopeVersionHash(scopeRevision);
+        var localToday = Now().Date;
+        var nowUtc = DateTime.UtcNow;
+        var reboundRows = store.ReconcileRecentStateChanges(businessDeviceObjids, sourceIdentityHash, scopeVersionHash,
+            localToday.AddDays(-1), localToday, nowUtc);
+        if (reboundRows > 0) return; // 來源或範圍不符時先更新佇列，下一輪才可向新來源發 HTTP。
+        if (Interlocked.Exchange(ref _recentStateQueueHttpDeferred, 0) != 0) return;
+
+        var owner = Guid.NewGuid().ToString("N");
+        var leases = store.ClaimRecentStateChanges(owner, nowUtc, TimeSpan.FromMinutes(2), take: 50);
+        for (var leaseIndex = 0; leaseIndex < leases.Count; leaseIndex++)
+        {
+            var lease = leases[leaseIndex];
+            if (ct.IsCancellationRequested)
+            {
+                for (var pendingIndex = leaseIndex; pendingIndex < leases.Count; pendingIndex++)
+                    store.ReleaseRecentStateChangeLease(leases[pendingIndex], DateTime.UtcNow);
+                ct.ThrowIfCancellationRequested();
+            }
+            if (!businessDeviceObjids.Contains(lease.Item.DeviceObjid) ||
+                lease.Item.SourceIdentityHash != sourceIdentityHash || lease.Item.BusinessScopeVersion != scopeVersionHash)
+            {
+                store.RetryRecentStateChange(lease, DateTime.UtcNow, TimeSpan.FromSeconds(30));
+                continue;
+            }
+
+            var operationRevision = store.ReadCatalogueDataRevision();
+            using var operationToken = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            void Checkpoint()
+            {
+                operationToken.Token.ThrowIfCancellationRequested();
+                var currentSettings = _settingsStore.Get();
+                if (SourceIdentityHash(currentSettings) != lease.Item.SourceIdentityHash ||
+                    ScopeVersionHash(scopeReader.Read()) != lease.Item.BusinessScopeVersion ||
+                    store.ReadCatalogueDataRevision() != operationRevision)
+                {
+                    operationToken.Cancel();
+                    operationToken.Token.ThrowIfCancellationRequested();
+                }
+            }
+
+            try
+            {
+                var client = GetClient(settings);
+                client.OperationCheckpoint = () =>
+                {
+                    _operationCheckpoint?.Invoke();
+                    Checkpoint();
+                };
+                var fetch = new PrtgFetchService(client, store,
+                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
+                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                var result = await fetch.FetchStateChangesRangeAsync(lease.Item.FromLocalDate, lease.Item.ToLocalDate,
+                    new[] { lease.Item.DeviceObjid }, settings.PrtgFetchConcurrency, operationToken.Token);
+                Checkpoint();
+                if (result.Converged && result.QueriedObjects == 1 && result.FailedObjects == 0 && result.Pages > 0)
+                {
+                    if (!store.AcknowledgeRecentStateChange(lease))
+                        WriteOutput($"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓完成，但佇列 lease 已改變；保留佇列供重試。", LogLevel.Warn);
+                }
+                else
+                {
+                    store.RetryRecentStateChange(lease, DateTime.UtcNow);
+                    WriteOutput($"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓未收斂，保留佇列稍後重試。", LogLevel.Warn);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                store.RetryRecentStateChange(lease, DateTime.UtcNow, TimeSpan.FromSeconds(15));
+                for (var pendingIndex = leaseIndex + 1; pendingIndex < leases.Count; pendingIndex++)
+                    store.ReleaseRecentStateChangeLease(leases[pendingIndex], DateTime.UtcNow);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                store.RetryRecentStateChange(lease, DateTime.UtcNow);
+                WriteOutput($"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓失敗（不影響快照）：{ex.Message}", LogLevel.Warn);
+            }
+            finally
+            {
+                if (_client != null) _client.OperationCheckpoint = _operationCheckpoint;
+            }
+        }
+    }
+
+    private static string SourceIdentityHash(SystemSettings settings)
+    {
+        var source = string.Join("\u001f", settings.PrtgUrl ?? string.Empty, settings.PrtgAuthMode ?? string.Empty,
+            settings.PrtgUsername ?? string.Empty, settings.PrtgApiTokenEnc ?? string.Empty,
+            settings.PrtgPasswordEnc ?? string.Empty, settings.PrtgPasshashEnc ?? string.Empty);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
+    }
+
+    private static string ScopeVersionHash(string revision) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(revision)));
+
+    private HashSet<long> ComputeBusinessScopeDevices(EfPrtgStore store)
+    {
+        // 持久化近期狀態交接沿用 PrtgScopeDevices 的已對應／衝突／人工業務裝置範圍，但排除僅供守門使用的裝置。
+        // 不呼叫停用守門的 Compute：該路徑仍會掃描全部鏡像感測器，以尋找守門裝置並保留其資料列。
+        var mapRows = store.GetLatestHostMap();
+        var businessDevices = mapRows.Where(row => row.MapStatus == PrtgMapStatus.Ok)
+            .Select(row => row.DeviceObjid).ToHashSet();
+        var activeHosts = _hosts.GetAll().Where(host => host.Active && host.MergedInto == null).ToArray();
+        var hostsById = activeHosts.Select(host => host.HostId).ToHashSet();
+        var hostIdsByIp = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var host in activeHosts)
+        {
+            var ip = _addressResolver.Resolve(host.IpAddress);
+            if (ip == null) continue;
+            if (!hostIdsByIp.TryGetValue(ip, out var ids)) hostIdsByIp[ip] = ids = [];
+            ids.Add(host.HostId);
+        }
+        foreach (var row in mapRows.Where(row => row.MapStatus == PrtgMapStatus.Conflict))
+        {
+            if (row.HostId.HasValue)
+            {
+                businessDevices.Add(row.DeviceObjid);
+                continue;
+            }
+            var ip = _addressResolver.Resolve(row.Ip);
+            if (ip != null && hostIdsByIp.ContainsKey(ip)) businessDevices.Add(row.DeviceObjid);
+        }
+        foreach (var manual in store.GetManualMaps())
+            if (hostsById.Contains(manual.HostId)) businessDevices.Add(manual.DeviceObjid);
+        return businessDevices;
     }
 
     /// <summary>
@@ -894,10 +1048,12 @@ public class PrtgSnapshotHostedService : BackgroundService
                 if (!_journalLoaded)
                 {
                     var state = _journal.Load(endpoint, Now());
+                    _journal.EnableIncremental(endpoint, Now());
                     if (state != null)
                     {
                         _accumulator.Restore(state.Accumulator);
                         _pendingWrite.AddRange(state.Pending);
+                        _pendingRows = state.Pending.Sum(batch => batch.Rows.Count);
                     }
                     _journalEndpoint = endpoint;
                     _journalLoaded = true;
@@ -906,8 +1062,10 @@ public class PrtgSnapshotHostedService : BackgroundService
                 {
                     if (_accumulator.SampleCount > 0 || _pendingWrite.Count > 0)
                         throw new InvalidDataException("PRTG 來源位址變更、來源／資源世代或對應變更，舊樣本保留待處理；不寫入新身分");
+                    _journal.EnableIncremental(endpoint, Now());
                     _journalEndpoint = endpoint;
                 }
+                _journalError = null;
                 return true;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
@@ -922,7 +1080,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         try
         {
-            _journal.Save(_journalEndpoint!, _accumulator.Capture(), _pendingWrite, Now());
+            var delta = _accumulator.CaptureDelta();
+            _journal.AppendDelta(_journalEndpoint!, delta, null, null, Now());
+            _accumulator.CommitDelta(delta);
             _journalError = null;
             return true;
         }
@@ -958,8 +1118,10 @@ public class PrtgSnapshotHostedService : BackgroundService
         lock (_pendingWrite)
         {
             var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-            WriteSampledRows(all ? _accumulator.DrainAll(_expectedSamplesPerHour, now)
-                : _accumulator.DrainBefore(hour, _expectedSamplesPerHour, now));
+            var rows = all ? _accumulator.PreviewDrainAll(_expectedSamplesPerHour, now)
+                : _accumulator.PreviewDrainBefore(hour, _expectedSamplesPerHour, now);
+            var keys = all ? _accumulator.KeysForDrainAll() : _accumulator.KeysForDrainBefore(hour);
+            WriteSampledRowsCore(rows, keys);
         }
     }
 
@@ -974,13 +1136,32 @@ public class PrtgSnapshotHostedService : BackgroundService
     }
 
     /// <summary>結算列先記入復原檔再提交 SQL，資料庫失敗保留穩定批次 ID。</summary>
-    private void WriteSampledRows(IReadOnlyList<PrtgValueRow> rows)
+    private void WriteSampledRows(IReadOnlyList<PrtgValueRow> rows) =>
+        WriteSampledRowsCore(rows, Array.Empty<PrtgSnapshotAccumulator.CheckpointKey>());
+
+    private void WriteSampledRowsCore(IReadOnlyList<PrtgValueRow> rows, IReadOnlyList<PrtgSnapshotAccumulator.CheckpointKey> drainKeys)
     {
         lock (_pendingWrite)
         {
             if (!_journalLoaded && !RestoreJournal(_settingsStore.Get())) return;
-            if (rows.Count > 0) _pendingWrite.Add(new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), rows.ToArray()));
-            if (!SaveJournal()) return;
+            var added = rows.Count > 0
+                ? new[] { new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), rows.ToArray()) }
+                : Array.Empty<PrtgSnapshotJournal.Batch>();
+            var delta = _accumulator.CaptureDelta(drainKeys);
+            try
+            {
+                if (delta.Upserts.Count > 0 || delta.Removals.Count > 0 || added.Length > 0)
+                    _journal.AppendDelta(_journalEndpoint!, delta, added, null, Now());
+                _accumulator.CommitDelta(delta);
+                _pendingWrite.AddRange(added);
+                _pendingRows += added.Sum(batch => batch.Rows.Count);
+                _journalError = null;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            {
+                JournalFailed(ex);
+                return;
+            }
             if (_pendingWrite.Count == 0) return;
 
             foreach (var pending in _pendingWrite.ToArray())
@@ -991,15 +1172,24 @@ public class PrtgSnapshotHostedService : BackgroundService
                     if (merged > 0)
                         foreach (var hourGroup in pending.Rows.GroupBy(row => row.PeriodStart))
                             RecordDiagnostic(hourGroup.Key, "persisted", sampled: hourGroup.Count());
+                    try
+                    {
+                        _journal.AppendAck(_journalEndpoint!, pending.Id, Now());
+                    }
+                    catch (Exception journalEx) when (journalEx is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+                    {
+                        JournalFailed(journalEx);
+                        break;
+                    }
                     _pendingWrite.Remove(pending);
-                    if (!SaveJournal()) return;
+                    _pendingRows -= pending.Rows.Count;
+                    _journalError = null;
                 }
                 catch (Exception ex)
                 {
                     foreach (var hourGroup in pending.Rows.GroupBy(row => row.PeriodStart))
                         RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetObjids?.Count ?? 0, hourGroup.Count());
-                    var queuedRows = _pendingWrite.Sum(batch => batch.Rows.Count);
-                    var msg = $"快照樣本寫入資料庫失敗，{queuedRows} 列留待下次重試：{ex.Message}";
+                    var msg = $"快照樣本寫入資料庫失敗，{_pendingRows} 列留待下次重試：{ex.Message}";
                     WriteOutput(msg, LogLevel.Warn);
                     Log.Error(ex, "PRTG 快照樣本寫入資料庫失敗");
                     break;

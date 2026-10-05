@@ -31,7 +31,11 @@ public sealed class PrtgDataPackage
 }
 
 public sealed record PrtgImportResult(
-    int Devices, int Sensors, int StateChanges, int Values, int HostMaps, int ManualMaps);
+    int Devices, int Sensors, int StateChanges, int Values, int HostMaps, int ManualMaps)
+{
+    public bool DiagnosticOnly { get; init; }
+    public string? DiagnosticId { get; init; }
+}
 
 public static class PrtgDataTransfer
 {
@@ -52,19 +56,18 @@ public static class PrtgDataTransfer
 
     public static PrtgImportResult Import(StorageBackend backend, PrtgDataPackage package)
     {
+        ArgumentNullException.ThrowIfNull(backend);
+        ArgumentNullException.ThrowIfNull(package);
         if (package.FormatVersion is not (1 or CurrentFormatVersion)) throw new InvalidOperationException("不支援的資料包版本。");
         if (package.Purpose != "diagnostic-only") throw new InvalidOperationException("匯入僅接受診斷包，不接受正式判定授權。");
-        // 跨站台 host_id 不能沿用；先落隔離包，不載入正式判定、意圖或語意證據。
+        // 正式儲存入口只將資料包保存到診斷隔離區。
         var json = JsonSerializer.Serialize(package);
         var id = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)));
         backend.Blob("prtg_import_diagnostic_" + id).Mutate(current => (json, true));
-        var safe = JsonSerializer.Deserialize<PrtgDataPackage>(json)!;
-        foreach (var map in safe.HostMaps) { map.HostId = null; map.MapStatus = PrtgMapStatus.Unmatched; }
-        safe.ManualMaps = [];
-        // 匯入後必須重新核對站台身分與範圍，開始新暖機；匯入不造成派工或通知。
-        new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
-        { p.SourceGeneration = ""; p.Revision = Guid.NewGuid().ToString("N"); p.ValidFrom = default; });
-        return Import(backend.PrtgStore(), safe);
+        return new PrtgImportResult(package.Devices?.Count ?? 0, package.Sensors?.Count ?? 0,
+            package.StateChanges?.Count ?? 0, package.Values?.Count ?? 0,
+            package.HostMaps?.Count ?? 0, package.ManualMaps?.Count ?? 0)
+        { DiagnosticOnly = true, DiagnosticId = id };
     }
 
     /// <summary>
@@ -105,45 +108,13 @@ public static class PrtgDataTransfer
     }
 
     /// <summary>
-    /// 匯入資料包，全部走既有的冪等寫入方法，回傳各表實際寫入筆數。
+    /// Legacy EF 匯入入口已停用，避免診斷包寫入正式鏡像資料。
     /// </summary>
     public static PrtgImportResult Import(EfPrtgStore store, PrtgDataPackage package)
     {
-        if (store == null) throw new ArgumentNullException(nameof(store));
-        if (package == null) throw new ArgumentNullException(nameof(package));
-
-        if (package.FormatVersion is not (1 or CurrentFormatVersion))
-        {
-            throw new InvalidOperationException(
-                $"不支援的格式版本 {package.FormatVersion}（目前支援版本為 1 與 {CurrentFormatVersion}）。");
-        }
-
-        var devices = store.UpsertDevices(package.Devices ?? new List<PrtgDeviceRow>(), package.ExportedAt);
-        var sensors = store.UpsertSensors(package.Sensors ?? new List<PrtgSensorRow>(), package.ExportedAt);
-        var stateChanges = store.AppendStateChanges(package.StateChanges ?? new List<PrtgStateChangeRow>());
-        var values = store.UpsertValues(package.Values ?? new List<PrtgValueRow>());
-
-        var hostMaps = 0;
-        if (package.HostMaps != null && package.HostMaps.Count > 0)
-        {
-            var groups = package.HostMaps.GroupBy(m => m.MapDate.Date);
-            foreach (var group in groups)
-            {
-                var rows = group.ToList();
-                hostMaps += store.ReplaceHostMapForDate(group.Key, rows);
-            }
-        }
-
-        var manualMaps = 0;
-        if (package.ManualMaps != null && package.ManualMaps.Count > 0)
-        {
-            foreach (var map in package.ManualMaps)
-            {
-                store.UpsertManualMap(map);
-                manualMaps++;
-            }
-        }
-
-        return new PrtgImportResult(devices, sensors, stateChanges, values, hostMaps, manualMaps);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(package);
+        throw new InvalidOperationException(
+            "正式 PRTG 鏡像匯入已停用；請使用 StorageBackend 診斷隔離匯入。正式資料不會變更。");
     }
 }

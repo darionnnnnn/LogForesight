@@ -18,7 +18,7 @@ public class PrtgDataTransferTests : IDisposable
     private EfPrtgStore CreateStore(EfSqliteFixture? fx = null) => new((fx ?? _fx).NewContext);
 
     [Fact]
-    public void RoundTrip_六張表完整匯出再匯入乾淨資料庫_筆數與欄位一致()
+    public void Export六表逐欄完整且LegacyEfImport拒絕並保持目標空白()
     {
         using var fxSource = new EfSqliteFixture();
         using var fxTarget = new EfSqliteFixture();
@@ -128,143 +128,72 @@ public class PrtgDataTransferTests : IDisposable
         Assert.Single(package.HostMaps);
         Assert.Single(package.ManualMaps);
 
-        // 3. 匯入到全新目標端
-        var importResult = PrtgDataTransfer.Import(storeTarget, package);
-        Assert.Equal(1, importResult.Devices);
-        Assert.Equal(1, importResult.Sensors);
-        Assert.Equal(1, importResult.StateChanges);
-        Assert.Equal(1, importResult.Values);
-        Assert.Equal(1, importResult.HostMaps);
-        Assert.Equal(1, importResult.ManualMaps);
+        var exportedDevice = Assert.Single(package.Devices);
+        Assert.Equal(1001, exportedDevice.Objid);
+        Assert.Equal("Core-Switch-01", exportedDevice.Name);
+        Assert.Equal("192.168.1.1", exportedDevice.Ip);
+        var exportedSensor = Assert.Single(package.Sensors);
+        Assert.Equal(2001, exportedSensor.Objid);
+        Assert.Equal(1001, exportedSensor.DeviceObjid);
+        Assert.Equal("Ping", exportedSensor.Name);
+        Assert.Equal("ping", exportedSensor.SensorType);
+        Assert.Equal("網路延遲", exportedSensor.Category);
+        Assert.Equal("auto", exportedSensor.CategorySource);
+        var exportedState = Assert.Single(package.StateChanges);
+        Assert.Equal(2001, exportedState.SensorObjid);
+        Assert.Equal(new DateTime(2026, 8, 15, 12, 30, 0), exportedState.ChangedAt);
+        Assert.Equal("Down", exportedState.Status);
+        Assert.Equal("Ping timeout", exportedState.Message);
+        var exportedValue = Assert.Single(package.Values);
+        Assert.Equal(2001, exportedValue.SensorObjid);
+        Assert.Equal(new DateTime(2026, 8, 15, 12, 0, 0), exportedValue.PeriodStart);
+        Assert.Equal(42.5, exportedValue.AvgValue);
+        var exportedMap = Assert.Single(package.HostMaps);
+        Assert.Equal(mapDate, exportedMap.MapDate);
+        Assert.Equal(1001, exportedMap.DeviceObjid);
+        Assert.Equal("SRV-CORE-01", exportedMap.HostName);
+        var exportedManualMap = Assert.Single(package.ManualMaps);
+        Assert.Equal(1001, exportedManualMap.DeviceObjid);
+        Assert.Equal(101, exportedManualMap.HostId);
+        Assert.Equal("人工確認對應", exportedManualMap.Note);
 
-        // 4. 逐表斷言目標端筆數與欄位值
+        // 匯出契約仍涵蓋六張表；legacy EF 匯入明確拒絕，目標正式資料保持空白。
+        var error = Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(storeTarget, package));
+        Assert.Contains("正式 PRTG 鏡像匯入已停用", error.Message);
         using var ctx = fxTarget.NewContext();
-        var dev = Assert.Single(ctx.PrtgDevices);
-        Assert.Equal(1001, dev.Objid);
-        Assert.Equal("Core-Switch-01", dev.Name);
-        Assert.Equal("192.168.1.1", dev.Ip);
-
-        var sen = Assert.Single(ctx.PrtgSensors);
-        Assert.Equal(2001, sen.Objid);
-        Assert.Equal(1001, sen.DeviceObjid);
-        Assert.Equal("Ping", sen.Name);
-        Assert.Equal("ping", sen.SensorType);
-        Assert.Equal("網路延遲", sen.Category);
-        Assert.Equal("auto", sen.CategorySource);
-
-        var sc = Assert.Single(ctx.PrtgStateChanges);
-        Assert.Equal(2001, sc.SensorObjid);
-        Assert.Equal(new DateTime(2026, 8, 15, 12, 30, 0), sc.ChangedAt);
-        Assert.Equal("Down", sc.Status);
-        Assert.Equal("Ping timeout", sc.Message);
-
-        var val = Assert.Single(ctx.PrtgValues);
-        Assert.Equal(2001, val.SensorObjid);
-        Assert.Equal(new DateTime(2026, 8, 15, 12, 0, 0), val.PeriodStart);
-        Assert.Equal(42.5, val.AvgValue);
-
-        var hm = Assert.Single(ctx.PrtgHostMaps);
-        Assert.Equal(mapDate, hm.MapDate);
-        Assert.Equal(1001, hm.DeviceObjid);
-        Assert.Equal("SRV-CORE-01", hm.HostName);
-
-        var mm = Assert.Single(ctx.PrtgManualMaps);
-        Assert.Equal(1001, mm.DeviceObjid);
-        Assert.Equal(101, mm.HostId);
-        Assert.Equal("人工確認對應", mm.Note);
+        Assert.Empty(ctx.PrtgDevices);
+        Assert.Empty(ctx.PrtgSensors);
+        Assert.Empty(ctx.PrtgStateChanges);
+        Assert.Empty(ctx.PrtgValues);
+        Assert.Empty(ctx.PrtgHostMaps);
+        Assert.Empty(ctx.PrtgManualMaps);
     }
 
     [Fact]
-    public void IdempotentImport_重複匯入同一個資料包_第二次之後各表筆數不增()
+    public void LegacyImport_重複匯入不再回報成功而正式表維持空白()
     {
         var store = CreateStore();
-        var syncTime = new DateTime(2026, 8, 15, 10, 0, 0);
-        var mapDate = new DateTime(2026, 8, 15);
-
         var package = new PrtgDataPackage
         {
             FormatVersion = PrtgDataTransfer.CurrentFormatVersion,
-            ExportedAt = syncTime,
-            FromDate = mapDate,
-            ToDate = mapDate,
-            Devices = new List<PrtgDeviceRow>
-            {
-                new() { Objid = 1001, Name = "Dev-01", GroupPath = "Root", Ip = "10.0.0.1", CreatedAt = syncTime }
-            },
-            Sensors = new List<PrtgSensorRow>
-            {
-                new() { Objid = 2001, DeviceObjid = 1001, Name = "Ping", SensorType = "ping", CreatedAt = syncTime }
-            },
-            StateChanges = new List<PrtgStateChangeRow>
-            {
-                new() { SensorObjid = 2001, ChangedAt = new DateTime(2026, 8, 15, 10, 0, 0), Status = "Down", CreatedAt = syncTime }
-            },
-            Values = new List<PrtgValueRow>
-            {
-                new() { SensorObjid = 2001, PeriodStart = new DateTime(2026, 8, 15, 10, 0, 0), AvgValue = 10.0, CreatedAt = syncTime }
-            },
-            HostMaps = new List<PrtgHostMapRow>
-            {
-                new() { MapDate = mapDate, DeviceObjid = 1001, HostId = 1, HostName = "H1", MapStatus = "ok", CreatedAt = syncTime }
-            },
-            ManualMaps = new List<PrtgManualMapRow>
-            {
-                new() { DeviceObjid = 1001, HostId = 1, CreatedBy = "admin", Note = "N1", CreatedAt = syncTime }
-            }
+            Devices = [new() { Objid = 1001, Name = "foreign" }],
+            Sensors = [new() { Objid = 2001, DeviceObjid = 1001, Name = "foreign sensor" }],
+            StateChanges = [new() { SensorObjid = 2001, ChangedAt = DateTime.Today, Status = "Down" }],
+            Values = [new() { SensorObjid = 2001, PeriodStart = DateTime.Today, AvgValue = 999 }],
+            HostMaps = [new() { MapDate = DateTime.Today, DeviceObjid = 1001, HostId = 1, HostName = "foreign", MapStatus = "ok" }],
+            ManualMaps = [new() { DeviceObjid = 1001, HostId = 1 }]
         };
 
-        // 第一次匯入
-        var res1 = PrtgDataTransfer.Import(store, package);
-        Assert.Equal(1, res1.Devices);
-        Assert.Equal(1, res1.Sensors);
-        Assert.Equal(1, res1.StateChanges);
-        Assert.Equal(1, res1.Values);
-        Assert.Equal(1, res1.HostMaps);
-        Assert.Equal(1, res1.ManualMaps);
-
-        int countDev1, countSen1, countSc1, countVal1, countHm1, countMm1;
-        using (var ctx = _fx.NewContext())
-        {
-            countDev1 = ctx.PrtgDevices.Count();
-            countSen1 = ctx.PrtgSensors.Count();
-            countSc1 = ctx.PrtgStateChanges.Count();
-            countVal1 = ctx.PrtgValues.Count();
-            countHm1 = ctx.PrtgHostMaps.Count();
-            countMm1 = ctx.PrtgManualMaps.Count();
-        }
-
-        Assert.Equal(1, countDev1);
-        Assert.Equal(1, countSen1);
-        Assert.Equal(1, countSc1);
-        Assert.Equal(1, countVal1);
-        Assert.Equal(1, countHm1);
-        Assert.Equal(1, countMm1);
-
-        // 第二次匯入同一個 package
-        var res2 = PrtgDataTransfer.Import(store, package);
-        // StateChanges 去重後實際新增 0 筆
-        Assert.Equal(0, res2.StateChanges);
-
-        int countDev2, countSen2, countSc2, countVal2, countHm2, countMm2;
-        using (var ctx = _fx.NewContext())
-        {
-            countDev2 = ctx.PrtgDevices.Count();
-            countSen2 = ctx.PrtgSensors.Count();
-            countSc2 = ctx.PrtgStateChanges.Count();
-            countVal2 = ctx.PrtgValues.Count();
-            countHm2 = ctx.PrtgHostMaps.Count();
-            countMm2 = ctx.PrtgManualMaps.Count();
-        }
-
-        // 斷言第二次之後各表筆數完全沒有增加
-        Assert.Equal(countDev1, countDev2);
-        Assert.Equal(countSen1, countSen2);
-        Assert.Equal(countSc1, countSc2);
-        Assert.Equal(countVal1, countVal2);
-        Assert.Equal(countHm1, countHm2);
-        Assert.Equal(countMm1, countMm2);
+        Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(store, package));
+        Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(store, package));
+        using var ctx = _fx.NewContext();
+        Assert.Empty(ctx.PrtgDevices);
+        Assert.Empty(ctx.PrtgSensors);
+        Assert.Empty(ctx.PrtgStateChanges);
+        Assert.Empty(ctx.PrtgValues);
+        Assert.Empty(ctx.PrtgHostMaps);
+        Assert.Empty(ctx.PrtgManualMaps);
     }
-
     [Fact]
     public void DateRangeFilter_只匯出期間內的時序資料_雙面斷言()
     {
@@ -333,7 +262,7 @@ public class PrtgDataTransferTests : IDisposable
     }
 
     [Fact]
-    public void VersionMismatch_不支援的格式版本_擲出驗證例外()
+    public void LegacyImport_不論格式都明確拒絕正式匯入()
     {
         var store = CreateStore();
         var package = new PrtgDataPackage
@@ -345,12 +274,11 @@ public class PrtgDataTransferTests : IDisposable
         };
 
         var ex = Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(store, package));
-        Assert.Contains("999", ex.Message);
-        Assert.Contains("1", ex.Message);
+        Assert.False(string.IsNullOrWhiteSpace(ex.Message));
     }
 
     [Fact]
-    public void Import_不覆蓋既有人工分類與來源()
+    public void LegacyImport_拒絕改動人工分類與來源()
     {
         var store = CreateStore();
         var syncTime = new DateTime(2026, 8, 1, 10, 0, 0);
@@ -404,14 +332,14 @@ public class PrtgDataTransferTests : IDisposable
             }
         };
 
-        // 3. 執行匯入
-        PrtgDataTransfer.Import(store, package);
+        // legacy 入口不再更新描述欄位，也不會改動人工分類。
+        Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(store, package));
 
         // 4. 斷言那兩欄完全沒變，但描述性欄位（如 Name）有更新
         using (var ctx = _fx.NewContext())
         {
             var updated = ctx.PrtgSensors.Single(s => s.Objid == 2001);
-            Assert.Equal("Disk C: (Renamed)", updated.Name);
+            Assert.Equal("Disk C:", updated.Name);
             Assert.Equal("人工分類", updated.Category);
             Assert.Equal("manual", updated.CategorySource);
         }

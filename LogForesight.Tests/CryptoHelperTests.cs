@@ -160,6 +160,34 @@ public class CryptoHelperKeyResolutionTests
         Assert.Equal("legacy-secret", result);
     }
 
+    [Fact]
+    public void V1錯誤金鑰padding有效但不是合法UTF8_仍退回內嵌金鑰()
+    {
+        var wrongKey = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("lf-cbc-padding-repro-371"));
+
+        Assert.Equal("legacy-secret", CryptoHelper.DecryptWith(wrongKey, LegacyCipherFromEmbeddedKeyEra));
+    }
+
+    [Fact]
+    public void V1以不同現用金鑰加密仍可直接解密()
+    {
+        const string cipher = "enc:v1:AAAAAAAAAAAAAAAAAAAAAP9rAXM2Gh+HbQmVelz10DAFXmDVbl7PTzYYytdTEnTl";
+
+        Assert.Equal("current-key-secret", CryptoHelper.DecryptWith(OtherKey, cipher));
+    }
+
+    [Fact]
+    public void V1兩把金鑰各自解出不同合法UTF8_拒絕選擇()
+    {
+        var wrongKey = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("lf-cbc-padding-repro-371"));
+        const string ambiguous = "enc:v1:1H3QwjLgWFCy+raRuJKj/tLS64ud2W73ZiH9k4D52XQ=";
+
+        Assert.Throws<System.Security.Cryptography.CryptographicException>(() =>
+            CryptoHelper.DecryptWith(wrongKey, ambiguous));
+    }
+
     /// <summary>
     /// 兩把金鑰都解不開時（密文本身損毀／根本不是這系統加密的）仍要如實拋出，不能吞掉。
     ///

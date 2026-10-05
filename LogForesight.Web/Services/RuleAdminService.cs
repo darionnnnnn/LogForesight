@@ -33,9 +33,11 @@ public class RuleAdminService
     private readonly IAuditService _audit;
     private readonly IHostGroupStore _hostGroups;
     private readonly IHostStore _hosts;
+    private readonly bool _hostStoreConfigured;
     private readonly IIssueAggregateQuery _issueAggregateQuery;
     private readonly PrtgDiskAssessmentService? _diskAssessment;
     private readonly ISystemSettingsStore? _systemSettings;
+    private readonly IVisibilityService? _visibility;
 
     /// <summary>抑制影響面預覽（回饋十四輪 C1）的比對窗口天數，與規則清單頁「近 N 日」等處的既有慣例一致</summary>
     private const int SuppressionPreviewWindowDays = 14;
@@ -48,10 +50,11 @@ public class RuleAdminService
         ICurrentUser currentUser,
         IAuditService audit,
         IHostGroupStore hostGroups,
-        IHostStore hosts,
+        IHostStore? hosts,
         IIssueAggregateQuery issueAggregateQuery,
         PrtgDiskAssessmentService? diskAssessment = null,
-        ISystemSettingsStore? systemSettings = null)
+        ISystemSettingsStore? systemSettings = null,
+        IVisibilityService? visibility = null)
     {
         _rules = rules;
         _seeds = seeds;
@@ -60,10 +63,12 @@ public class RuleAdminService
         _currentUser = currentUser;
         _audit = audit;
         _hostGroups = hostGroups;
-        _hosts = hosts;
+        _hosts = hosts!;
+        _hostStoreConfigured = hosts is not null;
         _issueAggregateQuery = issueAggregateQuery;
         _diskAssessment = diskAssessment;
         _systemSettings = systemSettings;
+        _visibility = visibility;
     }
 
     public List<RuleDto> GetRules()
@@ -279,8 +284,24 @@ public class RuleAdminService
     }
 
     /// <summary>草稿試算只讀已落地資料；每頁最多 100 列，日期最多 730 個已完成日，查詢批次依預期歷史點數設限。</summary>
-    public DiskTrendRulePreviewDto PreviewDiskTrend(DiskTrendRulePreviewRequest request)
+    public DiskTrendRulePreviewDto PreviewDiskTrend(DiskTrendRulePreviewRequest request, CancellationToken cancellationToken = default)
     {
+        try { return PreviewDiskTrendCore(request, cancellationToken); }
+        catch (InvalidOperationException error)
+        {
+            // 私有作業的版本／容量守門失敗需明確拒絕整頁，讓管理者可重試；取消仍直接傳出。
+            throw DomainException.Validation(error.Message);
+        }
+    }
+
+    private DiskTrendRulePreviewDto PreviewDiskTrendCore(DiskTrendRulePreviewRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw DomainException.Validation("磁碟趨勢預覽要求不可為空。");
+        if (request.Rule is null) throw DomainException.Validation("磁碟趨勢預覽必須包含規則草稿。");
+        if (_visibility is null || !_hostStoreConfigured)
+            throw DomainException.Forbidden("無法確認全站 PRTG 主機可見範圍，拒絕進行磁碟趨勢預覽。");
+        var hostSnapshot = _hosts.CapturePrtgSnapshot();
+        RequireFullPrtgHostVisibility(hostSnapshot);
         if (_diskAssessment is null) throw DomainException.Validation("磁碟趨勢評估服務尚未就緒。");
         var today = DateOnly.FromDateTime(DateTime.Today);
         var from = request.FromDate;
@@ -299,47 +320,43 @@ public class RuleAdminService
         var suppressions = _suppressions.LoadAll();
         var hostsById = new Dictionary<long, WebHost?>();
         var suppressionEstimateAvailable = true;
-        // Candidate membership is current-state based, so the stable sensor count is shared by every date.
-        var candidateCount = _diskAssessment.Assess(from, draft, PrtgDiskDecisionMode.Preview, 1, 0).CandidateCount;
-        result.DateSensorAssessmentRowCount = checked(candidateCount * (through.DayNumber - from.DayNumber + 1));
-        var pageBatchSize = PrtgDiskAssessmentService.EffectiveBatchSize(draft);
-        var dayCount = through.DayNumber - from.DayNumber + 1;
-        var dayIndex = candidateCount == 0 ? dayCount : Math.Min(dayCount, offset / candidateCount);
-        var sensorOffset = candidateCount == 0 ? 0 : offset % candidateCount;
-        while (dayIndex < dayCount && result.Rows.Count < limit)
+        cancellationToken.ThrowIfCancellationRequested();
+        var operation = _diskAssessment.BeginRangeAssessment(from, through, draft,
+            PrtgDiskDecisionMode.Preview, hostSnapshot, cancellationToken);
+        result.DateSensorAssessmentRowCount = operation.CandidateCount;
+        if ((long)offset < result.DateSensorAssessmentRowCount && limit > 0)
         {
-            var day = from.AddDays(dayIndex);
-            var dayOffset = sensorOffset;
-            while (result.Rows.Count < limit && dayOffset < candidateCount)
+            cancellationToken.ThrowIfCancellationRequested();
+            // Core 可縮短回傳頁以符合整頁 100,000 個歷史點的上限；每個 HTTP 頁只定位一次候選。
+            var page = _diskAssessment.AssessRangePage(operation, offset, limit, cancellationToken);
+            foreach (var row in page.Rows)
             {
-                var take = Math.Min(pageBatchSize, Math.Min(limit - result.Rows.Count, candidateCount - dayOffset));
-                var batch = _diskAssessment.Assess(day, draft, PrtgDiskDecisionMode.Preview, take, dayOffset);
-                if (batch.AssessedCount == 0) break;
-                foreach (var row in batch.Rows)
-                {
-                var dataReady = row.Readiness.Status == PrtgValueReadinessStatus.Ready;
-                var semanticReady = row.Readiness.SemanticReady && row.EvidenceValidity is { IsValid: true };
+                cancellationToken.ThrowIfCancellationRequested();
+                var day = row.CompletedDate;
+                var assessment = row.Assessment;
+                var dataReady = assessment.Readiness.Status == PrtgValueReadinessStatus.Ready;
+                var semanticReady = assessment.Readiness.SemanticReady && assessment.EvidenceValidity is { IsValid: true };
                 var applicable = dataReady && semanticReady;
-                var expectedHit = row.Decision.Exclusion == PrtgDiskDecisionExclusion.None && row.Decision.WouldHit;
-                var exclusionReason = !dataReady ? row.Readiness.Status.ToString()
-                    : !semanticReady ? row.EvidenceValidity is { IsValid: false } ? "EvidenceInvalid" : "SemanticNotReady"
-                    : row.Decision.Exclusion == PrtgDiskDecisionExclusion.None ? null : row.Decision.Exclusion.ToString();
+                var expectedHit = assessment.Decision.Exclusion == PrtgDiskDecisionExclusion.None && assessment.Decision.WouldHit;
+                var exclusionReason = !dataReady ? assessment.Readiness.Status.ToString()
+                    : !semanticReady ? assessment.EvidenceValidity is { IsValid: false } ? "EvidenceInvalid" : "SemanticNotReady"
+                    : assessment.Decision.Exclusion == PrtgDiskDecisionExclusion.None ? null : assessment.Decision.Exclusion.ToString();
                 var previewRow = new DiskTrendPreviewSensorDto
                 {
-                    SensorObjid = row.SensorObjid, DeviceObjid = row.DeviceObjid, HostId = row.CurrentHostId,
-                    CompletedDate = day, VerifiedCandidate = row.EvidenceValidity is { IsValid: true },
+                    SensorObjid = assessment.SensorObjid, DeviceObjid = assessment.DeviceObjid, HostId = assessment.CurrentHostId,
+                    CompletedDate = day, VerifiedCandidate = assessment.EvidenceValidity is { IsValid: true },
                     DataReady = dataReady, SemanticReady = semanticReady, Applicable = applicable,
-                    Eligible = row.Decision.Eligible, WouldHit = expectedHit,
+                    Eligible = assessment.Decision.Eligible, WouldHit = expectedHit,
                     ExclusionReason = exclusionReason,
-                    Reason = row.Decision.Reason, CurrentAvailablePercent = row.Decision.Trend?.CurrentAvailablePercent,
-                    ValidDayCount = row.Decision.Trend?.ValidDayCount ?? row.Readiness.UsableDays,
-                    UsableHours = row.Readiness.UsableHours,
-                    EstimatedDaysToDepletion = row.Decision.Trend?.EstimatedDaysToDepletion
+                    Reason = assessment.Decision.Reason, CurrentAvailablePercent = assessment.Decision.Trend?.CurrentAvailablePercent,
+                    ValidDayCount = assessment.Decision.Trend?.ValidDayCount ?? assessment.Readiness.UsableDays,
+                    UsableHours = assessment.Readiness.UsableHours,
+                    EstimatedDaysToDepletion = assessment.Decision.Trend?.EstimatedDaysToDepletion
                 };
                 if (previewRow.WouldHit)
                 {
-                    if (!hostsById.TryGetValue(row.CurrentHostId, out var host))
-                        hostsById[row.CurrentHostId] = host = _hosts.Get(row.CurrentHostId);
+                    if (!hostsById.TryGetValue(assessment.CurrentHostId, out var host))
+                        hostsById[assessment.CurrentHostId] = host = hostSnapshot.Find(assessment.CurrentHostId)?.ToWebHost();
                     if (host is not null)
                     {
                         var active = SuppressionFilter.ActiveForHost(suppressions, host.HostName, host.GroupIds, DateTime.Now);
@@ -349,7 +366,7 @@ public class RuleAdminService
                             Source = $"PRTG:{PrtgDiskRuleDecision.RuleCode}",
                             EventId = 0,
                             EntryType = EventLogEntryType.Warning,
-                            EventKey = $"prtg:{PrtgDiskRuleDecision.RuleCode}:{row.SensorObjid}",
+                            EventKey = $"prtg:{PrtgDiskRuleDecision.RuleCode}:{assessment.SensorObjid}",
                             RuleId = draft.Id
                         };
                         previewRow.SuppressedByCurrentSettings = SuppressionFilter.MarkSuppressed(
@@ -360,14 +377,10 @@ public class RuleAdminService
                         suppressionEstimateAvailable = false;
                     }
                 }
-                    result.Rows.Add(previewRow);
-                }
-                dayOffset += batch.AssessedCount;
+                result.Rows.Add(previewRow);
             }
-            dayIndex++;
-            sensorOffset = 0;
         }
-        result.HasMore = offset + result.Rows.Count < result.DateSensorAssessmentRowCount;
+        result.HasMore = (long)offset + result.Rows.Count < result.DateSensorAssessmentRowCount;
         result.AssessedCount = result.Rows.Count;
         result.UniqueSensorCount = result.Rows.Select(r => r.SensorObjid).Distinct().Count();
         result.VerifiedCandidateCount = result.Rows.Count(r => r.VerifiedCandidate);
@@ -386,7 +399,39 @@ public class RuleAdminService
             .GroupBy(r => r.ExclusionReason!).ToDictionary(g => g.Key, g => g.Count());
         result.SampleHits = result.Rows.Where(r => r.WouldHit).Take(10).ToList();
         result.LatestPreviewAt = DateTime.UtcNow;
+        cancellationToken.ThrowIfCancellationRequested();
+        _diskAssessment.CompleteRangeAssessment(operation);
+        ValidatePrtgHostSnapshot(hostSnapshot);
         return result;
+    }
+
+    private void RequireFullPrtgHostVisibility(PrtgHostSnapshot snapshot)
+    {
+        var visibility = _visibility;
+        if (visibility is null || !_hostStoreConfigured)
+            throw DomainException.Forbidden("無法確認全站 PRTG 主機可見範圍，拒絕進行磁碟趨勢預覽。");
+
+        var visible = visibility.GetVisibleHostIds(snapshot);
+        if (snapshot.Hosts.Count == 0)
+            throw DomainException.Forbidden("磁碟趨勢預覽依賴全站候選母體，僅可由具備全站主機可見權限的使用者查詢。");
+
+        // ViewAll 是全站業務資料能力；維運型 ServerAdmin 不具此能力，仍由上面的可見範圍檢查拒絕。
+        // ViewAll 可讀取停用／合併墓碑，因而不要求 VisibilityService 的 active-only ID 集合包含它們。
+        if (_currentUser.Has(Capability.ViewAll))
+            return;
+
+        if (visible.Count == 0 || snapshot.Hosts.Any(h =>
+                !visible.Contains(h.HostId) || visibility.IsCaseGrantOnly(h.HostId)))
+            throw DomainException.Forbidden("磁碟趨勢預覽依賴全站候選母體，僅可由具備全站主機可見權限的使用者查詢。");
+    }
+
+    private void ValidatePrtgHostSnapshot(PrtgHostSnapshot snapshot)
+    {
+        // 群組、負責人或問題負責人授權可在同一份主機 blob 期間變更；
+        // 使用相同不可變主機快照重算 ACL，避免沿用請求開始時的授權快取。
+        RequireFullPrtgHostVisibility(snapshot);
+        if (_hosts.DataVersion != snapshot.Version)
+            throw DomainException.Validation("主機資料於磁碟趨勢預覽期間改變；已拒絕回傳混合版本結果，請重新預覽。");
     }
 
     private void EnsureDiskTrendCanBeEnabled(KnownIssueRule? candidateRule)

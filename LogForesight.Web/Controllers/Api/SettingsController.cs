@@ -1,4 +1,4 @@
-﻿using System.Text.Encodings.Web;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -35,6 +35,8 @@ public class SettingsController : ControllerBase
     private readonly PrtgDeviceIndexCache? _deviceIndexCache;
     private readonly PrtgDiskVerificationService? _diskVerification;
     private readonly IVisibilityService? _visibility;
+    private readonly ICurrentUser? _currentUser;
+    private readonly IPrtgTransferCapacityProvider? _transferCapacity;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -48,7 +50,8 @@ public class SettingsController : ControllerBase
         IHostStore? hosts = null,
         PrtgSnapshotHostedService? snapshot = null,
         PrtgDeviceIndexCache? deviceIndexCache = null,
-        PrtgDiskVerificationService? diskVerification = null, IVisibilityService? visibility = null)
+        PrtgDiskVerificationService? diskVerification = null, IVisibilityService? visibility = null, ICurrentUser? currentUser = null,
+        IPrtgTransferCapacityProvider? transferCapacity = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -63,6 +66,8 @@ public class SettingsController : ControllerBase
         _deviceIndexCache = deviceIndexCache;
         _diskVerification = diskVerification;
         _visibility = visibility;
+        _currentUser = currentUser;
+        _transferCapacity = transferCapacity;
     }
 
     [HttpGet]
@@ -1434,9 +1439,11 @@ public class SettingsController : ControllerBase
     // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
     private void RequireFullPrtgTransferAccess()
     {
-        if (_visibility == null || _hosts == null) return;
+        if (_visibility == null || _hosts == null)
+            throw DomainException.Forbidden("無法確認全站 PRTG 主機可見範圍，拒絕執行搬運與維護操作。");
         var visible = _visibility.GetVisibleHostIds();
-        if (_hosts.GetAll().Any(h => !visible.Contains(h.HostId) || _visibility.IsCaseGrantOnly(h.HostId)))
+        var hosts = _hosts.GetAll();
+        if (visible.Count == 0 || hosts.Count == 0 || hosts.Any(h => !visible.Contains(h.HostId) || _visibility.IsCaseGrantOnly(h.HostId)))
             throw DomainException.Forbidden("全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作；受限角色請使用試點與驗收證據入口。");
     }
 
@@ -1468,34 +1475,26 @@ public class SettingsController : ControllerBase
         if (days > 366)
             throw DomainException.Validation($"匯出期間不可超過 366 天（目前 {days} 天）。");
 
-        var store = _backend.PrtgStore();
-        var package = PrtgDataTransfer.Export(_backend, fromDate, toDate);
-
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(package, PrtgDataJsonOptions);
-        var fileName = $"prtg-export-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.json";
-
-        _audit.Record(
-            action: AuditActions.PrtgDataExport,
-            summary: $"匯出 PRTG 鏡像資料（期間：{fromDate:yyyy-MM-dd} ~ {toDate:yyyy-MM-dd}，裝置 {package.Devices.Count} 筆、感測器 {package.Sensors.Count} 筆、狀態變更 {package.StateChanges.Count} 筆、數值 {package.Values.Count} 筆、主機對應 {package.HostMaps.Count} 筆、人工對應 {package.ManualMaps.Count} 筆）",
-            targetKind: "prtg_data",
-            targetId: $"{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}",
-            detail: new
-            {
-                From = fromDate.ToString("yyyy-MM-dd"),
-                To = toDate.ToString("yyyy-MM-dd"),
-                Devices = package.Devices.Count,
-                Sensors = package.Sensors.Count,
-                StateChanges = package.StateChanges.Count,
-                Values = package.Values.Count,
-                HostMaps = package.HostMaps.Count,
-                ManualMaps = package.ManualMaps.Count
-            });
-
-        return File(bytes, "application/json", fileName);
+        var capacity = _transferCapacity ?? new PrtgTransferCapacityProbe(_backend);
+        var bindingController = new PrtgTransferController(_backend, capacity, _hosts, _visibility,
+            _currentUser, new SystemSettingsStore(_backend.Blob("system_settings")));
+        return new PrtgDiagnosticExportActionResult(_backend, capacity, bindingController.CaptureBinding,
+            fromDate, toDate, _audit);
     }
 
     /// <summary>匯入 PRTG 鏡像資料 JSON 檔案</summary>
     [HttpPost("prtg-import")]
+    public IActionResult LegacyPrtgImport()
+    {
+        RequireFullPrtgTransferAccess();
+        return StatusCode(410, ApiResponse.Fail("legacy_import_retired",
+            "請使用管理介面的可續傳診斷匯入；V1/V2 JSON 舊檔仍可使用。舊單次入口已停止接收檔案。"));
+    }
+
+    // Kept for trusted in-process callers; HTTP never binds an IFormFile here.
+    [NonAction]
+    [RequestSizeLimit(4 * 1024 * 1024 + 64 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 4 * 1024 * 1024)]
     public ApiResponse<PrtgImportResult> ImportPrtgData([FromForm] IFormFile? file)
     {
         RequireFullPrtgTransferAccess();
@@ -1504,6 +1503,8 @@ public class SettingsController : ControllerBase
 
         if (file == null || file.Length == 0)
             throw DomainException.Validation("請選擇要匯入的 JSON 檔案。");
+        if (file.Length > 4 * 1024 * 1024)
+            throw DomainException.Validation("舊版單次匯入上限為 4 MiB；請使用管理介面的可續傳診斷匯入。");
 
         PrtgDataPackage? package;
         try
@@ -1522,12 +1523,14 @@ public class SettingsController : ControllerBase
         if (package.FormatVersion is not (1 or PrtgDataTransfer.CurrentFormatVersion))
             throw DomainException.Validation($"不支援的格式版本 {package.FormatVersion}（目前支援版本為 {PrtgDataTransfer.CurrentFormatVersion}）。");
 
-        var store = _backend.PrtgStore();
+        if (package.Purpose != "diagnostic-only")
+            throw DomainException.Validation("匯入僅接受 diagnostic-only 診斷包。");
+
         var result = PrtgDataTransfer.Import(_backend, package);
 
         _audit.Record(
             action: AuditActions.PrtgDataImport,
-            summary: $"匯入 PRTG 鏡像資料（期間：{package.FromDate:yyyy-MM-dd} ~ {package.ToDate:yyyy-MM-dd}，裝置 {result.Devices} 筆、感測器 {result.Sensors} 筆、狀態變更 {result.StateChanges} 筆、數值 {result.Values} 筆、主機對應 {result.HostMaps} 筆、人工對應 {result.ManualMaps} 筆）",
+            summary: $"診斷包已隔離保存，正式監控資料與判定未變更（{result.DiagnosticId}；裝置 {result.Devices} 筆、感測器 {result.Sensors} 筆、狀態變更 {result.StateChanges} 筆、數值 {result.Values} 筆、主機對應 {result.HostMaps} 筆、人工對應 {result.ManualMaps} 筆）",
             targetKind: "prtg_data",
             targetId: $"{package.FromDate:yyyyMMdd}-{package.ToDate:yyyyMMdd}",
             detail: new
@@ -1539,7 +1542,9 @@ public class SettingsController : ControllerBase
                 result.StateChanges,
                 result.Values,
                 result.HostMaps,
-                result.ManualMaps
+                result.ManualMaps,
+                result.DiagnosticOnly,
+                result.DiagnosticId
             });
 
         return ApiResponse<PrtgImportResult>.Ok(result);

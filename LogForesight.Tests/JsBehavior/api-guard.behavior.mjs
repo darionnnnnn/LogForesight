@@ -48,6 +48,20 @@ function slowFetch(record, delayMs) {
 }
 
 const cases = {
+    async 空白403回應仍分類為權限不足() {
+        globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => { throw new SyntaxError('empty'); } });
+        let caught;
+        try { await api.get('/api/restricted', { silent: true }); } catch (error) { caught = error; }
+        assert(caught instanceof ApiError && caught.code === 'forbidden' && caught.status === 403, '空白 403 必須保留權限分類與 status');
+        assert(caught.message.includes('權限') && !caught.message.includes('未預期'), '已知拒絕不得顯示成未預期系統錯誤');
+    },
+    async ['403保留後端明確拒絕原因']() {
+        globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({ success: false, error: { code: 'scope_denied', message: '此主機未授權。' } }) });
+        let caught;
+        try { await api.get('/api/restricted', { silent: true }); } catch (error) { caught = error; }
+        assert(caught instanceof ApiError && caught.code === 'scope_denied' && caught.status === 403, '不得覆蓋後端拒絕分類');
+        assert(caught.message === '此主機未授權。', '不得覆蓋後端明確原因');
+    },
     /** GET 超過逾時 → 拋出可辨識為逾時的 ApiError（code = timeout） */
     async GET超過逾時拋出可辨識的逾時錯誤() {
         const record = {};

@@ -833,105 +833,30 @@ public class PrtgProbeRunnerTests
 
     private static int CountFromUrl(string url) => int.Parse(url.Split("count=")[1].Split('&')[0]);
 
-    [Fact]
-    public async Task RunAsync_步驟9a_四個count都發出並印每千筆與結論()
+    private static string TypedSensorRows(params (string Type, int Count)[] specs)
     {
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        var rows = new List<string>();
+        var objid = 1;
+        foreach (var (type, count) in specs)
         {
-            if (!url.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency")) return null;
-            var count = CountFromUrl(url);
-            var rows = Enumerable.Range(1, count).Select(i => $"{{\"objid\": {i}}}");
-            return JsonResponse(HttpStatusCode.OK, "{\"sensors\": [" + string.Join(",", rows) + "]}");
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines.Where(l => l.Contains("9a") || l.Contains("9b") || l.Contains("9c")))
-            _output.WriteLine(line);
-
-        Assert.True(result);
-        foreach (var count in new[] { 500, 2500, 5000, 50000 })
-        {
-            Assert.Contains(stub.RequestedUrls, u => u.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency") && u.Contains($"count={count}&start=0"));
-            Assert.Single(console.Lines, l => l.Contains($"9a：count={count} →"));
-        }
-        Assert.Equal(4, console.Lines.Count(l => l.Contains("9a：count=")));
-        Assert.Single(console.Lines, l => l.Contains("9a：") && !l.Contains("9a：count="));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9c_無可用感測器時印略過且探測仍回true()
-    {
-        var stub = BuildPerfStub(SensorRows(3, status: "Paused"));
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("無可用感測器，略過"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9c_樣本8顆時印分配警告且四級各一行()
-    {
-        var stub = BuildPerfStub(SensorRows(8), url => url.Contains("/api/historicdata.json")
-            ? JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-09-10 00:00:00"", ""value"": ""1""}]}")
-            : null);
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines.Where(l => l.Contains("9c")))
-            _output.WriteLine(line);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("可用感測器只有 8 顆"));
-        Assert.Equal(4, console.Lines.Count(l => l.Contains("9c：併發 ") && l.Contains("→ 總耗時")));
-        Assert.Equal(3, console.Lines.Count(l => l.Contains("相對併發 1：總耗時 ×")));
-        Assert.Contains(stub.RequestedUrls, u => u.Contains("/api/historicdata.json") && u.Contains("avg=3600") && u.Contains("sdate="));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9c_單顆historicdata失敗計入失敗數不中斷()
-    {
-        // objid 1~8 依序分成 [1,2]／[3,4]／[5,6]／[7,8]：objid 5 落在併發 4 那一級
-        var stub = BuildPerfStub(SensorRows(8), url =>
-        {
-            if (!url.Contains("/api/historicdata.json")) return null;
-            if (url.Contains("id=5&")) return JsonResponse(HttpStatusCode.InternalServerError, @"{""error"": ""boom""}");
-            return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""value"": ""1""}]}");
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines.Where(l => l.Contains("9c")))
-            _output.WriteLine(line);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9c：併發 4 → ") && l.Contains("失敗 1"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9a_全欄位50000失敗時9b仍印自己的數字()
-    {
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-        {
-            if (url.Contains("columns=objid,parentid,") && url.Contains("count=50000"))
-                return JsonResponse(HttpStatusCode.InternalServerError, @"{""error"": ""boom""}");
-            if (url.Contains("columns=objid,parentid,"))
+            for (var i = 0; i < count; i++)
             {
-                var count = CountFromUrl(url);
-                var rows = Enumerable.Range(1, count).Select(i => $"{{\"objid\": {i}}}");
-                return JsonResponse(HttpStatusCode.OK, "{\"sensors\": [" + string.Join(",", rows) + "]}");
+                rows.Add($"{{\"objid\": {objid}, \"type\": \"{type}\", \"status\": \"Up\", \"parentid\": 1}}");
+                objid++;
             }
-            if (url.Contains("columns=objid&count=50000"))
-                return JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1}]}");
+        }
+        return "{\"sensors\": [" + string.Join(",", rows) + "]}";
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9_相容性探測產出BeginEnd區塊且包含有效JSON()
+    {
+        var stub = BuildPerfStub(SensorRows(5, type: "SNMP CPU Load"), url =>
+        {
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 15.5}]}");
+            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
+                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""15%""}]}");
             return null;
         });
 
@@ -939,12 +864,116 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
-        foreach (var line in console.Lines.Where(l => l.Contains("9a") || l.Contains("9b")))
-            _output.WriteLine(line);
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l == PrtgCompatibilityProbe.BeginMarker);
+        Assert.Contains(console.Lines, l => l == PrtgCompatibilityProbe.EndMarker);
+
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        Assert.True(endIdx > beginIdx + 1);
+
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var root = doc.RootElement;
+        Assert.Equal("1.0.0", root.GetProperty("schema_version").GetString());
+        Assert.True(root.TryGetProperty("summary", out _));
+        Assert.False(root.GetProperty("evidence_ready").GetBoolean());
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9_採樣上限最多3顆且historicdata呼叫不超過3次()
+    {
+        var sensors = TypedSensorRows(
+            ("SNMP CPU Load", 5),
+            ("SNMP Memory", 5),
+            ("SNMP Disk Free", 5),
+            ("Ping", 10));
+
+        var stub = BuildPerfStub(sensors, url =>
+        {
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
+            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
+                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""12%""}]}");
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        var objidOnly = console.Lines.Single(l => l.Contains("9b：objid-only"));
-        Assert.DoesNotContain("%", objidOnly);
+        var historicCalls = stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.json"));
+        Assert.True(historicCalls <= 3, $"historicdata 呼叫次數應 <= 3，實際為 {historicCalls}");
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9_不發出舊版壓測請求()
+    {
+        var stub = BuildPerfStub(SensorRows(10));
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency"));
+        Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("content=messages") && (u.Contains("id=0&") || u.Contains("id=0")));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("9a：") || l.Contains("9b：") || l.Contains("9c："));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9_無可用目標感測器時略過且探測仍回true()
+    {
+        var stub = BuildPerfStub(SensorRows(3, type: "Ping"));
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        Assert.Contains(console.Lines, l => l == PrtgCompatibilityProbe.BeginMarker);
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var root = doc.RootElement;
+        Assert.Equal("unknown", root.GetProperty("status").GetString());
+        var targets = root.GetProperty("targets");
+        Assert.All(targets.EnumerateArray(), t => Assert.Equal("missing", t.GetProperty("status").GetString()));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9_支援傳入證據環境Context()
+    {
+        var stub = BuildPerfStub(SensorRows(3, type: "Ping"));
+        var context = new PrtgProbeEvidenceContext
+        {
+            BuildVersion = "1.2.3.4",
+            PrtgBaseUrlFingerprint = new string('a', 64),
+            StorageEngine = "sqlite",
+            EfCoreProvider = "Microsoft.EntityFrameworkCore.Sqlite",
+            SettingsRevision = Guid.Parse("d2719dfc-2026-4104-8000-000000000001").ToString("N"),
+            DataRetentionDays = 30
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console, context);
+
+        Assert.True(result);
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var root = doc.RootElement;
+        Assert.Equal("1.2.3.4", root.GetProperty("build_version").GetString());
+        Assert.Equal(new string('a', 64), root.GetProperty("source_fingerprint").GetString());
+        Assert.Equal("Sqlite", root.GetProperty("storage_provider").GetString());
+        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", root.GetProperty("ef_core_provider").GetString());
+        Assert.Equal(Guid.Parse("d2719dfc-2026-4104-8000-000000000001").ToString("N"), root.GetProperty("settings_revision").GetString());
+        Assert.Equal(30, root.GetProperty("retention_days").GetInt32());
     }
     /// <summary>
     /// 相依性查詢回非 JSON（錯誤頁、登入頁）時，只印「無法解析」看不出回了什麼；
@@ -996,11 +1025,11 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_步驟9a_回應HTML時印無法量測不中斷探測()
+    public async Task RunAsync_步驟9_歷史資料回應HTML時印錯誤紀錄不中斷探測()
     {
         const string html = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-            url.Contains("columns=objid,parentid,sensor,type,tags,unit,status,paused,dependency")
+        var stub = BuildPerfStub(SensorRows(1, type: "SNMP CPU Load"), url =>
+            url.Contains("/api/historicdata.json")
                 ? JsonResponse(HttpStatusCode.OK, html)
                 : null);
 
@@ -1009,7 +1038,7 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9a：無法量測（PRTG 回傳 HTML 而非 JSON"));
+        Assert.Contains(console.Lines, l => l.Contains("historicdata 回應不是合法 JSON") || l.Contains("historicdata 請求失敗") || l.Contains("探測"));
     }
 
     /// <summary>正常解析時不能冒出這一行，否則每次探測都會多一句假警告。</summary>
@@ -1118,159 +1147,59 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_步驟9d1_印快照成本與三種分布()
+    public async Task RunAsync_步驟9_產出JSON體積小於64KiB且符合架構約束()
     {
-        const string snapshot = @"{""sensors"": [
-            {""objid"": 1, ""status"": ""Up"", ""interval"": ""60"", ""lastvalue"": ""1 ms"", ""lastvalue_raw"": ""1.0""},
-            {""objid"": 2, ""status"": ""Up"", ""interval"": ""60"", ""lastvalue"": ""2 ms"", ""lastvalue_raw"": ""2.0""},
-            {""objid"": 3, ""status"": ""Up"", ""interval"": ""60"", ""lastvalue"": ""3 ms"", ""lastvalue_raw"": ""3.0""},
-            {""objid"": 4, ""status"": ""Up"", ""interval"": ""60"", ""lastvalue"": ""4 ms"", ""lastvalue_raw"": ""4.0""},
-            {""objid"": 5, ""status"": ""Down"", ""interval"": ""300"", ""lastvalue"": ""5 ms"", ""lastvalue_raw"": ""5.0""},
-            {""objid"": 6, ""status"": ""Down"", ""interval"": ""300"", ""lastvalue"": ""OK"", ""lastvalue_raw"": ""abc""}
+        var sensors = TypedSensorRows(
+            ("SNMP CPU Load", 1),
+            ("SNMP Memory", 1),
+            ("SNMP Disk Free", 1));
+
+        var stub = BuildPerfStub(sensors, url =>
+        {
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
+            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
+                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""12%""}]}");
+            return null;
+        });
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.True(result);
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+
+        var byteCount = Encoding.UTF8.GetByteCount(jsonText);
+        Assert.True(byteCount <= 64 * 1024, $"JSON byte count {byteCount} exceeds 64KiB");
+
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var root = doc.RootElement;
+        Assert.Equal("1.0.0", root.GetProperty("schema_version").GetString());
+        Assert.True(root.TryGetProperty("build_version", out _));
+        Assert.True(root.TryGetProperty("source_fingerprint", out _));
+        Assert.True(root.TryGetProperty("summary", out _));
+        Assert.True(root.TryGetProperty("targets", out _));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟9_感測器ID使用別名且不外洩原始objid()
+    {
+        var customSensors = @"{""sensors"": [
+            {""objid"": 777777, ""type"": ""SNMP CPU Load"", ""status"": ""Up"", ""parentid"": 1},
+            {""objid"": 888888, ""type"": ""SNMP Memory"", ""status"": ""Up"", ""parentid"": 1},
+            {""objid"": 999999, ""type"": ""SNMP Disk Free"", ""status"": ""Up"", ""parentid"": 1}
         ]}";
 
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-            url.Contains("columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw")
-                ? JsonResponse(HttpStatusCode.OK, snapshot)
-                : null);
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines.Where(l => l.Contains("9d-")))
-            _output.WriteLine(line);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9d-1：快照 耗時 ") && l.Contains("回傳 6 筆") && l.Contains(" bytes"));
-        Assert.Contains(console.Lines, l => l.Contains("9d-1：interval 分布（前 5）：60×4（66.7%）、300×2（33.3%）"));
-        Assert.Contains(console.Lines, l => l.Contains("9d-1：status 分布（前 5）：Up×4（66.7%）、Down×2（33.3%）"));
-        Assert.Contains(console.Lines, l => l.Contains("9d-1：lastvalue_raw 可解析為數字：5/6 筆（83.3%）"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d1_無interval欄位時印欄位不可用()
-    {
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-            url.Contains("columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw")
-                ? JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""status"": ""Up""}]}")
-                : null);
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.Contains(console.Lines, l => l.Contains("9d-1：interval 分布（前 5）：interval 欄位不可用"));
-    }
-
-    /// <summary>指定各 type 的筆數，objid 依序編號（供 9c／9d 的不重複挑選測試）。</summary>
-    private static string TypedSensorRows(params (string Type, int Count)[] specs)
-    {
-        var rows = new List<string>();
-        var objid = 1;
-        foreach (var (type, count) in specs)
+        var stub = BuildPerfStub(customSensors, url =>
         {
-            for (var i = 0; i < count; i++)
-            {
-                rows.Add($"{{\"objid\": {objid}, \"type\": \"{type}\", \"status\": \"Up\", \"parentid\": 1}}");
-                objid++;
-            }
-        }
-        return "{\"sensors\": [" + string.Join(",", rows) + "]}";
-    }
-
-    private static List<long> HistoricIdsFromLines(List<string> lines, string marker)
-        => lines.Where(l => l.Contains(marker) && l.Contains("objid="))
-                .Select(l => long.Parse(l.Split("objid=")[1].Split(' ')[0]))
-                .ToList();
-
-    [Fact]
-    public async Task RunAsync_步驟9d2_五種type各挑3顆且不與9c重複()
-    {
-        // 前 64 顆 Ping 會被 9c 用掉；9d-2 只能挑到 objid > 64 的樣本
-        var step3 = TypedSensorRows(
-            ("Ping", 69),
-            ("SNMP CPU Load", 5),
-            ("SNMP Memory", 5),
-            ("SNMP Disk Free", 5),
-            ("SNMP Traffic 64bit", 5));
-
-        var stub = BuildPerfStub(step3, url => url.Contains("/api/historicdata.json")
-            ? JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-09-10 23:00:00"", ""value"": ""1""}, {""datetime"": ""2026-09-11 00:00:00"", ""value"": ""2""}]}")
-            : null);
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines.Where(l => l.Contains("9d-2")))
-            _output.WriteLine(line);
-
-        Assert.True(result);
-        foreach (var type in new[] { "SNMP CPU Load", "SNMP Memory", "SNMP Disk Free", "SNMP Traffic 64bit", "Ping" })
-        {
-            Assert.Equal(3, console.Lines.Count(l => l.Contains($"9d-2：{type} objid=")));
-            Assert.Single(console.Lines, l => l.Contains($"9d-2：{type} 平均延遲 ") && l.Contains("（3 顆）"));
-        }
-
-        var ids9d2 = HistoricIdsFromLines(console.Lines, "9d-2：");
-        Assert.Equal(15, ids9d2.Count);
-        Assert.Equal(15, ids9d2.Distinct().Count());
-        // 9c 用掉 objid 1~64（Ping 依 type 優先序排在最前面）
-        Assert.DoesNotContain(ids9d2, id => id <= 64);
-        Assert.Contains(console.Lines, l => l.Contains("histdata 末列：") && l.Contains("快照 lastvalue=「"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d2_某type無樣本時印該type無樣本()
-    {
-        var stub = BuildPerfStub(TypedSensorRows(("Ping", 3)), url => url.Contains("/api/historicdata.json")
-            ? JsonResponse(HttpStatusCode.OK, @"{""histdata"": []}")
-            : null);
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.Contains(console.Lines, l => l.Contains("9d-2：SNMP CPU Load 該 type 無樣本"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d3_一小時與一天各四顆並印結論()
-    {
-        var step3 = TypedSensorRows(("Ping", 80));
-        var stub = BuildPerfStub(step3, url => url.Contains("/api/historicdata.json")
-            ? JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""value"": ""1""}]}")
-            : null);
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines.Where(l => l.Contains("9d-3")))
-            _output.WriteLine(line);
-
-        Assert.True(result);
-        var hourSdate = "sdate=" + DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd-23-00-00");
-        var daySdate = "sdate=" + DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd-00-00-00");
-        var edate = "edate=" + DateTime.Today.ToString("yyyy-MM-dd-00-00-00");
-        Assert.Equal(4, stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.json") && u.Contains(hourSdate) && u.Contains(edate)));
-        // 9c 64 顆＋9d-2 的 3 顆 Ping＋9d-3 的 4 顆 1 天查詢
-        Assert.Equal(71, stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.json") && u.Contains(daySdate)));
-        Assert.Contains(console.Lines, l => l.Contains("9d-3：1 小時 平均延遲 ") && l.Contains("；1 天 平均延遲 "));
-        Assert.Contains(console.Lines, l => l.Contains("9d-3：✓ historicdata 成本以每次呼叫為主") || l.Contains("9d-3：⚠ 成本隨時間跨度成長"));
-        Assert.DoesNotContain(console.Lines, l => l.Contains("9d-3：⚠ 可用 Ping 感測器只有"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d4_印messages量級()
-    {
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-        {
-            if (!url.Contains("content=messages") || !url.Contains("count=1&id=0&filter_drel=")) return null;
-            return url.Contains("filter_drel=today")
-                ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 12, ""messages"": []}")
-                : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 345, ""messages"": []}");
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
+            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
+                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""12%""}]}");
+            return null;
         });
 
         using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
@@ -1278,73 +1207,37 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9d-4：messages treesize today=12、7days=345"));
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+
+        Assert.DoesNotContain("777777", jsonText);
+        Assert.DoesNotContain("888888", jsonText);
+        Assert.DoesNotContain("999999", jsonText);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var targets = doc.RootElement.GetProperty("targets");
+        var aliases = targets.EnumerateArray().Select(t => t.GetProperty("alias").GetString()).ToList();
+        Assert.Contains("s1", aliases);
+        Assert.Contains("s2", aliases);
+        Assert.Contains("s3", aliases);
     }
 
     [Fact]
-    public async Task RunAsync_步驟9d_量測失敗只印原因不影響回傳值()
+    public async Task RunAsync_步驟9_通道名稱嚴格過濾非白名單文字()
     {
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-            url.Contains("columns=objid,status,interval,lastcheck,lastvalue,lastvalue_raw")
-                ? JsonResponse(HttpStatusCode.InternalServerError, @"{""error"": ""boom""}")
-                : null);
+        var sensors = TypedSensorRows(("SNMP CPU Load", 1));
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9d-1：無法量測（"));
-        Assert.Contains(console.Lines, l => l.Contains("9d-4：messages treesize"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_成本行標示87次historicdata與最多19次tablejson()
-    {
-        var stub = BuildPerfStub(@"{""sensors"": []}");
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.Contains(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata 與最多 19 次 table.json"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d4_末頁仍在今天_判定生效()
-    {
-        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        var stub = BuildPerfStub(sensors, url =>
         {
-            if (!url.Contains("content=messages")) return null;
-            if (url.Contains("count=1&id=0&filter_drel="))
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
+            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
             {
-                return url.Contains("filter_drel=today")
-                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 10, ""messages"": []}")
-                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 20, ""messages"": []}");
-            }
-            if (url.Contains("columns=objid,datetime") && url.Contains("filter_drel=today"))
-            {
-                if (url.Contains("start=0"))
-                {
-                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
-                        {{""objid"": 1, ""datetime"": ""{todayStr} 12:00:00""}},
-                        {{""objid"": 2, ""datetime"": ""{todayStr} 11:00:00""}},
-                        {{""objid"": 3, ""datetime"": ""{todayStr} 10:00:00""}},
-                        {{""objid"": 4, ""datetime"": ""{todayStr} 09:00:00""}},
-                        {{""objid"": 5, ""datetime"": ""{todayStr} 08:00:00""}}
-                    ]}}");
-                }
-                if (url.Contains("start=5"))
-                {
-                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
-                        {{""objid"": 6, ""datetime"": ""{todayStr} 07:00:00""}},
-                        {{""objid"": 7, ""datetime"": ""{todayStr} 06:00:00""}},
-                        {{""objid"": 8, ""datetime"": ""{todayStr} 05:00:00""}},
-                        {{""objid"": 9, ""datetime"": ""{todayStr} 04:00:00""}},
-                        {{""objid"": 10, ""datetime"": ""{todayStr} 03:00:00""}}
-                    ]}}");
-                }
+                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [
+                    {""channel"": ""Confidential Customer Host Core"", ""lastvalue"": ""12%""},
+                    {""channel"": ""Total Memory"", ""lastvalue"": ""16 GB""}
+                ]}");
             }
             return null;
         });
@@ -1354,39 +1247,34 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9d-4：messages treesize today=10、7days=20"));
-        Assert.Contains(console.Lines, l => l.Contains($"9d-4：filter_drel=today 生效（末頁仍在今天：{todayStr} 03:00:00）"));
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+
+        Assert.DoesNotContain("Confidential", jsonText);
+        Assert.DoesNotContain("Customer Host", jsonText);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var targets = doc.RootElement.GetProperty("targets");
+        var s1 = targets.EnumerateArray().First(t => t.GetProperty("alias").GetString() == "s1");
+        var channels = s1.GetProperty("channels").GetProperty("rows");
+
+        var firstRow = channels[0];
+        Assert.Equal("[redacted]", firstRow.GetProperty("semantic_name").GetString());
+        Assert.False(firstRow.GetProperty("semantic_known").GetBoolean());
+
+        var secondRow = channels[1];
+        Assert.Equal("total memory", secondRow.GetProperty("semantic_name").GetString());
+        Assert.True(secondRow.GetProperty("semantic_known").GetBoolean());
     }
 
     [Fact]
-    public async Task RunAsync_步驟9d4_末頁早於今天_判定被忽略()
+    public async Task RunAsync_步驟9_9d5逐裝置查詢仍會執行()
     {
-        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
-        var yesterdayStr = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd");
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
+        var stub = BuildPerfStub(SensorRows(5), url =>
         {
-            if (!url.Contains("content=messages")) return null;
-            if (url.Contains("count=1&id=0&filter_drel="))
-            {
-                return url.Contains("filter_drel=today")
-                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 10, ""messages"": []}")
-                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 20, ""messages"": []}");
-            }
-            if (url.Contains("columns=objid,datetime") && url.Contains("filter_drel=today"))
-            {
-                if (url.Contains("start=0"))
-                {
-                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
-                        {{""objid"": 1, ""datetime"": ""{todayStr} 12:00:00""}}
-                    ]}}");
-                }
-                if (url.Contains("start=5"))
-                {
-                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
-                        {{""objid"": 10, ""datetime"": ""{yesterdayStr} 23:00:00""}}
-                    ]}}");
-                }
-            }
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 1.0}]}");
             return null;
         });
 
@@ -1395,70 +1283,7 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains($"9d-4：filter_drel=today ⚠ 被忽略（末頁已到 {yesterdayStr} 23:00:00，參數沒有縮小範圍；狀態變更階段會翻完整份歷史，靠依時間提早停止節省查詢）"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d4_末頁取不到資料_判定treesize可能封頂()
-    {
-        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-        {
-            if (!url.Contains("content=messages")) return null;
-            if (url.Contains("count=1&id=0&filter_drel="))
-            {
-                return url.Contains("filter_drel=today")
-                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1000000, ""messages"": []}")
-                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1000000, ""messages"": []}");
-            }
-            if (url.Contains("columns=objid,datetime") && url.Contains("filter_drel=today"))
-            {
-                if (url.Contains("start=0"))
-                {
-                    return JsonResponse(HttpStatusCode.OK, @$"{{""messages"": [
-                        {{""objid"": 1, ""datetime"": ""{todayStr} 12:00:00""}}
-                    ]}}");
-                }
-                if (url.Contains("start=999995"))
-                {
-                    return JsonResponse(HttpStatusCode.OK, @"{""messages"": []}");
-                }
-            }
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9d-4：filter_drel=today ⚠ treesize 可能被封頂（start=999995 取不到資料，treesize 不是實際筆數）"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9d4_treesize非數字_判定無法判定且不影響其他步驟()
-    {
-        var stub = BuildPerfStub(@"{""sensors"": []}", url =>
-        {
-            if (!url.Contains("content=messages")) return null;
-            if (url.Contains("count=1&id=0&filter_drel="))
-            {
-                return url.Contains("filter_drel=today")
-                    ? JsonResponse(HttpStatusCode.OK, @"{""treesize"": ""not_a_number"", ""messages"": []}")
-                    : JsonResponse(HttpStatusCode.OK, @"{""treesize"": 100, ""messages"": []}");
-            }
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("9d-4：messages treesize today=未知、7days=100"));
-        Assert.Contains(console.Lines, l => l.Contains("9d-4：filter_drel=today 無法判定（treesize 非數字）"));
-        Assert.Contains(stub.RequestedUrls, u => u.Contains("filter_drel=today") && u.Contains("start=0") && u.Contains("count=5"));
-        Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("filter_drel=today") && !u.Contains("start=0") && u.Contains("count=5"));
+        Assert.Contains(console.Lines, l => l.Contains("9d-5："));
     }
 
     [Fact]

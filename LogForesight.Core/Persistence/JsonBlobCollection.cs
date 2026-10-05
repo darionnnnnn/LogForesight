@@ -40,6 +40,23 @@ public abstract class JsonBlobCollection<T> where T : class
     /// 供上層判定「用這份資料建出來的索引要不要重建」——與 <see cref="Read"/> 同一個探測點。</summary>
     protected long CurrentVersion => _blob.ReadVersion();
 
+    /// <summary>讀取有界 JSON 陣列及同一資料列的版本戳。缺少 blob 回空集合；已存在但無效的內容拒絕使用。</summary>
+    protected (List<T> Value, long Version, int SourceCharacters) ReadBoundedValueWithVersion(int maxCharacters)
+    {
+        if (maxCharacters is < 1 or > int.MaxValue - 1) throw new ArgumentOutOfRangeException(nameof(maxCharacters));
+        var read = _blob.ReadBoundedWithVersion(maxCharacters);
+        if (read.Prefix is null && read.Version == 0) return (new List<T>(), 0, 0);
+        if (read.ReportedLength > maxCharacters || read.Prefix is null || read.Prefix.Length > maxCharacters)
+            throw new InvalidDataException($"JSON blob 超過 {maxCharacters} 字元上限；拒絕使用不完整內容。");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new System.Text.Json.JsonException("已存在的 JSON blob 為空；拒絕將不完整資料視為空集合。");
+
+        var value = JsonSerializer.Deserialize<List<T>>(read.Prefix, LfJsonOptions.Pretty);
+        if (value is null)
+            throw new System.Text.Json.JsonException("JSON blob 根節點為 null；拒絕將不完整資料視為空集合。");
+        return (value, read.Version, read.Prefix.Length);
+    }
+
     /// <summary>
     /// 讀取整份清單。內容不存在時回空清單（首次執行的正常情況，不是錯誤）。
     /// <para>為什麼要快取：主機清單（3000 台約 4 MB）在單一請求內會被讀取十幾次，若無快取反序列化成本極高。</para>

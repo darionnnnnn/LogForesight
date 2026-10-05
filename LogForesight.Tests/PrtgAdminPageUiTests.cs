@@ -4,6 +4,44 @@ namespace LogForesight.Tests;
 
 public class PrtgAdminPageUiTests
 {
+    [Fact]
+    public void 正式監控範圍頁面明示容量及本頁與搜尋結果批次操作()
+    {
+        var root = FindRepoRoot();
+        var prtgCshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        var content = File.ReadAllText(prtgCshtmlPath);
+
+        Assert.Contains("id=\"prtg-monitoring-selection-limits\"", content);
+        Assert.Contains("3,000 台主機", content);
+        Assert.Contains("15,000 顆 sensor", content);
+        Assert.Contains("不會截斷選取或保存部分範圍", content);
+        foreach (var id in new[]
+        {
+            "prtg-monitoring-host-select-page", "prtg-monitoring-host-clear-page",
+            "prtg-monitoring-host-select-search", "prtg-monitoring-host-select-cancel",
+            "prtg-monitoring-sensor-select-page", "prtg-monitoring-sensor-clear-page",
+            "prtg-monitoring-sensor-select-search", "prtg-monitoring-sensor-select-cancel",
+            "prtg-monitoring-saved-hosts", "prtg-monitoring-saved-host-search",
+            "prtg-monitoring-selected-sensor-search", "prtg-monitoring-selected-sensor-page-info"
+        })
+            Assert.Contains($"id=\"{id}\"", content);
+    }
+
+    [Fact]
+    public void 正式監控目錄查詢會取消過期請求並限制單次讀取時間()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+
+        Assert.Contains("let hostPageController = null, sensorPageController = null;", js);
+        Assert.Contains("function cancelMonitoringPageRequest(kind, clearSearchTimer = true)", js);
+        Assert.Contains("hostPageController?.abort();", js);
+        Assert.Contains("sensorPageController?.abort();", js);
+        Assert.Contains("signal: controller.signal, timeoutMs: 45000", js);
+        Assert.Contains("}, { signal: controller.signal, timeoutMs: 45000, silent: true });", js);
+        Assert.Contains("cancelMonitoringPageRequest('host'); cancelMonitoringPageRequest('sensor');", js);
+    }
+
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -324,12 +362,12 @@ public class PrtgAdminPageUiTests
         Assert.Contains("prtg-export-btn", content);
         Assert.Contains("prtg-import-btn", content);
 
-        // 且檔案中「資料搬運（開發用）」這個字串出現在 data-panel="probe" 之後（用 IndexOf 比較位置即可）
+        // 且檔案中「診斷資料搬運」這個字串出現在 data-panel="probe" 之後（用 IndexOf 比較位置即可）
         var probePanelIndex = content.IndexOf("data-panel=\"probe\"", StringComparison.Ordinal);
-        var dataTransferIndex = content.IndexOf("資料搬運（開發用）", StringComparison.Ordinal);
+        var dataTransferIndex = content.IndexOf("診斷資料搬運", StringComparison.Ordinal);
         Assert.True(probePanelIndex >= 0, "Prtg.cshtml 應包含 data-panel=\"probe\"");
-        Assert.True(dataTransferIndex >= 0, "Prtg.cshtml 應包含「資料搬運（開發用）」");
-        Assert.True(dataTransferIndex > probePanelIndex, "「資料搬運（開發用）」字串必須出現在 data-panel=\"probe\" 之後");
+        Assert.True(dataTransferIndex >= 0, "Prtg.cshtml 應包含「診斷資料搬運」");
+        Assert.True(dataTransferIndex > probePanelIndex, "「診斷資料搬運」字串必須出現在 data-panel=\"probe\" 之後");
     }
 
     [Fact]

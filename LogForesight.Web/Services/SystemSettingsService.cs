@@ -95,6 +95,9 @@ public class SystemSettingsService : ISystemSettingsService
     private readonly MailNotificationService _mail;
     private readonly IReportUsageQuery _reportUsage;
 
+    internal PrtgRequestBudget PrtgBudget { get; set; } = PrtgRequestBudget.Shared;
+    internal Func<HttpMessageHandler>? PrtgHandlerFactory { get; set; }
+
     public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit,
         IUserStore users, MailNotificationService mail, IReportUsageQuery reportUsage)
     {
@@ -946,11 +949,12 @@ public class SystemSettingsService : ISystemSettingsService
                 tokenOrEmpty: token,
                 timeoutSeconds: request.TimeoutSeconds,
                 ignoreSslErrors: request.IgnoreSslErrors,
-                handler: null,
+                handler: PrtgHandlerFactory?.Invoke(),
                 authMode: request.AuthMode ?? PrtgAuthModes.Token,
                 usernameOrEmpty: username,
                 passwordOrEmpty: password,
-                passhashOrEmpty: passhash);
+                passhashOrEmpty: passhash,
+                budget: PrtgBudget);
 
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestPrtgConnectionResultDto

@@ -1,4 +1,7 @@
-﻿using LogForesight.Core.Models;
+using System.Text;
+using System.Text.Json;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 using NLog;
@@ -11,6 +14,13 @@ namespace LogForesight.Core.Persistence.Sql;
 /// </summary>
 public sealed class EfPrtgStore
 {
+    private const int CandidateSnapshotSensorTypeMaxChars = 256;
+    private const int CandidateSnapshotUnitMaxChars = 128;
+    private const int CandidateSnapshotNameMaxChars = 255;
+    private const int CandidateSnapshotCategoryMaxChars = 64;
+    private const int CandidateSnapshotSensorTypeFieldMaxChars = 128;
+    private const int CandidateSnapshotUnitFieldMaxChars = 64;
+    private const int CandidateSnapshotTextMaxBytes = 24 * 1024 * 1024;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly Func<LfDbContext> _contextFactory;
@@ -24,6 +34,10 @@ public sealed class EfPrtgStore
 
     /// <summary>單次 SaveChanges 的批次上限</summary>
     private const int UpsertBatchSize = 500;
+    public const string RecentStateChangeQueuePrefix = "prtg_recent_stateq_";
+    public const int RecentStateChangeQueueCapacity = 15000;
+    public const int RecentStateChangeQueueItemMaxBytes = 8 * 1024;
+    public const string RecentStateChangeQueueStopSummaryKey = "prtg_recent_state_queue_stop_summary";
 
     public EfPrtgStore(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null)
     {
@@ -58,7 +72,7 @@ public sealed class EfPrtgStore
     /// 分批獨立提交會把前一批的 sampled coverage 再合併一次。
     /// </summary>
     private int BatchWriteAtomic<T>(IReadOnlyList<T> items, Func<LfDbContext, List<T>, int> writeBatch,
-        string? sampledBatchId = null)
+        string? sampledBatchId = null, Action<LfDbContext>? beforeCommit = null)
     {
         if (items == null || items.Count == 0) return 0;
 
@@ -86,6 +100,7 @@ public sealed class EfPrtgStore
                 // 每批已 SaveChanges，清掉追蹤列以免後續批次反覆掃描前批的 entity。
                 ctx.ChangeTracker.Clear();
             }
+            beforeCommit?.Invoke(ctx);
             transaction.Commit();
             return total;
         });
@@ -136,6 +151,7 @@ public sealed class EfPrtgStore
                 }
             }
 
+            IncrementPrtgCatalogueDataRevision(ctx);
             ctx.SaveChanges();
             return batch.Count;
         });
@@ -145,9 +161,17 @@ public sealed class EfPrtgStore
     /// PRTG 感測器結構鏡像 upsert。自然鍵為 objid，已存在則就地更新描述性欄位，不存在則新增。
     /// 更新時 CreatedAt 保持原值不覆蓋。
     /// </summary>
-    public int UpsertSensors(IReadOnlyList<PrtgSensorRow> sensors, DateTime syncedAt)
+    public int UpsertSensors(IReadOnlyList<PrtgSensorRow> sensors, DateTime syncedAt, bool requireAtomic = false)
+        => UpsertSensorsCore(sensors, syncedAt, requireAtomic, null);
+
+    public int UpsertSensorsAndEnqueueRecentStateChanges(IReadOnlyList<PrtgSensorRow> sensors, DateTime syncedAt,
+        PrtgRecentStateChangeQueueItem queueItem)
+        => UpsertSensorsCore(sensors, syncedAt, requireAtomic: true, queueItem);
+
+    private int UpsertSensorsCore(IReadOnlyList<PrtgSensorRow> sensors, DateTime syncedAt, bool requireAtomic,
+        PrtgRecentStateChangeQueueItem? queueItem)
     {
-        return BatchWrite(sensors, (ctx, batch) =>
+        int WriteBatch(LfDbContext ctx, List<PrtgSensorRow> batch)
         {
             var ids = batch.Select(s => s.Objid).ToList();
             var existing = ctx.PrtgSensors.Where(s => ids.Contains(s.Objid)).ToDictionary(s => s.Objid);
@@ -193,10 +217,316 @@ public sealed class EfPrtgStore
                 }
             }
 
+            IncrementPrtgCatalogueDataRevision(ctx);
             ctx.SaveChanges();
             return batch.Count;
+        }
+
+        if (queueItem != null)
+            return BatchWriteAtomic(sensors, (ctx, batch) => WriteBatch(ctx, batch),
+                beforeCommit: ctx => EnqueueRecentStateChangeInTransaction(ctx, queueItem));
+        return requireAtomic ? BatchWriteAtomic(sensors, WriteBatch) : BatchWrite(sensors, WriteBatch);
+    }
+
+    public IReadOnlyList<PrtgRecentStateChangeQueueItem> ReadRecentStateChangeQueue()
+    {
+        using var ctx = _contextFactory();
+        return ReadRecentStateChangeQueueRows(ctx).Select(x => x.Item).ToArray();
+    }
+
+    public PrtgRecentStateChangeQueueStopSummary? ReadRecentStateChangeQueueStopSummary()
+    {
+        using var ctx = _contextFactory();
+        var content = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueStopSummaryKey)
+            .Select(b => b.Content).FirstOrDefault();
+        return content == null ? null : JsonSerializer.Deserialize<PrtgRecentStateChangeQueueStopSummary>(content);
+    }
+
+    public IReadOnlyList<PrtgRecentStateChangeLease> ClaimRecentStateChanges(string owner, DateTime nowUtc,
+        TimeSpan leaseDuration, int take)
+    {
+        if (string.IsNullOrWhiteSpace(owner)) throw new ArgumentException("佇列租用者不可空白。", nameof(owner));
+        if (take is < 1 or > 50) throw new ArgumentOutOfRangeException(nameof(take));
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var due = ReadRecentStateChangeQueueRows(ctx)
+                .Where(x => x.Item.CompletedAtUtc == null && x.Item.NextAttemptAtUtc <= nowUtc &&
+                    (!x.Item.LeaseExpiresAtUtc.HasValue || x.Item.LeaseExpiresAtUtc.Value <= nowUtc))
+                .OrderBy(x => x.Item.NextAttemptAtUtc)
+                .ThenBy(x => x.Item.FirstEnqueuedAtUtc)
+                .ThenBy(x => x.Row.BlobKey, StringComparer.Ordinal)
+                .Take(take)
+                .ToList();
+            var leases = new List<PrtgRecentStateChangeLease>(due.Count);
+            foreach (var candidate in due)
+            {
+                var leasedItem = candidate.Item with { LeaseOwner = owner, LeaseExpiresAtUtc = nowUtc + leaseDuration };
+                var content = SerializeQueueItem(leasedItem);
+                if (!FitsQueueContent(content)) continue;
+                var changed = ctx.Blobs.Where(b => b.BlobKey == candidate.Row.BlobKey && b.Version == candidate.Row.Version)
+                    .ExecuteUpdate(setters => setters.SetProperty(b => b.Content, content)
+                        .SetProperty(b => b.UpdatedAt, nowUtc).SetProperty(b => b.Version, b => b.Version + 1));
+                if (changed == 1) leases.Add(new PrtgRecentStateChangeLease(leasedItem, owner, candidate.Row.Version + 1));
+            }
+            tx.Commit();
+            return (IReadOnlyList<PrtgRecentStateChangeLease>)leases;
         });
     }
+
+    public bool AcknowledgeRecentStateChange(PrtgRecentStateChangeLease lease)
+    {
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
+                    b.Version == lease.Version).Select(b => b.Content).FirstOrDefault();
+            if (row == null) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row);
+            if (current.LeaseOwner != lease.Owner || current.CompletedAtUtc != null) { tx.Commit(); return false; }
+            var content = SerializeQueueItem(current with { LeaseOwner = null, LeaseExpiresAtUtc = null, CompletedAtUtc = DateTime.UtcNow });
+            var updated = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
+                    b.Version == lease.Version)
+                .ExecuteUpdate(setters => setters.SetProperty(b => b.Content, content)
+                    .SetProperty(b => b.UpdatedAt, DateTime.UtcNow).SetProperty(b => b.Version, b => b.Version + 1));
+            tx.Commit();
+            return updated == 1;
+        });
+    }
+
+    public int ReconcileRecentStateChanges(IReadOnlySet<long> businessDeviceObjids, string sourceIdentityHash,
+        string businessScopeVersion, DateTime fromLocalDate, DateTime toLocalDate, DateTime nowUtc)
+    {
+        var mirroredBusinessDevices = businessDeviceObjids.Count == 0 || businessDeviceObjids.Count > RecentStateChangeQueueCapacity
+            ? Array.Empty<long>()
+            : PrtgSqlServerIdScope.Execute(_contextFactory, businessDeviceObjids, null,
+                (ctx, hosts, _, hostScope, _) =>
+                {
+                    var hostIds = hostScope ?? hosts.AsQueryable();
+                    return ctx.PrtgSensors.AsNoTracking().Where(s => hostIds.Contains(s.DeviceObjid))
+                        .Select(s => s.DeviceObjid).Distinct().ToArray();
+                });
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var rows = ReadRecentStateChangeQueueRows(ctx);
+            var deletedKeys = new HashSet<string>(StringComparer.Ordinal);
+            var changedRows = 0;
+            var stopped = rows.Where(x => !businessDeviceObjids.Contains(x.Item.DeviceObjid)).ToList();
+            var stoppedPendingDeviceIds = new List<long>();
+            foreach (var stale in stopped)
+            {
+                if (ctx.Blobs.Where(b => b.BlobKey == stale.Row.BlobKey && b.Version == stale.Row.Version).ExecuteDelete() == 1)
+                {
+                    deletedKeys.Add(stale.Row.BlobKey);
+                    if (!stale.Item.CompletedAtUtc.HasValue) stoppedPendingDeviceIds.Add(stale.Item.DeviceObjid);
+                }
+            }
+            var remaining = rows.Where(x => !deletedKeys.Contains(x.Row.BlobKey)).ToList();
+            if (businessDeviceObjids.Count > RecentStateChangeQueueCapacity)
+            {
+                UpsertRecentStateChangeQueueStopSummary(ctx, new(nowUtc,
+                    stoppedPendingDeviceIds.Count == 0 ? "business-scope-capacity-exceeded" : "business-scope-removed-and-capacity-exceeded",
+                    businessScopeVersion, stoppedPendingDeviceIds.Count,
+                    stoppedPendingDeviceIds.Order().Take(50).ToArray(),
+                    businessDeviceObjids.Count,
+                    businessDeviceObjids.Order().Take(50).ToArray()));
+                ctx.SaveChanges();
+                tx.Commit();
+                throw new InvalidOperationException($"PRTG 近期狀態業務範圍有 {businessDeviceObjids.Count} 台裝置；持久化佇列最多支援 {RecentStateChangeQueueCapacity} 台。系統未靜默省略任何裝置。");
+            }
+            foreach (var candidate in remaining
+                .Where(x => businessDeviceObjids.Contains(x.Item.DeviceObjid))
+                .Where(x => x.Item.SourceIdentityHash != sourceIdentityHash || x.Item.BusinessScopeVersion != businessScopeVersion ||
+                    (x.Item.CompletedAtUtc.HasValue &&
+                     (x.Item.FromLocalDate.Date != fromLocalDate.Date || x.Item.ToLocalDate.Date != toLocalDate.Date)))
+                .ToList())
+            {
+                var reset = candidate.Item with
+                {
+                    FromLocalDate = fromLocalDate.Date,
+                    ToLocalDate = toLocalDate.Date,
+                    SourceIdentityHash = sourceIdentityHash,
+                    BusinessScopeVersion = businessScopeVersion,
+                    FirstEnqueuedAtUtc = nowUtc,
+                    NextAttemptAtUtc = nowUtc,
+                    Attempts = 0,
+                    LeaseOwner = null,
+                    LeaseExpiresAtUtc = null,
+                    CompletedAtUtc = null
+                };
+                var content = SerializeQueueItem(reset);
+                if (!FitsQueueContent(content)) throw new InvalidOperationException("PRTG 近期狀態佇列項目超過 8 KiB。");
+                changedRows += ctx.Blobs.Where(b => b.BlobKey == candidate.Row.BlobKey && b.Version == candidate.Row.Version)
+                    .ExecuteUpdate(setters => setters.SetProperty(b => b.Content, content)
+                        .SetProperty(b => b.UpdatedAt, nowUtc).SetProperty(b => b.Version, b => b.Version + 1));
+            }
+
+            var knownDevices = remaining.Select(x => x.Item.DeviceObjid).ToHashSet();
+            var queueCount = rows.Count - deletedKeys.Count;
+            var missingMirroredDevices = mirroredBusinessDevices.Where(id => !knownDevices.Contains(id)).OrderBy(id => id).ToArray();
+            if (queueCount + missingMirroredDevices.Length > RecentStateChangeQueueCapacity)
+            {
+                UpsertRecentStateChangeQueueStopSummary(ctx, new(nowUtc,
+                    stoppedPendingDeviceIds.Count == 0 ? "business-scope-capacity-exceeded" : "business-scope-removed-and-capacity-exceeded",
+                    businessScopeVersion, stoppedPendingDeviceIds.Count,
+                    stoppedPendingDeviceIds.Order().Take(50).ToArray(),
+                    missingMirroredDevices.Length, missingMirroredDevices.Take(50).ToArray()));
+                ctx.SaveChanges();
+                tx.Commit();
+                throw new InvalidOperationException($"PRTG 近期狀態佇列容量 {RecentStateChangeQueueCapacity} 將因 {missingMirroredDevices.Length} 台已鏡像的業務裝置而超限。系統未靜默省略任何裝置。");
+            }
+            foreach (var deviceObjid in missingMirroredDevices)
+            {
+                var item = new PrtgRecentStateChangeQueueItem(deviceObjid, fromLocalDate.Date, toLocalDate.Date,
+                    sourceIdentityHash, businessScopeVersion, nowUtc, nowUtc, 0, null, null, null);
+                var content = SerializeQueueItem(item);
+                if (!FitsQueueContent(content)) throw new InvalidOperationException("PRTG 近期狀態佇列項目超過 8 KiB。");
+                ctx.Blobs.Add(new BlobRow { BlobKey = RecentStateChangeQueueKey(deviceObjid), Content = content, UpdatedAt = nowUtc, Version = 1 });
+                queueCount++;
+                changedRows++;
+            }
+            if (stoppedPendingDeviceIds.Count > 0)
+            {
+                UpsertRecentStateChangeQueueStopSummary(ctx, new(nowUtc, "business-scope-removed", businessScopeVersion,
+                    stoppedPendingDeviceIds.Count, stoppedPendingDeviceIds.Order().Take(50).ToArray(),
+                    0, Array.Empty<long>()));
+                changedRows++;
+            }
+            if (changedRows > 0) ctx.SaveChanges();
+            tx.Commit();
+            return changedRows + deletedKeys.Count;
+        });
+    }
+
+    private static void UpsertRecentStateChangeQueueStopSummary(LfDbContext ctx, PrtgRecentStateChangeQueueStopSummary summary)
+    {
+        var content = JsonSerializer.Serialize(summary);
+        if (Encoding.UTF8.GetByteCount(content) > RecentStateChangeQueueItemMaxBytes)
+            throw new InvalidOperationException("PRTG 近期狀態佇列停止摘要超過 8 KiB。");
+        var prior = ctx.Blobs.SingleOrDefault(b => b.BlobKey == RecentStateChangeQueueStopSummaryKey);
+        if (prior == null)
+            ctx.Blobs.Add(new BlobRow { BlobKey = RecentStateChangeQueueStopSummaryKey, Content = content, UpdatedAt = summary.AtUtc, Version = 1 });
+        else
+        {
+            prior.Content = content;
+            prior.UpdatedAt = summary.AtUtc;
+            prior.Version++;
+        }
+    }
+
+    public bool RetryRecentStateChange(PrtgRecentStateChangeLease lease, DateTime nowUtc, TimeSpan? delay = null)
+    {
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
+                    b.Version == lease.Version).Select(b => new { b.Content, b.Version }).FirstOrDefault();
+            if (row == null) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row.Content);
+            if (current.LeaseOwner != lease.Owner) { tx.Commit(); return false; }
+            var seconds = delay?.TotalSeconds ?? Math.Min(600, 15 * Math.Pow(2, Math.Min(current.Attempts, 5)));
+            var retry = current with
+            {
+                Attempts = checked(current.Attempts + 1),
+                NextAttemptAtUtc = nowUtc + TimeSpan.FromSeconds(seconds),
+                LeaseOwner = null,
+                LeaseExpiresAtUtc = null
+            };
+            var content = SerializeQueueItem(retry);
+            if (!FitsQueueContent(content)) { tx.Commit(); return false; }
+            var changed = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
+                    b.Version == lease.Version)
+                .ExecuteUpdate(setters => setters.SetProperty(b => b.Content, content)
+                    .SetProperty(b => b.UpdatedAt, nowUtc).SetProperty(b => b.Version, b => b.Version + 1));
+            tx.Commit();
+            return changed == 1;
+        });
+    }
+
+    public bool ReleaseRecentStateChangeLease(PrtgRecentStateChangeLease lease, DateTime nowUtc)
+    {
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
+                    b.Version == lease.Version).Select(b => b.Content).FirstOrDefault();
+            if (row == null) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row);
+            if (current.LeaseOwner != lease.Owner || current.CompletedAtUtc != null) { tx.Commit(); return false; }
+            var content = SerializeQueueItem(current with { LeaseOwner = null, LeaseExpiresAtUtc = null });
+            var updated = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
+                    b.Version == lease.Version)
+                .ExecuteUpdate(setters => setters.SetProperty(b => b.Content, content)
+                    .SetProperty(b => b.UpdatedAt, nowUtc).SetProperty(b => b.Version, b => b.Version + 1));
+            tx.Commit();
+            return updated == 1;
+        });
+    }
+
+    private static void EnqueueRecentStateChangeInTransaction(LfDbContext ctx, PrtgRecentStateChangeQueueItem item)
+    {
+        var key = RecentStateChangeQueueKey(item.DeviceObjid);
+        var existing = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
+        if (existing == null)
+        {
+            var count = ctx.Blobs.Count(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix));
+            if (count >= RecentStateChangeQueueCapacity)
+                throw new InvalidOperationException($"PRTG 近期狀態佇列已滿（{RecentStateChangeQueueCapacity} 筆）；感測器鏡像交易已回滾。");
+            var content = SerializeQueueItem(item);
+            if (!FitsQueueContent(content)) throw new InvalidOperationException("PRTG 近期狀態佇列項目超過 8 KiB。");
+            ctx.Blobs.Add(new BlobRow { BlobKey = key, Content = content, UpdatedAt = DateTime.UtcNow, Version = 1 });
+            ctx.SaveChanges();
+            return;
+        }
+
+        var prior = DeserializeQueueItem(existing.Content);
+        if (prior.SourceIdentityHash == item.SourceIdentityHash && prior.BusinessScopeVersion == item.BusinessScopeVersion &&
+            prior.FromLocalDate == item.FromLocalDate && prior.ToLocalDate == item.ToLocalDate)
+            return;
+        var updated = item with { FirstEnqueuedAtUtc = prior.FirstEnqueuedAtUtc, Attempts = 0,
+            NextAttemptAtUtc = DateTime.UtcNow, LeaseOwner = null, LeaseExpiresAtUtc = null, CompletedAtUtc = null };
+        var updatedContent = SerializeQueueItem(updated);
+        if (!FitsQueueContent(updatedContent)) throw new InvalidOperationException("PRTG 近期狀態佇列項目超過 8 KiB。");
+        existing.Content = updatedContent;
+        existing.UpdatedAt = DateTime.UtcNow;
+        existing.Version++;
+        ctx.SaveChanges();
+    }
+
+    private static List<(BlobRow Row, PrtgRecentStateChangeQueueItem Item)> ReadRecentStateChangeQueueRows(LfDbContext ctx)
+    {
+        var rows = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix))
+            .OrderBy(b => b.BlobKey).Take(RecentStateChangeQueueCapacity + 1).ToList();
+        if (rows.Count > RecentStateChangeQueueCapacity)
+            throw new InvalidOperationException($"PRTG 近期狀態佇列超過 {RecentStateChangeQueueCapacity} 筆容量上限。");
+        var result = new List<(BlobRow, PrtgRecentStateChangeQueueItem)>(rows.Count);
+        foreach (var row in rows)
+        {
+            if (Encoding.UTF8.GetByteCount(row.Content) > RecentStateChangeQueueItemMaxBytes)
+                throw new InvalidOperationException($"PRTG 近期狀態佇列資料列 {row.BlobKey} 超過 8 KiB。");
+            result.Add((row, DeserializeQueueItem(row.Content)));
+        }
+        return result;
+    }
+
+    private static string RecentStateChangeQueueKey(long deviceObjid) =>
+        RecentStateChangeQueuePrefix + deviceObjid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string SerializeQueueItem(PrtgRecentStateChangeQueueItem item) => JsonSerializer.Serialize(item);
+    private static PrtgRecentStateChangeQueueItem DeserializeQueueItem(string content) =>
+        JsonSerializer.Deserialize<PrtgRecentStateChangeQueueItem>(content) ??
+        throw new InvalidOperationException("PRTG 近期狀態佇列資料列無效。");
+    private static bool FitsQueueContent(string content) => Encoding.UTF8.GetByteCount(content) <= RecentStateChangeQueueItemMaxBytes;
 
     /// <summary>
     /// 依補充對照表＋內建對照表（<see cref="PrtgSensorTypeCategoryMap.Resolve"/>）重算自動分類。
@@ -247,6 +577,7 @@ public sealed class EfPrtgStore
                 changed++;
             }
 
+            if (changed > 0) IncrementPrtgCatalogueDataRevision(ctx);
             ctx.SaveChanges();
             return changed;
         });
@@ -528,6 +859,7 @@ public sealed class EfPrtgStore
                 written += count;
             }
 
+            IncrementHostMapDataRevision(ctx);
             tx.Commit();
             return written;
         });
@@ -592,15 +924,23 @@ public sealed class EfPrtgStore
                     .ToList(),
                 (ctx, keys) =>
                 {
-                    var deleted = 0;
-                    foreach (var g in keys.GroupBy(k => k.MapDate))
+                    var strategy = ctx.Database.CreateExecutionStrategy();
+                    return strategy.Execute(() =>
                     {
-                        var deviceIds = g.Select(k => k.DeviceObjid).ToList();
-                        deleted += ctx.PrtgHostMaps
-                            .Where(m => m.MapDate == g.Key && deviceIds.Contains(m.DeviceObjid))
-                            .ExecuteDelete();
-                    }
-                    return deleted;
+                        ctx.ChangeTracker.Clear();
+                        using var tx = ctx.Database.BeginTransaction();
+                        var deleted = 0;
+                        foreach (var g in keys.GroupBy(k => k.MapDate))
+                        {
+                            var deviceIds = g.Select(k => k.DeviceObjid).ToList();
+                            deleted += ctx.PrtgHostMaps
+                                .Where(m => m.MapDate == g.Key && deviceIds.Contains(m.DeviceObjid))
+                                .ExecuteDelete();
+                        }
+                        if (deleted > 0) IncrementHostMapDataRevision(ctx);
+                        tx.Commit();
+                        return deleted;
+                    });
                 },
                 ctx => ctx.PrtgHostMaps.Count(m => m.CreatedAt < cutoff),
                 "PRTG 主機對應", maxRows - total, batchSize);
@@ -650,7 +990,20 @@ public sealed class EfPrtgStore
             return new PrtgStaleDeleteResult(total, stale, 0, true);
         }
 
-        var deleted = ctx.PrtgDevices.Where(d => d.SyncedAt < syncStartedAt).ExecuteDelete();
+        using var probe = _contextFactory();
+        var deleted = probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var write = _contextFactory();
+            using var transaction = write.Database.BeginTransaction();
+            var count = write.PrtgDevices.Where(d => d.SyncedAt < syncStartedAt).ExecuteDelete();
+            if (count > 0)
+            {
+                IncrementPrtgCatalogueDataRevision(write);
+                write.SaveChanges();
+            }
+            transaction.Commit();
+            return count;
+        });
         return new PrtgStaleDeleteResult(total, stale, deleted, false);
     }
 
@@ -675,22 +1028,40 @@ public sealed class EfPrtgStore
         IReadOnlyCollection<long> preserveDeviceObjids)
     {
         using var __perf = _performance.Measure("prtg:DeleteStaleSensors");
-        using var ctx = _contextFactory();
-        var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
-        // 守門裝置數量級很小（幾台），IN 清單不會撞參數上限
-        if (preserveDeviceObjids.Count > 0)
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
         {
-            var preserve = preserveDeviceObjids.ToList();
-            stale = stale.Where(s => !preserve.Contains(s.DeviceObjid));
-        }
-        if (graceDeviceObjids.Count == 0)
-            return (stale.ExecuteDelete(), 0);
-
-        // 回 0 顆的裝置數量級很小（偶發狀況），IN 清單不會撞參數上限；保險起見仍截在單批上限內，超出的照常刪
-        var grace = graceDeviceObjids.Take(DeviceQueryBatchSize).ToList();
-        var kept = stale.Count(s => grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince);
-        var deleted = stale.Where(s => !(grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince)).ExecuteDelete();
-        return (deleted, kept);
+            using var ctx = _contextFactory();
+            using var transaction = ctx.Database.BeginTransaction();
+            var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
+            // 守門裝置數量級很小（幾台），IN 清單不會撞參數上限。
+            if (preserveDeviceObjids.Count > 0)
+            {
+                var preserve = preserveDeviceObjids.ToList();
+                stale = stale.Where(s => !preserve.Contains(s.DeviceObjid));
+            }
+            int deleted;
+            int kept;
+            if (graceDeviceObjids.Count == 0)
+            {
+                deleted = stale.ExecuteDelete();
+                kept = 0;
+            }
+            else
+            {
+                // 回 0 顆的裝置數量級很小；超出單批上限的照常刪。
+                var grace = graceDeviceObjids.Take(DeviceQueryBatchSize).ToList();
+                kept = stale.Count(s => grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince);
+                deleted = stale.Where(s => !(grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince)).ExecuteDelete();
+            }
+            if (deleted > 0)
+            {
+                IncrementPrtgCatalogueDataRevision(ctx);
+                ctx.SaveChanges();
+            }
+            transaction.Commit();
+            return (deleted, kept);
+        });
     }
 
     /// <summary>範圍外清除的基準（blob <see cref="PrtgScopeBaselineStore.BlobKey"/>），與鏡像共用同一個連線工廠</summary>
@@ -870,21 +1241,17 @@ public sealed class EfPrtgStore
         long sensorObjid, IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate)
     {
         if (sensorObjid <= 0 || activeHostIds.Count == 0) return null;
-        using var ctx = _contextFactory();
-        var latest = ctx.PrtgHostMaps.AsNoTracking()
-            .Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
-            .GroupBy(m => m.DeviceObjid)
-            .Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
-        var row = (from sensor in ctx.PrtgSensors.AsNoTracking()
-                   join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
-                   join last in latest on device.Objid equals last.DeviceObjid
-                   join map in ctx.PrtgHostMaps.AsNoTracking() on new { last.DeviceObjid, last.MapDate } equals new { map.DeviceObjid, map.MapDate }
-                   where sensor.Objid == sensorObjid && sensor.Category == PrtgSensorCategories.Disk
-                       && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue
-                       && activeHostIds.Contains(map.HostId.Value)
-                   select new { sensor.Objid, sensor.DeviceObjid, HostId = map.HostId!.Value, sensor.Name,
-                       sensor.SensorType, sensor.Category, sensor.Unit, SensorPaused = sensor.Paused, DevicePaused = device.Paused })
-            .FirstOrDefault();
+        var row = PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, new[] { sensorObjid },
+            (ctx, hosts, sensors, hostScope, sensorScope) =>
+            {
+                var query = BuildLatestMappedReadinessSensorsQuery(ctx, hosts, throughDate, fromDate,
+                    sensors, hostScope, sensorScope);
+                return query.Where(x => x.Sensor.Objid == sensorObjid)
+                    .Select(x => new { x.Sensor.Objid, x.Sensor.DeviceObjid, x.HostId, x.Sensor.Name,
+                        x.Sensor.SensorType, x.Sensor.Category, x.Sensor.Unit,
+                        SensorPaused = x.Sensor.Paused, DevicePaused = x.Device.Paused })
+                    .FirstOrDefault();
+            });
         return row is null ? null : (row.Objid, row.DeviceObjid, row.HostId, row.Name, row.SensorType,
             row.Category ?? "", row.Unit, row.SensorPaused, row.DevicePaused);
     }
@@ -896,27 +1263,349 @@ public sealed class EfPrtgStore
 
     /// <summary>Bounded disk candidates using each device's newest successful mapping in the lookback window.</summary>
     public (int Total, List<(long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> Rows) GetLatestMappedReadinessSensors(
-        IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate, int take, int offset = 0)
+        IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate, int take, int offset = 0,
+        IReadOnlyCollection<long>? selectedSensorObjids = null)
     {
         if (activeHostIds.Count == 0 || take <= 0) return (0, new());
-        using var ctx = _contextFactory();
+        long[]? filterSensorIds = null;
+        if (selectedSensorObjids is not null)
+        {
+            filterSensorIds = selectedSensorObjids.Where(id => id > 0).Distinct().ToArray();
+            if (filterSensorIds.Length == 0) return (0, new());
+        }
+
+        return PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, filterSensorIds,
+            (ctx, hosts, sensors, hostScope, sensorScope) =>
+            {
+                var query = BuildLatestMappedReadinessSensorsQuery(ctx, hosts, throughDate, fromDate,
+                    sensors, hostScope, sensorScope);
+                var total = query.Select(x => x.Sensor.Objid).Distinct().Count();
+                if (total == 0 || offset >= total) return (total, new());
+                var rows = query.OrderBy(x => x.Sensor.Objid).Skip(Math.Max(0, offset)).Take(take)
+                    .Select(x => new { x.Sensor.Objid, x.Sensor.DeviceObjid, x.HostId, x.Sensor.Name, x.Sensor.SensorType,
+                        x.Sensor.Category, x.Sensor.Unit, SensorPaused = x.Sensor.Paused, DevicePaused = x.Device.Paused }).ToList();
+                return (total, rows.Select(x => (x.Objid, x.DeviceObjid, x.HostId, x.Name, x.SensorType,
+                    x.Category ?? "", x.Unit, x.SensorPaused, x.DevicePaused)).ToList());
+            });
+    }
+
+    /// <summary>
+    /// 為多頁評估擷取有界且不可變的候選集合。SQL 總數只計一次，完整排序列也受上限保護，避免大量清單被載入記憶體。
+    /// 有序列查詢定義實際捕獲集合，COUNT 僅核對筆數；這不代表資料庫整體同一時間點快照。評估各頁沿用同一批不可變列，
+    /// 並在使用歷史資料前逐頁核對捕獲的最新映射日期、狀態與主機。
+    /// </summary>
+    internal (int Total, List<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> Rows)
+        GetLatestMappedReadinessSensorSnapshot(IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate,
+            int maximumCandidates, IReadOnlyCollection<long>? selectedSensorObjids = null)
+    {
+        if (maximumCandidates <= 0 || maximumCandidates > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize)
+            throw new ArgumentOutOfRangeException(nameof(maximumCandidates), "候選快照上限只能是 1 到 15,000。");
+        if (activeHostIds.Count == 0) return (0, new());
+        long[]? filterSensorIds = selectedSensorObjids?.Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
+        if (selectedSensorObjids is not null && filterSensorIds!.Length == 0) return (0, new());
+
+        return PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, filterSensorIds,
+            (ctx, hosts, sensors, hostScope, sensorScope) =>
+            {
+                var query = BuildLatestMappedReadinessSensorsQuery(ctx, hosts, throughDate, fromDate,
+                    sensors, hostScope, sensorScope);
+                var total = query.Select(x => x.Sensor.Objid).Distinct().LongCount();
+                if (total > maximumCandidates)
+                    throw new InvalidOperationException($"PRTG 磁碟候選數 {total} 超過單次評估上限 {maximumCandidates}，已拒絕建立候選快照。");
+                if (total == 0) return (0, new());
+
+                var rows = query.OrderBy(x => x.Sensor.Objid).Take(maximumCandidates + 1)
+                    .Select(x => new
+                    {
+                        x.Sensor.Objid,
+                        x.Sensor.DeviceObjid,
+                        x.HostId,
+                        x.MapDate,
+                        SensorTypeLength = x.Sensor.SensorType == null ? 0 : x.Sensor.SensorType.Length,
+                        SensorType = x.Sensor.SensorType == null ? "" : x.Sensor.SensorType.Length > CandidateSnapshotSensorTypeMaxChars
+                            ? x.Sensor.SensorType.Substring(0, CandidateSnapshotSensorTypeMaxChars) : x.Sensor.SensorType,
+                        UnitLength = x.Sensor.Unit == null ? 0 : x.Sensor.Unit.Length,
+                        Unit = x.Sensor.Unit == null ? null : x.Sensor.Unit.Length > CandidateSnapshotUnitMaxChars
+                            ? x.Sensor.Unit.Substring(0, CandidateSnapshotUnitMaxChars) : x.Sensor.Unit,
+                        SensorPaused = x.Sensor.Paused,
+                        DevicePaused = x.Device.Paused
+                    }).ToList();
+                if (rows.Count > maximumCandidates || rows.Count != total || rows.Select(x => x.Objid).Distinct().Count() != rows.Count)
+                    throw new InvalidOperationException("建立 PRTG 磁碟候選快照時集合筆數或唯一鍵改變；請重新開始評估。");
+                if (rows.Any(x => x.SensorTypeLength > CandidateSnapshotSensorTypeMaxChars || x.UnitLength > CandidateSnapshotUnitMaxChars))
+                    throw new InvalidOperationException("PRTG 磁碟候選 metadata 超過快照欄位上限；已拒絕建立快照。");
+                var textBytes = rows.Sum(x => (long)Encoding.UTF8.GetByteCount(x.SensorType) +
+                    (x.Unit is null ? 0 : Encoding.UTF8.GetByteCount(x.Unit)));
+                if (textBytes > CandidateSnapshotTextMaxBytes)
+                    throw new InvalidOperationException("PRTG 磁碟候選快照超過文字資料容量上限；已拒絕建立快照。");
+
+                return ((int)total, rows.Select(x => (x.Objid, x.DeviceObjid, x.HostId, x.MapDate, Name: "", x.SensorType,
+                    Category: PrtgSensorCategories.Disk, x.Unit, x.SensorPaused, x.DevicePaused)).ToList());
+            });
+    }
+
+    /// <summary>
+    /// Captures one range's candidate denominator with a single grouped sensor/map stream. A map row
+    /// owns its day through the earlier of the next row or its inclusive 30-day lookback expiry.
+    /// Rows with non-OK status or no host remain barriers; filtering them before interval construction
+    /// would incorrectly resurrect older successful mappings.
+    /// </summary>
+    internal int[] GetReadinessRangeCandidateCounts(DateOnly fromDate, DateOnly throughDate,
+        IReadOnlySet<long> activeHostIds, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(activeHostIds);
+        var dayCount = throughDate.DayNumber - fromDate.DayNumber + 1;
+        if (dayCount is < 1 or > 730)
+            throw new ArgumentOutOfRangeException(nameof(throughDate), "候選日期範圍只能是 1 到 730 日。");
+
+        var counts = new int[dayCount];
+
+        var rangeStart = fromDate.ToDateTime(TimeOnly.MinValue);
+        var rangeEnd = throughDate.AddDays(1).ToDateTime(TimeOnly.MinValue);
+        var mapStart = fromDate.AddDays(-PrtgDiskAssessmentService.CandidateMappingLookbackDays).ToDateTime(TimeOnly.MinValue);
+        var differences = new long[dayCount + 1];
+        var maximumRows = checked((long)PrtgDiskAssessmentService.MaximumCandidateSnapshotSize *
+            (dayCount + PrtgDiskAssessmentService.CandidateMappingLookbackDays));
+        long rowsRead = 0;
+        long previousDeviceId = 0;
+        RangeCandidateMapRow? previous = null;
+
+        using var context = _contextFactory();
+        var sensorCounts =
+            from sensor in context.PrtgSensors.AsNoTracking()
+            join device in context.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+            where sensor.Category == PrtgSensorCategories.Disk
+            group sensor by sensor.DeviceObjid into groupRows
+            select new { DeviceObjid = groupRows.Key, SensorCount = groupRows.LongCount() };
+
+        var stream =
+            from map in context.PrtgHostMaps.AsNoTracking()
+            join sensorCount in sensorCounts on map.DeviceObjid equals sensorCount.DeviceObjid
+            where map.MapDate >= mapStart && map.MapDate < rangeEnd
+            orderby map.DeviceObjid, map.MapDate
+            select new RangeCandidateMapRow(map.DeviceObjid, map.MapDate, map.MapStatus, map.HostId,
+                sensorCount.SensorCount);
+
+        foreach (var current in stream)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            rowsRead = checked(rowsRead + 1);
+            if (rowsRead > maximumRows)
+                throw new InvalidOperationException("PRTG 磁碟範圍映射列超過有限掃描上限；已拒絕預覽。");
+            if (current.MapDate.TimeOfDay != TimeSpan.Zero || current.MapDate < mapStart || current.MapDate >= rangeEnd)
+                throw new InvalidOperationException("PRTG 磁碟範圍包含非午夜或超界日映射；已拒絕推定日期。");
+            if (current.SensorCount <= 0)
+                throw new InvalidOperationException("PRTG 磁碟範圍 sensor/device 分組筆數無效。");
+
+            if (previous is not null)
+            {
+                if (current.DeviceObjid < previousDeviceId)
+                    throw new InvalidOperationException("PRTG 磁碟範圍映射排序或唯一鍵無效。");
+                if (current.DeviceObjid == previousDeviceId)
+                {
+                    if (current.MapDate <= previous.MapDate)
+                        throw new InvalidOperationException("PRTG 磁碟範圍映射排序或唯一鍵無效。");
+                    AddCandidateInterval(previous, current.MapDate);
+                }
+                else
+                {
+                    AddCandidateInterval(previous, rangeEnd);
+                    previousDeviceId = current.DeviceObjid;
+                }
+            }
+            else
+            {
+                previousDeviceId = current.DeviceObjid;
+            }
+            previous = current;
+        }
+        if (previous is not null) AddCandidateInterval(previous, rangeEnd);
+
+        long running = 0;
+        long total = 0;
+        for (var index = 0; index < dayCount; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            running = checked(running + differences[index]);
+            if (running < 0 || running > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize)
+                throw new InvalidOperationException($"PRTG 磁碟候選單日數量 {running} 超過上限 {PrtgDiskAssessmentService.MaximumCandidateSnapshotSize}。");
+            counts[index] = checked((int)running);
+            total = checked(total + running);
+        }
+        running = checked(running + differences[dayCount]);
+        if (running != 0 || total > checked((long)PrtgDiskAssessmentService.MaximumCandidateSnapshotSize * 730))
+            throw new InvalidOperationException("PRTG 磁碟範圍候選差分計數不一致。");
+        return counts;
+
+        void AddCandidateInterval(RangeCandidateMapRow row, DateTime nextMapDate)
+        {
+            if (!string.Equals(row.MapStatus, PrtgMapStatus.Ok, StringComparison.Ordinal) ||
+                !row.HostId.HasValue || !activeHostIds.Contains(row.HostId.Value)) return;
+
+            var start = row.MapDate < rangeStart ? rangeStart : row.MapDate;
+            var expiry = row.MapDate.AddDays(PrtgDiskAssessmentService.CandidateMappingLookbackDays + 1);
+            var end = nextMapDate < expiry ? nextMapDate : expiry;
+            if (end > rangeEnd) end = rangeEnd;
+            if (start >= end) return;
+            var startIndex = DateOnly.FromDateTime(start).DayNumber - fromDate.DayNumber;
+            var endIndex = DateOnly.FromDateTime(end).DayNumber - fromDate.DayNumber;
+            differences[startIndex] = checked(differences[startIndex] + row.SensorCount);
+            differences[endIndex] = checked(differences[endIndex] - row.SensorCount);
+        }
+    }
+
+    /// <summary>Reads only the page's per-day slices in one candidate SELECT; counts are supplied by Core's private range operation.</summary>
+    internal List<RangeReadinessCandidateRow> GetReadinessRangeCandidateRows(
+        IReadOnlyCollection<long> activeHostIds, IReadOnlyList<RangeReadinessCandidateSlice> slices,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(activeHostIds);
+        ArgumentNullException.ThrowIfNull(slices);
+        if (slices.Count > PrtgDiskAssessmentService.MaximumBatchSize || slices.Sum(x => x.Take) > PrtgDiskAssessmentService.MaximumBatchSize ||
+            slices.Select(x => x.CompletedDay).Distinct().Count() != slices.Count ||
+            slices.Any(x => x.Total is < 0 or > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize || x.Offset < 0 || x.Take <= 0 || x.Take > PrtgDiskAssessmentService.MaximumBatchSize || (long)x.Offset + x.Take > x.Total))
+            throw new ArgumentOutOfRangeException(nameof(slices), "範圍候選頁必須是總數不超過 100 的 Core 私有分頁切片。");
+        if (activeHostIds.Count == 0 || slices.Count == 0) return new();
+
+        return PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, null,
+            (context, hosts, _, hostIdScope, _) =>
+            {
+                IQueryable<RangeReadinessCandidateProjection>? combined = null;
+                foreach (var slice in slices)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var through = slice.CompletedDay.ToDateTime(TimeOnly.MinValue);
+                    var from = through.AddDays(-PrtgDiskAssessmentService.CandidateMappingLookbackDays);
+                    var branch = BuildLatestMappedReadinessSensorsQuery(context, hosts, through, from,
+                            selectedSensorObjids: null, hostIdScopeQuery: hostIdScope)
+                        .OrderBy(x => x.Sensor.Objid).Skip(slice.Offset).Take(slice.Take)
+                        .Select(x => new RangeReadinessCandidateProjection
+                        {
+                            CompletedDay = through,
+                            Objid = x.Sensor.Objid,
+                            DeviceObjid = x.Sensor.DeviceObjid,
+                            HostId = x.HostId,
+                            MappingDate = x.MapDate,
+                            NameLength = x.Sensor.Name == null ? 0 : x.Sensor.Name.Length,
+                            Name = x.Sensor.Name == null ? "" : x.Sensor.Name.Substring(0, CandidateSnapshotNameMaxChars + 1),
+                            SensorTypeLength = x.Sensor.SensorType == null ? 0 : x.Sensor.SensorType.Length,
+                            SensorType = x.Sensor.SensorType == null ? "" : x.Sensor.SensorType.Substring(0, CandidateSnapshotSensorTypeFieldMaxChars + 1),
+                            CategoryLength = x.Sensor.Category == null ? 0 : x.Sensor.Category.Length,
+                            Category = x.Sensor.Category == null ? "" : x.Sensor.Category.Substring(0, CandidateSnapshotCategoryMaxChars + 1),
+                            UnitLength = x.Sensor.Unit == null ? 0 : x.Sensor.Unit.Length,
+                            Unit = x.Sensor.Unit == null ? null : x.Sensor.Unit.Substring(0, CandidateSnapshotUnitFieldMaxChars + 1),
+                            Paused = x.Sensor.Paused,
+                            DevicePaused = x.Device.Paused
+                        });
+                    combined = combined is null ? branch : combined.Concat(branch);
+                }
+
+                if (combined is null) return new List<RangeReadinessCandidateRow>();
+                var projected = combined.OrderBy(x => x.CompletedDay).ThenBy(x => x.Objid).ToList();
+                cancellationToken.ThrowIfCancellationRequested();
+                var result = projected.Select(x =>
+                {
+                    if (x.NameLength > CandidateSnapshotNameMaxChars ||
+                        x.Name.Length > CandidateSnapshotNameMaxChars ||
+                        x.SensorTypeLength > CandidateSnapshotSensorTypeFieldMaxChars || x.SensorType.Length > CandidateSnapshotSensorTypeFieldMaxChars ||
+                        x.CategoryLength > CandidateSnapshotCategoryMaxChars || x.Category.Length > CandidateSnapshotCategoryMaxChars ||
+                        x.UnitLength > CandidateSnapshotUnitFieldMaxChars ||
+                        x.Unit is { Length: > CandidateSnapshotUnitFieldMaxChars })
+                        throw new InvalidOperationException("PRTG 磁碟範圍候選 metadata 超過正式欄位上限；已拒絕建立頁面。");
+                    return new RangeReadinessCandidateRow(DateOnly.FromDateTime(x.CompletedDay), x.Objid,
+                        x.DeviceObjid, x.HostId, x.MappingDate, x.Name, x.SensorType, x.Category,
+                        x.Unit, x.Paused, x.DevicePaused);
+                }).ToList();
+                foreach (var slice in slices)
+                {
+                    var sliceRows = result.Where(row => row.CompletedDay == slice.CompletedDay).ToArray();
+                    if (sliceRows.Length != slice.Take || sliceRows.Select(row => row.Objid).Distinct().Count() != sliceRows.Length ||
+                        !sliceRows.Select(row => row.Objid).SequenceEqual(sliceRows.Select(row => row.Objid).OrderBy(id => id)))
+                        throw new InvalidOperationException("PRTG 磁碟範圍候選頁筆數或排序於擷取期間改變；已拒絕整頁。");
+                }
+                var textBytes = result.Sum(row => (long)Encoding.UTF8.GetByteCount(row.Name) +
+                    Encoding.UTF8.GetByteCount(row.SensorType) + Encoding.UTF8.GetByteCount(row.Category) +
+                    (row.Unit is null ? 0 : Encoding.UTF8.GetByteCount(row.Unit)));
+                if (textBytes > CandidateSnapshotTextMaxBytes)
+                    throw new InvalidOperationException("PRTG 磁碟範圍候選頁文字資料超過容量上限；已拒絕整頁。");
+                return result;
+            });
+    }
+
+    private sealed record RangeCandidateMapRow(long DeviceObjid, DateTime MapDate, string MapStatus,
+        long? HostId, long SensorCount);
+
+    private sealed class RangeReadinessCandidateProjection
+    {
+        public DateTime CompletedDay { get; init; }
+        public long Objid { get; init; }
+        public long DeviceObjid { get; init; }
+        public long HostId { get; init; }
+        public DateTime MappingDate { get; init; }
+        public int NameLength { get; init; }
+        public string Name { get; init; } = "";
+        public int SensorTypeLength { get; init; }
+        public string SensorType { get; init; } = "";
+        public int CategoryLength { get; init; }
+        public string Category { get; init; } = "";
+        public int UnitLength { get; init; }
+        public string? Unit { get; init; }
+        public bool Paused { get; init; }
+        public bool DevicePaused { get; init; }
+    }
+
+    internal sealed record RangeReadinessCandidateRow(DateOnly CompletedDay, long Objid, long DeviceObjid,
+        long HostId, DateTime MappingDate, string Name, string SensorType, string Category, string? Unit,
+        bool Paused, bool DevicePaused);
+
+    internal sealed record RangeReadinessCandidateSlice(DateOnly CompletedDay, int Total, int Offset, int Take);
+
+    internal static IQueryable<PrtgReadinessCandidateQueryRow> BuildLatestMappedReadinessSensorsQuery(
+        LfDbContext ctx, IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate,
+        IReadOnlyCollection<long>? selectedSensorObjids = null,
+        IQueryable<long>? hostIdScopeQuery = null, IQueryable<long>? sensorIdScopeQuery = null)
+    {
+        var hostIds = activeHostIds as long[] ?? activeHostIds.ToArray();
+        var filterSensorIds = selectedSensorObjids == null
+            ? null
+            : (selectedSensorObjids as long[] ?? selectedSensorObjids.ToArray());
+
+        var sensorQuery = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
+        if (filterSensorIds != null)
+        {
+            sensorQuery = sensorIdScopeQuery is null
+                ? sensorQuery.Where(s => filterSensorIds.Contains(s.Objid))
+                : sensorQuery.Where(s => sensorIdScopeQuery.Contains(s.Objid));
+        }
+
         var latest = ctx.PrtgHostMaps.AsNoTracking()
             .Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
             .GroupBy(m => m.DeviceObjid)
             .Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
-        var query = from sensor in ctx.PrtgSensors.AsNoTracking()
-                    join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
-                    join last in latest on device.Objid equals last.DeviceObjid
-                    join map in ctx.PrtgHostMaps.AsNoTracking() on new { last.DeviceObjid, last.MapDate } equals new { map.DeviceObjid, map.MapDate }
-                    where sensor.Category == PrtgSensorCategories.Disk && map.MapStatus == PrtgMapStatus.Ok
-                        && map.HostId.HasValue && activeHostIds.Contains(map.HostId.Value)
-                    select new { Sensor = sensor, Device = device, HostId = map.HostId!.Value };
-        var total = query.Select(x => x.Sensor.Objid).Distinct().Count();
-        var rows = query.OrderBy(x => x.Sensor.Objid).Skip(Math.Max(0, offset)).Take(take)
-            .Select(x => new { x.Sensor.Objid, x.Sensor.DeviceObjid, x.HostId, x.Sensor.Name, x.Sensor.SensorType,
-                x.Sensor.Category, x.Sensor.Unit, SensorPaused = x.Sensor.Paused, DevicePaused = x.Device.Paused }).ToList();
-        return (total, rows.Select(x => (x.Objid, x.DeviceObjid, x.HostId, x.Name, x.SensorType,
-            x.Category ?? "", x.Unit, x.SensorPaused, x.DevicePaused)).ToList());
+
+        var mappedQuery = from sensor in sensorQuery
+                          join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                          join last in latest on device.Objid equals last.DeviceObjid
+                          join map in ctx.PrtgHostMaps.AsNoTracking() on new { last.DeviceObjid, last.MapDate } equals new { map.DeviceObjid, map.MapDate }
+                          where map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue
+                          select new PrtgReadinessCandidateQueryRow
+                          {
+                              Sensor = sensor,
+                              Device = device,
+                              HostId = map.HostId!.Value,
+                              MapDate = last.MapDate
+                          };
+        return hostIdScopeQuery is null
+            ? mappedQuery.Where(x => hostIds.Contains(x.HostId))
+            : mappedQuery.Where(x => hostIdScopeQuery.Contains(x.HostId));
+    }
+
+    internal sealed class PrtgReadinessCandidateQueryRow
+    {
+        public PrtgSensorRow Sensor { get; init; } = null!;
+        public PrtgDeviceRow Device { get; init; } = null!;
+        public long HostId { get; init; }
+        public DateTime MapDate { get; init; }
     }
 
     /// <summary>
@@ -927,48 +1616,78 @@ public sealed class EfPrtgStore
     public PrtgReadinessInventoryCounts GetReadinessInventoryCounts(IReadOnlyCollection<long> activeHostIds,
         IReadOnlyCollection<string> whitelistedTypes, DateTime throughDate, DateTime fromDate)
     {
-        using var ctx = _contextFactory();
-        var candidates = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
-        var inventory = BuildReadinessInventoryQuery(ctx, activeHostIds, whitelistedTypes, throughDate, fromDate);
-        var candidatesCount = candidates.Count();
-        var mappedCount = inventory.Count(x => x.ActiveMapped);
-        var whitelistCount = inventory.Count(x => x.Whitelisted);
-        var pausedCount = inventory.Count(x => x.Paused);
-        var conflictCount = inventory.Count(x => x.Conflict);
-        var unmappedCount = inventory.Count(x => x.Unmapped);
-        var disabledHostCount = inventory.Count(x => x.DisabledHost);
-        return new(candidatesCount, mappedCount, whitelistCount, pausedCount, conflictCount, unmappedCount, disabledHostCount);
+        return PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, null,
+            (ctx, hosts, _, hostIdScopeQuery, _) =>
+            {
+                var candidates = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
+                var inventory = BuildReadinessInventoryQuery(ctx, hosts, whitelistedTypes, throughDate, fromDate,
+                    hostIdScopeQuery);
+                var candidatesCount = candidates.Count();
+                var mappedCount = inventory.Count(x => x.ActiveMapped);
+                var whitelistCount = inventory.Count(x => x.Whitelisted);
+                var pausedCount = inventory.Count(x => x.Paused);
+                var conflictCount = inventory.Count(x => x.Conflict);
+                var unmappedCount = inventory.Count(x => x.Unmapped);
+                var disabledHostCount = inventory.Count(x => x.DisabledHost);
+                return new PrtgReadinessInventoryCounts(candidatesCount, mappedCount, whitelistCount, pausedCount,
+                    conflictCount, unmappedCount, disabledHostCount);
+            });
     }
 
     internal static IQueryable<PrtgReadinessInventoryRow> BuildReadinessInventoryQuery(LfDbContext ctx,
         IReadOnlyCollection<long> activeHostIds, IReadOnlyCollection<string> whitelistedTypes,
-        DateTime throughDate, DateTime fromDate)
+        DateTime throughDate, DateTime fromDate, IQueryable<long>? activeHostIdScopeQuery = null)
     {
         var whitelistIsUnrestricted = whitelistedTypes.Count == 0;
         var normalizedTypes = whitelistedTypes.Select(t => t.ToUpperInvariant()).ToArray();
         var candidates = ctx.PrtgSensors.AsNoTracking().Where(s => s.Category == PrtgSensorCategories.Disk);
         var latest = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate >= fromDate && m.MapDate <= throughDate)
             .GroupBy(m => m.DeviceObjid).Select(g => new { DeviceObjid = g.Key, MapDate = g.Max(m => m.MapDate) });
-        var inventory = from sensor in candidates
-                        join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
-                        join last in latest on device.Objid equals last.DeviceObjid into lastRows
-                        from last in lastRows.DefaultIfEmpty()
-                        join map in ctx.PrtgHostMaps.AsNoTracking() on new { DeviceObjid = device.Objid, MapDate = last == null ? (DateTime?)null : last.MapDate }
-                            equals new { map.DeviceObjid, MapDate = (DateTime?)map.MapDate } into mapRows
-                        from map in mapRows.DefaultIfEmpty()
-                        select new PrtgReadinessInventoryRow
-                        {
-                            Objid = sensor.Objid,
-                            ActiveMapped = map != null && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue && activeHostIds.Contains(map.HostId.Value),
-                            Whitelisted = whitelistIsUnrestricted || normalizedTypes.Contains((sensor.SensorType ?? "").ToUpper()),
-                            Paused = sensor.Paused || device.Paused,
-                            Conflict = map != null && map.MapStatus == PrtgMapStatus.Conflict,
-                            Unmapped = map == null || (map.MapStatus != PrtgMapStatus.Conflict &&
-                                (map.MapStatus != PrtgMapStatus.Ok || !map.HostId.HasValue)),
-                            DisabledHost = map != null && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue &&
-                                !activeHostIds.Contains(map.HostId.Value)
-                        };
-        return inventory;
+        var source = from sensor in candidates
+                     join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                     join last in latest on device.Objid equals last.DeviceObjid into lastRows
+                     from last in lastRows.DefaultIfEmpty()
+                     join map in ctx.PrtgHostMaps.AsNoTracking() on new { DeviceObjid = device.Objid, MapDate = last == null ? (DateTime?)null : last.MapDate }
+                         equals new { map.DeviceObjid, MapDate = (DateTime?)map.MapDate } into mapRows
+                     from map in mapRows.DefaultIfEmpty()
+                     select new
+                     {
+                         sensor.Objid,
+                         sensor.SensorType,
+                         SensorPaused = sensor.Paused,
+                         DevicePaused = device.Paused,
+                         MapStatus = map == null ? (string?)null : map.MapStatus,
+                         HostId = map == null ? (long?)null : map.HostId
+                     };
+
+        if (activeHostIdScopeQuery is null)
+        {
+            return source.Select(x => new PrtgReadinessInventoryRow
+            {
+                Objid = x.Objid,
+                ActiveMapped = x.MapStatus == PrtgMapStatus.Ok && x.HostId.HasValue && activeHostIds.Contains(x.HostId.Value),
+                Whitelisted = whitelistIsUnrestricted || normalizedTypes.Contains((x.SensorType ?? "").ToUpper()),
+                Paused = x.SensorPaused || x.DevicePaused,
+                Conflict = x.MapStatus == PrtgMapStatus.Conflict,
+                Unmapped = x.MapStatus == null || (x.MapStatus != PrtgMapStatus.Conflict &&
+                    (x.MapStatus != PrtgMapStatus.Ok || !x.HostId.HasValue)),
+                DisabledHost = x.MapStatus == PrtgMapStatus.Ok && x.HostId.HasValue &&
+                    !activeHostIds.Contains(x.HostId.Value)
+            });
+        }
+
+        return source.Select(x => new PrtgReadinessInventoryRow
+        {
+            Objid = x.Objid,
+            ActiveMapped = x.MapStatus == PrtgMapStatus.Ok && x.HostId.HasValue && activeHostIdScopeQuery.Contains(x.HostId.Value),
+            Whitelisted = whitelistIsUnrestricted || normalizedTypes.Contains((x.SensorType ?? "").ToUpper()),
+            Paused = x.SensorPaused || x.DevicePaused,
+            Conflict = x.MapStatus == PrtgMapStatus.Conflict,
+            Unmapped = x.MapStatus == null || (x.MapStatus != PrtgMapStatus.Conflict &&
+                (x.MapStatus != PrtgMapStatus.Ok || !x.HostId.HasValue)),
+            DisabledHost = x.MapStatus == PrtgMapStatus.Ok && x.HostId.HasValue &&
+                !activeHostIdScopeQuery.Contains(x.HostId.Value)
+        });
     }
 
     public sealed record PrtgReadinessInventoryCounts(int CandidateSensors, int MappedActiveSensors,
@@ -1113,6 +1832,188 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
+    /// <summary>依所選主機及同一個最新全域對應日期，在 SQL 端計數並回傳一頁感測器。</summary>
+    public PrtgMonitoringSensorPage GetMonitoringSensorPage(
+        DateTime mapDate, IReadOnlyCollection<long> hostIds, string? search, int offset, int take, int? knownTotal = null)
+    {
+        if (hostIds.Count > 3000 || offset < 0 || take is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(take), "範圍清單或頁面大小超出上限。");
+        if (hostIds.Count == 0) return new PrtgMonitoringSensorPage(0, []);
+        var hosts = hostIds.Distinct().ToArray();
+        var needle = search?.Trim();
+        using var ctx = _contextFactory();
+        var query = from sensor in ctx.PrtgSensors.AsNoTracking()
+                    join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                    join map in ctx.PrtgHostMaps.AsNoTracking() on device.Objid equals map.DeviceObjid
+                    where !sensor.Paused && !device.Paused && map.MapDate == mapDate && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue
+                        && hosts.Contains(map.HostId.Value)
+                    select new { Sensor = sensor, Device = device, Map = map };
+        if (!string.IsNullOrEmpty(needle))
+        {
+            if (long.TryParse(needle, out var sensorId))
+                query = query.Where(x => x.Sensor.Name.Contains(needle) || x.Sensor.Objid == sensorId ||
+                    x.Device.Name.Contains(needle) || (x.Map.HostName ?? "").Contains(needle));
+            else
+                query = query.Where(x => x.Sensor.Name.Contains(needle) || x.Device.Name.Contains(needle) ||
+                    (x.Map.HostName ?? "").Contains(needle));
+        }
+        var total = knownTotal ?? query.Select(x => x.Sensor.Objid).Distinct().Count();
+        var rows = query.OrderBy(x => x.Sensor.Objid).Skip(offset).Take(take)
+            .Select(x => new PrtgMonitoringSensorRow(x.Sensor.Objid, x.Map.HostId!.Value,
+                x.Sensor.Name, x.Sensor.SensorType, x.Sensor.Category))
+            .ToList();
+        return new PrtgMonitoringSensorPage(total, rows);
+    }
+
+    /// <summary>以最新全域映射日驗證指定的 sensor 全部屬於所選 host 集合。</summary>
+    public int CountValidMonitoringSensors(DateTime mapDate, IReadOnlyCollection<long> hostIds,
+        IReadOnlyCollection<long> sensorIds)
+    {
+        if (hostIds.Count > 3000 || sensorIds.Count > 15000)
+            throw new ArgumentOutOfRangeException(nameof(sensorIds), "範圍清單超出上限。");
+        if (hostIds.Count == 0 || sensorIds.Count == 0) return 0;
+        return PrtgSqlServerIdScope.Execute(_contextFactory, hostIds, sensorIds,
+            (ctx, hosts, sensors, hostIdScopeQuery, sensorIdScopeQuery) =>
+            {
+                var query = from sensor in ctx.PrtgSensors.AsNoTracking()
+                            join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                            join map in ctx.PrtgHostMaps.AsNoTracking() on device.Objid equals map.DeviceObjid
+                            where !sensor.Paused && !device.Paused && map.MapDate == mapDate && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue
+                            select new { sensor.Objid, map.HostId };
+                query = hostIdScopeQuery is null
+                    ? query.Where(x => hosts.Contains(x.HostId!.Value))
+                    : query.Where(x => hostIdScopeQuery.Contains(x.HostId!.Value));
+                query = sensorIdScopeQuery is null
+                    ? query.Where(x => sensors!.Contains(x.Objid))
+                    : query.Where(x => sensorIdScopeQuery.Contains(x.Objid));
+                return query.Select(x => x.Objid).Distinct().Count();
+            });
+    }
+
+    /// <summary>依明確 sensor ID 有界擷取評估 metadata；不計數、不依映射／候選資格定位。</summary>
+    public IReadOnlyList<PrtgReadinessSensorDetail> GetReadinessSensorDetailsByIds(
+        IReadOnlyCollection<long> sensorObjids)
+    {
+        ArgumentNullException.ThrowIfNull(sensorObjids);
+        if (sensorObjids.Count > 100 || sensorObjids.Any(id => id <= 0))
+            throw new ArgumentOutOfRangeException(nameof(sensorObjids), "最多接受 100 個正 sensor ID。");
+        var ids = sensorObjids.Distinct().ToArray();
+        if (ids.Length == 0) return [];
+
+        using var ctx = _contextFactory();
+        var rows = (from sensor in ctx.PrtgSensors.AsNoTracking()
+                    join device in ctx.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
+                    where ids.Contains(sensor.Objid)
+                    select new
+                    {
+                        sensor.Objid,
+                        sensor.DeviceObjid,
+                        Name = sensor.Name == null ? "" : sensor.Name.Substring(0, 256),
+                        SensorType = sensor.SensorType == null ? "" : sensor.SensorType.Substring(0, 129),
+                        Category = sensor.Category == null ? null : sensor.Category.Substring(0, 65),
+                        Unit = sensor.Unit == null ? null : sensor.Unit.Substring(0, 65),
+                        sensor.Paused,
+                        DevicePaused = device.Paused
+                    }).OrderBy(x => x.Objid).ToList();
+
+        if (rows.Count != ids.Length || rows.Select(x => x.Objid).Distinct().Count() != ids.Length)
+            throw new InvalidOperationException("部分 sensor ID 不存在、缺少裝置資料或結果不唯一；已拒絕不完整 readiness metadata。");
+        if (rows.Any(x => x.Name.Length > 255 || x.SensorType.Length > 128 ||
+            x.Category is { Length: > 64 } || x.Unit is { Length: > 64 }))
+            throw new InvalidOperationException("sensor readiness metadata 超過正式欄位上限；已拒絕讀取完整文字欄位。");
+
+        return rows.Select(x => new PrtgReadinessSensorDetail(x.Objid, x.DeviceObjid, x.Name,
+            x.SensorType, x.Category, x.Unit, x.Paused, x.DevicePaused)).ToArray();
+    }
+
+    /// <summary>依最新全域映射日，在 SQL 端先計數、再分頁讀取評估預覽候選。</summary>
+    public PrtgMonitoringEvaluationPage GetMonitoringEvaluationPage(
+        DateTime? mapDate, IReadOnlyCollection<long> visibleHostIds, bool fullScope, int offset, int take)
+    {
+        if (offset < 0 || offset > 30000 || take is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(take), "預覽頁面超出上限。");
+        if (visibleHostIds.Count == 0 && !fullScope) return new PrtgMonitoringEvaluationPage(0, []);
+        using var ctx = _contextFactory();
+        // 缺裝置鏡像的感測器仍供全站診斷顯示未對應；已暫停的資源不參與評估。
+        var sensors = ctx.PrtgSensors.AsNoTracking().Where(sensor => !sensor.Paused &&
+            !ctx.PrtgDevices.Any(device => device.Objid == sensor.DeviceObjid && device.Paused));
+        if (!mapDate.HasValue)
+        {
+            if (!fullScope) return new PrtgMonitoringEvaluationPage(0, []);
+            var totalAll = sensors.Count();
+            var pageAll = sensors.OrderBy(s => s.Objid).Skip(offset).Take(take)
+                .Select(s => new { SensorId = s.Objid, s.DeviceObjid, s.Name, s.SensorType, s.Category })
+                .ToList();
+            var rowsAll = pageAll.Select(s => new PrtgMonitoringEvaluationRow(s.SensorId, s.DeviceObjid,
+                s.Name, s.SensorType, s.Category, null, null, null)).ToList();
+            return new PrtgMonitoringEvaluationPage(totalAll, rowsAll);
+        }
+        var candidates = from sensor in sensors
+                         join map in ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == mapDate.Value)
+                             on sensor.DeviceObjid equals map.DeviceObjid into matches
+                         from map in matches.DefaultIfEmpty()
+                         where fullScope ||
+                             (map != null && map.HostId.HasValue && visibleHostIds.Contains(map.HostId.Value))
+                         select new
+                         {
+                             SensorId = sensor.Objid,
+                             sensor.DeviceObjid,
+                             sensor.Name,
+                             sensor.SensorType,
+                             sensor.Category,
+                             HostId = map == null ? (long?)null : map.HostId,
+                             HostName = map == null ? null : map.HostName,
+                             MapStatus = map == null ? null : map.MapStatus
+                         };
+        var total = candidates.Select(row => row.SensorId).Distinct().Count();
+        // SQL 先投影純量並限制頁面，再於記憶體建 DTO，避免左連接的可空實體無法翻譯。
+        var page = candidates.OrderBy(row => row.SensorId).Skip(offset).Take(take)
+            .Select(row => new
+            {
+                row.SensorId,
+                row.DeviceObjid,
+                row.Name,
+                row.SensorType,
+                row.Category,
+                row.HostId,
+                row.HostName,
+                row.MapStatus
+            })
+            .ToList();
+        var rows = page.Select(row => new PrtgMonitoringEvaluationRow(row.SensorId, row.DeviceObjid,
+            row.Name, row.SensorType, row.Category, row.HostId, row.HostName, row.MapStatus)).ToList();
+        return new PrtgMonitoringEvaluationPage(total, rows);
+    }
+
+    /// <summary>在最新全域映射日內，以 SQL 計數並分頁列出唯一 NetIQ host id。</summary>
+    public PrtgMonitoringHostPage GetMonitoringHostPage(
+        IReadOnlyCollection<long> eligibleHostIds, string? search, int offset, int take, int? knownTotal = null)
+    {
+        if (eligibleHostIds.Count > 3000 || offset < 0 || take is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(take), "範圍清單或頁面大小超出上限。");
+        if (eligibleHostIds.Count == 0) return new PrtgMonitoringHostPage(null, 0, []);
+        var ids = eligibleHostIds.Distinct().ToArray();
+        using var ctx = _contextFactory();
+        var mapDate = FindLatestHostMapDate(ctx, 30, null);
+        if (!mapDate.HasValue) return new PrtgMonitoringHostPage(null, 0, []);
+        var query = ctx.PrtgHostMaps.AsNoTracking()
+            .Where(m => m.MapDate == mapDate.Value && m.MapStatus == PrtgMapStatus.Ok &&
+                m.HostId.HasValue && ids.Contains(m.HostId.Value));
+        var needle = search?.Trim();
+        if (!string.IsNullOrEmpty(needle))
+        {
+            if (long.TryParse(needle, out var hostId)) query = query.Where(m => (m.HostName ?? "").Contains(needle) || m.HostId == hostId);
+            else query = query.Where(m => (m.HostName ?? "").Contains(needle));
+        }
+        var total = knownTotal ?? query.Select(m => m.HostId!.Value).Distinct().Count();
+        var rows = query.GroupBy(m => m.HostId!.Value)
+            .Select(g => new { HostId = g.Key, HostName = g.Min(m => m.HostName) })
+            .OrderBy(x => x.HostId).Skip(offset).Take(take)
+            .Select(x => new PrtgMonitoringHostRow(x.HostId, x.HostName ?? ""))
+            .ToList();
+        return new PrtgMonitoringHostPage(mapDate, total, rows);
+    }
+
     /// <summary>
     /// 取得指定日期的 PRTG 主機對應清單（唯讀查詢）。
     /// </summary>
@@ -1164,6 +2065,13 @@ public sealed class EfPrtgStore
             .ToList();
 
         return (latestDate.Value, rows);
+    }
+
+    /// <summary>只讀取最新全域映射日期，不載入該日期的映射列。</summary>
+    public DateTime? GetLatestHostMapDate(int maxLookbackDays = 30)
+    {
+        using var ctx = _contextFactory();
+        return FindLatestHostMapDate(ctx, maxLookbackDays, null);
     }
 
     /// <summary>
@@ -1246,6 +2154,57 @@ public sealed class EfPrtgStore
     }
 
     public const string ScopeRevisionBlobKey = "prtg_scope_revision";
+    public const string HostMapDataRevisionBlobKey = "prtg_host_map_data_revision";
+    public const string CatalogueDataRevisionBlobKey = "prtg_catalogue_data_revision";
+
+    /// <summary>讀取與裝置、感測器、分類正式寫入同交易遞增的版本。</summary>
+    public long ReadCatalogueDataRevision()
+    {
+        using var ctx = _contextFactory();
+        return ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == CatalogueDataRevisionBlobKey)
+            .Select(b => b.Version).FirstOrDefault();
+    }
+
+    private static void IncrementPrtgCatalogueDataRevision(LfDbContext ctx)
+    {
+        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == CatalogueDataRevisionBlobKey);
+        if (row is null)
+            ctx.Blobs.Add(new BlobRow { BlobKey = CatalogueDataRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
+        else
+        {
+            row.Version++;
+            row.UpdatedAt = DateTime.Now;
+        }
+    }
+
+    /// <summary>讀取與正式日映射寫入同交易遞增的版本。</summary>
+    public long ReadHostMapDataRevision()
+    {
+        using var ctx = _contextFactory();
+        return ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == HostMapDataRevisionBlobKey)
+            .Select(b => b.Version).FirstOrDefault();
+    }
+
+    private static void IncrementHostMapDataRevision(LfDbContext ctx)
+    {
+        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == HostMapDataRevisionBlobKey);
+        if (row is null)
+        {
+            ctx.Blobs.Add(new BlobRow
+            {
+                BlobKey = HostMapDataRevisionBlobKey,
+                Content = "{}",
+                Version = 1,
+                UpdatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+            return;
+        }
+
+        row.Version++;
+        row.UpdatedAt = DateTime.Now;
+        ctx.SaveChanges();
+    }
 
     // 範圍修改及其版本在同一交易提交；其他程序不會看見新對應卻仍讀到舊版本。
     private T WriteScopeChange<T>(Func<LfDbContext, T> change, long? expectedRevision = null)
@@ -1885,6 +2844,15 @@ internal sealed record PrtgSnapshotValueCoverageProjection(DateTime Hour, int Sa
 /// SkippedBySafety＝過期列超過一半而觸發安全保險、一列都沒刪。
 /// </summary>
 public sealed record PrtgStaleDeleteResult(int Total, int Stale, int Deleted, bool SkippedBySafety);
+public sealed record PrtgMonitoringSensorPage(int Total, List<PrtgMonitoringSensorRow> Rows);
+public sealed record PrtgMonitoringSensorRow(long SensorId, long HostId, string Name, string SensorType, string? Category);
+public sealed record PrtgReadinessSensorDetail(long Objid, long DeviceObjid, string Name, string SensorType,
+    string? Category, string? Unit, bool Paused, bool DevicePaused);
+public sealed record PrtgMonitoringHostPage(DateTime? MapDate, int Total, List<PrtgMonitoringHostRow> Rows);
+public sealed record PrtgMonitoringHostRow(long HostId, string HostName);
+public sealed record PrtgMonitoringEvaluationPage(int Total, List<PrtgMonitoringEvaluationRow> Rows);
+public sealed record PrtgMonitoringEvaluationRow(long SensorId, long DeviceObjid, string Name, string SensorType,
+    string? Category, long? HostId, string? HostName, string? MapStatus);
 
 /// <summary>
 /// 範圍外清除預覽：將刪除的數值列數、狀態變更列數、受影響裝置數（感測器鏡像對得到的）與前幾台裝置名稱；

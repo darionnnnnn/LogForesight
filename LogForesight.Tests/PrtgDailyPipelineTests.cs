@@ -2,7 +2,12 @@
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -40,7 +45,12 @@ public class PrtgDailyPipelineTests : IDisposable
     private sealed class CollectingConsole : IRunConsole
     {
         public List<string> Lines { get; } = new();
-        public void WriteLine(string message = "") => Lines.Add(message);
+        public Action<string>? OnWriteLine { get; set; }
+        public void WriteLine(string message = "")
+        {
+            Lines.Add(message);
+            OnWriteLine?.Invoke(message);
+        }
     }
 
     private sealed class CollectingProgress : IRunProgress
@@ -54,6 +64,47 @@ public class PrtgDailyPipelineTests : IDisposable
             Reports.Add((phase, done, total));
             OnReport?.Invoke(phase, done, total);
         }
+    }
+
+    private sealed class TrackingHostStore(IHostStore inner) : IHostStore
+    {
+        private readonly Dictionary<string, int> _getAllCallsByCaller = new(StringComparer.Ordinal);
+        public int GetAllCalls { get; private set; }
+        public int CapturePrtgSnapshotCalls { get; private set; }
+        public IReadOnlyDictionary<string, int> GetAllCallsByCaller => _getAllCallsByCaller;
+        public List<WebHost> GetAll()
+        {
+            GetAllCalls++;
+            var method = new StackTrace().GetFrame(1)?.GetMethod();
+            var declaringType = method?.DeclaringType;
+            var callerType = declaringType?.DeclaringType ?? declaringType;
+            var callerMethod = method?.Name;
+            if (callerMethod == "MoveNext" && declaringType?.Name is { } stateMachine && stateMachine.StartsWith('<'))
+            {
+                var stateMachineEnd = stateMachine.IndexOf('>');
+                if (stateMachineEnd > 1) callerMethod = stateMachine[1..stateMachineEnd];
+            }
+            var caller = $"{callerType?.Name}.{callerMethod}";
+            _getAllCallsByCaller[caller] = _getAllCallsByCaller.GetValueOrDefault(caller) + 1;
+            return inner.GetAll();
+        }
+        public PrtgHostSnapshot CapturePrtgSnapshot()
+        { CapturePrtgSnapshotCalls++; return inner.CapturePrtgSnapshot(); }
+        public long DataVersion => inner.DataVersion;
+        public WebHost? Get(long hostId) => inner.Get(hostId);
+        public WebHost? FindByName(string hostName) => inner.FindByName(hostName);
+        public WebHost Upsert(WebHost host) => inner.Upsert(host);
+        public WebHost Touch(string hostName, DateTime reportedAt, string source = "local") => inner.Touch(hostName, reportedAt, source);
+        public WebHost? TouchNetiq(long hostId, string? displayName, DateTime reportedAt) => inner.TouchNetiq(hostId, displayName, reportedAt);
+        public void SetGroups(long hostId, IEnumerable<long> groupIds) => inner.SetGroups(hostId, groupIds);
+        public void SetHighVolume(long hostId, bool isHighVolume) => inner.SetHighVolume(hostId, isHighVolume);
+        public HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace) =>
+            inner.SetGroupsBatch(hostIds, groupIds, replace);
+        public void SetOwners(long hostId, IEnumerable<long> userIds) => inner.SetOwners(hostId, userIds);
+        public void Merge(long sourceHostId, long targetHostId) => inner.Merge(sourceHostId, targetHostId);
+        public void Unmerge(long hostId) => inner.Unmerge(hostId);
+        public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation) => inner.MutateBatch(mutation);
+        public void MutateBatch(Action<List<WebHost>> mutation) => inner.MutateBatch(mutation);
     }
 
     private (AnalysisRunContext Ctx, CollectingConsole Console, CollectingProgress Progress, PrtgFindingsRegistry Registry)
@@ -1407,6 +1458,253 @@ public class PrtgDailyPipelineTests : IDisposable
             s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
             s.PrtgSensorTypeWhitelist = new List<string>(SystemSettings.DefaultPrtgSensorTypeWhitelist);
         });
+    }
+
+    [Theory]
+    [InlineData("mapping")]
+    [InlineData("evidence")]
+    [InlineData("verification")]
+    [InlineData("host")]
+    public async Task 磁碟候選第二頁映射或metadata改變_丟棄前頁結果且標記部分完成(string mutationKind)
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules().Select(r =>
+            r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode && r.PrtgSensorCategory == PrtgSensorCategories.Disk
+                ? r.CloneForSeedOverwrite(enabled: true) : r).ToList());
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-DISK-PAGE", Active = true, IpAddress = "192.168.1.141" });
+        var changedHost = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-DISK-PAGE-CHANGED", Active = true, IpAddress = "192.168.1.142" });
+
+        var portProbe = new TcpListener(IPAddress.Loopback, 0);
+        portProbe.Start();
+        var port = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+        portProbe.Stop();
+        var baseUrl = $"http://127.0.0.1:{port}/";
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgUrl = baseUrl);
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        var deviceRows = Enumerable.Range(1, 100).Select(id => new PrtgDeviceRow
+        {
+            Objid = id, Name = $"SRV-DISK-PAGE-{id}", Ip = id == 1 ? host.IpAddress : null
+        }).ToArray();
+        prtgStore.UpsertDevices(deviceRows, now);
+        var sensors = new List<PrtgSensorRow>
+        {
+            new() { Objid = 4000, DeviceObjid = 1, Name = "Disk C:", SensorType = "SNMP Disk Free", Unit = "%", Status = "Up", Category = PrtgSensorCategories.Disk }
+        };
+        sensors.AddRange(Enumerable.Range(1, 99).Select(i => new PrtgSensorRow
+        {
+            Objid = 4000 + i, DeviceObjid = 1 + i, Name = $"Disk {i}", SensorType = "SNMP Disk Free",
+            Status = "Up", Category = PrtgSensorCategories.Disk
+        }));
+        // 第二頁候選使用另一台裝置；第一頁裝置映射變更不能被第二頁的局部查詢掩蓋。
+        sensors.Add(new PrtgSensorRow { Objid = 4100, DeviceObjid = 100, Name = "Disk C: duplicate candidate", SensorType = "SNMP Disk Free", Unit = "%", Status = "Up", Category = PrtgSensorCategories.Disk });
+        prtgStore.UpsertSensors(sensors, now);
+
+        var persistedPoints = new List<PrtgValueRow>();
+        var hostMapDates = new List<PrtgHostMapRow>();
+        for (var offset = -27; offset <= 0; offset++)
+        {
+            var mapDay = day.AddDays(offset);
+            hostMapDates.Add(new PrtgHostMapRow
+            {
+                MapDate = mapDay, DeviceObjid = 1, HostId = host.HostId, HostName = host.HostName,
+                MapStatus = PrtgMapStatus.Ok, CreatedAt = now
+            });
+            for (var device = 2; device <= 100; device++)
+                hostMapDates.Add(new PrtgHostMapRow
+                {
+                    MapDate = mapDay, DeviceObjid = device, HostId = host.HostId,
+                    HostName = host.HostName, MapStatus = PrtgMapStatus.Ok, CreatedAt = now
+                });
+            var available = Math.Max(0.5, 95.0 - (offset + 27) * 3.5);
+            for (var hour = 0; hour < 12; hour++)
+                persistedPoints.Add(new PrtgValueRow
+                {
+                    SensorObjid = 4000, PeriodStart = mapDay.AddHours(hour), AvgValue = available,
+                    MinValue = available, MaxValue = available, Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = now
+                });
+        }
+        for (var offset = -27; offset <= 0; offset++)
+            prtgStore.ReplaceHostMapForDate(day.AddDays(offset), hostMapDates.Where(m => m.MapDate == day.AddDays(offset)).ToArray());
+        prtgStore.UpsertValues(persistedPoints);
+
+        var (ctx, console, _, registry) = CreateContext();
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(p =>
+        {
+            p.CoreSystemId = "fixture-core"; p.SourceGeneration = "test-source";
+            p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
+            p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(baseUrl);
+            p.ValidFrom = DateTimeOffset.Now.AddDays(-31); p.Revision = "candidate-page-failure";
+            p.HostIds = new List<long> { host.HostId }; p.SensorIds = sensors.Select(s => s.Objid).ToList();
+        });
+
+        const long deviceId = 1;
+        var mappingRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+        var timeline = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 4000));
+        var identityFingerprint = $"{deviceId}|SNMP Disk Free|2000|map:{mappingRevision}";
+        var diskFingerprint = JsonSerializer.Serialize(new
+        { ChannelIdentifier = "5", ChannelName = "Free", Unit = "%", Scale = (double?)1.0, Direction = "descending-danger" });
+        timeline.Update(e =>
+        {
+            e.SensorId = 4000; e.HostId = host.HostId; e.SourceGeneration = "test-source";
+            e.ResourceGeneration = "test-resource-4000"; e.IdentityFingerprint = identityFingerprint;
+            e.MappingRevision = mappingRevision; e.ValidFrom = DateTimeOffset.Now.AddDays(-31);
+            e.Accept(DateTimeOffset.Now.AddDays(-31), DateTimeOffset.Now, Array.Empty<PrtgTimedState>());
+            e.DiskSemanticValidFrom = DateTimeOffset.Now.AddDays(-31); e.DiskSemanticCheckedAt = DateTimeOffset.Now;
+            e.DiskSemanticFingerprint = diskFingerprint;
+        });
+        new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).ConfirmManually(
+            new PrtgDiskSemanticContext(4000, deviceId, host.HostId, "SNMP Disk Free", "5", "Free", "%", 1, "descending-danger"),
+            1, "R10 consumer failure fixture", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion);
+        new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Save(
+            new PrtgDiskVerificationResult(4000, deviceId, host.HostId, "SNMP Disk Free", "Verified", "fixture",
+                "5", "Free", "%", 1, "descending-danger", 5, true, DateTime.UtcNow, day, PrtgDiskAssessmentService.ParserSemanticVersion));
+
+        var diskRule = KnownIssueCatalog.Rules.Single(r => r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode &&
+            r.PrtgSensorCategory == PrtgSensorCategories.Disk && r.Enabled);
+        var baselineBatch = new PrtgDiskAssessmentService(prtgStore, hostStore,
+            new SystemSettingsStore(_backend.Blob("system_settings")),
+            new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
+            new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)))
+            .Assess(DateOnly.FromDateTime(day), diskRule, PrtgDiskDecisionMode.Formal, 100, 0,
+                selectedSensorObjids: sensors.Select(s => s.Objid).ToArray());
+        var baselineFinding = Assert.Single(baselineBatch.Rows, r => r.SensorObjid == 4000);
+        Assert.True(baselineFinding.Decision.Finding is not null,
+            $"Baseline candidate did not hit: exclusion={baselineFinding.Decision.Exclusion}; reason={baselineFinding.Decision.Reason}; readiness={baselineFinding.Readiness.Status}/{baselineFinding.Readiness.Reason}; semantic={baselineFinding.EvidenceValidity?.InvalidReason}; trend={baselineFinding.Decision.Trend?.Explanation}");
+        var scopeRevisionBeforeRun = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+
+        using var listener = new HttpListener();
+        listener.Prefixes.Add(baseUrl);
+        listener.Start();
+        using var serverStop = new CancellationTokenSource();
+        var serverTask = Task.Run(async () =>
+        {
+            while (!serverStop.IsCancellationRequested)
+            {
+                HttpListenerContext request;
+                try { request = await listener.GetContextAsync().WaitAsync(serverStop.Token); }
+                catch (OperationCanceledException) { break; }
+                catch (HttpListenerException) { break; }
+                var content = request.Request.QueryString["content"];
+                var id = long.TryParse(request.Request.QueryString["id"], out var parsedId) ? parsedId : 0;
+                object response = content switch
+                {
+                    "sensors" => new { sensors = new[] { new { objid = id.ToString(), parentid = sensors.FirstOrDefault(s => s.Objid == id)?.DeviceObjid.ToString() ?? "1", type = "SNMP Disk Free", status = "Up", cumsince_raw = "2000" } } },
+                    "messages" => new { messages = Array.Empty<object>() },
+                    "channels" => new { channels = new[] { new { objid = "5", channel = "Free", unit = "%", scaling = 1 } } },
+                    _ when request.Request.Url?.AbsolutePath.EndsWith("historicdata.json", StringComparison.OrdinalIgnoreCase) == true => new
+                    {
+                        histdata = id == 4000
+                            ? persistedPoints.Where(p => p.PeriodStart.Date == day).Take(12)
+                                .Select(p => (object)new { datetime_raw = p.PeriodStart.ToOADate(), value_raw = new[] { p.AvgValue!.Value } }).ToArray()
+                            : Array.Empty<object>()
+                    },
+                    _ => new { sensors = Array.Empty<object>(), devices = Array.Empty<object>(), messages = Array.Empty<object>() }
+                };
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+                request.Response.ContentType = "application/json";
+                request.Response.ContentLength64 = bytes.Length;
+                await request.Response.OutputStream.WriteAsync(bytes, serverStop.Token);
+                request.Response.Close();
+            }
+        });
+
+        var pageCallbacks = 0;
+        var trackedHostStore = new TrackingHostStore(hostStore);
+        var getAllCallsAfterFirstCandidatePage = -1;
+        var getAllCallsAtFinalCandidatePage = -1;
+        var getAllCallsAfterHostMutation = -1;
+        console.OnWriteLine = message =>
+        {
+            var firstPage = message.Contains("磁碟候選評估 100/101；已有趨勢 finding 1 筆，尚未提交判定。", StringComparison.Ordinal);
+            var finalPage = message.Contains("磁碟候選評估 101/101；已有趨勢 finding 1 筆，尚未提交判定。", StringComparison.Ordinal);
+            var finalPageBeforeFence = mutationKind == "host" && finalPage;
+            if (firstPage) getAllCallsAfterFirstCandidatePage = trackedHostStore.GetAllCalls;
+            if (finalPage) getAllCallsAtFinalCandidatePage = trackedHostStore.GetAllCalls;
+            if (firstPage && mutationKind != "host" || finalPageBeforeFence)
+            {
+                pageCallbacks++;
+                switch (mutationKind)
+                {
+                    case "mapping":
+                        MapDeviceToHost(day, 1, changedHost);
+                        break;
+                    case "evidence":
+                        new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).ConfirmManually(
+                            new PrtgDiskSemanticContext(4000, deviceId, host.HostId, "SNMP Disk Free", "5", "Free", "%", 1, "descending-danger"),
+                            1, "Metadata changed after first page.", DateTime.UtcNow,
+                            PrtgDiskAssessmentService.ParserSemanticVersion);
+                        break;
+                    case "verification":
+                        new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Save(
+                            new PrtgDiskVerificationResult(4000, deviceId, host.HostId, "SNMP Disk Free", "Failed",
+                                "Metadata changed after first page.", null, null, null, null, null, 0, null,
+                                DateTime.UtcNow, day, PrtgDiskAssessmentService.ParserSemanticVersion));
+                        break;
+                    case "host":
+                        hostStore.Upsert(new WebHost { HostName = host.HostName, Active = false });
+                        getAllCallsAfterHostMutation = trackedHostStore.GetAllCalls;
+                        break;
+                    default:
+                        throw new InvalidOperationException($"Unexpected test mutation: {mutationKind}");
+                }
+            }
+        };
+        try
+        {
+            await PrtgDailyPipeline.RunAsync(ctx, _backend, trackedHostStore, new[] { day }, Task.CompletedTask,
+                hostIds: null, guard: null, structureSyncGate: new FakeStructureSyncGate(running: true) { ResultToReturn = true });
+        }
+        finally
+        {
+            serverStop.Cancel();
+            listener.Close();
+            try { await serverTask.WaitAsync(TimeSpan.FromSeconds(2)); } catch (TimeoutException) { }
+        }
+
+        Assert.True(pageCallbacks == 1, string.Join(Environment.NewLine, console.Lines));
+        Assert.Contains(console.Lines, line => line.Contains("磁碟候選評估 101/101；已有趨勢 finding 1 筆，尚未提交判定。", StringComparison.Ordinal));
+        var expectedFence = mutationKind == "mapping"
+            ? "日映射版本於磁碟候選快照處理期間改變"
+            : mutationKind == "host"
+                ? "主機授權或顯示名稱於磁碟候選快照處理期間改變"
+                : "語意 metadata 於候選評估期間改變";
+        Assert.Contains(console.Lines, line => line.Contains("磁碟趨勢評估失敗") && line.Contains(expectedFence));
+        Assert.Equal(1, trackedHostStore.CapturePrtgSnapshotCalls); // one bounded immutable host capture for all disk pages
+        Assert.True(getAllCallsAfterFirstCandidatePage >= 0);
+        Assert.True(getAllCallsAtFinalCandidatePage >= 0);
+        Assert.Equal(getAllCallsAfterFirstCandidatePage, getAllCallsAtFinalCandidatePage); // no GetAll between candidate page 1 and the final page/fence
+        if (mutationKind == "host")
+            Assert.Equal(getAllCallsAtFinalCandidatePage, getAllCallsAfterHostMutation);
+        var expectedHostReadsByCaller = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["PrtgDailyPipeline.SelectActivePilotHostIds"] = 1,
+            ["PrtgScopeRevisionReader.Read"] = mutationKind == "host" ? 2 : 1,
+            ["PrtgHostMapper.MapForDate"] = 1,
+            ["PrtgHostMapper.BuildActiveHostIpLookup"] = 2,
+            ["PrtgScopeDevices.Compute"] = 1,
+            ["PrtgDailyPipeline.RunAsync"] = mutationKind == "host" ? 1 : 2 // host fence 在第二段前取消；其他案例會讀取抑制所需主機資訊
+        };
+        Assert.Equal(expectedHostReadsByCaller.OrderBy(x => x.Key),
+            trackedHostStore.GetAllCallsByCaller.OrderBy(x => x.Key));
+        Assert.Equal(expectedHostReadsByCaller.Values.Sum(), trackedHostStore.GetAllCalls);
+        Assert.True(registry.IsPublished(day));
+        Assert.Empty(registry.For(host.HostId, day));
+        Assert.Empty(registry.For(changedHost.HostId, day));
+        Assert.Null(timeline.Get().DiskIncidentStartedAt);
+        Assert.Equal("test-resource-4000", timeline.Get().ResourceGeneration);
+        Assert.Equal("test-source", timeline.Get().SourceGeneration);
+        if (mutationKind != "mapping")
+            Assert.Equal(scopeRevisionBeforeRun, _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion());
+
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, run!.PrtgOutcome);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, Assert.Single(run.PrtgDays!).Outcome);
     }
 
     private void MapDeviceToHost(DateTime day, long deviceObjid, WebHost host)

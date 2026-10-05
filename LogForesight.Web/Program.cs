@@ -302,6 +302,8 @@ public static class DataVersionStampPolicy
         if (context.Response.StatusCode >= 400) return false;
 
         var path = context.Request.Path.Value;
+        // Diagnostic chunks affect only isolated transfer tables.
+        if (context.Request.Path.StartsWithSegments("/api/admin/settings/prtg-import-transfers")) return false;
         return path == null || !Whitelist.Contains(path.TrimEnd('/'));
     }
 }

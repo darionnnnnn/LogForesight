@@ -125,6 +125,67 @@ public class CryptoKeyBootstrapperTests : IDisposable
     }
 
     [Fact]
+    public void 固定CBC向量錯誤key解出非UTF8時_PRTG與Sentinel都以正確明碼重包()
+    {
+        const string legacy = "enc:v1:I3Mnvp+FKKtlA+EfrWepjAB1NRzTwMwVntC7faKySAU=";
+        var wrongKey = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("lf-cbc-padding-repro-371"));
+        var priorEnv = Environment.GetEnvironmentVariable("LF_CRYPTO_KEY");
+        try
+        {
+            Environment.SetEnvironmentVariable("LF_CRYPTO_KEY", null);
+            Directory.CreateDirectory(Path.GetDirectoryName(KeyPath)!);
+            File.WriteAllText(KeyPath, Convert.ToBase64String(wrongKey));
+            _settings.Update(s => s.PrtgApiTokenEnc = legacy);
+            _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = legacy });
+
+            Run();
+
+            var token = _settings.Get().PrtgApiTokenEnc;
+            var sentinel = _sentinels.FindByName("S1")!.PasswordEnc;
+            Assert.StartsWith("enc:v2:", token);
+            Assert.StartsWith("enc:v2:", sentinel);
+            Assert.Equal("file", CryptoHelper.KeySource);
+            Assert.True(CryptoHelper.TryDecrypt(token, out var tokenPlain));
+            Assert.True(CryptoHelper.TryDecrypt(sentinel, out var sentinelPlain));
+            Assert.Equal("legacy-secret", tokenPlain);
+            Assert.Equal("legacy-secret", sentinelPlain);
+            Assert.False(CryptoHelper.DecryptFailureSeen);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LF_CRYPTO_KEY", priorEnv);
+        }
+    }
+
+    [Fact]
+    public void 歧義CBC向量_保留PRTG與Sentinel原密文並設解密失敗旗標()
+    {
+        const string ambiguous = "enc:v1:1H3QwjLgWFCy+raRuJKj/tLS64ud2W73ZiH9k4D52XQ=";
+        var wrongKey = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("lf-cbc-padding-repro-371"));
+        var priorEnv = Environment.GetEnvironmentVariable("LF_CRYPTO_KEY");
+        try
+        {
+            Environment.SetEnvironmentVariable("LF_CRYPTO_KEY", null);
+            Directory.CreateDirectory(Path.GetDirectoryName(KeyPath)!);
+            File.WriteAllText(KeyPath, Convert.ToBase64String(wrongKey));
+            _settings.Update(s => s.PrtgApiTokenEnc = ambiguous);
+            _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = ambiguous });
+
+            Run();
+
+            Assert.Equal(ambiguous, _settings.Get().PrtgApiTokenEnc);
+            Assert.Equal(ambiguous, _sentinels.FindByName("S1")!.PasswordEnc);
+            Assert.True(CryptoHelper.DecryptFailureSeen);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LF_CRYPTO_KEY", priorEnv);
+        }
+    }
+
+    [Fact]
     public void 解不開的v1保持原值_其餘照樣重加密()
     {
         // 長度不是 16 的倍數：任何金鑰都必定解不開

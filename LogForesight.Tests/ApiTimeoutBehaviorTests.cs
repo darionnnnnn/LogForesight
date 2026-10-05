@@ -40,6 +40,8 @@ public class ApiTimeoutBehaviorTests
     [InlineData("逾時在silent時不發toast")]
     [InlineData("載入失敗顯示重試鈕且按下會重跑")]
     [InlineData("找不到資料不顯示重試鈕")]
+    [InlineData("空白403回應仍分類為權限不足")]
+    [InlineData("403保留後端明確拒絕原因")]
     public void 前端等待體驗的行為案例(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

@@ -63,6 +63,7 @@ internal static class PrtgDailyPipeline
         var totalTargetSensors = 0;
         var totalFailedSensors = 0;
         var totalValuesWritten = 0;
+        var diskAssessmentFailed = false;
 
         // 逐日累計（規則評估、歸戶、觸發式取數）在 finally 才寫進執行紀錄：
         // 中途被停止或擲例外時，已經評估完的日子也要留下逐日結果，執行總表才不會整排「—」。
@@ -99,8 +100,7 @@ internal static class PrtgDailyPipeline
             var pilotReady = monitoringPolicy.Ready(systemSettings.PrtgUrl);
             var requestedHostIds = hostIds;
             if (pilotReady)
-                hostIds = monitoringPolicy.HostIds.Where(id => (requestedHostIds == null || requestedHostIds.Contains(id)) &&
-                    hostStore.GetAll().Any(h => h.HostId == id && h.Source == "netiq" && h.Active && h.MergedInto == null)).ToArray();
+                hostIds = SelectActivePilotHostIds(monitoringPolicy.HostIds, requestedHostIds, hostStore.GetAll);
             else
                 prtgConsole.WriteLine("尚未確認 Core 身分與試點清單；本趟只同步診斷資料，不發布正式 PRTG 判定。");
 
@@ -492,54 +492,71 @@ internal static class PrtgDailyPipeline
                         var pageOffset = 0;
                         var added = 0;
                         var batchSize = PrtgDiskAssessmentService.EffectiveBatchSize(diskRule);
+                        PrtgDiskCandidateSnapshot? candidateSnapshot = null;
+                        PrtgDiskMetadataSnapshot? metadataSnapshot = null;
+                        var assessedRows = new List<PrtgDiskAssessmentRow>();
                         while (true)
                         {
                             operationScope.Checkpoint();
                             ct.ThrowIfCancellationRequested();
-                            var page = assessment.Assess(DateOnly.FromDateTime(newest), diskRule,
+                            var candidateMappingRevision = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+                            var page = assessment.AssessCandidatePage(DateOnly.FromDateTime(newest), diskRule,
                                 PrtgDiskDecisionMode.Formal, batchSize,
-                                pageOffset, hostIds, monitoringPolicy.SensorIds);
-                            foreach (var row in page.Rows)
-                            {
-                                if (row.Decision.Exclusion == PrtgDiskDecisionExclusion.TrendNoHit && timelineEvidence.TryGetValue(row.SensorObjid, out var recovered) &&
-                                    recovered.DiskSemanticCheckedAt >= DateTimeOffset.Now.AddMinutes(-10) && recovered.DiskSemanticValidFrom != null &&
-                                    recovered.DiskSemanticValidFrom <= new DateTimeOffset(newest.AddDays(-27)) &&
-                                    monitoringPolicy.ValidFrom <= new DateTimeOffset(newest.AddDays(-27)) && recovered.QualityReason == "covered" &&
-                                    recovered.SourceGeneration == monitoringPolicy.SourceGeneration &&
-                                    recovered.MappingRevision == backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion())
-                                {
-                                    new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + row.SensorObjid))
-                                        .Update(e => e.DiskIncidentStartedAt = null);
-                                    recovered.DiskIncidentStartedAt = null;
-                                    if (!planned[newest].DiskReevaluatedResources.TryGetValue(row.CurrentHostId, out var resources))
-                                        planned[newest].DiskReevaluatedResources[row.CurrentHostId] = resources = new();
-                                    resources[row.SensorObjid] = recovered.ResourceGeneration;
-                                }
-                                if (row.Decision.Finding is not { } finding) continue;
-                                if (!timelineEvidence.TryGetValue(finding.SensorObjid!.Value, out var diskProof) ||
-                                    diskProof.QualityReason != "covered" || diskProof.MappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ||
-                                    diskProof.SourceGeneration != monitoringPolicy.SourceGeneration ||
-                                    diskProof.DiskSemanticValidFrom == null || diskProof.DiskSemanticCheckedAt == null ||
-                                    diskProof.DiskSemanticCheckedAt.Value < DateTimeOffset.Now.AddMinutes(-10) ||
-                                    diskProof.DiskSemanticValidFrom > new DateTimeOffset(newest.AddDays(-27)) ||
-                                    monitoringPolicy.ValidFrom > new DateTimeOffset(newest.AddDays(-27))) continue;
-                                var incident = diskProof.DiskIncidentStartedAt ?? new DateTimeOffset(newest.Date);
-                                new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + finding.SensorObjid))
-                                    .Update(e => e.DiskIncidentStartedAt ??= incident);
-                                finding = finding with { SourceGeneration = diskProof.SourceGeneration,
-                                    ResourceGeneration = diskProof.ResourceGeneration,
-                                    IncidentStartedAt = incident };
-                                var findingsByHost = planned[newest].FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
-                                if (!findingsByHost.TryGetValue(row.CurrentHostId, out var hostFindings))
-                                    findingsByHost[row.CurrentHostId] = hostFindings = new List<LogIssueSignature>();
-                                var signature = PrtgFindingMapper.ToSignature(finding, newest);
-                                hostFindings.Add(signature);
-                                planned[newest].Observations.Add((row.CurrentHostId, finding, signature));
-                                added++;
-                                dayStates[newest].TriggerHosts.Add(row.CurrentHostId);
-                            }
+                                pageOffset, hostIds, monitoringPolicy.SensorIds, candidateSnapshot,
+                                candidateMappingRevision,
+                                monitoringPolicy.SourceGeneration, metadataSnapshot, deferMetadataFence: true);
+                            if (candidateMappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion())
+                                throw new InvalidOperationException("PRTG 主機映射版本於磁碟候選頁處理期間改變；已拒絕本次評估，請重啟新範圍。");
+                            operationScope.Checkpoint();
+                            candidateSnapshot = page.CandidateSnapshot;
+                            metadataSnapshot = page.MetadataSnapshot;
+                            assessedRows.AddRange(page.Rows);
+                            var stagedFindingCount = assessedRows.Count(x => x.Decision.Finding != null);
+                            prtgConsole.WriteLine($"磁碟候選評估 {assessedRows.Count}/{page.CandidateCount}；已有趨勢 finding {stagedFindingCount} 筆，尚未提交判定。");
                             if (!page.HasMore) break;
                             pageOffset += page.AssessedCount;
+                        }
+                        assessment.ValidateAssessmentSnapshot(candidateSnapshot, metadataSnapshot);
+                        operationScope.Checkpoint();
+                        ct.ThrowIfCancellationRequested();
+                        foreach (var row in assessedRows)
+                        {
+                            if (row.Decision.Exclusion == PrtgDiskDecisionExclusion.TrendNoHit && timelineEvidence.TryGetValue(row.SensorObjid, out var recovered) &&
+                                recovered.DiskSemanticCheckedAt >= DateTimeOffset.Now.AddMinutes(-10) && recovered.DiskSemanticValidFrom != null &&
+                                recovered.DiskSemanticValidFrom <= new DateTimeOffset(newest.AddDays(-27)) &&
+                                monitoringPolicy.ValidFrom <= new DateTimeOffset(newest.AddDays(-27)) && recovered.QualityReason == "covered" &&
+                                recovered.SourceGeneration == monitoringPolicy.SourceGeneration &&
+                                recovered.MappingRevision == backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion())
+                            {
+                                new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + row.SensorObjid))
+                                    .Update(e => e.DiskIncidentStartedAt = null);
+                                recovered.DiskIncidentStartedAt = null;
+                                if (!planned[newest].DiskReevaluatedResources.TryGetValue(row.CurrentHostId, out var resources))
+                                    planned[newest].DiskReevaluatedResources[row.CurrentHostId] = resources = new();
+                                resources[row.SensorObjid] = recovered.ResourceGeneration;
+                            }
+                            if (row.Decision.Finding is not { } finding) continue;
+                            if (!timelineEvidence.TryGetValue(finding.SensorObjid!.Value, out var diskProof) ||
+                                diskProof.QualityReason != "covered" || diskProof.MappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ||
+                                diskProof.SourceGeneration != monitoringPolicy.SourceGeneration ||
+                                diskProof.DiskSemanticValidFrom == null || diskProof.DiskSemanticCheckedAt == null ||
+                                diskProof.DiskSemanticCheckedAt.Value < DateTimeOffset.Now.AddMinutes(-10) ||
+                                diskProof.DiskSemanticValidFrom > new DateTimeOffset(newest.AddDays(-27)) ||
+                                monitoringPolicy.ValidFrom > new DateTimeOffset(newest.AddDays(-27))) continue;
+                            var incident = diskProof.DiskIncidentStartedAt ?? new DateTimeOffset(newest.Date);
+                            new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + finding.SensorObjid))
+                                .Update(e => e.DiskIncidentStartedAt ??= incident);
+                            finding = finding with { SourceGeneration = diskProof.SourceGeneration,
+                                ResourceGeneration = diskProof.ResourceGeneration,
+                                IncidentStartedAt = incident };
+                            var findingsByHost = planned[newest].FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
+                            if (!findingsByHost.TryGetValue(row.CurrentHostId, out var hostFindings))
+                                findingsByHost[row.CurrentHostId] = hostFindings = new List<LogIssueSignature>();
+                            var signature = PrtgFindingMapper.ToSignature(finding, newest);
+                            hostFindings.Add(signature);
+                            planned[newest].Observations.Add((row.CurrentHostId, finding, signature));
+                            added++;
+                            dayStates[newest].TriggerHosts.Add(row.CurrentHostId);
                         }
                         if (added > 0)
                         {
@@ -554,6 +571,8 @@ internal static class PrtgDailyPipeline
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
+                        diskAssessmentFailed = true;
+                        dayStates[newest].DiskAssessmentFailed = true;
                         Log.Error(ex, "PRTG 磁碟趨勢評估失敗；既有狀態型 findings 繼續發布");
                         prtgConsole.WriteLine("  ⚠ 磁碟趨勢評估失敗，既有狀態型 findings 照常發布：" + ex.Message);
                     }
@@ -814,7 +833,7 @@ internal static class PrtgDailyPipeline
             {
                 prtgOutcome = BatchRun.PrtgOutcomeFailed;
             }
-            else if ((fetchResult != null && fetchResult.Failures > 0) || totalFailedSensors > 0)
+            else if ((fetchResult != null && fetchResult.Failures > 0) || totalFailedSensors > 0 || diskAssessmentFailed)
             {
                 prtgOutcome = BatchRun.PrtgOutcomePartial;
             }
@@ -870,7 +889,7 @@ internal static class PrtgDailyPipeline
                     {
                         var s = dayStates[day];
                         var failedSensors = s.Triggered?.FailedSensors ?? 0;
-                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed,
+                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || s.DiskAssessmentFailed,
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note);
@@ -913,6 +932,16 @@ internal static class PrtgDailyPipeline
                 totalTriggerHosts,
                 totalTargetSensors);
         }
+    }
+
+    /// <summary>保留試點設定順序，並以一次 host snapshot 過濾啟用中的 NetIQ 未合併主機。</summary>
+    internal static long[] SelectActivePilotHostIds(IEnumerable<long> policyHostIds,
+        IEnumerable<long>? requestedHostIds, Func<List<WebHost>> readHosts)
+    {
+        var requested = requestedHostIds?.ToHashSet();
+        var eligible = readHosts().Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null)
+            .Select(h => h.HostId).ToHashSet();
+        return policyHostIds.Where(id => (requested is null || requested.Contains(id)) && eligible.Contains(id)).ToArray();
     }
 
     /// <summary>規則庫沒有啟用中的 PRTG 規則時的逐日原因。</summary>
@@ -980,6 +1009,7 @@ internal static class PrtgDailyPipeline
         public int Findings;
         public int AttributedHosts;
         public bool MapAvailable;
+        public bool DiskAssessmentFailed;
         /// <summary>規則命中的主機，觸發式取數會把它們併進候選（規則命中但風險未上調的主機也要取數）。</summary>
         public HashSet<long> TriggerHosts { get; } = new();
         public PrtgTriggeredFetchResult? Triggered;

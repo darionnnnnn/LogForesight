@@ -75,6 +75,26 @@ public sealed class EfJsonBlobStore
         return row == null ? (null, 0) : (row.Content, row.Version);
     }
 
+    /// <summary>有界讀取單一 JSON blob；資料庫只傳回 cap+1 個字元，超限時可辨識並拒絕。</summary>
+    internal (string? Prefix, long Version, int ReportedLength) ReadBoundedWithVersion(int maxCharacters)
+    {
+        if (maxCharacters is < 1 or > int.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(nameof(maxCharacters));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var row = ctx.Blobs.AsNoTracking()
+            .Where(b => b.BlobKey == _key)
+            .Select(b => new
+            {
+                Prefix = b.Content.Substring(0, maxCharacters + 1),
+                Length = b.Content.Length,
+                b.Version
+            })
+            .FirstOrDefault();
+        _performance?.Record($"blob:{_key}:ReadBounded", sw.ElapsedMilliseconds);
+        return row == null ? (null, 0, 0) : (row.Prefix, row.Version, row.Length);
+    }
+
     /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>
     public TResult Mutate<TResult>(Func<string?, (string content, TResult result)> mutation)
     {

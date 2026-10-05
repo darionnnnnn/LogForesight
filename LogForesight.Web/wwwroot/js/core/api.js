@@ -1,4 +1,4 @@
-﻿/**
+/**
  * API 呼叫的唯一出口（docs/WEB-SPEC.md §8.1）。
  *
  * 頁面模組**不得直接呼叫 fetch**——信封解析、錯誤提示、401 導頁、CSRF 標頭
@@ -42,7 +42,15 @@ async function request(method, url, body, options = {}) {
     }
 
     if (body !== undefined && body !== null) {
-        if (body instanceof FormData) {
+        if (options.rawBytes === true) {
+            const size = body instanceof Blob ? body.size : body?.byteLength;
+            if (!(body instanceof Blob || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) ||
+                !Number.isSafeInteger(size) || size < 1 || size > 4 * 1024 * 1024) {
+                throw new RangeError('診斷傳輸每片必須為 1 byte 至 4 MiB 的原始位元組。');
+            }
+            init.headers['Content-Type'] = 'application/octet-stream';
+            init.body = body;
+        } else if (body instanceof FormData) {
             // 檔案上傳：Content-Type 必須讓瀏覽器自己帶（它要在裡面附 multipart boundary），
             // 手動指定會讓後端解不出欄位
             init.body = body;
@@ -57,12 +65,19 @@ async function request(method, url, body, options = {}) {
     // 就是重複執行（重複匯入、重複套用）。讀取沒有這個副作用，中止是安全的。
     let timedOut = false;
     let timeoutTimer = null;
+    let signalRelay = null;
+    if (options.signal) init.signal = options.signal;
     if (method === 'GET') {
         const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
             ? options.timeoutMs
             : GET_TIMEOUT_MS;
         const controller = new AbortController();
         init.signal = controller.signal;
+        if (options.signal) {
+            signalRelay = () => controller.abort(options.signal.reason);
+            if (options.signal.aborted) signalRelay();
+            else options.signal.addEventListener('abort', signalRelay, { once: true });
+        }
         timeoutTimer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
     }
 
@@ -70,6 +85,7 @@ async function request(method, url, body, options = {}) {
     try {
         response = await fetch(appUrl(url), init);
     } catch (networkError) {
+        if (options.signal?.aborted) throw new DOMException('作業已取消。', 'AbortError');
         // 逾時與網路層失敗要分得開：前者該縮小查詢範圍，後者該看網路或站台是否還活著
         if (timedOut) {
             const message = '查詢逾時，請縮小查詢範圍（例如時間區間）或稍後再試。';
@@ -84,6 +100,7 @@ async function request(method, url, body, options = {}) {
     } finally {
         // 收到回應就停錶：計時器若在讀 body 的期間觸發，會把已經在傳的回應串流中止掉
         if (timeoutTimer !== null) clearTimeout(timeoutTimer);
+        if (signalRelay !== null) options.signal.removeEventListener('abort', signalRelay);
     }
 
     // 401：登入逾期或帳號已停用 → 導回登入頁，並記住原本要去的位置
@@ -106,8 +123,10 @@ async function request(method, url, body, options = {}) {
     }
 
     if (!response.ok || !payload || payload.success !== true) {
-        const code = payload?.error?.code ?? 'server_error';
-        const message = payload?.error?.message ?? '系統發生未預期的錯誤，請稍後再試。';
+        const code = payload?.error?.code ?? (response.status === 403 ? 'forbidden' : 'server_error');
+        const message = payload?.error?.message ?? (response.status === 403
+            ? '目前沒有權限操作此範圍，請核對所選項目及可見權限。'
+            : '系統發生未預期的錯誤，請稍後再試。');
         if (options.silent !== true) toast(message, 'danger');
         throw new ApiError(code, message, response.status);
     }
@@ -119,6 +138,7 @@ export const api = {
     get: (url, options) => request('GET', url, null, options),
     post: (url, body, options) => request('POST', url, body, options),
     put: (url, body, options) => request('PUT', url, body, options),
+    putBytes: (url, body, options) => request('PUT', url, body, { ...options, rawBytes: true }),
     delete: (url, options) => request('DELETE', url, null, options)
 };
 

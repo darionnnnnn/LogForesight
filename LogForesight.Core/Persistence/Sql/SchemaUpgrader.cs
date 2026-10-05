@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -326,6 +326,95 @@ internal static class SchemaUpgrader
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_ip_excludes",
             isSqlite ? SqliteCreatePrtgIpExcludes : SqlServerCreatePrtgIpExcludes);
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", isSqlite ? """
+            CREATE TABLE lf_prtg_transfer_sessions (
+                transfer_id TEXT NOT NULL PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                scope_hash TEXT NOT NULL,
+                source_identity_hash TEXT NOT NULL,
+                declared_bytes INTEGER NOT NULL CHECK(declared_bytes > 0),
+                chunk_count INTEGER NOT NULL CHECK(chunk_count > 0),
+                package_sha256 TEXT NOT NULL,
+                received_bytes INTEGER NOT NULL DEFAULT 0 CHECK(received_bytes >= 0 AND received_bytes <= declared_bytes),
+                received_chunks INTEGER NOT NULL DEFAULT 0 CHECK(received_chunks >= 0 AND received_chunks <= chunk_count),
+                state TEXT NOT NULL DEFAULT 'receiving' CHECK(state IN ('receiving','validating','validation-failed','complete','abandoned')),
+                version INTEGER NOT NULL DEFAULT 1,
+                active_write_id TEXT NULL,
+                active_write_bytes INTEGER NOT NULL DEFAULT 0 CHECK(active_write_bytes >= 0 AND active_write_bytes <= 16777216),
+                active_write_until_utc INTEGER NULL,
+                lease_owner TEXT NULL,
+                lease_until_utc INTEGER NULL,
+                result_manifest_json TEXT NULL CHECK(result_manifest_json IS NULL OR length(CAST(result_manifest_json AS BLOB)) <= 65536),
+                failure_code TEXT NULL,
+                created_at_utc INTEGER NOT NULL,
+                updated_at_utc INTEGER NOT NULL,
+                completed_at_utc INTEGER NULL,
+                abandoned_at_utc INTEGER NULL,
+                cleanup_after_ordinal INTEGER NOT NULL DEFAULT -1,
+                CHECK(declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count)
+            )
+            """ : """
+            CREATE TABLE lf_prtg_transfer_sessions (
+                transfer_id uniqueidentifier NOT NULL,
+                owner_id nvarchar(128) NOT NULL,
+                scope_hash varchar(64) NOT NULL,
+                source_identity_hash varchar(64) NOT NULL,
+                declared_bytes bigint NOT NULL,
+                chunk_count int NOT NULL,
+                package_sha256 varchar(64) NOT NULL,
+                received_bytes bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_received_bytes DEFAULT 0,
+                received_chunks int NOT NULL CONSTRAINT DF_lf_prtg_transfer_received_chunks DEFAULT 0,
+                state nvarchar(24) NOT NULL CONSTRAINT DF_lf_prtg_transfer_state DEFAULT N'receiving',
+                version bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_version DEFAULT 1,
+                active_write_id uniqueidentifier NULL,
+                active_write_bytes bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_active_bytes DEFAULT 0,
+                active_write_until_utc bigint NULL,
+                lease_owner nvarchar(128) NULL,
+                lease_until_utc bigint NULL,
+                result_manifest_json nvarchar(max) NULL,
+                failure_code nvarchar(64) NULL,
+                created_at_utc bigint NOT NULL,
+                updated_at_utc bigint NOT NULL,
+                completed_at_utc bigint NULL,
+                abandoned_at_utc bigint NULL,
+                cleanup_after_ordinal int NOT NULL CONSTRAINT DF_lf_prtg_transfer_cleanup_ordinal DEFAULT -1,
+                CONSTRAINT PK_lf_prtg_transfer_sessions PRIMARY KEY (transfer_id),
+                CONSTRAINT CK_lf_prtg_transfer_sessions_size CHECK(declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count),
+                CONSTRAINT CK_lf_prtg_transfer_sessions_buffer CHECK(active_write_bytes >= 0 AND active_write_bytes <= 16777216),
+                CONSTRAINT CK_lf_prtg_transfer_sessions_state CHECK(state IN (N'receiving',N'validating',N'validation-failed',N'complete',N'abandoned')),
+                CONSTRAINT CK_lf_prtg_transfer_sessions_manifest CHECK(result_manifest_json IS NULL OR DATALENGTH(result_manifest_json) <= 131072)
+            )
+            """);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", "IX_lf_prtg_transfer_state_id", "state, transfer_id");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", "IX_lf_prtg_transfer_write", "state, active_write_until_utc");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", "IX_lf_prtg_transfer_cleanup", "state, updated_at_utc, transfer_id");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_transfer_chunks", isSqlite ? """
+            CREATE TABLE lf_prtg_transfer_chunks (
+                transfer_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                payload BLOB NOT NULL,
+                byte_length INTEGER NOT NULL CHECK(byte_length > 0 AND byte_length <= 4194304),
+                sha256 TEXT NOT NULL,
+                accepted_at_utc INTEGER NOT NULL,
+                CONSTRAINT PK_lf_prtg_transfer_chunks PRIMARY KEY (transfer_id, ordinal),
+                CONSTRAINT FK_lf_prtg_transfer_chunks_sessions FOREIGN KEY (transfer_id) REFERENCES lf_prtg_transfer_sessions(transfer_id) ON DELETE RESTRICT,
+                CHECK(length(payload) = byte_length)
+            )
+            """ : """
+            CREATE TABLE lf_prtg_transfer_chunks (
+                transfer_id uniqueidentifier NOT NULL,
+                ordinal int NOT NULL,
+                payload varbinary(max) NOT NULL,
+                byte_length int NOT NULL,
+                sha256 varchar(64) NOT NULL,
+                accepted_at_utc bigint NOT NULL,
+                CONSTRAINT PK_lf_prtg_transfer_chunks PRIMARY KEY (transfer_id, ordinal),
+                CONSTRAINT FK_lf_prtg_transfer_chunks_sessions FOREIGN KEY (transfer_id) REFERENCES lf_prtg_transfer_sessions(transfer_id),
+                CONSTRAINT CK_lf_prtg_transfer_chunks_payload CHECK(ordinal >= 0 AND byte_length > 0 AND byte_length <= 4194304 AND DATALENGTH(payload) = byte_length)
+            )
+            """);
 
         // 交辦單（↔ WorkOrderRow／WorkOrderEventRow）與案件的成員欄。
         // 既有案件的 source_* 與 work_order_id 由 WorkOrderBackfiller 在背景補，不在啟動路徑上跑

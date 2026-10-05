@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Core.Service;
@@ -493,10 +494,12 @@ public sealed class PrtgFetchService
     /// 寫入列的 SyncedAt 是呼叫當下，晚於任何已在進行中的結構同步起點，不會被那趟的「未刷新即刪除」清掉。
     /// </summary>
     public async Task<PrtgSensorBackfillResult> BackfillSensorsForDevicesAsync(
-        IReadOnlyList<long> deviceObjids, int concurrency, CancellationToken ct)
+        IReadOnlyList<long> deviceObjids, int concurrency, CancellationToken ct, bool requireCompleteDevice = false,
+        IReadOnlyDictionary<long, PrtgRecentStateChangeQueueItem>? recentStateQueueItems = null)
     {
         var (written, _, failedDevices, emptyDevices) = await FetchSensorsForDevicesAsync(
-            deviceObjids, concurrency, DateTime.Now, ct, progress: null);
+            deviceObjids, concurrency, DateTime.Now, ct, progress: null, requireCompleteDevice: requireCompleteDevice,
+            recentStateQueueItems: recentStateQueueItems);
         _store.ApplyAutoCategories(_categoryOverrides);
         return new PrtgSensorBackfillResult(written, failedDevices, emptyDevices);
     }
@@ -552,13 +555,14 @@ public sealed class PrtgFetchService
     /// <returns>寫入數、感測器名單（objid、是否暫停）、失敗的裝置 objid 清單、查詢成功但取回 0 顆的裝置 objid 清單</returns>
     private async Task<(int Written, List<(long Objid, bool Paused)> Targets, List<long> FailedDevices, List<long> EmptyDevices)> FetchSensorsForDevicesAsync(
         IReadOnlyList<long> deviceObjids, int concurrency, DateTime syncedAt, CancellationToken ct,
-        Action<string, int, int>? progress)
+        Action<string, int, int>? progress, bool requireCompleteDevice = false,
+        IReadOnlyDictionary<long, PrtgRecentStateChangeQueueItem>? recentStateQueueItems = null)
     {
         var totalDevices = deviceObjids.Count;
         progress?.Invoke(PrtgSyncSensorsPhase, 0, totalDevices);
 
         var filter = deviceObjids.ToHashSet();
-        var maxConcurrency = Math.Max(concurrency, 1);
+        var maxConcurrency = requireCompleteDevice ? Math.Clamp(concurrency, 1, 4) : Math.Max(concurrency, 1);
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         // targets／failed／寫入在併發下共用同一把鎖（寫入本身也序列化，避免同一個 store 被並行 upsert）
         var sync = new object();
@@ -576,10 +580,27 @@ public sealed class PrtgFetchService
                 ct.ThrowIfCancellationRequested();
                 // 本台取回（通過範圍過濾）的列數：查詢成功且為 0 才算「PRTG 端確實沒有感測器」
                 var deviceRows = 0;
+                var staged = requireCompleteDevice ? new List<PrtgSensorRow>() : null;
+                long stagedTextBytes = 0;
+                var deviceFilter = requireCompleteDevice ? new HashSet<long> { deviceObjid } : filter;
                 // 逐台不帶 phase／stageLabel：逐台印分頁進度會洗版，進度改由本方法以「台」回報
-                var paged = await FetchSensorPagesAsync($"id={deviceObjid}", filter, syncedAt,
+                var paged = await FetchSensorPagesAsync($"id={deviceObjid}", deviceFilter, syncedAt,
                     batch =>
                     {
+                        if (staged is not null)
+                        {
+                            // 補抓完整前不寫鏡像；取消後仍能由「尚無 sensor」辨識並重試。
+                            if (staged.Count + batch.Count > 15_000)
+                                throw new InvalidOperationException("單一裝置補抓超過 15,000 個 sensor，已拒絕提交不完整鏡像。");
+                            foreach (var row in batch)
+                                stagedTextBytes += 2L * (row.Name.Length + (row.SensorType?.Length ?? 0) +
+                                    (row.Tags?.Length ?? 0) + (row.Unit?.Length ?? 0) + (row.Status?.Length ?? 0));
+                            if (stagedTextBytes > 8L * 1024 * 1024)
+                                throw new InvalidOperationException("單一裝置補抓文字超過 8 MiB，已拒絕提交不完整鏡像。");
+                            staged.AddRange(batch);
+                            deviceRows += batch.Count;
+                            return;
+                        }
                         lock (sync)
                         {
                             deviceRows += batch.Count;
@@ -587,7 +608,7 @@ public sealed class PrtgFetchService
                             targets.AddRange(batch.Select(r => (r.Objid, r.Paused)));
                         }
                     },
-                    ct, stageLabel: null);
+                    ct, stageLabel: null, strictScope: requireCompleteDevice);
                 if (paged.Error != null)
                 {
                     lock (sync) failed.Add(deviceObjid);
@@ -595,6 +616,18 @@ public sealed class PrtgFetchService
                 else if (deviceRows == 0)
                 {
                     lock (sync) empty.Add(deviceObjid);
+                }
+                else if (staged is not null)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    lock (sync)
+                    {
+                        if (recentStateQueueItems != null && recentStateQueueItems.TryGetValue(deviceObjid, out var queueItem))
+                            totalWritten += _store.UpsertSensorsAndEnqueueRecentStateChanges(staged, syncedAt, queueItem);
+                        else
+                            totalWritten += _store.UpsertSensors(staged, syncedAt, requireAtomic: true);
+                        targets.AddRange(staged.Select(r => (r.Objid, r.Paused)));
+                    }
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -645,12 +678,17 @@ public sealed class PrtgFetchService
     /// </summary>
     private Task<PagedStageResult> FetchSensorPagesAsync(
         string? extraQuery, IReadOnlySet<long> scopeDevices, DateTime syncedAt,
-        Action<IReadOnlyList<PrtgSensorRow>> onBatch, CancellationToken ct, string? stageLabel)
+        Action<IReadOnlyList<PrtgSensorRow>> onBatch, CancellationToken ct, string? stageLabel, bool strictScope = false)
         => RunPagedStageAsync(() => FetchTablePagedAsync<PrtgSensorRow>(
             content: "sensors",
             columns: "objid,parentid,sensor,type,tags,unit,status,paused,dependency",
             extraQuery: extraQuery,
-            mapper: el => MapSensorRow(el, scopeDevices, syncedAt),
+            mapper: el =>
+            {
+                if (strictScope && !scopeDevices.Contains(GetLongProperty(el, "parentid") ?? 0))
+                    throw new InvalidOperationException("感測器補抓回應包含要求裝置之外的資料，拒絕提交或標記為空。");
+                return MapSensorRow(el, scopeDevices, syncedAt);
+            },
             onBatch: onBatch,
             ct: ct,
             phase: null,

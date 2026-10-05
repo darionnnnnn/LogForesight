@@ -27,41 +27,40 @@ public static class PrtgCoveredStateTimeline
         if (sensorObjid <= 0 || string.IsNullOrWhiteSpace(sourceGeneration) ||
             string.IsNullOrWhiteSpace(resourceGeneration)) return [];
 
-        var spans = coverage
+        var rawSpans = coverage
             .Where(c => c.SensorObjid == sensorObjid && c.SourceGeneration == sourceGeneration &&
-                        c.ResourceGeneration == resourceGeneration && c.Through > c.From &&
-                        c.Through > from && c.From < through)
-            .Select(c => (c.From, Through: c.Through < through ? c.Through : through))
+                        c.ResourceGeneration == resourceGeneration && c.Through > c.From)
             .OrderBy(c => c.From).ThenBy(c => c.Through).ToList();
-        if (spans.Count == 0) return [];
+        if (rawSpans.Count == 0) return [];
 
         var contiguous = new List<(DateTimeOffset From, DateTimeOffset Through)>();
-        foreach (var span in spans)
+        foreach (var span in rawSpans)
         {
             if (contiguous.Count == 0 || span.From > contiguous[^1].Through)
-                contiguous.Add(span);
+                contiguous.Add((span.From, span.Through));
             else if (span.Through > contiguous[^1].Through)
                 contiguous[^1] = (contiguous[^1].From, span.Through);
         }
 
-        var events = changes
-            .Where(c => c.SensorObjid == sensorObjid && c.SourceGeneration == sourceGeneration &&
-                        c.ResourceGeneration == resourceGeneration && c.At < through)
-            .GroupBy(c => c.At).OrderBy(g => g.Key)
-            .Select(g => new { At = g.Key, Status = g.Select(c => c.Status.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
-                ? g.First().Status.Trim() : null })
-            .ToList();
+        var activeChains = contiguous.Where(c => c.Through > from && c.From < through).ToList();
+        if (activeChains.Count == 0) return [];
+
         var periods = new List<PrtgCoveredStatePeriod>();
-        foreach (var span in contiguous)
+        foreach (var chain in activeChains)
         {
-            // 只認同一段可信涵蓋內發生的前導轉換；較早事件即使仍顯示 Down，
-            // 中間沒有完整查詢證明時也不能延續到這段。
-            var leading = events.LastOrDefault(e => e.At >= span.From && e.At <= from);
-            var inSpan = events.Where(e => e.At >= span.From && e.At < span.Through).ToList();
-            string? status = leading?.Status;
-            var entered = leading?.At ?? span.From;
-            var cursor = span.From;
-            foreach (var change in inSpan)
+            var spanEnd = chain.Through < through ? chain.Through : through;
+            var events = changes
+                .Where(c => c.SensorObjid == sensorObjid && c.SourceGeneration == sourceGeneration &&
+                            c.ResourceGeneration == resourceGeneration && c.At >= chain.From && c.At < spanEnd)
+                .GroupBy(c => c.At).OrderBy(g => g.Key)
+                .Select(g => new { At = g.Key, Status = g.Select(c => c.Status.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
+                    ? g.First().Status.Trim() : null })
+                .ToList();
+
+            string? status = null;
+            DateTimeOffset entered = chain.From;
+            DateTimeOffset cursor = chain.From;
+            foreach (var change in events)
             {
                 if (change.At > cursor && status != null)
                     periods.Add(new PrtgCoveredStatePeriod(cursor, change.At, status, entered));
@@ -72,9 +71,10 @@ public static class PrtgCoveredStateTimeline
                 status = change.Status;
                 if (!sameFault) entered = change.At;
             }
-            if (cursor < span.Through && status != null)
-                periods.Add(new PrtgCoveredStatePeriod(cursor, span.Through, status, entered));
+            if (cursor < spanEnd && status != null)
+                periods.Add(new PrtgCoveredStatePeriod(cursor, spanEnd, status, entered));
         }
+
         return periods.Where(p => p.Through > from && p.From < through)
             .Select(p => p with { From = p.From < from ? from : p.From,
                                   Through = p.Through > through ? through : p.Through })

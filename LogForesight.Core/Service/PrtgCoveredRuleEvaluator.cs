@@ -25,22 +25,29 @@ public static class PrtgCoveredRuleEvaluator
             KnownIssueRule? Rule(string code) => rules.Where(r => r.PrtgRuleCode == code &&
                 PrtgFormalEligibility.RuleCategoryMatches(r, sensor.Category))
                 .OrderByDescending(r => r.PrtgSensorCategory != null).ThenBy(r => r.Id, StringComparer.Ordinal).FirstOrDefault();
-            void Add(string code, int magnitude, DateTimeOffset entered, bool ack = false)
+            void Add(string code, int magnitude, DateTimeOffset entered, bool ack = false, int? continuousMinutes = null)
             {
                 var rule = Rule(code);
-                if (rule == null || magnitude < rule.PrtgThreshold) return;
+                if (rule == null) return;
+                var thresholdValue = continuousMinutes ?? magnitude;
+                if (thresholdValue < rule.PrtgThreshold) return;
+                var durationText = code == "down" && continuousMinutes.HasValue
+                    ? $"本日 {magnitude} 分鐘、連續可信 {continuousMinutes.Value} 分鐘"
+                    : $"區間 {magnitude} {(code == "flapping" ? "次" : "分鐘")}";
                 findings.Add(new(sensor.DeviceObjid, sensor.Objid, code,
-                    $"sensor {sensor.Objid}：可信 {code} 區間 {magnitude} {(code == "flapping" ? "次" : "分鐘")}；起點 {entered:yyyy-MM-dd HH:mm:ss zzz}，來源與資源世代已確認。" +
-                        (code == "down" ? " 當日故障區間：" + string.Join("；", periods.Where(p => PrtgSensorStatuses.IsDown(p.Status)).Select(p => $"{p.EnteredAt:yyyy-MM-dd HH:mm:ss zzz} 至 {p.Through:yyyy-MM-dd HH:mm:ss zzz}")) : ""),
+                    $"sensor {sensor.Objid}：可信 {code} {durationText}；起點 {entered:yyyy-MM-dd HH:mm:ss zzz}，來源與資源世代已確認。" +
+                        (code == "down" ? " 當日故障區間：" + string.Join("；", periods.Where(p => PrtgSensorStatuses.IsDown(p.Status)).Select(p => $"{p.From:yyyy-MM-dd HH:mm:ss zzz} 至 {p.Through:yyyy-MM-dd HH:mm:ss zzz}")) : ""),
                     magnitude, rule, ack)
                 { SensorCategory = sensor.Category, SourceGeneration = proof.SourceGeneration,
-                    ResourceGeneration = proof.ResourceGeneration, IncidentStartedAt = entered });
+                    ResourceGeneration = proof.ResourceGeneration, IncidentStartedAt = entered,
+                    ThresholdMagnitude = thresholdValue });
             }
+            var downRule = Rule("down");
             var down = periods.Where(p => PrtgSensorStatuses.IsDown(p.Status))
-                .Where(p => (p.Through - p.From).TotalMinutes >= (Rule("down")?.PrtgThreshold ?? int.MaxValue))
+                .Where(p => (p.Through - p.EnteredAt).TotalMinutes >= (downRule?.PrtgThreshold ?? int.MaxValue))
                 .OrderByDescending(p => p.EnteredAt).FirstOrDefault();
             if (down != null) Add("down", (int)(down.Through - down.From).TotalMinutes, down.EnteredAt,
-                PrtgSensorStatuses.IsAcknowledged(down.Status));
+                PrtgSensorStatuses.IsAcknowledged(down.Status), (int)(down.Through - down.EnteredAt).TotalMinutes);
             var warning = periods.Where(p => PrtgSensorStatuses.IsWarning(p.Status)).ToArray();
             if (warning.Length > 0) Add("warning", (int)warning.Sum(p => (p.Through - p.From).TotalMinutes), warning[^1].EnteredAt);
             var flaps = 0;

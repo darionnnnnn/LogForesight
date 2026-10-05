@@ -81,4 +81,129 @@ public sealed class PrtgCoveredRuleEvaluatorTests
             new(10, Start.AddHours(1), Start.AddDays(1), proof.SourceGeneration, proof.ResourceGeneration)];
         Assert.Empty(Evaluate(proof));
     }
+
+    [Fact]
+    public void 跨日連續Down_首日未達門檻不命中_翌日達門檻命中且Magnitude為當日重疊分鐘()
+    {
+        var proof = Proof((Start.AddMinutes(-15), "Down"), (Start.AddMinutes(20), "Up"));
+        // 首日 15 分鐘不命中（門檻 30 分鐘）
+        Assert.Empty(Evaluate(proof, Day.AddDays(-1)));
+
+        // 翌日連續 35 分鐘命中（門檻 30 分鐘）
+        var day2 = Evaluate(proof, Day);
+        var finding = Assert.Single(day2);
+        Assert.Equal(20, finding.Magnitude);
+        Assert.Equal(35, (int?)typeof(PrtgFinding).GetProperty("ThresholdMagnitude")?.GetValue(finding));
+        Assert.Equal(Start.AddMinutes(-15), finding.IncidentStartedAt);
+        Assert.Contains("本日 20 分鐘", finding.Detail);
+        Assert.Contains("連續可信 35 分鐘", finding.Detail);
+        Assert.Contains($"當日故障區間：{Start:yyyy-MM-dd HH:mm:ss zzz}", finding.Detail);
+
+        // 不得看到翌日恢復就回填首日
+        Assert.Empty(Evaluate(proof, Day.AddDays(-1)));
+
+        // consumer 映射驗證：Count 為 1（非分鐘），保留規則嚴重度與事故起點。
+        var sig = PrtgFindingMapper.ToSignature(finding, Day);
+        Assert.Equal(1, sig.Count);
+        Assert.Equal(IssueSeverity.High, sig.Severity);
+        Assert.Equal(Start.AddMinutes(-15), sig.PrtgIncidentStartedAt);
+        Assert.StartsWith("prtg:down:10:", sig.EventKey);
+        Assert.DoesNotContain("|", sig.EventKey);
+    }
+
+    [Fact]
+    public void 連續Down門檻剛好30分命中_29分59秒不命中_全episode35但本日1分仍命中()
+    {
+        // 剛好 30 分鐘：23:45 至 00:15
+        var hit30 = Proof((Start.AddMinutes(-15), "Down"), (Start.AddMinutes(15), "Up"));
+        var f30 = Assert.Single(Evaluate(hit30, Day));
+        Assert.Equal(15, f30.Magnitude);
+        Assert.Contains("連續可信 30 分鐘", f30.Detail);
+
+        // 29 分 59 秒：23:45:00 至 00:14:59
+        var miss2959 = Proof((Start.AddMinutes(-15), "Down"), (Start.AddMinutes(15).AddSeconds(-1), "Up"));
+        Assert.Empty(Evaluate(miss2959, Day));
+
+        // 全 episode 35 分但本日 1 分鐘：23:26 至 00:01
+        var hit1m = Proof((Start.AddMinutes(-34), "Down"), (Start.AddMinutes(1), "Up"));
+        var f1m = Assert.Single(Evaluate(hit1m, Day));
+        Assert.Equal(1, f1m.Magnitude);
+        Assert.Equal(35, (int?)typeof(PrtgFinding).GetProperty("ThresholdMagnitude")?.GetValue(f1m));
+        Assert.Contains("本日 1 分鐘", f1m.Detail);
+        Assert.Contains("連續可信 35 分鐘", f1m.Detail);
+        Assert.Equal(Start.AddMinutes(-34), f1m.IncidentStartedAt);
+    }
+
+    [Fact]
+    public void 同狀態檢查點與ACK跨日延續_序列化重載後結果一致()
+    {
+        var proof = Proof(
+            (Start.AddMinutes(-15), "Down"),
+            (Start.AddMinutes(5), "Down"),
+            (Start.AddMinutes(10), "Down (Acknowledged)"),
+            (Start.AddMinutes(20), "Up"));
+
+        var raw = System.Text.Json.JsonSerializer.Serialize(proof);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(raw)!;
+
+        var finding = Assert.Single(Evaluate(restored, Day));
+        Assert.Equal(20, finding.Magnitude);
+        Assert.Equal(Start.AddMinutes(-15), finding.IncidentStartedAt);
+        Assert.True(finding.Acknowledged);
+        Assert.Contains("本日 20 分鐘", finding.Detail);
+        Assert.Contains("連續可信 35 分鐘", finding.Detail);
+    }
+
+    [Fact]
+    public void Warning與Flapping仍只使用本日累積_不套用Down連續門檻()
+    {
+        var warningProof = Proof((Start.AddMinutes(-15), "Warning"), (Start.AddMinutes(20), "Up"));
+        var rule = new KnownIssueRule { Id = "warning", PrtgRuleCode = "warning", PrtgThreshold = 30 };
+        PrtgEvaluationResult Run(PrtgSensorTimelineEvidence proof) => PrtgCoveredRuleEvaluator.Evaluate(Day,
+            [new(10, 100, "Up", "Ping", "availability")],
+            new Dictionary<long, PrtgSensorTimelineEvidence> { [10] = proof }, [rule]);
+        Assert.Empty(Run(warningProof));
+        rule = new KnownIssueRule { Id = "warning", PrtgRuleCode = "warning", PrtgThreshold = 20 };
+        Assert.Equal(20, Assert.Single(Run(warningProof)).Magnitude);
+
+        var flapProof = Proof((Start.AddHours(-2), "Down"), (Start.AddHours(-1), "Up"),
+            (Start.AddHours(1), "Down"), (Start.AddHours(2), "Up"));
+        rule = new KnownIssueRule { Id = "flapping", PrtgRuleCode = "flapping", PrtgThreshold = 2 };
+        Assert.Empty(Run(flapProof));
+        rule = new KnownIssueRule { Id = "flapping", PrtgRuleCode = "flapping", PrtgThreshold = 1 };
+        Assert.Equal(1, Assert.Single(Run(flapProof)).Magnitude);
+    }
+
+    [Fact]
+    public void 覆蓋缺口一tick不能跨日累算_變更世代亦不可跨()
+    {
+        // 缺口 1 tick
+        var proofWithGap = new PrtgSensorTimelineEvidence();
+        proofWithGap.Bind(10, 1, "core", "sensor", Start.AddDays(-1));
+        proofWithGap.Coverage =
+        [
+            new(10, Start.AddDays(-1), Start.AddTicks(-1), proofWithGap.SourceGeneration, proofWithGap.ResourceGeneration),
+            new(10, Start, Start.AddDays(1), proofWithGap.SourceGeneration, proofWithGap.ResourceGeneration)
+        ];
+        proofWithGap.States =
+        [
+            new(10, Start.AddMinutes(-15), "Down", proofWithGap.SourceGeneration, proofWithGap.ResourceGeneration),
+            new(10, Start.AddMinutes(20), "Up", proofWithGap.SourceGeneration, proofWithGap.ResourceGeneration)
+        ];
+        Assert.Empty(Evaluate(proofWithGap, Day));
+
+        // 先證明同世代資料會命中，再隔離前一段，避免空證據也能通過反例。
+        var proofGenChange = Proof((Start.AddMinutes(-15), "Down"), (Start.AddMinutes(20), "Up"));
+        proofGenChange.Coverage =
+        [
+            new(10, Start.AddDays(-1), Start, proofGenChange.SourceGeneration, proofGenChange.ResourceGeneration),
+            new(10, Start, Start.AddDays(1), proofGenChange.SourceGeneration, proofGenChange.ResourceGeneration)
+        ];
+        Assert.Single(Evaluate(proofGenChange, Day));
+        var prior = proofGenChange.Coverage[0];
+        proofGenChange.Coverage[0] = prior with { ResourceGeneration = "other-resource" };
+        Assert.Empty(Evaluate(proofGenChange, Day));
+        proofGenChange.Coverage[0] = prior with { SourceGeneration = "other-source" };
+        Assert.Empty(Evaluate(proofGenChange, Day));
+    }
 }

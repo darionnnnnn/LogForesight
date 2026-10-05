@@ -56,7 +56,7 @@ public class RuleAdminServiceTests
 
     private RuleAdminService Create() =>
         new(_rules, _seeds, _suppressions, _users, FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _hostGroups,
-            _hosts, _issueAggregateQuery);
+            _hosts, _issueAggregateQuery, visibility: new FixedVisibilityService(_hosts.GetAll().Select(h => h.HostId)));
 
     private static SaveRuleRequest ValidRequest(string id = "custom-test") => new()
     {
@@ -175,6 +175,7 @@ public class RuleAdminServiceTests
     [Fact]
     public void 草稿預覽沒有評估服務時失敗且不寫規則或稽核()
     {
+        _hosts.Upsert(new WebHost { HostName = "preview-scope", Active = true });
         var before = _rules.Content.Rules.Select(r => r.Id).ToArray();
         var request = new DiskTrendRulePreviewRequest
         {
@@ -199,12 +200,14 @@ public class RuleAdminServiceTests
         seedStore.Sync(initialRules, KnownIssueSeed.Version);
         var audit = new RecordingAuditService();
         var settings = new FakeSystemSettingsStore();
-        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), new FakeHostStore(), settings,
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostId = 1, HostName = "preview-host", Active = true });
+        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
             new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
             new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey)));
         var service = new RuleAdminService(ruleStore, seedStore, new FakeSuppressionStore(), new FakeUserStore(),
-            FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(), new FakeHostStore(),
-            new FakeIssueAggregateQuery(), assessment, settings);
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(), hosts,
+            new FakeIssueAggregateQuery(), assessment, settings, new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
         var request = new DiskTrendRulePreviewRequest
         {
             FromDate = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)),
@@ -277,7 +280,8 @@ public class RuleAdminServiceTests
         var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings, evidence, verifications);
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
-            hosts, new FakeIssueAggregateQuery(), assessment, settings);
+            hosts, new FakeIssueAggregateQuery(), assessment, settings,
+            new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
         var request = new DiskTrendRulePreviewRequest
         {
             FromDate = previewDay, ThroughDate = previewDay,
@@ -339,7 +343,8 @@ public class RuleAdminServiceTests
             new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
         var service = new RuleAdminService(ruleStore, seeds, new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
-            hosts, new FakeIssueAggregateQuery(), assessment, settings);
+            hosts, new FakeIssueAggregateQuery(), assessment, settings,
+            new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
         var request = new DiskTrendRulePreviewRequest
         {
             FromDate = DateOnly.FromDateTime(today.AddDays(-36)), ThroughDate = DateOnly.FromDateTime(today.AddDays(-1)),
@@ -388,7 +393,8 @@ public class RuleAdminServiceTests
             new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
-            hosts, new FakeIssueAggregateQuery(), assessment, settings);
+            hosts, new FakeIssueAggregateQuery(), assessment, settings,
+            new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
         var request = new DiskTrendRulePreviewRequest
         {
             FromDate = today.AddDays(-36), ThroughDate = today.AddDays(-1), Limit = 1,

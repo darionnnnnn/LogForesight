@@ -1,5 +1,6 @@
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Services;
 
@@ -37,6 +38,9 @@ public interface IVisibilityService
     /// 回饋十八輪批次F 新增問題負責人）。
     /// </summary>
     IReadOnlySet<long> GetVisibleHostIds();
+
+    /// <summary>Resolve general visibility against a caller-captured host snapshot.</summary>
+    IReadOnlySet<long> GetVisibleHostIds(PrtgHostSnapshot snapshot) => GetVisibleHostIds();
 
     /// <summary>
     /// 指定使用者**因負責人身分**而可見的主機 ID（docs/archive/FEEDBACK-11-PLAN.md §2b／§3）。
@@ -115,6 +119,7 @@ public class VisibilityService : IVisibilityService
     // 每請求快取：一次請求內可能被多個 Service 呼叫（查詢＋計數＋明細），
     // Scoped 生命週期下重複解析同一份資料是白費工
     private IReadOnlySet<long>? _cached;
+    private PrtgHostSnapshot? _hostSnapshot;
     private IReadOnlyList<string>? _cachedGrantHostNames;
     private readonly Dictionary<long, bool> _cachedIsCaseGrantOnly = new();
     private readonly Dictionary<long, IReadOnlySet<string>> _cachedIssueKeyRestrictions = new();
@@ -148,12 +153,12 @@ public class VisibilityService : IVisibilityService
     /// 只有這一條走快取——其餘三條是記憶體集合運算，成本低、沒必要為它們擴大授權快取的面積。
     /// 回傳的集合已是副本（快取層回副本、resolver 本來就每次新建），呼叫端可安全 UnionWith。
     /// </summary>
-    private IReadOnlySet<long> ResolveIssueOwnedHostIds(long userId, int retentionDays)
+    private IReadOnlySet<long> ResolveIssueOwnedHostIds(long userId, int retentionDays, bool allowCrossRequestCache)
     {
         IReadOnlySet<long> Compute() => HostVisibilityResolver.GetIssueOwnedHostIds(
-            _hosts, _issueOwners!, _users, _issueAggregates!, userId, retentionDays);
+            _hostSnapshot!, _issueOwners!, _users, _issueAggregates!, userId, retentionDays);
 
-        return _issueOwnedCache == null
+        return !allowCrossRequestCache || _issueOwnedCache == null
             ? Compute()
             : _issueOwnedCache.GetOrAdd(userId, retentionDays, Compute);
     }
@@ -162,11 +167,34 @@ public class VisibilityService : IVisibilityService
     {
         if (_cached != null) return _cached;
 
+        return ComputeVisibleHostIds(_hostSnapshot ??= _hosts.CapturePrtgSnapshot(), allowCrossRequestCache: true);
+    }
+
+    /// <summary>
+    /// Resolve against a snapshot captured by the caller. This deliberately recomputes rather than
+    /// reusing a previously cached set, so IDs, names, and case-only checks can share one source version.
+    /// </summary>
+    public IReadOnlySet<long> GetVisibleHostIds(PrtgHostSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!ReferenceEquals(_hostSnapshot, snapshot))
+        {
+            _cachedIsCaseGrantOnly.Clear();
+            _cachedIssueKeyRestrictions.Clear();
+        }
+        _hostSnapshot = snapshot;
+        _cached = null;
+        return ComputeVisibleHostIds(snapshot, allowCrossRequestCache: false);
+    }
+
+    private IReadOnlySet<long> ComputeVisibleHostIds(PrtgHostSnapshot snapshot, bool allowCrossRequestCache)
+    {
+
         // 停用主機（管理員手動停用，或 Sentinel 移除觸發的系統停用）從可見範圍整批排除——
         // 資料只留在資料庫，歷史/儀表板/報表都不再計入，重新啟用即全部復原。
         // 墓碑列（合併來源，同樣 Active=false）不受影響：它們的歷史經由存活主機的別名展開
         // 可見（RecordRepository.VisibleHostKeys），不需要自己也在這個集合裡。
-        var allHosts = _hosts.GetAll().Where(h => h.Active).ToList();
+        var allHosts = snapshot.Hosts.Where(h => h.Active).ToList();
 
         // ViewAll（dev / manager / admin）：全部啟用中的主機
         if (_currentUser.Has(Capability.ViewAll))
@@ -214,9 +242,11 @@ public class VisibilityService : IVisibilityService
         if (_issueOwners != null && _issueAggregates != null)
         {
             var retentionDays = _settings.Get().RetentionDays;
-            visible.UnionWith(ResolveIssueOwnedHostIds(user.UserId, retentionDays));
+            visible.UnionWith(ResolveIssueOwnedHostIds(user.UserId, retentionDays, allowCrossRequestCache));
         }
 
+        // Keep even a cross-request issue-owner cache hit inside this capture's active inventory.
+        visible.IntersectWith(allHosts.Select(host => host.HostId));
         _cached = visible;
         return _cached;
     }
@@ -227,21 +257,22 @@ public class VisibilityService : IVisibilityService
     // 單點化避免兩邊各自維護一份而漂移。
 
     public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) =>
-        HostVisibilityResolver.GetOwnedHostIds(_hosts, _users, userId);
+        HostVisibilityResolver.GetOwnedHostIds(_hostSnapshot ??= _hosts.CapturePrtgSnapshot(), _users, userId);
 
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) =>
-        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, userId,
+        HostVisibilityResolver.GetVisibleHostIds(_hostSnapshot ??= _hosts.CapturePrtgSnapshot(), _users, _userGroups, _access, userId,
             _issueOwners, _issueAggregates, _settings.Get().RetentionDays);
 
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) =>
-        HostVisibilityResolver.GetGroupVisibleHostIds(_hosts, _users, _userGroups, _access, userId);
+        HostVisibilityResolver.GetGroupVisibleHostIds(_hostSnapshot ??= _hosts.CapturePrtgSnapshot(), _users, _userGroups, _access, userId);
 
     public List<WebHost> GetVisibleHosts()
     {
         var visible = GetVisibleHostIds();
-        return _hosts.GetAll()
+        return _hostSnapshot!.Hosts
             .Where(h => visible.Contains(h.HostId))
             .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => h.ToWebHost())
             .ToList();
     }
 
@@ -275,7 +306,7 @@ public class VisibilityService : IVisibilityService
             return false;
         }
 
-        var host = _hosts.Get(hostId);
+        var host = (_hostSnapshot ??= _hosts.CapturePrtgSnapshot()).Find(hostId);
         if (host == null)
         {
             _cachedIsCaseGrantOnly[hostId] = false;
@@ -296,7 +327,7 @@ public class VisibilityService : IVisibilityService
             return cached;
         }
 
-        var host = _hosts.Get(hostId);
+        var host = (_hostSnapshot ??= _hosts.CapturePrtgSnapshot()).Find(hostId);
         if (host == null)
         {
             var empty = new HashSet<string>(IssueSignatureKeyComparer.Instance);

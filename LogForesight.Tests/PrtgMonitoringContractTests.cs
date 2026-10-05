@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -6,6 +7,8 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -15,10 +18,24 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     private readonly StorageBackend _backend;
     private readonly HostStore _hosts;
     private readonly RecordingAuditService _audit = new();
+    private readonly IDataProtectionProvider _protection = new ServiceCollection().AddDataProtection()
+        .Services.BuildServiceProvider().GetRequiredService<IDataProtectionProvider>();
     private sealed class Visible(params long[] ids) : IVisibilityService
     {
+        private long[] _ids = ids;
+        public int SnapshotReadCount { get; private set; }
+        public int? RevokeAtSnapshotRead { get; set; }
+        public List<PrtgHostSnapshot> Snapshots { get; } = [];
         public bool CaseOnly { get; set; }
-        public IReadOnlySet<long> GetVisibleHostIds() => ids.ToHashSet();
+        public void SetVisibleHostIds(params long[] values) => _ids = values;
+        public IReadOnlySet<long> GetVisibleHostIds() => _ids.ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIds(PrtgHostSnapshot snapshot)
+        {
+            SnapshotReadCount++;
+            Snapshots.Add(snapshot);
+            if (RevokeAtSnapshotRead == SnapshotReadCount) _ids = [2];
+            return GetVisibleHostIds();
+        }
         public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
         public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
         public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
@@ -39,15 +56,44 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today,
             [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 1, HostName = "VISIBLE", MapStatus = PrtgMapStatus.Ok }]);
     }
-    private PrtgMonitoringController Controller(Visible? visible = null) => new(_backend, _hosts, visible ?? new(1, 2),
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, new DataVersionStamp());
+    private PrtgMonitoringController Controller(Visible? visible = null, ICurrentUser? currentUser = null) => new(_backend, _hosts, visible ?? new(1, 2),
+        currentUser ?? FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, new DataVersionStamp(), _protection);
+    private PrtgMonitoringController ControllerWithRealVisibility(ICurrentUser currentUser, IUserStore? userStore = null)
+    {
+        var visibility = new VisibilityService(currentUser, userStore ?? new FakeUserStore(), new FakeUserGroupStore(),
+            new FakeGroupAccessStore(), _hosts, new FakeIssueCaseStore(), new FakeSystemSettingsStore());
+        return new(_backend, _hosts, visibility, currentUser, _audit, new DataVersionStamp(), _protection);
+    }
     private static PrtgMonitoringRequest Request(string revision = "") => new()
     { Revision = revision, IdentityConfirmed = true, CoreSystemId = "fixture-core", SourceTimeZoneId = TimeZoneInfo.Local.Id,
         SourceCultureName = "en-US", HostIds = [1], SensorIds = [100] };
+
+    private static string DataString(IActionResult result, string name)
+    {
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        return document.RootElement.GetProperty("Data").GetProperty(name).GetString()!;
+    }
+
+    private static IActionResult Estimate(PrtgMonitoringController controller, PrtgMonitoringRequest request)
+    {
+        var get = controller.Get();
+        if (get is not OkObjectResult) return get;
+        request.CatalogueToken = DataString(get, "CatalogueToken");
+        var estimate = controller.Estimate(request);
+        if (estimate is OkObjectResult) request.EstimateToken = DataString(estimate, "EstimateToken");
+        return estimate;
+    }
+
+    private static IActionResult Save(PrtgMonitoringController controller, PrtgMonitoringRequest request)
+    {
+        var estimate = Estimate(controller, request);
+        return estimate is OkObjectResult ? controller.Put(request) : estimate;
+    }
     [Fact]
     public void 預設驗收分組隨資源語意修訂改變_日常探測時間不切段()
     {
-        Controller().Put(Request());
+        Save(Controller(), Request());
         var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
         var proof = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100));
         proof.Update(p => { p.HostId = 1; p.SensorId = 100; p.ResourceGeneration = "r1"; p.DiskSemanticFingerprint = "semantic1"; });
@@ -80,40 +126,41 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     [Fact]
     public void 樂觀版本防覆蓋_只改範圍保留來源_換時區重設暖機()
     {
-        Assert.IsType<OkObjectResult>(Controller().Put(Request()));
+        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
         var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var initial = store.Get();
         Assert.True(initial.Ready("https://fixture.example"));
-        Assert.IsType<ConflictObjectResult>(Controller().Put(Request()));
+        Assert.IsType<ConflictObjectResult>(Save(Controller(), Request()));
         Assert.Equal(initial.Revision, store.Get().Revision);
-        Assert.IsType<OkObjectResult>(Controller().Put(Request(initial.Revision)));
+        Assert.IsType<OkObjectResult>(Save(Controller(), Request(initial.Revision)));
         Assert.Equal(initial.SourceGeneration, store.Get().SourceGeneration);
         var next = Request(store.Get().Revision); next.SourceCultureName = "zh-TW"; next.SourceChangeMode = "new";
-        Assert.IsType<OkObjectResult>(Controller().Put(next));
+        Assert.IsType<OkObjectResult>(Save(Controller(), next));
         Assert.NotEqual(initial.SourceGeneration, store.Get().SourceGeneration);
     }
 
     [Fact]
     public void 同Core搬址必須明確選擇_延續要證據_新Core與未知不能冒稱延續()
     {
-        var controller = Controller(); Assert.IsType<OkObjectResult>(controller.Put(Request()));
+        var controller = Controller(); Assert.IsType<OkObjectResult>(Save(controller, Request()));
         var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var old = store.Get();
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgUrl = "https://moved.example");
         var request = Request(old.Revision);
+        Assert.IsType<OkObjectResult>(Estimate(controller, request));
         Assert.IsType<OkObjectResult>(controller.SourcePreview(request));
-        Assert.IsType<BadRequestObjectResult>(controller.Put(request));
+        Assert.IsType<BadRequestObjectResult>(Save(controller, request));
         request.SourceChangeMode = "continue";
-        Assert.IsType<BadRequestObjectResult>(controller.Put(request));
+        Assert.IsType<BadRequestObjectResult>(Save(controller, request));
         request.ContinuityConfirmed = true; request.ContinuityEvidenceReference = "管理者搬遷核對工單 123";
-        Assert.IsType<OkObjectResult>(controller.Put(request));
+        Assert.IsType<OkObjectResult>(Save(controller, request));
         Assert.Equal(old.SourceGeneration, store.Get().SourceGeneration); Assert.Equal(old.ValidFrom, store.Get().ValidFrom);
         Assert.Equal(request.ContinuityEvidenceReference, store.Get().ContinuityEvidenceReference);
         request.Revision = store.Get().Revision; request.CoreSystemId = "replacement-core";
-        Assert.IsType<BadRequestObjectResult>(controller.Put(request));
+        Assert.IsType<BadRequestObjectResult>(Save(controller, request));
         request.SourceChangeMode = "new";
-        Assert.IsType<OkObjectResult>(controller.Put(request));
+        Assert.IsType<OkObjectResult>(Save(controller, request));
         Assert.NotEqual(old.SourceGeneration, store.Get().SourceGeneration);
         request.Revision = store.Get().Revision; request.SourceChangeMode = "unknown"; request.CoreSystemId = "";
-        Assert.IsType<OkObjectResult>(controller.Put(request));
+        Assert.IsType<OkObjectResult>(Save(controller, request));
         Assert.False(store.Get().Ready("https://moved.example"));
         Assert.IsType<ConflictObjectResult>(controller.SourcePreview(Request()));
     }
@@ -121,7 +168,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     [Fact]
     public void 預覽未對應與試點排除_等待Netiq_沒有副作用_空權限零筆()
     {
-        var controller = Controller(); Assert.IsType<OkObjectResult>(controller.Put(Request()));
+        var controller = Controller(); Assert.IsType<OkObjectResult>(Save(controller, Request()));
         _backend.PrtgStore().UpsertSensors([new() { Objid = 200, DeviceObjid = 99, Name = "Unmapped", SensorType = "ping" }], DateTime.Now);
         var preview = Assert.IsType<OkObjectResult>(controller.Preview());
         var json = JsonSerializer.Serialize(preview.Value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
@@ -135,41 +182,260 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         Assert.IsType<BadRequestObjectResult>(controller.Preview(limit: 501));
         using var db = _backend.CreateContext(); Assert.Empty(db.PrtgObservations); Assert.Empty(db.IssueCases); Assert.Empty(db.WorkOrders);
     }
+
+    [Fact]
+    public void 首次唯讀評估預覽不會把記憶體種子寫進正式規則庫()
+    {
+        var rulesBlob = _backend.Blob("rules");
+        Assert.Equal(0, rulesBlob.ReadVersion());
+        Assert.IsType<OkObjectResult>(Controller().Preview());
+        Assert.Equal(0, rulesBlob.ReadVersion());
+        Assert.False(new KnownIssueRuleStore(rulesBlob).Exists);
+    }
+
     [Fact]
     public void 局部管理者不能覆寫含不可見主機的試點_案件例外不能設定整台主機()
     {
         new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => p.HostIds = [2]);
-        Assert.IsType<ConflictObjectResult>(Controller(new(1)).Put(Request()));
-        Assert.IsType<BadRequestObjectResult>(Controller(new(1) { CaseOnly = true }).Put(Request()));
+        Assert.IsType<ForbidResult>(Controller(new(1)).Get());
+        Assert.IsType<ForbidResult>(Controller(new(1) { CaseOnly = true }).Get());
+        Assert.IsType<ForbidResult>(Controller(new()).Get());
+        Assert.IsType<ForbidResult>(Save(Controller(new(1)), Request()));
+        Assert.IsType<ForbidResult>(Save(Controller(new(1) { CaseOnly = true }), Request()));
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
+        { p.HostIds = [1]; p.SensorIds = [100]; });
         var payload = JsonSerializer.Serialize(((OkObjectResult)Controller(new(1)).Get()).Value);
         Assert.DoesNotContain("PRIVATE", payload);
+        Assert.Contains("\"HostIds\":[1]", payload);
+        Assert.Contains("\"SensorIds\":[100]", payload);
+    }
+
+    [Fact]
+    public void ViewAll可檢視並修復停用合併非NetIQ及已移除的舊主機_保存只留下重新核對的選取()
+    {
+        _hosts.Upsert(new() { HostName = "PRIVATE", Source = "netiq", Active = false });
+        _hosts.Upsert(new() { HostName = "MERGED", Source = "netiq", Active = true });
+        var merged = _hosts.FindByName("MERGED")!;
+        _hosts.Merge(merged.HostId, 1);
+        _hosts.Upsert(new() { HostName = "LOCAL-ONLY", Source = "local", Active = true });
+        var local = _hosts.FindByName("LOCAL-ONLY")!;
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        var endpoint = EfPrtgObservationStore.SourceHintFor("https://fixture.example");
+        policy.Update(p =>
+        {
+            p.Revision = "recoverable-revision"; p.CoreSystemId = "fixture-core"; p.SourceGeneration = "existing-generation";
+            p.EndpointHint = endpoint; p.ValidFrom = DateTimeOffset.Now; p.SourceTimeZoneId = TimeZoneInfo.Local.Id;
+            p.SourceCultureName = "en-US"; p.HostIds = [1, 2, merged.HostId, local.HostId, 9999]; p.SensorIds = [100];
+        });
+
+        var adminUser = FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll);
+        var admin = ControllerWithRealVisibility(adminUser);
+        var get = admin.Get();
+        var ok = Assert.IsType<OkObjectResult>(get);
+        using (var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value)))
+        {
+            var saved = document.RootElement.GetProperty("Data").GetProperty("SavedHosts").EnumerateArray()
+                .ToDictionary(row => row.GetProperty("HostId").GetInt64(), row => row.GetProperty("Status").GetString());
+            Assert.Equal("inactive", saved[2]);
+            Assert.Equal("merged", saved[merged.HostId]);
+            Assert.Equal("not-netiq", saved[local.HostId]);
+            Assert.Equal("missing", saved[9999]);
+        }
+
+        var repair = Request(policy.Get().Revision);
+        repair.HostIds = [1]; repair.SensorIds = [100];
+        Assert.IsType<OkObjectResult>(Save(admin, repair));
+        Assert.Equal(new long[] { 1 }, policy.Get().HostIds);
+        Assert.Equal(new long[] { 100 }, policy.Get().SensorIds);
+        Assert.IsType<OkObjectResult>(admin.Get());
+
+        // A regular maintainer can see host 1 through the real owner path, but cannot read or
+        // overwrite the now-hidden host 2 policy. The denied estimate/save must leave its blob untouched.
+        policy.Update(p => { p.HostIds = [2]; p.SensorIds = [100]; });
+        var beforeDeniedSave = policy.Get();
+        var users = new FakeUserStore();
+        var maintainer = users.Upsert(new WebUser { Account = "scope-maintainer", Active = true });
+        _hosts.SetOwners(1, [maintainer.UserId]);
+        var maintainOnly = ControllerWithRealVisibility(FakeCurrentUser.ForUser(maintainer.UserId, Capability.Maintain), users);
+        Assert.IsType<ForbidResult>(maintainOnly.Get());
+        Assert.IsType<ForbidResult>(Save(maintainOnly, Request(beforeDeniedSave.Revision)));
+        Assert.Equal(beforeDeniedSave.Revision, policy.Get().Revision);
+        Assert.Equal(beforeDeniedSave.HostIds, policy.Get().HostIds);
+        Assert.Equal(beforeDeniedSave.SensorIds, policy.Get().SensorIds);
     }
     [Fact]
     public void 空清單或錯Sensor拒絕_不覆寫原設定()
     {
         var request = Request(); request.SensorIds = [999];
-        Assert.IsType<BadRequestObjectResult>(Controller().Put(request));
+        Assert.IsType<BadRequestObjectResult>(Save(Controller(), request));
         request.SensorIds = null!;
-        Assert.IsType<BadRequestObjectResult>(Controller().Put(request));
+        Assert.IsType<BadRequestObjectResult>(Save(Controller(), request));
         Assert.Empty(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision);
     }
+
+    [Fact]
+    public void 頁面權杖受保護且估算後目錄改變必須拒絕保存()
+    {
+        var controller = Controller();
+        var get = controller.Get();
+        var catalogueToken = DataString(get, "CatalogueToken");
+        Assert.IsType<BadRequestObjectResult>(controller.HostPage("forged-cursor", "", catalogueToken));
+        var hostPage = Assert.IsType<OkObjectResult>(controller.HostPage(null, "VISIBLE", catalogueToken));
+        Assert.Contains("VISIBLE", JsonSerializer.Serialize(hostPage.Value));
+
+        var request = Request();
+        Assert.IsType<OkObjectResult>(Estimate(controller, request));
+        _backend.PrtgStore().UpsertSensors([new() { Objid = 101, DeviceObjid = 10, Name = "new sensor", SensorType = "ping" }], DateTime.Now);
+        Assert.IsType<ConflictObjectResult>(controller.Put(request));
+        Assert.Empty(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision);
+    }
+
+    [Theory]
+    [InlineData("catalogue")]
+    [InlineData("map")]
+    [InlineData("hosts")]
+    [InlineData("settings")]
+    [InlineData("policy")]
+    [InlineData("visibility")]
+    public void BrowseEstimateSave期間版本維度改變時拒絕且不再寫正式設定(string dimension)
+    {
+        var visible = new Visible(1, 2);
+        var controller = Controller(visible);
+        var request = Request();
+        Assert.IsType<OkObjectResult>(Estimate(controller, request));
+
+        switch (dimension)
+        {
+            case "catalogue":
+                _backend.PrtgStore().UpsertSensors([new() { Objid = 101, DeviceObjid = 10, Name = "new", SensorType = "ping" }], DateTime.Now);
+                break;
+            case "map":
+                _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today,
+                    [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 1, HostName = "VISIBLE", MapStatus = PrtgMapStatus.Conflict }]);
+                break;
+            case "hosts":
+                _hosts.Upsert(new() { HostId = 1, HostName = "VISIBLE-RENAMED", Source = "netiq", Active = true });
+                break;
+            case "settings":
+                new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgUrl = "https://changed.example");
+                break;
+            case "policy":
+                new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
+                    .Update(p => p.Revision = Guid.NewGuid().ToString("N"));
+                break;
+            case "visibility":
+                visible.SetVisibleHostIds(2);
+                break;
+        }
+
+        var policyBlob = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        var result = controller.Put(request);
+        Assert.True(result is ConflictObjectResult or ForbidResult, $"Unexpected response for {dimension}: {result.GetType().Name}");
+        var after = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        Assert.Equal(policyBlob.Content, after.Content);
+        Assert.Equal(policyBlob.Version, after.Version);
+    }
+
+    [Fact]
+    public void SQL估算期間撤回群組可見權限_不回傳可保存估算權杖()
+    {
+        var visible = new Visible(1, 2);
+        var controller = Controller(visible);
+        var request = Request();
+        request.CatalogueToken = DataString(controller.Get(), "CatalogueToken");
+        var before = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        visible.Snapshots.Clear();
+        visible.RevokeAtSnapshotRead = visible.SnapshotReadCount + 2; // Estimate initial capture then post-query authorization fence
+
+        Assert.IsType<ConflictObjectResult>(controller.Estimate(request));
+
+        var after = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        Assert.Equal(before.Content, after.Content);
+        Assert.Equal(before.Version, after.Version);
+        Assert.All(visible.Snapshots, snapshot => Assert.Same(visible.Snapshots[0], snapshot));
+    }
+
+    [Fact]
+    public void SQL估算後PUT交易前撤回群組可見權限_同一HostSnapshot重算並拒絕保存()
+    {
+        var visible = new Visible(1, 2);
+        var controller = Controller(visible);
+        var request = Request();
+        Assert.IsType<OkObjectResult>(Estimate(controller, request));
+        var policyBlob = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        visible.Snapshots.Clear();
+        visible.RevokeAtSnapshotRead = visible.SnapshotReadCount + 3; // PUT initial capture、post-query fence、政策交易 callback
+
+        Assert.IsType<ConflictObjectResult>(controller.Put(request));
+
+        var after = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        Assert.Equal(policyBlob.Content, after.Content);
+        Assert.Equal(policyBlob.Version, after.Version);
+        Assert.NotEmpty(visible.Snapshots);
+        Assert.All(visible.Snapshots, snapshot => Assert.Same(visible.Snapshots[0], snapshot));
+    }
+
+    [Theory]
+    [InlineData("missing-map")]
+    [InlineData("conflict-map")]
+    public void 選取沒有有效全域最新對應的Sensor必須拒絕(string mapping)
+    {
+        if (mapping == "missing-map")
+            _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today, []);
+        else
+            _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today,
+                [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 1, HostName = "VISIBLE", MapStatus = PrtgMapStatus.Conflict }]);
+
+        Assert.IsType<BadRequestObjectResult>(Estimate(Controller(), Request()));
+        Assert.Empty(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision);
+    }
+
+    [Fact]
+    public void 超過完整範圍上限明確拒絕而不截斷()
+    {
+        var controller = Controller();
+        var tooManyHosts = Request(); tooManyHosts.HostIds = Enumerable.Range(1, 3001).Select(x => (long)x).ToList();
+        Assert.IsType<BadRequestObjectResult>(controller.Estimate(tooManyHosts));
+
+        var tooManySensors = Request(); tooManySensors.SensorIds = Enumerable.Range(1, 15001).Select(x => (long)x).ToList();
+        Assert.IsType<BadRequestObjectResult>(controller.Estimate(tooManySensors));
+
+        var unsupportedSixteenK = Request(); unsupportedSixteenK.SensorIds = Enumerable.Range(1, 16000).Select(x => (long)x).ToList();
+        Assert.IsType<BadRequestObjectResult>(controller.Estimate(unsupportedSixteenK));
+
+        var unsupportedExpansion = Request(); unsupportedExpansion.SensorIds = Enumerable.Range(1, 30000).Select(x => (long)x).ToList();
+        var result = Assert.IsType<BadRequestObjectResult>(controller.Estimate(unsupportedExpansion));
+        Assert.Contains("unsupported_capacity", JsonSerializer.Serialize(result.Value));
+    }
+
+    [Fact]
+    public void 暫停Sensor不得留在新正式範圍()
+    {
+        var controller = Controller();
+        _backend.PrtgStore().UpsertSensors([new() { Objid = 100, DeviceObjid = 10, Name = "Ping", SensorType = "ping", Paused = true }], DateTime.Now);
+        Assert.IsType<BadRequestObjectResult>(Estimate(controller, Request()));
+    }
+
     [Fact]
     public void V1匯入隔離跨站主機與人工對應_重複匯入不啟用正式判定()
     {
-        Controller().Put(Request());
+        Save(Controller(), Request());
         var package = PrtgDataTransfer.Export(_backend, DateTime.Today, DateTime.Today); package.FormatVersion = 1;
         package.ManualMaps = [new() { DeviceObjid = 10, HostId = 2 }];
+        var beforePolicy = JsonSerializer.Serialize(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get());
+        var beforeMaps = JsonSerializer.Serialize(_backend.PrtgStore().GetHostMapForDate(DateTime.Today));
+        var beforeManualMaps = JsonSerializer.Serialize(_backend.PrtgStore().GetManualMaps());
         PrtgDataTransfer.Import(_backend, package); PrtgDataTransfer.Import(_backend, package);
-        Assert.Empty(_backend.PrtgStore().GetManualMaps());
-        Assert.Null(Assert.Single(_backend.PrtgStore().GetHostMapForDate(DateTime.Today)).HostId);
-        Assert.False(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Ready("https://fixture.example"));
+        Assert.Equal(beforeMaps, JsonSerializer.Serialize(_backend.PrtgStore().GetHostMapForDate(DateTime.Today)));
+        Assert.Equal(beforeManualMaps, JsonSerializer.Serialize(_backend.PrtgStore().GetManualMaps()));
+        Assert.Equal(beforePolicy, JsonSerializer.Serialize(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get()));
         using var db = _backend.CreateContext(); Assert.Empty(db.PrtgObservations); Assert.Empty(db.IssueCases); Assert.Empty(db.WorkOrders);
         Assert.Single(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
     }
     [Fact]
     public void 驗收證據匯出與人工標籤依主機授權_不能偷標私有主機()
     {
-        Controller().Put(Request());
+        Save(Controller(), Request());
         var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
         Assert.IsType<ForbidResult>(api.Save(new() { HostId = 2 }));
         var file = Assert.IsType<FileContentResult>(api.Export(DateTime.Today.AddDays(-1), DateTime.Today));

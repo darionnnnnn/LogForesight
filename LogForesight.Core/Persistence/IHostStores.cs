@@ -15,6 +15,17 @@ public interface IHostStore
 {
     List<WebHost> GetAll();
 
+    /// <summary>Capture a bounded immutable catalogue view for PRTG and visibility consumers.</summary>
+    PrtgHostSnapshot CapturePrtgSnapshot()
+    {
+        var before = DataVersion;
+        var hosts = GetAll();
+        var after = DataVersion;
+        if (before != after)
+            throw new InvalidDataException("Host catalogue changed while its compatibility snapshot was being captured.");
+        return PrtgHostSnapshot.FromWebHosts(hosts, after);
+    }
+
     /// <summary>
     /// 主機資料的版本；內容每被寫入一次就前進（回饋二十七輪作業 F）。
     /// 供上層快取判定「用主機清單建出來的索引要不要重建」——刻意探測版本而不設 TTL：

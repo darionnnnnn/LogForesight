@@ -228,6 +228,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         });
         using var handler = new ScopeRefreshHandler();
         service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler, PrtgAuthModes.Token, "", "", "");
+        using var ackDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (initiallyBusy)
         {
             Assert.True(probeState.TryBeginRun(out _));
@@ -239,9 +240,19 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await handler.MessagesRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await handler.MessagesRequested.Task.WaitAsync(ackDeadline.Token);
             Assert.Contains(_backend.PrtgStore().GetAllSensors(), sensor => sensor.Objid == 201 && sensor.DeviceObjid == 20);
             Assert.All(handler.Requests, query => Assert.Matches(@"[?&]id=20(&|$)", query));
+            PrtgRecentStateChangeQueueItem handoff;
+            do
+            {
+                handoff = Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue());
+                if (handoff.CompletedAtUtc.HasValue) break;
+                await Task.Delay(TimeSpan.FromMilliseconds(20), ackDeadline.Token);
+            } while (true);
+            Assert.NotNull(handoff.CompletedAtUtc);
+            Assert.Equal(DateTime.Today.AddDays(-1), handoff.FromLocalDate);
+            Assert.Equal(DateTime.Today, handoff.ToLocalDate);
         }
         finally
         {
@@ -436,5 +447,83 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         Assert.False(status.IsRunning);
         Assert.True(status.Cancelled);
         Assert.False(status.Success);
+    }
+
+    // ── 驗收點 7：相容性探測去識別 JSON 下載 UI 與邏輯 ──────────────────
+
+    [Fact]
+    public void PrtgCshtml_包含下載相容性探測JSON按鈕與去識別說明()
+    {
+        var root = FindRepoRoot();
+        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
+        Assert.True(File.Exists(cshtmlPath), $"找不到 {cshtmlPath}");
+        var cshtml = File.ReadAllText(cshtmlPath);
+
+        // 應具備下載證據按鈕
+        Assert.Contains("id=\"prtg-probe-download-evidence\"", cshtml);
+        Assert.Contains("下載去識別相容性證據 (JSON)", cshtml);
+        Assert.Contains("disabled", cshtml);
+
+        // 應包含去識別安全說明
+        Assert.Contains("去識別", cshtml);
+        Assert.Contains("後端獨立保存", cshtml);
+        Assert.Contains("完整探測文字檔可能含主機名稱、IP", cshtml);
+    }
+
+    [Fact]
+    public void PrtgAdminJs_包含證據下載函式與按鈕互動()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
+        Assert.True(File.Exists(jsPath), $"找不到 {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        // 引用 evidence 工具模組
+        Assert.Contains("extractProbeEvidenceJson", js);
+        Assert.Contains("isProbeEvidenceDownloadable", js);
+
+        // 綁定下載按鈕點擊與狀態
+        Assert.Contains("prtg-probe-download-evidence", js);
+        Assert.Contains("application/json", js);
+        Assert.Contains("prtg-compatibility-evidence-", js);
+        Assert.Contains("status.evidenceJson", js);
+        Assert.DoesNotContain("extractProbeEvidenceJson(outputText)", js);
+    }
+
+    [Fact]
+    public void PrtgProbeEvidenceJs_檔案存在且包含邊界防護邏輯()
+    {
+        var root = FindRepoRoot();
+        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "prtg-probe-evidence.js");
+        Assert.True(File.Exists(jsPath), $"找不到 {jsPath}");
+        var js = File.ReadAllText(jsPath);
+
+        Assert.Contains("extractProbeEvidenceJson", js);
+        Assert.Contains("isProbeEvidenceDownloadable", js);
+        Assert.Contains("typeof evidenceJson !== 'string'", js);
+        Assert.Contains("parsed.evidence_ready !== false", js);
+        Assert.DoesNotContain("indexOf(beginMarker)", js);
+    }
+
+    [Fact]
+    public void PrtgProbeRunState_證據欄獨立於文字且每趟重設()
+    {
+        var state = new PrtgProbeRunState();
+        Assert.True(state.TryBeginRun(out _));
+        state.AppendLine("BEGIN_PRTG_COMPATIBILITY_JSON {\"password\":\"SENTINEL_SECRET_9\"}");
+        state.SetEvidenceJson("{\"schema_version\":\"1.0.0\",\"status\":\"partial\",\"evidence_ready\":false,\"targets\":[]}");
+        state.FinishRun(true, false);
+        Assert.Contains("SENTINEL_SECRET_9", string.Join("\n", state.Snapshot().Output));
+        Assert.DoesNotContain("SENTINEL_SECRET_9", state.Snapshot().EvidenceJson);
+
+        Assert.True(state.TryBeginRun(out _));
+        Assert.Null(state.Snapshot().EvidenceJson);
+        state.SetEvidenceJson("{\"schema_version\":\"1.0.0\",\"status\":\"partial\",\"evidence_ready\":false,\"targets\":[]}");
+        Assert.True(state.TryCancel());
+        Assert.Null(state.Snapshot().EvidenceJson);
+        state.FinishRun(false, true);
+        Assert.True(state.TryBeginRun(out _));
+        Assert.Null(state.Snapshot().EvidenceJson);
+        state.FinishRun(false, false);
     }
 }

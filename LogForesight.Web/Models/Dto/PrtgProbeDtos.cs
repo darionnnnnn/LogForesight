@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Models.Dto;
@@ -13,6 +13,7 @@ public class PrtgProbeStatusDto
     public string? LatestMessage { get; set; }
     public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
     public bool Cancelled { get; set; }
+    public string? EvidenceJson { get; set; }
 }
 
 public class CancelPrtgSelectedBackfillRequest

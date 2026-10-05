@@ -15,7 +15,7 @@
 <section class="lf-card mb-3" aria-labelledby="prtg-monitoring-title">
     <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-monitoring-title">正式判定試點與來源身分</h2></div>
     <div class="lf-card__body">
-        <p class="small text-muted">先同步結構與主機對應，再選取 NetIQ 主機與 sensor。未確認範圍只保存診斷資料。Core System ID 請由 PRTG 管理介面核對；換 Core 或 sensor 重建後需重新暖機，今日身分不追認歷史。最多 50 台／100 顆。</p>
+        <p class="small text-muted">先同步結構與主機對應，再選取 NetIQ 主機與 sensor。未確認範圍只保存診斷資料。Core System ID 請由 PRTG 管理介面核對；換 Core 或 sensor 重建後需重新暖機，今日身分不追認歷史。</p>
         <form id="prtg-monitoring-form">
             <label class="form-label" for="prtg-monitoring-core">Core System ID</label>
             <input class="form-control mb-2" id="prtg-monitoring-core" maxlength="128" required />
@@ -36,11 +36,59 @@
             <label class="form-label" for="prtg-monitoring-culture">PRTG 回應日期的語系</label>
             <input class="form-control mb-2" id="prtg-monitoring-culture" maxlength="64" placeholder="例如 zh-TW、en-US" required />
             <p class="small text-muted">需與 API 帳號看到的日期、時區一致；不以網頁使用者或 Web 伺服器語系猜測。更改後開始新暖機。</p>
-            <label class="form-label" for="prtg-monitoring-hosts">NetIQ 試點主機（可多選）</label>
-            <select class="form-select mb-2" id="prtg-monitoring-hosts" multiple size="5" required></select>
+            <label class="form-label" for="prtg-monitoring-host-search">搜尋 NetIQ 試點主機（勾選狀態會跨頁保留）</label>
+            <p class="small text-muted" id="prtg-monitoring-selection-limits">正式作用範圍最多選取 3,000 台主機與 15,000 顆 sensor。目錄可分頁瀏覽較大環境；超過選取上限會明確拒絕，不會截斷選取或保存部分範圍。</p>
+            <input class="form-control mb-2" id="prtg-monitoring-host-search" maxlength="128" autocomplete="off" />
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-prev" type="button">上一頁</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-next" type="button">下一頁</button>
+                <span class="small text-muted" id="prtg-monitoring-host-page-info"></span>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-host-select-page" type="button">勾選本頁主機</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-clear-page" type="button">取消本頁主機</button>
+                <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-host-select-search" type="button">加入目前主機搜尋結果</button>
+                <button class="btn btn-sm btn-outline-danger d-none" id="prtg-monitoring-host-select-cancel" type="button">停止批次</button>
+                <span class="small text-muted" id="prtg-monitoring-host-batch-status" role="status" aria-live="polite"></span>
+            </div>
+            <div id="prtg-monitoring-hosts" class="border rounded p-2 mb-2" style="max-height:14rem;overflow:auto" aria-label="試點主機"></div>
+            <div class="small text-muted mb-1">已保存主機（包含停用、合併或已移除的舊項目）；只載入每頁 100 筆。移除舊項目不會自動移除 sensor，請在下方另行核對。</div>
+            <label class="form-label" for="prtg-monitoring-saved-host-search">搜尋已保存主機</label>
+            <input class="form-control mb-2" id="prtg-monitoring-saved-host-search" maxlength="128" autocomplete="off" />
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-saved-host-prev" type="button">上一頁</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-saved-host-next" type="button">下一頁</button>
+                <span class="small text-muted" id="prtg-monitoring-saved-host-page-info"></span>
+            </div>
+            <div id="prtg-monitoring-saved-hosts" class="border rounded p-2 mb-3" style="max-height:14rem;overflow:auto" aria-label="已保存主機管理"></div>
+            <label class="form-label" for="prtg-monitoring-sensor-search">搜尋所選主機的 sensor（最多 100 筆／頁）</label>
+            <input class="form-control mb-2" id="prtg-monitoring-sensor-search" maxlength="128" autocomplete="off" />
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-sensor-prev" type="button">上一頁</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-sensor-next" type="button">下一頁</button>
+                <span class="small text-muted" id="prtg-monitoring-sensor-page-info"></span>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-sensor-select-page" type="button">勾選本頁 sensor</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-sensor-clear-page" type="button">取消本頁 sensor</button>
+                <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-sensor-select-search" type="button">加入目前 sensor 搜尋結果</button>
+                <button class="btn btn-sm btn-outline-danger d-none" id="prtg-monitoring-sensor-select-cancel" type="button">停止批次</button>
+                <span class="small text-muted" id="prtg-monitoring-sensor-batch-status" role="status" aria-live="polite"></span>
+            </div>
             <div id="prtg-monitoring-sensors" class="border rounded p-2 mb-2" style="max-height:18rem;overflow:auto" aria-label="試點感測器"></div>
+            <div class="small text-muted mb-2">已選 sensor（包含目前篩選之外及已不在目錄中的 ID）；可搜尋並逐頁移除，每頁最多顯示 100 筆。</div>
+            <label class="form-label" for="prtg-monitoring-selected-sensor-search">搜尋已選 sensor ID</label>
+            <input class="form-control mb-2" id="prtg-monitoring-selected-sensor-search" maxlength="32" inputmode="numeric" autocomplete="off" />
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-selected-sensor-prev" type="button">上一頁</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-selected-sensor-next" type="button">下一頁</button>
+                <span class="small text-muted" id="prtg-monitoring-selected-sensor-page-info"></span>
+            </div>
+            <div id="prtg-monitoring-selected-sensors" class="d-flex flex-wrap gap-1 mb-2" aria-label="已選 sensor"></div>
+            <button class="btn btn-outline-primary mt-2" id="prtg-monitoring-estimate" type="button">估算所選範圍與容量</button>
+            <div id="prtg-monitoring-estimate-result" class="small mt-2" role="status" aria-live="polite"></div>
             <label class="form-check"><input type="checkbox" class="form-check-input" id="prtg-monitoring-confirm" required />我已核對 Core 身分與所選資源；守門資源不因取數而自動參與業務判定。</label>
-            <button class="btn btn-primary mt-2" type="submit">儲存正式判定範圍</button>
+            <button class="btn btn-primary mt-2" type="submit" disabled>儲存正式判定範圍</button>
         </form>
         <div id="prtg-monitoring-status" class="small mt-2" role="status" aria-live="polite"></div>
         <button type="button" class="btn btn-outline-secondary mt-2" id="prtg-monitoring-preview">預覽已儲存試點的實際作用範圍</button>
@@ -688,12 +736,13 @@
                 <button type="button" class="btn btn-outline-danger d-none" id="prtg-probe-cancel">停止探測</button>
                 <div class="text-muted small" id="prtg-probe-status"></div>
             </div>
-            <div class="d-flex align-items-center gap-2 mb-2">
+            <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
                 <label for="prtg-probe-output" class="form-label small fw-semibold mb-0">探測輸出</label>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-download" disabled>下載探測結果</button>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-probe-download-evidence" disabled>下載去識別相容性證據 (JSON)</button>
             </div>
-            <p class="text-muted small">下載後請先檢查主機名稱、IP 等環境資訊，再提供試點驗收使用。探測成功只代表本次取得的資料能力，請連同日期與來源設定版本一起核對。</p>
+            <p class="text-muted small">JSON 下載使用後端獨立保存的白名單證據欄位，不從文字輸出尋找標記；未知來源欄位與任意文字不會匯出，缺項及未確認時區會標為 unknown 或 partial，這不代表正式就緒。完整探測文字檔可能含主機名稱、IP 與 PRTG 訊息，分享前請先檢查。環境資源描述的是此應用程式可見資源，遠端資料庫主機規格仍為 unknown。</p>
             <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
         </div>
     </div>
@@ -847,8 +896,8 @@
 
     <details class="lf-card d-none" id="prtg-data-transfer-advanced">
         <summary class="lf-card__header">
-            <h2 class="lf-card__title">資料搬運（開發用）</h2>
-            <span class="small text-muted">展開開發工具</span>
+            <h2 class="lf-card__title">診斷資料搬運</h2>
+            <span class="small text-muted">展開匯出與可續傳匯入</span>
         </summary>
         <div class="lf-card__body">
             <div class="row g-3 mb-3">
@@ -874,7 +923,13 @@
                 </div>
             </div>
             <div id="prtg-import-result" class="small mb-2"></div>
-            <div class="form-text">把正式機的 PRTG 鏡像資料搬到開發機供分析規則設計使用。匯入採自然鍵冪等寫入，重複匯入不會產生重複資料。</div>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-import-cancel-btn" disabled>取消本次操作</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-import-status-btn" disabled>查詢保留傳輸</button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="prtg-import-abandon-btn" disabled>放棄保留傳輸</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-import-forget-btn" disabled>清除此頁續傳紀錄</button>
+            </div>
+            <div class="form-text">匯入會將診斷包隔離保存，正式監控資料與判定不變；匯入內容不會搬入正式鏡像。</div>
         </div>
     </details>
 </div>

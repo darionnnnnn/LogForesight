@@ -19,6 +19,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
 {
     private readonly string _dir;
     private readonly StorageBackend _backend;
+    private readonly HostStore _hosts;
     private readonly RecordingAuditService _audit = new();
     private readonly SettingsController _controller;
 
@@ -29,6 +30,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         _backend = new StorageBackend(
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}" },
             _dir);
+        _hosts = new HostStore(_backend.Blob("hosts"));
 
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
         settingsStore.Update(x => x.PrtgEnabled = true);
@@ -38,7 +40,9 @@ public class PrtgUnmatchedMapUiTests : IDisposable
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
             backend: _backend,
-            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend),
+            hosts: _hosts,
+            visibility: new FullVisibility(_hosts));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -67,6 +71,19 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) => throw new NotSupportedException();
         public Task<TestMailResultDto> TestMail(TestMailRequest request) => throw new NotSupportedException();
         public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private sealed class FullVisibility(IHostStore hosts) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Select(h => h.HostId).ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
+        public bool IsCaseGrantOnly(long id) => false;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll();
+        public void EnsureVisible(long id) { }
     }
 
     private static string FindRepoRoot()

@@ -289,4 +289,33 @@ public class PrtgClientFactoryTests
         var handler = Assert.IsType<SocketsHttpHandler>(client.Handler);
         Assert.NotNull(handler.SslOptions.RemoteCertificateValidationCallback);
     }
+
+    [Fact]
+    public void Create_預設使用PrtgRequestBudget_Shared實例()
+    {
+        var settings = new SystemSettings
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("token-abc")
+        };
+
+        using var client = PrtgClientFactory.Create(settings);
+        Assert.Same(PrtgRequestBudget.Shared, client.Budget);
+    }
+
+    [Fact]
+    public void Create_可傳入自訂預算實例()
+    {
+        var settings = new SystemSettings
+        {
+            PrtgUrl = "https://prtg.example.com",
+            PrtgAuthMode = PrtgAuthModes.Token,
+            PrtgApiTokenEnc = CryptoHelper.Encrypt("token-abc")
+        };
+        var customBudget = new PrtgRequestBudget();
+
+        using var client = PrtgClientFactory.Create(settings, budget: customBudget);
+        Assert.Same(customBudget, client.Budget);
+    }
 }

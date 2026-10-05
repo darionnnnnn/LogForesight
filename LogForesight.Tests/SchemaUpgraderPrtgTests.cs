@@ -399,7 +399,9 @@ public class SchemaUpgraderPrtgTests : IDisposable
         "lf_prtg_manual_map",
         "lf_prtg_ip_excludes",
         "lf_prtg_sampled_batches",
-        "lf_prtg_observations"
+        "lf_prtg_observations",
+        "lf_prtg_transfer_chunks",
+        "lf_prtg_transfer_sessions"
     };
 
     private static HashSet<string> GetColumnNames(LfDbContext ctx, string table)

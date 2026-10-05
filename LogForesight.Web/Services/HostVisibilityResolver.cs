@@ -1,4 +1,5 @@
 using LogForesight.Web.Auth;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Web.Services;
 
@@ -15,11 +16,14 @@ namespace LogForesight.Web.Services;
 internal static class HostVisibilityResolver
 {
     public static IReadOnlySet<long> GetOwnedHostIds(IHostStore hosts, IUserStore users, long userId)
+        => GetOwnedHostIds(hosts.CapturePrtgSnapshot(), users, userId);
+
+    public static IReadOnlySet<long> GetOwnedHostIds(PrtgHostSnapshot hosts, IUserStore users, long userId)
     {
         var user = users.Get(userId);
         if (userId <= 0 || user == null || !user.Active) return new HashSet<long>();
 
-        return hosts.GetAll()
+        return hosts.Hosts
             .Where(h => h.Active && h.OwnerUserIds.Contains(userId))
             .Select(h => h.HostId)
             .ToHashSet();
@@ -27,6 +31,10 @@ internal static class HostVisibilityResolver
 
     public static IReadOnlySet<long> GetGroupVisibleHostIds(
         IHostStore hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId)
+        => GetGroupVisibleHostIds(hosts.CapturePrtgSnapshot(), users, userGroups, access, userId);
+
+    public static IReadOnlySet<long> GetGroupVisibleHostIds(
+        PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId)
     {
         var user = users.Get(userId);
         if (user == null || !user.Active) return new HashSet<long>();
@@ -37,7 +45,7 @@ internal static class HostVisibilityResolver
             .Where(g => g.Active && user.GroupIds.Contains(g.GroupId))
             .ToList();
 
-        var allHosts = hosts.GetAll().Where(h => h.Active).ToList();
+        var allHosts = hosts.Hosts.Where(h => h.Active).ToList();
 
         if (RoleCapabilityMap.For(activeGroups.Select(g => g.Role)).Contains(Capability.ViewAll))
             return allHosts.Select(h => h.HostId).ToHashSet();
@@ -63,6 +71,11 @@ internal static class HostVisibilityResolver
     public static IReadOnlySet<long> GetIssueOwnedHostIds(
         IHostStore hosts, IIssueOwnerStore issueOwners, IUserStore users, IIssueAggregateQuery issueAggregates,
         long userId, int retentionDays)
+        => GetIssueOwnedHostIds(hosts.CapturePrtgSnapshot(), issueOwners, users, issueAggregates, userId, retentionDays);
+
+    public static IReadOnlySet<long> GetIssueOwnedHostIds(
+        PrtgHostSnapshot hosts, IIssueOwnerStore issueOwners, IUserStore users, IIssueAggregateQuery issueAggregates,
+        long userId, int retentionDays)
     {
         var user = users.Get(userId);
         if (userId <= 0 || user == null || !user.Active) return new HashSet<long>();
@@ -82,7 +95,7 @@ internal static class HostVisibilityResolver
         // 停用主機排除（回饋十八輪體檢輪修正）：與 GetOwnedHostIds／GetGroupVisibleHostIds 同一條規則
         // ——這裡原本漏過濾，停用主機只要保留期內出現過負責的問題就會被算進可見範圍，
         // 與本方法自己的文件註解（「保留期內出現過其負責問題的『存活』主機」）矛盾。
-        var activeHostIds = hosts.GetAll().Where(h => h.Active).Select(h => h.HostId).ToHashSet();
+        var activeHostIds = hosts.Hosts.Where(h => h.Active).Select(h => h.HostId).ToHashSet();
         return hostIds.Where(activeHostIds.Contains).ToHashSet();
     }
 
@@ -90,6 +103,13 @@ internal static class HostVisibilityResolver
     /// 回饋十八輪批次F 新增第三條聯集）。</summary>
     public static IReadOnlySet<long> GetVisibleHostIds(
         IHostStore hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
+        IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null,
+        int retentionDays = SystemSettings.DefaultRetentionDays)
+        => GetVisibleHostIds(hosts.CapturePrtgSnapshot(), users, userGroups, access, userId,
+            issueOwners, issueAggregates, retentionDays);
+
+    public static IReadOnlySet<long> GetVisibleHostIds(
+        PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
         IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null,
         int retentionDays = SystemSettings.DefaultRetentionDays)
     {

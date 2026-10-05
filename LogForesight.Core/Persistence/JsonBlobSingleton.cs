@@ -70,6 +70,27 @@ public abstract class JsonBlobSingleton<T> where T : new()
         }
     }
 
+    /// <summary>供需要整份 dictionary 的單次工作使用；只讀 cap+1 字元並保留同次讀到的版本。</summary>
+    protected (T Value, long Version, int DeserializeCount, int SourceCharacters) ReadBoundedValueWithVersion(int maxCharacters)
+    {
+        var read = _blob.ReadBoundedWithVersion(maxCharacters);
+        if (read.Prefix is null && read.Version == 0)
+            return (new T(), 0, 0, 0);
+        if (read.ReportedLength > maxCharacters || read.Prefix is null || read.Prefix.Length > maxCharacters)
+            throw new InvalidDataException($"JSON blob 超過 {maxCharacters} 字元上限；拒絕使用不完整內容。");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new JsonException("已存在的 JSON blob 為空；拒絕將不完整資料視為空集合。");
+
+        var value = JsonSerializer.Deserialize<T>(read.Prefix, LfJsonOptions.Pretty);
+        if (value is null)
+            throw new JsonException("JSON blob 根節點為 null；拒絕將不完整資料視為空集合。");
+        OnDeserialized(value);
+        return (value, read.Version, 1, read.Prefix.Length);
+    }
+
+    /// <summary>取得 blob 目前版本，供 typed snapshot 最後一道版本柵欄使用。</summary>
+    protected long ReadCurrentBlobVersion() => _blob.ReadVersion();
+
     /// <summary>mutation 直接修改傳入的物件；成功後由 <see cref="Touch"/> 蓋章（如 UpdatedAt）</summary>
     public T Update(Action<T> mutation) =>
         _blob.Mutate(raw =>

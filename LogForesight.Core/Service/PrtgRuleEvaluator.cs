@@ -27,6 +27,8 @@ public sealed record PrtgFinding(
     public string? SourceGeneration { get; init; }
     public string? ResourceGeneration { get; init; }
     public DateTimeOffset? IncidentStartedAt { get; init; }
+    /// <summary>規則門檻實際使用的量值；跨日 Down 為完整可信 episode，Magnitude 仍保留當日重疊分鐘。</summary>
+    public int? ThresholdMagnitude { get; init; }
 }
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -2900,5 +2901,55 @@ public class SystemSettingsServiceTests : IDisposable
         var updatedAgain = service.Update(req);
         Assert.False(updatedAgain.AutoDispatchEnabled);
         Assert.False(service.Get().AutoDispatchEnabled);
+    }
+
+    [Fact]
+    public async Task TestPrtgAsync_使用共享預算且呼叫table端點受限流保護()
+    {
+        var clock = new PrtgRequestBudgetTests.TestPrtgClock(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
+        var budget = new PrtgRequestBudget(clock);
+
+        var service = Create();
+        service.PrtgBudget = budget;
+        service.PrtgHandlerFactory = () => new PrtgTestStubHandler();
+
+        var req = new TestPrtgConnectionRequest
+        {
+            Url = "https://prtg.example.com",
+            AuthMode = LogForesight.Core.Models.PrtgAuthModes.Token,
+            ApiToken = "test-token",
+            TimeoutSeconds = 30
+        };
+
+        // 第一次與第二次測試連線（table.json）立即成功
+        var r1 = await service.TestPrtgAsync(req, CancellationToken.None);
+        var r2 = await service.TestPrtgAsync(req, CancellationToken.None);
+        Assert.True(r1.Success);
+        Assert.True(r2.Success);
+
+        // 第三次測試連線在 1 秒內應等待
+        var r3Task = service.TestPrtgAsync(req, CancellationToken.None);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < TimeSpan.FromSeconds(5) && budget.WaiterCount < 1)
+        {
+            await Task.Delay(5);
+        }
+        clock.Advance(TimeSpan.FromMilliseconds(999));
+        Assert.False(r3Task.IsCompleted);
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        var r3 = await r3Task;
+        Assert.True(r3.Success);
+    }
+
+    private sealed class PrtgTestStubHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"prtg-version\":\"23.1\",\"sensors\":[{\"objid\":1001}]}", System.Text.Encoding.UTF8, "application/json")
+            });
+        }
     }
 }

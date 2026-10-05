@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Text;
 
 using LogForesight.Core.Persistence.Sql;
@@ -56,6 +56,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReportReader>(sp => sp.GetRequiredService<EfReportStore>());
         services.AddSingleton<IReportUsageQuery>(sp => sp.GetRequiredService<EfReportStore>());
         services.AddSingleton<EfPrtgStore>(sp => sp.GetRequiredService<StorageBackend>().PrtgStore());
+        services.AddSingleton<IPrtgTransferCapacityProvider, PrtgTransferCapacityProbe>();
+        services.AddSingleton<PrtgLegacyJsonTransferValidator>();
+        services.AddHostedService<PrtgDiagnosticRetentionHostedService>();
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         //

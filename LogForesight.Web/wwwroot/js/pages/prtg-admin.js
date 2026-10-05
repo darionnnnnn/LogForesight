@@ -14,6 +14,8 @@ import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserN
 import { initCalibration } from './prtg-calibration.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
+import { extractProbeEvidenceJson, isProbeEvidenceDownloadable } from '../core/prtg-probe-evidence.js';
+import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => { if (name === 'probe') queueMicrotask(loadDiskReadiness); } });
 
@@ -198,6 +200,7 @@ let prtgEnabled = false;
 /** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
 let structureSyncRunning = false;
 let selectedBackfillTimer = null;
+let currentProbeEvidenceJson = null;
 let selectedBackfillPreview = null;
 const selectedBackfillHostIds = new Set();
 let pendingBackfillHostId = null;
@@ -2435,11 +2438,13 @@ function bindDiskReadiness() {
 }
 
 function renderPrtgProbeStatus(status) {
+    currentProbeEvidenceJson = status.evidenceJson ?? null;
     setupState.probe = status.isRunning ? null : (status.completedAt ? status.success === true && !status.cancelled : null);
     renderSetupSummary();
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
     const downloadButton = document.getElementById('prtg-probe-download');
+    const downloadEvidenceButton = document.getElementById('prtg-probe-download-evidence');
     const startButton = document.getElementById('prtg-probe-start');
     const flowButton = document.getElementById('prtg-probe-flow-start');
     const cancelBtn = document.getElementById('prtg-probe-cancel');
@@ -2459,6 +2464,7 @@ function renderPrtgProbeStatus(status) {
     }
     copyButton.disabled = !outputText;
     if (downloadButton) downloadButton.disabled = !outputText || status.isRunning;
+    if (downloadEvidenceButton) downloadEvidenceButton.disabled = !isProbeEvidenceDownloadable(status.evidenceJson, status.isRunning);
 
     if (status.isRunning) {
         startButton.disabled = true;
@@ -2484,6 +2490,9 @@ async function refreshPrtgProbeStatus() {
     try {
         status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
     } catch {
+        currentProbeEvidenceJson = null;
+        const evidenceButton = document.getElementById('prtg-probe-download-evidence');
+        if (evidenceButton) evidenceButton.disabled = true;
         setupState.probe = null;
         renderSetupSummary();
         return;
@@ -2509,6 +2518,7 @@ function bindPrtgProbe() {
     const cancelBtn = document.getElementById('prtg-probe-cancel');
     const copyButton = document.getElementById('prtg-probe-copy');
     const downloadButton = document.getElementById('prtg-probe-download');
+    const downloadEvidenceButton = document.getElementById('prtg-probe-download-evidence');
     const outputEl = document.getElementById('prtg-probe-output');
     if (!startButton || !copyButton || !outputEl) return;
 
@@ -2522,6 +2532,9 @@ function bindPrtgProbe() {
         // 不用 withBusy：啟動成功後按鈕的 disabled 狀態交給輪詢狀態接管
         startButton.disabled = true;
         if (flowButton) flowButton.disabled = true;
+        currentProbeEvidenceJson = null;
+        const evidenceButton = document.getElementById('prtg-probe-download-evidence');
+        if (evidenceButton) evidenceButton.disabled = true;
         try {
             const path = dataFlow ? '/api/admin/settings/prtg-probe/data-flow/start' : '/api/admin/settings/prtg-probe/start';
             await api.post(path, {}, { silent: true });
@@ -2565,6 +2578,21 @@ function bindPrtgProbe() {
         const anchor = document.createElement('a');
         anchor.href = url;
         anchor.download = `prtg-probe-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    downloadEvidenceButton?.addEventListener('click', () => {
+        if (downloadEvidenceButton.disabled) return;
+        const jsonText = extractProbeEvidenceJson(currentProbeEvidenceJson);
+        if (!jsonText) {
+            toast('尚未取得合法去識別相容性證據 JSON。', 'warning');
+            return;
+        }
+        const blob = new Blob([jsonText + '\n'], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `prtg-compatibility-evidence-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         anchor.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
@@ -2637,6 +2665,85 @@ function bindPrtgDataTransfer() {
     const importBtn = document.getElementById('prtg-import-btn');
     const importFile = document.getElementById('prtg-import-file');
     const importResult = document.getElementById('prtg-import-result');
+    const cancelBtn = document.getElementById('prtg-import-cancel-btn');
+    const statusBtn = document.getElementById('prtg-import-status-btn');
+    const abandonBtn = document.getElementById('prtg-import-abandon-btn');
+    const forgetBtn = document.getElementById('prtg-import-forget-btn');
+    let activeController = null;
+    let operationBusy = false;
+    let pending = null;
+    let storageKey = null;
+    const show = (message, style = 'muted') => {
+        if (!importResult) return;
+        importResult.className = `small mb-2 text-${style}`;
+        importResult.textContent = message;
+    };
+    const savePending = value => {
+        pending = value;
+        try {
+            if (storageKey) value ? localStorage.setItem(storageKey, JSON.stringify(value)) : localStorage.removeItem(storageKey);
+        } catch { /* 儲存空間不可用時本頁仍可續傳，識別碼持續顯示。 */ }
+        if (statusBtn) statusBtn.disabled = operationBusy || !pending;
+        if (abandonBtn) abandonBtn.disabled = operationBusy || !pending;
+        if (forgetBtn) forgetBtn.disabled = operationBusy || !pending;
+        if (importBtn) importBtn.disabled = operationBusy;
+    };
+    const loadPending = async () => {
+        const user = await getCurrentUser();
+        storageKey = `lf-prtg-diagnostic:${appUrl('/')}:${user.userId}:${user.isServerAdmin}:${user.account}`;
+        if (!pending) {
+            try {
+                const stored = JSON.parse(localStorage.getItem(storageKey) || 'null');
+                if (stored && /^[0-9a-f-]{36}$/i.test(stored.transferId) &&
+                    /^[0-9a-f]{64}$/i.test(stored.packageSha256) && Number.isSafeInteger(stored.declaredBytes) && stored.declaredBytes > 0)
+                    pending = stored;
+            } catch { /* 無效的本機紀錄不授予傳輸資格。 */ }
+        }
+        savePending(pending);
+    };
+    const pendingLoaded = loadPending().then(() => {
+        if (pending) show(`保留中的傳輸 ${pending.transferId}；選取原檔可續傳，或查詢狀態及明確放棄。`);
+    }).catch(error => show(error.message, 'danger'));
+    cancelBtn?.addEventListener('click', () => activeController?.abort());
+    statusBtn?.addEventListener('click', async () => {
+        if (!pending || operationBusy) return;
+        operationBusy = true;
+        const transferId = pending.transferId;
+        savePending(pending);
+        try {
+            const status = await getDiagnosticTransfer(transferId);
+            const names = { receiving: '接收中，可續傳', validating: '驗證中', 'validation-failed': '驗證失敗', complete: '已完成', abandoned: '已放棄' };
+            show(`${names[status.state] || '未知狀態'}；已接受 ${formatNumber(status.receivedBytes)} / ${formatNumber(status.declaredBytes)} 位元組。${status.failureCode ? `原因 ${status.failureCode}。` : ''}識別碼 ${status.transferId}`,
+                status.state === 'complete' ? 'success' : status.failureCode ? 'danger' : 'muted');
+            if (status.state === 'complete' || status.state === 'abandoned') savePending(null);
+        } catch (error) { show(`${error.message}。若來源或帳號已變更，可清除此頁續傳紀錄後重新匯入。`, 'danger'); }
+        finally { operationBusy = false; savePending(pending); }
+    });
+    abandonBtn?.addEventListener('click', async () => {
+        if (!pending || operationBusy) return;
+        operationBusy = true;
+        const transferId = pending.transferId;
+        savePending(pending);
+        try {
+            if (!await confirmAction({ title: '放棄診斷傳輸', message: `將停止保留中的傳輸 ${transferId}，之後需重新匯入原檔。`, confirmText: '放棄傳輸' })) return;
+            const status = await abandonDiagnosticTransfer(transferId);
+            show(`傳輸 ${status.transferId} 已放棄，隔離片段將依保留期限清理。`);
+            savePending(null);
+        } catch (error) { show(error.message, 'danger'); }
+        finally { operationBusy = false; savePending(pending); }
+    });
+    forgetBtn?.addEventListener('click', async () => {
+        if (!pending || operationBusy) return;
+        operationBusy = true;
+        const transferId = pending.transferId;
+        savePending(pending);
+        try {
+            if (!await confirmAction({ title: '清除此頁續傳紀錄', message: `只清除此瀏覽器的傳輸 ${transferId} 續傳紀錄。伺服器上的診斷片段仍保留；若要停止保留，請使用「放棄保留傳輸」。`, confirmText: '清除續傳紀錄' })) return;
+            savePending(null);
+            show(`已清除此頁的傳輸 ${transferId} 續傳紀錄，可重新選檔匯入。伺服器片段仍保留。`);
+        } catch (error) { show(error.message, 'danger'); }
+        finally { operationBusy = false; savePending(pending); }
+    });
 
     exportBtn?.addEventListener('click', () => {
         const from = document.getElementById('prtg-export-from')?.value?.trim();
@@ -2663,34 +2770,36 @@ function bindPrtgDataTransfer() {
             return;
         }
 
+        if (operationBusy) return;
+        operationBusy = true;
+        activeController = new AbortController();
+        savePending(pending);
         const restore = withBusy(importBtn, '匯入中');
-        if (importResult) {
-            importResult.className = 'small mb-2 text-muted';
-            importResult.textContent = '匯入處理中…';
-        }
-
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-
-            const data = await api.post('/api/admin/settings/prtg-import', formData);
-
-            const msg = `匯入成功：裝置 ${formatNumber(data.devices)} 筆、感測器 ${formatNumber(data.sensors)} 筆、狀態變更 ${formatNumber(data.stateChanges)} 筆、數值 ${formatNumber(data.values)} 筆、主機對應 ${formatNumber(data.hostMaps)} 筆、人工對應 ${formatNumber(data.manualMaps)} 筆。`;
-            if (importResult) {
-                importResult.className = 'small mb-2 text-success';
-                importResult.textContent = msg;
-            }
-            toast('PRTG 鏡像資料匯入完成', 'success');
+            await pendingLoaded;
+            if (cancelBtn) cancelBtn.disabled = false;
+            savePending(pending);
+            const data = await uploadDiagnosticFile(file, {
+                signal: activeController.signal, resume: pending,
+                onSession: savePending,
+                progress: (phase, done, total) => {
+                    const labels = { hashing: '計算檔案指紋', uploading: '傳送診斷片段', validating: '驗證完整性' };
+                    show(`${labels[phase]}：${formatNumber(done)} / ${formatNumber(total)} 位元組${pending ? `；識別碼 ${pending.transferId}` : ''}`);
+                }
+            });
+            show(`診斷包已隔離保存，正式監控資料與判定未變更。識別碼 ${data.transferId}；${formatNumber(data.receivedBytes)} 位元組已通過完整性驗證。`, 'success');
+            toast('診斷包已隔離保存', 'success');
+            savePending(null);
             if (importFile) importFile.value = '';
-            await refreshPrtgMirror();
         } catch (error) {
-            const errMsg = error?.message || '匯入時發生未知錯誤。';
-            if (importResult) {
-                importResult.className = 'small mb-2 text-danger';
-                importResult.textContent = `匯入失敗：${errMsg}`;
-            }
+            show(error.name === 'AbortError' ? '本次操作已取消；已接受的片段保留，選取原檔可續傳。'
+                : `匯入未完成：${error?.message || '未知錯誤'}${pending ? `。傳輸 ${pending.transferId} 保留，可查詢狀態後續傳。` : ''}`, error.name === 'AbortError' ? 'muted' : 'danger');
         } finally {
+            activeController = null;
+            operationBusy = false;
+            if (cancelBtn) cancelBtn.disabled = true;
             restore();
+            savePending(pending);
         }
     });
 }
@@ -2917,7 +3026,7 @@ function init() {
     bindSelectedBackfill();
     bindPrtgEffectiveness();
     getCurrentUser().then(user => {
-        if (hasCapability(user, 'DevMonitor')) {
+        if (hasCapability(user, 'Maintain')) {
             document.getElementById('prtg-data-transfer-advanced')?.classList.remove('d-none');
         }
     }).catch(() => {});
@@ -2959,8 +3068,59 @@ if (monitoringForm) {
     const status = document.getElementById('prtg-monitoring-status');
     const hostSelect = document.getElementById('prtg-monitoring-hosts');
     const sensorBox = document.getElementById('prtg-monitoring-sensors');
+    const selectedSensorBox = document.getElementById('prtg-monitoring-selected-sensors');
+    const savedHostBox = document.getElementById('prtg-monitoring-saved-hosts');
+    const savedHostSearch = document.getElementById('prtg-monitoring-saved-host-search');
+    const selectedSensorSearch = document.getElementById('prtg-monitoring-selected-sensor-search');
     const sourceMode = document.getElementById('prtg-monitoring-source-mode');
+    const hostSearch = document.getElementById('prtg-monitoring-host-search');
+    const sensorSearch = document.getElementById('prtg-monitoring-sensor-search');
+    const hostBatchStatus = document.getElementById('prtg-monitoring-host-batch-status');
+    const sensorBatchStatus = document.getElementById('prtg-monitoring-sensor-batch-status');
+    const saveButton = monitoringForm.querySelector('button[type="submit"]');
+    const hostSelection = new Set();
+    const sensorSelection = new Set();
+    let hostCursors = [null], hostPageIndex = 0, hostPage = null;
+    let sensorCursors = [null], sensorPageIndex = 0, sensorPage = null;
+    let savedHostRows = [], savedHostPageIndex = 0, selectedSensorPageIndex = 0;
+    let estimateToken = null, estimateFingerprint = null, baselineFingerprint = null;
     let sourcePreviewSignature = null;
+    let draftVersion = 0, estimateSequence = 0, sourcePreviewSequence = 0;
+    let hostPageSequence = 0, sensorPageSequence = 0, monitoringLoadSequence = 0, previewSequence = 0;
+    let hostPageController = null, sensorPageController = null;
+    let hostSearchTimer = null, sensorSearchTimer = null;
+    let selectionBatchSequence = 0, activeSelectionBatch = null;
+    const selectionBatchTimeoutMs = 5 * 60 * 1000;
+    function sortedIds(values) { return [...values].map(Number).filter(Number.isSafeInteger).sort((a, b) => a - b); }
+    function scopeFingerprint(request) {
+        return JSON.stringify([request.revision, request.catalogueToken, request.coreSystemId, request.sourceTimeZoneId, request.sourceCultureName,
+            request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference,
+            request.identityConfirmed, sortedIds(new Set(request.hostIds)), sortedIds(new Set(request.sensorIds))]);
+    }
+    function cancelMonitoringPageRequest(kind, clearSearchTimer = true) {
+        if (kind === 'host') {
+            hostPageSequence++;
+            hostPageController?.abort();
+            hostPageController = null;
+            if (clearSearchTimer) { clearTimeout(hostSearchTimer); hostSearchTimer = null; }
+        } else {
+            sensorPageSequence++;
+            sensorPageController?.abort();
+            sensorPageController = null;
+            if (clearSearchTimer) { clearTimeout(sensorSearchTimer); sensorSearchTimer = null; }
+        }
+    }
+    function invalidateEstimate() {
+        draftVersion++; estimateSequence++; sourcePreviewSequence++;
+        if (activeSelectionBatch) cancelSelectionBatch(activeSelectionBatch.kind, '範圍草稿已變更，批次已拒絕套用');
+        cancelMonitoringPageRequest('host', false); cancelMonitoringPageRequest('sensor', false);
+        estimateToken = null; estimateFingerprint = null; sourcePreviewSignature = null;
+        document.getElementById('prtg-monitoring-estimate-result').textContent = '範圍或來源資料已變更，請重新估算。';
+        updateSaveButton();
+    }
+    function updateSaveButton() {
+        saveButton.disabled = !monitoring?.canEdit || !estimateToken || estimateFingerprint !== scopeFingerprint(monitoringRequest());
+    }
     function monitoringRequest() {
         return { revision: monitoring.revision,
             coreSystemId: document.getElementById('prtg-monitoring-core').value,
@@ -2970,36 +3130,94 @@ if (monitoringForm) {
             continuityConfirmed: document.getElementById('prtg-monitoring-continuity-confirm').checked,
             continuityEvidenceReference: document.getElementById('prtg-monitoring-continuity-evidence').value,
             identityConfirmed: document.getElementById('prtg-monitoring-confirm').checked,
-            hostIds: [...hostSelect.selectedOptions].map(o => Number(o.value)),
-            sensorIds: [...sensorBox.querySelectorAll('input:checked')].map(c => Number(c.value)) };
+            hostIds: sortedIds(hostSelection), sensorIds: sortedIds(sensorSelection),
+            catalogueToken: monitoring.catalogueToken, estimateToken };
     }
     function sourceSignature(request) {
         return JSON.stringify([request.revision, request.coreSystemId, request.sourceTimeZoneId,
-            request.sourceCultureName, request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference]);
+            request.sourceCultureName, request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference,
+            sortedIds(new Set(request.hostIds)), sortedIds(new Set(request.sensorIds))]);
     }
-    async function previewSource(request) {
-        const impact = await api.post('/api/prtg/monitoring/source-preview', request);
-        document.getElementById('prtg-monitoring-source-impact').textContent =
-            `${impact.message} 影響 ${impact.affectedHosts} 台／${impact.affectedSensors} 顆；保存觀察 ${impact.existingObservations} 筆，` +
-            `磁碟暖機 ${impact.warmingSensors} 顆，未結 PRTG 交辦 ${impact.openPrtgCases} 件。` +
-            `延續資格：${impact.continuationAllowed ? '可提出身分核對證據' : '不符合相同 Core／時間語意，禁止延續'}。`;
-        sourcePreviewSignature = sourceSignature(request);
-        return impact;
+    async function estimateScope() {
+        const request = monitoringRequest();
+        const requestFingerprint = scopeFingerprint(request);
+        const requestVersion = draftVersion;
+        const sequence = ++estimateSequence;
+        const estimate = await api.post('/api/prtg/monitoring/estimate', request);
+        if (sequence !== estimateSequence || requestVersion !== draftVersion ||
+            requestFingerprint !== scopeFingerprint(monitoringRequest())) return null;
+        estimateToken = estimate.estimateToken;
+        estimateFingerprint = requestFingerprint;
+        document.getElementById('prtg-monitoring-estimate-result').textContent =
+            `已估算 ${estimate.hostCount} 台主機、${estimate.selectedSensorCount} 顆已選 sensor；候選 ${estimate.availableSensorCount} 顆。` +
+            `最低工作量 ${estimate.minimumQueryWork} 次查詢工作。${estimate.queryCost}`;
+        sourcePreviewSignature = null; updateSaveButton();
+        return estimate;
+    }
+    async function previewSource(request, sequence = ++sourcePreviewSequence) {
+        const requestFingerprint = scopeFingerprint(request);
+        const requestVersion = draftVersion;
+        const isCurrentRequest = () => sequence === sourcePreviewSequence && requestVersion === draftVersion &&
+            requestFingerprint === scopeFingerprint(monitoringRequest());
+        try {
+            if (!request.estimateToken || estimateFingerprint !== requestFingerprint) {
+                const estimate = await estimateScope();
+                if (!estimate) throw new Error('範圍在估算期間已變更，請重新預覽目前範圍。');
+            }
+            if (!isCurrentRequest()) return null;
+            request = monitoringRequest();
+            const impact = await api.post('/api/prtg/monitoring/source-preview', request);
+            if (!isCurrentRequest()) return null;
+            document.getElementById('prtg-monitoring-source-impact').textContent =
+                `${impact.message} 影響 ${impact.affectedHosts} 台／${impact.affectedSensors} 顆；保存觀察 ${impact.existingObservations} 筆，` +
+                `磁碟暖機 ${impact.warmingSensors} 顆，未結 PRTG 交辦 ${impact.openPrtgCases} 件。` +
+                `延續資格：${impact.continuationAllowed ? '可提出身分核對證據' : '不符合相同 Core／時間語意，禁止延續'}。`;
+            sourcePreviewSignature = sourceSignature(request);
+            return impact;
+        } catch (error) {
+            // A superseded preview must not display its success or failure over the newer draft/request.
+            if (!isCurrentRequest()) return null;
+            throw error;
+        }
     }
     sourceMode.addEventListener('change', () => {
         document.getElementById('prtg-monitoring-core').required = sourceMode.value !== 'unknown';
+        invalidateEstimate();
+    });
+    document.getElementById('prtg-monitoring-estimate').addEventListener('click', async () => {
+        if (!monitoring) return;
+        const requestVersion = draftVersion;
+        const sequence = estimateSequence + 1;
+        try { await estimateScope(); }
+        catch (error) {
+            if (requestVersion === draftVersion && sequence === estimateSequence) {
+                estimateToken = null; updateSaveButton(); document.getElementById('prtg-monitoring-estimate-result').textContent = `估算遭拒：${error.message}`;
+            }
+        }
     });
     document.getElementById('prtg-monitoring-source-preview').addEventListener('click', async () => {
         if (!monitoring) return;
-        try { await previewSource(monitoringRequest()); }
-        catch (error) { status.textContent = `影響預覽失敗：${error.message}`; }
+        const requestVersion = draftVersion;
+        const sequence = ++sourcePreviewSequence;
+        const requestFingerprint = scopeFingerprint(monitoringRequest());
+        document.getElementById('prtg-monitoring-source-impact').textContent = '正在估算目前選取範圍的來源影響…';
+        try { await previewSource(monitoringRequest(), sequence); }
+        catch (error) {
+            if (sequence === sourcePreviewSequence && requestVersion === draftVersion &&
+                requestFingerprint === scopeFingerprint(monitoringRequest())) {
+                sourcePreviewSignature = null;
+                document.getElementById('prtg-monitoring-source-impact').textContent = `影響預覽失敗：${error.message}`;
+            }
+        }
     });
     let previewOffset = 0;
     async function previewScope(reset = false) {
         if (reset) previewOffset = 0;
+        const requestOffset = previewOffset, sequence = ++previewSequence;
         const panel = document.getElementById('prtg-monitoring-preview-result');
         try {
-            const data = await api.get(`/api/prtg/monitoring/preview?offset=${previewOffset}&limit=100`);
+            const data = await api.get(`/api/prtg/monitoring/preview?offset=${requestOffset}&limit=100`);
+            if (sequence !== previewSequence || requestOffset !== previewOffset) return null;
             panel.replaceChildren();
             const summary = document.createElement('p');
             summary.textContent = `${data.day.slice(0, 10)}｜設定 ${data.settingsRevision}｜試點 ${data.policyRevision}｜` +
@@ -3021,79 +3239,512 @@ if (monitoringForm) {
                     button.addEventListener('click', () => { previewOffset = next; previewScope(); }); panel.append(button);
                 }
             }
-        } catch (error) { panel.textContent = `範圍預覽失敗：${error.message}`; }
+        } catch (error) {
+            if (sequence === previewSequence && requestOffset === previewOffset)
+                panel.textContent = `範圍預覽失敗：${error.message}`;
+        }
     }
     document.getElementById('prtg-monitoring-preview').addEventListener('click', () => previewScope(true));
-    function renderMonitoringSensors() {
-        const hosts = new Set([...hostSelect.selectedOptions].map(o => Number(o.value)));
-        sensorBox.replaceChildren();
-        for (const sensor of monitoring.sensors.filter(s => hosts.has(s.hostId))) {
+    function sameIdSet(left, right) { return left.size === right.size && [...left].every(id => right.has(id)); }
+    function commitHostSelection(next) {
+        if (next.size > 3000) {
+            hostBatchStatus.textContent = '主機選取超過 3,000 台上限；未變更選取。';
+            renderMonitoringHosts();
+            return null;
+        }
+        if (sameIdSet(hostSelection, next)) return 0;
+        const added = [...next].filter(id => !hostSelection.has(id)).length;
+        hostSelection.clear(); next.forEach(id => hostSelection.add(id));
+        invalidateEstimate(); renderMonitoringHosts();
+        sensorPageSequence++; resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
+        return added;
+    }
+    function commitSensorSelection(next) {
+        if (next.size > 15000) {
+            sensorBatchStatus.textContent = 'sensor 選取超過 15,000 顆上限；未變更選取。';
+            renderMonitoringSensors();
+            return null;
+        }
+        if (sameIdSet(sensorSelection, next)) return 0;
+        const added = [...next].filter(id => !sensorSelection.has(id)).length;
+        sensorSelection.clear(); next.forEach(id => sensorSelection.add(id));
+        invalidateEstimate(); renderMonitoringSensors();
+        return added;
+    }
+    function applyCurrentPageSelection(kind, select) {
+        if (!monitoring?.canEdit) return;
+        const isHost = kind === 'host';
+        const rows = isHost ? hostPage?.rows || [] : sensorPage?.rows || [];
+        const current = isHost ? hostSelection : sensorSelection;
+        const maximum = isHost ? 3000 : 15000;
+        const proposed = new Set(current);
+        for (const row of rows) {
+            const id = Number(isHost ? row.hostId : row.sensorId);
+            if (!Number.isSafeInteger(id) || id <= 0) {
+                (isHost ? hostBatchStatus : sensorBatchStatus).textContent = '本頁含無效 ID；未變更任何選取。';
+                return;
+            }
+            if (select) proposed.add(id); else proposed.delete(id);
+        }
+        if (proposed.size > maximum) {
+            (isHost ? hostBatchStatus : sensorBatchStatus).textContent =
+                `本頁操作會超過 ${maximum.toLocaleString()} 筆選取上限；未變更任何選取。`;
+            return;
+        }
+        const added = isHost ? commitHostSelection(proposed) : commitSensorSelection(proposed);
+        (isHost ? hostBatchStatus : sensorBatchStatus).textContent = select
+            ? `已加入本頁 ${added} 筆；目前選取 ${proposed.size} 筆。`
+            : `已取消本頁選取；目前選取 ${proposed.size} 筆。`;
+    }
+    function updateSelectionBatchUi() {
+        const busyKind = activeSelectionBatch?.kind ?? null;
+        for (const kind of ['host', 'sensor']) {
+            const prefix = `prtg-monitoring-${kind}`;
+            for (const suffix of ['select-page', 'clear-page', 'select-search'])
+                document.getElementById(`${prefix}-${suffix}`).disabled = busyKind !== null;
+            const cancel = document.getElementById(`${prefix}-select-cancel`);
+            const isCurrent = busyKind === kind;
+            cancel.classList.toggle('d-none', !isCurrent);
+            cancel.disabled = !isCurrent;
+        }
+    }
+    function selectionBatchCurrent(batch) {
+        const search = batch.kind === 'host' ? hostSearch.value : sensorSearch.value;
+        const selectedHosts = batch.kind === 'sensor' ? sortedIds(hostSelection) : null;
+        return activeSelectionBatch === batch && batch.sequence === selectionBatchSequence &&
+            batch.draftVersion === draftVersion && monitoring?.revision === batch.revision &&
+            monitoring?.catalogueToken === batch.catalogueToken && search === batch.search &&
+            JSON.stringify(selectedHosts) === JSON.stringify(batch.selectedHosts);
+    }
+    function cancelSelectionBatch(kind, reason = '已由使用者停止批次') {
+        const batch = activeSelectionBatch;
+        if (!batch || batch.kind !== kind) return;
+        selectionBatchSequence++;
+        activeSelectionBatch = null;
+        if (batch.timeoutTimer) clearTimeout(batch.timeoutTimer);
+        batch.controller.abort();
+        updateSelectionBatchUi();
+        (kind === 'host' ? hostBatchStatus : sensorBatchStatus).textContent = `${reason}；選取保持不變。`;
+    }
+    async function addCurrentSearchResults(kind) {
+        if (!monitoring?.canEdit || activeSelectionBatch) return;
+        const isHost = kind === 'host';
+        const searchInput = isHost ? hostSearch : sensorSearch;
+        const statusBox = isHost ? hostBatchStatus : sensorBatchStatus;
+        const maximum = isHost ? 3000 : 15000;
+        const batch = {
+            kind, sequence: ++selectionBatchSequence, draftVersion,
+            revision: monitoring.revision, catalogueToken: monitoring.catalogueToken,
+            search: searchInput.value, selectedHosts: isHost ? null : sortedIds(hostSelection),
+            controller: new AbortController(), timeoutTimer: null, timedOut: false
+        };
+        activeSelectionBatch = batch;
+        updateSelectionBatchUi();
+        statusBox.textContent = '正在逐頁讀取目前搜尋結果；最多 5 分鐘，可隨時停止。選取尚未變更…';
+        batch.timeoutTimer = setTimeout(() => {
+            if (activeSelectionBatch !== batch) return;
+            batch.timedOut = true;
+            batch.controller.abort();
+        }, selectionBatchTimeoutMs);
+        try {
+            const collected = new Set();
+            let cursor = null, expectedTotal = null, pageNumber = 0;
+            do {
+                if (!selectionBatchCurrent(batch)) return;
+                let page;
+                if (isHost) {
+                    const query = new URLSearchParams({ search: batch.search, catalogueToken: batch.catalogueToken });
+                    if (cursor) query.set('cursor', cursor);
+                    page = await api.get(`/api/prtg/monitoring/hosts?${query.toString()}`, {
+                        signal: batch.controller.signal, timeoutMs: 45000, silent: true
+                    });
+                } else {
+                    page = await api.readOnlyPost('/api/prtg/monitoring/sensors', {
+                        catalogueToken: batch.catalogueToken, cursor, search: batch.search,
+                        hostIds: batch.selectedHosts, offset: pageNumber * 100
+                    }, { signal: batch.controller.signal, timeoutMs: 45000, silent: true });
+                }
+                if (!selectionBatchCurrent(batch)) return;
+                if (!page || !Array.isArray(page.rows) || page.rows.length > 100 || !Number.isSafeInteger(page.total) || page.total < 0)
+                    throw new Error('目錄回傳格式無效，未變更選取。');
+                if (expectedTotal === null) {
+                    expectedTotal = page.total;
+                    if (expectedTotal > maximum)
+                        throw new Error(`目前搜尋結果有 ${expectedTotal.toLocaleString()} 筆，超過 ${maximum.toLocaleString()} 筆批次選取上限；請縮小搜尋，未變更選取。`);
+                } else if (page.total !== expectedTotal) {
+                    throw new Error('目錄總數在批次讀取期間變更；已拒絕整批，未變更選取。');
+                }
+                if (pageNumber > Math.ceil(maximum / 100) || (page.rows.length === 0 && page.nextCursor))
+                    throw new Error('目錄分頁沒有前進；已停止批次，未變更選取。');
+                for (const row of page.rows) {
+                    const id = Number(isHost ? row.hostId : row.sensorId);
+                    if (!Number.isSafeInteger(id) || id <= 0)
+                        throw new Error('目錄含無效 ID；已拒絕整批，未變更選取。');
+                    collected.add(id);
+                }
+                pageNumber++;
+                cursor = page.nextCursor || null;
+                if (cursor && pageNumber >= Math.ceil(maximum / 100))
+                    throw new Error(`搜尋結果分頁超過 ${maximum.toLocaleString()} 筆批次上限；請縮小搜尋，未變更選取。`);
+                statusBox.textContent = `已讀取 ${Math.min(collected.size, expectedTotal).toLocaleString()}／${expectedTotal.toLocaleString()} 筆；選取尚未變更。`;
+            } while (cursor);
+
+            if (!selectionBatchCurrent(batch)) return;
+            if (collected.size !== expectedTotal)
+                throw new Error(`目錄只完整讀到 ${collected.size}／${expectedTotal} 筆；已拒絕部分結果，未變更選取。`);
+            const current = isHost ? hostSelection : sensorSelection;
+            const proposed = new Set(current);
+            collected.forEach(id => proposed.add(id));
+            if (proposed.size > maximum)
+                throw new Error(`加入搜尋結果後會超過 ${maximum.toLocaleString()} 筆選取上限；已拒絕整批，未變更選取。`);
+            activeSelectionBatch = null;
+            updateSelectionBatchUi();
+            const added = isHost ? commitHostSelection(proposed) : commitSensorSelection(proposed);
+            statusBox.textContent = `已完整加入搜尋結果 ${added.toLocaleString()} 筆；目前選取 ${proposed.size.toLocaleString()} 筆。`;
+        } catch (error) {
+            if (selectionBatchCurrent(batch)) statusBox.textContent = batch.timedOut
+                ? '批次超過 5 分鐘整體時間上限，已拒絕套用；選取保持不變。'
+                : `批次未套用：${error.message} 選取保持不變。`;
+        } finally {
+            if (activeSelectionBatch === batch) {
+                activeSelectionBatch = null;
+                if (batch.timeoutTimer) clearTimeout(batch.timeoutTimer);
+                updateSelectionBatchUi();
+            }
+        }
+    }
+    function renderMonitoringHosts() {
+        hostSelect.replaceChildren();
+        for (const host of hostPage?.rows || []) {
             const label = document.createElement('label'); label.className = 'form-check d-block';
             const check = document.createElement('input'); check.type = 'checkbox'; check.className = 'form-check-input';
-            check.value = String(sensor.sensorId); check.checked = monitoring.sensorIds.includes(sensor.sensorId);
+            check.value = String(host.hostId); check.checked = hostSelection.has(Number(host.hostId));
             check.addEventListener('change', () => {
-                monitoring.sensorIds = [...sensorBox.querySelectorAll('input:checked')].map(c => Number(c.value));
+                const id = Number(check.value);
+                const proposed = new Set(hostSelection);
+                if (check.checked) proposed.add(id); else proposed.delete(id);
+                commitHostSelection(proposed);
             });
-            label.append(check, document.createTextNode(`${sensor.name} (${sensor.sensorId}, ${sensor.sensorType}) — ${sensor.evidence?.qualityReason ?? '尚無可信涵蓋'}`));
-            if (sensor.evidence) {
-                const detail = document.createElement('span'); detail.className = 'small text-muted d-block ms-3';
-                const e = sensor.evidence;
-                detail.textContent = `可信涵蓋：${e.coveredFrom || '未知'} 至 ${e.coveredThrough || '未知'}；區間 ${e.coverageSpanCount} 段，缺口不視為正常。` +
-                    (sensor.category === 'disk' ? `磁碟語意暖機起點：${e.diskSemanticValidFrom || '尚未確認'}；最早完整視窗：${e.diskReadyAfter || '未知'}。` : '');
-                label.append(detail);
+            label.append(check, document.createTextNode(`${host.hostName} (#${host.hostId})`)); hostSelect.append(label);
+        }
+        const offset = hostPageIndex * 100;
+        document.getElementById('prtg-monitoring-host-page-info').textContent =
+            `主機 ${hostPage?.total ? offset + 1 : 0}–${offset + (hostPage?.rows.length || 0)}／${hostPage?.total || 0}；已選 ${hostSelection.size}`;
+        document.getElementById('prtg-monitoring-host-prev').disabled = hostPageIndex === 0;
+        document.getElementById('prtg-monitoring-host-next').disabled = !hostPage?.nextCursor;
+    }
+    function renderSavedHosts() {
+        savedHostBox.replaceChildren();
+        const search = savedHostSearch.value.trim().toLocaleLowerCase();
+        const filtered = savedHostRows.filter(host => `${host.hostId} ${host.hostName} ${host.status}`.toLocaleLowerCase().includes(search));
+        const pageCount = Math.max(1, Math.ceil(filtered.length / 100));
+        savedHostPageIndex = Math.min(savedHostPageIndex, pageCount - 1);
+        const rows = filtered.slice(savedHostPageIndex * 100, savedHostPageIndex * 100 + 100);
+        const labels = { eligible: '可選', inactive: '已停用', merged: '已合併', 'not-netiq': '非 NetIQ', 'not-visible': '目前不可見', missing: '目錄已移除' };
+        for (const host of rows) {
+            const label = document.createElement('label'); label.className = 'd-flex align-items-center gap-2 py-1';
+            const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn-sm btn-outline-danger';
+            remove.textContent = '移除'; remove.setAttribute('aria-label', `移除已保存主機 ${host.hostId}`);
+            remove.disabled = !monitoring?.canEdit;
+            remove.addEventListener('click', () => {
+                hostSelection.delete(Number(host.hostId));
+                savedHostRows = savedHostRows.filter(item => Number(item.hostId) !== Number(host.hostId));
+                invalidateEstimate(); renderSavedHosts(); renderMonitoringHosts();
+                sensorPageSequence++; resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
+            });
+            const text = document.createElement('span');
+            text.textContent = `${host.hostName} (#${host.hostId}) — ${labels[host.status] || '狀態未知'}`;
+            label.append(remove, text); savedHostBox.append(label);
+        }
+        const start = filtered.length ? savedHostPageIndex * 100 + 1 : 0;
+        const end = rows.length ? Math.min(start + rows.length - 1, filtered.length) : 0;
+        document.getElementById('prtg-monitoring-saved-host-page-info').textContent =
+            `已保存主機 ${start}–${end}／${filtered.length}；共 ${savedHostRows.length} 筆`;
+        document.getElementById('prtg-monitoring-saved-host-prev').disabled = savedHostPageIndex === 0;
+        document.getElementById('prtg-monitoring-saved-host-next').disabled = savedHostPageIndex + 1 >= pageCount;
+        if (!rows.length) savedHostBox.textContent = '沒有符合搜尋條件的已保存主機。';
+    }
+    async function loadMonitoringHostPage(reset = false) {
+        cancelMonitoringPageRequest('host');
+        if (reset) { hostCursors = [null]; hostPageIndex = 0; }
+        const pageIndex = hostPageIndex, search = hostSearch.value, catalogueToken = monitoring.catalogueToken;
+        const cursor = hostCursors[pageIndex], sequence = ++hostPageSequence;
+        const controller = new AbortController();
+        hostPageController = controller;
+        const binding = JSON.stringify([monitoring.revision, catalogueToken, pageIndex, cursor, search]);
+        const query = new URLSearchParams({ search, catalogueToken });
+        if (cursor) query.set('cursor', cursor);
+        let response;
+        try { response = await api.get(`/api/prtg/monitoring/hosts?${query.toString()}`, { signal: controller.signal, timeoutMs: 45000 }); }
+        catch (error) {
+            const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
+                hostPageIndex, hostCursors[hostPageIndex], hostSearch.value]);
+            if (sequence !== hostPageSequence || binding !== currentBinding) return null;
+            throw error;
+        } finally {
+            if (hostPageController === controller) hostPageController = null;
+        }
+        const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
+            hostPageIndex, hostCursors[hostPageIndex], hostSearch.value]);
+        if (sequence !== hostPageSequence || binding !== currentBinding) return null;
+        hostPage = response;
+        if (hostPage.nextCursor) hostCursors[pageIndex + 1] = hostPage.nextCursor;
+        renderMonitoringHosts();
+    }
+    function resetMonitoringSensorPages() { sensorCursors = [null]; sensorPageIndex = 0; sensorPage = null; }
+    function showSensorError(error) {
+        sensorBox.textContent = error.status === 403
+            ? '所選主機含目前無法選取的項目；請核對已保存主機及已選 sensor 清單，明確移除失效項目後重新估算。'
+            : `sensor 目錄載入失敗：${error.message}`;
+    }
+    function renderMonitoringSensors() {
+        sensorBox.replaceChildren();
+        for (const sensor of sensorPage?.rows || []) {
+            const label = document.createElement('label'); label.className = 'form-check d-block';
+            const check = document.createElement('input'); check.type = 'checkbox'; check.className = 'form-check-input';
+            check.value = String(sensor.sensorId); check.checked = sensorSelection.has(Number(sensor.sensorId));
+            check.addEventListener('change', () => {
+                const id = Number(check.value);
+                const proposed = new Set(sensorSelection);
+                if (check.checked) proposed.add(id); else proposed.delete(id);
+                commitSensorSelection(proposed);
+            });
+            label.append(check, document.createTextNode(`${sensor.name} (${sensor.sensorId}, ${sensor.sensorType}) — 主機 ${sensor.hostId}${sensor.category ? `；${sensor.category}` : ''}`));
+            sensorBox.append(label);
+        }
+        const offset = sensorPageIndex * 100;
+        document.getElementById('prtg-monitoring-sensor-page-info').textContent =
+            `sensor ${sensorPage?.total ? offset + 1 : 0}–${offset + (sensorPage?.rows.length || 0)}／${sensorPage?.total || 0}；已選 ${sensorSelection.size}`;
+        document.getElementById('prtg-monitoring-sensor-prev').disabled = sensorPageIndex === 0;
+        document.getElementById('prtg-monitoring-sensor-next').disabled = !sensorPage?.nextCursor;
+        if (!sensorPage?.rows.length) sensorBox.textContent = '此所選主機與搜尋範圍沒有有效的 sensor 對應。';
+        renderSelectedSensors();
+    }
+    function renderSelectedSensors() {
+        selectedSensorBox.replaceChildren();
+        const search = selectedSensorSearch.value.trim();
+        const filtered = sortedIds(sensorSelection).filter(sensorId => String(sensorId).includes(search));
+        const pageCount = Math.max(1, Math.ceil(filtered.length / 100));
+        selectedSensorPageIndex = Math.min(selectedSensorPageIndex, pageCount - 1);
+        const rows = filtered.slice(selectedSensorPageIndex * 100, selectedSensorPageIndex * 100 + 100);
+        for (const sensorId of rows) {
+            const chip = document.createElement('span'); chip.className = 'badge text-bg-secondary d-inline-flex align-items-center gap-1';
+            const value = document.createElement('span'); value.textContent = String(sensorId);
+            const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn-close btn-close-white';
+            remove.setAttribute('aria-label', `移除 sensor ${sensorId}`); remove.title = `移除 sensor ${sensorId}`;
+            remove.disabled = !monitoring?.canEdit;
+            remove.addEventListener('click', () => {
+                sensorSelection.delete(sensorId); invalidateEstimate(); renderMonitoringSensors();
+            });
+            chip.append(value, remove); selectedSensorBox.append(chip);
+        }
+        const start = filtered.length ? selectedSensorPageIndex * 100 + 1 : 0;
+        const end = rows.length ? Math.min(start + rows.length - 1, filtered.length) : 0;
+        document.getElementById('prtg-monitoring-selected-sensor-page-info').textContent =
+            `已選 sensor ${start}–${end}／${filtered.length}；選取共 ${sensorSelection.size} 顆`;
+        document.getElementById('prtg-monitoring-selected-sensor-prev').disabled = selectedSensorPageIndex === 0;
+        document.getElementById('prtg-monitoring-selected-sensor-next').disabled = selectedSensorPageIndex + 1 >= pageCount;
+        if (!rows.length) selectedSensorBox.textContent = '沒有符合搜尋條件的已選 sensor。';
+    }
+    async function loadMonitoringSensorPage() {
+        cancelMonitoringPageRequest('sensor');
+        const sequence = ++sensorPageSequence;
+        const pageIndex = sensorPageIndex, hostIds = sortedIds(hostSelection), search = sensorSearch.value;
+        const catalogueToken = monitoring.catalogueToken, revision = monitoring.revision, cursor = sensorCursors[pageIndex];
+        const binding = JSON.stringify([revision, catalogueToken, pageIndex, cursor, search, hostIds]);
+        if (!hostIds.length) {
+            if (sequence === sensorPageSequence && binding === JSON.stringify([monitoring.revision, monitoring.catalogueToken,
+                sensorPageIndex, sensorCursors[sensorPageIndex], sensorSearch.value, sortedIds(hostSelection)])) {
+                sensorPage = { rows: [], total: 0, nextCursor: null }; renderMonitoringSensors();
             }
-            sensorBox.appendChild(label);
+            return null;
         }
-        if (monitoring.sensorsTruncated) {
-            const note = document.createElement('p'); note.className = 'small text-warning';
-            note.textContent = `感測器清單只顯示前 500 筆（共 ${monitoring.sensorsTotal} 筆，已選項優先）。請縮小主機範圍或請管理者分批調整試點。`;
-            sensorBox.append(note);
+        const controller = new AbortController();
+        sensorPageController = controller;
+        let response;
+        try {
+            response = await api.readOnlyPost('/api/prtg/monitoring/sensors', {
+                catalogueToken, cursor, search, hostIds, offset: pageIndex * 100
+            }, { signal: controller.signal, timeoutMs: 45000, silent: true });
+        } catch (error) {
+            const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
+                sensorPageIndex, sensorCursors[sensorPageIndex], sensorSearch.value, sortedIds(hostSelection)]);
+            if (sequence !== sensorPageSequence || binding !== currentBinding) return null;
+            throw error;
+        } finally {
+            if (sensorPageController === controller) sensorPageController = null;
         }
-        if (!sensorBox.childNodes.length) sensorBox.textContent = '所選主機無有效對應的 sensor，請先同步並處理對應衝突。';
+        const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
+            sensorPageIndex, sensorCursors[sensorPageIndex], sensorSearch.value, sortedIds(hostSelection)]);
+        if (sequence !== sensorPageSequence || binding !== currentBinding) return null;
+        sensorPage = response;
+        if (sensorPage.nextCursor) sensorCursors[pageIndex + 1] = sensorPage.nextCursor;
+        renderMonitoringSensors();
     }
     async function loadMonitoring() {
+        if (activeSelectionBatch) cancelSelectionBatch(activeSelectionBatch.kind, '正在重新載入目錄，批次已拒絕套用');
+        cancelMonitoringPageRequest('host'); cancelMonitoringPageRequest('sensor');
+        const sequence = ++monitoringLoadSequence;
+        hostPageSequence++; sensorPageSequence++; previewSequence++;
+        const draftVersionAtStart = draftVersion;
         try {
-            const response = await api.get('/api/prtg/monitoring'); monitoring = response;
+            const response = await api.get('/api/prtg/monitoring');
+            if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
+            monitoring = response; draftVersion++; estimateSequence++; sourcePreviewSequence++;
+            hostPageSequence++; sensorPageSequence++;
+            const initializedDraftVersion = draftVersion;
             sourceMode.value = ''; sourcePreviewSignature = null;
+            estimateToken = null; estimateFingerprint = null;
+            hostSelection.clear(); monitoring.hostIds.forEach(id => hostSelection.add(Number(id)));
+            sensorSelection.clear(); monitoring.sensorIds.forEach(id => sensorSelection.add(Number(id)));
+            if (Array.isArray(monitoring.savedHosts) && monitoring.savedHosts.length > 3000)
+                throw new Error('已保存主機超過 3,000 筆修復清單上限；拒絕部分載入。');
+            savedHostRows = Array.isArray(monitoring.savedHosts) ? monitoring.savedHosts.slice() : [];
+            savedHostPageIndex = 0; selectedSensorPageIndex = 0;
             document.getElementById('prtg-monitoring-core').required = true;
             document.getElementById('prtg-monitoring-core').value = monitoring.coreSystemId;
             document.getElementById('prtg-monitoring-zone').value = monitoring.sourceTimeZoneId || monitoring.suggestedTimeZoneId;
             document.getElementById('prtg-monitoring-culture').value = monitoring.sourceCultureName || 'zh-TW';
-            hostSelect.replaceChildren();
             const acceptanceHosts = document.getElementById('prtg-acceptance-host');
             acceptanceHosts?.replaceChildren();
-            for (const host of monitoring.hosts) {
-                const option = document.createElement('option'); option.value = String(host.hostId); option.textContent = host.hostName;
-                option.selected = monitoring.hostIds.includes(host.hostId); hostSelect.appendChild(option);
-                if (acceptanceHosts) {
-                    const entry = document.createElement('option'); entry.value = String(host.hostId);
-                    entry.textContent = host.hostName; acceptanceHosts.append(entry);
-                }
+            if (acceptanceHosts) for (const hostId of monitoring.hostIds) {
+                const entry = document.createElement('option'); entry.value = String(hostId);
+                entry.textContent = String(hostId); acceptanceHosts.append(entry);
             }
             for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = !monitoring.canEdit;
             status.textContent = !monitoring.canEdit ? '範圍含不可見主機，請由可見全部試點的管理者修改。'
                 : !monitoring.enabled ? 'PRTG 擷取已停用；保留既有來源確認與證據，不發布新判定。'
                 : monitoring.ready ? '身分與範圍已確認；個別 sensor 的涵蓋仍需查證，首次確認會開始暖機。'
                 : '正式判定未就緒：請核對 Core 身分與明列試點，未確認不能發布 PRTG 風險。';
-            renderMonitoringSensors();
-        } catch (error) { status.textContent = `無法載入試點：${error.message}`; }
+            // 已保存選取的修復不依賴新候選目錄成功；停用／移除主機仍保留完整已選 ID。
+            renderSavedHosts(); renderSelectedSensors();
+            baselineFingerprint = scopeFingerprint(monitoringRequest());
+            updateSaveButton();
+            try { await loadMonitoringHostPage(true); }
+            catch (error) {
+                if (sequence === monitoringLoadSequence && initializedDraftVersion === draftVersion)
+                    hostSelect.textContent = `主機目錄載入失敗：${error.message}；已保存選取仍可核對。`;
+            }
+            if (sequence !== monitoringLoadSequence || initializedDraftVersion !== draftVersion) return null;
+            renderSavedHosts();
+            resetMonitoringSensorPages();
+            try { await loadMonitoringSensorPage(); }
+            catch (error) {
+                if (sequence === monitoringLoadSequence && initializedDraftVersion === draftVersion)
+                    showSensorError(error);
+            }
+            if (sequence !== monitoringLoadSequence || initializedDraftVersion !== draftVersion) return null;
+            baselineFingerprint = scopeFingerprint(monitoringRequest());
+            updateSaveButton();
+        } catch (error) {
+            if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
+            for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = true;
+            status.textContent = `無法載入或檢視試點範圍：${error.message}。請由至少能檢視完整既有試點的 Maintain 管理者處理。`;
+        }
     }
-    hostSelect.addEventListener('change', renderMonitoringSensors);
+    document.getElementById('prtg-monitoring-host-prev').addEventListener('click', async () => {
+        if (hostPageIndex > 0) { hostPageIndex--; await loadMonitoringHostPage(); }
+    });
+    document.getElementById('prtg-monitoring-host-next').addEventListener('click', async () => {
+        if (hostPage?.nextCursor) { hostCursors[hostPageIndex + 1] = hostPage.nextCursor; hostPageIndex++; await loadMonitoringHostPage(); }
+    });
+    document.getElementById('prtg-monitoring-sensor-prev').addEventListener('click', async () => {
+        if (sensorPageIndex > 0) { sensorPageIndex--; await loadMonitoringSensorPage(); }
+    });
+    document.getElementById('prtg-monitoring-sensor-next').addEventListener('click', async () => {
+        if (sensorPage?.nextCursor) { sensorCursors[sensorPageIndex + 1] = sensorPage.nextCursor; sensorPageIndex++; await loadMonitoringSensorPage(); }
+    });
+    document.getElementById('prtg-monitoring-host-select-page').addEventListener('click', () => applyCurrentPageSelection('host', true));
+    document.getElementById('prtg-monitoring-host-clear-page').addEventListener('click', () => applyCurrentPageSelection('host', false));
+    document.getElementById('prtg-monitoring-host-select-search').addEventListener('click', () => addCurrentSearchResults('host'));
+    document.getElementById('prtg-monitoring-host-select-cancel').addEventListener('click', () => cancelSelectionBatch('host'));
+    document.getElementById('prtg-monitoring-sensor-select-page').addEventListener('click', () => applyCurrentPageSelection('sensor', true));
+    document.getElementById('prtg-monitoring-sensor-clear-page').addEventListener('click', () => applyCurrentPageSelection('sensor', false));
+    document.getElementById('prtg-monitoring-sensor-select-search').addEventListener('click', () => addCurrentSearchResults('sensor'));
+    document.getElementById('prtg-monitoring-sensor-select-cancel').addEventListener('click', () => cancelSelectionBatch('sensor'));
+    document.getElementById('prtg-monitoring-saved-host-prev').addEventListener('click', () => {
+        if (savedHostPageIndex > 0) { savedHostPageIndex--; renderSavedHosts(); }
+    });
+    document.getElementById('prtg-monitoring-saved-host-next').addEventListener('click', () => {
+        const search = savedHostSearch.value.trim().toLocaleLowerCase();
+        const count = savedHostRows.filter(host => `${host.hostId} ${host.hostName} ${host.status}`.toLocaleLowerCase().includes(search)).length;
+        if ((savedHostPageIndex + 1) * 100 < count) { savedHostPageIndex++; renderSavedHosts(); }
+    });
+    savedHostSearch.addEventListener('input', () => { savedHostPageIndex = 0; renderSavedHosts(); });
+    document.getElementById('prtg-monitoring-selected-sensor-prev').addEventListener('click', () => {
+        if (selectedSensorPageIndex > 0) { selectedSensorPageIndex--; renderSelectedSensors(); }
+    });
+    document.getElementById('prtg-monitoring-selected-sensor-next').addEventListener('click', () => {
+        const count = sortedIds(sensorSelection).filter(id => String(id).includes(selectedSensorSearch.value.trim())).length;
+        if ((selectedSensorPageIndex + 1) * 100 < count) { selectedSensorPageIndex++; renderSelectedSensors(); }
+    });
+    selectedSensorSearch.addEventListener('input', () => { selectedSensorPageIndex = 0; renderSelectedSensors(); });
+    hostSearch.addEventListener('input', () => {
+        if (activeSelectionBatch?.kind === 'host') cancelSelectionBatch('host', '主機搜尋文字已變更，批次已拒絕套用');
+        cancelMonitoringPageRequest('host');
+        clearTimeout(hostSearchTimer); hostSearchTimer = setTimeout(() => loadMonitoringHostPage(true).catch(e => { status.textContent = `主機目錄載入失敗：${e.message}`; }), 250);
+    });
+    sensorSearch.addEventListener('input', () => {
+        if (activeSelectionBatch?.kind === 'sensor') cancelSelectionBatch('sensor', 'sensor 搜尋文字已變更，批次已拒絕套用');
+        cancelMonitoringPageRequest('sensor');
+        clearTimeout(sensorSearchTimer); sensorSearchTimer = setTimeout(() => {
+            resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
+        }, 250);
+    });
+    for (const id of ['prtg-monitoring-core', 'prtg-monitoring-zone', 'prtg-monitoring-culture',
+        'prtg-monitoring-continuity-confirm', 'prtg-monitoring-continuity-evidence', 'prtg-monitoring-confirm']) {
+        const input = document.getElementById(id);
+        input.addEventListener('input', invalidateEstimate); input.addEventListener('change', invalidateEstimate);
+    }
+    window.addEventListener('beforeunload', event => {
+        if (monitoring && baselineFingerprint !== scopeFingerprint(monitoringRequest())) {
+            event.preventDefault(); event.returnValue = '';
+        }
+    });
     monitoringForm.addEventListener('submit', async event => {
         event.preventDefault(); if (!monitoring) return;
-        const button = monitoringForm.querySelector('button[type="submit"]'); button.disabled = true;
+        saveButton.disabled = true;
+        let submitDraftVersion = null;
         try {
-            const request = monitoringRequest();
+            let request = monitoringRequest();
+            if (!request.hostIds.length || !request.sensorIds.length) throw new Error('請至少選取一台主機與一顆 sensor。');
+            const requestVersion = draftVersion;
+            submitDraftVersion = requestVersion;
+            const requestFingerprint = scopeFingerprint(request);
+            if (!request.estimateToken || estimateFingerprint !== requestFingerprint) {
+                const estimate = await estimateScope();
+                if (!estimate) throw new Error('範圍在估算期間已變更，未送出保存。');
+            }
+            request = monitoringRequest();
+            if (requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(request))
+                throw new Error('範圍在估算期間已變更，未送出保存。');
             if (sourcePreviewSignature !== sourceSignature(request)) {
                 const impact = await previewSource(request);
+                if (!impact || requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(monitoringRequest()))
+                    throw new Error('範圍在影響預覽期間已變更，未送出保存。');
                 if (impact.changed) {
                     status.textContent = '已列出來源變更影響；請核對處理方式及證據後再次儲存。'; return;
                 }
             }
-            await api.put('/api/prtg/monitoring', request);
-            await loadMonitoring();
-        } catch (error) { status.textContent = `儲存失敗：${error.message}。設定衝突時請重新載入頁面。`; }
-        finally { button.disabled = !monitoring?.canEdit; }
+            const putRequest = monitoringRequest();
+            if (requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(putRequest))
+                throw new Error('範圍在保存前已變更，未送出保存。');
+            const savedRevision = await api.put('/api/prtg/monitoring', putRequest);
+            if (requestVersion === draftVersion && requestFingerprint === scopeFingerprint(monitoringRequest())) {
+                await loadMonitoring();
+            } else {
+                if (typeof savedRevision === 'string' && savedRevision.length) {
+                    monitoring.revision = savedRevision;
+                    baselineFingerprint = scopeFingerprint({ ...putRequest, revision: savedRevision });
+                }
+                invalidateEstimate();
+                status.textContent = '已保存送出時的範圍；送出期間表單又有變更，草稿已保留。請重新估算目前草稿，再保存。';
+            }
+        } catch (error) {
+            if (submitDraftVersion === null || submitDraftVersion === draftVersion)
+                status.textContent = `儲存失敗：${error.message}。設定衝突時請重新載入頁面。`;
+        }
+        finally { updateSaveButton(); }
     });
     loadMonitoring();
 }

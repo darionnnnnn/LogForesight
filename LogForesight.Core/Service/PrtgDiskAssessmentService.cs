@@ -9,6 +9,7 @@ namespace LogForesight.Core.Service;
 public sealed class PrtgDiskAssessmentService
 {
     public const int MaximumBatchSize = 100;
+    public const int MaximumCandidateSnapshotSize = 15_000;
     public const int MaximumExpectedHistoricalPointsPerBatch = 100_000;
     public const int CandidateMappingLookbackDays = 30;
     public const string ParserSemanticVersion = "disk-semantic-v1";
@@ -17,6 +18,7 @@ public sealed class PrtgDiskAssessmentService
     private readonly ISystemSettingsStore _settings;
     private readonly PrtgDiskSemanticEvidenceStore _evidence;
     private readonly PrtgDiskVerificationResultStore? _verificationResults;
+    private readonly object _operationOwner = new();
 
     public PrtgDiskAssessmentService(EfPrtgStore store, IHostStore hosts, ISystemSettingsStore settings,
         PrtgDiskSemanticEvidenceStore evidence, PrtgDiskVerificationResultStore? verificationResults = null)
@@ -24,53 +26,325 @@ public sealed class PrtgDiskAssessmentService
 
     public PrtgDiskAssessmentBatch Assess(DateOnly completedDay, KnownIssueRule? rule,
         PrtgDiskDecisionMode mode = PrtgDiskDecisionMode.Preview, int limit = MaximumBatchSize, int offset = 0,
-        IReadOnlyCollection<long>? selectedHostIds = null, IReadOnlyCollection<long>? selectedSensorObjids = null)
+        IReadOnlyCollection<long>? selectedHostIds = null, IReadOnlyCollection<long>? selectedSensorObjids = null) =>
+        AssessCandidatePage(completedDay, rule, mode, limit, offset, selectedHostIds, selectedSensorObjids,
+            candidateSnapshot: null, candidateMappingRevision: null, candidatePolicyVersion: null);
+
+    /// <summary>
+    /// Opens one bounded assessment operation. A caller may pass the immutable host snapshot already
+    /// captured by its HTTP request so authorization, names, and candidate scope share one version.
+    /// Candidate count is captured here and is never accepted from the caller.
+    /// </summary>
+    public PrtgDiskAssessmentOperation BeginAssessment(DateOnly completedDay, DateTime candidateMappingThrough,
+        KnownIssueRule? rule = null, PrtgDiskDecisionMode mode = PrtgDiskDecisionMode.Preview,
+        IReadOnlyCollection<long>? selectedHostIds = null, IReadOnlyCollection<long>? selectedSensorObjids = null,
+        PrtgHostSnapshot? capturedHostSnapshot = null)
+    {
+        if (completedDay.ToDateTime(TimeOnly.MinValue).Date >= DateTime.Today)
+            throw new ArgumentOutOfRangeException(nameof(completedDay), "僅允許評估已完成日期。");
+        var completed = completedDay.ToDateTime(TimeOnly.MinValue).Date;
+        var mappingThrough = candidateMappingThrough.Date;
+        if (mappingThrough < completed || mappingThrough > DateTime.Today)
+            throw new ArgumentOutOfRangeException(nameof(candidateMappingThrough), "候選映射日必須介於完成日與今天之間。");
+
+        var hostSnapshot = capturedHostSnapshot ?? _hosts.CapturePrtgSnapshot();
+        var hostVersion = hostSnapshot.Version;
+        if (_hosts.DataVersion != hostVersion)
+            throw new InvalidOperationException("PRTG 主機清單版本已變更；請重新開始評估。");
+        var selectedHosts = selectedHostIds?.Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
+        var selected = selectedHosts?.ToHashSet();
+        var activeHostIds = hostSnapshot.Hosts.Where(h => h.Active && h.MergedInto == null &&
+                (selected is null || selected.Contains(h.HostId)))
+            .Select(h => h.HostId).OrderBy(id => id).ToArray();
+        var selectedSensors = selectedSensorObjids?.Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
+        var settings = _settings.Get();
+        var whitelist = (settings.PrtgSensorTypeWhitelist ?? new List<string>()).ToArray();
+        var settingsRevision = settings.Revision ?? string.Empty;
+        var settingsFingerprint = Fingerprint(string.Join("\n", whitelist.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
+        var ruleFingerprint = Fingerprint(rule is null ? string.Empty : System.Text.Json.JsonSerializer.Serialize(rule));
+        var mappingFrom = mappingThrough.AddDays(-CandidateMappingLookbackDays);
+        var hostMapRevision = _store.ReadHostMapDataRevision();
+        var catalogueRevision = _store.ReadCatalogueDataRevision();
+        var captured = activeHostIds.Length == 0 || selectedSensors is { Length: 0 }
+            ? (0, new List<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)>())
+            : _store.GetLatestMappedReadinessSensorSnapshot(activeHostIds, mappingThrough, mappingFrom,
+                MaximumCandidateSnapshotSize, selectedSensors);
+        if (hostMapRevision != _store.ReadHostMapDataRevision() || catalogueRevision != _store.ReadCatalogueDataRevision())
+            throw new InvalidOperationException("PRTG 主機映射或感測器目錄於候選快照擷取期間改變；請重新開始評估。");
+
+        var candidateSnapshot = new PrtgDiskCandidateSnapshot(completedDay, mappingThrough, activeHostIds,
+            selectedSensorObjids is null, selectedSensors, null, ruleFingerprint, hostMapRevision,
+            captured.Item1, captured.Item2, hostSnapshot, catalogueRevision);
+        var metadataSnapshot = PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        if (_hosts.DataVersion != hostVersion)
+            throw new InvalidOperationException("PRTG 主機清單版本於候選快照擷取期間改變；請重新開始評估。");
+
+        return new PrtgDiskAssessmentOperation(_operationOwner, completedDay, mappingThrough, rule, mode,
+            selectedHosts, selectedSensors, hostSnapshot, activeHostIds, hostVersion, settingsRevision,
+            settingsFingerprint, whitelist, ruleFingerprint, candidateSnapshot, metadataSnapshot);
+    }
+
+    /// <summary>Assess one page using the private immutable candidate and metadata snapshots captured by BeginAssessment.</summary>
+    public PrtgDiskAssessmentBatch AssessPage(PrtgDiskAssessmentOperation operation, int offset, int limit)
+    {
+        ValidateOperationOwner(operation);
+        if (operation.IsCompleted) throw new InvalidOperationException("PRTG 評估作業已完成；不能再讀取頁面。");
+        return AssessCandidatePage(operation.CompletedDay, operation.Rule, operation.Mode, limit, offset,
+            operation.SelectedHostIds, operation.SelectedSensorObjids, operation.CandidateSnapshot,
+            candidatePolicyVersion: operation.RuleFingerprint, metadataSnapshot: operation.MetadataSnapshot,
+            deferMetadataFence: true, capturedHostSnapshot: operation.HostSnapshot,
+            capturedWhitelist: operation.CapturedWhitelist, candidateMappingThrough: operation.CandidateMappingThrough);
+    }
+
+    /// <summary>Final fence for the complete Web response; call only after every page/detail has been mapped.</summary>
+    public void CompleteAssessment(PrtgDiskAssessmentOperation operation)
+    {
+        ValidateOperationOwner(operation);
+        if (operation.IsCompleted) throw new InvalidOperationException("PRTG 評估作業已完成。");
+        if (_store.ReadHostMapDataRevision() != operation.CandidateSnapshot.HostMapDataRevision ||
+            _store.ReadCatalogueDataRevision() != operation.CandidateSnapshot.CatalogueDataRevision)
+            throw new InvalidOperationException("PRTG 主機映射或感測器目錄於準備度頁面計算期間改變；已拒絕回傳整頁，請重試。");
+        ValidateMetadataSnapshot(operation.MetadataSnapshot);
+        var currentSettings = _settings.Get();
+        var currentSettingsFingerprint = Fingerprint(string.Join("\n", (currentSettings.PrtgSensorTypeWhitelist ?? new List<string>())
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
+        if (!string.Equals(currentSettings.Revision ?? string.Empty, operation.SettingsRevision, StringComparison.Ordinal) ||
+            !string.Equals(currentSettingsFingerprint, operation.SettingsFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("系統準備度設定於頁面計算期間改變；已拒絕回傳整頁，請重試。");
+        if (_hosts.DataVersion != operation.HostVersion)
+            throw new InvalidOperationException("PRTG 主機授權或顯示名稱於頁面計算期間改變；已拒絕回傳整頁，請重試。");
+        if (!string.Equals(Fingerprint(operation.Rule is null ? string.Empty : System.Text.Json.JsonSerializer.Serialize(operation.Rule)),
+                operation.RuleFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("PRTG 評估規則於頁面計算期間改變；已拒絕回傳整頁，請重試。");
+        operation.MarkCompleted();
+    }
+
+    /// <summary>Captures one immutable set of range-wide candidates' denominators and metadata fences.</summary>
+    public PrtgDiskAssessmentRangeOperation BeginRangeAssessment(DateOnly fromDate, DateOnly throughDate,
+        KnownIssueRule? rule, PrtgDiskDecisionMode mode = PrtgDiskDecisionMode.Preview,
+        PrtgHostSnapshot? capturedHostSnapshot = null, CancellationToken cancellationToken = default)
+    {
+        var dayCount = throughDate.DayNumber - fromDate.DayNumber + 1;
+        if (dayCount is < 1 or > 730 || throughDate.ToDateTime(TimeOnly.MinValue).Date >= DateTime.Today)
+            throw new ArgumentOutOfRangeException(nameof(throughDate), "僅允許 1 到 730 個已完成日期的範圍評估。");
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var hostSnapshot = capturedHostSnapshot ?? _hosts.CapturePrtgSnapshot();
+        if (_hosts.DataVersion != hostSnapshot.Version)
+            throw new InvalidOperationException("PRTG 主機清單版本已變更；請重新開始範圍評估。");
+        var activeHostIds = hostSnapshot.Hosts.Where(h => h.Active && h.MergedInto == null)
+            .Select(h => h.HostId).Distinct().OrderBy(id => id).ToArray();
+        var activeHostSet = activeHostIds.ToHashSet();
+        var settings = _settings.Get();
+        var whitelist = (settings.PrtgSensorTypeWhitelist ?? new List<string>()).ToArray();
+        var settingsRevision = settings.Revision ?? string.Empty;
+        var settingsFingerprint = Fingerprint(string.Join("\n", whitelist.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
+        var ruleFingerprint = Fingerprint(rule is null ? string.Empty : System.Text.Json.JsonSerializer.Serialize(rule));
+        var hostMapRevision = _store.ReadHostMapDataRevision();
+        var catalogueRevision = _store.ReadCatalogueDataRevision();
+        var counts = _store.GetReadinessRangeCandidateCounts(fromDate, throughDate, activeHostSet, cancellationToken);
+        if (_store.ReadHostMapDataRevision() != hostMapRevision || _store.ReadCatalogueDataRevision() != catalogueRevision)
+            throw new InvalidOperationException("PRTG 主機映射或感測器目錄於候選範圍計數期間改變；請重新開始範圍評估。");
+        var metadataSnapshot = PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        if (_hosts.DataVersion != hostSnapshot.Version)
+            throw new InvalidOperationException("PRTG 主機清單於候選範圍計數期間改變；請重新開始範圍評估。");
+
+        return new PrtgDiskAssessmentRangeOperation(_operationOwner, fromDate, throughDate, rule, mode,
+            hostSnapshot, activeHostIds, settingsRevision, settingsFingerprint, whitelist, ruleFingerprint,
+            counts, hostMapRevision, catalogueRevision, metadataSnapshot);
+    }
+
+    /// <summary>Assesses one flat page; all date slices are located by one bounded candidate SELECT.</summary>
+    public PrtgDiskAssessmentRangePage AssessRangePage(PrtgDiskAssessmentRangeOperation operation,
+        long offset, int limit, CancellationToken cancellationToken = default)
+    {
+        ValidateRangeOperationOwner(operation);
+        if (operation.IsCompleted) throw new InvalidOperationException("PRTG 磁碟範圍評估作業已完成；不能再讀取頁面。");
+        limit = Math.Clamp(limit, 1, MaximumBatchSize);
+        var historyDays = Math.Max(28, operation.Rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? 0);
+        var historyPointsPerSensor = checked(historyDays * 24);
+        if (historyPointsPerSensor > MaximumExpectedHistoricalPointsPerBatch)
+            throw new InvalidOperationException("PRTG 磁碟範圍每顆感測器歷史點數已超過頁面上限；拒絕預覽。");
+        // 單一 HTTP 頁可能橫跨多日；在此限制整頁列數乘歷史窗口，不只限制各日內部批次。
+        limit = Math.Min(limit, MaximumExpectedHistoricalPointsPerBatch / historyPointsPerSensor);
+        cancellationToken.ThrowIfCancellationRequested();
+        var slices = operation.CreateSlices(offset, limit);
+        if (slices.Count == 0)
+            return new(operation.CandidateCount, offset, Array.Empty<PrtgDiskAssessmentRangeRow>());
+
+        var located = _store.GetReadinessRangeCandidateRows(operation.ActiveHostIds, slices, cancellationToken);
+        var rows = new List<PrtgDiskAssessmentRangeRow>(located.Count);
+        var batchSize = EffectiveBatchSize(operation.Rule);
+        foreach (var slice in slices)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidates = located.Where(row => row.CompletedDay == slice.CompletedDay)
+                .Select(row => (row.Objid, row.DeviceObjid, row.HostId, row.MappingDate, row.Name, row.SensorType,
+                    row.Category, row.Unit, row.Paused, row.DevicePaused)).ToArray();
+            if (candidates.Length != slice.Take)
+                throw new InvalidOperationException("PRTG 磁碟範圍候選切片筆數與私有計數不同；已拒絕整頁。");
+            for (var relativeOffset = 0; relativeOffset < candidates.Length; relativeOffset += batchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var take = Math.Min(batchSize, candidates.Length - relativeOffset);
+                var batchCandidates = candidates.Skip(relativeOffset).Take(take).ToArray();
+                var batch = AssessCapturedCandidates(slice.CompletedDay, operation.Rule, operation.Mode,
+                    slice.Total, checked(slice.Offset + relativeOffset), batchCandidates, operation.HostSnapshot,
+                    operation.CapturedWhitelist, operation.MetadataSnapshot, deferMetadataFence: true,
+                    candidateMappingThrough: slice.CompletedDay.ToDateTime(TimeOnly.MinValue),
+                    cancellationToken: cancellationToken);
+                rows.AddRange(batch.Rows.Select(assessment =>
+                    new PrtgDiskAssessmentRangeRow(slice.CompletedDay, assessment)));
+            }
+        }
+        if (rows.Count != located.Count || rows.Count > limit)
+            throw new InvalidOperationException("PRTG 磁碟範圍評估頁輸出筆數與已定位候選不一致。");
+        return new(operation.CandidateCount, offset, rows.AsReadOnly());
+    }
+
+    /// <summary>Final fence for the entire RuleAdmin response, after mapping and suppression estimates.</summary>
+    public void CompleteRangeAssessment(PrtgDiskAssessmentRangeOperation operation)
+    {
+        ValidateRangeOperationOwner(operation);
+        if (operation.IsCompleted) throw new InvalidOperationException("PRTG 磁碟範圍評估作業已完成。");
+        if (_store.ReadHostMapDataRevision() != operation.HostMapDataRevision ||
+            _store.ReadCatalogueDataRevision() != operation.CatalogueDataRevision)
+            throw new InvalidOperationException("PRTG 主機映射或感測器目錄於磁碟範圍預覽期間改變；已拒絕回傳整頁，請重試。");
+        ValidateMetadataSnapshot(operation.MetadataSnapshot);
+        var currentSettings = _settings.Get();
+        var currentFingerprint = Fingerprint(string.Join("\n", (currentSettings.PrtgSensorTypeWhitelist ?? new List<string>())
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
+        if (!string.Equals(currentSettings.Revision ?? string.Empty, operation.SettingsRevision, StringComparison.Ordinal) ||
+            !string.Equals(currentFingerprint, operation.SettingsFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("系統準備度設定於磁碟範圍預覽期間改變；已拒絕回傳整頁，請重試。");
+        if (_hosts.DataVersion != operation.HostVersion)
+            throw new InvalidOperationException("PRTG 主機授權或顯示名稱於磁碟範圍預覽期間改變；已拒絕回傳整頁，請重試。");
+        if (!string.Equals(Fingerprint(operation.Rule is null ? string.Empty : System.Text.Json.JsonSerializer.Serialize(operation.Rule)),
+                operation.RuleFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("PRTG 評估規則於磁碟範圍預覽期間改變；已拒絕回傳整頁，請重試。");
+        operation.MarkCompleted();
+    }
+
+    private void ValidateRangeOperationOwner(PrtgDiskAssessmentRangeOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (!ReferenceEquals(operation.Owner, _operationOwner))
+            throw new InvalidOperationException("PRTG 磁碟範圍評估作業屬於不同的服務執行個體。");
+    }
+
+    private void ValidateOperationOwner(PrtgDiskAssessmentOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (!ReferenceEquals(operation.Owner, _operationOwner))
+            throw new InvalidOperationException("PRTG 評估作業屬於不同的服務執行個體。");
+    }
+
+    private static string Fingerprint(string text) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+
+    internal PrtgDiskAssessmentBatch AssessCandidatePage(DateOnly completedDay, KnownIssueRule? rule,
+        PrtgDiskDecisionMode mode = PrtgDiskDecisionMode.Preview, int limit = MaximumBatchSize, int offset = 0,
+        IReadOnlyCollection<long>? selectedHostIds = null, IReadOnlyCollection<long>? selectedSensorObjids = null,
+        PrtgDiskCandidateSnapshot? candidateSnapshot = null, long? candidateMappingRevision = null,
+        string? candidatePolicyVersion = null, PrtgDiskMetadataSnapshot? metadataSnapshot = null,
+        bool deferMetadataFence = false, PrtgHostSnapshot? capturedHostSnapshot = null,
+        IReadOnlyCollection<string>? capturedWhitelist = null, DateTime? candidateMappingThrough = null)
     {
         limit = Math.Min(Math.Clamp(limit, 1, MaximumBatchSize), EffectiveBatchSize(rule));
         offset = Math.Max(0, offset);
         var day = completedDay.ToDateTime(TimeOnly.MinValue);
         if (day.Date >= DateTime.Today) throw new ArgumentOutOfRangeException(nameof(completedDay), "僅允許評估已完成日期。");
         var selected = selectedHostIds?.ToHashSet();
-        var hosts = _hosts.GetAll().Where(h => h.Active && h.MergedInto == null && (selected is null || selected.Contains(h.HostId)))
-            .ToDictionary(h => h.HostId);
-        // 歷史試算的候選對應只能看到目標完成日；使用執行當天會讓
-        // 固定日期的預覽隨時間變動，並可能把事後對應帶回過去。
-        var mappingThrough = day;
-        int total;
-        List<(long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> candidates;
-        if (selectedSensorObjids is null)
+        var hostSnapshot = candidateSnapshot?.HostSnapshot ?? capturedHostSnapshot ?? _hosts.CapturePrtgSnapshot();
+        if (_hosts.DataVersion != hostSnapshot.Version)
+            throw new InvalidOperationException("PRTG 主機授權範圍於磁碟候選頁擷取期間改變；請重新開始評估。");
+        var activeHostIds = hostSnapshot.Hosts.Where(h => h.Active && h.MergedInto == null &&
+                (selected is null || selected.Contains(h.HostId)))
+            .Select(h => h.HostId).OrderBy(id => id).ToArray();
+        var activeHostSet = activeHostIds.ToHashSet();
+        // 一般歷史試算只看到目標完成日；HTTP readiness operation 可明確傳入分開的
+        // current-as-of candidate day，同時仍把歷史數值評估停在最近完成日。
+        var mappingThrough = candidateMappingThrough?.Date ?? day;
+        var activeHostScope = activeHostIds;
+        var selectedScope = selectedSensorObjids?.Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
+        var mappingFrom = mappingThrough.AddDays(-CandidateMappingLookbackDays);
+        if (candidateSnapshot is null)
         {
-            (total, candidates) = _store.GetLatestMappedReadinessSensors(hosts.Keys.ToArray(), mappingThrough,
-                mappingThrough.AddDays(-CandidateMappingLookbackDays), limit, offset);
+            var hostMapDataRevision = _store.ReadHostMapDataRevision();
+            var captured = activeHostScope.Length == 0 || selectedScope is { Length: 0 }
+                ? (0, new List<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)>())
+                : _store.GetLatestMappedReadinessSensorSnapshot(activeHostScope, mappingThrough, mappingFrom,
+                    MaximumCandidateSnapshotSize, selectedScope);
+            if (hostMapDataRevision != _store.ReadHostMapDataRevision())
+                throw new InvalidOperationException("PRTG 日映射於磁碟候選快照擷取期間改變；請重新開始評估。");
+            candidateSnapshot = new PrtgDiskCandidateSnapshot(completedDay, mappingThrough, activeHostScope,
+                selectedSensorObjids is null, selectedScope, candidateMappingRevision, candidatePolicyVersion,
+                hostMapDataRevision, captured.Item1, captured.Item2, hostSnapshot);
         }
-        else
+        else if (!candidateSnapshot.Matches(completedDay, mappingThrough, activeHostScope, selectedSensorObjids is null, selectedScope,
+                     candidateMappingRevision, candidatePolicyVersion))
         {
-            var scoped = selectedSensorObjids.Distinct().Where(id => id > 0)
-                .Select(id => _store.GetCurrentReadinessSensorById(id, hosts.Keys.ToArray(), mappingThrough,
-                    mappingThrough.AddDays(-CandidateMappingLookbackDays)))
-                .Where(x => x.HasValue).Select(x => x!.Value).OrderBy(x => x.Objid).ToList();
-            total = scoped.Count;
-            candidates = scoped.Skip(offset).Take(limit).ToList();
+            throw new InvalidOperationException("PRTG 磁碟候選範圍已改變；請重新開始評估，不能沿用舊候選總數。");
         }
-        var hasMore = offset + candidates.Count < total;
+
+        var total = candidateSnapshot.Total;
+        var candidates = candidateSnapshot.GetPage(offset, limit);
+        metadataSnapshot ??= PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        return AssessCapturedCandidates(completedDay, rule, mode, total, offset, candidates, hostSnapshot,
+            capturedWhitelist, metadataSnapshot, deferMetadataFence, mappingThrough, candidateSnapshot);
+    }
+
+    private PrtgDiskAssessmentBatch AssessCapturedCandidates(DateOnly completedDay, KnownIssueRule? rule,
+        PrtgDiskDecisionMode mode, int total, int offset,
+        IReadOnlyList<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType,
+            string Category, string? Unit, bool Paused, bool DevicePaused)> candidates,
+        PrtgHostSnapshot hostSnapshot, IReadOnlyCollection<string>? capturedWhitelist,
+        PrtgDiskMetadataSnapshot metadataSnapshot, bool deferMetadataFence, DateTime candidateMappingThrough,
+        PrtgDiskCandidateSnapshot? candidateSnapshot = null, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var day = completedDay.ToDateTime(TimeOnly.MinValue);
+        if (day.Date >= DateTime.Today) throw new ArgumentOutOfRangeException(nameof(completedDay), "僅允許評估已完成日期。");
+        var activeHostIds = hostSnapshot.Hosts.Where(h => h.Active && h.MergedInto == null)
+            .Select(h => h.HostId).OrderBy(id => id).ToArray();
+        var activeHostSet = activeHostIds.ToHashSet();
+        var mappingThrough = candidateMappingThrough.Date;
+        var mappingFrom = mappingThrough.AddDays(-CandidateMappingLookbackDays);
+        if (candidates.Any(sensor => !activeHostSet.Contains(sensor.HostId)))
+            throw new InvalidOperationException("PRTG 磁碟範圍候選包含不在捕獲主機快照內的主機。");
+        var hasMore = (long)offset + candidates.Count < total;
         var ids = candidates.Select(x => x.Objid).ToArray();
         var start = day.AddDays(-PrtgValueReadiness.WindowDays + 1);
         var recentStart = day.AddDays(-Math.Max(PrtgDiskTrendThresholds.Provisional.RecentWindowDays, rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? 0) + 1);
         var valuesStart = recentStart < start ? recentStart : start;
         var values = _store.GetReadinessValues(ids, valuesStart, day.AddDays(1));
-        var maps = _store.GetReadinessMaps(candidates.Select(x => x.DeviceObjid).Distinct().ToArray(), valuesStart, day.AddDays(1));
+        cancellationToken.ThrowIfCancellationRequested();
+        var mapSnapshotStart = valuesStart < mappingFrom ? valuesStart : mappingFrom;
+        var mapReadThrough = mappingThrough > day ? mappingThrough : day;
+        var maps = _store.GetReadinessMaps(candidates.Select(x => x.DeviceObjid).Distinct().ToArray(), mapSnapshotStart, mapReadThrough.AddDays(1));
+        cancellationToken.ThrowIfCancellationRequested();
+        var latestCandidateMaps = maps.Where(m => m.MapDate >= mappingFrom && m.MapDate <= mappingThrough)
+            .GroupBy(m => m.DeviceObjid)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(m => m.MapDate).First());
+        foreach (var sensor in candidates)
+        {
+            if (!latestCandidateMaps.TryGetValue(sensor.DeviceObjid, out var latestMap) ||
+                latestMap.MapDate != sensor.MappingDate || latestMap.MapStatus != PrtgMapStatus.Ok || latestMap.HostId != sensor.HostId)
+                throw new InvalidOperationException("PRTG 日映射於候選快照建立後改變；已拒絕使用新映射重算本頁，請重新開始評估。");
+        }
         var mapByDay = maps.GroupBy(x => (x.DeviceObjid, Day: x.MapDate.Date)).ToDictionary(g => g.Key, g => g.First());
-        var whitelist = _settings.Get().PrtgSensorTypeWhitelist.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var whitelist = (capturedWhitelist ?? _settings.Get().PrtgSensorTypeWhitelist).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var rows = new List<PrtgDiskAssessmentRow>(candidates.Count);
         foreach (var sensor in candidates)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var dayMaps = new Dictionary<DateTime, long?>();
             for (var d = start; d <= day; d = d.AddDays(1))
-                if (mapByDay.TryGetValue((sensor.DeviceObjid, d), out var map) && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue && hosts.ContainsKey(map.HostId.Value))
+                if (mapByDay.TryGetValue((sensor.DeviceObjid, d), out var map) && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue && activeHostSet.Contains(map.HostId.Value))
                     dayMaps[d] = map.HostId;
             var ownValues = values.Where(v => v.SensorObjid == sensor.Objid).ToArray();
             var hours = ownValues.Select(v => new PrtgReadinessHour(v.PeriodStart, v.Quality, v.Coverage)).ToArray();
-            var stored = _evidence.Get(sensor.Objid);
+            var stored = metadataSnapshot.GetEvidence(sensor.Objid);
             PrtgDiskSemanticEvidenceValidity? validity = null;
             if (stored is not null && stored.DeviceObjid == sensor.DeviceObjid && stored.HostId == sensor.HostId &&
                 string.Equals(stored.SensorType, sensor.SensorType, StringComparison.OrdinalIgnoreCase))
@@ -79,14 +353,16 @@ public sealed class PrtgDiskAssessmentService
                 // comparing evidence with itself cannot establish current channel semantics.
                 var context = new PrtgDiskSemanticContext(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType,
                     stored.MainChannelIdentifier, stored.MainChannelName, stored.Unit, stored.Scale, stored.Direction);
-                validity = _evidence.CheckValidity(sensor.Objid, context, ParserSemanticVersion);
-                var probe = _verificationResults?.Get(sensor.Objid);
-                if (!validity.IsValid || !MatchesVerifiedPercent(probe, stored, sensor))
+                validity = _evidence.CheckValidity(stored, sensor.Objid, context, ParserSemanticVersion);
+                var probe = metadataSnapshot.GetVerificationResult(sensor.Objid);
+                if (!validity.IsValid || !MatchesVerifiedPercent(probe, stored,
+                        (sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.Name, sensor.SensorType,
+                            sensor.Category, sensor.Unit, sensor.Paused, sensor.DevicePaused)))
                     validity = new() { IsValid = false, Evidence = stored,
                         InvalidReason = validity.InvalidReason ?? "缺少與目前對應一致的 typed 探測證據，或無法證明可用百分比語意。" };
             }
             var readiness = PrtgValueReadiness.Evaluate(new(sensor.Objid, sensor.DeviceObjid, sensor.Category,
-                hosts.ContainsKey(sensor.HostId), hosts.ContainsKey(sensor.HostId), sensor.Paused, sensor.DevicePaused,
+                activeHostSet.Contains(sensor.HostId), activeHostSet.Contains(sensor.HostId), sensor.Paused, sensor.DevicePaused,
                 (whitelist.Count == 0 || whitelist.Contains(sensor.SensorType)), stored?.Unit, stored?.MainChannelName, validity is { IsValid: true }, hours, dayMaps), day.AddDays(1));
             readiness = readiness with
             {
@@ -113,10 +389,38 @@ public sealed class PrtgDiskAssessmentService
                 : Array.Empty<PrtgDiskTrendDay>();
             var decision = PrtgDiskRuleDecision.Evaluate(new(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.Category,
                 readiness, validity, daily, completedDay, rule, mode));
-            rows.Add(new(sensor.Objid, sensor.DeviceObjid, sensor.HostId, readiness, validity, decision));
+            rows.Add(new(sensor.Objid, sensor.DeviceObjid, sensor.HostId, readiness, validity, decision)
+            {
+                CompletedDate = completedDay,
+                MissingHourWindowStart = DateOnly.FromDateTime(start),
+                MissingHourMasks = BuildMissingHourMasks(hours, start)
+            });
         }
         var exclusions = rows.GroupBy(x => x.Decision.Exclusion.ToString()).ToDictionary(g => g.Key, g => g.Count());
-        return new(total, offset, rows.Count, hasMore, exclusions, rows);
+        if (!deferMetadataFence) ValidateMetadataSnapshot(metadataSnapshot);
+        return new(total, offset, rows.Count, hasMore, exclusions, rows)
+        { CandidateSnapshot = candidateSnapshot, MetadataSnapshot = metadataSnapshot };
+    }
+
+    /// <summary>消費暫存結果前核對正式日映射資料版本；不重算候選總數或全載映射。</summary>
+    internal void ValidateCandidateSnapshotDataRevision(PrtgDiskCandidateSnapshot? candidateSnapshot)
+    {
+        if (candidateSnapshot is null)
+            throw new InvalidOperationException("PRTG 磁碟候選快照不存在；拒絕提交未核對日映射的結果。");
+        if (_hosts.DataVersion != candidateSnapshot.HostVersion)
+            throw new InvalidOperationException("PRTG 主機授權或顯示名稱於磁碟候選快照處理期間改變；已拒絕提交所有暫存結果，請重啟新範圍。");
+        if (candidateSnapshot.HostMapDataRevision != _store.ReadHostMapDataRevision())
+            throw new InvalidOperationException("PRTG 日映射版本於磁碟候選快照處理期間改變；已拒絕提交所有暫存結果，請重啟新範圍。");
+    }
+
+    /// <summary>跨頁正式評估提交前，同時核對日映射與兩份語意 metadata。</summary>
+    internal void ValidateAssessmentSnapshot(PrtgDiskCandidateSnapshot? candidateSnapshot,
+        PrtgDiskMetadataSnapshot? metadataSnapshot)
+    {
+        ValidateCandidateSnapshotDataRevision(candidateSnapshot);
+        if (metadataSnapshot is null)
+            throw new InvalidOperationException("PRTG 磁碟語意快照不存在；拒絕提交未核對 metadata 的結果。");
+        ValidateMetadataSnapshot(metadataSnapshot);
     }
 
     /// <summary>
@@ -126,18 +430,37 @@ public sealed class PrtgDiskAssessmentService
     /// </summary>
     public bool HasAnyReadySemanticCandidate(DateOnly completedDay, KnownIssueRule? rule)
     {
-        var evidenceIds = _evidence.GetAll().Select(e => e.SensorObjid).Distinct().OrderBy(id => id).ToArray();
-        if (evidenceIds.Length == 0) return false;
+        var metadataSnapshot = PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        var evidenceIds = metadataSnapshot.GetEvidenceIds();
+        if (evidenceIds.Length == 0)
+        {
+            ValidateMetadataSnapshot(metadataSnapshot);
+            return false;
+        }
         var batchSize = EffectiveBatchSize(rule);
         foreach (var chunk in evidenceIds.Chunk(batchSize))
         {
-            var batch = Assess(completedDay, rule, PrtgDiskDecisionMode.Preview, batchSize, 0,
-                selectedSensorObjids: chunk);
+            var batch = AssessCandidatePage(completedDay, rule, PrtgDiskDecisionMode.Preview, batchSize, 0,
+                selectedSensorObjids: chunk, metadataSnapshot: metadataSnapshot, deferMetadataFence: true);
             if (batch.Rows.Any(r => r.Readiness.Status == PrtgValueReadinessStatus.Ready
                                     && r.Readiness.SemanticReady
-                                    && r.EvidenceValidity is { IsValid: true })) return true;
+                                    && r.EvidenceValidity is { IsValid: true }))
+            {
+                ValidateMetadataSnapshot(metadataSnapshot);
+                return true;
+            }
         }
+        ValidateMetadataSnapshot(metadataSnapshot);
         return false;
+    }
+
+    private void ValidateMetadataSnapshot(PrtgDiskMetadataSnapshot snapshot)
+    {
+        var verificationCurrent = _verificationResults is null
+            ? snapshot.Verification is null
+            : snapshot.Verification is not null && _verificationResults.IsSnapshotCurrent(snapshot.Verification);
+        if (!_evidence.IsSnapshotCurrent(snapshot.Evidence) || !verificationCurrent)
+            throw new InvalidOperationException("PRTG 語意 metadata 於候選評估期間改變；已拒絕整批結果，請重新開始評估。");
     }
 
     public static int EffectiveBatchSize(KnownIssueRule? rule)
@@ -166,6 +489,20 @@ public sealed class PrtgDiskAssessmentService
         return freeChannel && percentUnit && Same(evidence.Direction, "descending-danger") && evidence.Scale == 1;
     }
 
+    private static IReadOnlyList<uint> BuildMissingHourMasks(IReadOnlyList<PrtgReadinessHour> hours, DateTime windowStart)
+    {
+        var usableTimes = hours.Where(PrtgValueReadiness.IsUsable).Select(hour => hour.PeriodStart).ToHashSet();
+        var masks = new uint[PrtgValueReadiness.WindowDays];
+        for (var dayIndex = 0; dayIndex < PrtgValueReadiness.WindowDays; dayIndex++)
+        {
+            var date = windowStart.Date.AddDays(dayIndex);
+            for (var hourIndex = 0; hourIndex < 24; hourIndex++)
+                if (!usableTimes.Contains(date.AddHours(hourIndex)))
+                    masks[dayIndex] |= 1u << hourIndex;
+        }
+        return Array.AsReadOnly(masks);
+    }
+
     private static bool Reported(string? value) => !string.IsNullOrWhiteSpace(value);
 
     private static bool IsAvailableCapacityChannel(string? name)
@@ -188,7 +525,100 @@ public sealed class PrtgDiskAssessmentService
 }
 
 public sealed record PrtgDiskAssessmentBatch(int CandidateCount, int Offset, int AssessedCount, bool HasMore,
-    IReadOnlyDictionary<string, int> ExclusionCounts, IReadOnlyList<PrtgDiskAssessmentRow> Rows);
+    IReadOnlyDictionary<string, int> ExclusionCounts, IReadOnlyList<PrtgDiskAssessmentRow> Rows)
+{
+    internal PrtgDiskCandidateSnapshot? CandidateSnapshot { get; init; }
+    internal PrtgDiskMetadataSnapshot? MetadataSnapshot { get; init; }
+}
+
+/// <summary>單次操作共用的私有 typed dictionary；不把 mutable dictionary 交給 consumer。</summary>
+internal sealed class PrtgDiskMetadataSnapshot
+{
+    private PrtgDiskMetadataSnapshot(PrtgDiskSemanticEvidenceSnapshot evidence,
+        PrtgDiskVerificationResultSnapshot? verification)
+    { Evidence = evidence; Verification = verification; }
+
+    internal PrtgDiskSemanticEvidenceSnapshot Evidence { get; }
+    internal PrtgDiskVerificationResultSnapshot? Verification { get; }
+    internal int EvidenceDeserializeCount => Evidence.DeserializeCount;
+    internal int VerificationDeserializeCount => Verification?.DeserializeCount ?? 0;
+    internal PrtgDiskSemanticEvidence? GetEvidence(long sensorObjid) =>
+        Evidence.TryGetValue(sensorObjid, out var item) ? item : null;
+    internal PrtgDiskVerificationResult? GetVerificationResult(long sensorObjid) =>
+        Verification?.Get(sensorObjid);
+    internal long[] GetEvidenceIds() => Evidence.GetSensorIds();
+
+    internal static PrtgDiskMetadataSnapshot Capture(PrtgDiskSemanticEvidenceStore evidence,
+        PrtgDiskVerificationResultStore? verificationResults) =>
+        new(evidence.CaptureSnapshot(), verificationResults?.CaptureSnapshot());
+}
+
+/// <summary>只在單次評估作業中共用的有界候選集合與範圍柵欄。</summary>
+internal sealed class PrtgDiskCandidateSnapshot
+{
+    private readonly long[] _activeHostIds;
+    private readonly bool _allSensors;
+    private readonly long[]? _selectedSensorObjids;
+    private readonly long? _mappingRevision;
+    private readonly long _hostMapDataRevision;
+    private readonly string? _policyVersion;
+    private readonly (long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category,
+        string? Unit, bool Paused, bool DevicePaused)[] _rows;
+
+    public PrtgDiskCandidateSnapshot(DateOnly completedDay, DateTime candidateMappingThrough, long[] activeHostIds, bool allSensors,
+        long[]? selectedSensorObjids, long? mappingRevision, string? policyVersion, long hostMapDataRevision, int total,
+        IReadOnlyList<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category,
+            string? Unit, bool Paused, bool DevicePaused)> rows, PrtgHostSnapshot hostSnapshot,
+        long? catalogueDataRevision = null)
+    {
+        CompletedDay = completedDay;
+        CandidateMappingThrough = candidateMappingThrough.Date;
+        _activeHostIds = activeHostIds.ToArray();
+        _allSensors = allSensors;
+        _selectedSensorObjids = selectedSensorObjids?.ToArray();
+        _mappingRevision = mappingRevision;
+        _hostMapDataRevision = hostMapDataRevision;
+        CatalogueDataRevision = catalogueDataRevision;
+        _policyVersion = policyVersion;
+        Total = total;
+        _rows = rows.ToArray();
+        HostSnapshot = hostSnapshot;
+        HostVersion = hostSnapshot.Version;
+        if (Total != _rows.Length || Total > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize)
+            throw new InvalidOperationException("PRTG 磁碟候選快照超出界線或筆數不一致。");
+    }
+
+    public DateOnly CompletedDay { get; }
+    public DateTime CandidateMappingThrough { get; }
+    public int Total { get; }
+    internal long HostMapDataRevision => _hostMapDataRevision;
+    internal PrtgHostSnapshot HostSnapshot { get; }
+    internal long HostVersion { get; }
+    internal long? CatalogueDataRevision { get; }
+    public List<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category,
+        string? Unit, bool Paused, bool DevicePaused)> GetPage(int offset, int limit) =>
+        _rows.Skip(Math.Max(0, offset)).Take(Math.Max(0, limit)).ToList();
+
+    public bool Matches(DateOnly completedDay, DateTime candidateMappingThrough, long[] activeHostIds, bool allSensors, long[]? selectedSensorObjids,
+        long? mappingRevision, string? policyVersion) =>
+        CompletedDay == completedDay && CandidateMappingThrough == candidateMappingThrough.Date && _allSensors == allSensors &&
+        _activeHostIds.SequenceEqual(activeHostIds) &&
+        _mappingRevision == mappingRevision &&
+        string.Equals(_policyVersion, policyVersion, StringComparison.Ordinal) &&
+        (_selectedSensorObjids is null ? selectedSensorObjids is null :
+            selectedSensorObjids is not null && _selectedSensorObjids.SequenceEqual(selectedSensorObjids));
+
+    internal (long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType,
+        string Category, string? Unit, bool Paused, bool DevicePaused)? FindCandidate(long sensorObjid) =>
+        _rows.FirstOrDefault(row => row.Objid == sensorObjid) is var candidate && candidate.Objid == sensorObjid
+            ? candidate : null;
+}
 public sealed record PrtgDiskAssessmentRow(long SensorObjid, long DeviceObjid, long CurrentHostId,
     PrtgValueReadinessResult Readiness, PrtgDiskSemanticEvidenceValidity? EvidenceValidity,
-    PrtgDiskRuleDecisionResult Decision);
+    PrtgDiskRuleDecisionResult Decision)
+{
+    public DateOnly CompletedDate { get; internal init; }
+    /// <summary>Compact coverage projection derived from the same bounded value rows as Readiness.</summary>
+    public DateOnly MissingHourWindowStart { get; internal init; }
+    public IReadOnlyList<uint> MissingHourMasks { get; internal init; } = Array.Empty<uint>();
+}

@@ -1,5 +1,6 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -18,6 +19,10 @@ namespace LogForesight.Core.Persistence.Sql;
 /// </summary>
 public class LfDbContext : DbContext
 {
+    private static readonly ValueConverter<DateTimeOffset, long> UtcTicksConverter = new(
+        value => value.UtcDateTime.Ticks,
+        ticks => new DateTimeOffset(ticks, TimeSpan.Zero));
+
     public LfDbContext(DbContextOptions<LfDbContext> options) : base(options) { }
 
     private void AdvanceDailyRevisions()
@@ -112,9 +117,12 @@ public class LfDbContext : DbContext
 
     /// <summary>PRTG IP 排除清單（↔ lf_prtg_ip_excludes）</summary>
     public DbSet<PrtgIpExcludeRow> PrtgIpExcludes => Set<PrtgIpExcludeRow>();
+    public DbSet<PrtgTransferSessionRow> PrtgTransferSessions => Set<PrtgTransferSessionRow>();
+    public DbSet<PrtgTransferChunkRow> PrtgTransferChunks => Set<PrtgTransferChunkRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        var isSqlite = Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
         b.Entity<PrtgObservationRow>(e =>
         {
             e.ToTable("lf_prtg_observations");
@@ -682,6 +690,67 @@ public class LfDbContext : DbContext
             e.Property(x => x.Note).HasColumnName("note").HasMaxLength(512);
             e.Property(x => x.CreatedBy).HasColumnName("created_by").HasMaxLength(64);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
+        });
+
+        b.Entity<PrtgTransferSessionRow>(e =>
+        {
+            e.ToTable("lf_prtg_transfer_sessions", t =>
+            {
+                t.HasCheckConstraint("CK_lf_prtg_transfer_sessions_size",
+                    "declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count");
+                t.HasCheckConstraint("CK_lf_prtg_transfer_sessions_buffer",
+                    "active_write_bytes >= 0 AND active_write_bytes <= 16777216");
+                t.HasCheckConstraint("CK_lf_prtg_transfer_sessions_state",
+                    "state IN ('receiving','validating','validation-failed','complete','abandoned')");
+                t.HasCheckConstraint("CK_lf_prtg_transfer_sessions_manifest",
+                    isSqlite
+                        ? "result_manifest_json IS NULL OR length(CAST(result_manifest_json AS BLOB)) <= 65536"
+                        : "result_manifest_json IS NULL OR DATALENGTH([result_manifest_json]) <= 131072");
+            });
+            e.HasKey(x => x.TransferId);
+            e.Property(x => x.TransferId).HasColumnName("transfer_id");
+            e.Property(x => x.OwnerId).HasColumnName("owner_id").HasMaxLength(128).IsRequired();
+            e.Property(x => x.ScopeHash).HasColumnName("scope_hash").HasMaxLength(64).IsUnicode(false).IsRequired();
+            e.Property(x => x.SourceIdentityHash).HasColumnName("source_identity_hash").HasMaxLength(64).IsUnicode(false).IsRequired();
+            e.Property(x => x.DeclaredBytes).HasColumnName("declared_bytes");
+            e.Property(x => x.ChunkCount).HasColumnName("chunk_count");
+            e.Property(x => x.PackageSha256).HasColumnName("package_sha256").HasMaxLength(64).IsUnicode(false).IsRequired();
+            e.Property(x => x.ReceivedBytes).HasColumnName("received_bytes");
+            e.Property(x => x.ReceivedChunks).HasColumnName("received_chunks");
+            e.Property(x => x.State).HasColumnName("state").HasMaxLength(24).IsRequired();
+            e.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
+            e.Property(x => x.ActiveWriteId).HasColumnName("active_write_id");
+            e.Property(x => x.ActiveWriteBytes).HasColumnName("active_write_bytes");
+            e.Property(x => x.ActiveWriteUntilUtc).HasColumnName("active_write_until_utc").HasConversion(UtcTicksConverter);
+            e.Property(x => x.LeaseOwner).HasColumnName("lease_owner").HasMaxLength(128);
+            e.Property(x => x.LeaseUntilUtc).HasColumnName("lease_until_utc").HasConversion(UtcTicksConverter);
+            e.Property(x => x.ResultManifestJson).HasColumnName("result_manifest_json");
+            e.Property(x => x.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+            e.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").HasConversion(UtcTicksConverter);
+            e.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").HasConversion(UtcTicksConverter);
+            e.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc").HasConversion(UtcTicksConverter);
+            e.Property(x => x.AbandonedAtUtc).HasColumnName("abandoned_at_utc").HasConversion(UtcTicksConverter);
+            e.Property(x => x.CleanupAfterOrdinal).HasColumnName("cleanup_after_ordinal").HasDefaultValue(-1);
+            e.HasIndex(x => new { x.State, x.TransferId }).HasDatabaseName("IX_lf_prtg_transfer_state_id");
+            e.HasIndex(x => new { x.State, x.ActiveWriteUntilUtc }).HasDatabaseName("IX_lf_prtg_transfer_write");
+            e.HasIndex(x => new { x.State, x.UpdatedAtUtc, x.TransferId }).HasDatabaseName("IX_lf_prtg_transfer_cleanup");
+        });
+
+        b.Entity<PrtgTransferChunkRow>(e =>
+        {
+            e.ToTable("lf_prtg_transfer_chunks", t =>
+                t.HasCheckConstraint("CK_lf_prtg_transfer_chunks_payload",
+                    isSqlite
+                        ? "ordinal >= 0 AND byte_length > 0 AND byte_length <= 4194304 AND length(payload) = byte_length"
+                        : "ordinal >= 0 AND byte_length > 0 AND byte_length <= 4194304 AND DATALENGTH([payload]) = byte_length"));
+            e.HasKey(x => new { x.TransferId, x.Ordinal });
+            e.Property(x => x.TransferId).HasColumnName("transfer_id");
+            e.Property(x => x.Ordinal).HasColumnName("ordinal");
+            e.Property(x => x.Payload).HasColumnName("payload").IsRequired();
+            e.Property(x => x.ByteLength).HasColumnName("byte_length");
+            e.Property(x => x.Sha256).HasColumnName("sha256").HasMaxLength(64).IsUnicode(false).IsRequired();
+            e.Property(x => x.AcceptedAtUtc).HasColumnName("accepted_at_utc").HasConversion(UtcTicksConverter);
+            e.HasOne(x => x.Session).WithMany().HasForeignKey(x => x.TransferId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

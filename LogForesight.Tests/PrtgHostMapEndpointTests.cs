@@ -18,6 +18,7 @@ public class PrtgHostMapEndpointTests : IDisposable
 {
     private readonly string _dir;
     private readonly StorageBackend _backend;
+    private readonly HostStore _hosts;
     private readonly RecordingAuditService _audit = new();
     private readonly SettingsController _controller;
 
@@ -28,6 +29,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         _backend = new StorageBackend(
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}" },
             _dir);
+        _hosts = new HostStore(_backend.Blob("hosts"));
 
         // 重算今日對應是這些端點的既定副作用（docs/PRTG-SPEC.md §4）——
         // 不傳 refresher 的話那段會靜默跳過，「重算確實發生」那條測試就量不到東西。
@@ -39,7 +41,9 @@ public class PrtgHostMapEndpointTests : IDisposable
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
             backend: _backend,
-            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend),
+            hosts: _hosts,
+            visibility: new FullVisibility(_hosts));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -60,6 +64,25 @@ public class PrtgHostMapEndpointTests : IDisposable
     private sealed class NoOpRunConsole : IRunConsole
     {
         public void WriteLine(string message = "") { }
+    }
+
+    private sealed class FullVisibility(IHostStore hosts) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Select(h => h.HostId).ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
+        public bool IsCaseGrantOnly(long id) => false;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll();
+        public void EnsureVisible(long id) { }
+    }
+
+    private void EnsureGuardHost()
+    {
+        if (_hosts.GetAll().Count == 0)
+            _hosts.Upsert(new WebHost { HostName = "guard-scope-fixture", Active = false, Source = "netiq" });
     }
 
     private sealed class StubSystemSettingsService : ISystemSettingsService
@@ -229,6 +252,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void Ip排除端點_PUT讀得到且正規化_DELETE後讀不到_空白IP擲例外()
     {
+        EnsureGuardHost();
         // 空白 IP 擲驗證例外
         var exEmpty = Assert.Throws<DomainException>(() =>
             _controller.SetPrtgIpExclude(new SetPrtgIpExcludeRequest { ExpectedScopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(), Ip = "" }));
@@ -432,6 +456,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 人工對應清單_同IP兩台皆人工對應時略過台數各為0()
     {
+        EnsureGuardHost();
         var store = _backend.PrtgStore();
         const string sharedIp = "10.9.9.9";
         store.UpsertDevices(new[]
@@ -460,6 +485,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 刪除端點_非IP字串不會被當成驗證錯誤擋下()
     {
+        EnsureGuardHost();
         // 正規化語意收緊為「只有合法 IP 才回值」之後，舊資料裡的非 IP 排除列
         // （早期 Upsert 不驗證內容時存進去的）正規化會回 null。端點若先正規化再擋 null，
         // 那些列就永遠刪不掉，而 store 層的相容測試照樣全綠——這條守的是端點這一段。
@@ -473,6 +499,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 刪除端點_空白仍然被擋下()
     {
+        EnsureGuardHost();
         Assert.Throws<DomainException>(() => _controller.DeletePrtgIpExclude("   ", _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()));
     }
 
@@ -480,6 +507,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 刪除端點_帶port的IP可以刪掉已正規化的列()
     {
+        EnsureGuardHost();
         var store = _backend.PrtgStore();
         store.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.8.8.9", CreatedBy = "admin", CreatedAt = DateTime.Now });
 

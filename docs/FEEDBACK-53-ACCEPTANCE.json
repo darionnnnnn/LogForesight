@@ -1,0 +1,934 @@
+{
+  "document": "FEEDBACK-53-PLAN.md",
+  "plan_sha256": "883840f684d23565fa6496f85b8c401baf5be9c69faa8d0f709b3c7e23c0d99f",
+  "date": "2026-10-05",
+  "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
+  "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
+  "decisions": [
+    "CPU／memory預設提示，試算後可啟用正式風險",
+    "每日主機日及合格NetIQ父紀錄",
+    "可信磁碟趨勢7日內降至20%納入風險"
+  ],
+  "measurement_contract": "PLAN §15.3、§16.5、§17",
+  "case_package_status": "A0尚須補齊每族5正例20反例與實際來源fixture／hash；不得以此清單代替完整可執行測試包",
+  "items": [
+    {
+      "id": "AC01",
+      "operation": "連線／憑證／啟停",
+      "required": true,
+      "acceptance_contract": "有效、錯誤、逾時、空欄沿用、停用重啟；保存後實際使用指定來源；回應／畫面／log／匯出憑證外洩 0；停用不開新 PRTG 作業，NetIQ 繼續",
+      "stages": "N1／M0、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC02",
+      "operation": "範圍／全量管理",
+      "required": true,
+      "acceptance_contract": "3,000 台／15,000 sensors 分頁、批次選取、超額及過期設定；預覽、保存、實際作用集合相等；舊 50／100／500 限制不靜默截斷；越界先拒絕再寫入",
+      "stages": "N2／M2、M4、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC03",
+      "operation": "對應／衝突／排除",
+      "required": true,
+      "acceptance_contract": "一對多、多對一、手動對應及刪除、IP 排除、同 IP 不同來源、兩管理者競寫；未解衝突零正式副作用，舊歷史不改歸戶；過期寫入明確衝突",
+      "stages": "N2／M1–M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC04",
+      "operation": "結構同步／取消",
+      "required": true,
+      "acceptance_contract": "末頁重複、差額、逾時、取消、範圍修訂；完整或明列未完成集合，未確認差額不刪；取消請求與已停止分開，停止後無新批次／舊版提交",
+      "stages": "N2–N3／M2–M5",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC05",
+      "operation": "快照／數值",
+      "required": true,
+      "acceptance_contract": "50／500／2,001／15,000 targets、主頻道改變、重複／陳舊／集中回應；無全站退路，各用途清單外請求 0，每目標有結果；樣本時間／品質與 §17.1 唯一 slot coverage 精確一致；§15.3 負載及新鮮度通過",
+      "stages": "N3／M1–M4",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC06",
+      "operation": "狀態時序",
+      "required": true,
+      "acceptance_contract": "前導、跨午夜 35 分 Down、無新訊息、缺口、恢復、ACK、暫停、Unknown、objid 重用；只用 as-of 可見證據，缺口不接續、ACK 不降風險、跨日不漏事故或重複建案",
+      "stages": "N3–N4／M1–M2",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC07",
+      "operation": "語意／準備度",
+      "required": true,
+      "acceptance_contract": "每族真實來源去識別樣本、方向／單位／channel 錯誤、28 日不足／恰足、世代改變；逐規則顯示不支援／暖機／就緒及原因入口；改一資源不重置其餘資源",
+      "stages": "N3／M0–M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC08",
+      "operation": "探測／試算／校準",
+      "required": true,
+      "acceptance_contract": "目前表單及已保存來源各測成功、失敗、取消；結果回到 sensor／規則資格，無正式派工／通知，遵守共同預算；校準與正式引擎對同一 as-of／語意／品質／規則輸入精確一致，不可用另一套寬鬆引擎建議門檻；不把 probe 成功等同正式流程通過",
+      "stages": "N1–N3／M0–M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC09",
+      "operation": "回填",
+      "required": true,
+      "acceptance_contract": "2 sensors×2 日、重複、部分失敗、取消續跑、額度耗盡；成功／失敗／待辦基數精確，資料不重複，不追認歷史對應／語意，不寄過期告警；全量先估成本",
+      "stages": "N3／M1–M5",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC10",
+      "operation": "全規則",
+      "required": true,
+      "acceptance_contract": "各族固定語料全數符合；門檻前／恰值／後、低 coverage、缺口、尖峰、合理負載、重跑、再發；無 consumer 的 rule code 明確處理，不允許保存後永不執行",
+      "stages": "N3–N4／M1、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC11",
+      "operation": "NetIQ 整合",
+      "required": true,
+      "acceptance_contract": "成功零事件、NetIQ 既有高風險、弱同日／強同資源時窗佐證、父失敗／缺日；獨立 PRTG 理由保留，NetIQ 風險不降低，無事件數造假，弱佐證不冒充雙重確認",
+      "stages": "N4／M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC12",
+      "operation": "晚到／重評／AI",
+      "required": true,
+      "acceptance_contract": "完成順序互換、5 次重跑、舊 AI 延遲回寫、規則／父版本變更；一份有效版本／成員，舊 AI 不覆寫；合格父及必要證據耐久提交後 ≤15 分鐘補充可見，歷史修訂不亂寄信",
+      "stages": "N4／M2、M4、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC13",
+      "operation": "查證／報告",
+      "required": true,
+      "acceptance_contract": "受限使用者對每族正例由清單找到正確資源、原因、期間、缺口、版本、下一步；清單／詳情／報告同版本一致；不需 developer log 或管理維護頁",
+      "stages": "N4–N5／M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC14",
+      "operation": "案件／交辦／回覆",
+      "required": true,
+      "acceptance_contract": "建案、指派、回覆、恢復再發、重評、父刪除；事故識別穩定，重複有效成員 0，人工回覆逐值保留；ACK／已回覆／風險解除區分",
+      "stages": "N4–N5／M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC15",
+      "operation": "通知／靜音／補寄",
+      "required": true,
+      "acceptance_contract": "SMTP 接受／拒絕、接受後提交未知、部分收件失敗、靜音重啟；同案識別及通知意圖不重複，失敗可重試，實收用測試信箱驗；外部 SMTP 無去重時不承諾郵件恰好一次",
+      "stages": "N4／M2、M5–M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC16",
+      "operation": "整體排程",
+      "required": true,
+      "acceptance_contract": "三來源成功／停用／失敗／積壓／補跑／維護重疊／重啟；一個總覽追溯整體工作與待補，降級不冒充完成，AI 失敗不抹掉確定性結果；公平性通過",
+      "stages": "N4–N5／M2、M4–M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC17",
+      "operation": "守門／健康",
+      "required": true,
+      "acceptance_contract": "守門在範圍外、遙測缺失、閾值、恢復、無目標；守門不造業務告警；輪詢、取得、耐久落庫、就緒與判定逐層區分，沒資料不顯示健康",
+      "stages": "N2、N5／M0、M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC18",
+      "operation": "診斷匯出／匯入",
+      "required": true,
+      "acceptance_contract": "舊版包、受限範圍、分批中斷／缺片、重複匯入、來源／objid 衝突、低品質覆寫高品質；manifest 版本／筆數／雜湊完整；有界處理及診斷隔離，不污染正式資料或授權正式風險；洩漏 0",
+      "stages": "N3、N6／M2–M3、M5–M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC19",
+      "operation": "保留／清理",
+      "required": true,
+      "acceptance_contract": "180 日高水位、未落庫 journal、未結案證據、到期、容量滿；批次清理不阻塞正常查詢，政策與實際筆數一致；未完成持久工作不清掉，案件證據保留或明示依設定裁切",
+      "stages": "N6／M3–M5",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC20",
+      "operation": "部署／升級／復原",
+      "required": true,
+      "acceptance_contract": "本輪建置、真實 provider、備份副本恢復、雙程序、提交未知、損壞 journal；精確基數通過；回退相容預先驗，不能恢復即阻擋升級",
+      "stages": "N1、N6／M0、M3、M5",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC21",
+      "operation": "授權／安全呈現",
+      "required": true,
+      "acceptance_contract": "管理者、維護者、處理者、受限查看、空可見集合、直接 URL／API；列表／證據／診斷／匯出／通知越權 0，外部名稱／訊息作文字不執行腳本",
+      "stages": "N5／M2、M6",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    },
+    {
+      "id": "AC22",
+      "operation": "文件／自助處理",
+      "required": true,
+      "acceptance_contract": "新操作者依正式文件完成設定、語意核對、查證、處置及排程診斷；實際限制／規則／恢復方式與文件一致；錯誤有原因、下一步及入口，不能只有聯絡開發者",
+      "stages": "N5、N8／M6–M7",
+      "status": "未執行",
+      "implementation_evidence": [],
+      "input_sha256": null,
+      "case_ids": [],
+      "expected_results": null,
+      "actual_results": null,
+      "evidence_paths": [],
+      "verified_by": null
+    }
+  ],
+  "critical_cases": [
+    {
+      "id": "DISK-WATER-01",
+      "ac": [
+        "AC10",
+        "AC11"
+      ],
+      "precondition": "語意、28日readiness、下降比例70%以上皆已符合；NetIQ合格父日Low",
+      "input": {
+        "free_percent": 30,
+        "decline_pp_per_day": 2
+      },
+      "expected": {
+        "days_to_20_percent": 5,
+        "hit": true,
+        "day_risk": "Medium"
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "DISK-WATER-02",
+      "ac": [
+        "AC10"
+      ],
+      "precondition": "其餘資格皆符合",
+      "input": {
+        "free_percent": 27,
+        "decline_pp_per_day": 1
+      },
+      "expected": {
+        "days_to_20_percent": 7,
+        "hit": true
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "DISK-WATER-03",
+      "ac": [
+        "AC10"
+      ],
+      "precondition": "其餘資格皆符合",
+      "input": {
+        "free_percent": 28,
+        "decline_pp_per_day": 1
+      },
+      "expected": {
+        "days_to_20_percent": 8,
+        "hit": false
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "PRESSURE-DEFAULT-01",
+      "ac": [
+        "AC10",
+        "AC11",
+        "AC13",
+        "AC14",
+        "AC15"
+      ],
+      "precondition": "CPU語意可信、兩完整相鄰小時、NetIQ合格父日Low、預設提示模式",
+      "input": {
+        "means": [
+          95,
+          95
+        ],
+        "coverage": [
+          100,
+          100
+        ]
+      },
+      "expected": {
+        "pressure_hint": true,
+        "day_risk": "Low",
+        "automatic_case_intents": 0,
+        "risk_mail_intents": 0
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "PRESSURE-FORMAL-01",
+      "ac": [
+        "AC10",
+        "AC11",
+        "AC12"
+      ],
+      "precondition": "CPU語意可信、同版本試算已通過、Maintain明確啟用正式規則、NetIQ合格父日Low",
+      "input": {
+        "means": [
+          90,
+          90
+        ],
+        "coverage": [
+          75,
+          75
+        ]
+      },
+      "expected": {
+        "finding": true,
+        "day_risk": "Medium"
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "PRESSURE-GAP-01",
+      "ac": [
+        "AC05",
+        "AC10"
+      ],
+      "precondition": "CPU正式模式；其餘資格符合",
+      "input": {
+        "means": [
+          95,
+          95
+        ],
+        "coverage": [
+          75,
+          50
+        ]
+      },
+      "expected": {
+        "new_pressure_finding": false,
+        "reason": "insufficient-coverage"
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "NETIQ-PARENT-01",
+      "ac": [
+        "AC11",
+        "AC12"
+      ],
+      "precondition": "PRTG合法風險已持久保存；缺NetIQ父紀錄",
+      "input": {
+        "parent": "missing"
+      },
+      "expected": {
+        "observation_visible": true,
+        "waiting_reason_visible": true,
+        "formal_case_intents": 0,
+        "risk_mail_intents": 0
+      },
+      "status": "未執行"
+    },
+    {
+      "id": "CROSSDAY-01",
+      "ac": [
+        "AC06",
+        "AC10",
+        "AC14"
+      ],
+      "precondition": "來源及資源世代一致且故障全段可信，Down門檻30分鐘",
+      "input": {
+        "down": "2026-09-30T23:45:00+08:00",
+        "up": "2026-10-01T00:20:00+08:00"
+      },
+      "expected": {
+        "day1_hit": false,
+        "day2_hit": true,
+        "trusted_episode_minutes": 35
+      },
+      "status": "先前最小probe已重現day2漏判；正式修正未執行"
+    }
+  ],
+  "stage_verifications": [
+    {
+      "id": "A1.1",
+      "status": "局部通過",
+      "scope": "任何非空快照目標固定50顆分批，含2001目標與部分失敗",
+      "passed": 10,
+      "failed": 0,
+      "evidence": ".gemini-tasks/primary-results/a1-1-primary.trx",
+      "not_proven": "15000完整容量、來源兼容與新鮮度"
+    },
+    {
+      "id": "A1.2",
+      "status": "單程序局部通過",
+      "scope": "共享限流、在途名額、取消與實際送出前延遲",
+      "passed": 227,
+      "failed": 0,
+      "evidence": ".gemini-tasks/primary-results/a1-2-primary.trx",
+      "not_proven": "跨程序擁有權、重啟限額、全站持續性能"
+    },
+    {
+      "id": "B1.1",
+      "status": "局部通過",
+      "scope": "跨日可信Down連續門檻、本日分鐘、coverage缺口及世代隔離",
+      "passed": 33,
+      "failed": 0,
+      "evidence": "work/logforesight-r06/.gemini-tasks/primary-results/b1-1-primary.trx",
+      "not_proven": "其餘規則、完整日管線及真實來源"
+    },
+    {
+      "id": "A1-B1-integrated",
+      "status": "定向整合通過",
+      "scope": "合併後重建、移除未用租約constructor；budget與covered rule/timeline/mapper",
+      "passed": 59,
+      "failed": 0,
+      "evidence": ".gemini-tasks/primary-results/a1-b1-integrated.trx",
+      "not_proven": "全量回歸與整輪22項驗收"
+    },
+    {
+      "status": "局部通過",
+      "passed": 99,
+      "failed": 0,
+      "evidence": "work/logforesight-r06/.gemini-tasks/primary-results/b1-2-primary.trx",
+      "scope": "Assess真實SQL命令數、15000 IDs、分頁與映射語意",
+      "not_proven": "SQL Server實機、3000主機180日完整容量、整輪AC",
+      "id": "B1.2"
+    },
+    {
+      "id": "B1.2-integrated",
+      "status": "定向整合通過",
+      "passed": 52,
+      "failed": 0,
+      "scope": "candidate paging＋covered evaluator/timeline＋request budget",
+      "evidence": ".gemini-tasks/primary-results/b1-2-integrated.trx",
+      "not_proven": "探測、journal新變更、全量回歸與完整AC"
+    },
+    {
+      "id": "A1.3",
+      "status": "局部與定向整合通過",
+      "passed": 18,
+      "failed": 0,
+      "scope": "正式backend診斷匯入隔離、Ready policy與非空正式證據保持不變、權限拒絕與稽核",
+      "evidence": "work/logforesight-r06/.gemini-tasks/primary-results/a1-3-primary.trx",
+      "not_proven": "R11分段與容量、整合UI操作、整輪AC"
+    },
+    {
+      "id": "A0.1",
+      "status": "局部與定向整合通過，待現場證據",
+      "passed": 82,
+      "failed": 0,
+      "scope": "白名單typed JSON、sentinel、實際本機API/取消/管理頁下載檔案",
+      "evidence": "work/logforesight-probe/.gemini-tasks/primary-results/a0-1-primary.trx",
+      "browser_evidence": "work/probe-smoke/browser-download-verification.json",
+      "not_proven": "現場PRTG相容性/容量與完整AC；共享budget實際本機HTTP整合已另有證據"
+    },
+    {
+      "id": "A1.4",
+      "status": "局部獨立驗收及最新完整回歸通過，整輪AC仍待完成",
+      "passed": 78,
+      "failed": 0,
+      "scope": "增量journal、migration/rotation中斷、SQL穩定GUID/ack、實際64MiB拒收與讀取前上限",
+      "evidence": ".gemini-tasks/primary-results/a1-4-primary.trx",
+      "not_proven": "完整3000主機180日容量、SQL Server實機、R03/R15",
+      "review_gap": "兩個空來源切換缺口已修，最新定向90/90及root完整回歸5815/0/10；不代表R03/R15/容量。",
+      "fix_evidence": ".gemini-tasks/primary-results/hosted-crypto-primary.trx"
+    },
+    {
+      "id": "Luna-stages-integrated",
+      "status": "歷史定向綠；新產物完整驗收重跑",
+      "passed": 207,
+      "failed": 0,
+      "scope": "A0.1＋A1.3＋已修B1/HTTP budget接線，含source版本尾碼反例",
+      "evidence": ".gemini-tasks/primary-results/luna-stages-integrated.trx",
+      "not_proven": "舊207綠不足以證明version尾碼新修正；主代理已保存stale DLL RED並強制重建，完整回歸須重跑。現場來源與22項AC仍未完成。"
+    },
+    {
+      "id": "Luna-rebuilt-full-regression",
+      "status": "歷史失敗已修，保留RED；最新GREEN另列",
+      "passed": 5806,
+      "failed": 1,
+      "skipped": 10,
+      "evidence": ".gemini-tasks/primary-results/luna-batch-rebuilt-full-regression.trx",
+      "scope": "全部既有與本次整合測試",
+      "not_proven": "完整回歸綠、全部22項AC、實際來源與容量",
+      "confirmed_red": ".gemini-tasks/journal-cost-probe/crypto-padding-red-primary.log"
+    },
+    {
+      "id": "Crypto-CBC-migration",
+      "status": "局部獨立驗收及最新完整回歸通過，整輪AC仍待完成",
+      "passed": 43,
+      "failed": 0,
+      "evidence": ".gemini-tasks/primary-results/crypto-cbc-primary.trx",
+      "scope": "V1 strict UTF8、雙候選歧義拒絕、實際PRTG/Sentinel bootstrap，V2相容",
+      "not_proven": "完整回歸與整輪AC"
+    },
+    {
+      "id": "Hosted-Crypto-full-regression",
+      "status": "完整程式回歸通過，整輪AC未通過",
+      "passed": 5815,
+      "failed": 0,
+      "skipped": 10,
+      "evidence": ".gemini-tasks/primary-results/hosted-crypto-full-regression.trx",
+      "scope": "最新CBC及Hosted來源切換修正後全部測試，839項source/assembly hash前後一致",
+      "not_proven": "AC01–AC22、現場來源、SQL Server provider、3000主機容量、尚未實作R項"
+    },
+    {
+      "id": "R10-R12-R14-integrated",
+      "status": "局部定向及同批組件完整回歸通過；整輪AC仍未通過",
+      "passed": 289,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": ".gemini-tasks/primary-results/r10-r12-r14-integrated-targeted.trx",
+      "scope": "每日候選共用及日映射DATA守門、legacy拒寫與搬運權限、可信校準同版規則及匯出最終consumer",
+      "not_proven": "R10 Web/metadata、AC01–AC22、來源/provider/3000主機容量及其餘實作",
+      "inputs": ".gemini-tasks/primary-results/r10-r12-r14-integrated-targeted-input.json",
+      "unchanged_input_count": 841
+    },
+    {
+      "id": "R10-R12-R14-full-regression",
+      "status": "完整程式回歸通過，整輪AC未通過",
+      "passed": 5835,
+      "failed": 0,
+      "skipped": 10,
+      "total": 5845,
+      "evidence": ".gemini-tasks/primary-results/r10-r12-r14-full-regression.trx",
+      "scope": "已整合R10每日候選、R12 legacy/搬運權限及R14可信校準／最終版本守門",
+      "inputs": ".gemini-tasks/primary-results/r10-r12-r14-full-input.json",
+      "unchanged_input_count": 841,
+      "not_proven": "新R10 metadata／Web、R01 scope管理、C1/D1 scope防護等新段及全部AC／來源／provider／容量"
+    },
+    {
+      "id": "R10-SqlServer-component",
+      "status": "實際provider元件通過；首次耗時待拆解",
+      "provider": "SqlServer 17.0.925.4 LocalDB",
+      "candidate_count": 15000,
+      "distinct_mapped_host_ids": 3000,
+      "count_queries": 1,
+      "candidate_queries": 2,
+      "cold_capture_ms": 18956,
+      "over_cap_rejected": true,
+      "replace_rollback": true,
+      "prune_rollback_retry": true,
+      "owned_database_removed": true,
+      "owned_instance_removed": true,
+      "evidence": ".gemini-tasks/sqlserver-provider-probe/provider-result.json",
+      "not_proven": "真實来源、3000 HostStore rows、180日容量／完整工作負載、p95與RAM門檻"
+    },
+    {
+      "id": "C1-D1-disk-visibility",
+      "status": "主代理局部整合通過",
+      "passed": 104,
+      "failed": 0,
+      "skipped": 0,
+      "executor_red_failed": 7,
+      "executor_red_kind": "equivalent unsafe guard bypass, not exact-old-source",
+      "executor_green_passed": 95,
+      "evidence": ".gemini-tasks/primary-results/visibility-integrated.trx",
+      "inputs": ".gemini-tasks/primary-results/visibility-input.json",
+      "not_proven": "其餘C1/D1交付、全角色動線、全輪AC；新完整回歸待後續整合"
+    },
+    {
+      "id": "R10-SqlServer-warm-baseline",
+      "status": "真實provider已確認效能缺口，未通過耗時驗收",
+      "warm_capture_ms": [
+        19084,
+        19060,
+        19367,
+        20007,
+        18476
+      ],
+      "count_big_reader_execute_ms": [
+        9372.9444,
+        9770.7241,
+        9526.4783,
+        10425.2305,
+        9120.9854
+      ],
+      "uses_openjson": true,
+      "parameter_counts": [
+        4,
+        5
+      ],
+      "evidence": ".gemini-tasks/sqlserver-provider-probe/warm-provider-result.json",
+      "owned_database_removed": true,
+      "owned_instance_removed": true,
+      "next": "隔離query plan/shape實驗後修正式consumer"
+    },
+    {
+      "id": "R10-metadata-R01-hosts-integrated",
+      "status": "主代理局部整合通過",
+      "passed": 287,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": ".gemini-tasks/primary-results/metadata-visibility-integrated.trx",
+      "inputs": ".gemini-tasks/primary-results/metadata-visibility-input.json",
+      "unchanged_input_count": 843,
+      "scope": "有界typed metadata、DailyPipeline全頁最終metadata fence、每日3k主機GetAll一次與visibility相鄰服務",
+      "not_proven": "Web新consumer、SQL耗時、完整AC與整體容量"
+    },
+    {
+      "id": "R10-SqlServer-recompile-experiment",
+      "status": "最小修正試驗未通過耗時，未加入正式來源",
+      "capture_ms": [
+        16567,
+        16475,
+        16390
+      ],
+      "evidence": ".gemini-tasks/sqlserver-provider-probe/recompile-provider-result.json",
+      "owned_database_removed": true,
+      "owned_instance_removed": true
+    },
+    {
+      "id": "R09_ISOLATED_ATOMIC_SAMPLING",
+      "status": "隔離階段213通過，待主工作樹整合",
+      "passed": 213,
+      "failed": 0,
+      "skipped": 0,
+      "path": "work/logforesight-r09-snapshot/.gemini-tasks/primary-results/r09-restored-green.trx",
+      "limitation": "不代替M4共同負載或R09全項結案"
+    },
+    {
+      "id": "R10_ACTUAL_SQLSERVER_TEMP_IDS",
+      "status": "正式來源實際SQL Server隔離驗證通過，待整合",
+      "provider": "17.0.925.4",
+      "cold_ms": 489,
+      "warm_ms": [
+        160,
+        151,
+        156,
+        172,
+        143
+      ],
+      "path": "work/logforesight-r01-scope/.gemini-tasks/sqlserver-provider-probe/bin/Debug/net8.0-windows/production-candidate-provider-result.json",
+      "limitation": "不代替180日時序容量、全站摘要或現場來源"
+    },
+    {
+      "id": "R09_SQL_HOST_MAIN_INTEGRATED",
+      "status": "主工作樹階段驗收通過",
+      "passed": 379,
+      "failed": 0,
+      "skipped": 0,
+      "input_count": 851,
+      "input_drift": 0,
+      "path": ".gemini-tasks/primary-results/r09-sql-host-integrated.trx",
+      "input_manifest": ".gemini-tasks/primary-results/r09-sql-host-input.json",
+      "limitation": "整輪13實作父項/5驗收群組/22AC仍未通過"
+    },
+    {
+      "id": "R01_R10_SQL_MANAGEMENT_OBSERVATION",
+      "status": "正確性通過但兩個consumer耗時缺漏，繼續實作",
+      "inventory_ms": [
+        12535,
+        67
+      ],
+      "save_eligibility_ms": [
+        8894,
+        8797
+      ],
+      "host_page_ms": [
+        47,
+        12
+      ],
+      "sensor_page_ms": [
+        162,
+        82
+      ],
+      "path": "work/logforesight-r01-scope/.gemini-tasks/sqlserver-provider-probe/bin/Debug/net8.0-windows/provider-result.json",
+      "owned_database_removed": true
+    },
+    {
+      "stage": "R01/R10 management SQL consumer provider",
+      "status": "provider-component-passed; sqlite-and-main-integration-pending",
+      "evidence": "work/logforesight-r01-scope/.gemini-tasks/sqlserver-provider-probe/bin/Debug/net8.0-windows/management-fixed-provider-result.json",
+      "source_sha256": "EA8B37B80BF8ABC35A101B33E030FCFD7E03623467866B77936EF659FAC0BF55",
+      "inventory_ms": [
+        210,
+        77
+      ],
+      "save_eligibility_ms": [
+        105,
+        54
+      ],
+      "input_drift": 0,
+      "owned_database_removed": true,
+      "does_not_close": "180d workload, real source, parent R01/R10"
+    },
+    {
+      "stage": "R10 shared host/metadata/value Web-Daily consumers",
+      "status": "isolated-passed; main-expanded-regression-has-R09-failures",
+      "isolated_tests": {
+        "skipped": 0,
+        "failed": 0,
+        "seconds": 122,
+        "input_drift": 0,
+        "input_count": 936,
+        "passed": 145
+      },
+      "main_tests": {
+        "skipped": 0,
+        "failed": 2,
+        "seconds": 489,
+        "input_drift": 0,
+        "input_count": 938,
+        "passed": 1695
+      },
+      "main_evidence": "work/logforesight-feedback-53/.gemini-tasks/primary-results/host-consumer-main.trx",
+      "closed_parent_todos": 0
+    }
+  ],
+  "implementation_worktree": "C:/Users/eldar/Documents/Codex/2026-10-01/c-users-eldar-claude-project-logforesight/work/logforesight-feedback-53",
+  "implementation_blocker": "AGY已依使用者指示停用；改gpt-6-luna high/medium/low續作。現場來源證據仍待安全環境探測產出取得。",
+  "execution_policy": {
+    "executor": "gpt-6-luna",
+    "allowed_efforts": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "effort_selected_by": "主模型依段落風險與難度",
+    "agy_enabled": false,
+    "verification": "主代理逐段獨立核對完整性、實際consumer與行為證據"
+  },
+  "implementation_review": {
+    "date": "2026-10-05T10:24:07.259478+08:00",
+    "basis": "主代理逐項核对canonical PLAN、main正式source及下一consumer；委派報告均須複核",
+    "removed_planning_todos": 5,
+    "closed_implementation_subitems": [
+      "V08/A1.1 scoped snapshot",
+      "A1.2 single-process budget",
+      "R04/A1.4 incremental journal and empty-source defects",
+      "R06 midnight Down defect",
+      "R10 per-ID candidate query defect only",
+      "R12 backend HTTP diagnostic isolation only",
+      "A0.1 typed safe evidence export",
+      "CBC credential migration",
+      "R10 DailyPipeline shared candidate snapshot and final host-map DATA revision fence",
+      "R12 legacy formal import rejection and fail-closed transfer visibility",
+      "R14 covered calibration/export parity and final validated-rule/host-map version fence",
+      "C1/D1 full host visibility before disk-readiness inventory and disk-trend preview",
+      "R10 bounded immutable semantic/verification snapshot and DailyPipeline final metadata fence",
+      "R01 DailyPipeline single eligible host snapshot/GetAll for 3000-host fixture",
+      "R09 bounded sampling under structure/backfill/nightly work and atomic complete-device backfill",
+      "R10 actual SqlServer bounded large-ID query shape performance and temporary input cleanup/retry",
+      "R01/R10 bounded immutable host snapshot and real visibility producer; consumers remain",
+      "R10 Web-Daily shared host/metadata/candidate operation, final ACL/version fences and same-value readiness/masks; main R09 failures remain separate",
+      "R01 complete scoped management paging/batch/estimate/save/inactive repair, actual SQL and browser, main integrated",
+      "R10 per-date range denominator and bounded Core-Web consumer with final ACL/version/cancellation, actual SQL, main integrated",
+      "R09 durable bounded recent-device state queue bootstrap/claim/ACK/retry/restart/reconciliation, main integrated",
+      "R11 storage transactions and unknown-commit/UTC leases/parallel quota ledger only; parent consumer remains"
+    ],
+    "remaining_implementation_items": 11,
+    "remaining_validation_groups": 5,
+    "confirmed_followup": [
+      "R02 per-sensor incremental timeline worker and two-phase bounded batch identity in implementation; request cost/cadence must meet shared budget",
+      "R03 mutation-owned per-resource epochs and all consumers in implementation; global operation revision must not reset unrelated resources",
+      "R11 capacity adapter/streaming legacy parser/HTTP consumer being completed; UI/export/retention lifecycle still pending",
+      "R07/R08/R13/R15/B1-B2/Q2/C1-D1 remain incomplete, as retained in PLAN section 5.1",
+      "A0 only real service environment probe evidence can establish source compatibility; input remains missing"
+    ],
+    "not_closed": "AC01–AC22、Q1–Q6、N1–N8/M0–M7、真實source/provider/容量，及§5.1其餘實作缺漏"
+  },
+  "stage_verification": [
+    {
+      "stage": "R01-R10-R09 and R11 storage main integration",
+      "status": "passed-bounded-stage-regression",
+      "passed": 1875,
+      "failed": 0,
+      "skipped": 0,
+      "input_drift": 0,
+      "input_count": 950,
+      "evidence": "work/logforesight-feedback-53/.gemini-tasks/primary-results/verified-stages-main-fixed.trx",
+      "closed_parent_todos": [
+        "R01",
+        "R10",
+        "R09"
+      ],
+      "does_not_close": "R05 180-day workload, actual source, other implementation parents, AC01-AC22"
+    }
+  ],
+  "probe_release": {
+    "version": "1.0.53.1",
+    "branch": "feature/prtg-feedback-53",
+    "purpose": "同版本現場唯讀完整環境探測，非整輪完成",
+    "source_baseline": "beda825b3dadbba7c6936f20acdf9dc731ae26ec",
+    "source_evidence_status": "等待新版完整環境探測安全 JSON",
+    "verification": [
+      {
+        "gate": "probe-release-10531-main",
+        "passed": 2004,
+        "failed": 0,
+        "skipped": 0,
+        "input_count": 967,
+        "input_drift": 0
+      },
+      {
+        "gate": "probe-release-duration-context-fixed-10531",
+        "passed": 132,
+        "failed": 0,
+        "skipped": 0,
+        "input_count": 967,
+        "input_drift": 0
+      }
+    ],
+    "round_acceptance": "仍保留全部未完成父 TODO、驗收群組及未通過 AC"
+  }
+}

@@ -2477,7 +2477,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 `POST api/admin/settings/prtg-test`、`GET api/admin/settings/prtg-mirror`、
 `GET/PUT api/admin/settings/prtg-manual-map`、`DELETE api/admin/settings/prtg-manual-map/{deviceObjid}`、
 `POST api/admin/settings/prtg-probe/start`、`POST api/admin/settings/prtg-probe/data-flow/start`、`GET api/admin/settings/prtg-probe/status`、`POST api/admin/settings/prtg-probe/cancel`、
-`GET api/admin/settings/prtg-export`、`POST api/admin/settings/prtg-import`。
+`GET api/admin/settings/prtg-export` 原生串流下載；診斷分片 API 為 `POST api/admin/settings/prtg-import-transfers`、`GET .../{transferId}`、`PUT .../{transferId}/chunks/{ordinal}`、`POST .../{transferId}/complete` 與 `POST .../{transferId}/abandon`。舊 `POST api/admin/settings/prtg-import` 回 410，不綁定 multipart 本文。Maintain 加全站主機可見範圍為必要條件；分片、驗證及下載重查來源／範圍。匯入只写隔離工作表，細節及清理契約見 PRTG-SPEC §10。
 排程作業頁只輪詢 §9.10 所列的同步／回填狀態與停止端點；歷史回填的啟動仍從 PRTG 維護頁進入。
 本頁載入欄位時仍 `GET api/admin/settings` 讀整包（順便取歷史保留天數供前端提示）；
 「不走整包」指的是**寫入**——讀整包再改再回寫才是會覆蓋他人改動的形狀。

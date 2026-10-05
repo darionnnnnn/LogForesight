@@ -76,4 +76,58 @@ public sealed class PrtgCoveredStateTimelineTests
         Assert.Equal(Start.AddHours(2), state.From);
         Assert.Equal("Warning", state.Status);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    public void 相鄰覆蓋區塊於午夜銜接等同完整連續區間_保留跨日前導Down(int overlapMinutes)
+    {
+        var cover1 = Cover(Start.AddDays(-1), Start.AddMinutes(overlapMinutes));
+        var cover2 = Cover(Start, Start.AddDays(1));
+        var changes = new[]
+        {
+            Change(Start.AddMinutes(-15), "Down"),
+            Change(Start.AddMinutes(20), "Up")
+        };
+        var periods = PrtgCoveredStateTimeline.Build(10, "core-1", "sensor-1",
+            [cover1, cover2], changes, Start, Start.AddDays(1));
+        Assert.Equal(2, periods.Count);
+        Assert.Equal(Start, periods[0].From);
+        Assert.Equal(Start.AddMinutes(20), periods[0].Through);
+        Assert.Equal("Down", periods[0].Status);
+        Assert.Equal(Start.AddMinutes(-15), periods[0].EnteredAt);
+        Assert.Equal(Start.AddMinutes(20), periods[1].From);
+        Assert.Equal(Start.AddDays(1), periods[1].Through);
+        Assert.Equal("Up", periods[1].Status);
+    }
+
+    [Fact]
+    public void 覆蓋缺口一tick切斷連續性_不可跨越累算()
+    {
+        var cover1 = Cover(Start.AddDays(-1), Start.AddTicks(-1));
+        var cover2 = Cover(Start, Start.AddDays(1));
+        var changes = new[]
+        {
+            Change(Start.AddMinutes(-15), "Down"),
+            Change(Start.AddMinutes(20), "Up")
+        };
+        var periods = PrtgCoveredStateTimeline.Build(10, "core-1", "sensor-1",
+            [cover1, cover2], changes, Start, Start.AddDays(1));
+        var single = Assert.Single(periods);
+        Assert.Equal("Up", single.Status);
+        Assert.Equal(Start.AddMinutes(20), single.From);
+    }
+
+    [Fact]
+    public void 沒有前導狀態不猜Down_涵蓋區塊起點至首筆狀態轉換間無狀態()
+    {
+        var cover = Cover(Start.AddHours(-1), Start.AddDays(1));
+        var changes = new[] { Change(Start.AddMinutes(-15), "Down") };
+        var periods = PrtgCoveredStateTimeline.Build(10, "core-1", "sensor-1",
+            [cover], changes, Start.AddDays(-1), Start);
+        var single = Assert.Single(periods);
+        Assert.Equal(Start.AddMinutes(-15), single.From);
+        Assert.Equal(Start, single.Through);
+        Assert.Equal("Down", single.Status);
+    }
 }

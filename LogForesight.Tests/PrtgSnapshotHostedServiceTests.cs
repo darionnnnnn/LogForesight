@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Text;
 using LogForesight.Core;
 using LogForesight.Core.Models;
@@ -75,7 +76,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private PrtgSnapshotHostedService CreateService(TestConsole? console = null)
+    private PrtgSnapshotHostedService CreateService(TestConsole? console = null, TimeSpan? pollInterval = null)
     {
         var service = new PrtgSnapshotHostedService(
             _settingsStore,
@@ -86,7 +87,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _hostStore,
             new FakeSentinelStore(),
             _probeState,
-            _lifetime);
+            _lifetime, pollInterval ?? TimeSpan.FromSeconds(60));
 
         service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
         if (console != null)
@@ -96,6 +97,53 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _services.Add(service);
         return service;
     }
+
+    private static bool RestoreJournal(PrtgSnapshotHostedService service, SystemSettings settings) =>
+        (bool)typeof(PrtgSnapshotHostedService)
+            .GetMethod("RestoreJournal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, new object[] { settings })!;
+
+    private static bool SaveJournal(PrtgSnapshotHostedService service) =>
+        (bool)typeof(PrtgSnapshotHostedService)
+            .GetMethod("SaveJournal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, null)!;
+
+    private static PrtgSnapshotJournal ServiceJournal(PrtgSnapshotHostedService service) =>
+        (PrtgSnapshotJournal)typeof(PrtgSnapshotHostedService)
+            .GetField("_journal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(service)!;
+
+    private static PrtgSnapshotAccumulator ServiceAccumulator(PrtgSnapshotHostedService service) =>
+        (PrtgSnapshotAccumulator)typeof(PrtgSnapshotHostedService)
+            .GetField("_accumulator", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(service)!;
+
+    private static string JournalEndpoint(PrtgSnapshotHostedService service) =>
+        (string)typeof(PrtgSnapshotHostedService)
+            .GetField("_journalEndpoint", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(service)!;
+
+    private PrtgRecentStateChangeQueueItem NewRecentStateQueueItem(long deviceObjid, DateTime localToday)
+    {
+        var sourceHash = (string)typeof(PrtgSnapshotHostedService)
+            .GetMethod("SourceIdentityHash", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(null, new object[] { _settingsStore.Get() })!;
+        var revision = new PrtgScopeRevisionReader(_backend, _hostStore).Read();
+        var scopeHash = (string)typeof(PrtgSnapshotHostedService)
+            .GetMethod("ScopeVersionHash", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(null, new object[] { revision })!;
+        var now = DateTime.UtcNow;
+        return new PrtgRecentStateChangeQueueItem(deviceObjid, localToday.Date.AddDays(-1), localToday.Date,
+            sourceHash, scopeHash, now, now, 0, null, null, null);
+    }
+
+    private WebHost SeedManualBusinessDevice(long deviceObjid)
+    {
+        var host = _hostStore.Upsert(new WebHost { HostName = $"queue-host-{deviceObjid}", Active = true });
+        _backend.PrtgStore().UpsertManualMap(new PrtgManualMapRow { DeviceObjid = deviceObjid, HostId = host.HostId });
+        return host;
+    }
+
 
     [Fact]
     public async Task 快照未到整點強制重建服務_恢復累積樣本且停用後仍可寫回()
@@ -120,6 +168,320 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(10, value.AvgValue);
         Assert.Equal(25, value.Coverage);
         Assert.Equal(0, restarted.GetStatus().PendingSamples);
+    }
+
+    [Fact]
+    public async Task HostedServiceRestart_鏡像與Queue同交易提交後_下次ScopeRefresh仍取回近期狀態()
+    {
+        const long deviceId = 702;
+        SeedManualBusinessDevice(deviceId);
+        var today = DateTime.Today;
+        var sensor = new PrtgSensorRow { Objid = 703, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" };
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[] { sensor }, DateTime.Now,
+            NewRecentStateQueueItem(deviceId, today));
+
+        // This models the process stopping after the atomic database commit but before any HTTP request.
+        CreateService().Dispose();
+        _stubHandler.OnSend = (request, _) => Task.FromResult(JsonResponse(
+            request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal)
+                ? "{\"treesize\":0,\"messages\":[]}"
+                : "{\"treesize\":0,\"sensors\":[]}"));
+        var restarted = CreateService();
+        restarted.Now = () => today.AddHours(12);
+        await restarted.ScopeRefreshTickAsync();
+
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal) &&
+            url.Contains($"id={deviceId}", StringComparison.Ordinal));
+        var queued = Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue());
+        Assert.NotNull(queued.CompletedAtUtc);
+        Assert.Equal(today.AddDays(-1), queued.FromLocalDate);
+        Assert.Equal(today, queued.ToLocalDate);
+    }
+
+    [Fact]
+    public async Task Queue資格按businessDevice映射列_同host多device含conflict_排除guardOnly()
+    {
+        var hostA = _hostStore.Upsert(new WebHost { HostName = "queue-map-a", Active = true });
+        var hostB = _hostStore.Upsert(new WebHost { HostName = "queue-map-b", Active = true });
+        var today = DateTime.Today;
+        var store = _backend.PrtgStore();
+        store.ReplaceHostMapForDate(today, new[]
+        {
+            new PrtgHostMapRow { MapDate = today, DeviceObjid = 810, HostId = hostA.HostId, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { MapDate = today, DeviceObjid = 811, HostId = hostA.HostId, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { MapDate = today, DeviceObjid = 820, HostId = hostB.HostId, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { MapDate = today, DeviceObjid = 821, HostId = hostB.HostId, MapStatus = PrtgMapStatus.Conflict }
+        });
+        store.UpsertSensors(new[] { 810L, 811L, 820L, 821L, 899L }.Select(id => new PrtgSensorRow
+        { Objid = id + 10_000, DeviceObjid = id, Name = "Ping", SensorType = "ping" }).ToArray(), DateTime.Now);
+        _settingsStore.Update(settings =>
+        {
+            settings.PrtgResourceGuardEnabled = true;
+            settings.PrtgResourceGuardSensorObjids = new List<string> { "10899" };
+        });
+
+        await CreateService().ScopeRefreshTickAsync();
+
+        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.Equal(new long[] { 810, 811, 820, 821 },
+            store.ReadRecentStateChangeQueue().Select(item => item.DeviceObjid).Order().ToArray());
+    }
+
+    [Fact]
+    public async Task Queue逐裝置隔離失敗_第一台失敗時第二台仍完成()
+    {
+        const long firstDevice = 720;
+        const long secondDevice = 721;
+        SeedManualBusinessDevice(firstDevice);
+        SeedManualBusinessDevice(secondDevice);
+        var today = DateTime.Today;
+        var items = new[] { NewRecentStateQueueItem(firstDevice, today), NewRecentStateQueueItem(secondDevice, today) };
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 722, DeviceObjid = firstDevice, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, items[0]);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 723, DeviceObjid = secondDevice, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, items[1]);
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var query = request.RequestUri!.Query;
+            if (!query.Contains("content=messages", StringComparison.Ordinal))
+                return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
+            if (query.Contains($"id={firstDevice}", StringComparison.Ordinal))
+                return Task.FromResult(JsonResponse("{}", HttpStatusCode.InternalServerError));
+            return Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
+        };
+
+        await CreateService().ScopeRefreshTickAsync();
+
+        var rows = _backend.PrtgStore().ReadRecentStateChangeQueue().ToDictionary(x => x.DeviceObjid);
+        Assert.Null(rows[firstDevice].CompletedAtUtc);
+        Assert.Null(rows[firstDevice].LeaseOwner);
+        Assert.NotNull(rows[secondDevice].CompletedAtUtc);
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains($"id={secondDevice}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task 範圍移除後Queue明確停止清理_重新進入時由既有鏡像重建()
+    {
+        const long deviceId = 730;
+        var host = SeedManualBusinessDevice(deviceId);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 731, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, NewRecentStateQueueItem(deviceId, DateTime.Today));
+        host.Active = false;
+        _hostStore.Upsert(host);
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
+
+        await CreateService().ScopeRefreshTickAsync();
+
+        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.Empty(_backend.PrtgStore().ReadRecentStateChangeQueue());
+        var stopped = Assert.IsType<PrtgRecentStateChangeQueueStopSummary>(
+            _backend.PrtgStore().ReadRecentStateChangeQueueStopSummary());
+        Assert.Equal("business-scope-removed", stopped.Reason);
+        Assert.Equal(1, stopped.StoppedCount);
+
+        host.Active = true;
+        _hostStore.Upsert(host);
+        var service = CreateService();
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
+        await service.ScopeRefreshTickAsync(); // Rebuilds a new row from the still-present sensor mirror and defers HTTP.
+        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.Null(Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue()).CompletedAtUtc);
+        await service.ScopeRefreshTickAsync();
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
+        Assert.NotNull(Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue()).CompletedAtUtc);
+    }
+
+    [Fact]
+    public async Task 來源切換前已有排隊項_該pass不發HTTP_重新識別後下一pass才重建()
+    {
+        const long deviceId = 750;
+        SeedManualBusinessDevice(deviceId);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 751, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, NewRecentStateQueueItem(deviceId, DateTime.Today));
+        _settingsStore.Update(s => s.PrtgUrl = "https://new-source.example.com");
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
+        var service = CreateService();
+        service.ClientFactory = () => new PrtgClient(_settingsStore.Get().PrtgUrl!, "token123", 30, true,
+            _stubHandler, PrtgAuthModes.Token, "", "", "");
+
+        await service.ScopeRefreshTickAsync();
+        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.Null(Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue()).CompletedAtUtc);
+
+        await service.ScopeRefreshTickAsync();
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.StartsWith("https://new-source.example.com", StringComparison.Ordinal));
+        Assert.NotNull(Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue()).CompletedAtUtc);
+    }
+
+    [Fact]
+    public async Task 來源在狀態HTTP期間改變_回應後版本checkpoint取消且Queue保留()
+    {
+        const long deviceId = 740;
+        SeedManualBusinessDevice(deviceId);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 741, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, NewRecentStateQueueItem(deviceId, DateTime.Today));
+        _stubHandler.OnSend = (request, _) =>
+        {
+            if (request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal))
+            {
+                _settingsStore.Update(s => s.PrtgUrl = "https://changed.example.com");
+                return Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
+            }
+            return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
+        };
+
+        await CreateService().ScopeRefreshTickAsync();
+
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
+        var row = Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue());
+        Assert.Null(row.CompletedAtUtc);
+        Assert.Null(row.LeaseOwner);
+    }
+
+    [Fact]
+    public async Task 業務範圍在狀態HTTP期間移除_回應後版本checkpoint取消且Queue保留()
+    {
+        const long deviceId = 760;
+        var host = SeedManualBusinessDevice(deviceId);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 761, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, NewRecentStateQueueItem(deviceId, DateTime.Today));
+        _stubHandler.OnSend = (request, _) =>
+        {
+            if (request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal))
+            {
+                host.Active = false;
+                _hostStore.Upsert(host);
+                return Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
+            }
+            return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
+        };
+
+        await CreateService().ScopeRefreshTickAsync();
+
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
+        var row = Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue());
+        Assert.Null(row.CompletedAtUtc);
+        Assert.Null(row.LeaseOwner);
+    }
+
+    [Fact]
+    public async Task 第一頁已寫入第二頁HTTP取消_狀態列保留且Queue不Ack並可重試()
+    {
+        const long deviceId = 770;
+        SeedManualBusinessDevice(deviceId);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
+        {
+            new PrtgSensorRow { Objid = 771, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }
+        }, DateTime.Now, NewRecentStateQueueItem(deviceId, DateTime.Today));
+        var secondPage = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecondPage = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = string.Join(",", Enumerable.Range(0, 5000).Select(i =>
+        {
+            var changed = DateTime.Today.AddSeconds(i).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            return $"{{\"objid\":771,\"datetime\":\"{changed}\",\"status\":\"Up\",\"message\":\"event-{i}\"}}";
+        }));
+        _stubHandler.OnSend = async (request, token) =>
+        {
+            var query = request.RequestUri!.Query;
+            if (!query.Contains("content=messages", StringComparison.Ordinal))
+                return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (query.Contains("start=0", StringComparison.Ordinal))
+                return JsonResponse($"{{\"treesize\":5001,\"messages\":[{events}]}}");
+            secondPage.TrySetResult(true);
+            await releaseSecondPage.Task;
+            token.ThrowIfCancellationRequested();
+            return JsonResponse("{\"treesize\":5001,\"messages\":[]}");
+        };
+
+        using var cancel = new CancellationTokenSource();
+        var service = CreateService();
+        var operation = service.ScopeRefreshTickAsync(cancel.Token);
+        try
+        {
+            await secondPage.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(_backend.PrtgStore().GetStateChanges(DateTime.Today.AddDays(-1), DateTime.Today.AddDays(1)).Count > 0);
+            cancel.Cancel();
+            releaseSecondPage.TrySetResult(true);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await operation);
+        }
+        finally
+        {
+            releaseSecondPage.TrySetResult(true);
+        }
+
+        var row = Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue());
+        Assert.Null(row.CompletedAtUtc);
+        Assert.Null(row.LeaseOwner);
+        Assert.True(row.Attempts > 0);
+    }
+
+    [Fact]
+    public async Task Tick先做快照及鏡像回填_同交易Queue讓當輪狀態查詢接續成功()
+    {
+        const long deviceId = 710;
+        const long sensorId = 711;
+        SeedManualBusinessDevice(deviceId);
+        _stubHandler.OnSend = (request, _) => Task.FromResult(JsonResponse(
+            request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal)
+                ? "{\"treesize\":0,\"messages\":[]}"
+                : $"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"parentid\":{deviceId},\"sensor\":\"Ping\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false,\"lastvalue_raw\":1,\"interval\":\"60 s\"}}]}}"));
+        var service = CreateService();
+        service.Now = () => DateTime.Today.AddHours(12);
+        await service.TickAsync();
+
+        Assert.Contains(_backend.PrtgStore().GetAllSensors(), row => row.Objid == sensorId && row.DeviceObjid == deviceId);
+        var requests = _stubHandler.RequestedUrls.ToArray();
+        var mirrorRequest = Array.FindIndex(requests, url => url.Contains("content=sensors", StringComparison.Ordinal));
+        var stateRequest = Array.FindIndex(requests, url => url.Contains("content=messages", StringComparison.Ordinal));
+        Assert.True(mirrorRequest >= 0);
+        Assert.True(stateRequest > mirrorRequest);
+        Assert.NotNull(Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue()).CompletedAtUtc);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 實際Tick僅在有效採樣區段中止背景歷史且結束後釋放優先權(bool enabled)
+    {
+        SeedManualBusinessDevice(720);
+        _settingsStore.Update(s => s.PrtgEnabled = enabled);
+        var activity = new PrtgSamplingActivity();
+        Assert.True(activity.TryBeginBackground(out var background));
+        using (background)
+        {
+            var observedRequests = 0;
+            _stubHandler.OnSend = (request, cancellationToken) =>
+            {
+                observedRequests++;
+                Assert.True(background.WasPreempted);
+                Assert.False(activity.TryBeginBackground(out _));
+                return Task.FromResult(JsonResponse(
+                    request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal)
+                        ? "{\"treesize\":0,\"messages\":[]}"
+                        : "{\"treesize\":1,\"sensors\":[{\"objid\":721,\"parentid\":720,\"sensor\":\"Ping\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false,\"lastvalue_raw\":1,\"interval\":\"60 s\"}]}"));
+            };
+            var service = CreateService();
+            service.SamplingActivity = activity;
+            service.Now = () => DateTime.Today.AddHours(12);
+            await service.TickAsync();
+            Assert.Equal(enabled, background.WasPreempted);
+            Assert.Equal(enabled, observedRequests > 0);
+            Assert.True(activity.TryBeginBackground(out var next));
+            next.Dispose();
+        }
     }
 
     [Fact]
@@ -171,7 +533,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _stubHandler.OnSend = (_, _) =>
         {
             // 本輪初始 checkpoint 已寫入；模擬回應期間暫存路徑失去寫入能力。
-            Directory.CreateDirectory(journal.FilePath + ".tmp");
+            Directory.CreateDirectory(journal.ManifestFilePath + ".tmp");
             return Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10}]}"));
         };
         await service.TickAsync();
@@ -193,15 +555,122 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         service.Now = () => hour;
         await service.TickAsync();
-        var path = new PrtgSnapshotJournal(_backend).FilePath;
-        var original = File.ReadAllBytes(path);
+        var journal = new PrtgSnapshotJournal(_backend);
+        var journalRoot = Path.GetDirectoryName(journal.FilePath)!;
+        var original = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories).Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(path => Path.GetRelativePath(journalRoot, path), path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
         _settingsStore.Update(s => s.PrtgUrl = "https://new-source.example.com");
         service.Now = () => hour.AddHours(1);
         await service.TickAsync();
         Assert.Single(_stubHandler.RequestedUrls);
         Assert.Contains("來源位址變更", service.GetStatus().LastSkipReason);
         Assert.Empty(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
-        Assert.Equal(original, File.ReadAllBytes(path));
+        var after = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories).Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(path => Path.GetRelativePath(journalRoot, path), path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+        Assert.Equal(original, after);
+    }
+
+    [Fact]
+    public void 空journal來源切換耐久發布新generation後可保存並重載新樣本()
+    {
+        var now = DateTime.Today.AddHours(10);
+        var service = CreateService();
+        service.Now = () => now;
+        var settingsA = _settingsStore.Get();
+        var endpointA = PrtgSnapshotJournal.Binding(_backend, settingsA.PrtgUrl);
+        Assert.True(RestoreJournal(service, settingsA));
+        Assert.Equal(endpointA, JournalEndpoint(service));
+
+        _settingsStore.Update(settings => settings.PrtgUrl = "https://prtg-b.example.com");
+        var settingsB = _settingsStore.Get();
+        var endpointB = PrtgSnapshotJournal.Binding(_backend, settingsB.PrtgUrl);
+        Assert.NotEqual(endpointA, endpointB);
+        Assert.True(RestoreJournal(service, settingsB));
+        Assert.Equal(endpointB, JournalEndpoint(service));
+
+        ServiceAccumulator(service).Add(501, now, 12, 25);
+        Assert.True(SaveJournal(service));
+        using var firstRead = new PrtgSnapshotJournal(_backend);
+        var firstState = firstRead.Load(endpointB, now)!;
+        var firstRow = Assert.Single(firstState.Accumulator);
+        Assert.Equal(endpointB, firstState.SourceEndpoint);
+        Assert.Equal(1, firstRow.Count);
+        Assert.Equal(12, firstRow.Sum);
+
+        using var retryRead = new PrtgSnapshotJournal(_backend);
+        var retryState = retryRead.Load(endpointB, now)!;
+        var retryRow = Assert.Single(retryState.Accumulator);
+        Assert.Equal(firstRow, retryRow);
+        Assert.Empty(retryState.Pending);
+    }
+
+    [Fact]
+    public void 有RAM樣本時來源切換拒絕且journal檔案與舊binding保持()
+    {
+        var now = DateTime.Today.AddHours(10);
+        var service = CreateService();
+        service.Now = () => now;
+        var settingsA = _settingsStore.Get();
+        var endpointA = PrtgSnapshotJournal.Binding(_backend, settingsA.PrtgUrl);
+        Assert.True(RestoreJournal(service, settingsA));
+        ServiceAccumulator(service).Add(501, now, 12, 25);
+        Assert.True(SaveJournal(service));
+
+        var journal = ServiceJournal(service);
+        var journalRoot = Path.GetDirectoryName(journal.FilePath)!;
+        var original = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories)
+            .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(path => Path.GetRelativePath(journalRoot, path),
+                path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+        _settingsStore.Update(settings => settings.PrtgUrl = "https://prtg-b.example.com");
+        var endpointB = PrtgSnapshotJournal.Binding(_backend, _settingsStore.Get().PrtgUrl);
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Equal(endpointA, JournalEndpoint(service));
+        var after = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories)
+            .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(path => Path.GetRelativePath(journalRoot, path),
+                path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+        Assert.Equal(original, after);
+        using var oldRead = new PrtgSnapshotJournal(_backend);
+        Assert.Equal(1, Assert.Single(oldRead.Load(endpointA, now)!.Accumulator).Count);
+        using var newRead = new PrtgSnapshotJournal(_backend);
+        Assert.Throws<InvalidDataException>(() => newRead.Load(endpointB, now));
+    }
+
+    [Fact]
+    public void generation發布失敗保留舊binding_故障清除後可安全重試()
+    {
+        var now = DateTime.Today.AddHours(10);
+        var service = CreateService();
+        service.Now = () => now;
+        var settingsA = _settingsStore.Get();
+        var endpointA = PrtgSnapshotJournal.Binding(_backend, settingsA.PrtgUrl);
+        Assert.True(RestoreJournal(service, settingsA));
+        var journal = ServiceJournal(service);
+        var originalManifest = File.ReadAllBytes(journal.ManifestFilePath);
+        journal.FaultPoint = point =>
+        {
+            if (point == "before-generation-switch") throw new IOException("simulated generation publication failure");
+        };
+        _settingsStore.Update(settings => settings.PrtgUrl = "https://prtg-b.example.com");
+        var settingsB = _settingsStore.Get();
+        var endpointB = PrtgSnapshotJournal.Binding(_backend, settingsB.PrtgUrl);
+
+        Assert.False(RestoreJournal(service, settingsB));
+        Assert.Equal(endpointA, JournalEndpoint(service));
+        Assert.Equal(originalManifest, File.ReadAllBytes(journal.ManifestFilePath));
+
+        journal.FaultPoint = null;
+        Assert.True(RestoreJournal(service, settingsB));
+        Assert.Equal(endpointB, JournalEndpoint(service));
+        ServiceAccumulator(service).Add(501, now, 12, 25);
+        Assert.True(SaveJournal(service));
+        using var recovered = new PrtgSnapshotJournal(_backend);
+        var state = recovered.Load(endpointB, now)!;
+        Assert.Equal(1, Assert.Single(state.Accumulator).Count);
+        Assert.Empty(state.Pending);
     }
 
     private void SetupTargetSensors(
@@ -683,15 +1152,14 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     [Fact]
     public async Task TickAsync_執行輸出有上限_長時間運行不無限增長()
     {
-        // 截斷警告只在單發全站查詢（目標超過分批門檻）時出現
-        SetupTargetSensors(ManyTargets(601, PrtgSnapshotHostedService.FilteredSnapshotLimit + 1));
+        SetupTargetSensors(new[] { (601L, "SNMP Traffic 64bit") });
         var service = CreateService();
         var clock = DateTime.Today.AddHours(1);
         service.Now = () => clock;
 
-        // treesize 大於回傳筆數：每次成功快照都寫一行截斷警告
-        var truncatedJson = "{\"treesize\":99,\"sensors\":[{\"objid\":601,\"lastvalue_raw\":1,\"interval\":\"60 s\"}]}";
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(truncatedJson));
+        // 每輪都有無法解析的 interval：每次成功快照都寫一行警告
+        var invalidIntervalJson = "{\"treesize\":1,\"sensors\":[{\"objid\":601,\"lastvalue_raw\":100,\"interval\":\"abc\"}]}";
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(invalidIntervalJson));
 
         for (var i = 0; i < 130; i++)
         {
@@ -762,24 +1230,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(90.0, row.AvgValue);
     }
 
-    [Fact]
-    public async Task TickAsync_筆數少於treesize_記錄截斷警告()
-    {
-        // 截斷警告只在單發全站查詢（目標超過分批門檻）時出現
-        SetupTargetSensors(ManyTargets(601, PrtgSnapshotHostedService.FilteredSnapshotLimit + 1));
-
-        var json = "{\"treesize\":10,\"sensors\":[" +
-                   "{\"objid\":601,\"lastvalue_raw\":10,\"interval\":\"60 s\"}" +
-                   "]}";
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(json));
-
-        var console = new TestConsole();
-        var service = CreateService(console);
-        await service.TickAsync();
-
-        Assert.Contains(console.Lines, l => l.Contains("只取到 1 個感測器") && l.Contains("10") && l.Contains("截斷"));
-        Assert.Contains(service.ExecutionOutputs, l => l.Contains("只取到 1 個感測器") && l.Contains("10") && l.Contains("截斷"));
-    }
 
     [Fact]
     public void ApplicationStopping_站台關閉時寫出當前小時殘存樣本()
@@ -836,6 +1286,92 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(0, service.GetStatus().PendingSamples);
         Assert.Single(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
         Assert.Empty(_stubHandler.RequestedUrls);
+    }
+
+    [Fact]
+    public async Task 正式responseconsumer_15000個感測器以兩個durable局部delta保存()
+    {
+        var service = CreateService();
+        var now = DateTime.Today.AddHours(10);
+        service.Now = () => now;
+        await service.TickAsync(); // RestoreJournal / EnableIncremental 在正式 worker 路徑啟動。
+
+        var parse = typeof(PrtgSnapshotHostedService).GetMethod("ParseAndCheckpoint",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var tallyType = typeof(PrtgSnapshotHostedService).GetNestedType("SnapshotTally",
+            System.Reflection.BindingFlags.NonPublic)!;
+        for (var start = 1; start <= 15_000; start += 7_500)
+        {
+            var sensors = Enumerable.Range(start, 7_500).Select(id => new
+            {
+                objid = id,
+                lastvalue_raw = (double)id,
+                interval = "60 s"
+            });
+            var json = System.Text.Json.JsonSerializer.Serialize(new { sensors });
+            var tally = Activator.CreateInstance(tallyType, nonPublic: true)!;
+            var accepted = Enumerable.Range(start, 7_500).Select(id => (long)id).ToHashSet();
+            parse.Invoke(service, new object[] { json, now, tally, accepted });
+        }
+
+        var endpoint = PrtgSnapshotJournal.Binding(_backend, _settingsStore.Get().PrtgUrl);
+        var journal = new PrtgSnapshotJournal(_backend);
+        var restored = journal.Load(endpoint, now)!;
+        Assert.Equal(15_000, restored.Accumulator.Count);
+        var segmentDirectory = Directory.GetDirectories(Path.Combine(_dir, "pending", "prtg-snapshot"), "checkpoint.g.*")
+            .Select(path => Path.Combine(path, "segments")).Single();
+        Assert.Equal(3, Directory.GetFiles(segmentDirectory, "*.json").Length); // snapshot base + two response deltas
+        Assert.False(File.Exists(journal.FilePath));
+    }
+
+    [Fact]
+    public async Task SQL已提交但ack段尚未發布_恢復以同一GUID重試且coverage不重複()
+    {
+        var service = CreateService();
+        var now = DateTime.Today.AddHours(8);
+        service.Now = () => now;
+        var journal = (PrtgSnapshotJournal)typeof(PrtgSnapshotHostedService)
+            .GetField("_journal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(service)!;
+        var durableWrites = 0;
+        journal.FaultPoint = point =>
+        {
+            if (point == "after-segment-flush" && ++durableWrites == 2)
+                throw new IOException("simulated crash before ack manifest");
+        };
+        var row = new PrtgValueRow
+        {
+            SensorObjid = 801,
+            PeriodStart = now,
+            AvgValue = 12,
+            MinValue = 12,
+            MaxValue = 12,
+            Coverage = 50,
+            Quality = PrtgDataQuality.Sampled,
+            CreatedAt = now
+        };
+        typeof(PrtgSnapshotHostedService)
+            .GetMethod("WriteSampledRows", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, new object[] { new[] { row } });
+        Assert.Equal(1, service.GetStatus().PendingSamples);
+        var endpoint = PrtgSnapshotJournal.Binding(_backend, _settingsStore.Get().PrtgUrl);
+        var queued = new PrtgSnapshotJournal(_backend).Load(endpoint, now)!.Pending;
+        var batch = Assert.Single(queued);
+        var saved = Assert.Single(_backend.PrtgStore().GetValues(now, now.AddHours(1)));
+        Assert.Equal(50, saved.Coverage);
+
+        journal.FaultPoint = null;
+        _settingsStore.Update(settings => settings.PrtgEnabled = false);
+        service.Now = () => now.AddMinutes(20);
+        await service.TickAsync();
+
+        Assert.Equal(0, service.GetStatus().PendingSamples);
+        Assert.Empty(new PrtgSnapshotJournal(_backend).Load(endpoint, now)!.Pending);
+        using var verify = new LfDbContext(new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(_dir, "test.db")}").Options);
+        Assert.Contains(batch.Id, verify.PrtgSampledBatches.Select(entry => entry.BatchId).ToArray());
+        var final = Assert.Single(_backend.PrtgStore().GetValues(now, now.AddHours(1)));
+        Assert.Equal(50, final.Coverage);
     }
 
     [Fact]
@@ -913,6 +1449,373 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Null(service.GetStatus().LastSkipReason);
     }
 
+    [Theory]
+    [InlineData("structure")]
+    [InlineData("backfill")]
+    [InlineData("nightly")]
+    public async Task 長維護仍保留三輪採樣且不擴張補抓(string kind)
+    {
+        SetupTargetSensors(new[] { (903L, "Ping") });
+        _stubHandler.OnSend = (request, _) => Task.FromResult(FilteredValues(request.RequestUri!.ToString()));
+        if (kind == "structure") Assert.True(_syncState.TryBegin());
+        else if (kind == "backfill") Assert.True(_backfillState.TryBeginRun(out _));
+        else
+        {
+            Assert.True(_schedulerRunState.TryBeginRun("schedule", out _));
+            _schedulerRunState.ReportProgress("prtg-sync", 0, 10);
+        }
+        var clock = DateTime.Today.AddHours(8);
+        var service = CreateService();
+        service.Now = () => clock;
+        await service.TickAsync();
+        Assert.Empty(SnapshotUrls());
+        for (var round = 1; round <= 3; round++)
+        {
+            clock = clock.AddMinutes(15);
+            await service.TickAsync();
+            Assert.Equal(round, SnapshotUrls().Count);
+            Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+            Assert.Null(service.GetStatus().LastSkipReason);
+        }
+        Assert.Empty(BackfillUrls());
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+        Assert.True(kind == "structure" ? _structureSync.IsRunning
+            : kind == "backfill" ? _backfill.GetStatus().IsRunning : _schedulerRunState.IsRunning);
+    }
+
+    [Fact]
+    public async Task 維護原因變更不會重新延長採樣等待期限()
+    {
+        SetupTargetSensors(new[] { (906L, "Ping") });
+        _stubHandler.OnSend = (request, _) => Task.FromResult(FilteredValues(request.RequestUri!.ToString()));
+        var clock = DateTime.Today.AddHours(8);
+        var service = CreateService();
+        service.Now = () => clock;
+        Assert.True(_syncState.TryBegin());
+        await service.TickAsync();
+        clock = clock.AddMinutes(8);
+        _syncState.EndRun(true);
+        Assert.True(_backfillState.TryBeginRun(out _));
+        await service.TickAsync();
+        Assert.Empty(SnapshotUrls());
+        clock = clock.AddMinutes(7);
+        await service.TickAsync();
+        Assert.Single(SnapshotUrls());
+        Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+    }
+
+    [Fact]
+    public async Task 歷史工作用滿配額仍可透過同一正式budget完成到期採樣()
+    {
+        SetupTargetSensors(new[] { (905L, "Ping") });
+        _stubHandler.OnSend = (request, _) => Task.FromResult(FilteredValues(request.RequestUri!.ToString()));
+        Assert.True(_backfillState.TryBeginRun(out _));
+        var clock = DateTime.Today.AddHours(8);
+        var budgetClock = new PrtgRequestBudgetTests.TestPrtgClock(new DateTimeOffset(clock));
+        var budget = new PrtgRequestBudget(budgetClock);
+        using var historicalClient = PrtgClientFactory.Create(_settingsStore.Get(), _stubHandler, budget);
+        for (var i = 1; i <= 5; i++)
+            await historicalClient.GetJsonAsync($"api/historicdata.json?id={i}");
+        using var pendingCancellation = new CancellationTokenSource();
+        var pending = historicalClient.GetJsonAsync("api/historicdata.json?id=6", pendingCancellation.Token);
+        var service = CreateService();
+        service.ClientFactory = () => PrtgClientFactory.Create(_settingsStore.Get(), _stubHandler, budget);
+        service.Now = () => clock;
+        try
+        {
+            await WaitUntilAsync(() => budget.WaiterCount == 1);
+            await service.TickAsync();
+            clock = clock.AddMinutes(15);
+            await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+            Assert.Single(SnapshotUrls());
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(5, _stubHandler.RequestedUrls.Count(url => url.Contains("historicdata.json")));
+            Assert.Equal(0, budget.InFlightCount);
+            Assert.True(_backfill.GetStatus().IsRunning);
+        }
+        finally
+        {
+            pendingCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        }
+    }
+
+    [Fact]
+    public async Task 真實服務迴圈有待處理範圍更新時仍按期限採樣()
+    {
+        SetupTargetSensors(new[] { (904L, "Ping") });
+        _stubHandler.OnSend = (request, _) => Task.FromResult(FilteredValues(request.RequestUri!.ToString()));
+        Assert.True(_syncState.TryBegin());
+        var initial = DateTime.Today.AddHours(8);
+        var clockTicks = initial.Ticks;
+        var service = CreateService(pollInterval: TimeSpan.FromMilliseconds(10));
+        service.Now = () => new DateTime(Interlocked.Read(ref clockTicks));
+        service.RequestScopeRefresh();
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true);
+            for (var round = 1; round <= 3; round++)
+            {
+                var expected = initial.AddMinutes(round * 15);
+                Interlocked.Exchange(ref clockTicks, expected.Ticks);
+                service.RequestScopeRefresh();
+                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected);
+                Assert.Equal(round, SnapshotUrls().Count);
+            }
+            Assert.True(_structureSync.IsRunning);
+            Assert.Empty(BackfillUrls());
+        }
+        finally
+        {
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await service.StopAsync(stop.Token);
+        }
+    }
+
+    [Fact]
+    public async Task 補抓逾期會讓出採樣且取消的補抓不標記裝置為空()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        _stubHandler.OnSend = async (request, ct) =>
+        {
+            if (IsBackfillUrl(request.RequestUri!.ToString()))
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return FilteredValues(request.RequestUri!.ToString());
+        };
+        var clock = DateTime.Today.AddHours(8);
+        var service = CreateService();
+        service.Now = () => clock;
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(2);
+        await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+        Assert.Single(SnapshotUrls());
+        Assert.Single(BackfillUrls());
+        Assert.Contains(service.ExecutionOutputs, line => line.Contains("補抓已達期限"));
+        clock = clock.AddMinutes(15);
+        await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, SnapshotUrls().Count);
+        Assert.Equal(2, BackfillUrls().Count);
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+    }
+
+    [Fact]
+    public async Task 真實服務迴圈補抓持續逾期後仍恢復下一輪採樣()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        _stubHandler.OnSend = async (request, ct) =>
+        {
+            if (IsBackfillUrl(request.RequestUri!.ToString()))
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return FilteredValues(request.RequestUri!.ToString());
+        };
+        var initial = DateTime.Today.AddHours(8);
+        var clockTicks = initial.Ticks;
+        var service = CreateService(pollInterval: TimeSpan.FromMilliseconds(10));
+        service.Now = () => new DateTime(Interlocked.Read(ref clockTicks));
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(2);
+        service.RequestScopeRefresh();
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == initial, TimeSpan.FromSeconds(15));
+            Assert.Single(SnapshotUrls());
+            var next = initial.AddMinutes(15);
+            Interlocked.Exchange(ref clockTicks, next.Ticks);
+            service.RequestScopeRefresh();
+            await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == next, TimeSpan.FromSeconds(15));
+            Assert.Equal(2, SnapshotUrls().Count);
+            Assert.True(BackfillUrls().Count >= 2);
+            Assert.DoesNotContain(_backend.PrtgStore().GetAllSensors(), row => row.DeviceObjid == 20);
+            Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+        }
+        finally
+        {
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await service.StopAsync(stop.Token);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task 補抓第一頁完成後取消不留下部分鏡像且重啟後仍重試(bool restart)
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        var clock = DateTime.Today.AddHours(8);
+        var pageTwoReached = false;
+        var first = true;
+        var pageOne = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            treesize = 5001,
+            sensors = Enumerable.Range(2000, 5000).Select(id => new
+            { objid = id, parentid = 20, sensor = "S", type = "ping", status = "Up", paused = false })
+        });
+        var pageTwo = "{\"treesize\":5001,\"sensors\":[{\"objid\":9001,\"parentid\":20,\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}]}";
+        _stubHandler.OnSend = async (request, ct) =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (!IsBackfillUrl(url)) return FilteredValues(url);
+            if (url.Contains("start=0")) return JsonResponse(pageOne);
+            pageTwoReached = true;
+            if (first) await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return JsonResponse(pageTwo);
+        };
+        var service = CreateService();
+        service.Now = () => clock;
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(2);
+        await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.True(pageTwoReached, "必須先完整讀到第一頁，再於第二頁等待時取消。");
+        Assert.DoesNotContain(_backend.PrtgStore().GetAllSensors(), row => row.DeviceObjid == 20);
+        Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+        first = false;
+        if (restart)
+        {
+            service.Dispose();
+            service = CreateService();
+            service.Now = () => clock;
+        }
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(30);
+        clock = clock.AddMinutes(15);
+        await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(5001, _backend.PrtgStore().GetAllSensors().Count(row => row.DeviceObjid == 20));
+        Assert.Equal(4, BackfillUrls().Count);
+        Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task 完整裝置補抓超額或跨裝置回應拒絕整批且下輪可重試(bool oversized)
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        var invalid = oversized
+            ? System.Text.Json.JsonSerializer.Serialize(new { treesize = 1, sensors = new[]
+                { new { objid = 201, parentid = 20, sensor = "S", type = "ping", tags = new string('x', 4 * 1024 * 1024 + 1) } } })
+            : "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":999,\"sensor\":\"S\",\"type\":\"ping\"}]}";
+        var first = true;
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var url = request.RequestUri!.ToString();
+            return Task.FromResult(IsBackfillUrl(url)
+                ? first ? JsonResponse(invalid) : DeviceSensors(url, new Dictionary<long, long> { [20] = 201 })
+                : FilteredValues(url));
+        };
+        var clock = DateTime.Today.AddHours(8);
+        var service = CreateService();
+        service.Now = () => clock;
+        await service.TickAsync();
+        Assert.DoesNotContain(_backend.PrtgStore().GetAllSensors(), row => row.DeviceObjid != 10);
+        Assert.Contains(service.ExecutionOutputs, line => line.Contains("感測器補抓失敗"));
+        first = false;
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Contains(_backend.PrtgStore().GetAllSensors(), row => row.Objid == 201 && row.DeviceObjid == 20);
+        Assert.Equal(2, BackfillUrls().Count);
+    }
+
+    [Fact]
+    public async Task 補抓第二批SQL失敗不留下部分鏡像且下一輪重試全部裝置()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        var store = _backend.PrtgStore();
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        store.ApplyAutoCategories(new Dictionary<string, string>());
+        var revision = store.ReadCatalogueDataRevision();
+        using (var context = _backend.CreateContext())
+            context.Database.ExecuteSqlRaw("""
+                CREATE TRIGGER fail_scope_sensor_second_batch BEFORE INSERT ON lf_prtg_sensors
+                WHEN NEW.objid = 2500
+                BEGIN SELECT RAISE(ABORT, 'injected scope second-batch failure'); END;
+                """);
+        var response = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            treesize = 501,
+            sensors = Enumerable.Range(2000, 501).Select(id => new
+            { objid = id, parentid = 20, sensor = "S", type = "ping", status = "Up", paused = false })
+        });
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var url = request.RequestUri!.ToString();
+            return Task.FromResult(IsBackfillUrl(url) ? JsonResponse(response) : FilteredValues(url));
+        };
+        var clock = DateTime.Today.AddHours(8);
+        var service = CreateService();
+        service.Now = () => clock;
+        await service.TickAsync();
+        Assert.DoesNotContain(store.GetAllSensors(), sensor => sensor.DeviceObjid == 20);
+        Assert.Equal(revision, store.ReadCatalogueDataRevision());
+        Assert.Single(BackfillUrls());
+        Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+        using (var context = _backend.CreateContext())
+            context.Database.ExecuteSqlRaw("DROP TRIGGER fail_scope_sensor_second_batch;");
+        clock = clock.AddMinutes(15);
+        await service.TickAsync();
+        Assert.Equal(501, store.GetAllSensors().Count(sensor => sensor.DeviceObjid == 20));
+        Assert.Equal(2, BackfillUrls().Count);
+        Assert.Equal(clock, service.GetStatus().LastSuccessAt);
+    }
+
+    [Fact]
+    public async Task 父工作取消不當成補抓期限也不再開採樣請求()
+    {
+        SetupOkDevices(new long[] { 10, 20 });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
+        }, DateTime.Now);
+        var requestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _stubHandler.OnSend = async (_, ct) =>
+        {
+            requestStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return JsonResponse("{}");
+        };
+        var service = CreateService();
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(5);
+        using var cancelled = new CancellationTokenSource();
+        var tick = service.TickAsync(cancelled.Token);
+        try
+        {
+            await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancelled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await tick.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally { cancelled.Cancel(); }
+        Assert.Empty(SnapshotUrls());
+        Assert.Null(service.GetStatus().LastSuccessAt);
+        Assert.DoesNotContain(service.ExecutionOutputs, line => line.Contains("補抓已達期限"));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> ready, TimeSpan? timeout = null)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!ready() && deadline.Elapsed < (timeout ?? TimeSpan.FromSeconds(5)))
+            await Task.Delay(10);
+        Assert.True(ready(), "服務迴圈沒有在有界等待內完成預期採樣。");
+    }
+
     // ── 分批快照與範圍補抓 ──
 
     private static IEnumerable<(long Objid, string SensorType)> ManyTargets(long start, int count) =>
@@ -987,31 +1890,59 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_目標超過門檻_改單發全站查詢()
+    public async Task 分批快照_目標2001顆_恰41個filter請求且無全站查詢()
     {
-        SetupTargetSensors(ManyTargets(1001, PrtgSnapshotHostedService.FilteredSnapshotLimit + 1));
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":1001,\"lastvalue_raw\":1,\"interval\":\"60 s\"}]}"));
+        SetupTargetSensors(ManyTargets(1001, 2001));
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+
+        var service = CreateService();
+        await service.TickAsync();
+
+        var snapshots = SnapshotUrls();
+        Assert.Equal(41, snapshots.Count);
+        Assert.All(snapshots, u => Assert.Contains("filter_objid=", u));
+        Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
+        Assert.Equal(50, FilterObjids(snapshots[0]).Count);
+        Assert.Single(FilterObjids(snapshots[40]));
+        Assert.Equal(2001, service.GetStatus().PendingSamples);
+        Assert.Equal(2001, service.GetStatus().LastSensorCount);
+    }
+
+    [Fact]
+    public async Task 分批快照_目標50顆_恰1個filter請求且無全站查詢()
+    {
+        SetupTargetSensors(ManyTargets(1001, 50));
+        _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
 
         var service = CreateService();
         await service.TickAsync();
 
         var snapshots = SnapshotUrls();
         var single = Assert.Single(snapshots);
-        Assert.Contains("count=50000", single);
-        Assert.DoesNotContain("filter_objid=", single);
+        Assert.Contains("filter_objid=", single);
+        Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
+        Assert.Equal(50, FilterObjids(single).Count);
+        Assert.Equal(50, service.GetStatus().PendingSamples);
+        Assert.Equal(50, service.GetStatus().LastSensorCount);
     }
 
     [Fact]
-    public async Task 分批快照_目標剛好等於門檻_仍走分批()
+    public async Task 分批快照_目標2000顆_恰40個filter請求且無全站查詢()
     {
-        SetupTargetSensors(ManyTargets(1001, PrtgSnapshotHostedService.FilteredSnapshotLimit));
+        SetupTargetSensors(ManyTargets(1001, 2000));
         _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
 
         var service = CreateService();
         await service.TickAsync();
 
-        Assert.Equal(PrtgSnapshotHostedService.FilteredSnapshotLimit / PrtgResourceGuardProbe.MaxBatchSize, SnapshotUrls().Count);
+        var snapshots = SnapshotUrls();
+        Assert.Equal(40, snapshots.Count);
+        Assert.All(snapshots, u => Assert.Contains("filter_objid=", u));
         Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
+        Assert.Equal(50, FilterObjids(snapshots[0]).Count);
+        Assert.Equal(50, FilterObjids(snapshots[39]).Count);
+        Assert.Equal(2000, service.GetStatus().PendingSamples);
+        Assert.Equal(2000, service.GetStatus().LastSensorCount);
     }
 
     [Fact]
@@ -1337,6 +2268,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var store = _backend.PrtgStore();
         var sensor = Assert.Single(store.GetAllSensors(), s => s.Objid == 9001);
         Assert.Equal(77, sensor.DeviceObjid);
+        Assert.DoesNotContain(store.ReadRecentStateChangeQueue(), item => item.DeviceObjid == 77);
 
         var settings = _settingsStore.Get();
         var scope = PrtgScopeDevices.Compute(store, _hostStore, new PrtgMirrorGuardSource(store), settings,
