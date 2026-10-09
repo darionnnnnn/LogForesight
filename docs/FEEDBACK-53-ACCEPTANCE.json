@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "3a7745de652b3823fe7d8bfc1916c4962b9e96f91f4f2b3edc481cae4a6371fe",
+  "plan_sha256": "f44964918de9c318f6bf1d84c4fada4a955e2acdbf1095744a7e768a5c1fa451",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -2155,39 +2155,12 @@
   "next_probe_release": {
     "version": "1.0.53.2",
     "branch": "feature/prtg-feedback-53",
-    "status": "prepared-not-committed-or-pushed",
+    "status": "code-committed-and-pushed-native-output-pending",
+    "historical_prepublication_status": "prepared-not-committed-or-pushed",
+    "published_dependency_commit": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0",
+    "latest_verified_product_commit": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "same_version_native_probe_received": false,
     "purpose": "Same-version read-only native identity_preserving_raw_history evidence; not whole-round acceptance"
-  },
-  "current_main_regression": {
-    "gate": "round53-main-full-regression-current-v2",
-    "status": "completed-failed-test-setup",
-    "counters": {
-      "total": "7112",
-      "executed": "7102",
-      "passed": "7085",
-      "failed": "17",
-      "error": "0",
-      "timeout": "0",
-      "aborted": "0",
-      "inconclusive": "0",
-      "passedButRunAborted": "0",
-      "notRunnable": "0",
-      "notExecuted": "0",
-      "disconnected": "0",
-      "warning": "0",
-      "completed": "0",
-      "inProgress": "0",
-      "pending": "0"
-    },
-    "build_errors": 0,
-    "build_warnings": 127,
-    "input_count": 1128,
-    "input_drift": 0,
-    "completed_trx": true,
-    "passed": false,
-    "resolved_by": "round53-main-incremental-source-day-current-v1-review.json",
-    "meaning": "保留完整 RED；全部 17 個 setup failure 已由完整受影響類別重驗解決，不宣稱單次完整回歸綠燈。",
-    "applies_to_previous_product_revision": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0"
   },
   "current_implementation_closure": {
     "items": [
@@ -2231,17 +2204,18 @@
     "meaning": "offline integrity only; no source trust or capacity qualification"
   },
   "current_required_delivery_counts": {
-    "implementation_items": 6,
+    "as_of_product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
+    "implementation_items": 5,
     "validation_groups": 5,
     "implementation_ids": [
+      "R07/day-window",
+      "R05/shared-admission",
       "A0/N1",
       "R15",
-      "Q2/C1",
-      "C1/D1",
-      "R05/shared-admission",
-      "AC15/smtp-unknown"
+      "C1/D1"
     ],
-    "meaning": "Current Main residual repair verified; remaining source/capacity/case/SMTP deliveries and all broader validation groups stay open."
+    "meaning": "已完成的 Q2/C1 與 SMTP 協定實作子項不重複計為活動 TODO；Q2 原生 alignment 仍屬 A0/N1、R15 的來源驗收，完整 AC15 與五組整輪驗收保留。"
   },
   "current_r08_r14_integration_verification": {
     "gate": "current-r08-r14-consumers-primary-v1",
@@ -2272,22 +2246,6 @@
     "download_file_bytes_independently_verified": false,
     "owned_process_and_tab_closed": true,
     "whole_round_passed": false
-  },
-  "formal_rule_case_pack_current_status": {
-    "gate": "formal-rule-case-pack-primary-v14-all",
-    "status": "red-completed-stage-not-merged",
-    "build_errors": 0,
-    "build_warnings": 72,
-    "completed_trx": false,
-    "no_pass_claim": true,
-    "case_production_normalized_matches_main": true,
-    "remaining_work": "valid authorized baseline before mutation; exact consumer guard; JSON-driven scenario alignment; actual Daily and human preservation",
-    "passed": 149,
-    "failed": 45,
-    "skipped": 0,
-    "total_tests": 194,
-    "input_drift": 0,
-    "meaning": "Full existing stage pack executed; fixture defects under repair. Looped positive cases are being split for per-ID TRX evidence; no case-pack acceptance."
   },
   "current_residual_provider_gap": {
     "status": "completed-current-main",
@@ -2744,7 +2702,7 @@
     ]
   },
   "current_formal_mode_revocation_gap": {
-    "status": "confirmed-root-source-review-implementation-in-private-stage",
+    "status": "implementation-integrated-component-evidence-present-whole-workflow-open",
     "source_verified_by_root": true,
     "candidate_worktree": "work/logforesight-mode-revocation",
     "acceptance_pass": false,
@@ -2757,7 +2715,11 @@
       "AI/case/notification consumers",
       "transaction rollback and retry"
     ],
-    "whole_round_accepted": false
+    "whole_round_accepted": false,
+    "historical_initial_status": "confirmed-root-source-review-implementation-in-private-stage",
+    "implementation_todo_closed": true,
+    "component_evidence": "current_mode_revocation_core_v4 and PLAN §5.3 mode-revocation row",
+    "remaining_distinct_requirement": "R07/day-window cross-host-day attribution remains undecided and open"
   },
   "acceptance_execution_scope": {
     "direct_onsite_application_required": false,
@@ -5567,7 +5529,8 @@
     "full_capacity_accepted": false,
     "actual_current_browser_verified": false,
     "implementation_todo_parents_retained": 5,
-    "segmented_push_policy": "verified dependency-complete stage -> commit/push current round branch -> verify remote HEAD"
+    "segmented_push_policy": "verified dependency-complete stage -> commit/push current round branch -> verify remote HEAD",
+    "tested_source_content_matches_product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150"
   },
   "previous_incremental_regressions": [
     {
@@ -5664,5 +5627,88 @@
       "nativeSourceVerified": false,
       "fullCapacityAccepted": false
     }
-  ]
+  ],
+  "previous_required_delivery_counts_snapshot": {
+    "implementation_items": 6,
+    "validation_groups": 5,
+    "implementation_ids": [
+      "A0/N1",
+      "R15",
+      "Q2/C1",
+      "C1/D1",
+      "R05/shared-admission",
+      "AC15/smtp-unknown"
+    ],
+    "meaning": "Current Main residual repair verified; remaining source/capacity/case/SMTP deliveries and all broader validation groups stay open."
+  },
+  "formal_rule_case_pack_historical_v14": {
+    "gate": "formal-rule-case-pack-primary-v14-all",
+    "status": "red-completed-stage-not-merged",
+    "build_errors": 0,
+    "build_warnings": 72,
+    "completed_trx": false,
+    "no_pass_claim": true,
+    "case_production_normalized_matches_main": true,
+    "remaining_work": "valid authorized baseline before mutation; exact consumer guard; JSON-driven scenario alignment; actual Daily and human preservation",
+    "passed": 149,
+    "failed": 45,
+    "skipped": 0,
+    "total_tests": 194,
+    "input_drift": 0,
+    "meaning": "Full existing stage pack executed; fixture defects under repair. Looped positive cases are being split for per-ID TRX evidence; no case-pack acceptance."
+  },
+  "formal_rule_case_pack_current_status": {
+    "status": "partial-component-verified-whole-contract-open",
+    "current_evidence": "round53-main-incremental-source-day-current-v1-review.json",
+    "component_rule_tests_passed": 224,
+    "owned_smtp_tests_passed": 21,
+    "native_case_fixture_accepted": false,
+    "whole_round_accepted": false,
+    "historical_red_retained": "formal_rule_case_pack_historical_v14",
+    "meaning": "固定案例與 SMTP 元件通過；原始 v14 RED、v20 後續證據均保留，整輪來源／角色／容量門檻仍開。"
+  },
+  "previous_main_regression_v2": {
+    "gate": "round53-main-full-regression-current-v2",
+    "status": "completed-failed-test-setup",
+    "counters": {
+      "total": "7112",
+      "executed": "7102",
+      "passed": "7085",
+      "failed": "17",
+      "error": "0",
+      "timeout": "0",
+      "aborted": "0",
+      "inconclusive": "0",
+      "passedButRunAborted": "0",
+      "notRunnable": "0",
+      "notExecuted": "0",
+      "disconnected": "0",
+      "warning": "0",
+      "completed": "0",
+      "inProgress": "0",
+      "pending": "0"
+    },
+    "build_errors": 0,
+    "build_warnings": 127,
+    "input_count": 1128,
+    "input_drift": 0,
+    "completed_trx": true,
+    "passed": false,
+    "resolved_by": "round53-main-incremental-source-day-current-v1-review.json",
+    "meaning": "保留完整 RED；全部 17 個 setup failure 已由完整受影響類別重驗解決，不宣稱單次完整回歸綠燈。",
+    "applies_to_previous_product_revision": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0"
+  },
+  "current_main_regression": {
+    "product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "status": "affected-components-verified-no-single-complete-full-green-run",
+    "passed": false,
+    "completed_trx": false,
+    "affected_component_passed": 135,
+    "affected_component_evidence": [
+      "round53-ai-zero-retry-current-v1",
+      "round53-ai-zero-retry-netiq-current-v1"
+    ],
+    "previous_full_result": "previous_main_regression_v2",
+    "whole_round_accepted": false
+  }
 }
