@@ -244,7 +244,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 
 快照容量的請求形狀指紋另含目前 Web 建置識別（informational version、assembly version 及 MVID），與 Profile transport 使用相同版本來源。Pilot、日常採样、runtime admission 與設定估算共用 resolver；舊版沒有版本綁定的樣本或不同 build 樣本均不匹配，不追認為目前成本，須重新試測。
 
-全域設定儲存會換 revision；品牌、AI 或郵件等無關設定不應永久停止 PRTG。Runtime 先驗目前來源／完整 scope／政策／策略／請求形狀／建置與新鮮量測、既定保留速率，再以完整 plan CAS 重綁 settings revision。重綁保留原 fingerprint、owner、CreatedAt、LeaseUntil 及三路速率，只前進 plan version；提交回覆遺失可冪等重試，過期、較新 owner／version 或前後來源檢查失敗時拒絕。Publish／Renew／Rebind 的成功回覆只取自實際完成的交易 attempt；回滾後拒絕的重試不承接前次成功狀態，exact rebind 不重寫 blob 版本。真正 PRTG 契約變更仍拒絕舊計畫，狹縮可保存但須重新取得相符准入，不放寬原 25% 餘裕或共同負載門檻。
+全域設定儲存會換 revision；品牌、AI 或郵件等無關設定不應永久停止 PRTG。Runtime 先驗目前來源／完整 scope／政策／策略／請求形狀／建置與新鮮量測、既定保留速率，再以完整 plan CAS 重綁 settings revision。重綁保留原 fingerprint、owner、CreatedAt、LeaseUntil 及三路速率，只前進 plan version；提交回覆遺失可冪等重試，過期、較新 owner／version 或前後來源檢查失敗時拒絕。初次發布的 CreatedAt／LeaseUntil 以來源重驗完成時的目前時間起算；最後來源檢查跨過租期時拒絕，僅失效本次 owner／version，不覆蓋較新的計畫。Publish／Renew／Rebind 的成功回覆只取自實際完成的交易 attempt；回滾後拒絕的重試不承接前次成功狀態，exact rebind 不重寫 blob 版本。真正 PRTG 契約變更仍拒絕舊計畫，狹縮可保存但須重新取得相符准入，不放寬原 25% 餘裕或共同負載門檻。
 
 ### 3c. 取數範圍
 

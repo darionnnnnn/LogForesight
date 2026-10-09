@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "9b70eb4fb8f81852255cae8449fb8f7a27cf41c5c2502226e0bf78540c24a148",
+  "plan_sha256": "2a48de66b95a0e05d47c97cdeb095b1f8a56b6b70760a0389fb09df4615a4122",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -2205,7 +2205,7 @@
     "meaning": "offline integrity only; no source trust or capacity qualification"
   },
   "current_required_delivery_counts": {
-    "as_of_product_revision": "42d07b6b14327bf36bfd1cdeb633b00654fdb008 + verified R05 audit changes (exact input hashes in gate receipt)",
+    "as_of_product_revision": "9337ba3c654fc7a3f0ee0073abf43ee0801ca1c3 + verified publication-boundary delta (exact source hashes in current_publication_boundary_reaudit_20261009)",
     "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
     "implementation_items": 3,
     "validation_groups": 5,
@@ -6045,5 +6045,42 @@
     "native_source_verified": false,
     "full_capacity_accepted": false,
     "single_full_regression_claim": false
+  },
+  "current_publication_boundary_reaudit_20261009": {
+    "base_commit": "9337ba3c654fc7a3f0ee0073abf43ee0801ca1c3",
+    "source_review": "root direct plan/TODO and production-caller review; no new delegation",
+    "confirmed_gap": "initial Publish uses captured approval time and does not reject expiry after final source check",
+    "red_gate": "round53-r05-publication-boundary-red-current-v1",
+    "red_passed": 0,
+    "red_failed": 3,
+    "red_skipped": 0,
+    "green_gate": "round53-r05-publication-boundary-affected-green-current-v1",
+    "passed": 53,
+    "failed": 0,
+    "skipped": 0,
+    "input_count": 1130,
+    "input_drift": 0,
+    "build_errors": 0,
+    "build_warnings": 127,
+    "changed_source_hashes": [
+      {
+        "Path": "LogForesight.Core\\Service\\PrtgCapacityAdmissionPlan.cs",
+        "Sha256": "A337FBB2A1F99B7EAE72F3E288205A71B916FFC2369E1482741AC3E18FC1280D"
+      },
+      {
+        "Path": "LogForesight.Tests\\PrtgCapacityAdmissionRetryTests.cs",
+        "Sha256": "A7C7F84F98866483E0A02C2F104F08A8D3916BD6E90D43BF52B823FC15FC76AE"
+      }
+    ],
+    "required_delivery_ids": [
+      "R07/day-window",
+      "A0/N1",
+      "R15"
+    ],
+    "validation_groups": 5,
+    "implementation_parent_todos_removed_this_reaudit": [],
+    "whole_round_accepted": false,
+    "native_authority_accepted": false,
+    "full_capacity_accepted": false
   }
 }

@@ -15,6 +15,74 @@ namespace LogForesight.Tests;
 public sealed class PrtgCapacityAdmissionRetryTests
 {
     [Fact]
+    public void Publish_starts_its_lease_from_current_time_after_source_revalidation()
+    {
+        var captured = DateTimeOffset.UtcNow;
+        using var db = new InMemoryAdmissionDatabase(captured);
+        var store = db.PlanStore(db.Clock);
+        var approvedAt = captured.AddHours(24).AddTicks(1);
+        var checks = 0;
+
+        var published = store.Publish(Candidate('A', captured), "owner-a", captured,
+            TimeSpan.FromHours(24), "settings-r1", () =>
+            {
+                if (++checks == 1) db.Clock.SetUtcNow(approvedAt);
+                return true;
+            });
+
+        Assert.Equal(approvedAt, published.CreatedAtUtc);
+        Assert.Equal(approvedAt.AddHours(24), published.LeaseUntilUtc);
+        Assert.Equal(published, store.ReadCurrent(db.Clock.GetUtcNow()));
+    }
+
+    [Fact]
+    public void Publish_rejects_and_invalidates_its_plan_when_final_source_check_crosses_expiry()
+    {
+        var captured = DateTimeOffset.UtcNow;
+        using var db = new InMemoryAdmissionDatabase(captured);
+        var store = db.PlanStore(db.Clock);
+        var checks = 0;
+
+        Assert.Throws<InvalidOperationException>(() => store.Publish(Candidate('A', captured),
+            "owner-a", captured, TimeSpan.FromHours(24), "settings-r1", () =>
+            {
+                if (++checks == 2) db.Clock.SetUtcNow(captured.AddHours(24).AddTicks(1));
+                return true;
+            }));
+
+        Assert.Equal(2, checks);
+        Assert.Null(store.ReadCurrent(captured));
+        Assert.Null(store.ReadCurrent(db.Clock.GetUtcNow()));
+    }
+
+    [Fact]
+    public void Publish_expiry_rejection_cannot_invalidate_a_newer_owners_plan()
+    {
+        var captured = DateTimeOffset.UtcNow;
+        using var db = new InMemoryAdmissionDatabase(captured);
+        var store = db.PlanStore(db.Clock);
+        var checks = 0;
+        PrtgCapacityAdmissionPlan? newer = null;
+
+        Assert.Throws<InvalidOperationException>(() => store.Publish(Candidate('A', captured),
+            "owner-a", captured, TimeSpan.FromHours(24), "settings-r1", () =>
+            {
+                if (++checks == 2)
+                {
+                    db.Clock.SetUtcNow(captured.AddHours(24).AddTicks(1));
+                    var current = db.Clock.GetUtcNow();
+                    newer = store.Publish(Candidate('B', current), "owner-b", current,
+                        TimeSpan.FromHours(24), "settings-r2", () => true);
+                }
+                return true;
+            }));
+
+        Assert.NotNull(newer);
+        Assert.Equal("owner-b", newer!.Owner);
+        Assert.Equal(newer, store.ReadCurrent(db.Clock.GetUtcNow()));
+    }
+
+    [Fact]
     public void Rebind_does_not_report_a_rolled_back_attempt_when_a_retry_rejects()
     {
         using var db = new InMemoryAdmissionDatabase();

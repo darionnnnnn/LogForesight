@@ -3,7 +3,7 @@
 > 2026-10-07 使用者更新驗收方式：不直接在實際現場環境執行驗收；必要來源／硬體／provider／版本事實只透過環境探測取得。功能、邊界、復原及容量在受控隔離環境，結合同版探測成本與來源 fixture 驗收；實際 SQL、SMTP 協定與收件匣指本輪隔離測試端。不得因此放寬既定時限、25%餘裕、3000／15000／180日負載或角色／版本守門，也不冒稱現場投遞／真實事故成效。以下歷史提及現場直接驗收的執行方式由本決策取代，未齊來源事實仍保留待探測。
 
 > 狀態：實作中（2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
-> 本次核對基準：`dev`／`beda825b3dadbba7c6936f20acdf9dc731ae26ec`；原規劃起點為 `feature/prtg-feedback-52`／`8db15b5`。工作區僅有既存未追蹤 `artifacts/`，保護不改；不讀 `docs/archive/`。部署版本仍須現場確認。
+> 規劃起始核對基準：`dev`／`beda825b3dadbba7c6936f20acdf9dc731ae26ec`；原規劃起點為 `feature/prtg-feedback-52`／`8db15b5`。工作區僅有既存未追蹤 `artifacts/`，保護不改；不讀 `docs/archive/`。部署版本仍須現場確認。
 > 承接：[第 52 輪第二輪 PLAN](FEEDBACK-52-ROUND2-PLAN.md) 的有效 NetIQ 契約、原需求 ID、E0–E4 與未通過門檻。此文件是下一輪有效待辦入口，舊 PLAN 保留證據與決策歷程。
 
 ## 1. 完全體的範圍
@@ -138,7 +138,7 @@
 
 ### 5.5 2026-10-09 規劃與正式程式對照
 
-本次逐項覆核 R01–R15、A0/A1/B1/B2/C1/D1 與 Q1–Q6；活動必要交付由五個父項縮至三個（R07/day-window、A0/N1、R15），五組驗收未縮減。以下是 source 對照，不以存在 class 或通過局部案例推定全部 AC 完成；§5.4 與 §18 舊日期記錄仍為歷史證據。
+基準 9337ba3 的再次對碼覆核維持三項必要交付／五組驗收；另補初次准入發布租期邊界，見 §18 最末紀錄。本次逐項覆核 R01–R15、A0/A1/B1/B2/C1/D1 與 Q1–Q6；活動必要交付由五個父項縮至三個（R07/day-window、A0/N1、R15），五組驗收未縮減。以下是 source 對照，不以存在 class 或通過局部案例推定全部 AC 完成；§5.4 與 §18 舊日期記錄仍為歷史證據。
 
 | 規劃項目 | 當前正式路徑 | 本次裁定／保留缺口 |
 |---|---|---|
@@ -1407,3 +1407,11 @@ Root 再逐一登入一般負責人並開啟主機詳情，實際確認停用、
 主代理強制 Rebuild 0 errors／127 warnings；廣版受影響 392/392 passed、0 failed／skipped，1129 source／組件輸入無漂移；其後追加 transaction retry 修正，當前來源定向 50/50 通過、輸入無漂移。兩者分別引用當時凍結來源，不把廣版舊 receipt 當作最後修改全數重驗。證據 `.gemini-tasks/primary-results/round53-r05-todo-audit-affected-green-current-v1-review.json`、`round53-r05-transaction-retry-affected-green-current-v1-review.json` 及三份對應 RED review；真實 SQLite 測例核對 actual SettingsController、plan CAS、stale owner／version、冪等重試、expiry 與完整 rollback retry，舊版樣本明確拒絕。這是本段驗收，不是單次全量回歸、原生 PRTG 或 N6 容量通過。
 
 清除已完成 R05/shared-admission、C1/D1 程式 TODO；較廣操作、原生資料與容量驗收轉留 §5.2，既有未通過反例與 AC01–AC22／Q1–Q6 條件不撤銷。活動必要交付三項，整輪驗收五組；無當前來源事實或未定產品決策時保留明確缺口，不宣稱全部實作或整輪可結案。README／Help／現況 SPEC 同步本段行為，既存無關 CLAUDE.md 改動排除提交。
+
+### 2026-10-09 再次對碼覆核與初次准入發布租期補漏
+
+直接回查當前 9337ba3 的活動 TODO、ResourcePeriodConsumer／TrustedSamplingProfileResolver、兩類容量 Pilot、SettingsController、Daily／Supplement／統一工作與來源 probe verifier。R07 的 SingleWindowHostDay／ExpectedHostDayWindows 仍排除跨主機日；A0/N1 未取得同 build 原生資訊；R15 的 primary channel、單位縮放、physical comparison 與時基 authority 必須俱全。這三項保留，不把待決語意或欠缺來源事實當作已實作完成。先前清除的 R05/C1/D1 程式交付仍有正式呼叫鏈與有限證據，五組整輪門檻不縮減。
+
+覆核另確認初次 Publish 未沿用 rebind／renew 的時鐘守門：以進入流程時的 now 當 CreatedAt／LeaseUntil，且 final callback 跨租期時仍返回成功。新增真實 SQLite＋受控 TimeProvider 三個最小反例，RED 3失敗／0通過；修後從來源重驗完成時取得核准時間，最後 callback 若已過期就拒絕並只失效自己的 owner／version，不清除較新的計畫。保留既有成功／stale／rollback／exact retry 語料，當前 53/53 通過、0失敗／略過，1130 source／組件輸入無漂移；強制 Rebuild 0 errors／127 warnings。未改 schema、頻率、容量餘裕或風險規則。
+
+證據 `.gemini-tasks/primary-results/round53-r05-publication-boundary-red-current-v1-review.json` 與 `round53-r05-publication-boundary-affected-green-current-v1-review.json`。這是補漏段落驗收，不能代替原生來源、跨日契約、3,000／15,000／180日共同容量或全輪 AC；本次沒有新增可刪的已完成父待辦，活動數仍為三項必要交付及五組驗收。

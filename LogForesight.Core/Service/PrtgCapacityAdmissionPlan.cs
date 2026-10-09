@@ -56,14 +56,20 @@ public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob, TimePro
             if (!sourceAndSettingsStillCurrent()) return (raw ?? "", null);
             var old = Parse(raw);
             var version = (old?.Version ?? 0) + 1;
-            var next = candidate with { SettingsRevision = currentSettingsRevision, Owner = owner, Version = version, CreatedAtUtc = nowUtc,
-                LeaseUntilUtc = nowUtc + leaseDuration };
+            var approvedAt = CurrentTime(nowUtc);
+            var next = candidate with { SettingsRevision = currentSettingsRevision, Owner = owner, Version = version, CreatedAtUtc = approvedAt,
+                LeaseUntilUtc = approvedAt + leaseDuration };
             return (Serialize(next), next);
         }, MaximumBytes, skipUnchangedContent: true);
         if (published is null || !sourceAndSettingsStillCurrent())
         {
             if (published is not null) Invalidate(published.Owner, published.Version);
             throw new InvalidOperationException("capacity-admission-plan-source-or-settings-superseded");
+        }
+        if (published.LeaseUntilUtc <= CurrentTime(nowUtc))
+        {
+            Invalidate(published.Owner, published.Version);
+            throw new InvalidOperationException("capacity-admission-plan-expired");
         }
         return published!;
     }
