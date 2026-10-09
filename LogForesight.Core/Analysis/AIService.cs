@@ -133,8 +133,12 @@ public class AIService : IAiService
 
         // Polly 重試：連線失敗、HTTP 錯誤、空回應皆重試（HttpClient 逾時除外，見下），間隔指數遞增（10s → 20s → 40s）。
         // 涵蓋模型剛重啟、瞬間過載等暫時性失敗；重試全部耗盡才回報失敗，由呼叫端降級處理。
-        _retryPipeline = new ResiliencePipelineBuilder()
-            .AddRetry(new RetryStrategyOptions
+        var retryPipelineBuilder = new ResiliencePipelineBuilder();
+        // Polly 的重試策略要求至少一次重試；直接設定為 0 時，只執行一次 HTTP 呼叫。
+        // 空 pipeline 保留 ChatAsync 原有的取消及例外處理；負數仍由 Polly 驗證拒絕。
+        if (settings.RetryCount != 0)
+        {
+            retryPipelineBuilder.AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = settings.RetryCount,
                 Delay = TimeSpan.FromSeconds(settings.RetryDelaySeconds),
@@ -153,8 +157,9 @@ public class AIService : IAiService
                     Log.Warn(args.Outcome.Exception, "AI 網路層呼叫失敗，第 {Attempt}/{Total} 次重試", args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
-            })
-            .Build();
+            });
+        }
+        _retryPipeline = retryPipelineBuilder.Build();
     }
 
     /// <summary>

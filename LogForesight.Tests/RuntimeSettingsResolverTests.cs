@@ -25,8 +25,8 @@ public class RuntimeSettingsResolverTests
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
         Assert.Equal(3, settings.Ai.RetryCount);
-        // The real AI consumer rejects zero retry attempts while constructing its Polly pipeline.
-        // Construction is local and sends no HTTP request.
+        // DB 設定仍沿用管理介面的 1..10 範圍；壞值保留可建立 consumer 的預設值。
+        // 建構本身不發出 HTTP 請求。
         _ = new LogForesight.Core.Analysis.AIService(settings.Ai);
     }
 

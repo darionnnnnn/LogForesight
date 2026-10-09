@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "fd3b4485100d85a919ca95f7aa34d068f990238a4123c614a00925c6d0b11d9d",
+  "plan_sha256": "3a7745de652b3823fe7d8bfc1916c4962b9e96f91f4f2b3edc481cae4a6371fe",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -2186,7 +2186,8 @@
     "completed_trx": true,
     "passed": false,
     "resolved_by": "round53-main-incremental-source-day-current-v1-review.json",
-    "meaning": "保留完整 RED；全部 17 個 setup failure 已由完整受影響類別重驗解決，不宣稱單次完整回歸綠燈。"
+    "meaning": "保留完整 RED；全部 17 個 setup failure 已由完整受影響類別重驗解決，不宣稱單次完整回歸綠燈。",
+    "applies_to_previous_product_revision": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0"
   },
   "current_implementation_closure": {
     "items": [
@@ -5428,100 +5429,240 @@
       "actual_current_browser_verified": false,
       "implementation_todo_parents_retained": 5,
       "segmented_push_policy": "verified dependency-complete stage -> commit/push current round branch -> verify remote HEAD"
+    },
+    {
+      "stage": "AIService exact zero retry initialization and existing NetIQ consumers",
+      "base_commit": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0",
+      "stageAccepted": true,
+      "scope": [
+        "LogForesight.Core/Analysis/AIService.cs",
+        "LogForesight.Tests/AIServiceRetryCountZeroTests.cs",
+        "LogForesight.Tests/RuntimeSettingsResolverTests.cs"
+      ],
+      "reviews": [
+        {
+          "gate": "round53-ai-zero-retry-current-v1",
+          "sha256": "b468c94dc2eade41a844716ac9b5089feee72dfb6bb0134abaf9a2686f1d0d4d",
+          "counters": {
+            "total": "89",
+            "executed": "89",
+            "passed": "89",
+            "failed": "0",
+            "error": "0",
+            "timeout": "0",
+            "aborted": "0",
+            "inconclusive": "0",
+            "passedButRunAborted": "0",
+            "notRunnable": "0",
+            "notExecuted": "0",
+            "disconnected": "0",
+            "warning": "0",
+            "completed": "0",
+            "inProgress": "0",
+            "pending": "0"
+          },
+          "input_drift": 0
+        },
+        {
+          "gate": "round53-ai-zero-retry-netiq-current-v1",
+          "sha256": "73b11836ca71d4623faed5a61c9343ccafe457e43f79e0cdc591c0b254971d35",
+          "counters": {
+            "total": "46",
+            "executed": "46",
+            "passed": "46",
+            "failed": "0",
+            "error": "0",
+            "timeout": "0",
+            "aborted": "0",
+            "inconclusive": "0",
+            "passedButRunAborted": "0",
+            "notRunnable": "0",
+            "notExecuted": "0",
+            "disconnected": "0",
+            "warning": "0",
+            "completed": "0",
+            "inProgress": "0",
+            "pending": "0"
+          },
+          "input_drift": 0
+        }
+      ],
+      "red_gate": "round53-ai-zero-retry-red-v1",
+      "red_passed": 1,
+      "red_failed": 3,
+      "single_complete_main_green_run": false,
+      "mainFullRegressionVerified": false,
+      "whole_round_accepted": false,
+      "actual_native_source_verified": false,
+      "full_capacity_accepted": false,
+      "actual_current_browser_verified": false,
+      "implementation_todo_parents_retained": 5,
+      "segmented_push_policy": "verified dependency-complete stage -> commit/push current round branch -> verify remote HEAD"
     }
   ],
   "current_incremental_regression": {
-    "schema": "root-test-only-incremental-regression-v1",
+    "stage": "AIService exact zero retry initialization and existing NetIQ consumers",
+    "base_commit": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0",
     "stageAccepted": true,
-    "wholeRoundAccepted": false,
+    "scope": [
+      "LogForesight.Core/Analysis/AIService.cs",
+      "LogForesight.Tests/AIServiceRetryCountZeroTests.cs",
+      "LogForesight.Tests/RuntimeSettingsResolverTests.cs"
+    ],
+    "reviews": [
+      {
+        "gate": "round53-ai-zero-retry-current-v1",
+        "sha256": "b468c94dc2eade41a844716ac9b5089feee72dfb6bb0134abaf9a2686f1d0d4d",
+        "counters": {
+          "total": "89",
+          "executed": "89",
+          "passed": "89",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "input_drift": 0
+      },
+      {
+        "gate": "round53-ai-zero-retry-netiq-current-v1",
+        "sha256": "73b11836ca71d4623faed5a61c9343ccafe457e43f79e0cdc591c0b254971d35",
+        "counters": {
+          "total": "46",
+          "executed": "46",
+          "passed": "46",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "input_drift": 0
+      }
+    ],
+    "red_gate": "round53-ai-zero-retry-red-v1",
+    "red_passed": 1,
+    "red_failed": 3,
+    "single_complete_main_green_run": false,
     "mainFullRegressionVerified": false,
-    "basis": "Completed full run retained as RED; all 17 test-setup failures resolved by a completed 245-case affected rerun. Product source, fixture manifests and all other test inputs are unchanged.",
-    "baselineGate": "round53-main-full-regression-current-v2",
-    "baselineRunOutcome": "Failed",
-    "baselineCounters": {
-      "total": "7112",
-      "executed": "7102",
-      "passed": "7085",
-      "failed": "17",
-      "error": "0",
-      "timeout": "0",
-      "aborted": "0",
-      "inconclusive": "0",
-      "passedButRunAborted": "0",
-      "notRunnable": "0",
-      "notExecuted": "0",
-      "disconnected": "0",
-      "warning": "0",
-      "completed": "0",
-      "inProgress": "0",
-      "pending": "0"
-    },
-    "baselineReviewSha256": "b52f88111833e3df4b85515de29e886dbeb9853e69cf59da7ffc07f1ca755c9b",
-    "affectedGate": "round53-silent-source-day-main-current-v1",
-    "affectedCounters": {
-      "total": "245",
-      "executed": "245",
-      "passed": "245",
-      "failed": "0",
-      "error": "0",
-      "timeout": "0",
-      "aborted": "0",
-      "inconclusive": "0",
-      "passedButRunAborted": "0",
-      "notRunnable": "0",
-      "notExecuted": "0",
-      "disconnected": "0",
-      "warning": "0",
-      "completed": "0",
-      "inProgress": "0",
-      "pending": "0"
-    },
-    "affectedReviewSha256": "4fb26e806897d4dbf90612262656975f65cc13cc4d8041ad72f2729e2fe4c125",
-    "resolvedFailureNames": [
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N21-disabled-rule\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N12-unknown-sensor-without-availability\"···)",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N14-all-sensors-paused\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N05-failed-source-read\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N01-inventory-count-mismatch\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N03-missing-source-asof\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N11-future-source-point\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N18-wrong-host-map\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N22-all-unknown-inventory-no-up-availab\"···)",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N07-mapping-fingerprint-changed\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N10-wrong-analysis-day\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N08-source-generation-drift\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N15-missing-timeline-coverage\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N13-paused-device\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N17-scope-excluded-device\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N20-partial-netiq-parent\")",
-      "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N19-missing-netiq-parent\")"
-    ],
-    "changedTestSources": [
-      "LogForesight.Tests/PrtgFormalRuleCaseFixture.cs",
-      "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.StateNegatives.cs"
-    ],
-    "newBoundaryCase": "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentSnapshotMutationUsesSourceZoneDayAcrossUtcMidnight",
-    "derivedCoverageCounters": {
-      "Passed": 7103,
-      "NotExecuted": 10
-    },
-    "derivedCoverageIsSingleCompletedGreenRun": false,
-    "productSourceAndCaseManifestUnchanged": true,
-    "currentInputManifest": "round53-silent-source-day-main-current-v1-input.json",
-    "currentInputDrift": 0,
-    "optionalScaleCasesRemainUnexecuted": [
-      "LogForesight.Tests.RetentionScopeBenchmarks.量測_保留期積壓量與清除耗時",
-      "LogForesight.Tests.ScaleBenchmarks.升級路徑_百萬列blob的遷移",
-      "LogForesight.Tests.ScaleBenchmarks.單筆標記成本不隨資料量成長",
-      "LogForesight.Tests.ScaleBenchmarks.主機別名展開成長曲線",
-      "LogForesight.Tests.WorkOrderScaleBenchmarks.夜間掛接含自動派工_4000主機日",
-      "LogForesight.Tests.WorkOrderScaleBenchmarks.缺口試跑_2000主機",
-      "LogForesight.Tests.ScaleBenchmarks.基準_6000台90天",
-      "LogForesight.Tests.WorkOrderScaleBenchmarks.交辦回覆_750成員同步段",
-      "LogForesight.Tests.WorkOrderScaleBenchmarks.交辦建單_4000台同步段與背景展開",
-      "LogForesight.Tests.ScaleBenchmarks.基準_2000台90天"
-    ],
-    "nativeSourceVerified": false,
-    "fullCapacityAccepted": false
-  }
+    "whole_round_accepted": false,
+    "actual_native_source_verified": false,
+    "full_capacity_accepted": false,
+    "actual_current_browser_verified": false,
+    "implementation_todo_parents_retained": 5,
+    "segmented_push_policy": "verified dependency-complete stage -> commit/push current round branch -> verify remote HEAD"
+  },
+  "previous_incremental_regressions": [
+    {
+      "schema": "root-test-only-incremental-regression-v1",
+      "stageAccepted": true,
+      "wholeRoundAccepted": false,
+      "mainFullRegressionVerified": false,
+      "basis": "Completed full run retained as RED; all 17 test-setup failures resolved by a completed 245-case affected rerun. Product source, fixture manifests and all other test inputs are unchanged.",
+      "baselineGate": "round53-main-full-regression-current-v2",
+      "baselineRunOutcome": "Failed",
+      "baselineCounters": {
+        "total": "7112",
+        "executed": "7102",
+        "passed": "7085",
+        "failed": "17",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "baselineReviewSha256": "b52f88111833e3df4b85515de29e886dbeb9853e69cf59da7ffc07f1ca755c9b",
+      "affectedGate": "round53-silent-source-day-main-current-v1",
+      "affectedCounters": {
+        "total": "245",
+        "executed": "245",
+        "passed": "245",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "affectedReviewSha256": "4fb26e806897d4dbf90612262656975f65cc13cc4d8041ad72f2729e2fe4c125",
+      "resolvedFailureNames": [
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N21-disabled-rule\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N12-unknown-sensor-without-availability\"···)",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N14-all-sensors-paused\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N05-failed-source-read\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N01-inventory-count-mismatch\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N03-missing-source-asof\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N11-future-source-point\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N18-wrong-host-map\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N22-all-unknown-inventory-no-up-availab\"···)",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N07-mapping-fingerprint-changed\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N10-wrong-analysis-day\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N08-source-generation-drift\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N15-missing-timeline-coverage\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N13-paused-device\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N17-scope-excluded-device\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N20-partial-netiq-parent\")",
+        "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentJsonNegativeHasDailyPositiveBaselineAndPreservesHumanState(caseId: \"F53-Silent-N19-missing-netiq-parent\")"
+      ],
+      "changedTestSources": [
+        "LogForesight.Tests/PrtgFormalRuleCaseFixture.cs",
+        "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.StateNegatives.cs"
+      ],
+      "newBoundaryCase": "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.SilentSnapshotMutationUsesSourceZoneDayAcrossUtcMidnight",
+      "derivedCoverageCounters": {
+        "Passed": 7103,
+        "NotExecuted": 10
+      },
+      "derivedCoverageIsSingleCompletedGreenRun": false,
+      "productSourceAndCaseManifestUnchanged": true,
+      "currentInputManifest": "round53-silent-source-day-main-current-v1-input.json",
+      "currentInputDrift": 0,
+      "optionalScaleCasesRemainUnexecuted": [
+        "LogForesight.Tests.RetentionScopeBenchmarks.量測_保留期積壓量與清除耗時",
+        "LogForesight.Tests.ScaleBenchmarks.升級路徑_百萬列blob的遷移",
+        "LogForesight.Tests.ScaleBenchmarks.單筆標記成本不隨資料量成長",
+        "LogForesight.Tests.ScaleBenchmarks.主機別名展開成長曲線",
+        "LogForesight.Tests.WorkOrderScaleBenchmarks.夜間掛接含自動派工_4000主機日",
+        "LogForesight.Tests.WorkOrderScaleBenchmarks.缺口試跑_2000主機",
+        "LogForesight.Tests.ScaleBenchmarks.基準_6000台90天",
+        "LogForesight.Tests.WorkOrderScaleBenchmarks.交辦回覆_750成員同步段",
+        "LogForesight.Tests.WorkOrderScaleBenchmarks.交辦建單_4000台同步段與背景展開",
+        "LogForesight.Tests.ScaleBenchmarks.基準_2000台90天"
+      ],
+      "nativeSourceVerified": false,
+      "fullCapacityAccepted": false
+    }
+  ]
 }
