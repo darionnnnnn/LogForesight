@@ -198,12 +198,12 @@ public sealed partial class PrtgDiskFormalFlowTests
         Assert.Equal(TimeSpan.FromHours(Page100HoursPerDay), hostDayEndUtc - hostDayStartUtc);
         Assert.Equal(0, hostDayStartUtc.Minute);
         Assert.Equal(0, hostDayStartUtc.Second);
-        var dayHours = Enumerable.Range(0, Page100HoursPerDay)
+        var dayHours = Enumerable.Range(-1, Page100HoursPerDay + 1)
             .Select(offset => DateTime.SpecifyKind(hostDayStartUtc.AddHours(offset), DateTimeKind.Utc))
             .ToArray();
         var dayRows = sensorIds.SelectMany(sensorId => dayHours.Select(hour =>
             PrtgResourceFixture.TrustedDiskHour(sensorId, hour, profiles[sensorId], value: 5))).ToArray();
-        Assert.Equal(Page100SensorCount * Page100HoursPerDay, dayRows.Length);
+        Assert.Equal(Page100SensorCount * (Page100HoursPerDay + 1), dayRows.Length);
 
         var currentHourUtc = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0,
             DateTimeKind.Utc);

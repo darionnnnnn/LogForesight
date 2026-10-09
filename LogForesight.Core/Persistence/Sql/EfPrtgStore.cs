@@ -2527,22 +2527,22 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// Bounded read for one closed analysis-zone calendar day. This is deliberately separate
-    /// from the live two-hour query so its existing contract remains unchanged.
+    /// Bounded read for one closed host-day replay window, including the preceding analysis-zone
+    /// hour needed when a two-hour window is assigned to the later hour's host-local date.
     /// </summary>
     public PrtgResourcePressureValuesResult GetResourcePressureValuesForClosedDay(
         IReadOnlyCollection<long> sensorObjids, DateTime dayStartInclusive, DateTime dayEndExclusive)
     {
         ArgumentNullException.ThrowIfNull(sensorObjids);
         const int maximumSensors = 100;
-        const int maximumRowsPerSensor = 26; // includes DST-long days and a conservative wall-hour bound
+        const int maximumRowsPerSensor = 27; // covers the longest mapped day plus the preceding hour
         const int maximumQualityCharacters = 64;
         const int maximumProofCharacters = 4096;
         if (dayStartInclusive.Kind != DateTimeKind.Unspecified || dayEndExclusive.Kind != DateTimeKind.Unspecified ||
-            dayEndExclusive <= dayStartInclusive || dayEndExclusive - dayStartInclusive > TimeSpan.FromHours(26) ||
+            dayEndExclusive <= dayStartInclusive || dayEndExclusive - dayStartInclusive > TimeSpan.FromHours(27) ||
             dayStartInclusive.Minute != 0 || dayStartInclusive.Second != 0 ||
             dayEndExclusive.Minute != 0 || dayEndExclusive.Second != 0)
-            throw new ArgumentException("資源歷史期間必須是 26 小時內的整點邊界。", nameof(dayEndExclusive));
+            throw new ArgumentException("資源歷史期間必須是 27 小時內的整點邊界。", nameof(dayEndExclusive));
         var ids = sensorObjids.Where(id => id > 0).Distinct().Order().ToArray();
         if (ids.Length is < 1 or > maximumSensors)
             throw new ArgumentOutOfRangeException(nameof(sensorObjids), $"每次最多查詢 {maximumSensors} 個 sensor。");

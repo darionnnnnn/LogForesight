@@ -44,7 +44,7 @@ public sealed class PrtgResourcePeriodAssessment
     /// <summary>Cutoff for the actual physical-sample window.</summary>
     public DateTime EvidenceAsOfUtc => Input.AsOfUtc;
     public DateTime AuthorityAsOfUtc { get; }
-    /// <summary>Host record date only when both evidence hours map to the same local host day.</summary>
+    /// <summary>Host record date from the later completed evidence hour in the host's local time zone.</summary>
     public DateTime? SingleWindowHostDay
     {
         get
@@ -53,15 +53,22 @@ public sealed class PrtgResourcePeriodAssessment
             try
             {
                 var analysisZone = TimeZoneInfo.FindSystemTimeZoneById(context.AnalysisTimeZoneId);
-                var hostDates = Decision.Window.Select(hour =>
-                {
-                    var wall = DateTime.SpecifyKind(hour.WallPeriodStart, DateTimeKind.Unspecified);
-                    var utc = TimeZoneInfo.ConvertTimeToUtc(wall, analysisZone);
-                    return TimeZoneInfo.ConvertTimeFromUtc(utc, TimeZoneInfo.Local).Date;
-                }).Distinct().ToArray();
-                return hostDates.Length == 1
-                    ? DateTime.SpecifyKind(hostDates[0], DateTimeKind.Unspecified)
-                    : null;
+                var hours = Decision.Window.OrderBy(hour => hour.WallPeriodStart).ToArray();
+                if (hours.Any(hour => hour.WallPeriodStart.Kind != DateTimeKind.Unspecified ||
+                        hour.WallPeriodStart.Minute != 0 || hour.WallPeriodStart.Second != 0 ||
+                        hour.WallPeriodStart.Ticks % TimeSpan.TicksPerHour != 0) ||
+                    hours[1].WallPeriodStart - hours[0].WallPeriodStart != TimeSpan.FromHours(1))
+                    return null;
+                var firstWall = hours[0].WallPeriodStart;
+                var laterWall = hours[1].WallPeriodStart;
+                if (analysisZone.IsInvalidTime(firstWall) || analysisZone.IsAmbiguousTime(firstWall) ||
+                    analysisZone.IsInvalidTime(laterWall) || analysisZone.IsAmbiguousTime(laterWall))
+                    return null;
+                var firstUtc = TimeZoneInfo.ConvertTimeToUtc(firstWall, analysisZone);
+                var laterUtc = TimeZoneInfo.ConvertTimeToUtc(laterWall, analysisZone);
+                if (laterUtc - firstUtc != TimeSpan.FromHours(1)) return null;
+                var hostLaterHour = TimeZoneInfo.ConvertTimeFromUtc(laterUtc, TimeZoneInfo.Local);
+                return DateTime.SpecifyKind(hostLaterHour.Date, DateTimeKind.Unspecified);
             }
             catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
             {

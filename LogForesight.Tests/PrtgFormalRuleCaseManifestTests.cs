@@ -91,6 +91,7 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         var dispatchedNegativeIds = StateFamilyDailyNegativeCases().Select(row => (string)row[1]!)
             .Concat(SilentFamilyDailyNegativeCases().Select(row => (string)row[0]!))
             .Concat(ResourceOneHourBelowThresholdCases().Select(row => (string)row[1]!))
+            .Concat(OriginalHostDayStraddlePositiveCases().Select(row => (string)row[1]!))
             .Concat(DiskTrendNegativeScenarios().Select(row => (string)row[0]!))
             .Append("F53-Warning-P03-warning-cross-midnight-evidence")
             .Append("F53-Silent-P02-silent-all-availability-unknown-with-resource-present")
@@ -619,11 +620,133 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         Assert.Contains(record.TopIssues, issue => issue.EventKey == finding.EventKey &&
             issue.Source == finding.Source && issue.SampleMessages.SequenceEqual(finding.SampleMessages));
     }
+    public static IEnumerable<object[]> OriginalHostDayStraddlePositiveCases()
+    {
+        foreach (var family in Manifest.Value.Families.Where(item => item.Family is
+                     "CPUFormal" or "MemoryFormal" or "DiskTwoHourLowWater"))
+        foreach (var testCase in family.NegativeAndBoundaryCases.Where(item => IsHostDayStraddleCase(item.CaseId)))
+            yield return [family.Family, testCase.CaseId];
+    }
+
+    // The frozen fixture keeps its historical NoFormal reclassification and unchanged raw SHA.
+    // The current product decision explicitly supersedes that old expectation: these original
+    // positive mutations must now produce Formal evidence on the later hour's host day.
+    [Theory]
+    [MemberData(nameof(OriginalHostDayStraddlePositiveCases))]
+    public async Task OriginalHostDayStraddleCaseProducesFindingOnLaterHourHostDay(string manifestFamily, string caseId)
+    {
+        var family = Manifest.Value.Families.Single(item => item.Family == manifestFamily);
+        var testCase = family.NegativeAndBoundaryCases.Single(item => item.CaseId == caseId);
+        Assert.True(IsHostDayStraddleCase(caseId));
+        Assert.Equal("synthetic fixture; never source-native qualification", testCase.FixtureAuthority);
+        Assert.False(string.IsNullOrWhiteSpace(testCase.OriginalExpectedFormalResult));
+        Assert.Empty(testCase.ExpectedFormalSideEffects);
+        Assert.True(testCase.OriginalPositiveMutation.ValueKind == JsonValueKind.Object);
+
+        var definition = manifestFamily switch
+        {
+            "CPUFormal" => (Family: PrtgResourceFamily.Cpu, Source: "PRTG:resource_cpu_sustained_pressure", RuleId: "builtin-prtg-resource-cpu-pressure"),
+            "MemoryFormal" => (Family: PrtgResourceFamily.Memory, Source: "PRTG:resource_memory_sustained_pressure", RuleId: "builtin-prtg-resource-memory-pressure"),
+            _ => (Family: PrtgResourceFamily.Disk, Source: "PRTG:disk_free_trend", RuleId: "builtin-prtg-resource-disk-pressure")
+        };
+        var mutation = testCase.OriginalPositiveMutation;
+        var values = mutation.GetProperty("completedHourAverages").EnumerateArray()
+            .Select(value => value.GetDouble()).ToArray();
+        var memoryRemaining = mutation.TryGetProperty("semantic", out var semantic) &&
+            semantic.GetString() == "memory-remaining-percent";
+        using var fixture = new PrtgFormalRuleCaseFixture();
+        fixture.UseAnalysisDay(DateTime.Today.AddDays(-2));
+        new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
+            .Update(policy => policy.ValidFrom = new DateTimeOffset(fixture.AnalysisDay.AddDays(-32)));
+        var host = fixture.SeedFormalResourceCase(definition.Family, values,
+            crossesHostMidnight: true, memoryValuesAreRemainingPercent: memoryRemaining);
+        var laterHourHostDay = fixture.AnalysisDay.AddDays(1);
+        var hostStore = fixture.Backend.PrtgStore();
+        hostStore.ReplaceHostMapForDate(laterHourHostDay, [new PrtgHostMapRow
+        {
+            DeviceObjid = PrtgFormalRuleCaseFixture.DeviceId, MapDate = laterHourHostDay,
+            HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok,
+            CreatedAt = DateTime.UtcNow
+        }]);
+        var records = fixture.Backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        var earlierParent = Assert.Single(records.ReadRecent(fixture.AnalysisDay, 1));
+        records.Append(new DailyAnalysisRecord
+        {
+            LogSource = earlierParent.LogSource,
+            LatestNetiqAttemptStatus = earlierParent.LatestNetiqAttemptStatus,
+            Date = laterHourHostDay,
+            HostId = host.HostId,
+            Host = host.HostName,
+            RiskLevel = earlierParent.RiskLevel,
+            RiskBasis = earlierParent.RiskBasis,
+            TopIssues = earlierParent.TopIssues.ToList()
+        });
+        var humanBefore = fixture.SeedHumanOwnedBaseline(host);
+
+        var cutoffForBothCompletedHours = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(
+            fixture.AnalysisDay.Date.AddDays(1).AddHours(1), DateTimeKind.Unspecified), TimeZoneInfo.Local);
+        var preview = fixture.AssessResourcePeriod(definition.Family, cutoffForBothCompletedHours);
+        Assert.NotNull(preview);
+        Assert.Equal(PrtgResourceDecisionKind.Hit, preview!.Decision.Kind);
+        Assert.Equal(laterHourHostDay.Date, preview.SingleWindowHostDay?.Date);
+
+        var earlierDaily = await fixture.RunDailyAsync(host, fixture.AnalysisDay);
+        Assert.DoesNotContain(earlierDaily.Registry.For(host.HostId, fixture.AnalysisDay),
+            finding => finding.Source == definition.Source);
+        var laterDaily = await fixture.RunDailyAsync(host, laterHourHostDay);
+        var finding = RequireDailyFinding(laterDaily, host, laterHourHostDay, definition.Source, caseId);
+        Assert.Equal(definition.RuleId, finding.RuleId);
+        if (definition.Family == PrtgResourceFamily.Disk)
+            Assert.Contains("disk-two-hour-low-water", finding.PrtgResourceReasonCodes ?? []);
+        var laterParent = Assert.Single(records.ReadRecent(laterHourHostDay, 1));
+        Assert.Contains(laterParent.TopIssues, issue => issue.EventKey == finding.EventKey &&
+            issue.Source == finding.Source && issue.SampleMessages.SequenceEqual(finding.SampleMessages));
+        if (definition.Family == PrtgResourceFamily.Disk)
+            Assert.Contains(laterParent.TopIssues, issue => issue.EventKey == finding.EventKey &&
+                issue.PrtgResourceReasonCodes?.Contains("disk-two-hour-low-water", StringComparer.Ordinal) == true);
+        Assert.Equal(humanBefore, fixture.CaptureHumanOwnedBaseline(host));
+
+        var repeatedDaily = await fixture.RunDailyAsync(host, laterHourHostDay);
+        var repeatedFinding = RequireDailyFinding(repeatedDaily, host, laterHourHostDay, definition.Source, caseId + " rerun");
+        Assert.Equal(finding.EventKey, repeatedFinding.EventKey);
+        Assert.Single(records.ReadRecent(laterHourHostDay, 1).Single().TopIssues.Where(issue =>
+            issue.EventKey == finding.EventKey));
+    }
+    [Fact]
+    public async Task CrossHostDayFormalFindingIsNotAttachedWithoutLaterDayParent()
+    {
+        var family = Manifest.Value.Families.Single(item => item.Family == "DiskTwoHourLowWater");
+        var testCase = family.NegativeAndBoundaryCases.Single(item =>
+            item.CaseId == "F53-DiskTwoHourLowWater-P04-disk-low-water-crosses-host-midnight");
+        var values = testCase.OriginalPositiveMutation.GetProperty("completedHourAverages").EnumerateArray()
+            .Select(value => value.GetDouble()).ToArray();
+        using var fixture = new PrtgFormalRuleCaseFixture();
+        fixture.UseAnalysisDay(DateTime.Today.AddDays(-2));
+        new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
+            .Update(policy => policy.ValidFrom = new DateTimeOffset(fixture.AnalysisDay.AddDays(-32)));
+        var host = fixture.SeedFormalResourceCase(PrtgResourceFamily.Disk, values, crossesHostMidnight: true);
+        var laterHourHostDay = fixture.AnalysisDay.AddDays(1);
+        fixture.Backend.PrtgStore().ReplaceHostMapForDate(laterHourHostDay, [new PrtgHostMapRow
+        {
+            DeviceObjid = PrtgFormalRuleCaseFixture.DeviceId, MapDate = laterHourHostDay,
+            HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok,
+            CreatedAt = DateTime.UtcNow
+        }]);
+
+        var run = await fixture.RunDailyAsync(host, laterHourHostDay);
+
+        Assert.Empty(run.Registry.For(host.HostId, laterHourHostDay).Where(item =>
+            item.Source == "PRTG:disk_free_trend"));
+        Assert.Empty(fixture.Backend.RecordStore(new HostKey
+            { HostId = host.HostId, HostName = host.HostName }).ReadRecent(laterHourHostDay, 1));
+        Assert.Empty(fixture.Backend.IssueCaseStore().GetOpenForHost(host.HostName));
+        Assert.Empty(fixture.Backend.WorkOrderStore().GetAllActive());
+    }
     public static IEnumerable<object[]> ResourceOneHourBelowThresholdCases()
     {
         foreach (var family in Manifest.Value.Families.Where(item => item.Family is
                      "CPUFormal" or "MemoryFormal" or "DiskTwoHourLowWater"))
-        foreach (var testCase in family.NegativeAndBoundaryCases)
+        foreach (var testCase in family.NegativeAndBoundaryCases.Where(item => !IsHostDayStraddleCase(item.CaseId)))
             yield return [family.Family, testCase.CaseId];
     }
 
@@ -635,6 +758,7 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         var family = Manifest.Value.Families.Single(item => item.Family == manifestFamily);
         var testCase = family.NegativeAndBoundaryCases.Single(item => item.CaseId == caseId);
         Assert.Equal("synthetic fixture; never source-native qualification", testCase.FixtureAuthority);
+
         var values = testCase.Mutations.GetProperty("completedHourAverages").EnumerateArray()
             .Select(value => value.GetDouble()).ToArray();
         var ruleEnabled = !testCase.Mutations.TryGetProperty("ruleEnabled", out var enabled) || enabled.GetBoolean();
@@ -681,41 +805,13 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
             ? slotCount.GetInt32() : 4;
         var memoryRemaining = testCase.Mutations.TryGetProperty("semantic", out var semantic) &&
             semantic.GetString() == "memory-remaining-percent";
-        if (IsHostDayStraddleCase(caseId))
-        {
-            fixture.UseAnalysisDay(DateTime.Today.AddDays(-2));
-            new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
-                .Update(policy => policy.ValidFrom = new DateTimeOffset(fixture.AnalysisDay.AddDays(-32)));
-        }
+
         var host = fixture.SeedFormalResourceCase(resourceFamily, values, goodSlots,
-            crossesHostMidnight: IsHostDayStraddleCase(caseId),
+            crossesHostMidnight: false,
             memoryValuesAreRemainingPercent: memoryRemaining, formalRuleEnabled: ruleEnabled,
             periodMutation: periodMutation, profileMutation: profileMutation,
             evidenceMutation: evidenceMutation, authorityMutation: authorityMutation);
-        if (IsHostDayStraddleCase(caseId))
-        {
-            var dailyCutoffPreview = fixture.AssessResourcePeriod(resourceFamily);
-            Assert.NotNull(dailyCutoffPreview);
-            Assert.Equal(PrtgResourceDecisionKind.Insufficient, dailyCutoffPreview!.Decision.Kind);
-            Assert.Equal("latest-two-completed-hours-missing", dailyCutoffPreview.Decision.ReasonCode);
-            var nextHostHourCutoff = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(
-                fixture.AnalysisDay.Date.AddDays(1).AddHours(1), DateTimeKind.Unspecified), TimeZoneInfo.Local);
-            var qualifiedPreview = fixture.AssessResourcePeriod(resourceFamily, nextHostHourCutoff);
-            Assert.NotNull(qualifiedPreview);
-            Assert.Equal(PrtgResourceDecisionKind.Hit, qualifiedPreview!.Decision.Kind);
-            Assert.Equal(new[] { fixture.AnalysisDay.Date.AddHours(23), fixture.AnalysisDay.Date.AddDays(1) },
-                qualifiedPreview.Decision.Window.Select(hour => hour.WallPeriodStart).ToArray());
-            Assert.Null(qualifiedPreview.SingleWindowHostDay);
-            var beforeStraddleHumanData = fixture.SeedHumanOwnedBaseline(host);
-            foreach (var hostDay in new[] { fixture.AnalysisDay.Date, fixture.AnalysisDay.Date.AddDays(1) })
-            {
-                var daily = await fixture.RunDailyAsync(host, hostDay);
-                Assert.Empty(daily.Registry.For(host.HostId, hostDay).Where(item => item.Source == sourceFor(resourceFamily)));
-                Assert.Empty(fixture.Backend.WorkOrderStore().GetAllActive());
-            }
-            Assert.Equal(beforeStraddleHumanData, fixture.CaptureHumanOwnedBaseline(host));
-            return;
-        }
+
         var invalidProfile = profileMutation is "wrong-unit" or "wrong-scale";
         PrtgResourcePeriodAssessment? preview = null;
         if (invalidProfile)

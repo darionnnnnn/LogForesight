@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "2a48de66b95a0e05d47c97cdeb095b1f8a56b6b70760a0389fb09df4615a4122",
+  "plan_sha256": "67176e24c5041cd91245d4840978b3236d35299989fc6143b339b5abe9b2b6be",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -2047,9 +2047,8 @@
     "complete_workload_acceptance": false
   },
   "current_blockers": [
-    "R07/day-window：跨主機日兩小時窗口仍被 SingleWindowHostDay 排除，歸較晚小時日的提案尚未定案。",
     "A0/N1：尚未收到當前 build 有限原生探測／provider／部署資源及完整來源 fixture。",
-    "R15：主要頻道、單位縮放及 raw/source/analysis 時基 authority 未確證；明確設定加原生核驗的替代契約待定案。",
+    "R15：主要頻道、單位縮放及 raw/source/analysis 時基 authority 未確證；明確設定加原生核驗已獲使用者採用，流程實作及 native snapshot 通道身分核驗仍待完成。",
     "N4–N5：完整多角色、報告、回放工作生命週期及 NetIQ 處置操作矩陣未全通過。",
     "R05/N6：3000 hosts / 15000 sensors / 180 days 共同負載及完整持續負載／升退版／備份復原未通過；本機 Express 容量前置拒絕不算驗收通過。",
     "N7：四基準獨立母體、查證與提前增益尚未達成；N8/M7 及全部必要 AC/Q 仍未結案。"
@@ -2205,12 +2204,11 @@
     "meaning": "offline integrity only; no source trust or capacity qualification"
   },
   "current_required_delivery_counts": {
-    "as_of_product_revision": "9337ba3c654fc7a3f0ee0073abf43ee0801ca1c3 + verified publication-boundary delta (exact source hashes in current_publication_boundary_reaudit_20261009)",
+    "as_of_product_revision": "4c807fada14c46eb9d8f4c91d0ac6966854faf52 + verified cross-host-day delta (exact source hashes in current_cross_day_completion_20261009)",
     "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
-    "implementation_items": 3,
+    "implementation_items": 2,
     "validation_groups": 5,
     "implementation_ids": [
-      "R07/day-window",
       "A0/N1",
       "R15"
     ],
@@ -6082,5 +6080,97 @@
     "whole_round_accepted": false,
     "native_authority_accepted": false,
     "full_capacity_accepted": false
+  },
+  "final_behavior_decisions_20261009": {
+    "authorization": "explicit user replies in current task",
+    "cross_host_day_window": "assign to Local host day of later hour start, not exclusive window end",
+    "sampling_profile": "Maintain explicit primary channel/unit/scale binding followed by bounded native channel/value/measurement-time verification; failure stays waiting",
+    "implemented": false,
+    "source_facts_received": false,
+    "whole_round_accepted": false,
+    "cross_host_day_implemented": true,
+    "sampling_profile_implemented": false
+  },
+  "current_cross_day_completion_20261009": {
+    "base_commit": "4c807fada14c46eb9d8f4c91d0ac6966854faf52",
+    "assignment": "Local host day of later hour start, not exclusive window end",
+    "closed_day_bound": {
+      "sensors_per_page": 100,
+      "maximum_hours": 27,
+      "maximum_rows_per_sensor": 27
+    },
+    "red_gate": "round53-cross-host-day-red-current-v1",
+    "preserved_failed_candidate_gates": [
+      "round53-cross-host-day-minimal-green-current-v1",
+      "round53-cross-host-day-affected-green-current-v2"
+    ],
+    "affected_gate": {
+      "gate": "round53-cross-host-day-affected-green-current-v2",
+      "counters": {
+        "total": "331",
+        "executed": "331",
+        "passed": "330",
+        "failed": "1",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "input_drift": 0,
+      "failed_cases": [
+        {
+          "name": "LogForesight.Tests.PrtgDiskFormalFlowTests.ClosedDayAssignsCrossHostDayWindowToTheLaterHourHostDay",
+          "message": "Assert.Single() Failure: The collection was empty",
+          "stack": "   at LogForesight.Tests.PrtgDiskFormalFlowTests.ClosedDayAssignsCrossHostDayWindowToTheLaterHourHostDay() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgResourceSameHostDayHistoryTests.cs:line 347\r\n   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)"
+        }
+      ]
+    },
+    "final_delta_gate": {
+      "gate": "round53-cross-host-day-final-delta-green-current-v3",
+      "counters": {
+        "total": "11",
+        "executed": "11",
+        "passed": "11",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "input_drift": 0,
+      "stage_accepted": true
+    },
+    "failed_fixture_correction": "EnableResourceConsumerSettings added to positive history fixture; production unchanged after affected gate",
+    "source_hashes": {
+      "LogForesight.Core/Service/PrtgResourcePeriodAssessment.cs": "c15858f95b6581d7455c1c642b35a94ff2e506a9c9538534b539d5597184acd6",
+      "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs": "b7a0e1f094cfbd74f8ccbf44017a868d4f2cfae9cf873b0a512c31b0a4a0d400",
+      "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs": "6a966423c1eebcb5003fe8ffce28a1a80f69295e315482d1ba1357be8882f38c",
+      "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad",
+      "LogForesight.Tests/PrtgResourceSameHostDayHistoryTests.cs": "0fb8bc9e0d8183ca705db2960e3aedc2053ead3af2366d3e46c77d59b32924c6",
+      "LogForesight.Tests/PrtgResourceClosedDayPageTests.cs": "044f9c704fcb7c32a56193fc18f74446faff625e80ab974f712cf2b7a15b008d",
+      "LogForesight.Tests/PrtgResourceCrossDayHostDayTests.cs": "339ba21a036c69162e0f79a69e55bfaebb7f1724bad10b178f831ed60da3bcdb"
+    },
+    "cleared_implementation_todos": [
+      "R07/day-window"
+    ],
+    "native_authority_accepted": false,
+    "full_capacity_accepted": false,
+    "whole_round_accepted": false
   }
 }

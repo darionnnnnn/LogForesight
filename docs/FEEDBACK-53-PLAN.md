@@ -50,9 +50,8 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R07／day-window：同一主機日的全日可信兩小時窗口及歷史 finding／目前 episode 分離已實作；剩餘真實主機日跨午夜窗口仍被 SingleWindowHostDay 排除。跨日歸較晚小時所在日的語意已提出討論，未定案前不改正式歸屬。不可把跨主機日正例改列限制後當作需求通過，需原反例及缺口／恢復／重跑／父資格驗收。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
-- [ ] R15：typed量測時間／品質／physical sample與唯一slot已穿過accumulator、journal、SQL、transfer、readiness及正式consumer；仍須補齊實際原生頻道／主要通道／單位縮放與時基authority，使正式profile可取得資格，不能由fixture追認舊聚合。明確設定＋原生核驗的替代契約待使用者定案。
+- [ ] R15：typed量測時間／品質／physical sample與唯一slot已穿過accumulator、journal、SQL、transfer、readiness及正式consumer；仍須補齊實際原生頻道／主要通道／單位縮放與時基authority，使正式profile可取得資格，不能由fixture追認舊聚合。使用者已於 2026-10-09 定案：由管理者明確設定主通道、單位及尺度，再用有界原生探測核對實際通道 ID、值與時間；核對失敗維持等待，不產生正式風險。此流程仍須完整實作及驗證。
 
 ### 5.2 尚未通過的驗收門檻
 
@@ -63,6 +62,10 @@
 - [ ] N8／M7：独立體檢、原需求回查、文件與程式完整性及AC01–AC22／Q1–Q6全部必要門檻完成。
 
 ### 5.3 已自活動 TODO 清除的實作子項
+
+| 已完成子項 | 實際程式→consumer | 驗證與限制 |
+|---|---|---|
+| R07/day-window 跨主機日完成窗口 | 較晚小時開始時間→Local 主機日；closed-day 前一小時有界讀取→每日合格 NetIQ 父列→finding／案件 consumer | 原三個跨日正向 mutation、缺父、缺小時、DST 歧義及 UTC 不連續反例已驗；擴大受影響回歸僅一個未啟用設定的新增 fixture 失敗，修正 fixture 後定向全綠。歷史不倒退目前 episode、重跑保留人工處理；固定原始 case JSON 不改。原生來源及整輪容量仍未通過。 |
 
 | 子項 | 實際程式→consumer | 完成證據／仍有效限制 |
 |---|---|---|
@@ -1415,3 +1418,14 @@ Root 再逐一登入一般負責人並開啟主機詳情，實際確認停用、
 覆核另確認初次 Publish 未沿用 rebind／renew 的時鐘守門：以進入流程時的 now 當 CreatedAt／LeaseUntil，且 final callback 跨租期時仍返回成功。新增真實 SQLite＋受控 TimeProvider 三個最小反例，RED 3失敗／0通過；修後從來源重驗完成時取得核准時間，最後 callback 若已過期就拒絕並只失效自己的 owner／version，不清除較新的計畫。保留既有成功／stale／rollback／exact retry 語料，當前 53/53 通過、0失敗／略過，1130 source／組件輸入無漂移；強制 Rebuild 0 errors／127 warnings。未改 schema、頻率、容量餘裕或風險規則。
 
 證據 `.gemini-tasks/primary-results/round53-r05-publication-boundary-red-current-v1-review.json` 與 `round53-r05-publication-boundary-affected-green-current-v1-review.json`。這是補漏段落驗收，不能代替原生來源、跨日契約、3,000／15,000／180日共同容量或全輪 AC；本次沒有新增可刪的已完成父待辦，活動數仍為三項必要交付及五組驗收。
+
+
+### 2026-10-09 剩餘行為定案與實作範圍
+
+使用者已採兩項建議：跨主機日的連續兩完成小時窗口，以後一小時開始時間的 Local 日期歸屬；正式採樣 profile 由管理者明確設定主通道、單位及尺度，再以有界原生探測核對實際通道 ID、值與量測時間。時區歧義、資料缺漏、身分或設定版本改變皆不補猜；明確設定本身不授予可信 profile，也不追認舊聚合。現有合格 NetIQ 父紀錄、期間品質、模式授權及下游處置守門維持。
+
+兩項分別補齊 consumer／每日判定及管理設定→來源核驗→profile→可信採樣流程；每段先保留最小失敗反例，再執行受影響回歸及必要實際操作，通過後獨立 commit／push。仍未取得同 build 現場探測，不以此產品定案代替來源事實或 3000／15000／180 日容量驗收。
+
+### 18.1 跨日段落完成核對
+
+跨日風險依後一小時開始時間歸戶；closed-day 查詢每批仍最多 100 sensors，向前加一小時，上限 27 小時／每 sensor 27 列。單次小時、缺漏、DST 無效或歧義、UTC 不連續均不補猜。NetIQ 父資格、CPU／memory 同版正式授權、finding 去重及人工內容不變。實作 TODO R07/day-window 已刪；§5.2 五組固定驗收仍保留。

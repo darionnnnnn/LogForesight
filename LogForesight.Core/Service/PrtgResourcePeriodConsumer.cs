@@ -558,10 +558,13 @@ public sealed class PrtgResourcePeriodConsumer
         if (dayEndWall <= dayStartWall || dayEndWall - dayStartWall > TimeSpan.FromHours(26))
             return current with { Hints = live.Hints, ClosedDay = new(evidenceDay, new Dictionary<long, int>(),
                 current.SelectedSensorObjids.ToHashSet(), false, current.SelectedSensorObjids, current.SelectionEpoch) };
+        // A window is assigned by the host-local date of its later hour start. Read one
+        // additional analysis-zone hour before the day boundary so a 23:00/00:00 pair is complete.
+        var scanStartWall = dayStartWall.AddHours(-1);
         var (expectedWindowStarts, unresolvableDayWindow) = ExpectedHostDayWindows(
-            dayStartWall, dayEndWall, analysisZone, evidenceDay.Date);
+            scanStartWall, dayEndWall, analysisZone, evidenceDay.Date);
         var values = _store.GetResourcePressureValuesForClosedDay(current.SelectedSensorObjids,
-            dayStartWall, dayEndWall);
+            scanStartWall, dayEndWall);
         var rejected = values.RejectedSensorObjids.ToHashSet();
         var rowsBySensor = values.Rows.GroupBy(row => row.SensorObjid)
             .ToDictionary(group => group.Key, group => group.OrderBy(row => row.PeriodStart).ToArray());
@@ -826,7 +829,11 @@ public sealed class PrtgResourcePeriodConsumer
         for (var first = fromWall; first.AddHours(1) < toWall; first = first.AddHours(1))
         {
             var second = first.AddHours(1);
-            if (analysisZone.IsInvalidTime(first) || analysisZone.IsInvalidTime(second)) continue;
+            if (analysisZone.IsInvalidTime(first) || analysisZone.IsInvalidTime(second))
+            {
+                unresolvable = true;
+                continue;
+            }
             if (analysisZone.IsAmbiguousTime(first) || analysisZone.IsAmbiguousTime(second))
             {
                 unresolvable = true;
@@ -840,10 +847,11 @@ public sealed class PrtgResourcePeriodConsumer
                 secondUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(second, DateTimeKind.Unspecified), analysisZone);
             }
             catch (ArgumentException) { unresolvable = true; continue; }
-            var firstHostDay = TimeZoneInfo.ConvertTimeFromUtc(firstUtc, TimeZoneInfo.Local).Date;
-            var secondHostDay = TimeZoneInfo.ConvertTimeFromUtc(secondUtc, TimeZoneInfo.Local).Date;
-            if (firstHostDay == hostDay && secondHostDay == hostDay && secondUtc - firstUtc == TimeSpan.FromHours(1))
+            var laterHostDay = TimeZoneInfo.ConvertTimeFromUtc(secondUtc, TimeZoneInfo.Local).Date;
+            if (laterHostDay == hostDay && secondUtc - firstUtc == TimeSpan.FromHours(1))
                 starts.Add(DateTime.SpecifyKind(first, DateTimeKind.Unspecified));
+            else if (laterHostDay == hostDay && secondUtc - firstUtc != TimeSpan.FromHours(1))
+                unresolvable = true;
         }
         return (starts, unresolvable || starts.Count == 0);
     }

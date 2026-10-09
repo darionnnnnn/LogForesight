@@ -313,10 +313,11 @@ public sealed partial class PrtgDiskFormalFlowTests
     }
 
     [Fact]
-    public void ClosedDayDoesNotJoinAWindowAcrossTheHostDayBoundary()
+    public void ClosedDayAssignsCrossHostDayWindowToTheLaterHourHostDay()
     {
         SeedDiskHistory(with28Days: true, descending: false, excludeOutsideParentDay: true);
         SeedTypedSemanticEvidence();
+        EnableResourceConsumerSettings();
         var store = _backend.PrtgStore();
         var profile = new PrtgTrustedSamplingProfileStore(_backend).GetMany([SensorId])[SensorId];
         var boundaryUtc = TimeZoneInfo.ConvertTimeToUtc(
@@ -329,14 +330,24 @@ public sealed partial class PrtgDiskFormalFlowTests
             return PrtgResourceFixture.TrustedDiskHour(SensorId, hour, profile, value);
         }).ToArray());
 
-        var result = new PrtgResourcePeriodConsumer(_backend,
-            new SystemSettingsStore(_backend.Blob("system_settings")))
-            .EvaluateClosedHostDayBatch([SensorId], _completedDay, DateTime.UtcNow,
-                evaluationHostIds: [HostId]);
-
-        Assert.DoesNotContain(result.QualifiedFormalFindings, finding =>
+        var consumer = new PrtgResourcePeriodConsumer(_backend,
+            new SystemSettingsStore(_backend.Blob("system_settings")));
+        var earlierDay = consumer.EvaluateClosedHostDayBatch([SensorId], _completedDay, DateTime.UtcNow,
+            evaluationHostIds: [HostId]);
+        Assert.DoesNotContain(earlierDay.QualifiedFormalFindings, finding =>
             finding.ReasonCodes.Contains("disk-two-hour-low-water", StringComparer.Ordinal));
-        Assert.Equal(_completedDay.Date, result.ClosedDay!.EvidenceDay.Date);
+
+        var laterHourHostDay = _completedDay.AddDays(1);
+        store.ReplaceHostMapForDate(laterHourHostDay, [new PrtgHostMapRow
+        {
+            DeviceObjid = DeviceId, MapDate = laterHourHostDay, HostId = HostId,
+            HostName = "DISK-HOST", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.UtcNow
+        }]);
+        var laterDay = consumer.EvaluateClosedHostDayBatch([SensorId], laterHourHostDay, DateTime.UtcNow,
+            evaluationHostIds: [HostId]);
+        var finding = Assert.Single(laterDay.QualifiedFormalFindings.Where(item =>
+            item.ReasonCodes.Contains("disk-two-hour-low-water", StringComparer.Ordinal)));
+        Assert.Equal(laterHourHostDay.Date, finding.EvidenceDay.Date);
     }
 
     private PrtgTrustedSamplingProfile SeedPressureSensor(long sensorId, string name, string category,
