@@ -1251,3 +1251,9 @@ Maintain 的 `POST api/prtg/resource-pressure/{hostId}/trial`、`PUT .../{hostId
 儲存 metadata 有 10 秒總預算、每 provider 最多 3 個查詢，每種檔案／磁碟資訊最多 16 列，超限明列截斷。SQL Server 保留原始數字 EngineEdition 經單次白名單正規化；data 檔分配與使用量、log 檔分配、整庫 log 使用量及各檔 volume 容量分開。低權限／逾時保持 partial 或 unknown；log 檔個別使用量未知，不把整庫 log 量分攤。SQLite 讀頁數與頁大小、限額、本地檔案及 owned data-root volume；UNC／相對路径不猜容量。遠端 SQL 主機實體 RAM 未知，服務程序的 GC 可用量不當作 SQL 硬體。
 
 離線 verifier 拒絕缺少儲存物件、provider 不符、欄位形狀錯誤、短 revision、重複屬性、超過 64 KiB 或 depth 32。partial／unknown／timeout／cancelled／truncated 或必要資訊未齊回 exit 2；錯誤形狀／版本回 1；完整交付形狀回 0。此結果不代表正式來源或實際容量驗收通過。
+
+### 原生主要通道診斷
+
+Compatibility 探測對每種最多一顆 sensor 查詢 `getobjectproperty.htm?id=<sensor>&name=primarychannel`；每請求 30 秒、64 KiB、XML 深度 8，整輪仍受 5 分鐘限制。僅接受無命名空間 prtg 根與唯一直接 leaf result 的非負 Int64。snapshot 同時請求 primarychannel；primarychannel／primarychannel_raw 只接受 JSON 整數，兩欄衝突或缺漏保持未知。sensor ID 以 s1–s3 替代；實際 channel ID 為核對必要資料。保存與原生 raw-history channel ID、snapshot ID 的可空比對結果及來源版本。
+
+`authorizes_formal_profile=false` 與 `reported_at_sample_time=false` 固定成立：此查詢只確認觀測時設定，不能推論量測當時身分或正式語意。離線 verifier 遇通道不一致、缺漏、timeout 或 elapsed 超過 30 秒裁定 incomplete，拒絕偽造正式授權。原生欄位是否受現場版本支援仍須由同版有界環境探測核實。

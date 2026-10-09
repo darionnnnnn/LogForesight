@@ -997,7 +997,7 @@ public class PrtgProbeRunnerTests
                 return JsonResponse(HttpStatusCode.OK, $@"{{""sensors"": [{{
                     ""objid"": {id}, ""type"": ""SNMP CPU Load"", ""status"": ""Up"", ""status_raw"": 3,
                     ""lastvalue_raw"": 42.5, ""lastcheck"": ""{lastcheck}"", ""lastcheck_raw"": 46300.04309,
-                    ""interval"": ""60 s"", ""interval_raw"": 60, ""private_metadata"": ""CUSTOMER_SECRET""
+                    ""interval"": ""60 s"", ""interval_raw"": 60, ""primarychannel"": 7, ""private_metadata"": ""CUSTOMER_SECRET""
                 }}]}}");
             }
 
@@ -1060,7 +1060,7 @@ public class PrtgProbeRunnerTests
 
         var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("filter_objid=")).ToList();
         Assert.Equal(3, snapshotUrls.Count);
-        Assert.All(snapshotUrls, u => Assert.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval", u));
+        Assert.All(snapshotUrls, u => Assert.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel", u));
         Assert.All(snapshotUrls, u => Assert.DoesNotContain("status_raw", u));
         Assert.All(snapshotUrls, u => Assert.DoesNotContain("lastcheck_raw", u));
         Assert.All(snapshotUrls, u => Assert.DoesNotContain("interval_raw", u));

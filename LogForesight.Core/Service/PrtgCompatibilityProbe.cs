@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 
 namespace LogForesight.Core.Service;
 
@@ -236,6 +238,57 @@ public sealed class PrtgProbeTargetEvidence
     [JsonPropertyName("identity_preserving_raw_history")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PrtgRawChannelIdentityEvidence? RawChannelIdentity { get; set; }
+
+    [JsonPropertyName("native_primary_capability")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgNativePrimaryCapabilityEvidence? NativePrimaryCapability { get; set; }
+}
+
+public sealed class PrtgNativePrimaryCapabilityEvidence
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "unknown";
+    [JsonPropertyName("property_support")]
+    public string PropertySupport { get; set; } = "unknown";
+    [JsonPropertyName("endpoint")]
+    public string Endpoint { get; set; } = "getobjectproperty.htm";
+    [JsonPropertyName("requested_property_name")]
+    public string RequestedPropertyName { get; set; } = "primarychannel";
+    [JsonPropertyName("requested_object_alias")]
+    public string RequestedObjectAlias { get; set; } = string.Empty;
+    [JsonPropertyName("primary_channel_id")]
+    public string? PrimaryChannelId { get; set; }
+    [JsonPropertyName("matches_raw_observed_channel_ids")]
+    public bool? MatchesRawObservedChannelIds { get; set; }
+    [JsonPropertyName("matches_snapshot_primary_channel_id")]
+    public bool? MatchesSnapshotPrimaryChannelId { get; set; }
+    [JsonPropertyName("property_value")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PropertyValue { get; set; }
+    [JsonPropertyName("response_status")]
+    public string ResponseStatus { get; set; } = "unknown";
+    [JsonPropertyName("http_status")]
+    public string HttpStatus { get; set; } = "unknown";
+    [JsonPropertyName("http_date_utc")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HttpDateUtc { get; set; }
+    [JsonPropertyName("response_format")]
+    public string ResponseFormat { get; set; } = "unknown";
+    [JsonPropertyName("requested_at_utc")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestedAtUtc { get; set; }
+    [JsonPropertyName("received_at_utc")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ReceivedAtUtc { get; set; }
+    [JsonPropertyName("elapsed_ms")]
+    public double ElapsedMs { get; set; }
+    [JsonPropertyName("source_version")]
+    public string SourceVersion { get; set; } = "unknown";
+    [JsonPropertyName("authorizes_formal_profile")]
+    public bool AuthorizesFormalProfile { get; set; }
+    [JsonPropertyName("error")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Error { get; set; }
 }
 
 public sealed class PrtgRawChannelIdentityEvidence
@@ -300,6 +353,18 @@ public sealed class PrtgSnapshotEvidence
 
     [JsonPropertyName("truncated")]
     public bool Truncated { get; set; }
+
+    [JsonPropertyName("native_primary_channel_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? NativePrimaryChannelId { get; set; }
+
+    [JsonPropertyName("primary_channel_field_name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PrimaryChannelFieldName { get; set; }
+
+    // The bulk sensor snapshot reports a configured channel ID, not a measurement timestamp.
+    [JsonPropertyName("reported_at_sample_time")]
+    public bool ReportedAtSampleTime { get; set; }
 
     [JsonPropertyName("error")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -524,6 +589,7 @@ public sealed class PrtgTimestampCandidate
     [JsonPropertyName("end_reported_offset")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EndReportedOffset { get; set; }
+
 }
 
 public static class PrtgCompatibilityProbe
@@ -536,6 +602,7 @@ public static class PrtgCompatibilityProbe
     public const int MaxResponseFields = 64;
     public const int MaxChannelRows = 16;
     public const int MaxHistoryRows = 3;
+    public const int MaxNativePrimaryXmlBytes = 64 * 1024;
 
     public static readonly TimeSpan OverallTimeout = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -559,10 +626,11 @@ public static class PrtgCompatibilityProbe
 
     private static readonly HashSet<string> WhitelistSnapshotColumns = new(StringComparer.OrdinalIgnoreCase)
     {
-        "objid", "type", "status", "status_raw", "lastvalue_raw", "lastcheck", "lastcheck_raw", "interval", "interval_raw"
+        "objid", "type", "status", "status_raw", "lastvalue_raw", "lastcheck", "lastcheck_raw", "interval", "interval_raw",
+        "primarychannel", "primarychannel_raw"
     };
 
-    private static readonly string[] SnapshotRequestedColumns = ["objid", "type", "status", "lastvalue_raw", "lastcheck", "interval"];
+    private static readonly string[] SnapshotRequestedColumns = ["objid", "type", "status", "lastvalue_raw", "lastcheck", "interval", "primarychannel"];
     private static readonly string[] ChannelRequestedColumns = ["objid", "name", "lastvalue", "unit", "scaling", "primary"];
 
     private static readonly HashSet<string> WhitelistHistoryColumns = new(StringComparer.OrdinalIgnoreCase)
@@ -651,7 +719,8 @@ public static class PrtgCompatibilityProbe
             context,
             ct,
             onEvidenceJsonProduced,
-            (url, token) => client.GetBoundedXmlAsync(url, PrtgHistoricXmlReader.MaximumBytes, token));
+            (url, token) => client.GetBoundedXmlAsync(url, PrtgHistoricXmlReader.MaximumBytes, token),
+            (url, token) => client.GetBoundedXmlAsync(url, MaxNativePrimaryXmlBytes, token));
     }
 
     public static async Task<PrtgCompatibilityProbeEvidence> ExecuteCoreAsync(
@@ -661,7 +730,8 @@ public static class PrtgCompatibilityProbe
         PrtgProbeEvidenceContext? context,
         CancellationToken ct = default,
         Action<string>? onEvidenceJsonProduced = null,
-        Func<string, CancellationToken, Task<PrtgSourceResponse>>? getHistoricXml = null)
+        Func<string, CancellationToken, Task<PrtgSourceResponse>>? getHistoricXml = null,
+        Func<string, CancellationToken, Task<PrtgSourceResponse>>? getNativePrimaryXml = null)
     {
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overallCts.CancelAfter(OverallTimeout);
@@ -768,6 +838,23 @@ public static class PrtgCompatibilityProbe
                 target.RawChannelIdentity = await ProbeRawChannelIdentityAsync(getHistoricXml, actualObjid,
                     sdate, yesterday.ToString("yyyy-MM-dd-01-00-00", CultureInfo.InvariantCulture), probeToken, ct);
                 TrackRequestStatus(target.RawChannelIdentity.Status, ref requestsSucceeded, ref requestsFailed, ref requestsTimedOut);
+            }
+
+            if (getNativePrimaryXml is not null)
+            {
+                var rawChannelIds = target.RawChannelIdentity?.Samples
+                    .SelectMany(sample => sample.Channels)
+                    .Select(channel => channel.ChannelId)
+                    .Where(IsNativePrimaryObjectId)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                requestsAttempted++;
+                target.NativePrimaryCapability = await ProbeNativePrimaryCapabilityAsync(
+                    getNativePrimaryXml, actualObjid, alias,
+                    target.RawChannelIdentity?.SourceVersion ?? context?.SourcePrtgVersion,
+                    rawChannelIds is { Length: > 0 } ? rawChannelIds : null,
+                    target.Snapshot!.NativePrimaryChannelId, probeToken, ct);
+                TrackRequestStatus(target.NativePrimaryCapability.Status, ref requestsSucceeded, ref requestsFailed, ref requestsTimedOut);
             }
 
             // 判定該 target 的整體狀態
@@ -880,6 +967,167 @@ public static class PrtgCompatibilityProbe
         }
     }
 
+    private static bool IsNativePrimaryObjectId(string? value) =>
+        value is { Length: > 0 and <= 20 } &&
+        long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id >= 0;
+
+    private static async Task<PrtgNativePrimaryCapabilityEvidence> ProbeNativePrimaryCapabilityAsync(
+        Func<string, CancellationToken, Task<PrtgSourceResponse>> getXml, long sensorId, string alias,
+        string? sourceVersion, IReadOnlyCollection<string>? rawChannelIds, string? snapshotPrimaryChannelId,
+        CancellationToken probeToken, CancellationToken userToken)
+    {
+        var evidence = new PrtgNativePrimaryCapabilityEvidence
+        {
+            RequestedObjectAlias = alias,
+            SourceVersion = SanitizePrtgVersion(sourceVersion) ?? "unknown"
+        };
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            using var request = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
+            request.CancelAfter(RequestTimeout);
+            evidence.RequestedAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+            var response = await getXml($"/api/getobjectproperty.htm?id={sensorId}&name=primarychannel", request.Token);
+            evidence.ReceivedAtUtc = response.ReceivedAtUtc.ToString("o", CultureInfo.InvariantCulture);
+            evidence.HttpDateUtc = response.HttpDateUtc?.ToString("o", CultureInfo.InvariantCulture);
+            evidence.ResponseStatus = "success";
+            evidence.HttpStatus = "2xx";
+            evidence.ResponseFormat = "xml";
+
+            if (!string.IsNullOrWhiteSpace(sourceVersion) && evidence.SourceVersion == "unknown")
+            {
+                evidence.Error = "source-version-malformed";
+                return evidence;
+            }
+
+            if (Encoding.UTF8.GetByteCount(response.Content) > MaxNativePrimaryXmlBytes)
+            {
+                evidence.Error = "response_over_limit";
+                return evidence;
+            }
+
+            XElement root;
+            try
+            {
+                var settings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersInDocument = MaxNativePrimaryXmlBytes,
+                    MaxCharactersFromEntities = 0
+                };
+                using (var depthReader = XmlReader.Create(new StringReader(response.Content), settings))
+                {
+                    while (depthReader.Read())
+                        if (depthReader.Depth > 8) throw new InvalidDataException("property-xml-depth-limit");
+                }
+                using var reader = XmlReader.Create(new StringReader(response.Content), settings);
+                var document = XDocument.Load(reader, LoadOptions.None);
+                root = document.Root ?? throw new InvalidDataException("property-response-root-missing");
+            }
+            catch (XmlException)
+            {
+                evidence.ResponseFormat = "malformed_xml";
+                evidence.Error = "malformed_xml";
+                return evidence;
+            }
+            catch (InvalidDataException ex)
+            {
+                evidence.ResponseFormat = "invalid_xml";
+                evidence.Error = ex.Message == "property-xml-depth-limit" ? "xml_depth_limit" : "invalid_xml";
+                return evidence;
+            }
+
+            if (root.Name != XName.Get("prtg"))
+            {
+                evidence.ResponseFormat = "unexpected_xml";
+                evidence.Error = "unexpected_xml_root";
+                return evidence;
+            }
+
+            var results = root.DescendantsAndSelf()
+                .Where(element => string.Equals(element.Name.LocalName, "result", StringComparison.Ordinal))
+                .Take(2)
+                .ToArray();
+            if (results.Length != 1)
+            {
+                evidence.Error = results.Length == 0 ? "property_result_missing" : "ambiguous_property_value";
+                return evidence;
+            }
+
+            if (results[0].Parent != root || results[0].Name != XName.Get("result") || results[0].HasElements)
+            {
+                evidence.Error = "invalid_property_result_shape";
+                return evidence;
+            }
+
+            var propertyValue = results[0].Value.Trim();
+            if (propertyValue.Length is < 1 or > 20 ||
+                !long.TryParse(propertyValue, NumberStyles.None, CultureInfo.InvariantCulture, out var primaryChannelId) ||
+                primaryChannelId < 0)
+            {
+                evidence.Error = "invalid_property_value";
+                return evidence;
+            }
+
+            evidence.Status = "ok";
+            evidence.PropertySupport = "supported";
+            evidence.PropertyValue = propertyValue;
+            evidence.PrimaryChannelId = primaryChannelId.ToString(CultureInfo.InvariantCulture);
+            if (rawChannelIds is { Count: > 0 })
+                evidence.MatchesRawObservedChannelIds = rawChannelIds.Any(id =>
+                    long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var rawId) && rawId == primaryChannelId);
+            if (IsNativePrimaryObjectId(snapshotPrimaryChannelId))
+                evidence.MatchesSnapshotPrimaryChannelId =
+                    long.TryParse(snapshotPrimaryChannelId, NumberStyles.None, CultureInfo.InvariantCulture, out var snapshotId) && snapshotId == primaryChannelId;
+            // Bulk snapshot and native property observations are diagnostic only. Neither
+            // establishes measurement-time identity, source semantics, or a formal profile.
+        }
+        catch (OperationCanceledException) when (userToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException)
+        {
+            evidence.Status = "timeout";
+            evidence.ResponseStatus = "timeout";
+            evidence.Error = "request-timeout";
+        }
+        catch (PrtgClientException ex)
+        {
+            evidence.ResponseStatus = "error";
+            if (ex.Message.Contains("探測回應超過有界讀取上限", StringComparison.Ordinal))
+            {
+                evidence.Error = "response_over_limit";
+                evidence.ResponseFormat = "unknown";
+            }
+            else
+            {
+                evidence.Status = "error";
+                evidence.Error = FormatSafeError(ex);
+            }
+            evidence.HttpStatus = ExtractHttpStatus(evidence.Error);
+        }
+        catch (Exception ex)
+        {
+            evidence.Status = "error";
+            evidence.ResponseStatus = "error";
+            evidence.Error = FormatSafeError(ex);
+            evidence.HttpStatus = ExtractHttpStatus(evidence.Error);
+        }
+        finally
+        {
+            sw.Stop();
+            evidence.ElapsedMs = sw.Elapsed.TotalMilliseconds;
+        }
+
+        return evidence;
+    }
+
+    private static string ExtractHttpStatus(string? safeError)
+    {
+        if (safeError is null) return "unknown";
+        var match = Regex.Match(safeError, @"\bHTTP\s+([1-5][0-9]{2})\b", RegexOptions.CultureInvariant);
+        return match.Success ? match.Groups[1].Value : "unknown";
+    }
+
     private static async Task<PrtgRawChannelIdentityEvidence> ProbeRawChannelIdentityAsync(
         Func<string, CancellationToken, Task<PrtgSourceResponse>> getXml, long sensorId,
         string start, string end, CancellationToken probeToken, CancellationToken userToken)
@@ -932,7 +1180,8 @@ public static class PrtgCompatibilityProbe
         var evidence = new PrtgSnapshotEvidence { RequestedFields = SnapshotRequestedColumns.ToList() };
         // PRTG expands requested base columns with their _raw forms. Asking for both
         // spellings duplicates properties in the response and obscures the field shape.
-        var url = $"/api/table.json?content=sensors&columns=objid,type,status,lastvalue_raw,lastcheck,interval&filter_objid={actualObjid}";
+        // Request primarychannel as discovery only; PRTG versions may omit or shape it differently.
+        var url = $"/api/table.json?content=sensors&columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel&filter_objid={actualObjid}";
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -987,6 +1236,7 @@ public static class PrtgCompatibilityProbe
 
             var rowEl = matchingRow.Value;
             var returnedProps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var primaryChannelValues = new List<(string FieldName, long? Value)>();
 
             foreach (var prop in rowEl.EnumerateObject().Take(MaxResponseFields))
             {
@@ -1001,6 +1251,16 @@ public static class PrtgCompatibilityProbe
                 returnedProps.Add(colName);
                 if (!evidence.ReturnedFields.Contains(colName, StringComparer.Ordinal))
                     evidence.ReturnedFields.Add(colName);
+
+                if (colName is "primarychannel" or "primarychannel_raw")
+                {
+                    long? primaryValue = null;
+                    if (prop.Value.ValueKind == JsonValueKind.Number &&
+                        prop.Value.TryGetInt64(out var primaryId) && primaryId >= 0)
+                        primaryValue = primaryId;
+                    primaryChannelValues.Add((colName, primaryValue));
+                    continue;
+                }
 
                 if (colName == "objid")
                 {
@@ -1123,8 +1383,28 @@ public static class PrtgCompatibilityProbe
             }
             evidence.Truncated = rowEl.EnumerateObject().Skip(MaxResponseFields).Any();
 
+            if (primaryChannelValues.Count == 1)
+            {
+                evidence.PrimaryChannelFieldName = primaryChannelValues[0].FieldName;
+                if (primaryChannelValues[0].Value.HasValue)
+                    evidence.NativePrimaryChannelId = primaryChannelValues[0].Value.Value.ToString(CultureInfo.InvariantCulture);
+            }
+            else if (primaryChannelValues.Count > 1 &&
+                     primaryChannelValues.All(value => value.Value.HasValue) &&
+                     primaryChannelValues.Select(value => value.Value!.Value).Distinct().Count() == 1)
+            {
+                evidence.NativePrimaryChannelId = primaryChannelValues[0].Value!.Value.ToString(CultureInfo.InvariantCulture);
+                evidence.PrimaryChannelFieldName = primaryChannelValues.Any(value => value.FieldName == "primarychannel_raw")
+                    ? "primarychannel_raw"
+                    : "primarychannel";
+            }
+
             foreach (var col in WhitelistSnapshotColumns)
             {
+                if (col == "primarychannel_raw")
+                    continue;
+                if (col == "primarychannel" && (returnedProps.Contains("primarychannel") || returnedProps.Contains("primarychannel_raw")))
+                    continue;
                 if (!returnedProps.Contains(col))
                 {
                     evidence.MissingFields.Add(col);
@@ -1139,6 +1419,8 @@ public static class PrtgCompatibilityProbe
                     "lastcheck" => returnedProps.Contains("lastcheck") || returnedProps.Contains("lastcheck_raw"),
                     "interval" => returnedProps.Contains("interval") || returnedProps.Contains("interval_raw"),
                     "status" => returnedProps.Contains("status") || returnedProps.Contains("status_raw"),
+                    // A present but malformed/conflicting discovery field remains unknown.
+                    "primarychannel" => evidence.NativePrimaryChannelId is not null,
                     _ => returnedProps.Contains(requested)
                 };
                 if (!present) evidence.MissingRequestedFields.Add(requested);

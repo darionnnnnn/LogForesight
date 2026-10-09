@@ -57,6 +57,30 @@ function New-ValidEvidence {
                 category = 'disk'
                 target_type = 'sensor'
                 status = 'ok'
+                snapshot = [ordered]@{
+                    native_primary_channel_id = '3'
+                    primary_channel_field_name = 'primarychannel'
+                    reported_at_sample_time = $false
+                }
+                native_primary_capability = [ordered]@{
+                    status = 'ok'
+                    property_support = 'supported'
+                    endpoint = 'getobjectproperty.htm'
+                    requested_property_name = 'primarychannel'
+                    requested_object_alias = 's1'
+                    primary_channel_id = '3'
+                    matches_raw_observed_channel_ids = $true
+                    matches_snapshot_primary_channel_id = $true
+                    property_value = '3'
+                    response_status = 'success'
+                    http_status = '2xx'
+                    response_format = 'xml'
+                    requested_at_utc = '2026-10-09T01:02:03.0000000Z'
+                    received_at_utc = '2026-10-09T01:02:04.0000000Z'
+                    elapsed_ms = 1.0
+                    source_version = '24.2.101'
+                    authorizes_formal_profile = $false
+                }
                 identity_preserving_raw_history = [ordered]@{
                     Status = 'ok'
                     Samples = @([ordered]@{ Channels = @([ordered]@{ ChannelId = '3' }) })
@@ -114,8 +138,91 @@ Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
     'StorageProvider: Sqlite',
     'SqlHostResources: not-applicable',
     'StorageVolumeRows: 1',
+    'NativePrimaryCapabilityDiagnostics: 1/1',
+    'NativePrimaryFormalAuthorization: not-asserted',
     'HANDOFF_INTEGRITY_OK'
 )
+
+$forgedAuthorization = New-ValidEvidence
+$forgedAuthorization.targets[0].native_primary_capability.authorizes_formal_profile = $true
+Invoke-ContractCase 'native-property-diagnostic-cannot-claim-formal-authorization' $forgedAuthorization 1 @('InvalidNativePrimaryCapabilityShape')
+
+$wrongNativeIdType = New-ValidEvidence
+$wrongNativeIdType.targets[0].native_primary_capability.primary_channel_id = 3
+Invoke-ContractCase 'native-channel-id-must-be-bounded-decimal-string' $wrongNativeIdType 1 @('InvalidNativePrimaryCapabilityShape')
+
+$wrongSnapshotTimeSemantics = New-ValidEvidence
+$wrongSnapshotTimeSemantics.targets[0].snapshot.reported_at_sample_time = $true
+Invoke-ContractCase 'snapshot-channel-is-not-reported-at-sample-time' $wrongSnapshotTimeSemantics 1 @('InvalidNativeSnapshotShape')
+
+$conflictingNativeObservation = New-ValidEvidence
+$conflictingNativeObservation.targets[0].native_primary_capability.primary_channel_id = '4'
+$conflictingNativeObservation.targets[0].native_primary_capability.property_value = '4'
+$conflictingNativeObservation.targets[0].native_primary_capability.matches_raw_observed_channel_ids = $false
+$conflictingNativeObservation.targets[0].native_primary_capability.matches_snapshot_primary_channel_id = $false
+Invoke-ContractCase 'native-primary-conflict-is-incomplete' $conflictingNativeObservation 2 @(
+    'NativePrimaryConflicts: 1',
+    'NativePrimaryFormalAuthorization: not-asserted',
+    'Result: INCOMPLETE'
+)
+
+$unknownNativeObservation = New-ValidEvidence
+$unknownNative = $unknownNativeObservation.targets[0].native_primary_capability
+$unknownNative.status = 'unknown'
+$unknownNative.property_support = 'unknown'
+$unknownNative.primary_channel_id = $null
+$unknownNative.matches_raw_observed_channel_ids = $null
+$unknownNative.matches_snapshot_primary_channel_id = $null
+$unknownNative.response_status = 'unknown'
+$unknownNative.http_status = 'unknown'
+$unknownNative.response_format = 'unknown'
+$unknownNative.Remove('property_value')
+Invoke-ContractCase 'unknown-native-primary-remains-incomplete-with-null-matches' $unknownNativeObservation 2 @(
+    'NativePrimaryCapabilityDiagnostics: 0/1',
+    'NativePrimaryFormalAuthorization: not-asserted',
+    'Result: INCOMPLETE'
+)
+
+$lateSuccessfulNativeObservation = New-ValidEvidence
+$lateSuccessfulNativeObservation.targets[0].native_primary_capability.elapsed_ms = 31001.0
+Invoke-ContractCase 'late-successful-native-diagnostic-is-incomplete-not-malformed' $lateSuccessfulNativeObservation 2 @(
+    'NativePrimaryCapabilityDiagnostics: 0/1',
+    'NativePrimaryFormalAuthorization: not-asserted',
+    'Result: INCOMPLETE'
+)
+
+$lateTimeoutNativeObservation = New-ValidEvidence
+$lateTimeoutNative = $lateTimeoutNativeObservation.targets[0].native_primary_capability
+$lateTimeoutNative.status = 'timeout'
+$lateTimeoutNative.property_support = 'unknown'
+$lateTimeoutNative.primary_channel_id = $null
+$lateTimeoutNative.matches_raw_observed_channel_ids = $null
+$lateTimeoutNative.matches_snapshot_primary_channel_id = $null
+$lateTimeoutNative.Remove('property_value')
+$lateTimeoutNative.response_status = 'timeout'
+$lateTimeoutNative.http_status = 'unknown'
+$lateTimeoutNative.response_format = 'unknown'
+$lateTimeoutNative.elapsed_ms = 31000.0
+Invoke-ContractCase 'late-timeout-with-unknown-proof-remains-incomplete' $lateTimeoutNativeObservation 2 @(
+    'NativePrimaryCapabilityDiagnostics: 0/1',
+    'NativePrimaryFormalAuthorization: not-asserted',
+    'Result: INCOMPLETE'
+)
+
+$hugeElapsedEvidenceJson = ConvertTo-Json -InputObject (New-ValidEvidence) -Depth 20 -Compress
+$hugeElapsedEvidenceJson = [regex]::Replace($hugeElapsedEvidenceJson, '("elapsed_ms"\s*:\s*)1(?:\.0)?(?=[,}])', '${1}1e999', 1)
+Invoke-ContractCase 'non-finite-huge-elapsed-is-malformed' $null 1 @('InvalidNativePrimaryCapabilityShape') -RawJson $hugeElapsedEvidenceJson
+
+$nanElapsedEvidenceJson = ConvertTo-Json -InputObject (New-ValidEvidence) -Depth 20 -Compress
+$nanElapsedEvidenceJson = [regex]::Replace($nanElapsedEvidenceJson, '("elapsed_ms"\s*:\s*)1(?:\.0)?(?=[,}])', '${1}NaN', 1)
+Invoke-ContractCase 'non-json-nan-elapsed-remains-malformed' $null 1 @('UnreadableOrMalformedJson') -RawJson $nanElapsedEvidenceJson
+
+$legacyPartial = New-ValidEvidence
+$legacyPartial.targets[0].Remove('snapshot')
+$legacyPartial.targets[0].Remove('native_primary_capability')
+$legacyPartial.targets[0].status = 'partial'
+$legacyPartial.status = 'partial'
+Invoke-ContractCase 'legacy-partial-probe-remains-incomplete' $legacyPartial 2 @('Result: INCOMPLETE')
 
 $missing = New-ValidEvidence
 $missing.Remove('storage_environment')

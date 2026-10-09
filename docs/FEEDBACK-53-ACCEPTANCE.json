@@ -6172,5 +6172,96 @@
     "native_authority_accepted": false,
     "full_capacity_accepted": false,
     "whole_round_accepted": false
+  },
+  "current_native_primary_diagnostics_20261010": {
+    "base_commit": "48b1050aef34746b074f78be0fa503496c167939",
+    "next_consumer": "PrtgClient -> compatibility producer -> runner/state/DTO -> safe JSON download -> offline verifier",
+    "scope": "bounded diagnostic primarychannel property and bulk snapshot identity; no formal profile authorization",
+    "green_gate": {
+      "name": "round53-native-primary-probe-green-current-v4",
+      "counters": {
+        "total": "112",
+        "executed": "112",
+        "passed": "112",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "input_count": 1133,
+      "input_drift": 0
+    },
+    "verifier_gate": {
+      "Owner": "root",
+      "ExitCode": 0,
+      "PassedCases": 20,
+      "InputDrift": 0,
+      "Hashes": {
+        "scripts/tests/Verify-PrtgProbeEvidence.ContractTests.ps1": "59F1A1ADAD0345CDB767BF53D5D957543409C4F382F692A4B278B7D2564B28DF",
+        "scripts/Verify-PrtgProbeEvidence.ps1": "15A110CDBC22DAE506472C2C8A384549F06C2F5E49A83C3A415E403130C06B2C"
+      },
+      "WholeRoundAccepted": false
+    },
+    "preserved_red": "round53-native-primary-and-snapshot-guard-red-current-v1",
+    "preserved_failed_attempts": [
+      "round53-native-primary-probe-green-current-v1",
+      "round53-native-primary-probe-green-current-v2"
+    ],
+    "corrections": "Structural JSON identity assertions replace numeric substring searches that matched legitimate channel IDs or timestamp fractions; elapsed >30s is incomplete rather than malformed.",
+    "limits": {
+      "request_seconds": 30,
+      "round_seconds": 300,
+      "response_bytes": 65536,
+      "property_xml_depth": 8
+    },
+    "source_hashes": {
+      "LogForesight.Core/Service/PrtgCompatibilityProbe.cs": "33db786b6a32d739c4cb14cf4c4165b49f6ad2ceacb55ad398bef14263e4a72b",
+      "LogForesight.Tests/NativePrimaryCapabilityRedTests.cs": "247d75895a4522ac0f40558724531a50568c0e8ff99654dfdeb9852228028b80",
+      "LogForesight.Tests/NativePrimaryCapabilityTests.cs": "7800b950af2340480a5ed1e50e733053c9a1e48b4f8fa52d1e3ba70ec112f4a2",
+      "LogForesight.Tests/PrtgCompatibilityProbeTests.cs": "ddf0a27875339034cf2ff645a743ddec5d4ee7c0e16a31592b1cb88f10dae340",
+      "LogForesight.Tests/PrtgProbeRunnerTests.cs": "794838badcd1de1af088a7c2d6cd30d8bf240c761121ff31dc64f0d191620049",
+      "scripts/tests/Verify-PrtgProbeEvidence.ContractTests.ps1": "59f1a1adad0345cdb767bf53d5d957543409c4f382f692a4b278b7d2564b28df",
+      "scripts/Verify-PrtgProbeEvidence.ps1": "15a110cdbc22dae506472c2c8a384549f06c2f5e49a83c3a415e403130c06b2c"
+    },
+    "native_source_support_verified": false,
+    "snapshot_measurement_time_primary_proven": false,
+    "formal_profile_authorized": false,
+    "full_fleet_capacity_accepted": false,
+    "active_implementation_delivery_count": 2,
+    "active_acceptance_groups": 5,
+    "whole_round_accepted": false,
+    "earlier_green_gate": {
+      "name": "round53-native-primary-probe-green-current-v3",
+      "counters": {
+        "total": "112",
+        "executed": "112",
+        "passed": "112",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "input_count": 1133,
+      "input_drift": 0
+    },
+    "final_cleanup": "EOF whitespace and Assert.Single predicate overload; production unchanged; full 112-case gate rerun on final inputs"
   }
 }

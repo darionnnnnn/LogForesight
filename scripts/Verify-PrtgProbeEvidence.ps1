@@ -63,6 +63,195 @@ function Test-JsonBoolean {
         $Element.ValueKind -eq [System.Text.Json.JsonValueKind]::False
 }
 
+function Test-AllowedJsonProperties {
+    param([System.Text.Json.JsonElement] $Element, [string[]] $AllowedNames)
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { return $false }
+    foreach ($property in $Element.EnumerateObject()) {
+        if ($property.Name -cnotin $AllowedNames) { return $false }
+    }
+    return $true
+}
+
+function Get-NativePrimaryId {
+    param([System.Text.Json.JsonElement] $Element, [bool] $AllowNull = $true)
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) {
+        if ($AllowNull) { return [pscustomobject]@{ Valid = $true; Present = $false; Value = [long]0 } }
+        return [pscustomobject]@{ Valid = $false; Present = $false; Value = [long]0 }
+    }
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+        return [pscustomobject]@{ Valid = $false; Present = $true; Value = [long]0 }
+    }
+    $text = $Element.GetString()
+    $value = [long]0
+    $valid = $text -match '^\d{1,20}$' -and
+        [long]::TryParse($text, [System.Globalization.NumberStyles]::None,
+            [System.Globalization.CultureInfo]::InvariantCulture, [ref] $value) -and $value -ge 0
+    return [pscustomobject]@{ Valid = $valid; Present = $true; Value = $value }
+}
+
+function Test-NullableJsonBoolean {
+    param([System.Text.Json.JsonElement] $Element)
+    return $Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null -or (Test-JsonBoolean $Element)
+}
+
+function Test-OptionalBoundedString {
+    param([System.Text.Json.JsonElement] $Element, [int] $MaximumLength,
+        [string[]] $AllowedValues = $null, [bool] $AllowNull = $true)
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { return $AllowNull }
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { return $false }
+    $value = $Element.GetString()
+    return $value.Length -le $MaximumLength -and
+        ($null -eq $AllowedValues -or $value -cin $AllowedValues)
+}
+
+function Test-OptionalUtcTimestamp {
+    param([System.Text.Json.JsonElement] $Element)
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { return $true }
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { return $false }
+    $value = $Element.GetString()
+    $parsed = [DateTimeOffset]::MinValue
+    return $value.Length -le 40 -and
+        [DateTimeOffset]::TryParse($value, [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind, [ref] $parsed) -and
+        $parsed.Offset -eq [TimeSpan]::Zero
+}
+
+function Test-NativeSnapshotFields {
+    param([System.Text.Json.JsonElement] $Snapshot, [ref] $HasNativeFields,
+        [ref] $SnapshotId, [ref] $IsIncomplete)
+    if ($Snapshot.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { return $false }
+    $allowed = @('status','elapsed_ms','requested_at_utc','received_at_utc','returned_fields',
+        'requested_fields','missing_requested_fields','missing_fields','unrecognized_fields_count',
+        'fields','has_unfiltered_objects','truncated','error','native_primary_channel_id',
+        'primary_channel_field_name','reported_at_sample_time')
+    if (-not (Test-AllowedJsonProperties $Snapshot $allowed)) { return $false }
+    $id = Get-JsonProperty $Snapshot 'native_primary_channel_id'
+    $fieldName = Get-JsonProperty $Snapshot 'primary_channel_field_name'
+    $reportedAtSampleTime = Get-JsonProperty $Snapshot 'reported_at_sample_time'
+    $HasNativeFields.Value = $null -ne $id -or $null -ne $fieldName -or $null -ne $reportedAtSampleTime
+    if (-not $HasNativeFields.Value) { return $true }
+    if ($null -eq $reportedAtSampleTime -or -not (Test-JsonBoolean $reportedAtSampleTime) -or
+        $reportedAtSampleTime.GetBoolean()) { return $false }
+    $parsedId = if ($null -eq $id) {
+        [pscustomobject]@{ Valid = $true; Present = $false; Value = [long]0 }
+    } else {
+        Get-NativePrimaryId $id
+    }
+    if (-not $parsedId.Valid) { return $false }
+    $SnapshotId.Value = $parsedId
+    if ($null -ne $fieldName -and -not (Test-OptionalBoundedString $fieldName 32 @('primarychannel','primarychannel_raw'))) { return $false }
+    if ($parsedId.Present -and ($null -eq $fieldName -or $fieldName.ValueKind -ne [System.Text.Json.JsonValueKind]::String)) { return $false }
+    if (-not $parsedId.Present -or $null -eq $fieldName -or
+        $fieldName.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { $IsIncomplete.Value = $true }
+    return $true
+}
+
+function Test-NativePrimaryCapability {
+    param([System.Text.Json.JsonElement] $Capability, [string] $TargetAlias,
+        [bool] $HasSnapshotNativeFields, $SnapshotId, [ref] $IsDiagnosticComplete, [ref] $IsConflict)
+    $allowed = @('status','property_support','endpoint','requested_property_name','requested_object_alias',
+        'primary_channel_id','matches_raw_observed_channel_ids','matches_snapshot_primary_channel_id',
+        'property_value','response_status','http_status','http_date_utc','response_format',
+        'requested_at_utc','received_at_utc','elapsed_ms','source_version',
+        'authorizes_formal_profile','error')
+    if (-not (Test-AllowedJsonProperties $Capability $allowed)) { return $false }
+
+    $status = Get-JsonProperty $Capability 'status'
+    $support = Get-JsonProperty $Capability 'property_support'
+    $endpoint = Get-JsonProperty $Capability 'endpoint'
+    $propertyName = Get-JsonProperty $Capability 'requested_property_name'
+    $alias = Get-JsonProperty $Capability 'requested_object_alias'
+    $primaryId = Get-JsonProperty $Capability 'primary_channel_id'
+    $rawMatch = Get-JsonProperty $Capability 'matches_raw_observed_channel_ids'
+    $snapshotMatch = Get-JsonProperty $Capability 'matches_snapshot_primary_channel_id'
+    $propertyValue = Get-JsonProperty $Capability 'property_value'
+    $responseStatus = Get-JsonProperty $Capability 'response_status'
+    $httpStatus = Get-JsonProperty $Capability 'http_status'
+    $httpDate = Get-JsonProperty $Capability 'http_date_utc'
+    $responseFormat = Get-JsonProperty $Capability 'response_format'
+    $requestedAt = Get-JsonProperty $Capability 'requested_at_utc'
+    $receivedAt = Get-JsonProperty $Capability 'received_at_utc'
+    $elapsed = Get-JsonProperty $Capability 'elapsed_ms'
+    $sourceVersion = Get-JsonProperty $Capability 'source_version'
+    $authorizes = Get-JsonProperty $Capability 'authorizes_formal_profile'
+    $error = Get-JsonProperty $Capability 'error'
+    foreach ($value in @($status,$support,$endpoint,$propertyName,$alias,$primaryId,$rawMatch,$snapshotMatch,
+            $responseStatus,$httpStatus,$responseFormat,$elapsed,$sourceVersion,$authorizes)) {
+        if ($null -eq $value) { return $false }
+    }
+    if (-not (Test-JsonString $status @('ok','unknown','timeout','error')) -or
+        -not (Test-JsonString $support @('supported','unknown')) -or
+        -not (Test-JsonString $endpoint @('getobjectproperty.htm')) -or
+        -not (Test-JsonString $propertyName @('primarychannel')) -or
+        -not (Test-JsonString $alias @($TargetAlias)) -or
+        -not (Test-JsonString $responseStatus @('success','timeout','error','unknown')) -or
+        -not (Test-JsonString $responseFormat @('xml','malformed_xml','invalid_xml','unexpected_xml','unknown')) -or
+        -not (Test-OptionalBoundedString $httpStatus 8 @('unknown','2xx','100','101','102','103','200','201','202','203','204','205','206','300','301','302','303','304','305','307','308','400','401','402','403','404','405','406','407','408','409','410','411','412','413','414','415','416','417','418','421','422','423','424','425','426','428','429','431','451','500','501','502','503','504','505','506','507','508','510','511')) -or
+        ($null -ne $httpDate -and -not (Test-OptionalUtcTimestamp $httpDate)) -or
+        ($null -ne $requestedAt -and -not (Test-OptionalUtcTimestamp $requestedAt)) -or
+        ($null -ne $receivedAt -and -not (Test-OptionalUtcTimestamp $receivedAt)) -or
+        $sourceVersion.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+        -not (Test-NullableJsonBoolean $rawMatch) -or
+        -not (Test-NullableJsonBoolean $snapshotMatch) -or
+        -not (Test-JsonBoolean $authorizes) -or $authorizes.GetBoolean() -or
+        $elapsed.ValueKind -ne [System.Text.Json.JsonValueKind]::Number) { return $false }
+    $elapsedValue = 0.0
+    if (-not $elapsed.TryGetDouble([ref] $elapsedValue) -or [double]::IsNaN($elapsedValue) -or
+        [double]::IsInfinity($elapsedValue) -or $elapsedValue -lt 0) { return $false }
+    $sourceVersionText = $sourceVersion.GetString()
+    if ($sourceVersionText.Length -gt 32 -or
+        ($sourceVersionText -ne 'unknown' -and $sourceVersionText -notmatch '^\d{1,3}(?:\.\d{1,5}){1,3}\+?$')) { return $false }
+    if ($null -ne $httpDate -and -not (Test-OptionalUtcTimestamp $httpDate)) { return $false }
+    if ($null -ne $error -and -not (Test-OptionalBoundedString $error 256)) { return $false }
+
+    $parsedPrimary = Get-NativePrimaryId $primaryId
+    if (-not $parsedPrimary.Valid) { return $false }
+    $parsedProperty = if ($null -eq $propertyValue) {
+        [pscustomobject]@{ Valid = $true; Present = $false; Value = [long]0 }
+    } else {
+        Get-NativePrimaryId $propertyValue
+    }
+    if (-not $parsedProperty.Valid) { return $false }
+    if ($parsedPrimary.Present -ne $parsedProperty.Present -or
+        $parsedPrimary.Present -and $parsedPrimary.Value -ne $parsedProperty.Value) { return $false }
+
+    if ($status.GetString() -eq 'ok') {
+        if ($support.GetString() -ne 'supported' -or $responseStatus.GetString() -ne 'success' -or
+            $httpStatus.GetString() -ne '2xx' -or $responseFormat.GetString() -ne 'xml' -or
+            -not $parsedPrimary.Present -or -not $parsedProperty.Present -or
+            $null -eq $requestedAt -or $null -eq $receivedAt -or
+            -not (Test-OptionalUtcTimestamp $requestedAt) -or
+            $requestedAt.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $receivedAt.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { return $false }
+        if ($HasSnapshotNativeFields -and $SnapshotId.Present) {
+            if ($snapshotMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { return $false }
+            if ($snapshotMatch.GetBoolean() -ne ($parsedPrimary.Value -eq $SnapshotId.Value)) { return $false }
+        } elseif ($snapshotMatch.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+            return $false
+        }
+        if ($rawMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::False -or
+            $rawMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::Null -or
+            $snapshotMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::False -or
+            $snapshotMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) {
+            $IsConflict.Value = $snapshotMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::False -or
+                $rawMatch.ValueKind -eq [System.Text.Json.JsonValueKind]::False
+            $IsDiagnosticComplete.Value = $false
+        } else {
+            $IsDiagnosticComplete.Value = $true
+        }
+    } else {
+        if ($support.GetString() -ne 'unknown' -or $parsedPrimary.Present -or
+            $parsedProperty.Present -or
+            $rawMatch.ValueKind -ne [System.Text.Json.JsonValueKind]::Null -or
+            $snapshotMatch.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) { return $false }
+        $IsDiagnosticComplete.Value = $false
+    }
+    # A deadline timeout is evidence, not a schema defect. Keep the measured
+    # elapsed duration but never treat a late response as a complete diagnostic.
+    if ($elapsedValue -gt 30000) { $IsDiagnosticComplete.Value = $false }
+    return $true
+}
+
 function Test-StorageRowShape {
     param([System.Text.Json.JsonElement] $Rows, [string] $Kind)
     if ($Rows.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $Rows.GetArrayLength() -gt 16) { return $false }
@@ -296,6 +485,9 @@ try {
     $targetCount = $targets.GetArrayLength()
     $rawCount = 0
     $channelIdCount = 0
+    $nativePrimaryCapabilityCount = 0
+    $nativePrimaryDiagnosticCompleteCount = 0
+    $nativePrimaryConflictCount = 0
     $rawShapeValid = $true
     $sourceIncomplete = $false
     foreach ($target in $targets.EnumerateArray()) {
@@ -305,6 +497,46 @@ try {
         $targetStatus = $targetStatusElement.GetString()
         if ($targetStatus -notin @('ok', 'partial', 'missing', 'timeout', 'unknown', 'error', 'truncated')) { $sourceIncomplete = $true }
         elseif ($targetStatus -ne 'ok') { $sourceIncomplete = $true }
+
+        $targetAliasElement = Get-JsonProperty $target 'alias'
+        if ($null -ne $targetAliasElement -and $targetAliasElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            Fail-Safely 'InvalidNativePrimaryCapabilityShape'
+        }
+        $snapshot = Get-JsonProperty $target 'snapshot'
+        $hasSnapshotNativeFields = $false
+        $snapshotId = [pscustomobject]@{ Present = $false; Value = [long]0 }
+        if ($null -ne $snapshot -and $snapshot.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+            $nativeMarker = $null -ne (Get-JsonProperty $snapshot 'native_primary_channel_id') -or
+                $null -ne (Get-JsonProperty $snapshot 'primary_channel_field_name') -or
+                $null -ne (Get-JsonProperty $snapshot 'reported_at_sample_time')
+            if ($nativeMarker) {
+                $snapshotIncomplete = $false
+                if (-not (Test-NativeSnapshotFields $snapshot ([ref]$hasSnapshotNativeFields) ([ref]$snapshotId) ([ref]$snapshotIncomplete))) {
+                    Fail-Safely 'InvalidNativeSnapshotShape'
+                }
+                if ($snapshotIncomplete) { $sourceIncomplete = $true }
+            }
+        } elseif ($null -ne $snapshot -and $snapshot.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+            Fail-Safely 'InvalidNativeSnapshotShape'
+        }
+
+        $nativeCapability = Get-JsonProperty $target 'native_primary_capability'
+        if ($null -ne $nativeCapability) {
+            if ($nativeCapability.ValueKind -ne [System.Text.Json.JsonValueKind]::Object -or
+                $null -eq $targetAliasElement -or $targetAliasElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                Fail-Safely 'InvalidNativePrimaryCapabilityShape'
+            }
+            $diagnosticComplete = $false
+            $nativeConflict = $false
+            if (-not (Test-NativePrimaryCapability $nativeCapability $targetAliasElement.GetString() `
+                    $hasSnapshotNativeFields $snapshotId ([ref]$diagnosticComplete) ([ref]$nativeConflict))) {
+                Fail-Safely 'InvalidNativePrimaryCapabilityShape'
+            }
+            $nativePrimaryCapabilityCount++
+            if ($diagnosticComplete) { $nativePrimaryDiagnosticCompleteCount++ }
+            else { $sourceIncomplete = $true }
+            if ($nativeConflict) { $nativePrimaryConflictCount++; $sourceIncomplete = $true }
+        }
         $raw = Get-JsonProperty $target 'identity_preserving_raw_history'
         if ($null -eq $raw) { $rawShapeValid = $false; break }
         if ($raw.ValueKind -eq [System.Text.Json.JsonValueKind]::Null -and $targetStatus -eq 'missing') {
@@ -355,6 +587,9 @@ try {
     Write-Output "TargetsCount: $targetCount"
     Write-Output "RawChannelIdentityTargets: $rawCount"
     Write-Output "RawChannelIds: $channelIdCount"
+    Write-Output "NativePrimaryCapabilityDiagnostics: $nativePrimaryDiagnosticCompleteCount/$nativePrimaryCapabilityCount"
+    Write-Output "NativePrimaryConflicts: $nativePrimaryConflictCount"
+    Write-Output 'NativePrimaryFormalAuthorization: not-asserted'
     Write-Output "DeploymentProcessorCount: $processorCountValue"
     Write-Output "RuntimeGcAvailableMemoryBytes: $runtimeMemoryValue"
     Write-Output "ProcessWorkingSetBytes: $workingSetValue"

