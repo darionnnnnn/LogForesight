@@ -331,6 +331,7 @@ internal static class SchemaUpgrader
             isSqlite ? SqliteCreatePrtgManualMap : SqlServerCreatePrtgManualMap);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_manual_map",
             "IX_lf_prtg_manual_map_host", "host_id");
+        if (!isSqlite) FixSqlServerPrtgManualMapIdentityIfNeeded(ctx);
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_ip_excludes",
             isSqlite ? SqliteCreatePrtgIpExcludes : SqlServerCreatePrtgIpExcludes);
@@ -1439,6 +1440,167 @@ internal static class SchemaUpgrader
             CONSTRAINT PK_lf_prtg_manual_map PRIMARY KEY (device_objid)
         )
         """;
+
+    /// <summary>
+    /// An older EnsureCreated model could make the externally-owned PRTG device key IDENTITY.
+    /// Rebuild only that exact known schema, preserving rows and the canonical host index. All
+    /// DDL and data movement is transactional; unknown constraints/dependencies fail closed.
+    /// </summary>
+    internal const string SqlServerFixPrtgManualMapIdentityDdl = """
+        SET NOCOUNT ON;
+        SET XACT_ABORT ON;
+        BEGIN TRY
+            BEGIN TRANSACTION;
+            DECLARE @lock_result int;
+            EXEC @lock_result = sys.sp_getapplock
+                @Resource = N'logforesight:lf_prtg_manual_map_identity_repair',
+                @LockMode = N'Exclusive',
+                @LockOwner = N'Transaction',
+                @LockTimeout = 60000,
+                @DbPrincipal = N'public';
+            IF @lock_result < 0
+                THROW 51000, N'Could not acquire manual-map identity repair lock.', 1;
+
+            -- Read the object only after the cross-process repair lock is held.
+            DECLARE @table_id int = OBJECT_ID(N'dbo.lf_prtg_manual_map', N'U');
+            IF @table_id IS NULL OR ISNULL(COLUMNPROPERTY(@table_id, N'device_objid', N'IsIdentity'), 0) <> 1
+            BEGIN
+                COMMIT TRANSACTION;
+                RETURN;
+            END;
+
+            IF ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'VIEW DEFINITION'), 0) <> 1
+                THROW 51000, N'Database metadata visibility is insufficient for safe manual-map identity repair.', 1;
+
+            DECLARE @source_count bigint;
+            SELECT @source_count = COUNT_BIG(*)
+            FROM dbo.lf_prtg_manual_map WITH (TABLOCKX, HOLDLOCK);
+            -- A competing startup may have completed while this process waited for TABLOCKX.
+            -- Re-read both the object id and identity bit under the acquired table lock.
+            SET @table_id = OBJECT_ID(N'dbo.lf_prtg_manual_map', N'U');
+            IF @table_id IS NULL OR ISNULL(COLUMNPROPERTY(@table_id, N'device_objid', N'IsIdentity'), 0) <> 1
+            BEGIN
+                COMMIT TRANSACTION;
+                RETURN;
+            END;
+
+            IF (SELECT COUNT(*) FROM sys.columns WHERE object_id = @table_id) <> 5 OR
+                NOT EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = @table_id AND c.name = N'device_objid' AND TYPE_NAME(c.user_type_id) = N'bigint' AND c.is_nullable = 0 AND c.is_identity = 1 AND c.is_computed = 0 AND c.generated_always_type = 0 AND c.is_hidden = 0 AND c.is_sparse = 0 AND c.is_column_set = 0 AND c.is_filestream = 0 AND c.is_rowguidcol = 0 AND c.is_masked = 0 AND c.encryption_type IS NULL AND c.xml_collection_id = 0 AND c.default_object_id = 0 AND c.rule_object_id = 0) OR
+                NOT EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = @table_id AND c.name = N'host_id' AND TYPE_NAME(c.user_type_id) = N'bigint' AND c.is_nullable = 0 AND c.is_identity = 0 AND c.is_computed = 0 AND c.generated_always_type = 0 AND c.is_hidden = 0 AND c.is_sparse = 0 AND c.is_column_set = 0 AND c.is_filestream = 0 AND c.is_rowguidcol = 0 AND c.is_masked = 0 AND c.encryption_type IS NULL AND c.xml_collection_id = 0 AND c.default_object_id = 0 AND c.rule_object_id = 0) OR
+                NOT EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = @table_id AND c.name = N'created_by' AND TYPE_NAME(c.user_type_id) = N'nvarchar' AND c.max_length = 128 AND c.is_nullable = 1 AND c.is_identity = 0 AND c.is_computed = 0 AND c.generated_always_type = 0 AND c.is_hidden = 0 AND c.is_sparse = 0 AND c.is_column_set = 0 AND c.is_filestream = 0 AND c.is_rowguidcol = 0 AND c.is_masked = 0 AND c.encryption_type IS NULL AND c.xml_collection_id = 0 AND c.default_object_id = 0 AND c.rule_object_id = 0 AND c.collation_name = CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS sysname)) OR
+                NOT EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = @table_id AND c.name = N'note' AND TYPE_NAME(c.user_type_id) = N'nvarchar' AND c.max_length = 1024 AND c.is_nullable = 1 AND c.is_identity = 0 AND c.is_computed = 0 AND c.generated_always_type = 0 AND c.is_hidden = 0 AND c.is_sparse = 0 AND c.is_column_set = 0 AND c.is_filestream = 0 AND c.is_rowguidcol = 0 AND c.is_masked = 0 AND c.encryption_type IS NULL AND c.xml_collection_id = 0 AND c.default_object_id = 0 AND c.rule_object_id = 0 AND c.collation_name = CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS sysname)) OR
+                NOT EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = @table_id AND c.name = N'created_at' AND TYPE_NAME(c.user_type_id) = N'datetime2' AND c.scale = 7 AND c.is_nullable = 0 AND c.is_identity = 0 AND c.is_computed = 0 AND c.generated_always_type = 0 AND c.is_hidden = 0 AND c.is_sparse = 0 AND c.is_column_set = 0 AND c.is_filestream = 0 AND c.is_rowguidcol = 0 AND c.is_masked = 0 AND c.encryption_type IS NULL AND c.xml_collection_id = 0 AND c.default_object_id = 0 AND c.rule_object_id = 0)
+                THROW 51000, N'Unexpected lf_prtg_manual_map column schema; refusing identity repair.', 1;
+
+            IF EXISTS (SELECT 1 FROM sys.identity_columns WHERE object_id = @table_id AND is_not_for_replication = 1) OR
+                EXISTS (SELECT 1 FROM sys.tables WHERE object_id = @table_id AND
+                    (temporal_type <> 0 OR is_memory_optimized = 1 OR is_tracked_by_cdc = 1 OR is_filetable = 1 OR is_remote_data_archive_enabled = 1 OR
+                     is_replicated = 1 OR is_merge_published = 1 OR is_sync_tran_subscribed = 1 OR lock_escalation <> 0)) OR
+                EXISTS (SELECT 1 FROM sys.objects WHERE object_id = @table_id AND (principal_id IS NOT NULL OR is_ms_shipped = 1)) OR
+                EXISTS (SELECT 1 FROM sys.security_predicates WHERE target_object_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.fulltext_indexes WHERE object_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.external_tables WHERE object_id = @table_id)
+                THROW 51000, N'Unexpected lf_prtg_manual_map storage or security feature; refusing identity repair.', 1;
+
+            DECLARE @pk_index_id int;
+            SELECT @pk_index_id = kc.unique_index_id
+            FROM sys.key_constraints kc
+            WHERE kc.parent_object_id = @table_id AND kc.type = N'PK' AND kc.name = N'PK_lf_prtg_manual_map';
+            IF @pk_index_id IS NULL OR
+                (SELECT COUNT(*) FROM sys.key_constraints WHERE parent_object_id = @table_id) <> 1 OR
+                NOT EXISTS (SELECT 1 FROM sys.indexes i WHERE i.object_id = @table_id AND i.index_id = @pk_index_id AND i.type = 1 AND i.is_unique = 1 AND i.is_primary_key = 1 AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0 AND i.fill_factor = 0 AND i.is_padded = 0 AND i.ignore_dup_key = 0 AND i.allow_row_locks = 1 AND i.allow_page_locks = 1 AND i.data_space_id = (SELECT data_space_id FROM sys.filegroups WHERE is_default = 1)) OR
+                (SELECT COUNT(*) FROM sys.index_columns WHERE object_id = @table_id AND index_id = @pk_index_id AND key_ordinal > 0) <> 1 OR
+                EXISTS (SELECT 1 FROM sys.index_columns WHERE object_id = @table_id AND index_id = @pk_index_id AND is_included_column = 1) OR
+                NOT EXISTS (SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE ic.object_id = @table_id AND ic.index_id = @pk_index_id AND ic.key_ordinal = 1 AND ic.is_descending_key = 0 AND c.name = N'device_objid')
+                THROW 51000, N'Unexpected lf_prtg_manual_map primary key; refusing identity repair.', 1;
+
+            DECLARE @host_index_id int;
+            SELECT @host_index_id = i.index_id FROM sys.indexes i
+            WHERE i.object_id = @table_id AND i.name = N'IX_lf_prtg_manual_map_host' AND i.type = 2 AND i.is_unique = 0 AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0;
+            IF @host_index_id IS NULL OR
+                NOT EXISTS (SELECT 1 FROM sys.indexes i WHERE i.object_id = @table_id AND i.index_id = @host_index_id AND i.fill_factor = 0 AND i.is_padded = 0 AND i.ignore_dup_key = 0 AND i.allow_row_locks = 1 AND i.allow_page_locks = 1 AND i.data_space_id = (SELECT data_space_id FROM sys.filegroups WHERE is_default = 1)) OR
+                (SELECT COUNT(*) FROM sys.indexes WHERE object_id = @table_id AND type > 0) <> 2 OR
+                (SELECT COUNT(*) FROM sys.index_columns WHERE object_id = @table_id AND index_id = @host_index_id AND key_ordinal > 0) <> 1 OR
+                EXISTS (SELECT 1 FROM sys.index_columns WHERE object_id = @table_id AND index_id = @host_index_id AND is_included_column = 1) OR
+                NOT EXISTS (SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE ic.object_id = @table_id AND ic.index_id = @host_index_id AND ic.key_ordinal = 1 AND ic.is_descending_key = 0 AND c.name = N'host_id')
+                THROW 51000, N'Unexpected lf_prtg_manual_map index schema; refusing identity repair.', 1;
+
+            -- SQL Server 2019+ exposes this index option; earlier supported versions do not.
+            -- Check it only through dynamic SQL when the catalog column exists, keeping this
+            -- repair executable on older engines while refusing a non-default 2019+ setting.
+            IF EXISTS (SELECT 1 FROM sys.all_columns
+                       WHERE object_id = OBJECT_ID(N'sys.indexes') AND name = N'optimize_for_sequential_key')
+            BEGIN
+                DECLARE @sequential_key_guard nvarchar(max) = N'
+                    IF EXISTS (SELECT 1 FROM sys.indexes
+                               WHERE object_id = @table_id
+                                 AND index_id IN (@pk_index_id, @host_index_id)
+                                 AND optimize_for_sequential_key <> 0)
+                        THROW 51000, N''Unexpected sequential-key index option; refusing identity repair.'', 1;';
+                EXEC sys.sp_executesql @sequential_key_guard,
+                    N'@table_id int, @pk_index_id int, @host_index_id int',
+                    @table_id = @table_id, @pk_index_id = @pk_index_id, @host_index_id = @host_index_id;
+            END;
+
+            IF EXISTS (SELECT 1 FROM sys.partitions WHERE object_id = @table_id AND data_compression <> 0) OR
+                EXISTS (SELECT 1 FROM sys.database_permissions WHERE class = 1 AND major_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = @table_id AND class IN (1, 7))
+                THROW 51000, N'Unexpected lf_prtg_manual_map partitioning or metadata; refusing identity repair.', 1;
+
+            IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id = @table_id OR referenced_object_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.triggers WHERE parent_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.default_constraints WHERE parent_object_id = @table_id) OR
+                EXISTS (SELECT 1 FROM sys.sql_expression_dependencies WHERE referenced_id = @table_id AND referencing_id <> @table_id) OR
+                EXISTS (SELECT 1 FROM sys.synonyms WHERE base_object_name IN (N'dbo.lf_prtg_manual_map', N'[dbo].[lf_prtg_manual_map]'))
+                THROW 51000, N'Unexpected lf_prtg_manual_map dependency; refusing identity repair.', 1;
+
+            IF OBJECT_ID(N'tempdb..#lf_prtg_manual_map_identity_repair_20261010') IS NOT NULL
+                THROW 51000, N'Manual-map identity repair temp table already exists; refusing repair.', 1;
+            SELECT device_objid, host_id, created_by, note, created_at
+            INTO #lf_prtg_manual_map_identity_repair_20261010
+            FROM dbo.lf_prtg_manual_map;
+
+            DROP TABLE dbo.lf_prtg_manual_map;
+            CREATE TABLE dbo.lf_prtg_manual_map (
+                device_objid bigint NOT NULL,
+                host_id bigint NOT NULL,
+                created_by nvarchar(64) NULL,
+                note nvarchar(512) NULL,
+                created_at datetime2 NOT NULL,
+                CONSTRAINT PK_lf_prtg_manual_map PRIMARY KEY (device_objid)
+            );
+            INSERT INTO dbo.lf_prtg_manual_map (device_objid, host_id, created_by, note, created_at)
+            SELECT device_objid, host_id, created_by, note, created_at
+            FROM #lf_prtg_manual_map_identity_repair_20261010;
+            DECLARE @copied_count bigint = ROWCOUNT_BIG();
+            IF @copied_count <> @source_count OR
+                EXISTS (SELECT device_objid, host_id, created_by, note, created_at FROM #lf_prtg_manual_map_identity_repair_20261010
+                        EXCEPT SELECT device_objid, host_id, created_by, note, created_at FROM dbo.lf_prtg_manual_map) OR
+                EXISTS (SELECT device_objid, host_id, created_by, note, created_at FROM dbo.lf_prtg_manual_map
+                        EXCEPT SELECT device_objid, host_id, created_by, note, created_at FROM #lf_prtg_manual_map_identity_repair_20261010)
+                THROW 51000, N'Manual-map identity repair copy verification failed; rolling back.', 1;
+            CREATE INDEX IX_lf_prtg_manual_map_host ON dbo.lf_prtg_manual_map (host_id);
+            DROP TABLE #lf_prtg_manual_map_identity_repair_20261010;
+            COMMIT TRANSACTION;
+        END TRY
+        BEGIN CATCH
+            IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+            THROW;
+        END CATCH;
+        """;
+
+    private static void FixSqlServerPrtgManualMapIdentityIfNeeded(LfDbContext ctx)
+    {
+        // Avoid an exclusive table lock on the normal path. The DDL repeats the identity check
+        // after opening its transaction, so concurrent application startups remain idempotent.
+        var needsRepair = ctx.Database.SqlQueryRaw<int>(
+            "SELECT CAST(CASE WHEN OBJECT_ID(N'dbo.lf_prtg_manual_map', N'U') IS NOT NULL AND " +
+            "COLUMNPROPERTY(OBJECT_ID(N'dbo.lf_prtg_manual_map', N'U'), N'device_objid', N'IsIdentity') = 1 " +
+            "THEN 1 ELSE 0 END AS int) AS Value").Single();
+        if (needsRepair == 1) ctx.Database.ExecuteSqlRaw(SqlServerFixPrtgManualMapIdentityDdl);
+    }
 
     private const string SqliteCreatePrtgIpExcludes = """
         CREATE TABLE lf_prtg_ip_excludes (

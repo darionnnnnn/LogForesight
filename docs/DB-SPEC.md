@@ -863,3 +863,8 @@ AttachDailyRiskReport 同一 Serializable SQL 交易驗證精確 RecordId、父�
 恢復 worker 沿既有共用工作 gate、lease 及耐久 hot/deep pass cursor，每頁最多補四份報告；輪次旋轉避免前四筆持續失敗阻塞後段。它只使用保存父紀錄與有界 RiskyEvent cache，不重抓來源；AI 可用且 AiPending 時由 AI worker 接續，AI 不可用時可先補非 AI 報告，保留 AiPending。非 actionable 父日只在精確父列／指紋仍相同時清除待補。模式續作須先完成必要報告及案件交接才推進該日游標。
 
 Formal mail dated shard 清理每頁最多 16 鍵，先快照 outbox 參照，再在 Serializable 交易重核 singleton 版本；無法讀取、被參照、過大或不合法資料保留。SQL execution strategy 重試同一有界頁，不以新查詢跳到下一頁；成功後才更新統計及游標。回覆遺失的重試只承認同頁預期刪除或一版且內容相同的改寫，不覆蓋其他版本。
+
+
+### PRTG 人工對應的外部主鍵與錯誤 IDENTITY 升級
+
+`lf_prtg_manual_map.device_objid` 是 PRTG 指定的外部 bigint 主鍵；EF 模型為 ValueGeneratedNever，新建 SQL Server 不產生 IDENTITY。若舊 EnsureCreated 結構錯設 IDENTITY，SchemaUpgrader 以交易 app lock 序列化後重新核對精確已知五欄、PK／host 索引、metadata 及相依關係，保留全部欄位／列與索引，雙向 EXCEPT 核對後提交；任一步失敗回滾原表與資料。已有正確結構不重建。額外權限、extended property、未知相依或非標準結構不自動破壞，拒絕升級並保留原資料。隔離 SQL Server 與 SQLite 驗證分開記錄；此修復不表示完整容量通過。

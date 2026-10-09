@@ -53,7 +53,7 @@
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 - [ ] R15：完成全範圍初次資格的耐久作業、容量准入、跨程序 historic 共享配額、取消／逾期／同作業續跑與管理者動線。已驗證的單顆 binding／核驗／consumer 子項移至 §5.3；原生來源事實仍歸 A0／N1，不以 fixture 追認舊聚合。
 
-- [ ] R16：隔離 SQL Server 發現新建人工對應表的 device_objid 錯設 IDENTITY；修正模型與既有錯誤結構升級，按新建／資料與索引保留／重跑／併發／失敗回滾實際 provider gate 驗證後清除。
+
 
 ### 5.2 尚未通過的驗收門檻
 
@@ -67,6 +67,7 @@
 
 | 已完成子項 | 實際程式→consumer | 驗證與限制 |
 |---|---|---|
+| R16 人工對應外部主鍵與安全升級 | PrtgManualMapRow ValueGeneratedNever→EnsureCreated；SchemaUpgrader 交易 app lock→精確已知結構修復→EfPrtgStore.UpsertManualMap | 78/78 定向回歸與隔離 SQL Server 6/6（新建、資料／索引保留、重跑、metadata 拒絕、實際回滾、兩連線併發）。未知結構拒絕且保留，不宣告其他 provider／容量通過。 |
 | R15 單顆正式綁定與核驗、批次草稿、可信 consumer | binding CAS→有界原生 proof→profile resolver→snapshot→期間規則／主機明細；metadata 撤銷保留 samples/journal；API 提交回執與按 sensor 草稿 | 主代理固定回歸、尺度／語意守門 RED→GREEN、隔離 SQL Server 四項實際鎖／租約檢查與瀏覽器驗證；完整耐久資格作業及來源／容量另列活動待辦。 |
 | R07/day-window 跨主機日完成窗口 | 較晚小時開始時間→Local 主機日；closed-day 前一小時有界讀取→每日合格 NetIQ 父列→finding／案件 consumer | 原三個跨日正向 mutation、缺父、缺小時、DST 歧義及 UTC 不連續反例已驗；擴大受影響回歸僅一個未啟用設定的新增 fixture 失敗，修正 fixture 後定向全綠。歷史不倒退目前 episode、重跑保留人工處理；固定原始 case JSON 不改。原生來源及整輪容量仍未通過。 |
 
@@ -1451,3 +1452,7 @@ R15 留下耐久初始資格作業與跨程序配額項，A0及五組整輪門�
 此次採逐案例聯集裁定：廣版 `round53-explicit-binding-stage-final-current-v13` 原始結果仍為失敗，三個錯誤量測語意案例卡在測試資料數字列舉讀取；修正該 fixture 的數字型別核對後，重跑全部同方法負例與所有變動的 Controller／Probe 呼叫端，未縮減原 case manifest 或斷言。Core 唯一差異是已被 resolver 拒絕的錯誤資源量測語意之等待原因分類；以來源反向替換及雜湊證明 ready／正式資格路徑未改，並重跑期間及規則 consumer。其餘差異為逐檔核對的 API／JS／測試輸入；聯集覆蓋 860 個唯一案例，廣版原有案例全部有成功結果，並保留原廣版失敗。這不是宣稱失敗的廣版 gate 通過。SQL Server 四項 provider 驗證確實使用目前 Core DLL，無漂移且專用資料庫／instance 已清除。瀏覽器 v3 的 UI／Controller／JS 與此段凍結來源相同，原始 Web DLL 雜湊另存於 browser evidence；驗證未排入草稿切換與 queued V1／editor V2 的保留動線；來源全為合成。
 
 原生 property 形狀補漏：主代理先以實際 XML envelope 重現容量 pilot 的純數字 parser 拒絕，v17 4通過／1失敗；改為共用既有有界 XML parser，未擴張來源資格。v18 保留 93通過／5失敗（四個既有 Razor BOM 契約與一個舊兩次 GET 計數）；還原 BOM 並要求三顆 sensor 完整 12 次 attempted／sent 後，v19 98/98 通過，零失敗／略過／輸入漂移，Rebuild 零錯誤。此 gate 同時補齊原先未選到的 TrustedSnapshotParser 與 ResourceConsumerContract、Help、管理頁檢查。容量 pilot 與資格探測現在解析同一個受限原生 XML 形狀；合成成功不代表現場支援或全範圍容量通過。
+
+### 2026-10-10 人工對應主鍵修復完成
+
+主代理保留候選模型套錯實體的 77通過／1失敗，改到真正 PrtgManualMapRow 後同組78/78通過、零略過／輸入漂移。SQL Server v1 的五項成功及併發觀測失敗均保留；v2 在 StorageBackend 升級前直接核對模型／EnsureCreated，再追蹤兩個專用 SQL 連線與實際 LCK_M_X APPLICATION 等待鏈（第二個等待第一個，第一個等待本機持有者），六項全部通過且資料庫／instance 已清除。未降低資料保留、回滾或併發要求。R16 活動實作項已刪；A0、R15與五組整輪驗收仍保留。

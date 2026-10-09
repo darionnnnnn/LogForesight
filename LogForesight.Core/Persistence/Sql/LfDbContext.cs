@@ -678,7 +678,8 @@ public class LfDbContext : DbContext
         {
             e.ToTable("lf_prtg_manual_map");
             e.HasKey(x => x.DeviceObjid);
-            e.Property(x => x.DeviceObjid).HasColumnName("device_objid");
+            // PRTG owns this key; EnsureCreated must not generate an IDENTITY.
+            e.Property(x => x.DeviceObjid).HasColumnName("device_objid").ValueGeneratedNever();
             e.Property(x => x.HostId).HasColumnName("host_id");
             e.Property(x => x.CreatedBy).HasColumnName("created_by").HasMaxLength(64);
             e.Property(x => x.Note).HasColumnName("note").HasMaxLength(512);

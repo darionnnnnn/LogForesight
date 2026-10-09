@@ -6773,5 +6773,132 @@
       "change": "remove extra empty line at EOF; all non-newline bytes identical"
     }
   },
-  "current_implementation_source_commit": null
+  "current_implementation_source_commit": null,
+  "current_manual_map_schema_repair_20261010": {
+    "owner": "root",
+    "gate": {
+      "gate": "round53-manual-map-schema-current-v2",
+      "driver": {
+        "Owner": "round53-root-controlled-acceptance",
+        "DriverPid": 20636,
+        "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+        "EvidenceName": "round53-manual-map-schema-current-v2",
+        "LiteralFilter": "FullyQualifiedName~PrtgManualMapIdentityContractTests|FullyQualifiedName~SchemaUpgraderPrtgTests|FullyQualifiedName~EfPrtgStoreTests",
+        "HangTimeout": "",
+        "StartedAtUtc": "2026-10-09T20:12:33.2077805+00:00",
+        "Status": "finished",
+        "ExitCode": 0,
+        "Error": null,
+        "PowerScope": "system-required-for-owned-driver-only",
+        "PowerScopeRestored": true,
+        "CompletedAtUtc": "2026-10-09T20:13:47.3856964+00:00"
+      },
+      "result": {
+        "InputCount": 1144,
+        "InputDrift": 0,
+        "Changed": [],
+        "AddedOrRemoved": [],
+        "TestExit": 0
+      },
+      "counters": {
+        "total": "78",
+        "executed": "78",
+        "passed": "78",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failedCases": [],
+      "runOutcome": "Completed",
+      "unitOutcomes": {
+        "Passed": 78
+      },
+      "optionalScaleCasesSkipped": [],
+      "consistentUnitCounts": true,
+      "rootInterrupted": false,
+      "stageAccepted": true,
+      "wholeRoundAccepted": false
+    },
+    "provider": {
+      "Owner": "root",
+      "Provider": "SqlServer LocalDB",
+      "ProviderVersion": "17.0.925.4",
+      "Results": {
+        "fresh-schema-public-upsert-preserves-external-id": {
+          "passed": true
+        },
+        "legacy-identity-upgrade-preserves-all-fields-index-and-public-upsert": {
+          "passed": true
+        },
+        "correct-schema-repeat-is-noop": {
+          "passed": true
+        },
+        "unexpected-metadata-refused-with-original-data-preserved": {
+          "passed": true
+        },
+        "fault-injected-post-copy-batch-rolls-back-schema-and-data": {
+          "passed": true
+        },
+        "concurrent-repairs-serialize-and-second-is-idempotent": {
+          "passed": true
+        }
+      },
+      "LockEvidence": [
+        {
+          "ownedBlockingSession": 52,
+          "ownedRepairSessions": [
+            68,
+            67
+          ],
+          "waiters": 2,
+          "requests": [
+            {
+              "session": 67,
+              "blockingSession": 52,
+              "waitType": "LCK_M_X",
+              "resource": "APPLICATION: 5:0:[logforesight:lf_prtg_manual_map_]:(d7fa5bee)"
+            },
+            {
+              "session": 68,
+              "blockingSession": 67,
+              "waitType": "LCK_M_X",
+              "resource": "APPLICATION: 5:0:[logforesight:lf_prtg_manual_map_]:(d7fa5bee)"
+            }
+          ]
+        }
+      ],
+      "Hashes": {
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/Sql/LfDbContext.cs": "3C8E478364332FD6906DCFEA45D13C14FA7E7159C022D1F2CED443EE8E02E98F",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs": "D4924BE049415E2917D4EDF059D3B161004F6DDCAD05CA55D83C49F0A025D71C",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/bin/Debug/net8.0-windows/LogForesight.Core.dll": "E56530104FEE148DDC630A94B4AE065D230603CDB3667B2A115E461DF27F4A25",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\manual-map-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Core.dll": "E56530104FEE148DDC630A94B4AE065D230603CDB3667B2A115E461DF27F4A25",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\manual-map-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Tests.dll": "490A95EF348D20DA75BC38C38239497F5816F0559154FD3307E8A8BE31ACAD13",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\manual-map-provider\\Program.cs": "C72882B443CA48B815E6C982FF7C14277290829F909BF6B87E54AE5C30088885",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\manual-map-provider\\Probe.csproj": "683C50DE526EEC7C86CA789076191EA3C3DE842C0A6C9B914CDDBA253FF25FEC"
+      },
+      "InputDrift": [],
+      "OwnedDatabaseRemoved": true,
+      "Accepted": true,
+      "WholeRoundAccepted": false,
+      "SourceTruth": "isolated manual-map schema repair; rollback check explicitly fault-injects the original batch"
+    },
+    "preserved_failures": [
+      "round53-manual-map-schema-current-v1",
+      "round53-manual-map-sql-provider-current-v1"
+    ],
+    "active_implementation_delivery_count": 2,
+    "active_acceptance_groups": 5,
+    "implemented": true,
+    "whole_round_accepted": false
+  }
 }
