@@ -15,6 +15,9 @@ public class PrtgClientException : Exception
     public PrtgClientException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
+/// <summary>Transport metadata is retained separately from the sensor's measurement clock.</summary>
+public sealed record PrtgSourceResponse(string Content, DateTimeOffset? HttpDateUtc, DateTimeOffset ReceivedAtUtc);
+
 /// <summary>
 /// PRTG 監控系統 HTTP 存取客戶端（PRTG 第 1 輪批次B、第 2 輪批次A）。
 /// 負責與 PRTG API 進行 HTTP 通訊，自動在 Query String 附加 API Token 或帳號與 passhash。
@@ -55,6 +58,12 @@ public sealed class PrtgClient : IDisposable
     internal TimeSpan Timeout => _http.Timeout;
     internal HttpMessageHandler Handler { get; }
     public PrtgRequestBudget? Budget { get; }
+    /// <summary>Workload lane used when acquiring the shared in-flight slot.</summary>
+    public PrtgRequestPurpose RequestPurpose { get; set; } = PrtgRequestPurpose.General;
+    /// <summary>Exact admission plan captured by snapshot/profile workers before this request sequence.</summary>
+    public string? AdmissionPlanFingerprint { get; set; }
+    /// <summary>Optional diagnostic hook invoked when a shared-budgeted Table request is admitted to transport.</summary>
+    public Action? TableRequestSent { get; set; }
 
     public PrtgClient(
         string baseUrl,
@@ -196,16 +205,16 @@ public sealed class PrtgClient : IDisposable
             var uri = new Uri($"{_baseUrl}/api/getpasshash.htm?{query}", UriKind.Absolute);
 
             Checkpoint(ct);
-            using var lease = Budget != null
+            using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General
                 ? await Budget.AcquireAsync(PrtgEndpointCategory.Other, ct)
-                : null;
+                : await Budget.AcquireAsync(PrtgEndpointCategory.Other, ct, RequestPurpose, AdmissionPlanFingerprint);
 
             HttpResponseMessage resp;
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
                 Checkpoint(ct);
-                lease?.MarkRequestSent();
+                if (lease != null) await lease.MarkRequestSentAsync(ct);
                 resp = await _http.SendAsync(request, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -307,6 +316,30 @@ public sealed class PrtgClient : IDisposable
     /// 呼叫 PRTG API GET 端點並取得原始 JSON 字串。
     /// </summary>
     public async Task<string> GetJsonAsync(string relativePathAndQuery, CancellationToken ct = default)
+        => (await GetResponseCoreAsync(relativePathAndQuery, null, true, ct)).Content;
+
+    public async Task<string> GetBoundedJsonAsync(string relativePathAndQuery, int maximumResponseBytes,
+        CancellationToken ct = default, Action? onRequestSent = null, Action<TimeSpan>? onResponseRead = null)
+    {
+        if (maximumResponseBytes is < 1 or > 2 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(maximumResponseBytes));
+        return (await GetResponseCoreAsync(relativePathAndQuery, maximumResponseBytes, true, ct, onRequestSent, onResponseRead)).Content;
+    }
+
+    public Task<PrtgSourceResponse> GetBoundedJsonResponseAsync(string relativePathAndQuery, int maximumResponseBytes,
+        CancellationToken ct = default) => GetBoundedResponseAsync(relativePathAndQuery, maximumResponseBytes, true, ct);
+
+    /// <summary>Authenticated, budgeted, capped XML transport. The caller must parse XML with DTDs disabled.</summary>
+    public Task<PrtgSourceResponse> GetBoundedXmlAsync(string relativePathAndQuery, int maximumResponseBytes,
+        CancellationToken ct = default) => GetBoundedResponseAsync(relativePathAndQuery, maximumResponseBytes, false, ct);
+
+    private Task<PrtgSourceResponse> GetBoundedResponseAsync(string path, int maximumResponseBytes, bool expectJson, CancellationToken ct)
+    {
+        if (maximumResponseBytes is < 1 or > 2 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(maximumResponseBytes));
+        return GetResponseCoreAsync(path, maximumResponseBytes, expectJson, ct);
+    }
+
+    private async Task<PrtgSourceResponse> GetResponseCoreAsync(string relativePathAndQuery, int? maximumResponseBytes,
+        bool expectJson, CancellationToken ct, Action? onRequestSent = null, Action<TimeSpan>? onResponseRead = null)
     {
         Checkpoint(ct);
         // 帳號類認證（password／passhash）的憑證失敗要黏住：每個 sensor 的數值擷取各自
@@ -322,17 +355,32 @@ public sealed class PrtgClient : IDisposable
         var category = PrtgRequestBudget.Classify(relativePathAndQuery);
 
         Checkpoint(ct);
-        using var lease = Budget != null
+        using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General
             ? await Budget.AcquireAsync(category, ct)
-            : null;
+            : await Budget.AcquireAsync(category, ct, RequestPurpose, AdmissionPlanFingerprint);
+        // Create the linked token now, but do not start its HTTP timer until rate/quota admission finishes.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var requestToken = ct;
+        Stopwatch? transportTimer = null;
 
         HttpResponseMessage resp;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             Checkpoint(ct);
-            lease?.MarkRequestSent();
-            resp = await _http.SendAsync(request, ct);
+            // Purpose-lane pacing is admission delay, like shared quota and permit waits.
+            if (lease != null) await lease.MarkRequestSentAsync(ct);
+            transportTimer = Stopwatch.StartNew();
+            // Start the HTTP timeout only after every admission delay, immediately before send.
+            deadline.CancelAfter(_http.Timeout);
+            requestToken = deadline.Token;
+            if (category == PrtgEndpointCategory.Table)
+            {
+                TableRequestSent?.Invoke();
+                onRequestSent?.Invoke();
+            }
+            resp = await _http.SendAsync(request, maximumResponseBytes.HasValue
+                ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, requestToken);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -378,7 +426,22 @@ public sealed class PrtgClient : IDisposable
             string text;
             try
             {
-                text = await resp.Content.ReadAsStringAsync(ct);
+                if (maximumResponseBytes is { } limit)
+                {
+                    if (resp.Content.Headers.ContentLength > limit) throw new PrtgClientException("PRTG 探測回應超過有界讀取上限。");
+                    await using var stream = await resp.Content.ReadAsStreamAsync(requestToken);
+                    using var buffer = new MemoryStream();
+                    var chunk = new byte[Math.Min(4096, limit + 1)];
+                    int count;
+                    while ((count = await stream.ReadAsync(chunk, requestToken)) > 0)
+                    {
+                        Checkpoint(requestToken);
+                        if (buffer.Length + count > limit) throw new PrtgClientException("PRTG 探測回應超過有界讀取上限。");
+                        buffer.Write(chunk, 0, count);
+                    }
+                    text = new System.Text.UTF8Encoding(false, true).GetString(buffer.ToArray());
+                }
+                else text = await resp.Content.ReadAsStringAsync(requestToken);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -395,15 +458,17 @@ public sealed class PrtgClient : IDisposable
             }
 
             var trimmed = text.Trim();
-            if (trimmed.StartsWith('<'))
+            if (expectJson && trimmed.StartsWith('<'))
             {
                 var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;
-                var sanitized = head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+                var sanitized = StripSecrets(head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " "));
                 throw new PrtgClientException(
                     $"PRTG 回傳 HTML 而非 JSON（登入頁代表連線位址或認證資訊有誤；空白頁多半是伺服器端處理逾時或負載過高）：{sanitized}");
             }
 
-            return text;
+            transportTimer?.Stop();
+            if (transportTimer is { } completedTransport) onResponseRead?.Invoke(completedTransport.Elapsed);
+            return new(text, resp.Headers.Date?.ToUniversalTime(), DateTimeOffset.UtcNow);
         }
     }
 

@@ -1,4 +1,5 @@
 using Xunit;
+using System.Text.Json;
 
 namespace LogForesight.Tests;
 
@@ -33,6 +34,46 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Headline = $"{date:MM-dd}"
     };
 
+    private static string ExpectedAttachedAiReportInput(DailyAnalysisRecord parent, AiOutcome outcome,
+        bool includeAddendum = true)
+    {
+        var final = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(
+            System.Text.Json.JsonSerializer.Serialize(parent))!;
+        final.Headline = outcome.Headline;
+        final.Summary = outcome.Summary;
+        final.TrendAssessment = outcome.TrendAssessment;
+        final.Action = outcome.Action;
+        final.RiskLevel = outcome.RiskLevel;
+        final.RiskBasis = outcome.RiskBasis;
+        final.AiAnalyzed = outcome.AiAnalyzed;
+        final.AiPending = false;
+        final.ScreenedTailCount = outcome.ScreenedTailCount;
+        final.ScreeningNotes = outcome.ScreeningNotes;
+        if (includeAddendum && outcome.UncoveredChecksAddendum is { Count: > 0 })
+            foreach (var note in outcome.UncoveredChecksAddendum)
+                if (!final.UncoveredChecks.Contains(note, StringComparer.Ordinal)) final.UncoveredChecks.Add(note);
+        return HostDayWorkflowFingerprint.ForReportInput(final);
+    }
+
+    [Fact]
+    public void ReportInputFingerprintTracksRenderedNarrativeWithoutChangingParentDecisionFingerprint()
+    {
+        var parent = Record(DateTime.Today, RiskLevels.High);
+        parent.Summary = "original summary";
+        var decisionFingerprint = HostDayWorkflowFingerprint.ForRecord(parent);
+        var reportFingerprint = HostDayWorkflowFingerprint.ForReportInput(parent);
+
+        parent.RiskReportPending = true;
+        Assert.Equal(decisionFingerprint, HostDayWorkflowFingerprint.ForRecord(parent));
+        Assert.Equal(reportFingerprint, HostDayWorkflowFingerprint.ForReportInput(parent));
+        parent.RiskReportPending = false;
+
+        parent.Summary = "changed summary";
+
+        Assert.Equal(decisionFingerprint, HostDayWorkflowFingerprint.ForRecord(parent));
+        Assert.NotEqual(reportFingerprint, HostDayWorkflowFingerprint.ForReportInput(parent));
+    }
+
     // ── ReadRecent：錨定日期窗 ────────────────────────────────────────────────
 
     [Fact]
@@ -44,6 +85,41 @@ public class AnalysisRecordStoreContractTests : IDisposable
         store.Append(Record(anchor.AddDays(-2)));
 
         Assert.Equal(2, store.ReadRecent(anchor, 3).Count);
+    }
+
+    [Fact]
+    public void WorkflowRecoveryPage_usesBoundedSqlPrefixAndAdvancesPastOversizedRow()
+    {
+        var query = (EfAnalysisRecordStore)CreateStore();
+        var day = new DateTime(2026, 10, 5);
+        var oversized = new DailyAnalysisRecord
+        {
+            HostId = 42, Host = "large-row", Date = day, RiskLevel = RiskLevels.Low,
+            Headline = new string('x', WorkflowRecoveryPage.MaximumPayloadBytes + 256)
+        };
+        query.Append(oversized);
+        var normal = new DailyAnalysisRecord
+        { HostId = 43, Host = "small-row", Date = day, RiskLevel = RiskLevels.Low, Headline = "bounded" };
+        query.Append(normal);
+
+        var page = query.QueryWorkflowRecoveryPage(day, day, 0, WorkflowRecoveryPage.MaximumRows);
+
+        Assert.Equal(2, page.RawCount);
+        Assert.Equal(normal.RecordId, page.NextRecordId);
+        Assert.Single(page.Records);
+        Assert.Equal(normal.RecordId, page.Records[0].RecordId);
+        Assert.True(page.CapturedWriteRevisions!.ContainsKey(normal.RecordId));
+        var waiting = Assert.Single(page.WaitingHostDays);
+        Assert.Equal(oversized.RecordId, waiting.RecordId);
+        Assert.Equal("recovery-payload-over-limit", waiting.ReasonCode);
+        using (var context = _fx.NewContext())
+            Assert.Equal(context.DailyRecords.Single(row => row.RecordId == oversized.RecordId).WriteRevision,
+                waiting.CapturedWriteRevision);
+        Assert.Equal(DateTimeKind.Utc, waiting.CapturedAtUtc.Kind);
+        Assert.InRange(page.PayloadBytesRead, 0, (long)WorkflowRecoveryPage.MaximumRows *
+            WorkflowRecoveryPage.MaximumPayloadPrefixCharacters * 4);
+        Assert.Throws<ArgumentOutOfRangeException>(() => query.QueryWorkflowRecoveryPage(day, day, 0,
+            WorkflowRecoveryPage.MaximumRows + 1));
     }
 
     /// <summary>
@@ -734,6 +810,439 @@ public class AnalysisRecordStoreContractTests : IDisposable
         using var ctx = _fx.NewContext();
         Assert.Empty(ctx.DailyRecords);
         Assert.Empty(ctx.TopIssues);
+    }
+
+    [Fact]
+    public void AttachDailyRiskReport_報告內容與父列參照同交易且過期草稿不覆寫現行內容()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-1);
+        var parent = new DailyAnalysisRecord
+        {
+            HostId = 101,
+            Host = "SRV-TEST",
+            Date = date,
+            RiskLevel = "高",
+            TopIssues = []
+        };
+        store.Append(parent);
+        var expected = HostDayWorkflowFingerprint.PrtgInputFingerprint(parent);
+
+        var draftA = new PreparedRiskReport(date,
+            new HostKey { HostId = 101, HostName = "SRV-TEST" },
+            $"{date:yyyy-MM-dd}_高風險_儲存裝置.txt", "report-content-A",
+            new ReportMeta(RiskLevels.High, "儲存裝置"), expected,
+            HostDayWorkflowFingerprint.ForReportInput(parent));
+        var decision = HostDayWorkflowFingerprint.ForRecord(parent);
+        var reportRefA = store.AttachDailyRiskReport(date, draftA, parent.RecordId, decision, expected);
+        Assert.NotNull(reportRefA);
+        var saved = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(reportRefA, saved.ReportFile);
+        Assert.Equal(expected, saved.PrtgReportEvidenceFingerprint);
+        var reports = new EfReportStore(_fx.NewContext);
+        Assert.Equal("report-content-A", reports.Read(draftA.Host, date, ReportKinds.DailyRisk)?.Content);
+
+        var staleDraftB = draftA with
+        {
+            Content = "stale-report-content-B",
+            PrtgEvidenceFingerprint = new string('0', 64)
+        };
+        Assert.Null(store.AttachDailyRiskReport(date, staleDraftB, parent.RecordId, decision,
+            staleDraftB.PrtgEvidenceFingerprint));
+        var unchanged = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(reportRefA, unchanged.ReportFile);
+        Assert.Equal(expected, unchanged.PrtgReportEvidenceFingerprint);
+        Assert.Equal("report-content-A", reports.Read(draftA.Host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void AttachDailyRiskReport_舊日報告以新產生時間保留而非立即清除()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-181);
+        var parent = new DailyAnalysisRecord
+        {
+            HostId = 102, Host = "OLD-REPORT-HOST", Date = date, RiskLevel = RiskLevels.High,
+            TopIssues = []
+        };
+        store.Append(parent);
+        var prtg = HostDayWorkflowFingerprint.PrtgInputFingerprint(parent);
+        var draft = new PreparedRiskReport(date, new HostKey { HostId = parent.HostId, HostName = parent.Host },
+            $"{date:yyyy-MM-dd}_高風險_服務.txt", "freshly generated historical report",
+            new ReportMeta(RiskLevels.High, "服務"), prtg,
+            HostDayWorkflowFingerprint.ForReportInput(parent));
+
+        Assert.NotNull(store.AttachDailyRiskReport(date, draft, parent.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(parent), prtg));
+        var reports = new EfReportStore(_fx.NewContext);
+        Assert.Equal(0, reports.Prune(180));
+        Assert.Equal("freshly generated historical report",
+            reports.Read(draft.Host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void AttachDailyRiskReport_相同PRTG但替換的父列不能承接舊報告草稿()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-3);
+        var host = new HostKey { HostId = 103, HostName = "REPLACED-REPORT-HOST" };
+        var original = new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = RiskLevels.High,
+            ErrorCount = 3, TopIssues = []
+        };
+        var reportInputFingerprint = HostDayWorkflowFingerprint.ForReportInput(original);
+        store.Append(original);
+        var prtg = HostDayWorkflowFingerprint.PrtgInputFingerprint(original);
+        var oldDecision = HostDayWorkflowFingerprint.ForRecord(original);
+        var draft = new PreparedRiskReport(date, host, $"{date:yyyy-MM-dd}_高風險_服務.txt",
+            "old parent report", new ReportMeta(RiskLevels.High, "服務"), prtg,
+            reportInputFingerprint);
+        var originalRef = store.AttachDailyRiskReport(date, draft, original.RecordId, oldDecision, prtg);
+        Assert.NotNull(originalRef);
+
+        using (var context = _fx.NewContext())
+        {
+            var row = context.DailyRecords.Single(item => item.RecordId == original.RecordId);
+            var changed = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson)!;
+            changed.RiskLevel = RiskLevels.Medium;
+            changed.ErrorCount = 9;
+            row.ContentJson = System.Text.Json.JsonSerializer.Serialize(changed);
+            row.RiskLevel = RiskLevels.Medium;
+            row.ErrorCount = 9;
+            context.SaveChanges();
+        }
+        Assert.Equal(prtg, HostDayWorkflowFingerprint.PrtgInputFingerprint(
+            Assert.Single(store.ReadRecent(date, 1))));
+        Assert.Null(store.AttachDailyRiskReport(date, draft, original.RecordId, oldDecision, prtg));
+        Assert.Equal(originalRef, Assert.Single(store.ReadRecent(date, 1)).ReportFile);
+
+        store.DeleteDays([date]);
+        var replacement = new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = RiskLevels.Medium,
+            ErrorCount = 9, TopIssues = []
+        };
+        store.Append(replacement);
+        Assert.Equal(prtg, HostDayWorkflowFingerprint.PrtgInputFingerprint(replacement));
+        Assert.NotEqual(oldDecision, HostDayWorkflowFingerprint.ForRecord(replacement));
+
+        Assert.Null(store.AttachDailyRiskReport(date, draft, original.RecordId, oldDecision, prtg));
+        var current = Assert.Single(store.ReadRecent(date, 1));
+        Assert.NotEqual(original.RecordId, current.RecordId);
+        Assert.Null(current.ReportFile);
+        Assert.Equal("old parent report", new EfReportStore(_fx.NewContext)
+            .Read(host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void AttachDailyRiskReport_父列更新失敗會回滾報告Upsert()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-4);
+        var host = new HostKey { HostId = 104, HostName = "REPORT-ROLLBACK-HOST" };
+        var parent = new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = RiskLevels.High,
+            TopIssues = []
+        };
+        store.Append(parent);
+        var prtg = HostDayWorkflowFingerprint.PrtgInputFingerprint(parent);
+        var inputFingerprint = HostDayWorkflowFingerprint.ForReportInput(parent);
+        var decision = HostDayWorkflowFingerprint.ForRecord(parent);
+        var first = new PreparedRiskReport(date, host, $"{date:yyyy-MM-dd}_高風險_服務.txt",
+            "original report", new ReportMeta(RiskLevels.High, "服務"), prtg, inputFingerprint);
+        var originalRef = store.AttachDailyRiskReport(date, first, parent.RecordId, decision, prtg);
+        Assert.NotNull(originalRef);
+        // A prior report may describe older evidence. Change its marker so the guarded attach
+        // must actually UPDATE the parent; an identical pointer/marker is a valid EF no-op.
+        var priorMarker = new string('f', 64);
+        using (var context = _fx.NewContext())
+        {
+            var row = context.DailyRecords.Single(item => item.RecordId == parent.RecordId);
+            var prior = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson)!;
+            prior.PrtgReportEvidenceFingerprint = priorMarker;
+            row.ContentJson = JsonSerializer.Serialize(prior);
+            context.SaveChanges();
+        }
+        var replacement = first with { Content = "must roll back" };
+        using (var context = _fx.NewContext())
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(context.Database,
+                "CREATE TRIGGER fail_daily_report_parent_update BEFORE UPDATE ON lf_daily_records BEGIN SELECT RAISE(ABORT, 'fixture parent update failure'); END;");
+
+        Assert.Throws<Microsoft.EntityFrameworkCore.DbUpdateException>(() =>
+            store.AttachDailyRiskReport(date, replacement, parent.RecordId, decision, prtg));
+
+        var current = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(originalRef, current.ReportFile);
+        Assert.Equal(priorMarker, current.PrtgReportEvidenceFingerprint);
+        Assert.Equal("original report", new EfReportStore(_fx.NewContext)
+            .Read(host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void TryAttachAiResult_報告內容與AI父列同交易且不匹配草稿不覆寫現行報告()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-2);
+        var host = new HostKey { HostId = 101, HostName = "SRV-TEST" };
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = date,
+            RiskLevel = RiskLevels.High,
+            AiPending = true,
+            TopIssues = []
+        });
+
+        var parent = Assert.Single(store.ReadRecent(date, 1));
+        var fingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(parent);
+        const string cacheNote = "本報告原始 log 來自有界風險事件暫存。";
+        var currentOutcome = new AiOutcome("標題 A", "摘要 A", "趨勢", "處置", RiskLevels.High, null,
+            true, 0, [], null, [], InputPrtgFingerprint: fingerprint,
+            UncoveredChecksAddendum: [cacheNote], ReportPrtgEvidenceFingerprint: fingerprint);
+        var draftA = new PreparedRiskReport(date, host, $"{date:yyyy-MM-dd}_高風險_儲存裝置.txt",
+            "ai-report-content-A", new ReportMeta(RiskLevels.High, "儲存裝置"), fingerprint,
+            ExpectedAttachedAiReportInput(parent, currentOutcome));
+        currentOutcome = currentOutcome with { ReportDraft = draftA };
+
+        Assert.True(store.TryAttachAiResult(date, currentOutcome, parent.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(parent), fingerprint));
+
+        var attached = Assert.Single(store.ReadRecent(date, 1));
+        Assert.NotNull(attached.ReportFile);
+        Assert.Equal(fingerprint, attached.PrtgReportEvidenceFingerprint);
+        Assert.Contains(cacheNote, attached.UncoveredChecks);
+        var reports = new EfReportStore(_fx.NewContext);
+        Assert.Equal("ai-report-content-A", reports.Read(host, date, ReportKinds.DailyRisk)?.Content);
+
+        var changedNarrative = currentOutcome with { Summary = "摘要 B" };
+        changedNarrative = changedNarrative with
+        {
+            ReportDraft = draftA with { Content = "stale narrative report" }
+        };
+        Assert.False(store.TryAttachAiResult(date, changedNarrative, attached.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(attached), fingerprint));
+        Assert.Equal("ai-report-content-A", reports.Read(host, date, ReportKinds.DailyRisk)?.Content);
+
+        const string lateProvenanceNote = "本次補跑原始 log 來自有限容量快取。";
+        var incompatibleOutcome = currentOutcome with { UncoveredChecksAddendum = [lateProvenanceNote] };
+        var incompatibleDraft = draftA with
+        {
+            Content = "report omits final provenance",
+            DecisionInputFingerprint = ExpectedAttachedAiReportInput(attached, incompatibleOutcome,
+                includeAddendum: false)
+        };
+        incompatibleOutcome = incompatibleOutcome with { ReportDraft = incompatibleDraft };
+        Assert.False(store.TryAttachAiResult(date, incompatibleOutcome, attached.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(attached), fingerprint));
+        Assert.Equal("ai-report-content-A", reports.Read(host, date, ReportKinds.DailyRisk)?.Content);
+
+        var staleDraftB = draftA with
+        {
+            Content = "ai-report-content-B-stale",
+            PrtgEvidenceFingerprint = new string('0', 64)
+        };
+        var staleOutcome = currentOutcome with
+        {
+            Summary = "stale AI summary B",
+            InputPrtgFingerprint = fingerprint,
+            ReportPrtgEvidenceFingerprint = staleDraftB.PrtgEvidenceFingerprint,
+            ReportDraft = staleDraftB
+        };
+        Assert.False(store.TryAttachAiResult(date, staleOutcome, attached.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(attached), fingerprint));
+
+        var unchanged = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(attached.ReportFile, unchanged.ReportFile);
+        Assert.Equal(fingerprint, unchanged.PrtgReportEvidenceFingerprint);
+        Assert.Equal("ai-report-content-A", reports.Read(host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void TryAttachAiResult_父列更新失敗會回滾AI報告Upsert()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-5);
+        var host = new HostKey { HostId = 105, HostName = "AI-REPORT-ROLLBACK-HOST" };
+        var parentRow = new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = RiskLevels.High,
+            AiPending = true, AiAnalyzed = false, TopIssues = []
+        };
+        store.Append(parentRow);
+        var parent = Assert.Single(store.ReadRecent(date, 1));
+        var prtg = HostDayWorkflowFingerprint.PrtgInputFingerprint(parent);
+        var decisionInput = HostDayWorkflowFingerprint.ForReportInput(parent);
+        var existingDraft = new PreparedRiskReport(date, host, $"{date:yyyy-MM-dd}_高風險_服務.txt",
+            "existing AI report", new ReportMeta(RiskLevels.High, "服務"), prtg, decisionInput);
+        var existingRef = store.AttachDailyRiskReport(date, existingDraft, parent.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(parent), prtg);
+        Assert.NotNull(existingRef);
+        var current = Assert.Single(store.ReadRecent(date, 1));
+        var outcome = new AiOutcome("new headline", "new summary", "trend", "action", RiskLevels.High,
+            null, true, 0, [], null, [], InputPrtgFingerprint: prtg,
+            ReportPrtgEvidenceFingerprint: prtg);
+        var replacementDraft = existingDraft with
+        {
+            Content = "replacement AI report",
+            DecisionInputFingerprint = ExpectedAttachedAiReportInput(current, outcome)
+        };
+        outcome = outcome with { ReportDraft = replacementDraft };
+        using (var context = _fx.NewContext())
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(context.Database,
+                "CREATE TRIGGER fail_ai_report_parent_update BEFORE UPDATE ON lf_daily_records BEGIN SELECT RAISE(ABORT, 'fixture AI parent update failure'); END;");
+
+        Assert.Throws<Microsoft.EntityFrameworkCore.DbUpdateException>(() =>
+            store.TryAttachAiResult(date, outcome, current.RecordId,
+                HostDayWorkflowFingerprint.ForRecord(current), prtg));
+
+        var unchanged = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(existingRef, unchanged.ReportFile);
+        Assert.True(unchanged.AiPending);
+        Assert.False(unchanged.AiAnalyzed);
+        Assert.Equal("existing AI report", new EfReportStore(_fx.NewContext)
+            .Read(host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void NotificationWorkflowUsesBoundedScalarRowsEvenWithOversizedInvalidContent()
+    {
+        var store = CreateStore();
+        var query = (IAnalysisRecordQuery)store;
+        var day = DateTime.Today.AddDays(-1);
+        store.Append(new DailyAnalysisRecord { HostId = 101, Host = "scalar-low", Date = day, RiskLevel = RiskLevels.Low });
+        store.Append(new DailyAnalysisRecord { HostId = 102, Host = "scalar-high", Date = day, RiskLevel = RiskLevels.High });
+        using (var db = _fx.NewContext())
+        {
+            foreach (var row in db.DailyRecords) row.ContentJson = new string('x', 1_000_000);
+            db.SaveChanges();
+        }
+        var first = query.QueryNotificationWorkflowPage(day, day, 0, 1);
+        Assert.Single(first);
+        var second = query.QueryNotificationWorkflowPage(day, day, first[0].RecordId, 1);
+        Assert.Single(second);
+        Assert.NotEqual(first[0].RecordId, second[0].RecordId);
+        Assert.Equal(new[] { RiskLevels.Low, RiskLevels.High }, first.Concat(second).Select(row => row.RiskLevel));
+        Assert.Empty(query.QueryNotificationWorkflowPage(day, day, second[0].RecordId, 500));
+        Assert.Throws<ArgumentOutOfRangeException>(() => query.QueryNotificationWorkflowPage(day, day, 0, 501));
+    }
+
+    [Fact]
+    public void ExactNotificationParentLookupPreservesSerializedHostAndDateKindAndReportsBoundedOversize()
+    {
+        var query = (EfAnalysisRecordStore)CreateStore();
+        var localDate = DateTime.SpecifyKind(new DateTime(2026, 10, 5), DateTimeKind.Local);
+        var parent = new DailyAnalysisRecord
+        {
+            HostId = 4401, Host = "serialized-parent-host", Date = localDate, RiskLevel = RiskLevels.High,
+            Headline = "bounded exact parent"
+        };
+        query.Append(parent);
+
+        var lookup = query.LookupByRecordId(parent.RecordId);
+
+        Assert.True(lookup.Exists);
+        Assert.False(lookup.IdentityMismatch);
+        Assert.Equal(parent.RecordId, lookup.Record!.RecordId);
+        Assert.Equal(4401, lookup.Record.HostId);
+        Assert.Equal("serialized-parent-host", lookup.Record.Host);
+        Assert.Equal(DateTimeKind.Local, lookup.Record.Date.Kind);
+        Assert.Equal(localDate.Date, lookup.Record.Date.Date);
+
+        var oversized = new DailyAnalysisRecord
+        {
+            HostId = 4402, Host = "oversized-parent", Date = localDate, RiskLevel = RiskLevels.High,
+            Headline = new string('x', WorkflowRecoveryPage.MaximumPayloadBytes + 512)
+        };
+        query.Append(oversized);
+        var overLimit = query.LookupByRecordId(oversized.RecordId);
+        Assert.True(overLimit.Exists);
+        Assert.True(overLimit.PayloadTooLarge);
+        Assert.Null(overLimit.Record);
+    }
+
+    [Fact]
+    public void ExactNotificationParentLookupRejectsSqlIdentityMismatchWithoutRewritingJsonIdentity()
+    {
+        var query = (EfAnalysisRecordStore)CreateStore();
+        var date = new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Local);
+        var parent = new DailyAnalysisRecord { HostId = 4403, Host = "serialized-host", Date = date, RiskLevel = RiskLevels.High };
+        query.Append(parent);
+        using (var db = _fx.NewContext())
+        {
+            var row = db.DailyRecords.Single(candidate => candidate.RecordId == parent.RecordId);
+            var stored = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson)!;
+            stored.HostId++;
+            stored.Date = stored.Date.AddDays(1);
+            row.ContentJson = System.Text.Json.JsonSerializer.Serialize(stored);
+            db.SaveChanges();
+        }
+
+        var lookup = query.LookupByRecordId(parent.RecordId);
+
+        Assert.True(lookup.Exists);
+        Assert.True(lookup.IdentityMismatch);
+        Assert.Null(lookup.Record);
+    }
+
+    [Fact]
+    public void AttachPrtgFindings_零FindingManifest原子持久_支援舊JSON及父版本拒絕()
+    {
+        var store = CreateStore();
+        var hostId = 991L;
+        var date = new DateTime(2026, 10, 3);
+        var appended = new DailyAnalysisRecord
+        {
+            HostId = hostId, Host = "manifest-host", Date = date,
+            LogSource = AnalysisLogSource.Netiq, RiskLevel = "低", ErrorCount = 0,
+            TopIssues = new List<LogIssueSignature>()
+        };
+        store.Append(appended);
+        Assert.True(appended.RecordId > 0);
+        var parent = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Null(parent.PrtgManifest); // old ContentJson omits the additive field
+
+        var manifest = new PrtgDecisionManifest
+        {
+            ParentRecordId = parent.RecordId,
+            ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(parent),
+            ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(parent.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
+            SourceGeneration = "source-v1",
+            ResourceFingerprint = new string('a', 64),
+            SemanticFingerprint = new string('b', 64),
+            StrategyFingerprint = new string('c', 64),
+            HostMappingFingerprint = new string('f', 64),
+            RuleFingerprint = new string('d', 64),
+            EvidenceFingerprint = new string('e', 64),
+            FindingFingerprint = PrtgFindingMapper.Fingerprint(Array.Empty<LogIssueSignature>()),
+            CompletedAtUtc = DateTime.UtcNow,
+            Outcome = "complete"
+        };
+
+        Assert.False(store.AttachPrtgFindings(hostId, date, Array.Empty<LogIssueSignature>(), NoPatternIds,
+            out _, aiConfigured: true, manifest: manifest)); // no finding delta; manifest is still committed
+        var persisted = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Empty(persisted.TopIssues);
+        Assert.NotNull(persisted.PrtgManifest);
+        Assert.True(persisted.PrtgManifest!.ParentRecordId > 0);
+        Assert.Equal(manifest.EvidenceFingerprint, persisted.PrtgManifest.EvidenceFingerprint);
+        Assert.Equal(PrtgFindingMapper.Fingerprint(Array.Empty<LogIssueSignature>()), persisted.PrtgManifest.FindingFingerprint);
+        Assert.Equal(manifest.ParentFingerprint, HostDayWorkflowFingerprint.ForParentRecord(persisted));
+        Assert.True(HostDayWorkflowFingerprint.HasValidPrtgManifest(persisted));
+
+        var changedParent = new DailyAnalysisRecord
+        {
+            HostId = persisted.HostId, Date = persisted.Date, LogSource = persisted.LogSource,
+            LatestNetiqAttemptStatus = "success", LatestNetiqAttemptAtUtc = DateTime.UtcNow,
+            ErrorCount = 1, TopIssues = persisted.TopIssues
+        };
+        Assert.NotEqual(persisted.PrtgManifest.ParentFingerprint,
+            HostDayWorkflowFingerprint.ForParentRecord(changedParent));
+        changedParent.RecordId = persisted.RecordId;
+        changedParent.PrtgManifest = persisted.PrtgManifest;
+        Assert.False(HostDayWorkflowFingerprint.HasValidPrtgManifest(changedParent));
     }
 
     [Fact]

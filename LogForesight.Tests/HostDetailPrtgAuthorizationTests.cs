@@ -24,10 +24,12 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
     {
         private readonly long _visibleHostId;
         private readonly string? _ipAddress;
-        public OnlyVisible(long visibleHostId, string? ipAddress = null)
+        private readonly bool _caseGrantOnly;
+        public OnlyVisible(long visibleHostId, string? ipAddress = null, bool caseGrantOnly = false)
         {
             _visibleHostId = visibleHostId;
             _ipAddress = ipAddress;
+            _caseGrantOnly = caseGrantOnly;
         }
 
         public void EnsureVisible(long hostId)
@@ -41,15 +43,15 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
         public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => throw new NotSupportedException("測試未使用此方法");
         public List<WebHost> GetVisibleHosts() => new() { new WebHost { HostId = _visibleHostId, IpAddress = _ipAddress } };
         public IReadOnlyList<string> GetCaseGrantHostNames() => throw new NotSupportedException("測試未使用此方法");
-        public bool IsCaseGrantOnly(long hostId) => false;
+        public bool IsCaseGrantOnly(long hostId) => _caseGrantOnly && hostId == _visibleHostId;
         public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
         public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();
     }
 
     // RecordDetailQueryService 在 /prtg 這條路徑完全用不到，傳 null 只為了建構 controller；
     // 這不是替身假值進斷言——斷言的是授權例外與回應內容，與 service 無關。
-    private HostDetailController CreateController(long visibleHostId, string? ipAddress = null) =>
-        new(null!, new EfPrtgStore(_fx.NewContext), new OnlyVisible(visibleHostId, ipAddress));
+    private HostDetailController CreateController(long visibleHostId, string? ipAddress = null, bool caseGrantOnly = false) =>
+        new(null!, new EfPrtgStore(_fx.NewContext), new OnlyVisible(visibleHostId, ipAddress, caseGrantOnly));
 
     [Fact]
     public void 不可見的主機_查詢PRTG對應擲NotFound()
@@ -58,6 +60,48 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
 
         var ex = Assert.Throws<DomainException>(() => controller.Prtg(999));
         Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    [Fact]
+    public void 僅有案件授與的主機_查詢PRTG對應擲Forbidden()
+    {
+        var controller = CreateController(visibleHostId: 10, caseGrantOnly: true);
+
+        var ex = Assert.Throws<DomainException>(() => controller.Prtg(10));
+
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+    }
+
+    [Fact]
+    public void 一般可見主機_查詢PRTG對應仍回傳裝置與感測器()
+    {
+        var now = DateTime.UtcNow;
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.PrtgDevices.Add(new PrtgDeviceRow
+            {
+                Objid = 1001, Name = "SW-A", Ip = "10.0.0.1", SyncedAt = now, CreatedAt = now
+            });
+            ctx.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = 2001, DeviceObjid = 1001, Name = "Ping", SensorType = "ping",
+                Category = "network", Paused = false, SyncedAt = now, CreatedAt = now
+            });
+            ctx.PrtgHostMaps.Add(new PrtgHostMapRow
+            {
+                MapDate = DateTime.Today, DeviceObjid = 1001, Ip = "10.0.0.1", HostId = 10,
+                HostName = "SRV-10", MapStatus = PrtgMapStatus.Ok, CreatedAt = now
+            });
+            ctx.SaveChanges();
+        }
+
+        var response = CreateController(visibleHostId: 10).Prtg(10);
+
+        var device = Assert.Single(response.Data!.Devices);
+        Assert.Equal(1001, device.DeviceObjid);
+        var sensor = Assert.Single(device.Sensors);
+        Assert.Equal(2001, sensor.Objid);
+        Assert.Equal("Ping", sensor.Name);
     }
 
     [Fact]

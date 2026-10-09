@@ -121,10 +121,10 @@ function renderCard(cardKey, itemData, metricLabels) {
     if (metricsContainer) {
         metricsContainer.replaceChildren();
         if (itemData.keyMetrics) {
-            for (const [key, label] of metricLabels) {
+            for (const [key, label, displayOverride] of metricLabels) {
                 if (key in itemData.keyMetrics) {
                     const rawVal = itemData.keyMetrics[key];
-                    const displayVal = typeof rawVal === 'number' ? formatNumber(rawVal) : String(rawVal);
+                    const displayVal = displayOverride ?? (typeof rawVal === 'number' ? formatNumber(rawVal) : String(rawVal));
                     metricsContainer.appendChild(createMetricRow(label, displayVal));
                 }
             }
@@ -172,14 +172,14 @@ function renderAssessment(data) {
         ['ValueBaselineRows', '值型基線逐日列數（決定完整匯出大小）']
     ]);
 
-    // 2. PRTG 規則門檻
+    // 2. PRTG 狀態規則門檻（只重算 down/flapping/warning）
     renderCard('prtg-rule-thresholds', data.prtgRuleThresholds, [
         ['DistinctCoverageDays', '可信完整涵蓋日數'],
         ['DownSensorDays', 'down sensor-日數'],
         ['FlappingSensorDays', 'flapping sensor-日數'],
         ['WarningSensorDays', 'warning sensor-日數'],
-        ['SilentDeviceDays', 'silent device-日數'],
-        ['TotalRuleHits', '現行門檻命中筆數']
+        ['SilentDeviceDays', 'silent device-日數', '未評估'],
+        ['TotalRuleHits', '三種狀態規則命中筆數']
     ]);
 
     // 3. 數值取得量級

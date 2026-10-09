@@ -14,6 +14,7 @@ namespace LogForesight.Tests;
 /// 只認「明確列出該 ID」的規則，MatchAllEventIds 規則不算涵蓋（否則任何一條 MatchAll 規則
 /// 存在就會讓所有 ID 被誤判為「已涵蓋」，漂移檢查形同虛設）。
 /// </summary>
+[Collection("KnownIssueCatalogState")]
 public class CorrelationAnalyzerRuleAlignmentTests
 {
     public CorrelationAnalyzerRuleAlignmentTests()

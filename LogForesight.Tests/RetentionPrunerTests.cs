@@ -119,6 +119,110 @@ public class RetentionPrunerTests : IDisposable
     }
 
     [Fact]
+    public void FormalMailShardPruneUsesBoundedKeysetPagesAndResumesCursor()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-formal-mail-prune-" + Guid.NewGuid());
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, directory);
+        var oldDay = DateTime.UtcNow.Date.AddDays(-120);
+        using (var db = backend.CreateContext())
+        {
+            for (var hostId = 1; hostId <= 18; hostId++)
+            {
+                var shard = new PrtgFormalMailClaimShard { HostId = hostId };
+                db.Blobs.Add(new BlobRow
+                {
+                    BlobKey = PrtgFormalMailClaimStore.BlobKey(hostId, oldDay),
+                    Content = System.Text.Json.JsonSerializer.Serialize(shard, LfJsonOptions.Pretty),
+                    UpdatedAt = DateTime.UtcNow.AddDays(-120), Version = 1
+                });
+            }
+            db.SaveChanges();
+        }
+
+        var first = PrtgFormalMailClaimStore.PruneExpiredShards(backend, 30, null, DateTime.UtcNow, maximumKeys: 4);
+        Assert.Equal(4, first.DeletedShards);
+        Assert.True(first.HasMore);
+        Assert.False(string.IsNullOrWhiteSpace(first.Cursor));
+
+        var second = PrtgFormalMailClaimStore.PruneExpiredShards(backend, 30, first.Cursor, DateTime.UtcNow);
+        Assert.Equal(14, second.DeletedShards);
+        Assert.False(second.HasMore);
+        Assert.Null(second.Cursor);
+        using var verify = backend.CreateContext();
+        Assert.Empty(verify.Blobs.Where(row => row.BlobKey.StartsWith("prtg_formal_mail_claims_v2_")));
+    }
+
+    [Fact]
+    public void FormalMailShardPruneKeepsOldShardReferencedByPendingOutbox()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-formal-mail-ref-prune-" + Guid.NewGuid());
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, directory);
+        var oldDay = DateTime.UtcNow.Date.AddDays(-120);
+        var shardKey = PrtgFormalMailClaimStore.BlobKey(77, oldDay);
+        using (var db = backend.CreateContext())
+        {
+            db.Blobs.Add(new BlobRow
+            {
+                BlobKey = shardKey,
+                Content = System.Text.Json.JsonSerializer.Serialize(new PrtgFormalMailClaimShard { HostId = 77 }, LfJsonOptions.Pretty),
+                UpdatedAt = DateTime.UtcNow.AddDays(-120), Version = 1
+            });
+            db.SaveChanges();
+        }
+        var state = new MailNotifyState();
+        state.UrgentOutbox["durable-pending"] = new MailUrgentIntent
+        {
+            Key = "durable-pending", HostId = 77, ParentRecordId = 9001, RecordDate = oldDay,
+            Status = "pending",
+            FormalStartFenceRefs = new Dictionary<string, PrtgFormalMailFenceReference>(StringComparer.Ordinal)
+            {
+                ["recipient|issue"] = new(77, shardKey, "fence", "hash")
+            }
+        };
+        backend.Blob(MailNotifyStateStore.BlobKey).Mutate(_ =>
+            (System.Text.Json.JsonSerializer.Serialize(state, LfJsonOptions.Pretty), true));
+
+        var result = PrtgFormalMailClaimStore.PruneExpiredShards(backend, 30, null, DateTime.UtcNow);
+
+        Assert.Equal(0, result.DeletedShards);
+        using var verify = backend.CreateContext();
+        Assert.True(verify.Blobs.Any(row => row.BlobKey == shardKey));
+    }
+
+    [Fact]
+    public void FormalMailRetentionReleasesOnlyExpiredFullyTerminalOutboxReferences()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-formal-mail-terminal-outbox-" + Guid.NewGuid());
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, directory);
+        var oldDate = DateTime.UtcNow.Date.AddDays(-120);
+        var acceptedState = new MailNotifyState();
+        acceptedState.UrgentOutbox["accepted-old"] = new MailUrgentIntent
+        {
+            Key = "accepted-old", HostId = 77, ParentRecordId = 9001, RecordDate = oldDate,
+            Status = "smtp-accepted", Recipients = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            { ["ops@example.test"] = "smtp-accepted" },
+            FormalIssueStates = new Dictionary<string, string>(StringComparer.Ordinal)
+            { ["ops@example.test|issue"] = "smtp-accepted" }
+        };
+        acceptedState.UrgentOutbox["unknown-old"] = new MailUrgentIntent
+        {
+            Key = "unknown-old", HostId = 77, ParentRecordId = 9002, RecordDate = oldDate,
+            Status = "pending", Recipients = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            { ["ops@example.test"] = "failed-or-unknown" }
+        };
+        backend.Blob(MailNotifyStateStore.BlobKey).Mutate(_ =>
+            (System.Text.Json.JsonSerializer.Serialize(acceptedState, LfJsonOptions.Pretty), true));
+
+        var retired = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey))
+            .PruneTerminalUrgentIntents(30, DateTime.UtcNow);
+
+        Assert.Equal(1, retired);
+        var after = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey)).Get();
+        Assert.DoesNotContain("accepted-old", after.UrgentOutbox.Keys);
+        Assert.Contains("unknown-old", after.UrgentOutbox.Keys);
+    }
+
+    [Fact]
     public void 過期診斷與退役證據清理_保留試點及未完成有效判定的證據()
     {
         var directory = Path.Combine(Path.GetTempPath(), "lf-retention-prtg-" + Guid.NewGuid());

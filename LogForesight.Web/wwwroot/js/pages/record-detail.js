@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 風險日詳情（docs/WEB-SPEC.md §9.3）。
  *
  * 兩層呈現（DB-PLAN 定案）：
@@ -1408,9 +1408,13 @@ function issueCell(issue) {
     meta.appendChild(count);
     const period = document.createElement('span');
     period.className = 'text-nowrap';
-    period.textContent = `${issue.firstSeen}~${issue.lastSeen}`;
+    period.textContent = `群組顯示時段 ${issue.firstSeen}~${issue.lastSeen}`;
     meta.appendChild(period);
     wrap.appendChild(meta);
+
+    wrap.appendChild(sourceEvidenceBlock(issue));
+    const prtgResourceEvidence = prtgResourceEvidenceBlock(issue);
+    if (prtgResourceEvidence) wrap.appendChild(prtgResourceEvidence);
 
     if (issue.knownIssue) {
         const text = document.createElement('div');
@@ -1447,6 +1451,94 @@ function issueCell(issue) {
     }
 
     return wrap;
+}
+
+function prtgResourceEvidenceBlock(issue) {
+    const evidence = issue.prtgResourceVersionEvidence;
+    if (!evidence) return null;
+    const block = document.createElement('div');
+    block.className = 'small text-muted mt-1';
+    const recorded = value => value === 'recorded' ? '已保存' : '未知';
+    const versions = document.createElement('div');
+    const reference = value => typeof value === 'string' && /^sha256:[0-9A-F]{64}$/.test(value) ? value : '未知';
+    versions.textContent = `紀錄中的版本依據：來源世代 ${recorded(evidence.sourceGeneration)}；資源世代 ${recorded(evidence.resourceGeneration)}；頻道世代 ${recorded(evidence.channelGeneration)}；規則准入指紋 ${recorded(evidence.ruleAdmissionFingerprint)}。保存版本參照 ${reference(evidence.evidenceVersionReference)}；規則准入版本參照 ${reference(evidence.ruleAdmissionVersionReference)}。參照只供比對已保存紀錄，不是原生識別或目前授權證明。`;
+    block.appendChild(versions);
+    const reasonNames = {
+        'disk-two-hour-low-water': '兩個完整小時皆處於磁碟低水位',
+        'disk-seven-day-low-water-trend': '七日趨勢預估將到達低水位'
+    };
+    const reasons = (issue.prtgResourceReasonCodes || []).filter(code => Object.hasOwn(reasonNames, code));
+    if (reasons.length) {
+        const line = document.createElement('div');
+        line.textContent = `保存的結構化資源理由：${reasons.map(code => reasonNames[code]).join('；')}`;
+        block.appendChild(line);
+    }
+    return block;
+}
+
+/** Bounded provenance disclosure. Every external value is rendered as text, never as markup or a link. */
+function sourceEvidenceBlock(issue) {
+    const observations = (issue.sourceObservations || []).slice(0, 64);
+    const exactReferences = observations.filter(item => item.nativeReference).length;
+    const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
+    const summary = document.createElement('div');
+    summary.className = 'small text-muted mt-1';
+    summary.textContent = `來源佐證：${observations.length} 筆觀測；${exactTimes} 筆有明確 UTC 時間；${exactReferences} 筆有原生參照。群組顯示時段不是來源時間窗` +
+        (issue.sourceObservationsTruncated ? '；清單已截斷' : '');
+
+    if (observations.length === 0) {
+        summary.textContent = '來源佐證：未知；未保存可核對的來源觀測。群組顯示時段不能代替來源時間窗' +
+            (issue.sourceObservationsTruncated ? '；清單已截斷' : '');
+        return summary;
+    }
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn-link btn-sm px-0 py-0 lf-no-print';
+    toggle.textContent = `檢視來源觀測（${observations.length}）`;
+    toggle.setAttribute('aria-expanded', 'false');
+    const details = document.createElement('div');
+    details.className = 'd-none small border-start ps-2 mt-1';
+    for (const item of observations) {
+        const row = document.createElement('div');
+        row.className = 'mb-1';
+        const sourceNames = {
+            Prtg: 'PRTG', SentinelWindows: 'Sentinel Windows', SentinelLinux: 'Sentinel Linux',
+            LocalClassicEventLog: '本機事件記錄', LocalEventRecord: '本機 Event Record'
+        };
+        const line = document.createElement('div');
+        const scopes = { Host: '主機', Volume: '磁碟區', Device: '裝置', Sensor: '感測器' };
+        line.textContent = `來源：${sourceNames[item.sourceKind] || '未知'}；範圍：${scopes[item.resourceScope] || '未知'}；主機：${item.exactHostKey || '未知'}；資源：${item.exactResourceKey || '未知'}`;
+        row.appendChild(line);
+
+        const time = document.createElement('div');
+        if (item.eventTimeUtc) time.textContent = `UTC 時間：${formatSourceUtc(item.eventTimeUtc)}`;
+        else if (item.windowStartUtc && item.windowEndUtc) time.textContent = `UTC 區間：[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`;
+        else time.textContent = 'UTC 時間／區間：未知';
+        row.appendChild(time);
+        const resolution = document.createElement('div');
+        resolution.textContent = `時間解讀：${item.windowResolution || '未知；不能推定連續狀態'}`;
+        row.appendChild(resolution);
+
+        const reference = document.createElement('div');
+        reference.textContent = `原生參照：${item.nativeReference || '未知'}`;
+        row.appendChild(reference);
+        details.appendChild(row);
+    }
+    toggle.addEventListener('click', () => {
+        const open = details.classList.toggle('d-none') === false;
+        toggle.textContent = `${open ? '收合' : '檢視'}來源觀測（${observations.length}）`;
+        toggle.setAttribute('aria-expanded', String(open));
+    });
+
+    const block = document.createElement('div');
+    block.append(summary, toggle, details);
+    return block;
+}
+
+function formatSourceUtc(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '未知' : date.toISOString();
 }
 
 /**
@@ -2195,9 +2287,18 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
  */
 const riskReportCard = reportCard({ storageKey: 'lf.recordDetail.reportExpanded' });
 const checkupReportCard = reportCard({ storageKey: 'lf.recordDetail.checkupReportExpanded' });
-document.getElementById('report-cards').append(riskReportCard.el, checkupReportCard.el);
+const reportCards = document.getElementById('report-cards');
+const riskReportPendingNotice = document.createElement('p');
+riskReportPendingNotice.className = 'small text-warning-emphasis mb-0';
+riskReportPendingNotice.hidden = true;
+reportCards.before(riskReportPendingNotice);
+reportCards.append(riskReportCard.el, checkupReportCard.el);
 
 async function loadReports() {
+    riskReportPendingNotice.hidden = currentDetail.riskReportPending !== true;
+    riskReportPendingNotice.textContent = currentDetail.hasReport
+        ? '風險報告待補，背景自動重試；舊報告仍保留。'
+        : '風險報告待補，背景自動重試；目前沒有已保存的報告。';
     // 兩份報告各自可有可無，分開請求；任一份查無（已過保留期）不影響另一份
     const [risk, checkup] = await Promise.all([
         currentDetail.hasReport

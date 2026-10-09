@@ -85,6 +85,47 @@ public class NightlyDispatchTests
     private void Attach(NightlyDispatch dispatch, string host, DateTime date, params LogIssueSignature[] issues) =>
         HostDayPostProcessor.AttachCase(_caseCoordinator, dispatch, host, date, issues.ToList());
 
+    [Theory]
+    [InlineData("delivered")]
+    [InlineData("skipped")]
+    [InlineData("deferred")]
+    [InlineData("failed")]
+    public void ActualDispatchReceiverPersistsEachOutcomeAndRestartKeepsPending(string expected)
+    {
+        var host = AddHost("WORKFLOW-HOST");
+        _settings.AutoDispatchEnabled = expected is "delivered" or "deferred";
+        if (expected == "delivered")
+            _candidates.Add(new DispatchCandidate { UserId = 3, Account = "c", InPool = true,
+                VisibleHostIds = new HashSet<long> { host.HostId } });
+        var (dispatch, _) = Create();
+        var root = Path.Combine(Path.GetTempPath(), "lf-dispatch-workflow-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, root);
+            var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+            workflow.ParentSucceeded(host.HostId, host.HostName, DateTime.Today, "run", 1, "parent", false, false,
+                parentRecordId: 123);
+            var version = workflow.CaptureDeliveryVersion(host.HostId, DateTime.Today, 123)!;
+            workflow.RecordCaseIntents(host.HostId, DateTime.Today, [IssueKey], version);
+            NightlyDispatchItemOutcome? result = null;
+            dispatch.DispatchDay(expected == "failed" ? "missing-host" : host.HostName, DateTime.Today, [Issue()], DateTime.Now,
+                outcome => { result = outcome; workflow.RecordDispatchOutcome(host.HostId, DateTime.Today, outcome, version); });
+            Assert.Equal(expected, result!.Outcome);
+            var restored = new HostDayWorkflowService(new HostDayWorkflowStore(backend)).Get(host.HostId, DateTime.Today)!;
+            Assert.Equal(expected is "delivered" or "skipped", restored.CaseIsComplete);
+            Assert.Equal(expected == "delivered" ? 1 : 0, restored.CaseDeliveredIntents.Length);
+            Assert.Equal(expected == "skipped" ? 1 : 0, restored.CaseSkippedIntents.Length);
+            Assert.Equal(expected == "failed" ? 1 : 0, restored.CaseFailedIntents.Length);
+            Assert.Equal(expected == "delivered" ? 1 : 0, _orders.All.Count);
+            workflow.ParentSucceeded(host.HostId, host.HostName, DateTime.Today, "replacement", 1, "parent", false, false,
+                parentRecordId: 124);
+            workflow.RecordDispatchOutcome(host.HostId, DateTime.Today, result, version);
+            Assert.Empty(workflow.Get(host.HostId, DateTime.Today)!.CaseIntents);
+            Assert.False(workflow.Get(host.HostId, DateTime.Today)!.CaseIsComplete);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     // ── 行為 ────────────────────────────────────────────────────────────
 
     [Theory]

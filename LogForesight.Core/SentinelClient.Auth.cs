@@ -25,7 +25,7 @@ public sealed partial class SentinelClient
             {
                 using var attempt = new HttpRequestMessage(HttpMethod.Post, AuthTokensUrl);
                 attempt.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-                var r = await _http.SendAsync(attempt, innerCt);
+                var r = await SendHttpAsync(attempt, innerCt);
                 if (IsTransientStatus(r.StatusCode))
                 {
                     r.Dispose();
@@ -43,20 +43,23 @@ public sealed partial class SentinelClient
         {
             if (!resp.IsSuccessStatusCode)
             {
-                var body = await SafeReadBodyAsync(resp);
+                var body = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
                     $"Sentinel「{_server.Name}」認證失敗：HTTP {(int)resp.StatusCode}" +
                     (resp.StatusCode == HttpStatusCode.Unauthorized ? "（帳號或密碼錯誤）" : "") +
                     $"｜{Truncate(body)}");
             }
 
-            var json = await resp.Content.ReadAsStringAsync(ct);
+            var json = await ReadResponseBodyAsync(resp, ct);
             var token = TryExtractToken(json);
             if (string.IsNullOrWhiteSpace(token))
-                throw new SentinelClientException($"Sentinel「{_server.Name}」認證回應未包含可辨識的 Token 欄位：{Truncate(json)}");
+                throw new SentinelClientException(_readLimits is null
+                    ? $"Sentinel「{_server.Name}」認證回應未包含可辨識的 Token 欄位：{Truncate(json)}"
+                    : "Sentinel probe authentication response was malformed.", safeCode: "malformed-response");
 
             _token = token;
-            Log.Info("[{Server}] Sentinel 認證成功", _server.Name);
+            if (_readLimits is null) Log.Info("[{Server}] Sentinel 認證成功", _server.Name);
+            else Log.Info("Bounded metadata probe authentication succeeded.");
         }
     }
 
@@ -92,7 +95,7 @@ public sealed partial class SentinelClient
             {
                 using var attempt = requestFactory();
                 attempt.Headers.Authorization = new AuthenticationHeaderValue("X-SAML", token);
-                var r = await _http.SendAsync(attempt, innerCt);
+                var r = await SendHttpAsync(attempt, innerCt);
                 if (IsTransientStatus(r.StatusCode))
                 {
                     r.Dispose();
@@ -112,7 +115,8 @@ public sealed partial class SentinelClient
             if (!allowReauth)
                 throw new SentinelClientException($"Sentinel「{_server.Name}」驗證被拒（重新認證後仍失敗），請確認帳密與權限是否有效。");
 
-            Log.Info("[{Server}] token 可能已過期，重新認證後重放請求", _server.Name);
+            if (_readLimits is null) Log.Info("[{Server}] token 可能已過期，重新認證後重放請求", _server.Name);
+            else Log.Info("Bounded metadata probe is reauthenticating; identifiers withheld.");
             _token = null;
             return await SendAuthenticatedAsync(requestFactory, ct, allowReauth: false);
         }
@@ -129,9 +133,65 @@ public sealed partial class SentinelClient
             await Task.Delay(_settings.QueryDelayMs, ct);
     }
 
-    private static async Task<string> SafeReadBodyAsync(HttpResponseMessage resp)
+    private async Task<HttpResponseMessage> SendHttpAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        try { return await resp.Content.ReadAsStringAsync(); }
-        catch { return "(無法讀取回應內容)"; }
+        if (_readLimits is not null)
+        {
+            var uri = request.RequestUri;
+            if (uri is null || !uri.IsAbsoluteUri ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                !string.IsNullOrEmpty(uri.UserInfo) ||
+                !string.Equals(uri.Scheme, _baseUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(uri.IdnHost, _baseUri.IdnHost, StringComparison.OrdinalIgnoreCase) ||
+                uri.Port != _baseUri.Port)
+            {
+                throw new SentinelClientException("Sentinel probe rejected a response-provided endpoint.",
+                    safeCode: "source-endpoint-mismatch");
+            }
+        }
+
+        if (_readLimits is not null && Interlocked.Increment(ref _httpRequestCount) > _readLimits.MaxHttpRequests)
+            throw new SentinelClientException("Sentinel probe HTTP request limit reached.", safeCode: "request-limit");
+
+        var completion = _readLimits is null ? HttpCompletionOption.ResponseContentRead : HttpCompletionOption.ResponseHeadersRead;
+        var response = await _http.SendAsync(request, completion, ct);
+        if (_readLimits is not null && response.Content.Headers.ContentLength is { } length && length > _readLimits.MaxResponseBytes)
+        {
+            response.Dispose();
+            throw new SentinelClientException("Sentinel probe response exceeded the byte limit.", safeCode: "response-byte-limit");
+        }
+        return response;
+    }
+
+    private async Task<string> ReadResponseBodyAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        if (_readLimits is null) return await resp.Content.ReadAsStringAsync(ct);
+        if (resp.Content.Headers.ContentLength is { } length && length > _readLimits.MaxResponseBytes)
+            throw new SentinelClientException("Sentinel probe response exceeded the byte limit.", safeCode: "response-byte-limit");
+
+        await using var input = await resp.Content.ReadAsStreamAsync(ct);
+        using var output = new MemoryStream(Math.Min(_readLimits.MaxResponseBytes, 8192));
+        var buffer = new byte[Math.Min(_readLimits.MaxResponseBytes + 1, 8192)];
+        while (true)
+        {
+            var allowed = Math.Min(buffer.Length, _readLimits.MaxResponseBytes + 1 - (int)output.Length);
+            var read = await input.ReadAsync(buffer.AsMemory(0, allowed), ct);
+            if (read == 0) break;
+            if (output.Length + read > _readLimits.MaxResponseBytes)
+                throw new SentinelClientException("Sentinel probe response exceeded the byte limit.", safeCode: "response-byte-limit");
+            output.Write(buffer, 0, read);
+        }
+        return Encoding.UTF8.GetString(output.GetBuffer(), 0, checked((int)output.Length));
+    }
+
+    private async Task<string> SafeReadBodyAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        try
+        {
+            var body = await ReadResponseBodyAsync(resp, ct);
+            return _readLimits is null ? body : string.Empty;
+        }
+        catch (SentinelClientException) { throw; }
+        catch { return _readLimits is null ? "(無法讀取回應內容)" : string.Empty; }
     }
 }

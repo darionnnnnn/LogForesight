@@ -351,7 +351,9 @@ public class RuleAdminService
                     Reason = assessment.Decision.Reason, CurrentAvailablePercent = assessment.Decision.Trend?.CurrentAvailablePercent,
                     ValidDayCount = assessment.Decision.Trend?.ValidDayCount ?? assessment.Readiness.UsableDays,
                     UsableHours = assessment.Readiness.UsableHours,
-                    EstimatedDaysToDepletion = assessment.Decision.Trend?.EstimatedDaysToDepletion
+                    EstimatedDaysToDepletion = assessment.Decision.Trend?.EstimatedDaysToDepletion,
+                    EstimatedDaysToLowWater = assessment.Decision.Trend?.EstimatedDaysToLowWater,
+                    Reasons = assessment.Decision.Trend?.Reasons ?? []
                 };
                 if (previewRow.WouldHit)
                 {

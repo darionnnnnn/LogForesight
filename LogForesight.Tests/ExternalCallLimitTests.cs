@@ -17,6 +17,7 @@ namespace LogForesight.Tests;
 /// 外部呼叫上限（回饋第 50 輪批次 A-5）：SQLite WAL、AI 逾時不重試、PRTG 回應 256 MB 上限、
 /// 快照服務重用 PRTG client。
 /// </summary>
+[Collection("PrtgSnapshotSharedBudget")]
 public class ExternalCallLimitTests : IDisposable
 {
     private readonly string _dir;
@@ -205,7 +206,8 @@ public class ExternalCallLimitTests : IDisposable
         public void StopApplication() { }
     }
 
-    private (CountingSnapshotService Service, SystemSettingsStore Settings, CountingHandler Handler) NewSnapshotService()
+    private (CountingSnapshotService Service, SystemSettingsStore Settings, CountingHandler Handler,
+        StorageBackend Backend, HostStore Hosts, long HostId) NewSnapshotService()
     {
         var backend = NewBackend(wal: true);
         var settingsStore = new SystemSettingsStore(backend.Blob("system_settings"));
@@ -213,6 +215,7 @@ public class ExternalCallLimitTests : IDisposable
         var syncState = new PrtgStructureSyncRunState();
         var lifetime = new FakeHostApplicationLifetime();
         var hostStore = new HostStore(backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { HostName = "Server-01", IpAddress = "192.168.1.10", Active = true });
         var statusStore = new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         var backfillState = new PrtgBackfillRunState();
         var structureSync = new PrtgStructureSyncService(settingsStore, backend, syncState, schedulerRunState, hostStore,
@@ -239,7 +242,7 @@ public class ExternalCallLimitTests : IDisposable
         {
             new PrtgHostMapRow
             {
-                DeviceObjid = 10, HostId = 1, HostName = "Server-01", Ip = "192.168.1.10",
+                DeviceObjid = 10, HostId = host.HostId, HostName = "Server-01", Ip = "192.168.1.10",
                 MapStatus = PrtgMapStatus.Ok, MapDate = today
             }
         });
@@ -247,23 +250,24 @@ public class ExternalCallLimitTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "Sensor-101", SensorType = "Ping", Status = "Up", Paused = false }
         }, DateTime.Now);
+        SnapshotAdmissionTestFixture.Seed(backend, hostStore, settingsStore, host.HostId, 10, (101, "Ping"));
 
         var handler = new CountingHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}",
+                "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"status\":\"Up\",\"lastcheck\":\"2026-10-08T00:00:00Z\",\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}",
                 Encoding.UTF8, "application/json")
         }));
 
         var service = new CountingSnapshotService(settingsStore, backend, schedulerRunState, structureSync, backfill,
             hostStore, new FakeSentinelStore(), probeState, lifetime, handler);
-        return (service, settingsStore, handler);
+        return (service, settingsStore, handler, backend, hostStore, host.HostId);
     }
 
     [Fact]
     public async Task 快照_設定不變連續兩輪只建一次client()
     {
-        var (service, _, handler) = NewSnapshotService();
+        var (service, _, handler, _, _, _) = NewSnapshotService();
         var clock = DateTime.Today.AddHours(10);
         service.Now = () => clock;
 
@@ -282,7 +286,7 @@ public class ExternalCallLimitTests : IDisposable
     [Fact]
     public async Task 快照_舊來源樣本清空後改PRTG網址會重建client()
     {
-        var (service, settings, handler) = NewSnapshotService();
+        var (service, settings, handler, backend, hosts, hostId) = NewSnapshotService();
         var clock = DateTime.Today.AddHours(10);
         service.Now = () => clock;
 
@@ -295,6 +299,8 @@ public class ExternalCallLimitTests : IDisposable
         Assert.Equal(0, service.GetStatus().PendingSamples);
         settings.Update(s => s.PrtgUrl = "https://prtg2.example.com");
         settings.Update(s => s.PrtgEnabled = true);
+        // The source-bound policy and capacity proof must describe the replacement endpoint.
+        SnapshotAdmissionTestFixture.Seed(backend, hosts, settings, hostId, 10, (101, "Ping"));
         clock = clock.AddHours(1);
         await service.TickAsync();
 

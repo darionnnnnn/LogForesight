@@ -1,9 +1,11 @@
-﻿using LogForesight.Core;
+using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using System.Globalization;
+using System.Text.Json;
 
 namespace LogForesight.Web.Services;
 
@@ -20,6 +22,9 @@ public sealed record PrtgDiskRuleTrial(string Status, string Message, long Senso
     double? MaximumDaysToDepletion, double? CurrentAvailablePercent, double? DeclinePerDay,
     double? EstimatedDaysToDepletion, bool PredictedHit, string RealPositiveStatus, string? RuleId, bool? RuleEnabled)
 {
+    public double? MaximumDaysToLowWater { get; init; }
+    public double? EstimatedDaysToLowWater { get; init; }
+    public IReadOnlyList<string> Reasons { get; init; } = [];
     public string RulesFingerprint { get; init; } = "";
     public string SettingsRevision { get; init; } = "";
     public string SemanticVersion { get; init; } = "";
@@ -109,7 +114,9 @@ public sealed class PrtgDiskVerificationService
             ready.RequiredHoursPerDay, quality, row.EvidenceValidity is { IsValid: true }, row.Decision.Exclusion.ToString(),
             thresholds?.LowWaterPercent, thresholds?.MinimumDeclinePercentagePointsPerDay, thresholds?.MaximumDaysToDepletion,
             trend?.CurrentAvailablePercent, trend?.RobustDeclinePercentagePointsPerDay, trend?.EstimatedDaysToDepletion,
-            row.Decision.WouldHit, "真實正向尚未觀察", rule?.Id, rule?.Enabled));
+            row.Decision.WouldHit, "真實正向尚未觀察", rule?.Id, rule?.Enabled)
+        { MaximumDaysToLowWater = thresholds?.MaximumDaysToLowWater,
+          EstimatedDaysToLowWater = trend?.EstimatedDaysToLowWater, Reasons = trend?.Reasons ?? [] });
     }
 
     public PrtgDiskVerificationStatus GetStatus(long? sensorObjid = null) => new(Volatile.Read(ref _ownsRun) != 0, _runningSensor,
@@ -287,23 +294,91 @@ public sealed class PrtgDiskVerificationService
                 DateTime.SpecifyKind(v.PeriodStart, DateTimeKind.Local).ToUniversalTime(), v.AvgValue!.Value)).ToArray();
         using var client = PrtgClientFactory.Create(settings);
         client.OperationCheckpoint = operation.Checkpoint;
+        var priorIdentity = _store.GetResourceIdentity(sensor.Objid);
+        if (!priorIdentity.Active || priorIdentity.PendingReconciliation || priorIdentity.Epoch <= 0 ||
+            priorIdentity.DeviceId != sensor.DeviceObjid || priorIdentity.HostId != sensor.HostId ||
+            string.IsNullOrWhiteSpace(priorIdentity.SourceGeneration) || string.IsNullOrWhiteSpace(priorIdentity.Generation))
+            throw new InvalidOperationException("資源尚未完成新世代確認，請先重新收集狀態與語意證據。");
+        var resourceFingerprint = await ReadObservedResourceFingerprintAsync(client, sensor.Objid, ct);
+        operation.Checkpoint();
+        var identity = _store.BindObservedResource(sensor.Objid, sensor.HostId, priorIdentity.SourceGeneration, resourceFingerprint);
+        if (!identity.Active || identity.PendingReconciliation || identity.Epoch <= 0 ||
+            identity.DeviceId != sensor.DeviceObjid || identity.HostId != sensor.HostId)
+            throw new InvalidOperationException("PRTG 資源身分於語意驗證期間改變；拒絕保存本次結果。");
         var result = await new PrtgDiskSemanticProbe(client).ProbeAsync(sensor.Objid,
             localStart.ToUniversalTime(), localStart.AddDays(1).ToUniversalTime(), points, ct);
         var checkedAtUtc = DateTime.UtcNow;
         operation.Checkpoint();
-        _results.Save(new PrtgDiskVerificationResult(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType,
-            result.Status.ToString(), Safe(result.Summary) ?? "語意驗證完成，請查看型別化結果。", Safe(result.ChannelIdentifier), Safe(result.ChannelName),
-            Safe(result.Unit), result.Scale, result.Direction, result.ComparedPointCount, result.ValuesMatch,
-            checkedAtUtc, date.Date, ParserSemanticVersion));
-        if (result.Status == PrtgDiskSemanticProbeStatus.Verified && result.ChannelIdentifier != null && result.ChannelName != null &&
-            result.Unit != null && result.Scale is > 0 && result.Direction != null)
-            _evidence.RecordAutomatedVerification(Context(sensor, result.ChannelIdentifier, result.ChannelName, result.Unit,
-                result.Scale.Value, result.Direction), true, "PRTG 主頻道為明確百分比可用空間，且 historicdata 與已落地樣本一致。", checkedAtUtc, ParserSemanticVersion);
+        PersistProbeResult(sensor, result, date.Date, checkedAtUtc, identity);
         operation.CompletedStage("語意驗證結果已保存");
         }
         catch (OperationCanceledException ex) when (operation.Token.IsCancellationRequested)
         { throw new PrtgScopeCancelledException(ex); }
     }
+
+    /// <summary>把一筆型別化探測結果綁到已確認的來源、資源與通道世代；供正式 producer 與 fixture 共用。</summary>
+    internal void PersistProbeResult(
+        (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused) sensor,
+        PrtgDiskSemanticProbeResult result, DateTime dataDate, DateTime checkedAtUtc, PrtgResourceIdentity capturedIdentity)
+    {
+        if (dataDate.Date != dataDate) throw new ArgumentException("資料日期必須是日期值。", nameof(dataDate));
+        if (checkedAtUtc.Kind != DateTimeKind.Utc) throw new ArgumentException("探測時間必須是 UTC。", nameof(checkedAtUtc));
+        var current = _store.GetResourceIdentity(sensor.Objid);
+        if (!SameResourceIdentity(capturedIdentity, current) || !current.Active || current.PendingReconciliation || current.Epoch <= 0 ||
+            current.SourceGeneration.Length == 0 || current.Generation.Length == 0 ||
+            current.DeviceId != sensor.DeviceObjid || current.HostId != sensor.HostId)
+            throw new InvalidOperationException("PRTG 資源世代於語意驗證期間改變；拒絕保存本次結果。");
+
+        var fingerprint = result.Status == PrtgDiskSemanticProbeStatus.Verified
+            ? System.Text.Json.JsonSerializer.Serialize(new
+                { result.ChannelIdentifier, result.ChannelName, result.Unit, result.Scale, result.Direction }) + "|" + ParserSemanticVersion
+            : "unverified:" + result.Status;
+        var identity = _store.SetObservedChannel(sensor.Objid, current.SourceGeneration, fingerprint, current.Generation);
+        var savedResult = new PrtgDiskVerificationResult(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType,
+            result.Status.ToString(), Safe(result.Summary) ?? "語意驗證完成，請查看型別化結果。", Safe(result.ChannelIdentifier), Safe(result.ChannelName),
+            Safe(result.Unit), result.Scale, result.Direction, result.ComparedPointCount, result.ValuesMatch,
+            checkedAtUtc, dataDate, ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch);
+        _results.Save(savedResult);
+        if (result.Status == PrtgDiskSemanticProbeStatus.Verified && result.ChannelIdentifier != null && result.ChannelName != null &&
+            result.Unit != null && result.Scale is > 0 && result.Direction != null)
+            _evidence.RecordAutomatedVerification(Context(sensor, result.ChannelIdentifier, result.ChannelName, result.Unit,
+                result.Scale.Value, result.Direction), true, "PRTG 主頻道為明確百分比可用空間，且 historicdata 與已落地樣本一致。",
+                checkedAtUtc, ParserSemanticVersion, identity.SourceGeneration, identity.Generation,
+                identity.ChannelGeneration, identity.Epoch);
+
+        if (!SameResourceIdentity(identity, _store.GetResourceIdentity(sensor.Objid)))
+            throw new InvalidOperationException("PRTG 資源世代於語意證據保存期間改變；拒絕本次驗證結果。");
+    }
+
+    private static bool SameResourceIdentity(PrtgResourceIdentity left, PrtgResourceIdentity right) =>
+        left.SensorId == right.SensorId && left.Epoch == right.Epoch && left.Generation == right.Generation &&
+        left.SourceGeneration == right.SourceGeneration && left.DeviceId == right.DeviceId && left.HostId == right.HostId &&
+        left.ResourceFingerprint == right.ResourceFingerprint && left.InventoryFingerprint == right.InventoryFingerprint &&
+        left.ChannelFingerprint == right.ChannelFingerprint &&
+        left.ChannelGeneration == right.ChannelGeneration && left.Active == right.Active &&
+        left.PendingReconciliation == right.PendingReconciliation;
+
+    private static async Task<string> ReadObservedResourceFingerprintAsync(PrtgClient client, long sensorId, CancellationToken ct)
+    {
+        using var document = JsonDocument.Parse(await client.GetJsonAsync(
+            $"api/table.json?content=sensors&id={sensorId.ToString(CultureInfo.InvariantCulture)}&columns=objid,parentid,type,status,cumsince&count=2", ct));
+        if (!document.RootElement.TryGetProperty("sensors", out var sensors) || sensors.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("sensor-identity-unavailable");
+        var exact = sensors.EnumerateArray().Where(sensor => ReadText(sensor, "objid") == sensorId.ToString(CultureInfo.InvariantCulture)).ToArray();
+        if (exact.Length != 1) throw new InvalidOperationException("sensor-identity-not-unique");
+        var parent = ReadText(exact[0], "parentid");
+        var type = ReadText(exact[0], "type");
+        var created = ReadText(exact[0], "cumsince_raw");
+        if (string.IsNullOrWhiteSpace(created)) created = ReadText(exact[0], "cumsince");
+        if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(created))
+            throw new InvalidOperationException("resource-generation-unverified");
+        return $"{parent}|{type}|{created}";
+    }
+
+    private static string ReadText(JsonElement element, string name) => element.TryGetProperty(name, out var value)
+        ? value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString() : "";
 
     private sealed class PrtgScopeCancelledException(OperationCanceledException inner)
         : OperationCanceledException("PRTG 作業已在安全邊界停止。", inner);
@@ -325,6 +400,13 @@ public sealed class PrtgDiskVerificationService
             throw new InvalidOperationException("最近探測未建立可供人工覆核的成功比對候選；不匹配、無落地資料點或其他探測狀態均須重新探測。");
         var current = FindCurrentSensor(request.SensorObjid);
         if (current.Objid == 0) throw new InvalidOperationException("感測器已不再映射至啟用主機。");
+        var identity = _store.GetResourceIdentity(request.SensorObjid);
+        if (!identity.Active || identity.DeviceId != current.DeviceObjid || identity.HostId != current.HostId ||
+            identity.PendingReconciliation || identity.Epoch <= 0 ||
+            string.IsNullOrWhiteSpace(identity.Generation) || string.IsNullOrWhiteSpace(identity.SourceGeneration) ||
+            previous.IdentityEpoch != identity.Epoch || previous.SourceGeneration != identity.SourceGeneration ||
+            previous.ResourceGeneration != identity.Generation || previous.ChannelGeneration != identity.ChannelGeneration)
+            throw new InvalidOperationException("資源尚未完成新世代確認，請先重新收集狀態與語意證據。");
         if (previous.DeviceObjid != current.DeviceObjid || previous.HostId != current.HostId || !Same(previous.SensorType, current.SensorType))
             throw new InvalidOperationException("探測後感測器的主機／裝置對應或類型已變更，請重新探測。");
         if (string.IsNullOrWhiteSpace(request.ChannelIdentifier) || string.IsNullOrWhiteSpace(request.ChannelName) ||
@@ -343,8 +425,16 @@ public sealed class PrtgDiskVerificationService
         if (previous.ComparedPointCount == 0)
             throw new InvalidOperationException("沒有可比對的落地資料點，不能人工確認空白候選。");
         var summary = $"人工確認：{request.Reason.Trim()}；探測摘要：{previous.Summary}";
-        return _evidence.ConfirmManually(Context(current, request.ChannelIdentifier, request.ChannelName, request.Unit,
-            request.Scale, request.Direction), userId, summary, DateTime.UtcNow, ParserSemanticVersion);
+        var channelFingerprint = System.Text.Json.JsonSerializer.Serialize(new
+        { request.ChannelIdentifier, request.ChannelName, request.Unit, request.Scale, request.Direction, ParserSemanticVersion });
+        identity = _store.SetObservedChannel(request.SensorObjid, identity.SourceGeneration, channelFingerprint,
+            identity.Generation);
+        var confirmed = _evidence.ConfirmManually(Context(current, request.ChannelIdentifier, request.ChannelName, request.Unit,
+            request.Scale, request.Direction), userId, summary, DateTime.UtcNow, ParserSemanticVersion,
+            identity.SourceGeneration, identity.Generation, identity.ChannelGeneration, identity.Epoch);
+        _results.Save(previous with { SourceGeneration = identity.SourceGeneration,
+            ResourceGeneration = identity.Generation, ChannelGeneration = identity.ChannelGeneration, IdentityEpoch = identity.Epoch });
+        return confirmed;
     }
 
     public PrtgDiskSemanticEvidenceValidity CheckEvidence(long sensorObjid)
@@ -354,6 +444,16 @@ public sealed class PrtgDiskVerificationService
         var e = _evidence.Get(sensorObjid);
         var latest = _results.Get(sensorObjid);
         if (e is null) return _evidence.CheckValidity(sensorObjid, null, ParserSemanticVersion);
+        var identity = _store.GetResourceIdentity(sensorObjid);
+        if (!identity.Active || string.IsNullOrWhiteSpace(e.SourceGeneration) ||
+            string.IsNullOrWhiteSpace(e.ResourceGeneration) || string.IsNullOrWhiteSpace(e.ChannelGeneration) ||
+            identity.PendingReconciliation || identity.Epoch <= 0 || e.IdentityEpoch != identity.Epoch || latest?.IdentityEpoch != identity.Epoch ||
+            e.SourceGeneration != identity.SourceGeneration || e.ResourceGeneration != identity.Generation ||
+            e.ChannelGeneration != identity.ChannelGeneration || latest is null ||
+            latest.SourceGeneration != identity.SourceGeneration || latest.ResourceGeneration != identity.Generation ||
+            latest.ChannelGeneration != identity.ChannelGeneration)
+            return new PrtgDiskSemanticEvidenceValidity
+            { IsValid = false, InvalidReason = "磁碟語意證據屬於舊資源或頻道世代；請重新探測並覆核。", Evidence = e };
         // 24 小時限制只適用於執行人工確認的當下。之後沿用最近的型別化探測，
         // 並在有新探測時要求它仍與確認內容一致；鏡像本身沒有 channel metadata 可持續重驗。
         if (latest is null || latest.CheckedAtUtc == default || latest.CheckedAtUtc > DateTime.UtcNow ||

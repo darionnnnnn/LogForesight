@@ -29,7 +29,8 @@ public static class KnownIssueSeed
     /// warning-disk、warning-hardware）；不限分類的 builtin-prtg-down 取消「重大」旗標（改由 availability 分類規則承擔）；
     /// 既有 PRTG 規則 Description 移除門檻數字（門檻可調，寫死在文字裡會與實際值不符）。</summary>
     /// v8 新增預設停用的磁碟可用空間趨勢規則，使用獨立 PrtgDiskTrendThresholds 暫定門檻。
-    public const int Version = 8;
+    /// v9 新增 CPU、記憶體與磁碟資源壓力規則；磁碟兩小時低水位使用獨立規則，不受磁碟趨勢 28 日啟用守門。
+    public const int Version = 9;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -1148,6 +1149,33 @@ public static class KnownIssueSeed
                 Impact = "硬體在警告狀態下持續運作可能加速劣化，最終導致非預期停機。",
                 LikelyCauses = new[] { "散熱不良或機房溫度偏高", "風扇轉速下降或單一電源失效", "RAID 背景重建或預測性故障警告" },
                 NextSteps = new[] { "登入硬體管理介面確認是哪個元件告警", "檢查機房溫度與機櫃氣流", "安排維護窗口更換預警元件" } },
+        new() { Id = "builtin-prtg-resource-cpu-pressure", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleResourceCpuPressure, PrtgThreshold = 0,
+                PrtgSensorCategory = PrtgSensorCategories.Cpu, Category = IssueCategory.Resource,
+                Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "CPU 使用率持續高壓",
+                PlainExplanation = "PRTG 的可信 CPU 使用率在兩個完整小時都達到 90%；正式事件還須有維護者核准的同版資源模式。",
+                Impact = "CPU 長時間接近飽和可能拉長服務回應時間並延遲背景工作。",
+                LikelyCauses = new[] { "流量或工作負載增加", "應用程式計算量上升", "背景工作或程序異常佔用 CPU" },
+                NextSteps = new[] { "比對兩個小時的負載與工作排程", "找出 CPU 使用最高的程序或服務", "評估擴充資源或調整工作併發度" } },
+        new() { Id = "builtin-prtg-resource-memory-pressure", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleResourceMemoryPressure, PrtgThreshold = 0,
+                PrtgSensorCategory = PrtgSensorCategories.Memory, Category = IssueCategory.Resource,
+                Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "記憶體使用率持續高壓",
+                PlainExplanation = "PRTG 的可信記憶體使用率在兩個完整小時都達到 90%；正式事件還須有維護者核准的同版資源模式。",
+                Impact = "記憶體壓力可能導致分頁、服務延遲或程序被系統終止。",
+                LikelyCauses = new[] { "工作集或快取成長", "記憶體洩漏", "併發工作量超過目前容量" },
+                NextSteps = new[] { "檢查程序工作集與分頁活動", "比對近期部署和工作負載變化", "評估釋放或擴充記憶體" } },
+        new() { Id = "builtin-prtg-resource-disk-pressure", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleResourceDiskPressure, PrtgThreshold = 0,
+                PrtgSensorCategory = PrtgSensorCategories.Disk, Category = IssueCategory.Storage,
+                Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "磁碟可用空間低水位或可信耗盡趨勢",
+                PlainExplanation = "PRTG 的可信磁碟證據顯示可用空間進入低水位，或已確認容量消耗趨勢；同一磁碟資源以一個案件追蹤。",
+                Impact = "可用空間耗盡會使服務、資料庫與日誌寫入失敗。",
+                LikelyCauses = new[] { "日誌或資料持續成長", "備份或暫存檔累積", "磁碟容量不足" },
+                NextSteps = new[] { "確認近期可用空間與容量趨勢", "找出成長最快的目錄並清理可移除資料", "評估擴充容量或調整資料保留策略" } },
         new() { Id = "builtin-prtg-disk-free-trend", Origin = "builtin", Enabled = false, Scope = "all", Platform = "prtg",
                 PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 0,
                 PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional, PrtgSensorCategory = PrtgSensorCategories.Disk,

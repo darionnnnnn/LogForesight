@@ -97,7 +97,7 @@ public class MailIssueDigest
             else if ((IssueSeverity)a.MaxSeverityRank >= IssueSeverity.High) bucket = MailIssueBucket.OtherHighRisk;
             else continue;   // 不屬於任何一區的問題不進郵件——這是「優先」摘要，不是全量清單
 
-            rows.Add(new MailIssueRow(a.Source, a.EventId, a.Category, a.HostCount, previousHostCount, bucket));
+            rows.Add(new MailIssueRow(a.Source, a.EventId, a.Category, a.HostCount, previousHostCount, bucket, a.MaxSeverityRank));
         }
 
         return rows;
@@ -149,7 +149,8 @@ public static class MailIssueBucket
 }
 
 /// <summary>一行問題優先摘要（回饋十九輪批次H1）</summary>
-public sealed record MailIssueRow(string Source, int EventId, string Category, int HostCount, int PreviousHostCount, string Bucket)
+public sealed record MailIssueRow(string Source, int EventId, string Category, int HostCount, int PreviousHostCount,
+    string Bucket, int MaxSeverityRank = 0)
 {
     /// <summary>信件本文的一行文字：<c>{Source}/{EventId}（{Category}）｜影響 N 台（前期 M）｜{區塊標記}</c>。
     /// 類別中文名走 Core 的唯一字典 <see cref="IssueCategoryNames"/>（批次I 體檢收斂——

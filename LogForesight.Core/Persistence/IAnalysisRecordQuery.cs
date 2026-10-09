@@ -49,6 +49,10 @@ public class RecordQueryFilter
 /// </summary>
 public interface IAnalysisRecordQuery
 {
+    /// <summary>Single-row, bounded lookup by immutable SQL parent id for durable notification retries.</summary>
+    ExactAnalysisRecordLookup LookupByRecordId(long recordId, int maximumPayloadBytes = WorkflowRecoveryPage.MaximumPayloadBytes) =>
+        throw new NotSupportedException("This record query does not support bounded exact-record lookup.");
+
     /// <summary>取每個主機／PRTG disk 趨勢 sensor 最新一筆有界證據，不載入無關每日紀錄。</summary>
     List<DiskTrendEvidenceRecord> QueryDiskTrendEvidence(
         IReadOnlyCollection<(long HostId, string SensorId)> hostSensors, DateTime from, DateTime to);
@@ -66,6 +70,23 @@ public interface IAnalysisRecordQuery
     /// 呼叫端一律只檢查 Count > 0，不讀內容）。
     /// </summary>
     List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter);
+
+    /// <summary>Keyset-paged authoritative rows for resumable workflow reconstruction; SQL caps each JSON prefix.</summary>
+    WorkflowRecoveryPage QueryWorkflowRecoveryPage(DateTime from, DateTime to, long afterRecordId, int take) =>
+        throw new NotSupportedException("This record query does not support workflow recovery paging.");
+
+    /// <summary>Bounded scalar projection for closing notification plans, including below-threshold days.</summary>
+    List<NotificationWorkflowRecord> QueryNotificationWorkflowPage(DateTime from, DateTime to, long afterRecordId, int take) =>
+        throw new NotSupportedException("This record query does not support notification workflow paging.");
+
+    /// <summary>Bounded keyset page of one host's retained parent days for durable PRTG mode replay.</summary>
+    List<NotificationWorkflowRecord> QueryModeReplayHostPage(long hostId, DateTime from, DateTime to,
+        long afterRecordId, int take) =>
+        throw new NotSupportedException("This record query does not support host mode replay paging.");
+
+    /// <summary>Batch existence check for at most 500 exact host-day keys during orphan cleanup.</summary>
+    HashSet<(long HostId, DateTime Date)> ExistingHostDays(IReadOnlyCollection<(long HostId, DateTime Date)> keys) =>
+        throw new NotSupportedException("This record query does not support workflow orphan checks.");
 
     /// <summary>
     /// 單筆紀錄（主機＋日期）；不存在回 null。
@@ -139,3 +160,25 @@ public sealed record DiskTrendEvidenceRecord(long HostId, DateTime RecordDate, s
 
 /// <summary>批次候選日查詢的一筆命中：某主機某天出現某問題鍵（Date 只含日期部分）</summary>
 public sealed record IssueDayHit(long HostId, string IssueKey, DateTime Date);
+
+public sealed record NotificationWorkflowRecord(long RecordId, long HostId, DateTime Date, string RiskLevel);
+public sealed record ModeReplayHostDay(long RecordId, long HostId, DateTime Date);
+
+public sealed record ExactAnalysisRecordLookup(long RecordId, long HostId, DateTime Date, string RiskLevel,
+    bool Exists, bool PayloadTooLarge, bool DetailPruned, bool Malformed, DailyAnalysisRecord? Record,
+    bool IdentityMismatch = false);
+
+/// <summary>One source row that cannot safely be deserialized within the workflow recovery payload bound.</summary>
+public sealed record WorkflowRecoveryWaitingHostDay(long RecordId, long HostId, DateTime Date,
+    string ReasonCode, int ReportedPayloadCharacters, long CapturedWriteRevision = 0,
+    DateTime CapturedAtUtc = default);
+
+/// <summary>Bounded keyset page. RawCount and NextRecordId include valid, oversized, and malformed rows.</summary>
+public sealed record WorkflowRecoveryPage(IReadOnlyList<DailyAnalysisRecord> Records,
+    IReadOnlyList<WorkflowRecoveryWaitingHostDay> WaitingHostDays, int RawCount, long? NextRecordId,
+    long PayloadBytesRead, IReadOnlyDictionary<long, long>? CapturedWriteRevisions = null)
+{
+    public const int MaximumRows = 100;
+    public const int MaximumPayloadBytes = 128 * 1024;
+    public const int MaximumPayloadPrefixCharacters = MaximumPayloadBytes + 1;
+}

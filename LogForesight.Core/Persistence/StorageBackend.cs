@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using NLog;
@@ -58,6 +59,17 @@ public class StorageBackend
     /// 僅對 SqlServer 生效：Sqlite 走本機檔案且本類別一律關掉 pooling（見
     /// <see cref="DisableSqlitePoolingIfUnset"/>），沒有池可限。</param>
     public StorageBackend(StorageSettings settings, string fallbackDir, int? maxPoolSize = null)
+        : this(settings, fallbackDir, maxPoolSize, null)
+    {
+    }
+
+    internal StorageBackend(StorageSettings settings, string fallbackDir, DbCommandInterceptor commandInterceptor)
+        : this(settings, fallbackDir, null, commandInterceptor)
+    {
+    }
+
+    private StorageBackend(StorageSettings settings, string fallbackDir, int? maxPoolSize,
+        DbCommandInterceptor? commandInterceptor)
     {
         DbContextOptions<LfDbContext> options;
         if (settings.Type == "Sqlite")
@@ -91,10 +103,11 @@ public class StorageBackend
             cs = DisableSqlitePoolingIfUnset(cs);
             // 連線層 PRAGMA 調校（回饋三十六輪批次B）：關池後 page cache 逐連線歸零，
             // 只能在每次連線開啟時重設——理由與各 PRAGMA 取值見 SqlitePragmaInterceptor
-            options = new DbContextOptionsBuilder<LfDbContext>()
+            var sqliteOptions = new DbContextOptionsBuilder<LfDbContext>()
                 .UseSqlite(cs)
-                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal))
-                .Options;
+                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal));
+            if (commandInterceptor is not null) sqliteOptions.AddInterceptors(commandInterceptor);
+            options = sqliteOptions.Options;
             _dbDesc = $"Sqlite（{cs}）";
         }
         else

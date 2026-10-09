@@ -29,6 +29,11 @@ internal static class EventRecordMapper
         }
 
         int eventId = record.Id;
+        var message = ReadMessage(record);
+        var utcTime = new DateTimeOffset(DateTime.SpecifyKind(time, time.Kind == DateTimeKind.Utc
+            ? DateTimeKind.Utc : DateTimeKind.Local).ToUniversalTime());
+        var machine = record.MachineName ?? string.Empty;
+        var nativeRecordId = record.RecordId;
 
         return new EventLogEntryData
         {
@@ -36,11 +41,29 @@ internal static class EventRecordMapper
             EntryType = MapEntryType(record.Level, record.Keywords, isAuditChannel),
             LogName = logName,
             Source = record.ProviderName ?? string.Empty,
-            Message = ReadMessage(record),
+            Message = message,
             // 重現 classic InstanceId 語意（Qualifiers 在高位、Event ID 在低 16 位）。
             // 此欄位不進任何識別鍵與簽章序列化，僅為相容性保留。
             InstanceId = ((long)(record.Qualifiers ?? 0) << 16) | (ushort)eventId,
-            EventId = eventId
+            EventId = eventId,
+            SourceEvidence = new SourceEvidence
+            {
+                SourceKind = SourceEvidenceKind.LocalEventRecord,
+                ResourceScope = string.IsNullOrWhiteSpace(machine) ? SourceResourceScope.Unknown : SourceResourceScope.Host,
+                ExactResourceKey = string.IsNullOrWhiteSpace(machine) ? null : $"host:{machine.ToUpperInvariant()}",
+                ExactHostKey = string.IsNullOrWhiteSpace(machine) ? null : $"host:{machine.ToUpperInvariant()}",
+                EventTimeUtc = utcTime,
+                SourceReference = nativeRecordId.HasValue
+                    ? $"event-record:{machine}:{logName}:{nativeRecordId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                    : null,
+                SourceReferenceQuality = nativeRecordId.HasValue
+                    ? SourceReferenceQuality.ExactNative : SourceReferenceQuality.Unknown,
+                ProjectionFingerprint = SourceEvidence.Fingerprint(machine, logName,
+                    nativeRecordId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    utcTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    eventId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    record.ProviderName, message)
+            }
         };
     }
 

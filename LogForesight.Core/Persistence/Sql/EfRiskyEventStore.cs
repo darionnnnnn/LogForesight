@@ -51,6 +51,7 @@ public class EfRiskyEventStore : IRiskyEventStore
                     EntryType = e.EntryType,
                     EventTime = e.EventTime,
                     Message = e.Message,
+                    SourceEvidenceJson = SourceEvidence.Serialize(e.SourceEvidence),
                     RuleId = e.RuleId,
                     CreatedAt = e.CreatedAt
                 });
@@ -177,6 +178,7 @@ public class EfRiskyEventStore : IRiskyEventStore
         EntryType = row.EntryType,
         EventTime = row.EventTime,
         Message = row.Message,
+        SourceEvidence = SourceEvidence.Deserialize(row.SourceEvidenceJson),
         RuleId = row.RuleId,
         CreatedAt = row.CreatedAt
     };

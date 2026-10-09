@@ -17,6 +17,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
+[Collection("PrtgSnapshotSharedBudget")]
 public class PrtgRunsCardAndProbeTests : IDisposable
 {
     private readonly string _dir;
@@ -195,10 +196,18 @@ public class PrtgRunsCardAndProbeTests : IDisposable
             var query = request.RequestUri!.Query;
             lock (Requests) Requests.Add(query);
             var messages = query.Contains("content=messages");
-            if (messages) MessagesRequested.TrySetResult(true);
+            var device21 = Regex.IsMatch(query, @"[?&]id=21(&|$)");
+            // The pre-existing device 20 can be drained first; wait for the actual new-device handoff.
+            if (messages && device21) MessagesRequested.TrySetResult(true);
+            var snapshot = query.Contains("columns=objid,lastvalue,interval,lastcheck,status", StringComparison.Ordinal);
+            var lastCheck = DateTimeOffset.UtcNow.ToString("O");
             var json = messages
                 ? "{\"treesize\":0,\"messages\":[]}"
-                : "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":20,\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}]}";
+                : snapshot
+                    ? $"{{\"treesize\":1,\"sensors\":[{{\"objid\":201,\"parentid\":20,\"sensor\":\"Old sensor name\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false,\"lastvalue_raw\":10,\"interval\":\"60 s\",\"lastcheck\":\"{lastCheck}\"}}]}}"
+                    : device21
+                        ? "{\"treesize\":1,\"sensors\":[{\"objid\":211,\"parentid\":21,\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}]}"
+                        : "{\"treesize\":0,\"sensors\":[]}";
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
@@ -213,6 +222,10 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         var shortInterval = TimeSpan.FromMilliseconds(300);
         var probeState = new PrtgProbeRunState();
         var service = new ScopeRefreshTrackingSnapshotService(_settingsStore, _backend, _hosts, _sentinels, probeState, shortInterval);
+        // This fixture exercises snapshot/backfill and queue handoff. The independent timeline
+        // worker has its own source client, so isolate it instead of contacting prtg.example.
+        service.TimelineTick = _ => Task.FromResult(new PrtgSensorTimelineTick(
+            TimeSpan.FromSeconds(5), false, "scope-refresh-owned-fixture"));
 
         _settingsStore.Update(s =>
         {
@@ -220,13 +233,28 @@ public class PrtgRunsCardAndProbeTests : IDisposable
             s.PrtgUrl = "https://prtg.example";
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgSensorTypeWhitelist = ["ping"];
         });
 
+        var host = _hosts.Upsert(new WebHost { HostName = "Server-20", IpAddress = "192.0.2.20", Active = true });
+        var missingSensorHost = _hosts.Upsert(new WebHost { HostName = "Server-21", IpAddress = "192.0.2.21", Active = true });
         _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today, new[]
         {
-            new PrtgHostMapRow { DeviceObjid = 20, HostId = 1, HostName = "Server-20", MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today }
+            new PrtgHostMapRow { DeviceObjid = 20, HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today },
+            new PrtgHostMapRow { DeviceObjid = 21, HostId = missingSensorHost.HostId, HostName = missingSensorHost.HostName, MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today }
         });
+        // Device 20 supplies the already mirrored target used by admission. Device 21 is mapped
+        // and active but has no sensor rows, so the scope refresh must perform a real backfill.
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow
+            {
+                Objid = 201, DeviceObjid = 20, Name = "Old sensor name", SensorType = "ping",
+                Status = "Up", Paused = false
+            }
+        }, DateTime.Now);
         using var handler = new ScopeRefreshHandler();
+        SnapshotAdmissionTestFixture.Seed(_backend, _hosts, _settingsStore, host.HostId, 20, (201, "ping"));
         service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler, PrtgAuthModes.Token, "", "", "");
         using var ackDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (initiallyBusy)
@@ -240,17 +268,65 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await handler.MessagesRequested.Task.WaitAsync(ackDeadline.Token);
-            Assert.Contains(_backend.PrtgStore().GetAllSensors(), sensor => sensor.Objid == 201 && sensor.DeviceObjid == 20);
-            Assert.All(handler.Requests, query => Assert.Matches(@"[?&]id=20(&|$)", query));
+            string FailureDiagnostics(string stage)
+            {
+                var status = service.GetStatus();
+                string[] requests;
+                lock (handler.Requests) requests = handler.Requests.ToArray();
+                var queue = _backend.PrtgStore().ReadRecentStateChangeQueue().Select(item =>
+                    $"device={item.DeviceObjid},from={item.FromLocalDate:O},to={item.ToLocalDate:O},attempts={item.Attempts},completed={item.CompletedAtUtc:O}");
+                return $"{stage}; SnapshotStatus={status}; Outputs=[{string.Join(" || ", service.ExecutionOutputs)}]; " +
+                    $"Requests=[{string.Join(" || ", requests)}]; Queue=[{string.Join(" || ", queue)}]";
+            }
+
+            try
+            {
+                await handler.MessagesRequested.Task.WaitAsync(ackDeadline.Token);
+            }
+            catch (OperationCanceledException) when (ackDeadline.IsCancellationRequested)
+            {
+                throw new Xunit.Sdk.XunitException(
+                    FailureDiagnostics("Message request was not reached within the fixed 5-second deadline"));
+            }
+            var mirroredSensors = _backend.PrtgStore().GetAllSensors();
+            Assert.Contains(mirroredSensors, sensor =>
+                sensor.Objid == 201 && sensor.DeviceObjid == 20 && sensor.Name == "Old sensor name");
+            Assert.Contains(mirroredSensors, sensor =>
+                sensor.Objid == 211 && sensor.DeviceObjid == 21 && sensor.Name == "S");
+            string[] requests;
+            lock (handler.Requests) requests = handler.Requests.ToArray();
+            Assert.Contains(requests, query => query.Contains("columns=objid,lastvalue,interval,lastcheck,status", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]filter_objid=201(&|$)"));
+            Assert.Contains(requests, query => query.Contains("content=sensors", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]id=21(&|$)"));
+            Assert.DoesNotContain(requests, query => query.Contains("content=sensors", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]id=20(&|$)"));
+            Assert.Contains(requests, query => query.Contains("content=messages", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]id=21(&|$)"));
+            Assert.All(requests.Where(query => Regex.IsMatch(query, @"[?&]id=\d+(&|$)")), query =>
+                Assert.Matches(@"[?&]id=(20|21)(&|$)", query));
             PrtgRecentStateChangeQueueItem handoff;
             do
             {
-                handoff = Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue());
-                if (handoff.CompletedAtUtc.HasValue) break;
-                await Task.Delay(TimeSpan.FromMilliseconds(20), ackDeadline.Token);
+                var queueItems = _backend.PrtgStore().ReadRecentStateChangeQueue();
+                Assert.Equal(new long[] { 20, 21 }, queueItems.Select(item => item.DeviceObjid).Order());
+                handoff = Assert.Single(queueItems, item => item.DeviceObjid == 21);
+                if (queueItems.All(item => item.CompletedAtUtc.HasValue)) break;
+                try { await Task.Delay(TimeSpan.FromMilliseconds(20), ackDeadline.Token); }
+                catch (OperationCanceledException) when (ackDeadline.IsCancellationRequested)
+                {
+                    throw new Xunit.Sdk.XunitException(FailureDiagnostics(
+                        "Recent-state queue acknowledgement was not reached within the fixed 5-second deadline"));
+                }
             } while (true);
             Assert.NotNull(handoff.CompletedAtUtc);
+            Assert.Equal(21, handoff.DeviceObjid);
+            Assert.All(_backend.PrtgStore().ReadRecentStateChangeQueue(), item =>
+            {
+                Assert.NotNull(item.CompletedAtUtc);
+                Assert.Equal(DateTime.Today.AddDays(-1), item.FromLocalDate);
+                Assert.Equal(DateTime.Today, item.ToLocalDate);
+            });
             Assert.Equal(DateTime.Today.AddDays(-1), handoff.FromLocalDate);
             Assert.Equal(DateTime.Today, handoff.ToLocalDate);
         }

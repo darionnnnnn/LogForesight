@@ -60,6 +60,8 @@ internal static class SchemaUpgrader
         // 未完成前查詢仍走 source + UPPER()，避免啟動時掃描整張暫存表。
         AddColumnIfMissing(ctx, isSqlite, "lf_risky_events", "source_key",
             isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_risky_events", "source_evidence_json",
+            isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
             "IX_lf_risky_events_host_id_date_source_key_event_id", "host_id, date, source_key, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
@@ -157,6 +159,10 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "known_issue", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "event_key",
             isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_observations_json",
+            isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_observations_truncated",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
         // 來源名稱的寫入時計算鍵；舊列保留 NULL 供背景分批補齊，不在啟動閘掃全表。
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_key",
             isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
@@ -239,6 +245,8 @@ internal static class SchemaUpgrader
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
             isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_values", "trust_version", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_values", "trusted_proof", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_uniq", "sensor_objid, period_start", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",

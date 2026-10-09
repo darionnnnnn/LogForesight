@@ -65,36 +65,38 @@ public sealed class PrtgTransferControllerTests
         Assert.Equal(1, result.Counts["Devices"]);
         Assert.Equal(0, result.Counts["Sensors"]);
         Assert.Contains("untrusted-diagnostic-payload", result.ResultManifestJson, StringComparison.Ordinal);
+        Assert.Contains("legacy-v1-unmanifested", result.ResultManifestJson, StringComparison.Ordinal);
         Assert.DoesNotContain("診斷主機", result.ResultManifestJson, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task LegacyJsonParserAcceptsRealV1AndV2PackagesWithEveryArrayPopulated()
+    public async Task LegacyJsonParserAcceptsFullUnmanifestedV2PackageAsUntrustedLegacy()
     {
         var validator = new PrtgLegacyJsonTransferValidator();
-        foreach (var version in new[] { 1, 2 })
-        {
-            var package = LegacyPackage(version);
-            var json = JsonSerializer.Serialize(package);
-            var roundTrip = JsonSerializer.Deserialize<PrtgDataPackage>(json)!;
-            Assert.All(new[] { roundTrip.Devices.Count, roundTrip.Sensors.Count, roundTrip.StateChanges.Count,
-                roundTrip.Values.Count, roundTrip.HostMaps.Count, roundTrip.ManualMaps.Count,
-                roundTrip.Observations.Count, roundTrip.Timelines.Count, roundTrip.SemanticEvidence.Count,
-                roundTrip.SemanticResults.Count }, count => Assert.Equal(1, count));
+        var json = JsonSerializer.Serialize(LegacyPackage(2));
+        var roundTrip = JsonSerializer.Deserialize<PrtgDataPackage>(json)!;
+        Assert.All(new[] { roundTrip.Devices.Count, roundTrip.Sensors.Count, roundTrip.StateChanges.Count,
+            roundTrip.Values.Count, roundTrip.HostMaps.Count, roundTrip.ManualMaps.Count,
+            roundTrip.Observations.Count, roundTrip.Timelines.Count, roundTrip.SemanticEvidence.Count,
+            roundTrip.SemanticResults.Count }, count => Assert.Equal(1, count));
 
-            var bytes = Encoding.UTF8.GetBytes(json);
-            var split = bytes.Length / 2;
-            var chunks = new[] { bytes[..split], bytes[split..] };
-            var result = await validator.ValidateAsync(chunks.Length,
-                (ordinal, _) => Task.FromResult(chunks[ordinal]), CancellationToken.None);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var split = bytes.Length / 2;
+        var chunks = new[] { bytes[..split], bytes[split..] };
+        var result = await validator.ValidateAsync(chunks.Length,
+            (ordinal, _) => Task.FromResult(chunks[ordinal]), CancellationToken.None);
 
-            Assert.Equal(version, result.FormatVersion);
-            Assert.Equal(bytes.LongLength, result.DeclaredBytes);
-            Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), result.PackageSha256);
-            Assert.All(new[] { "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps",
-                "Observations", "Timelines", "SemanticEvidence", "SemanticResults", "TimelineCoverageEntries", "TimelineStateEntries" },
-                category => Assert.Equal(1, result.Counts[category]));
-        }
+        Assert.Equal(2, result.FormatVersion);
+        Assert.Equal(bytes.LongLength, result.DeclaredBytes);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), result.PackageSha256);
+        Assert.Contains("legacy-v2-unmanifested", result.ResultManifestJson, StringComparison.Ordinal);
+        Assert.All(new[] { "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps",
+            "Observations", "Timelines", "SemanticEvidence", "SemanticResults", "TimelineCoverageEntries", "TimelineStateEntries" },
+            category => Assert.Equal(1, result.Counts[category]));
+
+        var nullablePolicy = Encoding.UTF8.GetBytes("""{"FormatVersion":2,"Purpose":"diagnostic-only","Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[],"SourcePolicy":null,"Observations":[],"Timelines":[],"SemanticEvidence":[],"SemanticResults":[]}""");
+        var nullPolicyResult = await validator.ValidateAsync(1, (_, _) => Task.FromResult(nullablePolicy), CancellationToken.None);
+        Assert.Contains("legacy-v2-unmanifested", nullPolicyResult.ResultManifestJson, StringComparison.Ordinal);
     }
 
     private static PrtgDataPackage LegacyPackage(int formatVersion) => new()
@@ -117,19 +119,146 @@ public sealed class PrtgTransferControllerTests
     };
 
     [Fact]
-    public async Task LegacyJsonParserAllowsMissingPurposeButRejectsDuplicateRootKeys()
+    public async Task LegacyJsonParserAllowsRealV1WithoutPurposeAndRejectsMinimalV2AndDuplicateKeys()
     {
-        var json = """{"FormatVersion":2,"Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[]}""";
+        var json = """{"FormatVersion":1,"Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[]}""";
         var validator = new PrtgLegacyJsonTransferValidator();
         var bytes = Encoding.UTF8.GetBytes(json);
 
         var result = await validator.ValidateAsync(1, (_, _) => Task.FromResult(bytes), CancellationToken.None);
-        Assert.Equal(2, result.FormatVersion);
+        Assert.Equal(1, result.FormatVersion);
+        Assert.Contains("legacy-v1-unmanifested", result.ResultManifestJson, StringComparison.Ordinal);
+
+        var malformedV2 = Encoding.UTF8.GetBytes("""{"FormatVersion":2,"Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[]}""");
+        var malformed = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+            (_, _) => Task.FromResult(malformedV2), CancellationToken.None));
+        Assert.StartsWith("legacy_v2_shape_invalid:", malformed.Message, StringComparison.Ordinal);
+
+        var missingVersionV2 = Encoding.UTF8.GetBytes("""{"Purpose":"diagnostic-only","Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[],"SourcePolicy":null,"Observations":[],"Timelines":[],"SemanticEvidence":[],"SemanticResults":[]}""");
+        var missingVersion = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+            (_, _) => Task.FromResult(missingVersionV2), CancellationToken.None));
+        Assert.StartsWith("format_version_required:", missingVersion.Message, StringComparison.Ordinal);
 
         var duplicate = Encoding.UTF8.GetBytes("""{"FormatVersion":1,"formatversion":2,"Devices":[]}""");
         var exception = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
             (_, _) => Task.FromResult(duplicate), CancellationToken.None));
         Assert.StartsWith("duplicate_root_property:", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task V2ManifestIsCheckedForUtf8PrefixHashByteOffsetAndEveryArrayCount()
+    {
+        var valid = BuildManifestV2();
+        var split = valid.Length - 19;
+        var chunks = new[] { valid[..split], valid[split..] };
+        var result = await new PrtgLegacyJsonTransferValidator().ValidateAsync(chunks.Length,
+            (ordinal, _) => Task.FromResult(chunks[ordinal]), CancellationToken.None);
+        Assert.Equal(2, result.FormatVersion);
+        Assert.Equal(0, result.Counts["Devices"]);
+        Assert.Contains("manifest-verified", result.ResultManifestJson, StringComparison.Ordinal);
+
+        var json = Encoding.UTF8.GetString(valid);
+        var rootPrefix = Encoding.UTF8.GetString(BuildManifestPrefix());
+        var actualHash = Convert.ToHexString(SHA256.HashData(BuildManifestPrefix()));
+        var wrongHash = json.Replace(actualHash, new string('0', 64), StringComparison.Ordinal);
+        await AssertManifestRejected(Encoding.UTF8.GetBytes(wrongHash), "manifest_hash_mismatch");
+
+        var wrongCount = json.Replace("\"Devices\":0", "\"Devices\":1", StringComparison.Ordinal);
+        await AssertManifestRejected(Encoding.UTF8.GetBytes(wrongCount), "manifest_count_mismatch");
+
+        var wrongOffset = json.Replace($"\"bytesBeforeManifest\":{Encoding.UTF8.GetByteCount(rootPrefix)}",
+            $"\"bytesBeforeManifest\":{Encoding.UTF8.GetByteCount(rootPrefix) + 1}", StringComparison.Ordinal);
+        await AssertManifestRejected(Encoding.UTF8.GetBytes(wrongOffset), "manifest_byte_count_mismatch");
+
+        var unmarkedNative = BuildUnmarkedManifestV2();
+        var unmarkedResult = await new PrtgLegacyJsonTransferValidator().ValidateAsync(1,
+            (_, _) => Task.FromResult(unmarkedNative), CancellationToken.None);
+        Assert.Contains("manifest-verified", unmarkedResult.ResultManifestJson, StringComparison.Ordinal);
+
+        var unsupported = Encoding.UTF8.GetString(valid).Replace(
+            "manifest-sha256-v1", "manifest-sha256-v2", StringComparison.Ordinal);
+        await AssertManifestRejected(Encoding.UTF8.GetBytes(unsupported), "integrity_contract_unsupported");
+
+        var missingManifest = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(BuildManifestPrefix()) + "}");
+        await AssertManifestRejected(missingManifest, "manifest_required");
+    }
+
+    [Fact]
+    public async Task NativeWriterOutputCompletesThroughHttpChunkConsumerAsManifestVerifiedAndUntrusted()
+    {
+        using var fixture = new TransferFixture();
+        var policyBefore = fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        var id = await CompleteTransfer(fixture, await WriteNativePackageAsync());
+        var row = fixture.TransferRow(id);
+        Assert.Equal(PrtgTransferStates.Complete, row.State);
+        Assert.Contains("manifest-verified", row.ResultManifestJson, StringComparison.Ordinal);
+        Assert.Contains("untrusted-diagnostic-payload", row.ResultManifestJson, StringComparison.Ordinal);
+        Assert.Equal(policyBefore, fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion());
+        using var db = fixture.Backend.CreateContext();
+        Assert.Empty(db.PrtgDevices);
+        Assert.Empty(db.PrtgSensors);
+        Assert.Empty(db.PrtgValues);
+        Assert.Empty(db.PrtgStateChanges);
+    }
+
+    private static async IAsyncEnumerable<PrtgDiagnosticExportItem> NativeRows()
+    {
+        await Task.Yield();
+        yield return new PrtgDiagnosticExportItem("SourcePolicy", "{}"u8.ToArray());
+    }
+
+    private static async Task<byte[]> WriteNativePackageAsync()
+    {
+        using var output = new MemoryStream();
+        var today = DateTime.UtcNow.Date;
+        await new PrtgDiagnosticExportWriter().WriteAsync(NativeRows(), output,
+            new PrtgDiagnosticExportHeader(today, today.AddDays(-1), today));
+        return output.ToArray();
+    }
+
+    private static byte[] BuildManifestPrefix() => Encoding.UTF8.GetBytes(
+        "{\"FormatVersion\":2,\"Purpose\":\"diagnostic-only\",\"IntegrityContract\":\"manifest-sha256-v1\",\"Devices\":[],\"Sensors\":[],\"StateChanges\":[],\"Values\":[],\"HostMaps\":[],\"ManualMaps\":[],\"SourcePolicy\":{},\"Observations\":[],\"Timelines\":[],\"SemanticEvidence\":[],\"SemanticResults\":[]");
+
+    private static byte[] BuildManifestV2()
+    {
+        var prefix = BuildManifestPrefix();
+        var counts = PrtgDiagnosticExportSource.V2ArrayProperties.ToDictionary(name => name, _ => 0L, StringComparer.Ordinal);
+        var manifest = JsonSerializer.Serialize(new
+        {
+            format = "legacy-json",
+            formatVersion = 2,
+            purpose = "diagnostic-only",
+            bytesBeforeManifest = prefix.LongLength,
+            sha256BeforeManifest = Convert.ToHexString(SHA256.HashData(prefix)),
+            rowCounts = counts
+        });
+        return prefix.Concat(Encoding.UTF8.GetBytes(",\"Manifest\":" + manifest + "}")).ToArray();
+    }
+
+    private static byte[] BuildUnmarkedManifestV2()
+    {
+        var markedPrefix = Encoding.UTF8.GetString(BuildManifestPrefix());
+        var prefix = Encoding.UTF8.GetBytes(markedPrefix.Replace(
+            ",\"IntegrityContract\":\"manifest-sha256-v1\"", "", StringComparison.Ordinal));
+        var counts = PrtgDiagnosticExportSource.V2ArrayProperties.ToDictionary(name => name, _ => 0L, StringComparer.Ordinal);
+        var manifest = JsonSerializer.Serialize(new
+        {
+            format = "legacy-json",
+            formatVersion = 2,
+            purpose = "diagnostic-only",
+            bytesBeforeManifest = prefix.LongLength,
+            sha256BeforeManifest = Convert.ToHexString(SHA256.HashData(prefix)),
+            rowCounts = counts
+        });
+        return prefix.Concat(Encoding.UTF8.GetBytes(",\"Manifest\":" + manifest + "}")).ToArray();
+    }
+
+    private static async Task AssertManifestRejected(byte[] bytes, string code)
+    {
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            new PrtgLegacyJsonTransferValidator().ValidateAsync(1,
+                (_, _) => Task.FromResult(bytes), CancellationToken.None));
+        Assert.StartsWith(code + ":", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -264,6 +393,50 @@ public sealed class PrtgTransferControllerTests
     }
 
     [Fact]
+    public async Task TransferConsumerAcceptsValidNativeManifestAndQuarantinesTamperedManifest()
+    {
+        using var fixture = new TransferFixture();
+        var policyBefore = fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
+        var validBytes = await WriteNativePackageAsync();
+        var validId = await CompleteTransfer(fixture, validBytes);
+        Assert.Equal(PrtgTransferStates.Complete, fixture.TransferRow(validId).State);
+
+        var priorNativeId = await CompleteTransfer(fixture, BuildUnmarkedManifestV2());
+        Assert.Equal(PrtgTransferStates.Complete, fixture.TransferRow(priorNativeId).State);
+        Assert.Contains("manifest-verified", fixture.TransferRow(priorNativeId).ResultManifestJson, StringComparison.Ordinal);
+
+        using var manifestDocument = JsonDocument.Parse(validBytes);
+        var actualHash = manifestDocument.RootElement.GetProperty("Manifest")
+            .GetProperty("sha256BeforeManifest").GetString()!;
+        var altered = Encoding.UTF8.GetString(validBytes);
+        altered = altered.Replace(actualHash, new string('0', 64), StringComparison.Ordinal);
+        var invalidId = await CompleteTransfer(fixture, Encoding.UTF8.GetBytes(altered));
+        Assert.Equal(PrtgTransferStates.ValidationFailed, fixture.TransferRow(invalidId).State);
+        Assert.Equal("manifest_hash_mismatch", fixture.TransferRow(invalidId).FailureCode);
+
+        Assert.Equal(policyBefore, fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion());
+        using var db = fixture.Backend.CreateContext();
+        Assert.Empty(db.PrtgDevices);
+        Assert.Empty(db.PrtgSensors);
+        Assert.Empty(db.PrtgValues);
+        Assert.Empty(db.PrtgStateChanges);
+    }
+
+    private static async Task<Guid> CompleteTransfer(TransferFixture fixture, byte[] bytes)
+    {
+        var id = fixture.CreateTransfer(bytes);
+        var context = new DefaultHttpContext();
+        context.Request.ContentType = "application/octet-stream";
+        context.Request.ContentLength = bytes.Length;
+        context.Request.Body = new MemoryStream(bytes);
+        fixture.Controller.ControllerContext = new ControllerContext { HttpContext = context };
+        Assert.IsType<OkObjectResult>(await fixture.Controller.PutChunk(id, 0, CancellationToken.None));
+        var result = await fixture.Controller.Complete(id, CancellationToken.None);
+        Assert.IsAssignableFrom<ObjectResult>(result);
+        return id;
+    }
+
+    [Fact]
     public async Task KestrelMvcReceivesRawChunksUnderPathBaseWithCsrfAndRejectsOversizeOrDeniedWrites()
     {
         using var fixture = new TransferFixture();
@@ -287,9 +460,7 @@ public sealed class PrtgTransferControllerTests
         {
             var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             using var client = new HttpClient { BaseAddress = new Uri(address + "/lf-r11/"), Timeout = TimeSpan.FromSeconds(30) };
-            var prefix = Encoding.UTF8.GetBytes("{\"FormatVersion\":2,\"Devices\":[]}");
-            var bytes = new byte[EfPrtgTransferStore.MaxChunkBytes + 1];
-            Array.Fill(bytes, (byte)' '); prefix.CopyTo(bytes, 0);
+            var bytes = LargeLegacyV1Payload();
             var id = Guid.NewGuid();
             const string route = "api/admin/settings/prtg-import-transfers";
             var request = new PrtgTransferCreateRequestDto(id, bytes.Length, 2, Convert.ToHexString(SHA256.HashData(bytes)));
@@ -310,18 +481,28 @@ public sealed class PrtgTransferControllerTests
             }
             for (var ordinal = 0; ordinal < 2; ordinal++)
             {
-                using var content = new ByteArrayContent(ordinal == 0 ? bytes[..EfPrtgTransferStore.MaxChunkBytes] : bytes[^1..]);
+                using var content = new ByteArrayContent(ordinal == 0 ? bytes[..EfPrtgTransferStore.MaxChunkBytes] : bytes[EfPrtgTransferStore.MaxChunkBytes..]);
                 content.Headers.ContentType = new("application/octet-stream");
                 using var accepted = await client.PutAsync($"{route}/{id}/chunks/{ordinal}", content);
                 Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
             }
-            using (var completed = await client.PostAsJsonAsync($"{route}/{id}/complete", new { })) Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+            using (var completed = await client.PostAsJsonAsync($"{route}/{id}/complete", new { }))
+                Assert.True(completed.StatusCode == HttpStatusCode.OK, await completed.Content.ReadAsStringAsync());
             Assert.Equal(PrtgTransferStates.Complete, fixture.TransferRow(id).State);
             Assert.Equal(bytes.Length, fixture.TransferRow(id).ReceivedBytes);
             fixture.User.AllowMaintain = false;
             using (var forbidden = await client.GetAsync($"{route}/{id}")) Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
         }
         finally { await app.StopAsync(); }
+    }
+
+    private static byte[] LargeLegacyV1Payload()
+    {
+        var name = new string('a', 2_100_000);
+        var json = "{\"FormatVersion\":1,\"Devices\":[{\"Objid\":1,\"Name\":\"" + name +
+                   "\"},{\"Objid\":2,\"Name\":\"" + name + "\"}],\"Sensors\":[],\"StateChanges\":[]," +
+                   "\"Values\":[],\"HostMaps\":[],\"ManualMaps\":[]}";
+        return Encoding.UTF8.GetBytes(json);
     }
 
     private sealed class NoopAudit : IAuditService
@@ -369,7 +550,7 @@ public sealed class PrtgTransferControllerTests
 
         public Guid CreateTransfer(byte[]? payload = null)
         {
-            var bytes = payload ?? Encoding.UTF8.GetBytes("{\"FormatVersion\":2,\"Devices\":[]}");
+            var bytes = payload ?? Encoding.UTF8.GetBytes("{\"FormatVersion\":1,\"Devices\":[],\"Sensors\":[],\"StateChanges\":[],\"Values\":[],\"HostMaps\":[],\"ManualMaps\":[]}");
             var id = Guid.NewGuid();
             var result = Assert.IsType<OkObjectResult>(Controller.Create(new PrtgTransferCreateRequestDto(id,
                 bytes.Length, 1, Convert.ToHexString(SHA256.HashData(bytes)))));

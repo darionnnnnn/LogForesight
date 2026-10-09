@@ -5,12 +5,13 @@ using NLog;
 
 namespace LogForesight.Web.Services;
 
-/// <summary>Completed/explicitly abandoned diagnostic chunks expire in bounded, restartable batches.</summary>
+/// <summary>Completed, failed, abandoned, and over-age incomplete diagnostic chunks expire in bounded, restartable batches.</summary>
 public sealed class PrtgDiagnosticRetentionHostedService(StorageBackend backend, IPrtgTransferCapacityProvider capacity)
     : BackgroundService
 {
-    public static readonly TimeSpan CompletedRetention = TimeSpan.FromDays(7);
-    public static readonly TimeSpan AbandonedRetention = TimeSpan.FromDays(1);
+    public static readonly TimeSpan CompletedRetention = EfPrtgTransferStore.CompletedRetention;
+    public static readonly TimeSpan AbandonedRetention = EfPrtgTransferStore.AbandonedRetention;
+    public static readonly TimeSpan IncompleteSessionLifetime = EfPrtgTransferStore.IncompleteSessionLifetime;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     internal async Task<int> TickAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -18,12 +19,18 @@ public sealed class PrtgDiagnosticRetentionHostedService(StorageBackend backend,
         cancellationToken.ThrowIfCancellationRequested();
         var completedBefore = now - CompletedRetention;
         var abandonedBefore = now - AbandonedRetention;
+        var incompleteBefore = now - IncompleteSessionLifetime;
         var store = new EfPrtgTransferStore(backend, capacity);
         store.ExpireExportReadLeases(now);
         using var db = backend.CreateContext();
         var due = await db.PrtgTransferSessions.AsNoTracking()
             .Where(row => (row.State == PrtgTransferStates.Complete && row.CompletedAtUtc <= completedBefore) ||
-                          (row.State == PrtgTransferStates.Abandoned && row.AbandonedAtUtc <= abandonedBefore))
+                          (row.State == PrtgTransferStates.Abandoned && row.AbandonedAtUtc <= abandonedBefore) ||
+                          (row.State == PrtgTransferStates.ValidationFailed && (row.AbandonedAtUtc ?? row.UpdatedAtUtc) <= abandonedBefore) ||
+                          ((row.State == PrtgTransferStates.Receiving || row.State == PrtgTransferStates.Validating) &&
+                           row.CreatedAtUtc <= incompleteBefore &&
+                           (row.ActiveWriteUntilUtc == null || row.ActiveWriteUntilUtc <= now) &&
+                           (row.LeaseUntilUtc == null || row.LeaseUntilUtc <= now)))
             .OrderBy(row => row.UpdatedAtUtc).ThenBy(row => row.TransferId)
             .Select(row => new { row.TransferId, row.CleanupAfterOrdinal }).Take(16)
             .ToArrayAsync(cancellationToken);

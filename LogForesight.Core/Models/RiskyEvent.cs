@@ -28,6 +28,9 @@ public class RiskyEvent
     /// <summary>事件原始時間戳</summary>
     public DateTime EventTime { get; set; }
 
+    /// <summary>Typed provenance captured before the retained message is truncated.</summary>
+    public SourceEvidence? SourceEvidence { get; set; }
+
     /// <summary>原文，截 2000 字（見 RiskyEventSelector.MaxMessageChars）</summary>
     public string Message { get; set; } = string.Empty;
 

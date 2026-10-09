@@ -192,13 +192,116 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
         if (!FenceMatches(estimate, Store().Get(), saveVisible, store) || estimate.HostVersion != sourceSnapshot.Version)
             return Conflict(ApiResponse.Fail("catalogue_changed", "估算後來源、授權或目錄已變更；請重新估算。"));
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        PrtgCapacityAdmissionPlan? pendingCapacityPlan = null;
         try
         {
             _ = TimeZoneInfo.FindSystemTimeZoneById(request.SourceTimeZoneId);
             _ = System.Globalization.CultureInfo.GetCultureInfo(request.SourceCultureName);
             var hint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
             if (hint.Length == 0) throw new ArgumentException("請先儲存 PRTG 連線位址。");
-            var result = Store().Update(p =>
+            var before = Store().Get();
+            if (before.Revision != request.Revision || before.HostIds.Any(visibility.IsCaseGrantOnly) ||
+                (!user.Has(Capability.ViewAll) && !before.HostIds.All(visible.Contains)))
+                throw new InvalidOperationException("設定已變更或含不可見主機；重新載入後再修改。");
+            var identityChanged = IdentityChanged(before, request, hint);
+            if (identityChanged && before.SourceGeneration.Length > 0 && request.SourceChangeMode is not ("new" or "continue" or "unknown"))
+                throw new ArgumentException("來源已變更，請先預覽影響並選擇延續、新來源或無法確認。");
+            var sourceChanges = (identityChanged && request.SourceChangeMode != "continue") ||
+                request.SourceChangeMode is "new" or "unknown";
+            var nextSourceGeneration = sourceChanges ? Guid.NewGuid().ToString("N") : before.SourceGeneration;
+            var proposedPolicy = new PrtgMonitoringPolicy
+            {
+                Revision = before.Revision,
+                CoreSystemId = request.SourceChangeMode == "unknown" ? "" : request.CoreSystemId.Trim(),
+                SourceGeneration = nextSourceGeneration,
+                EndpointHint = hint,
+                ValidFrom = sourceChanges ? DateTimeOffset.UtcNow : before.ValidFrom,
+                HostIds = selectedHosts.ToList(),
+                SensorIds = selectedSensors.ToList(),
+                SourceTimeZoneId = request.SourceTimeZoneId,
+                SourceCultureName = request.SourceCultureName,
+                RawTimestampTimeZoneId = before.RawTimestampTimeZoneId,
+                AnalysisTimeZoneId = before.AnalysisTimeZoneId,
+                TimeBasisEvidenceReference = before.TimeBasisEvidenceReference
+            };
+            if (settings.PrtgEnabled)
+            {
+                var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
+                var currentTargets = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings, sentinels, before);
+                var proposedTargets = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings, sentinels, proposedPolicy);
+                var currentIds = currentTargets.SensorObjids.ToHashSet();
+                var expanded = proposedTargets.SensorObjids.Any(id => !currentIds.Contains(id));
+                var profileScopeChanged = sourceChanges ||
+                    !before.HostIds.Order().SequenceEqual(proposedPolicy.HostIds.Order()) ||
+                    !before.SensorIds.Order().SequenceEqual(proposedPolicy.SensorIds.Order());
+                var contractChanged = sourceChanges ||
+                    currentTargets.EndpointFingerprint != proposedTargets.EndpointFingerprint ||
+                    currentTargets.ScopeFingerprint != proposedTargets.ScopeFingerprint || profileScopeChanged;
+                if (expanded || contractChanged)
+                {
+                    var estimateCapacity = PrtgSnapshotCapacityEvaluator.Evaluate(proposedTargets.SensorObjids.Count,
+                        PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), proposedTargets.ScopeFingerprint,
+                        proposedTargets.EndpointFingerprint, proposedTargets.RequestShapeFingerprint,
+                        new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
+                        DateTimeOffset.UtcNow);
+                    if (estimateCapacity.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
+                    {
+                        var code = estimateCapacity.Status == PrtgSnapshotCapacityStatus.CapacityExceeded
+                            ? "capacity-exceeded" : "capacity-unverified";
+                        return Conflict(ApiResponse.Fail(code,
+                            $"{code}: 快照容量證據不符合預計正式範圍（{estimateCapacity.TargetCount:N0} 顆、{estimateCapacity.BatchCount:N0} 批、樣本 {estimateCapacity.FreshMatchingFullBatchSamples}/5、{estimateCapacity.Reason}）。保持停用以保存新來源／範圍、完成同形容量試測後再啟用。"));
+                    }
+
+                    var profileIds = proposedPolicy.SensorIds.Where(id => id > 0).Distinct().Order()
+                        .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
+                    PrtgProfileTransportCapacityPilot.Contract profileContract;
+                    try
+                    {
+                        if (proposedPolicy.SensorIds.Count > 15_000 || profileIds.Length == 0 ||
+                            profileIds.Length != Math.Min(proposedPolicy.SensorIds.Distinct().Count(),
+                                PrtgProfileTransportCapacityPilot.MaximumSensorIds))
+                            throw new InvalidOperationException("profile-scope-missing-or-over-limit");
+                        profileContract = PrtgProfileTransportCapacityPilot.BuildContract(backend, hosts,
+                            settings, proposedPolicy, profileIds);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+                    {
+                        return Conflict(ApiResponse.Fail("capacity-unverified",
+                            $"Profile transport 範圍尚未有同形證據（{ex.Message}）。保持停用、保存來源／範圍後執行 5 次 bounded profile pilots，再重新啟用。"));
+                    }
+                    var profileCapacity = PrtgProfileTransportCapacityEvaluator.Evaluate(
+                        proposedPolicy.SensorIds.Distinct().Count(), profileContract.SourceFingerprint,
+                        profileContract.ScopeFingerprint, profileContract.StrategyFingerprint,
+                        profileContract.RequestShapeFingerprint, profileContract.VersionFingerprint,
+                        new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read(),
+                        DateTimeOffset.UtcNow);
+                    var joint = PrtgJointCapacityEvaluator.Evaluate(estimateCapacity, profileCapacity,
+                        PrtgRequestBudget.Shared.ReadUsage(), settings.PrtgTimeoutSeconds);
+                    if (joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
+                    {
+                        var code = joint.Status == PrtgSnapshotCapacityStatus.CapacityExceeded
+                            ? "capacity-exceeded" : "capacity-unverified";
+                        return Conflict(ApiResponse.Fail(code,
+                            $"{code}: joint snapshot/profile admission；snapshot {estimateCapacity.FreshMatchingFullBatchSamples}/5、profile {profileCapacity.FreshSuccessfulSamples}/5；估算 snapshot {joint.SnapshotEstimatedSeconds:0} s/{joint.SnapshotWindowSeconds:0} s、profile {joint.ProfileEstimatedSeconds:0} s/{joint.ProfileWindowSeconds:0} s；{joint.Reason}。保持停用並完成同形 pilots 後再儲存或啟用。"));
+                    }
+                    pendingCapacityPlan = PrtgJointCapacityEvaluator.CreatePlan(joint,
+                        profileContract.SourceFingerprint, proposedTargets.ScopeFingerprint,
+                        profileContract.ScopeFingerprint, profileContract.StrategyFingerprint,
+                        proposedTargets.RequestShapeFingerprint, profileContract.RequestShapeFingerprint,
+                        profileContract.VersionFingerprint,
+                        DateTimeOffset.UtcNow, settings.Revision, proposedPolicy.Revision);
+                }
+            }
+            var affectedResources = new HashSet<long>();
+            if (sourceChanges) affectedResources.UnionWith(before.SensorIds);
+            affectedResources.UnionWith(request.SensorIds.Except(before.SensorIds));
+            affectedResources.UnionWith(before.SensorIds.Except(request.SensorIds));
+            var changedHosts = before.HostIds.Except(request.HostIds).Concat(request.HostIds.Except(before.HostIds)).ToArray();
+            if (changedHosts.Length > 0)
+                affectedResources.UnionWith(backend.PrtgStore().GetSensorIdsMappedToHosts(changedHosts)
+                    .Intersect(before.SensorIds.Concat(request.SensorIds)));
+            // Policy revision CAS、政策內容與受影響資源世代在同一 SQL transaction 發布。
+            var result = Store().UpdateWithResourceEpochs(request.Revision, affectedResources, p =>
             {
                 var writeVisible = VisibleHostIds(sourceSnapshot);
                 if (p.Revision != request.Revision || p.HostIds.Any(visibility.IsCaseGrantOnly) ||
@@ -213,7 +316,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                     request.ContinuityEvidenceReference.Length > 1000))
                     throw new ArgumentException("延續須核對相同 Core、時區及語系，並提供來源身分核對證據；不確定請選新來源／無法確認。");
                 if ((changed && request.SourceChangeMode != "continue") || request.SourceChangeMode is "new" or "unknown")
-                { p.SourceGeneration = Guid.NewGuid().ToString("N"); p.ValidFrom = DateTimeOffset.Now;
+                { p.SourceGeneration = nextSourceGeneration; p.ValidFrom = DateTimeOffset.Now;
                     p.ContinuityEvidenceReference = ""; p.ContinuityConfirmedAtUtc = null; }
                 if (request.SourceChangeMode == "continue")
                 { p.ContinuityEvidenceReference = request.ContinuityEvidenceReference.Trim(); p.ContinuityConfirmedAtUtc = DateTimeOffset.UtcNow; }
@@ -222,8 +325,47 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                 p.HostIds = selectedHosts.ToList(); p.SensorIds = selectedSensors.ToList();
                 p.Revision = Guid.NewGuid().ToString("N"); p.ConfirmedBy = user.UserId.ToString();
             });
+            string? capacityPublishFailure = null;
+            if (pendingCapacityPlan is not null)
+            {
+                try
+                {
+                    var planStore = new PrtgCapacityAdmissionPlanStore(backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
+                    var candidatePlan = pendingCapacityPlan with { PolicyRevision = result.Revision };
+                    var published = planStore.Publish(candidatePlan, result.Revision, DateTimeOffset.UtcNow,
+                        TimeSpan.FromHours(24), settings.Revision, () =>
+                        {
+                            var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                            var latestPolicy = Store().Get();
+                            if (!latestSettings.PrtgEnabled || latestSettings.Revision != settings.Revision ||
+                                latestPolicy.Revision != result.Revision) return false;
+                            var latestProfileIds = latestPolicy.SensorIds.Where(id => id > 0).Distinct().Order()
+                                .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
+                            var latestProfileContract = PrtgProfileTransportCapacityPilot.BuildContract(backend,
+                                hosts, latestSettings, latestPolicy, latestProfileIds);
+                            var latestSnapshotTargets = PrtgSnapshotTargetResolver.Resolve(backend, hosts,
+                                latestSettings, new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
+                            return latestProfileContract.SourceFingerprint == pendingCapacityPlan.SourceFingerprint &&
+                                latestProfileContract.ScopeFingerprint == pendingCapacityPlan.ProfileScopeFingerprint &&
+                                latestProfileContract.StrategyFingerprint == pendingCapacityPlan.StrategyFingerprint &&
+                                latestProfileContract.RequestShapeFingerprint == pendingCapacityPlan.RequestShapeFingerprint &&
+                                latestProfileContract.VersionFingerprint == pendingCapacityPlan.RuntimeVersionFingerprint &&
+                                latestSnapshotTargets.ScopeFingerprint == pendingCapacityPlan.SnapshotScopeFingerprint &&
+                                latestSnapshotTargets.RequestShapeFingerprint == pendingCapacityPlan.SnapshotRequestShapeFingerprint;
+                        });
+                    PrtgRequestBudget.Shared.SetAdmissionPlan(published);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+                {
+                    PrtgRequestBudget.Shared.ClearAdmissionPlan();
+                    capacityPublishFailure = ex.Message;
+                }
+            }
             audit.Record("prtg_monitoring_confirm", "確認 Core 身分及 NetIQ 試點範圍；新身分不追認過去涵蓋。", "prtg", result.Revision);
             stamp.Bump();
+            if (capacityPublishFailure is not null)
+                return Conflict(ApiResponse.Fail("capacity-unverified",
+                    $"PRTG 範圍已保存，但 joint capacity plan 發布時來源或設定已改變；擷取保持 fail-closed，請重新估算並完成容量 pilots。 ({capacityPublishFailure})"));
             return Ok(ApiResponse<string>.Ok(result.Revision));
         }
         catch (ArgumentException ex) { return BadRequest(ApiResponse.Fail("validation_failed", ex.Message)); }
@@ -453,21 +595,30 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             rulesVersion != backend.Blob("rules").ReadVersion())
             return Conflict(ApiResponse.Fail("catalogue_changed", "範圍或 sentinel 設定在預覽期間變更，請重新查詢。"));
         var scopeRevision = $"{scopeRevisionVersion}:{policyStoreVersion}:{rulesVersion}:{sentinelFingerprint}:{hostFingerprint}";
+        var resourceIdentities = backend.PrtgStore().GetResourceIdentities(dataPage.Rows.Select(sensor => sensor.SensorId));
         var rows = dataPage.Rows.Select(sensor =>
         {
             hostById.TryGetValue(sensor.HostId ?? 0, out var host);
             var proof = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.SensorId)).Get();
             var matching = rules.Where(r => PrtgFormalEligibility.RuleCategoryMatches(r, sensor.Category) &&
-                (r.PrtgRuleCode is "down" or "warning" or "flapping" || r.PrtgRuleCode == "disk_free_trend" && sensor.Category == "disk" && r.PrtgSensorCategory == "disk"))
+                (r.PrtgRuleCode is "down" or "warning" or "flapping" ||
+                 r.PrtgRuleCode == "disk_free_trend" && sensor.Category == "disk" && r.PrtgSensorCategory == "disk" ||
+                 r.Id == "builtin-prtg-resource-disk-pressure" &&
+                 r.PrtgRuleCode == PrtgRuleEvaluator.RuleResourceDiskPressure &&
+                 sensor.Category == PrtgSensorCategories.Disk && r.PrtgSensorCategory == PrtgSensorCategories.Disk))
                 .GroupBy(r => r.PrtgRuleCode).Select(g => g.OrderByDescending(r => r.PrtgSensorCategory != null).ThenBy(r => r.Id, StringComparer.Ordinal).First()).ToArray();
             var reasons = new List<string>();
             if (sensor.MapStatus != PrtgMapStatus.Ok || host == null) reasons.Add(sensor.MapStatus == PrtgMapStatus.Conflict ? "主機對應衝突" : "尚無有效主機對應");
             if (!PrtgFormalEligibility.HostAllowed(host?.ToWebHost(), settings, policy)) reasons.Add("未啟用、來源未確認或主機不在有效 NetIQ 試點");
             if (!policySensors.Contains(sensor.SensorId)) reasons.Add("感測器未納入試點");
             if (matching.Length == 0) reasons.Add("沒有適用且啟用的正式規則");
+            if (host is null || !resourceIdentities.TryGetValue(sensor.SensorId, out var identity) ||
+                !PrtgResourceQualification.IsCurrent(proof, identity, policy.SourceGeneration,
+                    sensor.SensorId, sensor.DeviceObjid, host.HostId)) reasons.Add("來源／資源／對應身分待確認");
+            if (host is not null && matching.Any(r => r.Id == "builtin-prtg-resource-disk-pressure") &&
+                !PrtgResourceProfileQualification.IsCurrentDiskProfile(backend, host.HostId, sensor.SensorId, DateTime.UtcNow))
+                reasons.Add("磁碟正式判定需目前可信 primary-channel／量義／physical-sample profile");
             var configured = reasons.Count == 0;
-            if (proof.HostId != host?.HostId || proof.SourceGeneration != policy.SourceGeneration || proof.ResourceGeneration.Length == 0 ||
-                proof.MappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()) reasons.Add("來源／資源／對應身分待確認");
             var begin = new DateTimeOffset(targetDay); var finish = begin.AddDays(1);
             var periods = proof.Periods(begin, finish);
             if (periods.Sum(p => (p.Through - p.From).TotalSeconds) < (finish - begin).TotalSeconds ||
@@ -476,7 +627,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             var parentQualified = parent?.CanSupplementWithPrtg() == true;
             if (!parentQualified) reasons.Add("等待目標日 NetIQ 成功分析");
             if (matching.Any(r => r.PrtgRuleCode == "disk_free_trend"))
-                reasons.Add("磁碟仍須正式當輪語意重驗與 28 日 readiness；預覽不取數、不解鎖資格");
+                reasons.Add("容量趨勢理由仍須正式當輪語意重驗與 28 日 readiness；兩小時低水位資源規則獨立評估；預覽不取數、不解鎖資格");
             return new { Objid = sensor.SensorId, SensorName = sensor.Name, sensor.Category, HostId = host?.HostId, HostName = host?.HostName,
                 Selected = policySensors.Contains(sensor.SensorId), RuleIds = matching.Select(r => r.Id),
                 ConfiguredForEvaluation = configured, NetiqQualified = parentQualified,

@@ -249,6 +249,17 @@ public interface IIssueAggregateQuery
     /// <param name="hostIds">目標存活主機集合；null＝不篩主機（校準匯出用），空集合＝零結果。</param>
     List<PrtgRuleHitAggregate> AggregatePrtgRuleHits(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
 
+    /// <summary>Calibration-only complete query with an explicit source-row ceiling; oversized data is rejected, never sampled.</summary>
+    List<PrtgRuleHitAggregate> AggregatePrtgRuleHitsBounded(IssueExclusion exclusion, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, int maximumSourceRows, LogForesight.Core.Service.PrtgCalibrationCaptureBudget budget)
+    {
+        var rows = AggregatePrtgRuleHits(exclusion, from, to, hostIds);
+        if (rows.Count > maximumSourceRows)
+            throw new LogForesight.Core.Service.CalibrationCapacityException("PRTG calibration rule-hit source exceeds the bounded query contract.");
+        budget.Charge(rows.Count * 256L, "bounded test/custom PRTG rule-hit result rows");
+        return rows;
+    }
+
     /// <summary>
     /// PRTG finding 跨日命中日期（docs/PRTG-SPEC.md 跨日判定）：回傳每個 EventKey 在
     /// <c>[fromInclusive, toExclusive)</c> 內出現過的相異日期。只取 <c>LogName == "PRTG"</c> 的列，

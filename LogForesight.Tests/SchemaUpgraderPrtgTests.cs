@@ -229,7 +229,7 @@ public class SchemaUpgraderPrtgTests : IDisposable
         var valColumns = GetColumnNames(ctx, "lf_prtg_values");
         var expectedVal = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "id", "sensor_objid", "period_start", "avg_value", "min_value", "max_value", "coverage", "quality", "created_at"
+            "id", "sensor_objid", "period_start", "avg_value", "min_value", "max_value", "coverage", "quality", "created_at", "trust_version", "trusted_proof"
         };
         Assert.True(expectedVal.SetEquals(valColumns), $"lf_prtg_values 欄位不符。實際: {string.Join(", ", valColumns)}");
 
@@ -248,6 +248,31 @@ public class SchemaUpgraderPrtgTests : IDisposable
             "device_objid", "host_id", "created_by", "note", "created_at"
         };
         Assert.True(expectedManual.SetEquals(manualColumns), $"lf_prtg_manual_map 欄位不符。實際: {string.Join(", ", manualColumns)}");
+    }
+
+    [Fact]
+    public void 舊lfPrtgValues升級後既有樣本保持trustVersion零()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS lf_prtg_values");
+            ctx.Database.ExecuteSqlRaw("""
+                CREATE TABLE lf_prtg_values (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, sensor_objid INTEGER NOT NULL,
+                    period_start TEXT NOT NULL, avg_value REAL NULL, min_value REAL NULL, max_value REAL NULL,
+                    coverage REAL NULL, quality TEXT NOT NULL, created_at TEXT NOT NULL)
+                """);
+            ctx.Database.ExecuteSqlRaw("""
+                INSERT INTO lf_prtg_values(sensor_objid,period_start,avg_value,coverage,quality,created_at)
+                VALUES (88,'2026-10-05 10:00:00',12.0,75.0,'sampled','2026-10-05 11:00:00')
+                """);
+            SchemaUpgrader.Upgrade(ctx);
+        }
+        using var read = _fx.NewContext();
+        var row = Assert.Single(read.PrtgValues);
+        Assert.Equal(0, row.TrustVersion);
+        Assert.Null(row.TrustedProof);
+        Assert.Equal(75.0, row.Coverage!.Value);
     }
 
     [Fact]

@@ -60,14 +60,15 @@ async function request(method, url, body, options = {}) {
         }
     }
 
-    // **只有 GET 加逾時，POST／PUT／DELETE 一律不加**：測試連線、估算規模、套用匯入這類
+    // GET 與明確標示為唯讀的 POST 查詢加逾時；一般 POST／PUT／DELETE 不加：
+    // 測試連線、套用匯入這類
     // 長時間寫入操作若在客戶端中止，伺服器仍會繼續做完——使用者看到失敗後再按一次，
     // 就是重複執行（重複匯入、重複套用）。讀取沒有這個副作用，中止是安全的。
     let timedOut = false;
     let timeoutTimer = null;
     let signalRelay = null;
     if (options.signal) init.signal = options.signal;
-    if (method === 'GET') {
+    if (method === 'GET' || (method === 'POST' && options.readOnly === true)) {
         const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
             ? options.timeoutMs
             : GET_TIMEOUT_MS;
@@ -137,6 +138,8 @@ async function request(method, url, body, options = {}) {
 export const api = {
     get: (url, options) => request('GET', url, null, options),
     post: (url, body, options) => request('POST', url, body, options),
+    // 大範圍查詢使用 POST body，仍經相同 CSRF／登入／信封與取消處理。
+    readOnlyPost: (url, body, options) => request('POST', url, body, { ...options, readOnly: true }),
     put: (url, body, options) => request('PUT', url, body, options),
     putBytes: (url, body, options) => request('PUT', url, body, { ...options, rawBytes: true }),
     delete: (url, options) => request('DELETE', url, null, options)

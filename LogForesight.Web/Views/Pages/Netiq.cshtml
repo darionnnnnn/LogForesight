@@ -183,6 +183,19 @@
             <button type="button" class="btn btn-sm btn-outline-secondary" id="probe-copy" disabled>複製</button>
         </label>
         <textarea class="form-control font-monospace small" id="probe-output" rows="20" readonly placeholder="尚未執行過診斷。"></textarea>
+
+        <hr />
+        <h3 class="h6">安全欄位形狀探測</h3>
+        <p class="small text-muted">單一選定 Sentinel、近 1 小時、最多 3 筆事件；30 秒期限、單一查詢、最多 12 次 HTTP 請求、每個回應本文最多 512 KiB、報告最多 32 KiB。只顯示格式安全的欄名與 JSON 形狀，不輸出欄位值、IP、帳號、訊息或連線位址。候選形狀不是語意證明，也不會授權強匹配。</p>
+        <div class="d-flex align-items-center gap-3 mb-3">
+            <button type="button" class="btn btn-outline-primary" id="probe-metadata-start">執行安全欄位探測</button>
+            <div class="text-muted small" id="probe-metadata-state"></div>
+        </div>
+        <label for="probe-metadata-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+            安全欄位形狀報告
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="probe-metadata-copy" disabled>複製</button>
+        </label>
+        <textarea class="form-control font-monospace small" id="probe-metadata-output" rows="12" readonly placeholder="尚未執行過安全欄位探測。"></textarea>
     </div>
 </div>
 

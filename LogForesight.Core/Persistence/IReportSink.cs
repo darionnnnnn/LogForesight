@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+
 namespace LogForesight.Core.Persistence;
 
 /// <summary>報告種類，供後端分類儲存（`lf_reports.kind`），不影響內容本身</summary>
@@ -44,6 +46,15 @@ public static class ReportKinds
 /// <param name="RiskLevel">風險等級</param>
 /// <param name="Categories">當日發現的類別串，如「儲存裝置+安全」</param>
 public record ReportMeta(string? RiskLevel = null, string? Categories = null);
+
+public sealed record PreparedRiskReport(
+    DateTime Date,
+    HostKey Host,
+    string FileName,
+    string Content,
+    ReportMeta? Meta,
+    string PrtgEvidenceFingerprint,
+    string DecisionInputFingerprint = "");
 
 /// <summary>
 /// 報告內容的輸出目的地。呼叫端負責組好報告文字內容，sink 只負責「寫到哪裡、回傳什麼參照」——

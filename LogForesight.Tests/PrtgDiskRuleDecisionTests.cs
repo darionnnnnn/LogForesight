@@ -134,6 +134,24 @@ public sealed class PrtgDiskRuleDecisionTests
         Assert.NotNull(insufficient.Trend);
     }
 
+    [Fact]
+    public void 提前低水位預覽與正式判定使用同一理由且不增加第二個資源finding()
+    {
+        var data = Enumerable.Range(0, 28).Select(i => new PrtgDiskTrendDay(End.AddDays(i - 27), 54 - i)).ToArray();
+        var formal = PrtgDiskRuleDecision.Evaluate(Input(series: data));
+        var preview = PrtgDiskRuleDecision.Evaluate(Input(series: data, mode: PrtgDiskDecisionMode.Preview));
+        Assert.True(formal.WouldHit);
+        Assert.True(preview.WouldHit);
+        Assert.Equal(formal.Trend, preview.Trend);
+        Assert.Null(preview.Finding);
+        Assert.Contains("7.0 日降到低水位 20.0%", formal.Finding!.Detail);
+        Assert.Equal("predicted-low-water", Assert.Single(formal.Trend!.Reasons));
+        Assert.Equal($"prtg:disk_free_trend:{Sensor}", PrtgFindingMapper.ToSignature(formal.Finding, End.ToDateTime(TimeOnly.MinValue)).EventKey);
+        var stale = PrtgDiskRuleDecision.Evaluate(Input(series: data.Select(x => x with { Day = x.Day.AddDays(-1) }).ToArray()));
+        Assert.Equal(PrtgDiskDecisionExclusion.StaleDataAsOf, stale.Exclusion);
+        Assert.Null(stale.Finding);
+    }
+
     [Theory]
     [InlineData(PrtgDiskDecisionMode.Formal)]
     [InlineData(PrtgDiskDecisionMode.Preview)]

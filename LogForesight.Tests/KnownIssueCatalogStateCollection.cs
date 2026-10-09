@@ -10,7 +10,7 @@ namespace LogForesight.Tests;
 /// 把所有會讀寫這份共用狀態的測試類別放進同一個 collection，xUnit 保證同一 collection 內
 /// 序列執行，其餘不相關的測試類別不受影響、仍可平行執行。
 /// </summary>
-[CollectionDefinition("KnownIssueCatalogState")]
+[CollectionDefinition("KnownIssueCatalogState", DisableParallelization = true)]
 public class KnownIssueCatalogStateCollection
 {
 }

@@ -31,9 +31,11 @@ public sealed partial class SentinelClient
 
         while (retrieved < targetCount)
         {
+            if (request.MaxPages is { } maxPages && page > maxPages)
+                throw new SentinelClientException("Sentinel probe page limit reached.", safeCode: "page-limit");
             await ThrottleAsync(ct);
             var href = SetPageQueryParam(status.ResultsHref, page);
-            var pageEvents = await FetchPageAsync(href, request.RawFields, ct);
+            var pageEvents = await FetchPageAsync(href, request, ct);
             if (pageEvents.Count == 0) break; // 沒有更多資料，即使數字對不上也停止，避免無窮迴圈
 
             retrieved += pageEvents.Count;
@@ -58,23 +60,28 @@ public sealed partial class SentinelClient
         return $"{href}{separator}page={page}";
     }
 
-    private async Task<List<SentinelEvent>> FetchPageAsync(string href, bool rawFields, CancellationToken ct)
+    private async Task<List<SentinelEvent>> FetchPageAsync(string href, SentinelSearchRequest request, CancellationToken ct)
     {
         var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Get, href), ct);
         using (resp)
         {
             if (!resp.IsSuccessStatusCode)
             {
-                var body = await SafeReadBodyAsync(resp);
+                var body = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
                     $"Sentinel「{_server.Name}」讀取查詢結果失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
             }
 
-            var json = await resp.Content.ReadAsStringAsync(ct);
+            var json = await ReadResponseBodyAsync(resp, ct);
             // 只留分析與顯示會用到的欄位（批次E1）：回應可能帶回投影以外的屬性，
             // 全部入袋會讓單筆事件大小不受控。probe 診斷路徑（RawFields）不過濾，
             // 它要靠全欄位聯集發現未知欄位。
-            return ParseEventsPage(json, rawFields ? null : SentinelFieldMap.ParseKeepFields);
+            var parsed = ParseEventsPage(json, request.RawFields ? null : SentinelFieldMap.ParseKeepFields,
+                request.ShapeOnly, out var recognized, request.ShapeOnly ? request.MaxResults : null,
+                request.ShapeOnly ? request.MaxShapeFieldKeys : null);
+            if (request.ShapeOnly && !recognized)
+                throw new SentinelClientException("Sentinel probe response shape was not recognized.", safeCode: "malformed-response");
+            return parsed;
         }
     }
 
@@ -90,8 +97,13 @@ public sealed partial class SentinelClient
     /// 這裡再依實測結果收斂。
     /// </summary>
     internal static List<SentinelEvent> ParseEventsPage(string json, IReadOnlySet<string>? keepFields)
+        => ParseEventsPage(json, keepFields, shapeOnly: false, out _, null, null);
+
+    private static List<SentinelEvent> ParseEventsPage(string json, IReadOnlySet<string>? keepFields, bool shapeOnly,
+        out bool recognized, int? maximumEvents, int? maximumFieldKeys)
     {
         var events = new List<SentinelEvent>();
+        recognized = false;
         JsonDocument doc;
         try
         {
@@ -106,22 +118,87 @@ public sealed partial class SentinelClient
         {
             var array = FindEventArray(doc.RootElement);
             if (array == null) return events;
+            recognized = true;
 
+            var observedEvents = 0;
+            var observedKeysTotal = 0;
             foreach (var item in array.Value.EnumerateArray())
             {
+                observedEvents++;
+                if (shapeOnly && maximumEvents is { } maxEvents && observedEvents > maxEvents)
+                    throw new SentinelClientException("Sentinel probe event limit exceeded.", safeCode: "event-limit");
                 if (item.ValueKind != JsonValueKind.Object) continue;
-                var fields = new Dictionary<string, string>(
-                    keepFields?.Count ?? 0, StringComparer.OrdinalIgnoreCase);
+                var fields = new Dictionary<string, string>(shapeOnly ? 0 : (keepFields?.Count ?? 0), StringComparer.OrdinalIgnoreCase);
+                var shapes = shapeOnly
+                    ? new Dictionary<string, SentinelFieldShape>(StringComparer.Ordinal)
+                    : null;
                 foreach (var prop in item.EnumerateObject())
                 {
                     // keepFields 為 null＝不過濾（診斷用途要看真實回應的全部欄位）
                     if (keepFields != null && !keepFields.Contains(prop.Name)) continue;
-                    fields[prop.Name] = ElementToString(prop.Value);
+                    if (shapeOnly)
+                    {
+                        AddShape(shapes!, prop.Name, prop.Value, ref observedKeysTotal, maximumFieldKeys);
+                        if (prop.Value.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var child in prop.Value.EnumerateObject())
+                                AddShape(shapes!, $"{prop.Name}.{child.Name}", child.Value, ref observedKeysTotal, maximumFieldKeys);
+                        }
+                        else if (prop.Value.ValueKind == JsonValueKind.Array)
+                        {
+                            var sampledItems = 0;
+                            foreach (var itemValue in prop.Value.EnumerateArray())
+                            {
+                                if (itemValue.ValueKind == JsonValueKind.Object)
+                                {
+                                    foreach (var child in itemValue.EnumerateObject())
+                                        AddShape(shapes!, $"{prop.Name}.item.{child.Name}", child.Value, ref observedKeysTotal, maximumFieldKeys);
+                                }
+                                if (++sampledItems >= 3) break;
+                            }
+                        }
+                    }
+                    else fields[prop.Name] = ElementToString(prop.Value);
                 }
-                events.Add(new SentinelEvent(fields));
+                events.Add(shapes is null
+                    ? new SentinelEvent(fields)
+                    : new SentinelEvent(fields) { Shapes = shapes });
             }
         }
         return events;
+    }
+
+    private static void AddShape(Dictionary<string, SentinelFieldShape> shapes, string name, JsonElement value,
+        ref int observedKeys, int? maximumKeys)
+    {
+        if (shapes.ContainsKey(name)) return;
+        observedKeys++;
+        if (maximumKeys is { } max && observedKeys > max)
+            throw new SentinelClientException("Sentinel probe field-key limit exceeded.", safeCode: "field-key-limit");
+        shapes[name] = DescribeShape(value);
+    }
+
+    private static SentinelFieldShape DescribeShape(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var text = value.GetString() ?? string.Empty;
+            var parsesAsTime = DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out _);
+            var explicitOffset = Regex.IsMatch(text, "(?:Z|[+-]\\d{2}:?\\d{2})$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return new SentinelFieldShape("string", text.Length, parsesAsTime, explicitOffset);
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number => new SentinelFieldShape("number", value.GetRawText().Length, null, null),
+            JsonValueKind.True => new SentinelFieldShape("true", 4, null, null),
+            JsonValueKind.False => new SentinelFieldShape("false", 5, null, null),
+            JsonValueKind.Null => new SentinelFieldShape("null", 0, null, null),
+            JsonValueKind.Object => new SentinelFieldShape("object", null, null, null),
+            JsonValueKind.Array => new SentinelFieldShape("array", null, null, null),
+            _ => new SentinelFieldShape("undefined", null, null, null)
+        };
     }
 
     private static JsonElement? FindEventArray(JsonElement root)

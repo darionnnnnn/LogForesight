@@ -387,6 +387,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 {
     private readonly List<DailyAnalysisRecord> _records = new();
 
+    public Func<DateTime, DateTime, long, int, WorkflowRecoveryPage>? WorkflowRecoveryPageOverride { get; set; }
+    public List<int> WorkflowTakeRequests { get; } = new();
+    public int WorkflowRecoveryPageCalls { get; private set; }
+
     /// <summary>最近一次 Query() 收到的 filter（回饋十八輪批次A-4）：郵件下推測試斷言用，
     /// 確認 MailNotificationService 真的把 RiskLevels 帶進查詢，而不是只在記憶體篩。</summary>
     public RecordQueryFilter? LastFilter { get; private set; }
@@ -418,6 +422,48 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .Where(r => filter.To == null || r.Date.Date <= filter.To.Value.Date)
             .Where(r => filter.RiskLevels == null || filter.RiskLevels.Count == 0 || filter.RiskLevels.Contains(r.RiskLevel))
             .ToList();
+    }
+
+    public List<NotificationWorkflowRecord> QueryNotificationWorkflowPage(DateTime from, DateTime to, long afterRecordId, int take) =>
+        _records.Where(record => record.RecordId > afterRecordId && record.Date.Date >= from.Date && record.Date.Date <= to.Date)
+            .OrderBy(record => record.RecordId).Take(take)
+            .Select(record => new NotificationWorkflowRecord(record.RecordId, record.HostId, record.Date, record.RiskLevel)).ToList();
+
+    public WorkflowRecoveryPage QueryWorkflowRecoveryPage(DateTime from, DateTime to, long afterRecordId, int take)
+    {
+        WorkflowRecoveryPageCalls++;
+        WorkflowTakeRequests.Add(take);
+        if (take is < 1 or > WorkflowRecoveryPage.MaximumRows) throw new ArgumentOutOfRangeException(nameof(take));
+        if (WorkflowRecoveryPageOverride != null) return WorkflowRecoveryPageOverride(from, to, afterRecordId, take);
+
+        var rows = _records.Where(record => record.RecordId > afterRecordId && record.Date.Date >= from.Date && record.Date.Date <= to.Date)
+            .OrderBy(record => record.RecordId).Take(take).ToList();
+        var valid = new List<DailyAnalysisRecord>();
+        var waiting = new List<WorkflowRecoveryWaitingHostDay>();
+        var capturedAtUtc = DateTime.UtcNow;
+        long bytes = 0;
+        foreach (var record in rows)
+        {
+            var payload = System.Text.Json.JsonSerializer.Serialize(record);
+            var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(payload);
+            bytes += payloadBytes;
+            if (record.HostId <= 0)
+                waiting.Add(new WorkflowRecoveryWaitingHostDay(record.RecordId, record.HostId, record.Date,
+                    "recovery-host-id-invalid", payload.Length, 0, capturedAtUtc));
+            else if (payloadBytes > WorkflowRecoveryPage.MaximumPayloadBytes)
+                waiting.Add(new WorkflowRecoveryWaitingHostDay(record.RecordId, record.HostId, record.Date,
+                    "recovery-payload-over-limit", payload.Length, 0, capturedAtUtc));
+            else valid.Add(record);
+        }
+        var revisions = valid.Where(record => record.RecordId > 0).ToDictionary(record => record.RecordId, _ => 0L);
+        return new WorkflowRecoveryPage(valid, waiting, rows.Count, rows.LastOrDefault()?.RecordId, bytes, revisions);
+    }
+
+    public HashSet<(long HostId, DateTime Date)> ExistingHostDays(IReadOnlyCollection<(long HostId, DateTime Date)> keys)
+    {
+        if (keys.Count > WorkflowRecoveryPage.MaximumRows) throw new ArgumentOutOfRangeException(nameof(keys));
+        return _records.Where(record => keys.Contains((record.HostId, record.Date.Date)))
+            .Select(record => (record.HostId, record.Date.Date)).ToHashSet();
     }
 
     public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)

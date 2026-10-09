@@ -31,6 +31,7 @@ public sealed class PrtgFindingsRegistry
     private readonly object _lock = new();
     private readonly Dictionary<DateTime, IReadOnlyDictionary<long, IReadOnlyList<LogIssueSignature>>> _byDate = new();
     private readonly Dictionary<DateTime, IReadOnlyDictionary<long, IReadOnlySet<string>>> _suppressedPatternIdsByDate = new();
+    private readonly Dictionary<DateTime, IReadOnlyDictionary<long, PrtgDecisionManifest>> _manifestsByDate = new();
     private static readonly IReadOnlySet<string> NoPatternIds = new HashSet<string>();
 
     /// <summary>PRTG finding 是否已發佈（至少一天已發佈即為 true，維持現有呼叫端與測試語意）。</summary>
@@ -73,6 +74,19 @@ public sealed class PrtgFindingsRegistry
             _byDate[day.Date] = findingsByHost;
             _suppressedPatternIdsByDate[day.Date] = suppressedPatternIdsByHost;
         }
+    }
+
+    /// <summary>Publish bounded evaluation manifests; records remain the authority and consumers attach these atomically.</summary>
+    public void PublishManifests(DateTime day, IReadOnlyDictionary<long, PrtgDecisionManifest> manifestsByHost)
+    {
+        lock (_lock) _manifestsByDate[day.Date] = manifestsByHost;
+    }
+
+    public PrtgDecisionManifest? ManifestFor(long hostId, DateTime date)
+    {
+        lock (_lock)
+            return _manifestsByDate.TryGetValue(date.Date, out var hostMap) && hostMap.TryGetValue(hostId, out var manifest)
+                ? manifest : null;
     }
 
     /// <summary>

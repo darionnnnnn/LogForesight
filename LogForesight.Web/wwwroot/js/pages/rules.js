@@ -226,9 +226,9 @@ const RULE_COLUMNS = [
     },
     {
         title: '門檻', className: 'text-end', sortKey: 'threshold', sortDefaultDir: 'desc',
-        sortValue: r => r.platform === 'prtg' ? (r.prtgRuleCode === 'disk_free_trend' ? (r.prtgDiskTrendThresholds?.lowWaterPercent ?? 0) : r.prtgThreshold) : r.countThreshold,
+        sortValue: r => r.platform === 'prtg' ? (r.prtgRuleCode === 'disk_free_trend' ? (r.prtgDiskTrendThresholds?.lowWaterPercent ?? 0) : r.prtgRuleCode?.startsWith('resource_') ? 90 : r.prtgThreshold) : r.countThreshold,
         render: r => r.platform === 'prtg'
-            ? (r.prtgRuleCode === 'disk_free_trend' ? `低水位 ${r.prtgDiskTrendThresholds?.lowWaterPercent ?? '—'}%` : r.prtgRuleCode === 'silent' ? '-' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}${prtgSensorCategorySuffix(r)}`)
+            ? (r.prtgRuleCode === 'disk_free_trend' ? `低水位 ${r.prtgDiskTrendThresholds?.lowWaterPercent ?? '—'}%` : r.prtgRuleCode === 'silent' ? '-' : r.prtgRuleCode?.startsWith('resource_') ? '可信完成小時規則' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}${prtgSensorCategorySuffix(r)}`)
             : String(r.countThreshold)
     },
     { title: '狀態', render: r => statusCell(r) },
@@ -350,11 +350,19 @@ function applyPrtgSensorCategoryLock() {
     const code = document.getElementById('rule-prtg-code').value;
     const isSilent = code === 'silent';
     const isDiskTrend = code === 'disk_free_trend';
+    const resourceCategory = {
+        resource_cpu_sustained_pressure: 'cpu',
+        resource_memory_sustained_pressure: 'memory',
+        resource_disk_pressure: 'disk'
+    }[code];
+    const isResourcePressure = Boolean(resourceCategory);
     if (isSilent) select.value = '';
     if (isDiskTrend) select.value = 'disk';
-    select.disabled = isSilent || isDiskTrend;
+    if (isResourcePressure) select.value = resourceCategory;
+    select.disabled = isSilent || isDiskTrend || isResourcePressure;
     document.getElementById('rule-prtg-disk-trend-fields').classList.toggle('d-none', !isDiskTrend);
-    document.getElementById('rule-match-prtg-threshold').classList.toggle('d-none', isDiskTrend);
+    document.getElementById('rule-match-prtg-threshold').classList.toggle('d-none', isDiskTrend || isResourcePressure);
+    if (isResourcePressure) document.getElementById('rule-prtg-threshold').value = '0';
 }
 
 function matchCell(rule) {
@@ -370,7 +378,9 @@ function matchCell(rule) {
         threshold.className = 'small text-muted';
         if (rule.prtgRuleCode === 'disk_free_trend') {
             const t = rule.prtgDiskTrendThresholds;
-            threshold.textContent = t ? `低水位 ${t.lowWaterPercent}% · ${t.minimumDeclinePercentagePointsPerDay} 百分點／日 · ${t.maximumDaysToDepletion} 日內` : '磁碟趨勢門檻未設定';
+            threshold.textContent = t ? `低水位 ${t.lowWaterPercent}% · ${t.minimumDeclinePercentagePointsPerDay} 百分點／日 · ${t.maximumDaysToDepletion} 日內耗盡 · ${t.maximumDaysToLowWater ?? 7} 日內降到低水位` : '磁碟趨勢門檻未設定';
+        } else if (rule.prtgRuleCode?.startsWith('resource_')) {
+            threshold.textContent = '可信完成小時規則';
         } else if (rule.prtgRuleCode === 'silent') {
             threshold.textContent = '不使用門檻';
         } else if (rule.prtgRuleCode === 'flapping') {
@@ -575,6 +585,7 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
         lowWaterPercent: 20,
         minimumDeclinePercentagePointsPerDay: 0.5,
         maximumDaysToDepletion: 30,
+        maximumDaysToLowWater: 7,
         minimumValidDays: 28,
         recentWindowDays: 35,
         minimumDecliningDayRatio: 0.70
@@ -582,6 +593,7 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
     document.getElementById('rule-prtg-trend-low-water').value = trend.lowWaterPercent;
     document.getElementById('rule-prtg-trend-decline').value = trend.minimumDeclinePercentagePointsPerDay;
     document.getElementById('rule-prtg-trend-depletion').value = trend.maximumDaysToDepletion;
+    document.getElementById('rule-prtg-trend-low-water-days').value = trend.maximumDaysToLowWater ?? 7;
     document.getElementById('rule-prtg-trend-min-days').value = trend.minimumValidDays;
     document.getElementById('rule-prtg-trend-window').value = trend.recentWindowDays;
     document.getElementById('rule-prtg-trend-ratio').value = trend.minimumDecliningDayRatio * 100;
@@ -639,6 +651,7 @@ function collectRule() {
             lowWaterPercent: Number(document.getElementById('rule-prtg-trend-low-water').value),
             minimumDeclinePercentagePointsPerDay: Number(document.getElementById('rule-prtg-trend-decline').value),
             maximumDaysToDepletion: Number(document.getElementById('rule-prtg-trend-depletion').value),
+            maximumDaysToLowWater: Number(document.getElementById('rule-prtg-trend-low-water-days').value),
             minimumValidDays: Number(document.getElementById('rule-prtg-trend-min-days').value),
             recentWindowDays: Number(document.getElementById('rule-prtg-trend-window').value),
             minimumDecliningDayRatio: Number(document.getElementById('rule-prtg-trend-ratio').value) / 100
@@ -765,7 +778,7 @@ async function runDiskPreview(event) {
                 ? `排除：${exclusionReasonLabel(row.exclusionReason)}`
                 : row.applicable ? '具備適用條件' : '尚未符合適用條件';
             const outcome = row.wouldHit ? `草稿條件命中${row.suppressedByCurrentSettings ? '／符合當前抑制估計' : ''}` : row.eligible ? '已評估，未達命中條件' : row.dataReady ? '資料有就緒但本列不可評估' : '沒有足夠資料，無法判斷是否命中';
-            const metrics = [row.currentAvailablePercent == null ? null : `目前可用 ${row.currentAvailablePercent}%`, `有效日 ${row.validDayCount}`, `可用時數 ${row.usableHours}`, row.estimatedDaysToDepletion == null ? null : `預估耗盡 ${row.estimatedDaysToDepletion} 日`].filter(Boolean).join('；');
+            const metrics = [row.currentAvailablePercent == null ? null : `目前可用 ${row.currentAvailablePercent}%`, `有效日 ${row.validDayCount}`, `可用時數 ${row.usableHours}`, row.estimatedDaysToDepletion == null ? null : `預估耗盡 ${row.estimatedDaysToDepletion} 日`, row.estimatedDaysToLowWater == null ? null : `預估到低水位 ${row.estimatedDaysToLowWater} 日`].filter(Boolean).join('；');
             item.textContent = `${row.completedDate} × Sensor ${row.sensorObjid}／Device ${row.deviceObjid}／Host ${row.hostId} · ${flags} · ${readiness} · ${outcome}${row.reason ? `（${row.reason}）` : ''}${metrics ? ` · ${metrics}` : ''}`;
             list.appendChild(item);
         }

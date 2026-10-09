@@ -257,6 +257,10 @@ const DAY_DETAIL_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, render: h => h.hostName },
     { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status) },
     {
+        title: '整體工作流', sortKey: 'workflowComplete', sortValue: h => h.workflowComplete == null ? -1 : Number(h.workflowComplete),
+        render: h => workflowSummaryCell(h)
+    },
+    {
         title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc',
         sortValue: h => h.runId != null ? h.daysAnalyzed : -1,
         render: h => h.runId != null ? String(h.daysAnalyzed) : ''
@@ -268,6 +272,26 @@ const DAY_DETAIL_COLUMNS = [
     },
     { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
 ];
+
+function workflowSummaryCell(host) {
+    if (host.decisionVersion == null) return '尚未重建';
+    const labels = {
+        succeeded: '完成', failed: '失敗', disabled: '停用', degraded: '降級', waiting: '待補',
+        running: '進行中', deferred: '延後', overdue: '逾期', none: '不需通知', delivered: '已送交 SMTP', 'smtp-accepted': '已送交 SMTP',
+        partial: '部分失敗', pending: '待送達', ready: '已就緒', insufficient: '證據不足',
+        'not-required': '不適用', 'recovery-waiting': '原始資料待修復'
+    };
+    const part = (name, value) => `${name} ${labels[value] ?? value ?? '未知'}`;
+    const overall = host.workflowOutcome === 'failed' ? '主流程失敗' :
+        host.workflowOutcome === 'partial' ? '已完成但部分降級／失敗' :
+        host.workflowOutcome === 'complete' ? '整體已完成' : '仍有待補';
+    return [overall,
+        part('NetIQ', host.parentWorkflowState), part('PRTG', host.prtgWorkflowState),
+        part('PRTG就緒度', host.prtgReadinessState),
+        host.workflowRecoveryState ? `資料恢復 ${labels[host.workflowRecoveryState] ?? host.workflowRecoveryState}${host.workflowRecoveryReason ? ` (${host.workflowRecoveryReason})` : ''}` : null,
+        part('AI', host.aiWorkflowState), part('案件', host.caseWorkflowState), part('郵件', host.mailWorkflowState)
+    ].filter(Boolean).join(' · ');
+}
 
 /**
  * 日期列就地展開（§2）：懶載入該天每台主機的狀態，render 進展開列。

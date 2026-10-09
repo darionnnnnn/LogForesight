@@ -220,7 +220,7 @@ public class PrtgRequestBudgetTests
         await client.GetJsonAsync("/api/historicdata.json?id=4");
         await client.GetJsonAsync("/api/historicdata.json?id=5");
 
-        var blocked = client.GetJsonAsync("/api/historicdata.json?id=6");
+        var blocked = RunTransportOnDedicatedThread(() => client.GetJsonAsync("/api/historicdata.json?id=6"));
         await WaitForWaiterCountAsync(budget,1, TimeSpan.FromSeconds(5));
 
         clock.Advance(TimeSpan.FromSeconds(59.999));
@@ -526,17 +526,17 @@ public class PrtgRequestBudgetTests
         using var client2 = MakeClient(true);
         using var client3 = MakeClient(false);
 
-        var task1 = Task.Run(() => client1.GetJsonAsync("/api/table.json?id=1"));
-        var task2 = Task.Run(() => client2.GetJsonAsync("/api/table.json?id=2"));
+        var task1 = RunTransportOnDedicatedThread(() => client1.GetJsonAsync("/api/table.json?id=1"));
+        var task2 = RunTransportOnDedicatedThread(() => client2.GetJsonAsync("/api/table.json?id=2"));
 
-        Assert.True(reachedCheckpoint.Wait(TimeSpan.FromSeconds(5)), "前兩個請求應到達 Checkpoint");
+        await WaitForCheckpointAsync(() => reachedCheckpoint.IsSet, "前兩個請求應到達 Checkpoint");
 
         // 時鐘推過 2 秒（Table 視窗為 1 秒）
         clock.Advance(TimeSpan.FromSeconds(2));
 
         // 此時 client3 嘗試發送 2 個 table 請求
-        var task3 = Task.Run(() => client3.GetJsonAsync("/api/table.json?id=3"));
-        var task4 = Task.Run(() => client3.GetJsonAsync("/api/table.json?id=4"));
+        var task3 = client3.GetJsonAsync("/api/table.json?id=3");
+        var task4 = client3.GetJsonAsync("/api/table.json?id=4");
         await WaitForWaiterCountAsync(budget, 2, TimeSpan.FromSeconds(5));
 
         // 放行前兩個暫停中的 checkpoint
@@ -616,15 +616,15 @@ public class PrtgRequestBudgetTests
 
         try
         {
-            var firstTasks = pausedClients.Select((c, i) => Task.Run(() => c.GetJsonAsync($"/api/historicdata.json?id={i}"))).ToArray();
+            var firstTasks = pausedClients.Select((c, i) => RunTransportOnDedicatedThread(() => c.GetJsonAsync($"/api/historicdata.json?id={i}"))).ToArray();
 
-            Assert.True(reachedCheckpoint.Wait(TimeSpan.FromSeconds(5)), "前 4 個 historic 請求應到達 Checkpoint 佔滿在途");
+            await WaitForCheckpointAsync(() => reachedCheckpoint.IsSet, "前 4 個 historic 請求應到達 Checkpoint 佔滿在途");
 
             // 時鐘推過 60 秒
             clock.Advance(TimeSpan.FromSeconds(60));
 
             // 此時放入 5 個新的 historic 請求（因在途與預留皆滿，進入佇列）
-            var secondTasks = newClients.Select((c, i) => Task.Run(() => c.GetJsonAsync($"/api/historicdata.json?id={i + 10}"))).ToArray();
+            var secondTasks = newClients.Select((c, i) => c.GetJsonAsync($"/api/historicdata.json?id={i + 10}")).ToArray();
             await WaitForWaiterCountAsync(budget, 5, TimeSpan.FromSeconds(5));
 
             // 放行前 4 個 checkpoint
@@ -690,8 +690,8 @@ public class PrtgRequestBudgetTests
         };
 
         // client1 取得 Table 名額 (1/2) 並停在 Checkpoint
-        var task1 = Task.Run(() => client1.GetJsonAsync("/api/table.json?id=1", cts.Token));
-        Assert.True(reachedCheckpoint.Wait(TimeSpan.FromSeconds(5)));
+        var task1 = RunTransportOnDedicatedThread(() => client1.GetJsonAsync("/api/table.json?id=1", cts.Token));
+        await WaitForCheckpointAsync(() => reachedCheckpoint.IsSet, "pending request must reach its checkpoint");
 
         // client2 取得 Table 名額 (2/2) 並成功發送
         await client2.GetJsonAsync("/api/table.json?id=2");
@@ -699,7 +699,7 @@ public class PrtgRequestBudgetTests
 
         // 此時 Table 額度已滿 (client1 pending + client2 sent)
         // client3 請求 Table，應進入佇列等待
-        var task3 = Task.Run(() => client3.GetJsonAsync("/api/table.json?id=3"));
+        var task3 = client3.GetJsonAsync("/api/table.json?id=3");
         await WaitForWaiterCountAsync(budget, 1, TimeSpan.FromSeconds(5));
 
         // 觸發 client1 在 checkpoint 取消
@@ -810,6 +810,23 @@ public class PrtgRequestBudgetTests
         {
             fx.Dispose();
         }
+    }
+
+    // OperationCheckpoint is synchronous. Its deliberately blocked producers need dedicated
+    // threads; blocking xUnit's worker while Task.Run waits for another worker can prevent the
+    // fixture from ever reaching the intended quota boundary during the full regression.
+    // A delayed transport also runs outside the test synchronization context, so its fake-clock
+    // wake-up does not need an xUnit worker occupied by another synchronous test fixture.
+    private static Task<string> RunTransportOnDedicatedThread(Func<Task<string>> operation) =>
+        Task.Factory.StartNew(operation, CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+
+    private static async Task WaitForCheckpointAsync(Func<bool> reached, string message)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!reached() && deadline.Elapsed < TimeSpan.FromSeconds(5))
+            await Task.Delay(5);
+        Assert.True(reached(), message);
     }
 
     private static async Task WaitForWaiterCountAsync(PrtgRequestBudget budget, int expected, TimeSpan timeout)

@@ -239,7 +239,10 @@ public class WeeklyCheckupServiceTests
     {
         var prompt = await CapturePrompt(MixedPrtgWindow());
 
-        var section = prompt[prompt.IndexOf("【PRTG 監控訊號】（既有監控系統的量測結果，由程式依規則確定性判定，與上述事件日誌互為佐證）", StringComparison.Ordinal)..];
+        var section = prompt[prompt.IndexOf("【PRTG 監控訊號】", StringComparison.Ordinal)..];
+        Assert.Contains("獨立來源 finding", section);
+        Assert.Contains("同一觀察期出現不表示資源或時間相符", section);
+        Assert.DoesNotContain("互為佐證", section);
         Assert.Contains("- [Medium] 規則描述-warning-5：窗口內 2 天（warning），最近一次：最新的明細", section);
         Assert.DoesNotContain("舊的明細", prompt);
         Assert.DoesNotContain("規則描述-down-7", prompt);

@@ -54,6 +54,7 @@
           實作細節改成 public API——重構的要求是行為零改變，不該順手擴大公開介面。
         -->
         <InternalsVisibleTo Include="LogForesight.Tests" />
+    <InternalsVisibleTo Include="LogForesight.Web" />
     </ItemGroup>
 
 </Project>

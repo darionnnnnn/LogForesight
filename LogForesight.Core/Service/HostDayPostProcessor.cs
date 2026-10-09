@@ -154,7 +154,8 @@ public static class HostDayPostProcessor
         if (!record.CanSupplementWithPrtg()) return 0;
 
         var findings = registry.For(hostId, record.Date);
-        if (findings.Count == 0) return 0;
+        var manifest = registry.ManifestFor(hostId, record.Date);
+        if (findings.Count == 0 && manifest == null) return 0;
 
         try
         {
@@ -164,12 +165,12 @@ public static class HostDayPostProcessor
                 .ToHashSet(StringComparer.Ordinal);
 
             var added = findings.Where(f => existingKeys.Add(f.EventKey)).ToList();
-            if (added.Count == 0) return 0;
+            if (added.Count == 0 && manifest == null) return 0;
 
             // 與 PRTG 路徑的補追加對同一主機日序列化（見 PrtgFindingsRegistry.AttachExclusive）。
             var attachedNow = registry.AttachExclusive(hostId, record.Date,
                 () => store.AttachPrtgFindings(hostId, record.Date, added,
-                    registry.SuppressedPatternIdsFor(hostId, record.Date), out _, aiConfigured));
+                    registry.SuppressedPatternIdsFor(hostId, record.Date), out _, aiConfigured, manifest));
 
             // **先看資料庫端做了沒**：查無該主機當日列、或詳情已被保留期精簡（detail_pruned）時
             // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
@@ -184,6 +185,11 @@ public static class HostDayPostProcessor
                 if (persisted == null || !persisted.CanSupplementWithPrtg()) return 0;
                 var persistedKeys = persisted.TopIssues.Select(i => i.EventKey).ToHashSet(StringComparer.Ordinal);
                 if (added.Any(i => !persistedKeys.Contains(i.EventKey))) return 0;
+                record.PrtgManifest = persisted.PrtgManifest;
+            }
+            else if (manifest != null)
+            {
+                record.PrtgManifest = manifest;
             }
 
             record.TopIssues.AddRange(added);
@@ -221,24 +227,114 @@ public static class HostDayPostProcessor
         }
     }
 
-    public static void AttachCase(
+    public static bool AttachCase(
         IssueCaseCoordinator caseCoordinator, NightlyDispatch dispatch, string hostName, DateTime date,
-        List<LogIssueSignature> topIssues, string logContext = "")
+        List<LogIssueSignature> topIssues, string logContext = "", HostDayWorkflowService? workflow = null, long hostId = 0, long parentRecordId = 0)
     {
+        var version = workflow?.CaptureDeliveryVersion(hostId, date, parentRecordId);
+        var hasWorkflow = workflow != null && hostId > 0 && version != null;
+        var pressureIssues = topIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue).ToArray();
+        var authorizedPressureKeys = new HashSet<string>(StringComparer.Ordinal);
+        var pressureClaimFailed = false;
+        if (pressureIssues.Length > 0 && hasWorkflow)
+        {
+            try
+            {
+                authorizedPressureKeys = workflow!.ClaimFormalPressureCaseStarts(hostId, date, version!, pressureIssues)
+                    .ToHashSet(StringComparer.Ordinal);
+            }
+            catch (Exception ex)
+            {
+                // The durable-start transaction is the linearization point. A failed claim must
+                // never fall through to CaseAttach or NightlyDispatch for these pressure findings.
+                // Independent non-pressure findings in the same parent still proceed below.
+                Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} formal PRTG pressure case start claim failed closed", logContext, date);
+                pressureClaimFailed = true;
+            }
+        }
+        var distinctPressureKeys = pressureIssues.Select(IssueSignatureKey.For)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        // Every targeted pressure finding must have a current durable start claim before replay
+        // can complete, even when unrelated findings in the same parent can still be dispatched.
+        pressureClaimFailed |= distinctPressureKeys.Length > 0 &&
+            (!hasWorkflow || distinctPressureKeys.Any(key => !authorizedPressureKeys.Contains(key)));
+        var deliveryIssues = topIssues.Where(issue =>
+            !PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue) ||
+            authorizedPressureKeys.Contains(IssueSignatureKey.For(issue))).ToList();
+        // With no safe parent/workflow fence, targeted CPU/memory pressure remains deferred.
+        // A replay caller must retry until a current durable claim is available; otherwise it could
+        // mark the parent job complete after committing a finding but before its case starts.
+        if (pressureIssues.Length > 0 && deliveryIssues.Count == 0) return false;
+
+        var expectedCaseKeys = deliveryIssues.Select(IssueSignatureKey.For).Distinct(StringComparer.Ordinal).ToArray();
+        var workflowTrackingFailed = false;
+        var retryableDispatchOutcome = false;
+        if (hasWorkflow)
+        {
+            try { workflow!.RecordCaseIntents(hostId, date, expectedCaseKeys, version); }
+            catch (Exception ex)
+            {
+                workflowTrackingFailed = true;
+                Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} case intent workflow tracking failed", logContext, date);
+            }
+        }
         try
         {
-            var attach = caseCoordinator.AttachNewDay(hostName, date, topIssues, DateTime.Now);
+            var attach = caseCoordinator.AttachNewDay(hostName, date, deliveryIssues, DateTime.Now);
             if (attach.AttachedCount > 0)
                 Log.Info("{Context}{Date:yyyy-MM-dd} 案件掛接：掛入 {Count} 個問題", logContext, date, attach.AttachedCount);
 
+            if (hasWorkflow)
+                try
+                {
+                    // CaseAttach/FleetApply side effects are complete only for signatures that the
+                    // coordinator did not return for NightlyDispatch. Keep expected issue identities
+                    // separate from raw EventKeys and from the coordinator's aggregate count.
+                    var unassigned = attach.Unassigned.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+                    workflow!.RecordCaseResults(hostId, date, expectedCaseKeys,
+                        expectedCaseKeys.Where(key => !unassigned.Contains(key)), [], version);
+                }
+                catch (Exception ex)
+                {
+                    workflowTrackingFailed = true;
+                    Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} case delivery workflow tracking failed", logContext, date);
+                }
+
             // 掛接剩下的問題交給夜間派工（負責人規則、續掛、自動派工）
-            dispatch.DispatchDay(hostName, date, attach.Unassigned, DateTime.Now);
+            dispatch.DispatchDay(hostName, date, attach.Unassigned, DateTime.Now,
+                hasWorkflow ? outcome =>
+                {
+                    if (!IsTerminalDispatchOutcome(outcome)) retryableDispatchOutcome = true;
+                    try { workflow!.RecordDispatchOutcome(hostId, date, outcome, version); }
+                    catch (Exception ex)
+                    {
+                        workflowTrackingFailed = true;
+                        Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} dispatch workflow tracking failed", logContext, date);
+                    }
+                } : null);
+            return !pressureClaimFailed && !workflowTrackingFailed && !retryableDispatchOutcome;
         }
         catch (Exception ex)
         {
+            if (hasWorkflow)
+                try { workflow!.RecordCaseResults(hostId, date, expectedCaseKeys, [], expectedCaseKeys, version); }
+                catch (Exception workflowError) { Log.Warn(workflowError, "{Context}{Date:yyyy-MM-dd} case failure workflow tracking failed", logContext, date); }
             Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 案件掛接或派工失敗（不影響分析結果，下次執行冪等補掛）", logContext, date);
+            return false;
         }
     }
+
+    private static bool IsTerminalDispatchOutcome(NightlyDispatchItemOutcome outcome) => outcome.Outcome switch
+    {
+        "delivered" => true,
+        // No eligible owner/candidate and explicit operator dispositions are product decisions,
+        // not transient receiver failures. Keep retrying unavailable contexts and unknown outcomes.
+        "deferred" => outcome.Reason == WorkOrderDispatcher.SkipNoCandidate,
+        "skipped" => outcome.Reason is WorkOrderDispatcher.SkipMuted or WorkOrderDispatcher.SkipSuppressed or
+            WorkOrderDispatcher.SkipNoise or WorkOrderDispatcher.SkipSeverity or WorkOrderDispatcher.SkipDismissed or
+            WorkOrderDispatcher.SkipDisabled or "related_warning_active",
+        _ => false
+    };
 
     public static void ReplaceRiskyEvents(
         IRiskyEventStore? riskyEventStore, int retentionDays, DateTime date,

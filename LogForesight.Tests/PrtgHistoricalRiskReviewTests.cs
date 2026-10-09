@@ -46,6 +46,28 @@ public sealed class PrtgHistoricalRiskReviewTests
     }
 
     [Fact]
+    public void 新增的精確來源對齊仍不算風險關聯_不阻止舊弱配對重算()
+    {
+        var record = Legacy();
+        const string alignmentText = "【儲存異常來源對齊】已核對的來源參照";
+        record.CorrelationAlerts.Add(alignmentText);
+        record.CorrelationAlertRefs.Add(new CorrelationAlertRef
+        {
+            Text = alignmentText,
+            PatternId = CorrelationPatternIds.PrtgStorageEvidenceAligned
+        });
+
+        Assert.False(PrtgHistoricalRiskReview.IsWeakPattern(CorrelationPatternIds.PrtgStorageEvidenceAligned));
+        Assert.True(PrtgHistoricalRiskReview.Apply(record));
+
+        Assert.Equal("revised", record.RiskReview!.Status);
+        Assert.Equal("中", record.RiskLevel);
+        Assert.Contains(alignmentText, record.CorrelationAlerts);
+        Assert.Contains(record.CorrelationAlertRefs,
+            reference => reference.PatternId == CorrelationPatternIds.PrtgStorageEvidenceAligned);
+    }
+
+    [Fact]
     public void 歷史投影原子保留原文_SQL與JSON一致_重啟重試不再修訂()
     {
         using var fixture = new EfSqliteFixture();

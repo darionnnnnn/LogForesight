@@ -242,6 +242,14 @@ public sealed class TopIssueBackfiller
                 // 回饋十九輪批次B：與其餘聚合維度同一批回填，不必另開一個回填流程
                 row.KnownIssue = match.KnownIssue;
                 row.EventKey = match.EventKey;
+                var exactMatch = issues.Where(i => string.Equals(i.Source, row.SourceName, StringComparison.OrdinalIgnoreCase) &&
+                    i.EventId == row.EventId && i.LogName == match.LogName && i.EntryType == match.EntryType &&
+                    i.EventKey == match.EventKey).ToList();
+                if (exactMatch.Count == 1)
+                {
+                    row.SourceObservationsJson = SourceEvidence.SerializeObservations(exactMatch[0].SourceObservations, out var serializationTruncated);
+                    row.SourceObservationsTruncated = exactMatch[0].SourceObservationsTruncated || serializationTruncated;
+                }
             }
         }
 

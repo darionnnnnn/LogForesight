@@ -6,7 +6,8 @@ namespace LogForesight.Core.Service;
 public static class PrtgCoveredRuleEvaluator
 {
     public static PrtgEvaluationResult Evaluate(DateTime day, IReadOnlyList<PrtgSensorStatusInput> sensors,
-        IReadOnlyDictionary<long, PrtgSensorTimelineEvidence> evidence, IReadOnlyList<KnownIssueRule> rules)
+        IReadOnlyDictionary<long, PrtgSensorTimelineEvidence> evidence, IReadOnlyList<KnownIssueRule> rules,
+        IReadOnlyList<PrtgSilentDeviceEvidence>? silentPresenceEvidence = null)
     {
         var findings = new List<PrtgFinding>();
         var start = new DateTimeOffset(day.Date); var end = start.AddDays(1);
@@ -25,7 +26,7 @@ public static class PrtgCoveredRuleEvaluator
             KnownIssueRule? Rule(string code) => rules.Where(r => r.PrtgRuleCode == code &&
                 PrtgFormalEligibility.RuleCategoryMatches(r, sensor.Category))
                 .OrderByDescending(r => r.PrtgSensorCategory != null).ThenBy(r => r.Id, StringComparer.Ordinal).FirstOrDefault();
-            void Add(string code, int magnitude, DateTimeOffset entered, bool ack = false, int? continuousMinutes = null)
+            void Add(string code, int magnitude, DateTimeOffset entered, bool ack = false, int? continuousMinutes = null, IEnumerable<PrtgEvidenceWindow>? windows = null)
             {
                 var rule = Rule(code);
                 if (rule == null) return;
@@ -40,27 +41,33 @@ public static class PrtgCoveredRuleEvaluator
                     magnitude, rule, ack)
                 { SensorCategory = sensor.Category, SourceGeneration = proof.SourceGeneration,
                     ResourceGeneration = proof.ResourceGeneration, IncidentStartedAt = entered,
-                    ThresholdMagnitude = thresholdValue });
+                    ThresholdMagnitude = thresholdValue, EvidenceWindows = windows?.Take(64).ToArray() ?? [] });
             }
             var downRule = Rule("down");
             var down = periods.Where(p => PrtgSensorStatuses.IsDown(p.Status))
                 .Where(p => (p.Through - p.EnteredAt).TotalMinutes >= (downRule?.PrtgThreshold ?? int.MaxValue))
                 .OrderByDescending(p => p.EnteredAt).FirstOrDefault();
             if (down != null) Add("down", (int)(down.Through - down.From).TotalMinutes, down.EnteredAt,
-                PrtgSensorStatuses.IsAcknowledged(down.Status), (int)(down.Through - down.EnteredAt).TotalMinutes);
+                PrtgSensorStatuses.IsAcknowledged(down.Status), (int)(down.Through - down.EnteredAt).TotalMinutes,
+                [new(down.From.ToUniversalTime(), down.Through.ToUniversalTime())]);
             var warning = periods.Where(p => PrtgSensorStatuses.IsWarning(p.Status)).ToArray();
-            if (warning.Length > 0) Add("warning", (int)warning.Sum(p => (p.Through - p.From).TotalMinutes), warning[^1].EnteredAt);
+            if (warning.Length > 0) Add("warning", (int)warning.Sum(p => (p.Through - p.From).TotalMinutes), warning[^1].EnteredAt, windows: warning.Select(p =>
+                new PrtgEvidenceWindow(p.From.ToUniversalTime(), p.Through.ToUniversalTime())));
+            var flapWindows = new List<PrtgEvidenceWindow>();
             var flaps = 0;
             var flapStart = start;
             for (var i = 1; i < periods.Count; i++)
                 if (periods[i - 1].Through == periods[i].From && PrtgSensorStatuses.IsDown(periods[i - 1].Status) &&
-                    PrtgSensorStatuses.IsUp(periods[i].Status)) { flaps++; flapStart = periods[i - 1].EnteredAt; }
-            if (flaps > 0) Add("flapping", flaps, flapStart);
+                    PrtgSensorStatuses.IsUp(periods[i].Status)) { flaps++; flapStart = periods[i - 1].EnteredAt;
+                    flapWindows.Add(new(periods[i - 1].From.ToUniversalTime(), periods[i].From.ToUniversalTime())); }
+            if (flaps > 0) Add("flapping", flaps, flapStart, windows: flapWindows);
         }
         var warnings = rules.Where(r => !string.IsNullOrWhiteSpace(r.PrtgRuleCode))
             .GroupBy(r => (Code: r.PrtgRuleCode!.ToLowerInvariant(), Category: r.PrtgSensorCategory?.ToLowerInvariant()))
             .Where(g => g.Count() > 1).Select(g =>
                 $"規則代碼 {g.Key.Code}{(g.Key.Category == null ? "" : $"（分類 {g.Key.Category}）")} 有多條啟用規則，採用 {g.OrderBy(r => r.Id, StringComparer.Ordinal).First().Id}").ToList();
+        if (silentPresenceEvidence is not null)
+            findings.AddRange(PrtgSilentAbsenceEvaluator.Evaluate(day, silentPresenceEvidence, rules));
         return new(findings, warnings, 0);
     }
 }

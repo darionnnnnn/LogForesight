@@ -14,6 +14,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -47,13 +50,15 @@ public class CalibrationServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private CalibrationService CreateService(IKnownIssueRuleStore? ruleStore = null, IIssueAggregateQuery? issueQueryOverride = null)
+    private CalibrationService CreateService(IKnownIssueRuleStore? ruleStore = null,
+        IIssueAggregateQuery? issueQueryOverride = null, PrtgCalibrationCaptureLimits? captureLimits = null)
     {
         // 判定快取是靜態的，測試之間必須清乾淨（否則前一個測試的結論會漏到下一個）
         CalibrationService.ClearAssessmentCache();
         var prtgStore = new EfPrtgStore(_fx.NewContext);
         var issueQuery = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
-        return new CalibrationService(_fx.NewContext, prtgStore, issueQueryOverride ?? issueQuery, _settingsStore, ruleStore ?? _ruleStore);
+        return new CalibrationService(_fx.NewContext, prtgStore, issueQueryOverride ?? issueQuery,
+            _settingsStore, ruleStore ?? _ruleStore, captureLimits);
     }
 
     private static KnownIssueRule ValidPrtgRule(string id, string code, int threshold, string? category = null, bool enabled = true) => new()
@@ -92,10 +97,29 @@ public class CalibrationServiceTests : IDisposable
     private void InstallTimelineWindow(long sensorId, DateTimeOffset from, DateTimeOffset through,
         params (DateTimeOffset At, string Status)[] states)
     {
+        var policy = new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_fx.NewContext,
+            PrtgMonitoringPolicyStore.BlobKey)).Get();
+        PrtgResourceIdentity? identity = null;
+        if (policy.SensorIds.Contains(sensorId) && policy.HostIds.Contains(1) && policy.SourceGeneration.Length > 0)
+        {
+            try
+            {
+                identity = new EfPrtgStore(_fx.NewContext).BindObservedResource(sensorId, 1,
+                    policy.SourceGeneration, $"calibration-resource-{sensorId}");
+            }
+            catch (InvalidOperationException)
+            {
+                // 沒有目前有效鏡像對應時，保留無權威世代的診斷 fixture。
+            }
+        }
         var store = new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + sensorId));
         store.Update(e =>
         {
-            e.Bind(sensorId, 1, "source-v1", $"resource-{sensorId}", from);
+            if (identity is not null)
+                e.Bind(sensorId, 1, identity.SourceGeneration, $"calibration-resource-{sensorId}",
+                    identity.Generation, identity.Epoch, identity.ChannelGeneration, from);
+            else
+                e.Bind(sensorId, 1, "source-v1", $"resource-{sensorId}", from);
             e.MappingRevision = new EfJsonBlobStore(_fx.NewContext, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
             e.Accept(from, through, states.Select(s => new PrtgTimedState(sensorId, s.At, s.Status,
                 e.SourceGeneration, e.ResourceGeneration)));
@@ -430,6 +454,111 @@ public class CalibrationServiceTests : IDisposable
         Assert.True(mutationObserved);
     }
 
+    [Theory]
+    [InlineData("policy")]
+    [InlineData("timeline")]
+    [InlineData("resource-identity")]
+    [InlineData("settings")]
+    public void RuleCalibration_AuthorityMutationAtDailyHitsConsumerBoundaryRejectsMixedSnapshot(string source)
+    {
+        var anchor = new DateTime(2026, 9, 1);
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping",
+            Category = "availability", Paused = false }], DateTime.Now);
+        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10,
+            HostId = 1, MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
+        InstallCalibrationPolicy(anchor, [1001]);
+        InstallTimeline(1001, anchor,
+            (new DateTimeOffset(anchor.Date.AddMinutes(-15)), "Down"),
+            (new DateTimeOffset(anchor.Date.AddMinutes(20)), "Up"));
+        _ruleStore.Content = new RuleFileContent { Rules =
+            [ValidPrtgRule("down-availability", "down", 30, "availability")] };
+        var mutationObserved = false;
+        var queryProxy = System.Reflection.DispatchProxy.Create<IIssueAggregateQuery, RuleMutationIssueQueryProxy>();
+        var proxy = (RuleMutationIssueQueryProxy)(object)queryProxy;
+        proxy.Inner = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
+        proxy.BeforeAggregateRuleHits = () =>
+        {
+            mutationObserved = true;
+            switch (source)
+            {
+                case "policy":
+                    new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_fx.NewContext,
+                        PrtgMonitoringPolicyStore.BlobKey)).Update(policy => policy.SourceGeneration = "source-v2");
+                    break;
+                case "timeline":
+                    InstallTimeline(1001, anchor,
+                        (new DateTimeOffset(anchor.Date.AddMinutes(-10)), "Up"));
+                    break;
+                case "resource-identity":
+                    store.BindObservedResource(1001, 1, "source-v1", "changed-resource-fingerprint");
+                    break;
+                case "settings":
+                    _settingsStore.Update(settings => settings.PrtgSensorTypeWhitelist = ["SNMP CPU Load"]);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(source));
+            }
+        };
+
+        var service = CreateService(issueQueryOverride: queryProxy);
+        var exception = Assert.Throws<InvalidOperationException>(() => service.BuildExportPackage(anchor));
+        Assert.Contains("校準來源版本或設定在匯出組裝期間變更", exception.Message);
+        Assert.True(mutationObserved);
+    }
+
+    [Theory]
+    [InlineData("sensor-status")]
+    [InlineData("map-status")]
+    public void BuildExportPackage_LegacyOversizedStatusFieldsRejectFullAndSummary(string field)
+    {
+        var anchor = DateTime.Today;
+        var now = DateTime.Now;
+        _settingsStore.Update(settings => settings.PrtgSensorTypeWhitelist = ["Ping"]);
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors([new PrtgSensorRow
+        {
+            Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability",
+            Status = "Up", Paused = false
+        }], now);
+        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow
+        {
+            MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1",
+            MapStatus = PrtgMapStatus.Ok, CreatedAt = now
+        }]);
+        store.UpsertValues([new PrtgValueRow
+        {
+            SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50,
+            Quality = PrtgDataQuality.Ok
+        }]);
+        InstallCalibrationPolicy(anchor, [1001]);
+        InstallTimeline(1001, anchor,
+            (new DateTimeOffset(anchor.Date.AddMinutes(-15)), "Down"),
+            (new DateTimeOffset(anchor.Date.AddMinutes(20)), "Up"));
+
+        var service = CreateService();
+        var valid = service.BuildExportPackage(anchor);
+        Assert.NotEmpty(valid.ValueBaselines);
+
+        using (var ctx = _fx.NewContext())
+        {
+            if (field == "sensor-status")
+                ctx.Database.ExecuteSqlRaw("UPDATE lf_prtg_sensors SET status = {0} WHERE objid = {1}",
+                    new string('S', 65), 1001L);
+            else
+                ctx.Database.ExecuteSqlRaw("UPDATE lf_prtg_host_map SET map_status = {0} WHERE map_date = {1} AND device_objid = {2}",
+                    new string('M', 17), anchor, 10L);
+        }
+
+        foreach (var summaryOnly in new[] { false, true })
+        {
+            var exception = Assert.Throws<CalibrationCapacityException>(
+                () => service.BuildExportPackage(anchor, summaryOnly));
+            Assert.Contains(field == "sensor-status" ? "狀態" : "MapStatus", exception.Message,
+                StringComparison.Ordinal);
+        }
+    }
+
     public class RuleMutationIssueQueryProxy : System.Reflection.DispatchProxy
     {
         public IIssueAggregateQuery Inner { get; set; } = null!;
@@ -438,7 +567,7 @@ public class CalibrationServiceTests : IDisposable
         protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod == null) throw new MissingMethodException();
-            if (targetMethod.Name == nameof(IIssueAggregateQuery.AggregatePrtgRuleHits)) BeforeAggregateRuleHits?.Invoke();
+            if (targetMethod.Name == nameof(IIssueAggregateQuery.AggregatePrtgRuleHitsBounded)) BeforeAggregateRuleHits?.Invoke();
             return targetMethod.Invoke(Inner, args);
         }
     }
@@ -858,12 +987,21 @@ public class CalibrationServiceTests : IDisposable
             p.HostIds = [1]; p.SensorIds = [1001]; p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
         });
         var start = new DateTimeOffset(anchor.Date.AddDays(-1)); var end = new DateTimeOffset(anchor.Date.AddDays(1));
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
+        primary.ApplyAutoCategories(new Dictionary<string, string>());
+        PrtgResourceIdentity primaryIdentity;
+        using (var db = _fx.NewContext())
         {
-            e.SensorId = 1001; e.HostId = 1; e.SourceGeneration = "source-v1"; e.ResourceGeneration = "resource-fixed";
-            e.IdentityFingerprint = "identity-fixed"; e.MappingRevision = 0; e.ValidFrom = start; e.QualityReason = "covered";
-            e.Coverage = [new PrtgSensorCoverage(1001, start, end, "source-v1", "resource-fixed")];
-            e.States = [new PrtgTimedState(1001, new DateTimeOffset(anchor.Date.AddHours(8)), "Down", "source-v1", "resource-fixed")];
+            primaryIdentity = PrtgResourceIdentityStore.Set(db, 1001, "source-v1", 10, 1,
+                "cache-primary-resource", "Ping|availability|auto", "", true, start.ToUniversalTime());
+            db.SaveChanges();
+        }
+        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext,
+            PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
+        {
+            e.Bind(1001, 1, primaryIdentity.SourceGeneration, "cache-primary-resource",
+                primaryIdentity.Generation, primaryIdentity.Epoch, primaryIdentity.ChannelGeneration, start);
+            e.Accept(start, end, [new PrtgTimedState(1001, new DateTimeOffset(anchor.Date.AddHours(8)),
+                "Down", e.SourceGeneration, e.ResourceGeneration)]);
         });
         var primarySummary = CreateService().AssessStatus(anchor).PrtgRuleThresholds;
 
@@ -878,6 +1016,7 @@ public class CalibrationServiceTests : IDisposable
         });
         var otherPrtg = new EfPrtgStore(otherFx.NewContext);
         otherPrtg.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Status = "Up", Paused = false }], DateTime.Now);
+        otherPrtg.ApplyAutoCategories(new Dictionary<string, string>());
         otherPrtg.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
             HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
         new PrtgMonitoringPolicyStore(new EfJsonBlobStore(otherFx.NewContext, PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
@@ -886,12 +1025,18 @@ public class CalibrationServiceTests : IDisposable
             p.EndpointHint = EfPrtgObservationStore.SourceHintFor(url); p.ValidFrom = new DateTimeOffset(anchor.AddDays(-60));
             p.HostIds = [1]; p.SensorIds = [1001]; p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
         });
+        PrtgResourceIdentity otherIdentity;
+        using (var db = otherFx.NewContext())
+        {
+            otherIdentity = PrtgResourceIdentityStore.Set(db, 1001, "source-v1", 10, 1,
+                "cache-separation-resource", "Ping|availability|auto", "", true, start.ToUniversalTime());
+            db.SaveChanges();
+        }
         new PrtgSensorTimelineStore(new EfJsonBlobStore(otherFx.NewContext, PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
         {
-            e.SensorId = 1001; e.HostId = 1; e.SourceGeneration = "source-v1"; e.ResourceGeneration = "resource-fixed";
-            e.IdentityFingerprint = "identity-fixed"; e.MappingRevision = 0; e.ValidFrom = start; e.QualityReason = "covered";
-            e.Coverage = [new PrtgSensorCoverage(1001, start, end, "source-v1", "resource-fixed")];
-            e.States = [new PrtgTimedState(1001, start, "Up", "source-v1", "resource-fixed")];
+            e.Bind(1001, 1, otherIdentity.SourceGeneration, "cache-separation-resource",
+                otherIdentity.Generation, otherIdentity.Epoch, otherIdentity.ChannelGeneration, start);
+            e.Accept(start, end, [new PrtgTimedState(1001, start, "Up", e.SourceGeneration, e.ResourceGeneration)]);
         });
         var otherService = new CalibrationService(otherFx.NewContext, otherPrtg,
             new EfIssueAggregateQuery(otherFx.NewContext, _hostStore), otherSettings, new FakeRuleStore());
@@ -1713,6 +1858,323 @@ public class CalibrationServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildExportPackage_同錨點重跑會讀取最新NetIQ殘留資料()
+    {
+        var anchor = new DateTime(2026, 7, 17);
+        DailyAnalysisRecord MakeRecord(int totalCount, long hostId = 101, string hostName = "SEC-SRV-01") => new()
+        {
+            HostId = hostId, Host = hostName, Date = anchor, RiskLevel = "高",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security", Source = "Microsoft-Windows-Security-Auditing", EventId = 4625,
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    { new() { Account = "redacted", Source = "redacted", LogonType = 3, Count = totalCount } },
+                    LoginFailureTotalCount = totalCount
+                }
+            }
+        };
+        using (var ctx = _fx.NewContext())
+        {
+            var row = new DailyRecordRow
+            {
+                HostId = 101, HostName = "SEC-SRV-01", RecordDate = anchor,
+                DetailPruned = false, ContentJson = JsonSerializer.Serialize(MakeRecord(1))
+            };
+            ctx.DailyRecords.Add(row);
+            ctx.SaveChanges();
+            ctx.TopIssues.Add(new TopIssueRow
+            {
+                RecordId = row.RecordId, HostId = 101, RecordDate = anchor,
+                SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+            });
+            ctx.SaveChanges();
+        }
+
+        var service = CreateService();
+        var before = service.BuildExportPackage(anchor).ResidualCandidates.Single();
+        Assert.Equal(1, before.TotalDetailCount);
+        using (var ctx = _fx.NewContext())
+        {
+            var row = ctx.DailyRecords.Single();
+            row.ContentJson = JsonSerializer.Serialize(MakeRecord(27));
+            ctx.SaveChanges();
+        }
+
+        var after = service.BuildExportPackage(anchor).ResidualCandidates.Single();
+        Assert.Equal(27, after.TotalDetailCount);
+
+        using var otherFx = new EfSqliteFixture();
+        using (var ctx = otherFx.NewContext())
+        {
+            var row = new DailyRecordRow
+            {
+                HostId = 202, HostName = "OTHER-SRV", RecordDate = anchor,
+                DetailPruned = false, ContentJson = JsonSerializer.Serialize(MakeRecord(39, 202, "OTHER-SRV"))
+            };
+            ctx.DailyRecords.Add(row);
+            ctx.SaveChanges();
+            ctx.TopIssues.Add(new TopIssueRow
+            {
+                RecordId = row.RecordId, HostId = 202, RecordDate = anchor,
+                SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+            });
+            ctx.SaveChanges();
+        }
+        var otherStore = new EfPrtgStore(otherFx.NewContext);
+        var otherService = new CalibrationService(otherFx.NewContext, otherStore,
+            new EfIssueAggregateQuery(otherFx.NewContext, _hostStore), _settingsStore, _ruleStore);
+        var other = otherService.BuildExportPackage(anchor).ResidualCandidates.Single();
+        Assert.Equal(39, other.TotalDetailCount);
+        Assert.Equal(202, other.HostId);
+    }
+
+    [Fact]
+    public void BuildExportPackage_巨大TopIssues空物件陣列在反序列化前拒絕()
+    {
+        var anchor = new DateTime(2026, 7, 17);
+        using (var ctx = _fx.NewContext())
+        {
+            var row = new DailyRecordRow
+            {
+                HostId = 101, HostName = "SEC-SRV-01", RecordDate = anchor,
+                DetailPruned = false,
+                ContentJson = JsonSerializer.Serialize(new DailyAnalysisRecord
+                {
+                    HostId = 101, Host = "SEC-SRV-01", Date = anchor,
+                    TopIssues = [new LogIssueSignature { EventId = 4625, LogName = "Security" }]
+                })
+            };
+            ctx.DailyRecords.Add(row);
+            ctx.SaveChanges();
+            ctx.TopIssues.Add(new TopIssueRow
+            {
+                RecordId = row.RecordId, HostId = 101, RecordDate = anchor,
+                SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+            });
+            ctx.SaveChanges();
+        }
+
+        var service = CreateService();
+        var validPackage = service.BuildExportPackage(anchor);
+        Assert.NotNull(validPackage.Summary);
+
+        using (var ctx = _fx.NewContext())
+        {
+            var row = ctx.DailyRecords.Single();
+            row.ContentJson = "{\"TopIssues\":[" + string.Join(',', Enumerable.Repeat("{}", PrtgCalibrationCaptureBudget.MaximumTopIssues + 1)) + "]}";
+            ctx.SaveChanges();
+        }
+
+        var exception = Assert.Throws<CalibrationCapacityException>(() => service.BuildExportPackage(anchor));
+        Assert.Contains("陣列項目", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 校準作業budget會拒絕超額並在短暫reservation釋放後恢復()
+    {
+        using var budget = new PrtgCalibrationCaptureBudget(1024);
+        budget.Charge(512, "retained fixture");
+        using (budget.ReserveTransient(256, "temporary page"))
+            Assert.Equal(768, budget.ReservedBytes);
+        Assert.Equal(512, budget.ReservedBytes);
+        Assert.Throws<CalibrationCapacityException>(() => budget.Charge(513, "over-limit fixture"));
+    }
+
+    [Fact]
+    public void 零位元組transientReservation不會冒充retainReference()
+    {
+        var budget = new PrtgCalibrationCaptureBudget(1024);
+        var zeroReservation = budget.ReserveTransient(0, "empty page");
+        budget.Charge(1, "still active");
+        var retained = budget.Retain();
+        budget.Dispose();
+        budget.Charge(1, "retained response lifetime");
+        zeroReservation.Dispose();
+        retained.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => budget.Charge(1, "released"));
+    }
+
+    [Fact]
+    public void KnownIssueRuleStore校準讀取超限時先回傳有界失敗()
+    {
+        var blob = new EfJsonBlobStore(_fx.NewContext, "rules");
+        blob.Mutate<string?>(_ => ("{\"Rules\":[]}" + new string(' ', 1024 * 1024), null));
+        var store = new KnownIssueRuleStore(blob);
+
+        var bounded = store.LoadBounded(1024 * 1024);
+
+        Assert.False(bounded.Success);
+        Assert.Contains("超過", bounded.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void KnownIssueRuleStore有界讀取保留註解與尾逗號相容性()
+    {
+        var blob = new EfJsonBlobStore(_fx.NewContext, "rules");
+        blob.Mutate<string?>(_ => ("// persisted rule note\n{\"SchemaVersion\":1,\"SeedVersion\":0,\"Rules\":[],}\n", null));
+        var store = new KnownIssueRuleStore(blob);
+
+        var bounded = store.LoadBounded(1024 * 1024);
+
+        Assert.True(bounded.Success, bounded.Error);
+        Assert.NotNull(bounded.Content);
+        Assert.Empty(bounded.Content.Rules);
+    }
+
+    [Fact]
+    public void KnownIssueRuleStore校準讀取在建立rule物件圖前拒絕過大Rules陣列()
+    {
+        var blob = new EfJsonBlobStore(_fx.NewContext, "rules");
+        var json = "{\"Rules\":[" + string.Join(',', Enumerable.Repeat("{}", 10_001)) + "]}";
+        blob.Mutate<string?>(_ => (json, null));
+        var store = new KnownIssueRuleStore(blob);
+
+        var bounded = store.LoadBounded(1024 * 1024);
+
+        Assert.False(bounded.Success);
+        Assert.Contains("Rules", bounded.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void 校準遇到超限實際rulesBlob時狀態與兩種匯出都明確拒絕而不退回seed()
+    {
+        var anchor = DateTime.Today;
+        var now = DateTime.Now;
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        prtgStore.UpsertSensors([new PrtgSensorRow
+        {
+            Objid = 1001, DeviceObjid = 10, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false
+        }], now);
+        prtgStore.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow
+        {
+            MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now
+        }]);
+        prtgStore.UpsertValues([new PrtgValueRow
+        {
+            SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50, Quality = PrtgDataQuality.Ok
+        }]);
+
+        var blob = new EfJsonBlobStore(_fx.NewContext, "rules");
+        blob.Mutate<string?>(_ => (JsonSerializer.Serialize(new RuleFileContent { Rules = KnownIssueSeed.CreateRules() }), null));
+        var ruleStore = new KnownIssueRuleStore(blob);
+        var service = CreateService(ruleStore);
+        var validPackage = service.BuildExportPackage(anchor);
+        Assert.NotEmpty(validPackage.RuleThresholds.CurrentRules);
+        Assert.NotEmpty(validPackage.ValueBaselines);
+
+        blob.Mutate<string?>(_ => ("{\"SchemaVersion\":1,\"Rules\":[" +
+            string.Join(',', Enumerable.Repeat("{}", 10_001)) + "]}", null));
+
+        foreach (var summaryOnly in new[] { false, true })
+        {
+            var exception = Assert.Throws<CalibrationCapacityException>(
+                () => service.BuildExportPackage(anchor, summaryOnly));
+            Assert.Contains("Rules", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var controller = new CalibrationController(service, new RecordingAuditService());
+        var statusResult = Assert.IsType<ObjectResult>(controller.GetStatus());
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, statusResult.StatusCode);
+        var envelope = Assert.IsAssignableFrom<ApiResponse<object>>(statusResult.Value);
+        Assert.Equal("capacity_exceeded", envelope.Error?.Code);
+        Assert.Contains("Rules", envelope.Error?.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildExportPackage_超長SQLiteEventKey在來源列物件化前明確拒絕()
+    {
+        var anchor = DateTime.Today;
+        var now = DateTime.Now;
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors([new PrtgSensorRow
+        {
+            Objid = 1001, DeviceObjid = 10, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false
+        }], now);
+        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow
+        {
+            MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now
+        }]);
+        store.UpsertValues([new PrtgValueRow
+        {
+            SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50, Quality = PrtgDataQuality.Ok
+        }]);
+        var service = CreateService();
+        var validPackage = service.BuildExportPackage(anchor);
+        Assert.NotEmpty(validPackage.ValueBaselines);
+
+        using (var ctx = _fx.NewContext())
+        {
+            var record = new DailyRecordRow
+            {
+                HostId = 1, HostName = "HOST-1", RecordDate = anchor, RiskLevel = "中", ContentJson = "{}"
+            };
+            ctx.DailyRecords.Add(record);
+            ctx.SaveChanges();
+            ctx.TopIssues.Add(new TopIssueRow
+            {
+                RecordId = record.RecordId, HostId = 1, RecordDate = anchor, LogName = "PRTG",
+                SourceName = "PRTG:down", EventId = 0, EventKey = new string('x', 256),
+                Category = "Service", SeverityRank = 2
+            });
+            ctx.SaveChanges();
+        }
+
+        foreach (var summaryOnly in new[] { false, true })
+        {
+            var exception = Assert.Throws<CalibrationCapacityException>(
+                () => service.BuildExportPackage(anchor, summaryOnly));
+            Assert.Contains("EventKey", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("未截斷", exception.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void BuildExportPackage_殘留歷史超過單筆容量時明確拒絕完整回看()
+    {
+        var anchor = new DateTime(2026, 7, 17);
+        using (var ctx = _fx.NewContext())
+        {
+            var candidate = new DailyAnalysisRecord
+            {
+                HostId = 101, Host = "SEC-SRV-01", Date = anchor, RiskLevel = "高",
+                TopIssues = new List<LogIssueSignature>
+                {
+                    new()
+                    {
+                        LogName = "Security", Source = "Microsoft-Windows-Security-Auditing", EventId = 4625,
+                        LoginFailureDetails = new List<LoginFailureDetail>
+                        { new() { Account = "redacted", Source = "redacted", LogonType = 3, Count = 2 } },
+                        LoginFailureTotalCount = 2
+                    }
+                }
+            };
+            var candidateRow = new DailyRecordRow
+            {
+                HostId = 101, HostName = "SEC-SRV-01", RecordDate = anchor,
+                DetailPruned = false, ContentJson = JsonSerializer.Serialize(candidate)
+            };
+            var historyRow = new DailyRecordRow
+            {
+                HostId = 101, HostName = "SEC-SRV-01", RecordDate = anchor.AddDays(-1),
+                DetailPruned = false, ContentJson = new string(' ', CalibrationConstants.ResidualHistoryJsonMaxCharacters + 1)
+            };
+            ctx.DailyRecords.AddRange(candidateRow, historyRow);
+            ctx.SaveChanges();
+            ctx.TopIssues.Add(new TopIssueRow
+            {
+                RecordId = candidateRow.RecordId, HostId = 101, RecordDate = anchor,
+                SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+            });
+            ctx.SaveChanges();
+        }
+
+        var exception = Assert.Throws<CalibrationCapacityException>(() => CreateService().BuildExportPackage(anchor));
+        Assert.Contains("單筆內容", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildExportPackage_殘留資料集不含任何帳號名稱()
     {
         var anchor = new DateTime(2026, 8, 31);
@@ -1868,9 +2330,10 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal("SNMP Disk Free", vb.SensorType);
         Assert.Equal(55.0, vb.AvgValue);
 
-        // 規則門檻資料集（包含 9 條預設規則：4 條不限分類＋4 條分類規則＋1 條停用的磁碟趨勢範本，seed v8）
+        // 規則門檻資料集（預設 12 條：4 條不限分類＋4 條分類規則＋3 條資源規則＋1 條停用磁碟趨勢範本）
         Assert.NotNull(package.RuleThresholds);
-        Assert.Equal(9, package.RuleThresholds.CurrentRules.Count);
+        Assert.Equal(2, package.RuleThresholds.MagnitudeSemanticsVersion);
+        Assert.Equal(12, package.RuleThresholds.CurrentRules.Count);
         Assert.Equal(4, package.RuleThresholds.CurrentRules.Count(r => r.SensorCategory == null));
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "disk_free_trend" && r.SensorCategory == "disk");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "down" && r.SensorCategory == "availability" && r.Threshold == 30);
@@ -1878,6 +2341,69 @@ public class CalibrationServiceTests : IDisposable
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "flapping");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "warning");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "silent");
+        Assert.Contains(package.RuleThresholds.Explanations, text => text.Contains("RuleEnabled", StringComparison.Ordinal));
+
+        // Resource-period rules have no scalar threshold. The serialized export must state exactly
+        // which rules its covered-state evaluator can recompute and which it cannot evaluate.
+        var resourceCodes = new[]
+        {
+            "resource_cpu_sustained_pressure",
+            "resource_memory_sustained_pressure",
+            "resource_disk_pressure"
+        };
+        foreach (var code in resourceCodes)
+        {
+            var resourceRule = Assert.Single(package.RuleThresholds.CurrentRules, r => r.RuleCode == code);
+            Assert.Null((object?)resourceRule.Threshold);
+        }
+
+        using (var exported = JsonDocument.Parse(JsonSerializer.Serialize(package)))
+        {
+            var dataset = exported.RootElement.GetProperty("RuleThresholds");
+            Assert.True(dataset.TryGetProperty("FormalEvaluationScope", out var scope));
+            Assert.Equal("trusted-status-timeline-only", scope.GetString());
+            Assert.True(dataset.TryGetProperty("FormalEvaluationSupportedRuleCodes", out var supportedCodes));
+            Assert.Equal(new[] { "down", "flapping", "warning" },
+                supportedCodes.EnumerateArray()
+                    .Select(value => value.GetString()).OrderBy(value => value, StringComparer.Ordinal).ToArray());
+
+            Assert.True(dataset.TryGetProperty("UnsupportedByMagnitudeAnalysisRuleCodes", out var unsupportedCodesElement));
+            var unsupportedCodes = unsupportedCodesElement
+                .EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+            Assert.Contains("silent", unsupportedCodes);
+            Assert.Contains("disk_free_trend", unsupportedCodes);
+            Assert.Contains("resource_cpu_sustained_pressure", unsupportedCodes);
+            Assert.Contains("resource_memory_sustained_pressure", unsupportedCodes);
+            Assert.Contains("resource_disk_pressure", unsupportedCodes);
+
+            var serializedResourceRules = dataset.GetProperty("CurrentRules").EnumerateArray()
+                .Where(row => resourceCodes.Contains(row.GetProperty("RuleCode").GetString(), StringComparer.Ordinal)).ToArray();
+            Assert.Equal(resourceCodes.Length, serializedResourceRules.Length);
+            foreach (var code in resourceCodes)
+            {
+                var serializedResourceRule = Assert.Single(serializedResourceRules,
+                    row => row.GetProperty("RuleCode").GetString() == code);
+                Assert.True(serializedResourceRule.TryGetProperty("Threshold", out var serializedThreshold));
+                Assert.Equal(JsonValueKind.Null, serializedThreshold.ValueKind);
+                Assert.True(serializedResourceRule.TryGetProperty("ThresholdKind", out var thresholdKind));
+                Assert.Equal("resource-period-profile", thresholdKind.GetString());
+                Assert.True(serializedResourceRule.TryGetProperty("RuleEnabled", out var ruleEnabled));
+                Assert.True(ruleEnabled.GetBoolean());
+            }
+
+            var serializedDiskTrendRule = Assert.Single(dataset.GetProperty("CurrentRules").EnumerateArray(),
+                row => row.GetProperty("RuleCode").GetString() == "disk_free_trend");
+            Assert.True(serializedDiskTrendRule.TryGetProperty("Threshold", out var diskTrendThreshold));
+            Assert.Equal(JsonValueKind.Null, diskTrendThreshold.ValueKind);
+            Assert.True(serializedDiskTrendRule.TryGetProperty("ThresholdKind", out var diskTrendThresholdKind));
+            Assert.Equal("disk-trend-profile", diskTrendThresholdKind.GetString());
+            Assert.True(serializedDiskTrendRule.TryGetProperty("RuleEnabled", out var diskTrendEnabled));
+            Assert.False(diskTrendEnabled.GetBoolean());
+
+            var formalHits = dataset.GetProperty("FormalCurrentHitCounts").EnumerateArray().ToArray();
+            Assert.DoesNotContain(formalHits, row =>
+                !new[] { "down", "flapping", "warning" }.Contains(row.GetProperty("RuleCode").GetString(), StringComparer.Ordinal));
+        }
 
         // 觸發式量級資料集
         Assert.Single(package.TriggeredMagnitudes);
@@ -2249,8 +2775,116 @@ public class CalibrationServiceTests : IDisposable
         Assert.NotEmpty(package.ValueTypeProfiles);
         Assert.Equal("summary", package.Context.Detail);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void 匯出_感測器單位超過SQL欄位長度時完整與摘要模式都拒絕(bool summaryOnly)
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Unit = "%", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50.0, Quality = PrtgDataQuality.Ok }
+        });
+
+        var service = CreateService();
+        var validPackage = service.BuildExportPackage(anchor);
+        Assert.NotEmpty(validPackage.ValueBaselines);
+        Assert.NotEmpty(validPackage.ValueSensorSummaries);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Unit = new string('u', 65), Paused = false }
+        }, now.AddMinutes(1));
+
+        var exception = Assert.ThrowsAny<InvalidOperationException>(
+            () => service.BuildExportPackage(anchor, summaryOnly));
+        Assert.Contains("容量", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(2, true)]
+    [InlineData(1, false)]
+    public void 匯出_每日聚合小budget完整分頁或明確拒絕(int maximumRows, bool shouldSucceed)
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Unit = "%", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-1).AddHours(1), AvgValue = 40.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50.0, Quality = PrtgDataQuality.Ok }
+        });
+
+        var limits = new PrtgCalibrationCaptureLimits(1, 10, maximumRows, 1, 16 * 1024 * 1024, 10);
+        var service = CreateService(captureLimits: limits);
+        if (!shouldSucceed)
+        {
+            var exception = Assert.Throws<CalibrationCapacityException>(() => service.BuildExportPackage(anchor));
+            Assert.Contains("每日聚合", exception.Message, StringComparison.Ordinal);
+            return;
+        }
+
+        var package = service.BuildExportPackage(anchor);
+        Assert.Equal(2, package.ValueBaselines.Count);
+        Assert.Equal(new[] { anchor.Date.AddDays(-1), anchor.Date }, package.ValueBaselines.Select(row => row.Date).ToArray());
+    }
+
+    [Fact]
+    public void 擷取_不允許放大正式budget或超過56日日期範圍()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+        var oversized = EfPrtgStore.DefaultCalibrationCaptureLimits with { MaximumMirrorSensors = int.MaxValue };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.CaptureCalibrationData(
+            anchor.AddDays(-55), anchor.AddDays(1), Array.Empty<string>(), anchor, oversized));
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.CaptureCalibrationData(
+            anchor.AddDays(-56), anchor.AddDays(1), Array.Empty<string>(), anchor));
+    }
+
+    [Fact]
+    public void 擷取_正式SQLite非WAL時明確拒絕()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lf-calibration-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+            connection.Open();
+            var options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(connection).Options;
+            var store = new EfPrtgStore(() => new LfDbContext(options));
+            var anchor = new DateTime(2026, 8, 31);
+
+            var exception = Assert.Throws<CalibrationCapacityException>(() => store.CaptureCalibrationData(
+                anchor.AddDays(-55), anchor.AddDays(1), Array.Empty<string>(), anchor));
+            Assert.Contains("WAL", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
 }
 
+[Collection("CalibrationCacheState")]
 public class CalibrationControllerTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
@@ -2276,12 +2910,14 @@ public class CalibrationControllerTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private CalibrationController CreateController(ISystemSettingsStore? settingsStore = null)
+    private CalibrationController CreateController(ISystemSettingsStore? settingsStore = null,
+        long maximumExportBytes = 64L * 1024 * 1024, PrtgCalibrationCaptureLimits? captureLimits = null)
     {
         var prtgStore = new EfPrtgStore(_fx.NewContext);
         var issueQuery = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
-        var service = new CalibrationService(_fx.NewContext, prtgStore, issueQuery, settingsStore ?? _settingsStore, _ruleStore);
-        return new CalibrationController(service, _audit);
+        var service = new CalibrationService(_fx.NewContext, prtgStore, issueQuery,
+            settingsStore ?? _settingsStore, _ruleStore, captureLimits);
+        return new CalibrationController(service, _audit, maximumExportBytes);
     }
 
     private sealed class DisablePrtgOnSecondReadStore(FakeSystemSettingsStore inner) : ISystemSettingsStore
@@ -2380,11 +3016,12 @@ public class CalibrationControllerTests : IDisposable
         var controller = CreateController();
 
         var result = controller.Export(isOverride: true);
-        var fileResult = Assert.IsType<FileContentResult>(result);
+        var fileResult = Assert.IsAssignableFrom<FileStreamResult>(result);
         Assert.Equal("application/json", fileResult.ContentType);
         Assert.StartsWith("calibration-", fileResult.FileDownloadName);
         Assert.EndsWith(".json", fileResult.FileDownloadName);
-        Assert.NotEmpty(fileResult.FileContents);
+        Assert.True(fileResult.FileStream.Length > 0);
+        ((IDisposable)fileResult).Dispose();
     }
 
     // ── 3. 稽核：匯出成功寫稽核，覆寫匯出標記 Override = true ──────────────
@@ -2394,7 +3031,8 @@ public class CalibrationControllerTests : IDisposable
     {
         var controller = CreateController();
 
-        controller.Export(isOverride: true);
+        var result = Assert.IsAssignableFrom<IDisposable>(controller.Export(isOverride: true));
+        result.Dispose();
 
         var auditEntry = Assert.Single(_audit.Entries);
         Assert.Equal(AuditActions.CalibrationExport, auditEntry.Action);
@@ -2441,10 +3079,10 @@ public class CalibrationControllerTests : IDisposable
         Assert.Equal(CalibrationStatus.Insufficient, initialService.AssessStatus(forceRefresh: true).PrtgValueBaseline.Status);
 
         var togglingStore = new DisablePrtgOnSecondReadStore(_settingsStore);
-        var file = Assert.IsType<FileContentResult>(CreateController(togglingStore).Export(isOverride: true));
+        var file = Assert.IsAssignableFrom<FileStreamResult>(CreateController(togglingStore).Export(isOverride: true));
         Assert.True(togglingStore.FirstReadWasEnabled);
 
-        using var package = JsonDocument.Parse(file.FileContents);
+        using var package = JsonDocument.Parse(ReadFile(file));
         var packageStatus = (CalibrationStatus)package.RootElement.GetProperty("Summary")
             .GetProperty("PrtgValueBaseline").GetProperty("Status").GetInt32();
         using var audit = JsonDocument.Parse(Assert.Single(_audit.Entries).DetailJson!);
@@ -2457,17 +3095,18 @@ public class CalibrationControllerTests : IDisposable
     {
         var controller = CreateController();
 
-        var response = controller.GetStatus();
-        Assert.NotNull(response);
-        Assert.True(response.Success);
-        Assert.NotNull(response.Data);
+        var response = Assert.IsAssignableFrom<OkObjectResult>(controller.GetStatus());
+        var payload = Assert.IsType<ApiResponse<CalibrationStatusDto>>(response.Value);
+        Assert.True(payload.Success);
+        Assert.NotNull(payload.Data);
 
-        var data = response.Data!;
+        var data = payload.Data!;
         Assert.NotNull(data.PrtgValueBaseline);
         Assert.NotNull(data.PrtgRuleThresholds);
         Assert.NotNull(data.TriggeredFetchMagnitude);
         Assert.NotNull(data.ResidualCredentialThresholds);
         Assert.False(data.CanExport);
+        Assert.IsAssignableFrom<IDisposable>(response).Dispose();
     }
 
     [Fact]
@@ -2476,12 +3115,12 @@ public class CalibrationControllerTests : IDisposable
         var controller = CreateController();
 
         var result = controller.Export(isOverride: true, detail: "summary");
-        var fileResult = Assert.IsType<FileContentResult>(result);
+        var fileResult = Assert.IsAssignableFrom<FileStreamResult>(result);
 
         Assert.Equal($"calibration-{DateTime.Today:yyyyMMdd}-summary.json", fileResult.FileDownloadName);
         Assert.Contains("-summary", fileResult.FileDownloadName);
 
-        using var doc = JsonDocument.Parse(fileResult.FileContents);
+        using var doc = JsonDocument.Parse(ReadFile(fileResult));
         var root = doc.RootElement;
         Assert.True(root.TryGetProperty("ValueBaselines", out var vb));
         Assert.Equal(0, vb.GetArrayLength());
@@ -2493,6 +3132,153 @@ public class CalibrationControllerTests : IDisposable
         using var auditDoc = JsonDocument.Parse(auditEntry.DetailJson!);
         Assert.True(auditDoc.RootElement.TryGetProperty("Detail", out var auditDetailProp));
         Assert.Equal("summary", auditDetailProp.GetString());
+    }
+
+    private static byte[] ReadFile(FileStreamResult result)
+    {
+        using var stream = new MemoryStream();
+        result.FileStream.CopyTo(stream);
+        Assert.IsAssignableFrom<IDisposable>(result).Dispose();
+        return stream.ToArray();
+    }
+
+    private static (ServiceProvider Services, ActionContext Context) CreateMvcActionContext(Stream responseBody,
+        CancellationToken requestAborted = default)
+    {
+        var services = new ServiceCollection().AddLogging().AddControllers().Services.BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices = services };
+        http.Response.Body = responseBody;
+        if (requestAborted.CanBeCanceled)
+            http.RequestAborted = requestAborted;
+        return (services, new ActionContext(http, new RouteData(), new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor()));
+    }
+
+    [Fact]
+    public async Task Export_MVC傳送期間保留Admission直到response完成()
+    {
+        var controller = CreateController();
+        await using var body = new BlockingResponseStream();
+        var mvc = CreateMvcActionContext(body);
+        using var services = mvc.Services;
+        controller.ControllerContext = new ControllerContext(mvc.Context);
+        var file = Assert.IsAssignableFrom<FileStreamResult>(controller.Export(isOverride: true));
+
+        var execution = file.ExecuteResultAsync(mvc.Context);
+        await body.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var blocked = Assert.IsType<ObjectResult>(controller.Export(isOverride: true));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, blocked.StatusCode);
+        Assert.Equal("capture_busy", Assert.IsType<ApiResponse<object>>(blocked.Value).Error?.Code);
+
+        body.AllowWrite.TrySetResult(true);
+        await execution;
+        var next = Assert.IsAssignableFrom<IDisposable>(controller.Export(isOverride: true));
+        next.Dispose();
+    }
+
+    [Fact]
+    public async Task GetStatus_MVC傳送期間保留Admission並阻擋匯出()
+    {
+        var controller = CreateController();
+        await using var body = new BlockingResponseStream();
+        var mvc = CreateMvcActionContext(body);
+        using var services = mvc.Services;
+        controller.ControllerContext = new ControllerContext(mvc.Context);
+        var status = Assert.IsAssignableFrom<OkObjectResult>(controller.GetStatus());
+
+        var execution = status.ExecuteResultAsync(mvc.Context);
+        await body.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var blocked = Assert.IsType<ObjectResult>(controller.Export(isOverride: true));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, blocked.StatusCode);
+        Assert.Equal("capture_busy", Assert.IsType<ApiResponse<object>>(blocked.Value).Error?.Code);
+
+        body.AllowWrite.TrySetResult(true);
+        await execution;
+        var next = Assert.IsAssignableFrom<IDisposable>(controller.Export(isOverride: true));
+        next.Dispose();
+    }
+
+    [Fact]
+    public async Task Export_MVC傳送失敗與clientAbort都釋放Admission()
+    {
+        var controller = CreateController();
+        var failingMvc = CreateMvcActionContext(new ThrowingResponseStream());
+        using (failingMvc.Services)
+        {
+            controller.ControllerContext = new ControllerContext(failingMvc.Context);
+            var failedFile = Assert.IsAssignableFrom<FileStreamResult>(controller.Export(isOverride: true));
+            await Assert.ThrowsAnyAsync<IOException>(() => failedFile.ExecuteResultAsync(failingMvc.Context));
+        }
+
+        var afterFailure = Assert.IsAssignableFrom<IDisposable>(controller.Export(isOverride: true));
+        afterFailure.Dispose();
+
+        using var abort = new CancellationTokenSource();
+        await using var blockedBody = new BlockingResponseStream();
+        var abortMvc = CreateMvcActionContext(blockedBody, abort.Token);
+        var abortFeature = new RecordingRequestLifetimeFeature { RequestAborted = abort.Token };
+        abortMvc.Context.HttpContext.Features.Set<Microsoft.AspNetCore.Http.Features.IHttpRequestLifetimeFeature>(abortFeature);
+        using (abortMvc.Services)
+        {
+            controller.ControllerContext = new ControllerContext(abortMvc.Context);
+            var abortFile = Assert.IsAssignableFrom<FileStreamResult>(controller.Export(isOverride: true));
+            var execution = abortFile.ExecuteResultAsync(abortMvc.Context);
+            await blockedBody.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            abort.Cancel();
+            await execution;
+            Assert.True(abortFeature.AbortCalled, "MVC must abort the canceled file response.");
+            Assert.False(blockedBody.AllowWrite.Task.IsCompleted);
+        }
+
+        var afterAbort = Assert.IsAssignableFrom<IDisposable>(CreateController().Export(isOverride: true));
+        afterAbort.Dispose();
+    }
+
+    private sealed class RecordingRequestLifetimeFeature : Microsoft.AspNetCore.Http.Features.IHttpRequestLifetimeFeature
+    {
+        public CancellationToken RequestAborted { get; set; }
+        public bool AbortCalled { get; private set; }
+        public void Abort() => AbortCalled = true;
+    }
+
+    private sealed class BlockingResponseStream : MemoryStream
+    {
+        public TaskCompletionSource<bool> WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> AllowWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            WriteStarted.TrySetResult(true);
+            await AllowWrite.Task.WaitAsync(cancellationToken);
+        }
+
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            WriteStarted.TrySetResult(true);
+            await AllowWrite.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    private sealed class ThrowingResponseStream : MemoryStream
+    {
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException(new IOException("fixture response failure"));
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("fixture response failure"));
+    }
+
+    [Fact]
+    public void Export_JSON超過注入上限時override也回容量拒絕而非部分檔案()
+    {
+        var result = CreateController(maximumExportBytes: 1).Export(isOverride: true);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, problem.StatusCode);
+        var envelope = Assert.IsType<ApiResponse<object>>(problem.Value);
+        Assert.False(envelope.Success);
+        Assert.Equal("capacity_exceeded", envelope.Error?.Code);
+        Assert.Contains("使用摘要模式取得同一完整範圍的統計；需要逐時明細請用診斷資料搬運匯出", envelope.Error?.Message, StringComparison.Ordinal);
+        Assert.Empty(_audit.Entries);
     }
 }
 

@@ -233,6 +233,31 @@ public sealed class PrtgDiagnosticExportSourceTests
         Assert.Equal(0, fixture.Counter.ObservationEntityPages);
     }
 
+    [Theory]
+    [InlineData(4097)]
+    [InlineData(1000000)]
+    public async Task TrustedProofLobIsRejectedBeforeAnyValueEntityIsLoaded(int proofCharacters)
+    {
+        using var fixture = new ExportFixture();
+        using var context = fixture.OpenContext();
+        await context.Database.EnsureCreatedAsync();
+        SeedV2(context, largeDictionaryEntries: 0);
+        var value = context.PrtgValues.Local.First();
+        value.TrustVersion = 1;
+        value.TrustedProof = new string('p', proofCharacters);
+        await context.SaveChangesAsync();
+        await using var transaction = await context.Database.BeginTransactionAsync();
+        fixture.Counter.Reset();
+        var error = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        {
+            await foreach (var _ in new PrtgDiagnosticExportSource().EnumerateRowsAsync(
+                context, From, Through, Policy(), 7, CancellationToken.None)) { }
+        });
+        Assert.Contains("4 KiB", error.Message);
+        Assert.True(fixture.Counter.ValueLengthPages > 0);
+        Assert.Equal(0, fixture.Counter.ValueEntityPages);
+    }
+
     [Fact]
     public async Task StalePolicyVersionAndPreCancelledEnumerationIssueNoDataQueries()
     {
@@ -372,14 +397,22 @@ public sealed class PrtgDiagnosticExportSourceTests
         public int DevicePageCommands { get; private set; }
         public int ObservationLengthPages { get; private set; }
         public int ObservationEntityPages { get; private set; }
+        public int ValueLengthPages { get; private set; }
+        public int ValueEntityPages { get; private set; }
 
-        public void Reset() { ReaderCommands = 0; DevicePageCommands = 0; ObservationLengthPages = 0; ObservationEntityPages = 0; }
+        public void Reset() { ReaderCommands = 0; DevicePageCommands = 0; ObservationLengthPages = 0; ObservationEntityPages = 0; ValueLengthPages = 0; ValueEntityPages = 0; }
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
             ReaderCommands++;
+            if (command.CommandText.Contains("lf_prtg_values", StringComparison.OrdinalIgnoreCase) &&
+                command.CommandText.Contains("LIMIT", StringComparison.OrdinalIgnoreCase))
+            {
+                if (command.CommandText.Contains("length(", StringComparison.OrdinalIgnoreCase)) ValueLengthPages++;
+                else ValueEntityPages++;
+            }
             if (command.CommandText.Contains("lf_prtg_devices", StringComparison.OrdinalIgnoreCase) &&
                 command.CommandText.Contains("LIMIT", StringComparison.OrdinalIgnoreCase)) DevicePageCommands++;
             if (command.CommandText.Contains("lf_prtg_observations", StringComparison.OrdinalIgnoreCase) &&

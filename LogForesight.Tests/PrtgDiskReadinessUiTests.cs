@@ -26,7 +26,10 @@ public sealed class PrtgDiskReadinessUiTests
         Assert.Contains("prtg-readiness-prev", view);
         Assert.Contains("prtg-readiness-next", view);
         Assert.Contains("/api/prtg/disk-readiness?page=", js);
-        Assert.Contains("onChange: name => { if (name === 'probe') queueMicrotask(loadDiskReadiness); }", js);
+        // The tab callback also loads timeline progress. Keep the readiness trigger
+        // contract independent of formatting or additional tabs.
+        Assert.Contains("onChange: name =>", js);
+        Assert.Contains("if (name === 'probe') queueMicrotask(loadDiskReadiness);", js);
         Assert.Contains("row.usableDays} / ${row.requiredDays}", js);
         Assert.Contains("row.latestUsableHour", js);
         Assert.Contains("row.semanticVerified", js);

@@ -1,4 +1,5 @@
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -18,6 +19,7 @@ public class RunMonitorService
     private readonly IUserStore _users;
     private readonly ScheduleOptionsStore _scheduleOptions;
     private readonly IUserDisplayNameService _displayNameService;
+    private readonly HostDayWorkflowService? _workflow;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     internal static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -26,7 +28,8 @@ public class RunMonitorService
     private const int MaxFailedHostNames = 10;
 
     public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users,
-        ScheduleOptionsStore scheduleOptions, IUserDisplayNameService displayNameService)
+        ScheduleOptionsStore scheduleOptions, IUserDisplayNameService displayNameService,
+        HostDayWorkflowService? workflow = null)
     {
         _runs = runs;
         _hosts = hosts;
@@ -34,6 +37,7 @@ public class RunMonitorService
         _users = users;
         _scheduleOptions = scheduleOptions;
         _displayNameService = displayNameService;
+        _workflow = workflow;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
@@ -186,6 +190,7 @@ public class RunMonitorService
             var cell = host.Source == "netiq"
                 ? NetiqCell(host, date, recordDates)
                 : LocalCell(host, dateStr, dayRuns, date, recordDates, localEnabled);
+            var workflow = host.HostId > 0 ? _workflow?.Get(host.HostId, date.AddDays(-1)) : null;
             return new RunDayHostStatusDto
             {
                 HostName = host.HostName,
@@ -197,7 +202,22 @@ public class RunMonitorService
                 WarnCount = cell.WarnCount,
                 ErrorCount = cell.ErrorCount,
                 AiFailures = cell.AiFailures,
-                RunCount = cell.RunCount
+                RunCount = cell.RunCount,
+                DecisionVersion = workflow?.DecisionVersion,
+                ParentWorkflowState = workflow?.Parent.ToString().ToLowerInvariant(),
+                PrtgWorkflowState = workflow?.Prtg.ToString().ToLowerInvariant(),
+                PrtgReadinessState = workflow?.PrtgReadinessState,
+                WorkflowRecoveryState = workflow?.IsRecoveryWaiting == true ? "waiting" : null,
+                WorkflowRecoveryReason = workflow?.RecoveryWaitingReason,
+                AiWorkflowState = workflow?.Ai.ToString().ToLowerInvariant(),
+                CaseWorkflowState = workflow?.CaseState.ToString().ToLowerInvariant(),
+                MailWorkflowState = workflow == null ? null :
+                    !workflow.MailPlanClosed ? "pending" :
+                    workflow.MailIntents.Length == 0 ? "none" :
+                    workflow.MailIsComplete ? "smtp-accepted" :
+                    workflow.MailFailedParts.Length > 0 || workflow.MailDeliveredParts.Length > 0 ? "partial" : "pending",
+                WorkflowComplete = workflow?.IsComplete,
+                WorkflowOutcome = workflow?.WorkflowOutcome
             };
         }).ToList();
     }

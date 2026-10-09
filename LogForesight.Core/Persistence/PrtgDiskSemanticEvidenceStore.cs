@@ -36,7 +36,11 @@ public sealed record PrtgDiskSemanticEvidence(
     long? VerifierUserId,
     string EvidenceSummary,
     DateTime VerifiedAtUtc,
-    string ParserSemanticVersion);
+    string ParserSemanticVersion,
+    string SourceGeneration = "",
+    string ResourceGeneration = "",
+    string ChannelGeneration = "",
+    long IdentityEpoch = 0);
 
 public sealed class PrtgDiskSemanticEvidenceValidity
 {
@@ -88,7 +92,11 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
         long verifierUserId,
         string evidenceSummary,
         DateTime verifiedAtUtc,
-        string parserSemanticVersion)
+        string parserSemanticVersion,
+        string sourceGeneration = "",
+        string resourceGeneration = "",
+        string channelGeneration = "",
+        long identityEpoch = 0)
     {
         ValidateContext(context);
         if (verifierUserId <= 0) throw new ArgumentOutOfRangeException(nameof(verifierUserId));
@@ -101,7 +109,8 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
             context.SensorObjid, context.DeviceObjid, context.HostId, context.SensorType.Trim(),
             context.MainChannelIdentifier.Trim(), context.MainChannelName.Trim(), context.Unit.Trim(),
             context.Scale, context.Direction.Trim(), PrtgDiskSemanticEvidenceSource.Manual,
-            verifierUserId, evidenceSummary.Trim(), verifiedAtUtc, parserSemanticVersion.Trim()));
+            verifierUserId, evidenceSummary.Trim(), verifiedAtUtc, parserSemanticVersion.Trim(),
+            sourceGeneration, resourceGeneration, channelGeneration, identityEpoch));
     }
 
     /// <summary>只有呼叫端已完成強證據核驗時，才可寫入自動確認結果。</summary>
@@ -110,7 +119,11 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
         bool robustEvidenceEstablished,
         string evidenceSummary,
         DateTime verifiedAtUtc,
-        string parserSemanticVersion)
+        string parserSemanticVersion,
+        string sourceGeneration = "",
+        string resourceGeneration = "",
+        string channelGeneration = "",
+        long identityEpoch = 0)
     {
         ValidateContext(context);
         if (!robustEvidenceEstablished)
@@ -124,7 +137,8 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
             context.SensorObjid, context.DeviceObjid, context.HostId, context.SensorType.Trim(),
             context.MainChannelIdentifier.Trim(), context.MainChannelName.Trim(), context.Unit.Trim(),
             context.Scale, context.Direction.Trim(), PrtgDiskSemanticEvidenceSource.Automated,
-            null, evidenceSummary.Trim(), verifiedAtUtc, parserSemanticVersion.Trim()));
+            null, evidenceSummary.Trim(), verifiedAtUtc, parserSemanticVersion.Trim(),
+            sourceGeneration, resourceGeneration, channelGeneration, identityEpoch));
     }
 
     public PrtgDiskSemanticEvidenceValidity CheckValidity(

@@ -7,7 +7,7 @@ namespace LogForesight.Tests;
 /// LogAnalysisService 拆分統計段/AI 段（docs/archive/FEEDBACK-12-PLAN.md §3.3）之後的回歸測試：
 /// AnalyzeDayAsync 的組合呼叫（統計段緊接著 AI 段）產出的最終紀錄與報告內容要與拆分前
 /// 完全一致。這裡專門釘住 <c>CompleteAiAsync</c> 內部組出的暫用 <see cref="DailyAnalysisRecord"/>
-/// 有沒有把 <see cref="RiskReportService.GenerateAsync"/> 會讀的欄位都填齊——實作過程中曾經
+/// 有沒有把 <see cref="RiskReportService.PrepareAsync"/> 會讀的欄位都填齊——實作過程中曾經
 /// 只填了 TopIssues/RiskLevel/AiAnalyzed 幾個欄位，報告會靜靜少一大塊內容（Headline／Summary／
 /// TrendAssessment／Action／UncoveredChecks／DataIncomplete），但不會有任何例外或建置警告。
 /// </summary>
@@ -53,14 +53,60 @@ public class LogAnalysisServiceSplitTests : IDisposable
 
         // 報告要歸到這個分析服務綁定的主機：升級前這裡完全沒把主機傳下去，
         // 多台主機同日同風險同類別的報告因而互相覆蓋
-        Assert.Equal(42, sink.LastHost?.HostId);
-        Assert.Equal("SRV-NETIQ-07", sink.LastHost?.HostName);
+        var report = new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = 42, HostName = "SRV-NETIQ-07" }, record.Date, ReportKinds.DailyRisk);
+        Assert.NotNull(report);
+        Assert.Equal(record.ReportFile, report.ReportId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.True(record.AiAnalyzed);
         Assert.NotNull(record.ReportFile);
-        Assert.NotNull(sink.LastContent);
-        Assert.Contains("磁碟即將故障", sink.LastContent);       // AI headline 有沒有進報告
-        Assert.Contains("偵測到大量磁碟I/O錯誤", sink.LastContent); // AI summary 有沒有進報告
-        Assert.Contains("今天就要處理", sink.LastContent);       // AI action 有沒有進報告
+        Assert.Contains("磁碟即將故障", report.Content);       // AI headline 有沒有進報告
+        Assert.Contains("偵測到大量磁碟I/O錯誤", report.Content); // AI summary 有沒有進報告
+        Assert.Contains("今天就要處理", report.Content);       // AI action 有沒有進報告
+    }
+
+    [Fact]
+    public async Task AI報告使用完整統計父列輸入保留頻道盲區與已抑制問題()
+    {
+        var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        var sink = new FakeReportSink();
+        var ai = new FakeAiService
+        {
+            NextContent = """{"risk_level":"高","headline":"磁碟即將故障","story":"大量磁碟 I/O 錯誤。","trend_story":"","action":"今天處理"}"""
+        };
+        var suppressedEvent = new EventLogEntryData
+        {
+            TimeGenerated = DateTime.Today.AddHours(-1), EntryType = EventLogEntryType.Error,
+            LogName = "Application", Source = "QuietVendor", EventId = 9001,
+            Message = "已知的低優先級雜訊"
+        };
+        var signatureKey = IssueSignatureKey.For("Application", "QuietVendor", 9001, EventLogEntryType.Error);
+        var suppressions = new FakeSuppressionStore();
+        suppressions.SaveAll(new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = signatureKey,
+                Scope = SuppressionScopes.Site, Reason = "測試：已知雜訊" }
+        });
+        var reportService = new RiskReportService(ai, sink);
+        var service = new LogAnalysisService(new EventLogService(), ai, history, suppressions,
+            reportService: reportService, host: "SRV-NETIQ-07", hostId: 42);
+        var channels = new ChannelAvailability { Read = new List<string> { "System" }, Denied = new List<string> { "Security" } };
+
+        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-1),
+            MakeHighRiskDiskEvents().Append(suppressedEvent).ToList(), useAi: true,
+            securityLogAvailable: false, channels: channels);
+
+        var persisted = Assert.Single(history.ReadRecent(record.Date, 1));
+        Assert.Equal("高", record.RiskLevel);
+        Assert.Equal(record.RiskLevel, persisted.RiskLevel);
+        Assert.Equal(channels.Read, persisted.ChannelsRead);
+        Assert.False(persisted.SecurityLogAvailable);
+        Assert.Contains(persisted.TopIssues, issue => issue.Source == "QuietVendor" && issue.Suppressed);
+        Assert.Contains(persisted.UncoveredChecks, check => check.Contains("Security", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(persisted.ReportFile);
+        var report = new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = 42, HostName = "SRV-NETIQ-07" }, persisted.Date, ReportKinds.DailyRisk);
+        Assert.NotNull(report);
+        Assert.Contains("Security", report.Content, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>統計模式（useAi=false）路徑不受拆分影響：規則本身判定的高風險一樣要出報告，
@@ -82,8 +128,108 @@ public class LogAnalysisServiceSplitTests : IDisposable
         Assert.False(record.AiAnalyzed);
         Assert.Equal(0, ai.Calls);
         Assert.NotNull(record.ReportFile);
-        Assert.NotNull(sink.LastContent);
-        Assert.Contains("統計模式紀錄", sink.LastContent);
+        var report = new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = record.HostId, HostName = record.Host }, record.Date, ReportKinds.DailyRisk);
+        Assert.NotNull(report);
+        Assert.Contains("統計模式紀錄", report.Content);
+    }
+
+    [Fact]
+    public async Task 非AI報告可延後到PRTG存檔後並同步持久化報告參照與證據版本()
+    {
+        var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        var sink = new FakeReportSink();
+        var ai = new FakeAiService();
+        var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
+            reportService: new RiskReportService(ai, sink), host: "SRV-NETIQ-07", hostId: 42);
+        var day = DateTime.Today.AddDays(-1);
+        var (record, workItem) = await service.BuildStatisticalRecordAsync(
+            day, MakeHighRiskDiskEvents(), useAi: false, deferNonAiReport: true);
+        Assert.Null(workItem);
+        Assert.Null(record.ReportFile);
+        Assert.Null(sink.LastContent);
+
+        var resourceFinding = new LogIssueSignature
+        {
+            LogName = "PRTG",
+            Source = "PRTG:disk_free_trend",
+            EventId = 0,
+            EventKey = "prtg:disk_free_trend:17",
+            RuleId = "builtin-prtg-resource-disk-pressure",
+            Category = IssueCategory.Storage,
+            Severity = IssueSeverity.Critical,
+            Count = 1,
+            FirstSeen = "10:00",
+            LastSeen = "10:00",
+            PrtgSourceGeneration = "saved-source-generation",
+            PrtgResourceGeneration = "saved-resource-generation",
+            PrtgChannelGeneration = "saved-channel-generation",
+            PrtgRuleAdmissionFingerprint = new string('A', 64),
+            PrtgResourceReasonCodes = ["disk-two-hour-low-water"],
+            SampleMessages = ["兩小時可用空間均值 4.2%，合格涵蓋 120 分鐘"]
+        };
+        record.TopIssues.Add(resourceFinding);
+        history.Append(record);
+
+        Assert.True(await service.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, MakeHighRiskDiskEvents()));
+
+        var saved = Assert.Single(history.ReadRecent(day, 1));
+        Assert.NotNull(saved.ReportFile);
+        Assert.Equal(HostDayWorkflowFingerprint.PrtgInputFingerprint(saved), saved.PrtgReportEvidenceFingerprint);
+        var report = new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = 42, HostName = "SRV-NETIQ-07" }, day, ReportKinds.DailyRisk);
+        Assert.NotNull(report);
+        Assert.Contains("正式資源原因：兩個完整小時皆處於磁碟低水位", report.Content);
+        Assert.Equal(saved.ReportFile, record.ReportFile);
+        Assert.Equal(saved.PrtgReportEvidenceFingerprint, record.PrtgReportEvidenceFingerprint);
+        Assert.Equal(0, ai.Calls);
+    }
+
+    [Fact]
+    public async Task 已保存主機日的報告附掛失敗會留獨立標記並在新服務重試()
+    {
+        var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        var ai = new FakeAiService();
+        var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
+            reportService: new RiskReportService(ai, new FakeReportSink()), host: "REPORT-RETRY", hostId: 882);
+        var day = DateTime.Today.AddDays(-3);
+        var record = await service.AnalyzeDayStatisticalAsync(day, MakeHighRiskDiskEvents(), useAi: false,
+            deferNonAiReport: true);
+        Assert.True(record.RiskReportPending);
+        Assert.Null(record.ReportFile);
+
+        using (var context = _fx.NewContext())
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(context.Database,
+                "CREATE TRIGGER fail_report_parent_update BEFORE UPDATE ON lf_daily_records BEGIN SELECT RAISE(ABORT, 'fixture parent update failure'); END;");
+
+        Assert.False(await service.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, MakeHighRiskDiskEvents()));
+        var afterFailure = Assert.Single(history.ReadRecent(day, 1));
+        Assert.True(afterFailure.RiskReportPending);
+        Assert.Null(afterFailure.ReportFile);
+        Assert.Null(new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = 882, HostName = "REPORT-RETRY" }, day, ReportKinds.DailyRisk));
+
+        using (var context = _fx.NewContext())
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(context.Database,
+                "DROP TRIGGER fail_report_parent_update;");
+
+        // A new service instance models a process restart. It reads the durable parent/cache only;
+        // report preparation is explicitly non-AI and guarded attach rechecks the same parent image.
+        var restarted = new LogAnalysisService(new EventLogService(), ai,
+            new EfAnalysisRecordStore(_fx.NewContext, "test"), new FakeSuppressionStore(),
+            reportService: new RiskReportService(ai, new FakeReportSink()), host: "REPORT-RETRY", hostId: 882);
+        Assert.True(await restarted.FinalizePendingRiskReportAsync(afterFailure));
+
+        var completed = Assert.Single(history.ReadRecent(day, 1));
+        Assert.False(completed.RiskReportPending);
+        Assert.NotNull(completed.ReportFile);
+        Assert.Equal(HostDayWorkflowFingerprint.PrtgInputFingerprint(completed),
+            completed.PrtgReportEvidenceFingerprint);
+        var report = new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = 882, HostName = "REPORT-RETRY" }, day, ReportKinds.DailyRisk);
+        Assert.NotNull(report);
+        Assert.Contains("風險事件快取為空", report.Content);
+        Assert.Equal(0, ai.Calls);
     }
 
     /// <summary>
@@ -311,9 +457,11 @@ public class LogAnalysisServiceSplitTests : IDisposable
         Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
         Assert.False(record.TopIssues.Single(i => i.Source == "Ntfs").Suppressed);
         Assert.Equal("高", record.RiskLevel); // 由未靜音的 Ntfs 拉高，確保報告會產出
-        Assert.NotNull(sink.LastContent);
-        Assert.Contains("已抑制的告警 1 項", sink.LastContent);
-        Assert.Contains($"靜音至 {DateTime.Today.AddDays(2):yyyy-MM-dd}：更換磁碟陣列中", sink.LastContent);
+        var report = new EfReportStore(_fx.NewContext).Read(
+            new HostKey { HostId = record.HostId, HostName = record.Host }, day, ReportKinds.DailyRisk);
+        Assert.NotNull(report);
+        Assert.Contains("已抑制的告警 1 項", report.Content);
+        Assert.Contains($"靜音至 {DateTime.Today.AddDays(2):yyyy-MM-dd}：更換磁碟陣列中", report.Content);
     }
 
     [Fact]

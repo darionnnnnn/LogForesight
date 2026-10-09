@@ -11,7 +11,7 @@ public sealed record PrtgRuleInfo(
     int DefaultThreshold);
 
 /// <summary>
-/// PRTG 四條狀態變更規則的靜態對照表。
+/// PRTG 狀態變更與資源 pressure rule 的靜態描述對照表。
 /// 集中管理規則分類、嚴重度、風險升級旗標、簡述與預設門檻，避免各處手抄分岔。
 /// </summary>
 public static class PrtgRuleCatalog
@@ -20,6 +20,21 @@ public static class PrtgRuleCatalog
     public const int DefaultFlapCount = 5;
     public const int DefaultWarningMinutes = 240;
     public const int DefaultSilentThreshold = 0;
+
+    /// <summary>
+    /// The formal code path each persisted rule code must reach. Silent is consumed by the
+    /// covered evaluator only when it receives typed, complete presence evidence.
+    /// </summary>
+    public static string? FormalConsumerFor(string? ruleCode) => ruleCode switch
+    {
+        PrtgRuleEvaluator.RuleDown or PrtgRuleEvaluator.RuleFlapping or PrtgRuleEvaluator.RuleWarning =>
+            nameof(PrtgCoveredRuleEvaluator),
+        PrtgRuleEvaluator.RuleSilent => nameof(PrtgSilentAbsenceEvaluator),
+        PrtgRuleEvaluator.RuleDiskFreeTrend => nameof(PrtgDailyPipeline),
+        PrtgRuleEvaluator.RuleResourceCpuPressure or PrtgRuleEvaluator.RuleResourceMemoryPressure or
+            PrtgRuleEvaluator.RuleResourceDiskPressure => nameof(PrtgResourcePeriodConsumer),
+        _ => null
+    };
 
     /// <summary>跨日判定回望窗口（日，不含當日）</summary>
     public const int CrossDayWindowDays = 14;
@@ -63,6 +78,18 @@ public static class PrtgRuleCatalog
         [PrtgRuleEvaluator.RuleDiskFreeTrend] = new(
             IssueCategory.Storage, IssueSeverity.High, false,
             "磁碟可用空間持續下降，可能在處理期間內耗盡", 0),
+
+        [PrtgRuleEvaluator.RuleResourceCpuPressure] = new(
+            IssueCategory.Resource, IssueSeverity.High, false,
+            "CPU 使用率連續兩個完成小時達到 90%", 90),
+
+        [PrtgRuleEvaluator.RuleResourceMemoryPressure] = new(
+            IssueCategory.Resource, IssueSeverity.High, false,
+            "記憶體使用率連續兩個完成小時達到 90%", 90),
+
+        [PrtgRuleEvaluator.RuleResourceDiskPressure] = new(
+            IssueCategory.Storage, IssueSeverity.High, false,
+            "磁碟可用空間低水位或可信耗盡趨勢", 0),
     };
 
     /// <summary>依規則代碼查詢規則資訊</summary>

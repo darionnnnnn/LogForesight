@@ -89,7 +89,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         using (client)
         {
             var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
-            var today = new DateTime(2026, 9, 9);
+            var today = DateTime.Today;
 
             var status = await PrtgStructureSyncRunner.RunAsync(
                 fetchService, store, hostStore, new PrtgAddressResolver(),
@@ -216,7 +216,7 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         var hostStore = new FakeHostStore();
         hostStore.MutateBatch(hosts =>
             hosts.Add(new WebHost { HostId = 51, HostName = "srv-a", IpAddress = "10.1.1.1", Active = true }));
-        var today = new DateTime(2026, 9, 9);
+        var today = DateTime.Today;
 
         var (client, _) = CreateClient(StructureResponder);
         using (client)

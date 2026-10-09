@@ -340,4 +340,51 @@ public class FrontendConsistencyUiTests
         Assert.Contains("台有 PRTG 監測項目異常", js);
         Assert.Contains("'沒回報 ≠ 沒問題'", js);
     }
+
+    [Fact]
+    public void 風險日來源佐證有界顯示且不產生原始參照連結或HTML()
+    {
+        var js = ReadJs("pages", "record-detail.js");
+        var block = ExtractBody(js, @"function sourceEvidenceBlock\(issue\)");
+        Assert.Contains("slice(0, 64)", block);
+        Assert.Contains("item.exactHostKey || '未知'", block);
+        Assert.Contains("item.exactResourceKey || '未知'", block);
+        Assert.Contains("UTC 時間／區間：未知", block);
+        Assert.Contains("原生參照：${item.nativeReference || '未知'}", block);
+        Assert.Contains("row.appendChild(reference)", block);
+        Assert.DoesNotContain("innerHTML", block);
+        Assert.DoesNotContain("href", block);
+        Assert.Contains("群組顯示時段不是來源時間窗", block);
+    }
+
+    [Fact]
+    public void 風險報告待補狀態接到詳情提示與主機時間軸標記()
+    {
+        var detailJs = ReadJs("pages", "record-detail.js");
+        Assert.Contains("currentDetail.riskReportPending !== true", ExtractBody(detailJs, @"async function loadReports\(\)"));
+        Assert.Contains("風險報告待補，背景自動重試；舊報告仍保留。", detailJs);
+
+        var hostJs = ReadJs("pages", "host-detail.js");
+        var timeline = ExtractBody(hostJs, @"function renderTimeline\(detail\)");
+        Assert.Contains("day.riskReportPending === true", timeline);
+        Assert.Contains("cell.setAttribute('aria-label'", timeline);
+        Assert.Contains("風險報告待補，背景自動重試", timeline);
+    }
+
+    [Fact]
+    public void 案件授與主機頁不把裁剪後的空資料顯示成全主機結論或載入PRTG對應()
+    {
+        var hostJs = ReadJs("pages", "host-detail.js");
+        Assert.Contains("function renderCaseGrantScopeNotice(container, message)", hostJs);
+        Assert.Contains("notice.textContent = message", hostJs);
+        Assert.DoesNotContain("notice.innerHTML", hostJs);
+        Assert.Contains("if (detail.caseGrantOnly === true)", ExtractBody(hostJs, @"function renderTimeline\(detail\)"));
+        Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。", hostJs);
+        Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。", hostJs);
+        Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示主機層級的資源觀察或維護控制。", hostJs);
+        var load = ExtractBody(hostJs, @"async function load\(\)");
+        Assert.Contains("if (detail.caseGrantOnly === true)", load);
+        Assert.Contains("loadPrtgMapping();", load);
+        Assert.Contains("案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。", hostJs);
+    }
 }

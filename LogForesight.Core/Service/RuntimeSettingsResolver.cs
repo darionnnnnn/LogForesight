@@ -151,7 +151,8 @@ public static class RuntimeSettingsResolver
     public static void ApplyAiAdvanced(AiSettings ai, SystemSettings db)
     {
         if (db.AiTimeoutSeconds >= 1) ai.TimeoutSeconds = db.AiTimeoutSeconds;
-        if (db.AiRetryCount >= 0) ai.RetryCount = db.AiRetryCount;
+        // Match the persisted settings API: invalid legacy/blob values retain the working default.
+        if (db.AiRetryCount is >= 1 and <= 10) ai.RetryCount = db.AiRetryCount;
         if (db.AiRetryDelaySeconds >= 0) ai.RetryDelaySeconds = db.AiRetryDelaySeconds;
         if (db.AiJsonRetryCount >= 0) ai.JsonRetryCount = db.AiJsonRetryCount;
         if (db.AiMaxTokens >= 0) ai.MaxTokens = db.AiMaxTokens;

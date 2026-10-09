@@ -13,6 +13,89 @@ namespace LogForesight.Tests;
 /// </summary>
 public class PrtgCompatibilityProbeTests
 {
+    [Fact]
+    public async Task IdentityPreservingXmlReachesSafeProbeArtifactWithoutAuthorizingUnknownClockOrPrimary()
+    {
+        var samples = CreateSamples((1003, "SNMP Disk Free", "Up"));
+        var xmlCalls = 0;
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) => Task.FromResult(
+            url.Contains("content=sensors") ? "{\"sensors\":[{\"objid\":1003,\"lastvalue_raw\":24}]}" :
+            url.Contains("content=channels") ? "{\"channels\":[{\"objid\":3,\"name\":\"Free Space\"}]}" :
+            "{\"histdata\":[{\"datetime_raw\":46288.5,\"value_raw\":24}]}"),
+            new TestConsole(), samples, null, getHistoricXml: (url, _) =>
+            {
+                xmlCalls++;
+                Assert.Contains("avg=0", url);
+                Assert.Contains("historicdata.xml", url);
+                const string xml = "<histdata totalcount=\"1\"><prtg-version>24.1.92.1554+</prtg-version><item><datetime_raw>46288.5</datetime_raw><value channel=\"Free Space\" channelid=\"3\">24 %</value><value_raw channel=\"Free Space\" channelid=\"3\">24</value_raw><value_raw channel=\"Private Host Label\" channelid=\"9\">11</value_raw></item></histdata>";
+                return Task.FromResult(new PrtgSourceResponse(xml, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+            });
+        Assert.Equal(1, xmlCalls);
+        var raw = Assert.Single(result.Targets.Where(t => t.Category == "disk")).RawChannelIdentity!;
+        Assert.Equal("ok", raw.Status);
+        Assert.Equal(1, raw.SampleCount);
+        Assert.Equal(46288.5, raw.Samples[0].RawOaDate);
+        Assert.Equal("3", raw.Samples[0].Channels[0].ChannelId);
+        Assert.Equal(24, raw.Samples[0].Channels[0].RawValue);
+        Assert.True(raw.Samples[0].Channels[0].ExplicitPercentDisplay);
+        Assert.False(raw.Samples[0].Channels[1].SemanticKnown);
+        Assert.False(raw.AuthorizesFormalProfile);
+        Assert.Equal("unknown", raw.RawTimestampBasis);
+        Assert.False(result.EvidenceReady);
+        var safe = JsonSerializer.Serialize(result);
+        Assert.DoesNotContain("Private Host Label", safe);
+        Assert.Equal(4, result.Summary.RequestsAttempted);
+    }
+
+    [Fact]
+    public async Task FullCompatibilityArtifactIncludesSafeDeploymentAndProviderMatchedStorageMetadata()
+    {
+        var context = new PrtgProbeEvidenceContext
+        {
+            BuildVersion = "1.0.53.2+0123456789abcdef0123456789abcdef01234567",
+            StorageProvider = "Sqlite",
+            EfCoreProvider = "Microsoft.EntityFrameworkCore.Sqlite",
+            StorageEnvironment = new PrtgStorageEnvironmentFacts
+            {
+                Status = "measured",
+                Provider = "Sqlite",
+                EngineVersion = "3.45.0",
+                Edition = "unknown",
+                EngineEdition = "unknown",
+                FileStatus = "measured",
+                VolumeStatus = "measured",
+                LocalFileStatus = "measured",
+                LogStatus = "unknown",
+                QueriesAttempted = 2,
+                QueriesSucceeded = 2,
+                FileCapacities = [
+                    new PrtgStorageCapacityRow("database-pages", 4096, 2048, 8192, "bounded", null, null),
+                    new PrtgStorageCapacityRow("write-ahead-log", 1024, 512, null, "unknown", null, null)
+                ],
+                VolumeCapacities = [new PrtgStorageVolumeRow("owned-data-root", 100_000, 40_000)]
+            }
+        };
+
+        var evidence = await PrtgCompatibilityProbe.ExecuteCoreAsync((_, _) => Task.FromResult("{}"),
+            new TestConsole(), [], context);
+        var json = PrtgCompatibilityProbe.SerializeEvidence(evidence);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var deployment = root.GetProperty("deployment_resources");
+        var storage = root.GetProperty("storage_environment");
+
+        Assert.Equal(JsonValueKind.Number, deployment.GetProperty("total_available_memory_bytes").ValueKind);
+        Assert.Equal(JsonValueKind.Number, deployment.GetProperty("working_set_bytes").ValueKind);
+        Assert.Equal("unknown (remote database host resources not observable from app process)",
+            deployment.GetProperty("sql_host_resources").GetString());
+        Assert.Equal("Sqlite", root.GetProperty("storage_provider").GetString());
+        Assert.Equal("Sqlite", storage.GetProperty("provider").GetString());
+        Assert.Equal("owned-data-root", storage.GetProperty("volume_capacities")[0].GetProperty("role").GetString());
+        Assert.DoesNotContain("physical_memory", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Data Source=", json, StringComparison.OrdinalIgnoreCase);
+        Assert.InRange(Encoding.UTF8.GetByteCount(json), 1, PrtgCompatibilityProbe.MaxJsonSizeBytes);
+    }
+
     private sealed class TestConsole : IRunConsole
     {
         public List<string> Lines { get; } = new();
@@ -126,6 +209,12 @@ public class PrtgCompatibilityProbeTests
 
         var cpu = evidence.Targets.First(t => t.Category == "cpu");
         Assert.NotEqual("missing", cpu.Status);
+        Assert.Equal(new[] { "objid", "type", "status", "lastvalue_raw", "lastcheck", "interval" }, cpu.Snapshot!.RequestedFields);
+        Assert.Contains("lastvalue_raw", cpu.Snapshot.MissingRequestedFields);
+        Assert.Equal("s1", cpu.Channels!.RequestSensorAlias);
+        Assert.Contains("filtered request used the selected sensor objid", cpu.Channels.RequestSensorIdProvenance);
+        Assert.Equal(new[] { "objid", "name", "lastvalue", "unit", "scaling", "primary" }, cpu.Channels.RequestedFields);
+        Assert.Contains(cpu.Channels.FieldPresence, field => field.Field == "unit" && field.PresentRows == 0 && field.MissingRows == 0);
 
         var memory = evidence.Targets.First(t => t.Category == "memory");
         Assert.Equal("missing", memory.Status);
@@ -288,8 +377,44 @@ public class PrtgCompatibilityProbeTests
         Assert.NotNull(cpu.History);
         Assert.Equal(2, cpu.History.TotalRows);
         var firstRow = cpu.History.Rows[0];
-        Assert.Contains(firstRow.Entries, e => e.Name == "datetime" && (string?)e.Value == "2026-10-01T00:00:00.0000000");
-        Assert.NotEmpty(firstRow.Entries);
+        Assert.Equal(new[] { "datetime", "value_raw", "value_raw", "coverage" },
+            firstRow.Entries.Select(entry => entry.Name));
+        var timestamp = Assert.Single(firstRow.Entries, entry => entry.Name == "datetime");
+        Assert.Equal("datetime_string", timestamp.Type);
+        Assert.Equal("unknown", timestamp.TimestampBasis);
+        Assert.Equal("2026-10-01T00:00:00.000", timestamp.TimestampComponents);
+        Assert.Equal(new object?[] { 10.5, 20.5 },
+            firstRow.Entries.Where(entry => entry.Name == "value_raw").Select(entry => entry.Value));
+    }
+
+    [Theory]
+    [InlineData("+02:00")]
+    [InlineData("-05:00")]
+    [InlineData("+00:00")]
+    [InlineData("+05:30")]
+    public async Task ExecuteCoreAsync_ISO明確時區偏移保留原始壁鐘與正負零及半小時偏移(string offset)
+    {
+        var samples = CreateSamples((1001, "SNMP CPU Load", "Up"));
+        var historyJson = System.Text.Json.JsonSerializer.Serialize(new {
+            histdata = new[] { new { datetime = "2026-10-04T06:02:03" + offset, value_raw = 1 } }
+        });
+
+        Func<string, CancellationToken, Task<string>> getJson = (url, _) =>
+        {
+            if (url.Contains("/api/historicdata.json")) return Task.FromResult(historyJson);
+            if (url.Contains("content=sensors") && url.Contains("filter_objid="))
+                return Task.FromResult(@"{""sensors"": [{""objid"": ""1001"", ""type"": ""SNMP CPU Load"", ""status"": ""Up""}]}");
+            if (url.Contains("content=channels")) return Task.FromResult(@"{""channels"": []}");
+            return Task.FromResult("{}");
+        };
+
+        var evidence = await PrtgCompatibilityProbe.ExecuteCoreAsync(getJson, new TestConsole(), samples, null);
+        var history = Assert.IsType<PrtgHistoryEvidence>(evidence.Targets.Single(t => t.Category == "cpu").History);
+        var timestamp = Assert.Single(Assert.Single(history.Rows).Entries, entry => entry.Name == "datetime");
+        var candidate = Assert.Single(timestamp.TimestampCandidates!);
+        Assert.Equal("unknown", timestamp.TimestampBasis);
+        Assert.Equal(offset, candidate.ReportedOffset);
+        Assert.Equal("2026-10-04T06:02:03.000", candidate.StartComponents);
     }
 
     [Fact]
@@ -351,14 +476,21 @@ public class PrtgCompatibilityProbeTests
         Assert.Equal("[redacted]", s1);
         Assert.False(k1);
 
-        // 純白名單英文
+        // 僅完整且明確的標籤保留；相鄰的多個詞不能被誤讀為一個已知 channel。
         var (s2, k2) = PrtgCompatibilityProbe.SanitizeChannelName("Total CPU Free Memory");
-        Assert.Equal("total cpu free memory", s2);
-        Assert.True(k2);
+        Assert.Equal("[redacted]", s2);
+        Assert.False(k2);
+
+        var (s2a, k2a) = PrtgCompatibilityProbe.SanitizeChannelName("Free Memory");
+        Assert.Equal("free memory", s2a);
+        Assert.True(k2a);
+        var (s2b, k2b) = PrtgCompatibilityProbe.SanitizeChannelName("Used Memory");
+        Assert.Equal("used memory", s2b);
+        Assert.True(k2b);
 
         // 純白名單繁體中文
-        var (s3, k3) = PrtgCompatibilityProbe.SanitizeChannelName("剩餘 磁碟 總計 記憶體");
-        Assert.Equal("剩餘 磁碟 總計 記憶體", s3);
+        var (s3, k3) = PrtgCompatibilityProbe.SanitizeChannelName("剩餘 記憶體");
+        Assert.Equal("剩餘 記憶體", s3);
         Assert.True(k3);
 
         // 包含 IP 位址
@@ -507,9 +639,18 @@ public class PrtgCompatibilityProbeTests
         Assert.DoesNotContain("customer-prod-17", json);
         Assert.DoesNotContain("arbitraryHost", json);
         Assert.Contains("parent sensor id is unavailable", json);
+        Assert.Contains("request_sensor_id_provenance", json);
+        Assert.Contains("requested_fields", json);
+        Assert.Contains("missing_requested_fields", json);
         Assert.Contains("\"unit\":\"[redacted]\"", json);
         Assert.Equal("unknown (filtered request; channel objid identifies a channel, response parent sensor id is unavailable)", result.Targets[0].Channels!.ParentIdentity);
+        Assert.Equal("s1", result.Targets[0].Channels.RequestSensorAlias);
         Assert.Equal("number", result.Targets[0].Channels!.Rows[0].ChannelIdType);
+        Assert.Contains("name", result.Targets[0].Channels.Rows[0].MissingFields);
+        Assert.Contains(result.Targets[0].Channels.FieldPresence,
+            field => field.Field == "name" && field.PresentRows == 0 && field.MissingRows == 1);
+        Assert.Contains(result.Targets[0].Channels.FieldPresence,
+            field => field.Field == "unit" && field.PresentRows == 1 && field.MissingRows == 0);
         Assert.Contains("\"unrecognized_fields_count\":3", json);
         Assert.Contains("\"api_operation_attempts\":3", json);
         Assert.Contains("\"api_operation_responses\":3", json);
@@ -522,6 +663,8 @@ public class PrtgCompatibilityProbeTests
     [Theory]
     [InlineData("23.4-customerprod17", "unknown")]
     [InlineData("23.4.92.1234", "23.4.92.1234")]
+    [InlineData("24.1.92.1554+", "24.1.92.1554+")]
+    [InlineData("24.1.92.1554+private-build", "unknown")]
     [InlineData("23.4", "23.4")]
     public async Task ExecuteCoreAsync_SourcePrtgVersion只接受numeric廠商版本(string sourceVersion, string expected)
     {

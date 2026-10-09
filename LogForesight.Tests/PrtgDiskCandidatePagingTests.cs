@@ -750,22 +750,33 @@ public sealed class PrtgDiskCandidatePagingTests : IDisposable
             db.SaveChanges();
         }
 
+        var store = new EfPrtgStore(NewContext);
+        var identity = PrtgResourceFixture.Bind(store,
+            new EfJsonBlobStore(NewContext, PrtgMonitoringPolicyStore.BlobKey), sensorId, deviceId, 1,
+            "candidate-formal-source", "candidate-formal-resource");
+        identity = PrtgResourceFixture.BindChannel(store, identity, "free", "Free", "%", 1,
+            "descending-danger");
         var evidenceStore = new PrtgDiskSemanticEvidenceStore(new EfJsonBlobStore(NewContext, PrtgDiskSemanticEvidenceStore.BlobKey));
         evidenceStore.ConfirmManually(
             new PrtgDiskSemanticContext(sensorId, deviceId, 1, "SNMP Disk Free", "free", "Free", "%", 1, "descending-danger"),
-            9, "Manually confirmed percent free channel.", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion);
+            9, "Manually confirmed percent free channel.", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion,
+            identity.SourceGeneration, identity.Generation, identity.ChannelGeneration, identity.Epoch);
 
         var verificationStore = new PrtgDiskVerificationResultStore(new EfJsonBlobStore(NewContext, PrtgDiskVerificationResultStore.BlobKey));
         verificationStore.Save(new PrtgDiskVerificationResult(
             sensorId, deviceId, 1, "SNMP Disk Free", "Verified", "Typed channel values matched.",
             "free", "Free", "%", 1, "descending-danger", 1, true,
-            DateTime.UtcNow, today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion));
+            DateTime.UtcNow, today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
 
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostId = 1, HostName = "active-svr", Active = true });
 
-        var store = new EfPrtgStore(NewContext);
         var service = new PrtgDiskAssessmentService(store, hosts, new FakeSystemSettingsStore(), evidenceStore, verificationStore);
+
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(NewContext, sensorId, deviceId, 1,
+            "SNMP Disk Free", identity.SourceGeneration);
 
         // Assess with selectedSensorObjids
         var batch = service.Assess(completedDay, null, PrtgDiskDecisionMode.Preview,

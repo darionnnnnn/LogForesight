@@ -44,12 +44,12 @@ public class ReportHostBindingTests
             }
         };
 
-        await service.GenerateAsync(record, new List<EventLogEntryData>());
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
-        Assert.Equal(ReportKind.DailyRisk, sink.LastKind);
-        Assert.Equal(RiskLevels.High, sink.LastMeta?.RiskLevel);
-        Assert.Equal(IssueCategoryNames.Zh(IssueCategory.Storage), sink.LastMeta?.Categories);
-        Assert.Equal(3, sink.LastHost?.HostId);
+        Assert.Equal(RiskLevels.High, draft.Meta?.RiskLevel);
+        Assert.Equal(IssueCategoryNames.Zh(IssueCategory.Storage), draft.Meta?.Categories);
+        Assert.Equal(3, draft.Host.HostId);
+        Assert.False(sink.Called);
     }
 
     /// <summary>
@@ -81,9 +81,9 @@ public class ReportHostBindingTests
             }
         };
 
-        await service.GenerateAsync(record, new List<EventLogEntryData>());
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
-        Assert.Equal(9, sink.LastHost?.HostId);
-        Assert.Equal("SRV-FALLBACK", sink.LastHost?.HostName);
+        Assert.Equal(9, draft.Host.HostId);
+        Assert.Equal("SRV-FALLBACK", draft.Host.HostName);
     }
 }

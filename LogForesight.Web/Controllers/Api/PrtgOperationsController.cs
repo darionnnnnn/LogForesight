@@ -13,7 +13,8 @@ namespace LogForesight.Web.Controllers.Api;
 [ApiController, Route("api/prtg/operations"), Permission(Capability.Maintain)]
 public sealed class PrtgOperationsController(StorageBackend backend, IVisibilityService visibility,
     MailNotifyStateStore mailState, MailNotificationService mail, PrtgSupplementReplay replay,
-    BackgroundWorkGate gate, DataVersionStamp stamp, IAuditService audit, IHostStore hosts) : ControllerBase
+    BackgroundWorkGate gate, DataVersionStamp stamp, IAuditService audit, IHostStore hosts,
+    HostDayWorkflowService workflow) : ControllerBase
 {
     [HttpGet]
     public IActionResult Get()
@@ -44,7 +45,7 @@ public sealed class PrtgOperationsController(StorageBackend backend, IVisibility
         var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         if (!policy.HostIds.All(visible.Contains) || hosts.GetAll().Any(h => !visible.Contains(h.HostId))) return Forbid();
         await gate.RunAsync("PRTG 補追加重試", () => Task.Run(() =>
-        { if (replay.RunBatch(cancellationToken: ct) > 0) stamp.Bump(); }, ct), ct);
+        { if (replay.RunBatch(cancellationToken: ct, workflow: workflow) > 0) stamp.Bump(); }, ct), ct);
         // 不清除成功識別；只重新核對當前來源、路由與權限後處理尚未完成的意圖。
         mail.ResetRecipientFailureStreaks();
         await mail.NotifyAfterRunAsync(ct);

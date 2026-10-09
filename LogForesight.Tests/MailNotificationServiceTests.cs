@@ -1,4 +1,6 @@
-﻿using LogForesight.Core.Service;
+using LogForesight.Core.Service;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
@@ -88,6 +90,34 @@ public class MailNotificationServiceTests : IDisposable
             configure?.Invoke(s);
         });
 
+    [Fact]
+    public void AggregateSuppressionForOneRevokedHostKeepsSameCpuFindingFromAnotherHost()
+    {
+        var source = "CPU";
+        const int eventId = 7;
+        _issueAggregates.AggregateOverride = (from, _) =>
+        [new IssueAggregate
+        {
+            Source = source, EventId = eventId, Category = "Hardware", MaxSeverityRank = (int)IssueSeverity.High,
+            HostCount = from.Date == Yesterday.Date ? 2 : 1, DayCount = 1, ActiveDays = 1,
+            FirstSeen = Yesterday, LastSeen = Yesterday
+        }];
+        var service = CreateWithIssueDigest();
+        var method = typeof(MailNotificationService).GetMethod("BuildIssueRowsCached",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var pair = IssueProfile.KeyOf(source, eventId);
+        var suppressed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { $"101\0{pair.SourceUpper}|{eventId}" };
+
+        var rows = (List<MailIssueRow>)method.Invoke(service,
+            [new Dictionary<string, List<MailIssueRow>>(), Yesterday, Yesterday,
+                (IReadOnlySet<long>)new HashSet<long> { 101, 202 }, suppressed])!;
+
+        var cpu = Assert.Single(rows);
+        Assert.Equal(1, cpu.HostCount);
+        Assert.Equal(MailIssueBucket.OtherHighRisk, cpu.Bucket);
+    }
+
     /// <summary>建一個看得到所有主機的啟用帳號（ViewAll 角色），email 與參數相同——供需要
     /// 「收件人能解析到帳號、且可見範圍涵蓋全部」的測試使用（回饋十七輪批次B-4）。</summary>
     private WebUser CreateViewAllAccount(string email)
@@ -97,6 +127,122 @@ public class MailNotificationServiceTests : IDisposable
         {
             Account = email, Email = email, Active = true, GroupIds = new List<long> { group.GroupId }
         });
+    }
+
+    [Theory]
+    [InlineData("accepted")]
+    [InlineData("disabled")]
+    [InlineData("below-threshold")]
+    [InlineData("no-recipient")]
+    [InlineData("partial")]
+    [InlineData("cancelled")]
+    [InlineData("stale")]
+    public async Task ActualNotifyReceiverClosesOnlyCurrentEvaluatedPlan(string scenario)
+    {
+        EnableMail(settings =>
+        {
+            settings.MailEnabled = scenario != "disabled";
+            settings.MailOnRunCompleted = true; settings.MailUrgentEnabled = false;
+            settings.MailMinRiskLevel = RiskLevels.Medium;
+            settings.MailRecipients = scenario is "partial" or "cancelled" ? ["a@test.local", "b@test.local"] : ["a@test.local"];
+        });
+        if (scenario != "no-recipient") CreateViewAllAccount("a@test.local");
+        if (scenario is "partial" or "cancelled") CreateViewAllAccount("b@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "MAIL-WORKFLOW", Active = true });
+        var record = Record(host.HostId, host.HostName, Yesterday,
+            scenario == "below-threshold" ? RiskLevels.Low : RiskLevels.High);
+        record.RecordId = 4001; record.LogSource = AnalysisLogSource.Netiq;
+        record.LatestNetiqAttemptStatus = "success"; record.LatestNetiqAttemptAtUtc = DateTime.UtcNow;
+        _records.Add(record);
+        var root = Path.Combine(Path.GetTempPath(), "lf-mail-workflow-" + Guid.NewGuid().ToString("N"));
+        using var cts = new CancellationTokenSource();
+        try
+        {
+            var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, root);
+            var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+            workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
+            Assert.False(workflow.Get(host.HostId, Yesterday)!.MailIsComplete);
+            if (scenario == "partial") _sender.ThrowOnSendForRecipient = "b@test.local";
+            if (scenario == "cancelled") _sender.OnSend = _ => cts.Cancel();
+            if (scenario == "stale") _sender.OnSend = _ => workflow.ParentSucceeded(host.HostId, host.HostName,
+                Yesterday, "replacement", 0, "changed", false, false, parentRecordId: 4002);
+            var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+                _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+                _issueOwners, _issueAggregates, workflow: workflow);
+            await service.NotifyAfterRunAsync(cts.Token);
+            var restored = new HostDayWorkflowService(new HostDayWorkflowStore(backend)).Get(host.HostId, Yesterday)!;
+            if (scenario == "partial")
+            {
+                Assert.False(restored.MailIsComplete);
+                Assert.Single(restored.MailDeliveredPartsByIntent.Values.Single());
+                Assert.Single(restored.MailFailedPartsByIntent.Values.Single());
+                _sender.ThrowOnSendForRecipient = null;
+                await service.NotifyAfterRunAsync(cts.Token);
+                restored = new HostDayWorkflowService(new HostDayWorkflowStore(backend)).Get(host.HostId, Yesterday)!;
+                Assert.True(restored.MailIsComplete);
+                Assert.Equal(2, restored.MailDeliveredPartsByIntent.Values.Single().Length);
+                Assert.Empty(restored.MailFailedPartsByIntent.Values.Single());
+                Assert.Equal(3, _sender.Attempts.Count); // second pass sends only the unresolved recipient part.
+            }
+            Assert.Equal(scenario is "accepted" or "disabled" or "below-threshold" or "partial", restored.MailIsComplete);
+            Assert.Equal(scenario is "accepted" or "disabled" or "below-threshold" or "partial", restored.MailPlanClosed);
+            if (scenario == "partial")
+            {
+                Assert.Single(restored.MailIntents);
+                Assert.Equal(2, restored.MailExpectedPartsByIntent.Values.Single().Length);
+                Assert.Equal(2, restored.MailDeliveredPartsByIntent.Values.Single().Length);
+                Assert.Empty(restored.MailFailedPartsByIntent.Values.Single());
+            }
+            if (scenario == "cancelled") Assert.Single(restored.MailDeliveredPartsByIntent.Values.Single());
+            if (scenario == "stale") { Assert.Equal(4002, restored.ParentRecordId); Assert.Empty(restored.MailIntents); }
+            if (scenario is "disabled" or "below-threshold") Assert.Empty(_sender.Attempts);
+            if (scenario == "no-recipient") Assert.Equal("no-qualified-recipient-or-current-receipt", restored.MailPlanReason);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_skipsHostDayQuarantinedByBoundedRecovery()
+    {
+        EnableMail(settings =>
+        {
+            settings.MailOnRunCompleted = true;
+            settings.MailUrgentEnabled = false;
+            settings.MailMinRiskLevel = RiskLevels.Medium;
+        });
+        CreateViewAllAccount("ops@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "RECOVERY-QUARANTINE", Active = true });
+        var backendRoot = Path.Combine(Path.GetTempPath(), "lf-mail-recovery-wait-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, backendRoot);
+            var source = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High);
+            source.LogSource = AnalysisLogSource.Netiq;
+            source.LatestNetiqAttemptStatus = "success";
+            source.LatestNetiqAttemptAtUtc = DateTime.UtcNow.AddMinutes(-10);
+            backend.RecordStore().Append(source);
+            var page = backend.RecordStore().QueryWorkflowRecoveryPage(Yesterday, Yesterday, 0, 10);
+            var record = Assert.Single(page.Records);
+            _records.Add(record);
+
+            var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+            workflow.ParentSucceeded(record.HostId, record.Host, record.Date, "parent", record.AuditEventCount,
+                HostDayWorkflowFingerprint.ForParentRecord(record), prtgEnabled: false, aiEnabled: false,
+                parentRecordId: record.RecordId);
+            Assert.True(workflow.MarkRecoveryWaiting(new WorkflowRecoveryWaitingHostDay(record.RecordId,
+                record.HostId, record.Date, "recovery-payload-invalid", 140_000,
+                page.CapturedWriteRevisions![record.RecordId], DateTime.UtcNow)));
+
+            var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups,
+                _groupAccess, _records, _handlings,
+                new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+                _issueOwners, _issueAggregates, workflow: workflow);
+            await service.NotifyAfterRunAsync();
+
+            Assert.Empty(_sender.Sent);
+            Assert.True(workflow.IsRecoveryWaiting(record.HostId, record.Date, record.RecordId));
+        }
+        finally { if (Directory.Exists(backendRoot)) Directory.Delete(backendRoot, true); }
     }
 
     // ── NotifyAfterRunAsync：執行摘要 + 高風險即時通知 ──────────────────────
@@ -1745,16 +1891,25 @@ public class MailNotificationServiceTests : IDisposable
             p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
             p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor("https://fixture.example");
             p.HostIds = [host.HostId]; p.SensorIds = [10]; p.ValidFrom = DateTimeOffset.Now.AddDays(-3); });
+        var prtgStore = backend.PrtgStore();
+        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = 1, Name = "host" }], DateTime.Now);
+        prtgStore.UpsertSensors([new PrtgSensorRow { Objid = 10, DeviceObjid = 1,
+            SensorType = "ping", Category = "availability", Paused = false }], DateTime.Now);
+        prtgStore.ReplaceHostMapForDate(Yesterday, [new PrtgHostMapRow { DeviceObjid = 1,
+            MapDate = Yesterday, HostId = host.HostId, HostName = "host", MapStatus = PrtgMapStatus.Ok }]);
+        var identity = prtgStore.BindObservedResource(10, host.HostId, "core", "mail-resource-10");
         var rules = new KnownIssueRuleStore(backend.Blob("rules"));
         var rule = new KnownIssueRule { Id = "down", Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
             Severity = IssueSeverity.High, ElevatesDayRisk = true };
         rules.Save(new RuleFileContent { Rules = [rule] });
         var finding = new PrtgFinding(1, 10, "down", "trusted", 60, rule)
-        { SourceGeneration = "core", ResourceGeneration = "resource", IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)) };
+        { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation,
+            IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)) };
         var signature = PrtgFindingMapper.ToSignature(finding, Yesterday);
         backend.PrtgObservationStore().Capture(host.HostId, Yesterday, "r1", [(finding, signature)]);
         new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + 10)).Update(e =>
-        { e.HostId = host.HostId; e.SourceGeneration = "core"; e.ResourceGeneration = "resource";
+        { e.Bind(10, host.HostId, identity.SourceGeneration, "mail-fixture", identity.Generation,
+            identity.Epoch, identity.ChannelGeneration, policy.Get().ValidFrom);
             e.MappingRevision = backend.Blob(LogForesight.Core.Persistence.Sql.EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(); });
         var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: signature);
         record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);

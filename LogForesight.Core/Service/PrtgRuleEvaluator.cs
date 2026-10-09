@@ -1,4 +1,4 @@
-using LogForesight.Core.Analysis;
+﻿using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 
@@ -10,6 +10,8 @@ namespace LogForesight.Core.Service;
 /// 問題簽章的 <c>Count</c>：整日 Down 會是 1440，會讓 PRTG finding 在問題排行的「次數」
 /// 維度壓過所有真實事件計數。它的用途是規則測試、Detail 文案，以及校準數值匯出時的門檻分佈統計。
 /// </remarks>
+public sealed record PrtgEvidenceWindow(DateTimeOffset StartUtc, DateTimeOffset EndUtc);
+
 public sealed record PrtgFinding(
     long DeviceObjid,
     long? SensorObjid,
@@ -23,12 +25,29 @@ public sealed record PrtgFinding(
     /// 觸發這筆 finding 的 sensor 語意分類（評估時已知，見 <see cref="PrtgSensorCategories"/>）。
     /// device 層（silent）與分類未知的 sensor 為 null。映射成簽章時寫進 <c>LogIssueSignature.PrtgSensorCategory</c>。
     /// </summary>
+    public IReadOnlyList<PrtgEvidenceWindow> EvidenceWindows { get; init; } = Array.Empty<PrtgEvidenceWindow>();
+    public string EvidenceWindowResolution { get; init; } = "來源覆蓋狀態區間";
     public string? SensorCategory { get; init; }
     public string? SourceGeneration { get; init; }
     public string? ResourceGeneration { get; init; }
     public DateTimeOffset? IncidentStartedAt { get; init; }
+    public DateTime? PresenceSourceDay { get; init; }
+    public DateTimeOffset? PresenceSourceAsOf { get; init; }
+    public DateTimeOffset? PresenceDeviceStatusAsOf { get; init; }
+    public string? PresenceSourceAuthorityFingerprint { get; init; }
+    public string? PresenceMappingFingerprint { get; init; }
+    public string? PresenceInventoryFingerprint { get; init; }
     /// <summary>規則門檻實際使用的量值；跨日 Down 為完整可信 episode，Magnitude 仍保留當日重疊分鐘。</summary>
     public int? ThresholdMagnitude { get; init; }
+    /// <summary>Server-selected compatibility identity; mapper accepts this only for the governed disk aggregate rule.</summary>
+    public string? EventIdentityRuleCode { get; init; }
+    /// <summary>Accurate reason-based label, carried with the signature while retaining its established event identity.</summary>
+    public string? DisplayLabel { get; init; }
+    public IReadOnlyList<string>? ResourceReasonCodes { get; init; }
+    public string? RuleAdmissionFingerprint { get; init; }
+    public string? TrendSourceRuleId { get; init; }
+    public string? TrendSourceRuleFingerprint { get; init; }
+    public string? ChannelGeneration { get; init; }
 }
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>
@@ -65,6 +84,9 @@ public static class PrtgRuleEvaluator
     public const string RuleFlapping = "flapping";
     public const string RuleWarning = "warning";
     public const string RuleSilent = "silent";
+    public const string RuleResourceCpuPressure = "resource_cpu_sustained_pressure";
+    public const string RuleResourceMemoryPressure = "resource_memory_sustained_pressure";
+    public const string RuleResourceDiskPressure = "resource_disk_pressure";
 
     public static PrtgEvaluationResult Evaluate(
         DateTime day,

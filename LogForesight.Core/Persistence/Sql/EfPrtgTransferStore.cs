@@ -20,6 +20,10 @@ public sealed class EfPrtgTransferStore
     public const int MaxManifestUtf8Bytes = 64 * 1024;
     public const long ValidationBufferReservationBytes = 16L * 1024 * 1024;
     public const long ExportBufferReservationBytes = 128L * 1024 * 1024;
+    public static readonly TimeSpan CompletedRetention = TimeSpan.FromDays(7);
+    public static readonly TimeSpan AbandonedRetention = TimeSpan.FromDays(1);
+    public static readonly TimeSpan IncompleteSessionLifetime = CompletedRetention;
+    public static readonly TimeSpan FailedSessionRetention = AbandonedRetention;
     private const string ExportLeasePrefix = "export:";
     private const int WriteBufferMultiplier = 4;
     private static readonly TimeSpan WriteLeaseDuration = TimeSpan.FromMinutes(5);
@@ -49,6 +53,7 @@ public sealed class EfPrtgTransferStore
                 if (existing.DeclaredBytes != request.DeclaredBytes || existing.ChunkCount != request.ChunkCount ||
                     existing.PackageSha256 != NormalizeHash(request.PackageSha256))
                     throw Conflict("transfer_id_conflict", "傳輸識別碼已用於不同的宣告內容。");
+                ThrowIfExpired(existing, nowUtc);
                 return ToStatus(existing);
             }
 
@@ -144,6 +149,8 @@ public sealed class EfPrtgTransferStore
         var row = db.PrtgTransferSessions.AsNoTracking().SingleOrDefault(x => x.TransferId == transferId)
             ?? throw NotFound();
         RequireBinding(row, normalized);
+        // Reads do not renew or mutate retention. Expired records remain inspectable until the
+        // bounded cleanup worker removes them; mutation/lease entry points enforce expiry.
         return ToStatus(row);
     }
 
@@ -160,6 +167,7 @@ public sealed class EfPrtgTransferStore
         {
             var row = db.PrtgTransferSessions.SingleOrDefault(x => x.TransferId == transferId) ?? throw NotFound();
             RequireBinding(row, normalized);
+            ThrowIfIncompleteAgeElapsed(row, nowUtc);
             if (row.State != PrtgTransferStates.Receiving)
                 throw Conflict("transfer_not_receiving", "此傳輸目前不接受新片段。");
             if (ordinal < 0 || ordinal >= row.ChunkCount || expectedBytes != ExpectedChunkLength(row, ordinal))
@@ -288,6 +296,7 @@ public sealed class EfPrtgTransferStore
         {
             var row = db.PrtgTransferSessions.SingleOrDefault(x => x.TransferId == transferId) ?? throw NotFound();
             RequireBinding(row, normalized);
+            ThrowIfIncompleteAgeElapsed(row, nowUtc);
             if (row.State == PrtgTransferStates.Complete)
                 throw Conflict("transfer_already_complete", "此診斷包已完成驗證。");
             if (row.State == PrtgTransferStates.ValidationFailed || row.State == PrtgTransferStates.Abandoned)
@@ -356,6 +365,7 @@ public sealed class EfPrtgTransferStore
         {
             var row = db.PrtgTransferSessions.SingleOrDefault(x => x.TransferId == lease.TransferId) ?? throw NotFound();
             RequireBinding(row, normalized);
+            ThrowIfExpired(row, nowUtc);
             if (row.State == PrtgTransferStates.Complete)
             {
                 if (row.PackageSha256 == hash) return ToStatus(row);
@@ -370,6 +380,7 @@ public sealed class EfPrtgTransferStore
             {
                 row.State = PrtgTransferStates.ValidationFailed;
                 row.FailureCode = "package_hash_mismatch";
+                row.AbandonedAtUtc = nowUtc;
                 row.LeaseOwner = null; row.LeaseUntilUtc = null;
                 row.Version = checked(row.Version + 1); row.UpdatedAtUtc = nowUtc;
                 db.SaveChanges();
@@ -394,11 +405,14 @@ public sealed class EfPrtgTransferStore
         {
             var row = db.PrtgTransferSessions.SingleOrDefault(x => x.TransferId == lease.TransferId) ?? throw NotFound();
             RequireBinding(row, normalized);
+            ThrowIfExpired(row, nowUtc);
             if (row.State == PrtgTransferStates.ValidationFailed && row.FailureCode == failureCode)
                 return ToStatus(row);
             RequireValidationLease(row, lease, nowUtc);
             row.State = PrtgTransferStates.ValidationFailed;
             row.FailureCode = failureCode;
+            // Anchor failed-payload retention independently from UpdatedAtUtc, which cleanup cursors update.
+            row.AbandonedAtUtc = nowUtc;
             row.LeaseOwner = null; row.LeaseUntilUtc = null;
             row.Version = checked(row.Version + 1); row.UpdatedAtUtc = nowUtc;
             return ToStatus(row);
@@ -461,8 +475,8 @@ public sealed class EfPrtgTransferStore
     }
 
     /// <summary>
-    /// Deletes a bounded keyset of payload rows only after explicit completion-retention expiry or
-    /// an explicit abandon-retention expiry. Receiving, validating and validation-failed sessions are never swept.
+    /// Deletes bounded payload batches after the terminal retention deadline or the fixed maximum
+    /// age of incomplete sessions. Active write/validation leases always protect their current reader.
     /// </summary>
     public PrtgTransferCleanupResult CleanupChunkBatch(
         Guid transferId, int afterOrdinal, int maxRows,
@@ -474,8 +488,14 @@ public sealed class EfPrtgTransferStore
         {
             var row = db.PrtgTransferSessions.SingleOrDefault(x => x.TransferId == transferId);
             if (row == null) return new PrtgTransferCleanupResult(0, true, afterOrdinal);
+            var incompleteExpired = (row.State == PrtgTransferStates.Receiving || row.State == PrtgTransferStates.Validating) &&
+                row.CreatedAtUtc <= completedBeforeUtc &&
+                (!row.ActiveWriteUntilUtc.HasValue || row.ActiveWriteUntilUtc <= nowUtc) &&
+                (!row.LeaseUntilUtc.HasValue || row.LeaseUntilUtc <= nowUtc);
             var eligible = (row.State == PrtgTransferStates.Complete && row.CompletedAtUtc <= completedBeforeUtc) ||
-                           (row.State == PrtgTransferStates.Abandoned && row.AbandonedAtUtc <= abandonedBeforeUtc);
+                           (row.State == PrtgTransferStates.Abandoned && row.AbandonedAtUtc <= abandonedBeforeUtc) ||
+                           (row.State == PrtgTransferStates.ValidationFailed && (row.AbandonedAtUtc ?? row.UpdatedAtUtc) <= abandonedBeforeUtc) ||
+                           incompleteExpired;
             if (!eligible) throw Conflict("transfer_retention_not_elapsed", "此傳輸尚未到達已設定的完成或放棄清理期限。");
 
             if (afterOrdinal < row.CleanupAfterOrdinal)
@@ -608,6 +628,30 @@ public sealed class EfPrtgTransferStore
             !string.Equals(row.ScopeHash, binding.ScopeHash, StringComparison.Ordinal) ||
             !string.Equals(row.SourceIdentityHash, binding.SourceIdentityHash, StringComparison.Ordinal))
             throw new PrtgTransferStoreException("transfer_binding_mismatch", "owner、範圍或來源身分與建立傳輸時不符。", 403);
+    }
+
+    private static void ThrowIfIncompleteAgeElapsed(PrtgTransferSessionRow row, DateTimeOffset nowUtc)
+    {
+        if ((row.State == PrtgTransferStates.Receiving || row.State == PrtgTransferStates.Validating) &&
+            row.CreatedAtUtc <= nowUtc - IncompleteSessionLifetime)
+            throw new PrtgTransferStoreException("transfer_expired", "此診斷傳輸已超過 7 天續傳期限；請重新匯入原檔。", 410);
+    }
+
+    private static void ThrowIfExpired(PrtgTransferSessionRow row, DateTimeOffset nowUtc)
+    {
+        var expired = row.State switch
+        {
+            PrtgTransferStates.Receiving or PrtgTransferStates.Validating =>
+                row.CreatedAtUtc <= nowUtc - IncompleteSessionLifetime &&
+                (!row.ActiveWriteUntilUtc.HasValue || row.ActiveWriteUntilUtc <= nowUtc) &&
+                (!row.LeaseUntilUtc.HasValue || row.LeaseUntilUtc <= nowUtc),
+            PrtgTransferStates.ValidationFailed => (row.AbandonedAtUtc ?? row.UpdatedAtUtc) <= nowUtc - FailedSessionRetention,
+            PrtgTransferStates.Complete => row.CompletedAtUtc <= nowUtc - CompletedRetention,
+            PrtgTransferStates.Abandoned => row.AbandonedAtUtc <= nowUtc - AbandonedRetention,
+            _ => false
+        };
+        if (expired)
+            throw new PrtgTransferStoreException("transfer_expired", "此診斷傳輸已到期；請重新匯入原檔。", 410);
     }
 
     private static void RequireActiveWrite(PrtgTransferSessionRow row, PrtgTransferChunkWriteLease lease, DateTimeOffset nowUtc)

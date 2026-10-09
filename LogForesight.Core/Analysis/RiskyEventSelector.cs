@@ -55,6 +55,7 @@ public static class RiskyEventSelector
                     EntryType = e.EntryType,
                     EventTime = e.TimeGenerated,
                     Message = TextTruncation.Truncate(e.Message, MaxMessageChars),
+                    SourceEvidence = e.SourceEvidence?.BoundedCopy(),
                     RuleId = sig.RuleId,
                     CreatedAt = createdAt
                 });
@@ -97,7 +98,8 @@ public static class RiskyEventSelector
                 Source = e.Source,
                 Message = TextTruncation.Truncate(e.Message, MaxMessageChars),
                 InstanceId = e.InstanceId,
-                EventId = e.EventId
+                EventId = e.EventId,
+                SourceEvidence = e.SourceEvidence?.BoundedCopy()
             })
             .ToList();
         return result.Count > MaxPerHostDay ? result.Take(MaxPerHostDay).ToList() : result;

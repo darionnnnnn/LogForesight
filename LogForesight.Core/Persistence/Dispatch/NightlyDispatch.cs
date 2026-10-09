@@ -29,6 +29,8 @@ public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThis
 /// 決策、建單、寫成員整段在 <see cref="DispatchContext.Gate"/> 內：脈絡的負載增量與已選中狀態、
 /// 以及「該人此問題已有進行中單」的判斷都要看到另一路剛建的單，否則兩路會各建一張。
 /// </summary>
+public sealed record NightlyDispatchItemOutcome(string SignatureKey, string Outcome, string? Reason = null);
+
 public sealed class NightlyDispatch
 {
     private const string SkipRelatedWarningActive = "related_warning_active";
@@ -54,7 +56,8 @@ public sealed class NightlyDispatch
         _hosts = hosts;
     }
 
-    public void DispatchDay(string hostName, DateTime date, IReadOnlyList<LogIssueSignature> unassigned, DateTime occurredAt)
+    public void DispatchDay(string hostName, DateTime date, IReadOnlyList<LogIssueSignature> unassigned, DateTime occurredAt,
+        Action<NightlyDispatchItemOutcome>? onResult = null)
     {
         if (unassigned.Count == 0) return;
 
@@ -62,6 +65,7 @@ public sealed class NightlyDispatch
         if (host == null)
         {
             Log.Warn("夜間派工：找不到主機「{Host}」，{Date:yyyy-MM-dd} 的 {Count} 個問題不派工", hostName, date, unassigned.Count);
+            foreach (var issue in unassigned) Report(onResult, issue, "failed", "host-not-found");
             return;
         }
 
@@ -75,14 +79,15 @@ public sealed class NightlyDispatch
                 .ToList();
             if (pairedWarnings.Count > 0)
             {
-                DispatchBatch(host, date, pairedWarnings, occurredAt);
+                DispatchBatch(host, date, pairedWarnings, occurredAt, onResult);
                 unassigned = unassigned.Where(i => !pairedWarnings.Contains(i)).ToList();
             }
-            DispatchBatch(host, date, unassigned, occurredAt);
+            DispatchBatch(host, date, unassigned, occurredAt, onResult);
         }
     }
 
-    private void DispatchBatch(WebHost host, DateTime date, IReadOnlyList<LogIssueSignature> issues, DateTime occurredAt)
+    private void DispatchBatch(WebHost host, DateTime date, IReadOnlyList<LogIssueSignature> issues, DateTime occurredAt,
+        Action<NightlyDispatchItemOutcome>? onResult)
     {
         if (issues.Count == 0) return;
         var hostName = host.HostName;
@@ -102,6 +107,7 @@ public sealed class NightlyDispatch
                         Kind = DispatchDecisionKind.Skip,
                         SkipReason = SkipRelatedWarningActive
                     }, issue.Source, issue.EventId);
+                    Report(onResult, issue, "skipped", SkipRelatedWarningActive);
                     continue;
                 }
 
@@ -109,6 +115,9 @@ public sealed class NightlyDispatch
                 {
                     case DispatchDecisionKind.Skip:
                         _ctx.Commit(decision, issue.Source, issue.EventId);
+                        var terminal = decision.SkipReason is WorkOrderDispatcher.SkipMuted or WorkOrderDispatcher.SkipSuppressed or
+                            WorkOrderDispatcher.SkipNoise or WorkOrderDispatcher.SkipSeverity or WorkOrderDispatcher.SkipDismissed or WorkOrderDispatcher.SkipDisabled;
+                        Report(onResult, issue, terminal ? "skipped" : "deferred", decision.SkipReason);
                         continue;
 
                     case DispatchDecisionKind.CreateFor:
@@ -151,9 +160,11 @@ public sealed class NightlyDispatch
                 var (issue, workOrderId, plannedHandlerId, _) = members[i];
                 if (writtenHandlers[i] is not long handlerId)
                 {
+                    Report(onResult, issue, "failed", WorkOrderCoordinator.SkipOrderClosedMidrun);
                     _midrunCounts[WorkOrderCoordinator.SkipOrderClosedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.SkipOrderClosedMidrun) + 1;
                     continue;
                 }
+                Report(onResult, issue, "delivered");
                 _ctx.InvalidateCasesFor(hostName);
                 if (handlerId != plannedHandlerId)
                     _midrunCounts[WorkOrderCoordinator.HandlerChangedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.HandlerChangedMidrun) + 1;
@@ -172,6 +183,14 @@ public sealed class NightlyDispatch
                         : $"{issue.Source}/{issue.EventId}";
                 }
         }
+    }
+
+    private static void Report(Action<NightlyDispatchItemOutcome>? receiver, LogIssueSignature issue,
+        string outcome, string? reason = null)
+    {
+        if (receiver is null) return;
+        try { receiver(new(IssueSignatureKey.For(issue), outcome, reason)); }
+        catch (Exception ex) { Log.Warn(ex, "夜間派工結果已確定，但 workflow 回寫失敗；保持待補而不重複派工。"); }
     }
 
     private static bool IsPrtgWarning(LogIssueSignature issue) => PrtgFindingMapper.IsPrtg(issue)

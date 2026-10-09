@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Analysis;
 
@@ -35,6 +36,23 @@ public class LogIssueSignature
     public string? PrtgSourceGeneration { get; set; }
     public string? PrtgResourceGeneration { get; set; }
     public DateTimeOffset? PrtgIncidentStartedAt { get; set; }
+    /// <summary>Server-authored resource reason label; event/source identity remains the governed legacy key.</summary>
+    public string? PrtgDisplayLabel { get; set; }
+    public List<string>? PrtgResourceReasonCodes { get; set; }
+    public string? PrtgRuleAdmissionFingerprint { get; set; }
+    public string? PrtgTrendSourceRuleId { get; set; }
+    public string? PrtgTrendSourceRuleFingerprint { get; set; }
+    public string? PrtgChannelGeneration { get; set; }
+    public DateTime? PrtgPresenceSourceDay { get; set; }
+    public DateTimeOffset? PrtgPresenceSourceAsOf { get; set; }
+    public DateTimeOffset? PrtgPresenceDeviceStatusAsOf { get; set; }
+    public string? PrtgPresenceSourceAuthorityFingerprint { get; set; }
+    public string? PrtgPresenceMappingFingerprint { get; set; }
+    public string? PrtgPresenceInventoryFingerprint { get; set; }
+
+    /// <summary>Bounded exact source observations used by cross-source matching; never inferred from sample text.</summary>
+    public List<SourceEvidence> SourceObservations { get; set; } = new();
+    public bool SourceObservationsTruncated { get; set; }
 
     /// <summary>
     /// 顯示用的「來源＋事件識別」文字（docs/archive/FEEDBACK-12-PLAN.md §4.3）：Windows 顯示既有的
@@ -46,6 +64,8 @@ public class LogIssueSignature
     /// </summary>
     [JsonIgnore]
     public string SourceEventLabel => LogName.Equals("PRTG", StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(PrtgDisplayLabel) ? PrtgDisplayLabel! :
+        LogName.Equals("PRTG", StringComparison.OrdinalIgnoreCase) &&
         EventKey.Split(':') is { Length: >= 5 } parts
         ? $"PRTG {parts[1] switch { "down" => "持續故障", "warning" => "持續警告", "flapping" => "反覆故障", "disk_free_trend" => "磁碟容量趨勢", _ => parts[1] }}（感測器 #{parts[2]}）"
         : EventId == 0 && EventKey.Length > 0 ? $"{Source}（{EventKey}）" : $"{Source} EventId {EventId}";
@@ -194,6 +214,7 @@ internal static class LogAggregator
                     ? ExtractSecurityDetails(g.Select(e => e.Message))
                     : default;
 
+                var sourceObservations = SourceEvidence.BoundObservations(g.Select(e => e.SourceEvidence), out var evidenceTruncated);
                 return new LogIssueSignature
                 {
                     LogName = g.Key.LogName,
@@ -205,6 +226,8 @@ internal static class LogAggregator
                     FirstSeen = g.Min(e => e.TimeGenerated).ToString("HH:mm"),
                     LastSeen = g.Max(e => e.TimeGenerated).ToString("HH:mm"),
                     SampleMessages = distinctMessages.Take(3).ToList(),
+                    SourceObservations = sourceObservations,
+                    SourceObservationsTruncated = evidenceTruncated,
                     DistinctMessageCount = distinctMessages.Count,
                     KeyDetails = securityDetails.KeyDetails,
                     KeyAccounts = securityDetails.KeyAccounts,

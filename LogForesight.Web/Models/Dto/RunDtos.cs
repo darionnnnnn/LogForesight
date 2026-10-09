@@ -62,6 +62,20 @@ public class RunDayHostStatusDto
     public int ErrorCount { get; set; }
     public int AiFailures { get; set; }
 
+    /// <summary>Persisted host-day workflow snapshot; null means no workflow sidecar has been reconstructed yet.</summary>
+    public long? DecisionVersion { get; set; }
+    public string? ParentWorkflowState { get; set; }
+    public string? PrtgWorkflowState { get; set; }
+    public string? PrtgReadinessState { get; set; }
+    public string? WorkflowRecoveryState { get; set; }
+    public string? WorkflowRecoveryReason { get; set; }
+    public string? AiWorkflowState { get; set; }
+    public string? CaseWorkflowState { get; set; }
+    public string? MailWorkflowState { get; set; }
+    public bool? WorkflowComplete { get; set; }
+    /// <summary>complete | partial | pending; distinguishes terminal degraded/failed legs from clean success.</summary>
+    public string? WorkflowOutcome { get; set; }
+
     /// <summary>當日執行次數（手動重跑會 > 1）</summary>
     public int RunCount { get; set; }
 }

@@ -1,5 +1,9 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
+using System.Data;
+using System.Linq.Expressions;
+using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Persistence;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -90,6 +94,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     {
         var sw = Stopwatch.StartNew();
         var shaped = RecordStorageShaper.ForStorage(record);
+        long appendedRecordId = 0;
 
         // 主列與問題子列必須同進退——分兩次 SaveChanges 但不包交易時，子列寫入失敗會留下
         // 一筆「沒有問題列」的紀錄，SQL 聚合（IIssueAggregateQuery）會靜默漏算這一天。
@@ -130,6 +135,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             };
             ctx.DailyRecords.Add(row);
             ctx.SaveChanges();   // 先存主列拿到 RecordId
+            appendedRecordId = row.RecordId;
 
             foreach (var issue in shaped.TopIssues)
             {
@@ -138,6 +144,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             ctx.SaveChanges();
             tx.Commit();
         });
+        record.RecordId = appendedRecordId;
 
         // 機房首見日（回饋十九輪批次B）：獨立於主交易之外——這是輔助的呈現用資料，
         // 不該因為它偶發的並發競態（見 UpsertFirstSeen）而讓當天的分析結果整筆遺失。
@@ -249,70 +256,286 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 讀列 → 改 → 寫回整段持有主機日鎖（理由見 HostDayLocks）
         lock (LockFor(hostId.Value, date))
         {
-            AttachAiResultLocked(date, outcome);
+            AttachAiResultLocked(date, outcome, expectedPrtgFingerprint: outcome.InputPrtgFingerprint);
         }
     }
 
-    private void AttachAiResultLocked(DateTime date, AiOutcome outcome)
+    public string? AttachDailyRiskReport(DateTime date, PreparedRiskReport report, long expectedParentRecordId,
+        string expectedDecisionFingerprint, string expectedPrtgFingerprint)
     {
-        using var ctx = _contextFactory();
-        var row = OwnedRows(ctx).FirstOrDefault(r => r.RecordDate == date.Date);
-        if (row == null)
+        // PreparedRiskReport is immutable, but its HostKey is a mutable reference type. Freeze that
+        // value once before validation so a retry cannot observe caller mutation after an unknown commit.
+        var frozenReport = report is null || report.Host is null ? null : report with
         {
-            // 契約同 AttachWeeklyCheckup：找不到對應日期安靜略過（呼叫端在統計段 Append 之後
-            // 才附掛，理論上必找得到）
-            Log.Warn("[SQL] AttachAiResult：找不到 {Date:yyyy-MM-dd} 的紀錄，略過", date);
-            return;
+            Host = new HostKey { HostId = report.Host.HostId, HostName = report.Host.HostName },
+            Meta = report.Meta is null ? null : report.Meta with { }
+        };
+        if (frozenReport == null || string.IsNullOrWhiteSpace(frozenReport.FileName) ||
+            frozenReport.FileName.Any(char.IsControl) || string.IsNullOrWhiteSpace(frozenReport.Content) ||
+            frozenReport.Date.Date != date.Date ||
+            expectedParentRecordId <= 0 ||
+            expectedDecisionFingerprint is not { Length: 64 } || !expectedDecisionFingerprint.All(Uri.IsHexDigit) ||
+            expectedPrtgFingerprint is not { Length: 64 } || !expectedPrtgFingerprint.All(Uri.IsHexDigit))
+            return null;
+        if (!StringComparer.Ordinal.Equals(expectedPrtgFingerprint, frozenReport.PrtgEvidenceFingerprint)) return null;
+
+        var hostId = FindOwnedHostId(date);
+        if (hostId == null) return null;
+
+        lock (LockFor(hostId.Value, date))
+        {
+            using var probe = _contextFactory();
+            var strategy = probe.Database.CreateExecutionStrategy();
+            var reportRef = strategy.Execute(() =>
+            {
+                // Every execution-strategy attempt owns a fresh context. A commit acknowledgement
+                // loss can replay the whole operation without reusing a completed transaction.
+                using var ctx = _contextFactory();
+                using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                var row = OwnedRows(ctx).FirstOrDefault(r => r.RecordDate == date.Date);
+                if (row == null || row.DetailPruned || row.RecordId != expectedParentRecordId) return null;
+
+                var record = Deserialize(row);
+                if (!StringComparer.Ordinal.Equals(expectedDecisionFingerprint, HostDayWorkflowFingerprint.ForRecord(record)) ||
+                    !StringComparer.Ordinal.Equals(frozenReport.DecisionInputFingerprint,
+                        HostDayWorkflowFingerprint.ForReportInput(record)))
+                    return null;
+                if (!string.Equals(HostDayWorkflowFingerprint.PrtgInputFingerprint(record),
+                        expectedPrtgFingerprint, StringComparison.Ordinal))
+                    return null;
+                if (frozenReport.Host.HostId != row.HostId ||
+                    !StringComparer.OrdinalIgnoreCase.Equals(frozenReport.Host.HostName, record.Host))
+                    return null;
+
+                // The report upsert and parent pointer share this transaction; an obsolete draft can never
+                // replace content that the current parent still points at.
+                var attachedReportRef = EfReportStore.Write(ctx, frozenReport);
+                record.ReportFile = attachedReportRef;
+                record.PrtgReportEvidenceFingerprint = expectedPrtgFingerprint;
+                record.RiskReportPending = false;
+                row.ContentJson = JsonSerializer.Serialize(record);
+                ctx.SaveChanges();
+                tx.Commit();
+                return attachedReportRef;
+            });
+            if (reportRef != null)
+                Log.Info("[SQL] 報告與主機日參照同交易提交：{Host} {Date:yyyy-MM-dd}（report_id={Id}）",
+                    frozenReport.Host.HostName, date, reportRef);
+            return reportRef;
+        }
+    }
+
+    public bool TryClearPendingDailyRiskReport(DateTime date, long expectedParentRecordId,
+        string expectedDecisionFingerprint, string expectedPrtgFingerprint)
+    {
+        if (expectedParentRecordId <= 0 || expectedDecisionFingerprint is not { Length: 64 } ||
+            expectedPrtgFingerprint is not { Length: 64 }) return false;
+        var hostId = FindOwnedHostId(date);
+        if (hostId == null) return false;
+        lock (LockFor(hostId.Value, date))
+        {
+            using var probe = _contextFactory();
+            var strategy = probe.Database.CreateExecutionStrategy();
+            return strategy.Execute(() =>
+            {
+                using var ctx = _contextFactory();
+                using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                var row = OwnedRows(ctx).FirstOrDefault(candidate => candidate.RecordDate == date.Date);
+                if (row == null || row.RecordId != expectedParentRecordId || row.DetailPruned) return false;
+                var record = Deserialize(row);
+                if (!StringComparer.Ordinal.Equals(expectedDecisionFingerprint, HostDayWorkflowFingerprint.ForRecord(record)) ||
+                    !StringComparer.Ordinal.Equals(expectedPrtgFingerprint, HostDayWorkflowFingerprint.PrtgInputFingerprint(record)))
+                    return false;
+                if (RiskLevels.IsActionable(record.RiskLevel)) return false;
+                if (!record.RiskReportPending) { tx.Commit(); return true; }
+                record.RiskReportPending = false;
+                row.ContentJson = JsonSerializer.Serialize(record);
+                ctx.SaveChanges();
+                tx.Commit();
+                return true;
+            });
+        }
+    }
+
+    public bool TryAttachAiResult(DateTime date, AiOutcome outcome, long expectedParentRecordId,
+        string expectedDecisionFingerprint, string expectedPrtgFingerprint)
+    {
+        if (expectedParentRecordId <= 0 || string.IsNullOrWhiteSpace(expectedDecisionFingerprint) ||
+            string.IsNullOrWhiteSpace(expectedPrtgFingerprint)) return false;
+        var hostId = FindOwnedHostId(date);
+        if (hostId == null)
+        {
+            Log.Warn("[SQL] TryAttachAiResult：找不到 {Date:yyyy-MM-dd} 的紀錄，略過", date);
+            return false;
         }
 
-        var record = Deserialize(row);
-        // 遷移可能發生在 AI 已取走舊輸入之後。歷史投影不能被該舊結果覆蓋。
-        // 明確重跑 NetIQ 會建立無 RiskReview 的新父列，才可再次接受 AI 結果。
-        if (record.RiskReview != null) return;
-        if (outcome.InputPrtgFingerprint != null && outcome.InputPrtgFingerprint != PrtgFindingMapper.Fingerprint(record.TopIssues))
+        lock (LockFor(hostId.Value, date))
         {
-            record.AiPending = true; row.AiPending = true;
-            row.ContentJson = JsonSerializer.Serialize(record); ctx.SaveChanges();
-            return; // AI 期間補追加／修訂：保留現況，下一輪以新證據重跑。
+            return AttachAiResultLocked(date, outcome, expectedPrtgFingerprint,
+                expectedParentRecordId, expectedDecisionFingerprint);
         }
-        if (record.TopIssues.Any(PrtgFindingMapper.IsPrtg))
-        { record.PrtgBaselineRiskLevel = null; record.PrtgBaselineRiskBasis = null; }
-        record.Headline = outcome.Headline;
-        record.Summary = outcome.Summary;
-        record.TrendAssessment = outcome.TrendAssessment;
-        record.Action = outcome.Action;
-        // 只升不降（docs/DETECTION-SPEC.md：AI 只能把風險往上拉）。outcome.RiskLevel 是 AI 撿到
-        // 這筆時算的，PRTG finding 可能在 AI 判讀期間才追加並上調了列上的等級；無條件覆寫會把
-        // 上調蓋回去。列上的等級較高時保留它與它的依據（那是 PRTG 的 prtg:{code}）。
-        if (RiskLevels.MoreSevere(record.RiskLevel, outcome.RiskLevel) == outcome.RiskLevel)
-        {
-            record.RiskLevel = outcome.RiskLevel;
-            record.RiskBasis = outcome.RiskBasis;
-        }
-        record.AiAnalyzed = outcome.AiAnalyzed;
-        record.AiPending = false;
-        record.ScreenedTailCount = outcome.ScreenedTailCount;
-        record.ScreeningNotes = outcome.ScreeningNotes;
-        record.ReportFile = outcome.ReportFile;
-        record.DeepDives = outcome.DeepDives;
-        // 追加而非覆寫（回饋十三輪 C）：統計段寫入的 UncoveredChecks 已經定案，
-        // AI 段（含孤兒補跑）只在這裡把自己才知道的新缺口併進去
-        if (outcome.UncoveredChecksAddendum is { Count: > 0 })
-        {
-            record.UncoveredChecks.AddRange(outcome.UncoveredChecksAddendum);
-        }
-        row.ContentJson = JsonSerializer.Serialize(record);
+    }
 
-        // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
-        // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移；
-        // 成功後清為 false（批次C 單點化事實來源），ai_analyzed 同步。
-        row.RiskLevel = record.RiskLevel;
-        row.AiPending = false;
-        row.AiAnalyzed = outcome.AiAnalyzed;
-        ctx.SaveChanges();
+    private bool AttachAiResultLocked(DateTime date, AiOutcome outcome, string? expectedPrtgFingerprint,
+        long? expectedParentRecordId = null, string? expectedDecisionFingerprint = null)
+    {
+        // Execution strategies may replay the complete delegate after a transient failure or an
+        // unknown commit outcome. Freeze the mutable list/deep-dive payload once, then rebuild it
+        // for each attempt so neither the caller nor a prior attempt can mutate the next write.
+        var frozenReportDraft = outcome.ReportDraft is { } draft
+            ? draft with { Host = new HostKey { HostId = draft.Host.HostId, HostName = draft.Host.HostName } }
+            : null;
+        // Report content can be much larger than the AI scalar result; keep the immutable draft out
+        // of the retry JSON copy and reattach the frozen value for each transaction attempt.
+        var outcomeJson = JsonSerializer.Serialize(outcome with { ReportDraft = null });
+        var outcomeRiskForLog = outcome.RiskLevel;
+        var outcomeAnalyzedForLog = outcome.AiAnalyzed;
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
+        var attempts = 0;
+        long committedRecordId = 0;
+        string? committedContentJson = null;
+        string? committedHeadline = null;
+        string? committedRiskLevel = null;
+        bool? committedAiPending = null;
+        bool? committedAiAnalyzed = null;
+        var attached = strategy.Execute(() =>
+        {
+            var attemptNumber = Interlocked.Increment(ref attempts);
+            var attemptOutcome = (JsonSerializer.Deserialize<AiOutcome>(outcomeJson)
+                ?? throw new InvalidDataException("AI result snapshot could not be restored for SQL retry."))
+                with { ReportDraft = frozenReportDraft };
+            using var ctx = _contextFactory();
+            // Serializable keeps the authoritative row stable through fingerprint validation and save.
+            // Across processes PRTG either commits first (the stale AI fingerprint is rejected), or
+            // waits until this write commits and then marks the new AI result pending again.
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            var row = OwnedRows(ctx).FirstOrDefault(r => r.RecordDate == date.Date);
+            if (row == null)
+            {
+                // 契約同 AttachWeeklyCheckup：找不到對應日期安靜略過（呼叫端在統計段 Append 之後
+                // 才附掛，理論上必找得到）
+                Log.Warn("[SQL] AttachAiResult：找不到 {Date:yyyy-MM-dd} 的紀錄，略過", date);
+                return false;
+            }
 
-        Log.Info("[SQL] AttachAiResult {Date:yyyy-MM-dd}（風險={Risk}, aiAnalyzed={AiAnalyzed}）",
-            date, outcome.RiskLevel, outcome.AiAnalyzed);
+            var record = Deserialize(row);
+            var hasFormalResourcePressure = record.TopIssues.Any(
+                LogForesight.Core.Service.PrtgResourceFormalDeliveryFence.IsTargetPressureIssue);
+            if (hasFormalResourcePressure &&
+                (record.PrtgManifest is not { ResourceModeFenceRequired: true } existingManifest ||
+                 !ModeRevisionMatches(ctx, row.HostId, existingManifest.ResourceModeBlobVersion)))
+                return false;
+            // 遷移可能發生在 AI 已取走舊輸入之後。歷史投影不能被該舊結果覆蓋。
+            // 明確重跑 NetIQ 會建立無 RiskReview 的新父列，才可再次接受 AI 結果。
+            if (record.RiskReview != null) return false;
+            if (expectedParentRecordId is { } expectedId && row.RecordId != expectedId) return false;
+            if (expectedPrtgFingerprint != null &&
+                !StringComparer.Ordinal.Equals(expectedPrtgFingerprint, HostDayWorkflowFingerprint.PrtgInputFingerprint(record)))
+                return false;
+            // Commit may have succeeded even if its acknowledgement was lost. Recognize only the
+            // exact full row image generated by this delegate, including its extracted SQL columns;
+            // a separate call or any concurrent parent mutation cannot use this replay path.
+            if (attemptNumber > 1 && committedContentJson is not null && row.RecordId == committedRecordId &&
+                StringComparer.Ordinal.Equals(row.ContentJson, committedContentJson) &&
+                StringComparer.Ordinal.Equals(row.Headline, committedHeadline) &&
+                StringComparer.Ordinal.Equals(row.RiskLevel, committedRiskLevel) &&
+                row.AiPending == committedAiPending && row.AiAnalyzed == committedAiAnalyzed)
+            {
+                tx.Commit();
+                return true;
+            }
+            if (expectedDecisionFingerprint != null &&
+                !StringComparer.Ordinal.Equals(expectedDecisionFingerprint, HostDayWorkflowFingerprint.ForRecord(record))) return false;
+            // AI may add a report-availability note to UncoveredChecks. Only the guarded writer
+            // may carry a currently valid manifest across that exact AI-owned parent delta.
+            if (hasFormalResourcePressure && !HostDayWorkflowFingerprint.HasValidPrtgManifest(record)) return false;
+            var canCarryPrtgParent = expectedParentRecordId.HasValue &&
+                expectedDecisionFingerprint is not null && expectedPrtgFingerprint is not null &&
+                HostDayWorkflowFingerprint.HasValidPrtgManifest(record) &&
+                (record.PrtgManifest!.ResourceModeFenceRequired != true ||
+                 ModeRevisionMatches(ctx, row.HostId, record.PrtgManifest.ResourceModeBlobVersion));
+            // A guarded result may include PRTG pressure in the AI judgment. Keep the
+            // separately captured NetIQ baseline when carrying that exact parent, so a
+            // later formal-mode withdrawal cannot erase an independent NetIQ risk.
+            // Unfenced legacy results still invalidate the unverifiable baseline.
+            if (record.TopIssues.Any(PrtgFindingMapper.IsPrtg) && !canCarryPrtgParent)
+            { record.PrtgBaselineRiskLevel = null; record.PrtgBaselineRiskBasis = null; }
+            record.Headline = attemptOutcome.Headline;
+            record.Summary = attemptOutcome.Summary;
+            record.TrendAssessment = attemptOutcome.TrendAssessment;
+            record.Action = attemptOutcome.Action;
+            // 只升不降（docs/DETECTION-SPEC.md：AI 只能把風險往上拉）。outcome.RiskLevel 是 AI 撿到
+            // 這筆時算的，PRTG finding 可能在 AI 判讀期間才追加並上調了列上的等級；無條件覆寫會把
+            // 上調蓋回去。列上的等級較高時保留它與它的依據（那是 PRTG 的 prtg:{code}）。
+            if (RiskLevels.MoreSevere(record.RiskLevel, attemptOutcome.RiskLevel) == attemptOutcome.RiskLevel)
+            {
+                record.RiskLevel = attemptOutcome.RiskLevel;
+                record.RiskBasis = attemptOutcome.RiskBasis;
+            }
+            record.AiAnalyzed = attemptOutcome.AiAnalyzed;
+            record.AiPending = false;
+            record.ScreenedTailCount = attemptOutcome.ScreenedTailCount;
+            record.ScreeningNotes = attemptOutcome.ScreeningNotes;
+            if (attemptOutcome.UncoveredChecksAddendum is { Count: > 0 })
+            {
+                // The report draft must describe the exact final parent, including any retry-only
+                // provenance note. Apply it before validating the captured report-input fingerprint.
+                foreach (var note in attemptOutcome.UncoveredChecksAddendum)
+                    if (!record.UncoveredChecks.Contains(note, StringComparer.Ordinal)) record.UncoveredChecks.Add(note);
+            }
+            var attachedReportFile = attemptOutcome.ReportFile;
+            var attachedReportFingerprint = attemptOutcome.ReportPrtgEvidenceFingerprint;
+            if (attemptOutcome.ReportDraft is { } reportDraft)
+            {
+                if (expectedPrtgFingerprint == null ||
+                    reportDraft.Date.Date != date.Date ||
+                    !StringComparer.Ordinal.Equals(reportDraft.PrtgEvidenceFingerprint, expectedPrtgFingerprint) ||
+                    !StringComparer.Ordinal.Equals(reportDraft.DecisionInputFingerprint,
+                        HostDayWorkflowFingerprint.ForReportInput(record)) ||
+                    reportDraft.Host.HostId != row.HostId ||
+                    !StringComparer.OrdinalIgnoreCase.Equals(reportDraft.Host.HostName, record.Host))
+                    return false;
+                attachedReportFile = EfReportStore.Write(ctx, reportDraft);
+                attachedReportFingerprint = reportDraft.PrtgEvidenceFingerprint;
+            }
+            record.ReportFile = attachedReportFile;
+            record.PrtgReportEvidenceFingerprint = attachedReportFile == null
+                ? null
+                : attachedReportFingerprint;
+            if (!RiskLevels.IsActionable(record.RiskLevel)) record.RiskReportPending = false;
+            else record.RiskReportPending = attachedReportFile == null;
+            record.DeepDives = attemptOutcome.DeepDives;
+            if (attemptOutcome.UncoveredChecksAddendum is { Count: > 0 })
+            {
+                // Repeated successful AI work must not change the parent again for an identical note.
+                if (canCarryPrtgParent)
+                    record.PrtgManifest!.ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record);
+            }
+            row.ContentJson = JsonSerializer.Serialize(record);
+
+            // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
+            // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移；
+            // 成功後清為 false（批次C 單點化事實來源），ai_analyzed 同步。
+            row.Headline = record.Headline;
+            row.RiskLevel = record.RiskLevel;
+            row.AiPending = false;
+            row.AiAnalyzed = attemptOutcome.AiAnalyzed;
+            committedRecordId = row.RecordId;
+            committedContentJson = row.ContentJson;
+            committedHeadline = row.Headline;
+            committedRiskLevel = row.RiskLevel;
+            committedAiPending = row.AiPending;
+            committedAiAnalyzed = row.AiAnalyzed;
+            ctx.SaveChanges();
+            tx.Commit();
+            return true;
+        });
+
+        if (attached)
+            Log.Info("[SQL] AttachAiResult {Date:yyyy-MM-dd}（風險={Risk}, aiAnalyzed={AiAnalyzed}）",
+                date, outcomeRiskForLog, outcomeAnalyzedForLog);
+        return attached;
     }
 
     /// <summary>
@@ -322,16 +545,51 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 找不到該主機當日紀錄時回傳 false，不建立新紀錄。
     /// </summary>
     public bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
-        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured = false)
+        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured = false,
+        PrtgDecisionManifest? manifest = null)
+        => AttachPrtgFindingsCore(hostId, date, findings, suppressedPatternIds, out corroboratedCount,
+            aiConfigured, manifest, reconciliation: null);
+
+    /// <summary>Atomically reconciles qualified status/resource findings and attaches this host-day decision.</summary>
+    public bool AttachPrtgFindingsWithReconciliation(long hostId, DateTime date,
+        IReadOnlyList<LogIssueSignature> findings, IReadOnlySet<string> suppressedPatternIds,
+        out int corroboratedCount, bool aiConfigured, PrtgDecisionManifest manifest,
+        PrtgStateReconciliationBatch reconciliation)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(reconciliation);
+        return AttachPrtgFindingsCore(hostId, date, findings, suppressedPatternIds,
+            out corroboratedCount, aiConfigured, manifest, reconciliation);
+    }
+
+    /// <summary>Applies exact persisted mode revocations even when current pressure evidence is unavailable.</summary>
+    public bool AttachPrtgModeRevocationsWithReconciliation(long hostId, DateTime date,
+        IReadOnlyList<LogIssueSignature> currentFindings, IReadOnlySet<string> suppressedPatternIds,
+        out int corroboratedCount, bool aiConfigured, PrtgStateReconciliationBatch reconciliation)
+    {
+        ArgumentNullException.ThrowIfNull(reconciliation);
+        if (!reconciliation.ResourceModeFenceRequired)
+            throw new InvalidOperationException("Mode revocation reconciliation requires a captured host mode revision.");
+        return AttachPrtgFindingsCore(hostId, date, currentFindings, suppressedPatternIds,
+            out corroboratedCount, aiConfigured, manifest: null, reconciliation: reconciliation);
+    }
+
+    private bool AttachPrtgFindingsCore(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
+        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured,
+        PrtgDecisionManifest? manifest, PrtgStateReconciliationBatch? reconciliation)
     {
         corroboratedCount = 0;
-        if (findings == null || findings.Count == 0) return false;
+        findings ??= Array.Empty<LogIssueSignature>();
+        if (findings.Count == 0 && manifest == null && reconciliation == null) return false;
+        if (reconciliation is { } batch && !batch.IsValid())
+            throw new InvalidOperationException("PRTG state reconciliation batch is invalid or exceeds its bounded contract.");
 
         using var probe = _contextFactory();
         var strategy = probe.Database.CreateExecutionStrategy();
 
         long? attemptedRecordId = null;
         var appended = false;
+        var successful = false;
         var appendedCount = 0;
         var corroborated = 0;
         try
@@ -341,7 +599,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction();
+            // HostDayLocks only coordinates this process. Keep the parent preimage read,
+            // reconciliation, and final manifest write serializable across SQL connections.
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
 
             var row = ctx.DailyRecords.FirstOrDefault(r => r.HostId == hostId && r.RecordDate == date.Date);
             if (row == null)
@@ -358,6 +618,44 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             attemptedRecordId = row.RecordId;
             var record = Deserialize(row);
             if (!record.CanSupplementWithPrtg()) return;
+            if (reconciliation is { ExpectedParentRecordId: > 0 } expectedParent &&
+                (row.RecordId != expectedParent.ExpectedParentRecordId ||
+                 HostDayWorkflowFingerprint.ForParentRecord(record) != expectedParent.ExpectedParentFingerprint ||
+                 PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg)) !=
+                    expectedParent.ExpectedParentFindingFingerprint))
+                return;
+            var modeFenceRequired = manifest?.ResourceModeFenceRequired == true ||
+                reconciliation?.ResourceModeFenceRequired == true;
+            var modeVersion = manifest?.ResourceModeFenceRequired == true
+                ? manifest.ResourceModeBlobVersion : reconciliation?.ResourceModeBlobVersion ?? 0;
+            if (manifest?.ResourceModeFenceRequired == true && reconciliation?.ResourceModeFenceRequired == true &&
+                manifest.ResourceModeBlobVersion != reconciliation.ResourceModeBlobVersion)
+                return;
+            if (modeFenceRequired && !ModeRevisionMatches(ctx, hostId, modeVersion)) return;
+            if (manifest != null)
+            {
+                var currentParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record);
+                var currentParentFindingFingerprint = PrtgFindingMapper.Fingerprint(
+                    record.TopIssues.Where(PrtgFindingMapper.IsPrtg));
+                if (IsIdempotentPrtgReplay(manifest, record, row.RecordId, findings, reconciliation,
+                    currentParentFingerprint, currentParentFindingFingerprint))
+                {
+                    CopyManifest(record.PrtgManifest!, manifest);
+                    successful = true;
+                    return;
+                }
+                // This is checked inside the same host-day transaction and before any reconciliation,
+                // risk, normalized-row, or observation side effect.
+                if (!string.Equals(manifest.ParentFingerprint, currentParentFingerprint, StringComparison.Ordinal) ||
+                    !string.Equals(manifest.ParentFindingFingerprint, currentParentFindingFingerprint, StringComparison.Ordinal))
+                    return;
+            }
+            if (manifest != null && !ValidPrtgManifest(manifest, record, row.RecordId, findings?.Any(PrtgFindingMapper.IsPrtg) == true))
+                throw new InvalidOperationException("PRTG decision manifest is invalid or exceeds the bounded record contract.");
+            var previousPrtgFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(record);
+
+            var reconciledCount = reconciliation is { } qualifiedBatch
+                ? ReconcilePrtgStateFindings(ctx, row, record, qualifiedBatch).Count : 0;
 
             var existingKeys = record.TopIssues
                 .Select(i => i.EventKey)
@@ -380,12 +678,22 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 }
             }
 
-            if (toAdd.Count == 0 && replacements.Count == 0)
+            var manifestChanged = false;
+            if (manifest != null) manifest.ParentRecordId = row.RecordId;
+            record.TopIssues.AddRange(toAdd);
+            if (manifest != null)
             {
+                manifest.ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record);
+                manifest.FindingFingerprint = PrtgFindingMapper.Fingerprint(
+                    record.TopIssues.Where(PrtgFindingMapper.IsPrtg));
+                manifestChanged = !ManifestEquals(record.PrtgManifest, manifest);
+                if (manifestChanged) record.PrtgManifest = manifest;
+            }
+            if (toAdd.Count == 0 && replacements.Count == 0 && !manifestChanged && reconciledCount == 0)
+            {
+                successful = true;
                 return;
             }
-
-            record.TopIssues.AddRange(toAdd);
             if (record.PrtgBaselineRiskLevel == null && !record.TopIssues.Except(toAdd).Any(PrtgFindingMapper.IsPrtg))
             { record.PrtgBaselineRiskLevel = record.RiskLevel; record.PrtgBaselineRiskBasis = record.RiskBasis; }
             // 有明確 NetIQ 下限才可撤銷本輪 PRTG 加權；旧列缺下限時維持原風險待重評。
@@ -432,6 +740,21 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     }
                 }
             }
+            // New or revised PRTG evidence invalidates the previous AI input even when the daily
+            // risk stays unchanged. Keep its old narrative visible, but mark this decision pending.
+            if (aiConfigured && !record.DetailPruned && record.RiskLevel != RiskLevels.Low &&
+                !StringComparer.Ordinal.Equals(previousPrtgFingerprint, HostDayWorkflowFingerprint.PrtgInputFingerprint(record)))
+            {
+                record.AiPending = true;
+                record.AiAnalyzed = false;
+                row.AiPending = true;
+                row.AiAnalyzed = false;
+            }
+            if (!RiskLevels.IsActionable(record.RiskLevel)) record.RiskReportPending = false;
+            else if (record.ReportFile == null ||
+                !StringComparer.Ordinal.Equals(record.PrtgReportEvidenceFingerprint,
+                    HostDayWorkflowFingerprint.PrtgInputFingerprint(record)))
+                record.RiskReportPending = true;
             row.HasCorrelation = record.CorrelationAlerts.Count > 0;
 
             row.ContentJson = JsonSerializer.Serialize(record);
@@ -456,8 +779,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
             ctx.SaveChanges();
             tx.Commit();
-            appended = true;
+            appended = toAdd.Count > 0 || replacements.Count > 0;
             appendedCount = toAdd.Count + replacements.Count;
+            successful = true;
         });
         }
         // 只有重新查證原父列確實消失才降級為不存在；其他約束／寫入失敗必須讓上層標記失敗。
@@ -478,7 +802,106 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 hostId, date, appendedCount);
         }
 
-        return appended;
+        return reconciliation != null ? successful : appended;
+    }
+
+    private static bool ValidPrtgManifest(PrtgDecisionManifest manifest, DailyAnalysisRecord parent, long recordId, bool hasQualifiedFinding)
+    {
+        static bool Bounded(string? value) => value is { Length: > 0 and <= 256 };
+        static bool Sha256(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
+        if (manifest.Version != 1 || manifest.ParentRecordId != recordId || manifest.ResourceModeBlobVersion < 0 ||
+            !Bounded(manifest.ParentFingerprint) || !Bounded(manifest.SourceGeneration) ||
+            !Bounded(manifest.ResourceFingerprint) || !Bounded(manifest.SemanticFingerprint) ||
+            !Bounded(manifest.StrategyFingerprint) || !Bounded(manifest.RuleFingerprint) ||
+            !Bounded(manifest.EvidenceFingerprint) || !Bounded(manifest.FindingFingerprint) || !Bounded(manifest.Outcome) ||
+            !HostDayWorkflowFingerprint.HasValidPrtgOutcome(manifest, hasQualifiedFinding) || !Sha256(manifest.ParentFingerprint) ||
+            !Sha256(manifest.ParentFindingFingerprint) ||
+            !Sha256(manifest.ResourceFingerprint) || !Sha256(manifest.SemanticFingerprint) ||
+            !Sha256(manifest.StrategyFingerprint) || !Sha256(manifest.RuleFingerprint) ||
+            !Sha256(manifest.EvidenceFingerprint) || !Sha256(manifest.FindingFingerprint) ||
+            manifest.CompletedAtUtc == default || manifest.CompletedAtUtc.Kind != DateTimeKind.Utc ||
+            !StringComparer.Ordinal.Equals(manifest.ParentFingerprint, HostDayWorkflowFingerprint.ForParentRecord(parent)))
+            return false;
+        return System.Text.Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(manifest)) <= 4096;
+    }
+
+    private static bool ManifestEquals(PrtgDecisionManifest? left, PrtgDecisionManifest right) =>
+        left != null && JsonSerializer.Serialize(left) == JsonSerializer.Serialize(right);
+
+    private static bool IsIdempotentPrtgReplay(PrtgDecisionManifest incoming, DailyAnalysisRecord record,
+        long recordId, IReadOnlyList<LogIssueSignature> findings, PrtgStateReconciliationBatch? reconciliation,
+        string currentParentFingerprint, string currentFindingFingerprint)
+    {
+        var stored = record.PrtgManifest;
+        if (!ValidPrtgManifest(incoming, record, recordId, findings.Any(PrtgFindingMapper.IsPrtg)) ||
+            stored is not { Version: 1 } || !HostDayWorkflowFingerprint.HasValidPrtgManifest(record) ||
+            stored.ParentRecordId != recordId ||
+            stored.EvidenceFingerprint != incoming.EvidenceFingerprint || stored.Outcome != incoming.Outcome ||
+            stored.SourceGeneration != incoming.SourceGeneration || stored.ResourceFingerprint != incoming.ResourceFingerprint ||
+            stored.ResourceModeBlobVersion != incoming.ResourceModeBlobVersion ||
+            stored.ResourceModeFenceRequired != incoming.ResourceModeFenceRequired ||
+            stored.SemanticFingerprint != incoming.SemanticFingerprint || stored.StrategyFingerprint != incoming.StrategyFingerprint ||
+            stored.HostMappingFingerprint != incoming.HostMappingFingerprint || stored.RuleFingerprint != incoming.RuleFingerprint ||
+            !stored.WaitReasonCodes.SequenceEqual(incoming.WaitReasonCodes, StringComparer.Ordinal) ||
+            stored.ParentFingerprint != currentParentFingerprint || incoming.ParentFingerprint != currentParentFingerprint ||
+            stored.FindingFingerprint != currentFindingFingerprint)
+            return false;
+
+        return currentFindingFingerprint == DesiredPrtgFingerprintAfterReconciliation(record, findings, reconciliation);
+    }
+
+    private static string DesiredPrtgFingerprintAfterReconciliation(DailyAnalysisRecord record,
+        IReadOnlyList<LogIssueSignature> findings, PrtgStateReconciliationBatch? reconciliation)
+    {
+        var issues = record.TopIssues.ToList();
+        if (reconciliation is { } batch)
+        {
+            var removed = FindReconciledPrtgFindings(record, batch.SourceGeneration,
+                    batch.StateResourceGenerationsBySensor, batch.CurrentEventKeys,
+                    new HashSet<string>(StringComparer.Ordinal) { "down", "warning", "flapping" })
+                .Concat(FindReconciledPrtgFindings(record, batch.SourceGeneration,
+                    batch.DiskResourceGenerationsBySensor, batch.CurrentEventKeys,
+                    new HashSet<string>(StringComparer.Ordinal) { PrtgDiskRuleDecision.RuleCode }))
+                .Concat(FindReconciledPrtgFindings(record,
+                    batch.ResourcePressureGenerations, batch.CurrentEventKeys))
+                .Select(issue => issue.EventKey).ToHashSet(StringComparer.Ordinal);
+            issues.RemoveAll(issue => removed.Contains(issue.EventKey));
+        }
+
+        var existingKeys = issues.Select(issue => issue.EventKey).Where(key => !string.IsNullOrEmpty(key))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var finding in findings)
+        {
+            if (!string.IsNullOrEmpty(finding.EventKey) && existingKeys.Add(finding.EventKey))
+                issues.Add(finding);
+            else if (finding.PrtgSourceGeneration != null)
+            {
+                var index = issues.FindIndex(issue => issue.EventKey == finding.EventKey);
+                if (index >= 0) issues[index] = finding;
+            }
+        }
+        return PrtgFindingMapper.Fingerprint(issues.Where(PrtgFindingMapper.IsPrtg));
+    }
+
+    private static void CopyManifest(PrtgDecisionManifest source, PrtgDecisionManifest destination)
+    {
+        destination.Version = source.Version;
+        destination.ParentRecordId = source.ParentRecordId;
+        destination.ParentFingerprint = source.ParentFingerprint;
+        destination.ParentFindingFingerprint = source.ParentFindingFingerprint;
+        destination.SourceGeneration = source.SourceGeneration;
+        destination.ResourceModeBlobVersion = source.ResourceModeBlobVersion;
+        destination.ResourceModeFenceRequired = source.ResourceModeFenceRequired;
+        destination.ResourceFingerprint = source.ResourceFingerprint;
+        destination.SemanticFingerprint = source.SemanticFingerprint;
+        destination.StrategyFingerprint = source.StrategyFingerprint;
+        destination.HostMappingFingerprint = source.HostMappingFingerprint;
+        destination.WaitReasonCodes = source.WaitReasonCodes.ToList();
+        destination.RuleFingerprint = source.RuleFingerprint;
+        destination.EvidenceFingerprint = source.EvidenceFingerprint;
+        destination.FindingFingerprint = source.FindingFingerprint;
+        destination.CompletedAtUtc = source.CompletedAtUtc;
+        destination.Outcome = source.Outcome;
     }
 
     /// <summary>只撤回已完整重評的同世代狀態判定；案件／人工結論保留，空回應與缺口不可呼叫。</summary>
@@ -496,45 +919,101 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             if (row == null || row.DetailPruned) return false;
             var record = Deserialize(row);
             if (!record.CanSupplementWithPrtg()) return false;
-            var removed = record.TopIssues.Where(i => PrtgFindingMapper.IsPrtg(i) &&
-                i.PrtgSourceGeneration == sourceGeneration && !currentKeys.Contains(i.EventKey) &&
-                i.EventKey.Split(':') is { Length: >= 5 } parts &&
-                (evaluatedRuleCodes ?? new HashSet<string> { "down", "warning", "flapping" }).Contains(parts[1]) && long.TryParse(parts[2], out var sensor) &&
-                resources.TryGetValue(sensor, out var generation) && generation == i.PrtgResourceGeneration).ToArray();
-            if (removed.Length == 0) return false;
-            var keys = removed.Select(i => i.EventKey).ToArray();
-            record.TopIssues.RemoveAll(i => keys.Contains(i.EventKey));
-            PrtgCorroboration.Refresh(record);
-            row.HasCorrelation = record.CorrelationAlerts.Count > 0;
-            ctx.TopIssues.Where(i => i.RecordId == row.RecordId && keys.Contains(i.EventKey)).ExecuteDelete();
-            if (record.PrtgBaselineRiskLevel != null)
-            {
-                record.RiskLevel = RiskLevels.MoreSevere(record.PrtgBaselineRiskLevel,
-                    PrtgFindingMapper.RiskFromFindings(record.TopIssues));
-                record.RiskBasis = record.RiskLevel == record.PrtgBaselineRiskLevel ? record.PrtgBaselineRiskBasis
-                    : PrtgFindingMapper.RiskBasisFrom(record.TopIssues);
-            }
-            else if (record.RiskReview == null)
-            {
-                row.OriginalRiskContentJson ??= row.ContentJson;
-                record.RiskReview = new HistoricalRiskReview { Version = 1, Status = "pending",
-                    Reason = "可信 PRTG 重評後撤回舊判定；原 AI 或風險下限不可獨立還原，請重跑 NetIQ 分析。",
-                    OriginalRiskLevel = record.RiskLevel, OriginalRiskBasis = record.RiskBasis,
-                    OriginalHeadline = record.Headline, OriginalSummary = record.Summary, ReviewedAtUtc = DateTime.UtcNow };
-                row.RiskProjectionVersion = 1; row.RiskReviewStatus = "pending";
-            }
-            record.Headline = "PRTG 判定已修訂";
-            record.Summary = "已依完整涵蓋重新判定，撤回不再命中的問題；既有案件與人工結論保留。";
-            record.WeeklyCheckup = null;
-            record.AiAnalyzed = false; record.AiPending = false;
-            row.AiAnalyzed = false; row.AiPending = false; row.WeeklyCheckupDate = null;
-            row.RiskLevel = record.RiskLevel; row.Headline = record.Headline; row.ContentJson = JsonSerializer.Serialize(record);
-            ctx.PrtgObservations.Where(o => o.HostId == hostId && o.RecordDate == day.Date &&
-                o.ActiveKey != null && keys.Contains(o.EventKey)).ExecuteUpdate(u =>
-                    u.SetProperty(o => o.ActiveKey, (string?)null).SetProperty(o => o.SupplementStatus, "superseded"));
+            var keys = ReconcilePrtgStateFindings(ctx, row, record, sourceGeneration, resources,
+                currentKeys, evaluatedRuleCodes ?? new HashSet<string> { "down", "warning", "flapping" });
+            if (keys.Count == 0) return false;
+            row.ContentJson = JsonSerializer.Serialize(record);
             ctx.SaveChanges(); tx.Commit(); return true;
         }
         });
+    }
+
+    private static IReadOnlyList<string> ReconcilePrtgStateFindings(LfDbContext ctx, DailyRecordRow row,
+        DailyAnalysisRecord record, PrtgStateReconciliationBatch batch)
+    {
+        var removed = FindReconciledPrtgFindings(record, batch.SourceGeneration,
+                batch.StateResourceGenerationsBySensor, batch.CurrentEventKeys,
+                new HashSet<string>(StringComparer.Ordinal) { "down", "warning", "flapping" })
+            .Concat(FindReconciledPrtgFindings(record, batch.SourceGeneration,
+                batch.DiskResourceGenerationsBySensor, batch.CurrentEventKeys,
+                new HashSet<string>(StringComparer.Ordinal) { PrtgDiskRuleDecision.RuleCode }))
+            .Concat(FindReconciledPrtgFindings(record, batch.ResourcePressureGenerations, batch.CurrentEventKeys))
+            .Select(issue => issue.EventKey).Distinct(StringComparer.Ordinal).ToArray();
+        ApplyPrtgReconciliation(ctx, row, record, removed);
+        return removed;
+    }
+
+    private static IEnumerable<LogIssueSignature> FindReconciledPrtgFindings(DailyAnalysisRecord record,
+        IReadOnlyList<PrtgResourceGenerationFence> generations, IReadOnlySet<string> currentKeys) =>
+        record.TopIssues.Where(issue => PrtgFindingMapper.IsPrtg(issue) &&
+            issue.EventKey.Split(':') is { Length: >= 5 } parts &&
+            (parts[1] is "prtg.resource.cpu-sustained-pressure" or "prtg.resource.memory-sustained-pressure" or
+                LogForesight.Core.Service.PrtgRuleEvaluator.RuleResourceCpuPressure or
+                LogForesight.Core.Service.PrtgRuleEvaluator.RuleResourceMemoryPressure) &&
+            long.TryParse(parts[2], out var sensorId) && generations.Any(generation =>
+                generation.SensorObjid == sensorId && generation.SourceGeneration == issue.PrtgSourceGeneration &&
+                generation.ResourceGeneration == issue.PrtgResourceGeneration) && !currentKeys.Contains(issue.EventKey));
+
+    private static bool ModeRevisionMatches(LfDbContext ctx, long hostId, long expectedVersion) =>
+        expectedVersion >= 0 && ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey ==
+                PrtgResourcePressureModeStore.BlobKey(hostId))
+            .Select(blob => blob.Version).FirstOrDefault() == expectedVersion;
+
+    private static IReadOnlyList<string> ReconcilePrtgStateFindings(LfDbContext ctx, DailyRecordRow row,
+        DailyAnalysisRecord record, string sourceGeneration, IReadOnlyDictionary<long, string> resources,
+        IReadOnlySet<string> currentKeys, IReadOnlySet<string> evaluatedRuleCodes)
+    {
+        var removed = FindReconciledPrtgFindings(record, sourceGeneration, resources, currentKeys,
+            evaluatedRuleCodes).Select(issue => issue.EventKey).Distinct(StringComparer.Ordinal).ToArray();
+        ApplyPrtgReconciliation(ctx, row, record, removed);
+        return removed;
+    }
+
+    private static IEnumerable<LogIssueSignature> FindReconciledPrtgFindings(DailyAnalysisRecord record,
+        string sourceGeneration, IReadOnlyDictionary<long, string> resources, IReadOnlySet<string> currentKeys,
+        IReadOnlySet<string> evaluatedRuleCodes) => record.TopIssues.Where(issue =>
+            PrtgFindingMapper.IsPrtg(issue) && issue.PrtgSourceGeneration == sourceGeneration &&
+            !currentKeys.Contains(issue.EventKey) && issue.EventKey.Split(':') is { Length: >= 5 } parts &&
+            evaluatedRuleCodes.Contains(parts[1]) && long.TryParse(parts[2], out var sensorId) &&
+            resources.TryGetValue(sensorId, out var generation) && generation == issue.PrtgResourceGeneration);
+
+    private static void ApplyPrtgReconciliation(LfDbContext ctx, DailyRecordRow row,
+        DailyAnalysisRecord record, IReadOnlyList<string> removedKeys)
+    {
+        if (removedKeys.Count == 0) return;
+        var removed = removedKeys.ToHashSet(StringComparer.Ordinal);
+        record.TopIssues.RemoveAll(issue => removed.Contains(issue.EventKey));
+        PrtgCorroboration.Refresh(record);
+        row.HasCorrelation = record.CorrelationAlerts.Count > 0;
+        ctx.TopIssues.Where(issue => issue.RecordId == row.RecordId && removed.Contains(issue.EventKey)).ExecuteDelete();
+        if (record.PrtgBaselineRiskLevel != null)
+        {
+            record.RiskLevel = RiskLevels.MoreSevere(record.PrtgBaselineRiskLevel,
+                PrtgFindingMapper.RiskFromFindings(record.TopIssues));
+            record.RiskBasis = record.RiskLevel == record.PrtgBaselineRiskLevel ? record.PrtgBaselineRiskBasis
+                : PrtgFindingMapper.RiskBasisFrom(record.TopIssues);
+        }
+        else if (record.RiskReview == null)
+        {
+            row.OriginalRiskContentJson ??= row.ContentJson;
+            record.RiskReview = new HistoricalRiskReview { Version = 1, Status = "pending",
+                Reason = "可信 PRTG 重評後撤回舊判定；原 AI 或風險下限不可獨立還原，請重跑 NetIQ 分析。",
+                OriginalRiskLevel = record.RiskLevel, OriginalRiskBasis = record.RiskBasis,
+                OriginalHeadline = record.Headline, OriginalSummary = record.Summary, ReviewedAtUtc = DateTime.UtcNow };
+            row.RiskProjectionVersion = 1; row.RiskReviewStatus = "pending";
+        }
+        record.Headline = "PRTG 判定已修訂";
+        record.Summary = "已依完整涵蓋重新判定，撤回不再命中的問題；既有案件與人工結論保留。";
+        record.WeeklyCheckup = null;
+        record.AiAnalyzed = false; record.AiPending = false;
+        row.AiAnalyzed = false; row.AiPending = false; row.WeeklyCheckupDate = null;
+        row.RiskLevel = record.RiskLevel;
+        row.Headline = record.Headline;
+        ctx.PrtgObservations.Where(observation => observation.HostId == row.HostId &&
+            observation.RecordDate == row.RecordDate && observation.ActiveKey != null &&
+            removed.Contains(observation.EventKey)).ExecuteUpdate(update => update
+                .SetProperty(observation => observation.ActiveKey, (string?)null)
+                .SetProperty(observation => observation.SupplementStatus, "superseded"));
     }
 
     private bool RecordWasRemoved(long recordId)
@@ -543,8 +1022,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return !context.DailyRecords.AsNoTracking().Any(r => r.RecordId == recordId);
     }
 
-    private static TopIssueRow MapToTopIssueRow(long recordId, long hostId, DateTime recordDate, LogIssueSignature issue) =>
-        new()
+    private static TopIssueRow MapToTopIssueRow(long recordId, long hostId, DateTime recordDate, LogIssueSignature issue)
+    {
+        var sourceObservationsJson = SourceEvidence.SerializeObservations(issue.SourceObservations, out var serializationTruncated);
+        return new TopIssueRow
         {
             RecordId = recordId,
             SourceName = issue.Source,
@@ -562,8 +1043,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             LogName = issue.LogName,
             EntryType = (int)issue.EntryType,
             KnownIssue = issue.KnownIssue,
-            EventKey = issue.EventKey
+            EventKey = issue.EventKey,
+            SourceObservationsJson = sourceObservationsJson,
+            SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
         };
+    }
 
     /// <summary>
     /// 單次清理的列數上限（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
@@ -928,7 +1412,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 string.Equals(i.Source, "PRTG:disk_free_trend", StringComparison.Ordinal)
                 && string.Equals(i.LogName, "PRTG", StringComparison.Ordinal)
                 && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
-                && string.Equals(i.EventKey, latest.EventKey, StringComparison.Ordinal));
+                && string.Equals(i.EventKey, latest.EventKey, StringComparison.Ordinal)
+                && (i.RuleId != "builtin-prtg-resource-disk-pressure" ||
+                    i.PrtgResourceReasonCodes?.Contains("disk-seven-day-low-water-trend", StringComparer.Ordinal) == true));
             if (issue == null) continue;
             var detail = issue.SampleMessages?.FirstOrDefault()?.Trim();
             results.Add(new DiskTrendEvidenceRecord(pair.HostId, row.RecordDate, pair.SensorId,
@@ -1047,6 +1533,161 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             filter.From, filter.To, filter.Hosts?.Count, rows.Count, result.Count, sw.ElapsedMilliseconds);
         _performance?.Record("records:QueryLightweight", sw.ElapsedMilliseconds);
         return result;
+    }
+
+    public List<NotificationWorkflowRecord> QueryNotificationWorkflowPage(DateTime from, DateTime to, long afterRecordId, int take)
+    {
+        if (take is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(take));
+        using var ctx = _contextFactory();
+        return ctx.DailyRecords.AsNoTracking().Where(row => row.RecordId > afterRecordId && row.HostId > 0 &&
+            row.RecordDate >= from.Date && row.RecordDate <= to.Date).OrderBy(row => row.RecordId)
+            .Select(row => new NotificationWorkflowRecord(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel))
+            .Take(take).ToList();
+    }
+
+    public List<NotificationWorkflowRecord> QueryModeReplayHostPage(long hostId, DateTime from, DateTime to,
+        long afterRecordId, int take)
+    {
+        if (hostId <= 0) throw new ArgumentOutOfRangeException(nameof(hostId));
+        if (take is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(take));
+        using var ctx = _contextFactory();
+        return ctx.DailyRecords.AsNoTracking().Where(row => row.RecordId > afterRecordId &&
+            row.HostId == hostId && row.RecordDate >= from.Date && row.RecordDate <= to.Date)
+            .OrderBy(row => row.RecordId)
+            .Select(row => new NotificationWorkflowRecord(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel))
+            .Take(take).ToList();
+    }
+
+    public ExactAnalysisRecordLookup LookupByRecordId(long recordId, int maximumPayloadBytes = WorkflowRecoveryPage.MaximumPayloadBytes)
+    {
+        if (recordId <= 0) throw new ArgumentOutOfRangeException(nameof(recordId));
+        if (maximumPayloadBytes is < 1 or > 1024 * 1024)
+            throw new ArgumentOutOfRangeException(nameof(maximumPayloadBytes));
+        using var ctx = _contextFactory();
+        var row = ctx.DailyRecords.AsNoTracking().Where(candidate => candidate.RecordId == recordId)
+            .Select(candidate => new
+            {
+                candidate.RecordId, candidate.HostId, candidate.HostName, candidate.RecordDate,
+                candidate.RiskLevel, candidate.DetailPruned,
+                Prefix = candidate.ContentJson.Substring(0, maximumPayloadBytes + 1),
+                Length = candidate.ContentJson.Length
+            }).FirstOrDefault();
+        if (row == null)
+            return new ExactAnalysisRecordLookup(recordId, 0, default, string.Empty, false, false, false, false, null);
+        if (row.DetailPruned || string.IsNullOrWhiteSpace(row.Prefix))
+            return new ExactAnalysisRecordLookup(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel,
+                true, false, true, false, null);
+        if (row.Length > maximumPayloadBytes || row.Prefix.Length > maximumPayloadBytes ||
+            Encoding.UTF8.GetByteCount(row.Prefix) > maximumPayloadBytes)
+            return new ExactAnalysisRecordLookup(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel,
+                true, true, false, false, null);
+        DailyAnalysisRecord record;
+        try
+        {
+            record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.Prefix) ?? new DailyAnalysisRecord();
+        }
+        catch (JsonException)
+        {
+            return new ExactAnalysisRecordLookup(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel,
+                true, false, false, true, null);
+        }
+        // RecordId is generated by SQL and intentionally absent from ContentJson. Keep the
+        // serialized parent Host/Date values untouched: DateTime.Kind participates in the
+        // workflow's canonical JSON fingerprint even though SQL stores a calendar day.
+        record.RecordId = row.RecordId;
+        if (record.HostId != row.HostId || record.Date.Date != row.RecordDate.Date)
+            return new ExactAnalysisRecordLookup(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel,
+                true, false, false, false, null, IdentityMismatch: true);
+        return new ExactAnalysisRecordLookup(row.RecordId, row.HostId, row.RecordDate, row.RiskLevel,
+            true, false, false, false, record);
+    }
+
+    public WorkflowRecoveryPage QueryWorkflowRecoveryPage(DateTime from, DateTime to, long afterRecordId, int take)
+    {
+        if (take is < 1 or > WorkflowRecoveryPage.MaximumRows) throw new ArgumentOutOfRangeException(nameof(take));
+        // This is the query's logical start fence. A PRTG/workflow producer that publishes after
+        // this instant must win over any waiting marker derived from this possibly stale page.
+        var capturedAtUtc = DateTime.UtcNow;
+        using var ctx = _contextFactory();
+        var projected = ctx.DailyRecords.AsNoTracking()
+            .Where(row => row.RecordDate >= from.Date && row.RecordDate <= to.Date && row.RecordId > afterRecordId)
+            .OrderBy(row => row.RecordId).Take(take)
+            .Select(row => new WorkflowRecoveryProjection(row.RecordId, row.HostId, row.HostName, row.RecordDate,
+                row.RiskLevel, row.AiPending, row.DetailPruned, row.RiskReviewStatus, row.RiskProjectionVersion,
+                row.ContentJson.Substring(0, WorkflowRecoveryPage.MaximumPayloadPrefixCharacters), row.ContentJson.Length,
+                row.WriteRevision))
+            .ToList();
+
+        var records = new List<DailyAnalysisRecord>(projected.Count);
+        var waiting = new List<WorkflowRecoveryWaitingHostDay>();
+        long bytesRead = 0;
+        foreach (var item in projected)
+        {
+            var prefixBytes = Encoding.UTF8.GetByteCount(item.ContentPrefix);
+            bytesRead += prefixBytes;
+            if (item.HostId <= 0)
+            {
+                waiting.Add(new WorkflowRecoveryWaitingHostDay(item.RecordId, item.HostId, item.RecordDate,
+                    "recovery-host-id-invalid", item.ContentLength, item.WriteRevision, capturedAtUtc));
+                continue;
+            }
+            if (item.ContentLength > WorkflowRecoveryPage.MaximumPayloadBytes ||
+                prefixBytes > WorkflowRecoveryPage.MaximumPayloadBytes || item.ContentLength > item.ContentPrefix.Length)
+            {
+                waiting.Add(new WorkflowRecoveryWaitingHostDay(item.RecordId, item.HostId, item.RecordDate,
+                    "recovery-payload-over-limit", item.ContentLength, item.WriteRevision, capturedAtUtc));
+                continue;
+            }
+
+            var row = new DailyRecordRow
+            {
+                RecordId = item.RecordId,
+                HostId = item.HostId,
+                HostName = item.HostName,
+                RecordDate = item.RecordDate,
+                RiskLevel = item.RiskLevel,
+                AiPending = item.AiPending,
+                DetailPruned = item.DetailPruned,
+                RiskReviewStatus = item.RiskReviewStatus,
+                RiskProjectionVersion = item.RiskProjectionVersion,
+                ContentJson = item.ContentPrefix
+            };
+            try { records.Add(Deserialize(row)); }
+            catch (JsonException)
+            {
+                waiting.Add(new WorkflowRecoveryWaitingHostDay(item.RecordId, item.HostId, item.RecordDate,
+                    "recovery-payload-invalid", item.ContentLength, item.WriteRevision, capturedAtUtc));
+            }
+        }
+
+        var capturedRevisions = projected.Where(item => records.Any(record => record.RecordId == item.RecordId))
+            .ToDictionary(item => item.RecordId, item => item.WriteRevision);
+        return new WorkflowRecoveryPage(records, waiting, projected.Count, projected.LastOrDefault()?.RecordId,
+            bytesRead, capturedRevisions);
+    }
+
+    private sealed record WorkflowRecoveryProjection(long RecordId, long HostId, string HostName, DateTime RecordDate,
+        string RiskLevel, bool AiPending, bool DetailPruned, string RiskReviewStatus, int RiskProjectionVersion,
+        string ContentPrefix, int ContentLength, long WriteRevision);
+
+    public HashSet<(long HostId, DateTime Date)> ExistingHostDays(
+        IReadOnlyCollection<(long HostId, DateTime Date)> keys)
+    {
+        if (keys.Count > 500) throw new ArgumentOutOfRangeException(nameof(keys), "At most 500 keys may be checked per recovery round.");
+        if (keys.Count == 0) return [];
+        var parameter = Expression.Parameter(typeof(DailyRecordRow), "row");
+        Expression body = Expression.Constant(false);
+        foreach (var (hostId, date) in keys)
+        {
+            var host = Expression.Equal(Expression.Property(parameter, nameof(DailyRecordRow.HostId)), Expression.Constant(hostId));
+            var day = Expression.Equal(Expression.Property(parameter, nameof(DailyRecordRow.RecordDate)), Expression.Constant(date.Date));
+            body = Expression.OrElse(body, Expression.AndAlso(host, day));
+        }
+        var predicate = Expression.Lambda<Func<DailyRecordRow, bool>>(body, parameter);
+        using var ctx = _contextFactory();
+        return ctx.DailyRecords.AsNoTracking().Where(predicate)
+            .Select(row => new { row.HostId, row.RecordDate }).ToList()
+            .Select(row => (row.HostId, row.RecordDate.Date)).ToHashSet();
     }
 
     /// <summary>
@@ -1355,7 +1996,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             .Select(t => new
             {
                 t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
-                t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey
+                t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey,
+                t.SourceObservationsJson, t.SourceObservationsTruncated
             })
             .ToList()
             .GroupBy(t => t.RecordId)
@@ -1366,6 +2008,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 EventId = t.EventId,
                 EntryType = (System.Diagnostics.EventLogEntryType)t.EntryType,
                 EventKey = t.EventKey,
+                SourceObservations = SourceEvidence.DeserializeObservations(t.SourceObservationsJson),
+                SourceObservationsTruncated = t.SourceObservationsTruncated,
                 Count = t.EventCount,
                 // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
                 // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
@@ -1410,6 +2054,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             return new DailyAnalysisRecord
             {
+                RecordId = row.RecordId,
                 HostId = row.HostId,
                 Host = row.HostName,
                 Date = row.RecordDate,
@@ -1423,6 +2068,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         var record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
         record.DetailPruned = row.DetailPruned;
+        record.RecordId = row.RecordId;
         // 事實來源單點化（批次C）：以 DB 欄位 ai_pending 為準，不得改讀 ContentJson 內序列化的同名值
         record.AiPending = row.AiPending;
         return record;

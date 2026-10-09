@@ -161,6 +161,8 @@ public class HostDetailController : ControllerBase
         // RecordDetailQueryService 內的 EnsureVisible，這支不走 service，必須自己檢查——
         // 否則任何登入者都能用任意 hostId 列出別人主機的 PRTG device 與 sensor
         _visibility.EnsureVisible(hostId);
+        if (_visibility.IsCaseGrantOnly(hostId))
+            throw DomainException.Forbidden("案件授與不包含主機層級的 PRTG 對應資訊。");
 
         var store = _prtgStore;
         var host = _visibility.GetVisibleHosts().FirstOrDefault(h => h.HostId == hostId);

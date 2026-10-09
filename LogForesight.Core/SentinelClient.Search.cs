@@ -10,6 +10,16 @@ public sealed partial class SentinelClient
 {
     public async Task<SentinelSearchResult> SearchAsync(SentinelSearchRequest request, CancellationToken ct = default)
     {
+        if (request.MaxPages is <= 0) throw new ArgumentOutOfRangeException(nameof(request.MaxPages));
+        if (request.ShapeOnly && (request.Filter != "sev:[0 TO 5]" || request.Type != "USER" ||
+            !request.RawFields || request.Fields is { Count: > 0 } ||
+            request.PageSize is not (> 0 and <= 3) || request.MaxResults is not (> 0 and <= 3) ||
+            request.MaxPages != 1 || request.MaxShapeFieldKeys is not (> 0 and <= 128) || _readLimits is null ||
+            _readLimits.MaxHttpRequests > 12 || _readLimits.MaxResponseBytes > 512 * 1024 ||
+            request.Start.Offset != TimeSpan.Zero || request.End.Offset != TimeSpan.Zero ||
+            request.End > DateTimeOffset.UtcNow || request.Start >= request.End || request.Start < request.End.AddHours(-1)))
+            throw new ArgumentException("Shape-only queries require the fixed bounded probe request and response limits.", nameof(request));
+
         await _queue.WaitAsync(ct);
         string? jobHref = null;
         try
@@ -35,8 +45,15 @@ public sealed partial class SentinelClient
             {
                 // 清理不受呼叫端取消影響——即使呼叫端放棄等待，殘留的 job 仍佔用 server 資源，
                 // 用一個獨立、有限時的 token 確保「用完即刪」的承諾在取消路徑下仍然成立。
-                using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                await TryDeleteJobAsync(jobHref, cleanupCts.Token);
+                if (_readLimits is null)
+                {
+                    using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                    await TryDeleteJobAsync(jobHref, cleanupCts.Token);
+                }
+                else
+                {
+                    await TryDeleteJobAsync(jobHref, ct);
+                }
             }
             _queue.Release();
         }
@@ -109,7 +126,7 @@ public sealed partial class SentinelClient
         {
             if (!resp.IsSuccessStatusCode)
             {
-                var errBody = await SafeReadBodyAsync(resp);
+                var errBody = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
                     $"Sentinel「{_server.Name}」建立查詢工作失敗：HTTP {(int)resp.StatusCode}｜{Truncate(errBody)}");
             }
@@ -117,13 +134,15 @@ public sealed partial class SentinelClient
             if (resp.Headers.Location != null)
                 return resp.Headers.Location.ToString();
 
-            var raw = await resp.Content.ReadAsStringAsync(ct);
+            var raw = await ReadResponseBodyAsync(resp, ct);
             var href = TryExtractHrefFromBody(raw);
             if (href == null)
             {
                 throw new SentinelClientException(
-                    $"Sentinel「{_server.Name}」建立查詢工作成功，但回應中找不到工作位址" +
-                    $"（Location 標頭與回應本文皆無 @href）。原始回應：{Truncate(raw)}");
+                    _readLimits is null
+                        ? $"Sentinel「{_server.Name}」建立查詢工作成功，但回應中找不到工作位址（Location 標頭與回應本文皆無 @href）。原始回應：{Truncate(raw)}"
+                        : "Sentinel probe received a malformed job response.",
+                    safeCode: "malformed-response");
             }
             return href;
         }
@@ -186,12 +205,12 @@ public sealed partial class SentinelClient
         {
             if (!resp.IsSuccessStatusCode)
             {
-                var body = await SafeReadBodyAsync(resp);
+                var body = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
                     $"Sentinel「{_server.Name}」查詢工作狀態失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
             }
 
-            var json = await resp.Content.ReadAsStringAsync(ct);
+            var json = await ReadResponseBodyAsync(resp, ct);
             return ParseJobStatus(json);
         }
     }
@@ -233,7 +252,7 @@ public sealed partial class SentinelClient
         }
         catch (JsonException ex)
         {
-            throw new SentinelClientException("Sentinel 查詢工作狀態回應不是合法 JSON", ex);
+            throw new SentinelClientException("Sentinel 查詢工作狀態回應不是合法 JSON", ex, "malformed-response");
         }
     }
 
@@ -260,7 +279,10 @@ public sealed partial class SentinelClient
         {
             // 用完即刪是負擔控制措施，失敗不該讓已經拿到的查詢結果報廢——記 WARN 讓人知道
             // server 端可能殘留一個 job，不中斷主流程。
-            Log.Warn(ex, "[{Server}] 清理查詢工作失敗（可能造成 server 端殘留 job，非致命）：{Href}", _server.Name, jobHref);
+            if (_readLimits is null)
+                Log.Warn(ex, "[{Server}] 清理查詢工作失敗（可能造成 server 端殘留 job，非致命）：{Href}", _server.Name, jobHref);
+            else
+                Log.Warn("Bounded metadata probe job cleanup failed; details withheld");
         }
     }
 
@@ -284,7 +306,7 @@ public sealed partial class SentinelClient
             var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ct);
             using (resp)
             {
-                var body = await resp.Content.ReadAsStringAsync(ct);
+                var body = await ReadResponseBodyAsync(resp, ct);
                 if (!resp.IsSuccessStatusCode)
                 {
                     throw new SentinelClientException(

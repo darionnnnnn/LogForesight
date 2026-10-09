@@ -31,6 +31,8 @@ public static class ServiceCollectionExtensions
 
         // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
         services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
+        services.AddSingleton(sp => new HostDayWorkflowStore(sp.GetRequiredService<StorageBackend>()));
+        services.AddSingleton<HostDayWorkflowService>();
 
         services.AddSingleton<IUserStore>(sp =>
         {
@@ -428,6 +430,15 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerRunState>();
         // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路
         services.AddSingleton(sp => new BackgroundWorkGate(sp.GetRequiredService<SchedulerRunState>(), TimeSpan.FromSeconds(30)));
+        services.AddSingleton<HostDayWorkflowRecoveryHostedService>(sp => new HostDayWorkflowRecoveryHostedService(
+            sp.GetRequiredService<IAnalysisRecordQuery>(),
+            sp.GetRequiredService<StorageBackend>(),
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<IWebAiService>(),
+            sp.GetRequiredService<HostDayWorkflowService>(),
+            sp.GetRequiredService<BackgroundWorkGate>()));
+        services.AddHostedService(sp => sp.GetRequiredService<HostDayWorkflowRecoveryHostedService>());
+        services.AddHostedService<PrtgResourcePressureModeReplayHostedService>();
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
@@ -458,7 +469,8 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IWebAiService>(),
                 suppressionStore,
                 aiService: null,
-                lifetime: lifetime);
+                lifetime: lifetime,
+                workflow: sp.GetRequiredService<HostDayWorkflowService>());
         });
         services.AddHostedService(sp => sp.GetRequiredService<AiAnalysisHostedService>());
 
@@ -526,6 +538,14 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IHostApplicationLifetime>(),
             TimeSpan.FromSeconds(60)));
         services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
+
+        // Durable fair refresh of current selected resource profiles, separate from daily analysis.
+        services.AddSingleton<PrtgTrustedSamplingProfileRefreshHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<PrtgTrustedSamplingProfileRefreshHostedService>());
+
+        // Native per-device PRTG status cross-sections for the formal silent-monitoring rule.
+        // This is a fair background queue; daily analysis only consumes already persisted proofs.
+        services.AddHostedService<PrtgSilentPresenceHostedService>();
 
         // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：
         // 人工對應／IP 排除／主機主檔變更三條路徑共用同一份實作

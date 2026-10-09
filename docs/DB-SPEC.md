@@ -851,4 +851,15 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 
 `lf_prtg_transfer_sessions` 保存 owner／scope／source 雜湊、宣告大小、套件雜湊、工作狀態、租約／版本、接收量與清理游標；`lf_prtg_transfer_chunks` 以工作及 ordinal 為複合鍵，保存最多 4 MiB 的原始片段、大小與 SHA-256。所有時間持久化 UTC ticks。工作交易與 CAS 保障重送、並行及 SQL execution strategy 的未知提交；正式 PRTG 資料不因診斷驗證寫入。
 
-共用記憶體帳本 256 MiB：上傳按片段四倍、驗證 16 MiB、原生匯出 128 MiB 预約。匯出租約以私有 `export:` owner prefix 使用 validating 狀態，不保存 payload；正常結束釋放為 abandoned，異常一小時到期回收。清理 complete 7 日／abandoned 1 日，每分鐘最多 16 工作各 8 片，先查鍵再刪，不載入 payload。接收與失敗工作不得自動刪除。
+共用記憶體帳本 256 MiB：上傳按片段四倍、驗證 16 MiB、原生匯出 128 MiB 预約。匯出租約以私有 `export:` owner prefix 使用 validating 狀態，不保存 payload；正常結束釋放為 abandoned，異常一小時到期回收。清理 complete 7 日／abandoned 與 validation_failed 1 日；receiving／validating 自建立起 7 日後，僅在寫入及驗證租約均已失效時清理。每分鐘最多 16 工作各 8 片，先查鍵再刪，不載入 payload；清理游標耐久保存，仍在有效租約內的工作保留。
+
+
+### 主機日風險報告的耐久待補與原子附掛
+
+DailyAnalysisRecord JSON 保存 RiskReportPending，獨立於 AiPending；儲存整形保留，工作流程判定指紋排除這個補寫旗標。PendingRiskReportDraft 僅為程序內準備資料，JsonIgnore，不保存草稿物件。報告渲染輸入以身分正規化的判定指紋及四個完整敘事欄位另算 ForReportInput，防止只核對 PRTG 而附掛過時敘事。
+
+AttachDailyRiskReport 同一 Serializable SQL 交易驗證精確 RecordId、父判定／PRTG／完整報告輸入、主機及日期，upsert lf_reports 並更新父列 ReportFile／PrtgReportEvidenceFingerprint、清除 RiskReportPending。過時草稿拒絕，交易失敗保留原報告與父參照；ReportCreatedAt 使用產生時間，使新產生的歷史日報告不立即被保留期清除。SQL Server 的完整交易由 execution strategy 包覆，每次重試使用新 context；草稿的可變 HostKey 在進入重試前凍結。
+
+恢復 worker 沿既有共用工作 gate、lease 及耐久 hot/deep pass cursor，每頁最多補四份報告；輪次旋轉避免前四筆持續失敗阻塞後段。它只使用保存父紀錄與有界 RiskyEvent cache，不重抓來源；AI 可用且 AiPending 時由 AI worker 接續，AI 不可用時可先補非 AI 報告，保留 AiPending。非 actionable 父日只在精確父列／指紋仍相同時清除待補。模式續作須先完成必要報告及案件交接才推進該日游標。
+
+Formal mail dated shard 清理每頁最多 16 鍵，先快照 outbox 參照，再在 Serializable 交易重核 singleton 版本；無法讀取、被參照、過大或不合法資料保留。SQL execution strategy 重試同一有界頁，不以新查詢跳到下一頁；成功後才更新統計及游標。回覆遺失的重試只承認同頁預期刪除或一版且內容相同的改寫，不覆蓋其他版本。

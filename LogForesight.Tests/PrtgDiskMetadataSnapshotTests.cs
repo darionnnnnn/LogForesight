@@ -299,21 +299,32 @@ public sealed class PrtgDiskMetadataSnapshotTests : IDisposable
             db.SaveChanges();
         }
 
+        var prtgStore = new EfPrtgStore(NewContext);
+        var identity = PrtgResourceFixture.Bind(prtgStore,
+            new EfJsonBlobStore(NewContext, PrtgMonitoringPolicyStore.BlobKey), sensorId, deviceId, 1,
+            "metadata-source", "metadata-resource");
+        identity = PrtgResourceFixture.BindChannel(prtgStore, identity, "free", "Free", "%", 1,
+            "descending-danger");
         var evidence = new PrtgDiskSemanticEvidenceStore(new EfJsonBlobStore(NewContext,
             PrtgDiskSemanticEvidenceStore.BlobKey));
         evidence.ConfirmManually(new PrtgDiskSemanticContext(sensorId, deviceId, 1,
                 "SNMP Disk Free", "free", "Free", "%", 1, "descending-danger"),
-            7, "Ready semantic fixture.", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion);
+            7, "Ready semantic fixture.", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion,
+            identity.SourceGeneration, identity.Generation, identity.ChannelGeneration, identity.Epoch);
         var verification = new PrtgDiskVerificationResultStore(new EfJsonBlobStore(NewContext,
             PrtgDiskVerificationResultStore.BlobKey));
         verification.Save(new PrtgDiskVerificationResult(sensorId, deviceId, 1, "SNMP Disk Free",
             "Verified", "Typed values match.", "free", "Free", "%", 1, "descending-danger", 1, true,
-            DateTime.UtcNow, _day, PrtgDiskAssessmentService.ParserSemanticVersion));
+            DateTime.UtcNow, _day, PrtgDiskAssessmentService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostName = "ready-host", Active = true });
         PrtgDiskAssessmentService CreateService(ISystemSettingsStore settings) => new(new EfPrtgStore(NewContext),
             hosts, settings, evidence, verification);
 
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(NewContext, sensorId, deviceId, 1,
+            "SNMP Disk Free", identity.SourceGeneration);
         Assert.True(CreateService(new FakeSystemSettingsStore()).HasAnyReadySemanticCandidate(completedDate, null));
         var settingsWithMutation = new CallbackSettingsStore(() =>
         {

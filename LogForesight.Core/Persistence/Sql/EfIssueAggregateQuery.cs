@@ -74,13 +74,18 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 改成探測主機資料版本，版本沒變就沿用既有索引。刻意不設 TTL：別名索引決定紀錄歸屬
     /// 哪一台主機，過期索引會讓查詢結果落在錯誤的主機上——與清單快取同一個判準。
     /// </summary>
-    private HostAliasIndex AliasIndex()
+    private HostAliasIndex AliasIndex(LogForesight.Core.Service.PrtgCalibrationCaptureBudget? budget = null)
     {
         var version = _hosts.DataVersion;
 
         // 命中路徑不進鎖（同 JsonBlobCollection.Read 的理由：連命中都搶鎖等於換一個咽喉點）
         var snapshot = _aliasIndexSnapshot;
-        if (snapshot != null && snapshot.Version == version) return snapshot.Index;
+        if (snapshot != null && snapshot.Version == version)
+        {
+            if (budget != null && snapshot.Index.HostCount > 10_000)
+                throw new LogForesight.Core.Service.CalibrationCapacityException("主機別名索引超過校準安全上限。");
+            return snapshot.Index;
+        }
 
         lock (_aliasIndexLock)
         {
@@ -90,10 +95,33 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 // **配上去的是進來時讀到的 version，不是建完後再讀一次的新版本**：
                 // 兩次讀之間主機若被改過，「新版本號配舊內容」會讓過期索引一路命中到下次寫入為止；
                 // 反過來「舊版本號配新內容」只會下次比對不相等、多重建一次，是安全的失敗方向。
-                var index = new HostAliasIndex(_hosts.GetAll());
-                current = new AliasIndexSnapshot(index, version);
+                HostAliasIndex index;
+                long indexedVersion;
+                if (budget == null)
+                {
+                    index = new HostAliasIndex(_hosts.GetAll());
+                    indexedVersion = version;
+                }
+                else
+                {
+                    var hostSnapshot = _hosts.CapturePrtgSnapshot(budget);
+                    if (hostSnapshot.Hosts.Count > 10_000)
+                        throw new LogForesight.Core.Service.CalibrationCapacityException("主機別名索引超過校準安全上限。");
+                    budget.Charge(hostSnapshot.Hosts.Count * 1024L, "bounded PRTG rule-hit host alias index");
+                    var hosts = hostSnapshot.Hosts.Select(host => new WebHost
+                    {
+                        HostId = host.HostId,
+                        HostName = host.HostName,
+                        MergedInto = host.MergedInto
+                    }).ToList();
+                    index = new HostAliasIndex(hosts);
+                    indexedVersion = hostSnapshot.Version;
+                }
+                current = new AliasIndexSnapshot(index, indexedVersion);
                 _aliasIndexSnapshot = current;
             }
+            if (budget != null && current.Index.HostCount > 10_000)
+                throw new LogForesight.Core.Service.CalibrationCapacityException("主機別名索引超過校準安全上限。");
             return current.Index;
         }
     }
@@ -1234,6 +1262,63 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         _performance?.Record("issues:AggregatePrtgRuleHits", sw.ElapsedMilliseconds);
 
         return result;
+    }
+
+    /// <summary>Complete calibration projection that rejects before materializing more than the admitted source rows.</summary>
+    public List<PrtgRuleHitAggregate> AggregatePrtgRuleHitsBounded(IssueExclusion exclusion, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, int maximumSourceRows,
+        LogForesight.Core.Service.PrtgCalibrationCaptureBudget budget)
+    {
+        if (maximumSourceRows is < 1 or > 200_000) throw new ArgumentOutOfRangeException(nameof(maximumSourceRows));
+        ArgumentNullException.ThrowIfNull(budget);
+        if (hostIds is { Count: 0 }) return [];
+        var f = from.Date;
+        var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
+        var sourceKeyReady = _sourceKeyReady();
+        using var ctx = _contextFactory();
+        HostAliasIndex? aliasIndexForFilter = null;
+        var query = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.LogName == PrtgFindingMapper.PrtgLogName);
+        if (hostIds != null)
+        {
+            aliasIndexForFilter = AliasIndex(budget);
+            var expandedHostIds = ExpandToAliasIds(aliasIndexForFilter, hostIds);
+            query = query.Where(x => expandedHostIds.Contains(x.HostId));
+        }
+
+        var sourceRowCount = query.LongCount();
+        if (sourceRowCount > maximumSourceRows)
+            throw new LogForesight.Core.Service.CalibrationCapacityException(
+                $"校準 PRTG 歷史命中來源超過 {maximumSourceRows} 列上限，完整統計已拒絕且未抽樣。");
+        if (query.Any(x => (x.EventKey + "x").Length - 1 > 255))
+            throw new LogForesight.Core.Service.CalibrationCapacityException(
+                "校準 PRTG 歷史命中包含超過 255 字元的 EventKey；完整統計已拒絕，未截斷鍵值。");
+
+        // Upper-bound each projected string plus row, grouping key/bucket and host-set overhead
+        // before EF materializes source objects. EventKey has just been checked against 255 chars.
+        using var sourceGraphReservation = budget.ReserveTransient(sourceRowCount * 2048L,
+            "bounded PRTG rule-hit source and grouping graph");
+        var aliasIndex = aliasIndexForFilter ?? AliasIndex(budget);
+        var rows = query.Select(x => new
+            {
+                x.RecordDate,
+                x.HostId,
+                EventKeyLength = (x.EventKey + "x").Length - 1,
+                EventKey = x.EventKey.Substring(0,
+                    (x.EventKey + "x").Length - 1 > 256 ? 256 : (x.EventKey + "x").Length - 1)
+            })
+            .Take(maximumSourceRows + 1).ToList();
+        if (rows.Count > maximumSourceRows || rows.Count != sourceRowCount)
+            throw new LogForesight.Core.Service.CalibrationCapacityException(
+                "校準 PRTG 歷史命中在預檢與讀取間變更，完整統計已拒絕且未抽樣。");
+        if (rows.Any(x => x.EventKeyLength > 255 || x.EventKey.Length > 255))
+            throw new LogForesight.Core.Service.CalibrationCapacityException(
+                "校準 PRTG 歷史命中包含超過 255 字元的 EventKey；完整統計已拒絕，未截斷鍵值。");
+        return rows.GroupBy(x => new { RuleCode = ExtractPrtgRuleCode(x.EventKey), x.RecordDate })
+            .Select(group => new PrtgRuleHitAggregate(group.Key.RuleCode, group.Key.RecordDate, group.Count(),
+                group.Select(row => Surviving(aliasIndex, row.HostId)).Distinct().Count()))
+            .ToList();
     }
 
     /// <summary>EventKey 清單每批上限：SQL Server 單一語句參數上限 2100，留足餘裕。</summary>

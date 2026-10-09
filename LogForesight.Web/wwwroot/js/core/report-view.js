@@ -92,6 +92,22 @@ function pre(report) {
     return el;
 }
 
+function evidenceVersionNotice(report) {
+    const messages = {
+        current: '此報告的已保存 PRTG 證據版本與目前主機日存檔相符。這只是存檔比對，不代表目前授權或即時狀態。',
+        stale: '此報告的已保存 PRTG 證據版本與目前主機日存檔不同；請以分析紀錄詳情中的目前存檔證據為準。',
+        unknown: '此報告沒有可核對的已保存 PRTG 證據版本；版本狀態未知。'
+    };
+    const message = Object.prototype.hasOwnProperty.call(messages, report.prtgEvidenceVersionStatus)
+        ? messages[report.prtgEvidenceVersionStatus]
+        : null;
+    if (!message) return null;
+    const notice = document.createElement('p');
+    notice.className = 'small text-muted mb-2';
+    notice.textContent = message;
+    return notice;
+}
+
 /**
  * 頁面內的可收合報告卡片。
  *
@@ -165,7 +181,7 @@ export function reportCard({ storageKey, title } = {}) {
             header.querySelector('.lf-no-print')?.remove();
             header.appendChild(toolbar(report));
 
-            body.replaceChildren(pre(report));
+            body.replaceChildren(...[evidenceVersionNotice(report), pre(report)].filter(Boolean));
             section.classList.remove('d-none');
 
             applyExpanded(storageKey ? localStorage.getItem(storageKey) === 'true' : false);
@@ -187,6 +203,8 @@ export function openReportModal(report) {
     meta.textContent = subtitleOf(report);
 
     head.append(meta, toolbar(report));
+    const notice = evidenceVersionNotice(report);
+    if (notice) wrap.appendChild(notice);
     wrap.append(head, pre(report));
 
     showDetailModal({ title: `${report.kindName}全文`, body: wrap, size: 'modal-xl' });

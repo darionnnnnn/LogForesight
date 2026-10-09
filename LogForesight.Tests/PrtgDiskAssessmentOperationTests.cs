@@ -53,6 +53,37 @@ public sealed class PrtgDiskAssessmentOperationTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => fixture.Service.AssessPage(operation, 0, 1));
     }
 
+    [Fact]
+    public void LegacyEvidenceWithoutIdentityReturnsUnreadyRowAndDoesNotFailWholeRead()
+    {
+        var fixture = Seed(1);
+        var operation = fixture.Service.BeginAssessment(_completedDay, _candidateThrough,
+            capturedHostSnapshot: ((IHostStore)fixture.Hosts).CapturePrtgSnapshot());
+
+        var page = fixture.Service.AssessPage(operation, 0, 1);
+        var row = Assert.Single(page.Rows);
+
+        Assert.False(row.EvidenceValidity?.IsValid ?? false);
+        Assert.False(row.Readiness.SemanticReady);
+        fixture.Service.CompleteAssessment(operation);
+    }
+
+    [Fact]
+    public void IdentityAppearingAfterLegacyMetadataCaptureRejectsTheOperation()
+    {
+        var fixture = Seed(1);
+        var operation = fixture.Service.BeginAssessment(_completedDay, _candidateThrough,
+            capturedHostSnapshot: ((IHostStore)fixture.Hosts).CapturePrtgSnapshot());
+        using (var db = NewContext())
+        {
+            PrtgResourceIdentityStore.Set(db, 1, "source-v1", 10_001, 1,
+                "resource-v1", "disk|auto", "channel-v1", true, DateTimeOffset.UtcNow);
+            db.SaveChanges();
+        }
+
+        Assert.Throws<InvalidOperationException>(() => fixture.Service.CompleteAssessment(operation));
+    }
+
     [Theory]
     [InlineData("mapping")]
     [InlineData("catalogue")]

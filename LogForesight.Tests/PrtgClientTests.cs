@@ -14,6 +14,93 @@ public class PrtgClientTests
     private const string ValidUrl = "https://prtg.example.com";
     private const string SampleToken = "prtg-secret-token-12345";
 
+    [Fact]
+    public async Task BoundedXmlSharesAuthenticationAndRetainsHttpClockSeparatelyFromBody()
+    {
+        var at = new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero);
+        const string xml = "<histdata totalcount=\"0\"/>";
+        var stub = new StubHandler { OnSend = (request, _) =>
+        {
+            Assert.Contains("apitoken=", request.RequestUri!.Query);
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(xml, Encoding.UTF8, "application/xml") };
+            response.Headers.Date = at;
+            return Task.FromResult(response);
+        } };
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var response = await client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64);
+        Assert.Equal(xml, response.Content);
+        Assert.Equal(at, response.HttpDateUtc);
+        Assert.Equal(TimeSpan.Zero, response.ReceivedAtUtc.Offset);
+        Assert.Equal(PrtgEndpointCategory.HistoricData, PrtgRequestBudget.Classify("api/historicdata.xml?id=77"));
+        Assert.Throws<InvalidDataException>(() => PrtgHistoricXmlReader.Parse("<html>login</html>"));
+    }
+
+    [Fact]
+    public async Task BoundedXmlRejectsUndeclaredOversizeAndSticky401WithoutAnotherLogin()
+    {
+        var calls = 0;
+        var stub = new StubHandler { OnSend = (_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        } };
+        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "reader", "", "passhash-secret");
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64));
+        await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedXmlAsync("api/historicdata.xml?id=78", 64));
+        Assert.Equal(1, calls);
+        var large = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StreamContent(new NonSeekableReadStream(Encoding.UTF8.GetBytes(new string('x', 65)))) }) };
+        using var bounded = new PrtgClient(ValidUrl, SampleToken, 30, false, large, PrtgAuthModes.Token, "", "", "");
+        await Assert.ThrowsAsync<PrtgClientException>(() => bounded.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64));
+    }
+
+    [Fact]
+    public async Task BoundedProbeRejectsDeclaredAndUndeclaredOversizeBeforeParsing()
+    {
+        foreach (var declared in new[] { true, false })
+        {
+            var stub = new StubHandler { OnSend = (_, _) =>
+            {
+                var content = new StreamContent(new NonSeekableReadStream(Encoding.UTF8.GetBytes(new string('x', 65))));
+                if (declared) content.Headers.ContentLength = 65;
+                else Assert.Null(content.Headers.ContentLength);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+            } };
+            using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedJsonAsync("api/table.json", 64));
+            Assert.Contains("上限", ex.Message);
+            Assert.DoesNotContain(SampleToken, ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task BoundedProbeAcceptsExactByteLimitAndHonorsCancellation()
+    {
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"a\":1}")) };
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        Assert.Equal("{\"a\":1}", await client.GetBoundedJsonAsync("api/table.json", 7));
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetBoundedJsonAsync("api/table.json", 7, cancellation.Token));
+        Assert.Single(stub.Requests);
+    }
+
+    private sealed class NonSeekableReadStream(byte[] bytes) : Stream
+    {
+        private readonly MemoryStream _inner = new(bytes);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => _inner.ReadAsync(buffer, ct);
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) _inner.Dispose(); base.Dispose(disposing); }
+    }
+
     private static HttpResponseMessage JsonResponse(HttpStatusCode code, string json)
     {
         return new HttpResponseMessage(code)

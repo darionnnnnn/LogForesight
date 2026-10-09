@@ -77,15 +77,31 @@ public sealed class PrtgDiskAssessmentServiceTests : IDisposable
             db.SaveChanges();
         }
         var evidence = new PrtgDiskSemanticEvidenceStore(_fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        var identity = PrtgResourceFixture.Bind(prtgStore, _fx.Blob(PrtgMonitoringPolicyStore.BlobKey),
+            sensorId, deviceId, 1, "assessment-source", "assessment-resource-1101");
+        identity = PrtgResourceFixture.BindChannel(prtgStore, identity, "free", "Free", "%", 1,
+            "descending-danger");
         for (long id = 1001; id <= sensorId; id++)
-            evidence.ConfirmManually(new PrtgDiskSemanticContext(id, id == sensorId ? deviceId : 3000 + id, 1,
+        {
+            var proofIdentity = id == sensorId ? identity : null;
+            var context = new PrtgDiskSemanticContext(id, id == sensorId ? deviceId : 3000 + id, 1,
                 "SNMP Disk Free", "free", "Free", "%", 1,
-                "descending-danger"), 9, "Manually confirmed percent free channel.", DateTime.UtcNow,
-                PrtgDiskAssessmentService.ParserSemanticVersion);
+                "descending-danger");
+            if (proofIdentity is null)
+                evidence.ConfirmManually(context, 9, "Manually confirmed percent free channel.", DateTime.UtcNow,
+                    PrtgDiskAssessmentService.ParserSemanticVersion);
+            else
+                evidence.ConfirmManually(context, 9, "Manually confirmed percent free channel.", DateTime.UtcNow,
+                    PrtgDiskAssessmentService.ParserSemanticVersion, proofIdentity.SourceGeneration,
+                    proofIdentity.Generation, proofIdentity.ChannelGeneration, proofIdentity.Epoch);
+        }
         var verifications = new PrtgDiskVerificationResultStore(_fx.Blob(PrtgDiskVerificationResultStore.BlobKey));
         verifications.Save(new PrtgDiskVerificationResult(sensorId, deviceId, 1, "SNMP Disk Free", "Verified",
             "Typed channel values matched.", "free", "Free", "%", 1, "descending-danger", 1, true,
-            DateTime.UtcNow, today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion));
+            DateTime.UtcNow, today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostName = "active", Active = true });
         var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(_fx.NewContext), hosts,
@@ -95,6 +111,8 @@ public sealed class PrtgDiskAssessmentServiceTests : IDisposable
         {
             PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional with { RecentWindowDays = 730 }
         };
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, sensorId, deviceId, 1,
+            "SNMP Disk Free", identity.SourceGeneration);
         Assert.True(assessment.HasAnyReadySemanticCandidate(completedDay, longWindowRule));
     }
 

@@ -196,6 +196,8 @@ public sealed class DiskTrendPreviewSensorDto
     public int ValidDayCount { get; set; }
     public int UsableHours { get; set; }
     public double? EstimatedDaysToDepletion { get; set; }
+    public double? EstimatedDaysToLowWater { get; set; }
+    public IReadOnlyList<string> Reasons { get; set; } = [];
 }
 
 /// <summary>儲存前驗證的結果——不合格時逐條回報，不寫入任何資料</summary>

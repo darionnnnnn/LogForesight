@@ -2,6 +2,11 @@
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Web.Services;
 
@@ -25,6 +30,7 @@ public class RecordDetailQueryService
     private readonly ISystemSettingsStore _settings;
     private readonly IIssueExclusionSource _exclusions;
     private readonly IIssueOwnerStore _issueOwners;
+    private readonly StorageBackend? _resourcePressureBackend;
 
     public RecordDetailQueryService(
         IRecordRepository repository,
@@ -40,7 +46,8 @@ public class RecordDetailQueryService
         ICurrentUser currentUser,
         ISystemSettingsStore settings,
         IIssueExclusionSource exclusions,
-        IIssueOwnerStore issueOwners)
+        IIssueOwnerStore issueOwners,
+        StorageBackend? resourcePressureBackend = null)
     {
         _repository = repository;
         _reports = reports;
@@ -56,6 +63,7 @@ public class RecordDetailQueryService
         _settings = settings;
         _exclusions = exclusions;
         _issueOwners = issueOwners;
+        _resourcePressureBackend = resourcePressureBackend;
     }
 
     public RecordDetailDto GetDetail(long hostId, DateTime date)
@@ -212,6 +220,8 @@ public class RecordDetailQueryService
             // 報告有自己的保留期，可能比紀錄先被清掉——實查有無，不看紀錄上那個永遠留著的旗標，
             // 否則畫面會給出一個點下去必定落空的入口
             HasReport = !caseGrantOnly && _reports.Exists(reportHost, date, ReportKinds.DailyRisk),
+            // 這是整日報告工作狀態；案件授與只涵蓋被交辦問題，不能洩漏整台主機的報告狀態。
+            RiskReportPending = caseGrantOnly ? null : record.RiskReportPending,
             CaseGrantOnly = caseGrantOnly,
             WeeklyCheckup = record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
             {
@@ -257,7 +267,15 @@ public class RecordDetailQueryService
         if (reportDate == null) return null;
 
         var content = _reports.Read(new HostKey { HostId = record.HostId, HostName = record.Host }, reportDate.Value, kind);
-        return content == null ? null : ReportViewDto.From(content);
+        if (content == null) return null;
+        var evidenceStatus = kind != ReportKinds.DailyRisk
+            ? "not_applicable"
+            : record.PrtgReportEvidenceFingerprint is { Length: 64 } savedFingerprint && savedFingerprint.All(Uri.IsHexDigit)
+                ? string.Equals(savedFingerprint, HostDayWorkflowFingerprint.PrtgInputFingerprint(record), StringComparison.Ordinal)
+                    ? "current"
+                    : "stale"
+                : "unknown";
+        return ReportViewDto.From(content, evidenceStatus);
     }
 
     /// <summary>
@@ -315,6 +333,8 @@ public class RecordDetailQueryService
     public HostDetailDto GetHostDetail(long hostId, int days)
     {
         _visibility.EnsureVisible(hostId);
+        var caseGrantOnly = _visibility.IsCaseGrantOnly(hostId);
+        var hostSettings = _settings.Get();
 
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
 
@@ -351,7 +371,8 @@ public class RecordDetailQueryService
                 HasRecord = record != null,
                 RiskLevel = record?.RiskLevel,
                 Headline = record?.Headline ?? "",
-                HasCoverageGap = record != null && record.HasCoverageGap
+                HasCoverageGap = record != null && record.HasCoverageGap,
+                RiskReportPending = caseGrantOnly ? null : record?.RiskReportPending
             });
         }
 
@@ -364,9 +385,187 @@ public class RecordDetailQueryService
             .Select(r => r.WeeklyCheckup!)
             .FirstOrDefault();
 
+        // Read display-only hints only after the normal host visibility check above.
+        var resourceHintItems = _resourcePressureBackend is null || caseGrantOnly
+            ? Array.Empty<PrtgResourcePressureHint>()
+            : new PrtgResourcePressureHintStore(_resourcePressureBackend.Blob(
+                    PrtgResourcePressureHintStore.BlobKey(hostId)))
+                .GetCurrent(hostId, DateTime.UtcNow).ToArray();
+        var currentEpisodes = _resourcePressureBackend is null || caseGrantOnly
+            ? Array.Empty<PrtgResourceFormalEpisode>()
+            : new PrtgResourceFormalEpisodeStore(_resourcePressureBackend.Blob(
+                PrtgResourceFormalEpisodeStore.BlobKey(hostId)))
+                .GetCurrentForHost(hostId, DateTime.UtcNow).ToArray();
+        var currentEpisodeSensorIds = currentEpisodes
+            .Select(e => e.SensorObjid);
+        var canManageResourcePressure = _resourcePressureBackend is not null &&
+            _currentUser.Has(Capability.Maintain) && !caseGrantOnly;
+        var savedPressureModes = canManageResourcePressure
+            ? (new PrtgResourcePressureModeStore(_resourcePressureBackend!.Blob(
+                PrtgResourcePressureModeStore.BlobKey(hostId))).Get().Grants ?? [])
+                .Where(grant => grant.FormalEnabled && grant.HostId == hostId)
+                .OrderBy(grant => grant.SensorObjid).ThenBy(grant => grant.Family).ToArray()
+            : Array.Empty<PrtgResourcePressureModeGrant>();
+        var currentResourceIds = resourceHintItems.Select(h => h.SensorObjid)
+            .Concat(currentEpisodeSensorIds)
+            .Concat(savedPressureModes.Select(grant => grant.SensorObjid))
+            .Distinct().ToArray();
+        IReadOnlyDictionary<long, PrtgResourceIdentity> currentResourceIdentities = new Dictionary<long, PrtgResourceIdentity>();
+        var currentResourceMetadata = new Dictionary<long, PrtgResourcePressureSensorMetadata>();
+        var currentPolicySensorIds = new HashSet<long>();
+        IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> currentSamplingProfiles =
+            new Dictionary<long, PrtgTrustedSamplingProfile>();
+        PrtgTrustedSamplingStrategyContext? currentSamplingStrategy = null;
+        PrtgMonitoringPolicy? currentResourcePolicy = null;
+        var resourcePolicyReady = false;
+        var resourceRules = _resourcePressureBackend is null ? null : PrtgResourceCurrentRuleCatalog.Load(_resourcePressureBackend);
+        if (_resourcePressureBackend is not null && !caseGrantOnly && hostSettings.PrtgEnabled)
+        {
+            var policy = new PrtgMonitoringPolicyStore(_resourcePressureBackend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+            currentResourcePolicy = policy;
+            resourcePolicyReady = policy.Ready(hostSettings.PrtgUrl) && policy.HostIds.Contains(hostId);
+            if (resourcePolicyReady && currentResourceIds.Length > 0)
+            {
+                currentPolicySensorIds = policy.SensorIds.ToHashSet();
+                var prtg = _resourcePressureBackend.PrtgStore();
+                currentResourceIdentities = prtg.GetResourceIdentities(currentResourceIds);
+                foreach (var page in currentResourceIds.Chunk(100))
+                    foreach (var metadata in prtg.GetResourcePressureSensorMetadata(page))
+                        currentResourceMetadata[metadata.SensorObjid] = metadata;
+                try
+                {
+                    var strategyProfile = PrtgFetchStrategy.Profile(hostSettings.PrtgFetchStrategy);
+                    currentSamplingStrategy = PrtgTrustedSamplingStrategyStateStore.ReadCurrent(
+                        _resourcePressureBackend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey).Read(), policy,
+                        PrtgFetchStrategy.Normalize(hostSettings.PrtgFetchStrategy), strategyProfile.SnapshotIntervalMinutes);
+                    if (currentSamplingStrategy.Ready)
+                        currentSamplingProfiles = new PrtgTrustedSamplingProfileStore(_resourcePressureBackend)
+                            .GetMany(currentResourceIds);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException or
+                                           ArgumentException or InvalidOperationException or
+                                           TimeZoneNotFoundException or InvalidTimeZoneException)
+                {
+                    currentSamplingProfiles = new Dictionary<long, PrtgTrustedSamplingProfile>();
+                    currentSamplingStrategy = null;
+                }
+                resourceHintItems = resourceHintItems.Where(h => IsCurrentResource(h.SensorObjid,
+                    h.SourceGeneration, h.ResourceGeneration, h.ChannelGeneration, h.ResourceEpoch,
+                    h.Family, h.SemanticVersion, h.StrategyVersion, h.ProfileFingerprint) &&
+                    resourceRules?.For(h.Family) is not null).ToArray();
+            }
+            else resourceHintItems = [];
+        }
+        else resourceHintItems = [];
+        bool IsCurrentResource(long sensorId, string? source, string? resource, string? channel, string? epoch,
+            PrtgResourceFamily family, string? semanticVersion = null, string? strategyVersion = null,
+            string? profileFingerprint = null) =>
+            resourcePolicyReady && currentResourceIdentities.TryGetValue(sensorId, out var identity) &&
+            currentResourceMetadata.TryGetValue(sensorId, out var metadata) && identity.Active &&
+            !identity.PendingReconciliation && identity.HostId == hostId && currentPolicySensorIds.Contains(sensorId) &&
+            identity.DeviceId == metadata.DeviceObjid && !metadata.Paused && !metadata.DevicePaused &&
+            source == identity.SourceGeneration && resource == identity.Generation &&
+            channel == identity.ChannelGeneration && epoch == identity.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
+            currentResourcePolicy is not null && currentSamplingStrategy is { Ready: true } &&
+            currentSamplingProfiles.TryGetValue(sensorId, out var profile) &&
+            IsCurrentSamplingProfile(profile, identity, metadata, currentResourcePolicy, currentSamplingStrategy,
+                family, semanticVersion, strategyVersion, profileFingerprint, DateTime.UtcNow);
+        var resourceHints = resourceHintItems
+                .Select(h => new PrtgResourcePressureHintDto
+                {
+                    SensorObjid = h.SensorObjid,
+                    Family = h.Family.ToString(),
+                    State = h.Kind.ToString(),
+                    ReasonCode = h.ReasonCode,
+                    AsOfUtc = h.AsOfUtc,
+                    EvidenceAsOfUtc = h.EvidenceAsOfUtc,
+                    EarlierHourAveragePercent = h.EarlierHourAveragePercent,
+                    LatestHourAveragePercent = h.LatestHourAveragePercent,
+                    CoveragePercent = h.WindowCoveragePercent,
+                    FirstHourStartUtc = h.FirstHourStartUtc,
+                    LatestHourStartUtc = h.LatestHourStartUtc,
+                    EpisodeStartedAtUtc = h.EpisodeStartedAtUtc,
+                    MissingFacts = h.MissingFacts?.ToList() ?? new()
+                }).ToList();
+        if (_resourcePressureBackend is not null && resourcePolicyReady && !caseGrantOnly)
+        {
+            var episodeStore = new PrtgResourceFormalEpisodeStore(_resourcePressureBackend.Blob(
+                PrtgResourceFormalEpisodeStore.BlobKey(hostId)));
+            foreach (var episode in episodeStore.GetCurrentForHost(hostId, DateTime.UtcNow)
+                         .Where(e => resourceRules?.For(PrtgResourceFamily.Disk) is not null &&
+                             IsCurrentResource(e.SensorObjid, e.SourceGeneration, e.ResourceGeneration,
+                    e.ChannelGeneration, e.ResourceEpoch, PrtgResourceFamily.Disk)))
+            {
+                var hint = resourceHints.FirstOrDefault(h => h.SensorObjid == episode.SensorObjid &&
+                    h.Family == "Disk");
+                if (hint is null)
+                {
+                    hint = new PrtgResourcePressureHintDto
+                    {
+                        SensorObjid = episode.SensorObjid,
+                        Family = "Disk",
+                        State = "Hit",
+                        ReasonCode = "active-formal-episode",
+                        AsOfUtc = episode.UpdatedAtUtc
+                    };
+                    resourceHints.Add(hint);
+                }
+                hint.EpisodeObservedSinceUtc = episode.EpisodeObservedSinceUtc;
+                hint.FormalReasons = episode.Reasons.OrderBy(r => r.ReasonCode, StringComparer.Ordinal)
+                    .Select(r => r.Summary).ToList();
+                hint.FormalEvidenceFingerprint = episode.ReasonSetFingerprint;
+            }
+        }
+
+        var resourcePressureModes = savedPressureModes.Select(grant =>
+        {
+            var catalog = resourceRules;
+            var familyRule = catalog?.For(grant.Family);
+            var source = grant.Family switch
+            {
+                PrtgResourceFamily.Cpu => "PRTG:" + PrtgRuleEvaluator.RuleResourceCpuPressure,
+                PrtgResourceFamily.Memory => "PRTG:" + PrtgRuleEvaluator.RuleResourceMemoryPressure,
+                _ => string.Empty
+            };
+            var issue = new LogIssueSignature
+            {
+                Source = source,
+                RuleId = grant.RuleId,
+                PrtgSourceGeneration = grant.SourceGeneration,
+                PrtgResourceGeneration = grant.ResourceGeneration,
+                PrtgChannelGeneration = grant.ChannelGeneration,
+                PrtgRuleAdmissionFingerprint = catalog?.AdmissionFingerprintFor(grant.Family)
+            };
+            var qualified = false;
+            if (canManageResourcePressure && resourcePolicyReady && familyRule is not null)
+            {
+                try
+                {
+                    qualified = PrtgResourceProfileQualification.IsCurrentFormalPressure(_resourcePressureBackend!,
+                        hostId, grant.SensorObjid, issue, DateTime.UtcNow);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException or
+                                           ArgumentException or InvalidOperationException or
+                                           TimeZoneNotFoundException or InvalidTimeZoneException)
+                {
+                    // Broken or stale persisted evidence is displayed as stale and never blocks host detail.
+                }
+            }
+            return new PrtgResourcePressureModeDto
+            {
+                SensorObjid = grant.SensorObjid,
+                Family = grant.Family.ToString(),
+                FormalEnabled = true,
+                Status = qualified ? "active" : "stale",
+                StaleReason = qualified ? null : !resourcePolicyReady ? "source-policy-unready" :
+                    familyRule?.Rule.Id != grant.RuleId ? "rule-changed" : "profile-identity-or-current-rule-unavailable"
+            };
+        }).ToList();
+
         return new HostDetailDto
         {
             HostId = host.HostId,
+            CaseGrantOnly = caseGrantOnly,
             HostName = host.HostName,
             DisplayName = host.DisplayName,
             RoleDesc = host.RoleDesc,
@@ -387,8 +586,65 @@ public class RecordDetailQueryService
                 Conclusion = latestCheckup.Conclusion
             },
             TopSignatures = BuildIssueSummary(records.Values),
-            MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settings.Get().RetentionDays)
+            ResourcePressureHints = resourceHints,
+            CanManageResourcePressure = canManageResourcePressure,
+            ResourcePressureModes = resourcePressureModes,
+            ResourcePressureAvailability = caseGrantOnly ? null : GetResourcePressureAvailability(
+                hostSettings.PrtgEnabled, _resourcePressureBackend is not null, resourcePolicyReady,
+                currentResourceIds.Length, resourceHints),
+            MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(hostSettings.RetentionDays)
         };
+    }
+
+    private static string GetResourcePressureAvailability(bool prtgEnabled, bool backendAvailable,
+        bool policyReady, int currentResourceCount, IReadOnlyCollection<PrtgResourcePressureHintDto> hints)
+    {
+        if (!prtgEnabled) return "disabled";
+        if (!backendAvailable || !policyReady) return "policy-not-ready";
+        if (currentResourceCount == 0 || hints.Count == 0) return "current-proof-unavailable";
+        if (hints.All(hint => hint.State == PrtgResourceDecisionKind.Insufficient.ToString())) return "warming";
+        if (hints.All(hint => hint.State == PrtgResourceDecisionKind.NoHit.ToString())) return "ready-no-hit";
+        return "current-evidence";
+    }
+
+    private static bool IsCurrentSamplingProfile(PrtgTrustedSamplingProfile profile, PrtgResourceIdentity identity,
+        PrtgResourcePressureSensorMetadata metadata, PrtgMonitoringPolicy policy,
+        PrtgTrustedSamplingStrategyContext strategy, PrtgResourceFamily family,
+        string? expectedSemanticVersion, string? expectedStrategyVersion, string? expectedProfileFingerprint,
+        DateTime nowUtc)
+    {
+        if (nowUtc.Kind != DateTimeKind.Utc || !strategy.Ready ||
+            expectedSemanticVersion is not null && profile.SemanticVersion != expectedSemanticVersion ||
+            expectedStrategyVersion is not null && profile.StrategyFingerprint != expectedStrategyVersion ||
+            profile.Unit != "%" || profile.Scale != 1 || (family switch
+            {
+                PrtgResourceFamily.Cpu => profile.Quantity != PrtgTrustedQuantitySemantic.CpuLoadPercent,
+                PrtgResourceFamily.Memory => profile.Quantity is not (PrtgTrustedQuantitySemantic.MemoryUsedPercent or
+                    PrtgTrustedQuantitySemantic.MemoryAvailablePercent),
+                PrtgResourceFamily.Disk => profile.Quantity != PrtgTrustedQuantitySemantic.DiskFreePercent,
+                _ => true
+            })) return false;
+
+        try
+        {
+            var resolution = PrtgTrustedSamplingProfileResolver.Resolve(profile, identity, policy, profile.SensorObjid,
+                metadata.SensorType, strategy, nowUtc, nowUtc, nowUtc);
+            if (!resolution.Ready) return false;
+            if (expectedProfileFingerprint is null) return true;
+            var currentContext = new PrtgResourceCurrentContext(profile.SensorObjid, profile.SourceGeneration,
+                profile.ResourceGeneration, profile.ChannelGeneration, profile.IdentityEpoch.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture), profile.SemanticVersion,
+                profile.StrategyFingerprint, profile.StrategyMinutes, profile.StrategyEffectiveFromHourUtc,
+                profile.ConfirmedScanInterval, profile.RawTimestampTimeZoneId, profile.AnalysisTimeZoneId,
+                PrtgResourcePeriodConsumer.StableProfileFingerprint(profile));
+            return IsSha256(expectedProfileFingerprint) && expectedProfileFingerprint ==
+                PrtgResourcePressureEvaluator.GetProfileFingerprint(family, currentContext);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException or TimeZoneNotFoundException or
+                                   InvalidTimeZoneException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -647,6 +903,7 @@ public class RecordDetailQueryService
         HashSet<string>? priorClosedIssueKeys = null)
     {
         var key = IssueSignatureKey.For(issue);
+        var sourceObservations = SourceEvidence.BoundObservations(issue.SourceObservations, out var sourceObservationsTruncated);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
         var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
 
@@ -666,6 +923,21 @@ public class RecordDetailQueryService
             KnownIssue = issue.KnownIssue,
             FirstSeen = issue.FirstSeen,
             LastSeen = issue.LastSeen,
+            SourceObservations = sourceObservations.Select(e => new IssueSourceObservationDto
+            {
+                SourceKind = e.SourceKind.ToString(),
+                ResourceScope = e.ResourceScope.ToString(),
+                ExactHostKey = e.ExactHostKey,
+                ExactResourceKey = e.ExactResourceKey,
+                EventTimeUtc = e.EventTimeUtc,
+                WindowStartUtc = e.WindowStartUtc,
+                WindowEndUtc = e.WindowEndUtc,
+                WindowResolution = e.WindowResolution,
+                NativeReference = e.HasExactReference ? e.SourceReference : null
+            }).ToList(),
+            SourceObservationsTruncated = issue.SourceObservationsTruncated || sourceObservationsTruncated,
+            PrtgResourceReasonCodes = PrtgResourceEvidencePresentation.From(issue)?.ReasonCodes.ToList() ?? [],
+            PrtgResourceVersionEvidence = BuildPrtgResourceVersionEvidence(issue),
             DistinctMessageCount = issue.DistinctMessageCount,
             KeyDetails = issue.KeyDetails,
             LoginFailureDetails = issue.LoginFailureDetails?.Select(d => new LoginFailureDetailDto
@@ -705,6 +977,26 @@ public class RecordDetailQueryService
             HasPriorHandling = priorClosedIssueKeys?.Contains(key) ?? false
         };
     }
+
+    private static PrtgResourceVersionEvidenceDto? BuildPrtgResourceVersionEvidence(LogIssueSignature issue)
+    {
+        var evidence = PrtgResourceEvidencePresentation.From(issue);
+        if (evidence == null) return null;
+        return new PrtgResourceVersionEvidenceDto
+        {
+            SourceGeneration = IsBoundedStoredVersion(issue.PrtgSourceGeneration) ? "recorded" : "unknown",
+            ResourceGeneration = IsBoundedStoredVersion(issue.PrtgResourceGeneration) ? "recorded" : "unknown",
+            ChannelGeneration = IsBoundedStoredVersion(issue.PrtgChannelGeneration) ? "recorded" : "unknown",
+            RuleAdmissionFingerprint = IsSha256(issue.PrtgRuleAdmissionFingerprint) ? "recorded" : "unknown",
+            EvidenceVersionReference = evidence.EvidenceVersionReference,
+            RuleAdmissionVersionReference = evidence.RuleAdmissionVersionReference
+        };
+    }
+
+    private static bool IsBoundedStoredVersion(string? value) => value is { Length: > 0 and <= 128 } &&
+        value.All(character => !char.IsControl(character));
+
+    private static bool IsSha256(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
     private static string IssueStatusText(string status) => status switch
     {

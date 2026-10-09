@@ -1,9 +1,12 @@
 using System.Text.Json;
+using System.Data;
+using System.Data.Common;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -77,6 +80,12 @@ public static class CalibrationConstants
     public const int ResidualSufficientDays = 28;
     /// <summary>殘留候選主機日匯出筆數上限</summary>
     public const int ResidualCandidateMaxCount = 5000;
+    public const int ResidualCandidateJsonMaxCharacters = 1 * 1024 * 1024;
+    public const int ResidualCandidateJsonMaxBytes = 32 * 1024 * 1024;
+    public const int ResidualHistoryMaxRows = 250_000;
+    public const int ResidualHistoryJsonMaxCharacters = 1 * 1024 * 1024;
+    public const int ResidualHistoryObjectGraphBudgetBytes = 256 * 1024 * 1024;
+    public const int ResidualDatabasePageRows = 500;
 }
 
 /// <summary>
@@ -148,8 +157,16 @@ public sealed class CalibrationRuleThresholdDataset
 {
     public List<PrtgRuleHitAggregate> DailyRuleHits { get; init; } = new();
     public List<CalibrationPrtgRuleThresholdInfo> CurrentRules { get; init; } = new();
-    public int MagnitudeSemanticsVersion { get; init; } = 1;
+    public int MagnitudeSemanticsVersion { get; init; } = 2;
     public string MagnitudeBasis { get; init; } = "trusted-covered-timeline-v1; Down Magnitude/ThresholdMagnitude is continuous trusted episode minutes and DayMagnitude is daily overlap minutes; Warning is daily cumulative minutes; Flapping is daily Down-to-Up transitions.";
+    public string FormalEvaluationScope { get; init; } = "trusted-status-timeline-only";
+    public List<string> FormalEvaluationSupportedRuleCodes { get; init; } = new()
+    {
+        PrtgRuleEvaluator.RuleDown,
+        PrtgRuleEvaluator.RuleFlapping,
+        PrtgRuleEvaluator.RuleWarning
+    };
+    public List<string> UnsupportedByMagnitudeAnalysisRuleCodes { get; init; } = new();
     public string EvidenceFingerprint { get; init; } = string.Empty;
     public DateTimeOffset AsOf { get; init; }
     public List<string> Explanations { get; init; } = new();
@@ -178,7 +195,7 @@ public sealed record CalibrationRuleMagnitudeRow(
     public int? DayMagnitude { get; init; }
 }
 
-/// <summary>以同一可信 timeline/as-of 和正式門檻 evaluator 實際命中的筆數，按規則識別分列。</summary>
+/// <summary>以同一可信 timeline/as-of 和正式門檻 evaluator 重算 down/flapping/warning 的命中筆數，按規則識別分列。</summary>
 public sealed record CalibrationFormalRuleHitCount(string RuleCode, string RuleId, string? SensorCategory,
     int Threshold, int FindingCount);
 
@@ -199,12 +216,14 @@ public sealed record CalibrationRuleMagnitudeSummary(
 /// </summary>
 public sealed record CalibrationPrtgRuleThresholdInfo(
     string RuleCode,
-    int Threshold,
+    int? Threshold,
     string Category,
     string Severity,
     bool ElevatesDayRisk,
     string Description,
-    string? SensorCategory);
+    string? SensorCategory,
+    string ThresholdKind,
+    bool RuleEnabled);
 
 /// <summary>
 /// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）
@@ -311,8 +330,13 @@ public sealed class CalibrationExportPackage
 /// </summary>
 public sealed class CalibrationService
 {
+    private static readonly SemaphoreSlim CalibrationCaptureAdmission = new(1, 1);
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private const int MaxPolicySensorsForCalibration = 15000;
+    private const int CalibrationSensorTypeMaxChars = 128;
+    private const int CalibrationSensorStatusMaxChars = 64;
+    private const int CalibrationCategoryMaxChars = 64;
+    private const int CalibrationMapStatusMaxChars = 16;
     private const int MaxTimelineBlobRowsForCalibration = 30000;
     private const int MaxPolicyBlobCharactersForCalibration = 4 * 1024 * 1024;
     private const int MaxTimelineBlobCharactersForCalibration = 4 * 1024 * 1024;
@@ -326,19 +350,22 @@ public sealed class CalibrationService
     private readonly ISystemSettingsStore _settingsStore;
     private readonly IKnownIssueRuleStore _ruleStore;
     private readonly string _backendCacheIdentity;
+    private readonly PrtgCalibrationCaptureLimits _captureLimits;
 
     public CalibrationService(
         Func<LfDbContext> contextFactory,
         EfPrtgStore prtgStore,
         IIssueAggregateQuery issueQuery,
         ISystemSettingsStore settingsStore,
-        IKnownIssueRuleStore ruleStore)
+        IKnownIssueRuleStore ruleStore,
+        PrtgCalibrationCaptureLimits? captureLimits = null)
     {
         _contextFactory = contextFactory ?? throw new ArgumentNullException(nameof(contextFactory));
         _prtgStore = prtgStore ?? throw new ArgumentNullException(nameof(prtgStore));
         _issueQuery = issueQuery ?? throw new ArgumentNullException(nameof(issueQuery));
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _ruleStore = ruleStore ?? throw new ArgumentNullException(nameof(ruleStore));
+        _captureLimits = captureLimits ?? EfPrtgStore.DefaultCalibrationCaptureLimits;
         using (var context = _contextFactory())
         {
             var connection = context.Database.GetDbConnection();
@@ -355,18 +382,15 @@ public sealed class CalibrationService
     private static DateTime _cachedAt;
     private static CalibrationAssessmentSummary? _cached;
     private static string _cachedAssessmentKey = string.Empty;
-    private static List<CalibrationResidualCandidateRow>? _cachedResidualRows;
-    private static (DateTime Anchor, int RetentionDays) _cachedResidualKey;
-
-    /// <summary>殘差候選列快取自己的時間戳。**不可以共用 <c>_cachedAt</c>**（那是整體判定
-    /// 摘要的）：共用的話，沒先算過整體摘要時 _cachedAt 恆為 default，殘差快取永遠不命中；
-    /// 反過來剛算過整體摘要時，十分鐘前算的殘差資料會被判成新鮮。</summary>
-    private static DateTime _cachedResidualAt;
+    private List<CalibrationResidualCandidateRow>? _capturedResidualRows;
 
     private readonly object _ruleMagnitudeLock = new();
     private RuleMagnitudeAnalysis? _cachedRuleMagnitudeAnalysis;
 
-    private sealed record RuleMagnitudeAnalysis(string SourceFingerprint, string Fingerprint, string RuleStamp, long HostMapDataRevision, DateTimeOffset AsOf,
+    private sealed record RuleMagnitudeAnalysis(string SourceFingerprint, string Fingerprint, string RuleStamp,
+        long HostMapDataRevision, long PolicyVersion, long ScopeVersion, long[] PolicySensorIds,
+        string ResourceIdentityStamp, string ResourceIdentityVersionStamp, string TimelineStamp,
+        string SensorStamp, string SettingsStamp, DateTimeOffset AsOf,
         List<CalibrationRuleMagnitudeRow> Samples, List<CalibrationRuleMagnitudeSummary> Summaries,
         List<CalibrationFormalRuleHitCount> FormalHits, List<string> Explanations,
         List<CalibrationPrtgRuleThresholdInfo> CurrentRules,
@@ -381,12 +405,62 @@ public sealed class CalibrationService
     /// 評估四項校準指標的累積量、狀態與補充說明。
     /// 結果在行程內快取 <see cref="CacheTtl"/>；`forceRefresh` 為 true 時略過快取重算。
     /// </summary>
-    public CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null, bool forceRefresh = false)
+    public CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null, bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
-        var anchorDate = (anchor ?? DateTime.Today).Date;
-        var settings = _settingsStore.Get();
-        var allSensors = _prtgStore.GetAllSensors();
-        var analysis = GetRuleMagnitudeAnalysis(anchorDate, settings, forceRefresh);
+        if (!CalibrationCaptureAdmission.Wait(0))
+            throw new CalibrationCapacityException("另一個校準資料擷取正在執行，請稍後重試。", retryable: true);
+        using var budget = new PrtgCalibrationCaptureBudget();
+        try
+        {
+            var anchorDate = (anchor ?? DateTime.Today).Date;
+            var settings = _settingsStore.Get();
+            var from = anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
+            var toExclusive = anchorDate.AddDays(1);
+            var capture = _prtgStore.CaptureCalibrationData(from, toExclusive, settings.PrtgSensorTypeWhitelist,
+                anchorDate, _captureLimits, cancellationToken, budget);
+            return AssessStatusWithCapture(anchorDate, settings, capture, forceRefresh, cancellationToken, budget);
+        }
+        finally
+        {
+            CalibrationCaptureAdmission.Release();
+        }
+    }
+
+    /// <summary>Runs status capture and its consuming response under one logical memory admission.</summary>
+    public TResult WithAssessment<TResult>(bool forceRefresh,
+        Func<CalibrationAssessmentSummary, PrtgCalibrationCaptureBudget, TResult> consume,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(consume);
+        if (!CalibrationCaptureAdmission.Wait(0))
+            throw new CalibrationCapacityException("另一個校準資料擷取正在執行，請稍後重試。", retryable: true);
+        using var budget = new PrtgCalibrationCaptureBudget();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var anchorDate = DateTime.Today;
+            var settings = _settingsStore.Get();
+            var capture = _prtgStore.CaptureCalibrationData(anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1)),
+                anchorDate.AddDays(1), settings.PrtgSensorTypeWhitelist, anchorDate, _captureLimits, cancellationToken, budget);
+            var summary = AssessStatusWithCapture(anchorDate, settings, capture, forceRefresh, cancellationToken, budget);
+            return consume(summary, budget);
+        }
+        finally
+        {
+            CalibrationCaptureAdmission.Release();
+        }
+    }
+
+    private CalibrationAssessmentSummary AssessStatusWithCapture(DateTime anchorDate, SystemSettings settings,
+        PrtgCalibrationDataCapture capture, bool forceRefresh, CancellationToken cancellationToken,
+        PrtgCalibrationCaptureBudget budget, RuleMagnitudeAnalysis? sharedRuleAnalysis = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _capturedResidualRows = null;
+        budget.Charge(capture.Sensors.Count * 8L, "sensor reference index");
+        var allSensors = capture.Sensors.ToList();
+        var analysis = sharedRuleAnalysis ?? GetRuleMagnitudeAnalysis(anchorDate, settings, forceRefresh, budget);
         var assessmentKey = BuildAssessmentCacheKey(anchorDate, settings, allSensors, analysis.Fingerprint);
         if (!forceRefresh)
         {
@@ -397,10 +471,13 @@ public sealed class CalibrationService
             }
         }
 
-        var item1 = AssessPrtgValueBaseline(anchorDate, settings, allSensors);
+        budget.Charge(checked(capture.Sensors.Count * 64L + capture.ValueCoverage.Count * 64L),
+            "baseline status sensor and coverage indexes");
+        var item1 = AssessPrtgValueBaseline(anchorDate, settings, allSensors, capture);
         var item2 = AssessPrtgRuleThresholds(anchorDate, settings, allSensors, analysis);
-        var item3 = AssessTriggeredFetchMagnitude(anchorDate, settings, allSensors);
-        var item4 = AssessResidualCredentialThresholds(anchorDate, settings);
+        var item3 = AssessTriggeredFetchMagnitude(anchorDate, settings, allSensors, capture.DailyMagnitudes);
+        var item4 = AssessResidualCredentialThresholds(anchorDate, settings, cancellationToken, budget);
+        budget.Charge(64 * 1024L, "status DTO assembly");
 
         var summary = new CalibrationAssessmentSummary
         {
@@ -418,7 +495,26 @@ public sealed class CalibrationService
             _cachedAssessmentKey = assessmentKey;
         }
 
+        budget.Charge(EstimateStatusDtoBytes(summary), "status response DTO");
+
         return summary;
+    }
+
+    private static long EstimateStatusDtoBytes(CalibrationAssessmentSummary summary)
+    {
+        static long EstimateItem(CalibrationItemAssessment item)
+        {
+            static long EstimateDictionary(Dictionary<string, object> values) => values.Sum(pair =>
+                256L + 2L * pair.Key.Length + (pair.Value is string text ? 2L * text.Length : 256L));
+
+            return checked(2048L + 2L * item.ItemName.Length +
+                EstimateDictionary(item.KeyMetrics) + EstimateDictionary(item.CurrentThresholds) +
+                item.Explanations.Sum(text => 256L + 2L * text.Length));
+        }
+
+        return checked(512L * 1024L + EstimateItem(summary.PrtgValueBaseline) +
+            EstimateItem(summary.PrtgRuleThresholds) + EstimateItem(summary.TriggeredFetchMagnitude) +
+            EstimateItem(summary.ResidualCredentialThresholds));
     }
 
     /// <summary>清空判定快取（測試用；正式路徑靠 TTL 自然過期）</summary>
@@ -430,9 +526,6 @@ public sealed class CalibrationService
             _cachedAnchor = default;
             _cachedAt = default;
             _cachedAssessmentKey = string.Empty;
-            _cachedResidualRows = null;
-            _cachedResidualKey = default;
-            _cachedResidualAt = default;
         }
     }
 
@@ -441,38 +534,73 @@ public sealed class CalibrationService
     /// </summary>
     public CalibrationExportPackage BuildExportPackage(DateTime? anchor = null, bool summaryOnly = false)
     {
+        if (!CalibrationCaptureAdmission.Wait(0))
+            throw new CalibrationCapacityException("另一個校準資料擷取正在執行，請稍後重試。", retryable: true);
+        using var budget = new PrtgCalibrationCaptureBudget();
+        try
+        {
+            var package = BuildExportPackageCore(anchor, summaryOnly, CancellationToken.None, budget);
+            budget.Charge(EstimateExportDtoBytes(package), "export DTO assembly");
+            return package;
+        }
+        finally
+        {
+            CalibrationCaptureAdmission.Release();
+        }
+    }
+
+    /// <summary>在同一個 process-wide capture admission 內組包並消費，避免匯出序列化期間再配置另一份全量封包。</summary>
+    public TResult WithExportPackage<TResult>(bool summaryOnly,
+        Func<CalibrationExportPackage, PrtgCalibrationCaptureBudget, TResult> consume,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(consume);
+        if (!CalibrationCaptureAdmission.Wait(0))
+            throw new CalibrationCapacityException("另一個校準資料擷取正在執行，請稍後重試。", retryable: true);
+        using var budget = new PrtgCalibrationCaptureBudget();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var package = BuildExportPackageCore(null, summaryOnly, cancellationToken, budget);
+            budget.Charge(EstimateExportDtoBytes(package), "export DTO assembly");
+            return consume(package, budget);
+        }
+        finally
+        {
+            CalibrationCaptureAdmission.Release();
+        }
+    }
+
+    private CalibrationExportPackage BuildExportPackageCore(DateTime? anchor, bool summaryOnly,
+        CancellationToken cancellationToken, PrtgCalibrationCaptureBudget budget)
+    {
         var anchorDate = (anchor ?? DateTime.Today).Date;
         var now = DateTime.Now;
         var settings = _settingsStore.Get();
-        var allSensors = _prtgStore.GetAllSensors();
-        RuleMagnitudeAnalysis ruleAnalysis = null!;
-        CalibrationAssessmentSummary summary = null!;
-        var evidenceMatched = false;
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            settings = _settingsStore.Get();
-            allSensors = _prtgStore.GetAllSensors();
-            ruleAnalysis = GetRuleMagnitudeAnalysis(anchorDate, settings, forceRefresh: false);
-            summary = AssessStatus(anchorDate);
-            var summaryFingerprint = summary.PrtgRuleThresholds.KeyMetrics.TryGetValue("EvidenceFingerprint", out var value)
-                ? value?.ToString() : null;
-            if (string.Equals(summaryFingerprint, ruleAnalysis.Fingerprint, StringComparison.Ordinal))
-            {
-                evidenceMatched = true;
-                break;
-            }
-        }
-        if (!evidenceMatched)
-            throw new InvalidOperationException("校準證據在匯出組裝期間變更，請重試。");
-
-        // 1. 值型基線資料集：最近 56 天 per-sensor 每日聚合
         var valueBaselineFrom = anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
         var valueBaselineToExclusive = anchorDate.AddDays(1);
-        var dailyAggs = _prtgStore.GetDailyValueAggregations(valueBaselineFrom, valueBaselineToExclusive);
+        var capturedWhitelist = (settings.PrtgSensorTypeWhitelist ?? []).ToArray();
+        var capture = _prtgStore.CaptureCalibrationData(valueBaselineFrom, valueBaselineToExclusive,
+            capturedWhitelist, anchorDate, _captureLimits, cancellationToken, budget);
+        budget.Charge(capture.Sensors.Count * 8L, "sensor reference index");
+        var allSensors = capture.Sensors.ToList();
+        settings = _settingsStore.Get();
+        if (!capturedWhitelist.SequenceEqual(settings.PrtgSensorTypeWhitelist ?? [], StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("校準 sensor 白名單在一致性資料擷取期間變更，請重試。");
+        var ruleAnalysis = GetRuleMagnitudeAnalysis(anchorDate, settings, forceRefresh: true, budget: budget);
+        var summary = AssessStatusWithCapture(anchorDate, settings, capture, forceRefresh: true,
+            cancellationToken, budget, ruleAnalysis);
 
+        // 1. 值型基線資料集：取自同一個有界 SQL snapshot 的 56 天每日聚合。
+        var dailyAggs = capture.DailyAggregations;
+        // Summary mode keeps compact exact-statistic accumulators only. It must not pay for
+        // per-row DTOs or LINQ GroupBy lists that it never emits.
+        budget.Charge(checked(dailyAggs.Count * (summaryOnly ? 80L : 960L)),
+            summaryOnly ? "compact exact summary statistic accumulators" : "full daily DTO and summary grouping assembly");
+        budget.Charge(capture.Sensors.Count * 1024L + capture.HostMaps.Count * 256L,
+            "sensor and host-map export lookup indexes");
         var sensorsByObjid = allSensors.ToDictionary(s => s.Objid);
-        var (_, hostMapRows) = _prtgStore.GetLatestHostMapWithDate(30, anchorDate);
-        var hostByDevice = hostMapRows
+        var hostByDevice = capture.HostMaps
             .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .ToDictionary(m => m.DeviceObjid, m => (HostId: m.HostId!.Value, HostName: m.HostName ?? string.Empty));
 
@@ -518,30 +646,37 @@ public sealed class CalibrationService
         }
 
         // 1b. 每顆感測器的分佈摘要（ValueSensorSummaries）
-        var scopedAggsBySensor = dailyAggs
-            .Where(agg => sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)
-                       && (whitelistSet == null || whitelistSet.Contains(sensor.SensorType)))
-            .GroupBy(agg => agg.SensorObjid)
-            .OrderBy(g => g.Key)
-            .ToList();
-
         var valueSensorSummaries = new List<CalibrationValueSensorSummary>();
-        foreach (var group in scopedAggsBySensor)
+        var sensorStats = new Dictionary<long, (int UsableHours, int SampledHours, int Days, List<double> Samples)>();
+        var typeSamplesByName = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var agg in dailyAggs)
         {
-            var sensor = sensorsByObjid[group.Key];
+            if (!sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor) ||
+                (whitelistSet != null && !whitelistSet.Contains(sensor.SensorType))) continue;
+
+            if (!sensorStats.TryGetValue(agg.SensorObjid, out var accumulator))
+                accumulator = (0, 0, 0, new List<double>(CalibrationConstants.ValueBaselineWindowDays));
+            accumulator.UsableHours = checked(accumulator.UsableHours + agg.UsableCount);
+            accumulator.SampledHours = checked(accumulator.SampledHours + agg.SampledCount);
+            if (agg.UsableCount > 0) accumulator.Days++;
+            if (agg.AvgValue.HasValue) accumulator.Samples.Add(agg.AvgValue.Value);
+            sensorStats[agg.SensorObjid] = accumulator;
+            if (agg.AvgValue.HasValue)
+            {
+                if (!typeSamplesByName.TryGetValue(sensor.SensorType, out var typeSamples))
+                    typeSamplesByName[sensor.SensorType] = typeSamples = new List<double>();
+                typeSamples.Add(agg.AvgValue.Value);
+            }
+        }
+
+        foreach (var pair in sensorStats.OrderBy(p => p.Key))
+        {
+            var sensor = sensorsByObjid[pair.Key];
             string? hostName = hostByDevice.TryGetValue(sensor.DeviceObjid, out var hostInfo) ? hostInfo.HostName : null;
-            var aggs = group.ToList();
-
-            var days = aggs.Count(a => a.UsableCount > 0);
-            var usableHours = aggs.Sum(a => a.UsableCount);
-            var sampledHours = aggs.Sum(a => a.SampledCount);
-            var sampledRatio = usableHours > 0 ? Math.Round((double)sampledHours / usableHours, 3) : 0.0;
-
-            var samples = aggs
-                .Where(a => a.AvgValue != null)
-                .Select(a => a.AvgValue!.Value)
-                .OrderBy(v => v)
-                .ToList();
+            var stats = pair.Value;
+            var sampledRatio = stats.UsableHours > 0 ? Math.Round((double)stats.SampledHours / stats.UsableHours, 3) : 0.0;
+            var samples = stats.Samples;
+            samples.Sort();
 
             double? mean = samples.Count > 0 ? samples.Average() : null;
             double? stdDev = CalculatePopulationStdDev(samples, mean);
@@ -556,8 +691,8 @@ public sealed class CalibrationService
                 SensorType: sensor.SensorType,
                 Unit: sensor.Unit,
                 IsVolumeNormalized: PrtgVolumeSensorTypes.IsVolume(sensor.SensorType),
-                Days: days,
-                UsableHours: usableHours,
+                Days: stats.Days,
+                UsableHours: stats.UsableHours,
                 SampledRatio: sampledRatio,
                 Mean: mean,
                 StdDev: stdDev,
@@ -569,16 +704,10 @@ public sealed class CalibrationService
         }
 
         // 1c. 每種感測器類型的分佈與小時曲線（ValueTypeProfiles）
-        var hourlyProfiles = _prtgStore.GetUsableHourlyProfileByType(valueBaselineFrom, valueBaselineToExclusive);
+        var hourlyProfiles = capture.HourlyProfiles;
         var hourlyByType = hourlyProfiles
             .GroupBy(p => p.SensorType, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToDictionary(p => p.Hour, p => p.AvgValue), StringComparer.OrdinalIgnoreCase);
-
-        var scopedDailyAggsByType = dailyAggs
-            .Where(agg => sensorsByObjid.TryGetValue(agg.SensorObjid, out var sensor)
-                       && (whitelistSet == null || whitelistSet.Contains(sensor.SensorType)))
-            .GroupBy(agg => sensorsByObjid[agg.SensorObjid].SensorType, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
         var valueTypeProfiles = new List<CalibrationValueTypeProfile>();
         var summariesByType = valueSensorSummaries
@@ -592,15 +721,10 @@ public sealed class CalibrationService
             var sensorCount = typeGroup.Count();
             var usableHours = typeGroup.Sum(s => s.UsableHours);
 
-            List<double> typeSamples = new();
-            if (scopedDailyAggsByType.TryGetValue(sensorType, out var typeAggs))
-            {
-                typeSamples = typeAggs
-                    .Where(a => a.AvgValue != null)
-                    .Select(a => a.AvgValue!.Value)
-                    .OrderBy(v => v)
-                    .ToList();
-            }
+            var typeSamples = typeSamplesByName.TryGetValue(sensorType, out var collectedSamples)
+                ? collectedSamples
+                : new List<double>();
+            typeSamples.Sort();
 
             double? dailyP50 = Percentile(typeSamples, 50);
             double? dailyP90 = Percentile(typeSamples, 90);
@@ -632,8 +756,9 @@ public sealed class CalibrationService
         }
 
         // 1d. 匯出上下文（CalibrationExportContext）
-        var mirrorSummary = _prtgStore.GetMirrorSummary();
-        var snapshotTargets = _prtgStore.GetValueFetchTargets(whitelist, hostByDevice.Keys).Count;
+        var mirrorSummary = capture.MirrorSummary;
+        var snapshotTargets = allSensors.Count(sensor => !sensor.Paused &&
+            (whitelistSet == null || whitelistSet.Contains(sensor.SensorType)) && hostByDevice.ContainsKey(sensor.DeviceObjid));
         var exportContext = new CalibrationExportContext(
             Detail: summaryOnly ? "summary" : "full",
             FetchStrategy: settings.PrtgFetchStrategy ?? string.Empty,
@@ -652,7 +777,9 @@ public sealed class CalibrationService
         // 2. 規則門檻資料集：近 56 天每日命中數 ＋ 規則庫全部 PRTG 規則的門檻現值（含適用分類）
         var ruleFrom = anchorDate.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
         // 靜音不排除：校準看的是規則實際命中量，靜音只是讀取側的顯示決定，排掉會讓門檻建議失真
-        var ruleHits = _issueQuery.AggregatePrtgRuleHits(IssueExclusion.None, ruleFrom, anchorDate, null);
+        var ruleHits = _issueQuery.AggregatePrtgRuleHitsBounded(
+            IssueExclusion.None, ruleFrom, anchorDate, null, 200_000, budget);
+        budget.Charge(ruleHits.Count * 192L, "PRTG daily rule-hit DTOs");
 
         var ruleDataset = new CalibrationRuleThresholdDataset
         {
@@ -660,6 +787,10 @@ public sealed class CalibrationService
             MagnitudeSamples = ruleAnalysis.Samples,
             MagnitudeSummaries = ruleAnalysis.Summaries,
             CurrentRules = ruleAnalysis.CurrentRules,
+            UnsupportedByMagnitudeAnalysisRuleCodes = ruleAnalysis.CurrentRules
+                .Select(rule => rule.RuleCode).Distinct(StringComparer.Ordinal)
+                .Where(code => code is not (PrtgRuleEvaluator.RuleDown or PrtgRuleEvaluator.RuleFlapping or PrtgRuleEvaluator.RuleWarning))
+                .OrderBy(code => code, StringComparer.Ordinal).ToList(),
             EvidenceFingerprint = ruleAnalysis.Fingerprint,
             AsOf = ruleAnalysis.AsOf,
             Explanations = ruleAnalysis.Explanations,
@@ -667,12 +798,11 @@ public sealed class CalibrationService
         };
 
         // 3. 觸發式量級資料集：近 30 天每日相異 sensor 數與品質列數
-        var triggeredFrom = anchorDate.AddDays(-(CalibrationConstants.TriggeredMagnitudeWindowDays - 1));
-        var triggeredToExclusive = anchorDate.AddDays(1);
-        var triggeredMagnitudes = _prtgStore.GetDailyValueMagnitudes(triggeredFrom, triggeredToExclusive);
+        budget.Charge(capture.DailyMagnitudes.Count * 16L, "triggered magnitude export list references");
+        var triggeredMagnitudes = capture.DailyMagnitudes.ToList();
 
         // 4. 殘留判定資料集：候選主機日指標（最多 5000 筆，排除任何帳號文字）
-        var residualCandidates = BuildResidualCandidateRows(anchorDate, settings.RawEventRetentionDays);
+        var residualCandidates = BuildResidualCandidateRows(anchorDate, settings.RawEventRetentionDays, cancellationToken, budget);
 
         var package = new CalibrationExportPackage
         {
@@ -687,15 +817,45 @@ public sealed class CalibrationService
             ValueTypeProfiles = valueTypeProfiles,
             Context = exportContext
         };
-        if (!string.Equals(ruleAnalysis.RuleStamp, GetValidatedPrtgRuleSnapshot().Stamp, StringComparison.Ordinal))
+        if (!string.Equals(ruleAnalysis.RuleStamp, GetValidatedPrtgRuleSnapshot(budget).Stamp, StringComparison.Ordinal))
             throw new InvalidOperationException("校準規則在匯出組裝期間變更，請重試。");
         if (ruleAnalysis.HostMapDataRevision != _prtgStore.ReadHostMapDataRevision())
             throw new InvalidOperationException("校準主機對應在匯出組裝期間變更，請重試。");
+        if (!HasCurrentRuleAuthority(ruleAnalysis, budget))
+            throw new InvalidOperationException("校準來源版本或設定在匯出組裝期間變更，請重試。");
         return package;
     }
 
+    private bool HasCurrentRuleAuthority(RuleMagnitudeAnalysis captured, PrtgCalibrationCaptureBudget budget)
+    {
+        using var guardReservation = budget.ReserveTransient(8L * 1024 * 1024,
+            "final calibration authority version check");
+        var settings = _settingsStore.Get();
+        if (CalibrationRuleSettingsStamp(settings) != captured.SettingsStamp ||
+            _prtgStore.ReadHostMapDataRevision() != captured.HostMapDataRevision ||
+            new EfJsonBlobStore(_contextFactory, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() != captured.ScopeVersion ||
+            new EfJsonBlobStore(_contextFactory, PrtgMonitoringPolicyStore.BlobKey).ReadVersion() != captured.PolicyVersion)
+            return false;
+
+        var statuses = ReadCalibrationSensorStatuses(captured.PolicySensorIds, out var sensorLimit);
+        var timelineVersions = ReadCalibrationTimelineVersions(captured.PolicySensorIds, out var timelineLimit);
+        var identityVersions = ReadCalibrationResourceIdentityVersions(captured.PolicySensorIds, out var identityLimit);
+        return !sensorLimit && !timelineLimit && !identityLimit &&
+            CalibrationSensorStamp(statuses) == captured.SensorStamp &&
+            CalibrationVersionStamp(timelineVersions) == captured.TimelineStamp &&
+            CalibrationVersionStamp(identityVersions) == captured.ResourceIdentityVersionStamp;
+    }
+
+    private static long EstimateExportDtoBytes(CalibrationExportPackage package) => checked(
+        package.ValueBaselines.Count * 256L + package.ValueSensorSummaries.Count * 192L +
+        package.ValueTypeProfiles.Count * 256L + package.RuleThresholds.DailyRuleHits.Count * 192L +
+        package.RuleThresholds.MagnitudeSamples.Count * 320L + package.RuleThresholds.MagnitudeSummaries.Count * 192L +
+        package.RuleThresholds.CurrentRules.Count * 4096L + package.TriggeredMagnitudes.Count * 256L +
+        package.ResidualCandidates.Count * 512L + 256 * 1024L);
+
     private CalibrationItemAssessment AssessPrtgValueBaseline(
-        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors)
+        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors,
+        PrtgCalibrationDataCapture capture)
     {
         var thresholds = new Dictionary<string, object>
         {
@@ -752,19 +912,16 @@ public sealed class CalibrationService
             };
         }
 
-        var (_, hostMapRows) = _prtgStore.GetLatestHostMapWithDate(30, anchor);
-        var okDeviceMap = hostMapRows
+        var okDeviceMap = capture.HostMaps
             .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .ToDictionary(m => m.DeviceObjid, m => (HostId: m.HostId!.Value, HostName: m.HostName ?? string.Empty));
 
-        var from = anchor.Date.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
-        var toExclusive = anchor.Date.AddDays(1);
-        var dailyAggs = _prtgStore.GetDailyValueAggregations(from, toExclusive);
+        var dailyAggs = capture.DailyAggregations;
 
         // 有效資料的起訖日：回答「這批基線涵蓋哪一段期間」，與涵蓋天數是兩件事
         // （中間可能有斷檔）。白名單內完全沒有數值的 sensor 數同理——
         // 它區分「還沒累積夠」與「這些 sensor 根本沒在取數」。
-        var coverage = _prtgStore.GetValueCoverageSummary(from, toExclusive);
+        var coverage = capture.ValueCoverage;
         var whitelistedObjids = whitelistedSensors.Select(x => x.Objid).ToHashSet();
         var coverageInScope = coverage.Where(c => whitelistedObjids.Contains(c.SensorObjid)).ToList();
         var earliestOk = coverageInScope
@@ -782,10 +939,14 @@ public sealed class CalibrationService
         // 也進不了主機層的基線，與「有對應但還沒累積夠」是不同的問題，補充說明的方向也不同
         var unmappedSensors = whitelistedSensors.Count(x => !okDeviceMap.ContainsKey(x.DeviceObjid));
 
-        var sensorCoverageDays = dailyAggs
-            .Where(a => a.UsableCount >= CalibrationConstants.ValueBaselineMinDailyUsableHours)
-            .GroupBy(a => a.SensorObjid)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Date.Date).Distinct().Count());
+        // SQL capture is already grouped by sensor and date, so count qualifying days directly
+        // without retaining one LINQ group/list/date object for every daily row.
+        var sensorCoverageDays = new Dictionary<long, int>();
+        foreach (var aggregate in dailyAggs)
+        {
+            if (aggregate.UsableCount < CalibrationConstants.ValueBaselineMinDailyUsableHours) continue;
+            sensorCoverageDays[aggregate.SensorObjid] = sensorCoverageDays.GetValueOrDefault(aggregate.SensorObjid) + 1;
+        }
 
         var hostCoverageDays = new Dictionary<long, int>();
         foreach (var sensor in whitelistedSensors)
@@ -869,8 +1030,9 @@ public sealed class CalibrationService
             }
         }
 
-        var snapshotTargets = _prtgStore.GetValueFetchTargets(whitelist, okDeviceMap.Keys).Count;
-        var sampled24h = _prtgStore.GetSampledCoverageSince(DateTime.Now.AddHours(-24));
+        var snapshotTargets = allSensors.Count(sensor => !sensor.Paused &&
+            (whitelistSet == null || whitelistSet.Contains(sensor.SensorType)) && okDeviceMap.ContainsKey(sensor.DeviceObjid));
+        var sampled24h = capture.SampledCoverage;
         var snapshotSensors24h = sampled24h.SensorCount;
         var snapshotCoverage24h = sampled24h.AverageCoverage.HasValue
             ? Math.Round(sampled24h.AverageCoverage.Value, 1)
@@ -1023,7 +1185,8 @@ public sealed class CalibrationService
     }
 
     private CalibrationItemAssessment AssessTriggeredFetchMagnitude(
-        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors)
+        DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors,
+        IReadOnlyList<PrtgDailyValueMagnitude> magnitudes)
     {
         var thresholds = new Dictionary<string, object>
         {
@@ -1048,9 +1211,6 @@ public sealed class CalibrationService
             };
         }
 
-        var from = anchor.Date.AddDays(-(CalibrationConstants.TriggeredMagnitudeWindowDays - 1));
-        var toExclusive = anchor.Date.AddDays(1);
-        var magnitudes = _prtgStore.GetDailyValueMagnitudes(from, toExclusive);
         var withValues = magnitudes.Where(m => m.TotalCount > 0).ToList();
         var daysWithValues = withValues.Count;
 
@@ -1137,8 +1297,108 @@ public sealed class CalibrationService
         };
     }
 
+    private sealed class CalibrationReadSnapshot : IDisposable
+    {
+        private readonly LfDbContext _context;
+        private readonly Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction _transaction;
+        private readonly DbTransaction? _providerTransaction;
+        private readonly DbConnection _connection;
+        private readonly bool _sqlite;
+        private readonly int _previousTempStore;
+
+        private CalibrationReadSnapshot(LfDbContext context,
+            Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,
+            DbTransaction? providerTransaction, bool sqlite, int previousTempStore = 0)
+        {
+            _context = context;
+            _transaction = transaction;
+            _providerTransaction = providerTransaction;
+            _connection = context.Database.GetDbConnection();
+            _sqlite = sqlite;
+            _previousTempStore = previousTempStore;
+        }
+
+        public static CalibrationReadSnapshot Begin(LfDbContext context)
+        {
+            var connection = context.Database.GetDbConnection();
+            if (context.Database.IsSqlite())
+            {
+                if (connection is not SqliteConnection sqlite)
+                    throw new CalibrationCapacityException("無法確認 SQLite 殘留資料 snapshot journal mode。");
+                context.Database.OpenConnection();
+                var builder = new SqliteConnectionStringBuilder(sqlite.ConnectionString);
+                var privateMemory = builder.DataSource == ":memory:" && builder.Cache != SqliteCacheMode.Shared;
+                using var pragma = connection.CreateCommand();
+                pragma.CommandText = "PRAGMA journal_mode";
+                var mode = Convert.ToString(pragma.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+                if (!privateMemory && !string.Equals(mode, "wal", StringComparison.OrdinalIgnoreCase))
+                    throw new CalibrationCapacityException("殘留校準擷取需要正式 SQLite WAL journal mode。");
+                int previousTempStore;
+                using (var tempStore = connection.CreateCommand())
+                {
+                    tempStore.CommandText = "PRAGMA temp_store";
+                    previousTempStore = Convert.ToInt32(tempStore.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+                    tempStore.CommandText = "PRAGMA temp_store=FILE";
+                    tempStore.ExecuteNonQuery();
+                }
+                using (var queryOnly = connection.CreateCommand())
+                {
+                    queryOnly.CommandText = "PRAGMA query_only=ON";
+                    queryOnly.ExecuteNonQuery();
+                }
+                try
+                {
+                    var providerTransaction = sqlite.BeginTransaction(deferred: true);
+                    var transaction = context.Database.UseTransaction(providerTransaction);
+                    if (transaction is null)
+                    {
+                        providerTransaction.Dispose();
+                        throw new CalibrationCapacityException("無法建立殘留校準 SQLite deferred snapshot transaction。");
+                    }
+                    return new CalibrationReadSnapshot(context, transaction, providerTransaction, sqlite: true,
+                        previousTempStore: previousTempStore);
+                }
+                catch
+                {
+                    using var queryOnly = connection.CreateCommand();
+                    queryOnly.CommandText = "PRAGMA query_only=OFF";
+                    queryOnly.ExecuteNonQuery();
+                    queryOnly.CommandText = $"PRAGMA temp_store={previousTempStore}";
+                    queryOnly.ExecuteNonQuery();
+                    throw;
+                }
+            }
+            if (!context.Database.IsSqlServer())
+                throw new CalibrationCapacityException("目前 provider 無法提供殘留校準 snapshot 一致性。");
+            try
+            {
+                var enabled = context.Database.SqlQueryRaw<int>(
+                        "SELECT CONVERT(int, snapshot_isolation_state) AS [Value] FROM sys.databases WHERE database_id = DB_ID()")
+                    .AsEnumerable().FirstOrDefault();
+                if (enabled != 1)
+                    throw new CalibrationCapacityException("SQL Server 必須啟用 ALLOW_SNAPSHOT_ISOLATION 才能評估殘留校準。");
+                return new CalibrationReadSnapshot(context,
+                    context.Database.BeginTransaction(IsolationLevel.Snapshot), null, sqlite: false);
+            }
+            catch (CalibrationCapacityException) { throw; }
+        }
+
+        public void Dispose()
+        {
+            _transaction.Dispose();
+            _providerTransaction?.Dispose();
+            if (!_sqlite) return;
+            using var command = _connection.CreateCommand();
+            command.CommandText = "PRAGMA query_only=OFF";
+            command.ExecuteNonQuery();
+            command.CommandText = $"PRAGMA temp_store={_previousTempStore}";
+            command.ExecuteNonQuery();
+        }
+    }
+
     private CalibrationItemAssessment AssessResidualCredentialThresholds(
-        DateTime anchor, SystemSettings settings)
+        DateTime anchor, SystemSettings settings, CancellationToken cancellationToken,
+        PrtgCalibrationCaptureBudget budget)
     {
         var thresholds = new Dictionary<string, object>
         {
@@ -1148,23 +1408,25 @@ public sealed class CalibrationService
             ["SufficientCoverageDays"] = CalibrationConstants.ResidualSufficientDays
         };
 
-        using var ctx = _contextFactory();
+        var capture = ExecuteResidualSnapshot(budget, cancellationToken, ctx =>
+        {
+            var cutoff = anchor.Date.AddDays(-settings.RawEventRetentionDays);
 
-        var cutoff = anchor.Date.AddDays(-settings.RawEventRetentionDays);
-
-        var candidateRows = CandidateRecordsQuery(ctx, cutoff, anchor.Date)
-            .Select(r => new { r.HostId, r.RecordDate })
-            .ToList()
-            .Select(r => (r.HostId, Date: r.RecordDate.Date))
-            .Distinct()
-            .ToList();
+            var candidateHostDays = CandidateRecordsQuery(ctx, cutoff, anchor.Date)
+                .Select(r => new { r.HostId, Date = r.RecordDate.Date }).Distinct().Count();
+            var distinctDays = CandidateRecordsQuery(ctx, cutoff, anchor.Date)
+                .Select(r => r.RecordDate.Date).Distinct().Count();
+            cancellationToken.ThrowIfCancellationRequested();
+            var rows = BuildResidualCandidateRowsCore(ctx, anchor, settings.RawEventRetentionDays, cancellationToken, budget);
+            return (CandidateHostDays: candidateHostDays, DistinctDays: distinctDays, Rows: rows);
+        });
+        var candidateHostDays = capture.CandidateHostDays;
+        var distinctDays = capture.DistinctDays;
+        _capturedResidualRows = capture.Rows;
 
         // 註：這裡的候選是「有登入失敗簽章且未精簡」的主機日，與匯出端同一個查詢。
         // 匯出端還會逐筆反序列化後再要求 LoginFailureDetails 非空（明細真的存在），
         // 因此匯出筆數可能少於這裡的計數——差額即「有簽章但明細已不在」的舊資料。
-
-        var candidateHostDays = candidateRows.Count;
-        var distinctDays = candidateRows.Select(r => r.Date).Distinct().Count();
 
         if (candidateHostDays == 0)
         {
@@ -1237,7 +1499,7 @@ public sealed class CalibrationService
         // 截斷比例與命中數要逐筆算指標才知道，與匯出資料集同一份來源（受同一個上限保護）。
         // 這兩個數字是校準的重點之一：截斷比例高代表明細封頂在拖累判定，
         // 命中數則回答「現行門檻下實際命中多少」。
-        var sampledRows = BuildResidualCandidateRows(anchor, settings.RawEventRetentionDays);
+        var sampledRows = capture.Rows;
         var truncatedRatio = sampledRows.Count > 0
             ? Math.Round((double)sampledRows.Count(r => r.IsTruncated) / sampledRows.Count, 3)
             : 0.0;
@@ -1261,49 +1523,106 @@ public sealed class CalibrationService
     }
 
     /// <summary>
-    /// 殘留候選列（判定的截斷比例／命中數與匯出資料集共用同一份）。
-    /// 建構成本高（逐筆反序列化），故與判定摘要同一個 TTL 快取：匯出時判定已算過，
-    /// 這裡直接回同一份，不把整批 blob 再反序列化一次。
+    /// 殘留候選列由同一個 read snapshot 計算，供摘要與匯出共用；不跨請求快取，
+    /// 因為 NetIQ 日誌可在同一錨點日期內新增或修正。
     /// </summary>
     private List<CalibrationResidualCandidateRow> BuildResidualCandidateRows(
-        DateTime anchor, int rawEventRetentionDays)
+        DateTime anchor, int rawEventRetentionDays, CancellationToken cancellationToken,
+        PrtgCalibrationCaptureBudget budget)
     {
-        var key = (anchor.Date, rawEventRetentionDays);
-        lock (CacheLock)
-        {
-            if (_cachedResidualRows != null && _cachedResidualKey == key && DateTime.Now - _cachedResidualAt < CacheTtl)
-            {
-                return _cachedResidualRows;
-            }
-        }
-
-        var rows = BuildResidualCandidateRowsCore(anchor, rawEventRetentionDays);
-
-        lock (CacheLock)
-        {
-            _cachedResidualRows = rows;
-            _cachedResidualKey = key;
-            _cachedResidualAt = DateTime.Now;
-        }
-
-        return rows;
+        if (_capturedResidualRows is not null) return _capturedResidualRows;
+        var rows = ExecuteResidualSnapshot(budget, cancellationToken,
+            ctx => BuildResidualCandidateRowsCore(ctx, anchor, rawEventRetentionDays, cancellationToken, budget));
+        return _capturedResidualRows = rows;
     }
 
-    private List<CalibrationResidualCandidateRow> BuildResidualCandidateRowsCore(
-        DateTime anchor, int rawEventRetentionDays)
+    /// <summary>
+    /// Each provider retry gets a new context and a new snapshot transaction. The callback keeps
+    /// all residual counts, candidate pages, and history reads inside that one snapshot. Budget
+    /// charges and callback results are published only after transaction disposal succeeds.
+    /// </summary>
+    internal T ExecuteResidualSnapshot<T>(PrtgCalibrationCaptureBudget budget, CancellationToken cancellationToken,
+        Func<LfDbContext, T> capture)
     {
-        using var ctx = _contextFactory();
+        using var strategyContext = _contextFactory();
+        var strategy = strategyContext.Database.CreateExecutionStrategy();
+        return strategy.Execute(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var attemptBudget = budget.BeginAttempt();
+            T result;
+            using (var context = _contextFactory())
+            {
+                using (CalibrationReadSnapshot.Begin(context))
+                {
+                    context.Database.SetCommandTimeout(TimeSpan.FromMinutes(2));
+                    result = capture(context);
+                }
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            attemptBudget.Commit();
+            return result;
+        });
+    }
 
+    private sealed record ResidualCandidateInput(long RecordId, long HostId, string? HostName,
+        DateTime RecordDate, string? ContentJson, int ContentLength);
+    private sealed record ResidualCandidateMetadata(long RecordId, long HostId, string? HostName,
+        DateTime RecordDate, int ContentLength);
+
+    private List<CalibrationResidualCandidateRow> BuildResidualCandidateRowsCore(
+        LfDbContext ctx, DateTime anchor, int rawEventRetentionDays, CancellationToken cancellationToken,
+        PrtgCalibrationCaptureBudget budget)
+    {
         var cutoff = anchor.Date.AddDays(-rawEventRetentionDays);
-
         var candidateRuleIds = LinuxAuthParser.LoginFailureRuleIds;
-
-        var candidateDailyRows = CandidateRecordsQuery(ctx, cutoff, anchor.Date)
-            .OrderByDescending(r => r.RecordDate)
-            .ThenByDescending(r => r.RecordId)
-            .Take(CalibrationConstants.ResidualCandidateMaxCount)
-            .Select(r => new { r.HostId, r.HostName, r.RecordDate, r.ContentJson })
-            .ToList();
+        var candidateDailyRows = new List<ResidualCandidateInput>(CalibrationConstants.ResidualCandidateMaxCount);
+        DateTime? afterDate = null;
+        long? afterRecordId = null;
+        long candidateBytes = 0;
+        while (candidateDailyRows.Count < CalibrationConstants.ResidualCandidateMaxCount)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidateQuery = CandidateRecordsQuery(ctx, cutoff, anchor.Date);
+            if (afterDate.HasValue)
+                candidateQuery = candidateQuery.Where(r => r.RecordDate < afterDate.Value ||
+                    (r.RecordDate == afterDate.Value && r.RecordId < afterRecordId!.Value));
+            var pageSize = Math.Min(CalibrationConstants.ResidualDatabasePageRows,
+                CalibrationConstants.ResidualCandidateMaxCount - candidateDailyRows.Count);
+            var metadataPage = candidateQuery.OrderByDescending(r => r.RecordDate).ThenByDescending(r => r.RecordId)
+                .Take(pageSize)
+                .Select(r => new ResidualCandidateMetadata(r.RecordId, r.HostId,
+                    r.HostName == null ? null : r.HostName.Substring(0,
+                        (r.HostName + "x").Length - 1 > 257 ? 257 : (r.HostName + "x").Length - 1),
+                    r.RecordDate,
+                    r.ContentJson == null ? 0 : (r.ContentJson + "x").Length - 1))
+                .ToList();
+            if (metadataPage.Count == 0) break;
+            if (metadataPage.Any(row => row.HostName?.Length > 256 ||
+                    row.ContentLength > CalibrationConstants.ResidualCandidateJsonMaxCharacters))
+                throw new CalibrationCapacityException("殘留候選資料的單筆內容超過校準匯出安全上限。");
+            var pageBytes = metadataPage.Sum(row => 128L + 2L * ((row.HostName?.Length ?? 0) + row.ContentLength));
+            if (candidateBytes + pageBytes > CalibrationConstants.ResidualCandidateJsonMaxBytes)
+                throw new CalibrationCapacityException("殘留候選資料超過校準匯出總量上限；完整資料未截斷。");
+            budget.Charge(pageBytes, "residual candidate source JSON");
+            var metadataIds = metadataPage.Select(row => row.RecordId).ToArray();
+            var contentByRecordId = ctx.DailyRecords.AsNoTracking().Where(r => metadataIds.Contains(r.RecordId))
+                .Select(r => new
+                {
+                    r.RecordId,
+                    ContentJson = r.ContentJson == null ? null : r.ContentJson.Substring(0,
+                        (r.ContentJson + "x").Length - 1 > CalibrationConstants.ResidualCandidateJsonMaxCharacters + 1
+                            ? CalibrationConstants.ResidualCandidateJsonMaxCharacters + 1 : (r.ContentJson + "x").Length - 1)
+                }).ToDictionary(row => row.RecordId, row => row.ContentJson);
+            if (contentByRecordId.Count != metadataPage.Count)
+                throw new CalibrationCapacityException("殘留候選資料在擷取期間變更，已拒絕不完整輸出。");
+            var page = metadataPage.Select(row => new ResidualCandidateInput(row.RecordId, row.HostId, row.HostName,
+                row.RecordDate, contentByRecordId[row.RecordId], row.ContentLength)).ToList();
+            candidateDailyRows.AddRange(page);
+            candidateBytes += pageBytes;
+            afterDate = metadataPage[^1].RecordDate;
+            afterRecordId = metadataPage[^1].RecordId;
+        }
 
         // 條件 4（跨日重現）要看同主機回看窗內的歷史。逐候選各查一次是 N+1
         // （5000 筆候選＝5000 次查詢＋每次最多 7 份 blob 反序列化，同一台主機的 30 個候選日
@@ -1313,12 +1632,15 @@ public sealed class CalibrationService
             ctx,
             candidateDailyRows.Select(r => r.HostId).Distinct().ToList(),
             candidateDailyRows.Count > 0 ? candidateDailyRows.Min(r => r.RecordDate) : anchor.Date,
-            candidateDailyRows.Count > 0 ? candidateDailyRows.Max(r => r.RecordDate) : anchor.Date);
+            candidateDailyRows.Count > 0 ? candidateDailyRows.Max(r => r.RecordDate) : anchor.Date, cancellationToken, budget);
 
         var result = new List<CalibrationResidualCandidateRow>();
         foreach (var row in candidateDailyRows)
         {
             if (string.IsNullOrWhiteSpace(row.ContentJson)) continue;
+
+            var graphBytes = budget.ValidateDailyRecordJson(row.ContentJson, "殘留候選");
+            using var graphReservation = budget.ReserveTransient(graphBytes, "residual candidate deserialized object graph");
 
             DailyAnalysisRecord? record;
             try
@@ -1381,38 +1703,96 @@ public sealed class CalibrationService
     /// 範圍＝最早候選日往前一個回看窗，到最晚候選日（不含）；窗長與判定端同一常數。
     /// </summary>
     private static Dictionary<long, List<DailyAnalysisRecord>> LoadHistoryForHosts(
-        LfDbContext ctx, IReadOnlyCollection<long> hostIds, DateTime earliestCandidate, DateTime latestCandidate)
+        LfDbContext ctx, IReadOnlyCollection<long> hostIds, DateTime earliestCandidate, DateTime latestCandidate,
+        CancellationToken cancellationToken, PrtgCalibrationCaptureBudget budget)
     {
         var byHost = new Dictionary<long, List<DailyAnalysisRecord>>();
         if (hostIds.Count == 0) return byHost;
 
         var from = earliestCandidate.Date.AddDays(-(ResidualCredentialDetector.HistoryWindowDaysForCalibration - 1));
         var toExclusive = latestCandidate.Date;
-
-        var rows = ctx.DailyRecords.AsNoTracking()
-            .Where(r => hostIds.Contains(r.HostId) && !r.DetailPruned &&
-                        r.RecordDate >= from && r.RecordDate < toExclusive)
-            .Select(r => new { r.HostId, r.ContentJson })
-            .ToList();
-
-        foreach (var row in rows)
+        var hostScope = EfPrtgStore.CalibrationSensorIdScope.Create(ctx, hostIds, "ResidualHosts");
+        using (hostScope)
         {
-            if (string.IsNullOrWhiteSpace(row.ContentJson)) continue;
-            try
+            var query = ctx.DailyRecords.AsNoTracking()
+                .Where(r => hostScope.Query.Contains(r.HostId) && !r.DetailPruned &&
+                            r.RecordDate >= from && r.RecordDate < toExclusive);
+            var rowCount = query.Count();
+            if (rowCount > CalibrationConstants.ResidualHistoryMaxRows)
+                throw new CalibrationCapacityException($"殘留歷史資料超過 {CalibrationConstants.ResidualHistoryMaxRows} 列安全上限；完整回看未截斷。");
+
+            long? afterRecordId = null;
+            long historyBytes = 0;
+            var loadedRows = 0;
+            while (true)
             {
-                var rec = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson);
-                if (rec == null) continue;
-                if (!byHost.TryGetValue(row.HostId, out var list))
+                cancellationToken.ThrowIfCancellationRequested();
+                var pageQuery = query;
+                if (afterRecordId.HasValue) pageQuery = pageQuery.Where(r => r.RecordId > afterRecordId.Value);
+                var page = pageQuery.OrderBy(r => r.RecordId).Take(CalibrationConstants.ResidualDatabasePageRows)
+                    .Select(r => new
+                    {
+                        r.RecordId, r.HostId,
+                        ContentLength = r.ContentJson == null ? 0 : (r.ContentJson + "x").Length - 1
+                    }).ToList();
+                if (page.Count == 0) break;
+                if (page.Any(row => row.ContentLength > CalibrationConstants.ResidualHistoryJsonMaxCharacters))
+                    throw new CalibrationCapacityException("殘留歷史單筆內容超過校準反序列化安全上限。");
+                // Budget for the JSON plus a conservative 8x deserialized object-graph expansion.
+                var pageBytes = page.Sum(row => 128L + 16L * row.ContentLength);
+                if (pageBytes > budget.RemainingBytes)
+                    throw new CalibrationCapacityException("殘留歷史反序列化物件圖超過校準作業總預算；完整回看未截斷。" );
+                loadedRows += page.Count;
+
+                var recordIds = page.Select(row => row.RecordId).ToArray();
+                using var pageInputBudget = budget.ReserveTransient(page.Sum(row => 128L + 2L * row.ContentLength),
+                    "residual history JSON page");
+                var contentByRecordId = ctx.DailyRecords.AsNoTracking().Where(r => recordIds.Contains(r.RecordId))
+                    .Select(r => new
+                    {
+                        r.RecordId,
+                        ContentJson = r.ContentJson == null ? null : r.ContentJson.Substring(0,
+                            (r.ContentJson + "x").Length - 1 > CalibrationConstants.ResidualHistoryJsonMaxCharacters + 1
+                                ? CalibrationConstants.ResidualHistoryJsonMaxCharacters + 1 : (r.ContentJson + "x").Length - 1)
+                    }).ToDictionary(row => row.RecordId, row => row.ContentJson);
+                if (contentByRecordId.Count != page.Count)
+                    throw new CalibrationCapacityException("殘留歷史在擷取期間變更，完整回看已拒絕。");
+
+                long pageGraphBytes = 0;
+                foreach (var content in contentByRecordId.Values)
                 {
-                    list = new List<DailyAnalysisRecord>();
-                    byHost[row.HostId] = list;
+                    if (string.IsNullOrWhiteSpace(content)) continue;
+                    pageGraphBytes = checked(pageGraphBytes + budget.ValidateDailyRecordJson(content, "殘留歷史"));
                 }
-                list.Add(rec);
+                if (historyBytes + pageGraphBytes > CalibrationConstants.ResidualHistoryObjectGraphBudgetBytes)
+                    throw new CalibrationCapacityException("殘留歷史反序列化物件圖超過總量安全上限；完整回看未截斷。");
+                historyBytes += pageGraphBytes;
+                budget.Charge(pageGraphBytes, "residual history deserialized object graphs");
+
+                foreach (var row in page)
+                {
+                    var contentJson = contentByRecordId[row.RecordId];
+                    if (string.IsNullOrWhiteSpace(contentJson)) continue;
+                    try
+                    {
+                        var rec = JsonSerializer.Deserialize<DailyAnalysisRecord>(contentJson);
+                        if (rec == null) continue;
+                        if (!byHost.TryGetValue(row.HostId, out var list))
+                        {
+                            list = new List<DailyAnalysisRecord>();
+                            byHost[row.HostId] = list;
+                        }
+                        list.Add(rec);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(ex, "[校準] 歷史紀錄反序列化失敗，略過此筆");
+                    }
+                }
+                afterRecordId = page[^1].RecordId;
             }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "[校準] 歷史紀錄反序列化失敗，略過此筆");
-            }
+            if (loadedRows != rowCount)
+                throw new CalibrationCapacityException("殘留歷史在擷取期間變更，完整回看已拒絕。");
         }
 
         return byHost;
@@ -1457,7 +1837,7 @@ public sealed class CalibrationService
     private Dictionary<DateTime, List<PrtgHostMapRow>> ReadCalibrationHostMaps(
         DateTime from, DateTime to,
         IReadOnlyCollection<(long Objid, long DeviceObjid, string? Status, string SensorType, string? Category)> sensorStatuses,
-        out bool exceeded)
+        PrtgCalibrationCaptureBudget budget, out bool exceeded)
     {
         var rowsByDay = new Dictionary<DateTime, List<PrtgHostMapRow>>();
         var totalRows = 0;
@@ -1480,13 +1860,25 @@ public sealed class CalibrationService
             foreach (var chunk in deviceIds.Chunk(1000))
             {
                 var remaining = MaxMapRowsForCalibration - totalRows - dayRows.Count;
-                var projected = ctx.PrtgHostMaps.AsNoTracking()
-                    .Where(m => m.MapDate == latestDate.Value && chunk.Contains(m.DeviceObjid))
-                    .OrderBy(m => m.DeviceObjid)
+                var query = ctx.PrtgHostMaps.AsNoTracking()
+                    .Where(m => m.MapDate == latestDate.Value && chunk.Contains(m.DeviceObjid));
+                var matchingRows = query.LongCount();
+                if (matchingRows > remaining) { exceeded = true; return new(); }
+                budget.Charge(matchingRows * 192L, "bounded host-map snapshot page objects and buffers");
+                var projected = query.OrderBy(m => m.DeviceObjid)
                     .Take(remaining + 1)
-                    .Select(m => new { m.MapDate, m.DeviceObjid, m.HostId, m.MapStatus })
+                    .Select(m => new
+                    {
+                        m.MapDate, m.DeviceObjid, m.HostId,
+                        MapStatusLength = m.MapStatus == null ? 0 : (m.MapStatus + "x").Length - 1,
+                        MapStatus = m.MapStatus == null ? "" : m.MapStatus.Substring(0,
+                            (m.MapStatus + "x").Length - 1 > CalibrationMapStatusMaxChars + 1
+                                ? CalibrationMapStatusMaxChars + 1 : (m.MapStatus + "x").Length - 1)
+                    })
                     .ToList();
                 if (projected.Count > remaining) { exceeded = true; return new(); }
+                if (projected.Any(m => m.MapStatusLength > CalibrationMapStatusMaxChars))
+                    throw new CalibrationCapacityException("PRTG 主機對應 MapStatus 超過欄位上限；校準匯出已拒絕。");
                 dayRows.AddRange(projected.Select(m => new PrtgHostMapRow
                 {
                     MapDate = m.MapDate, DeviceObjid = m.DeviceObjid, HostId = m.HostId, MapStatus = m.MapStatus
@@ -1525,9 +1917,28 @@ public sealed class CalibrationService
                 .Where(s => !s.Paused && chunk.Contains(s.Objid))
                 .OrderBy(s => s.Objid)
                 .Take(remaining + 1)
-                .Select(s => new { s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category })
+                .Select(s => new
+                {
+                    s.Objid, s.DeviceObjid,
+                    StatusLength = s.Status == null ? 0 : (s.Status + "x").Length - 1,
+                    Status = s.Status == null ? null : s.Status.Substring(0,
+                        (s.Status + "x").Length - 1 > CalibrationSensorStatusMaxChars + 1
+                            ? CalibrationSensorStatusMaxChars + 1 : (s.Status + "x").Length - 1),
+                    SensorTypeLength = s.SensorType == null ? 0 : (s.SensorType + "x").Length - 1,
+                    SensorType = s.SensorType == null ? "" : s.SensorType.Substring(0,
+                        (s.SensorType + "x").Length - 1 > CalibrationSensorTypeMaxChars + 1
+                            ? CalibrationSensorTypeMaxChars + 1 : (s.SensorType + "x").Length - 1),
+                    CategoryLength = s.Category == null ? 0 : (s.Category + "x").Length - 1,
+                    Category = s.Category == null ? null : s.Category.Substring(0,
+                        (s.Category + "x").Length - 1 > CalibrationCategoryMaxChars + 1
+                            ? CalibrationCategoryMaxChars + 1 : (s.Category + "x").Length - 1)
+                })
                 .ToList();
             if (rows.Count > remaining) { exceeded = true; return []; }
+            if (rows.Any(row => row.StatusLength > CalibrationSensorStatusMaxChars ||
+                    row.SensorTypeLength > CalibrationSensorTypeMaxChars ||
+                    row.CategoryLength > CalibrationCategoryMaxChars))
+                throw new CalibrationCapacityException("PRTG sensor 狀態、類型或分類文字超過欄位上限；校準匯出已拒絕。");
             statuses.AddRange(rows.Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category)));
         }
         return statuses;
@@ -1554,9 +1965,50 @@ public sealed class CalibrationService
         return versions;
     }
 
+    private Dictionary<long, long> ReadCalibrationResourceIdentityVersions(IReadOnlyCollection<long> selectedIds,
+        out bool exceeded)
+    {
+        var versions = selectedIds.ToDictionary(id => id, _ => 0L);
+        exceeded = false;
+        foreach (var chunk in selectedIds.Chunk(1000))
+        {
+            using var ctx = _contextFactory();
+            var keys = chunk.Select(id => PrtgResourceIdentityStore.Prefix +
+                id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            var rows = ctx.Blobs.AsNoTracking().Where(blob => keys.Contains(blob.BlobKey))
+                .Select(blob => new { blob.BlobKey, blob.Version })
+                .Take(1001).ToList();
+            if (rows.Count > 1000) { exceeded = true; return versions; }
+            foreach (var row in rows)
+            {
+                var suffix = row.BlobKey.AsSpan(PrtgResourceIdentityStore.Prefix.Length);
+                if (long.TryParse(suffix, out var sensorId) && versions.ContainsKey(sensorId))
+                    versions[sensorId] = row.Version;
+            }
+        }
+        return versions;
+    }
+
+    private static string CalibrationVersionStamp(IReadOnlyDictionary<long, long> versions) =>
+        string.Join("|", versions.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
+
+    private static string CalibrationRuleSettingsStamp(SystemSettings settings)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            settings.PrtgEnabled,
+            settings.PrtgUrl,
+            settings.PrtgRetentionDays,
+            settings.PrtgFetchStrategy,
+            settings.RawEventRetentionDays,
+            SensorTypeWhitelist = settings.PrtgSensorTypeWhitelist ?? []
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload));
+    }
+
     private sealed record ValidatedPrtgRuleSnapshot(List<KnownIssueRule> Rules, string Stamp);
 
-    private ValidatedPrtgRuleSnapshot GetValidatedPrtgRuleSnapshot()
+    private ValidatedPrtgRuleSnapshot GetValidatedPrtgRuleSnapshot(PrtgCalibrationCaptureBudget budget)
     {
         // 校準維持唯讀並沿用正式規則的有效內容：成功載入（含刻意留空）就驗證原清單；
         // 規則庫不存在或載入失敗時只在記憶體套用內建種子，不嘗試寫回。
@@ -1567,7 +2019,10 @@ public sealed class CalibrationService
         }
         else
         {
-            var loaded = _ruleStore.Load();
+            budget.Charge(24L * 1024 * 1024, "bounded rules JSON parse and validated snapshot");
+            var loaded = _ruleStore.LoadBounded(1024 * 1024);
+            if (loaded.IsCapacityExceeded)
+                throw new CalibrationCapacityException(loaded.Error ?? "規則資料超過校準容量上限，已拒絕使用替代規則。" );
             sourceRules = loaded.Success && loaded.Content != null
                 ? loaded.Content.Rules
                 : KnownIssueSeed.CreateRules();
@@ -1585,12 +2040,19 @@ public sealed class CalibrationService
         return new ValidatedPrtgRuleSnapshot(validated, stamp);
     }
 
-    private RuleMagnitudeAnalysis GetRuleMagnitudeAnalysis(DateTime anchor, SystemSettings settings, bool forceRefresh)
+    private RuleMagnitudeAnalysis GetRuleMagnitudeAnalysis(DateTime anchor, SystemSettings settings, bool forceRefresh,
+        PrtgCalibrationCaptureBudget budget)
     {
         var hostMapDataRevision = _prtgStore.ReadHostMapDataRevision();
+        budget.Charge(16L * 1024 * 1024, "bounded monitoring policy and parsed arrays");
         var policySnapshot = ReadCalibrationBlobSnapshot(PrtgMonitoringPolicyStore.BlobKey, MaxPolicyBlobCharactersForCalibration);
         var capacityExceeded = policySnapshot.ContentLength > MaxPolicyBlobCharactersForCalibration ||
             (policySnapshot.Content?.Length ?? 0) > MaxPolicyBlobCharactersForCalibration;
+        if (!capacityExceeded && !string.IsNullOrWhiteSpace(policySnapshot.Content))
+        {
+            var policyGraphBytes = budget.ValidatePolicyJson(policySnapshot.Content, "PRTG monitoring policy");
+            budget.Charge(policyGraphBytes, "parsed PRTG policy object graph");
+        }
         var policy = new PrtgMonitoringPolicy();
         if (!capacityExceeded && !string.IsNullOrWhiteSpace(policySnapshot.Content))
         {
@@ -1609,27 +2071,39 @@ public sealed class CalibrationService
             !string.IsNullOrWhiteSpace(policy.EndpointHint) && policy.ValidFrom != default &&
             !string.IsNullOrWhiteSpace(policy.SourceTimeZoneId) && !string.IsNullOrWhiteSpace(policy.SourceCultureName) &&
             policy.Ready(settings.PrtgUrl);
-        var ruleSnapshot = GetValidatedPrtgRuleSnapshot();
+        var ruleSnapshot = GetValidatedPrtgRuleSnapshot(budget);
         var allPrtgRules = ruleSnapshot.Rules;
         var allRules = allPrtgRules
             .Where(r => r.Enabled && !string.IsNullOrWhiteSpace(r.PrtgRuleCode))
             .ToList();
         var statuses = ReadCalibrationSensorStatuses(policySensorIds, out var sensorLimit);
+        budget.Charge(statuses.Count * 256L, "policy sensor status rows");
         if (sensorLimit) capacityExceeded = true;
+        var resourceIdentityVersions = ReadCalibrationResourceIdentityVersions(policySensorIds, out var resourceVersionLimit);
+        budget.Charge(resourceIdentityVersions.Count * 48L, "resource identity version tokens");
+        var resourceIdentityVersionStamp = CalibrationVersionStamp(resourceIdentityVersions);
+        budget.Charge(policySensorIds.Length * 256L, "resource identity rows");
+        var resourceIdentities = _prtgStore.GetResourceIdentities(policySensorIds);
+        var resourceIdentityStamp = string.Join("|", resourceIdentities.OrderBy(p => p.Key)
+            .Select(p => $"{p.Key}:{p.Value.Epoch}:{p.Value.Generation}:{p.Value.ChannelGeneration}"));
         var mapLimit = false;
-        var mapsByDay = policyReady && !capacityExceeded ? ReadCalibrationHostMaps(from, to, statuses, out mapLimit) : new Dictionary<DateTime, List<PrtgHostMapRow>>();
+        var mapsByDay = policyReady && !capacityExceeded
+            ? ReadCalibrationHostMaps(from, to, statuses, budget, out mapLimit)
+            : new Dictionary<DateTime, List<PrtgHostMapRow>>();
         if (policyReady && !capacityExceeded && mapLimit) capacityExceeded = true;
         var timelineRowsLimit = false;
         var timelineVersions = policyReady && !capacityExceeded
             ? ReadCalibrationTimelineVersions(policySensorIds, out timelineRowsLimit)
             : policySensorIds.ToDictionary(id => id, _ => 0L);
         if (policyReady && !capacityExceeded && timelineRowsLimit) capacityExceeded = true;
+        if (resourceVersionLimit) capacityExceeded = true;
         var mapStamp = string.Join("|", mapsByDay.OrderBy(day => day.Key).SelectMany(day => day.Value.OrderBy(m => m.DeviceObjid)
             .Select(m => $"{day.Key:yyyy-MM-dd}:{m.DeviceObjid}:{m.HostId}:{m.MapStatus}")));
         var ruleStamp = ruleSnapshot.Stamp;
         var timelineStamp = string.Join("|", timelineVersions.OrderBy(p => p.Key).Select(p => $"{p.Key}:{p.Value}"));
         var sensorStamp = CalibrationSensorStamp(statuses);
-        var fingerprintInput = $"{_backendCacheIdentity}|{anchor.Date:O}|{policySnapshot.Version}|{scopeVersion}|map-data:{hostMapDataRevision}|{settings.PrtgEnabled}|{settings.PrtgUrl}|{ruleStamp}|{timelineStamp}|{mapStamp}|{sensorStamp}|capacity:{capacityExceeded}";
+        var settingsStamp = CalibrationRuleSettingsStamp(settings);
+        var fingerprintInput = $"{_backendCacheIdentity}|{anchor.Date:O}|{policySnapshot.Version}|{scopeVersion}|map-data:{hostMapDataRevision}|resource-identity:{resourceIdentityStamp}|resource-identity-versions:{resourceIdentityVersionStamp}|settings:{settingsStamp}|{ruleStamp}|{timelineStamp}|{mapStamp}|{sensorStamp}|capacity:{capacityExceeded}";
         var sourceFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(fingerprintInput)));
         lock (_ruleMagnitudeLock)
             if (!forceRefresh && _cachedRuleMagnitudeAnalysis is { } cached && cached.SourceFingerprint == sourceFingerprint && DateTime.Now - _cachedRuleMagnitudeAt < CacheTtl)
@@ -1651,6 +2125,8 @@ public sealed class CalibrationService
         var captureChanged = false;
         if (policyReady && !capacityExceeded)
         {
+            budget.Charge(MaxMagnitudeSamplesForCalibration * 320L + allRules.Count * 1024L,
+                "timeline finding samples and formal hit aggregates");
             var selected = policySensorIds.ToHashSet();
             var sensorRows = statuses.Where(s => selected.Contains(s.Objid)).OrderBy(s => s.Objid).ToArray();
             // 門檻探索分佈獨立於規則啟用狀態；升級或管理者停用規則後，仍保留相同的低門檻事件樣本。
@@ -1662,6 +2138,8 @@ public sealed class CalibrationService
                 }).ToList();
             foreach (var sensor in sensorRows)
             {
+                using var timelineInputBudget = budget.ReserveTransient(
+                    MaxTimelineBlobCharactersForCalibration * 2L, "single PRTG timeline JSON input");
                 var snapshot = ReadCalibrationBlobSnapshot(PrtgSensorTimelineStore.Prefix + sensor.Objid, MaxTimelineBlobCharactersForCalibration);
                 if (snapshot.Version != timelineVersions.GetValueOrDefault(sensor.Objid)) { captureChanged = true; break; }
                 if (string.IsNullOrWhiteSpace(snapshot.Content)) { coverageGap = true; continue; }
@@ -1670,6 +2148,8 @@ public sealed class CalibrationService
                 captureBytes += (long)snapshot.Content.Length * sizeof(char);
                 if (snapshot.Content.Length > MaxTimelineBlobCharactersForCalibration || captureBytes > MaxTimelineCaptureBytesForCalibration)
                 { capacityExceeded = true; break; }
+                var timelineGraphBytes = budget.ValidateTimelineJson(snapshot.Content, "PRTG timeline");
+                using var timelineGraphBudget = budget.ReserveTransient(timelineGraphBytes, "deserialized timeline object graph and evaluator state");
                 PrtgSensorTimelineEvidence? proof;
                 try { proof = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(snapshot.Content, LogForesight.Core.Persistence.LfJsonOptions.Pretty); }
                 catch (JsonException) { proof = null; }
@@ -1682,7 +2162,9 @@ public sealed class CalibrationService
                         s.ResourceGeneration != proof.ResourceGeneration || s.At < proof.ValidFrom))
                 { generationMismatch = true; continue; }
                 if (proof.SourceGeneration != policy.SourceGeneration) { sourceMismatch = true; continue; }
-                if (proof.MappingRevision != scopeVersion || !policy.HostIds.Contains(proof.HostId)) { mappingMismatch = true; continue; }
+                if (!policy.HostIds.Contains(proof.HostId) || !resourceIdentities.TryGetValue(sensor.Objid, out var resourceIdentity) ||
+                    !PrtgResourceQualification.IsCurrent(proof, resourceIdentity, policy.SourceGeneration,
+                        sensor.Objid, sensor.DeviceObjid, proof.HostId)) { mappingMismatch = true; continue; }
                 var proofDays = false;
                 for (var day = from; day <= to; day = day.AddDays(1))
                 {
@@ -1711,7 +2193,8 @@ public sealed class CalibrationService
                     var bounded = new PrtgSensorTimelineEvidence
                     {
                         SensorId = proof.SensorId, HostId = proof.HostId, SourceGeneration = proof.SourceGeneration,
-                        ResourceGeneration = proof.ResourceGeneration, IdentityFingerprint = proof.IdentityFingerprint,
+                        ResourceGeneration = proof.ResourceGeneration, IdentityEpoch = proof.IdentityEpoch,
+                        ChannelGeneration = proof.ChannelGeneration, IdentityFingerprint = proof.IdentityFingerprint,
                         MappingRevision = proof.MappingRevision, ValidFrom = proof.ValidFrom, LastAttemptAt = proof.LastAttemptAt,
                         QualityReason = proof.QualityReason, Coverage = proof.Coverage.Where(c => c.From < end)
                             .Select(c => c with { Through = c.Through > end ? end : c.Through }).Where(c => c.Through > c.From).ToList(),
@@ -1757,23 +2240,24 @@ public sealed class CalibrationService
             var finalVersions = ReadCalibrationTimelineVersions(policySensorIds, out var finalRowsLimit);
             var finalStatuses = ReadCalibrationSensorStatuses(policySensorIds, out var finalSensorLimit);
             var finalSensorStamp = CalibrationSensorStamp(finalStatuses);
-            var finalMaps = ReadCalibrationHostMaps(from, to, statuses, out var finalMapLimit);
-            var finalMapStamp = string.Join("|", finalMaps.OrderBy(day => day.Key).SelectMany(day => day.Value.OrderBy(m => m.DeviceObjid)
-                .Select(m => $"{day.Key:yyyy-MM-dd}:{m.DeviceObjid}:{m.HostId}:{m.MapStatus}")));
-            if (finalRowsLimit || finalSensorLimit || finalMapLimit || finalSensorStamp != sensorStamp ||
+            var finalResourceIdentityVersions = ReadCalibrationResourceIdentityVersions(policySensorIds, out var finalResourceVersionLimit);
+            if (finalRowsLimit || finalSensorLimit || finalSensorStamp != sensorStamp ||
                 finalVersions.Any(v => timelineVersions.GetValueOrDefault(v.Key) != v.Value) ||
-                !string.Equals(mapStamp, finalMapStamp, StringComparison.Ordinal) ||
+                finalResourceVersionLimit || resourceIdentityVersionStamp != CalibrationVersionStamp(finalResourceIdentityVersions) ||
                 scopeVersion != new EfJsonBlobStore(_contextFactory, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ||
                 policySnapshot.Version != new EfJsonBlobStore(_contextFactory, PrtgMonitoringPolicyStore.BlobKey).ReadVersion()) captureChanged = true;
         }
-        if (!string.Equals(ruleStamp, GetValidatedPrtgRuleSnapshot().Stamp, StringComparison.Ordinal)) captureChanged = true;
+        if (!string.Equals(ruleStamp, GetValidatedPrtgRuleSnapshot(budget).Stamp, StringComparison.Ordinal)) captureChanged = true;
         if (hostMapDataRevision != _prtgStore.ReadHostMapDataRevision()) captureChanged = true;
         if (captureChanged) explanations.Add("校準不可用：收集期間來源版本或主機對應變更；已拒絕混合版本結果。");
         if (sourceMismatch) explanations.Add("校準不可用：timeline 來源世代與目前政策不一致。");
         if (mappingMismatch) explanations.Add("校準不可用：timeline 範圍修訂或該日主機對應已變更。");
         if (generationMismatch) explanations.Add("校準不可用：timeline resource generation、coverage 或 state 身分不一致，可信品質無效。");
         if (coverageGap) explanations.Add("可信 timeline 的已涵蓋區間仍依正式 evaluator 計入 finding 與分佈；不完整或含 Unknown 的 sensor-day 不計入完整涵蓋日數，缺口不以 state-change 或鏡像資料補足。");
-        explanations.Add("MagnitudeSummaries.HitsAtCurrentThreshold 是不限分類規則門檻對可信樣本的分佈對照，不代表正式 finding 命中數；正式命中依 rule id/category 列於 FormalCurrentHitCounts。DailyRuleHits 是既有持久化歷史彙總。");
+        explanations.Add("本次重算的 FormalCurrentHitCounts 與 MagnitudeSamples 僅涵蓋可信 status timeline 的 down、flapping、warning 三種規則。DailyRuleHits 是既有持久化歷史彙總，可能包含其他規則族群，不能當成本次重算結果。");
+        explanations.Add("未支援規則代碼會列在 UnsupportedByMagnitudeAnalysisRuleCodes；這代表本分析未評估，不能解讀為零命中或符合規則。silent 所需的 presence 證據不在本分析輸入中；磁碟趨勢與資源時段規則也不由 status timeline evaluator 重算。");
+        explanations.Add("CurrentRules 的 RuleEnabled 僅表示規則目錄開關；本匯出不證明資源規則具有有效 profile 或來源資格，也不證明 CPU／記憶體正式規則具備同版 trial 與 Maintain 授權。");
+        explanations.Add("MagnitudeSummaries.HitsAtCurrentThreshold 是不限分類規則門檻對可信樣本的分佈對照，不代表正式 finding 命中數；正式命中依 rule id/category 列於 FormalCurrentHitCounts。");
         explanations.Add("每個 sensor timeline 目前最多保存 31 天；超過此窗的 56 天充足門檻不以 raw state-change 或舊鏡像補足。");
         if (capacityExceeded || captureChanged)
         {
@@ -1796,10 +2280,29 @@ public sealed class CalibrationService
         else if (!blocked && samples.Count == 0)
             explanations.Add("可信 timeline 涵蓋存在，但本視窗沒有正式 finding 樣本；門檻分佈仍不足。");
         var currentRules = allPrtgRules.Where(r => !string.IsNullOrWhiteSpace(r.PrtgRuleCode))
-            .Select(r => new CalibrationPrtgRuleThresholdInfo(
-                r.PrtgRuleCode!, r.PrtgThreshold, r.Category.ToString(), r.Severity.ToString(),
-                r.ElevatesDayRisk, r.Description, r.PrtgSensorCategory)).ToList();
-        var result = new RuleMagnitudeAnalysis(sourceFingerprint, fingerprint, ruleStamp, hostMapDataRevision, evaluationAsOf,
+            .Select(r =>
+            {
+                var code = r.PrtgRuleCode!;
+                var thresholdKind = code switch
+                {
+                    PrtgRuleEvaluator.RuleDown or PrtgRuleEvaluator.RuleWarning => "minutes",
+                    PrtgRuleEvaluator.RuleFlapping => "state-transitions",
+                    PrtgRuleEvaluator.RuleSilent => "days",
+                    PrtgRuleEvaluator.RuleDiskFreeTrend => "disk-trend-profile",
+                    PrtgRuleEvaluator.RuleResourceCpuPressure or PrtgRuleEvaluator.RuleResourceMemoryPressure or
+                        PrtgRuleEvaluator.RuleResourceDiskPressure => "resource-period-profile",
+                    _ => "unspecified"
+                };
+                int? threshold = code is PrtgRuleEvaluator.RuleDiskFreeTrend or
+                    PrtgRuleEvaluator.RuleResourceCpuPressure or PrtgRuleEvaluator.RuleResourceMemoryPressure or
+                    PrtgRuleEvaluator.RuleResourceDiskPressure ? null : r.PrtgThreshold;
+                return new CalibrationPrtgRuleThresholdInfo(
+                    code, threshold, r.Category.ToString(), r.Severity.ToString(),
+                    r.ElevatesDayRisk, r.Description, r.PrtgSensorCategory, thresholdKind, r.Enabled);
+            }).ToList();
+        var result = new RuleMagnitudeAnalysis(sourceFingerprint, fingerprint, ruleStamp, hostMapDataRevision,
+            policySnapshot.Version, scopeVersion, policySensorIds, resourceIdentityStamp, resourceIdentityVersionStamp,
+            timelineStamp, sensorStamp, settingsStamp, evaluationAsOf,
             samples, summaries, formalHits.Select(kv => new CalibrationFormalRuleHitCount(kv.Key.Code, kv.Key.Id, kv.Key.Category, kv.Key.Threshold, kv.Value)).ToList(),
             explanations, currentRules, coveredDays.Count, totalHits, downHits, flapHits, warningHits, silentHits, blocked);
         lock (_ruleMagnitudeLock) { _cachedRuleMagnitudeAnalysis = result; _cachedRuleMagnitudeAt = DateTime.Now; }
@@ -1854,4 +2357,10 @@ public sealed class CalibrationService
         }
         return Math.Sqrt(sumSquaredDiff / values.Count);
     }
+}
+
+public sealed class CalibrationCapacityException(string message, bool retryable = false)
+    : InvalidOperationException(message)
+{
+    public bool Retryable { get; } = retryable;
 }

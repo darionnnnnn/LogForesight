@@ -22,6 +22,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// PRTG 數值快照可觀測性與規模估算單元測試（docs/PRTG-SPEC.md §3b、§8）。
 /// </summary>
+[Collection("PrtgSnapshotSharedBudget")]
 public class PrtgSnapshotObservabilityTests : IDisposable
 {
     private readonly string _dir;
@@ -64,6 +65,8 @@ public class PrtgSnapshotObservabilityTests : IDisposable
     private PrtgSnapshotHostedService CreateService()
     {
         var hostStore = new HostStore(_backend.Blob("hosts"));
+        if (hostStore.Get(1) == null)
+            hostStore.Upsert(new WebHost { HostName = "Server-01", IpAddress = "192.168.1.10", Active = true });
         var syncState = new PrtgStructureSyncRunState();
         var schedulerRunState = new SchedulerRunState();
         var lifetime = new FakeHostApplicationLifetime();
@@ -214,6 +217,13 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         store.UpsertSensors(sensors, DateTime.Now);
     }
 
+    private void SeedSnapshotAdmission(params (long Objid, string SensorType)[] sensors)
+    {
+        var hosts = new HostStore(_backend.Blob("hosts"));
+        SnapshotAdmissionTestFixture.Seed(_backend, hosts, _settingsStore, 1, 10,
+            sensors.Select(sensor => (sensor.Objid, sensor.SensorType)).ToArray());
+    }
+
     [Fact]
     public void 鏡像狀態_快照服務未接上時欄位為預設且不擲例外()
     {
@@ -256,6 +266,7 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(json));
 
         var service = CreateService();
+        SeedSnapshotAdmission((101, "Ping"), (102, "Ping"));
         await service.TickAsync();
 
         var controller = CreateController(snapshot: service);
@@ -274,10 +285,18 @@ public class PrtgSnapshotObservabilityTests : IDisposable
     public async Task 鏡像狀態_連續失敗三次後標示退避()
     {
         SetupTargetSensors(new[] { (101L, "Ping") });
-        _stubHandler.OnSend = (_, _) => throw new HttpRequestException("Simulated HTTP failure");
+        var failuresRemaining = 3;
+        _stubHandler.OnSend = (_, _) =>
+        {
+            if (failuresRemaining-- > 0)
+                throw new HttpRequestException("Simulated HTTP failure");
+            return Task.FromResult(JsonResponse(
+                "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"status\":\"Up\",\"lastcheck\":\"2026-10-08T00:00:00Z\",\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}"));
+        };
 
         var service = CreateService();
-        var clock = DateTime.Today.AddHours(1);
+        SeedSnapshotAdmission((101, "Ping"));
+        var clock = DateTime.Now;
         service.Now = () => clock;
 
         // 第 1 次失敗
@@ -306,6 +325,31 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         Assert.True(res.Data.SnapshotBackingOff);
         Assert.Equal(3, res.Data.SnapshotConsecutiveFailures);
         Assert.Equal(30, res.Data.SnapshotIntervalMinutes);
+
+        clock = clock.AddMinutes(statusAfter3.IntervalMinutes);
+        await service.TickAsync();
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+        Assert.NotNull(service.GetStatus().LastSuccessAt);
+
+        var selection = PrtgSnapshotTargetResolver.Resolve(_backend, new HostStore(_backend.Blob("hosts")),
+            _settingsStore.Get(), Array.Empty<Sentinel>());
+        var evidenceStore = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
+        var firstRecoveryEstimate = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(_settingsStore.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
+            selection.EndpointFingerprint, selection.RequestShapeFingerprint, evidenceStore.Read(), DateTimeOffset.UtcNow);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, firstRecoveryEstimate.Status);
+        Assert.Equal(1, firstRecoveryEstimate.FreshMatchingFullBatchSamples);
+
+        for (var sample = 1; sample < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; sample++)
+        {
+            clock = clock.AddMinutes(service.GetStatus().IntervalMinutes);
+            await service.TickAsync();
+        }
+        var requalified = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(_settingsStore.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
+            selection.EndpointFingerprint, selection.RequestShapeFingerprint, evidenceStore.Read(), DateTimeOffset.UtcNow);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, requalified.Status);
+        Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples, requalified.FreshMatchingFullBatchSamples);
     }
 
     [Fact]

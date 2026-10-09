@@ -75,7 +75,7 @@ public sealed class PrtgSupplementRevisionTests : IDisposable
     public void AI執行期間新證據追加_舊結果不得覆蓋現況且保留重新補跑()
     {
         Parent(); var input = PrtgFindingMapper.Fingerprint([]);
-        Store.AttachPrtgFindings(11, _day, [Finding()], new HashSet<string>(), out _);
+        Store.AttachPrtgFindings(11, _day, [Finding()], new HashSet<string>(), out _, aiConfigured: true);
         Store.AttachAiResult(_day, new("stale headline", "stale summary", "", "", RiskLevels.Low, null,
             true, 0, [], null, [], InputPrtgFingerprint: input));
         var current = Assert.Single(Store.ReadRecent(_day, 1));

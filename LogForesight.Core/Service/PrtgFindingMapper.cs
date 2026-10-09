@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -78,22 +79,53 @@ public static class PrtgFindingMapper
         return parts.Length >= 2 && parts[0] == "prtg" ? $"prtg:{parts[1]}" : "prtg";
     }
 
-    public static LogIssueSignature ToSignature(PrtgFinding finding, DateTime day)
+    public static LogIssueSignature ToSignature(PrtgFinding finding, DateTime day, long? verifiedHostId = null)
     {
         var targetObjid = finding.SensorObjid ?? finding.DeviceObjid;
+        var governedDiskAlias = IsGovernedDiskIdentityAlias(finding);
+        var governedPressure = finding.RuleCode is PrtgRuleEvaluator.RuleResourceCpuPressure or
+            PrtgRuleEvaluator.RuleResourceMemoryPressure or PrtgRuleEvaluator.RuleResourceDiskPressure &&
+            finding.Rule.PrtgRuleCode == finding.RuleCode;
+        var identityRuleCode = governedDiskAlias
+            ? PrtgRuleEvaluator.RuleDiskFreeTrend : finding.RuleCode;
 
+        var observations = SourceEvidence.BoundObservations(finding.EvidenceWindows
+            .Where(window => window.StartUtc.Offset == TimeSpan.Zero && window.EndUtc.Offset == TimeSpan.Zero &&
+                window.EndUtc > window.StartUtc)
+            .Take(65).Select(window => new SourceEvidence
+            {
+                SourceKind = SourceEvidenceKind.Prtg,
+                ExactHostKey = verifiedHostId is > 0 ? $"host-id:{verifiedHostId}" : null,
+                // The native sensor's monitored volume/endpoint and addressable evidence reference
+                // have not been proved by objid, category, or our internal hash.
+                ResourceScope = SourceResourceScope.Unknown,
+                SourceReferenceQuality = SourceReferenceQuality.Unknown,
+                WindowStartUtc = window.StartUtc, WindowEndUtc = window.EndUtc,
+                WindowResolution = finding.EvidenceWindowResolution,
+                ProjectionFingerprint = SourceEvidence.Fingerprint(finding.SourceGeneration,
+                    finding.ResourceGeneration, targetObjid.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    finding.RuleCode, window.StartUtc.ToString("O"), window.EndUtc.ToString("O"))
+            }), out var truncated);
         return new LogIssueSignature
         {
             LogName = PrtgLogName,
-            Source = $"PRTG:{finding.RuleCode}",
+            Source = $"PRTG:{identityRuleCode}",
             EventId = 0,
             EntryType = EventLogEntryType.Warning,
-            EventKey = $"prtg:{finding.RuleCode}:{targetObjid}" +
+            EventKey = $"prtg:{identityRuleCode}:{targetObjid}" +
                 (finding.SourceGeneration != null && finding.ResourceGeneration != null
                     ? $":{finding.SourceGeneration}:{finding.ResourceGeneration}" : ""),
             PrtgSourceGeneration = finding.SourceGeneration,
             PrtgResourceGeneration = finding.ResourceGeneration,
             PrtgIncidentStartedAt = finding.IncidentStartedAt,
+            PrtgPresenceSourceDay = finding.PresenceSourceDay,
+            PrtgPresenceSourceAsOf = finding.PresenceSourceAsOf,
+            PrtgPresenceDeviceStatusAsOf = finding.PresenceDeviceStatusAsOf,
+            PrtgPresenceSourceAuthorityFingerprint = finding.PresenceSourceAuthorityFingerprint,
+            PrtgPresenceMappingFingerprint = finding.PresenceMappingFingerprint,
+            PrtgPresenceInventoryFingerprint = finding.PresenceInventoryFingerprint,
+            SourceObservations = observations,
+            SourceObservationsTruncated = truncated,
             Count = 1,
             FirstSeen = "00:00",
             LastSeen = "23:59",
@@ -106,8 +138,28 @@ public static class PrtgFindingMapper
             ElevatesDayRisk = finding.Rule.ElevatesDayRisk,
             KnownIssue = finding.Rule.Description,
             RuleId = finding.Rule.Id,
+            PrtgDisplayLabel = governedDiskAlias ? finding.DisplayLabel : null,
+            PrtgResourceReasonCodes = governedDiskAlias && finding.ResourceReasonCodes is { Count: > 0 and <= 2 } reasons &&
+                reasons.All(code => code is "disk-two-hour-low-water" or "disk-seven-day-low-water-trend")
+                ? reasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList() : null,
+            PrtgRuleAdmissionFingerprint = governedPressure && finding.RuleAdmissionFingerprint is { Length: 64 } fingerprint &&
+                fingerprint.All(Uri.IsHexDigit) ? fingerprint : null,
+            PrtgTrendSourceRuleId = governedDiskAlias ? finding.TrendSourceRuleId : null,
+            PrtgTrendSourceRuleFingerprint = governedDiskAlias && finding.TrendSourceRuleFingerprint is { Length: 64 } trendFingerprint &&
+                trendFingerprint.All(Uri.IsHexDigit) ? trendFingerprint : null,
+            PrtgChannelGeneration = governedPressure ? finding.ChannelGeneration : null,
             // 跨來源佐證（PrtgCorroboration）靠它分辨 sensor 類型；silent（device 層）為 null
             PrtgSensorCategory = finding.SensorCategory
         };
     }
+
+    private static bool IsGovernedDiskIdentityAlias(PrtgFinding finding) =>
+        finding.EventIdentityRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend &&
+        finding.RuleCode == PrtgRuleEvaluator.RuleResourceDiskPressure &&
+        finding.Rule.Id == "builtin-prtg-resource-disk-pressure" &&
+        finding.SensorCategory == PrtgSensorCategories.Disk &&
+        !string.IsNullOrWhiteSpace(finding.DisplayLabel) &&
+        finding.RuleAdmissionFingerprint is { Length: 64 } admissionFingerprint && admissionFingerprint.All(Uri.IsHexDigit) &&
+        finding.ResourceReasonCodes is { Count: > 0 and <= 2 } reasons &&
+        reasons.All(code => code is "disk-two-hour-low-water" or "disk-seven-day-low-water-trend");
 }

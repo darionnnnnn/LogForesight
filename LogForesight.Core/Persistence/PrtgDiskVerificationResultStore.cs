@@ -7,7 +7,9 @@ public sealed record PrtgDiskVerificationResult(
     string Status, string Summary, string? ChannelIdentifier, string? ChannelName,
     string? Unit, double? Scale, string? Direction, int ComparedPointCount,
     bool? ValuesMatch, DateTime CheckedAtUtc, DateTime DataDate,
-    string ParserSemanticVersion, bool Cancelled = false);
+    string ParserSemanticVersion, bool Cancelled = false,
+    string SourceGeneration = "", string ResourceGeneration = "", string ChannelGeneration = "",
+    long IdentityEpoch = 0);
 
 /// <summary>Stores only typed verification output; never raw PRTG response bodies.</summary>
 public sealed class PrtgDiskVerificationResultStore : JsonBlobSingleton<Dictionary<long, PrtgDiskVerificationResult>>

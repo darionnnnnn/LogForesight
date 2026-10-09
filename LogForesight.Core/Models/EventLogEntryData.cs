@@ -22,4 +22,7 @@ public class EventLogEntryData
 
     /// <summary>發起這個操作的帳號（NetIQ sun 欄位）。非 NetIQ 來源與 Linux 路徑為 null。</summary>
     public string? InitiatorAccount { get; set; }
+
+    /// <summary>Typed provenance captured before message decoration/truncation; unsupported facts stay unknown.</summary>
+    public SourceEvidence? SourceEvidence { get; set; }
 }

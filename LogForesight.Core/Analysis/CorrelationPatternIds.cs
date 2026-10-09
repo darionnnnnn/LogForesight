@@ -3,13 +3,13 @@ namespace LogForesight.Core.Analysis;
 /// <summary>
 /// 跨 log 關聯模式的穩定識別碼目錄（回饋十五輪 A-5）：<see cref="CorrelationFinding.PatternId"/>
 /// 是 required 屬性，新增模式時編譯期就會強制指定，這份目錄是唯一權威來源——供
-/// <see cref="CorrelationAnalyzer"/>／<see cref="LinuxCorrelationAnalyzer"/> 標記，也供
+/// <see cref="CorrelationAnalyzer"/>／<see cref="LinuxCorrelationAnalyzer"/>／<see cref="PrtgCorroboration"/> 標記，也供
 /// Web 層驗證 <c>RuleSuppression.CorrelationPatternId</c>（TargetType=Correlation）是否為
 /// 已知模式（Core 的 CorrelationFinding/CorrelationAnalyzer 是 internal，Web 看不到，
 /// 這份目錄故意是 public，是兩邊唯一共用的介面）。
 ///
 /// public 但不代表模式的組合邏輯外露——這裡只有識別碼字串，實際觸發條件仍完全在
-/// CorrelationAnalyzer／LinuxCorrelationAnalyzer 內部。
+/// CorrelationAnalyzer／LinuxCorrelationAnalyzer／PrtgCorroboration 內部。
 /// </summary>
 public static class CorrelationPatternIds
 {
@@ -40,10 +40,13 @@ public static class CorrelationPatternIds
     public const string LinuxSshBruteSuccess = "linux-ssh-brute-success";
     public const string LinuxSshBruteUncertain = "linux-ssh-brute-uncertain";
 
-    // ── PRTG 跨來源佐證（同一主機日，追加 PRTG finding 時判定，見 PrtgCorroboration）──
+    // ── PRTG 跨來源佐證（弱同日與精確來源對齊分開識別，見 PrtgCorroboration）──
     public const string PrtgStorageCorroborated = "prtg-storage-corroborated";
     public const string PrtgCapacityCorroborated = "prtg-capacity-corroborated";
     public const string PrtgOutageCorroborated = "prtg-outage-corroborated";
+    public const string PrtgStorageEvidenceAligned = "prtg-storage-evidence-aligned";
+    public const string PrtgCapacityEvidenceAligned = "prtg-capacity-evidence-aligned";
+    public const string PrtgOutageEvidenceAligned = "prtg-outage-evidence-aligned";
 
     public static readonly string[] All =
     {
@@ -52,7 +55,8 @@ public static class CorrelationPatternIds
         CrashServiceFail, CrashLoopResource, TimeSkewAuth, PasswordSpray,
         XdayIntrusion, XdayStorage, XdayAvOffMalware, XdayBruteRdp,
         LinuxSshBruteSuccess, LinuxSshBruteUncertain,
-        PrtgStorageCorroborated, PrtgCapacityCorroborated, PrtgOutageCorroborated
+        PrtgStorageCorroborated, PrtgCapacityCorroborated, PrtgOutageCorroborated,
+        PrtgStorageEvidenceAligned, PrtgCapacityEvidenceAligned, PrtgOutageEvidenceAligned
     };
 
     public static bool IsValid(string patternId) => All.Contains(patternId);

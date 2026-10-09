@@ -271,6 +271,8 @@ public class LfDbContext : DbContext
             // 「同 program 不同規則」會在 SQL 端誤併成一組（規劃 §8.1 缺陷 1 的 Linux 版本）。
             e.Property(x => x.KnownIssue).HasColumnName("known_issue");
             e.Property(x => x.EventKey).HasColumnName("event_key").HasMaxLength(255).HasDefaultValue(string.Empty);
+            e.Property(x => x.SourceObservationsJson).HasColumnName("source_observations_json");
+            e.Property(x => x.SourceObservationsTruncated).HasColumnName("source_observations_truncated").HasDefaultValue(false);
 
             e.HasIndex(x => x.RecordId);
             e.HasIndex(x => new { x.EventId, x.SourceName });   // 跨主機同簽章查詢
@@ -470,6 +472,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.EntryType).HasColumnName("entry_type");
             e.Property(x => x.EventTime).HasColumnName("event_time");
             e.Property(x => x.Message).HasColumnName("message");
+            e.Property(x => x.SourceEvidenceJson).HasColumnName("source_evidence_json");
             e.Property(x => x.RuleId).HasColumnName("rule_id").HasMaxLength(64);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
@@ -639,6 +642,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.Coverage).HasColumnName("coverage");
             e.Property(x => x.Quality).HasColumnName("quality").HasMaxLength(16);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.TrustVersion).HasColumnName("trust_version").HasDefaultValue(0);
+            e.Property(x => x.TrustedProof).HasColumnName("trusted_proof");
 
             e.HasIndex(x => new { x.SensorObjid, x.PeriodStart }).IsUnique().HasDatabaseName("IX_lf_prtg_values_uniq");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_values_created");
@@ -836,6 +841,9 @@ public class TopIssueRow
     /// 沒有它，SQL 端無法組回完整 <c>IssueSignatureKey</c> 去 join 處理狀態，
     /// 「同一個 program 命中不同規則」會被併成同一組。Windows 事件恆為空字串。</summary>
     public string EventKey { get; set; } = string.Empty;
+    /// <summary>Bounded SourceEvidence JSON; null on pre-provenance rows.</summary>
+    public string? SourceObservationsJson { get; set; }
+    public bool SourceObservationsTruncated { get; set; }
 }
 
 /// <summary>風險 log 暫存一列（docs/archive/WEB-SCHEDULER-PLAN.md §2）。↔ lf_risky_events</summary>
@@ -852,6 +860,8 @@ public class RiskyEventRow
     public EventLogEntryType EntryType { get; set; }
     public DateTime EventTime { get; set; }
     public string Message { get; set; } = string.Empty;
+    /// <summary>Bounded SourceEvidence JSON captured before message truncation.</summary>
+    public string? SourceEvidenceJson { get; set; }
     public string? RuleId { get; set; }
     public DateTime CreatedAt { get; set; }
 }
@@ -1162,6 +1172,9 @@ public class PrtgValueRow
     public double? Coverage { get; set; }
     public string Quality { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+    /// <summary>0 表示舊／診斷資料；只有明確 typed proof 可寫入版本 1。</summary>
+    public int TrustVersion { get; set; }
+    public string? TrustedProof { get; set; }
 }
 
 /// <summary>PRTG sampled 整批寫入的冪等識別。↔ lf_prtg_sampled_batches</summary>

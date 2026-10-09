@@ -3,6 +3,7 @@ namespace LogForesight.Web.Models.Dto;
 /// <summary>NetIQ 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）狀態，供輪詢用</summary>
 public class NetiqProbeStatusDto
 {
+    public string Mode { get; set; } = "legacy";
     public bool IsRunning { get; set; }
     public long? SentinelId { get; set; }
     public string? SentinelName { get; set; }
@@ -24,6 +25,11 @@ public class StartNetiqProbeRequest
 
     /// <summary>一台已知的 Linux 主機 IP，用於核對 Linux 事件欄位形狀。選填</summary>
     public string? SampleLinuxIp { get; set; }
+}
+
+public class StartNetiqMetadataProbeRequest
+{
+    public long SentinelId { get; set; }
 }
 
 public class StartNetiqProbeResultDto

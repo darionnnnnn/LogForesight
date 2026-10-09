@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -93,7 +93,8 @@ internal sealed record AnalysisRunContext(
     RunRequest Request, AppSettings Settings, RetentionOptions Retention, IRunConsole Console,
     CancellationToken Ct, EventLogService EventLogService, IssueCaseCoordinator CaseCoordinator,
     IRiskyEventStore RiskyEventStore, BatchRunRecorder RunRecorder, OrchestratorResult Result,
-    bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings, NightlyDispatch Dispatch);
+    bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings, NightlyDispatch Dispatch,
+    HostDayWorkflowService? Workflow = null, bool PrtgEnabled = false);
 
 /// <summary>
 /// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
@@ -571,7 +572,8 @@ public class AnalysisOrchestrator
 
                 var runCtx = new AnalysisRunContext(
                     request, settings, retention, runConsole, ct, eventLogService, caseCoordinator,
-                    riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch);
+                    riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch,
+                    new HostDayWorkflowService(new HostDayWorkflowStore(backend)), systemSettings.PrtgEnabled);
 
                 // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
                 // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
@@ -758,7 +760,7 @@ public class AnalysisOrchestrator
         IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch, workflow, prtgEnabled) = ctx;
 
         // 回望天數（回饋三十四輪 C）：立即執行的「回望天數」是單一欄位，缺漏日與重跑日
         // 共用同一個窗口，且**本機與 NetIQ 都適用**——合併前這個欄位只影響 NetIQ，
@@ -913,6 +915,13 @@ public class AnalysisOrchestrator
 
                     var isRerun = rerunDateSet.Contains(date.Date);
                     var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+                    if (currentHostId > 0)
+                    {
+                        var canonicalHostKey = $"host-id:{currentHostId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+                        foreach (var item in logs)
+                            if (item.SourceEvidence != null)
+                                item.SourceEvidence = SourceEvidence.WithCanonicalHost(item.SourceEvidence, canonicalHostKey);
+                    }
                     // 這一天的事件取出後就從分組移除（批次E3）：區塊內的記憶體隨進度遞減，
                     // 而不是整塊 14 天的事件全程壓在記憶體裡等最後一起回收。
                     logsByDate.Remove(date);
@@ -939,18 +948,43 @@ public class AnalysisOrchestrator
 
                     var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
-                        replaceExisting: isRerun);
+                        replaceExisting: isRerun, deferNonAiReport: true);
+                    var hadAiWorkItem = record.AiPending;
                     // PRTG finding 追加：**必須排在案件掛接與執行摘要之前**——案件掛接吃的是
                     // 記憶體裡的 record.TopIssues，摘要吃的是 record.RiskLevel，
                     // 晚一步併入的 finding 就進不了問題案件，上調後的風險也不會出現在摘要。
                     HostDayPostProcessor.AttachPrtgFindings(
                         prtgFindings, historyService, record, currentHostId, aiConfigured: localUseAi);
+                    if (!hadAiWorkItem)
+                        await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, logs, ct);
+                    try
+                    {
+                        workflow?.ParentSucceeded(currentHostId, currentHost, date, runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            logs.Count, HostDayWorkflowFingerprint.ForParentRecord(record), prtgEnabled: prtgEnabled,
+                            aiEnabled: localUseAi, parentRecordId: record.RecordId > 0 ? record.RecordId : null);
+                        if (prtgFindings.IsPublished(date))
+                        {
+                            if (HostDayWorkflowFingerprint.HasValidPrtgManifest(record))
+                                workflow?.SetPrtg(currentHostId, date, record.PrtgManifest!.Outcome == "complete" ? WorkflowLegState.Succeeded : WorkflowLegState.Degraded,
+                                    evidenceReady: record.PrtgManifest.Outcome == "complete",
+                                    record.PrtgManifest.EvidenceFingerprint,
+                                    failure: record.PrtgManifest.Outcome == "partial" ? string.Join(",", record.PrtgManifest.WaitReasonCodes) : null);
+                            else
+                                workflow?.SetPrtg(currentHostId, date, WorkflowLegState.Waiting, evidenceReady: false,
+                                    failure: "formal-manifest-missing-or-stale");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(ex, "主機日 workflow metadata 寫入失敗，不影響分析成果");
+                    }
 
                     result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
                     // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
                     // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
-                    HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, currentHost, date, record.TopIssues);
+                    HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, currentHost, date, record.TopIssues,
+                        workflow: workflow, hostId: currentHostId, parentRecordId: record.RecordId);
                     HostDayPostProcessor.ReplaceRiskyEvents(
                         riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
 
@@ -1015,7 +1049,7 @@ public class AnalysisOrchestrator
         PrtgResourceGuard? guard = null)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch, workflow, prtgEnabled) = ctx;
 
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
@@ -1064,7 +1098,9 @@ public class AnalysisOrchestrator
                 permissionMappings: settings.Permissions.FieldMappings,
                 rerunMode: request.RerunMode,
                 guard: guard,
-                prtgFindings: prtgFindings);
+                prtgFindings: prtgFindings,
+                workflow: workflow,
+                prtgEnabled: prtgEnabled);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

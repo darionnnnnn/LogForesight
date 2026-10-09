@@ -39,8 +39,26 @@ public sealed class EfReportStore : IReportSink, IReportReader, IReportUsageQuer
     /// <returns>report_id 的字串形式</returns>
     internal string Write(string kind, HostKey host, string fileName, string content, ReportMeta? meta, DateTime createdAt)
     {
-        var reportDate = ParseReportDate(fileName) ?? createdAt.Date;
         using var ctx = _contextFactory();
+        var reportRef = Write(ctx, kind, host, fileName, content, meta, createdAt);
+        Log.Info("[SQL] 報告已寫入：{Kind} {Host} {Date:yyyy-MM-dd}（{Len} 字元，report_id={Id}）",
+            kind, host.HostName, ParseReportDate(fileName) ?? createdAt.Date, content.Length, reportRef);
+        return reportRef;
+    }
+
+    /// <summary>Write through an existing parent transaction so report content and parent reference commit together.</summary>
+    internal static string Write(LfDbContext ctx, PreparedRiskReport report)
+    {
+        if (ParseReportDate(report.FileName) != report.Date.Date)
+            throw new InvalidDataException("Prepared risk report filename date does not match its host-day.");
+        return Write(ctx, ReportKinds.DailyRisk, report.Host, report.FileName, report.Content, report.Meta, DateTime.Now);
+    }
+
+    /// <summary>Upsert in the caller's context. The caller owns transaction boundaries.</summary>
+    internal static string Write(LfDbContext ctx, string kind, HostKey host, string fileName, string content,
+        ReportMeta? meta, DateTime createdAt)
+    {
+        var reportDate = ParseReportDate(fileName) ?? createdAt.Date;
 
         // upsert：同一主機同一天同一種報告只留一份。重新分析同一天要就地取代，
         // 不是留兩份讓使用者猜哪份是現行的。
@@ -74,8 +92,6 @@ public sealed class EfReportStore : IReportSink, IReportReader, IReportUsageQuer
 
         ctx.SaveChanges();
 
-        Log.Info("[SQL] 報告已寫入：{Kind} {Host} {Date:yyyy-MM-dd}（{Len} 字元，report_id={Id}）",
-            kind, host.HostName, reportDate, content.Length, row.ReportId);
         return row.ReportId.ToString(CultureInfo.InvariantCulture);
     }
 

@@ -15,6 +15,33 @@ public class RuntimeSettingsResolverTests
 {
     private readonly FakeSystemSettingsStore _store = new();
 
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(11)]
+    public void InvalidStoredAiRetryCountRetainsConstructibleRuntimeDefault(int invalidCount)
+    {
+        _store.Update(s => s.AiRetryCount = invalidCount);
+        var settings = new AppSettings();
+        RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
+        Assert.Equal(3, settings.Ai.RetryCount);
+        // The real AI consumer rejects zero retry attempts while constructing its Polly pipeline.
+        // Construction is local and sends no HTTP request.
+        _ = new LogForesight.Core.Analysis.AIService(settings.Ai);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(10)]
+    public void ValidStoredAiRetryBoundariesReachActualConsumer(int validCount)
+    {
+        _store.Update(s => s.AiRetryCount = validCount);
+        var settings = new AppSettings();
+        RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
+        Assert.Equal(validCount, settings.Ai.RetryCount);
+        _ = new LogForesight.Core.Analysis.AIService(settings.Ai);
+    }
+
     [Fact]
     public void DB值覆寫AI進階參數與分析參數()
     {

@@ -35,11 +35,87 @@ public class KnownIssueRuleStore : IKnownIssueRuleStore
 
     public string Location => _blob.Location;
 
-    public bool Exists => _blob.Read() != null;
+    public bool Exists => _blob.Exists();
 
     public RuleLoadOutcome Load()
     {
-        var text = _blob.Read();
+        return LoadText(_blob.Read());
+    }
+
+    public RuleLoadOutcome LoadBounded(int maximumCharacters)
+    {
+        if (maximumCharacters is < 1 or > int.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(nameof(maximumCharacters));
+        var (prefix, _, reportedLength) = _blob.ReadBoundedWithVersion(maximumCharacters);
+        if (reportedLength > maximumCharacters || (prefix?.Length ?? 0) > maximumCharacters)
+            return RuleLoadOutcome.CapacityFailure($"rules blob 超過 {maximumCharacters} 字元校準上限");
+        if (prefix != null && !HasBoundedRuleShape(prefix, out var shapeError, out var capacityExceeded))
+            return capacityExceeded ? RuleLoadOutcome.CapacityFailure(shapeError) : RuleLoadOutcome.Fail(shapeError);
+        return LoadText(prefix);
+    }
+
+    private static bool HasBoundedRuleShape(string json, out string error, out bool capacityExceeded)
+    {
+        const int maxTokens = 50_000;
+        capacityExceeded = false;
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json), new JsonReaderOptions
+        {
+            MaxDepth = 64,
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        });
+        var arrays = new Stack<(string? Name, int Depth, int Count)>();
+        string? propertyName = null;
+        var tokens = 0;
+        try
+        {
+            while (reader.Read())
+            {
+                if (++tokens > maxTokens)
+                {
+                    capacityExceeded = true;
+                    error = $"rules JSON 超過校準節點上限（{maxTokens}）";
+                    return false;
+                }
+                if (arrays.Count > 0 && reader.CurrentDepth == arrays.Peek().Depth + 1 &&
+                    reader.TokenType is not (JsonTokenType.EndArray or JsonTokenType.EndObject))
+                {
+                    var frame = arrays.Pop();
+                    frame.Count++;
+                    var cap = frame.Name?.Equals("Rules", StringComparison.OrdinalIgnoreCase) == true ? 10_000 : 1_024;
+                    if (frame.Count > cap)
+                    {
+                        capacityExceeded = true;
+                        error = $"rules JSON 的 {frame.Name ?? "nested"} 陣列超過校準項目上限（{cap}）";
+                        return false;
+                    }
+                    arrays.Push(frame);
+                }
+                if (reader.TokenType == JsonTokenType.PropertyName) propertyName = reader.GetString();
+                else if (reader.TokenType == JsonTokenType.StartArray)
+                {
+                    arrays.Push((propertyName, reader.CurrentDepth, 0));
+                    propertyName = null;
+                }
+                else if (reader.TokenType == JsonTokenType.EndArray)
+                {
+                    if (arrays.Count == 0) break;
+                    arrays.Pop();
+                }
+                else propertyName = null;
+            }
+        }
+        catch (JsonException)
+        {
+            error = "rules JSON 結構無效，校準拒絕解析";
+            return false;
+        }
+        error = string.Empty;
+        return true;
+    }
+
+    private RuleLoadOutcome LoadText(string? text)
+    {
         if (text == null)
         {
             return RuleLoadOutcome.Fail("檔案不存在");

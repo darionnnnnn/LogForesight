@@ -90,6 +90,13 @@ internal static class CorrelationAnalyzer
         }.Where(s => s != null).Cast<LogIssueSignature>().ToList();
     }
 
+    /// <summary>全部符合既有儲存訊號明確來源與事件 ID 的簽章；供需要逐筆原生證據的精確配對使用。</summary>
+    internal static List<LogIssueSignature> StorageSignalCandidates(IReadOnlyList<LogIssueSignature> issues) =>
+        issues.Where(i =>
+            (i.Source.Contains("disk", StringComparison.OrdinalIgnoreCase) && DiskErrorIds.Contains(i.EventId)) ||
+            (i.Source.Contains("Ntfs", StringComparison.OrdinalIgnoreCase) && NtfsErrorIds.Contains(i.EventId)) ||
+            (i.Source.Contains("stor", StringComparison.OrdinalIgnoreCase) && i.EventId == 129)).ToList();
+
     /// <summary>
     /// 非預期關機（Kernel-Power 41，沒有時退回 EventLog 6008）。
     /// 非預期關機的唯一判定：同日關聯與 PRTG 跨來源佐證共用。
@@ -98,6 +105,12 @@ internal static class CorrelationAnalyzer
     {
         return FindIn(issues, "Kernel-Power", 41) ?? FindIn(issues, "EventLog", 6008);
     }
+
+    /// <summary>全部符合既有非預期關機定義的簽章；不同事件可各自提供可核對的原生時間與引用。</summary>
+    internal static List<LogIssueSignature> UnexpectedShutdownCandidates(IReadOnlyList<LogIssueSignature> issues) =>
+        issues.Where(i =>
+            (i.Source.Contains("Kernel-Power", StringComparison.OrdinalIgnoreCase) && i.EventId == 41) ||
+            (i.Source.Contains("EventLog", StringComparison.OrdinalIgnoreCase) && i.EventId == 6008)).ToList();
 
     public static List<CorrelationFinding> Detect(List<LogIssueSignature> issues,
         List<DailyAnalysisRecord> history, DateTime targetDate, SuccessfulLogonMatch? successfulLogonMatch = null)

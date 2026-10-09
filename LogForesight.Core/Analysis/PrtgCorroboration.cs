@@ -15,9 +15,37 @@ namespace LogForesight.Core.Analysis;
 /// </summary>
 public static class PrtgCorroboration
 {
+    // 每日簽章清單沒有筆數上限；可信觀測先過濾，再以固定配對上限守住精確比對成本，超限即不產生對齊。
+    private const int MaximumEvidencePairComparisons = 4096;
+
     private const string StoragePrefix = "【儲存異常同日訊號】";
     private const string CapacityPrefix = "【容量異常同日訊號】";
     private const string OutagePrefix = "【關機與監測異常同日訊號】";
+    private const string StorageAlignedPrefix = "【儲存異常來源對齊】";
+    private const string CapacityAlignedPrefix = "【容量異常來源對齊】";
+    private const string OutageAlignedPrefix = "【關機與監測來源對齊】";
+
+    private static readonly (string Id, string Prefix)[] OwnedPatterns =
+    [
+        (CorrelationPatternIds.PrtgStorageCorroborated, StoragePrefix),
+        (CorrelationPatternIds.PrtgCapacityCorroborated, CapacityPrefix),
+        (CorrelationPatternIds.PrtgOutageCorroborated, OutagePrefix),
+        (CorrelationPatternIds.PrtgStorageEvidenceAligned, StorageAlignedPrefix),
+        (CorrelationPatternIds.PrtgCapacityEvidenceAligned, CapacityAlignedPrefix),
+        (CorrelationPatternIds.PrtgOutageEvidenceAligned, OutageAlignedPrefix)
+    ];
+
+    private static readonly (string WeakId, string AlignedId)[] SuppressionInheritance =
+    [
+        (CorrelationPatternIds.PrtgStorageCorroborated, CorrelationPatternIds.PrtgStorageEvidenceAligned),
+        (CorrelationPatternIds.PrtgCapacityCorroborated, CorrelationPatternIds.PrtgCapacityEvidenceAligned),
+        (CorrelationPatternIds.PrtgOutageCorroborated, CorrelationPatternIds.PrtgOutageEvidenceAligned)
+    ];
+
+    public static bool OwnsCorrelation(DailyAnalysisRecord record, string text) =>
+        OwnedPatterns.Any(pattern => text.StartsWith(pattern.Prefix, StringComparison.Ordinal)) ||
+        record.CorrelationAlertRefs.Any(reference => reference.Text == text &&
+            OwnedPatterns.Any(pattern => pattern.Id == reference.PatternId));
 
     private sealed record Hit(string PatternId, string Prefix, string Text);
 
@@ -25,38 +53,38 @@ public static class PrtgCorroboration
     public static (string? RiskLevel, string? RiskBasis, int Added) Refresh(
         DailyAnalysisRecord record, IReadOnlySet<string>? suppressedPatternIds = null)
     {
-        (string Id, string Prefix)[] owned = [
-            (CorrelationPatternIds.PrtgStorageCorroborated, StoragePrefix),
-            (CorrelationPatternIds.PrtgCapacityCorroborated, CapacityPrefix),
-            (CorrelationPatternIds.PrtgOutageCorroborated, OutagePrefix)];
-        var prior = record.CorrelationAlertRefs.Where(r => owned.Any(o => o.Id == r.PatternId))
+        var prior = record.CorrelationAlertRefs.Where(r => OwnedPatterns.Any(o => o.Id == r.PatternId))
             .Select(r => r.PatternId).ToHashSet(StringComparer.Ordinal);
-        var suppression = suppressedPatternIds ?? owned.Where(o => record.SuppressedCorrelationAlerts
+        var suppression = suppressedPatternIds ?? OwnedPatterns.Where(o => record.SuppressedCorrelationAlerts
             .Any(t => t.StartsWith(o.Prefix, StringComparison.Ordinal))).Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
         var priorTexts = record.CorrelationAlertRefs.Where(r => prior.Contains(r.PatternId)).Select(r => r.Text).ToHashSet();
-        bool Owns(string text) => priorTexts.Contains(text) || owned.Any(o => text.StartsWith(o.Prefix, StringComparison.Ordinal));
+        bool Owns(string text) => priorTexts.Contains(text) || OwnedPatterns.Any(o => text.StartsWith(o.Prefix, StringComparison.Ordinal));
         record.CorrelationAlerts.RemoveAll(Owns);
         record.SuppressedCorrelationAlerts.RemoveAll(Owns);
-        record.CorrelationAlertRefs.RemoveAll(r => owned.Any(o => o.Id == r.PatternId));
+        record.CorrelationAlertRefs.RemoveAll(r => OwnedPatterns.Any(o => o.Id == r.PatternId));
         Apply(record, suppression);
-        return (null, null, record.CorrelationAlertRefs.Count(r => owned.Any(o => o.Id == r.PatternId) && !prior.Contains(r.PatternId)));
+        return (null, null, record.CorrelationAlertRefs.Count(r => OwnedPatterns.Any(o => o.Id == r.PatternId) && !prior.Contains(r.PatternId)));
     }
 
     /// <summary>
     /// 對紀錄套用佐證判定，就地寫入 <see cref="DailyAnalysisRecord.CorrelationAlerts"/>／
     /// <see cref="DailyAnalysisRecord.CorrelationAlertRefs"/>（未抑制）或
     /// <see cref="DailyAnalysisRecord.SuppressedCorrelationAlerts"/>（模式被抑制）。
-    /// 目前只有弱佐證，回傳風險為 null；呼叫端的 PRTG finding 本身仍可依規則影響風險。
+    /// 同日弱訊號與精確來源對齊各有獨立模式；兩者都不提高風險，呼叫端的 PRTG finding 本身仍可依規則影響風險。
     /// </summary>
     /// <param name="record">主機日紀錄（TopIssues 已含本次追加的 PRTG 簽章）。</param>
     /// <param name="suppressedPatternIds">該主機生效中的關聯抑制模式 Id（沒有就傳空集合）。</param>
     /// <returns>
-    /// 現有配對只有同日資訊，缺時間與資源身分；只記弱佐證，不以配對提高風險。
+    /// 同日配對永遠保留弱佐證。僅完整精確證據會另外增加來源對齊線索；任何配對都不提高風險。
     /// 回傳的風險與依據恆為 null；Added 為新加的未抑制線索數。
     /// </returns>
     public static (string? RiskLevel, string? RiskBasis, int Added) Apply(
         DailyAnalysisRecord record, IReadOnlySet<string> suppressedPatternIds)
     {
+        var effectiveSuppression = suppressedPatternIds.ToHashSet(StringComparer.Ordinal);
+        foreach (var (weakId, alignedId) in SuppressionInheritance)
+            if (effectiveSuppression.Contains(weakId)) effectiveSuppression.Add(alignedId);
+
         var eventIssues = record.TopIssues
             .Where(i => !PrtgFindingMapper.IsPrtg(i) && !i.Suppressed)
             .ToList();
@@ -77,6 +105,11 @@ public static class PrtgCorroboration
             hits.Add(new Hit(CorrelationPatternIds.PrtgStorageCorroborated, StoragePrefix,
                 $"{StoragePrefix}事件日誌的磁碟 I/O 錯誤（{parts}）與 PRTG 硬體健康 sensor 同日示警（{DetailOf(hardwareAlert)}），" +
                 "兩來源同日出現異常；尚未確認為同一裝置或同一時段，請查對硬體與備份"));
+            AddAlignedHit(hits, CorrelationAnalyzer.StorageSignalCandidates(eventIssues),
+                MatchingPrtg(prtgIssues, PrtgSensorCategories.Hardware,
+                    PrtgRuleEvaluator.RuleWarning, PrtgRuleEvaluator.RuleDown),
+                SourceEvidenceRelation.DiskIoToHardware,
+                CorrelationPatternIds.PrtgStorageEvidenceAligned, StorageAlignedPrefix);
         }
 
         // capacity：srv 2013（磁碟空間即將不足）＋ 磁碟可用空間 sensor 的 warning
@@ -87,6 +120,11 @@ public static class PrtgCorroboration
         {
             hits.Add(new Hit(CorrelationPatternIds.PrtgCapacityCorroborated, CapacityPrefix,
                 $"{CapacityPrefix}事件日誌回報磁碟空間即將不足，PRTG 磁碟可用空間 sensor 同日示警（{DetailOf(diskWarning)}）；尚未確認為同一磁碟區"));
+            AddAlignedHit(hits, eventIssues.Where(i => i.EventId == 2013 &&
+                    i.Source.Contains("srv", StringComparison.OrdinalIgnoreCase)),
+                MatchingPrtg(prtgIssues, PrtgSensorCategories.Disk, PrtgRuleEvaluator.RuleWarning),
+                SourceEvidenceRelation.CapacityToDiskSensor,
+                CorrelationPatternIds.PrtgCapacityEvidenceAligned, CapacityAlignedPrefix);
         }
 
         // outage：非預期關機 ＋ 連通性 sensor 的 down 或 flapping
@@ -97,6 +135,11 @@ public static class PrtgCorroboration
         {
             hits.Add(new Hit(CorrelationPatternIds.PrtgOutageCorroborated, OutagePrefix,
                 $"{OutagePrefix}事件日誌記錄非預期關機，PRTG 連通性類 sensor 同日異常（{DetailOf(availabilityAlert)}）；尚未確認時間與探測對象相符"));
+            AddAlignedHit(hits, CorrelationAnalyzer.UnexpectedShutdownCandidates(eventIssues),
+                MatchingPrtg(prtgIssues, PrtgSensorCategories.Availability,
+                    PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping),
+                SourceEvidenceRelation.ShutdownToAvailability,
+                CorrelationPatternIds.PrtgOutageEvidenceAligned, OutageAlignedPrefix);
         }
 
         var added = new List<Hit>();
@@ -106,7 +149,7 @@ public static class PrtgCorroboration
             // 不能把「曾被抑制」當成「已存在」，否則取消抑制後重跑，這個佐證永遠補不回來
             if (record.CorrelationAlertRefs.Any(r => string.Equals(r.PatternId, hit.PatternId, StringComparison.Ordinal))) continue;
 
-            if (suppressedPatternIds.Contains(hit.PatternId))
+            if (effectiveSuppression.Contains(hit.PatternId))
             {
                 if (!record.SuppressedCorrelationAlerts.Any(t => t.StartsWith(hit.Prefix, StringComparison.Ordinal)))
                     record.SuppressedCorrelationAlerts.Add(hit.Text);
@@ -134,6 +177,59 @@ public static class PrtgCorroboration
             PrtgFindingMapper.TryGetRuleCode(i.Source, out var code) &&
             ruleCodes.Contains(code, StringComparer.OrdinalIgnoreCase));
 
+    private static IReadOnlyList<LogIssueSignature> MatchingPrtg(
+        IReadOnlyList<LogIssueSignature> prtgIssues, string sensorCategory, params string[] ruleCodes) =>
+        prtgIssues.Where(i =>
+            string.Equals(i.PrtgSensorCategory, sensorCategory, StringComparison.OrdinalIgnoreCase) &&
+            PrtgFindingMapper.TryGetRuleCode(i.Source, out var code) &&
+            ruleCodes.Contains(code, StringComparer.OrdinalIgnoreCase)).ToList();
+
     private static string DetailOf(LogIssueSignature signature) =>
         signature.SampleMessages.Count > 0 ? signature.SampleMessages[0] : signature.Source;
+
+    private static void AddAlignedHit(List<Hit> hits, IEnumerable<LogIssueSignature> eventIssues,
+        IEnumerable<LogIssueSignature> prtgIssues, SourceEvidenceRelation relation, string patternId, string prefix)
+    {
+        var text = MatchedText(eventIssues, prtgIssues, relation, prefix);
+        if (text != null) hits.Add(new Hit(patternId, prefix, text));
+    }
+
+    /// <summary>
+    /// Binds a relation only on bounded local copies after the actual event and PRTG signal pair
+    /// has already matched one of the explicit rules above. Stored observations remain untouched.
+    /// </summary>
+    private static string? MatchedText(IEnumerable<LogIssueSignature> eventIssues,
+        IEnumerable<LogIssueSignature> prtgIssues, SourceEvidenceRelation relation, string prefix)
+    {
+        var eligibleEvents = eventIssues.SelectMany(i => i.SourceObservations)
+            .Where(HasTrustedIdentityAndReference).ToList();
+        var eligiblePrtg = prtgIssues.SelectMany(i => i.SourceObservations)
+            .Where(HasTrustedIdentityAndReference).ToList();
+        if (eligibleEvents.Count == 0 || eligiblePrtg.Count == 0) return null;
+
+        var comparisons = 0;
+        foreach (var eventEvidence in eligibleEvents)
+        foreach (var prtgEvidence in eligiblePrtg)
+        {
+            if (comparisons >= MaximumEvidencePairComparisons) return null;
+            comparisons++;
+            var eventProof = eventEvidence.BoundedCopy();
+            var prtgProof = prtgEvidence.BoundedCopy();
+            eventProof.RelationContract = relation;
+            prtgProof.RelationContract = relation;
+            if (!SourceEvidenceMatcher.Match(eventProof, prtgProof).SameResourceAndWindow) continue;
+            var window = prtgProof.HasValidWindow
+                ? $"[{prtgProof.WindowStartUtc:O},{prtgProof.WindowEndUtc:O})"
+                : $"[{eventProof.WindowStartUtc:O},{eventProof.WindowEndUtc:O})";
+            return $"{prefix}事件來源 {eventProof.SourceReference} 與 PRTG 來源 {prtgProof.SourceReference} " +
+                $"指向主機 {eventProof.ExactHostKey} 的 {eventProof.ResourceScope} {eventProof.ExactResourceKey}，" +
+                $"UTC 時間窗 {window} 相符；這只表示來源在資源與時間上對齊，不代表因果關係";
+        }
+        return null;
+    }
+
+    private static bool HasTrustedIdentityAndReference(SourceEvidence evidence) =>
+        Enum.IsDefined(evidence.ResourceScope) && evidence.ResourceScope != SourceResourceScope.Unknown &&
+        !string.IsNullOrWhiteSpace(evidence.ExactHostKey) &&
+        !string.IsNullOrWhiteSpace(evidence.ExactResourceKey) && evidence.HasExactReference;
 }

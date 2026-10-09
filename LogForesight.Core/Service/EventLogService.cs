@@ -246,7 +246,21 @@ public class EventLogService
                     Source = entry.Source,
                     Message = entry.Message,
                     InstanceId = entry.InstanceId,
-                    EventId = eventId
+                    EventId = eventId,
+                    SourceEvidence = new SourceEvidence
+                    {
+                        SourceKind = SourceEvidenceKind.LocalClassicEventLog,
+                        ResourceScope = SourceResourceScope.Host,
+                        ExactResourceKey = $"host:{Environment.MachineName.ToUpperInvariant()}",
+                        ExactHostKey = $"host:{Environment.MachineName.ToUpperInvariant()}",
+                        EventTimeUtc = new DateTimeOffset(DateTime.SpecifyKind(entry.TimeGenerated, DateTimeKind.Local).ToUniversalTime()),
+                        SourceReference = $"classic-eventlog:{Environment.MachineName}:{logName}:{entry.Index}",
+                        SourceReferenceQuality = SourceReferenceQuality.ExactNative,
+                        ProjectionFingerprint = SourceEvidence.Fingerprint(Environment.MachineName, logName,
+                            entry.Index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            entry.TimeGenerated.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                            entry.Source, entry.Message)
+                    }
                 });
             }
 

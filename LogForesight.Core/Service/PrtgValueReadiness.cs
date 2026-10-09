@@ -9,7 +9,7 @@ public enum PrtgValueReadinessStatus
     Unknown
 }
 
-public sealed record PrtgReadinessHour(DateTime PeriodStart, string Quality, double? Coverage);
+public sealed record PrtgReadinessHour(DateTime PeriodStart, string Quality, double? Coverage, bool Trusted = false);
 
 /// <summary>供值型 readiness 計算使用的單顆磁碟候選與其有限窗口資料。</summary>
 public sealed record PrtgValueReadinessInput(
@@ -90,9 +90,9 @@ public static class PrtgValueReadiness
             usableHours, MinDailyUsableHours, latest, semanticReady, reason);
     }
 
-    public static bool IsUsable(PrtgReadinessHour hour) =>
-        string.Equals(hour.Quality, PrtgDataQuality.Ok, StringComparison.OrdinalIgnoreCase)
+    public static bool IsUsable(PrtgReadinessHour hour) => hour.Trusted &&
+        (string.Equals(hour.Quality, PrtgDataQuality.Ok, StringComparison.OrdinalIgnoreCase)
         || (string.Equals(hour.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase)
             && hour.Coverage.HasValue
-            && hour.Coverage.Value >= PrtgValueUsability.SampledMinCoverage);
+            && hour.Coverage.Value >= PrtgValueUsability.SampledMinCoverage));
 }

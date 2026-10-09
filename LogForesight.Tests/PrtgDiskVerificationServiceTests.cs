@@ -1,9 +1,10 @@
-﻿using LogForesight.Core;
+using LogForesight.Core;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -81,6 +82,72 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         Assert.Empty(_evidence.GetAll());
         Assert.Empty(_results.GetRecent());
     }
+
+    [Fact]
+    public void VerifiedProbeProducerPersistsOneCurrentSourceResourceChannelEpoch()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var captured = CaptureCurrentIdentity(store);
+        var now = DateTime.UtcNow;
+        var probe = new LogForesight.Core.Service.PrtgDiskSemanticProbeResult(1,
+            LogForesight.Core.Service.PrtgDiskSemanticProbeStatus.Verified, "verified", "free", "Free space", "%", 1,
+            "descending-danger", 1, true, Array.Empty<string>());
+
+        _service.PersistProbeResult(CurrentDisk(), probe, DateTime.Today.AddDays(-1), now, captured);
+
+        var current = store.GetResourceIdentity(1);
+        var result = Assert.IsType<PrtgDiskVerificationResult>(_results.Get(1));
+        var evidence = Assert.Single(_evidence.GetAll());
+        Assert.Equal(current.SourceGeneration, result.SourceGeneration);
+        Assert.Equal(current.Generation, result.ResourceGeneration);
+        Assert.Equal(current.ChannelGeneration, result.ChannelGeneration);
+        Assert.Equal(current.Epoch, result.IdentityEpoch);
+        Assert.Equal(result.SourceGeneration, evidence.SourceGeneration);
+        Assert.Equal(result.ResourceGeneration, evidence.ResourceGeneration);
+        Assert.Equal(result.ChannelGeneration, evidence.ChannelGeneration);
+        Assert.Equal(result.IdentityEpoch, evidence.IdentityEpoch);
+        Assert.True(PrtgResourceQualification.IsChannelCurrent(evidence, result, current));
+    }
+
+    [Fact]
+    public void VerifiedProbeProducerRejectsIdentityChangedDuringProbeWithoutSavingEvidence()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var captured = CaptureCurrentIdentity(store);
+        var policy = new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.UpdateWithResourceEpochs("revision-1", [1], p =>
+        {
+            p.Revision = "revision-2";
+            p.SourceGeneration = "source-v2";
+        });
+        var probe = new LogForesight.Core.Service.PrtgDiskSemanticProbeResult(1,
+            LogForesight.Core.Service.PrtgDiskSemanticProbeStatus.Verified, "verified", "free", "Free space", "%", 1,
+            "descending-danger", 1, true, Array.Empty<string>());
+
+        Assert.Throws<InvalidOperationException>(() => _service.PersistProbeResult(CurrentDisk(), probe,
+            DateTime.Today.AddDays(-1), DateTime.UtcNow, captured));
+
+        Assert.Empty(_evidence.GetAll());
+        Assert.Null(_results.Get(1));
+        Assert.True(store.GetResourceIdentity(1).PendingReconciliation);
+    }
+
+    private PrtgResourceIdentity CaptureCurrentIdentity(EfPrtgStore store)
+    {
+        var policy = new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p =>
+        {
+            p.Revision = "revision-1";
+            p.SourceGeneration = "source-v1";
+            p.HostIds = [1];
+            p.SensorIds = [1];
+        });
+        return store.BindObservedResource(1, 1, "source-v1", "2|snmpdiskfree|created-A");
+    }
+
+    private static (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category,
+        string? Unit, bool Paused, bool DevicePaused) CurrentDisk() =>
+        (1, 2, 1, "disk", "snmpdiskfree", PrtgSensorCategories.Disk, "%", false, false);
 
     [Fact]
     public void RuleTrial_SelectsOrdinalFirstEnabledDiskRuleRegardlessOfStoredOrder()
@@ -203,6 +270,8 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             db.PrtgValues.AddRange(values);
             db.SaveChanges();
         }
+        CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, 1, 2, 1, "snmpdiskfree", "source-v1");
         var trial = _service.AssessRuleTrial(1);
         Assert.Equal("insufficient-data", trial.Status);
         Assert.Equal(6, trial.UsableDays);
@@ -233,11 +302,10 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             db.PrtgValues.AddRange(values);
             db.SaveChanges();
         }
-        _evidence.ConfirmManually(new(1, 2, 1, "snmpdiskfree", "free", "Free", "%", 1, "descending-danger"),
-            42, "verified", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion);
-        _results.Save(new(1, 2, 1, "snmpdiskfree", "Verified", "matched", "free", "Free", "%", 1,
-            "descending-danger", 1, true, DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion));
+        ConfirmTrialSemanticEvidence();
         var beforeResults = _results.GetRecent().Count;
+        CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, 1, 2, 1, "snmpdiskfree", "source-v1");
         var trial = _service.AssessRuleTrial(1);
         Assert.Equal("ready-no-hit", trial.Status);
         Assert.True(trial.SemanticVerified);
@@ -302,14 +370,24 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         db.PrtgHostMaps.AddRange(maps);
         db.PrtgValues.AddRange(values);
         db.SaveChanges();
+        CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, sensor.Objid, sensor.DeviceObjid,
+            1, sensor.SensorType, "source-v1");
     }
 
     private void ConfirmTrialSemanticEvidence()
     {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var identity = CaptureCurrentIdentity(store);
+        identity = PrtgResourceFixture.BindChannel(store, identity, "free", "Free", "%", 1,
+            "descending-danger");
         _evidence.ConfirmManually(new(1, 2, 1, "snmpdiskfree", "free", "Free", "%", 1, "descending-danger"),
-            42, "test fixture semantic evidence", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion);
+            42, "test fixture semantic evidence", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion,
+            identity.SourceGeneration, identity.Generation, identity.ChannelGeneration, identity.Epoch);
         _results.Save(new(1, 2, 1, "snmpdiskfree", "Verified", "matched", "free", "Free", "%", 1,
-            "descending-danger", 1, true, DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion));
+            "descending-danger", 1, true, DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
     }
 
     private void SaveTrialRule(bool enabled = true, PrtgDiskTrendThresholds? thresholds = null) => _ruleStore.Save(new RuleFileContent
@@ -391,22 +469,32 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         Assert.True(_service.CheckEvidence(1).IsValid);
 
         Thread.Sleep(5);
+        var identity = new EfPrtgStore(_fx.NewContext).GetResourceIdentity(1);
         _results.Save(new(1, 2, 1, "snmpdiskfree", "NeedsManualReview", "channel differs",
             "channel-2", "Used", "%", 1, "descending-danger", 1, true, DateTime.UtcNow,
-            DateTime.Today.AddDays(-1), PrtgDiskVerificationService.ParserSemanticVersion));
+            DateTime.Today.AddDays(-1), PrtgDiskVerificationService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
         Assert.False(_service.CheckEvidence(1).IsValid);
     }
 
     [Fact]
     public void ManualEvidence_RemainsValidWhenMatchingProbeIsOlderThan25Hours()
     {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var identity = CaptureCurrentIdentity(store);
+        identity = PrtgResourceFixture.BindChannel(store, identity, "channel-1", "Free space", "%", 1,
+            "descending-danger");
         var verifiedAt = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
         _results.Save(new(1, 2, 1, "snmpdiskfree", "NeedsManualReview", "metadata incomplete",
             "channel-1", "Free space", "%", 1, "descending-danger", 1, true, verifiedAt,
-            DateTime.Today.AddDays(-1), PrtgDiskVerificationService.ParserSemanticVersion));
+            DateTime.Today.AddDays(-1), PrtgDiskVerificationService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
         _evidence.ConfirmManually(
             new(1, 2, 1, "snmpdiskfree", "channel-1", "Free space", "%", 1, "descending-danger"),
-            42, "reviewed", verifiedAt, PrtgDiskVerificationService.ParserSemanticVersion);
+            42, "reviewed", verifiedAt, PrtgDiskVerificationService.ParserSemanticVersion,
+            identity.SourceGeneration, identity.Generation, identity.ChannelGeneration, identity.Epoch);
 
         Assert.True(DateTime.UtcNow - verifiedAt > TimeSpan.FromHours(25));
         Assert.True(_service.CheckEvidence(1).IsValid);
@@ -418,21 +506,21 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         ConfirmManualEvidenceFromPartialProbe();
         Assert.True(_service.CheckEvidence(1).IsValid);
 
-        using (var db = _fx.NewContext())
-        {
-            var map = db.PrtgHostMaps.Single(row => row.MapDate == DateTime.Today);
-            map.HostId = 99;
-            db.SaveChanges();
-        }
+        new EfPrtgStore(_fx.NewContext).ReplaceHostMapForDate(DateTime.Today,
+            [new PrtgHostMapRow { DeviceObjid = 2, MapDate = DateTime.Today, HostId = 99,
+                MapStatus = PrtgMapStatus.Ok }]);
         Assert.False(_service.CheckEvidence(1).IsValid);
     }
 
     private void ConfirmManualEvidenceFromPartialProbe()
     {
+        var identity = CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
         var probeAt = DateTime.UtcNow;
         _results.Save(new(1, 2, 1, "snmpdiskfree", "NeedsManualReview", "metadata incomplete",
             null, null, null, null, null, 1, true, probeAt, DateTime.Today.AddDays(-1),
-            PrtgDiskVerificationService.ParserSemanticVersion));
+            PrtgDiskVerificationService.ParserSemanticVersion, SourceGeneration: identity.SourceGeneration,
+            ResourceGeneration: identity.Generation, ChannelGeneration: identity.ChannelGeneration,
+            IdentityEpoch: identity.Epoch));
 
         Assert.Throws<ArgumentException>(() => _service.ConfirmManually(new(1, "channel-1", "Free space", "%", 2,
             "descending-danger", "scale must be one"), 42));

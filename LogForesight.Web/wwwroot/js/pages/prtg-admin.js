@@ -17,7 +17,142 @@ import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { extractProbeEvidenceJson, isProbeEvidenceDownloadable } from '../core/prtg-probe-evidence.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
 
-bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => { if (name === 'probe') queueMicrotask(loadDiskReadiness); } });
+bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => {
+    if (name === 'probe') queueMicrotask(loadDiskReadiness);
+    if (name === 'timeline-progress') queueMicrotask(loadTimelineProgress);
+    if (name === 'profile-refresh') queueMicrotask(loadTrustedProfileRefresh);
+} });
+
+let trustedProfileOffset = 0;
+async function loadTrustedProfileRefresh() {
+    const status = document.getElementById('prtg-profile-refresh-progress');
+    const rowsRoot = document.getElementById('prtg-profile-refresh-rows');
+    if (!status || !rowsRoot) return;
+    status.textContent = '正在讀取背景進度與 100 筆 profile 狀態…';
+    try {
+        const [progress, page] = await Promise.all([
+            api.get('/api/prtg/monitoring/trusted-sampling/refresh-progress', { silent: true }),
+            api.get(`/api/prtg/monitoring/trusted-sampling/refresh-sensors?offset=${trustedProfileOffset}&limit=100`, { silent: true })
+        ]);
+        const p = progress || {};
+        status.textContent = `所選 ${p.selectedSensors || 0} 顆｜符合條件 ${p.eligibleSensors || 0}｜游標 ${p.cursor || 0}｜符合 ${p.qualified || 0}、等待 ${p.waiting || 0}、不可用 ${p.unavailable || 0}、失敗 ${p.failed || 0}｜表格請求 ${p.rawRequestCount || 0}｜實際請求耗時 ${formatNumber(p.observedRequestSeconds || 0)} 秒｜最近結果 ${p.lastOutcome || '尚未執行'}${p.lastWaitingReason ? `（${p.lastWaitingReason}）` : ''}${p.running ? '｜工作進行中' : ''}${p.nextSweepAtUtc ? `｜下次巡覽 ${p.nextSweepAtUtc}` : ''}`;
+        const rows = Array.isArray(page?.rows) ? page.rows : [];
+        rowsRoot.replaceChildren();
+        for (const row of rows) {
+            const line = document.createElement('div');
+            line.className = 'small py-1 border-bottom';
+            line.textContent = `Sensor #${row.sensorObjid}｜${row.eligible ? '符合巡覽條件' : '目前排除'}｜${row.status || 'waiting'}｜${row.reason || '等待更新'}${row.nextAttemptAtUtc ? `｜下次嘗試 ${row.nextAttemptAtUtc}` : ''}`;
+            rowsRoot.append(line);
+        }
+        const next = page?.nextOffset;
+        document.getElementById('prtg-profile-refresh-page').textContent = `第 ${Math.floor(trustedProfileOffset / 100) + 1} 頁｜目前進度列 ${page?.total || 0}`;
+        document.getElementById('prtg-profile-refresh-prev').disabled = trustedProfileOffset === 0;
+        document.getElementById('prtg-profile-refresh-next').disabled = next == null;
+    } catch (error) {
+        rowsRoot.replaceChildren();
+        status.textContent = `Trusted profile 進度無法讀取：${error?.message || '請重新載入。'}`;
+        document.getElementById('prtg-profile-refresh-page').textContent = '';
+        document.getElementById('prtg-profile-refresh-prev').disabled = true;
+        document.getElementById('prtg-profile-refresh-next').disabled = true;
+    }
+}
+document.getElementById('prtg-profile-refresh-reload')?.addEventListener('click', loadTrustedProfileRefresh);
+document.getElementById('prtg-profile-refresh-prev')?.addEventListener('click', () => { trustedProfileOffset = Math.max(0, trustedProfileOffset - 100); loadTrustedProfileRefresh(); });
+document.getElementById('prtg-profile-refresh-next')?.addEventListener('click', () => { trustedProfileOffset += 100; loadTrustedProfileRefresh(); });
+
+let timelineProgressPage = 1;
+let timelineProgressController = null;
+let timelineProgressRevision = null;
+async function loadTimelineProgress() {
+    const root = document.getElementById('prtg-timeline-progress-rows');
+    if (!root) return;
+    timelineProgressController?.abort();
+    const controller = new AbortController();
+    timelineProgressController = controller;
+    const status = document.getElementById('prtg-timeline-progress-status');
+    const cancel = document.getElementById('prtg-timeline-progress-cancel');
+    const previous = document.getElementById('prtg-timeline-progress-prev');
+    const next = document.getElementById('prtg-timeline-progress-next');
+    const pageLabel = document.getElementById('prtg-timeline-progress-page');
+    cancel.disabled = false;
+    status.textContent = '正在讀取一頁，最多 50 顆 sensor…';
+    try {
+        const data = await api.get(`/api/prtg/timeline-progress?page=${timelineProgressPage}&pageSize=50`,
+            { signal: controller.signal, silent: true });
+        if (controller.signal.aborted) return;
+        timelineProgressRevision = data.revision || null;
+        const hours = document.getElementById('prtg-timeline-bootstrap-hours');
+        const resume = document.getElementById('prtg-timeline-bootstrap-resume');
+        if (hours) hours.value = String(data.bootstrapDeadlineHours ?? 72);
+        if (resume) resume.disabled = data.bootstrapCycleOutcome !== 'deadline-exceeded';
+        root.replaceChildren();
+        const rows = Array.isArray(data?.rows) ? data.rows : [];
+        const labels = {
+            complete: '31天歷史狀態涵蓋已累積', 'capacity-unverified': '歷史狀態涵蓋尚未完整驗證', 'capacity-shortfall': '歷史頁數上限不足',
+            'waiting-identity': '等待目前資源身分', 'source-scope-stale': '來源範圍待更新',
+            malformed: '進度資料無效', 'not-started': '尚未開始'
+        };
+        for (const row of rows) {
+            const line = document.createElement('div');
+            line.className = 'small py-1 border-bottom';
+            const label = labels[row.bootstrapStatus] || '等待更新';
+            const watermark = row.lastCompleteThrough ? `｜完整水位 ${row.lastCompleteThrough}` : '';
+            const retry = row.nextAttemptAt ? `｜下次嘗試 ${row.nextAttemptAt}` : '';
+            const initial = row.initialCollectionCaptured ? '｜本週期初始查詢完成' : '｜本週期初始查詢待完成';
+            line.textContent = `Sensor #${row.sensorId}｜${label}${initial}${watermark}${retry}｜${row.qualityReason || '狀態待核對'}`;
+            root.append(line);
+        }
+        pageLabel.textContent = `第 ${data.page} / ${data.totalPages} 頁｜選取 ${data.selectedSensors} 顆｜版本 ${data.revision || '已核對'}`;
+        previous.disabled = data.page <= 1;
+        next.disabled = data.page >= data.totalPages;
+        const remaining = Number.isFinite(Number(data.bootstrapCycleRemainingSeconds))
+            ? Math.ceil(Number(data.bootstrapCycleRemainingSeconds) / 3600) : null;
+        const cycle = data.bootstrapCycleOutcome === 'running' && remaining !== null
+            ? `週期 ${data.bootstrapCycleOutcome}，期限 ${data.bootstrapCycleDeadlineAtUtc}（剩餘約${remaining}小時）`
+            : `週期 ${data.bootstrapCycleOutcome || '尚未開始'}${data.bootstrapCycleReason ? `：${data.bootstrapCycleReason}` : ''}`;
+        const prior = data.previousBootstrapCycle
+            ? `；前一週期 ${data.previousBootstrapCycle.outcome}（${data.previousBootstrapCycle.deadlineAtUtc || '無期限資料'}）` : '';
+        status.textContent = `${cycle}${prior}；目前頁已完成初始收集 ${data.bootstrapCycleCapturedOnPage ?? 0} 顆，選取總數 ${data.bootstrapCycleSelectedSensors || data.selectedSensors} 顆，公平游標 sensor #${data.lastServedSensorId || 0}；成本基準估算 ${Number(data.estimatedBootstrapBaselineHours || 0).toFixed(1)} 小時，預算遙測 ${data.budgetTelemetryStatus || 'unknown'}；最近一輪 ${data.lastRoundOutcome || '尚未執行'}，完成時間 ${data.lastRoundCompletedAt || '尚無'}。估算不是容量保證；各規則品質與暖機條件另行判定。`;
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        root.replaceChildren();
+        status.textContent = `進度無法讀取：${error?.message || '請重新載入。'} 範圍變更會取消舊頁結果。`;
+        pageLabel.textContent = '';
+        previous.disabled = true; next.disabled = true;
+    } finally {
+        if (timelineProgressController === controller) {
+            timelineProgressController = null;
+            cancel.disabled = true;
+        }
+    }
+}
+document.getElementById('prtg-timeline-progress-refresh')?.addEventListener('click', () => loadTimelineProgress());
+document.getElementById('prtg-timeline-progress-cancel')?.addEventListener('click', () => timelineProgressController?.abort());
+document.getElementById('prtg-timeline-progress-prev')?.addEventListener('click', () => { timelineProgressPage = Math.max(1, timelineProgressPage - 1); loadTimelineProgress(); });
+document.getElementById('prtg-timeline-progress-next')?.addEventListener('click', () => { timelineProgressPage++; loadTimelineProgress(); });
+document.getElementById('prtg-timeline-bootstrap-save')?.addEventListener('click', async () => {
+    const hours = Number(document.getElementById('prtg-timeline-bootstrap-hours')?.value);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 720 || !timelineProgressRevision) {
+        toast('期限需為1至720小時，請重新載入目前週期。', 'warning'); return;
+    }
+    try {
+        await api.put('/api/prtg/timeline-progress/configuration', {
+            deadlineHours: hours, expectedRevision: timelineProgressRevision, page: timelineProgressPage, pageSize: 50
+        }, { silent: true });
+        toast('期限設定已保存，套用於下一個新週期或明確續行。', 'success');
+        await loadTimelineProgress();
+    } catch (error) { toast(error?.message || '期限設定未保存；請重新載入。', 'danger'); }
+});
+document.getElementById('prtg-timeline-bootstrap-resume')?.addEventListener('click', async () => {
+    if (!timelineProgressRevision) { toast('請先重新載入目前週期。', 'warning'); return; }
+    try {
+        await api.post('/api/prtg/timeline-progress/resume', {
+            expectedRevision: timelineProgressRevision, page: timelineProgressPage, pageSize: 50
+        }, { silent: true });
+        toast('已明確續行保存的週期、游標與逐 sensor 前導。', 'success');
+        await loadTimelineProgress();
+    } catch (error) { toast(error?.message || '週期未續行；請重新載入。', 'danger'); }
+});
 
 let scopeRevision = null;
 const setupState = { settings: null, settingsLoading: true, connectionTest: null, probe: null, sync: null, rules: null, schedule: null };
@@ -195,8 +330,10 @@ function bindPrtgEffectiveness() {
     refresh.addEventListener('click', loadPrtgEffectiveness);
 }
 
-/** 目前已儲存的 PRTG 擷取開關。鏡像頁籤的「同步結構與對應」關閉時要擋住（後端也會擋，這是提前告知）。 */
+/** 目前已儲存的 PRTG 擷取開關。結構同步只更新鏡像，不會變更這個開關。 */
 let prtgEnabled = false;
+/** 已儲存的位址與認證是否足以啟動結構同步。 */
+let prtgStructureConfigured = false;
 /** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
 let structureSyncRunning = false;
 let selectedBackfillTimer = null;
@@ -482,6 +619,13 @@ function renderPrtgFields(settings) {
 
 
     prtgEnabled = Boolean(settings.prtgEnabled);
+    const authMode = settings.prtgAuthMode || 'token';
+    const hasCredential = authMode === 'password'
+        ? Boolean(settings.prtgHasPassword && settings.prtgUsername)
+        : authMode === 'passhash'
+            ? Boolean(settings.prtgHasPasshash && settings.prtgUsername)
+            : Boolean(settings.prtgHasApiToken);
+    prtgStructureConfigured = Boolean(settings.prtgUrl?.trim() && hasCredential);
     document.getElementById('prtg-enabled').checked = prtgEnabled;
     const scopeSelect = document.getElementById('prtg-value-fetch-scope');
     if (scopeSelect) {
@@ -553,7 +697,7 @@ function syncScopeFields() {
     const conservative = document.getElementById('prtg-fetch-strategy')?.value !== 'aggressive';
     document.getElementById('prtg-value-fetch-extra-hosts-group')
         ?.classList.toggle('d-none', off || conservative || scope !== 'triggered-plus-list');
-    document.getElementById('prtg-scope-estimate-btn')?.classList.toggle('d-none', off || conservative);
+    document.getElementById('prtg-scope-estimate-btn')?.classList.toggle('d-none', off);
     if (off || conservative) {
         document.getElementById('prtg-scope-estimate-result')?.replaceChildren();
         document.getElementById('prtg-snapshot-estimate-result')?.replaceChildren();
@@ -581,16 +725,12 @@ function syncStrategyHint() {
     syncScopeFields();
 }
 
-/**
- * 鏡像頁籤「同步結構與對應」的閘：擷取未啟用時同步一定被後端拒絕（PrtgStructureSyncService），
- * 讓按鈕直接灰掉並說去哪開，比按下去看紅字有用。以「已儲存的值」為準——
- * 開關改了還沒存不算啟用，否則會讓人以為存過了。
- */
+/** 鏡像同步以已儲存的 PRTG 位址與認證為準；取樣停用不會阻擋手動更新結構。 */
 function syncStructureSyncGate() {
     const btn = document.getElementById('prtg-structure-sync-btn');
-    if (btn) btn.disabled = !prtgEnabled || structureSyncRunning;
+    if (btn) btn.disabled = !prtgStructureConfigured || structureSyncRunning;
     document.getElementById('prtg-structure-sync-disabled-hint')
-        ?.classList.toggle('d-none', prtgEnabled);
+        ?.classList.toggle('d-none', prtgStructureConfigured);
 }
 
 function bindScopeControls() {
@@ -621,8 +761,9 @@ function bindScopeControls() {
         try {
             // 估算的是「目前選的模式」而非已儲存的模式——管理者是在決定要不要改設定。
             const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
+            const strategy = document.getElementById('prtg-fetch-strategy')?.value ?? 'conservative';
             const res = await api.get(
-                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}`,
+                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}&strategy=${encodeURIComponent(strategy)}`,
                 { silent: true });
 
             if (!res.success) {
@@ -633,18 +774,46 @@ function bindScopeControls() {
 
             if (snapshotResult) {
                 const snapBase = `快照（不受數值取數對象影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
+                const model = res.snapshotCapacityEstimatedSeconds == null
+                    ? '尚無足夠同形新樣本' : `p95 ${Number(res.snapshotCapacityP95BatchSeconds).toFixed(1)} 秒/批，估計 ${Number(res.snapshotCapacityEstimatedSeconds).toFixed(0)} 秒`;
+                const age = res.snapshotCapacityOldestSampleAgeSeconds == null
+                    ? '無樣本時間' : `最舊樣本 ${Number(res.snapshotCapacityOldestSampleAgeSeconds).toFixed(0)} 秒前`;
+                const capacity = `快照分項量測 ${res.snapshotCapacityStatus}（${res.snapshotCapacityStrategy}，${formatNumber(res.snapshotTargets)} 顆/${formatNumber(res.snapshotCapacityBatchCount)} 批；${formatNumber(res.snapshotCapacitySamples)} 個新鮮 ${formatNumber(res.snapshotCapacitySampleBatchSize)}-ID 樣本（至少 5 個）；${model}；${age}；原因 ${res.snapshotCapacityReason}；模型 ${res.snapshotCapacityModel}；請求形式 ${res.snapshotCapacityRequestShape}）`;
+                const profileCapacity = `Profile 分項量測 ${res.profileCapacityStatus}（目前有效的新鮮樣本 ${formatNumber(res.profileCapacitySamples)} 筆；首次核准及失敗後恢復需 5 筆；p95 ${res.profileCapacityP95SensorSeconds == null ? '—' : Number(res.profileCapacityP95SensorSeconds).toFixed(2) + ' 秒／sensor'}；${res.profileCapacityEstimatedSeconds == null ? '尚無僅傳輸估算' : '僅傳輸試測估算 ' + formatNumber(res.profileCapacityEstimatedSeconds) + ' 秒'}／${formatNumber(res.profileCapacityWindowSeconds)} 秒可用期限；原因 ${res.profileCapacityReason}；請求形式 ${res.profileCapacityRequestShape}）`;
+                const jointStatusText = res.jointCapacityStatus === 'capacity-qualified' ? '符合容量條件'
+                    : res.jointCapacityStatus === 'capacity-exceeded' ? '超出期限或共享額度' : '待驗證';
+                const jointPlanText = res.jointAdmissionPlanMatched
+                    ? '符合目前已核准方案' : '候選設定共同試算，儲存或啟用時會重新驗證';
+                const jointSeconds = value => value == null || !Number.isFinite(Number(value))
+                    ? '—' : formatNumber(Number(value).toFixed(0));
+                const jointRate = value => value == null || !Number.isFinite(Number(value))
+                    ? '—' : Number(value).toFixed(3);
+                const jointCapacity = `共同容量 ${jointStatusText}（${jointPlanText}；原因 ${res.jointCapacityReason}；Table API 共享配額 ${jointRate(res.jointSharedTableRequestsPerSecond)}/秒；快照保留 ${jointRate(res.jointSnapshotTableRequestsPerSecond)}/秒、Profile 保留 ${jointRate(res.jointProfileTableRequestsPerSecond)}/秒、一般請求餘額 ${jointRate(res.jointGeneralResidualTableRequestsPerSecond)}/秒；快照完成估算 ${jointSeconds(res.jointSnapshotEstimatedSeconds)}/${jointSeconds(res.jointSnapshotWindowSeconds)} 秒；Profile 完成估算 ${jointSeconds(res.jointProfileEstimatedSeconds)}/${jointSeconds(res.jointProfileWindowSeconds)} 秒）`;
                 if (res.snapshotWarning) {
                     snapshotResult.className = 'text-warning small d-block';
-                    snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}`;
+                    snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}；${capacity}；${profileCapacity}；${jointCapacity}`;
                 } else {
-                    snapshotResult.className = 'text-muted small d-block';
-                    snapshotResult.textContent = snapBase;
+                    snapshotResult.className = res.jointCapacityStatus === 'capacity-qualified'
+                        ? 'text-success small d-block'
+                        : res.jointCapacityStatus === 'capacity-exceeded' ? 'text-danger small d-block' : 'text-warning small d-block';
+                    snapshotResult.textContent = `${snapBase}；${capacity}；${profileCapacity}；${jointCapacity}`;
                 }
             }
 
             if (scope === 'triggered') {
+                if (strategy !== 'aggressive') {
+                    result.className = 'text-muted small';
+                    result.textContent = '保守策略不執行夜間逐 sensor 取數；快照容量估算已列於上方。';
+                    return;
+                }
                 result.className = 'text-muted small';
                 result.textContent = '只抓觸發主機：數量逐日變動，事前無法估算。';
+                return;
+            }
+
+            if (strategy !== 'aggressive') {
+                result.className = 'text-muted small';
+                result.textContent = '保守策略不執行夜間逐 sensor 取數；快照容量估算已列於上方。';
                 return;
             }
 
@@ -732,6 +901,49 @@ function bindPrtgTest() {
         } finally {
             restore();
         }
+    });
+
+    const pilotButton = document.getElementById('prtg-capacity-pilot-btn');
+    const pilotResult = document.getElementById('prtg-capacity-pilot-result');
+    pilotButton?.addEventListener('click', async () => {
+        const restore = withBusy(pilotButton, '試測中');
+        pilotResult?.replaceChildren();
+        pilotResult?.classList.remove('text-danger', 'text-success', 'text-warning');
+        try {
+            const res = await api.post('/api/admin/settings/prtg-capacity-pilot', {}, { silent: true });
+            if (pilotResult) {
+                const model = res.estimatedSeconds == null ? '尚無可用估算' : `估計 ${Number(res.estimatedSeconds).toFixed(0)} 秒`;
+                pilotResult.classList.add(res.status === 'capacity-qualified' ? 'text-success' : 'text-warning');
+                pilotResult.textContent = `${res.status}：${formatNumber(res.targetCount)} 個目前目標、送出 ${res.requestsSent}/${res.requestsAttempted} 批、${formatNumber(res.matchingFullBatchSamples)} 個新鮮 ${formatNumber(res.capacitySampleBatchSize)}-ID 樣本（至少 5 個），p95 ${res.p95BatchSeconds == null ? '—' : Number(res.p95BatchSeconds).toFixed(1) + ' 秒'}；${model}；覆蓋 ${res.coverage}；形狀 ${res.requestShape}（${res.reason}）。`;
+            }
+        } catch (error) {
+            if (pilotResult) {
+                pilotResult.classList.add('text-danger');
+                pilotResult.textContent = error?.message || '容量試測失敗。';
+            }
+        } finally { restore(); }
+    });
+
+    const profilePilotButton = document.getElementById('prtg-profile-capacity-pilot-btn');
+    const profilePilotResult = document.getElementById('prtg-profile-capacity-pilot-result');
+    profilePilotButton?.addEventListener('click', async () => {
+        const restore = withBusy(profilePilotButton, '測量中');
+        profilePilotResult?.replaceChildren();
+        profilePilotResult?.classList.remove('text-danger', 'text-success', 'text-warning');
+        try {
+            const res = await api.post('/api/prtg/monitoring/trusted-sampling/profile-capacity-pilot', {}, { silent: true });
+            if (profilePilotResult) {
+                const p95 = res.p95SensorSeconds == null ? '—' : `${Number(res.p95SensorSeconds).toFixed(2)} 秒／sensor`;
+                const estimate = res.estimatedSeconds == null ? '尚無可用估算' : `估計 ${formatNumber(res.estimatedSeconds)} 秒`;
+                profilePilotResult.classList.add(res.status === 'capacity-qualified' ? 'text-success' : 'text-warning');
+                profilePilotResult.textContent = `${res.status}：範圍 ${formatNumber(res.targetSensorCount)} 顆；已發送 ${res.requestsSent}/${res.requestsAttempted} 個 GET；成功樣本 ${res.matchingFreshSuccessfulSamples}/5；p95 ${p95}；${estimate}／${formatNumber(res.completionWindowSeconds)} 秒期限；耗時 ${formatNumber(res.elapsedMilliseconds / 1000)} 秒；${res.reason}。`;
+            }
+        } catch (error) {
+            if (profilePilotResult) {
+                profilePilotResult.classList.add('text-danger');
+                profilePilotResult.textContent = error?.message || 'Profile 傳輸測量失敗。';
+            }
+        } finally { restore(); }
     });
 }
 
@@ -2245,8 +2457,8 @@ async function refreshDiskRuleTrial() {
             `完成日：${trial.completedDay}；資料品質：${trial.dataQuality}（${trial.usableDays}/${trial.requiredDays} 天，${trial.usableHours} 個可用小時；每日需 ${trial.requiredHoursPerDay} 小時）`,
             `語意：${trial.semanticVerified ? '已驗證' : '未驗證'}；排除原因：${trial.exclusion || '無'}`,
             trial.ruleId ? `規則：${trial.ruleId}（${trial.ruleEnabled ? '啟用' : '停用；試算仍使用已儲存門檻'}）` : '規則：未設定',
-            trial.lowWaterPercent != null ? `門檻：低水位 ${trial.lowWaterPercent}%；下降至少 ${trial.minimumDeclinePerDay} 百分點／日；預估耗盡 ${trial.maximumDaysToDepletion} 日內` : null,
-            trial.currentAvailablePercent != null ? `趨勢：目前 ${trial.currentAvailablePercent}%；穩健下降 ${trial.declinePerDay ?? '—'} 百分點／日；預估 ${trial.estimatedDaysToDepletion ?? '—'} 日耗盡；預測命中：${trial.predictedHit ? '是' : '否'}` : '趨勢：目前沒有可用的完整趨勢估計',
+            trial.lowWaterPercent != null ? `門檻：低水位 ${trial.lowWaterPercent}%；下降至少 ${trial.minimumDeclinePerDay} 百分點／日；預估耗盡 ${trial.maximumDaysToDepletion} 日內；到低水位 ${trial.maximumDaysToLowWater ?? 7} 日內` : null,
+            trial.currentAvailablePercent != null ? `趨勢：目前 ${trial.currentAvailablePercent}%；穩健下降 ${trial.declinePerDay ?? '—'} 百分點／日；預估 ${trial.estimatedDaysToDepletion ?? '—'} 日耗盡、${trial.estimatedDaysToLowWater ?? '—'} 日到低水位；預測命中：${trial.predictedHit ? '是' : '否'}` : '趨勢：目前沒有可用的完整趨勢估計',
             `真實效果：${trial.message?.includes('real effect pending') ? '待觀察（尚無已證實的真實正向案例）' : trial.realPositiveStatus}`
         ].filter(Boolean);
         panel.replaceChildren(...lines.map(line => readinessText('div', line)));
@@ -2892,9 +3104,9 @@ async function refreshStructureSyncStatus() {
 function bindStructureSync() {
     const btn = document.getElementById('prtg-structure-sync-btn');
     btn?.addEventListener('click', async () => {
-        // 按鈕已依模組狀態灰掉，這裡是輪詢競態時的第二道（後端還有第三道）
-        if (!prtgEnabled) {
-            toast('PRTG 擷取未啟用，請先在「擷取參數」頁籤選擇數值取數對象。', 'warning');
+        // 按鈕依已儲存的連線設定灰掉；這裡再防一次載入與操作之間的競態。
+        if (!prtgStructureConfigured) {
+            toast('請先儲存 PRTG 位址與認證，再同步結構與對應。', 'warning');
             return;
         }
         const restore = withBusy(btn, '啟動中');
@@ -3754,7 +3966,9 @@ if (operationsStatus) {
     const labels = { pending: '等待重試', applied: '已追加／案件已涵蓋', unassigned: '已追加但尚未交辦',
         'waiting-netiq': '等待 NetIQ 成功紀錄', 'scope-paused': '範圍或資源對應已變更', 'rules-changed': '規則已變更，等待重新評估', shadow: '僅診斷證據',
         retry: '寫入或派工待重試', invalid: '證據無效', 'smtp-accepted': 'SMTP 已接受',
-        'no-qualified-recipient': '無合格收件人', 'sending-result-unknown': '寄送結果未知' };
+        'no-qualified-recipient': '無合格收件人', 'sending-result-unknown': '寄送結果未知',
+        'failed-or-unknown': '未收到 SMTP 確認，可能已送達；重試可能重複',
+        'failed-or-not-sent': '寄送未完成（舊狀態）', 'not-sent': '本輪未送出' };
     async function showOperations(retry = false) {
         const button = document.getElementById(retry ? 'prtg-operations-retry' : 'prtg-operations-refresh');
         button.disabled = true;

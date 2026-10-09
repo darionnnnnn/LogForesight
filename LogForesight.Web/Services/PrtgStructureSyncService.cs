@@ -87,6 +87,9 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     private readonly ISentinelStore _sentinels;
     private readonly IHostApplicationLifetime? _lifetime;
 
+    // 測試可注入受控 HTTP handler；正式環境一律沿用共用 PRTG 用戶端與請求預算。
+    internal Func<SystemSettings, PrtgClient>? ClientFactoryForTests { get; set; }
+
     /// <summary>
     /// 本趟同步的取消來源；沒有執行中時為 null。
     /// volatile：寫入在啟動執行緒、讀取在按下停止鈕的請求執行緒。
@@ -246,12 +249,6 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         isConflict = false;
         var s = _settings.Get();
 
-        if (!s.PrtgEnabled)
-        {
-            error = "PRTG 擷取未啟用，請先在 PRTG 維護頁「擷取參數」選擇取數範圍。";
-            return false;
-        }
-
         if (string.IsNullOrWhiteSpace(s.PrtgUrl))
         {
             error = "尚未設定 PRTG 連線位址，無法同步。";
@@ -339,7 +336,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
 
         try
         {
-            client = PrtgClientFactory.Create(s);
+            client = ClientFactoryForTests?.Invoke(s) ?? PrtgClientFactory.Create(s);
         }
         catch (Exception ex)
         {
@@ -357,7 +354,9 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
     /// <summary>同步主體：跑完、落地結果並結束執行狀態。回傳（是否成功, 失敗原因）。</summary>
     private async Task<(bool Success, string? Error)> ExecuteAsync(SystemSettings s, PrtgClient client, CancellationTokenSource cts)
     {
-        using var operation = new PrtgOperationScope(s, _settings.Get, cts.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read, "結構同步");
+        using var operation = new PrtgOperationScope(s, _settings.Get, cts.Token,
+            new PrtgScopeRevisionReader(_backend, _hosts).Read, "結構同步",
+            requireEnabled: false, cancelOnEnabledChange: true);
         client.OperationCheckpoint = operation.Checkpoint;
         var console = new PrtgStructureSyncConsole(_state);
         var prtgStore = _backend.PrtgStore();

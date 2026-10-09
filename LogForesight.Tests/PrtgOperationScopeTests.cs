@@ -42,6 +42,35 @@ public class PrtgOperationScopeTests
     }
 
     [Fact]
+    public void 明確監看開關變更_取樣停用期間可執行但啟用時取消()
+    {
+        var initial = new SystemSettings { PrtgEnabled = false };
+        var current = new SystemSettings { PrtgEnabled = false };
+        using var scope = new PrtgOperationScope(initial, () => current, default,
+            kind: "結構同步", requireEnabled: false, cancelOnEnabledChange: true);
+
+        scope.Checkpoint();
+        Assert.False(scope.Token.IsCancellationRequested);
+
+        current.PrtgEnabled = true;
+        Assert.Throws<OperationCanceledException>(scope.Checkpoint);
+        Assert.True(scope.SettingsChanged);
+    }
+
+    [Fact]
+    public void 明確監看開關變更_取樣持續停用時可完成檢查()
+    {
+        var current = new SystemSettings { PrtgEnabled = false };
+        using var scope = new PrtgOperationScope(current, () => current, default,
+            kind: "結構同步", requireEnabled: false, cancelOnEnabledChange: true);
+
+        scope.Checkpoint();
+
+        Assert.False(scope.Token.IsCancellationRequested);
+        Assert.False(scope.SettingsChanged);
+    }
+
+    [Fact]
     public void 郵件設定改變_不停止取數_父層取消仍有效()
     {
         using var parent = new CancellationTokenSource();

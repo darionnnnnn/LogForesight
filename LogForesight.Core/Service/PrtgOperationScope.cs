@@ -22,6 +22,7 @@ public sealed class PrtgOperationScope : IDisposable
     private readonly string _id = Guid.NewGuid().ToString("N");
     private readonly string _kind;
     private readonly bool _requireEnabled;
+    private readonly bool _cancelOnEnabledChange;
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private string _lastStage = "尚未完成階段";
     private bool _disposed;
@@ -34,7 +35,7 @@ public sealed class PrtgOperationScope : IDisposable
     public bool SettingsChanged => Volatile.Read(ref _settingsChanged) != 0;
 
     public PrtgOperationScope(SystemSettings initial, Func<SystemSettings> read, CancellationToken parent, Func<string>? readScope = null,
-        string kind = "PRTG", bool requireEnabled = true)
+        string kind = "PRTG", bool requireEnabled = true, bool cancelOnEnabledChange = false)
     {
         _initial = System.Text.Json.JsonSerializer.Deserialize<SystemSettings>(
             System.Text.Json.JsonSerializer.Serialize(initial))!;
@@ -42,6 +43,7 @@ public sealed class PrtgOperationScope : IDisposable
         _readScope = readScope;
         _kind = kind;
         _requireEnabled = requireEnabled;
+        _cancelOnEnabledChange = cancelOnEnabledChange;
         _cancel = CancellationTokenSource.CreateLinkedTokenSource(parent);
         Active[_id] = this;
         Publish(initial, "執行中");
@@ -52,7 +54,7 @@ public sealed class PrtgOperationScope : IDisposable
         Token.ThrowIfCancellationRequested();
         var current = _read();
         // 不以 UpdatedAt 相同跳過比較：同時儲存／匯入也可能保留相同時間。
-        if (!current.PrtgEnabled && (_requireEnabled || _initial.PrtgEnabled) || !SameSettings(_initial, current) ||
+        if (EnabledStateInvalid(current) || !SameSettings(_initial, current) ||
             ScopeChanged())
         {
             Interlocked.Exchange(ref _settingsChanged, 1);
@@ -61,6 +63,10 @@ public sealed class PrtgOperationScope : IDisposable
         Publish(current, SettingsChanged ? "已取消：設定或範圍變更" : "執行中");
         Token.ThrowIfCancellationRequested();
     }
+
+    private bool EnabledStateInvalid(SystemSettings current) =>
+        !current.PrtgEnabled && (_requireEnabled || _initial.PrtgEnabled) ||
+        _cancelOnEnabledChange && current.PrtgEnabled != _initial.PrtgEnabled;
 
     private bool ScopeChanged()
     {
@@ -101,7 +107,8 @@ public sealed class PrtgOperationScope : IDisposable
     {
         static string Hash(string? value) => value == null ? "尚未讀取" : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
         var scope = _scopeCaptured ? _readScope?.Invoke() : null;
-        var changed = !SameSettings(_initial, current) || !current.PrtgEnabled && (_requireEnabled || _initial.PrtgEnabled) || _scopeCaptured && scope != _initialScope;
+        var changed = !SameSettings(_initial, current) || EnabledStateInvalid(current) ||
+            _scopeCaptured && scope != _initialScope;
         Versions[_id] = new(_id, _kind, _startedAt, _disposed ? DateTimeOffset.UtcNow : null,
             _initial.Revision, current.Revision, Hash(_initialScope), Hash(scope), _lastStage,
             !_disposed && changed && !SettingsChanged ? "等待安全取消點" : state, changed);

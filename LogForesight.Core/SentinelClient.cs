@@ -24,7 +24,24 @@ public enum SentinelJobState
 
 /// <summary>單筆事件的投影結果：欄位名（Sentinel schema 短名）→ 值。欄位對應交由呼叫端解讀
 /// （docs/NETIQ-API-REFERENCE.md §3.3，已由三輪 probe 實測定案，見 <see cref="SentinelFieldMap"/>）</summary>
-public sealed record SentinelEvent(IReadOnlyDictionary<string, string> Fields);
+public sealed record SentinelEvent(IReadOnlyDictionary<string, string> Fields)
+{
+    private static readonly IReadOnlyDictionary<string, SentinelFieldShape> EmptyShapes =
+        new Dictionary<string, SentinelFieldShape>(StringComparer.Ordinal);
+    internal IReadOnlyDictionary<string, SentinelFieldShape> Shapes { get; init; } = EmptyShapes;
+}
+
+/// <summary>Optional per-client hard limits; absent means the established client behavior is unchanged.</summary>
+public sealed record SentinelClientReadLimits(int MaxHttpRequests, int MaxResponseBytes)
+{
+    public void Validate()
+    {
+        if (MaxHttpRequests is < 1 or > 32) throw new ArgumentOutOfRangeException(nameof(MaxHttpRequests));
+        if (MaxResponseBytes is < 1 or > 4 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(MaxResponseBytes));
+    }
+}
+
+internal sealed record SentinelFieldShape(string JsonKind, int? ValueLength, bool? ParsesAsTimestamp, bool? HasExplicitOffset);
 
 /// <summary>建立一個 event-search job 的查詢條件</summary>
 public sealed record SentinelSearchRequest(
@@ -49,7 +66,10 @@ public sealed record SentinelSearchRequest(
     /// **僅供 NetIQ probe 診斷使用**——probe 的價值正是逐筆印出全欄位、算欄位聯集來發現
     /// 未知欄位（obssvcname、estz 都是這樣找到的），過濾後它再也看不到投影清單以外的東西。
     /// 分析主線一律走預設 false（欄位過濾，見 SentinelFieldMap.ParseKeepFields）。</summary>
-    bool RawFields = false);
+    bool RawFields = false,
+    bool ShapeOnly = false,
+    int? MaxPages = null,
+    int? MaxShapeFieldKeys = null);
 
 public sealed class SentinelSearchResult
 {
@@ -79,7 +99,8 @@ public sealed class SentinelSearchResult
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>
 public class SentinelClientException : Exception
 {
-    public SentinelClientException(string message, Exception? inner = null) : base(message, inner) { }
+    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed") : base(message, inner) => SafeCode = safeCode;
+    public string SafeCode { get; }
 }
 
 /// <summary>
@@ -114,14 +135,18 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly SentinelServer _server;
+    private readonly Uri _baseUri;
     private readonly NetiqOptions _settings;
     private readonly HttpClient _http;
+    private readonly SentinelClientReadLimits? _readLimits;
+    private int _httpRequestCount;
     private readonly SemaphoreSlim _queue = new(1, 1);
     private readonly ResiliencePipeline _retryPipeline;
     private string? _token;
     private bool _disposed;
 
-    public SentinelClient(SentinelServer server, NetiqOptions settings, HttpMessageHandler? handler = null)
+    public SentinelClient(SentinelServer server, NetiqOptions settings, HttpMessageHandler? handler = null,
+        SentinelClientReadLimits? readLimits = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。");
@@ -141,10 +166,15 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         }
 
         _server = server;
+        _baseUri = parsed;
         _settings = settings;
+        readLimits?.Validate();
+        _readLimits = readLimits;
 
         var ownsHandler = handler == null;
         var actualHandler = handler ?? CreateDefaultHandler(settings);
+        if (_readLimits is not null && actualHandler is SocketsHttpHandler boundedHandler)
+            boundedHandler.AllowAutoRedirect = false;
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
         {
             Timeout = TimeSpan.FromSeconds(Math.Max(settings.TimeoutSeconds, 1))
@@ -154,7 +184,10 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         // 每個 client 建立時記一筆 WARN（不是每次連線——那會洗版），讓 log 看得出這台是誰在裸奔
         if (ownsHandler && settings.AllowInvalidCertificates)
         {
-            Log.Warn("[{Server}] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）", server.Name);
+            if (_readLimits is null)
+                Log.Warn("[{Server}] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）", server.Name);
+            else
+                Log.Warn("Bounded metadata probe uses the configured certificate-validation policy.");
         }
 
         // 重試：連線失敗／逾時／5xx（含 503）皆重試，指數退避；4xx 不重試（打錯就是打錯，
@@ -178,8 +211,12 @@ public sealed partial class SentinelClient : ISentinelSearchClient
                     .Handle<SentinelTransientException>(),
                 OnRetry = args =>
                 {
-                    Log.Warn(args.Outcome.Exception, "[{Server}] Sentinel 呼叫失敗，第 {Attempt}/{Total} 次重試",
-                        _server.Name, args.AttemptNumber + 1, settings.RetryCount);
+                    if (_readLimits is null)
+                        Log.Warn(args.Outcome.Exception, "[{Server}] Sentinel 呼叫失敗，第 {Attempt}/{Total} 次重試",
+                            _server.Name, args.AttemptNumber + 1, settings.RetryCount);
+                    else
+                        Log.Warn("Bounded metadata probe retry {Attempt}/{Total}; details withheld",
+                            args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
             });
@@ -209,6 +246,20 @@ public sealed partial class SentinelClient : ISentinelSearchClient
 
     public async ValueTask DisposeAsync()
     {
+        if (_readLimits is not null)
+        {
+            using var boundedCleanup = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await DisposeCoreAsync(boundedCleanup.Token);
+            return;
+        }
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await DisposeCoreAsync(cleanup.Token);
+    }
+
+    public ValueTask DisposeAsync(CancellationToken cleanupToken) => DisposeCoreAsync(cleanupToken);
+
+    private async ValueTask DisposeCoreAsync(CancellationToken cleanupToken)
+    {
         if (_disposed) return;
         _disposed = true;
 
@@ -219,12 +270,12 @@ public sealed partial class SentinelClient : ISentinelSearchClient
                 using var req = new HttpRequestMessage(HttpMethod.Delete, $"{AuthTokensUrl}/{Uri.EscapeDataString(_token)}");
                 req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
                     Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_server.Username}:{_server.Password}")));
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using var resp = await _http.SendAsync(req, cts.Token);
+                using var resp = await SendHttpAsync(req, cleanupToken);
             }
             catch (Exception ex)
             {
-                Log.Warn(ex, "[{Server}] 登出 Sentinel token 失敗（非致命）", _server.Name);
+                if (_readLimits is null) Log.Warn(ex, "[{Server}] 登出 Sentinel token 失敗（非致命）", _server.Name);
+                else Log.Warn("Bounded metadata probe token cleanup failed; details withheld");
             }
         }
 

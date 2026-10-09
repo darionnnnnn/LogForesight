@@ -301,6 +301,10 @@ const probeStartButton = document.getElementById('probe-start');
 const probeStateEl = document.getElementById('probe-state');
 const probeOutputEl = document.getElementById('probe-output');
 const probeCopyButton = document.getElementById('probe-copy');
+const metadataProbeStartButton = document.getElementById('probe-metadata-start');
+const metadataProbeStateEl = document.getElementById('probe-metadata-state');
+const metadataProbeOutputEl = document.getElementById('probe-metadata-output');
+const metadataProbeCopyButton = document.getElementById('probe-metadata-copy');
 
 let probePollTimer = null;
 
@@ -339,6 +343,23 @@ function setProbeSpinnerText(text) {
 }
 
 function renderProbeStatus(status) {
+    probeSentinelSelect.disabled = status.isRunning || sentinels.length === 0;
+    probeStartButton.disabled = status.isRunning;
+    metadataProbeStartButton.disabled = status.isRunning;
+    if (status.mode === 'metadata-shape') {
+        metadataProbeOutputEl.value = status.output || '';
+        metadataProbeCopyButton.disabled = !status.output;
+        if (status.isRunning) {
+            metadataProbeStateEl.textContent = `Sentinel #${status.sentinelId}：執行中（安全欄位形狀探測）…`;
+        } else if (status.completedAt) {
+            metadataProbeStateEl.textContent = `Sentinel #${status.sentinelId}：上次執行 ${formatDateTime(status.completedAt)}　` +
+                (status.success ? '✓ 完成' : '✗ 未完成；請查看安全原因');
+        } else {
+            metadataProbeStateEl.textContent = '';
+        }
+        return;
+    }
+
     probeOutputEl.value = status.output || '';
     if (status.output) {
         probeOutputEl.scrollTop = probeOutputEl.scrollHeight;
@@ -406,10 +427,36 @@ probeStartButton.addEventListener('click', async () => {
     }
 });
 
+metadataProbeStartButton.addEventListener('click', async () => {
+    const sentinelId = Number(probeSentinelSelect.value);
+    if (!sentinelId) {
+        toast('請先選擇要探測的 Sentinel', 'warning');
+        return;
+    }
+
+    metadataProbeStartButton.disabled = true;
+    try {
+        await api.post('/api/admin/netiq/probe/metadata/start', { sentinelId });
+        toast('已開始安全欄位探測；報告不含回應值', 'success');
+        await refreshProbeStatus();
+    } catch {
+        metadataProbeStartButton.disabled = false;
+    }
+});
+
 probeCopyButton.addEventListener('click', async () => {
     try {
         await navigator.clipboard.writeText(probeOutputEl.value);
         toast('已複製診斷輸出', 'success');
+    } catch {
+        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+    }
+});
+
+metadataProbeCopyButton.addEventListener('click', async () => {
+    try {
+        await navigator.clipboard.writeText(metadataProbeOutputEl.value);
+        toast('已複製安全欄位形狀報告', 'success');
     } catch {
         toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
     }

@@ -59,10 +59,10 @@ public class RiskReportServiceTests
         issue.ResidualCredentialBasis = "疑似殘留憑證重試：svc_backup 自 WKS01 重複失敗 40 次（網路登入，密碼錯誤），近 7 天已重複出現";
         var record = MakeRecord(issue);
 
-        await service.GenerateAsync(record, new List<EventLogEntryData>());
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
-        Assert.NotNull(sink.LastContent);
-        Assert.Contains("疑似殘留憑證重試：svc_backup 自 WKS01", sink.LastContent);
+        Assert.Contains("疑似殘留憑證重試：svc_backup 自 WKS01", draft.Content);
+        Assert.False(sink.Called);
     }
 
     [Fact]
@@ -72,12 +72,133 @@ public class RiskReportServiceTests
         var service = MakeService(sink);
         var record = MakeRecord(MakeStorageIssue());
 
-        await service.GenerateAsync(record, new List<EventLogEntryData>());
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
-        Assert.NotNull(sink.LastContent);
-        Assert.Contains("處置參考（知識庫）", sink.LastContent);
-        Assert.DoesNotContain("AI 深入分析（儲存裝置）", sink.LastContent);
-        Assert.Contains("硬碟可能即將故障", sink.LastContent + record.TopIssues[0].KnownIssue);
+        Assert.Contains("處置參考（知識庫）", draft.Content);
+        Assert.DoesNotContain("AI 深入分析（儲存裝置）", draft.Content);
+        Assert.Contains("硬碟可能即將故障", draft.Content + record.TopIssues[0].KnownIssue);
+    }
+
+    [Fact]
+    public async Task PRTG風險報告包含有界量值說明與明確來源可信度()
+    {
+        var sink = new FakeReportSink();
+        var service = MakeService(sink);
+        var issue = MakeStorageIssue();
+        issue.LogName = "PRTG";
+        issue.Source = "PRTG:disk_free_trend";
+        issue.EventId = 0;
+        issue.EventKey = "prtg:disk_free_trend:17";
+        issue.SampleMessages = ["兩小時可用空間均值 4.2%，合格涵蓋 120 分鐘"];
+        issue.SourceObservations =
+        [
+            new SourceEvidence
+            {
+                SourceKind = SourceEvidenceKind.Prtg,
+                ExactHostKey = "host-id:17",
+                ResourceScope = SourceResourceScope.Unknown,
+                WindowStartUtc = new DateTimeOffset(2026, 10, 5, 8, 0, 0, TimeSpan.Zero),
+                WindowEndUtc = new DateTimeOffset(2026, 10, 5, 10, 0, 0, TimeSpan.Zero)
+            }
+        ];
+
+        var draft = await service.PrepareAsync(MakeRecord(issue), new List<EventLogEntryData>());
+
+        Assert.Contains("PRTG量值／期間說明（原始 finding；不代表跨來源確認）：兩小時可用空間均值 4.2%", draft.Content);
+        Assert.Contains("UTC 時間：[2026-10-05T08:00:00.0000000+00:00,2026-10-05T10:00:00.0000000+00:00)", draft.Content);
+        Assert.Contains("主機身分：已確認（host-id:17）", draft.Content);
+        Assert.Contains("資源身分：未確認", draft.Content);
+        Assert.Contains("原生來源引用：未確認", draft.Content);
+        Assert.DoesNotContain("精確來源佐證", draft.Content);
+    }
+
+    [Fact]
+    public async Task 正式PRTG資源報告包含允許的原因與保存版本參照但不輸出原始世代值()
+    {
+        var sink = new FakeReportSink();
+        var service = MakeService(sink);
+        var issue = MakeStorageIssue();
+        issue.LogName = "PRTG";
+        issue.Source = "PRTG:disk_free_trend";
+        issue.EventId = 0;
+        issue.EventKey = "prtg:disk_free_trend:17";
+        issue.RuleId = "builtin-prtg-resource-disk-pressure";
+        issue.PrtgSourceGeneration = "private-source-generation";
+        issue.PrtgResourceGeneration = "private-resource-generation";
+        issue.PrtgChannelGeneration = "private-channel-generation";
+        issue.PrtgRuleAdmissionFingerprint = new string('A', 64);
+        issue.PrtgResourceReasonCodes = ["disk-two-hour-low-water"];
+        var record = MakeRecord(issue);
+        var expectedReference = HostDayWorkflowFingerprint.PrtgInputFingerprint(record);
+
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
+
+        Assert.Contains("正式資源原因：兩個完整小時皆處於磁碟低水位", draft.Content);
+        Assert.Contains($"已保存 PRTG 證據版本比對參照：sha256:{expectedReference}", draft.Content);
+        Assert.Contains("已保存資源證據版本參照（僅供比對）：sha256:", draft.Content);
+        Assert.Contains("已保存規則准入版本參照（僅供比對）：sha256:", draft.Content);
+        Assert.Equal(expectedReference, draft.PrtgEvidenceFingerprint);
+        Assert.DoesNotContain("private-source-generation", draft.Content);
+        Assert.DoesNotContain("private-resource-generation", draft.Content);
+        Assert.DoesNotContain("private-channel-generation", draft.Content);
+        Assert.Null(record.ReportFile);
+        Assert.Null(record.PrtgReportEvidenceFingerprint);
+    }
+
+    [Fact]
+    public async Task PRTG報告清理並限制不可信顯示字串且不輸出credential樣式內容()
+    {
+        var sink = new FakeReportSink();
+        var service = MakeService(sink);
+        var issue = MakeStorageIssue();
+        issue.LogName = "PRTG";
+        issue.Source = "PRTG:resource_cpu_sustained_pressure";
+        issue.EventId = 0;
+        issue.EventKey = "prtg:resource_cpu_sustained_pressure:17";
+        issue.SampleMessages = ["<script>alert(1)</script>\r\n" + new string('x', 500)];
+        issue.SourceObservations =
+        [
+            new SourceEvidence
+            {
+                SourceKind = SourceEvidenceKind.Prtg,
+                ExactHostKey = "host-id:17\n<script>",
+                ExactResourceKey = "cpu<&>\r\n",
+                ResourceScope = SourceResourceScope.Volume,
+                SourceReference = "native</script>\nref",
+                SourceReferenceQuality = SourceReferenceQuality.ExactNative,
+                WindowStartUtc = new DateTimeOffset(2026, 10, 5, 8, 0, 0, TimeSpan.Zero),
+                WindowEndUtc = new DateTimeOffset(2026, 10, 5, 10, 0, 0, TimeSpan.Zero)
+            }
+        ];
+
+        var draft = await service.PrepareAsync(MakeRecord(issue), new List<EventLogEntryData>());
+
+        Assert.DoesNotContain("<script>", draft.Content);
+        Assert.DoesNotContain("</script>", draft.Content);
+        Assert.Contains("‹script›", draft.Content);
+        Assert.Contains("Volume（已確認（cpu‹＆›））", draft.Content);
+        Assert.Contains("原生來源引用：已確認（native‹/script›ref）", draft.Content);
+        Assert.DoesNotContain(new string('x', 321), draft.Content);
+
+        issue.SampleMessages = ["password=do-not-print"];
+        var credentialDraft = await MakeService(new FakeReportSink()).PrepareAsync(MakeRecord(issue), new List<EventLogEntryData>());
+        Assert.DoesNotContain("password=do-not-print", credentialDraft.Content);
+    }
+
+    [Fact]
+    public async Task PRTG舊紀錄空來源集合仍以未確認輸出()
+    {
+        var sink = new FakeReportSink();
+        var issue = MakeStorageIssue();
+        issue.LogName = "PRTG";
+        issue.Source = "PRTG:disk_free_trend";
+        issue.EventId = 0;
+        issue.SampleMessages = null!;
+        issue.SourceObservations = null!;
+
+        var draft = await MakeService(sink).PrepareAsync(MakeRecord(issue), new List<EventLogEntryData>());
+
+        Assert.Contains("PRTG來源佐證：UTC 時間未確認；主機身分未確認；資源身分未確認；原生來源引用未確認", draft.Content);
     }
 
     [Fact]
@@ -87,7 +208,7 @@ public class RiskReportServiceTests
         var service = MakeService(sink);
         var record = MakeRecord(MakeStorageIssue());
 
-        await service.GenerateAsync(record, new List<EventLogEntryData>());
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
         var dive = Assert.Single(record.DeepDives);
         Assert.Equal(IssueCategory.Storage, dive.Category);
@@ -108,9 +229,9 @@ public class RiskReportServiceTests
         var record = MakeRecord(MakeStorageIssue());
         record.AiAnalyzed = false;
 
-        await service.GenerateAsync(record, new List<EventLogEntryData>());
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
         Assert.Single(record.DeepDives);
-        Assert.Contains("處置參考（知識庫）", sink.LastContent);
+        Assert.Contains("處置參考（知識庫）", draft.Content);
     }
 }

@@ -68,4 +68,48 @@ public class PrtgDiskTrendEvaluatorTests
         var data = Declining().Reverse().ToArray();
         Assert.Equal(PrtgDiskTrendEvaluator.Evaluate(data), PrtgDiskTrendEvaluator.Evaluate(data));
     }
+
+    [Theory]
+    [InlineData(27, PrtgDiskTrendOutcome.Hit)]
+    [InlineData(27.001, PrtgDiskTrendOutcome.NoHit)]
+    [InlineData(26.99, PrtgDiskTrendOutcome.Hit)]
+    public void 高於低水位但七日內降到百分之二十時提前預警(double latest, PrtgDiskTrendOutcome expected)
+    {
+        var data = Enumerable.Range(0, 28).Select(i => new PrtgDiskTrendDay(Start.AddDays(i), latest + 27 - i)).ToArray();
+        var result = PrtgDiskTrendEvaluator.Evaluate(data);
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(latest - 20, result.EstimatedDaysToLowWater!.Value, 5);
+        Assert.Equal(expected == PrtgDiskTrendOutcome.Hit ? PrtgDiskTrendHitReason.PredictedLowWater : PrtgDiskTrendHitReason.None, result.HitReasons);
+        if (expected == PrtgDiskTrendOutcome.Hit)
+        {
+            Assert.Equal("predicted-low-water", Assert.Single(result.Reasons));
+            Assert.Contains("降到低水位 20.0%", result.Explanation);
+        }
+    }
+
+    [Fact]
+    public void 提前預警不能降低二十八日準備度或略過持續下降品質()
+    {
+        var baseline = Enumerable.Range(0, 28).Select(i => new PrtgDiskTrendDay(Start.AddDays(i), 54 - i)).ToArray();
+        Assert.Equal(PrtgDiskTrendOutcome.Hit, PrtgDiskTrendEvaluator.Evaluate(baseline).Outcome);
+        Assert.Equal(PrtgDiskTrendOutcome.InsufficientData,
+            PrtgDiskTrendEvaluator.Evaluate(baseline.Skip(1).ToArray(), PrtgDiskTrendThresholds.Provisional with { MinimumValidDays = 2 }).Outcome);
+        var singleDrop = baseline.Select((x, i) => x with { AvailablePercent = i == 27 ? 25 : 60 }).ToArray();
+        Assert.Equal(PrtgDiskTrendOutcome.NoHit, PrtgDiskTrendEvaluator.Evaluate(singleDrop).Outcome);
+        var slow = baseline.Select((x, i) => x with { AvailablePercent = 22.4 + (27 - i) * 0.4 }).ToArray();
+        Assert.Equal(PrtgDiskTrendOutcome.NoHit, PrtgDiskTrendEvaluator.Evaluate(slow).Outcome);
+        var noisy = baseline.Select((x, i) => x with { AvailablePercent = 54 - i + (i % 2 == 0 ? 2 : 0) }).ToArray();
+        Assert.Equal(PrtgDiskTrendOutcome.NoHit, PrtgDiskTrendEvaluator.Evaluate(noisy).Outcome);
+    }
+
+    [Fact]
+    public void 舊門檻JSON保留七日預設且提前時間修改影響命中()
+    {
+        var json = "{\"LowWaterPercent\":20,\"MinimumDeclinePercentagePointsPerDay\":0.5,\"MaximumDaysToDepletion\":30,\"MinimumValidDays\":28,\"RecentWindowDays\":35,\"MinimumDecliningDayRatio\":0.7}";
+        var old = System.Text.Json.JsonSerializer.Deserialize<PrtgDiskTrendThresholds>(json)!;
+        Assert.Equal(7, old.MaximumDaysToLowWater);
+        var data = Enumerable.Range(0, 28).Select(i => new PrtgDiskTrendDay(Start.AddDays(i), 54 - i)).ToArray();
+        Assert.Equal(PrtgDiskTrendOutcome.Hit, PrtgDiskTrendEvaluator.Evaluate(data, old).Outcome);
+        Assert.Equal(PrtgDiskTrendOutcome.NoHit, PrtgDiskTrendEvaluator.Evaluate(data, old with { MaximumDaysToLowWater = 6 }).Outcome);
+    }
 }

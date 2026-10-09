@@ -71,6 +71,8 @@ public class NetiqPipelineService
     private readonly PermissionFieldMappings? _permissionMappings;
     private readonly RerunMode _rerunMode;
     private readonly PrtgResourceGuard? _guard;
+    private readonly HostDayWorkflowService? _workflow;
+    private readonly bool _prtgEnabled;
     /// <summary>權限異動的主機日佔位（回饋三十四輪 A2）：只放「主機＋日期」，不放事件內容——
     /// 內容去重由 <see cref="PermissionChangeStore.GetDedupeKeysForHost"/> 逐主機日現查承擔。</summary>
     private ConcurrentDictionary<string, byte> _permissionHostDayClaims = new();
@@ -113,7 +115,9 @@ public class NetiqPipelineService
         PermissionFieldMappings? permissionMappings = null,
         RerunMode rerunMode = RerunMode.None,
         PrtgResourceGuard? guard = null,
-        PrtgFindingsRegistry? prtgFindings = null)
+        PrtgFindingsRegistry? prtgFindings = null,
+        HostDayWorkflowService? workflow = null,
+        bool prtgEnabled = true)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -141,6 +145,8 @@ public class NetiqPipelineService
         _permissionMappings = permissionMappings;
         _rerunMode = rerunMode;
         _guard = guard;
+        _workflow = workflow;
+        _prtgEnabled = prtgEnabled;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -525,6 +531,15 @@ public class NetiqPipelineService
         {
             var hostRawEvents = eventsByIp.TryGetValue(plan.Target.IpAddress, out var raw) ? raw : new List<SentinelEvent>();
             var (mapped, skipped) = SentinelEventMapper.MapAll(hostRawEvents, os);
+            // repip/IP identifies the emitting host; promote it to the canonical owner key only when
+            // this IP maps to one configured target. Duplicate-IP targets remain host-IP scoped/weak.
+            if (plansPerIp[plan.Target.IpAddress] == 1 && plan.Target.HostId > 0)
+            {
+                var canonicalHostKey = $"host-id:{plan.Target.HostId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+                foreach (var item in mapped)
+                    if (item.SourceEvidence != null)
+                        item.SourceEvidence = SourceEvidence.WithCanonicalHost(item.SourceEvidence, canonicalHostKey);
+            }
             totalSkipped += skipped;
 
             // sn（回報此事件的主機名稱）回填 DisplayName——NetIQ 主機以 IP 登錄，
@@ -609,7 +624,7 @@ public class NetiqPipelineService
             AiWorkItem? workItem;
             (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
-                securityLogAvailable: true, channels: null, ct, hostOs: target.Os);
+                securityLogAvailable: true, channels: null, ct, hostOs: target.Os, deferNonAiReport: true);
 
             record.LogSource = AnalysisLogSource.Netiq;
             record.LatestNetiqAttemptStatus = dataIncomplete ? "partial" : "success";
@@ -623,6 +638,17 @@ public class NetiqPipelineService
 
             plan.Store.Append(record);
 
+            try
+            {
+                _workflow?.ParentSucceeded(target.HostId, target.HostName, date, _runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    events.Count, HostDayWorkflowFingerprint.ForParentRecord(record), _prtgEnabled, _useAi,
+                    parentRecordId: record.RecordId > 0 ? record.RecordId : null);
+            }
+            catch (Exception workflowError)
+            {
+                Log.Warn(workflowError, "NetIQ 主機日 workflow metadata 寫入失敗，不影響已保存的分析紀錄");
+            }
+
             result.AddAnalyzed();
             _runRecorder.RecordDayAnalyzed();
 
@@ -635,8 +661,30 @@ public class NetiqPipelineService
             // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
             HostDayPostProcessor.AttachPrtgFindings(
                 _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
+            if (workItem == null)
+                await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, events, ct);
 
-            HostDayPostProcessor.AttachCase(_caseCoordinator, _dispatch, target.HostName, date, record.TopIssues, logContext);
+            try
+            {
+                if (_prtgFindings.IsPublished(date))
+                {
+                    if (HostDayWorkflowFingerprint.HasValidPrtgManifest(record))
+                        _workflow?.SetPrtg(target.HostId, date, record.PrtgManifest!.Outcome == "complete" ? WorkflowLegState.Succeeded : WorkflowLegState.Degraded,
+                                    evidenceReady: record.PrtgManifest.Outcome == "complete",
+                                    record.PrtgManifest.EvidenceFingerprint,
+                                    failure: record.PrtgManifest.Outcome == "partial" ? string.Join(",", record.PrtgManifest.WaitReasonCodes) : null);
+                    else
+                        _workflow?.SetPrtg(target.HostId, date, WorkflowLegState.Waiting, evidenceReady: false,
+                            failure: "formal-manifest-missing-or-stale");
+                }
+            }
+            catch (Exception workflowError)
+            {
+                Log.Warn(workflowError, "NetIQ PRTG workflow metadata 寫入失敗，不影響已保存的分析紀錄");
+            }
+
+            HostDayPostProcessor.AttachCase(_caseCoordinator, _dispatch, target.HostName, date, record.TopIssues, logContext,
+                _workflow, target.HostId, record.RecordId);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(
@@ -668,6 +716,8 @@ public class NetiqPipelineService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             NetiqSourceAttempt.Mark(_backend, target.HostId, date, "failed");
+            try { _workflow?.ParentFailed(target.HostId, target.HostName, date, _runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture), "failed"); }
+            catch (Exception workflowError) { Log.Warn(workflowError, "NetIQ workflow failure metadata could not be persisted"); }
             result.AddFailed();
             Log.Warn(ex, "[{Server}] [{Ip}] {Date} 分析失敗", sentinelName, target.IpAddress, date);
             _console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +

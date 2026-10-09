@@ -39,7 +39,7 @@ public sealed class PrtgValueReadinessTests
     {
         var hours = Enumerable.Range(0, 28).SelectMany(day => Enumerable.Range(0, 12)
             .Select(hour => new PrtgReadinessHour(AsOf.Date.AddDays(-28 + day).AddHours(hour),
-                PrtgDataQuality.Sampled, 25)));
+                PrtgDataQuality.Sampled, 25, Trusted: true)));
 
         var result = PrtgValueReadiness.Evaluate(Input(103, hours), AsOf);
 
@@ -94,6 +94,16 @@ public sealed class PrtgValueReadinessTests
         Assert.Contains("語意待確認", result.Reason);
     }
 
+    [Fact]
+    public void LegacyOkRowsNeverCountAsTrustedReadiness()
+    {
+        var legacy = FullWindowHours(AsOf).Select(hour => hour with { Trusted = false });
+        var result = PrtgValueReadiness.Evaluate(Input(109, legacy), AsOf);
+
+        Assert.Equal(0, result.UsableDays);
+        Assert.Equal(PrtgValueReadinessStatus.InsufficientData, result.Status);
+    }
+
     private static PrtgValueReadinessInput Input(long id, IEnumerable<PrtgReadinessHour> hours)
     {
         var maps = Enumerable.Range(1, PrtgValueReadiness.WindowDays)
@@ -104,5 +114,6 @@ public sealed class PrtgValueReadinessTests
 
     private static IEnumerable<PrtgReadinessHour> FullWindowHours(DateTime asOf, int days = 28) =>
         Enumerable.Range(0, days).SelectMany(day => Enumerable.Range(0, 12)
-            .Select(hour => new PrtgReadinessHour(asOf.Date.AddDays(-days + day).AddHours(hour), PrtgDataQuality.Ok, null)));
+            .Select(hour => new PrtgReadinessHour(asOf.Date.AddDays(-days + day).AddHours(hour),
+                PrtgDataQuality.Ok, null, Trusted: true)));
 }

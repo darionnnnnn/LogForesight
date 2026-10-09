@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -200,8 +201,7 @@ internal class AnalysisPromptBuilder
         if (prtgFindings.Count > 0)
         {
             sb.AppendLine();
-            sb.AppendLine("【PRTG 監控訊號】（既有監控系統對這台主機的量測結果，由程式依規則確定性判定，" +
-                          "與上述事件日誌互為佐證）");
+            sb.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌同日不表示資源或時間相符）");
             foreach (var f in prtgFindings)
             {
                 var description = f.KnownIssue;
@@ -343,6 +343,8 @@ internal class AnalysisPromptBuilder
         var sampleCount = flagged ? FlaggedSampleCount : OtherSampleCount;
         var variety = i.DistinctMessageCount > 1 ? $"（共 {i.DistinctMessageCount} 種不同內容）" : "";
         sb.AppendLine($"  範例訊息{variety}：{string.Join(" ｜ ", i.SampleMessages.Take(sampleCount))}");
+        if (i.SourceObservations.Count > 0)
+            sb.AppendLine($"  {SourceEvidenceSummary.DescribeObservations(i.SourceObservations, i.SourceObservationsTruncated)}；僅為來源脈絡，不代表同資源關聯。");
 
         if (i.KeyDetails != null)
         {

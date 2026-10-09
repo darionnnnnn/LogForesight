@@ -28,6 +28,26 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
     }
 
     [Fact]
+    public void 可信slotProof經journalcheckpoint與pendingbatch重播保留且舊列仍為版本零()
+    {
+        var hour = new DateTime(2026, 10, 5, 10, 0, 0, DateTimeKind.Utc);
+        var input = new PrtgTrustedSample(8, 42, "source", "resource", "channel", "epoch", "semantic", "strategy", 15,
+            hour, hour.AddMinutes(15), hour.AddMinutes(15).AddSeconds(2), TimeSpan.FromMinutes(1),
+            PrtgTrustedSampleQuality.Good, "physical-1", "UTC", "UTC");
+        var accumulator = new PrtgSnapshotAccumulator();
+        Assert.Equal(PrtgTrustedSampleDisposition.Accepted, accumulator.AddTrusted(input, input.ReceivedAt.AddSeconds(1)));
+        var trustedRow = Assert.Single(accumulator.PreviewDrainAll(4, hour.AddMinutes(30)));
+        var oldRow = new PrtgValueRow { SensorObjid = 9, PeriodStart = hour, Quality = PrtgDataQuality.Sampled };
+        using var journal = new PrtgSnapshotJournal(_backend);
+        journal.Save("source", accumulator.Capture(), [new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), [trustedRow, oldRow])], hour.AddMinutes(30));
+        var loaded = journal.Load("source", hour.AddMinutes(30))!;
+        Assert.Equal(1, Assert.Single(loaded.Accumulator).Trusted!.Slots.Count);
+        Assert.Equal(1, Assert.Single(loaded.Pending).Rows[0].TrustVersion);
+        Assert.Null(loaded.Pending.Single().Rows[1].TrustedProof);
+        Assert.Equal(0, loaded.Pending.Single().Rows[1].TrustVersion);
+    }
+
+    [Fact]
     public void 空V2checkpoint可轉換binding並以新binding重新載入()
     {
         var now = DateTime.Today;
@@ -142,19 +162,357 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
     }
 
     [Fact]
-    public void 同URL換Core或資源世代_拒絕舊待寫且不破壞原檔()
+    public void 持久來源binding明列endpoint與source且不隨資源修訂改變()
     {
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
         policy.Update(p => p.SourceGeneration = "source-a");
         var journal = new PrtgSnapshotJournal(_backend); var now = DateTime.Today;
-        journal.Save(PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"),
+        var binding = PrtgSnapshotJournal.Binding(_backend, "https://fixture.example");
+        var bindingParts = binding.Split('|');
+        Assert.Equal("v3", bindingParts[0]);
+        Assert.Equal(PrtgSnapshotJournal.Endpoint("https://fixture.example"), bindingParts[1]);
+        Assert.Equal("source-a", System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(bindingParts[2])));
+        journal.Save(binding,
             [new(now, 1, 12, 1, 12, 12)], [], now);
         var original = File.ReadAllBytes(journal.FilePath);
         _backend.Blob("prtg_resource_generation_revision").Mutate(_ => ("1", 0));
-        Assert.Throws<InvalidDataException>(() => journal.Load(PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"), now));
+        _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).Mutate(_ => ("1", 0));
+        Assert.Equal(binding, PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"));
+        Assert.Single(new PrtgSnapshotJournal(_backend).Load(binding, now)!.Accumulator);
         policy.Update(p => p.SourceGeneration = "source-b");
+        Assert.NotEqual(binding, PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"));
         Assert.Throws<InvalidDataException>(() => journal.Load(PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"), now));
         Assert.Equal(original, File.ReadAllBytes(journal.FilePath));
+    }
+
+    [Fact]
+    public void BindingPair以同一份policySource建立current與legacy值()
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(value => value.SourceGeneration = "source-pair-a");
+
+        var captured = PrtgSnapshotJournal.CaptureBindingPair(_backend, "https://fixture.example");
+        policy.Update(value => value.SourceGeneration = "source-pair-b");
+
+        Assert.Equal("source-pair-a", captured.SourceGeneration);
+        Assert.Equal("source-pair-a", System.Text.Encoding.UTF8.GetString(
+            Convert.FromBase64String(captured.Current.Split('|')[2])));
+        Assert.Equal(64, captured.Legacy.Length);
+        Assert.All(captured.Legacy, character => Assert.True(Uri.IsHexDigit(character)));
+        Assert.NotEqual(captured.Current, PrtgSnapshotJournal.Binding(_backend, "https://fixture.example"));
+        Assert.NotEqual(captured.Legacy, PrtgSnapshotJournal.LegacyBinding(_backend, "https://fixture.example"));
+    }
+
+    [Fact]
+    public void ExactLegacyV2Binding_先驗checksum後原子遷移且保留trustedProof與legacy列()
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p => p.SourceGeneration = "source-v2");
+        var url = "https://fixture.example";
+        var legacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        var currentBinding = PrtgSnapshotJournal.Binding(_backend, url);
+        var now = DateTime.Today;
+        var hour = DateTime.SpecifyKind(now.AddHours(10), DateTimeKind.Unspecified);
+        var effectiveUtc = DateTime.SpecifyKind(hour, DateTimeKind.Utc);
+        var accumulator = new PrtgSnapshotAccumulator();
+        var trusted = new PrtgTrustedSample(8, 42, "source-v2", "resource-8", "channel-8", "epoch-8",
+            "semantic-v1", "strategy-v1", 15, effectiveUtc, effectiveUtc.AddMinutes(15),
+            effectiveUtc.AddMinutes(15).AddSeconds(2), TimeSpan.FromMinutes(1), PrtgTrustedSampleQuality.Good,
+            "measurement-8", "UTC", "UTC");
+        Assert.Equal(PrtgTrustedSampleDisposition.Accepted,
+            accumulator.AddTrusted(trusted, trusted.ReceivedAt.AddSeconds(1)));
+        var legacyRow = new PrtgValueRow
+        {
+            SensorObjid = 9, PeriodStart = hour, Quality = PrtgDataQuality.Sampled, CreatedAt = hour,
+            TrustVersion = 0, TrustedProof = null
+        };
+        using var writer = new PrtgSnapshotJournal(_backend);
+        writer.Save(legacyBinding, accumulator.Capture(),
+            [new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), [legacyRow])], now.AddDays(1));
+        var original = File.ReadAllBytes(writer.FilePath);
+
+        using var migration = new PrtgSnapshotJournal(_backend);
+        var loaded = migration.Load(currentBinding, now.AddDays(1), legacyBinding)!;
+        Assert.Equal(legacyBinding, loaded.SourceEndpoint);
+        Assert.Equal(original, File.ReadAllBytes(migration.FilePath));
+        migration.EnableIncremental(currentBinding, now.AddDays(1), legacyBinding);
+
+        Assert.False(File.Exists(migration.FilePath));
+        Assert.True(File.Exists(migration.ManifestFilePath));
+        using var recovered = new PrtgSnapshotJournal(_backend);
+        var state = recovered.Load(currentBinding, now.AddDays(1))!;
+        var checkpoint = Assert.Single(state.Accumulator);
+        Assert.Equal(trusted.ResourceGeneration, checkpoint.Trusted!.ResourceGeneration);
+        Assert.Equal(trusted.ResourceEpoch, checkpoint.Trusted.ResourceEpoch);
+        var pendingRow = Assert.Single(Assert.Single(state.Pending).Rows);
+        Assert.Equal(0, pendingRow.TrustVersion);
+        Assert.Null(pendingRow.TrustedProof);
+    }
+
+    [Fact]
+    public void LegacyV2binding不匹配_保留原字節且不重標為新來源()
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p => p.SourceGeneration = "source-v2");
+        var url = "https://fixture.example";
+        var legacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        using var writer = new PrtgSnapshotJournal(_backend);
+        var now = DateTime.Today;
+        writer.Save(legacyBinding, [new(now, 8, 42, 1, 42, 42)], [], now);
+        var original = File.ReadAllBytes(writer.FilePath);
+        _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).Mutate(_ => ("1", 0));
+        var currentBinding = PrtgSnapshotJournal.Binding(_backend, url);
+        var changedLegacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        Assert.NotEqual(legacyBinding, changedLegacyBinding);
+
+        using var restart = new PrtgSnapshotJournal(_backend);
+        var error = Assert.Throws<InvalidDataException>(() => restart.Load(currentBinding, now, changedLegacyBinding));
+        Assert.Contains("舊版來源 binding", error.Message);
+        Assert.Equal(original, File.ReadAllBytes(restart.FilePath));
+        Assert.False(File.Exists(restart.ManifestFilePath));
+    }
+
+    [Fact]
+    public void LegacyV2遷移交換manifest前故障_原checkpoint仍為權威且可重試()
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p => p.SourceGeneration = "source-v2");
+        var url = "https://fixture.example";
+        var legacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        var currentBinding = PrtgSnapshotJournal.Binding(_backend, url);
+        var now = DateTime.Today;
+        using var writer = new PrtgSnapshotJournal(_backend);
+        writer.Save(legacyBinding, [new(now, 8, 42, 1, 42, 42)], [], now);
+        var original = File.ReadAllBytes(writer.FilePath);
+
+        using var migration = new PrtgSnapshotJournal(_backend);
+        migration.Load(currentBinding, now, legacyBinding);
+        migration.FaultPoint = point =>
+        {
+            if (point == "before-generation-switch") throw new IOException("simulated migration failure");
+        };
+        Assert.Throws<IOException>(() => migration.EnableIncremental(currentBinding, now, legacyBinding));
+        Assert.Equal(original, File.ReadAllBytes(migration.FilePath));
+        Assert.False(File.Exists(migration.ManifestFilePath));
+
+        migration.FaultPoint = null;
+        migration.EnableIncremental(currentBinding, now, legacyBinding);
+        using var recovered = new PrtgSnapshotJournal(_backend);
+        Assert.Equal(42, Assert.Single(recovered.Load(currentBinding, now)!.Accumulator).Sum);
+    }
+
+    [Fact]
+    public void Scopechange重啟保留A與B樣本_新epoch只使A失去正式readiness()
+    {
+        var source = "source-r03-proof";
+        var url = "https://fixture.example";
+        var policy = new PrtgMonitoringPolicy
+        {
+            Revision = "policy-r03",
+            SourceGeneration = source,
+            EndpointHint = PrtgSnapshotJournal.Endpoint(url),
+            SourceTimeZoneId = "UTC",
+            SourceCultureName = "en-US",
+            RawTimestampTimeZoneId = "UTC",
+            AnalysisTimeZoneId = "UTC",
+            TimeBasisEvidenceReference = "time-basis-r03",
+            HostIds = [81, 82],
+            SensorIds = [8, 9]
+        };
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(value =>
+        {
+            value.Revision = policy.Revision;
+            value.SourceGeneration = policy.SourceGeneration;
+        });
+        var endpoint = PrtgSnapshotJournal.Binding(_backend, url);
+        var now = DateTimeOffset.UtcNow;
+        var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+        var effective = currentHour.AddHours(-1); // The evidence hour is complete at restart.
+        var observedAt = now.AddSeconds(-2); // Keep the source metadata probe fresh.
+        var profileMeasured = observedAt.UtcDateTime;
+        var accumulator = new PrtgSnapshotAccumulator();
+        var fixtures = new List<(PrtgResourceIdentity Identity, PrtgTrustedSamplingProfile Profile,
+            PrtgTrustedSamplingProfileResolution Resolution, PrtgTrustedSample Sample)>();
+        foreach (var pair in new[] { (Sensor: 8L, Host: 81L, Resource: "resource-a", Channel: "channel-a"),
+                     (Sensor: 9L, Host: 82L, Resource: "resource-b", Channel: "channel-b") })
+        {
+            var identity = new PrtgResourceIdentity
+            {
+                SensorId = pair.Sensor, Epoch = 1, Generation = pair.Resource, SourceGeneration = source,
+                DeviceId = pair.Host + 100, HostId = pair.Host, ResourceFingerprint = $"resource-fp-{pair.Sensor}",
+                InventoryFingerprint = $"inventory-fp-{pair.Sensor}", ChannelFingerprint = $"channel-fp-{pair.Sensor}",
+                ChannelGeneration = pair.Channel, Active = true
+            };
+            var strategy = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(source, "UTC", "UTC", "UTC",
+                PrtgFetchStrategy.Conservative, 15);
+            var profile = PrtgTrustedSamplingProfile.FromProbe(pair.Sensor, identity, "CPU", pair.Channel,
+                "Load", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct", "cpu-percent-v1",
+                strategy, 15, effective, TimeSpan.FromMinutes(1), "seconds", "UTC", "UTC", "UTC",
+                observedAt, $"metadata-{pair.Sensor}", $"physical-{pair.Sensor}", true, 10, 10,
+                profileMeasured.ToOADate(), profileMeasured.ToOADate());
+            var resolution = PrtgTrustedSamplingProfileResolver.Resolve(profile, identity, policy, pair.Sensor,
+                "CPU", PrtgFetchStrategy.Conservative, 15, effective, now.UtcDateTime, now.UtcDateTime,
+                now.UtcDateTime);
+            Assert.True(resolution.Ready, resolution.RejectionReason);
+            PrtgTrustedSample? lastSample = null;
+            for (var slot = 0; slot < 3; slot++)
+            {
+                var measured = effective.AddMinutes(slot * 15).AddSeconds(1);
+                var received = measured.AddSeconds(2);
+                var sample = new PrtgTrustedSample(pair.Sensor, 10 + slot, source, identity.Generation,
+                    identity.ChannelGeneration, identity.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    profile.SemanticVersion, profile.StrategyFingerprint, profile.StrategyMinutes,
+                    profile.StrategyEffectiveFromHourUtc, measured, received, profile.ConfirmedScanInterval,
+                    PrtgTrustedSampleQuality.Good, $"measurement-{pair.Sensor}-{slot}", "UTC", "UTC");
+                Assert.Equal(PrtgTrustedSampleDisposition.Accepted, accumulator.AddTrusted(sample, received));
+                lastSample = sample;
+            }
+            fixtures.Add((identity, profile, resolution, lastSample!));
+        }
+        using (var seed = new PrtgSnapshotJournal(_backend))
+            seed.Save(endpoint, accumulator.Capture(), [], now.LocalDateTime);
+
+        _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).Mutate(_ => ("1", 0));
+        _backend.Blob("prtg_resource_generation_revision").Mutate(_ => ("1", 0));
+        Assert.Equal(endpoint, PrtgSnapshotJournal.Binding(_backend, url));
+        using var restarted = new PrtgSnapshotJournal(_backend);
+        var restored = restarted.Load(PrtgSnapshotJournal.Binding(_backend, url), now.LocalDateTime)!
+            .Accumulator.ToDictionary(row => row.SensorObjid);
+        Assert.Equal(2, restored.Count);
+
+        foreach (var fixture in fixtures)
+        {
+            var checkpoint = restored[fixture.Identity.SensorId];
+            Assert.Equal(fixture.Sample.ResourceEpoch, checkpoint.Trusted!.ResourceEpoch);
+            var proofJson = PrtgTrustedSampleProof.Serialize(checkpoint.Trusted);
+            var readinessRow = new PrtgDiskReadinessProofProjection(0, fixture.Identity.SensorId,
+                checkpoint.Hour, checkpoint.Trusted.Slots.Average(slot => slot.Value),
+                checkpoint.Trusted.Slots.Min(slot => slot.Value), checkpoint.Trusted.Slots.Max(slot => slot.Value),
+                checkpoint.Trusted.Slots.Count * 100d / (60 / checkpoint.Trusted.StrategyMinutes),
+                PrtgDataQuality.Sampled, 1, proofJson, proofJson.Length);
+            Assert.Equal(75d, readinessRow.Coverage);
+            Assert.True(PrtgDiskTrustedProofValidator.IsTrusted(readinessRow, fixture.Resolution));
+            if (fixture.Identity.SensorId == 8)
+            {
+                var changedIdentity = new PrtgResourceIdentity
+                {
+                    SensorId = fixture.Identity.SensorId, Epoch = 2, Generation = "resource-a-new",
+                    SourceGeneration = fixture.Identity.SourceGeneration, DeviceId = fixture.Identity.DeviceId,
+                    HostId = fixture.Identity.HostId, ResourceFingerprint = fixture.Identity.ResourceFingerprint,
+                    InventoryFingerprint = fixture.Identity.InventoryFingerprint,
+                    ChannelFingerprint = fixture.Identity.ChannelFingerprint,
+                    ChannelGeneration = fixture.Identity.ChannelGeneration, Active = true,
+                    PendingReconciliation = false, ChangedAtUtc = now
+                };
+                var staleResolution = PrtgTrustedSamplingProfileResolver.Resolve(fixture.Profile, changedIdentity,
+                    policy, fixture.Identity.SensorId, "CPU", PrtgFetchStrategy.Conservative, 15, effective,
+                    now.UtcDateTime, now.UtcDateTime, now.UtcDateTime);
+                Assert.False(staleResolution.Ready);
+                Assert.False(PrtgDiskTrustedProofValidator.IsTrusted(readinessRow, staleResolution));
+            }
+            else
+            {
+                Assert.True(PrtgDiskTrustedProofValidator.IsTrusted(readinessRow, fixture.Resolution));
+            }
+        }
+    }
+
+    [Fact]
+    public void ExactLegacySegmentbinding_原子遷移且交換manifest後故障仍可由新格式恢復()
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(p => p.SourceGeneration = "source-segment-v1");
+        var url = "https://fixture.example";
+        var legacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        var currentBinding = PrtgSnapshotJournal.Binding(_backend, url);
+        var now = DateTime.Today;
+        var hour = DateTime.SpecifyKind(now.AddHours(10), DateTimeKind.Unspecified);
+        var effectiveUtc = DateTime.SpecifyKind(hour, DateTimeKind.Utc);
+        var trustedAccumulator = new PrtgSnapshotAccumulator();
+        var trustedInput = new PrtgTrustedSample(8, 42, "source-segment-v1", "resource-8", "channel-8",
+            "epoch-8", "semantic-v1", "strategy-v1", 15, effectiveUtc, effectiveUtc.AddMinutes(15),
+            effectiveUtc.AddMinutes(15).AddSeconds(2), TimeSpan.FromMinutes(1), PrtgTrustedSampleQuality.Good,
+            "measurement-8", "UTC", "UTC");
+        Assert.Equal(PrtgTrustedSampleDisposition.Accepted,
+            trustedAccumulator.AddTrusted(trustedInput, trustedInput.ReceivedAt.AddSeconds(1)));
+        var legacyPending = new PrtgValueRow
+        {
+            SensorObjid = 9, PeriodStart = hour, Quality = PrtgDataQuality.Sampled,
+            CreatedAt = hour, TrustVersion = 0, TrustedProof = null
+        };
+        using (var seed = new PrtgSnapshotJournal(_backend))
+        {
+            seed.Load(legacyBinding, now);
+            seed.EnableIncremental(legacyBinding, now);
+            seed.AppendDelta(legacyBinding,
+                new PrtgSnapshotAccumulator.CheckpointDelta(trustedAccumulator.Capture(), []),
+                [new PrtgSnapshotJournal.Batch(Guid.NewGuid().ToString("N"), [legacyPending])], null, now);
+        }
+        var root = Path.Combine(_backend.DataRoot, "pending", "prtg-snapshot");
+        var oldGeneration = Directory.GetDirectories(root, "checkpoint.g.*").Single();
+        var oldSegmentHashes = Directory.GetFiles(Path.Combine(oldGeneration, "segments"), "*.json")
+            .ToDictionary(path => Path.GetFileName(path), path => Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+
+        using var migration = new PrtgSnapshotJournal(_backend);
+        var oldState = migration.Load(currentBinding, now, legacyBinding)!;
+        Assert.Equal(42, Assert.Single(oldState.Accumulator).Sum);
+        migration.FaultPoint = point =>
+        {
+            if (point == "after-generation-switch") throw new IOException("simulated crash after manifest publication");
+        };
+        Assert.Throws<IOException>(() => migration.EnableIncremental(currentBinding, now, legacyBinding));
+        var unchangedOldHashes = Directory.GetFiles(Path.Combine(oldGeneration, "segments"), "*.json")
+            .ToDictionary(path => Path.GetFileName(path), path => Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+        Assert.Equal(oldSegmentHashes, unchangedOldHashes);
+        Assert.True(File.Exists(migration.ManifestFilePath));
+        using (var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(migration.ManifestFilePath)))
+        {
+            var newGeneration = manifest.RootElement.GetProperty("Generation").GetString()!;
+            Assert.NotEqual(Path.GetFileName(oldGeneration), newGeneration);
+            var newSnapshot = Path.Combine(root, newGeneration, "segments", "00000000000000000001.json");
+            Assert.True(File.Exists(newSnapshot));
+        }
+
+        // Simulate process restart after the durable pointer switch. The new generation
+        // is authoritative and contains the exact validated legacy data.
+        using var recovered = new PrtgSnapshotJournal(_backend);
+        var recoveredState = recovered.Load(currentBinding, now)!;
+        Assert.Equal(trustedInput.ResourceEpoch, Assert.Single(recoveredState.Accumulator).Trusted!.ResourceEpoch);
+        var pendingRow = Assert.Single(Assert.Single(recoveredState.Pending).Rows);
+        Assert.Equal(0, pendingRow.TrustVersion);
+        Assert.Null(pendingRow.TrustedProof);
+    }
+
+    [Fact]
+    public void LegacySegmentbinding不匹配_整代checksum文件保持原樣並拒絕重標()
+    {
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
+            .Update(value => value.SourceGeneration = "source-segment-old");
+        var url = "https://fixture.example";
+        var legacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        var now = DateTime.Today;
+        using (var writer = new PrtgSnapshotJournal(_backend))
+        {
+            writer.Load(legacyBinding, now);
+            writer.EnableIncremental(legacyBinding, now);
+            writer.AppendDelta(legacyBinding,
+                new PrtgSnapshotAccumulator.CheckpointDelta([new(now, 8, 42, 1, 42, 42)], []), null, null, now);
+        }
+        var root = Path.Combine(_backend.DataRoot, "pending", "prtg-snapshot");
+        static Dictionary<string, string> Hashes(string path) => Directory.GetFiles(path, "*", SearchOption.AllDirectories)
+            .ToDictionary(file => Path.GetRelativePath(path, file), file => Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file))));
+        var before = Hashes(root);
+        _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).Mutate(_ => ("1", 0));
+        var currentLegacyBinding = PrtgSnapshotJournal.LegacyBinding(_backend, url);
+        Assert.NotEqual(legacyBinding, currentLegacyBinding);
+
+        using var restart = new PrtgSnapshotJournal(_backend);
+        Assert.Contains("舊版來源 binding", Assert.Throws<InvalidDataException>(() =>
+            restart.Load(PrtgSnapshotJournal.Binding(_backend, url), now, currentLegacyBinding)).Message);
+        Assert.Equal(before, Hashes(root));
     }
 
     [Fact]

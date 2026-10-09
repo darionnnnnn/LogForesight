@@ -237,40 +237,91 @@ public class RuleAdminServiceTests
         Assert.Empty(db.PrtgHostMaps);
     }
 
-    [Fact]
-    public void 草稿預覽足28日但趨勢最新日落後時標示Stale且不算命中()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void 草稿預覽有27個可信歷史日但完成日明確無資料時標示Insufficient且不命中(bool prewarning)
     {
         using var fx = new EfSqliteFixture();
-        var previewDay = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
+        var previewDay = new DateOnly(2026, 9, 30);
         const long deviceId = 3101, sensorId = 4101;
+        var localZone = TimeZoneInfo.Local;
+        // Profile metadata is freshly observed at preview time; historical sample slots remain bounded by previewDay.
+        var profileObservedAtUtc = DateTimeOffset.UtcNow;
         using (var db = fx.NewContext())
         {
             db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
             db.PrtgSensors.Add(new PrtgSensorRow { Objid = sensorId, DeviceObjid = deviceId,
                 Category = PrtgSensorCategories.Disk, SensorType = "SNMP Disk Free", Name = "Disk C:" });
-            var values = new List<PrtgValueRow>();
             for (var offset = -28; offset <= 0; offset++)
             {
                 var date = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
                 db.PrtgHostMaps.Add(new PrtgHostMapRow { DeviceObjid = deviceId, MapDate = date.Date,
                     HostId = 1, MapStatus = PrtgMapStatus.Ok });
-                for (var hour = 0; hour < 12; hour++)
-                    values.Add(new PrtgValueRow { SensorObjid = sensorId, PeriodStart = date.AddHours(hour),
-                        AvgValue = offset == 0 ? null : 18 - offset, MinValue = 18 - offset, MaxValue = 18 - offset,
-                        Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.Today });
             }
-            db.PrtgValues.AddRange(values);
             db.SaveChanges();
         }
 
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var effectiveFrom = DateTime.SpecifyKind(previewDay.ToDateTime(TimeOnly.MinValue).AddDays(-35), DateTimeKind.Utc);
+        var profile = PrtgResourceFixture.ConfigureDiskTrustedProfile(prtgStore,
+            fx.Blob(PrtgMonitoringPolicyStore.BlobKey), fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey),
+            sensorId, deviceId, 1, "SNMP Disk Free", effectiveFrom, observedAtUtc: profileObservedAtUtc,
+            sourceGeneration: "preview-source", channelCaption: "Free");
+        var identity = prtgStore.GetResourceIdentity(sensorId);
+        var trustedRows = new List<PrtgValueRow>();
+        for (var offset = -27; offset <= -1; offset++)
+        {
+            var localDay = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+            var dailyPercent = (prewarning ? 25 : 18) - offset;
+            var insertedHours = 0;
+            for (var localHour = 0; localHour < 24 && insertedHours < PrtgValueReadiness.MinDailyUsableHours; localHour++)
+            {
+                var localWall = DateTime.SpecifyKind(localDay.AddHours(localHour), DateTimeKind.Unspecified);
+                if (localZone.IsInvalidTime(localWall) || localZone.IsAmbiguousTime(localWall)) continue;
+                var utcHour = TimeZoneInfo.ConvertTimeToUtc(localWall, localZone);
+                var analysisWallHour = DateTime.SpecifyKind(utcHour, DateTimeKind.Unspecified);
+                trustedRows.Add(PrtgResourceFixture.TrustedDiskHour(sensorId, analysisWallHour, profile, dailyPercent));
+                insertedHours++;
+            }
+            Assert.Equal(PrtgValueReadiness.MinDailyUsableHours, insertedHours);
+        }
+        prtgStore.MergeSampledValues(trustedRows);
+
+        // Keep an older fully trusted host day outside the 28-day readiness window.
+        var olderLocalDay = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(-28);
+        var olderRows = Enumerable.Range(0, 12).Select(localHour =>
+        {
+            var localWall = DateTime.SpecifyKind(olderLocalDay.AddHours(localHour), DateTimeKind.Unspecified);
+            var utcHour = TimeZoneInfo.ConvertTimeToUtc(localWall, localZone);
+            return PrtgResourceFixture.TrustedDiskHour(sensorId,
+                DateTime.SpecifyKind(utcHour, DateTimeKind.Unspecified), profile, 55);
+        }).ToArray();
+        prtgStore.MergeSampledValues(olderRows);
+
+        // The completed local day has explicit NoData mirror rows, with no slots or trusted proof.
+        var completedLocalDay = previewDay.ToDateTime(TimeOnly.MinValue);
+        var noDataRows = Enumerable.Range(0, 12).Select(localHour =>
+        {
+            var localWall = DateTime.SpecifyKind(completedLocalDay.AddHours(localHour), DateTimeKind.Unspecified);
+            var utcHour = TimeZoneInfo.ConvertTimeToUtc(localWall, localZone);
+            return new PrtgValueRow { SensorObjid = sensorId,
+                PeriodStart = DateTime.SpecifyKind(utcHour, DateTimeKind.Unspecified), AvgValue = null,
+                MinValue = null, MaxValue = null, Coverage = 0, Quality = PrtgDataQuality.NoData,
+                CreatedAt = DateTime.UtcNow, TrustVersion = 0, TrustedProof = null };
+        }).ToArray();
+        prtgStore.UpsertValues(noDataRows);
+
         var evidence = new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
         evidence.ConfirmManually(new PrtgDiskSemanticContext(sensorId, deviceId, 1, "SNMP Disk Free", "free", "Free", "%", 1,
-            "descending-danger"), 9, "Manually confirmed percent free channel.", DateTime.UtcNow,
-            PrtgDiskAssessmentService.ParserSemanticVersion);
+            "descending-danger"), 9, "Manually confirmed percent free channel.", profileObservedAtUtc.UtcDateTime,
+            PrtgDiskAssessmentService.ParserSemanticVersion, identity.SourceGeneration, identity.Generation,
+            identity.ChannelGeneration, identity.Epoch);
         var verifications = new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey));
         verifications.Save(new PrtgDiskVerificationResult(sensorId, deviceId, 1, "SNMP Disk Free", "Verified",
             "Typed channel values matched.", "free", "Free", "%", 1, "descending-danger", 1, true,
-            DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion));
+            profileObservedAtUtc.UtcDateTime, previewDay.ToDateTime(TimeOnly.MinValue), PrtgDiskAssessmentService.ParserSemanticVersion, SourceGeneration: identity.SourceGeneration,
+            ResourceGeneration: identity.Generation, ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostName = "active", Active = true });
         var settings = new FakeSystemSettingsStore();
@@ -298,12 +349,13 @@ public class RuleAdminServiceTests
         var preview = service.PreviewDiskTrend(request);
 
         var row = Assert.Single(preview.Rows);
-        Assert.Equal(28, row.ValidDayCount);
-        Assert.True(row.DataReady);
+        Assert.Equal(27, row.ValidDayCount);
+        Assert.Equal(27 * PrtgValueReadiness.MinDailyUsableHours, row.UsableHours);
+        Assert.False(row.DataReady);
         Assert.True(row.SemanticReady);
         Assert.False(row.Eligible);
         Assert.False(row.WouldHit);
-        Assert.Equal("StaleDataAsOf", row.ExclusionReason);
+        Assert.Equal("InsufficientData", row.ExclusionReason);
         Assert.Equal(0, preview.HitCount);
         Assert.Equal(0, preview.UniqueHitHostCount);
         Assert.Equal(0, preview.UnsuppressedHitRowCount);

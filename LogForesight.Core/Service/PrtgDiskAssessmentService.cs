@@ -20,6 +20,17 @@ public sealed class PrtgDiskAssessmentService
     private readonly PrtgDiskVerificationResultStore? _verificationResults;
     private readonly object _operationOwner = new();
 
+    private PrtgDiskMetadataSnapshot CaptureMetadataSnapshot()
+    {
+        return PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults, _store, () =>
+        {
+            var settings = _settings.Get();
+            var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+            var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+            return _store.GetTrustedSamplingPolicyContext(strategyName, strategyMinutes);
+        });
+    }
+
     public PrtgDiskAssessmentService(EfPrtgStore store, IHostStore hosts, ISystemSettingsStore settings,
         PrtgDiskSemanticEvidenceStore evidence, PrtgDiskVerificationResultStore? verificationResults = null)
     { _store = store; _hosts = hosts; _settings = settings; _evidence = evidence; _verificationResults = verificationResults; }
@@ -75,7 +86,7 @@ public sealed class PrtgDiskAssessmentService
         var candidateSnapshot = new PrtgDiskCandidateSnapshot(completedDay, mappingThrough, activeHostIds,
             selectedSensorObjids is null, selectedSensors, null, ruleFingerprint, hostMapRevision,
             captured.Item1, captured.Item2, hostSnapshot, catalogueRevision);
-        var metadataSnapshot = PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        var metadataSnapshot = CaptureMetadataSnapshot();
         if (_hosts.DataVersion != hostVersion)
             throw new InvalidOperationException("PRTG 主機清單版本於候選快照擷取期間改變；請重新開始評估。");
 
@@ -145,7 +156,7 @@ public sealed class PrtgDiskAssessmentService
         var counts = _store.GetReadinessRangeCandidateCounts(fromDate, throughDate, activeHostSet, cancellationToken);
         if (_store.ReadHostMapDataRevision() != hostMapRevision || _store.ReadCatalogueDataRevision() != catalogueRevision)
             throw new InvalidOperationException("PRTG 主機映射或感測器目錄於候選範圍計數期間改變；請重新開始範圍評估。");
-        var metadataSnapshot = PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        var metadataSnapshot = CaptureMetadataSnapshot();
         if (_hosts.DataVersion != hostSnapshot.Version)
             throw new InvalidOperationException("PRTG 主機清單於候選範圍計數期間改變；請重新開始範圍評估。");
 
@@ -162,7 +173,9 @@ public sealed class PrtgDiskAssessmentService
         if (operation.IsCompleted) throw new InvalidOperationException("PRTG 磁碟範圍評估作業已完成；不能再讀取頁面。");
         limit = Math.Clamp(limit, 1, MaximumBatchSize);
         var historyDays = Math.Max(28, operation.Rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? 0);
-        var historyPointsPerSensor = checked(historyDays * 24);
+        // The SQL wall-time superset includes two conservative boundary days on either side;
+        // exact UTC/local filtering below keeps only the requested local host-day window.
+        var historyPointsPerSensor = checked((historyDays + 4) * 24);
         if (historyPointsPerSensor > MaximumExpectedHistoricalPointsPerBatch)
             throw new InvalidOperationException("PRTG 磁碟範圍每顆感測器歷史點數已超過頁面上限；拒絕預覽。");
         // 單一 HTTP 頁可能橫跨多日；在此限制整頁列數乘歷史窗口，不只限制各日內部批次。
@@ -289,7 +302,7 @@ public sealed class PrtgDiskAssessmentService
 
         var total = candidateSnapshot.Total;
         var candidates = candidateSnapshot.GetPage(offset, limit);
-        metadataSnapshot ??= PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        metadataSnapshot ??= CaptureMetadataSnapshot();
         return AssessCapturedCandidates(completedDay, rule, mode, total, offset, candidates, hostSnapshot,
             capturedWhitelist, metadataSnapshot, deferMetadataFence, mappingThrough, candidateSnapshot);
     }
@@ -303,6 +316,21 @@ public sealed class PrtgDiskAssessmentService
         PrtgDiskCandidateSnapshot? candidateSnapshot = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var historyDays = Math.Max(PrtgDiskTrendThresholds.Provisional.RecentWindowDays,
+            rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? 0);
+        var projectionSensors = (int)Math.Clamp((12L * 1024 * 1024) / ((historyDays + 4) * 24L * 512), 1, MaximumBatchSize);
+        if (candidates.Count > projectionSensors)
+        {
+            var combined = new List<PrtgDiskAssessmentRow>(candidates.Count);
+            foreach (var chunk in candidates.Chunk(projectionSensors))
+                combined.AddRange(AssessCapturedCandidates(completedDay, rule, mode, total, offset + combined.Count,
+                    chunk, hostSnapshot, capturedWhitelist, metadataSnapshot, true, candidateMappingThrough,
+                    candidateSnapshot, cancellationToken).Rows);
+            if (!deferMetadataFence) ValidateMetadataSnapshot(metadataSnapshot);
+            return new(total, offset, combined.Count, (long)offset + combined.Count < total,
+                combined.GroupBy(row => row.Decision.Exclusion.ToString()).ToDictionary(group => group.Key, group => group.Count()),
+                combined) { CandidateSnapshot = candidateSnapshot, MetadataSnapshot = metadataSnapshot };
+        }
         var day = completedDay.ToDateTime(TimeOnly.MinValue);
         if (day.Date >= DateTime.Today) throw new ArgumentOutOfRangeException(nameof(completedDay), "僅允許評估已完成日期。");
         var activeHostIds = hostSnapshot.Hosts.Where(h => h.Active && h.MergedInto == null)
@@ -317,7 +345,92 @@ public sealed class PrtgDiskAssessmentService
         var start = day.AddDays(-PrtgValueReadiness.WindowDays + 1);
         var recentStart = day.AddDays(-Math.Max(PrtgDiskTrendThresholds.Provisional.RecentWindowDays, rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? 0) + 1);
         var valuesStart = recentStart < start ? recentStart : start;
-        var values = _store.GetReadinessValues(ids, valuesStart, day.AddDays(1));
+        var localTimeZone = TimeZoneInfo.Local;
+        var authorityAnalysisTimeZoneId = metadataSnapshot.Authority.Strategy.AnalysisTimeZoneId;
+        var analysisTimeZone = TryFindTimeZone(authorityAnalysisTimeZoneId);
+        var timeBasisReason = !metadataSnapshot.Authority.Strategy.Ready ||
+            !string.Equals(metadataSnapshot.Authority.Policy.AnalysisTimeZoneId, authorityAnalysisTimeZoneId, StringComparison.Ordinal) ||
+            analysisTimeZone is null
+            ? "Unknown：可信採樣的 AnalysisTimeZoneId 缺失或無效，無法定位磁碟歷史主機日。"
+            : null;
+        DateTime valuesStartUtc = default;
+        DateTime valuesEndUtc = default;
+        DateTime rawPeriodStart = default;
+        DateTime rawPeriodEnd = default;
+        if (timeBasisReason is null)
+        {
+            if (!TryConvertLocalBoundaryToUtc(valuesStart, localTimeZone, out valuesStartUtc) ||
+                !TryConvertLocalBoundaryToUtc(day.AddDays(1), localTimeZone, out valuesEndUtc))
+                timeBasisReason = "Unknown：Local host-day 邊界落在無效或模糊 DST 時段，無法安全定位磁碟歷史。";
+            else if (!TryBuildAnalysisWallBounds(valuesStartUtc, valuesEndUtc, analysisTimeZone,
+                         out rawPeriodStart, out rawPeriodEnd))
+                timeBasisReason = "Unknown：無法把 Local host-day 窗口轉成可信 AnalysisTimeZone wall 範圍。";
+        }
+        var pageProfiles = metadataSnapshot.CaptureProfiles(_store, ids);
+        var profileResolutions = new Dictionary<long, PrtgTrustedSamplingProfileResolution>();
+        var semanticValidities = new Dictionary<long, PrtgDiskSemanticEvidenceValidity?>();
+        foreach (var sensor in candidates)
+        {
+            var stored = metadataSnapshot.GetEvidence(sensor.Objid);
+            var probe = metadataSnapshot.GetVerificationResult(sensor.Objid);
+            var identity = metadataSnapshot.GetResourceIdentity(sensor.Objid);
+            PrtgDiskSemanticEvidenceValidity? validity = null;
+            if (stored is not null && stored.DeviceObjid == sensor.DeviceObjid && stored.HostId == sensor.HostId &&
+                string.Equals(stored.SensorType, sensor.SensorType, StringComparison.OrdinalIgnoreCase))
+            {
+                var context = new PrtgDiskSemanticContext(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType,
+                    stored.MainChannelIdentifier, stored.MainChannelName, stored.Unit, stored.Scale, stored.Direction);
+                validity = _evidence.CheckValidity(stored, sensor.Objid, context, ParserSemanticVersion);
+                if (!PrtgResourceQualification.IsChannelCurrent(stored, probe, identity) || !validity.IsValid ||
+                    !MatchesVerifiedPercent(probe, stored, (sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.Name, sensor.SensorType, sensor.Category, sensor.Unit, sensor.Paused, sensor.DevicePaused)))
+                    validity = new() { IsValid = false, Evidence = stored,
+                        InvalidReason = validity.InvalidReason ?? "缺少與目前對應一致的 typed 探測證據，或無法證明可用百分比語意。" };
+            }
+            semanticValidities[sensor.Objid] = validity;
+            var authority = metadataSnapshot.Authority;
+            var resolved = PrtgTrustedSamplingProfileResolver.Resolve(pageProfiles.GetValueOrDefault(sensor.Objid), identity,
+                authority.Policy, sensor.Objid, sensor.SensorType, authority.Strategy, DateTime.UtcNow, DateTime.UtcNow);
+            var profile = pageProfiles.GetValueOrDefault(sensor.Objid);
+            if (profile is null || profile.Quantity != PrtgTrustedQuantitySemantic.DiskFreePercent ||
+                profile.Unit != "%" || profile.Scale != 1 || profile.Direction != "direct" ||
+                !IsAvailableCapacityChannel(profile.PrimaryChannelCaption))
+                resolved = new(null, resolved.MissingFacts, resolved.RejectionReason ?? "disk_semantic_profile_mismatch");
+            profileResolutions[sensor.Objid] = resolved;
+        }
+        List<PrtgDiskReadinessValue> values;
+        string? projectionCapacityReason = null;
+        try
+        {
+            values = timeBasisReason is null
+                ? _store.GetTrustedReadinessValues(ids, rawPeriodStart, rawPeriodEnd,
+                    MaximumExpectedHistoricalPointsPerBatch, projected =>
+                        profileResolutions.TryGetValue(projected.SensorObjid, out var resolution) &&
+                        PrtgDiskTrustedProofValidator.IsTrusted(projected, resolution, valuesEndUtc))
+                : new();
+        }
+        catch (PrtgReadinessCapacityException ex)
+        {
+            // No partial projection can imply complete history. The caller gets an explicit readiness reason.
+            values = new();
+            projectionCapacityReason = ex.Reason;
+        }
+        var hostHoursBySensor = new Dictionary<long, List<DiskHistoryHour>>();
+        var timeBasisUnknownSensors = new HashSet<long>();
+        if (timeBasisReason is null && analysisTimeZone is not null)
+        {
+            foreach (var value in values)
+            {
+                if (!TryMapAnalysisHourToLocalWindow(value.PeriodStart, analysisTimeZone, localTimeZone,
+                        valuesStartUtc, valuesEndUtc, out var utcStart, out var localPeriodStart, out var ambiguous))
+                {
+                    if (ambiguous) timeBasisUnknownSensors.Add(value.SensorObjid);
+                    continue;
+                }
+                if (!hostHoursBySensor.TryGetValue(value.SensorObjid, out var sensorHours))
+                    hostHoursBySensor[value.SensorObjid] = sensorHours = new();
+                sensorHours.Add(new(value, localPeriodStart, utcStart));
+            }
+        }
         cancellationToken.ThrowIfCancellationRequested();
         var mapSnapshotStart = valuesStart < mappingFrom ? valuesStart : mappingFrom;
         var mapReadThrough = mappingThrough > day ? mappingThrough : day;
@@ -342,44 +455,38 @@ public sealed class PrtgDiskAssessmentService
             for (var d = start; d <= day; d = d.AddDays(1))
                 if (mapByDay.TryGetValue((sensor.DeviceObjid, d), out var map) && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue && activeHostSet.Contains(map.HostId.Value))
                     dayMaps[d] = map.HostId;
-            var ownValues = values.Where(v => v.SensorObjid == sensor.Objid).ToArray();
-            var hours = ownValues.Select(v => new PrtgReadinessHour(v.PeriodStart, v.Quality, v.Coverage)).ToArray();
+            var ownValues = hostHoursBySensor.GetValueOrDefault(sensor.Objid) ?? new();
+            var hours = ownValues.Select(v => new PrtgReadinessHour(v.LocalPeriodStart, v.Value.Quality, v.Value.Coverage, v.Value.Trusted)).ToArray();
             var stored = metadataSnapshot.GetEvidence(sensor.Objid);
-            PrtgDiskSemanticEvidenceValidity? validity = null;
-            if (stored is not null && stored.DeviceObjid == sensor.DeviceObjid && stored.HostId == sensor.HostId &&
-                string.Equals(stored.SensorType, sensor.SensorType, StringComparison.OrdinalIgnoreCase))
-            {
-                // Current mirror has no channel/unit fields. Require a matching successful typed probe result;
-                // comparing evidence with itself cannot establish current channel semantics.
-                var context = new PrtgDiskSemanticContext(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType,
-                    stored.MainChannelIdentifier, stored.MainChannelName, stored.Unit, stored.Scale, stored.Direction);
-                validity = _evidence.CheckValidity(stored, sensor.Objid, context, ParserSemanticVersion);
-                var probe = metadataSnapshot.GetVerificationResult(sensor.Objid);
-                if (!validity.IsValid || !MatchesVerifiedPercent(probe, stored,
-                        (sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.Name, sensor.SensorType,
-                            sensor.Category, sensor.Unit, sensor.Paused, sensor.DevicePaused)))
-                    validity = new() { IsValid = false, Evidence = stored,
-                        InvalidReason = validity.InvalidReason ?? "缺少與目前對應一致的 typed 探測證據，或無法證明可用百分比語意。" };
-            }
+            var validity = semanticValidities.GetValueOrDefault(sensor.Objid);
             var readiness = PrtgValueReadiness.Evaluate(new(sensor.Objid, sensor.DeviceObjid, sensor.Category,
                 activeHostSet.Contains(sensor.HostId), activeHostSet.Contains(sensor.HostId), sensor.Paused, sensor.DevicePaused,
                 (whitelist.Count == 0 || whitelist.Contains(sensor.SensorType)), stored?.Unit, stored?.MainChannelName, validity is { IsValid: true }, hours, dayMaps), day.AddDays(1));
             readiness = readiness with
             {
-                Reason = readiness.Reason + (string.IsNullOrWhiteSpace(sensor.Unit)
+                Status = timeBasisReason is not null || timeBasisUnknownSensors.Contains(sensor.Objid)
+                    ? PrtgValueReadinessStatus.Unknown : readiness.Status,
+                Reason = (timeBasisReason ?? (timeBasisUnknownSensors.Contains(sensor.Objid)
+                    ? "Unknown：可信歷史包含無效或 ambiguous DST analysis wall hour，無法映射到 Local host day。" : readiness.Reason)) +
+                    (projectionCapacityReason is null ? string.Empty : " 容量限制，歷史投影未完整讀取：" + projectionCapacityReason) +
+                    (hours.Any(h => !h.Trusted && (string.Equals(h.Quality, PrtgDataQuality.Ok, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(h.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase)))
+                        ? " 部分歷史列缺少符合目前來源／身分／策略的完整可信 proof。" : string.Empty) +
+                    (string.IsNullOrWhiteSpace(sensor.Unit)
                     ? " 鏡像未提供目前通道／單位欄位；通道漂移須待下次 typed probe 才能確認。"
                     : " 鏡像未提供目前通道欄位；通道漂移須待下次 typed probe 才能確認。")
             };
-            var dataDays = hours.Where(h => h.PeriodStart >= start && h.PeriodStart < day.AddDays(1) &&
-                    (string.Equals(h.Quality, PrtgDataQuality.Ok, StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(h.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase) && h.Coverage >= PrtgValueUsability.SampledMinCoverage))
+            var dataDays = hours.Where(h => h.PeriodStart >= start && h.PeriodStart < day.AddDays(1) && PrtgValueReadiness.IsUsable(h))
                 .Select(h => h.PeriodStart.Date).Distinct();
             if (dataDays.Any(d => !dayMaps.TryGetValue(d, out var mappedHost) || mappedHost != sensor.HostId))
-                readiness = readiness with { Status = PrtgValueReadinessStatus.Unknown, Reason = "歷史資料日主機對應與目前候選主機不一致。" };
+                readiness = readiness with { Status = PrtgValueReadinessStatus.Unknown,
+                    Reason = readiness.Reason + " 歷史資料日主機對應與目前候選主機不一致。" };
 
             var ruleWindow = rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? PrtgDiskTrendThresholds.Provisional.RecentWindowDays;
-            var eligibleDaily = ownValues.Where(v => v.AvgValue.HasValue && IsUsable(v.Quality, v.Coverage) && v.PeriodStart.Date >= day.AddDays(-ruleWindow + 1))
-                .GroupBy(v => v.PeriodStart.Date).Select(g => new { Day = g.Key, Hours = g.Select(x => x.PeriodStart).Distinct().Count(), Average = g.Average(x => x.AvgValue!.Value) })
+            var eligibleDaily = ownValues.Where(v => v.Value.AvgValue.HasValue &&
+                    PrtgValueReadiness.IsUsable(new(v.LocalPeriodStart, v.Value.Quality, v.Value.Coverage, v.Value.Trusted)) &&
+                    v.LocalPeriodStart.Date >= day.AddDays(-ruleWindow + 1))
+                .GroupBy(v => v.LocalPeriodStart.Date).Select(g => new { Day = g.Key, Hours = g.Select(x => x.LocalPeriodStart).Distinct().Count(), Average = g.Average(x => x.Value.AvgValue!.Value) })
                 .Where(x => x.Hours >= PrtgValueReadiness.MinDailyUsableHours)
                 .ToArray();
             var trendMappingValid = eligibleDaily.All(x => mapByDay.TryGetValue((sensor.DeviceObjid, x.Day), out var mapped)
@@ -392,6 +499,18 @@ public sealed class PrtgDiskAssessmentService
             rows.Add(new(sensor.Objid, sensor.DeviceObjid, sensor.HostId, readiness, validity, decision)
             {
                 CompletedDate = completedDay,
+                EvidenceFingerprint = Fingerprint(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    sensor.Objid, sensor.DeviceObjid, sensor.HostId, CompletedDay = completedDay,
+                    Identity = metadataSnapshot.GetResourceIdentity(sensor.Objid),
+                    SemanticEvidence = stored, ProfileDigest = pageProfiles.GetValueOrDefault(sensor.Objid)?.MetadataDigest,
+                    RuleFingerprint = rule is null ? string.Empty : Fingerprint(System.Text.Json.JsonSerializer.Serialize(rule)),
+                    Hours = ownValues.OrderBy(value => value.LocalPeriodStart).ThenBy(value => value.Value.Id)
+                        .Select(value => new { AnalysisPeriodStart = value.Value.PeriodStart,
+                            AnalysisHourUtcStart = value.UtcStart, HostPeriodStart = value.LocalPeriodStart,
+                            value.Value.Trusted, value.Value.EvidenceFingerprint }).ToArray(),
+                    DayMappings = dayMaps.OrderBy(pair => pair.Key).Select(pair => new { Day = pair.Key, HostId = pair.Value }).ToArray()
+                })),
                 MissingHourWindowStart = DateOnly.FromDateTime(start),
                 MissingHourMasks = BuildMissingHourMasks(hours, start)
             });
@@ -430,7 +549,7 @@ public sealed class PrtgDiskAssessmentService
     /// </summary>
     public bool HasAnyReadySemanticCandidate(DateOnly completedDay, KnownIssueRule? rule)
     {
-        var metadataSnapshot = PrtgDiskMetadataSnapshot.Capture(_evidence, _verificationResults);
+        var metadataSnapshot = CaptureMetadataSnapshot();
         var evidenceIds = metadataSnapshot.GetEvidenceIds();
         if (evidenceIds.Length == 0)
         {
@@ -459,14 +578,117 @@ public sealed class PrtgDiskAssessmentService
         var verificationCurrent = _verificationResults is null
             ? snapshot.Verification is null
             : snapshot.Verification is not null && _verificationResults.IsSnapshotCurrent(snapshot.Verification);
+        var ids = snapshot.GetEvidenceIds().Concat(snapshot.GetProfileFenceSnapshot().Keys).Distinct().ToArray();
+        var identities = _store.GetResourceIdentities(ids);
+        if (ids.Any(id => !snapshot.TryGetResourceIdentity(id, out var captured) ||
+            !IdentitiesMatch(captured, identities.GetValueOrDefault(id) ?? new PrtgResourceIdentity { SensorId = id })))
+            throw new InvalidOperationException("PRTG 資源世代於磁碟候選評估期間改變；已拒絕整批結果，請重新開始評估。");
+        var profileFences = snapshot.GetProfileFenceSnapshot();
+        if (profileFences.Count > 0)
+        {
+            foreach (var page in profileFences.Chunk(MaximumBatchSize))
+            {
+                var currentProfiles = _store.GetTrustedSamplingProfiles(page.Select(item => item.Key));
+                if (page.Any(item => !string.Equals(item.Value,
+                        currentProfiles.TryGetValue(item.Key, out var profile) ? profile.MetadataDigest : "<missing>",
+                        StringComparison.Ordinal)))
+                    throw new InvalidOperationException("PRTG sensor sampling profile 於磁碟準備度評估期間改變；已拒絕整批結果，請重新開始評估。");
+            }
+        }
+        var settings = _settings.Get();
+        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+        var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+        var currentAuthority = _store.GetTrustedSamplingPolicyContext(strategyName, strategyMinutes);
+        if (!snapshot.AuthorityMatches(currentAuthority))
+            throw new InvalidOperationException("PRTG source、strategy 或 time-basis 於磁碟準備度評估期間改變；已拒絕整批結果，請重新開始評估。");
         if (!_evidence.IsSnapshotCurrent(snapshot.Evidence) || !verificationCurrent)
             throw new InvalidOperationException("PRTG 語意 metadata 於候選評估期間改變；已拒絕整批結果，請重新開始評估。");
     }
 
+    private static bool IdentitiesMatch(PrtgResourceIdentity left, PrtgResourceIdentity right) =>
+        left.SensorId == right.SensorId && left.Epoch == right.Epoch && left.Generation == right.Generation &&
+        left.SourceGeneration == right.SourceGeneration && left.DeviceId == right.DeviceId && left.HostId == right.HostId &&
+        left.ResourceFingerprint == right.ResourceFingerprint && left.InventoryFingerprint == right.InventoryFingerprint &&
+        left.ChannelFingerprint == right.ChannelFingerprint && left.ChannelGeneration == right.ChannelGeneration &&
+        left.Active == right.Active && left.PendingReconciliation == right.PendingReconciliation;
+
     public static int EffectiveBatchSize(KnownIssueRule? rule)
     {
         var windowDays = Math.Max(28, rule?.PrtgDiskTrendThresholds?.RecentWindowDays ?? 0);
-        return Math.Clamp(MaximumExpectedHistoricalPointsPerBatch / (windowDays * 24), 1, MaximumBatchSize);
+        var historyHours = (long)(windowDays + 4) * 24;
+        return (int)Math.Clamp(MaximumExpectedHistoricalPointsPerBatch / historyHours, 1, MaximumBatchSize);
+    }
+
+    private static TimeZoneInfo? TryFindTimeZone(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
+        { return null; }
+    }
+
+    private static bool TryConvertLocalBoundaryToUtc(DateTime localWall, TimeZoneInfo localZone, out DateTime utc)
+    {
+        utc = default;
+        var wall = DateTime.SpecifyKind(localWall, DateTimeKind.Unspecified);
+        if (localZone.IsInvalidTime(wall) || localZone.IsAmbiguousTime(wall)) return false;
+        try
+        {
+            utc = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeToUtc(wall, localZone), DateTimeKind.Utc);
+            return true;
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static bool TryBuildAnalysisWallBounds(DateTime fromUtc, DateTime toUtc,
+        TimeZoneInfo analysisZone, out DateTime wallFrom, out DateTime wallTo)
+    {
+        wallFrom = default;
+        wallTo = default;
+        if (fromUtc.Kind != DateTimeKind.Utc || toUtc.Kind != DateTimeKind.Utc || fromUtc >= toUtc) return false;
+        try
+        {
+            var minimum = DateTime.MaxValue;
+            var maximum = DateTime.MinValue;
+            for (var instant = fromUtc; instant < toUtc; instant = instant.AddHours(6))
+            {
+                var wall = TimeZoneInfo.ConvertTimeFromUtc(instant, analysisZone);
+                if (wall < minimum) minimum = wall;
+                if (wall > maximum) maximum = wall;
+            }
+            var endWall = TimeZoneInfo.ConvertTimeFromUtc(toUtc, analysisZone);
+            if (endWall < minimum) minimum = endWall;
+            if (endWall > maximum) maximum = endWall;
+            // Keep the raw SQL predicate broad across an offset transition; the bounded
+            // rows are converted back to UTC and clipped to the exact Local interval.
+            wallFrom = DateTime.SpecifyKind(minimum.AddDays(-1), DateTimeKind.Unspecified);
+            wallTo = DateTime.SpecifyKind(maximum.AddDays(1), DateTimeKind.Unspecified);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidTimeZoneException)
+        { return false; }
+    }
+
+    private static bool TryMapAnalysisHourToLocalWindow(DateTime analysisWallHour,
+        TimeZoneInfo analysisZone, TimeZoneInfo localZone, DateTime windowStartUtc, DateTime windowEndUtc,
+        out DateTime utcStart, out DateTime localWallHour, out bool ambiguous)
+    {
+        utcStart = default;
+        localWallHour = default;
+        ambiguous = false;
+        var wall = DateTime.SpecifyKind(analysisWallHour, DateTimeKind.Unspecified);
+        if (wall.Minute != 0 || wall.Second != 0 || wall.Millisecond != 0 || wall.Ticks % TimeSpan.TicksPerSecond != 0 ||
+            analysisZone.IsInvalidTime(wall) || analysisZone.IsAmbiguousTime(wall))
+        {
+            ambiguous = true;
+            return false;
+        }
+        try { utcStart = TimeZoneInfo.ConvertTimeToUtc(wall, analysisZone); }
+        catch (ArgumentException) { ambiguous = true; return false; }
+        var utcEnd = utcStart.AddHours(1);
+        if (utcStart < windowStartUtc || utcEnd > windowEndUtc) return false;
+        localWallHour = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(utcStart, localZone), DateTimeKind.Unspecified);
+        return true;
     }
 
     internal static bool MatchesVerifiedPercent(PrtgDiskVerificationResult? probe, PrtgDiskSemanticEvidence evidence,
@@ -488,6 +710,8 @@ public sealed class PrtgDiskAssessmentService
         var percentUnit = unit is not null && (unit.Equals("%", StringComparison.Ordinal) || unit.Equals("percent", StringComparison.OrdinalIgnoreCase) || unit.Equals("percentage", StringComparison.OrdinalIgnoreCase));
         return freeChannel && percentUnit && Same(evidence.Direction, "descending-danger") && evidence.Scale == 1;
     }
+
+    private sealed record DiskHistoryHour(PrtgDiskReadinessValue Value, DateTime LocalPeriodStart, DateTime UtcStart);
 
     private static IReadOnlyList<uint> BuildMissingHourMasks(IReadOnlyList<PrtgReadinessHour> hours, DateTime windowStart)
     {
@@ -534,12 +758,17 @@ public sealed record PrtgDiskAssessmentBatch(int CandidateCount, int Offset, int
 /// <summary>單次操作共用的私有 typed dictionary；不把 mutable dictionary 交給 consumer。</summary>
 internal sealed class PrtgDiskMetadataSnapshot
 {
+    private readonly Dictionary<long, PrtgResourceIdentity> _identities;
+    private readonly object _profileFenceLock = new();
+    private readonly Dictionary<long, string> _profileDigests = new();
     private PrtgDiskMetadataSnapshot(PrtgDiskSemanticEvidenceSnapshot evidence,
-        PrtgDiskVerificationResultSnapshot? verification)
-    { Evidence = evidence; Verification = verification; }
+        PrtgDiskVerificationResultSnapshot? verification,
+        IReadOnlyDictionary<long, PrtgResourceIdentity> identities, PrtgTrustedSamplingPolicyContext authority)
+    { Evidence = evidence; Verification = verification; _identities = identities.ToDictionary(pair => pair.Key, pair => pair.Value); Authority = authority; }
 
     internal PrtgDiskSemanticEvidenceSnapshot Evidence { get; }
     internal PrtgDiskVerificationResultSnapshot? Verification { get; }
+    internal PrtgTrustedSamplingPolicyContext Authority { get; }
     internal int EvidenceDeserializeCount => Evidence.DeserializeCount;
     internal int VerificationDeserializeCount => Verification?.DeserializeCount ?? 0;
     internal PrtgDiskSemanticEvidence? GetEvidence(long sensorObjid) =>
@@ -547,10 +776,59 @@ internal sealed class PrtgDiskMetadataSnapshot
     internal PrtgDiskVerificationResult? GetVerificationResult(long sensorObjid) =>
         Verification?.Get(sensorObjid);
     internal long[] GetEvidenceIds() => Evidence.GetSensorIds();
+    internal PrtgResourceIdentity? GetResourceIdentity(long sensorObjid) => _identities.GetValueOrDefault(sensorObjid);
+    internal bool TryGetResourceIdentity(long sensorObjid, out PrtgResourceIdentity identity) =>
+        _identities.TryGetValue(sensorObjid, out identity!);
+
+    internal IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> CaptureProfiles(EfPrtgStore store,
+        IReadOnlyCollection<long> sensorIds)
+    {
+        var profiles = store.GetTrustedSamplingProfiles(sensorIds);
+        var currentIdentities = store.GetResourceIdentities(sensorIds);
+        lock (_profileFenceLock)
+            foreach (var sensorId in sensorIds.Distinct())
+            {
+                var digest = profiles.TryGetValue(sensorId, out var profile) ? profile.MetadataDigest : "<missing>";
+                if (_profileDigests.TryGetValue(sensorId, out var captured) && captured != digest)
+                    throw new InvalidOperationException("可信 profile 在同一評估作業期間變更；拒絕混合不同版本。");
+                _profileDigests[sensorId] = digest;
+                if (!_identities.ContainsKey(sensorId))
+                    _identities[sensorId] = currentIdentities.GetValueOrDefault(sensorId) ?? new PrtgResourceIdentity { SensorId = sensorId };
+            }
+        return profiles;
+    }
+
+    internal IReadOnlyDictionary<long, string> GetProfileFenceSnapshot()
+    {
+        lock (_profileFenceLock) return new Dictionary<long, string>(_profileDigests);
+    }
+
+    internal bool AuthorityMatches(PrtgTrustedSamplingPolicyContext current) =>
+        string.Equals(AuthorityFingerprint(Authority), AuthorityFingerprint(current), StringComparison.Ordinal);
+
+    private static string AuthorityFingerprint(PrtgTrustedSamplingPolicyContext context) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new { context.Policy.SourceGeneration, context.Policy.Revision,
+                context.Policy.RawTimestampTimeZoneId, context.Policy.SourceTimeZoneId, context.Policy.AnalysisTimeZoneId,
+                context.Policy.TimeBasisEvidenceReference, context.Strategy.StrategyName, context.Strategy.StrategyMinutes,
+                context.Strategy.StrategyFingerprint, context.Strategy.EffectiveFromHourUtc,
+                StrategyRawTimestampTimeZoneId = context.Strategy.RawTimestampTimeZoneId,
+                StrategyAnalysisTimeZoneId = context.Strategy.AnalysisTimeZoneId,
+                Missing = context.Strategy.MissingFacts }))));
 
     internal static PrtgDiskMetadataSnapshot Capture(PrtgDiskSemanticEvidenceStore evidence,
-        PrtgDiskVerificationResultStore? verificationResults) =>
-        new(evidence.CaptureSnapshot(), verificationResults?.CaptureSnapshot());
+        PrtgDiskVerificationResultStore? verificationResults, EfPrtgStore store,
+        Func<PrtgTrustedSamplingPolicyContext> captureAuthority)
+    {
+        var evidenceSnapshot = evidence.CaptureSnapshot();
+        var verificationSnapshot = verificationResults?.CaptureSnapshot();
+        var authority = captureAuthority();
+        var sensorIds = evidenceSnapshot.GetSensorIds();
+        var identities = store.GetResourceIdentities(sensorIds).ToDictionary(pair => pair.Key, pair => pair.Value);
+        foreach (var sensorId in sensorIds)
+            identities.TryAdd(sensorId, new PrtgResourceIdentity { SensorId = sensorId });
+        return new(evidenceSnapshot, verificationSnapshot, identities, authority);
+    }
 }
 
 /// <summary>只在單次評估作業中共用的有界候選集合與範圍柵欄。</summary>
@@ -618,6 +896,8 @@ public sealed record PrtgDiskAssessmentRow(long SensorObjid, long DeviceObjid, l
     PrtgDiskRuleDecisionResult Decision)
 {
     public DateOnly CompletedDate { get; internal init; }
+    /// <summary>Exact qualified history/identity/rule digest retained for the formal day manifest.</summary>
+    public string EvidenceFingerprint { get; internal init; } = string.Empty;
     /// <summary>Compact coverage projection derived from the same bounded value rows as Readiness.</summary>
     public DateOnly MissingHourWindowStart { get; internal init; }
     public IReadOnlyList<uint> MissingHourMasks { get; internal init; } = Array.Empty<uint>();

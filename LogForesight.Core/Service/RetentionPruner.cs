@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using NLog;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Core.Service;
 
@@ -199,8 +200,25 @@ public static class RetentionPruner
         // 記錄今天已執行保留清除：排程輪詢看到今天已做過就不再單獨補做
         try
         {
-            new RetentionStateStore(backend.Blob(StateBlobKey))
-                .Update(s => s.LastRunDate = DateTime.Today.ToString("yyyy-MM-dd"));
+            var stateStore = new RetentionStateStore(backend.Blob(StateBlobKey));
+            var prior = stateStore.Get();
+            // Retire only fully terminal outbox intents after the same maximum horizon used by
+            // shard pruning. Their references otherwise pin accepted/revoked shards forever when
+            // no later mail run occurs. Unknown and mixed outcomes keep both intent and shard.
+            var retiredIntents = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey))
+                .PruneTerminalUrgentIntents(retention.RetentionDays, DateTime.UtcNow);
+            var formalMailPrune = PrtgFormalMailClaimStore.PruneExpiredShards(backend, retention.RetentionDays,
+                prior.FormalMailClaimPruneCursor, DateTime.UtcNow);
+            stateStore.Update(s =>
+            {
+                s.LastRunDate = DateTime.Today.ToString("yyyy-MM-dd");
+                s.FormalMailClaimPruneCursor = formalMailPrune.Cursor;
+                s.FormalMailClaimPruneHasMore = formalMailPrune.HasMore || formalMailPrune.StateUnavailable;
+            });
+            if (formalMailPrune.DeletedShards + formalMailPrune.UpdatedShards > 0)
+                console.WriteLine($"已清理 {formalMailPrune.DeletedShards} 個完整過期郵件 claim shard，並修整 {formalMailPrune.UpdatedShards} 個仍有保留項目的 shard。");
+            if (retiredIntents > 0)
+                console.WriteLine($"已封存 {retiredIntents} 筆超過 {Math.Max(90, retention.RetentionDays)} 天且結果明確的郵件意圖。");
         }
         catch (Exception ex)
         {
@@ -218,11 +236,21 @@ public static class RetentionPruner
             : null;
     }
 
+    /// <summary>Whether the bounded formal-mail shard sweep must continue despite today's completed run marker.</summary>
+    public static bool HasFormalMailClaimPruneBacklog(StorageBackend backend) =>
+        new RetentionStateStore(backend.Blob(StateBlobKey)).Get().FormalMailClaimPruneHasMore;
+
     /// <summary>retention_state blob 的內容：<c>{ "lastRunDate": "yyyy-MM-dd" }</c></summary>
     internal sealed class RetentionState
     {
         [JsonPropertyName("lastRunDate")]
         public string? LastRunDate { get; set; }
+
+        [JsonPropertyName("formalMailClaimPruneCursor")]
+        public string? FormalMailClaimPruneCursor { get; set; }
+
+        [JsonPropertyName("formalMailClaimPruneHasMore")]
+        public bool FormalMailClaimPruneHasMore { get; set; }
     }
 
     private sealed class RetentionStateStore : JsonBlobSingleton<RetentionState>

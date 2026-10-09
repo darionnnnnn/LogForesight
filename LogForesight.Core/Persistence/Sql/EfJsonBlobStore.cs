@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -42,6 +43,13 @@ public sealed class EfJsonBlobStore
         var content = ctx.Blobs.AsNoTracking().FirstOrDefault(b => b.BlobKey == _key)?.Content;
         _performance?.Record($"blob:{_key}:Read", sw.ElapsedMilliseconds);
         return content;
+    }
+
+    /// <summary>Tests row presence without projecting or materializing its JSON content.</summary>
+    internal bool Exists()
+    {
+        using var ctx = _contextFactory();
+        return ctx.Blobs.AsNoTracking().Any(b => b.BlobKey == _key);
     }
 
     /// <summary>目前版本號；內容不存在回 0。只讀一個整數欄，不拉整份內容——
@@ -97,6 +105,12 @@ public sealed class EfJsonBlobStore
 
     /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>
     public TResult Mutate<TResult>(Func<string?, (string content, TResult result)> mutation)
+        => MutateWithContext((_, current) => mutation(current));
+
+    /// <summary>在同一個 JSON blob 交易內更新其他資料列，供需要先失效證據再發布設定的寫入端使用。</summary>
+    internal TResult MutateWithContext<TResult>(Func<LfDbContext, string?, (string content, TResult result)> mutation,
+        int? maxCurrentCharacters = null, IsolationLevel? isolationLevel = null,
+        bool skipUnchangedContent = false)
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）
         //
@@ -124,10 +138,29 @@ public sealed class EfJsonBlobStore
                         // 重試時必須用全新 context——同一個 context 的變更追蹤會殘留上一次嘗試
                         // 加入的列，重試時再 Add 一次會造成重複追蹤
                         using var ctx = _contextFactory();
-                        using var tx = ctx.Database.BeginTransaction();
+                        using var tx = ctx.Database.BeginTransaction(isolationLevel ?? IsolationLevel.Unspecified);
+
+                        if (maxCurrentCharacters is { } max)
+                        {
+                            var bounded = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == _key)
+                                .Select(b => new
+                                {
+                                    Prefix = b.Content.Substring(0, max + 1),
+                                    Length = b.Content.Length
+                                }).FirstOrDefault();
+                            if (bounded is { } existing &&
+                                (existing.Length > max || System.Text.Encoding.UTF8.GetByteCount(existing.Prefix) > max))
+                                throw new InvalidDataException($"Blob '{_key}' exceeds its {max}-character/byte mutation limit.");
+                        }
 
                         var row = ctx.Blobs.FirstOrDefault(b => b.BlobKey == _key);
-                        var (content, result) = mutation(row?.Content);
+                        var (content, result) = mutation(ctx, row?.Content);
+
+                        if (skipUnchangedContent && row != null && StringComparer.Ordinal.Equals(row.Content, content))
+                        {
+                            tx.Commit();
+                            return result;
+                        }
 
                         if (row == null)
                             ctx.Blobs.Add(new BlobRow { BlobKey = _key, Content = content, UpdatedAt = DateTime.Now, Version = 1 });

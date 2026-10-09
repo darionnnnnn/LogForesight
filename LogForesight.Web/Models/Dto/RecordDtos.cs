@@ -288,6 +288,8 @@ public class RecordDetailDto
     public List<string> UncoveredChecks { get; set; } = new();
 
     public bool HasReport { get; set; }
+    /// <summary>Risk report content is awaiting background regeneration; null when whole-day status is not visible.</summary>
+    public bool? RiskReportPending { get; set; }
     public WeeklyCheckupDto? WeeklyCheckup { get; set; }
 
     /// <summary>
@@ -348,6 +350,13 @@ public class IssueDto
     public string? KnownIssue { get; set; }
     public string FirstSeen { get; set; } = string.Empty;
     public string LastSeen { get; set; } = string.Empty;
+    /// <summary>Bounded source observations; fields absent from the native source remain null.</summary>
+    public List<IssueSourceObservationDto> SourceObservations { get; set; } = new();
+    public bool SourceObservationsTruncated { get; set; }
+    /// <summary>正式 PRTG 資源判定保存且經白名單核對的結構化理由碼。</summary>
+    public List<string> PrtgResourceReasonCodes { get; set; } = new();
+    /// <summary>僅顯示資源與規則版本是否保存；此處不重新核驗它們是否為目前版本。</summary>
+    public PrtgResourceVersionEvidenceDto? PrtgResourceVersionEvidence { get; set; }
     public int DistinctMessageCount { get; set; }
     public string? KeyDetails { get; set; }
 
@@ -448,6 +457,20 @@ public class IssueDto
     /// 不必再到獨立的深入分析卡玩多對多連連看。
     /// </summary>
     public IssueGuidanceDto? Guidance { get; set; }
+}
+
+/// <summary>Safe presentation projection of source provenance; projection fingerprints are intentionally omitted.</summary>
+public sealed class IssueSourceObservationDto
+{
+    public string SourceKind { get; set; } = "Unknown";
+    public string ResourceScope { get; set; } = "Unknown";
+    public string? ExactHostKey { get; set; }
+    public string? ExactResourceKey { get; set; }
+    public DateTimeOffset? EventTimeUtc { get; set; }
+    public DateTimeOffset? WindowStartUtc { get; set; }
+    public DateTimeOffset? WindowEndUtc { get; set; }
+    public string? WindowResolution { get; set; }
+    public string? NativeReference { get; set; }
 }
 
 public class LoginFailureDetailDto
@@ -573,8 +596,11 @@ public class ReportViewDto
 
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>current/stale/unknown for daily risk reports; reports without a saved fingerprint remain unverified.</summary>
+    public string PrtgEvidenceVersionStatus { get; set; } = "not_applicable";
+
     /// <summary>儲存層的報告 → 畫面 DTO。三種報告共用同一條轉換，避免各服務各寫一份而漂移。</summary>
-    public static ReportViewDto From(ReportContent content) => new()
+    public static ReportViewDto From(ReportContent content, string prtgEvidenceVersionStatus = "not_applicable") => new()
     {
         Kind = content.Kind,
         KindName = ReportKinds.Zh(content.Kind),
@@ -582,7 +608,8 @@ public class ReportViewDto
         FileName = content.FileName,
         RiskLevel = content.RiskLevel,
         Categories = content.Categories,
-        Content = content.Content
+        Content = content.Content,
+        PrtgEvidenceVersionStatus = prtgEvidenceVersionStatus
     };
 }
 
@@ -594,11 +621,15 @@ public class TimelineDayDto
     public string Headline { get; set; } = string.Empty;
     public bool HasRecord { get; set; }
     public bool HasCoverageGap { get; set; }
+    /// <summary>Saved daily risk report is awaiting background regeneration; null for case-grant-only viewers.</summary>
+    public bool? RiskReportPending { get; set; }
 }
 
 public class HostDetailDto
 {
     public long HostId { get; set; }
+    /// <summary>True when this host is visible only through an issue-specific case grant.</summary>
+    public bool CaseGrantOnly { get; set; }
     public string HostName { get; set; } = string.Empty;
     public string? DisplayName { get; set; }
     public string RoleDesc { get; set; } = string.Empty;
@@ -624,6 +655,15 @@ public class HostDetailDto
     public List<TimelineDayDto> Timeline { get; set; } = new();
     public WeeklyCheckupDto? LatestCheckup { get; set; }
 
+    /// <summary>Current PRTG resource-period diagnostics; display only, never issue or risk input.</summary>
+    public List<PrtgResourcePressureHintDto> ResourcePressureHints { get; set; } = new();
+    /// <summary>目前主機層級資源證據狀態；案件授與模式一律為 null。</summary>
+    public string? ResourcePressureAvailability { get; set; }
+
+    /// <summary>Maintain-only controls and current formal-mode state. Empty for case-grant-only viewers.</summary>
+    public bool CanManageResourcePressure { get; set; }
+    public List<PrtgResourcePressureModeDto> ResourcePressureModes { get; set; } = new();
+
     /// <summary>期間內問題彙總（docs/archive/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」下鑽進來
     /// 原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接列出期間內出現過的
     /// 問題（依 Source+EventId 分組），每列連結到最近一次出現的那天詳情</summary>
@@ -631,6 +671,46 @@ public class HostDetailDto
 
     /// <summary>回望天數有效上限（歷史資料保留天數）</summary>
     public int MaxBackfillDays { get; set; }
+}
+
+public class PrtgResourcePressureHintDto
+{
+    public long SensorObjid { get; set; }
+    public string Family { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string ReasonCode { get; set; } = string.Empty;
+    public DateTime AsOfUtc { get; set; }
+    public DateTime? EvidenceAsOfUtc { get; set; }
+    public double? EarlierHourAveragePercent { get; set; }
+    public double? LatestHourAveragePercent { get; set; }
+    public double? CoveragePercent { get; set; }
+    public DateTime? FirstHourStartUtc { get; set; }
+    public DateTime? LatestHourStartUtc { get; set; }
+    public DateTime? EpisodeStartedAtUtc { get; set; }
+    public DateTime? EpisodeObservedSinceUtc { get; set; }
+    public List<string> MissingFacts { get; set; } = new();
+    public List<string> FormalReasons { get; set; } = new();
+    public string? FormalEvidenceFingerprint { get; set; }
+}
+
+public class PrtgResourceVersionEvidenceDto
+{
+    public string SourceGeneration { get; set; } = "unknown";
+    public string ResourceGeneration { get; set; } = "unknown";
+    public string ChannelGeneration { get; set; } = "unknown";
+    public string RuleAdmissionFingerprint { get; set; } = "unknown";
+    public string EvidenceVersionReference { get; set; } = "unknown";
+    public string RuleAdmissionVersionReference { get; set; } = "unknown";
+}
+
+public class PrtgResourcePressureModeDto
+{
+    public long SensorObjid { get; set; }
+    public string Family { get; set; } = string.Empty;
+    public bool FormalEnabled { get; set; }
+    /// <summary>active when the live two-hour consumer still accepts the same mode; stale otherwise.</summary>
+    public string Status { get; set; } = string.Empty;
+    public string? StaleReason { get; set; }
 }
 
 /// <summary>主機詳情頁「重點問題（期間彙總）」的單列（docs/archive/FEEDBACK-3-PLAN.md #4）。

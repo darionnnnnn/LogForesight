@@ -707,6 +707,20 @@ public class RuleValidatorTests
     }
 
     [Fact]
+    public void PRTG規則_silent保留原欄位並宣告正式presenceConsumer()
+    {
+        var silent = PrtgRule(prtgRuleCode: PrtgRuleEvaluator.RuleSilent, prtgThreshold: 0);
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { silent });
+
+        Assert.Equal(nameof(PrtgSilentAbsenceEvaluator),
+            PrtgRuleCatalog.FormalConsumerFor(PrtgRuleEvaluator.RuleSilent));
+        Assert.Same(silent, Assert.Single(outcome.ValidRules));
+        Assert.Empty(outcome.SkippedRules);
+        Assert.Equal(0, silent.PrtgThreshold);
+        Assert.Null(silent.PrtgSensorCategory);
+    }
+
+    [Fact]
     public void 非PRTG規則帶適用分類時不合格()
     {
         var windows = new KnownIssueRule

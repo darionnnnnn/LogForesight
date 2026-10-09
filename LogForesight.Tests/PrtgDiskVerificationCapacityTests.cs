@@ -3,6 +3,7 @@ using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -11,6 +12,7 @@ namespace LogForesight.Tests;
 public sealed class PrtgDiskVerificationCapacityTests : IDisposable
 {
     private readonly EfSqliteFixture _fixture = new();
+    private PrtgResourceIdentity _identity = null!;
 
     [Theory]
     [InlineData("free capacity")]
@@ -61,6 +63,9 @@ public sealed class PrtgDiskVerificationCapacityTests : IDisposable
             });
             db.SaveChanges();
         }
+        _identity = PrtgResourceFixture.Bind(new EfPrtgStore(_fixture.NewContext),
+            _fixture.Blob(PrtgMonitoringPolicyStore.BlobKey), 1, 2, 1, "capacity-source",
+            "2|snmpdiskfree|capacity-fixture");
 
         return new PrtgDiskVerificationService(settings, new EfPrtgStore(_fixture.NewContext), hosts,
             new PrtgProbeRunState(), evidence,
@@ -68,9 +73,11 @@ public sealed class PrtgDiskVerificationCapacityTests : IDisposable
             new SchedulerRunState(), new KnownIssueRuleStore(_fixture.Blob("rules")));
     }
 
-    private static PrtgDiskVerificationResult Candidate() => new(
+    private PrtgDiskVerificationResult Candidate() => new(
         1, 2, 1, "snmpdiskfree", "NeedsManualReview", "metadata incomplete", null, null, null, null, null,
-        1, true, DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskVerificationService.ParserSemanticVersion);
+        1, true, DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskVerificationService.ParserSemanticVersion,
+        SourceGeneration: _identity.SourceGeneration, ResourceGeneration: _identity.Generation,
+        ChannelGeneration: _identity.ChannelGeneration, IdentityEpoch: _identity.Epoch);
 
     public void Dispose()
     {

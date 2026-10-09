@@ -1,5 +1,7 @@
 ﻿namespace LogForesight.Core.Models;
 
+using LogForesight.Core.Service;
+
 /// <summary>
 /// 郵件通知的寄送狀態（↔ webdata blob，key=mail_notify_state，回饋十五輪批次D）：
 /// 記錄「每日／每週摘要今天寄過了嗎」與「這台主機這天的緊急通知寄過了嗎」，
@@ -13,6 +15,9 @@ public class MailNotifyState
 
     /// <summary>先落庫再寄出的緊急通知意圖；SMTP 接受不等於信箱實收。</summary>
     public Dictionary<string, MailUrgentIntent> UrgentOutbox { get; set; } = new();
+
+    /// <summary>Legacy singleton claims, retained for fail-closed migration handling; new claims live in per-host shards.</summary>
+    public Dictionary<string, MailFormalStartClaim> FormalMailStartClaims { get; set; } = new(StringComparer.Ordinal);
     /// <summary>最後一次寄出每日摘要的日期（yyyy-MM-dd）；null＝從未寄過</summary>
     public string? LastDailySentDate { get; set; }
 
@@ -41,15 +46,46 @@ public class MailNotifyState
     public string? LastFreshnessAlertDate { get; set; }
 }
 
+public sealed class MailFormalStartClaim
+{
+    /// <summary>Legacy singleton fence retained for safe deserialization; new claims store only FenceKey in host shards.</summary>
+    public PrtgResourceFormalDeliveryFence Fence { get; set; } = null!;
+    public string FenceKey { get; set; } = string.Empty;
+    public string Status { get; set; } = "pending";
+    public DateTime UpdatedAtUtc { get; set; }
+    public DateTime? SmtpAcceptedAtUtc { get; set; }
+}
+
 public sealed class MailUrgentIntent
 {
     public string Key { get; set; } = string.Empty;
     public long HostId { get; set; }
+    public long ParentRecordId { get; set; }
     public DateTime RecordDate { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
     public string SettingsRevision { get; set; } = string.Empty;
     public string Status { get; set; } = "pending";
     public DateTime UpdatedAtUtc { get; set; }
+    public string? WaitingReasonCode { get; set; }
+    public DateTime? WaitingSinceUtc { get; set; }
     public Dictionary<string, DateTime> SmtpAcceptedAtUtc { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> Recipients { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> ProblemKeys { get; set; } = new();
+
+    /// <summary>Immutable start authority captured on first formal CPU/memory send attempt, by issue signature.</summary>
+    /// <remarks>Legacy full-fence payload retained for deserialization. New intents use the compact shard references below.</remarks>
+    public Dictionary<string, PrtgResourceFormalDeliveryFence> FormalStartFences { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Host-shard pointers for new intents; immutable fence payloads remain in the shard.</summary>
+    public Dictionary<string, PrtgFormalMailFenceReference> FormalStartFenceRefs { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Per-issue revocation/claim outcome. A revoked issue is not revived by an old outbox retry.</summary>
+    public Dictionary<string, string> FormalIssueStates { get; set; } = new(StringComparer.Ordinal);
+}
+
+/// <summary>Stable keyset cursor for bounded retries of old durable urgent intents.</summary>
+public sealed class MailUrgentRetryCursorState
+{
+    public string? LastIntentKey { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }

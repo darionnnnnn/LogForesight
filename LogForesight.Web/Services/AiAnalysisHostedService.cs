@@ -33,6 +33,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly ISuppressionStore? _suppressionStore;
     private readonly IAiService? _injectedAiService;
     private readonly IHostApplicationLifetime? _lifetime;
+    private readonly HostDayWorkflowService? _workflow;
     private readonly IWebAiService _webAi;
 
     public AiAnalysisHostedService(
@@ -48,7 +49,8 @@ public class AiAnalysisHostedService : BackgroundService
         IWebAiService webAi,
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
-        IHostApplicationLifetime? lifetime = null)
+        IHostApplicationLifetime? lifetime = null,
+        HostDayWorkflowService? workflow = null)
     {
         _webAi = webAi;
         _optionsStore = optionsStore;
@@ -63,6 +65,7 @@ public class AiAnalysisHostedService : BackgroundService
         _suppressionStore = suppressionStore;
         _injectedAiService = aiService;
         _lifetime = lifetime;
+        _workflow = workflow;
 
         // 站台關閉時對進行中的 AI 執行發出優雅停止
         _lifetime?.ApplicationStopping.Register(() => _runState.TryCancel());
@@ -408,12 +411,56 @@ public class AiAnalysisHostedService : BackgroundService
                                 continue;
                             }
 
+                            long workflowVersion = 0;
+                            if (_workflow != null)
+                            {
+                                try
+                                {
+                                    _workflow.RestoreFromRecord(full, aiEnabled: true);
+                                    workflowVersion = _workflow.BeginAi(record.HostId, record.Date);
+                                }
+                                catch (Exception workflowError)
+                                {
+                                    Log.Warn(workflowError, "AI workflow metadata recovery failed; source analysis remains available");
+                                }
+                            }
+
                             var outcome = await analysisService.RetryAiAsync(full, TrendWindowDays, token);
 
                             // AI 呼叫成功：寫回結果並清 ai_pending
                             if (outcome.AiAnalyzed)
                             {
-                                hostStore.AttachAiResult(record.Date, outcome);
+                                if (_workflow != null && workflowVersion > 0)
+                                {
+                                    try
+                                    {
+                                        var current = _recordQuery.GetOne(new[] { hostKey }, record.Date);
+                                        if (current == null ||
+                                            HostDayWorkflowFingerprint.ForRecord(current) != HostDayWorkflowFingerprint.ForRecord(full) ||
+                                            !_workflow.IsCurrentAiVersion(record.HostId, record.Date, workflowVersion))
+                                        {
+                                            Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的判定版本已更新，拒絕舊 AI 回寫", record.Host, record.Date);
+                                            continue;
+                                        }
+                                    }
+                                    catch (Exception workflowError)
+                                    {
+                                        Log.Warn(workflowError, "AI version guard failed; refusing to risk writing a stale result");
+                                        continue;
+                                    }
+                                }
+                                var expectedPrtgFingerprint = outcome.InputPrtgFingerprint ??
+                                    HostDayWorkflowFingerprint.PrtgInputFingerprint(full);
+                                var expectedDecisionFingerprint = HostDayWorkflowFingerprint.ForRecord(full);
+                                if (!hostStore.TryAttachAiResult(record.Date, outcome, full.RecordId,
+                                        expectedDecisionFingerprint, expectedPrtgFingerprint))
+                                {
+                                    Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的正式 PRTG 證據已變更，拒絕舊 AI 回寫",
+                                        record.Host, record.Date);
+                                    continue;
+                                }
+                                if (_workflow != null && workflowVersion > 0)
+                                    _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: true);
                                 var doneNow = Interlocked.Increment(ref totalDone);
                                 Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);
@@ -424,6 +471,8 @@ public class AiAnalysisHostedService : BackgroundService
                             else
                             {
                                 // AI 未成功：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批
+                                if (_workflow != null && workflowVersion > 0)
+                                    _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: false, outcome.Headline);
                                 Interlocked.Increment(ref counters.Failed);
                                 Log.Warn("主機 {Host} {Date:yyyy-MM-dd} AI 呼叫未成功（{Headline}），維持待補",
                                     record.Host, record.Date, outcome.Headline);

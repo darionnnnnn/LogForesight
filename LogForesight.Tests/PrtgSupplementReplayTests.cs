@@ -54,19 +54,79 @@ public sealed class PrtgSupplementReplayTests : IDisposable
         });
     private void Observe(long id)
     {
+        var sensorId = 100 + id;
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = sensorId, Name = "H" + id }], now);
+        prtgStore.UpsertSensors([new PrtgSensorRow { Objid = sensorId, DeviceObjid = sensorId,
+            SensorType = "ping", Category = "availability", Paused = false }], now);
+        List<PrtgHostMapRow> maps;
+        using (var db = _backend.CreateContext())
+            maps = db.PrtgHostMaps.Where(map => map.MapDate == _day).ToList();
+        maps.RemoveAll(map => map.DeviceObjid == sensorId);
+        maps.Add(new PrtgHostMapRow { DeviceObjid = sensorId, MapDate = _day, HostId = id,
+            HostName = "H" + id, MapStatus = PrtgMapStatus.Ok, CreatedAt = now });
+        prtgStore.ReplaceHostMapForDate(_day, maps);
+        var identity = prtgStore.BindObservedResource(sensorId, id, "source", $"supplement-resource-{sensorId}");
         var rule = new KnownIssueRule { Id = "down", Platform = "prtg", Enabled = true, Severity = IssueSeverity.High, ElevatesDayRisk = true };
         new KnownIssueRuleStore(_backend.Blob("rules")).Save(new RuleFileContent { Rules = [rule] });
-        var finding = new PrtgFinding(1, 100 + id, "down", "confirmed sensor failure", 60, rule)
-        { SourceGeneration = "source", ResourceGeneration = "sensor-" + id, IncidentStartedAt = new DateTimeOffset(_day) };
+        var finding = new PrtgFinding(1, sensorId, "down", "confirmed sensor failure", 60, rule)
+        { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation, IncidentStartedAt = new DateTimeOffset(_day) };
         new EfPrtgObservationStore(_backend.CreateContext).Capture(id, _day, "r1", [(finding, PrtgFindingMapper.ToSignature(finding, _day))]);
-        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + (100 + id))).Update(e =>
+        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Update(e =>
         {
-            e.SensorId = 100 + id; e.HostId = id; e.SourceGeneration = "source"; e.ResourceGeneration = "sensor-" + id;
-            e.ValidFrom = new DateTimeOffset(_day.AddHours(-1));
+            e.Bind(sensorId, id, identity.SourceGeneration, $"supplement-resource-{sensorId}", identity.Generation,
+                identity.Epoch, identity.ChannelGeneration, new PrtgMonitoringPolicyStore(_backend.Blob(
+                    PrtgMonitoringPolicyStore.BlobKey)).Get().ValidFrom);
             e.Accept(e.ValidFrom, new DateTimeOffset(_day.AddDays(1)),
                 [new(e.SensorId, e.ValidFrom, "Down", e.SourceGeneration, e.ResourceGeneration)]);
         });
     }
+    private void AddCurrentDiskProfile(PrtgResourceIdentity identity)
+    {
+        const string url = "https://fixture.example";
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settings.Update(s => { s.PrtgEnabled = true; s.PrtgUrl = url; });
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(p =>
+        {
+            p.SourceTimeZoneId = "UTC";
+            p.RawTimestampTimeZoneId = "UTC"; p.AnalysisTimeZoneId = "UTC";
+            p.TimeBasisEvidenceReference = "verified-time-basis";
+        });
+        using (var db = _backend.CreateContext())
+        {
+            var sensor = db.PrtgSensors.Single(s => s.Objid == identity.SensorId);
+            sensor.Category = "disk"; sensor.SensorType = "disk";
+            db.SaveChanges();
+        }
+        identity = _backend.PrtgStore().SetObservedChannel(identity.SensorId, identity.SourceGeneration,
+            "primary-disk-channel|resource-period-v1", identity.Generation);
+        var policy = policyStore.Get();
+        var strategyProfile = PrtgFetchStrategy.Profile(settings.Get().PrtgFetchStrategy);
+        var strategy = new PrtgTrustedSamplingStrategyStateStore(
+            _backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey)).GetCurrent(policy,
+            PrtgFetchStrategy.Normalize(settings.Get().PrtgFetchStrategy),
+            strategyProfile.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-2));
+        var now = DateTime.UtcNow;
+        var oa = now.ToOADate();
+        var profile = PrtgTrustedSamplingProfile.FromProbe(identity.SensorId, identity, "disk",
+            "primary-disk-channel", "Disk Free", PrtgTrustedQuantitySemantic.DiskFreePercent, "%", 1,
+            "direct", "disk-resource-v1", strategy.StrategyFingerprint, strategy.StrategyMinutes,
+            strategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(strategy.StrategyMinutes), "minutes",
+            "UTC", "UTC", "UTC", new DateTimeOffset(now), "metadata-reference-valid",
+            "physical-reference-valid", true, 20, 20, oa, oa);
+        new PrtgTrustedSamplingProfileStore(_backend).RecordProbeResult(profile);
+        var sensorId = identity.SensorId;
+        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Update(e =>
+        {
+            e.Bind(sensorId, 2, identity.SourceGeneration, $"disk-resource-{sensorId}",
+                identity.Generation, identity.Epoch, identity.ChannelGeneration, policy.ValidFrom);
+            e.Accept(e.ValidFrom, new DateTimeOffset(_day.AddDays(1)),
+                [new(e.SensorId, e.ValidFrom, "Up", e.SourceGeneration, e.ResourceGeneration)]);
+        });
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -102,6 +162,49 @@ public sealed class PrtgSupplementReplayTests : IDisposable
             Assert.All(db.PrtgObservations, o => Assert.Equal("applied", o.SupplementStatus));
             Assert.All(db.IssueCases, c => Assert.Contains("confirmed sensor failure", c.PrtgEvidenceJson));
         }
+    }
+
+    [Fact]
+    public void DiskResourceAggregateReplay_UsesCapturedCurrentRuleAndPreservesGovernedLegacyKey()
+    {
+        Parent(2);
+        Observe(2);
+        var store = _backend.PrtgStore();
+        var identity = store.GetResourceIdentity(102);
+        var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-resource-disk-pressure");
+        new KnownIssueRuleStore(_backend.Blob("rules")).Save(new RuleFileContent
+        { SeedVersion = KnownIssueSeed.Version, Rules = [rule] });
+        AddCurrentDiskProfile(identity);
+        identity = store.GetResourceIdentity(102);
+        using (var db = _backend.CreateContext())
+        {
+            db.PrtgObservations.RemoveRange(db.PrtgObservations);
+            db.SaveChanges();
+        }
+        var finding = new PrtgFinding(102, 102, PrtgRuleEvaluator.RuleResourceDiskPressure,
+            "low-water episode", 1, rule)
+        {
+            SensorCategory = "disk", SourceGeneration = identity.SourceGeneration,
+            ResourceGeneration = identity.Generation, IncidentStartedAt = new DateTimeOffset(_day),
+            EventIdentityRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend,
+            DisplayLabel = "PRTG 磁碟可用空間低水位（感測器 #102）",
+            ResourceReasonCodes = ["disk-two-hour-low-water"],
+            ChannelGeneration = identity.ChannelGeneration,
+            RuleAdmissionFingerprint = PrtgResourceCurrentRuleCatalog.Load(_backend)
+                .AdmissionFingerprintFor(PrtgResourceFamily.Disk)
+        };
+        var signature = PrtgFindingMapper.ToSignature(finding, _day);
+        Assert.Equal("prtg:disk_free_trend:102:source:" + identity.Generation, signature.EventKey);
+        _backend.PrtgObservationStore().Capture(2, _day, "r1", [(finding, signature)]);
+
+        Assert.Equal(1, Replay().RunBatch());
+        using var result = _backend.CreateContext();
+        var stored = Assert.Single(result.TopIssues);
+        Assert.Equal(signature.EventKey, stored.EventKey);
+        var persisted = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(
+            result.DailyRecords.Single(record => record.RecordId == stored.RecordId).ContentJson)!;
+        Assert.Equal(rule.Id, Assert.Single(persisted.TopIssues).RuleId);
+        Assert.Equal("applied", Assert.Single(result.PrtgObservations).SupplementStatus);
     }
     [Theory]
     [InlineData(AnalysisLogSource.Local, "success")]

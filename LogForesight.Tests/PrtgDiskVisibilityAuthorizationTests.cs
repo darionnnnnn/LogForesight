@@ -43,6 +43,7 @@ public sealed class PrtgDiskVisibilityAuthorizationTests
         Assert.Equal(ApiErrorCodes.Forbidden, readinessError.Code);
 
         var rulesController = provider.GetRequiredService<RulesController>();
+        rulesController.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         var previewError = Assert.Throws<DomainException>(() => rulesController.PreviewDiskTrend(new()));
         Assert.Equal(ApiErrorCodes.Forbidden, previewError.Code);
     }
@@ -67,6 +68,7 @@ public sealed class PrtgDiskVisibilityAuthorizationTests
         Assert.Equal(ApiErrorCodes.Forbidden,
             Assert.Throws<DomainException>(() => readiness.Get()).Code);
         var rules = provider.GetRequiredService<RulesController>();
+        rules.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         Assert.Equal(ApiErrorCodes.Forbidden,
             Assert.Throws<DomainException>(() => rules.PreviewDiskTrend(new())).Code);
     }
@@ -83,6 +85,7 @@ public sealed class PrtgDiskVisibilityAuthorizationTests
             Assert.Throws<DomainException>(() => controller.Get()).Code);
 
         var rulesController = provider.GetRequiredService<RulesController>();
+        rulesController.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         Assert.Equal(ApiErrorCodes.Forbidden,
             Assert.Throws<DomainException>(() => rulesController.PreviewDiskTrend(new())).Code);
     }
@@ -102,10 +105,10 @@ public sealed class PrtgDiskVisibilityAuthorizationTests
         var service = new RuleAdminService(new FakeRuleStore(), new FakeRuleSeedStore(), new FakeSuppressionStore(),
             new FakeUserStore(), FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(),
             new FakeHostGroupStore(), null!, new FakeIssueAggregateQuery(), visibility: visibility);
+        var rulesController = new RulesController(service)
+        { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
         Assert.Equal(ApiErrorCodes.Forbidden,
-            Assert.Throws<DomainException>(() => new RulesController(service)
-            { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } }
-                .PreviewDiskTrend(new())).Code);
+            Assert.Throws<DomainException>(() => rulesController.PreviewDiskTrend(new())).Code);
     }
 
     [Fact]
@@ -147,8 +150,7 @@ public sealed class PrtgDiskVisibilityAuthorizationTests
         services.AddSingleton<ICurrentUser>(currentUser);
         services.AddSingleton<IAuditService>(new RecordingAuditService());
         services.AddSingleton<PrtgDiskReadinessController>();
-        services.AddSingleton(sp => new RulesController(sp.GetRequiredService<RuleAdminService>())
-        { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } });
+        services.AddSingleton<RulesController>();
         services.AddSingleton<RuleAdminService>(sp =>
         {
             var ruleSettings = new FakeSystemSettingsStore();

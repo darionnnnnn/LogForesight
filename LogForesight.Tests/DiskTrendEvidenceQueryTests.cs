@@ -38,6 +38,9 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
         Append(22, "HOST-B", today.AddDays(-1), "456", "B-456");
         Append(22, "HOST-B", today, "123", "cross pair");
         Append(11, "HOST-A", today, "123", "forged source", source: "PRTG:warning");
+        Append(33, "HOST-C", today, "789", "actual disk trend");
+        Append(33, "HOST-C", today.AddDays(1), "789", "low-water only",
+            ruleId: "builtin-prtg-resource-disk-pressure", reasons: ["disk-two-hour-low-water"]);
 
         // 30 日的無關資料故意放入無效 JSON：若查詢載入並 Deserialize 這些列，測試會直接失敗。
         using (var ctx = _fx.NewContext())
@@ -55,7 +58,7 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
 
         var timer = Stopwatch.StartNew();
         var result = store.QueryDiskTrendEvidence(new[] { (11L, "123"), (22L, "456") },
-            today.AddDays(-29), today);
+            today.AddDays(-29), today.AddDays(1));
         timer.Stop();
 
         Assert.Equal(2, result.Count);
@@ -65,6 +68,7 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
             && x.Detail == "B-456");
         Assert.DoesNotContain(result, x => x.HostId == 11 && x.SensorId == "456");
         Assert.DoesNotContain(result, x => x.HostId == 22 && x.SensorId == "123");
+        Assert.DoesNotContain(result, x => x.HostId == 33 && x.SensorId == "789");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(10), $"SQLite scoped evidence query took {timer.Elapsed}.");
     }
 
@@ -80,7 +84,8 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
     }
 
     private void Append(long hostId, string host, DateTime date, string sensor, string detail,
-        string source = "PRTG:disk_free_trend") =>
+        string source = "PRTG:disk_free_trend", string? ruleId = null,
+        List<string>? reasons = null) =>
         new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory").Append(new DailyAnalysisRecord
         {
             HostId = hostId,
@@ -95,6 +100,8 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
                     EventId = 0,
                     EntryType = EventLogEntryType.Warning,
                     EventKey = $"prtg:disk_free_trend:{sensor}",
+                    RuleId = ruleId,
+                    PrtgResourceReasonCodes = reasons,
                     SampleMessages = new() { detail }
                 }
             }

@@ -10,11 +10,15 @@ namespace LogForesight.Web.Services.Mail;
 /// </summary>
 public class SystemNetSmtpMailSender : ISmtpMailSender
 {
+    private const int SendTimeoutMilliseconds = 30_000;
+
     public async Task SendAsync(SmtpConnectionSpec connection, MailMessageSpec message, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         using var client = new SmtpClient(connection.Server, connection.Port)
         {
-            EnableSsl = connection.UseTls
+            EnableSsl = connection.UseTls,
+            Timeout = SendTimeoutMilliseconds
         };
 
         // 帳號留空＝relay 不需要驗證（內網常見情境），沿用 SmtpClient 預設的匿名/Windows 整合驗證
@@ -35,8 +39,39 @@ public class SystemNetSmtpMailSender : ISmtpMailSender
             mail.To.Add(recipient);
         }
 
-        // .NET 5+ 的 SendMailAsync(MailMessage, CancellationToken) 多載，不需要事件式 API 的
-        // SendAsyncCancel() 那套（那是給舊版 SendAsync(MailMessage, object) 用的，API 對不上）
-        await client.SendMailAsync(mail, ct);
+        // .NET 8's event-based SendMailAsync completion path can report success when its final
+        // response read fails with IOException. The synchronous Send path propagates a missing
+        // final DATA reply as failure, so run it on an owned worker and always join that worker.
+        // Cancellation aborts/disposes the client; awaiting the worker prevents abandoned background sends.
+        // A dedicated worker avoids occupying a shared ThreadPool thread during a slow relay response.
+        var worker = Task.Factory.StartNew(() => client.Send(mail), CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        using var cancellation = ct.Register(static state => CancelClient((SmtpClient)state!), client);
+        try
+        {
+            await worker.ConfigureAwait(false);
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("SMTP send was cancelled.", ct);
+        }
+    }
+
+    private static void CancelClient(SmtpClient client)
+    {
+        try
+        {
+            client.SendAsyncCancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The worker completed and its client was already disposed.
+        }
+        finally
+        {
+            // SmtpClient.Dispose aborts an in-progress send and marks an idle client unusable,
+            // covering cancellation that races with the worker starting Send().
+            client.Dispose();
+        }
     }
 }

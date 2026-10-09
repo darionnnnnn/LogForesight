@@ -132,4 +132,19 @@ public class HelpContentServiceTests
             Assert.NotEqual(chapter.Content, chapter.AiContent);
         }
     }
+
+    [Fact]
+    public void PRTG說明區分來源佐證_期間提示與案件授與範圍()
+    {
+        var detail = _service.Chapters.Single(c => c.Id == "record-detail").Content;
+        var handling = _service.Chapters.Single(c => c.Id == "handling").Content;
+        var myWork = _service.Chapters.Single(c => c.Id == "my-work").Content;
+
+        Assert.Contains("檢視來源觀測", detail);
+        Assert.Contains("PRTG 資源期間觀察", detail);
+        Assert.Contains("CPU 與記憶體預設只顯示提示", detail);
+        Assert.Contains("Maintain", detail);
+        Assert.Contains("案件授與不會附帶主機級", handling);
+        Assert.Contains("不含主機級 PRTG 期間提示", myWork);
+    }
 }

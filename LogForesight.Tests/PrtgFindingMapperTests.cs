@@ -65,6 +65,42 @@ public class PrtgFindingMapperTests
     }
 
     [Fact]
+    public void DiskResourceAggregate_OnlyGovernedCurrentRuleMayUseLegacyTrendIdentityAndReasonLabel()
+    {
+        var rule = System.Text.Json.JsonSerializer.Deserialize<KnownIssueRule>(System.Text.Json.JsonSerializer.Serialize(
+            SeedRules["builtin-prtg-resource-disk-pressure"]))!;
+        rule.Severity = IssueSeverity.Medium;
+        rule.ElevatesDayRisk = true;
+        var finding = new PrtgFinding(1001, 2001, PrtgRuleEvaluator.RuleResourceDiskPressure,
+            "low water", 1, rule)
+        {
+            SensorCategory = PrtgSensorCategories.Disk,
+            SourceGeneration = "source-v1", ResourceGeneration = "resource-v1",
+            EventIdentityRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend,
+            DisplayLabel = "PRTG 磁碟可用空間低水位（感測器 #2001）",
+            ResourceReasonCodes = ["disk-two-hour-low-water"],
+            RuleAdmissionFingerprint = new string('A', 64), ChannelGeneration = "channel-v1"
+        };
+        var signature = PrtgFindingMapper.ToSignature(finding, TestDay);
+        Assert.Equal("PRTG:disk_free_trend", signature.Source);
+        Assert.Equal("prtg:disk_free_trend:2001:source-v1:resource-v1", signature.EventKey);
+        Assert.Equal("builtin-prtg-resource-disk-pressure", signature.RuleId);
+        Assert.Equal(IssueSeverity.Medium, signature.Severity);
+        Assert.True(signature.ElevatesDayRisk);
+        Assert.Equal(finding.DisplayLabel, signature.SourceEventLabel);
+        Assert.True(KnownIssueCatalog.RuleMayHit(rule, signature.Source, signature.EventId));
+
+        var ungovernedJson = System.Text.Json.Nodes.JsonNode.Parse(
+            System.Text.Json.JsonSerializer.Serialize(rule))!;
+        ungovernedJson[nameof(KnownIssueRule.Id)] = "user-selected-alias";
+        var ungovernedRule = System.Text.Json.JsonSerializer.Deserialize<KnownIssueRule>(ungovernedJson.ToJsonString())!;
+        var ungoverned = finding with { Rule = ungovernedRule };
+        var ordinary = PrtgFindingMapper.ToSignature(ungoverned, TestDay);
+        Assert.Equal("PRTG:resource_disk_pressure", ordinary.Source);
+        Assert.StartsWith("PRTG resource_disk_pressure", ordinary.SourceEventLabel);
+    }
+
+    [Fact]
     public void ToSignature_EventKey格式為冒號分隔且絕不含管線符號()
     {
         var downRule = SeedRules["builtin-prtg-down"];

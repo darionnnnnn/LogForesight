@@ -298,6 +298,19 @@ public sealed class PrtgTransferStoreTests : IDisposable
         commitFault.FailAfterNextCommit();
         Assert.Equal(PrtgTransferStates.ValidationFailed,
             store.FailValidation(failLease, "parser-rejected", binding, Start.AddMinutes(1).AddSeconds(4)).State);
+        DateTimeOffset failureAt;
+        using (var failedDb = Context())
+        {
+            var failedRow = failedDb.PrtgTransferSessions.Single(row => row.TransferId == failId);
+            failureAt = Assert.IsType<DateTimeOffset>(failedRow.AbandonedAtUtc);
+        }
+        Assert.Equal(Start.AddMinutes(1).AddSeconds(4), failureAt);
+        Assert.Equal(PrtgTransferStates.ValidationFailed,
+            store.FailValidation(failLease, "parser-rejected", binding, Start.AddMinutes(1).AddSeconds(5)).State);
+        using (var afterRetry = Context())
+            Assert.Equal(failureAt, afterRetry.PrtgTransferSessions.Single(row => row.TransferId == failId).AbandonedAtUtc);
+        AssertCode("transfer_expired", () => store.FailValidation(failLease, "parser-rejected", binding,
+            failureAt.Add(EfPrtgTransferStore.FailedSessionRetention)));
 
         var releaseId = Guid.NewGuid();
         store.Create(Request(releaseId, body), Start.AddMinutes(2));
@@ -403,6 +416,31 @@ public sealed class PrtgTransferStoreTests : IDisposable
     }
 
     [Fact]
+    public void ExpiredValidationLeaseCanBeRetriedUntilTheFixedSessionAgeLimit()
+    {
+        var body = "diagnostic"u8.ToArray();
+        var id = Create(body);
+        var store = Store();
+        var write = store.BeginChunkWrite(id, 0, body.Length, Binding, Start.AddSeconds(1));
+        store.AcceptChunk(write, body, Binding, Start.AddSeconds(2));
+        var crashed = store.AcquireValidationLease(id, Binding, "crashed", TimeSpan.FromMinutes(1), Start.AddSeconds(3));
+
+        var retry = Store().AcquireValidationLease(id, Binding, "retry", TimeSpan.FromMinutes(1), Start.AddMinutes(2));
+        Assert.Equal("retry", retry.LeaseOwner);
+        Assert.False(store.ReleaseValidationLease(crashed, Binding, Start.AddMinutes(2).AddSeconds(1)));
+        Assert.Equal("validating", Store().GetStatus(id, Binding).State);
+    }
+
+    [Fact]
+    public void NewWorkIsRejectedAfterFixedSevenDayAgeEvenWhenTheTransferIdIsReused()
+    {
+        var body = "diagnostic"u8.ToArray();
+        var id = Create(body);
+        AssertCode("transfer_expired", () => Store().BeginChunkWrite(id, 0, body.Length, Binding, Start.AddDays(7)));
+        AssertCode("transfer_expired", () => Store().Create(Request(id, body), Start.AddDays(7)));
+    }
+
+    [Fact]
     public void ExplicitOwnerAbandonCanReleaseObsoleteContextWithoutRevealingPayload()
     {
         var id = Create("diagnostic"u8.ToArray());
@@ -462,11 +500,15 @@ internal sealed class CommitAcknowledgementRetryStrategy(ExecutionStrategyDepend
 internal sealed class CommitAcknowledgementLossInterceptor : DbTransactionInterceptor
 {
     private int _failNextCommit;
+    private Action? _afterNextCommit;
 
     public void FailAfterNextCommit() => Interlocked.Exchange(ref _failNextCommit, 1);
+    public void RunAfterNextCommit(Action action)
+        => Interlocked.Exchange(ref _afterNextCommit, action ?? throw new ArgumentNullException(nameof(action)));
 
     public override void TransactionCommitted(DbTransaction transaction, TransactionEndEventData eventData)
     {
+        Interlocked.Exchange(ref _afterNextCommit, null)?.Invoke();
         if (Interlocked.Exchange(ref _failNextCommit, 0) == 1)
             throw new CommitAcknowledgementLostException();
     }

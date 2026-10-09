@@ -64,6 +64,7 @@ public sealed class PrtgDiagnosticExportWriterTests
         var validation = await new PrtgLegacyJsonTransferValidator().ValidateAsync(
             chunks.Count, (ordinal, _) => Task.FromResult(chunks[ordinal]), CancellationToken.None);
         Assert.Equal(2, validation.FormatVersion);
+        Assert.Contains("manifest-verified", validation.ResultManifestJson, StringComparison.Ordinal);
         Assert.Equal(48, validation.Counts["Devices"]);
         Assert.Equal(1, validation.Counts["Timelines"]);
         Assert.Equal(0, validation.Counts["Sensors"]);
@@ -71,6 +72,8 @@ public sealed class PrtgDiagnosticExportWriterTests
         using var document = JsonDocument.Parse(package);
         Assert.Equal("診斷🧪", document.RootElement.GetProperty("Devices")[0].GetProperty("Name").GetString());
         Assert.Equal("diagnostic-only", document.RootElement.GetProperty("Purpose").GetString());
+        Assert.Equal(PrtgDiagnosticExportWriter.IntegrityContract,
+            document.RootElement.GetProperty("IntegrityContract").GetString());
         var timeline = document.RootElement.GetProperty("Timelines").EnumerateArray().Single();
         Assert.Equal(777, timeline.GetProperty("SensorId").GetInt64());
         Assert.Equal(0, timeline.GetProperty("Coverage").GetArrayLength());

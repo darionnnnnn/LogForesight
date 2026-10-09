@@ -62,6 +62,75 @@ public class HostDetailIssueSummaryTests : IDisposable
             TopIssues = issues.ToList()
         });
 
+    [Fact]
+    public void FormalPrtgResourceIssueReturnsOnlyAllowListedReasonsAndVersionPresence()
+    {
+        var host = AddHost("HOST-PRTG-EVIDENCE");
+        var issue = new LogIssueSignature
+        {
+            LogName = "PRTG",
+            Source = "PRTG:" + LogForesight.Core.Service.PrtgRuleEvaluator.RuleDiskFreeTrend,
+            RuleId = "builtin-prtg-resource-disk-pressure",
+            EventKey = "prtg:disk_free_trend:700:source-v1:resource-v2",
+            PrtgSourceGeneration = "source-v1",
+            PrtgResourceGeneration = "resource-v2",
+            PrtgChannelGeneration = "channel-v3",
+            PrtgRuleAdmissionFingerprint = new string('A', 64),
+            PrtgResourceReasonCodes = ["disk-two-hour-low-water", "disk-seven-day-low-water-trend"],
+            Severity = IssueSeverity.High,
+            Category = IssueCategory.Storage,
+            Count = 1
+        };
+        AddRecord(host, DateTime.Today, "高", issue);
+
+        var projected = Assert.Single(_service.GetDetail(host.HostId, DateTime.Today).TopIssues);
+
+        Assert.Equal(new[] { "disk-seven-day-low-water-trend", "disk-two-hour-low-water" },
+            projected.PrtgResourceReasonCodes);
+        Assert.Equal("recorded", projected.PrtgResourceVersionEvidence?.SourceGeneration);
+        Assert.Equal("recorded", projected.PrtgResourceVersionEvidence?.ResourceGeneration);
+        Assert.Equal("recorded", projected.PrtgResourceVersionEvidence?.ChannelGeneration);
+        Assert.Equal("recorded", projected.PrtgResourceVersionEvidence?.RuleAdmissionFingerprint);
+        var savedEvidenceReference = Assert.IsType<string>(projected.PrtgResourceVersionEvidence?.EvidenceVersionReference);
+        var savedAdmissionReference = Assert.IsType<string>(projected.PrtgResourceVersionEvidence?.RuleAdmissionVersionReference);
+        Assert.Matches("^sha256:[0-9A-F]{64}$", savedEvidenceReference);
+        Assert.Matches("^sha256:[0-9A-F]{64}$", savedAdmissionReference);
+        var serializedEvidence = System.Text.Json.JsonSerializer.Serialize(projected.PrtgResourceVersionEvidence);
+        Assert.DoesNotContain("source-v1", serializedEvidence);
+        Assert.DoesNotContain("resource-v2", serializedEvidence);
+        Assert.DoesNotContain("channel-v3", serializedEvidence);
+        Assert.DoesNotContain(new string('A', 64), serializedEvidence);
+
+        AddRecord(host, DateTime.Today.AddDays(-2), "高", issue);
+        var repeated = Assert.Single(_service.GetDetail(host.HostId, DateTime.Today.AddDays(-2)).TopIssues);
+        Assert.Equal(savedEvidenceReference, repeated.PrtgResourceVersionEvidence?.EvidenceVersionReference);
+        Assert.Equal(savedAdmissionReference, repeated.PrtgResourceVersionEvidence?.RuleAdmissionVersionReference);
+
+        issue.PrtgResourceReasonCodes = ["untrusted-reason-code"];
+        issue.PrtgSourceGeneration = "\u0001";
+        issue.PrtgRuleAdmissionFingerprint = "not-a-fingerprint";
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue);
+        var invalid = Assert.Single(_service.GetDetail(host.HostId, DateTime.Today.AddDays(-1)).TopIssues);
+        Assert.Empty(invalid.PrtgResourceReasonCodes);
+        Assert.Equal("unknown", invalid.PrtgResourceVersionEvidence?.SourceGeneration);
+        Assert.Equal("unknown", invalid.PrtgResourceVersionEvidence?.RuleAdmissionFingerprint);
+        Assert.Equal("unknown", invalid.PrtgResourceVersionEvidence?.EvidenceVersionReference);
+        Assert.Equal("unknown", invalid.PrtgResourceVersionEvidence?.RuleAdmissionVersionReference);
+
+        issue.PrtgSourceGeneration = "source-v4";
+        issue.PrtgRuleAdmissionFingerprint = new string('A', 64);
+        AddRecord(host, DateTime.Today.AddDays(-3), "高", issue);
+        var changedTuple = Assert.Single(_service.GetDetail(host.HostId, DateTime.Today.AddDays(-3)).TopIssues);
+        Assert.NotEqual(savedEvidenceReference, changedTuple.PrtgResourceVersionEvidence?.EvidenceVersionReference);
+        Assert.Equal(savedAdmissionReference, changedTuple.PrtgResourceVersionEvidence?.RuleAdmissionVersionReference);
+
+        issue.PrtgRuleAdmissionFingerprint = new string('B', 64);
+        AddRecord(host, DateTime.Today.AddDays(-4), "高", issue);
+        var changedAdmission = Assert.Single(_service.GetDetail(host.HostId, DateTime.Today.AddDays(-4)).TopIssues);
+        Assert.NotEqual(savedEvidenceReference, changedAdmission.PrtgResourceVersionEvidence?.EvidenceVersionReference);
+        Assert.NotEqual(savedAdmissionReference, changedAdmission.PrtgResourceVersionEvidence?.RuleAdmissionVersionReference);
+    }
+
     private static LogIssueSignature Issue(
         string source, int eventId, IssueSeverity severity, IssueCategory category, int count, string? knownIssue = null) =>
         new()
@@ -154,6 +223,37 @@ public class HostDetailIssueSummaryTests : IDisposable
 
         var signature = Assert.Single(detail.TopSignatures);
         Assert.Equal("disk", signature.Source);
+    }
+
+    [Fact]
+    public void DisabledPrtgHasExplicitEmptyStateForFullHostViewer()
+    {
+        var host = AddHost("HOST-PRTG-DISABLED");
+
+        var detail = _service.GetHostDetail(host.HostId, days: 30);
+
+        Assert.Equal("disabled", detail.ResourcePressureAvailability);
+        Assert.Empty(detail.ResourcePressureHints);
+    }
+
+    [Fact]
+    public void 主機時間軸標記待補風險報告()
+    {
+        var host = AddHost("HOST-REPORT-PENDING");
+        var reportDate = DateTime.Today.AddDays(-1);
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = reportDate,
+            RiskLevel = "高",
+            RiskReportPending = true
+        });
+
+        var detail = _service.GetHostDetail(host.HostId, days: 7);
+
+        var day = Assert.Single(detail.Timeline, item => item.Date == reportDate.ToString("yyyy-MM-dd"));
+        Assert.True(day.RiskReportPending);
     }
 
     [Fact]

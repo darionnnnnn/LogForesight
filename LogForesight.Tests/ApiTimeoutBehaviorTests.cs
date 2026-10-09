@@ -36,6 +36,8 @@ public class ApiTimeoutBehaviorTests
     [NodeTheory]
     [InlineData("GET超過逾時拋出可辨識的逾時錯誤")]
     [InlineData("POST超過同樣時間不會被中止")]
+    [InlineData("唯讀POST保留JSON與CSRF且逾時可辨識")]
+    [InlineData("唯讀POST取消保留AbortError且不發錯誤toast")]
     [InlineData("逾時在非silent時發一次toast")]
     [InlineData("逾時在silent時不發toast")]
     [InlineData("載入失敗顯示重試鈕且按下會重跑")]

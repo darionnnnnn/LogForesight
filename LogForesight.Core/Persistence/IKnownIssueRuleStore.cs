@@ -30,11 +30,13 @@ public class RuleFileContent
 public class RuleLoadOutcome
 {
     public bool Success { get; init; }
+    public bool IsCapacityExceeded { get; init; }
     public RuleFileContent? Content { get; init; }
     public string? Error { get; init; }
 
     public static RuleLoadOutcome Ok(RuleFileContent content) => new() { Success = true, Content = content };
     public static RuleLoadOutcome Fail(string error) => new() { Success = false, Error = error };
+    public static RuleLoadOutcome CapacityFailure(string error) => new() { Success = false, IsCapacityExceeded = true, Error = error };
 }
 
 /// <summary>
@@ -54,6 +56,9 @@ public interface IKnownIssueRuleStore
     /// <summary>讀取規則檔內容。整檔損毀（JSON 語法錯誤、SchemaVersion 過新）視為失敗，不覆寫原檔；
     /// 單條規則物件解析失敗會被跳過並記入警告，不影響其餘規則載入。</summary>
     RuleLoadOutcome Load();
+
+    /// <summary>Bounded read for capacity-sensitive consumers; legacy test/custom stores can fall back to Load.</summary>
+    RuleLoadOutcome LoadBounded(int maximumCharacters) => Load();
 
     /// <summary>寫入規則檔內容（初次部署種子、或規則維護頁「內建規則升級」套用後）。實作應採原子寫入
     /// （寫暫存檔後改名），避免程式在寫入途中被中斷留下半個損毀的檔案。</summary>

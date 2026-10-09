@@ -150,6 +150,7 @@ public class RecordStorageShaperTests
     {
         var original = new DailyAnalysisRecord
         {
+            RecordId = 4201, // immutable SQL query metadata; deliberately not part of the storage payload
             Date = new DateTime(2026, 7, 20),
             HostId = 42,
             Host = "SRV-REFLECT",
@@ -157,6 +158,19 @@ public class RecordStorageShaperTests
             LatestNetiqAttemptStatus = "success",
             PrtgBaselineRiskLevel = "低",
             PrtgBaselineRiskBasis = "netiq-rule",
+            PrtgManifest = new PrtgDecisionManifest
+            {
+                ParentRecordId = 4201,
+                ParentFingerprint = "parent-fingerprint",
+                SourceGeneration = "source-generation",
+                ResourceFingerprint = "resource-fingerprint",
+                SemanticFingerprint = "semantic-fingerprint",
+                StrategyFingerprint = "strategy-fingerprint",
+                RuleFingerprint = "rule-fingerprint",
+                EvidenceFingerprint = "evidence-fingerprint",
+                FindingFingerprint = "finding-fingerprint",
+                CompletedAtUtc = new DateTime(2026, 7, 20, 1, 0, 0, DateTimeKind.Utc)
+            },
             LatestNetiqAttemptAtUtc = new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc),
             RiskReview = new HistoricalRiskReview { Version = 1, Reason = "review" },
             ErrorCount = 3,
@@ -176,6 +190,8 @@ public class RecordStorageShaperTests
             ScreenedTailCount = 7,
             ScreeningNotes = new List<string> { "note" },
             ReportFile = "report/path.txt",
+            PrtgReportEvidenceFingerprint = "report-evidence-fingerprint",
+            RiskReportPending = true,
             DataIncomplete = true,
             SecurityLogAvailable = false,
             UncoveredChecks = new List<string> { "uncovered" },
@@ -185,6 +201,8 @@ public class RecordStorageShaperTests
             DetailPruned = true,
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 1, SampleMessages = new() { "x" } } }
         };
+        original.PrtgManifest!.ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(
+            original.TopIssues.Where(PrtgFindingMapper.IsPrtg));
 
         // fixture 自我檢查：每個頂層欄位都必須被上面設成「非預設值」，否則下面的比對對該欄位是盲的
         // （original 與 shaped 兩邊都是預設值，漏複製也比不出差異——ChannelsRead 曾因此漏網，
@@ -192,6 +210,8 @@ public class RecordStorageShaperTests
         var defaults = new DailyAnalysisRecord();
         foreach (var prop in typeof(DailyAnalysisRecord).GetProperties())
         {
+            // Transient immutable draft is JsonIgnore and intentionally never persisted by the shaper.
+            if (prop.Name == nameof(DailyAnalysisRecord.PendingRiskReportDraft)) continue;
             var fixtureValue = prop.GetValue(original);
             var defaultValue = prop.GetValue(defaults);
             Assert.False(Equals(fixtureValue, defaultValue),
@@ -202,9 +222,12 @@ public class RecordStorageShaperTests
 
         foreach (var prop in typeof(DailyAnalysisRecord).GetProperties())
         {
-            if (prop.Name == nameof(DailyAnalysisRecord.TopIssues) || prop.Name == nameof(DailyAnalysisRecord.DetailPruned))
+            // Transient immutable draft is JsonIgnore and intentionally never persisted by the shaper.
+            if (prop.Name == nameof(DailyAnalysisRecord.PendingRiskReportDraft)) continue;
+            if (prop.Name == nameof(DailyAnalysisRecord.TopIssues) || prop.Name == nameof(DailyAnalysisRecord.DetailPruned) ||
+                prop.Name == nameof(DailyAnalysisRecord.RecordId))
             {
-                continue; // TopIssues 是刻意改寫，DetailPruned 是 DB 專用旗標
+                continue; // TopIssues is intentionally shaped; RecordId is query-only; DetailPruned is DB-only.
             }
 
             var expected = prop.GetValue(original);
@@ -215,6 +238,7 @@ public class RecordStorageShaperTests
         // TopIssues 本身：筆數保留、samples 被精簡
         Assert.Equal(original.TopIssues.Count, shaped.TopIssues.Count);
         Assert.Empty(shaped.TopIssues[0].SampleMessages);
+        Assert.Equal(0, shaped.RecordId); // assigning a new shape must not carry the old SQL row identity
     }
 
     [Fact]

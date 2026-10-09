@@ -113,9 +113,15 @@ public class LogAnalysisService
         {
             var outcome = await CompleteAiAsync(workItem, ct);
             ApplyOutcome(record, outcome);
+            // Render only after the AI fields have been overlaid on the complete statistical
+            // record. The prepared draft fingerprints report inputs that AiWorkItem does not carry.
+            record.PendingRiskReportDraft = await GenerateReportIfActionableAsync(
+                record, workItem.Logs, workItem.ActiveSuppressions, ct);
         }
 
+        record.RiskReportPending = RiskLevels.IsActionable(record.RiskLevel);
         CommitRecord(record, targetDate, replaceExisting, sw.ElapsedMilliseconds);
+        PersistPendingRiskReport(record);
 
         return record;
     }
@@ -127,14 +133,15 @@ public class LogAnalysisService
     /// </summary>
     public async Task<DailyAnalysisRecord> AnalyzeDayStatisticalAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
         int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
-        CancellationToken ct = default, bool replaceExisting = false)
+        CancellationToken ct = default, bool replaceExisting = false, bool deferNonAiReport = false)
     {
         ct.ThrowIfCancellationRequested();
 
         var sw = Stopwatch.StartNew();
 
         var (record, _) = await BuildStatisticalRecordAsync(
-            targetDate, logs, useAi, historyDays, dataIncomplete, securityLogAvailable, channels, ct);
+            targetDate, logs, useAi, historyDays, dataIncomplete, securityLogAvailable, channels, ct,
+            deferNonAiReport: deferNonAiReport);
 
         ct.ThrowIfCancellationRequested();
 
@@ -143,7 +150,10 @@ public class LogAnalysisService
             record.AiPending = false;
         }
 
+        record.RiskReportPending = RiskLevels.IsActionable(record.RiskLevel);
+
         CommitRecord(record, targetDate, replaceExisting, sw.ElapsedMilliseconds);
+        if (!deferNonAiReport) PersistPendingRiskReport(record);
 
         return record;
     }
@@ -161,6 +171,41 @@ public class LogAnalysisService
                  "aiAnalyzed={AiAnalyzed}, 耗時={ElapsedMs}ms, 報告參照={ReportFile}",
             targetDate, record.RiskLevel, record.ErrorCount, record.WarningCount, record.AuditEventCount,
             record.AiAnalyzed, elapsedMs, record.ReportFile ?? "(無)");
+    }
+
+    private void PersistPendingRiskReport(DailyAnalysisRecord record)
+    {
+        var draft = record.PendingRiskReportDraft;
+        if (draft == null) return;
+
+        string? reportFile = null;
+        try
+        {
+            if (record.RecordId > 0 &&
+                StringComparer.Ordinal.Equals(draft.DecisionInputFingerprint,
+                    HostDayWorkflowFingerprint.ForReportInput(record)) &&
+                StringComparer.Ordinal.Equals(draft.PrtgEvidenceFingerprint,
+                    HostDayWorkflowFingerprint.PrtgInputFingerprint(record)))
+                reportFile = _historyService.AttachDailyRiskReport(record.Date, draft, record.RecordId,
+                    HostDayWorkflowFingerprint.ForRecord(record), draft.PrtgEvidenceFingerprint);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn(ex, "{Date:yyyy-MM-dd} 報告草稿未能在主機日交易中附掛", record.Date);
+        }
+
+        if (reportFile == null)
+        {
+            record.ReportFile = null;
+            record.PrtgReportEvidenceFingerprint = null;
+            Log.Warn("{Date:yyyy-MM-dd} 報告草稿與目前主機日不符或附掛失敗，未發布報告參照", record.Date);
+        }
+        else
+        {
+            record.ReportFile = reportFile;
+            record.PrtgReportEvidenceFingerprint = draft.PrtgEvidenceFingerprint;
+        }
+        record.PendingRiskReportDraft = null;
     }
 
     /// <summary>
@@ -184,7 +229,7 @@ public class LogAnalysisService
     internal async Task<(DailyAnalysisRecord Record, AiWorkItem? WorkItem)> BuildStatisticalRecordAsync(
         DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true, int historyDays = 14,
         bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
-        CancellationToken ct = default, string hostOs = WebHost.OsWindows)
+        CancellationToken ct = default, string hostOs = WebHost.OsWindows, bool deferNonAiReport = false)
     {
         Log.Info("開始分析 {Date:yyyy-MM-dd}：log 筆數={LogCount}, useAi={UseAi}", targetDate, logs.Count, useAi);
 
@@ -385,6 +430,8 @@ public class LogAnalysisService
             SuppressedTrendAlerts = suppressedTrendAlerts,
             SuppressedCorrelationAlerts = suppressedCorrelations.Select(c => c.Description).ToList(),
             RiskLevel = ruleRisk,
+            // This survives later report-render/attach failure and is independent of AiPending.
+            RiskReportPending = RiskLevels.IsActionable(ruleRisk),
             RiskBasis = riskBasis,
             AiAnalyzed = false,
             DataIncomplete = dataIncomplete,
@@ -420,11 +467,115 @@ public class LogAnalysisService
             : "（統計模式紀錄，未呼叫 AI 分析）";
 
         // record 此時已是完整定案內容（Headline/Summary/RiskLevel/TrendAlerts/CorrelationAlerts/
-        // UncoveredChecks/DataIncomplete 皆已設好），直接傳給報告產生器，GenerateAsync 會就地
+        // UncoveredChecks/DataIncomplete 皆已設好），直接傳給報告產生器，PrepareAsync 會就地
         // 把 DeepDives 寫進同一個物件，不需要另外合併
-        record.ReportFile = await GenerateReportIfActionableAsync(record, logs, reportSuppressions, ct);
+        if (!deferNonAiReport)
+            record.PendingRiskReportDraft = await GenerateReportIfActionableAsync(record, logs, reportSuppressions, ct);
 
         return (record, null);
+    }
+
+    /// <summary>Generate the non-AI report only after the authoritative PRTG attachment has updated the saved host-day.</summary>
+    internal async Task<bool> FinalizeNonAiReportAfterPrtgAttachmentAsync(
+        DailyAnalysisRecord record, List<EventLogEntryData> logs, CancellationToken ct = default)
+    {
+        if (record.AiAnalyzed) return false;
+
+        return await FinalizeGuardedReportAsync(record, logs, ct, reportContextNote: null,
+            allowAiDeepDive: false);
+    }
+
+    /// <summary>Retries a durably marked report from the saved host-day and bounded event cache; never calls AI.</summary>
+    internal Task<bool> FinalizePendingRiskReportAsync(DailyAnalysisRecord record, CancellationToken ct = default)
+    {
+        if (!record.RiskReportPending) return Task.FromResult(true);
+        var expectedParent = HostDayWorkflowFingerprint.ForRecord(record);
+        var expectedPrtg = HostDayWorkflowFingerprint.PrtgInputFingerprint(record);
+        if (!RiskLevels.IsActionable(record.RiskLevel))
+            return Task.FromResult(_historyService.TryClearPendingDailyRiskReport(record.Date, record.RecordId,
+                expectedParent, expectedPrtg));
+
+        var cached = _riskyEventStore?.QueryDay(record.HostId, record.Date) ?? [];
+        var logs = cached.Select(ToEventLogEntryData).ToList();
+        var cacheContext = cached.Count == 0
+            ? "風險事件快取為空；本報告不含原始事件摘錄。未重新查詢來源。"
+            : $"原始事件摘錄取自每主機日有界風險事件快取（最多 {RiskyEventSelector.MaxPerHostDay} 筆），不代表完整日誌。未重新查詢來源。";
+        return FinalizeGuardedReportAsync(record, logs, ct, cacheContext, allowAiDeepDive: false);
+    }
+
+    /// <summary>
+    /// Regenerates a mode-replay report from the persisted parent and the bounded raw-event cache.
+    /// The cache is presentation evidence only; it never changes the parent decision image.
+    /// </summary>
+    internal async Task<bool> FinalizeModeReplayReportAsync(DailyAnalysisRecord record,
+        CancellationToken ct = default, bool resourceModeDisabled = false)
+    {
+        if (!RiskLevels.IsActionable(record.RiskLevel)) return true;
+        ct.ThrowIfCancellationRequested();
+        var cached = _riskyEventStore?.QueryDay(record.HostId, record.Date) ?? [];
+        var logs = cached.Select(ToEventLogEntryData).ToList();
+        var decisionContext = resourceModeDisabled
+            ? "PRTG 正式模式已關閉；本報告依撤回 PRTG 證據後保存的主機日決定產生。"
+            : "PRTG 正式風險判定來自已保存的主機日紀錄。";
+        var cacheContext = cached.Count == 0
+            ? "NetIQ 原始事件快取為空，因此本報告不列為完整原始日誌。未重新查詢 NetIQ。"
+            : $"下方原始事件僅取自最多 {RiskyEventSelector.MaxPerHostDay} 筆的每主機日快取子集，不代表完整原始日誌。未重新查詢 NetIQ。";
+        var contextNote = $"{decisionContext} {cacheContext}";
+        if (record.AiAnalyzed)
+            contextNote += " 已保存的 AI 敘事沿用父紀錄；本次未重新執行 AI 深析。";
+
+        return await FinalizeGuardedReportAsync(record, logs, ct, contextNote, allowAiDeepDive: false);
+    }
+
+    private async Task<bool> FinalizeGuardedReportAsync(DailyAnalysisRecord record,
+        List<EventLogEntryData> logs, CancellationToken ct, string? reportContextNote, bool allowAiDeepDive)
+    {
+
+        var allSuppressions = LoadSuppressions();
+        var activeSuppressions = SuppressionFilter.ActiveForHost(allSuppressions, _host, _hostGroupIds, DateTime.Now);
+        var reportSuppressions = activeSuppressions
+            .Concat(SuppressionFilter.MutesOn(SuppressionFilter.MutesOf(allSuppressions), record.Date))
+            .ToList();
+        var expectedParentRecordId = record.RecordId;
+        var expectedDecisionFingerprint = HostDayWorkflowFingerprint.ForRecord(record);
+        var expectedReportInputFingerprint = HostDayWorkflowFingerprint.ForReportInput(record);
+        var expectedPrtgFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(record);
+        var reportDraft = await GenerateReportIfActionableAsync(record, logs, reportSuppressions, ct,
+            reportContextNote, allowAiDeepDive);
+        if (reportDraft == null) return false;
+
+        // A concurrent PRTG refresh must not leave the persisted record claiming this report describes a different evidence set.
+        string? reportFile = null;
+        try
+        {
+            if (expectedParentRecordId > 0 &&
+                StringComparer.Ordinal.Equals(expectedDecisionFingerprint, HostDayWorkflowFingerprint.ForRecord(record)) &&
+                StringComparer.Ordinal.Equals(expectedReportInputFingerprint, reportDraft.DecisionInputFingerprint) &&
+                StringComparer.Ordinal.Equals(expectedReportInputFingerprint,
+                    HostDayWorkflowFingerprint.ForReportInput(record)) &&
+                StringComparer.Ordinal.Equals(expectedPrtgFingerprint,
+                    HostDayWorkflowFingerprint.PrtgInputFingerprint(record)))
+                reportFile = _historyService.AttachDailyRiskReport(record.Date, reportDraft, expectedParentRecordId,
+                    expectedDecisionFingerprint, expectedPrtgFingerprint);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn(ex, "{Date:yyyy-MM-dd} PRTG 報告附掛失敗", record.Date);
+        }
+        if (reportFile == null)
+        {
+            Log.Warn("{Date:yyyy-MM-dd} 報告參照未能安全附掛到目前主機日；保留未驗證狀態", record.Date);
+            record.ReportFile = null;
+            record.PrtgReportEvidenceFingerprint = null;
+            record.PendingRiskReportDraft = null;
+            return false;
+        }
+
+        record.ReportFile = reportFile;
+        record.PrtgReportEvidenceFingerprint = expectedPrtgFingerprint;
+        record.RiskReportPending = false;
+        record.PendingRiskReportDraft = null;
+        return true;
     }
 
     /// <summary>
@@ -495,36 +646,9 @@ public class LogAnalysisService
             if (riskBasisOverride != null) riskBasis = riskBasisOverride;
         }
 
-        // CompleteAiAsync 沒有自己的持久化紀錄，組一個形狀跟原本單階段版本完全一樣的暫用物件
-        // 餵給報告產生器——少任何一個 BuildReport 會讀的欄位，報告內容就會缺一塊
-        // （這裡曾經漏掉，只給 TopIssues/RiskLevel/AiAnalyzed 幾個欄位，體檢時抓到）
-        var scratch = new DailyAnalysisRecord
-        {
-            Date = item.TargetDate,
-            HostId = _hostId,
-            Host = _host,
-            ErrorCount = item.ErrorCount,
-            WarningCount = item.WarningCount,
-            AuditEventCount = item.AuditCount,
-            TopIssues = item.Issues,
-            TrendAlerts = item.TrendAlerts,
-            CorrelationAlerts = item.Correlations.Select(c => c.Description).ToList(),
-            RiskLevel = riskLevel,
-            RiskBasis = riskBasis,
-            Headline = headline,
-            Summary = summary,
-            TrendAssessment = trendAssessment,
-            Action = action,
-            AiAnalyzed = aiAnalyzed,
-            ScreenedTailCount = screenedTailCount,
-            ScreeningNotes = screeningNotes,
-            DataIncomplete = item.DataIncomplete,
-            UncoveredChecks = item.UncoveredChecks
-        };
-        var reportFile = await GenerateReportIfActionableAsync(scratch, item.Logs, item.ActiveSuppressions, ct);
-
         return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis,
-            aiAnalyzed, screenedTailCount, screeningNotes, reportFile, scratch.DeepDives, InputPrtgFingerprint: inputPrtgFingerprint);
+            aiAnalyzed, screenedTailCount, screeningNotes, null, new List<CategoryDeepDive>(),
+            InputPrtgFingerprint: inputPrtgFingerprint);
     }
 
     /// <summary>
@@ -549,7 +673,7 @@ public class LogAnalysisService
     /// </summary>
     public async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
-        var inputPrtgFingerprint = PrtgFindingMapper.Fingerprint(pendingRecord.TopIssues);
+        var inputPrtgFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(pendingRecord);
         var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
         // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，
         // 見本方法 XML 文件），空字串不影響 prompt 組裝，也不會被誤判成任何已知模式（不落在
@@ -564,7 +688,7 @@ public class LogAnalysisService
             pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel, ct);
         var riskBasis = riskBasisOverride ?? pendingRecord.RiskBasis;
 
-        string? reportFile = null;
+        PreparedRiskReport? reportDraft = null;
         List<CategoryDeepDive> deepDives = new();
         List<string>? uncoveredChecksAddendum = null;
 
@@ -582,35 +706,25 @@ public class LogAnalysisService
 
                 // 形狀比照 CompleteAiAsync 的 scratch：GenerateReportIfActionableAsync 只看
                 // record 上這些欄位，少一個報告內容就缺一塊
-                var scratch = new DailyAnalysisRecord
-                {
-                    Date = pendingRecord.Date,
-                    HostId = pendingRecord.HostId,
-                    Host = pendingRecord.Host,
-                    ErrorCount = pendingRecord.ErrorCount,
-                    WarningCount = pendingRecord.WarningCount,
-                    AuditEventCount = pendingRecord.AuditEventCount,
-                    TopIssues = pendingRecord.TopIssues,
-                    TrendAlerts = pendingRecord.TrendAlerts,
-                    CorrelationAlerts = pendingRecord.CorrelationAlerts,
-                    RiskLevel = riskLevel,
-                    RiskBasis = riskBasis,
-                    Headline = headline,
-                    Summary = summary,
-                    TrendAssessment = trendAssessment,
-                    Action = action,
-                    AiAnalyzed = aiAnalyzed,
-                    ScreenedTailCount = pendingRecord.ScreenedTailCount,
-                    ScreeningNotes = pendingRecord.ScreeningNotes,
-                    DataIncomplete = pendingRecord.DataIncomplete,
-                    UncoveredChecks = pendingRecord.UncoveredChecks
-                };
+                var scratch = CloneForReport(pendingRecord);
+                scratch.RiskLevel = riskLevel;
+                scratch.RiskBasis = riskBasis;
+                scratch.Headline = headline;
+                scratch.Summary = summary;
+                scratch.TrendAssessment = trendAssessment;
+                scratch.Action = action;
+                scratch.AiAnalyzed = aiAnalyzed;
+                scratch.AiPending = false;
+                var cacheProvenanceNote = "本報告原始 log 來自有界風險事件暫存（每簽章至多 50 筆），不是完整原始主機日資料。";
+                if (!scratch.UncoveredChecks.Contains(cacheProvenanceNote, StringComparer.Ordinal))
+                    scratch.UncoveredChecks.Add(cacheProvenanceNote);
 
-                reportFile = await GenerateReportIfActionableAsync(scratch, logs, activeSuppressions, ct);
+                reportDraft = await GenerateReportIfActionableAsync(scratch, logs, activeSuppressions, ct,
+                    reportContextNote: cacheProvenanceNote);
                 deepDives = scratch.DeepDives;
-                if (reportFile != null)
+                if (reportDraft != null)
                 {
-                    uncoveredChecksAddendum = new List<string> { "原始 log 取自風險事件暫存（每簽章至多 50 筆），非本次即時查詢結果" };
+                    uncoveredChecksAddendum = new List<string> { cacheProvenanceNote };
                 }
             }
             else if (RiskLevels.IsActionable(riskLevel))
@@ -625,7 +739,9 @@ public class LogAnalysisService
 
         return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis, aiAnalyzed,
             pendingRecord.ScreenedTailCount, pendingRecord.ScreeningNotes,
-            reportFile, deepDives, uncoveredChecksAddendum, inputPrtgFingerprint);
+            null, deepDives, uncoveredChecksAddendum, inputPrtgFingerprint,
+            ReportPrtgEvidenceFingerprint: reportDraft?.PrtgEvidenceFingerprint,
+            ReportDraft: reportDraft);
     }
 
     /// <summary>
@@ -634,6 +750,18 @@ public class LogAnalysisService
     /// <see cref="RiskReportService.FormatRawLog"/> 只讀 Message/TimeGenerated）——唯一缺的
     /// InstanceId 兩者皆不使用，留預設值 0 無妨。
     /// </summary>
+    private static DailyAnalysisRecord CloneForReport(DailyAnalysisRecord record)
+    {
+        // Preserve every input included in the report fingerprint. Hand-built scratch rows drifted
+        // from the persisted parent as that contract grew (channels and suppression outcomes were omitted).
+        var clone = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(
+            System.Text.Json.JsonSerializer.Serialize(record))
+            ?? throw new InvalidDataException("Could not clone the report input record.");
+        clone.RecordId = record.RecordId;
+        clone.PendingRiskReportDraft = null;
+        return clone;
+    }
+
     private static EventLogEntryData ToEventLogEntryData(RiskyEvent e) => new()
     {
         TimeGenerated = e.EventTime,
@@ -714,12 +842,17 @@ public class LogAnalysisService
         record.RiskLevel = outcome.RiskLevel;
         record.RiskBasis = outcome.RiskBasis;
         record.AiAnalyzed = outcome.AiAnalyzed;
+        record.RiskReportPending = RiskLevels.IsActionable(record.RiskLevel);
         // AI 失敗且非低風險才標待補（回饋二十輪 N）：低風險日本來就不會呼叫 AI
         // （見 needsAi 的判準），標了會讓「只補跑」把它們全撿回來重跑一遍統計
         record.AiPending = !outcome.AiAnalyzed && record.RiskLevel != RiskLevels.Low;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
         record.ScreeningNotes = outcome.ScreeningNotes;
         record.ReportFile = outcome.ReportFile;
+        record.PrtgReportEvidenceFingerprint = outcome.ReportFile == null
+            ? null
+            : outcome.ReportPrtgEvidenceFingerprint;
+        record.PendingRiskReportDraft = outcome.ReportDraft;
         record.DeepDives.AddRange(outcome.DeepDives);
     }
 
@@ -730,15 +863,16 @@ public class LogAnalysisService
     /// 「report 生成不看 useAi、只看最終風險等級」的既有行為一致（統計模式下規則本身判定
     /// 中/高風險一樣會出報告，只是報告內容不含 AI 深析）。
     ///
-    /// <paramref name="record"/> 必須已填好 <see cref="RiskReportService.GenerateAsync"/> 會讀取的
+    /// <paramref name="record"/> 必須已填好 <see cref="RiskReportService.PrepareAsync"/> 會讀取的
     /// 全部欄位（Headline/Summary/TrendAssessment/Action/TopIssues/TrendAlerts/CorrelationAlerts/
     /// UncoveredChecks/DataIncomplete/ScreeningNotes/AiAnalyzed）——呼叫端若沒有現成的完整紀錄
     /// （<see cref="CompleteAiAsync"/> 沒有自己的持久化紀錄），要組一個形狀完全對齊的暫用物件，
     /// 少任何一個欄位，報告內容就會缺一塊。<see cref="DailyAnalysisRecord.DeepDives"/> 由
-    /// <see cref="RiskReportService.GenerateAsync"/> 就地寫入同一個 <paramref name="record"/>。
+    /// <see cref="RiskReportService.PrepareAsync"/> 就地寫入同一個 <paramref name="record"/>。
     /// </summary>
-    private async Task<string?> GenerateReportIfActionableAsync(
-        DailyAnalysisRecord record, List<EventLogEntryData> logs, List<RuleSuppression> activeSuppressions, CancellationToken ct)
+    private async Task<PreparedRiskReport?> GenerateReportIfActionableAsync(
+        DailyAnalysisRecord record, List<EventLogEntryData> logs, List<RuleSuppression> activeSuppressions,
+        CancellationToken ct, string? reportContextNote = null, bool allowAiDeepDive = true)
     {
         if (_reportService == null || !RiskLevels.IsActionable(record.RiskLevel))
         {
@@ -748,10 +882,11 @@ public class LogAnalysisService
         try
         {
             // 主機一定要帶：多台主機同一天、同風險等級、同類別組合的報告只差在這個鍵
-            return await _reportService.GenerateAsync(record, logs, _serverDescription, activeSuppressions,
-                host: new HostKey { HostId = _hostId, HostName = _host }, ct: ct);
+            return await _reportService.PrepareAsync(record, logs, _serverDescription, activeSuppressions,
+                host: new HostKey { HostId = _hostId, HostName = _host }, ct: ct,
+                reportContextNote: reportContextNote, allowAiDeepDive: allowAiDeepDive);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Error(ex, "風險報告輸出失敗：{Date:yyyy-MM-dd}", record.Date);
             return null;

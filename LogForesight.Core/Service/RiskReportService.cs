@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using LogForesight.Core.Persistence;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -38,24 +39,28 @@ public class RiskReportService
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
     private readonly IAiService _aiService;
-    private readonly IReportSink _reportSink;
     private readonly int _deepDiveMaxTokens;
 
     public RiskReportService(IAiService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
     {
         _aiService = aiService;
-        _reportSink = reportSink;
+        // Kept in the constructor for existing composition roots; report persistence now belongs
+        // to the guarded parent writer, never to this renderer.
+        _ = reportSink;
         _deepDiveMaxTokens = deepDiveMaxTokens;
     }
 
-    /// <summary>產生風險報告，回傳報告參照（`lf_reports.report_id`）</summary>
+    /// <summary>準備風險報告內容；資料庫寫入必須由持有主機日鎖的 guarded parent writer 完成。</summary>
     /// <param name="host">主機識別。**必須帶入真實主機**——多台主機同一天、同風險等級、
     /// 同類別組合的報告只差在這個鍵，不帶就會互相覆蓋</param>
     /// <param name="activeSuppressions">本機現在生效中的抑制項目（含 Reason），用來在報告的
     /// 「已抑制的告警」區塊顯示原因；null/空清單時該區塊不輸出</param>
-    public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "",
-        List<RuleSuppression>? activeSuppressions = null, HostKey? host = null, CancellationToken ct = default)
+    public async Task<PreparedRiskReport> PrepareAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "",
+        List<RuleSuppression>? activeSuppressions = null, HostKey? host = null, CancellationToken ct = default,
+        string? reportContextNote = null, bool allowAiDeepDive = true)
     {
+        var decisionInputFingerprint = HostDayWorkflowFingerprint.ForReportInput(record);
+        var prtgEvidenceFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(record);
         var focusIssues = SelectFocusIssues(record.TopIssues);
 
         // 依類別分組，嚴重度最高的類別排最前面
@@ -84,12 +89,12 @@ public class RiskReportService
             // 規則已命中的類別直接查表渲染靜態知識庫內容，零 AI 呼叫（見 docs/archive/HISTORY.md）；
             // 只有 Other（未命中規則、AI 唯一還需要判讀的地方）才發一次深入分析呼叫
             var outcome = group.Key == IssueCategory.Other
-                ? (record.AiAnalyzed
+                ? (record.AiAnalyzed && allowAiDeepDive
                     ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription, ct)
                     : new DeepDiveOutcome(null, false, 0, categoryLogs.Count))
                 : BuildStaticOutcome(issues, categoryLogs.Count);
 
-            if (group.Key == IssueCategory.Other && record.AiAnalyzed && outcome.Result == null)
+            if (group.Key == IssueCategory.Other && record.AiAnalyzed && allowAiDeepDive && outcome.Result == null)
             {
                 Log.Warn("{Date:yyyy-MM-dd} 【{Category}】深入分析失敗或無法解析，該區塊將標注從缺", record.Date, group.Key);
             }
@@ -116,11 +121,13 @@ public class RiskReportService
         var categories = string.Join("+", sections.Select(s => CategoryZh(s.Category)).Distinct());
         var fileName = BuildFileName(record.Date, record.RiskLevel, categories);
         var hostKey = host ?? new HostKey { HostId = record.HostId, HostName = record.Host };
-        var reportRef = await _reportSink.WriteAsync(ReportKind.DailyRisk, hostKey, fileName,
-            BuildReport(record, sections, activeSuppressions),
-            new ReportMeta(record.RiskLevel, categories.Length > 0 ? categories : null));
-        Log.Info("風險報告已寫入：{Host} {Date:yyyy-MM-dd}（參照 {Ref}）", hostKey.HostName, record.Date, reportRef);
-        return reportRef;
+        var report = new PreparedRiskReport(record.Date.Date, hostKey, fileName,
+            BuildReport(record, sections, activeSuppressions, reportContextNote, allowAiDeepDive),
+            new ReportMeta(record.RiskLevel, categories.Length > 0 ? categories : null),
+            prtgEvidenceFingerprint,
+            decisionInputFingerprint);
+        record.PendingRiskReportDraft = report;
+        return report;
     }
 
     /// <summary>類別的中文顯示名稱（區塊標題與檔名共用）——委派給 Core 的唯一字典
@@ -289,17 +296,24 @@ public class RiskReportService
         return new DeepDiveOutcome(new DeepDiveResult { Analyses = analyses }, false, totalLogs, totalLogs);
     }
 
-    private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections, List<RuleSuppression>? activeSuppressions)
+    private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections,
+        List<RuleSuppression>? activeSuppressions, string? reportContextNote, bool allowAiDeepDive)
     {
         var sb = new StringBuilder();
         AppendHeader(sb, record, sections);
         AppendOverview(sb, record);
         foreach (var section in sections)
         {
-            AppendCategorySection(sb, section);
+            AppendCategorySection(sb, section, allowAiDeepDive);
         }
         AppendSuppressedIssues(sb, record, activeSuppressions);
         AppendScreeningTail(sb, record);
+        if (!string.IsNullOrWhiteSpace(reportContextNote))
+        {
+            sb.AppendLine();
+            sb.AppendLine("■ 本次報告資料範圍");
+            sb.AppendLine($"  {reportContextNote}");
+        }
         return sb.ToString();
     }
 
@@ -309,6 +323,7 @@ public class RiskReportService
         sb.AppendLine($"  LogForesight 風險報告  {record.Date:yyyy-MM-dd}    風險等級：{record.RiskLevel}");
         sb.AppendLine($"  問題類別：{(sections.Count > 0 ? string.Join("、", sections.Select(s => CategoryZh(s.Category))) : "（無重點類別）")}");
         sb.AppendLine($"  產生時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"  已保存 PRTG 證據版本比對參照：sha256:{HostDayWorkflowFingerprint.PrtgInputFingerprint(record)}（僅供本報告與主機日存檔比對，不代表目前授權或即時狀態）");
         sb.AppendLine("══════════════════════════════════════════════════════════");
     }
 
@@ -360,7 +375,7 @@ public class RiskReportService
     }
 
     /// <summary>單一類別區塊：問題清單 → 該類別的處置參考（知識庫或 AI 深入分析） → 該類別的原始 log</summary>
-    private static void AppendCategorySection(StringBuilder sb, CategorySection section)
+    private static void AppendCategorySection(StringBuilder sb, CategorySection section, bool allowAiDeepDive)
     {
         sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         sb.AppendLine($"■【{CategoryZh(section.Category)}】重點問題 {section.Issues.Count} 項");
@@ -386,7 +401,9 @@ public class RiskReportService
         {
             sb.AppendLine(isStaticSection
                 ? "  （知識庫查無對應處置參考）"
-                : "  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）");
+                : allowAiDeepDive
+                    ? "  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）"
+                    : "  （本次未重新執行 AI 深入分析）");
         }
         else
         {
@@ -505,8 +522,80 @@ public class RiskReportService
             sb.AppendLine();
             sb.Append($"  {i.ResidualCredentialBasis}");
         }
+        if (PrtgFindingMapper.IsPrtg(i))
+        {
+            var detail = BoundedReportLiteral(i.SampleMessages?.FirstOrDefault(), 320);
+            if (!string.IsNullOrWhiteSpace(detail) && !ContainsCredentialAssignment(detail))
+            {
+                sb.AppendLine();
+                sb.Append($"  PRTG量值／期間說明（原始 finding；不代表跨來源確認）：{detail}");
+            }
+
+            var proof = i.SourceObservations?.FirstOrDefault(e => e.SourceKind == SourceEvidenceKind.Prtg)?.BoundedCopy();
+            sb.AppendLine();
+            sb.Append("  PRTG來源佐證：");
+            if (proof == null)
+            {
+                sb.Append("UTC 時間未確認；主機身分未確認；資源身分未確認；原生來源引用未確認");
+            }
+            else
+            {
+                sb.Append($"UTC 時間：{FormatEvidenceTime(proof)}；主機身分：{KnownOrUnknown(proof.ExactHostKey)}；");
+                var resourceIsExact = proof.ResourceScope != SourceResourceScope.Unknown &&
+                    Enum.IsDefined(proof.ResourceScope) &&
+                    !string.IsNullOrWhiteSpace(proof.ExactResourceKey);
+                sb.Append($"資源身分：{(resourceIsExact ? $"{proof.ResourceScope}（{KnownOrUnknown(proof.ExactResourceKey)}）" : "未確認")}；");
+                sb.Append($"原生來源引用：{(proof.HasExactReference ? KnownOrUnknown(proof.SourceReference, 128) : "未確認")}");
+            }
+
+            var resourceEvidence = PrtgResourceEvidencePresentation.From(i);
+            if (resourceEvidence != null)
+            {
+                if (resourceEvidence.ReasonText.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.Append($"  正式資源原因：{string.Join("；", resourceEvidence.ReasonText)}");
+                }
+                sb.AppendLine();
+                sb.Append($"  已保存資源證據版本參照（僅供比對）：{resourceEvidence.EvidenceVersionReference}");
+                sb.AppendLine();
+                sb.Append($"  已保存規則准入版本參照（僅供比對）：{resourceEvidence.RuleAdmissionVersionReference}");
+            }
+        }
         return sb.ToString();
     }
+
+    private static string FormatEvidenceTime(SourceEvidence evidence)
+    {
+        if (evidence.EventTimeUtc is { Offset: var eventOffset } eventTime && eventOffset == TimeSpan.Zero)
+            return eventTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        if (evidence.HasValidWindow && evidence.WindowStartUtc is { } start && evidence.WindowEndUtc is { } end)
+            return $"[{start.ToString("O", System.Globalization.CultureInfo.InvariantCulture)},{end.ToString("O", System.Globalization.CultureInfo.InvariantCulture)})";
+        return "unknown";
+    }
+
+    private static string KnownOrUnknown(string? value, int maximumLength = 96) =>
+        string.IsNullOrWhiteSpace(value) ? "未確認" : $"已確認（{SafeEvidenceLiteral(value, maximumLength)}）";
+
+    private static string SafeEvidenceLiteral(string? value, int maximumLength) =>
+        string.IsNullOrWhiteSpace(value) ? "unknown" :
+        ContainsCredentialAssignment(value) ? "[redacted]" : BoundedReportLiteral(value, maximumLength);
+
+    private static string BoundedReportLiteral(string? value, int maximumLength)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        var safe = new string(value
+            .Where(c => !char.IsControl(c))
+            .Select(c => c switch { '<' => '‹', '>' => '›', '&' => '＆', _ => c })
+            .Take(maximumLength)
+            .ToArray());
+        return value.Length > maximumLength ? safe + "…" : safe;
+    }
+
+    private static bool ContainsCredentialAssignment(string value) =>
+        System.Text.RegularExpressions.Regex.IsMatch(value,
+            @"\b(password|passwd|secret|token|api[_-]?key)\s*[:=]",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static string TrendZh(LogIssueSignature i) => i.Trend switch
     {
@@ -525,7 +614,8 @@ public class RiskReportService
         {
             message = message[..maxMessageLength] + "...";
         }
-        return $"[{log.TimeGenerated:HH:mm:ss}] {log.LogName}/{log.Source} #{log.EventId} ({type})\n    {message}";
+        var evidence = log.SourceEvidence == null ? string.Empty : $"\n    {SourceEvidenceSummary.Describe(log.SourceEvidence)}";
+        return $"[{log.TimeGenerated:HH:mm:ss}] {log.LogName}/{log.Source} #{log.EventId} ({type}){evidence}\n    {message}";
     }
 
     /// <summary>單一類別的報告區塊素材</summary>

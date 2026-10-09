@@ -375,6 +375,57 @@ public class PrtgValueFetchScopeEstimateDto
 
     /// <summary>快照規模警示（白名單為空或累積列數超標時提示）</summary>
     public string? SnapshotWarning { get; set; }
+
+    /// <summary>快照容量評估：capacity-unverified／capacity-qualified／capacity-exceeded。</summary>
+    public string SnapshotCapacityStatus { get; set; } = "capacity-unverified";
+    public string SnapshotCapacityReason { get; set; } = "capacity_evidence_not_available";
+    public string SnapshotCapacityStrategy { get; set; } = "conservative";
+    public int SnapshotCapacitySamples { get; set; }
+    public int SnapshotCapacitySampleBatchSize { get; set; }
+    public int SnapshotCapacityBatchCount { get; set; }
+    public double? SnapshotCapacityP95BatchSeconds { get; set; }
+    public double? SnapshotCapacityEstimatedSeconds { get; set; }
+    public double SnapshotCapacityWindowSeconds { get; set; }
+    public DateTimeOffset? SnapshotCapacityOldestSampleAtUtc { get; set; }
+    public double? SnapshotCapacityOldestSampleAgeSeconds { get; set; }
+    public string SnapshotCapacityModel { get; set; } = "max(ceil(batchCount/2), ceil(batchCount/4) * measured p95 batch seconds)";
+    public string SnapshotCapacityRequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status; sorted exact-size ID filter; response cap 512 KiB";
+    public string ProfileCapacityStatus { get; set; } = "capacity-unverified";
+    public string ProfileCapacityReason { get; set; } = "profile_transport_evidence_not_available";
+    public int ProfileCapacitySamples { get; set; }
+    public double? ProfileCapacityP95SensorSeconds { get; set; }
+    public double? ProfileCapacityEstimatedSeconds { get; set; }
+    public double ProfileCapacityWindowSeconds { get; set; }
+    public string ProfileCapacityRequestShape { get; set; } = "sensor + channels table GET, sequential, max 5 sensors, 512 KiB each, 30 seconds";
+    /// <summary>Joint snapshot/profile capacity result; component pilots alone do not grant admission.</summary>
+    public string JointCapacityStatus { get; set; } = "capacity-unverified";
+    public string JointCapacityReason { get; set; } = "joint_capacity_evidence_not_available";
+    public bool JointAdmissionPlanMatched { get; set; }
+    public double? JointSharedTableRequestsPerSecond { get; set; }
+    public double? JointSnapshotTableRequestsPerSecond { get; set; }
+    public double? JointProfileTableRequestsPerSecond { get; set; }
+    public double? JointGeneralResidualTableRequestsPerSecond { get; set; }
+    public double? JointSnapshotEstimatedSeconds { get; set; }
+    public double? JointSnapshotWindowSeconds { get; set; }
+    public double? JointProfileEstimatedSeconds { get; set; }
+    public double? JointProfileWindowSeconds { get; set; }
+}
+
+public sealed class PrtgSnapshotCapacityPilotDto
+{
+    public string Status { get; set; } = "capacity-unverified";
+    public string Reason { get; set; } = "pilot_not_run";
+    public int TargetCount { get; set; }
+    public int CapacitySampleBatchSize { get; set; }
+    public int RequestsAttempted { get; set; }
+    public int RequestsSent { get; set; }
+    public int UniqueSensorsSampled { get; set; }
+    public string Coverage { get; set; } = "";
+    public string RequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status; sorted exact-size ID filter; response cap 512 KiB";
+    public int MatchingFullBatchSamples { get; set; }
+    public double? P95BatchSeconds { get; set; }
+    public double? EstimatedSeconds { get; set; }
+    public double CompletionWindowSeconds { get; set; }
 }
 
 /// <summary>「同步結構與對應」的狀態（docs/PRTG-SPEC.md §5a）。Last* 全為 null 代表從未執行過。</summary>

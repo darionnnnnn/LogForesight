@@ -22,6 +22,7 @@ public sealed record PrtgDiagnosticExportWriteResult(
 public sealed class PrtgDiagnosticExportWriter
 {
     public const int MaximumManifestUtf8Bytes = 64 * 1024;
+    public const string IntegrityContract = "manifest-sha256-v1";
     private static readonly string[] OrderedProperties =
     [
         "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps",
@@ -70,6 +71,7 @@ public sealed class PrtgDiagnosticExportWriter
             writer.WriteString("FromDate", header.FromDate);
             writer.WriteString("ToDate", header.ToDate);
             writer.WriteString("Purpose", "diagnostic-only");
+            writer.WriteString("IntegrityContract", IntegrityContract);
             await FlushAsync(writer, outputBuffer, counted, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 

@@ -10,8 +10,13 @@ public static class PrtgHistoricalRiskReview
     public static readonly string[] WeakPatterns =
     [CorrelationPatternIds.PrtgStorageCorroborated, CorrelationPatternIds.PrtgCapacityCorroborated,
         CorrelationPatternIds.PrtgOutageCorroborated];
+    private static readonly string[] EvidenceAlignmentPatterns =
+    [CorrelationPatternIds.PrtgStorageEvidenceAligned, CorrelationPatternIds.PrtgCapacityEvidenceAligned,
+        CorrelationPatternIds.PrtgOutageEvidenceAligned];
 
     public static bool IsWeakPattern(string? id) => id != null && WeakPatterns.Contains(id);
+    private static bool IsNonRiskPrtgPattern(string? id) => IsWeakPattern(id) ||
+        id != null && EvidenceAlignmentPatterns.Contains(id);
     private static readonly (string Old, string Current)[] Prefixes =
     [("【儲存故障雙重確認】", "【儲存異常同日訊號】"),
         ("【磁碟容量雙重確認】", "【容量異常同日訊號】"),
@@ -42,8 +47,8 @@ public static class PrtgHistoricalRiskReview
         foreach (var reference in record.CorrelationAlertRefs) reference.Text = Replace(reference.Text);
 
         var strongIndependent = record.TopIssues.Any(i => !i.Suppressed && i.ElevatesDayRisk);
-        var hasOtherCorrelation = record.CorrelationAlertRefs.Any(r => !IsWeakPattern(r.PatternId)) ||
-            record.CorrelationAlerts.Any(t => !record.CorrelationAlertRefs.Any(r => r.Text == t && IsWeakPattern(r.PatternId)));
+        var hasOtherCorrelation = record.CorrelationAlertRefs.Any(r => !IsNonRiskPrtgPattern(r.PatternId)) ||
+            record.CorrelationAlerts.Any(t => !record.CorrelationAlertRefs.Any(r => r.Text == t && IsNonRiskPrtgPattern(r.PatternId)));
         // RiskBasis 指向弱配對且無其他關聯／AI時，保存的規則旗標與趨勢足以還原下限。
         var canRecalculate = IsWeakPattern(record.RiskBasis) && record.TopIssues.Count > 0 && !record.AiAnalyzed && !hasOtherCorrelation;
         if (strongIndependent)

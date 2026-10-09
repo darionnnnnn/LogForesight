@@ -1,7 +1,10 @@
+using System.Net;
+using System.Text;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -59,15 +62,84 @@ public class PrtgStructureSyncServiceTests : IDisposable
     }
 
     [Fact]
-    public void TryStart_PRTG未啟用時拒絕()
+    public void TryStart_PRTG未啟用且未設定連線位址時拒絕()
     {
         var service = Create();
 
         Assert.False(service.TryStart(out var error, out var isConflict));
-        // 訊息要指出開關在哪：只說「未啟用」會讓人在排程作業頁到處找（回饋第 41 輪批次F6）
-        Assert.Contains("PRTG 擷取未啟用", error);
-        Assert.Contains("擷取參數", error);
+        Assert.Contains("連線位址", error);
         Assert.False(isConflict);   // 設定不齊是輸入面問題，不是衝突
+    }
+
+    private sealed class StructureSyncHandler : HttpMessageHandler
+    {
+        public List<string> RequestedUrls { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri!.ToString();
+            lock (RequestedUrls) RequestedUrls.Add(url);
+            var json = url.Contains("content=devices", StringComparison.OrdinalIgnoreCase)
+                ? "{\"treesize\":1,\"devices\":[{\"objid\":5501,\"device\":\"sync-fixture\",\"host\":\"10.50.0.9\",\"group\":\"fixture\",\"status\":\"Up\",\"paused\":false}]}"
+                : url.Contains("content=sensors", StringComparison.OrdinalIgnoreCase)
+                    ? "{\"treesize\":1,\"sensors\":[{\"objid\":6501,\"parentid\":5501,\"sensor\":\"fixture sensor\",\"type\":\"fixture\",\"status\":\"Up\",\"paused\":false}]}"
+                    : url.Contains("content=messages", StringComparison.OrdinalIgnoreCase)
+                        ? "{\"treesize\":0,\"messages\":[]}"
+                        : "{}";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    [Fact]
+    public async Task TryStart_取樣停用但已設定來源時執行結構同步且不啟用取樣()
+    {
+        _settingsStore.Update(s =>
+        {
+            s.PrtgEnabled = false;
+            s.PrtgUrl = "https://prtg.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+        });
+        new HostStore(_backend.Blob("hosts")).MutateBatch(hosts =>
+            hosts.Add(new WebHost { HostId = 9, HostName = "sync-fixture", IpAddress = "10.50.0.9", Active = true }));
+        var handler = new StructureSyncHandler();
+        var service = Create();
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(
+            settings, handler, new PrtgRequestBudget());
+
+        Assert.True(service.TryStart(out var error, out _), error);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.IsRunning && DateTime.UtcNow < deadline) await Task.Delay(20);
+
+        Assert.False(service.IsRunning, "結構同步背景工作應在受控回應後結束。");
+        Assert.True(service.GetStatus().LastSuccess);
+        Assert.Equal(1, service.GetStatus().LastDevices);
+        Assert.Equal(1, service.GetStatus().LastSensors);
+        Assert.Equal(1, service.GetStatus().LastMapOk);
+        Assert.False(_settingsStore.Get().PrtgEnabled, "手動同步不得啟用數值取樣。");
+        Assert.Contains(handler.RequestedUrls, url => url.Contains("content=devices", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(handler.RequestedUrls, url => url.Contains("content=sensors", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void TryStart_取樣停用且缺少認證時拒絕()
+    {
+        _settingsStore.Update(s =>
+        {
+            s.PrtgEnabled = false;
+            s.PrtgUrl = "https://prtg.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+        });
+        var service = Create();
+
+        Assert.False(service.TryStart(out var error, out var isConflict));
+        Assert.Contains("認證", error);
+        Assert.False(isConflict);
+        Assert.False(service.IsRunning);
     }
 
     [Fact]

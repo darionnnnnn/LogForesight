@@ -116,6 +116,8 @@
 
 ## 常見問答與邊界狀況（Q&A）
 
+安全欄位形狀探測使用 `POST /api/admin/netiq/probe/metadata/start`，狀態沿用 `GET /api/admin/netiq/probe/status`，需要 Maintain；`mode=metadata-shape` 的輸出顯示在獨立唯讀文字框。固定一小時、三事件、一頁、12 次 HTTP、每回應 512 KiB、報告 32 KiB、整輪 30 秒，與一般診斷共用 busy gate。報告只含欄位形狀及版本／查詢 UTC 窗口，來源值與例外明細不外洩；超限必須失敗。結果不能授予原生參照、資源語意、來源時基或正式規則資格。
+
 - **Q: 刪除一台 Sentinel 後，原本掛在該 Sentinel 下的主機會遺失嗎？**
   - **A**: 不會遺失。刪除 Sentinel 時，其轄下主機會被設定為停用（`Active = false`）並標記為孤兒主機（`Orphan = true`），過往的所有分析紀錄與稽核軌跡完全保留。管理員可在「系統管理 > 主機」頁中將孤兒主機重新綁定至其他 Sentinel，或在網段掃描精靈中透過「可復活」勾選重新啟用。
 - **Q: 為什麼網段掃描時，某些確定在線上的主機沒有被掃描出來？**

@@ -222,14 +222,25 @@ public sealed class PrtgDiagnosticExportSource
                      (row.PeriodStart == afterPeriod && row.Id > afterId))));
             var ordered = query.OrderBy(row => row.SensorObjid).ThenBy(row => row.PeriodStart).ThenBy(row => row.Id);
             var lengths = await ReadPageLengthsAsync(ordered, row => row.Id, context.Database.IsSqlServer(), cancellationToken,
-                row => row.Quality).ConfigureAwait(false);
+                row => row.Quality, row => row.TrustedProof).ConfigureAwait(false);
             ValidatePageLengths(lengths, "Values");
             if (lengths.Count == 0) yield break;
+            // A newly added proof LOB must participate in preflight bounds too.
+            // Only scalar lengths cross SQL before any value entity is loaded.
+            var proofLengths = await ordered.Select(row => new { row.Id,
+                Length = row.TrustedProof == null ? 0 : row.TrustedProof.Length })
+                .Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
+            if (proofLengths.Count != lengths.Count || proofLengths.Where((row, index) => row.Id != lengths[index].Key).Any())
+                throw new InvalidDataException("Values proof 長度頁與資料 key 不一致。");
+            if (proofLengths.Any(row => row.Length > Models.PrtgTrustedSampleProof.MaximumSerializedBytes))
+                throw new InvalidDataException("Values proof 超過 4 KiB 讀取前上限。");
             var page = await ordered.Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
             EnsurePageKeysMatch(page, lengths, row => row.Id, "Values");
             foreach (var row in page)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (row.TrustedProof != null && System.Text.Encoding.UTF8.GetByteCount(row.TrustedProof) > Models.PrtgTrustedSampleProof.MaximumSerializedBytes)
+                    throw new InvalidDataException("Values proof 超過 4 KiB UTF8 上限。");
                 hasCursor = true; afterSensor = row.SensorObjid; afterPeriod = row.PeriodStart; afterId = row.Id;
                 yield return Item("Values", row);
             }

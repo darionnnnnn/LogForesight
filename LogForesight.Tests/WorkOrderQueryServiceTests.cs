@@ -280,6 +280,40 @@ public class WorkOrderQueryServiceTests
     }
 
     [Fact]
+    public void 成員_Prtg案件證據只由精確主機日期與EventKey解析()
+    {
+        var orderId = AddOrder(_alice.UserId, "PRTG:warning", 0);
+        var issueCase = AddPrtgMember(orderId, "HOST-EVIDENCE", "warning", "sensor-1");
+        const string expectedEventKey = "prtg:warning:sensor-1";
+        issueCase.PrtgEvidence = new PrtgCaseEvidence(D2, expectedEventKey, "source-v1", "resource-v1",
+            null, "covered-state-v1", "bounded summary");
+        _cases.Save(issueCase);
+        var host = _hosts.FindByName("HOST-EVIDENCE")!;
+
+        // A matching EventKey on an adjacent day and a different key on the pinned day are not the exact pointer.
+        _records.Add(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = D2.AddDays(1),
+            TopIssues = new() { new LogIssueSignature { EventKey = expectedEventKey } }
+        });
+        var targetDay = new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = D2,
+            TopIssues = new() { new LogIssueSignature { EventKey = "prtg:warning:other-sensor" } }
+        };
+        _records.Add(targetDay);
+
+        var service = Service(As(_alice.UserId, Capability.Handle), host.HostId);
+        var member = Assert.Single(service.Members(orderId, "all", 1, 50).Items);
+        Assert.Equal("reanalysed-without-finding", member.PrtgEvidenceParentStatus);
+        Assert.Equal($"/records/{host.HostId}/{D2:yyyy-MM-dd}", member.PrtgEvidenceRecordPath);
+
+        targetDay.TopIssues.Add(new LogIssueSignature { EventKey = expectedEventKey });
+        member = Assert.Single(service.Members(orderId, "all", 1, 50).Items);
+        Assert.Equal("available", member.PrtgEvidenceParentStatus);
+    }
+
+    [Fact]
     public void 成員_相同EventKey但來源不符不算趨勢證據()
     {
         var warningId = AddOrder(_alice.UserId, "PRTG:warning", 0);

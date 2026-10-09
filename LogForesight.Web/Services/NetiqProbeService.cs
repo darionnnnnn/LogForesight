@@ -27,9 +27,10 @@ public class NetiqProbeService
         var s = _state.Snapshot();
         return new NetiqProbeStatusDto
         {
+            Mode = s.Mode,
             IsRunning = s.IsRunning,
             SentinelId = s.SentinelId,
-            SentinelName = s.SentinelName,
+            SentinelName = s.Mode == "metadata-shape" ? null : s.SentinelName,
             StartedAt = s.StartedAt,
             CompletedAt = s.CompletedAt,
             Success = s.Success,
@@ -76,6 +77,57 @@ public class NetiqProbeService
             catch (Exception ex)
             {
                 console.WriteLine($"探測過程發生未預期錯誤：{ex.Message}");
+            }
+            finally
+            {
+                _state.EndRun(success);
+            }
+        });
+
+        return true;
+    }
+
+    /// <summary>Starts the independent, value-free, bounded response-shape probe.</summary>
+    public bool TryStartMetadata(long sentinelId, out Sentinel? sentinel, out string? validationError)
+    {
+        validationError = null;
+        sentinel = _sentinels.Get(sentinelId);
+        if (sentinel == null)
+        {
+            validationError = "找不到這台 Sentinel。";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(sentinel.Username) || string.IsNullOrWhiteSpace(sentinel.PasswordEnc))
+        {
+            validationError = "這台 Sentinel 尚未設定探索帳密，無法執行欄位形狀探測。";
+            return false;
+        }
+        var options = _netiqOptions.Get();
+        if (!_state.TryBeginMetadata(sentinel.SentinelId, sentinel.Name))
+        {
+            validationError = "已有 NetIQ 診斷正在執行中，請稍候再試。";
+            return false;
+        }
+        var console = new WebProbeConsole(_state);
+        var probeSentinel = sentinel;
+        _ = Task.Run(async () =>
+        {
+            var success = false;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(NetiqEvidenceMetadataProbeRunner.DeadlineSeconds));
+            try
+            {
+                var result = await NetiqEvidenceMetadataProbeRunner.RunAsync(probeSentinel, options, deadline.Token);
+                foreach (var line in result.Report.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    console.WriteLine(line.TrimEnd('\r'));
+                success = result.Success;
+            }
+            catch (OperationCanceledException)
+            {
+                console.WriteLine("NetIQ response field-shape probe failed; reason=deadline-reached. Details withheld.");
+            }
+            catch
+            {
+                console.WriteLine("NetIQ response field-shape probe failed; reason=probe-failed-details-withheld.");
             }
             finally
             {

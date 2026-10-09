@@ -4,6 +4,14 @@ namespace LogForesight.Core.Models;
 
 public class DailyAnalysisRecord
 {
+    /// <summary>Immutable SQL parent-row identity; query metadata only, never stored in ContentJson.</summary>
+    [JsonIgnore]
+    public long RecordId { get; set; }
+
+    [JsonIgnore]
+    public LogForesight.Core.Persistence.PreparedRiskReport? PendingRiskReportDraft { get; set; }
+    /// <summary>Durable retry marker for a risk report whose source parent is already saved.</summary>
+    public bool RiskReportPending { get; set; }
     public string? PrtgBaselineRiskLevel { get; set; }
     public string? PrtgBaselineRiskBasis { get; set; }
     public DateTime Date { get; set; }
@@ -37,6 +45,9 @@ public class DailyAnalysisRecord
     public int WarningCount { get; set; }
     public int AuditEventCount { get; set; }
     public List<LogIssueSignature> TopIssues { get; set; } = new();
+
+    /// <summary>Authoritative per-parent PRTG evaluation identity, including successful zero-finding evaluations.</summary>
+    public PrtgDecisionManifest? PrtgManifest { get; set; }
 
     /// <summary>程式比對歷史後偵測到的頻率異常（首次出現、頻率上升、整體錯誤量突增）。
     /// 已排除本機抑制設定關掉的項目（回饋十五輪 A）——被抑制的仍照算趨勢欄位與嚴重度升級，
@@ -131,6 +142,9 @@ public class DailyAnalysisRecord
     /// </summary>
     public string? ReportFile { get; set; }
 
+    /// <summary>PRTG input fingerprint captured when the saved daily risk report was generated; null means unverified/legacy.</summary>
+    public string? PrtgReportEvidenceFingerprint { get; set; }
+
     /// <summary>
     /// true = 本日事件來源不完整（例如回補時 Event Log 已被系統覆蓋、只能取得部分時段），
     /// 趨勢基準（TrendAnalyzer 的近期平均）計算時應排除這一天，避免用不完整的天墊低/墊高平均值。
@@ -219,7 +233,37 @@ public sealed record AiOutcome(
     string? ReportFile,
     List<CategoryDeepDive> DeepDives,
     List<string>? UncoveredChecksAddendum = null,
-    string? InputPrtgFingerprint = null);
+    string? InputPrtgFingerprint = null,
+    string? ReportPrtgEvidenceFingerprint = null,
+    LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null);
+
+/// <summary>Bounded identity of one completed PRTG decision for a single NetIQ parent row.</summary>
+public sealed class PrtgDecisionManifest
+{
+    public int Version { get; set; } = 1;
+    public long ParentRecordId { get; set; }
+    public string ParentFingerprint { get; set; } = string.Empty;
+    /// <summary>Captured PRTG rows on the exact parent before this run's state reconciliation and finding attach.</summary>
+    public string ParentFindingFingerprint { get; set; } = string.Empty;
+    public string PolicyRevision { get; set; } = string.Empty;
+    public string SourceGeneration { get; set; } = string.Empty;
+    /// <summary>Monotonic fence for trusted resource identity, channel and sampling-profile changes.</summary>
+    public long ResourceAuthorityRevision { get; set; }
+    /// <summary>Exact per-host formal resource-mode blob revision captured with its grant snapshot.</summary>
+    public long ResourceModeBlobVersion { get; set; }
+    /// <summary>Legacy manifests may omit the mode fence; new daily resource evaluations require it even at version zero.</summary>
+    public bool ResourceModeFenceRequired { get; set; }
+    public string ResourceFingerprint { get; set; } = string.Empty;
+    public string SemanticFingerprint { get; set; } = string.Empty;
+    public string StrategyFingerprint { get; set; } = string.Empty;
+    public string HostMappingFingerprint { get; set; } = string.Empty;
+    public List<string> WaitReasonCodes { get; set; } = new();
+    public string RuleFingerprint { get; set; } = string.Empty;
+    public string EvidenceFingerprint { get; set; } = string.Empty;
+    public string FindingFingerprint { get; set; } = string.Empty;
+    public DateTime CompletedAtUtc { get; set; }
+    public string Outcome { get; set; } = "complete";
+}
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

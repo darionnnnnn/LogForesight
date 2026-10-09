@@ -51,6 +51,9 @@ public class AnalysisPromptBuilderPrtgTests
         var prompt = Build(WindowsIssue(), PrtgFinding());
 
         Assert.Contains(PrtgSectionTitle, prompt);
+        Assert.Contains("獨立來源 finding", prompt);
+        Assert.Contains("同日不表示資源或時間相符", prompt);
+        Assert.DoesNotContain("互為佐證", prompt);
         // 規則的白話說明要出現，讓 AI 讀得懂這個訊號代表什麼
         Assert.Contains("PRTG 監控 sensor 持續 Down 達門檻", prompt);
     }

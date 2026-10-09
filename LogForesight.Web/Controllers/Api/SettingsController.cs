@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -21,6 +22,7 @@ namespace LogForesight.Web.Controllers.Api;
 public class SettingsController : ControllerBase
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private static readonly object AdmissionPublicationLock = new();
 
     private readonly ISystemSettingsService _settings;
     private readonly AiUsageStore _aiUsage;
@@ -37,6 +39,7 @@ public class SettingsController : ControllerBase
     private readonly IVisibilityService? _visibility;
     private readonly ICurrentUser? _currentUser;
     private readonly IPrtgTransferCapacityProvider? _transferCapacity;
+    internal Func<SystemSettings, PrtgClient>? SnapshotCapacityClientFactory { get; set; }
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -84,7 +87,13 @@ public class SettingsController : ControllerBase
             throw DomainException.Validation(error);
         }
 
-        return ApiResponse<SystemSettingsDto>.Ok(_settings.Update(request));
+        lock (AdmissionPublicationLock)
+        {
+            var plan = EnsureSnapshotCapacityAdmission(request);
+            var updated = _settings.Update(request);
+            PublishAdmissionPlan(plan, updated, request.PrtgEnabled);
+            return ApiResponse<SystemSettingsDto>.Ok(updated);
+        }
     }
 
     /// <summary>AD 測試連線（docs/archive/HISTORY.md #9）：用表單目前填的值＋管理者當場輸入的帳密試 bind</summary>
@@ -104,8 +113,240 @@ public class SettingsController : ControllerBase
 
     /// <summary>PRTG 設定專屬更新（PRTG 維護頁，docs/archive/FEEDBACK-37-PLAN.md 批次F1）：只更新 PRTG 欄位，不動其他設定</summary>
     [HttpPut("prtg")]
-    public ApiResponse<SystemSettingsDto> UpdatePrtg([FromBody] UpdatePrtgSettingsRequest request) =>
-        ApiResponse<SystemSettingsDto>.Ok(_settings.UpdatePrtg(request));
+    public ApiResponse<SystemSettingsDto> UpdatePrtg([FromBody] UpdatePrtgSettingsRequest request)
+    {
+        lock (AdmissionPublicationLock)
+        {
+            var plan = EnsureSnapshotCapacityAdmission(request);
+            var updated = _settings.UpdatePrtg(request);
+            PublishAdmissionPlan(plan, updated, request.PrtgEnabled);
+            return ApiResponse<SystemSettingsDto>.Ok(updated);
+        }
+    }
+
+    private void PublishAdmissionPlan(PrtgCapacityAdmissionPlan? plan, SystemSettingsDto updated, bool? enabledRequest)
+    {
+        if (_backend is null) return;
+        if (enabledRequest == false)
+        {
+            PrtgRequestBudget.Shared.ClearAdmissionPlan();
+            return;
+        }
+        if (plan is null) return;
+        var store = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
+        PrtgCapacityAdmissionPlan published;
+        var publicationMismatch = "plan-validation-failed";
+        try
+        {
+            published = store.Publish(plan, updated.Revision, DateTimeOffset.UtcNow, TimeSpan.FromHours(24),
+                updated.Revision, () =>
+                {
+                    var settingsCurrent = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+                    var policyCurrent = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    if (settingsCurrent.Revision != updated.Revision)
+                    { publicationMismatch = "settings-revision-changed"; return false; }
+                    if (policyCurrent.Revision != plan.PolicyRevision)
+                    { publicationMismatch = "policy-revision-changed"; return false; }
+                    var profileIds = policyCurrent.SensorIds.Where(id => id > 0).Distinct().Order()
+                        .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
+                    var contract = PrtgProfileTransportCapacityPilot.BuildContract(_backend, _hosts,
+                        settingsCurrent, policyCurrent, profileIds);
+                    var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hosts, settingsCurrent,
+                        new SentinelStore(_backend.Blob("sentinels")).GetAll(), policyCurrent);
+                    (bool Matches, string Reason)[] checks =
+                    [
+                        (contract.SourceFingerprint == plan.SourceFingerprint, "source-contract-changed"),
+                        (contract.ScopeFingerprint == plan.ProfileScopeFingerprint, "profile-scope-changed"),
+                        (contract.StrategyFingerprint == plan.StrategyFingerprint, "strategy-changed"),
+                        (contract.RequestShapeFingerprint == plan.RequestShapeFingerprint, "profile-request-shape-changed"),
+                        (contract.VersionFingerprint == plan.RuntimeVersionFingerprint, "runtime-version-changed"),
+                        (selection.ScopeFingerprint == plan.SnapshotScopeFingerprint, "snapshot-scope-changed"),
+                        (selection.RequestShapeFingerprint == plan.SnapshotRequestShapeFingerprint, "snapshot-request-shape-changed")
+                    ];
+                    var mismatch = checks.FirstOrDefault(check => !check.Matches);
+                    if (mismatch.Reason is not null)
+                    { publicationMismatch = mismatch.Reason; return false; }
+                    publicationMismatch = "publication-store-rejected";
+                    return true;
+                });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+        {
+            PrtgRequestBudget.Shared.ClearAdmissionPlan();
+            if (enabledRequest == true)
+                new SystemSettingsStore(_backend.Blob("system_settings")).Update(current =>
+                {
+                    if (current.Revision == updated.Revision) current.PrtgEnabled = false;
+                });
+            throw DomainException.Conflict(
+                $"PRTG 容量計畫無法發布（{publicationMismatch}）；此次啟用已撤回，請重新估算並完成同形容量 pilots。");
+        }
+        PrtgRequestBudget.Shared.SetAdmissionPlan(published);
+    }
+
+    private PrtgCapacityAdmissionPlan? EnsureSnapshotCapacityAdmission(UpdatePrtgSettingsRequest request)
+    {
+        if (_backend == null || _hosts == null)
+        {
+            if (request.PrtgEnabled == true)
+                throw new DomainException("capacity-unverified", "無法解析目前快照目標範圍，拒絕啟用 PRTG 擷取。");
+            return null;
+        }
+        var current = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        request.ExpectedRevision ??= current.Revision;
+        var candidate = CloneSettings(current);
+        candidate.PrtgEnabled = request.PrtgEnabled ?? current.PrtgEnabled;
+        ApplyPrtgFields(candidate, request);
+        return RequireCapacityForSnapshotChange(current, candidate,
+            request.ClearPrtgApiToken || request.ClearPrtgPassword || request.ClearPrtgPasshash ||
+            !string.IsNullOrWhiteSpace(request.PrtgApiToken) || !string.IsNullOrWhiteSpace(request.PrtgPassword) ||
+            !string.IsNullOrWhiteSpace(request.PrtgPasshash));
+    }
+
+    private PrtgCapacityAdmissionPlan? EnsureSnapshotCapacityAdmission(UpdateSystemSettingsRequest request)
+    {
+        if (_backend == null || _hosts == null)
+        {
+            if (request.PrtgEnabled == true)
+                throw new DomainException("capacity-unverified", "無法解析目前快照目標範圍，拒絕啟用 PRTG 擷取。");
+            return null;
+        }
+        var current = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        request.ExpectedRevision ??= current.Revision;
+        var candidate = CloneSettings(current);
+        candidate.PrtgEnabled = request.PrtgEnabled ?? current.PrtgEnabled;
+        ApplyPrtgFields(candidate, request);
+        return RequireCapacityForSnapshotChange(current, candidate,
+            request.ClearPrtgApiToken || request.ClearPrtgPassword || request.ClearPrtgPasshash ||
+            !string.IsNullOrWhiteSpace(request.PrtgApiToken) || !string.IsNullOrWhiteSpace(request.PrtgPassword) ||
+            !string.IsNullOrWhiteSpace(request.PrtgPasshash));
+    }
+
+    private PrtgCapacityAdmissionPlan? RequireCapacityForSnapshotChange(SystemSettings current, SystemSettings candidate,
+        bool credentialChanged)
+    {
+        if (!candidate.PrtgEnabled) return null; // stopping or saving disabled setup never needs admission evidence
+        if (credentialChanged)
+            throw new DomainException("capacity-unverified",
+                "憑證變更尚未有可比對的新 transport 樣本。先保持 PRTG 停用並儲存新憑證，再執行 snapshot 與 profile pilots，最後重新啟用。");
+        var sentinels = new SentinelStore(_backend!.Blob("sentinels")).GetAll();
+        var prior = PrtgSnapshotTargetResolver.Resolve(_backend, _hosts!, current, sentinels);
+        var next = PrtgSnapshotTargetResolver.Resolve(_backend, _hosts!, candidate, sentinels);
+        var priorIds = prior.SensorObjids.ToHashSet();
+        var expanded = next.SensorObjids.Any(id => !priorIds.Contains(id));
+        var sourceOrStrategyChanged = prior.EndpointFingerprint != next.EndpointFingerprint ||
+            PrtgFetchStrategy.Normalize(current.PrtgFetchStrategy) != PrtgFetchStrategy.Normalize(candidate.PrtgFetchStrategy) ||
+            current.PrtgTimeoutSeconds != candidate.PrtgTimeoutSeconds ||
+            current.PrtgIgnoreSslErrors != candidate.PrtgIgnoreSslErrors ||
+            current.PrtgAuthMode != candidate.PrtgAuthMode || current.PrtgUsername != candidate.PrtgUsername ||
+            credentialChanged;
+        var enabling = !current.PrtgEnabled && candidate.PrtgEnabled;
+        // Stopping or narrowing scope must remain available without fresh capacity evidence.
+        // The runtime exact-scope/revision fence rejects the previous plan after this save.
+        if (!enabling && !expanded && !sourceOrStrategyChanged) return null;
+
+        var capacity = PrtgSnapshotCapacityEvaluator.Evaluate(next.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(candidate.PrtgFetchStrategy), next.ScopeFingerprint,
+            next.EndpointFingerprint, next.RequestShapeFingerprint,
+            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
+            DateTimeOffset.UtcNow);
+        if (capacity.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
+        {
+            var status = capacity.Status switch
+            {
+                PrtgSnapshotCapacityStatus.CapacityExceeded => "capacity-exceeded",
+                _ => "capacity-unverified"
+            };
+            throw new DomainException(status,
+                $"目前目標 {capacity.TargetCount:N0} 顆、{capacity.BatchCount:N0} 批，策略 {PrtgFetchStrategy.Normalize(candidate.PrtgFetchStrategy)}；樣本 {capacity.FreshMatchingFullBatchSamples}/5，原因 {capacity.Reason}。請先儲存設定（保持關閉）、執行最多 5 批同形容量試測，再重新啟用。固定窗口 {capacity.CompletionWindowSeconds:0} 秒且保留 25% 餘裕。");
+        }
+
+        return RequireProfileAndJointCapacity(candidate, next, capacity);
+    }
+
+    private PrtgCapacityAdmissionPlan RequireProfileAndJointCapacity(SystemSettings candidate,
+        PrtgSnapshotTargetSelection snapshotSelection,
+        PrtgSnapshotCapacityEstimate snapshotCapacity)
+    {
+        var policy = new PrtgMonitoringPolicyStore(_backend!.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var profileIds = policy.SensorIds.Distinct().Order()
+            .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
+        PrtgProfileTransportCapacityPilot.Contract contract;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(policy.Revision) || profileIds.Length == 0 || policy.SensorIds.Count > 15_000 ||
+                profileIds.Length != Math.Min(policy.SensorIds.Distinct().Count(), PrtgProfileTransportCapacityPilot.MaximumSensorIds))
+                throw new InvalidOperationException("profile_scope_missing_or_over_limit");
+            contract = PrtgProfileTransportCapacityPilot.BuildContract(_backend, _hosts, candidate, policy, profileIds);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+        {
+            throw new DomainException("capacity-unverified",
+                $"Profile transport 樣本尚未符合目前來源、身分與範圍（{ex.Message}）；保持停用並先執行 5 次 bounded profile capacity pilot。");
+        }
+        var profileCapacity = PrtgProfileTransportCapacityEvaluator.Evaluate(policy.SensorIds.Distinct().Count(),
+            contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
+            contract.RequestShapeFingerprint, contract.VersionFingerprint,
+            new PrtgProfileTransportCapacityStore(_backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read(),
+            DateTimeOffset.UtcNow);
+        var joint = PrtgJointCapacityEvaluator.Evaluate(snapshotCapacity, profileCapacity,
+            PrtgRequestBudget.Shared.ReadUsage(), candidate.PrtgTimeoutSeconds);
+        if (joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
+        {
+            var status = joint.Status == PrtgSnapshotCapacityStatus.CapacityExceeded
+                ? "capacity-exceeded" : "capacity-unverified";
+            throw new DomainException(status,
+                $"Joint snapshot/profile admission {joint.Status}: snapshot {snapshotCapacity.FreshMatchingFullBatchSamples}/5, profile {profileCapacity.FreshSuccessfulSamples}/5; shared Table quota {joint.SharedTableRequestsPerSecond:0.##}/s, estimated snapshot {joint.SnapshotEstimatedSeconds:0} s/{joint.SnapshotWindowSeconds:0} s, profile {joint.ProfileEstimatedSeconds:0} s/{joint.ProfileWindowSeconds:0} s, reclaim delay {joint.ReclaimDelaySeconds:0} s; {joint.Reason}. Keep PRTG disabled, run the bounded snapshot and profile pilots, then retry.");
+        }
+        return PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
+            snapshotSelection.ScopeFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
+            snapshotSelection.RequestShapeFingerprint, contract.RequestShapeFingerprint, contract.VersionFingerprint,
+            DateTimeOffset.UtcNow, candidate.Revision, policy.Revision);
+    }
+
+    private static SystemSettings CloneSettings(SystemSettings settings) =>
+        JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(settings))
+        ?? throw new InvalidDataException("無法複製 PRTG 設定以執行容量檢查。");
+
+    private static void ApplyPrtgFields(SystemSettings target, UpdatePrtgSettingsRequest request)
+    {
+        if (request.PrtgUrl != null) target.PrtgUrl = request.PrtgUrl;
+        if (request.PrtgIgnoreSslErrors.HasValue) target.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+        if (request.PrtgAuthMode != null) target.PrtgAuthMode = request.PrtgAuthMode;
+        if (request.PrtgUsername != null) target.PrtgUsername = request.PrtgUsername;
+        if (request.PrtgTimeoutSeconds.HasValue) target.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
+        if (request.PrtgFetchStrategy != null) target.PrtgFetchStrategy = request.PrtgFetchStrategy;
+        if (request.PrtgSensorTypeWhitelist != null) target.PrtgSensorTypeWhitelist = request.PrtgSensorTypeWhitelist;
+        if (request.PrtgSensorTypeCategoryOverrides != null) target.PrtgSensorTypeCategoryOverrides = request.PrtgSensorTypeCategoryOverrides;
+        if (request.PrtgResourceGuardEnabled.HasValue) target.PrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled.Value;
+        if (request.PrtgResourceGuardSensorObjids != null) target.PrtgResourceGuardSensorObjids = request.PrtgResourceGuardSensorObjids;
+        if (request.ClearPrtgApiToken) target.PrtgApiTokenEnc = "";
+        if (request.ClearPrtgPassword) target.PrtgPasswordEnc = "";
+        if (request.ClearPrtgPasshash) target.PrtgPasshashEnc = "";
+        if (!string.IsNullOrWhiteSpace(request.PrtgApiToken)) target.PrtgApiTokenEnc = "unpersisted-secret-change";
+        if (!string.IsNullOrWhiteSpace(request.PrtgPassword)) target.PrtgPasswordEnc = "unpersisted-secret-change";
+        if (!string.IsNullOrWhiteSpace(request.PrtgPasshash)) target.PrtgPasshashEnc = "unpersisted-secret-change";
+    }
+
+    private static void ApplyPrtgFields(SystemSettings target, UpdateSystemSettingsRequest request)
+    {
+        if (request.PrtgUrl != null) target.PrtgUrl = request.PrtgUrl;
+        if (request.PrtgIgnoreSslErrors.HasValue) target.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+        if (request.PrtgAuthMode != null) target.PrtgAuthMode = request.PrtgAuthMode;
+        if (request.PrtgUsername != null) target.PrtgUsername = request.PrtgUsername;
+        if (request.PrtgTimeoutSeconds.HasValue) target.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
+        if (request.PrtgFetchStrategy != null) target.PrtgFetchStrategy = request.PrtgFetchStrategy;
+        if (request.PrtgSensorTypeWhitelist != null) target.PrtgSensorTypeWhitelist = request.PrtgSensorTypeWhitelist;
+        if (request.PrtgSensorTypeCategoryOverrides != null) target.PrtgSensorTypeCategoryOverrides = request.PrtgSensorTypeCategoryOverrides;
+        if (request.PrtgResourceGuardEnabled.HasValue) target.PrtgResourceGuardEnabled = request.PrtgResourceGuardEnabled.Value;
+        if (request.PrtgResourceGuardSensorObjids != null) target.PrtgResourceGuardSensorObjids = request.PrtgResourceGuardSensorObjids;
+        if (request.ClearPrtgApiToken) target.PrtgApiTokenEnc = "";
+        if (request.ClearPrtgPassword) target.PrtgPasswordEnc = "";
+        if (request.ClearPrtgPasshash) target.PrtgPasshashEnc = "";
+        if (!string.IsNullOrWhiteSpace(request.PrtgApiToken)) target.PrtgApiTokenEnc = "unpersisted-secret-change";
+        if (!string.IsNullOrWhiteSpace(request.PrtgPassword)) target.PrtgPasswordEnc = "unpersisted-secret-change";
+        if (!string.IsNullOrWhiteSpace(request.PrtgPasshash)) target.PrtgPasshashEnc = "unpersisted-secret-change";
+    }
 
     /// <summary>AI token 用量統計（回饋二十七輪作業 B）：今日／累計＋近 30 天每日明細</summary>
     [HttpGet("ai-usage")]
@@ -388,7 +629,8 @@ public class SettingsController : ControllerBase
     /// </summary>
     /// <param name="scope">要估算的模式；未帶時用目前已儲存的設定</param>
     [HttpGet("prtg-fetch-scope/estimate")]
-    public ApiResponse<PrtgValueFetchScopeEstimateDto> EstimatePrtgFetchScope([FromQuery] string? scope)
+    public ApiResponse<PrtgValueFetchScopeEstimateDto> EstimatePrtgFetchScope([FromQuery] string? scope,
+        [FromQuery] string? strategy = null)
     {
         // 維護頁下拉的「關閉」不是後端的合法 scope；Normalize 會把它退回 triggered 而給出一組
         // 看起來正常的數字——關閉狀態下不會取數，回一個估算值是語意矛盾。
@@ -450,6 +692,81 @@ public class SettingsController : ControllerBase
 
         var allOkDevices = mapRows.Select(m => m.DeviceObjid).Distinct().ToList();
         var snapshotTargets = prtgStore.GetValueFetchTargets(whitelist, allOkDevices).Count;
+        PrtgSnapshotTargetSelection? actualSelection = null;
+        var snapshotSettings = settings;
+        if (!string.IsNullOrWhiteSpace(strategy)) snapshotSettings.PrtgFetchStrategy = PrtgFetchStrategy.Normalize(strategy);
+        if (_hosts != null)
+        {
+            actualSelection = PrtgSnapshotTargetResolver.Resolve(_backend,
+                _hosts, snapshotSettings, new SentinelStore(_backend.Blob("sentinels")).GetAll());
+            snapshotTargets = actualSelection.SensorObjids.Count;
+        }
+        var capacityStrategy = PrtgFetchStrategy.Normalize(snapshotSettings.PrtgFetchStrategy);
+        var capacity = actualSelection == null
+            ? new PrtgSnapshotCapacityEstimate(PrtgSnapshotCapacityStatus.CapacityUnverified,
+                snapshotTargets, (snapshotTargets + 49) / 50, 0, null, null, null,
+                capacityStrategy == PrtgFetchStrategy.Aggressive ? 180 : 600, 0.25,
+                "runtime_target_catalogue_unavailable")
+            : PrtgSnapshotCapacityEvaluator.Evaluate(snapshotTargets, capacityStrategy,
+                actualSelection.ScopeFingerprint, actualSelection.EndpointFingerprint,
+                actualSelection.RequestShapeFingerprint,
+                new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
+                DateTimeOffset.UtcNow);
+        var profileCapacity = new PrtgProfileTransportEstimate(PrtgSnapshotCapacityStatus.CapacityUnverified,
+            0, 0, null, null, null, PrtgProfileTransportCapacityEvaluator.ProfileRefreshWindow.TotalSeconds,
+            PrtgProfileTransportCapacityEvaluator.RequiredHeadroomFraction, "profile_transport_scope_unavailable");
+        PrtgProfileTransportCapacityPilot.Contract? profileContract = null;
+        PrtgCapacityAdmissionPlan? matchingAdmissionPlan = null;
+        if (_backend != null && _hosts != null)
+        {
+            var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+            var profileIds = policy.SensorIds.Distinct().Order().Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
+            if (policy.SensorIds.Count <= 15_000 && profileIds.Length > 0)
+            {
+                try
+                {
+                    var contract = PrtgProfileTransportCapacityPilot.BuildContract(_backend, _hosts, snapshotSettings, policy, profileIds);
+                    var admissionPlan = new PrtgCapacityAdmissionPlanStore(
+                        _backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow);
+                    var existingPlanMatches = settings.PrtgEnabled &&
+                        PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy) == capacityStrategy &&
+                        admissionPlan is not null && admissionPlan.SourceFingerprint == contract.SourceFingerprint &&
+                        admissionPlan.SnapshotScopeFingerprint == actualSelection?.ScopeFingerprint &&
+                        admissionPlan.ProfileScopeFingerprint == contract.ScopeFingerprint &&
+                        admissionPlan.StrategyFingerprint == contract.StrategyFingerprint &&
+                        admissionPlan.SnapshotRequestShapeFingerprint == actualSelection?.RequestShapeFingerprint &&
+                        admissionPlan.RequestShapeFingerprint == contract.RequestShapeFingerprint &&
+                        admissionPlan.RuntimeVersionFingerprint == contract.VersionFingerprint &&
+                        admissionPlan.SettingsRevision == settings.Revision &&
+                        admissionPlan.PolicyRevision == policy.Revision;
+                    profileContract = contract;
+                    if (existingPlanMatches) matchingAdmissionPlan = admissionPlan;
+                    profileCapacity = PrtgProfileTransportCapacityEvaluator.Evaluate(policy.SensorIds.Distinct().Count(),
+                        contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
+                        contract.RequestShapeFingerprint, contract.VersionFingerprint,
+                        new PrtgProfileTransportCapacityStore(_backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read(),
+                        DateTimeOffset.UtcNow, requiredFreshSuccessfulSamples: existingPlanMatches ? 1 : 5);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+                {
+                    profileCapacity = profileCapacity with { Reason = "profile_transport_contract_unavailable" };
+                }
+            }
+        }
+        var jointCapacity = new PrtgJointCapacityEstimate(PrtgSnapshotCapacityStatus.CapacityUnverified,
+            PrtgJointCapacityEvaluator.SharedTableRequestsPerSecond, 0, 0, 0, 0, 0, 0,
+            capacity.CompletionWindowSeconds * (1 - PrtgJointCapacityEvaluator.RequiredHeadroomFraction),
+            profileCapacity.CompletionWindowSeconds, "joint_capacity_contract_unavailable");
+        if (actualSelection != null && profileContract != null)
+        {
+            var usage = PrtgRequestBudget.Shared.ReadUsage();
+            jointCapacity = matchingAdmissionPlan is not null
+                ? PrtgJointCapacityEvaluator.EvaluateAgainstReservedRates(capacity, profileCapacity, usage,
+                    settings.PrtgTimeoutSeconds, matchingAdmissionPlan.SnapshotTableRequestsPerSecond,
+                    matchingAdmissionPlan.ProfileTableRequestsPerSecond)
+                : PrtgJointCapacityEvaluator.Evaluate(capacity, profileCapacity, usage,
+                    settings.PrtgTimeoutSeconds);
+        }
         var snapshotRowsPerDay = snapshotTargets * 24L;
         // 這是與 RuntimeSettingsResolver 的 PRTG 保留期規則對齊的顯示用近似值（不含低於下限的退回邏輯）。
         var snapshotRetentionDays = Math.Min(settings.PrtgRetentionDays, settings.RetentionDays);
@@ -491,8 +808,81 @@ public class SettingsController : ControllerBase
             SnapshotRowsPerDay = snapshotRowsPerDay,
             SnapshotRetentionDays = snapshotRetentionDays,
             SnapshotRowsAtRetention = snapshotRowsAtRetention,
-            SnapshotWarning = snapshotWarning
+            SnapshotWarning = snapshotWarning,
+            SnapshotCapacityStatus = capacity.Status switch
+            {
+                PrtgSnapshotCapacityStatus.CapacityQualified => "capacity-qualified",
+                PrtgSnapshotCapacityStatus.CapacityExceeded => "capacity-exceeded",
+                _ => "capacity-unverified"
+            },
+            SnapshotCapacityReason = capacity.Reason,
+            SnapshotCapacityStrategy = capacityStrategy,
+            SnapshotCapacitySamples = capacity.FreshMatchingFullBatchSamples,
+            SnapshotCapacitySampleBatchSize = actualSelection?.CapacitySampleBatchSize ?? 0,
+            SnapshotCapacityBatchCount = capacity.BatchCount,
+            SnapshotCapacityP95BatchSeconds = capacity.P95BatchSeconds,
+            SnapshotCapacityEstimatedSeconds = capacity.EstimatedSeconds,
+            SnapshotCapacityWindowSeconds = capacity.CompletionWindowSeconds,
+            SnapshotCapacityOldestSampleAtUtc = capacity.OldestSampleAtUtc,
+            SnapshotCapacityOldestSampleAgeSeconds = capacity.OldestSampleAtUtc.HasValue
+                ? Math.Max(0, (DateTimeOffset.UtcNow - capacity.OldestSampleAtUtc.Value).TotalSeconds) : null,
+            SnapshotCapacityRequestShape = $"table.json sensors; columns={PrtgSnapshotTargetResolver.SnapshotColumns}; sorted {actualSelection?.CapacitySampleBatchSize ?? 0}-ID filter; response cap 512 KiB",
+            ProfileCapacityStatus = profileCapacity.Status switch
+            {
+                PrtgSnapshotCapacityStatus.CapacityQualified => "capacity-qualified",
+                PrtgSnapshotCapacityStatus.CapacityExceeded => "capacity-exceeded",
+                _ => "capacity-unverified"
+            },
+            ProfileCapacityReason = profileCapacity.Reason,
+            ProfileCapacitySamples = profileCapacity.FreshSuccessfulSamples,
+            ProfileCapacityP95SensorSeconds = profileCapacity.P95SensorSeconds,
+            ProfileCapacityEstimatedSeconds = profileCapacity.EstimatedSeconds,
+            ProfileCapacityWindowSeconds = profileCapacity.CompletionWindowSeconds,
+            ProfileCapacityRequestShape = PrtgProfileTransportCapacityPilot.RequestShape,
+            JointCapacityStatus = CapacityStatusName(jointCapacity.Status),
+            JointCapacityReason = jointCapacity.Reason,
+            JointAdmissionPlanMatched = matchingAdmissionPlan is not null,
+            JointSharedTableRequestsPerSecond = FiniteOrNull(jointCapacity.SharedTableRequestsPerSecond),
+            JointSnapshotTableRequestsPerSecond = FiniteOrNull(jointCapacity.SnapshotTableRequestsPerSecond),
+            JointProfileTableRequestsPerSecond = FiniteOrNull(jointCapacity.ProfileTableRequestsPerSecond),
+            JointGeneralResidualTableRequestsPerSecond = FiniteOrNull(jointCapacity.GeneralResidualRequestsPerSecond),
+            JointSnapshotEstimatedSeconds = FiniteOrNull(jointCapacity.SnapshotEstimatedSeconds),
+            JointSnapshotWindowSeconds = FiniteOrNull(jointCapacity.SnapshotWindowSeconds),
+            JointProfileEstimatedSeconds = FiniteOrNull(jointCapacity.ProfileEstimatedSeconds),
+            JointProfileWindowSeconds = FiniteOrNull(jointCapacity.ProfileWindowSeconds)
         });
+    }
+
+    private static string CapacityStatusName(PrtgSnapshotCapacityStatus status) => status switch
+    {
+        PrtgSnapshotCapacityStatus.CapacityQualified => "capacity-qualified",
+        PrtgSnapshotCapacityStatus.CapacityExceeded => "capacity-exceeded",
+        _ => "capacity-unverified"
+    };
+
+    private static double? FiniteOrNull(double value) => double.IsFinite(value) ? value : null;
+
+    /// <summary>Bounded real snapshot-shape capacity pilot; safe to run while saved PRTG sampling is disabled.</summary>
+    [HttpPost("prtg-capacity-pilot")]
+    public async Task<ApiResponse<PrtgSnapshotCapacityPilotDto>> RunPrtgCapacityPilot(CancellationToken ct)
+    {
+        if (_backend == null || _hosts == null)
+            return ApiResponse<PrtgSnapshotCapacityPilotDto>.Ok(new PrtgSnapshotCapacityPilotDto
+            { Reason = "runtime_target_catalogue_unavailable" });
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        try
+        {
+            var result = await new PrtgSnapshotCapacityPilot(_backend, SnapshotCapacityClientFactory).RunAsync(_hosts, settings,
+                new SentinelStore(_backend.Blob("sentinels")).GetAll(), ct);
+            return ApiResponse<PrtgSnapshotCapacityPilotDto>.Ok(result);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch
+        {
+            // Never return URL, credentials, raw sensor IDs, or source response bodies from this probe.
+            return ApiResponse<PrtgSnapshotCapacityPilotDto>.Ok(new PrtgSnapshotCapacityPilotDto
+            { Reason = "pilot_source_or_storage_failure" });
+        }
     }
 
     /// <summary>粗估用的每次 historicdata 查詢平均秒數（暫定）。</summary>

@@ -557,6 +557,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
     private sealed class ServiceHarness : IDisposable
     {
         private readonly string _dir;
+        public string DataRoot => _dir;
         public StorageBackend Backend { get; }
         public SystemSettingsStore Settings { get; }
         public PrtgProbeService Service { get; }
@@ -676,5 +677,20 @@ public class PrtgProbeSiteCheckTests : IDisposable
         Assert.Contains("PRTG 環境探測完成", result.Text);
         Assert.Contains("══════════ 站台對照 ══════════", result.Text);
         Assert.Contains("鏡像尚未同步", result.Text);
+        var evidenceJson = h.Service.GetStatus().EvidenceJson;
+        Assert.NotNull(evidenceJson);
+        using var evidence = System.Text.Json.JsonDocument.Parse(evidenceJson!);
+        Assert.Equal("Sqlite", evidence.RootElement.GetProperty("storage_provider").GetString());
+        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite",
+            evidence.RootElement.GetProperty("ef_core_provider").GetString());
+        var storage = evidence.RootElement.GetProperty("storage_environment");
+        Assert.Equal("measured", storage.GetProperty("status").GetString());
+        Assert.Equal("Sqlite", storage.GetProperty("provider").GetString());
+        Assert.InRange(storage.GetProperty("queries_attempted").GetInt32(), 1,
+            PrtgStorageEnvironmentProbe.MaximumMetadataQueries);
+        Assert.Equal("measured", storage.GetProperty("file_status").GetString());
+        Assert.Equal("measured", storage.GetProperty("local_file_status").GetString());
+        Assert.NotEmpty(storage.GetProperty("file_capacities").EnumerateArray());
+        Assert.DoesNotContain(h.DataRoot, evidenceJson, StringComparison.OrdinalIgnoreCase);
     }
 }

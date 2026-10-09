@@ -1,6 +1,8 @@
 using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -47,6 +49,79 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
     }
 
     public void Dispose() => _fixture.Dispose();
+
+    [Fact]
+    public void Detail_projects_bounded_native_source_provenance_without_inventing_missing_facts()
+    {
+        var host = AddHost("source-proof-host");
+        var evidence = new SourceEvidence
+        {
+            SourceKind = SourceEvidenceKind.Prtg,
+            ResourceScope = SourceResourceScope.Volume,
+            ExactHostKey = $"host-id:{host.HostId}",
+            ExactResourceKey = "volume:D:",
+            EventTimeUtc = new DateTimeOffset(DateTime.SpecifyKind(Today, DateTimeKind.Utc)),
+            SourceReference = "prtg:device:70:sensor:700:epoch:2",
+            SourceReferenceQuality = SourceReferenceQuality.ExactNative,
+            ProjectionFingerprint = SourceEvidence.Fingerprint("internal-only")
+        };
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Today, RiskLevel = "低",
+            TopIssues = new()
+            {
+                new LogIssueSignature
+                {
+                    LogName = "PRTG", Source = "disk", EventId = 0,
+                    EntryType = System.Diagnostics.EventLogEntryType.Warning,
+                    Count = 1, SourceObservations = new() { evidence }
+                }
+            }
+        });
+
+        var issue = Assert.Single(_service.GetDetail(host.HostId, Today).TopIssues);
+        var observation = Assert.Single(issue.SourceObservations);
+        Assert.Equal("volume:D:", observation.ExactResourceKey);
+        Assert.Equal($"host-id:{host.HostId}", observation.ExactHostKey);
+        Assert.Equal(evidence.SourceReference, observation.NativeReference);
+        Assert.Null(observation.WindowStartUtc);
+        Assert.Null(observation.WindowEndUtc);
+        Assert.DoesNotContain("ProjectionFingerprint", System.Text.Json.JsonSerializer.Serialize(observation));
+    }
+
+    [Fact]
+    public void Detail_keeps_observation_transport_within_native_count_and_byte_bounds()
+    {
+        var host = AddHost("source-proof-bounded");
+        var observations = Enumerable.Range(0, 64).Select(index => new SourceEvidence
+        {
+            SourceKind = SourceEvidenceKind.LocalEventRecord,
+            ResourceScope = SourceResourceScope.Host,
+            ExactHostKey = $"host-id:{host.HostId}", ExactResourceKey = $"host-id:{host.HostId}",
+            EventTimeUtc = new DateTimeOffset(DateTime.SpecifyKind(Today, DateTimeKind.Utc)).AddMinutes(index),
+            SourceReference = $"event-record:{new string('x', 500)}:{index}",
+            SourceReferenceQuality = SourceReferenceQuality.ExactNative
+        }).ToList();
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Today, RiskLevel = "低",
+            TopIssues = new()
+            {
+                new LogIssueSignature
+                {
+                    LogName = "System", Source = Source, EventId = EventId,
+                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    Count = observations.Count, SourceObservations = observations
+                }
+            }
+        });
+
+        var issue = Assert.Single(_service.GetDetail(host.HostId, Today).TopIssues);
+        Assert.InRange(issue.SourceObservations.Count, 1, 64);
+        Assert.True(issue.SourceObservationsTruncated);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(
+            System.Text.Json.JsonSerializer.Serialize(issue.SourceObservations)) <= SourceEvidence.MaximumSerializedBytes);
+    }
 
     private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 

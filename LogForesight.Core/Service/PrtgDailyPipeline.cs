@@ -1,4 +1,4 @@
-﻿using LogForesight.Core.Models;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Analysis;
@@ -55,7 +55,7 @@ internal static class PrtgDailyPipeline
         var oldest = days[^1].Date;
 
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
-            runRecorder, result, useAi, progress, prtgFindings, dispatch) = ctx;
+            runRecorder, result, useAi, progress, prtgFindings, dispatch, workflow, prtgEnabled) = ctx;
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
@@ -64,6 +64,7 @@ internal static class PrtgDailyPipeline
         var totalFailedSensors = 0;
         var totalValuesWritten = 0;
         var diskAssessmentFailed = false;
+        string? interruptedDayReason = null;
 
         // 逐日累計（規則評估、歸戶、觸發式取數）在 finally 才寫進執行紀錄：
         // 中途被停止或擲例外時，已經評估完的日子也要留下逐日結果，執行總表才不會整排「—」。
@@ -76,6 +77,7 @@ internal static class PrtgDailyPipeline
         var conservativeStrategy = false;
 
         var parentToken = ct;
+        var planned = new Dictionary<DateTime, PrtgPlannedDay>();
         PrtgOperationScope? operation = null;
         try
         {
@@ -98,9 +100,11 @@ internal static class PrtgDailyPipeline
             client.OperationCheckpoint = operationScope.Checkpoint;
             var monitoringPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
             var pilotReady = monitoringPolicy.Ready(systemSettings.PrtgUrl);
+            var evaluationHostSnapshot = hostStore.CapturePrtgSnapshot();
+            var evaluationHosts = evaluationHostSnapshot.Hosts.ToDictionary(host => host.HostId, host => host.ToWebHost());
             var requestedHostIds = hostIds;
             if (pilotReady)
-                hostIds = SelectActivePilotHostIds(monitoringPolicy.HostIds, requestedHostIds, hostStore.GetAll);
+                hostIds = SelectActivePilotHostIds(monitoringPolicy.HostIds, requestedHostIds, () => evaluationHosts.Values.ToList());
             else
                 prtgConsole.WriteLine("尚未確認 Core 身分與試點清單；本趟只同步診斷資料，不發布正式 PRTG 判定。");
 
@@ -276,6 +280,8 @@ internal static class PrtgDailyPipeline
                 .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category))
                 .ToList();
             var reportedDuplicateRuleWarnings = new HashSet<string>();
+            var parentProducerSucceeded = true;
+            var parentTaskAwaited = false;
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，不硬造（docs/PRTG-SPEC.md §5）。
             // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。
@@ -290,25 +296,104 @@ internal static class PrtgDailyPipeline
 
             // 兩段式：處理最新一天的當下，較舊日期的 finding 還沒評估也還沒寫進資料庫，
             // 跨日判定只查資料庫會少算。所以先對全部日期評估並歸戶（不發佈），再逐日標註、抑制、發佈、追加。
-            var planned = new Dictionary<DateTime, PrtgPlannedDay>();
             // partial 同步會保留其他主機的鏡像；歸戶也必須套本趟主機範圍，
             // 不能因舊鏡像仍在就替未選取、已停用或已合併主機保存新判定。
-            var evaluationHostIds = hostStore.GetAll()
+            var evaluationHostIds = evaluationHosts.Values
                 .Where(h => PrtgFormalEligibility.HostAllowed(h, systemSettings, monitoringPolicy) && (hostIds == null || hostIds.Contains(h.HostId)))
                 .Select(h => h.HostId).ToHashSet();
-            var timelineEvidence = new Dictionary<long, PrtgSensorTimelineEvidence>();
-            var currentMaps = ResolveHostMapRows(newest).Where(m => m.MapStatus == PrtgMapStatus.Ok &&
-                m.HostId.HasValue && evaluationHostIds.Contains(m.HostId.Value)).ToDictionary(m => m.DeviceObjid, m => m.HostId!.Value);
-            if (pilotReady)
+            var resourceModeSnapshots = new Dictionary<long, PrtgResourcePressureModeHostSnapshot>();
+            var resourceModeSnapshotFailures = new HashSet<long>();
+            foreach (var hostId in evaluationHostIds)
             {
-                var collector = new PrtgSensorTimelineCollector(backend, client);
-                var selectedSensors = sensorStatuses.Where(s => monitoringPolicy.SensorIds.Contains(s.Objid) && currentMaps.ContainsKey(s.DeviceObjid)).ToArray();
-                for (var index = 0; index < selectedSensors.Length; index++)
+                try
                 {
+                    resourceModeSnapshots[hostId] = new PrtgResourcePressureModeStore(backend.Blob(
+                        PrtgResourcePressureModeStore.BlobKey(hostId))).ReadHostSnapshot(hostId);
+                }
+                catch (Exception modeSnapshotError) when (modeSnapshotError is not OperationCanceledException)
+                {
+                    resourceModeSnapshotFailures.Add(hostId);
+                    Log.Warn(modeSnapshotError, "PRTG mode revocation snapshot unavailable for host {HostId}; its formal attach will be fenced", hostId);
+                }
+            }
+            prtgStore.EnsureResourceAuthorityRevisions(evaluationHostIds);
+            var resourceAuthorityRevisionsAtEvaluation = prtgStore.ReadResourceAuthorityRevisions(evaluationHostIds);
+            var resourceObservationRevisionsAtEvaluation = prtgStore.ReadResourceObservationRevisions(evaluationHostIds);
+            // A qualified trend is another reason of the same disk resource episode. Complete
+            // its bounded history assessment before evaluating two-hour pressure and building manifests.
+            var qualifiedTrendReasons = new Dictionary<long, IReadOnlyList<PrtgResourceFormalReasonObservation>>();
+            var trendEvidenceFacts = new Dictionary<long, string>();
+            var trendCatalog = PrtgResourceCurrentRuleCatalog.Load(backend);
+            bool HasEnabledValueRule(string? category) => (category?.ToLowerInvariant() switch
+            {
+                PrtgSensorCategories.Cpu => trendCatalog.For(PrtgResourceFamily.Cpu),
+                PrtgSensorCategories.Memory => trendCatalog.For(PrtgResourceFamily.Memory),
+                PrtgSensorCategories.Disk => trendCatalog.For(PrtgResourceFamily.Disk),
+                _ => null
+            }) is not null;
+            var trendRule = prtgRules.SingleOrDefault(rule => rule.Id == trendCatalog.DiskTrendRuleId);
+            if (pilotReady && newest.Date < DateTime.Today && trendRule is not null && trendCatalog.DiskTrendEnabled)
+            {
+                try
+                {
+                    var assessment = new PrtgDiskAssessmentService(prtgStore, hostStore,
+                        new SystemSettingsStore(backend.Blob("system_settings")),
+                        new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
+                        new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)));
+                    var trendOperation = assessment.BeginAssessment(DateOnly.FromDateTime(newest.Date), newest.Date,
+                        trendRule, PrtgDiskDecisionMode.Formal, evaluationHostIds.ToArray(), monitoringPolicy.SensorIds, evaluationHostSnapshot);
+                    var trendEvidenceAsOfUtc = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeToUtc(
+                        DateTime.SpecifyKind(newest.Date.AddDays(1), DateTimeKind.Unspecified), TimeZoneInfo.Local), DateTimeKind.Utc);
+                    var qualifiedActiveTrendSensors = new HashSet<long>();
+                    for (var offset = 0; ;)
+                    {
+                        operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
+                        var page = assessment.AssessPage(trendOperation, offset, PrtgDiskAssessmentService.MaximumBatchSize);
+                        var identities = prtgStore.GetResourceIdentities(page.Rows.Select(row => row.SensorObjid));
+                        foreach (var row in page.Rows)
+                        {
+                            if (row.Readiness.Status != PrtgValueReadinessStatus.Ready ||
+                                row.EvidenceValidity is not { IsValid: true } ||
+                                !identities.TryGetValue(row.SensorObjid, out var identity) || !identity.Active ||
+                                identity.PendingReconciliation || identity.SourceGeneration != monitoringPolicy.SourceGeneration ||
+                                identity.DeviceId != row.DeviceObjid || identity.HostId != row.CurrentHostId ||
+                                row.EvidenceFingerprint.Length != 64) continue;
+                            var reasonState = row.Decision.Finding is not null ? PrtgResourceFormalReasonState.Active :
+                                row.Decision.Exclusion == PrtgDiskDecisionExclusion.TrendNoHit
+                                    ? PrtgResourceFormalReasonState.Recovered : PrtgResourceFormalReasonState.Unknown;
+                            var summary = string.Concat(row.Decision.Reason.Where(character => !char.IsControl(character) &&
+                                character != '<' && character != '>').Take(256));
+                            qualifiedTrendReasons[row.SensorObjid] = [new(row.SensorObjid, identity.SourceGeneration,
+                                identity.Generation, identity.ChannelGeneration,
+                                identity.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                "disk-seven-day-low-water-trend", reasonState, row.EvidenceFingerprint, summary,
+                                EvidenceDay: DateTime.SpecifyKind(newest.Date, DateTimeKind.Unspecified),
+                                SourceRuleId: trendRule.Id,
+                                SourceRuleFingerprint: PrtgResourceCurrentRuleCatalog.ComputeRuleFingerprint(trendRule),
+                                EvidenceAsOfUtc: trendEvidenceAsOfUtc)];
+                            trendEvidenceFacts[row.SensorObjid] = row.EvidenceFingerprint;
+                            if (reasonState == PrtgResourceFormalReasonState.Active)
+                                qualifiedActiveTrendSensors.Add(row.SensorObjid);
+                        }
+                        var assessedThrough = Math.Min(page.CandidateCount, page.Offset + page.AssessedCount);
+                        prtgConsole.WriteLine($"磁碟候選評估 {assessedThrough}/{page.CandidateCount}；已有趨勢 finding {qualifiedActiveTrendSensors.Count} 筆，尚未提交判定。");
+                        if (!page.HasMore) break;
+                        if (page.AssessedCount <= 0) throw new InvalidOperationException("Disk trend page made no progress.");
+                        offset += page.AssessedCount;
+                    }
+                    assessment.CompleteAssessment(trendOperation);
+                    var liveCatalog = PrtgResourceCurrentRuleCatalog.Load(backend);
+                    if (!liveCatalog.DiskTrendEnabled || liveCatalog.DiskTrendRuleId != trendRule.Id ||
+                        liveCatalog.DiskTrendRuleFingerprint != trendCatalog.DiskTrendRuleFingerprint)
+                        throw new InvalidOperationException("Disk trend rule changed during history assessment.");
                     operationScope.Checkpoint();
-                    var sensor = selectedSensors[index];
-                    timelineEvidence[sensor.Objid] = await collector.CollectAsync(sensor.Objid, currentMaps[sensor.DeviceObjid], monitoringPolicy, ct);
-                    prtgConsole.WriteLine($"狀態涵蓋 {index + 1}/{selectedSensors.Length}：sensor {sensor.Objid}，{timelineEvidence[sensor.Objid].QualityReason}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception error)
+                {
+                    qualifiedTrendReasons.Clear(); trendEvidenceFacts.Clear(); diskAssessmentFailed = true;
+                    Log.Error(error, "PRTG disk trend evidence is incomplete; preserving existing resource reasons");
+                    prtgConsole.WriteLine("  ⚠ 磁碟趨勢證據未完整：" + error.Message);
                 }
             }
 
@@ -320,8 +405,32 @@ internal static class PrtgDailyPipeline
                 ct.ThrowIfCancellationRequested();
                 progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
-                var state = dayStates[day] = new PrtgDayState();
+                var state = dayStates[day] = new PrtgDayState { DiskAssessmentFailed = diskAssessmentFailed };
                 var plan = planned[day] = new PrtgPlannedDay();
+                foreach (var (hostId, snapshot) in resourceModeSnapshots)
+                {
+                    plan.ModeBlobVersionsByHost[hostId] = snapshot.BlobVersion;
+                    plan.ModeFenceRequiredByHost.Add(hostId);
+                    foreach (var revocation in snapshot.Revocations)
+                    {
+                        if (!plan.PendingModeRevocationsByHost.TryGetValue(hostId, out var pending))
+                            plan.PendingModeRevocationsByHost[hostId] = pending = new List<PrtgResourcePressureModeRevocation>();
+                        pending.Add(revocation);
+                        if (revocation.SourceGeneration.Length > 0 && revocation.ResourceGeneration.Length > 0)
+                        {
+                            AddPressureGenerationFence(plan, hostId, new(revocation.SensorObjid,
+                                revocation.SourceGeneration, revocation.ResourceGeneration));
+                            AddExactModeRevocationFence(plan, hostId, new(revocation.SensorObjid,
+                                revocation.SourceGeneration, revocation.ResourceGeneration));
+                        }
+                    }
+                }
+                foreach (var hostId in resourceModeSnapshotFailures)
+                {
+                    plan.ModeBlobVersionsByHost[hostId] = -1;
+                    plan.ModeFenceRequiredByHost.Add(hostId);
+                    plan.PendingReasonByHost[hostId] = "resource-mode-snapshot-unavailable";
+                }
                 if (days.Count > 1)
                 {
                     prtgConsole.WriteLine($"第 {i + 1}／{days.Count} 天（{day:yyyy-MM-dd}）");
@@ -338,25 +447,78 @@ internal static class PrtgDailyPipeline
                         }
                     }
                     state.MapAvailable = deviceToHost.Count > 0;
-
+                    bool RequiresStateTimeline(PrtgSensorStatusInput sensor) => prtgRules.Any(rule =>
+                        (rule.PrtgRuleCode is PrtgRuleEvaluator.RuleDown or PrtgRuleEvaluator.RuleWarning or PrtgRuleEvaluator.RuleFlapping) &&
+                        PrtgFormalEligibility.RuleCategoryMatches(rule, sensor.Category));
                     // 規則庫沒有 PRTG 規則：該日照樣發佈空結果（「算不出東西」與「還沒算完」要分得出來）
-                    var applicableEvidence = timelineEvidence.Where(p => p.Value.SourceGeneration == monitoringPolicy.SourceGeneration &&
-                        sensorToDevice.TryGetValue(p.Key, out var device) &&
-                        deviceToHost.TryGetValue(device, out var mappedHost) && mappedHost == p.Value.HostId)
-                        .ToDictionary(p => p.Key, p => p.Value);
-                    foreach (var proof in applicableEvidence.Values)
+                    var stateSemanticFactsByHost = new Dictionary<long, List<string>>();
+                    var stateIdentityFactsByHost = new Dictionary<long, List<string>>();
+                    var pageFindings = new List<PrtgFinding>();
+                    var duplicateWarnings = new HashSet<string>(StringComparer.Ordinal);
+                    // The background incremental worker owns PRTG history requests. Daily reads only
+                    // persisted bounded pages; no fleet-sized dictionary retains raw timeline payloads.
+                    var selectedStateSensors = sensorStatuses.Where(sensor => monitoringPolicy.SensorIds.Contains(sensor.Objid) &&
+                            deviceToHost.ContainsKey(sensor.DeviceObjid) && RequiresStateTimeline(sensor))
+                        .OrderBy(sensor => sensor.Objid).ToArray();
+                    foreach (var sensorPage in selectedStateSensors.Chunk(12))
                     {
-                        var begin = new DateTimeOffset(day); var finish = begin.AddDays(1);
-                        var periods = proof.Periods(begin, finish);
-                        if (periods.Sum(p => (p.Through - p.From).TotalSeconds) >= (finish - begin).TotalSeconds &&
-                            periods.All(p => !string.Equals(p.Status, "Unknown", StringComparison.OrdinalIgnoreCase)))
+                        operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
+                        var pageIds = sensorPage.Select(sensor => sensor.Objid).ToArray();
+                        var evidencePage = PrtgSensorTimelineStore.ReadManyBoundedForSilentRule(backend.CreateContext, pageIds);
+                        var identityPage = prtgStore.GetResourceIdentities(pageIds);
+                        var applicableEvidence = new Dictionary<long, PrtgSensorTimelineEvidence>();
+                        foreach (var pair in evidencePage)
                         {
-                            if (!plan.ReevaluatedResources.TryGetValue(proof.HostId, out var resources))
-                                plan.ReevaluatedResources[proof.HostId] = resources = new();
-                            resources[proof.SensorId] = proof.ResourceGeneration;
+                            if (!sensorToDevice.TryGetValue(pair.Key, out var device) ||
+                                !deviceToHost.TryGetValue(device, out var mappedHost) || mappedHost != pair.Value.HostId ||
+                                !identityPage.TryGetValue(pair.Key, out var identity) ||
+                                !PrtgResourceQualification.IsCurrent(pair.Value, identity, monitoringPolicy.SourceGeneration,
+                                    pair.Key, device, mappedHost)) continue;
+                            applicableEvidence[pair.Key] = pair.Value;
+                            var proof = pair.Value;
+                            var begin = new DateTimeOffset(day); var finish = begin.AddDays(1);
+                            var periods = proof.Periods(begin, finish);
+                            var sensorInput = sensorStatuses.FirstOrDefault(sensor => sensor.Objid == pair.Key);
+                            if (sensorInput is not null && RequiresStateTimeline(sensorInput) &&
+                                periods.Sum(period => (period.Through - period.From).TotalSeconds) >= (finish - begin).TotalSeconds &&
+                                periods.All(period => !string.Equals(period.Status, "Unknown", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                if (!plan.ReevaluatedResources.TryGetValue(proof.HostId, out var resources))
+                                    plan.ReevaluatedResources[proof.HostId] = resources = new();
+                                resources[proof.SensorId] = proof.ResourceGeneration;
+                            }
+                            if (!stateIdentityFactsByHost.TryGetValue(proof.HostId, out var identityFacts))
+                                stateIdentityFactsByHost[proof.HostId] = identityFacts = new List<string>();
+                            identityFacts.Add($"{identity.SensorId}:{identity.DeviceId}:{identity.HostId}:{identity.Epoch}:{identity.Generation}:{identity.ResourceFingerprint}");
+                            if (!stateSemanticFactsByHost.TryGetValue(proof.HostId, out var semanticFacts))
+                                stateSemanticFactsByHost[proof.HostId] = semanticFacts = new List<string>();
+                            semanticFacts.Add(HostDayWorkflowFingerprint.HashParts(periods.Select(period =>
+                                $"{proof.SensorId}:{proof.ResourceGeneration}:{proof.ChannelGeneration}:{proof.DiskSemanticFingerprint}:{period.From:O}:{period.Through:O}:{period.Status}")));
                         }
+                        var pageResult = PrtgCoveredRuleEvaluator.Evaluate(day, sensorPage, applicableEvidence, prtgRules);
+                        pageFindings.AddRange(pageResult);
+                        duplicateWarnings.UnionWith(pageResult.DuplicateRuleWarnings);
                     }
-                    var findings = PrtgCoveredRuleEvaluator.Evaluate(day, sensorStatuses, applicableEvidence, prtgRules);
+                    var silentRuleEnabled = prtgRules.Any(rule => rule.Enabled &&
+                        string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleSilent, StringComparison.OrdinalIgnoreCase));
+                    PrtgSilentPresenceEvaluation silentEvaluation;
+                    try
+                    {
+                        silentEvaluation = new PrtgSilentPresenceFormalConsumer(backend).EvaluateWithReadiness(
+                            day, monitoringPolicy, systemSettings.PrtgUrl, deviceToHost, prtgRules);
+                        if (silentRuleEnabled && day == newest && silentEvaluation.Findings.Count == 0)
+                            prtgConsole.WriteLine($"{day:yyyy-MM-dd} 靜默監測判定等待：沒有同來源日、完整且符合目前 policy/scope 的原生狀態快照與涵蓋時間軸。");
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(ex, "PRTG 靜默監測來源證據載入失敗；本日不產生靜默 finding");
+                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 靜默監測判定等待：來源證據無法驗證（{ex.Message}）。");
+                        silentEvaluation = new PrtgSilentPresenceEvaluation([], deviceToHost.ToDictionary(
+                            pair => pair.Key, pair => new PrtgSilentPresenceDeviceReadiness(pair.Key, pair.Value,
+                                PrtgSilentPresenceReadinessState.Waiting, "source-proof-read-failed", string.Empty, [])));
+                    }
+                    var findings = new PrtgEvaluationResult(pageFindings, duplicateWarnings.Order().ToArray(), 0);
                     foreach (var warning in findings.DuplicateRuleWarnings)
                     {
                         if (reportedDuplicateRuleWarnings.Add(warning))
@@ -368,6 +530,7 @@ internal static class PrtgDailyPipeline
 
                     if (!state.MapAvailable)
                     {
+                        foreach (var hostId in evaluationHostIds) plan.PendingReasonByHost[hostId] = "host-map-unavailable-for-day";
                         // 用今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一樣（docs/PRTG-SPEC.md §5「回填不做主機對應」同一條線）。
                         prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶");
                         continue;
@@ -383,17 +546,402 @@ internal static class PrtgDailyPipeline
                                 hostFindings = new List<LogIssueSignature>();
                                 findingsByHost[hostId] = hostFindings;
                             }
-                            var signature = PrtgFindingMapper.ToSignature(finding, day);
+                            var signature = PrtgFindingMapper.ToSignature(finding, day, hostId);
                             hostFindings.Add(signature);
                             plan.Observations.Add((hostId, finding, signature));
                             state.TriggerHosts.Add(hostId);
                         }
                     }
                     state.AttributedHosts = findingsByHost.Count;
+                    var resourceFormalFindingCount = 0;
+                    var resourceDecisionFactsByHost = new Dictionary<long, List<string>>();
+                    var resourceReadinessCompleteByHost = new HashSet<long>();
+                    foreach (var (deviceId, readiness) in silentEvaluation.Devices)
+                    {
+                        if (readiness.State is PrtgSilentPresenceReadinessState.QualifiedHit or PrtgSilentPresenceReadinessState.QualifiedNoHit or
+                            PrtgSilentPresenceReadinessState.ExplicitlyExcluded)
+                        {
+                            if (!resourceDecisionFactsByHost.TryGetValue(readiness.HostId, out var facts))
+                                resourceDecisionFactsByHost[readiness.HostId] = facts = new List<string>();
+                            facts.Add($"silent:{deviceId}:{readiness.State}:{readiness.Reason}:{readiness.EvidenceFingerprint}");
+                        }
+                        if (readiness.State == PrtgSilentPresenceReadinessState.Waiting)
+                            plan.PendingReasonByHost[readiness.HostId] = "silent-presence-" + readiness.Reason;
+                        foreach (var finding in readiness.Findings)
+                        {
+                            if (!findingsByHost.TryGetValue(readiness.HostId, out var hostFindings))
+                                findingsByHost[readiness.HostId] = hostFindings = new List<LogIssueSignature>();
+                            var signature = PrtgFindingMapper.ToSignature(finding, day, readiness.HostId);
+                            hostFindings.Add(signature);
+                            plan.Observations.Add((readiness.HostId, finding, signature));
+                            state.TriggerHosts.Add(readiness.HostId);
+                            resourceFormalFindingCount++;
+                        }
+                    }
+                    var silentReadyHosts = deviceToHost.Values.Distinct()
+                        .Where(hostId => silentEvaluation.IsReadyForHost(hostId)).ToHashSet();
+                    var selectedValueHosts = sensorStatuses.Where(sensor => monitoringPolicy.SensorIds.Contains(sensor.Objid) &&
+                        deviceToHost.ContainsKey(sensor.DeviceObjid) && TryWorkflowFamily(sensor.Category, out _) && HasEnabledValueRule(sensor.Category))
+                        .Select(sensor => deviceToHost[sensor.DeviceObjid]).ToHashSet();
+                    foreach (var hostId in deviceToHost.Values.Distinct().Where(hostId => !selectedValueHosts.Contains(hostId)))
+                    {
+                        var hostSensorIds = selectedStateSensors.Where(sensor => deviceToHost[sensor.DeviceObjid] == hostId)
+                            .Select(sensor => sensor.Objid).ToArray();
+                        var epoch = PrtgResourcePeriodConsumer.ComputeSelectionEpoch(prtgStore.GetResourceIdentities(hostSensorIds).Values);
+                        var fingerprint = PrtgResourcePeriodConsumer.ComputeSelectedSensorFingerprint(monitoringPolicy, [hostId], hostSensorIds);
+                        workflow?.BeginPrtgReadiness(hostId, day, epoch, fingerprint, []);
+                        workflow?.ClosePrtgSelectedSensors(hostId, day, epoch, fingerprint);
+                        resourceReadinessCompleteByHost.Add(hostId);
+                    }
+
+                    // Publish the bounded live resource consumer as a separate finite readiness
+                    // pass. Its selection is frozen globally before paging; only assessments whose
+                    // complete two-hour window maps to this host day can change its daily findings.
+                    if (pilotReady)
+                    {
+                        var familySensors = sensorStatuses.Where(sensor => monitoringPolicy.SensorIds.Contains(sensor.Objid) &&
+                                deviceToHost.ContainsKey(sensor.DeviceObjid) &&
+                                TryWorkflowFamily(sensor.Category, out _) && HasEnabledValueRule(sensor.Category))
+                            .GroupBy(sensor => sensor.Objid).Select(group => group.First())
+                            .Select(sensor => (Sensor: sensor, HostId: deviceToHost[sensor.DeviceObjid],
+                                Family: WorkflowFamily(sensor.Category!)))
+                            .ToArray();
+                        if (familySensors.Length == 0)
+                        {
+                            // No value rules are required for a state-only host. Its exact selected
+                            // state sensor set and covered periods still gate formal completion.
+                        }
+                        else
+                        {
+                            var sensorIds = familySensors.Select(item => item.Sensor.Objid).Distinct().Order().ToArray();
+                            var identities = prtgStore.GetResourceIdentities(sensorIds);
+                            var readinessEpoch = PrtgResourcePeriodConsumer.ComputeSelectionEpoch(identities.Values);
+                            var selectionFingerprint = PrtgResourcePeriodConsumer.ComputeSelectedSensorFingerprint(
+                                monitoringPolicy, evaluationHostIds, sensorIds);
+                            var expectedByHost = familySensors.GroupBy(item => item.HostId).ToDictionary(group => group.Key,
+                                group => group.GroupBy(item => item.Family).ToDictionary(family => family.Key, family => family.Count()));
+                            var familyEnumByName = Enum.GetValues<PrtgWorkflowResourceFamily>()
+                                .ToDictionary(family => family.ToString(), family => family, StringComparer.OrdinalIgnoreCase);
+                            var readinessStarted = new HashSet<long>();
+                            foreach (var (hostId, expectedCounts) in expectedByHost)
+                            {
+                                workflow?.BeginPrtgReadiness(hostId, day, readinessEpoch, selectionFingerprint,
+                                    expectedCounts.Keys, expectedCounts);
+                                readinessStarted.Add(hostId);
+                            }
+
+                            {
+                                var completeDayWindow = day.Date < DateTime.Today;
+                                try
+                                {
+                                    if (!completeDayWindow)
+                                    {
+                                        foreach (var hostId in readinessStarted)
+                                            plan.PendingReasonByHost[hostId] = "resource-period-day-not-closed";
+                                    }
+                                    else
+                                    {
+                                        var authorityNowUtc = DateTime.UtcNow;
+                                        var consumer = new PrtgResourcePeriodConsumer(backend,
+                                            new SystemSettingsStore(backend.Blob("system_settings")));
+                                        var returnedSensorIds = new HashSet<long>();
+                                        var returnedFamilies = new HashSet<PrtgWorkflowResourceFamily>();
+                                        for (var offset = 0; offset < sensorIds.Length; offset += PrtgResourcePeriodConsumer.MaximumBatchSize)
+                                        {
+                                            operationScope.Checkpoint();
+                                            var pageIds = sensorIds.Skip(offset).Take(PrtgResourcePeriodConsumer.MaximumBatchSize).ToArray();
+                                            var pageHosts = familySensors.Where(item => pageIds.Contains(item.Sensor.Objid))
+                                                .Select(item => item.HostId).Distinct().ToArray();
+                                            // This is a host calendar day, not an instant. Scheduler dates may
+                                            // carry Local kind; preserve the stored parent while making the
+                                            // consumer's calendar-day representation explicit at this seam.
+                                            var hostCalendarDay = DateTime.SpecifyKind(day.Date, DateTimeKind.Unspecified);
+                                            var consumption = consumer.EvaluateClosedHostDayBatch(pageIds, hostCalendarDay, authorityNowUtc,
+                                                diskReasonObservations: day.Date == newest.Date ? qualifiedTrendReasons : null, evaluationHostIds: pageHosts);
+                                            var closedDay = consumption.ClosedDay;
+                                            var expectedPageEpoch = PrtgResourcePeriodConsumer.ComputeSelectionEpoch(
+                                                pageIds.Where(identities.ContainsKey).Select(id => identities[id]));
+                                            var expectedPageSelection = PrtgResourcePeriodConsumer.ComputeSelectedSensorFingerprint(
+                                                monitoringPolicy, pageHosts, pageIds);
+                                            if (closedDay is null || closedDay.EvidenceDay.Date != day.Date ||
+                                                !closedDay.SelectedSensorObjids.Order().SequenceEqual(consumption.SelectedSensorObjids.Order()) ||
+                                                closedDay.SelectionEpoch != consumption.SelectionEpoch ||
+                                                consumption.SelectionEpoch != expectedPageEpoch ||
+                                                consumption.SelectedSensorFingerprint != expectedPageSelection)
+                                                throw new InvalidOperationException("Resource selection changed during page evaluation.");
+                                            returnedSensorIds.UnionWith(consumption.SelectedSensorObjids);
+                                            foreach (var (hostId, version) in consumption.ModeBlobVersionsByHost)
+                                            {
+                                                if (plan.ModeBlobVersionsByHost.TryGetValue(hostId, out var priorVersion) &&
+                                                    priorVersion != version)
+                                                    plan.ModeBlobVersionsByHost[hostId] = -1;
+                                                else if (!plan.ModeBlobVersionsByHost.ContainsKey(hostId))
+                                                    plan.ModeBlobVersionsByHost[hostId] = version;
+                                            }
+                                            foreach (var (hostId, resources) in consumption.ResourcePressureReevaluatedResourcesByHost)
+                                            {
+                                                foreach (var generation in resources)
+                                                    AddPressureGenerationFence(plan, hostId, generation);
+                                            }
+                                            foreach (var revocation in consumption.PendingModeRevocations)
+                                            {
+                                                if (!plan.PendingModeRevocationsByHost.TryGetValue(revocation.HostId, out var pending))
+                                                    plan.PendingModeRevocationsByHost[revocation.HostId] = pending = new List<PrtgResourcePressureModeRevocation>();
+                                                if (!pending.Any(item => item.SensorObjid == revocation.SensorObjid &&
+                                                        item.Family == revocation.Family && item.SourceGeneration == revocation.SourceGeneration &&
+                                                        item.ResourceGeneration == revocation.ResourceGeneration))
+                                                    pending.Add(revocation);
+                                                if (revocation.SourceGeneration.Length > 0 && revocation.ResourceGeneration.Length > 0)
+                                                {
+                                                    var exact = new PrtgResourceGenerationFence(revocation.SensorObjid,
+                                                        revocation.SourceGeneration, revocation.ResourceGeneration);
+                                                    AddPressureGenerationFence(plan, revocation.HostId, exact);
+                                                    AddExactModeRevocationFence(plan, revocation.HostId, exact);
+                                                }
+                                            }
+                                            foreach (var enabledFamily in consumption.EnabledFamilies)
+                                                if (familyEnumByName.TryGetValue(enabledFamily.ToString(), out var mappedFamily))
+                                                    returnedFamilies.Add(mappedFamily);
+                                            foreach (var assessment in consumption.Assessments)
+                                            {
+                                                if (!readinessStarted.Contains(assessment.HostId) ||
+                                                    !familyEnumByName.TryGetValue(assessment.Family.ToString(), out var workflowFamily))
+                                                    continue;
+                                                var decision = assessment.Decision.Kind.ToString() switch
+                                                {
+                                                    "Hit" => PrtgWorkflowAssessment.Hit,
+                                                    "NoHit" => PrtgWorkflowAssessment.NoHit,
+                                                    "Recovery" => PrtgWorkflowAssessment.Recovery,
+                                                    _ => PrtgWorkflowAssessment.Insufficient
+                                                };
+                                                var windowCountsValid = closedDay.ExpectedWindowCountsBySensor.TryGetValue(
+                                                        assessment.SensorObjid, out var expectedWindows) &&
+                                                    closedDay.EvaluatedWindowCountsBySensor.TryGetValue(
+                                                        assessment.SensorObjid, out var evaluatedWindows) &&
+                                                    expectedWindows is > 0 and <= 25 && evaluatedWindows <= expectedWindows;
+                                                if (assessment.SingleWindowHostDay?.Date != day.Date ||
+                                                    !windowCountsValid || closedDay.ExceededBatchRowBound ||
+                                                    closedDay.RejectedSensorObjids.Contains(assessment.SensorObjid))
+                                                    decision = PrtgWorkflowAssessment.Insufficient;
+                                                if (assessment.Family == PrtgResourceFamily.Disk &&
+                                                    assessment.SingleWindowHostDay?.Date == day.Date &&
+                                                    (assessment.Decision.Kind is PrtgResourceDecisionKind.NoHit or PrtgResourceDecisionKind.Recovery) &&
+                                                    day.Date == newest.Date && qualifiedTrendReasons.TryGetValue(assessment.SensorObjid, out var trendObservations) &&
+                                                        trendObservations.Any(observation => observation.State is
+                                                            PrtgResourceFormalReasonState.Active or PrtgResourceFormalReasonState.Recovered))
+                                                {
+                                                    if (!plan.DiskReevaluatedResources.TryGetValue(assessment.HostId, out var diskResources))
+                                                        plan.DiskReevaluatedResources[assessment.HostId] = diskResources = new Dictionary<long, string>();
+                                                    diskResources[assessment.SensorObjid] = assessment.ResourceGeneration;
+                                                }
+                                                workflow?.PublishPrtgResourceAssessment(assessment.HostId, day, readinessEpoch,
+                                                    selectionFingerprint, workflowFamily, decision);
+                                                if (assessment.SingleWindowHostDay?.Date == day.Date &&
+                                                    assessment.Decision.Kind.ToString() != "Insufficient")
+                                                {
+                                                    if (!resourceDecisionFactsByHost.TryGetValue(assessment.HostId, out var facts))
+                                                        resourceDecisionFactsByHost[assessment.HostId] = facts = new List<string>();
+                                                    facts.Add($"{assessment.SensorObjid}:{assessment.Family}:{assessment.Decision.Kind}:{assessment.EvidenceFingerprint}");
+                                                }
+                                            }
+                                            foreach (var qualified in consumption.QualifiedFormalFindings.Where(item =>
+                                                item.EvidenceDay.Date == day.Date))
+                                            {
+                                                var finding = qualified.Finding;
+                                                if (!deviceToHost.TryGetValue(finding.DeviceObjid, out var findingHostId)) continue;
+                                                if (!findingsByHost.TryGetValue(findingHostId, out var hostFindings))
+                                                    findingsByHost[findingHostId] = hostFindings = new List<LogIssueSignature>();
+                                                var signature = PrtgFindingMapper.ToSignature(finding, day, findingHostId);
+                                                hostFindings.Add(signature); resourceFormalFindingCount++;
+                                                plan.Observations.Add((findingHostId, finding, signature));
+                                                state.TriggerHosts.Add(findingHostId);
+                                                if (finding.SensorObjid is { } sensorId && trendEvidenceFacts.TryGetValue(sensorId, out var trendFact))
+                                                {
+                                                    if (!resourceDecisionFactsByHost.TryGetValue(findingHostId, out var facts))
+                                                        resourceDecisionFactsByHost[findingHostId] = facts = new List<string>();
+                                                    facts.Add($"{sensorId}:qualified-trend:{trendFact}");
+                                                }
+                                            }
+                                        }
+                                        var finalEpoch = PrtgResourcePeriodConsumer.ComputeSelectionEpoch(
+                                            prtgStore.GetResourceIdentities(sensorIds).Values);
+                                        if (finalEpoch == readinessEpoch && returnedSensorIds.SetEquals(sensorIds) &&
+                                            returnedFamilies.SetEquals(familySensors.Select(item => item.Family)))
+                                        {
+                                            foreach (var hostId in readinessStarted)
+                                            {
+                                                workflow?.ClosePrtgSelectedSensors(hostId, day, readinessEpoch, selectionFingerprint);
+                                                if (workflow?.Get(hostId, day) is { PrtgReadinessComplete: true })
+                                                    resourceReadinessCompleteByHost.Add(hostId);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            foreach (var hostId in readinessStarted)
+                                                plan.PendingReasonByHost[hostId] = "resource-selection-changed-during-evaluation";
+                                        }
+                                    }
+                                }
+                                catch (OperationCanceledException) { throw; }
+                                catch (Exception assessmentError)
+                                {
+                                    foreach (var hostId in readinessStarted)
+                                        plan.PendingReasonByHost[hostId] = "resource-period-assessment-failed";
+                                    Log.Warn(assessmentError, "PRTG bounded resource period assessment failed for {Day}", day);
+                                    prtgConsole.WriteLine($"  ⚠ {day:yyyy-MM-dd} 資源期間評估未完成：{assessmentError.Message}");
+                                }
+                            }
+                        }
+                    }
+
+                    // A complete evaluation manifest exists for every mapped host, including zero findings.
+                    // Only compact fingerprints are persisted; per-resource evidence remains in its bounded stores.
+                    var ruleFingerprint = HostDayWorkflowFingerprint.HashParts(prtgRules
+                        .OrderBy(rule => rule.Id, StringComparer.Ordinal)
+                        .Select(rule => System.Text.Json.JsonSerializer.Serialize(rule)));
+                    var closedExpectedSensorsByHost = sensorStatuses
+                        .Where(sensor => monitoringPolicy.SensorIds.Contains(sensor.Objid) &&
+                            sensorToDevice.TryGetValue(sensor.Objid, out var deviceId) && deviceToHost.ContainsKey(deviceId) &&
+                            RequiresStateTimeline(sensor))
+                        .Select(sensor => (HostId: deviceToHost[sensorToDevice[sensor.Objid]], sensor.Objid))
+                        .GroupBy(item => item.HostId)
+                        .ToDictionary(group => group.Key, group => group.Select(item => item.Objid).Distinct().ToHashSet());
+                    var persistedWholeEvidenceHosts = workflow?.WholeEvidenceHostIdsForDay(day) ?? Array.Empty<long>();
+                    var wholeEvidenceHosts = deviceToHost.Values
+                        .Concat(workflow?.ParentHostIdsForDay(day) ?? Array.Empty<long>())
+                        .Concat(persistedWholeEvidenceHosts)
+                        .Distinct().ToArray();
+                    plan.WholeEvidenceHosts.UnionWith(wholeEvidenceHosts);
+                    foreach (var hostId in wholeEvidenceHosts)
+                    {
+                        if (!closedExpectedSensorsByHost.ContainsKey(hostId)) closedExpectedSensorsByHost[hostId] = new HashSet<long>();
+                        if (!plan.ReevaluatedResources.ContainsKey(hostId)) plan.ReevaluatedResources[hostId] = new Dictionary<long, string>();
+                    }
+                    var authoritativeParents = new Dictionary<long, DailyAnalysisRecord>();
+                    foreach (var hostId in deviceToHost.Values.Distinct())
+                    {
+                        if (!parentTaskAwaited)
+                        {
+                            parentTaskAwaited = true;
+                            try { await analysisTask.ConfigureAwait(false); }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception producerError)
+                            {
+                                parentProducerSucceeded = false;
+                                Log.Warn(producerError, "Daily analysis producer failed before PRTG manifest publication");
+                                prtgConsole.WriteLine("  ⚠ 分析工作失敗；PRTG 不建立替代主機日 parent。");
+                            }
+                        }
+                        if (!parentProducerSucceeded)
+                        {
+                            plan.PendingReasonByHost[hostId] = "analysis-parent-producer-failed";
+                            continue;
+                        }
+                        var host = evaluationHosts.GetValueOrDefault(hostId);
+                        if (host == null) continue;
+                        var parent = backend.RecordStore(new HostKey { HostId = hostId, HostName = host.HostName })
+                            .ReadRecent(day, 1).FirstOrDefault(row => row.HostId == hostId && row.Date.Date == day.Date);
+                        if (parent is { RecordId: > 0 } && parent.CanSupplementWithPrtg())
+                        {
+                            authoritativeParents[hostId] = parent;
+                            plan.CapturedParentPrtgFingerprintsByHost[hostId] =
+                                PrtgFindingMapper.Fingerprint(parent.TopIssues.Where(PrtgFindingMapper.IsPrtg));
+                        }
+                    }
+                    var livePolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    var liveRuleFingerprint = HostDayWorkflowFingerprint.HashParts(KnownIssueCatalog.Rules
+                        .Where(rule => string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && rule.Enabled)
+                        .OrderBy(rule => rule.Id, StringComparer.Ordinal)
+                        .Select(rule => System.Text.Json.JsonSerializer.Serialize(rule)));
+                    var liveHostMap = ResolveHostMapRows(day).Where(row => row.MapStatus == PrtgMapStatus.Ok &&
+                            row.HostId.HasValue && evaluationHostIds.Contains(row.HostId.Value))
+                        .GroupBy(row => row.DeviceObjid).ToDictionary(group => group.Key, group => group.Last().HostId!.Value);
+                    var publicationAuthorityCurrent = parentProducerSucceeded &&
+                        string.Equals(livePolicy.Revision, monitoringPolicy.Revision, StringComparison.Ordinal) &&
+                        string.Equals(livePolicy.SourceAuthorityFingerprint(systemSettings.PrtgUrl),
+                            monitoringPolicy.SourceAuthorityFingerprint(systemSettings.PrtgUrl), StringComparison.Ordinal) &&
+                        string.Equals(liveRuleFingerprint, ruleFingerprint, StringComparison.Ordinal) &&
+                        deviceToHost.Count == liveHostMap.Count && deviceToHost.All(pair =>
+                            liveHostMap.TryGetValue(pair.Key, out var liveHostId) && liveHostId == pair.Value);
+                    if (!publicationAuthorityCurrent)
+                        foreach (var hostId in deviceToHost.Values.Distinct())
+                            plan.PendingReasonByHost[hostId] = parentProducerSucceeded
+                                ? "formal-source-rule-or-host-mapping-drift" : "analysis-parent-producer-failed";
+                    var completeManifestHosts = publicationAuthorityCurrent ? closedExpectedSensorsByHost
+                        .Where(entry => prtgRules.Any(rule => !string.IsNullOrWhiteSpace(rule.PrtgRuleCode)) &&
+                            resourceReadinessCompleteByHost.Contains(entry.Key) &&
+                            silentReadyHosts.Contains(entry.Key) &&
+                            authoritativeParents.ContainsKey(entry.Key) &&
+                            plan.ReevaluatedResources.TryGetValue(entry.Key, out var covered) &&
+                            entry.Value.SetEquals(covered.Keys))
+                        .Select(entry => entry.Key).ToHashSet() : new HashSet<long>();
+                    var partialManifestHosts = publicationAuthorityCurrent
+                        ? deviceToHost.Values.Distinct().Where(hostId => !completeManifestHosts.Contains(hostId) &&
+                            authoritativeParents.ContainsKey(hostId) &&
+                            findingsByHost.TryGetValue(hostId, out var qualifiedFindings) && qualifiedFindings.Count > 0).ToHashSet()
+                        : new HashSet<long>();
+                    var manifestReadyHosts = completeManifestHosts.Union(partialManifestHosts).ToHashSet();
+                    state.FormalEvidencePending = deviceToHost.Values.Distinct().Any(hostId => !completeManifestHosts.Contains(hostId));
+                    foreach (var hostId in deviceToHost.Values.Distinct().Where(hostId => !manifestReadyHosts.Contains(hostId)))
+                    {
+                        if (!plan.PendingReasonByHost.ContainsKey(hostId))
+                            plan.PendingReasonByHost[hostId] = !prtgRules.Any(rule => !string.IsNullOrWhiteSpace(rule.PrtgRuleCode))
+                            ? "no-enabled-prtg-rules"
+                            : "timeline-resource-semantic-or-sample-quality-not-ready";
+                    }
+                    plan.ManifestsByHost = manifestReadyHosts.ToDictionary(hostId => hostId, hostId =>
+                    {
+                        var parent = authoritativeParents[hostId];
+                        var parentFindingFingerprint = plan.CapturedParentPrtgFingerprintsByHost[hostId];
+                        var resourcesFingerprint = HostDayWorkflowFingerprint.HashParts(stateIdentityFactsByHost.GetValueOrDefault(hostId) ?? []);
+                        var semanticFacts = (stateSemanticFactsByHost.GetValueOrDefault(hostId) ?? [])
+                            .Concat(resourceDecisionFactsByHost.GetValueOrDefault(hostId) ?? []);
+                        var semanticFingerprint = HostDayWorkflowFingerprint.HashParts(semanticFacts);
+                        var hostMappingFingerprint = HostDayWorkflowFingerprint.HashParts(deviceToHost
+                            .Where(pair => pair.Value == hostId).OrderBy(pair => pair.Key)
+                            .Select(pair => PrtgSilentPresenceMappingFingerprint.Compute(pair.Key, pair.Value)));
+                        var strategyFingerprint = HostDayWorkflowFingerprint.HashParts([
+                            systemSettings.PrtgFetchStrategy, monitoringPolicy.SourceTimeZoneId,
+                            monitoringPolicy.SourceCultureName, conservativeStrategy.ToString(),
+                            monitoringPolicy.SourceAuthorityFingerprint(systemSettings.PrtgUrl),
+                            hostMappingFingerprint]);
+                        var findingFingerprint = PrtgFindingMapper.Fingerprint(findingsByHost.GetValueOrDefault(hostId) ?? []);
+                        var waitReasonCodes = completeManifestHosts.Contains(hostId) ? new List<string>() :
+                            BuildManifestWaitReasonCodes(hostId, plan, silentEvaluation, resourceReadinessCompleteByHost,
+                                silentReadyHosts, closedExpectedSensorsByHost, plan.ReevaluatedResources);
+                        var outcome = completeManifestHosts.Contains(hostId) ? "complete" : "partial";
+                        return new PrtgDecisionManifest
+                        {
+                            ParentRecordId = parent.RecordId,
+                            ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(parent),
+                            PolicyRevision = monitoringPolicy.Revision,
+                            SourceGeneration = monitoringPolicy.SourceGeneration,
+                            ResourceAuthorityRevision = resourceAuthorityRevisionsAtEvaluation.GetValueOrDefault(hostId),
+                            ResourceModeBlobVersion = plan.ModeBlobVersionsByHost.GetValueOrDefault(hostId, -1),
+                            ResourceModeFenceRequired = plan.ModeFenceRequiredByHost.Contains(hostId),
+                            ResourceFingerprint = resourcesFingerprint,
+                            SemanticFingerprint = semanticFingerprint,
+                            StrategyFingerprint = strategyFingerprint,
+                            HostMappingFingerprint = hostMappingFingerprint,
+                            RuleFingerprint = ruleFingerprint,
+                            EvidenceFingerprint = HostDayWorkflowFingerprint.HashParts([
+                                monitoringPolicy.SourceGeneration, resourcesFingerprint, semanticFingerprint,
+                                strategyFingerprint, hostMappingFingerprint, ruleFingerprint, outcome,
+                                plan.ModeBlobVersionsByHost.GetValueOrDefault(hostId, -1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                string.Join("|", waitReasonCodes)]),
+                            ParentFindingFingerprint = parentFindingFingerprint,
+                            FindingFingerprint = findingFingerprint,
+                            CompletedAtUtc = DateTime.UtcNow,
+                            Outcome = outcome,
+                            WaitReasonCodes = waitReasonCodes
+                        };
+                    });
 
                     plan.FindingsByHost = findingsByHost;
                     // 折疊前總數：被合併掉的不在 findings 裡，「其中已合併 c 筆」才會是 N 的子集
-                    plan.FindingCount = findings.Count + findings.MergedCount;
+                    plan.FindingCount = findings.Count + findings.MergedCount + resourceFormalFindingCount;
+                    state.Findings += resourceFormalFindingCount;
+                    state.AttributedHosts = findingsByHost.Count;
                     plan.AcknowledgedCount = findings.Count(f => f.Acknowledged);
                     plan.MergedCount = findings.MergedCount;
                 }
@@ -404,178 +952,10 @@ internal static class PrtgDailyPipeline
                 catch (Exception ex)
                 {
                     plan.FindingsByHost = null;
+                    state.FormalEvidencePending = true;
+                    foreach (var hostId in evaluationHostIds) plan.PendingReasonByHost[hostId] = "prtg-rule-evaluation-failed";
                     Log.Error(ex, "PRTG 規則評估失敗，不影響分析成果");
                     prtgConsole.WriteLine($"\n  ✗ PRTG 規則評估失敗：{ex.Message}");
-                }
-            }
-
-            // 正式磁碟趨勢只讀取已落盤的日資料，且僅評估最新的已完成日。
-            // 它不等待本趟 triggered fetch，也不接觸 PRTG API；分頁上限由 assessment service 強制為 100。
-            if (pilotReady && newest.Date < DateTime.Today)
-            {
-                operationScope.Checkpoint();
-                var diskRules = KnownIssueCatalog.Rules.Where(r =>
-                    string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(r.PrtgRuleCode, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(r.PrtgSensorCategory, PrtgSensorCategories.Disk, StringComparison.OrdinalIgnoreCase) && r.Enabled)
-                    .OrderBy(r => r.Id, StringComparer.Ordinal).ToArray();
-                if (diskRules.Length > 1)
-                {
-                    var warning = $"PRTG 磁碟趨勢規則有 {diskRules.Length} 筆相同代碼／disk 分類，正式評估採用 Id 最小的「{diskRules[0].Id}」。";
-                    Log.Warn(warning);
-                    prtgConsole.WriteLine("  ⚠ " + warning);
-                }
-
-                var diskRule = diskRules.FirstOrDefault();
-                if (diskRule != null)
-                {
-                    try
-                    {
-                        var assessment = new PrtgDiskAssessmentService(prtgStore, hostStore,
-                            new SystemSettingsStore(backend.Blob("system_settings")),
-                            new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
-                            new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)));
-                        // 逐 sensor 重新核對通道，當前語意只能從第一次確認開始累積，不能追認先前 28 日。
-                        var semanticStore = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
-                        foreach (var sensor in sensorStatuses.Where(s => monitoringPolicy.SensorIds.Contains(s.Objid) &&
-                            s.Category == PrtgSensorCategories.Disk && timelineEvidence.ContainsKey(s.Objid)))
-                        {
-                            operationScope.Checkpoint();
-                            var proof = timelineEvidence[sensor.Objid];
-                            // 落地數值目前以 Web 主機時區解析；異時區不可用來宣稱可信的 28 日趨勢。
-                            if (!TimeZoneInfo.FindSystemTimeZoneById(monitoringPolicy.SourceTimeZoneId).HasSameRules(TimeZoneInfo.Local))
-                            {
-                                timelineEvidence[sensor.Objid] = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid))
-                                    .Update(e => { e.DiskSemanticCheckedAt = null; e.QualityReason = "disk-timezone-not-supported"; });
-                                prtgConsole.WriteLine($"sensor {sensor.Objid} 來源與伺服器時區不同；磁碟趨勢暫不發布，狀態涵蓋另行判讀。");
-                                continue;
-                            }
-                            using var semanticBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            semanticBudget.CancelAfter(TimeSpan.FromSeconds(20));
-                            try
-                            {
-                                var localStart = DateTime.SpecifyKind(newest.Date, DateTimeKind.Local);
-                                var points = prtgStore.GetValuesForSensor(sensor.Objid, localStart, localStart.AddDays(1))
-                                    .Where(v => v.AvgValue.HasValue && (v.Quality == PrtgDataQuality.Ok ||
-                                        v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
-                                    .Take(5).Select(v => new PrtgDiskSemanticPersistedPoint(
-                                        DateTime.SpecifyKind(v.PeriodStart, DateTimeKind.Local).ToUniversalTime(), v.AvgValue!.Value)).ToArray();
-                                var typed = await new PrtgDiskSemanticProbe(client).ProbeAsync(sensor.Objid,
-                                    localStart.ToUniversalTime(), localStart.AddDays(1).ToUniversalTime(), points, semanticBudget.Token);
-                                var now = DateTimeOffset.Now;
-                                var fingerprint = System.Text.Json.JsonSerializer.Serialize(new
-                                { typed.ChannelIdentifier, typed.ChannelName, typed.Unit, typed.Scale, typed.Direction });
-                                var stored = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e =>
-                                {
-                                    e.DiskSemanticCheckedAt = now;
-                                    if (typed.Status != PrtgDiskSemanticProbeStatus.Verified)
-                                    { e.DiskSemanticValidFrom = null; e.DiskSemanticFingerprint = ""; return; }
-                                    if (e.DiskSemanticFingerprint != fingerprint || e.DiskSemanticValidFrom == null)
-                                    { e.DiskSemanticFingerprint = fingerprint; e.DiskSemanticValidFrom = now; }
-                                });
-                                timelineEvidence[sensor.Objid] = stored;
-                                new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Save(new(
-                                    sensor.Objid, sensor.DeviceObjid, proof.HostId, sensor.SensorType, typed.Status.ToString(), typed.Summary,
-                                    typed.ChannelIdentifier, typed.ChannelName, typed.Unit, typed.Scale, typed.Direction,
-                                    typed.ComparedPointCount, typed.ValuesMatch, now.UtcDateTime, newest, PrtgDiskAssessmentService.ParserSemanticVersion));
-                                if (typed.Status == PrtgDiskSemanticProbeStatus.Verified)
-                                    semanticStore.RecordAutomatedVerification(new(sensor.Objid, sensor.DeviceObjid, proof.HostId, sensor.SensorType,
-                                        typed.ChannelIdentifier!, typed.ChannelName!, typed.Unit!, typed.Scale!.Value, typed.Direction!), true,
-                                        "正式評估前重新核對主通道與落地樣本；暖機期間不追認先前數值。", now.UtcDateTime, PrtgDiskAssessmentService.ParserSemanticVersion);
-                            }
-                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                            { timelineEvidence[sensor.Objid] = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e => e.DiskSemanticCheckedAt = null); prtgConsole.WriteLine($"sensor {sensor.Objid} 語意核對逾時；不發布磁碟趨勢。"); }
-                            catch (OperationCanceledException) { throw; }
-                            catch (Exception ex)
-                            { timelineEvidence[sensor.Objid] = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e => e.DiskSemanticCheckedAt = null); Log.Warn(ex, "磁碟語意重新核對失敗 sensor={Sensor}", sensor.Objid); }
-                        }
-                        var pageOffset = 0;
-                        var added = 0;
-                        var batchSize = PrtgDiskAssessmentService.EffectiveBatchSize(diskRule);
-                        PrtgDiskCandidateSnapshot? candidateSnapshot = null;
-                        PrtgDiskMetadataSnapshot? metadataSnapshot = null;
-                        var assessedRows = new List<PrtgDiskAssessmentRow>();
-                        while (true)
-                        {
-                            operationScope.Checkpoint();
-                            ct.ThrowIfCancellationRequested();
-                            var candidateMappingRevision = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
-                            var page = assessment.AssessCandidatePage(DateOnly.FromDateTime(newest), diskRule,
-                                PrtgDiskDecisionMode.Formal, batchSize,
-                                pageOffset, hostIds, monitoringPolicy.SensorIds, candidateSnapshot,
-                                candidateMappingRevision,
-                                monitoringPolicy.SourceGeneration, metadataSnapshot, deferMetadataFence: true);
-                            if (candidateMappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion())
-                                throw new InvalidOperationException("PRTG 主機映射版本於磁碟候選頁處理期間改變；已拒絕本次評估，請重啟新範圍。");
-                            operationScope.Checkpoint();
-                            candidateSnapshot = page.CandidateSnapshot;
-                            metadataSnapshot = page.MetadataSnapshot;
-                            assessedRows.AddRange(page.Rows);
-                            var stagedFindingCount = assessedRows.Count(x => x.Decision.Finding != null);
-                            prtgConsole.WriteLine($"磁碟候選評估 {assessedRows.Count}/{page.CandidateCount}；已有趨勢 finding {stagedFindingCount} 筆，尚未提交判定。");
-                            if (!page.HasMore) break;
-                            pageOffset += page.AssessedCount;
-                        }
-                        assessment.ValidateAssessmentSnapshot(candidateSnapshot, metadataSnapshot);
-                        operationScope.Checkpoint();
-                        ct.ThrowIfCancellationRequested();
-                        foreach (var row in assessedRows)
-                        {
-                            if (row.Decision.Exclusion == PrtgDiskDecisionExclusion.TrendNoHit && timelineEvidence.TryGetValue(row.SensorObjid, out var recovered) &&
-                                recovered.DiskSemanticCheckedAt >= DateTimeOffset.Now.AddMinutes(-10) && recovered.DiskSemanticValidFrom != null &&
-                                recovered.DiskSemanticValidFrom <= new DateTimeOffset(newest.AddDays(-27)) &&
-                                monitoringPolicy.ValidFrom <= new DateTimeOffset(newest.AddDays(-27)) && recovered.QualityReason == "covered" &&
-                                recovered.SourceGeneration == monitoringPolicy.SourceGeneration &&
-                                recovered.MappingRevision == backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion())
-                            {
-                                new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + row.SensorObjid))
-                                    .Update(e => e.DiskIncidentStartedAt = null);
-                                recovered.DiskIncidentStartedAt = null;
-                                if (!planned[newest].DiskReevaluatedResources.TryGetValue(row.CurrentHostId, out var resources))
-                                    planned[newest].DiskReevaluatedResources[row.CurrentHostId] = resources = new();
-                                resources[row.SensorObjid] = recovered.ResourceGeneration;
-                            }
-                            if (row.Decision.Finding is not { } finding) continue;
-                            if (!timelineEvidence.TryGetValue(finding.SensorObjid!.Value, out var diskProof) ||
-                                diskProof.QualityReason != "covered" || diskProof.MappingRevision != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ||
-                                diskProof.SourceGeneration != monitoringPolicy.SourceGeneration ||
-                                diskProof.DiskSemanticValidFrom == null || diskProof.DiskSemanticCheckedAt == null ||
-                                diskProof.DiskSemanticCheckedAt.Value < DateTimeOffset.Now.AddMinutes(-10) ||
-                                diskProof.DiskSemanticValidFrom > new DateTimeOffset(newest.AddDays(-27)) ||
-                                monitoringPolicy.ValidFrom > new DateTimeOffset(newest.AddDays(-27))) continue;
-                            var incident = diskProof.DiskIncidentStartedAt ?? new DateTimeOffset(newest.Date);
-                            new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + finding.SensorObjid))
-                                .Update(e => e.DiskIncidentStartedAt ??= incident);
-                            finding = finding with { SourceGeneration = diskProof.SourceGeneration,
-                                ResourceGeneration = diskProof.ResourceGeneration,
-                                IncidentStartedAt = incident };
-                            var findingsByHost = planned[newest].FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
-                            if (!findingsByHost.TryGetValue(row.CurrentHostId, out var hostFindings))
-                                findingsByHost[row.CurrentHostId] = hostFindings = new List<LogIssueSignature>();
-                            var signature = PrtgFindingMapper.ToSignature(finding, newest);
-                            hostFindings.Add(signature);
-                            planned[newest].Observations.Add((row.CurrentHostId, finding, signature));
-                            added++;
-                            dayStates[newest].TriggerHosts.Add(row.CurrentHostId);
-                        }
-                        if (added > 0)
-                        {
-                            var latestPlan = planned[newest];
-                            latestPlan.FindingCount += added;
-                            latestPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
-                            dayStates[newest].Findings += added;
-                            dayStates[newest].AttributedHosts = latestPlan.FindingsByHost.Count;
-                            prtgConsole.WriteLine($"磁碟趨勢正式評估完成（{newest:yyyy-MM-dd}）：新增 finding {added} 筆。");
-                        }
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        diskAssessmentFailed = true;
-                        dayStates[newest].DiskAssessmentFailed = true;
-                        Log.Error(ex, "PRTG 磁碟趨勢評估失敗；既有狀態型 findings 繼續發布");
-                        prtgConsole.WriteLine("  ⚠ 磁碟趨勢評估失敗，既有狀態型 findings 照常發布：" + ex.Message);
-                    }
                 }
             }
 
@@ -616,23 +996,113 @@ internal static class PrtgDailyPipeline
 
                 try
                 {
-                    foreach (var (hostId, resources) in plan.ReevaluatedResources)
+                    var finalPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    var finalRuleFingerprint = HostDayWorkflowFingerprint.HashParts(KnownIssueCatalog.Rules
+                        .Where(rule => string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && rule.Enabled)
+                        .OrderBy(rule => rule.Id, StringComparer.Ordinal)
+                        .Select(rule => System.Text.Json.JsonSerializer.Serialize(rule)));
+                    var finalHostMap = ResolveHostMapRows(day).Where(row => row.MapStatus == PrtgMapStatus.Ok &&
+                            row.HostId.HasValue && evaluationHostIds.Contains(row.HostId.Value))
+                        .GroupBy(row => row.DeviceObjid).ToDictionary(group => group.Key, group => group.Last().HostId!.Value);
+                    var finalResourceAuthorityRevisions = prtgStore.ReadResourceAuthorityRevisions(
+                        plan.ManifestsByHost?.Keys.AsEnumerable() ?? Enumerable.Empty<long>());
+                    var finalResourceObservationRevisions = prtgStore.ReadResourceObservationRevisions(
+                        plan.ManifestsByHost?.Keys.AsEnumerable() ?? Enumerable.Empty<long>());
+                    var globalPublicationFence = string.Equals(finalPolicy.Revision, monitoringPolicy.Revision, StringComparison.Ordinal) &&
+                        string.Equals(finalPolicy.SourceAuthorityFingerprint(systemSettings.PrtgUrl),
+                            monitoringPolicy.SourceAuthorityFingerprint(systemSettings.PrtgUrl), StringComparison.Ordinal) &&
+                        string.Equals(finalRuleFingerprint, HostDayWorkflowFingerprint.HashParts(prtgRules
+                            .OrderBy(rule => rule.Id, StringComparer.Ordinal)
+                            .Select(rule => System.Text.Json.JsonSerializer.Serialize(rule))), StringComparison.Ordinal);
+                    var finalManifests = new Dictionary<long, PrtgDecisionManifest>();
+                    if (globalPublicationFence && plan.ManifestsByHost is not null)
                     {
-                        operationScope.Checkpoint();
-                        var key = hostStore.GetAll().First(h => h.HostId == hostId);
-                        backend.RecordStore(new HostKey { HostId = hostId, HostName = key.HostName })
-                            .ReconcilePrtgStateFindings(hostId, day, resources, monitoringPolicy.SourceGeneration,
-                                (plan.FindingsByHost?.GetValueOrDefault(hostId) ?? []).Select(f => f.EventKey).ToHashSet());
+                        foreach (var (hostId, manifest) in plan.ManifestsByHost)
+                        {
+                            var currentHostMappingFingerprint = HostDayWorkflowFingerprint.HashParts(finalHostMap
+                                .Where(pair => pair.Value == hostId).OrderBy(pair => pair.Key)
+                                .Select(pair => PrtgSilentPresenceMappingFingerprint.Compute(pair.Key, pair.Value)));
+                            if (!string.Equals(currentHostMappingFingerprint, manifest.HostMappingFingerprint, StringComparison.Ordinal) ||
+                                manifest.SourceGeneration != finalPolicy.SourceGeneration ||
+                                manifest.ResourceModeFenceRequired && manifest.ResourceModeBlobVersion < 0 ||
+                                manifest.ResourceModeFenceRequired && backend.Blob(
+                                    PrtgResourcePressureModeStore.BlobKey(hostId)).ReadVersion() != manifest.ResourceModeBlobVersion ||
+                                manifest.ResourceAuthorityRevision <= 0 ||
+                                !resourceAuthorityRevisionsAtEvaluation.TryGetValue(hostId, out var evaluatedAuthorityRevision) ||
+                                manifest.ResourceAuthorityRevision != evaluatedAuthorityRevision ||
+                                !finalResourceAuthorityRevisions.TryGetValue(hostId, out var finalAuthorityRevision) ||
+                                manifest.ResourceAuthorityRevision != finalAuthorityRevision ||
+                                !resourceObservationRevisionsAtEvaluation.TryGetValue(hostId, out var evaluatedObservationRevision) ||
+                                !finalResourceObservationRevisions.TryGetValue(hostId, out var finalObservationRevision) ||
+                                evaluatedObservationRevision != finalObservationRevision)
+                                continue;
+                            var host = evaluationHosts.GetValueOrDefault(hostId);
+                            if (host is null) continue;
+                            var parent = backend.RecordStore(new HostKey { HostId = hostId, HostName = host.HostName })
+                                .ReadRecent(day, 1).FirstOrDefault(row => row.HostId == hostId && row.Date.Date == day.Date);
+                            if (parent is not { RecordId: > 0 } || parent.RecordId != manifest.ParentRecordId ||
+                                !parent.CanSupplementWithPrtg() ||
+                                !string.Equals(HostDayWorkflowFingerprint.ForParentRecord(parent), manifest.ParentFingerprint, StringComparison.Ordinal) ||
+                                !plan.CapturedParentPrtgFingerprintsByHost.TryGetValue(hostId, out var capturedParentFindingFingerprint) ||
+                                !string.Equals(PrtgFindingMapper.Fingerprint(parent.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
+                                    capturedParentFindingFingerprint, StringComparison.Ordinal))
+                                continue;
+                            finalManifests[hostId] = manifest;
+                        }
                     }
-                    foreach (var (hostId, resources) in plan.DiskReevaluatedResources)
+                    var timerResourceAuthorityRevisions = prtgStore.ReadResourceAuthorityRevisions(finalManifests.Keys);
+                    var timerResourceObservationRevisions = prtgStore.ReadResourceObservationRevisions(finalManifests.Keys);
+                    foreach (var hostId in plan.WholeEvidenceHosts)
                     {
-                        operationScope.Checkpoint();
-                        var key = hostStore.GetAll().First(h => h.HostId == hostId);
-                        backend.RecordStore(new HostKey { HostId = hostId, HostName = key.HostName })
-                            .ReconcilePrtgStateFindings(hostId, day, resources, monitoringPolicy.SourceGeneration,
-                                (plan.FindingsByHost?.GetValueOrDefault(hostId) ?? []).Select(f => f.EventKey).ToHashSet(),
-                                new HashSet<string> { PrtgDiskRuleDecision.RuleCode });
+                        if (finalManifests.TryGetValue(hostId, out var qualifiedManifest) &&
+                            qualifiedManifest.Outcome == "complete")
+                        {
+                            if (!timerResourceAuthorityRevisions.TryGetValue(hostId, out var currentAuthorityRevision) ||
+                                qualifiedManifest.ResourceAuthorityRevision != currentAuthorityRevision ||
+                                qualifiedManifest.ResourceModeFenceRequired && qualifiedManifest.ResourceModeBlobVersion < 0 ||
+                                qualifiedManifest.ResourceModeFenceRequired && backend.Blob(
+                                    PrtgResourcePressureModeStore.BlobKey(hostId)).ReadVersion() != qualifiedManifest.ResourceModeBlobVersion ||
+                                !resourceObservationRevisionsAtEvaluation.TryGetValue(hostId, out var evaluatedObservationRevision) ||
+                                !timerResourceObservationRevisions.TryGetValue(hostId, out var currentObservationRevision) ||
+                                evaluatedObservationRevision != currentObservationRevision)
+                            {
+                                finalManifests.Remove(hostId);
+                                plan.PendingReasonByHost[hostId] = "resource-profile-authority-changed";
+                                dayStates[day].FormalEvidencePending = true;
+                                workflow?.InvalidateWholePrtgEvidence(hostId, day, "resource-profile-authority-changed");
+                                continue;
+                            }
+                            if (workflow is not null)
+                            {
+                                var readyAtUtc = DateTime.UtcNow;
+                                if (!workflow.RecordWholePrtgEvidenceReady(hostId, day, qualifiedManifest, readyAtUtc.ToLocalTime()))
+                                {
+                                    finalManifests.Remove(hostId);
+                                    plan.PendingReasonByHost[hostId] = "whole-evidence-workflow-fence-rejected";
+                                    dayStates[day].FormalEvidencePending = true;
+                                    workflow.InvalidateWholePrtgEvidence(hostId, day, "whole-evidence-workflow-fence-rejected");
+                                }
+                                else
+                                {
+                                    var completedAtUtc = DateTime.UtcNow;
+                                    qualifiedManifest.CompletedAtUtc = completedAtUtc > readyAtUtc
+                                        ? completedAtUtc : readyAtUtc;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            workflow?.InvalidateWholePrtgEvidence(hostId, day,
+                                plan.PendingReasonByHost.GetValueOrDefault(hostId, "necessary-evidence-not-ready"));
+                        }
                     }
+                    if (plan.FindingsByHost is not null)
+                    {
+                        foreach (var hostId in plan.FindingsByHost.Keys.Where(hostId => !finalManifests.ContainsKey(hostId)).ToArray())
+                            plan.FindingsByHost.Remove(hostId);
+                    }
+                    if (plan.ManifestsByHost?.Keys.Any(hostId => !finalManifests.ContainsKey(hostId)) == true)
+                        dayStates[day].FormalEvidencePending = true;
                     if (plan.FindingsByHost == null)
                     {
                         prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
@@ -662,7 +1132,7 @@ internal static class PrtgDailyPipeline
 
                     var (escalatedCount, chronicCount) = PrtgCrossDay.Apply(daySignatures, history, day);
 
-                    var hostsById = hostStore.GetAll().ToDictionary(h => h.HostId);
+                    var hostsById = evaluationHosts;
                     var suppressedCount = 0;
                     var suppressedPatternIdsByHost = new Dictionary<long, IReadOnlySet<string>>();
                     foreach (var (hostId, hostFindings) in findingsByHost)
@@ -676,19 +1146,12 @@ internal static class PrtgDailyPipeline
                         suppressedPatternIdsByHost[hostId] = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
                     }
 
-                    // 先保存不依賴日誌紀錄的判定快照。影子資料尚未通過共同讀取切換，
-                    // 不據此建案／通知，也不把缺少來源身分與涵蓋證據的結果當作可信延續。
-                    var captured = 0;
-                    foreach (var group in plan.Observations.GroupBy(o => o.HostId))
-                    {
-                        operationScope.Checkpoint();
-                        captured += backend.PrtgObservationStore().Capture(group.Key, day, systemSettings.Revision,
-                            group.Select(o => (o.Finding, o.Signature)).ToArray(), systemSettings.PrtgUrl, runRecorder.RunId);
-                    }
-                    prtgConsole.WriteLine($"獨立 PRTG 判定快照：新增 {captured} 筆（可信版本等待合格 NetIQ 日紀錄補追加；未知品質只作診斷）。");
-
-                    prtgFindings.Publish(day, findingsByHost.ToDictionary(
-                        kv => kv.Key, kv => (IReadOnlyList<LogIssueSignature>)kv.Value), suppressedPatternIdsByHost);
+                    // Cross-day escalation and suppression are part of the decision we attach.
+                    // Keep the manifest's incoming finding fingerprint aligned with that final
+                    // version; SQL recomputes the merged parent+finding fingerprint atomically.
+                    foreach (var (hostId, manifest) in finalManifests)
+                        manifest.FindingFingerprint = PrtgFindingMapper.Fingerprint(
+                            findingsByHost.GetValueOrDefault(hostId) ?? []);
 
                     try
                     {
@@ -697,22 +1160,82 @@ internal static class PrtgDailyPipeline
                         var pendingHosts = 0;
                         var corroboratedCount = 0;
 
-                        foreach (var (hostId, hostFindings) in findingsByHost)
+                        // The loop can drop hosts whose transaction preimage became stale. Snapshot the
+                        // keys first so removing that host from the publication maps is safe.
+                        foreach (var hostId in finalManifests.Keys.AsEnumerable()
+                                     .Union(findingsByHost.Keys)
+                                     .Union(plan.ExactModeRevocationGenerationsByHost.Keys).Distinct().ToArray())
                         {
                             operationScope.Checkpoint();
+                            var hostFindings = findingsByHost.GetValueOrDefault(hostId) ?? [];
                             var hostName = hostsById.TryGetValue(hostId, out var webHost) ? webHost.HostName : string.Empty;
                             var hostRecordStore = backend.RecordStore(new HostKey { HostId = hostId, HostName = hostName });
+                            var manifest = finalManifests.GetValueOrDefault(hostId);
+                            var hasExactModeRevocations = plan.ExactModeRevocationGenerationsByHost.ContainsKey(hostId);
+                            var modeOnlyRevocation = manifest == null && hasExactModeRevocations;
+                            var reconciliation = manifest == null && !hasExactModeRevocations ? null : new PrtgStateReconciliationBatch(
+                                monitoringPolicy.SourceGeneration,
+                                manifest == null ? new Dictionary<long, string>() :
+                                    plan.ReevaluatedResources.GetValueOrDefault(hostId) ?? new Dictionary<long, string>(),
+                                manifest == null ? new Dictionary<long, string>() :
+                                    plan.DiskReevaluatedResources.GetValueOrDefault(hostId) ?? new Dictionary<long, string>(),
+                                manifest == null ? new HashSet<string>(StringComparer.Ordinal) :
+                                    hostFindings.Select(finding => finding.EventKey).ToHashSet(StringComparer.Ordinal),
+                                manifest == null ? plan.ExactModeRevocationGenerationsByHost.GetValueOrDefault(hostId) :
+                                    plan.ResourcePressureReevaluatedResourcesByHost.GetValueOrDefault(hostId),
+                                plan.ModeBlobVersionsByHost.GetValueOrDefault(hostId, -1),
+                                plan.ModeFenceRequiredByHost.Contains(hostId));
 
                             var hostCorroborated = 0;
-                            if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AttachPrtgFindings(
-                                    hostId, day, hostFindings, prtgFindings.SuppressedPatternIdsFor(hostId, day), out hostCorroborated, useAi)))
+                            if (prtgFindings.AttachExclusive(hostId, day, () => manifest is not null && reconciliation is not null
+                                    ? hostRecordStore.AttachPrtgFindingsWithReconciliation(hostId, day, hostFindings,
+                                        suppressedPatternIdsByHost.GetValueOrDefault(hostId, new HashSet<string>()), out hostCorroborated, useAi,
+                                        manifest!, reconciliation)
+                                    : reconciliation is not null
+                                        ? hostRecordStore.AttachPrtgModeRevocationsWithReconciliation(hostId, day, [],
+                                            suppressedPatternIdsByHost.GetValueOrDefault(hostId, new HashSet<string>()),
+                                            out hostCorroborated, useAi, reconciliation)
+                                        : hostRecordStore.AttachPrtgFindings(hostId, day, hostFindings,
+                                        suppressedPatternIdsByHost.GetValueOrDefault(hostId, new HashSet<string>()), out hostCorroborated, useAi)))
                             {
-                                appendedHosts++;
+                                if (!modeOnlyRevocation && hostFindings.Count > 0) appendedHosts++;
                                 corroboratedCount += hostCorroborated;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                var captured = 0;
+                                foreach (var observation in plan.Observations.Where(item => !modeOnlyRevocation && item.HostId == hostId))
+                                {
+                                    operationScope.Checkpoint();
+                                    try
+                                    {
+                                        captured += backend.PrtgObservationStore().Capture(hostId, day, systemSettings.Revision,
+                                            [(observation.Finding, observation.Signature)], systemSettings.PrtgUrl, runRecorder.RunId);
+                                    }
+                                    catch (Exception observationError) when (observationError is not OperationCanceledException)
+                                    {
+                                        Log.Warn(observationError, "PRTG 附加觀察快照寫入失敗；主機日 finding 已原子持久");
+                                        prtgConsole.WriteLine("  ⚠ PRTG 附加觀察快照寫入失敗；正式主機日判定已持久化。");
+                                    }
+                                }
+                                if (captured > 0)
+                                    prtgConsole.WriteLine($"主機 {hostId} 獨立 PRTG 判定快照：新增 {captured} 筆（可信版本等待合格 NetIQ 日紀錄補追加；未知品質只作診斷）。");
+                                if (!modeOnlyRevocation && hostFindings.Count > 0)
+                                    HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day,
+                                        hostFindings.ToList(), "[PRTG] ", workflow, hostId,
+                                        manifest?.ParentRecordId ?? 0);
                             }
-                            else pendingHosts++;
+                            else
+                            {
+                                finalManifests.Remove(hostId);
+                                findingsByHost.Remove(hostId);
+                                suppressedPatternIdsByHost.Remove(hostId);
+                                workflow?.InvalidateWholePrtgEvidence(hostId, day, "formal-manifest-parent-fence-rejected");
+                                dayStates[day].FormalEvidencePending = true;
+                                if (hostFindings.Count > 0) pendingHosts++;
+                            }
                         }
+
+                        prtgFindings.Publish(day, findingsByHost.ToDictionary(
+                            pair => pair.Key, pair => (IReadOnlyList<LogIssueSignature>)pair.Value), suppressedPatternIdsByHost);
+                        prtgFindings.PublishManifests(day, finalManifests);
 
                         var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
                                       $"本階段追加 {appendedHosts} 台、未追加 {pendingHosts} 台（可能由分析路徑處理；若當日沒有日誌分析紀錄，目前不會建立獨立 PRTG 問題）";
@@ -767,7 +1290,7 @@ internal static class PrtgDailyPipeline
 
                     var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(
                         systemSettings.PrtgValueFetchExtraHosts,
-                        hostStore.GetAll().Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
+                        hostStore.CapturePrtgSnapshot().Hosts.Select(h => (h.HostId, h.HostName, h.Active, h.MergedInto.HasValue)));
 
                     if (unresolvedHosts.Count > 0)
                     {
@@ -845,11 +1368,17 @@ internal static class PrtgDailyPipeline
         catch (OperationCanceledException) when (!parentToken.IsCancellationRequested && operation?.SettingsChanged == true)
         {
             prtgOutcome = BatchRun.PrtgOutcomePartial;
+            interruptedDayReason = "未完成評估：PRTG 設定或範圍在執行中變更；請以目前範圍重新執行。";
             prtgConsole.WriteLine("PRTG 設定在執行中變更；已完成的資料保留，停止後續 PRTG 工作。NetIQ／本機分析繼續。");
             runRecorder.Milestone("PRTG 設定在執行中變更，後續 PRTG 工作已停止");
         }
         catch (OperationCanceledException)
         {
+            if (prtgEnabled)
+            {
+                prtgOutcome = BatchRun.PrtgOutcomePartial;
+                interruptedDayReason = "未完成評估：作業已取消；保留已提交資料，請明確重新執行。";
+            }
             // 取消訊號必須穿透，讓上層統一處理中斷
             throw;
         }
@@ -872,13 +1401,68 @@ internal static class PrtgDailyPipeline
                 }
             }
 
+            // Reconcile only host-days written by this run. The analysis row is authoritative; workflow blobs
+            // are a recoverable sidecar and never decide whether a successful source write is kept.
+            foreach (var day in days)
+            {
+                foreach (var hostId in workflow?.ParentHostIdsForDay(day) ?? Array.Empty<long>())
+                {
+                    try
+                    {
+                        var prior = workflow!.Get(hostId, day);
+                        if (prior == null || prior.Parent != WorkflowLegState.Succeeded) continue;
+                        var records = backend.RecordStore(new HostKey { HostId = hostId, HostName = prior.HostName })
+                            .ReadRecent(day, 1);
+                        var authoritative = records.FirstOrDefault(row => row.HostId == hostId && row.Date.Date == day.Date);
+                        if (authoritative == null)
+                        {
+                            workflow.ParentDeleted(hostId, day);
+                            continue;
+                        }
+                        var manifest = authoritative.PrtgManifest;
+                        var currentRunManifest = prtgFindings.ManifestFor(hostId, day);
+                        var validManifest = currentRunManifest != null && HostDayWorkflowFingerprint.HasValidPrtgManifest(authoritative) && manifest is { Version: 1 } &&
+                            (manifest.Outcome is "complete" or "partial") &&
+                            manifest.HostMappingFingerprint is { Length: 64 } mappingFingerprint && mappingFingerprint.All(Uri.IsHexDigit) &&
+                            manifest.WaitReasonCodes is { Count: <= 16 } waitReasons && waitReasons.All(code => code is { Length: > 0 and <= 128 }) &&
+                            (manifest.Outcome == "complete" ? waitReasons.Count == 0 : waitReasons.Count > 0) &&
+                            StringComparer.Ordinal.Equals(currentRunManifest.EvidenceFingerprint, manifest.EvidenceFingerprint) &&
+                            currentRunManifest.CompletedAtUtc == manifest.CompletedAtUtc &&
+                            manifest.ParentRecordId == authoritative.RecordId &&
+                            manifest.CompletedAtUtc.Kind == DateTimeKind.Utc &&
+                            StringComparer.Ordinal.Equals(manifest.ParentFingerprint, HostDayWorkflowFingerprint.ForParentRecord(authoritative)) &&
+                            StringComparer.Ordinal.Equals(manifest.FindingFingerprint,
+                                PrtgFindingMapper.Fingerprint(authoritative.TopIssues.Where(PrtgFindingMapper.IsPrtg)));
+                        var completedRun = prtgOutcome is BatchRun.PrtgOutcomeSuccess or BatchRun.PrtgOutcomeNoOutput or BatchRun.PrtgOutcomePartial;
+                        var partialManifest = validManifest && manifest!.Outcome == "partial";
+                        var prtgState = !prtgEnabled ? WorkflowLegState.Disabled :
+                            completedRun && validManifest && !partialManifest ? WorkflowLegState.Succeeded :
+                            completedRun && partialManifest ? WorkflowLegState.Degraded :
+                            completedRun ? WorkflowLegState.Waiting : WorkflowLegState.Degraded;
+                        var waitReason = planned.TryGetValue(day.Date, out var currentPlan) &&
+                            currentPlan.PendingReasonByHost.TryGetValue(hostId, out var reason)
+                                ? reason : "necessary-evidence-not-ready";
+                        workflow.SetPrtg(hostId, day, prtgState, evidenceReady: prtgState == WorkflowLegState.Succeeded,
+                            evidenceFingerprint: validManifest ? manifest!.EvidenceFingerprint : null,
+                            now: validManifest ? manifest!.CompletedAtUtc.ToLocalTime() : null,
+                            failure: partialManifest ? string.Join(",", manifest!.WaitReasonCodes) : prtgState == WorkflowLegState.Waiting ? waitReason :
+                                prtgState == WorkflowLegState.Degraded ? "prtg-evaluation-failed" : null);
+                    }
+                    catch (Exception workflowError)
+                    {
+                        Log.Warn(workflowError, "PRTG workflow reconciliation failed for {HostId}/{Day}; analysis data remains authoritative", hostId, day);
+                    }
+                }
+            }
+            workflow?.ReleaseTouchedDays(days.Select(day => day.Date));
+
             if (anyBackfilled)
             {
                 progress?.Report(RunPhases.PrtgFindingsReady, 0, 0);
             }
 
-            // 逐日結果：只記有進到逐日迴圈的日子（PRTG 未啟用時一天都沒有，PrtgDays 維持 null）。
-            // 中途被停止的日子就記到哪算到哪，執行總表才看得出「哪幾天其實已經評估完了」。
+            // 保留已處理日期的實際結果；取消時另標明尚未進入评估的日期，避免讀者把缺項當零風險。
+            // PRTG 未啟用仍維持 null，不宣稱這些日期已經執行過。
             List<PrtgDayStat>? dayStats = null;
             if (dayStates.Count > 0)
             {
@@ -889,8 +1473,10 @@ internal static class PrtgDailyPipeline
                     {
                         var s = dayStates[day];
                         var failedSensors = s.Triggered?.FailedSensors ?? 0;
-                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || s.DiskAssessmentFailed,
+                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || s.DiskAssessmentFailed || s.FormalEvidencePending,
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
+                        if (s.DiskAssessmentFailed && outcome == BatchRun.PrtgOutcomePartial)
+                            note = "磁碟趨勢證據未完整；尚未完成風險判定。";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note);
                     })
@@ -902,6 +1488,19 @@ internal static class PrtgDailyPipeline
                 {
                     prtgOutcome = BatchRun.PrtgOutcomeNoOutput;
                 }
+                else if (prtgOutcome == BatchRun.PrtgOutcomeSuccess && dayStats.Any(d => d.Outcome == BatchRun.PrtgOutcomePartial))
+                {
+                    prtgOutcome = BatchRun.PrtgOutcomePartial;
+                }
+            }
+
+            if (interruptedDayReason is not null)
+            {
+                dayStats ??= [];
+                dayStats.AddRange(days.Where(day => !dayStates.ContainsKey(day))
+                    .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, interruptedDayReason)));
+                var statsByDay = dayStats.ToDictionary(stat => stat.Date.Date);
+                dayStats = days.Select(day => statsByDay[day.Date]).ToList();
             }
 
             if (prtgOutcome != null)
@@ -988,19 +1587,95 @@ internal static class PrtgDailyPipeline
         return (BatchRun.PrtgOutcomeSuccess, conservativeStrategy ? NoteSnapshotValues : null);
     }
 
+    private static bool TryWorkflowFamily(string? category, out PrtgWorkflowResourceFamily family)
+    {
+        switch (category?.Trim().ToLowerInvariant())
+        {
+            case PrtgSensorCategories.Cpu: family = PrtgWorkflowResourceFamily.Cpu; return true;
+            case PrtgSensorCategories.Memory: family = PrtgWorkflowResourceFamily.Memory; return true;
+            case PrtgSensorCategories.Disk: family = PrtgWorkflowResourceFamily.Disk; return true;
+            default: family = default; return false;
+        }
+    }
+
+    private static PrtgWorkflowResourceFamily WorkflowFamily(string category) =>
+        TryWorkflowFamily(category, out var family) ? family :
+            throw new ArgumentOutOfRangeException(nameof(category), category, "Unsupported PRTG workflow resource family.");
+
+    private static List<string> BuildManifestWaitReasonCodes(long hostId, PrtgPlannedDay plan,
+        PrtgSilentPresenceEvaluation silentEvaluation, IReadOnlySet<long> resourceReadyHosts,
+        IReadOnlySet<long> silentReadyHosts, IReadOnlyDictionary<long, HashSet<long>> expectedStateSensorsByHost,
+        IReadOnlyDictionary<long, Dictionary<long, string>> coveredStateSensorsByHost)
+    {
+        var reasons = new HashSet<string>(StringComparer.Ordinal);
+        if (plan.PendingReasonByHost.TryGetValue(hostId, out var pendingReason)) reasons.Add(pendingReason);
+        if (plan.PendingModeRevocationsByHost.TryGetValue(hostId, out var pendingModeRevocations) &&
+            pendingModeRevocations.Any(revocation =>
+            {
+                // A wildcard marker records a bounded request to inspect this resource. It has no
+                // generation authority and cannot withdraw a finding; keep it out of the host-day
+                // completeness gate so an off resource with unavailable evidence does not remain
+                // perpetually pending. Exact markers are inserted into the exact fence map above.
+                if (revocation.SourceGeneration.Length == 0 || revocation.ResourceGeneration.Length == 0) return false;
+                if (!plan.ResourcePressureReevaluatedResourcesByHost.TryGetValue(hostId, out var resources)) return true;
+                return !resources.Any(fence => fence.SensorObjid == revocation.SensorObjid &&
+                        fence.SourceGeneration == revocation.SourceGeneration &&
+                        fence.ResourceGeneration == revocation.ResourceGeneration);
+            }))
+            reasons.Add("resource-mode-revocation-awaiting-current-pressure");
+        if (!silentReadyHosts.Contains(hostId))
+            foreach (var reason in silentEvaluation.WaitingReasonsForHost(hostId)) reasons.Add("silent-presence-" + reason);
+        if (!resourceReadyHosts.Contains(hostId)) reasons.Add("resource-family-evidence-not-ready");
+        if (!expectedStateSensorsByHost.TryGetValue(hostId, out var expected) ||
+            !coveredStateSensorsByHost.TryGetValue(hostId, out var covered) || !expected.SetEquals(covered.Keys))
+            reasons.Add("state-timeline-coverage-incomplete");
+        if (reasons.Count == 0) reasons.Add("required-formal-proof-unavailable");
+        return reasons.Order(StringComparer.Ordinal).Take(16)
+            .Select(reason => string.Concat(reason.Where(character => !char.IsControl(character)).Take(128))).ToList();
+    }
+
     /// <summary>
     /// 第一段留給第二段的逐日結果。<see cref="FindingsByHost"/> 為 null＝該日發佈空結果
     /// （規則庫沒有 PRTG 規則、無主機對應可用、評估失敗）。
     /// </summary>
     private sealed class PrtgPlannedDay
     {
+        public HashSet<long> WholeEvidenceHosts { get; } = new();
         public Dictionary<long, Dictionary<long, string>> ReevaluatedResources { get; } = new();
         public Dictionary<long, Dictionary<long, string>> DiskReevaluatedResources { get; } = new();
+        public Dictionary<long, List<PrtgResourceGenerationFence>> ResourcePressureReevaluatedResourcesByHost { get; } = new();
+        public Dictionary<long, List<PrtgResourceGenerationFence>> ExactModeRevocationGenerationsByHost { get; } = new();
+        public Dictionary<long, long> ModeBlobVersionsByHost { get; } = new();
+        public HashSet<long> ModeFenceRequiredByHost { get; } = new();
+        public Dictionary<long, List<PrtgResourcePressureModeRevocation>> PendingModeRevocationsByHost { get; } = new();
+        public Dictionary<long, string> CapturedParentPrtgFingerprintsByHost { get; } = new();
         public List<(long HostId, PrtgFinding Finding, LogIssueSignature Signature)> Observations { get; } = new();
         public Dictionary<long, List<LogIssueSignature>>? FindingsByHost;
+        public Dictionary<long, PrtgDecisionManifest>? ManifestsByHost;
+        public Dictionary<long, string> PendingReasonByHost { get; } = new();
         public int FindingCount;
         public int AcknowledgedCount;
         public int MergedCount;
+    }
+
+    private static void AddPressureGenerationFence(PrtgPlannedDay plan, long hostId,
+        PrtgResourceGenerationFence fence)
+    {
+        if (!plan.ResourcePressureReevaluatedResourcesByHost.TryGetValue(hostId, out var values))
+            plan.ResourcePressureReevaluatedResourcesByHost[hostId] = values = new List<PrtgResourceGenerationFence>();
+        if (!values.Contains(fence)) values.Add(fence);
+        if (values.Count > PrtgStateReconciliationBatch.MaximumItems)
+            throw new InvalidOperationException("PRTG pressure revocation batch exceeds its bounded item limit.");
+    }
+
+    private static void AddExactModeRevocationFence(PrtgPlannedDay plan, long hostId,
+        PrtgResourceGenerationFence fence)
+    {
+        if (!plan.ExactModeRevocationGenerationsByHost.TryGetValue(hostId, out var values))
+            plan.ExactModeRevocationGenerationsByHost[hostId] = values = new List<PrtgResourceGenerationFence>();
+        if (!values.Contains(fence)) values.Add(fence);
+        if (values.Count > PrtgStateReconciliationBatch.MaximumItems)
+            throw new InvalidOperationException("PRTG exact mode revocation batch exceeds its bounded item limit.");
     }
 
     /// <summary>某一天在這趟裡累計出來的結果，最後寫成 <see cref="PrtgDayStat"/>。</summary>
@@ -1010,6 +1685,7 @@ internal static class PrtgDailyPipeline
         public int AttributedHosts;
         public bool MapAvailable;
         public bool DiskAssessmentFailed;
+        public bool FormalEvidencePending;
         /// <summary>規則命中的主機，觸發式取數會把它們併進候選（規則命中但風險未上調的主機也要取數）。</summary>
         public HashSet<long> TriggerHosts { get; } = new();
         public PrtgTriggeredFetchResult? Triggered;

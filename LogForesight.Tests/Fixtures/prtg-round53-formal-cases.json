@@ -1,0 +1,3183 @@
+{
+  "schemaVersion": 1,
+  "packId": "FEEDBACK-53-formal-rule-acceptance",
+  "sourceTruth": "synthetic-only; no native PRTG compatibility, capacity, or operational outcome claim",
+  "caseContract": {
+    "minimumPositivePerFamily": 5,
+    "minimumNegativeOrBoundaryPerFamily": 20,
+    "positiveMustReach": "formal Daily/finding/risk/downstream issue or record-detail data consumer",
+    "negativeMustAssert": "exact qualification failure, waiting/exclusion reason where available, zero formal side effects, and preservation of NetIQ/human-owned data"
+  },
+  "families": [
+    {
+      "family": "Down",
+      "ruleCode": "down",
+      "formalConsumer": "PrtgDailyPipeline -> PrtgCoveredRuleEvaluator",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-Down-P01-down-exact-30-minute-availability-threshold",
+          "mutations": {
+            "ruleCategoryFilter": "availability",
+            "durationMinutes": 30,
+            "thresholdMinutes": 30,
+            "crossesMidnight": false,
+            "acknowledged": false
+          },
+          "expectedFormalResult": "完整可信 Down episode 在 availability 分類門檻 30 分鐘命中；finding 到日風險／主機日消費端",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Down-P02-down-above-threshold",
+          "mutations": {
+            "durationMinutes": 61,
+            "crossesMidnight": false,
+            "acknowledged": false
+          },
+          "expectedFormalResult": "完整可信 Down episode 超過 60 分鐘；finding 到日風險／主機日消費端",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Down-P03-down-cross-midnight-35-minute-profile",
+          "mutations": {
+            "durationMinutes": 35,
+            "crossesMidnight": true,
+            "thresholdMinutes": 30,
+            "acknowledged": false
+          },
+          "expectedFormalResult": "完整可信事故跨日 35 分鐘，在隔日完整證據到達後命中；finding 到主機日",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Down-P04-down-ack-does-not-reset-episode",
+          "mutations": {
+            "durationMinutes": 61,
+            "crossesMidnight": false,
+            "acknowledged": true
+          },
+          "expectedFormalResult": "ACK 保留事故起點與 High finding；不降低風險",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Down-P05-down-distinct-outage-after-recovery",
+          "mutations": {
+            "episodeCount": 2,
+            "recoveryGapMinutes": 5,
+            "secondDurationMinutes": 60
+          },
+          "expectedFormalResult": "恢復後新事故獨立命中；兩個事件識別不拼接",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-Down-N01-below-threshold",
+          "mutation": "below-threshold",
+          "failedQualification": "threshold-not-met",
+          "mutations": {
+            "durationMinutes": 29,
+            "thresholdMinutes": 30,
+            "scenario": "below-threshold"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Down-N02-uncovered-short-gap",
+          "mutation": "uncovered-short-gap",
+          "failedQualification": "threshold-not-met",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "uncovered-short-gap"
+          }
+        },
+        {
+          "caseId": "F53-Down-N03-unknown-gap",
+          "mutation": "unknown-gap",
+          "failedQualification": "threshold-not-met",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-gap"
+          }
+        },
+        {
+          "caseId": "F53-Down-N04-paused-interval",
+          "mutation": "paused-interval",
+          "failedQualification": "paused-interval-excluded",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-interval"
+          }
+        },
+        {
+          "caseId": "F53-Down-N05-future-only-transition",
+          "mutation": "future-only-transition",
+          "failedQualification": "transition-after-as-of-cutoff",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-only-transition"
+          }
+        },
+        {
+          "caseId": "F53-Down-N06-late-transition-outside-asof",
+          "mutation": "late-transition-outside-asof",
+          "failedQualification": "late-transition-outside-asof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "late-transition-outside-asof"
+          }
+        },
+        {
+          "caseId": "F53-Down-N07-wrong-resource-generation",
+          "mutation": "wrong-resource-generation",
+          "failedQualification": "resource-generation-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-resource-generation"
+          }
+        },
+        {
+          "caseId": "F53-Down-N08-wrong-source-generation",
+          "mutation": "wrong-source-generation",
+          "failedQualification": "source-generation-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-source-generation"
+          }
+        },
+        {
+          "caseId": "F53-Down-N09-inactive-resource",
+          "mutation": "inactive-resource",
+          "failedQualification": "inactive-resource",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "inactive-resource"
+          }
+        },
+        {
+          "caseId": "F53-Down-N10-mapping-drift",
+          "mutation": "mapping-drift",
+          "failedQualification": "current-host-mapping-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "mapping-drift"
+          }
+        },
+        {
+          "caseId": "F53-Down-N11-scope-excluded",
+          "mutation": "scope-excluded",
+          "failedQualification": "outside-authorized-host-scope",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "scope-excluded"
+          }
+        },
+        {
+          "caseId": "F53-Down-N12-missing-parent",
+          "mutation": "missing-parent",
+          "failedQualification": "netiq-parent-missing",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-parent"
+          }
+        },
+        {
+          "caseId": "F53-Down-N13-partial-parent",
+          "mutation": "partial-parent",
+          "failedQualification": "netiq-parent-partial",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "partial-parent"
+          }
+        },
+        {
+          "caseId": "F53-Down-N14-failed-parent",
+          "mutation": "failed-parent",
+          "failedQualification": "netiq-parent-failed",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "failed-parent"
+          }
+        },
+        {
+          "caseId": "F53-Down-N15-running-parent",
+          "mutation": "running-parent",
+          "failedQualification": "netiq-parent-running",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "running-parent"
+          }
+        },
+        {
+          "caseId": "F53-Down-N16-unknown-parent",
+          "mutation": "unknown-parent",
+          "failedQualification": "netiq-parent-status-unknown",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-parent"
+          }
+        },
+        {
+          "caseId": "F53-Down-N17-duplicate-poll-checkpoint",
+          "mutation": "duplicate-poll-checkpoint",
+          "failedQualification": "duplicate-poll-checkpoint",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "duplicate-poll-checkpoint"
+          }
+        },
+        {
+          "caseId": "F53-Down-N18-ack-only-without-down",
+          "mutation": "ack-only-without-down",
+          "failedQualification": "ack-only-without-down",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "ack-only-without-down"
+          }
+        },
+        {
+          "caseId": "F53-Down-N19-recovered-before-threshold",
+          "mutation": "recovered-before-threshold",
+          "failedQualification": "recovered-before-threshold",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "recovered-before-threshold"
+          }
+        },
+        {
+          "caseId": "F53-Down-N20-wrong-category-profile",
+          "mutation": "wrong-category-profile",
+          "failedQualification": "wrong-category-profile",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-category-profile",
+            "ruleCategoryFilter": "availability"
+          }
+        },
+        {
+          "caseId": "F53-Down-N21-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "formal-rule-disabled",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "disabled-rule"
+          }
+        }
+      ]
+    },
+    {
+      "family": "Warning",
+      "ruleCode": "warning",
+      "formalConsumer": "PrtgDailyPipeline -> PrtgCoveredRuleEvaluator",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-Warning-P01-warning-exact-240-minute-total",
+          "mutations": {
+            "ruleCategoryFilter": "availability",
+            "warningMinutes": 240,
+            "segments": [
+              240
+            ]
+          },
+          "expectedFormalResult": "可信 Warning 累計達 240 分鐘；finding 到主機日／issue",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Warning-P02-warning-separated-window-total",
+          "mutations": {
+            "warningMinutes": 240,
+            "segments": [
+              120,
+              120
+            ],
+            "upGapMinutes": 5
+          },
+          "expectedFormalResult": "兩段各 120 分鐘按窗口累計命中；文案不得稱連續",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Warning-P04-warning-threshold-profile-override",
+          "mutations": {
+            "warningMinutes": 30,
+            "thresholdMinutes": 30,
+            "segments": [
+              30
+            ]
+          },
+          "expectedFormalResult": "目前有效的分類門檻達邊界後命中",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Warning-P05-warning-recovers-and-repeats",
+          "mutations": {
+            "episodes": [
+              {
+                "warningMinutes": 240
+              },
+              {
+                "warningMinutes": 240,
+                "afterRecovery": true
+              }
+            ]
+          },
+          "expectedFormalResult": "恢復後再發仍命中，episode 與原因可查",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Warning-P06-warning-segments-starting-at-analysis-day-boundary",
+          "mutations": {
+            "warningMinutes": 240,
+            "segments": [
+              90,
+              150
+            ],
+            "upGapMinutes": 5,
+            "startsAtMinute": 0
+          },
+          "expectedFormalResult": "兩段可信 Warning 在分析日內累計達 240 分鐘；每日 finding 到記錄明細",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-Warning-N01-below-threshold-total",
+          "mutation": "below-threshold-total",
+          "failedQualification": "below-threshold-total",
+          "mutations": {
+            "warningMinutes": 239,
+            "thresholdMinutes": 240,
+            "scenario": "below-threshold-total"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Warning-N02-two-segments-not-consecutive-claim",
+          "mutation": "two-segments-not-consecutive-claim",
+          "failedQualification": "below-threshold-total",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "two-segments-not-consecutive-claim"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N03-unknown-gap-not-counted",
+          "mutation": "unknown-gap-not-counted",
+          "failedQualification": "below-threshold-total",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-gap-not-counted"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N04-paused-interval",
+          "mutation": "paused-interval",
+          "failedQualification": "paused-interval-excluded",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-interval"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N05-future-only-transition",
+          "mutation": "future-only-transition",
+          "failedQualification": "transition-after-as-of-cutoff",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-only-transition"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N06-late-transition-outside-asof",
+          "mutation": "late-transition-outside-asof",
+          "failedQualification": "late-transition-outside-asof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "late-transition-outside-asof"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N07-wrong-resource-generation",
+          "mutation": "wrong-resource-generation",
+          "failedQualification": "resource-generation-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-resource-generation"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N08-wrong-source-generation",
+          "mutation": "wrong-source-generation",
+          "failedQualification": "source-generation-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-source-generation"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N09-inactive-resource",
+          "mutation": "inactive-resource",
+          "failedQualification": "inactive-resource",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "inactive-resource"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N10-mapping-drift",
+          "mutation": "mapping-drift",
+          "failedQualification": "current-host-mapping-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "mapping-drift"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N11-scope-excluded",
+          "mutation": "scope-excluded",
+          "failedQualification": "outside-authorized-host-scope",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "scope-excluded"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N12-missing-parent",
+          "mutation": "missing-parent",
+          "failedQualification": "netiq-parent-missing",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-parent"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N13-partial-parent",
+          "mutation": "partial-parent",
+          "failedQualification": "netiq-parent-partial",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "partial-parent"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N14-failed-parent",
+          "mutation": "failed-parent",
+          "failedQualification": "netiq-parent-failed",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "failed-parent"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N15-running-parent",
+          "mutation": "running-parent",
+          "failedQualification": "netiq-parent-running",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "running-parent"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N16-unknown-parent",
+          "mutation": "unknown-parent",
+          "failedQualification": "netiq-parent-status-unknown",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-parent"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N17-duplicate-poll-checkpoint",
+          "mutation": "duplicate-poll-checkpoint",
+          "failedQualification": "duplicate-poll-checkpoint",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "duplicate-poll-checkpoint"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N18-up-state-only",
+          "mutation": "up-state-only",
+          "failedQualification": "required-down-up-transitions-missing",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "up-state-only"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N19-recovered-before-threshold",
+          "mutation": "recovered-before-threshold",
+          "failedQualification": "recovered-before-threshold",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "recovered-before-threshold"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N20-wrong-category-profile",
+          "mutation": "wrong-category-profile",
+          "failedQualification": "wrong-category-profile",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-category-profile",
+            "ruleCategoryFilter": "availability"
+          }
+        },
+        {
+          "caseId": "F53-Warning-N21-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "formal-rule-disabled",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "disabled-rule"
+          }
+        },
+        {
+          "caseId": "F53-Warning-P03-warning-cross-midnight-evidence",
+          "mutation": "warning interval crosses analysis-day boundary; only target-day overlap counts",
+          "failedQualification": "target-day-warning-overlap-below-240",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "originalPositiveMutation": {
+            "warningMinutes": 240,
+            "crossesMidnight": true
+          },
+          "reclassification": "The formal consumer sums covered Warning minutes inside the requested analysis day. A 120+120 cross-midnight episode contributes only 120 minutes to that day, so the original positive expectation was invalid.",
+          "mutations": {
+            "warningMinutes": 240,
+            "crossesMidnight": true,
+            "scenario": "F53-Warning-P03-warning-cross-midnight-evidence"
+          },
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ]
+    },
+    {
+      "family": "Flapping",
+      "ruleCode": "flapping",
+      "formalConsumer": "PrtgDailyPipeline -> PrtgCoveredRuleEvaluator",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-Flapping-P01-flapping-exact-five-round-trips",
+          "mutations": {
+            "ruleCategoryFilter": "availability",
+            "roundTrips": 5,
+            "crossesMidnight": false
+          },
+          "expectedFormalResult": "完整可信五次 Down→Up 往返；finding 到主機日／issue",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Flapping-P02-flapping-above-threshold-six-round-trips",
+          "mutations": {
+            "roundTrips": 6,
+            "crossesMidnight": false
+          },
+          "expectedFormalResult": "完整可信六次往返；每次轉態均有來源證據",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Flapping-P03-flapping-custom-four-round-trips",
+          "mutations": {
+            "roundTrips": 4,
+            "threshold": 4,
+            "crossesMidnight": false
+          },
+          "expectedFormalResult": "有效 profile 門檻四次；正式日 finding 可查",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Flapping-P04-flapping-cross-midnight-window",
+          "mutations": {
+            "roundTrips": 5,
+            "crossesMidnight": true,
+            "window": "local-analysis-day"
+          },
+          "expectedFormalResult": "按主機日分析窗口計完整往返，跨午夜事件不重複計數",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Flapping-P05-flapping-restarts-after-recovery",
+          "mutations": {
+            "roundTrips": 5,
+            "recoveryBeforeWindow": true
+          },
+          "expectedFormalResult": "恢復後的新窗口五次往返獨立命中",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-Flapping-N01-four-of-five-round-trips",
+          "mutation": "four-of-five-round-trips",
+          "failedQualification": "flap-count-below-threshold",
+          "mutations": {
+            "roundTrips": 4,
+            "threshold": 5,
+            "scenario": "four-of-five-round-trips"
+          },
+          "expectedFormalSideEffects": [
+            "PRTG:down"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Flapping-N02-repeated-poll-checkpoints",
+          "mutation": "repeated-poll-checkpoints",
+          "failedQualification": "flap-count-below-threshold",
+          "expectedFormalSideEffects": [
+            "PRTG:down"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "repeated-poll-checkpoints"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N03-missing-down-transition",
+          "mutation": "missing-down-transition",
+          "failedQualification": "missing-down-transition",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-down-transition"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N04-missing-up-transition",
+          "mutation": "missing-up-transition",
+          "failedQualification": "missing-up-transition",
+          "expectedFormalSideEffects": [
+            "PRTG:down"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-up-transition"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N05-unknown-gap",
+          "mutation": "unknown-gap",
+          "failedQualification": "flap-count-below-threshold",
+          "expectedFormalSideEffects": [
+            "PRTG:down"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-gap"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N06-paused-interval",
+          "mutation": "paused-interval",
+          "failedQualification": "paused-interval-excluded",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-interval"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N07-future-only-transition",
+          "mutation": "future-only-transition",
+          "failedQualification": "transition-after-as-of-cutoff",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-only-transition"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N08-late-transition-outside-asof",
+          "mutation": "late-transition-outside-asof",
+          "failedQualification": "late-transition-outside-asof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "late-transition-outside-asof"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N09-wrong-resource-generation",
+          "mutation": "wrong-resource-generation",
+          "failedQualification": "resource-generation-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-resource-generation"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N10-wrong-source-generation",
+          "mutation": "wrong-source-generation",
+          "failedQualification": "source-generation-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-source-generation"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N11-inactive-resource",
+          "mutation": "inactive-resource",
+          "failedQualification": "inactive-resource",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "inactive-resource"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N12-mapping-drift",
+          "mutation": "mapping-drift",
+          "failedQualification": "current-host-mapping-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "mapping-drift"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N13-scope-excluded",
+          "mutation": "scope-excluded",
+          "failedQualification": "outside-authorized-host-scope",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "scope-excluded"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N14-missing-parent",
+          "mutation": "missing-parent",
+          "failedQualification": "netiq-parent-missing",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-parent"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N15-partial-parent",
+          "mutation": "partial-parent",
+          "failedQualification": "netiq-parent-partial",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "partial-parent"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N16-failed-parent",
+          "mutation": "failed-parent",
+          "failedQualification": "netiq-parent-failed",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "failed-parent"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N17-running-parent",
+          "mutation": "running-parent",
+          "failedQualification": "netiq-parent-running",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "running-parent"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N18-unknown-parent",
+          "mutation": "unknown-parent",
+          "failedQualification": "netiq-parent-status-unknown",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-parent"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N19-wrong-category-profile",
+          "mutation": "wrong-category-profile",
+          "failedQualification": "wrong-category-profile",
+          "expectedFormalSideEffects": [
+            "PRTG:down"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-category-profile",
+            "ruleCategoryFilter": "availability"
+          }
+        },
+        {
+          "caseId": "F53-Flapping-N20-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "formal-rule-disabled",
+          "expectedFormalSideEffects": [
+            "PRTG:down"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "disabled-rule"
+          }
+        }
+      ]
+    },
+    {
+      "family": "Silent",
+      "ruleCode": "silent",
+      "formalConsumer": "PrtgDailyPipeline -> PrtgSilentPresenceFormalConsumer -> PrtgSilentAbsenceEvaluator",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-Silent-P01-silent-complete-up-availability-unknown-resource",
+          "mutations": {
+            "inventoryComplete": true,
+            "reportedCountMatches": true,
+            "availabilityUpSensors": 1,
+            "unknownNonAvailabilitySensors": 1
+          },
+          "expectedFormalResult": "完整來源 inventory 有 Up availability 與持續 Unknown 的非 availability resource；Daily finding 明示監測缺口不等於主機故障",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Silent-P03-silent-source-local-day-boundary",
+          "mutations": {
+            "inventoryComplete": true,
+            "sourcePoint": "end-of-source-day",
+            "analysisDate": "local-day-of-source-instant"
+          },
+          "expectedFormalResult": "來源日與主機分析日不同仍按同一可見 instant 配對",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Silent-P04-silent-fresh-complete-inventory-after-prior-unknown",
+          "mutations": {
+            "inventoryComplete": true,
+            "priorUnknownDurationHours": 2,
+            "sourceAgeMinutes": 1
+          },
+          "expectedFormalResult": "新鮮完整來源讀取證實 Unknown 持續；Daily finding 可查來源時間",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Silent-P05-silent-device-and-sensor-status-asof-differ",
+          "mutations": {
+            "inventoryComplete": true,
+            "sourceAsOfOffsetSeconds": 9,
+            "deviceStatusAsOfOffsetSeconds": 0
+          },
+          "expectedFormalResult": "保留兩個來源時間點並通過完整 inventory；finding 有精確來源證據",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-Silent-P06-silent-multiple-up-availability-sensors",
+          "mutations": {
+            "inventoryComplete": true,
+            "availabilityUpSensors": 2,
+            "unknownNonAvailabilitySensors": 1,
+            "unknownDurationHours": 2,
+            "sourceAgeMinutes": 1
+          },
+          "expectedFormalResult": "兩個 availability sensors 均 Up，且一個非 availability resource 持續 Unknown；Daily 靜默 finding 到記錄明細",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-Silent-N01-inventory-count-mismatch",
+          "mutation": "inventory-count-mismatch",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "inventory-count-mismatch"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N02-partial-inventory",
+          "mutation": "partial-inventory",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "partial-inventory"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N03-missing-source-asof",
+          "mutation": "missing-source-asof",
+          "failedQualification": "source-proof-unavailable",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-source-asof"
+          },
+          "originalFailedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "reclassification": "The synthetic consumer cannot evaluate an absent as-of source snapshot; retain the original source-inventory intent and expose the actual earlier source-proof guard."
+        },
+        {
+          "caseId": "F53-Silent-N04-stale-source-response",
+          "mutation": "stale-source-response",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "stale-source-response"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N05-failed-source-read",
+          "mutation": "failed-source-read",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "failed-source-read"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N06-missing-snapshot",
+          "mutation": "missing-snapshot",
+          "failedQualification": "source-proof-unavailable",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-snapshot"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N07-mapping-fingerprint-changed",
+          "mutation": "mapping-fingerprint-changed",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "mapping-fingerprint-changed"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N08-source-generation-drift",
+          "mutation": "source-generation-drift",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "source-generation-drift"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N09-policy-revision-drift",
+          "mutation": "source-authority-drift",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "reclassification": "Policy revision alone is not a device-scoped proof failure; this case now mutates source authority fingerprint.",
+          "originalMutation": {
+            "scenario": "policy-revision-drift"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "source-authority-drift"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N10-wrong-analysis-day",
+          "mutation": "wrong-analysis-day",
+          "failedQualification": "source-proof-unavailable",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-analysis-day"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N11-future-source-point",
+          "mutation": "future-source-point",
+          "failedQualification": "source-proof-unavailable",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-source-point"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N12-unknown-sensor-without-availability-qualifier",
+          "mutation": "unknown-sensor-without-availability-qualifier",
+          "failedQualification": "qualified-no-silent-hit",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unknown-sensor-without-availability-qualifier"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N13-paused-device",
+          "mutation": "paused-device",
+          "failedQualification": "device-or-all-sensors-paused",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-device"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N14-all-sensors-paused",
+          "mutation": "all-sensors-paused",
+          "failedQualification": "device-or-all-sensors-paused",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "all-sensors-paused"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N15-missing-timeline-coverage",
+          "mutation": "missing-timeline-coverage",
+          "failedQualification": "sensor-identity-or-timeline-not-current-at-source-asof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-timeline-coverage"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N16-timeline-ends-before-asof",
+          "mutation": "timeline-ends-before-asof",
+          "failedQualification": "sensor-identity-or-timeline-not-current-at-source-asof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "timeline-ends-before-asof"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N17-scope-excluded-device",
+          "mutation": "scope-excluded-device",
+          "failedQualification": "source-authority-unverified",
+          "reclassification": "The device-scoped snapshot authority check rejects this mutation first; preserve its original scope intent and record the actual guard for review.",
+          "originalMutation": {
+            "scenario": "policy-revision-drift"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "scope-excluded-device"
+          },
+          "originalFailedQualification": "source-inventory-time-or-mapping-proof-incomplete"
+        },
+        {
+          "caseId": "F53-Silent-N18-wrong-host-map",
+          "mutation": "wrong-host-map",
+          "failedQualification": "source-inventory-time-or-mapping-proof-incomplete",
+          "reclassification": "Policy revision alone is not a device-scoped proof failure; this case now mutates source authority fingerprint.",
+          "originalMutation": {
+            "scenario": "policy-revision-drift"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-host-map"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N19-missing-netiq-parent",
+          "mutation": "missing-netiq-parent",
+          "failedQualification": "missing-netiq-parent",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-netiq-parent"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N20-partial-netiq-parent",
+          "mutation": "partial-netiq-parent",
+          "failedQualification": "partial-netiq-parent",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "partial-netiq-parent"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N21-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "silent-rule-disabled",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "disabled-rule"
+          }
+        },
+        {
+          "caseId": "F53-Silent-N22-all-unknown-inventory-no-up-availability",
+          "mutation": "all-unknown-inventory-no-up-availability",
+          "failedQualification": "qualified-no-silent-hit",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "all-unknown-inventory-no-up-availability"
+          }
+        },
+        {
+          "caseId": "F53-Silent-P02-silent-all-availability-unknown-with-resource-present",
+          "mutation": "all-availability-unknown-with-resource-present",
+          "failedQualification": "qualified-no-silent-hit",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "originalPositiveMutation": {
+            "inventoryComplete": true,
+            "availability": [
+              "Unknown",
+              "Unknown"
+            ],
+            "resourceStatus": "Up"
+          },
+          "reclassification": "The valid source is assessed but does not qualify as a silent hit; retain the original availability mutation and record the consumer outcome.",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "all-unknown-no-up-availability"
+          },
+          "originalFailedQualification": "availability-status-not-up (consumer outcome: qualified-no-silent-hit)"
+        }
+      ]
+    },
+    {
+      "family": "DiskTwoHourLowWater",
+      "ruleCode": "resource_disk_pressure",
+      "formalConsumer": "PrtgDailyPipeline/PrtgResourcePeriodConsumer",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-DiskTwoHourLowWater-P01-disk-low-water-exact-ten-percent",
+          "mutations": {
+            "completedHourAverages": [
+              10,
+              10
+            ],
+            "coveragePercent": 100
+          },
+          "expectedFormalResult": "兩個完成小時各 10% 剩餘；正式 risk finding 到日風險／issue",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-P02-disk-low-water-below-ten-percent",
+          "mutations": {
+            "completedHourAverages": [
+              5,
+              9
+            ],
+            "coveragePercent": 100
+          },
+          "expectedFormalResult": "兩個完成小時均低於 10%；正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-P03-disk-low-water-exact-75-percent-slot-coverage",
+          "mutations": {
+            "completedHourAverages": [
+              10,
+              8
+            ],
+            "coveragePercent": 75,
+            "goodPhysicalSlotsPerHour": 3
+          },
+          "expectedFormalResult": "兩個小時各達固定 75% 實體 slot coverage；正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-P05-disk-low-water-both-hours-distinct-values",
+          "mutations": {
+            "completedHourAverages": [
+              0,
+              10
+            ],
+            "coveragePercent": 100
+          },
+          "expectedFormalResult": "兩個有效完成小時可不同值且均達界線；合併同 episode 理由",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-P06-disk-low-water-analysis-midnight-same-host-day",
+          "mutations": {
+            "completedHourAverages": [
+              9,
+              10
+            ],
+            "coveragePercent": 100,
+            "crossesAnalysisMidnight": true
+          },
+          "expectedFormalResult": "兩個 profile 分析時區小時跨午夜；實際 host-wall 小時為 22:00、23:00，落在同一主機日並命中正式 finding。",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N01-one-hour-only",
+          "mutation": "one-hour-only",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              10
+            ],
+            "scenario": "one-hour-only"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N02-one-of-two-hours-above-ten",
+          "mutation": "one-of-two-hours-above-ten",
+          "failedQualification": "two-hour-low-water-threshold-not-met",
+          "mutations": {
+            "completedHourAverages": [
+              10,
+              11
+            ],
+            "scenario": "one-of-two-hours-above-ten"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N03-open-latest-hour",
+          "mutation": "open-latest-hour",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              10,
+              10
+            ],
+            "periodMutation": "open-latest-hour",
+            "scenario": "open-latest-hour"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N04-gap-between-hours",
+          "mutation": "gap-between-hours",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              10,
+              10
+            ],
+            "periodMutation": "gap-between-hours",
+            "scenario": "gap-between-hours"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N05-below-75-percent-coverage",
+          "mutation": "below-75-percent-coverage",
+          "failedQualification": "hour-coverage-below-75-percent",
+          "mutations": {
+            "completedHourAverages": [
+              10,
+              10
+            ],
+            "goodPhysicalSlotsPerHour": 2,
+            "scenario": "below-75-percent-coverage"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N06-duplicate-physical-slot",
+          "mutation": "duplicate-physical-slot",
+          "failedQualification": "invalid-hour-proof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "duplicate-physical-slot",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N07-summary-proof-disagrees",
+          "mutation": "summary-proof-disagrees",
+          "failedQualification": "summary-does-not-match-proved-slots",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "summary-proof-disagrees",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N08-unproved-mean",
+          "mutation": "unproved-mean",
+          "failedQualification": "invalid-hour-proof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unproved-mean",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N09-wrong-quantity-semantic",
+          "mutation": "wrong-quantity-semantic",
+          "failedQualification": "measurement-semantics-unverified",
+          "mutations": {
+            "completedHourAverages": [
+              5,
+              5
+            ],
+            "profileMutation": "wrong-quantity-semantic",
+            "scenario": "wrong-quantity-semantic"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N10-wrong-unit",
+          "mutation": "wrong-unit",
+          "failedQualification": "resource-period-assessment-failed",
+          "mutations": {
+            "completedHourAverages": [
+              5,
+              5
+            ],
+            "profileMutation": "wrong-unit",
+            "scenario": "wrong-unit"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N11-wrong-scale",
+          "mutation": "wrong-scale",
+          "failedQualification": "resource-period-assessment-failed",
+          "mutations": {
+            "completedHourAverages": [
+              5,
+              5
+            ],
+            "profileMutation": "wrong-scale",
+            "scenario": "wrong-scale"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N12-channel-generation-drift",
+          "mutation": "channel-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "channel-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "channel-generation-drift",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N13-source-generation-drift",
+          "mutation": "source-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "source-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "source-generation-drift",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N14-resource-epoch-drift",
+          "mutation": "resource-epoch-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "resource-epoch-drift",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "resource-epoch-drift",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N15-wrong-host-scope",
+          "mutation": "wrong-host-scope",
+          "failedQualification": "excluded-before-assessment; no selected sensor assessment",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "wrong-host-scope",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N16-future-sample",
+          "mutation": "future-sample",
+          "failedQualification": "future-or-untrusted-as-of-sample",
+          "originalFailedQualification": "future-sample",
+          "reclassification": "The structurally valid sample is received after the assessment as-of cutoff. The readiness evaluator exposes its precise future-or-untrusted-as-of-sample reason.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-sample",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N17-paused-sensor",
+          "mutation": "paused-sensor",
+          "failedQualification": "excluded-before-assessment; no selected sensor assessment",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-sensor",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N18-insufficient-slot-window",
+          "mutation": "insufficient-slot-window",
+          "failedQualification": "hour-coverage-below-75-percent",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "insufficient-slot-window",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N19-formal-source-policy-unready",
+          "mutation": "formal-source-policy-unready",
+          "failedQualification": "source-policy-unready",
+          "originalFailedQualification": "formal-source-policy-unready",
+          "reclassification": "The prior fixture cleared ConfirmedBy, which is not required by PrtgMonitoringPolicy.Ready; this mutation now clears CoreSystemId, the actual readiness prerequisite, while retaining the case ID and intent.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "formal-source-policy-unready",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-N20-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "formal-rule-disabled",
+          "mutations": {
+            "completedHourAverages": [
+              5,
+              5
+            ],
+            "ruleEnabled": false,
+            "scenario": "disabled-rule"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-P04-disk-low-water-crosses-host-midnight",
+          "mutation": "host-day-straddle",
+          "failedQualification": "latest-two-completed-hours-missing-at-daily-cutoff; preview-hit-spans-host-days",
+          "mutations": {
+            "completedHourAverages": [
+              9,
+              10
+            ],
+            "coveragePercent": 100,
+            "scenario": "host-day-straddle",
+            "crossesHostMidnight": true
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "originalPositiveMutation": {
+            "completedHourAverages": [
+              9,
+              10
+            ],
+            "crossesHostMidnight": true,
+            "coveragePercent": 100
+          },
+          "originalExpectedFormalResult": "兩個連續完成 host-wall 小時跨日；finding 歸屬可查證主機日",
+          "reclassification": "原正例 ID、mutation 與 expected 保留。實際 D 23:00 與 D+1 00:00 的兩個可信小時，在 D+1 01:00 preview cutoff 可命中，但分屬兩個 service host day，SingleWindowHostDay 為 null。Daily 保持既有 D+1 00:00 cutoff，因此缺少 latest-two-completed-hours，且跨 host day 的 window 不符合 SingleWindowHostDay 資格；D 與 D+1 均不得產生此資源的正式 finding。"
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-LIVE-source-identity-profile-mismatch",
+          "mutation": "live-source-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "source-generation-mismatch",
+          "reclassification": "The fixture advances the current live source identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-source-generation-mismatch",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-LIVE-resource-identity-profile-mismatch",
+          "mutation": "live-resource-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "resource-generation-mismatch",
+          "reclassification": "The fixture advances the current live resource identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-resource-generation-mismatch",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-LIVE-channel-identity-profile-mismatch",
+          "mutation": "live-channel-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "channel-generation-mismatch",
+          "reclassification": "The fixture advances the current live channel identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-channel-generation-mismatch",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        },
+        {
+          "caseId": "F53-DiskTwoHourLowWater-LIVE-epoch-identity-profile-mismatch",
+          "mutation": "live-epoch-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "identity-epoch-mismatch",
+          "reclassification": "The fixture advances the current live epoch identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-epoch-mismatch",
+            "completedHourAverages": [
+              5,
+              5
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "family": "DiskTrend",
+      "ruleCode": "disk_free_trend",
+      "formalConsumer": "PrtgDailyPipeline",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-DiskTrend-P01-disk-trend-seven-day-low-water-at-boundary",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "estimatedDaysToTwenty": 7
+          },
+          "expectedFormalResult": "可信 28 日趨勢，七日降至 20%；Daily risk finding 及同 episode reason",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-P02-disk-trend-five-day-low-water",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 30,
+            "declinePercentPerDay": 2,
+            "estimatedDaysToTwenty": 5
+          },
+          "expectedFormalResult": "可信 28 日趨勢，五日降至 20%；finding 到主機日",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-P03-disk-trend-seven-day-low-water-with-noisy-daily-values",
+          "mutations": {
+            "validDays": 30,
+            "currentPercent": 27,
+            "robustDeclinePercentPerDay": 1,
+            "decliningDayRatio": 0.8,
+            "dailyValues": [
+              57,
+              55.75,
+              54.5,
+              53.25,
+              52,
+              52,
+              50.75,
+              49.5,
+              48.25,
+              47,
+              47,
+              45.75,
+              44.5,
+              43.25,
+              42,
+              42,
+              40.75,
+              39.5,
+              38.25,
+              37,
+              37,
+              35.75,
+              34.5,
+              33.25,
+              32,
+              32,
+              30.75,
+              29.5,
+              28.25,
+              27
+            ]
+          },
+          "expectedFormalResult": "穩健斜率與下降比例合格，Daily reason 可查",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-P04-disk-trend-recent-window-minimum-valid-days",
+          "mutations": {
+            "validDays": 28,
+            "windowDays": 35,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1
+          },
+          "expectedFormalResult": "35 日窗口內 28 個可信有效日；正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-P05-disk-trend-current-below-low-water",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 19,
+            "lowWaterPercent": 20
+          },
+          "expectedFormalResult": "低水位沿既有趨勢分支正式命中，與低水位 reason 合併",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-DiskTrend-N01-27-valid-days",
+          "mutation": "27-valid-days",
+          "failedQualification": "readiness-not-ready",
+          "mutations": {
+            "validDays": 27,
+            "currentPercent": 25,
+            "declinePercentPerDay": 1,
+            "scenario": "27-valid-days"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "originalFailedQualification": "requires-28-trusted-days",
+          "reclassification": "The 27-day input is rejected by the disk readiness floor before trend evaluation; retain the 28-day intent and record the actual guard."
+        },
+        {
+          "caseId": "F53-DiskTrend-N02-missing-trusted-history-day",
+          "mutation": "missing-trusted-history-day",
+          "failedQualification": "readiness-not-ready",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "missingDayOffsets": [
+              14
+            ],
+            "scenario": "missing-trusted-history-day"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "originalFailedQualification": "requires-28-trusted-days",
+          "reclassification": "The missing day leaves readiness below its trusted-history floor before trend evaluation; retain the intended history-gap guard and record actual readiness."
+        },
+        {
+          "caseId": "F53-DiskTrend-N03-decline-below-0.5",
+          "mutation": "decline-below-0.5",
+          "failedQualification": "decline-below-0.5",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 35,
+            "declinePercentPerDay": 0.4,
+            "scenario": "decline-below-0.5"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N04-declining-ratio-below-70-percent",
+          "mutation": "declining-ratio-below-70-percent",
+          "failedQualification": "declining-ratio-below-70-percent",
+          "mutations": {
+            "validDays": 30,
+            "currentPercent": 27,
+            "dailyValues": [
+              45,
+              44,
+              43,
+              42,
+              42,
+              41,
+              40,
+              39,
+              39,
+              38,
+              37,
+              36,
+              36,
+              35,
+              34,
+              33,
+              33,
+              32,
+              31,
+              30,
+              30,
+              29,
+              28,
+              27,
+              27,
+              27,
+              27,
+              27,
+              27,
+              27
+            ],
+            "scenario": "declining-ratio-below-70-percent"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N05-eight-day-low-water-forecast",
+          "mutation": "eight-day-low-water-forecast",
+          "failedQualification": "forecast-exceeds-7-days",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 28,
+            "declinePercentPerDay": 1,
+            "scenario": "eight-day-low-water-forecast"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N06-flat-series",
+          "mutation": "flat-series",
+          "failedQualification": "decline-threshold-not-met",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 50,
+            "declinePercentPerDay": 0,
+            "scenario": "flat-series"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N07-increasing-series",
+          "mutation": "increasing-series",
+          "failedQualification": "decline-threshold-not-met",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 50,
+            "declinePercentPerDay": -1,
+            "scenario": "increasing-series"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N08-duplicate-day",
+          "mutation": "duplicate-day",
+          "failedQualification": "idempotent-duplicate-period-upsert",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "duplicatePeriodDayOffset": 14,
+            "scenario": "duplicate-day"
+          },
+          "expectedFormalSideEffects": [
+            "one canonical Daily trend finding",
+            "no duplicate issue or case"
+          ],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N09-null-daily-value",
+          "mutation": "null-daily-value",
+          "failedQualification": "daily-value-missing",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "missingDayOffsets": [
+              27
+            ],
+            "scenario": "null-daily-value"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N10-out-of-range-percent",
+          "mutation": "out-of-range-percent",
+          "failedQualification": "percent-out-of-range",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "outOfRangePercent": 101,
+            "outOfRangeDayOffset": 14,
+            "scenario": "out-of-range-percent"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N11-untrusted-history",
+          "mutation": "untrusted-history",
+          "failedQualification": "historical-trust-proof-missing",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "trustedHistory": false,
+            "scenario": "untrusted-history"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "reclassification": "Fixture must retain internally consistent trusted proof and isolate the intended history/profile/as-of mutation; no proof-version mismatch is a valid test outcome."
+        },
+        {
+          "caseId": "F53-DiskTrend-N12-semantic-effective-date-too-new",
+          "mutation": "semantic-effective-date-too-new",
+          "failedQualification": "readiness-not-ready",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "profileEffectiveDaysBefore": 0,
+            "scenario": "semantic-effective-date-too-new"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "reclassification": "A too-new trusted-sampling profile is rejected by readiness before trend evaluation. Samples are now seeded with internally valid proofs, then the too-new profile is applied after ingestion.",
+          "originalFailedQualification": "semantic-effective-date-too-new"
+        },
+        {
+          "caseId": "F53-DiskTrend-N13-channel-generation-drift",
+          "mutation": "channel-generation-drift",
+          "failedQualification": "channel-generation-mismatch",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "identityDrift": "channel",
+            "scenario": "channel-generation-drift"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N14-source-generation-drift",
+          "mutation": "source-generation-drift",
+          "failedQualification": "source-generation-mismatch",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "identityDrift": "source",
+            "scenario": "source-generation-drift"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N15-resource-generation-drift",
+          "mutation": "resource-generation-drift",
+          "failedQualification": "resource-generation-mismatch",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "identityDrift": "resource",
+            "scenario": "resource-generation-drift"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N16-future-measurements",
+          "mutation": "future-measurements",
+          "failedQualification": "future-measurements",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "futureMeasurements": true,
+            "scenario": "future-measurements"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "reclassification": "Fixture must retain internally consistent trusted proof and isolate the intended history/profile/as-of mutation; no proof-version mismatch is a valid test outcome."
+        },
+        {
+          "caseId": "F53-DiskTrend-N17-insufficient-hour-coverage",
+          "mutation": "insufficient-hour-coverage",
+          "failedQualification": "insufficient-hour-coverage",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "physicalSlotsPerHour": 2,
+            "scenario": "insufficient-hour-coverage"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N18-missing-parent",
+          "mutation": "missing-parent",
+          "failedQualification": "netiq-parent-missing",
+          "mutations": {
+            "parentStatus": "missing",
+            "scenario": "missing-parent"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N19-partial-parent",
+          "mutation": "partial-parent",
+          "failedQualification": "netiq-parent-partial",
+          "mutations": {
+            "parentStatus": "partial",
+            "scenario": "partial-parent"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N20-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "formal-rule-disabled",
+          "mutations": {
+            "ruleEnabled": false,
+            "scenario": "disabled-rule"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-DiskTrend-N21-two-missing-trusted-days",
+          "mutation": "two-missing-trusted-days",
+          "failedQualification": "requires-28-trusted-days",
+          "mutations": {
+            "validDays": 28,
+            "currentPercent": 27,
+            "declinePercentPerDay": 1,
+            "missingDayOffsets": [
+              0,
+              27
+            ],
+            "scenario": "two-missing-trusted-days"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ]
+    },
+    {
+      "family": "CPUFormal",
+      "ruleCode": "resource_cpu_sustained_pressure",
+      "formalConsumer": "PrtgDailyPipeline/PrtgResourcePeriodConsumer",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-CPUFormal-P01-cpu-formal-exact-90-percent-two-hours",
+          "mutations": {
+            "completedHourAverages": [
+              90,
+              90
+            ],
+            "coveragePercent": 100,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "兩小時各 90%，同版成功試算與 Maintain 授權；正式 finding 可查",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-P02-cpu-formal-asymmetric-high-hours",
+          "mutations": {
+            "completedHourAverages": [
+              92,
+              90
+            ],
+            "coveragePercent": 100,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "兩小時分別高於／達門檻；正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-P03-cpu-formal-exact-75-percent-slot-coverage",
+          "mutations": {
+            "completedHourAverages": [
+              90,
+              95
+            ],
+            "coveragePercent": 75,
+            "goodPhysicalSlotsPerHour": 3,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "實體 slot 分母達 75%；同版 grant 正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-P05-cpu-formal-after-refreshed-profile-and-trial",
+          "mutations": {
+            "completedHourAverages": [
+              99,
+              90
+            ],
+            "profileRefreshed": true,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "刷新證據及新成功試算綁定現行 profile 後命中",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-P06-cpu-formal-analysis-midnight-same-host-day",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              91
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain",
+            "crossesAnalysisMidnight": true
+          },
+          "expectedFormalResult": "兩個 profile 分析時區小時跨午夜；實際 host-wall 小時為 22:00、23:00，落在同一主機日並命中正式 finding。",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-CPUFormal-N01-single-hour-peak",
+          "mutation": "single-hour-peak",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95
+            ],
+            "scenario": "single-hour-peak"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N02-one-hour-below-90",
+          "mutation": "one-hour-below-90",
+          "failedQualification": "two-hour-pressure-threshold-not-met",
+          "mutations": {
+            "completedHourAverages": [
+              90,
+              89
+            ],
+            "scenario": "one-hour-below-90"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N03-open-hour",
+          "mutation": "open-hour",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "periodMutation": "open-latest-hour",
+            "scenario": "open-hour"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N04-missing-latest-hour",
+          "mutation": "missing-latest-hour",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "periodMutation": "missing-latest-hour",
+            "scenario": "missing-latest-hour"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N05-hour-gap",
+          "mutation": "hour-gap",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "periodMutation": "gap-between-hours",
+            "scenario": "hour-gap"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N06-coverage-below-75",
+          "mutation": "coverage-below-75",
+          "failedQualification": "hour-coverage-below-75-percent",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "goodPhysicalSlotsPerHour": 2,
+            "scenario": "coverage-below-75"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N07-duplicate-physical-slot",
+          "mutation": "duplicate-physical-slot",
+          "failedQualification": "invalid-hour-proof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "duplicate-physical-slot",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N08-summary-proof-disagrees",
+          "mutation": "summary-proof-disagrees",
+          "failedQualification": "summary-does-not-match-proved-slots",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "summary-proof-disagrees",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N09-wrong-quantity-semantic",
+          "mutation": "wrong-quantity-semantic",
+          "failedQualification": "measurement-semantics-unverified",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "profileMutation": "wrong-quantity-semantic",
+            "scenario": "wrong-quantity-semantic"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N10-wrong-unit",
+          "mutation": "wrong-unit",
+          "failedQualification": "resource-period-assessment-failed",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "profileMutation": "wrong-unit",
+            "scenario": "wrong-unit"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N11-wrong-scale",
+          "mutation": "wrong-scale",
+          "failedQualification": "resource-period-assessment-failed",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "profileMutation": "wrong-scale",
+            "scenario": "wrong-scale"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-N12-channel-generation-drift",
+          "mutation": "channel-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "channel-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "channel-generation-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N13-source-generation-drift",
+          "mutation": "source-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "source-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "source-generation-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N14-resource-generation-drift",
+          "mutation": "resource-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "resource-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "resource-generation-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N15-unverified-time-basis",
+          "mutation": "unverified-time-basis",
+          "failedQualification": "current-strategy-unverified",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unverified-time-basis",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N16-future-samples",
+          "mutation": "future-samples",
+          "failedQualification": "future-or-untrusted-as-of-sample",
+          "originalFailedQualification": "evidence-after-as-of-cutoff",
+          "reclassification": "The structurally valid sample is received after the assessment as-of cutoff. The readiness evaluator exposes its precise future-or-untrusted-as-of-sample reason.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-samples",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N17-paused-sensor",
+          "mutation": "paused-sensor",
+          "failedQualification": "excluded-before-assessment; no selected sensor assessment",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-sensor",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N18-missing-maintain-permission",
+          "mutation": "missing-maintain-permission",
+          "failedQualification": "formal-mode-requires-maintain",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-maintain-permission",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N19-trial-profile-drift",
+          "mutation": "trial-profile-drift",
+          "failedQualification": "trial-profile-fingerprint-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "trial-profile-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-N20-disabled-rule",
+          "mutation": "disabled-rule",
+          "failedQualification": "formal-rule-disabled",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "ruleEnabled": false,
+            "scenario": "disabled-rule"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-CPUFormal-P04-cpu-formal-two-completed-hours-cross-midnight",
+          "mutation": "host-day-straddle",
+          "failedQualification": "latest-two-completed-hours-missing-at-daily-cutoff; preview-hit-spans-host-days",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              91
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain",
+            "scenario": "host-day-straddle",
+            "crossesHostMidnight": true
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "originalPositiveMutation": {
+            "completedHourAverages": [
+              95,
+              91
+            ],
+            "crossesHostMidnight": true,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "originalExpectedFormalResult": "host-wall 完成小時跨日；grant 後 finding 歸屬當日",
+          "reclassification": "原正例 ID、mutation 與 expected 保留。實際 D 23:00 與 D+1 00:00 的兩個可信小時，在 D+1 01:00 preview cutoff 可命中，但分屬兩個 service host day，SingleWindowHostDay 為 null。Daily 保持既有 D+1 00:00 cutoff，因此缺少 latest-two-completed-hours，且跨 host day 的 window 不符合 SingleWindowHostDay 資格；D 與 D+1 均不得產生此資源的正式 finding。"
+        },
+        {
+          "caseId": "F53-CPUFormal-LIVE-source-identity-profile-mismatch",
+          "mutation": "live-source-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "source-generation-mismatch",
+          "reclassification": "The fixture advances the current live source identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-source-generation-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-LIVE-resource-identity-profile-mismatch",
+          "mutation": "live-resource-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "resource-generation-mismatch",
+          "reclassification": "The fixture advances the current live resource identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-resource-generation-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-LIVE-channel-identity-profile-mismatch",
+          "mutation": "live-channel-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "channel-generation-mismatch",
+          "reclassification": "The fixture advances the current live channel identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-channel-generation-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-CPUFormal-LIVE-epoch-identity-profile-mismatch",
+          "mutation": "live-epoch-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "identity-epoch-mismatch",
+          "reclassification": "The fixture advances the current live epoch identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-epoch-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "family": "MemoryFormal",
+      "ruleCode": "resource_memory_sustained_pressure",
+      "formalConsumer": "PrtgDailyPipeline/PrtgResourcePeriodConsumer",
+      "fixtureAuthority": "synthetic-only",
+      "positiveCases": [
+        {
+          "caseId": "F53-MemoryFormal-P01-memory-formal-exact-90-percent-used-two-hours",
+          "mutations": {
+            "semantic": "memory-used-percent",
+            "completedHourAverages": [
+              90,
+              90
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "正確的 used% 語意兩小時達門檻；正式 finding 可查",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-P02-memory-formal-from-ten-percent-remaining",
+          "mutations": {
+            "semantic": "memory-remaining-percent",
+            "completedHourAverages": [
+              10,
+              10
+            ],
+            "convertedUsedPercent": [
+              90,
+              90
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "由剩餘 10% 正確換算為使用 90%；正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-P03-memory-formal-asymmetric-high-hours",
+          "mutations": {
+            "semantic": "memory-used-percent",
+            "completedHourAverages": [
+              96,
+              90
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "兩小時不相同但均達門檻；正式 finding",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-P04-memory-formal-exact-75-percent-slot-coverage",
+          "mutations": {
+            "semantic": "memory-used-percent",
+            "completedHourAverages": [
+              90,
+              94
+            ],
+            "coveragePercent": 75,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "expectedFormalResult": "slot coverage 邊界與 same-version grant 均合格",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-P06-memory-formal-analysis-midnight-same-host-day",
+          "mutations": {
+            "semantic": "memory-used-percent",
+            "completedHourAverages": [
+              91,
+              90
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain",
+            "crossesAnalysisMidnight": true
+          },
+          "expectedFormalResult": "兩個 profile 分析時區小時跨午夜；實際 host-wall 小時為 22:00、23:00，落在同一主機日並命中正式 finding。",
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        }
+      ],
+      "negativeAndBoundaryCases": [
+        {
+          "caseId": "F53-MemoryFormal-N01-single-hour-peak",
+          "mutation": "single-hour-peak",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95
+            ],
+            "semantic": "memory-used-percent",
+            "scenario": "single-hour-peak"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N02-one-hour-below-90",
+          "mutation": "one-hour-below-90",
+          "failedQualification": "two-hour-pressure-threshold-not-met",
+          "mutations": {
+            "completedHourAverages": [
+              90,
+              89
+            ],
+            "semantic": "memory-used-percent",
+            "scenario": "one-hour-below-90"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N03-remaining-used-direction-confused",
+          "mutation": "remaining-used-direction-confused",
+          "failedQualification": "both-completed-hour-averages-below-85",
+          "mutations": {
+            "completedHourAverages": [
+              90,
+              90
+            ],
+            "semantic": "memory-remaining-percent",
+            "scenario": "remaining-used-direction-confused"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N04-open-hour",
+          "mutation": "open-hour",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "periodMutation": "open-latest-hour",
+            "scenario": "open-hour"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N05-missing-latest-hour",
+          "mutation": "missing-latest-hour",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "periodMutation": "missing-latest-hour",
+            "scenario": "missing-latest-hour"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N06-hour-gap",
+          "mutation": "hour-gap",
+          "failedQualification": "latest-two-completed-hours-missing",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "periodMutation": "gap-between-hours",
+            "scenario": "hour-gap"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N07-coverage-below-75",
+          "mutation": "coverage-below-75",
+          "failedQualification": "hour-coverage-below-75-percent",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "goodPhysicalSlotsPerHour": 2,
+            "scenario": "coverage-below-75"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N08-duplicate-physical-slot",
+          "mutation": "duplicate-physical-slot",
+          "failedQualification": "invalid-hour-proof",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "duplicate-physical-slot",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N09-summary-proof-disagrees",
+          "mutation": "summary-proof-disagrees",
+          "failedQualification": "summary-does-not-match-proved-slots",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "summary-proof-disagrees",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N10-wrong-quantity-semantic",
+          "mutation": "wrong-quantity-semantic",
+          "failedQualification": "measurement-semantics-unverified",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "profileMutation": "wrong-quantity-semantic",
+            "scenario": "wrong-quantity-semantic"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N11-wrong-unit",
+          "mutation": "wrong-unit",
+          "failedQualification": "resource-period-assessment-failed",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "profileMutation": "wrong-unit",
+            "scenario": "wrong-unit"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N12-wrong-scale",
+          "mutation": "wrong-scale",
+          "failedQualification": "resource-period-assessment-failed",
+          "mutations": {
+            "completedHourAverages": [
+              95,
+              95
+            ],
+            "profileMutation": "wrong-scale",
+            "scenario": "wrong-scale"
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification"
+        },
+        {
+          "caseId": "F53-MemoryFormal-N13-channel-generation-drift",
+          "mutation": "channel-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "channel-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "channel-generation-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N14-source-generation-drift",
+          "mutation": "source-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "source-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "source-generation-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N15-resource-generation-drift",
+          "mutation": "resource-generation-drift",
+          "failedQualification": "invalid-hour-proof",
+          "originalFailedQualification": "resource-generation-mismatch",
+          "reclassification": "This case mutates only the persisted physical slot-proof authority while leaving the current profile and identity unchanged. The validator rejects the proof/profile context first as invalid-hour-proof; the original generation mismatch intent is retained in originalFailedQualification. Dedicated LIVE cases below mutate current identity and independently assert source-profile-stale.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "resource-generation-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N16-unverified-time-basis",
+          "mutation": "unverified-time-basis",
+          "failedQualification": "current-strategy-unverified",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "unverified-time-basis",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N17-future-samples",
+          "mutation": "future-samples",
+          "failedQualification": "future-or-untrusted-as-of-sample",
+          "originalFailedQualification": "evidence-after-as-of-cutoff",
+          "reclassification": "The structurally valid sample is received after the assessment as-of cutoff. The readiness evaluator exposes its precise future-or-untrusted-as-of-sample reason.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "future-samples",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N18-paused-sensor",
+          "mutation": "paused-sensor",
+          "failedQualification": "excluded-before-assessment; no selected sensor assessment",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "paused-sensor",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N19-missing-maintain-permission",
+          "mutation": "missing-maintain-permission",
+          "failedQualification": "formal-mode-requires-maintain",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "missing-maintain-permission",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-N20-trial-profile-drift",
+          "mutation": "trial-profile-drift",
+          "failedQualification": "trial-profile-fingerprint-mismatch",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "trial-profile-drift",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-P05-memory-formal-completed-hours-cross-midnight",
+          "mutation": "host-day-straddle",
+          "failedQualification": "latest-two-completed-hours-missing-at-daily-cutoff; preview-hit-spans-host-days",
+          "mutations": {
+            "semantic": "memory-used-percent",
+            "completedHourAverages": [
+              91,
+              90
+            ],
+            "formalGrant": "same-version-successful-trial+Maintain",
+            "scenario": "host-day-straddle",
+            "crossesHostMidnight": true
+          },
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "originalPositiveMutation": {
+            "semantic": "memory-used-percent",
+            "completedHourAverages": [
+              91,
+              90
+            ],
+            "crossesHostMidnight": true,
+            "formalGrant": "same-version-successful-trial+Maintain"
+          },
+          "originalExpectedFormalResult": "完成小時跨日；同版授權後正式 finding 歸屬日可查",
+          "reclassification": "原正例 ID、mutation 與 expected 保留。實際 D 23:00 與 D+1 00:00 的兩個可信小時，在 D+1 01:00 preview cutoff 可命中，但分屬兩個 service host day，SingleWindowHostDay 為 null。Daily 保持既有 D+1 00:00 cutoff，因此缺少 latest-two-completed-hours，且跨 host day 的 window 不符合 SingleWindowHostDay 資格；D 與 D+1 均不得產生此資源的正式 finding。"
+        },
+        {
+          "caseId": "F53-MemoryFormal-LIVE-source-identity-profile-mismatch",
+          "mutation": "live-source-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "source-generation-mismatch",
+          "reclassification": "The fixture advances the current live source identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-source-generation-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-LIVE-resource-identity-profile-mismatch",
+          "mutation": "live-resource-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "resource-generation-mismatch",
+          "reclassification": "The fixture advances the current live resource identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-resource-generation-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-LIVE-channel-identity-profile-mismatch",
+          "mutation": "live-channel-generation-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "channel-generation-mismatch",
+          "reclassification": "The fixture advances the current live channel identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-channel-generation-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        },
+        {
+          "caseId": "F53-MemoryFormal-LIVE-epoch-identity-profile-mismatch",
+          "mutation": "live-epoch-mismatch",
+          "failedQualification": "source-profile-stale",
+          "originalFailedQualification": "identity-epoch-mismatch",
+          "reclassification": "The fixture advances the current live epoch identity authority while retaining the previously probed profile and physical proof. The profile must be rejected as stale before a formal finding is emitted.",
+          "expectedFormalSideEffects": [],
+          "preserveNetiqAndHumanOwnedData": true,
+          "fixtureAuthority": "synthetic fixture; never source-native qualification",
+          "mutations": {
+            "scenario": "live-epoch-mismatch",
+            "completedHourAverages": [
+              95,
+              95
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -112,9 +112,50 @@
     <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="selected-backfill" type="button">指定主機補值</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="timeline-progress" type="button">狀態涵蓋進度</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="profile-refresh" type="button">Trusted profile 進度</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="effectiveness" type="button">使用效果</button></li>
     <li class="nav-item ms-sm-auto"><button class="nav-link small" data-tab="probe" type="button">前往探測與資料準備度</button></li>
 </ul>
+
+<div data-panel="timeline-progress" class="d-none">
+    <section class="lf-card mb-3" aria-labelledby="prtg-timeline-progress-title">
+        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-timeline-progress-title">逐 sensor 狀態涵蓋進度</h2></div>
+        <div class="lf-card__body">
+            <p class="small text-muted">背景工作以有限週期補抓目前來源與選取範圍。首次週期預設72小時；期限到達會停止新請求，需管理者明確續行。週期完成只表示所有選取 sensor 的初始查詢已封閉且目前身分相符；歷史涵蓋欄位與各規則自己的品質、暖機條件另行判定。成本數字是估算，不是容量或服務水準保證。</p>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <label class="small" for="prtg-timeline-bootstrap-hours">期限（小時）</label>
+                <input type="number" class="form-control form-control-sm" id="prtg-timeline-bootstrap-hours" min="1" max="720" value="72" style="width:6rem">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-timeline-bootstrap-save">保存期限</button>
+                <button type="button" class="btn btn-sm btn-outline-warning" id="prtg-timeline-bootstrap-resume" disabled>明確續行逾期週期</button>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-timeline-progress-refresh">重新載入</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-timeline-progress-cancel" disabled>取消本次查詢</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-timeline-progress-prev" disabled>上一頁</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-timeline-progress-next" disabled>下一頁</button>
+                <span id="prtg-timeline-progress-page" class="small text-muted"></span>
+            </div>
+            <div id="prtg-timeline-progress-status" class="small mb-2" role="status" aria-live="polite">選取此頁籤後載入進度。</div>
+            <div id="prtg-timeline-progress-rows" class="border rounded p-2" aria-live="polite"></div>
+        </div>
+    </section>
+</div>
+
+<div data-panel="profile-refresh" class="d-none">
+    <section class="lf-card mb-3" aria-labelledby="prtg-profile-refresh-title">
+        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-profile-refresh-title">Trusted sampling profile 更新進度</h2></div>
+        <div class="lf-card__body">
+            <p class="small text-muted">背景工作公平巡覽目前正式選取的 sensor，每次最多讀取 100 筆並探測最多 5 顆。只有目前啟用、CPU／記憶體／磁碟且未暫停的資源會探測；來源欄位或身分未能證明時會等待並冷卻重試。這項進度不代表 15,000 顆容量驗收或原生 PRTG 24 小時歷史證明。</p>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-primary" id="prtg-profile-refresh-reload" type="button">重新載入</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-profile-refresh-prev" type="button" disabled>上一頁</button>
+                <button class="btn btn-sm btn-outline-secondary" id="prtg-profile-refresh-next" type="button" disabled>下一頁</button>
+                <span id="prtg-profile-refresh-page" class="small text-muted align-self-center"></span>
+            </div>
+            <div id="prtg-profile-refresh-progress" class="small mb-2" role="status" aria-live="polite">選取此頁籤後載入進度。</div>
+            <div id="prtg-profile-refresh-rows" class="border rounded p-2" aria-live="polite"></div>
+        </div>
+    </section>
+</div>
 
 <div data-panel="effectiveness" class="d-none">
     <section class="lf-card mb-4" id="prtg-effectiveness" aria-labelledby="prtg-effectiveness-title">
@@ -431,8 +472,14 @@
                 <div class="d-flex align-items-center flex-wrap gap-3 mt-3">
                     <button type="submit" class="btn btn-primary" id="prtg-params-save">儲存</button>
                     <button type="button" class="btn btn-outline-secondary" id="prtg-scope-estimate-btn">估算規模</button>
+                    <button type="button" class="btn btn-outline-primary" id="prtg-capacity-pilot-btn">執行 5 批容量試測</button>
+                    <button type="button" class="btn btn-outline-primary" id="prtg-profile-capacity-pilot-btn">測量 Profile 傳輸</button>
                     <span id="prtg-scope-estimate-result" class="small"></span>
                     <span class="small d-block" id="prtg-snapshot-estimate-result"></span>
+                    <span class="small d-block" id="prtg-capacity-pilot-result"></span>
+                    <span class="small d-block" id="prtg-profile-capacity-pilot-result"></span>
+                    <span class="small text-muted d-block">容量試測使用實際快照表格查詢與共用限流，僅估算 10 分鐘（保守）／3 分鐘（激進）窗口並保留 25% 餘裕；這不是原生 PRTG 24 小時能力證明。</span>
+                    <span class="small text-muted d-block">Profile 試測可在擷取停用時執行，依目前範圍排序取最多 5 顆，每顆依序讀 sensor 與 channels 各一次；每份回應最多 512 KiB、整趟 30 秒。只保存遮罩來源／範圍／策略／版本雜湊、請求數、結果與耗時，不建立 trusted profile，也不改 identity／channel generation。</span>
                 </div>
             </div>
         </div>
@@ -475,7 +522,7 @@
                             <div class="fw-semibold">同步結構與對應</div>
                             <div class="text-muted small">
                                 立刻向 PRTG 取得裝置與感測器結構，並重算今天的主機對應。
-                                PRTG 剛啟用、或剛新增一批裝置時執行；平常由夜間排程自動進行。
+                                取樣停用時也可手動更新鏡像；此操作不會啟用數值取樣。平常由夜間排程自動進行。
                             </div>
                         </div>
                         <div class="d-flex gap-2">
@@ -484,7 +531,7 @@
                         </div>
                     </div>
                     <div class="small text-warning mt-2 d-none" id="prtg-structure-sync-disabled-hint">
-                        PRTG 擷取未啟用，無法同步。請到「擷取參數」頁籤選擇數值取數對象。
+                        請先儲存 PRTG 位址與認證，才能同步結構與對應。
                     </div>
                     <div class="small mt-2" id="prtg-structure-sync-status">上次同步：載入中…</div>
                     <div class="small text-muted" id="prtg-structure-sync-progress"></div>
@@ -754,7 +801,7 @@
         </summary>
         <div class="lf-card__body">
             <p class="text-muted mb-3">
-                本頁面用於評估下一輪設計 PRTG 值型規則與校準門檻所需的資料累積量是否足夠。當四項校準指標皆達標時，即可匯出校準數值封裝檔供開發端進行分析與規則調校。
+                本區評估校準資料累積量，供調整 CPU、記憶體與磁碟狀態規則門檻參考。四項資料量指標達標不代表逐規則證據已就緒或已取得正式啟用資格，仍須通過個別規則準備度與授權試用流程。摘要模式提供同一完整範圍的統計；需要逐時明細請使用診斷資料搬運匯出。完整與摘要匯出都會讀取完整基線範圍；超過安全容量時會明確拒絕，不會截斷、抽樣或縮小查詢範圍。
             </p>
 
             <div class="d-flex align-items-center gap-3 mb-4">
@@ -791,18 +838,19 @@
                     </div>
                 </div>
 
-                <!-- 2. PRTG 規則門檻 -->
+                <!-- 2. PRTG 狀態規則門檻 -->
                 <div class="col-lg-6">
                     <div class="border rounded p-3 h-100 bg-light" id="calibration-card-prtg-rule-thresholds">
                         <div class="d-flex align-items-center justify-content-between mb-2">
-                            <h3 class="h6 fw-bold mb-0">PRTG 規則門檻</h3>
+                            <h3 class="h6 fw-bold mb-0">PRTG 狀態規則門檻</h3>
                             <span class="badge bg-secondary" id="badge-prtg-rule-thresholds">尚未計算</span>
                         </div>
+                        <p class="text-muted small">此卡僅重算可信 timeline 的 down、flapping、warning。silent、磁碟趨勢與 CPU／記憶體／磁碟資源時段規則未評估；未評估不代表零命中。</p>
                         <div class="mb-3" id="metrics-prtg-rule-thresholds">
                             <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
                         </div>
                         <div class="mb-3">
-                            <div class="text-muted small fw-semibold mb-1">門檻現值</div>
+                            <div class="text-muted small fw-semibold mb-1">校準資料量門檻</div>
                             <div id="thresholds-prtg-rule-thresholds">
                                 <div class="text-muted small">-</div>
                             </div>

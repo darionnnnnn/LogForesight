@@ -19,6 +19,69 @@ public class EfPrtgStoreTests : IDisposable
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
 
     [Fact]
+    public void MergeSampledValues_同物理樣本變值拒絕且不寫入批次或改變舊資料()
+    {
+        var hour = new DateTime(2026, 10, 5, 10, 0, 0, DateTimeKind.Utc);
+        PrtgValueRow Row(double value)
+        {
+            var accumulator = new LogForesight.Core.Service.PrtgSnapshotAccumulator();
+            var sample = new PrtgTrustedSample(8077, value, "source", "resource", "channel", "epoch", "semantic", "strategy", 15,
+                hour, hour, hour.AddSeconds(2), TimeSpan.FromMinutes(1), PrtgTrustedSampleQuality.Good, "same-physical", "UTC", "UTC");
+            accumulator.AddTrusted(sample, hour.AddSeconds(3));
+            return Assert.Single(accumulator.PreviewDrainAll(4, hour.AddMinutes(1)));
+        }
+        var store = CreateStore();
+        store.MergeSampledValues([Row(10)], Guid.NewGuid().ToString("N"));
+        var conflictingBatch = Guid.NewGuid().ToString("N");
+        var exception = Assert.Throws<InvalidDataException>(() => store.MergeSampledValues([Row(20)], conflictingBatch));
+        Assert.Contains("physical_measurement_conflict", exception.Message);
+        using var db = _fx.NewContext();
+        var persisted = Assert.Single(db.PrtgValues);
+        Assert.Equal(10, persisted.AvgValue);
+        Assert.Equal(25, persisted.Coverage);
+        Assert.False(db.PrtgSampledBatches.Any(x => x.BatchId == conflictingBatch));
+    }
+
+    [Fact]
+    public void MergeSampledValues_可信slotproof同小時增量合併及journal重播只保存唯一slot()
+    {
+        var hour = new DateTime(2026, 10, 5, 10, 0, 0, DateTimeKind.Utc);
+        PrtgValueRow Row(int minute, string physical, double value)
+        {
+            var accumulator = new LogForesight.Core.Service.PrtgSnapshotAccumulator();
+            var measured = hour.AddMinutes(minute);
+            var input = new PrtgTrustedSample(8077, value, "source", "resource", "channel", "epoch", "semantic", "strategy", 15,
+                hour, measured, measured.AddSeconds(2), TimeSpan.FromMinutes(1), PrtgTrustedSampleQuality.Good, physical, "UTC", "UTC");
+            Assert.Equal(PrtgTrustedSampleDisposition.Accepted, accumulator.AddTrusted(input, measured.AddSeconds(3)));
+            return Assert.Single(accumulator.PreviewDrainAll(4, measured.AddMinutes(1)));
+        }
+        var store = CreateStore();
+        var first = Row(0, "physical-0", 10);
+        var replayBatch = Guid.NewGuid().ToString("N");
+        Assert.Equal(1, store.MergeSampledValues([first], replayBatch));
+        Assert.Equal(0, store.MergeSampledValues([first], replayBatch));
+        Assert.Equal(1, store.MergeSampledValues([first], Guid.NewGuid().ToString("N")));
+        Assert.Equal(1, store.MergeSampledValues([Row(15, "physical-1", 30)], Guid.NewGuid().ToString("N")));
+        Assert.Equal(1, store.MergeSampledValues([Row(17, "physical-1-latest", 50)], Guid.NewGuid().ToString("N")));
+        using var check = _fx.NewContext();
+        var persisted = Assert.Single(check.PrtgValues);
+        Assert.Equal(1, persisted.TrustVersion);
+        Assert.Equal(50.0, persisted.Coverage!.Value);
+        Assert.Equal(30.0, persisted.AvgValue!.Value);
+        var proof = PrtgTrustedSampleProof.Deserialize(persisted.TrustedProof!);
+        Assert.Equal(2, proof.Slots.Count);
+        Assert.Equal("resource", proof.ResourceGeneration);
+
+        // 舊列沒有 proof 即使 quality=sampled，仍維持未驗證版本。
+        store.MergeSampledValues([new PrtgValueRow { SensorObjid = 8078, PeriodStart = hour,
+            Quality = PrtgDataQuality.Sampled, Coverage = 25 }], Guid.NewGuid().ToString("N"));
+        using var legacy = _fx.NewContext();
+        var legacyRow = legacy.PrtgValues.Single(row => row.SensorObjid == 8078);
+        Assert.Equal(0, legacyRow.TrustVersion);
+        Assert.Null(legacyRow.TrustedProof);
+    }
+
+    [Fact]
     public void 縮短原始資料保留期_批次識別仍覆蓋安全重播期限()
     {
         using (var ctx = _fx.NewContext())
@@ -2132,5 +2195,62 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(1, result.Deleted);
         Assert.DoesNotContain(store.GetAllDevices(), d => d.Objid == 1);
         Assert.Contains(store.GetManualMaps(), m => m.DeviceObjid == 1 && m.HostId == 10);
+    }
+
+    [Fact]
+    public void GetResourcePressureValues_201stRowRejectsTheWholeBoundedPage()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 10, 4, 10, 0, 0, DateTimeKind.Unspecified);
+        var values = Enumerable.Range(1, 100).SelectMany(sensor => new[] { 0, 1 }.Select(hour =>
+            new PrtgValueRow
+            {
+                SensorObjid = sensor, PeriodStart = from.AddHours(hour), CreatedAt = from,
+                Quality = PrtgDataQuality.Sampled, TrustVersion = 0
+            })).ToList();
+        values.Add(new PrtgValueRow
+        {
+            SensorObjid = 1, PeriodStart = from.AddHours(1), CreatedAt = from,
+            Quality = PrtgDataQuality.Sampled, TrustVersion = 0
+        });
+        using (var context = _fx.NewContext())
+        {
+            // Simulate a corrupt legacy database that violates the normal per-hour uniqueness constraint.
+            context.Database.ExecuteSqlRaw("DROP INDEX IF EXISTS IX_lf_prtg_values_uniq");
+            context.PrtgValues.AddRange(values);
+            context.SaveChanges();
+        }
+
+        var result = store.GetResourcePressureValues(Enumerable.Range(1, 100).Select(id => (long)id).ToArray(),
+            from, from.AddHours(2));
+
+        Assert.True(result.ExceededRowBound);
+        Assert.Empty(result.Rows);
+        Assert.Equal(100, result.RejectedSensorObjids.Count);
+    }
+
+    [Fact]
+    public void GetResourcePressureValues_UnicodeProofUsesStrictUtf8ByteLimit()
+    {
+        var store = CreateStore();
+        var from = new DateTime(2026, 10, 4, 10, 0, 0, DateTimeKind.Unspecified);
+        using (var context = _fx.NewContext())
+        {
+            foreach (var (sensor, proof) in new[] { (1L, new string('é', 2048)), (2L, new string('é', 2049)) })
+            for (var hour = 0; hour < 2; hour++)
+                context.PrtgValues.Add(new PrtgValueRow
+                {
+                    SensorObjid = sensor, PeriodStart = from.AddHours(hour), CreatedAt = from,
+                    Quality = PrtgDataQuality.Sampled, TrustVersion = 1, TrustedProof = proof
+                });
+            context.SaveChanges();
+        }
+
+        var result = store.GetResourcePressureValues([1, 2], from, from.AddHours(2));
+
+        Assert.False(result.ExceededRowBound);
+        Assert.Equal(2, result.Rows.Count);
+        Assert.All(result.Rows, row => Assert.Equal(4096, System.Text.Encoding.UTF8.GetByteCount(row.TrustedProof!)));
+        Assert.Contains(2, result.RejectedSensorObjids);
     }
 }

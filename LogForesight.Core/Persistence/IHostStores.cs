@@ -26,6 +26,14 @@ public interface IHostStore
         return PrtgHostSnapshot.FromWebHosts(hosts, after);
     }
 
+    /// <summary>Capacity-aware snapshot hook. Production HostStore reserves and validates raw JSON before materializing it.</summary>
+    PrtgHostSnapshot CapturePrtgSnapshot(LogForesight.Core.Service.PrtgCalibrationCaptureBudget budget)
+    {
+        var snapshot = CapturePrtgSnapshot();
+        budget.Charge(snapshot.Hosts.Count * 1024L, "bounded compatibility host snapshot");
+        return snapshot;
+    }
+
     /// <summary>
     /// 主機資料的版本；內容每被寫入一次就前進（回饋二十七輪作業 F）。
     /// 供上層快取判定「用主機清單建出來的索引要不要重建」——刻意探測版本而不設 TTL：

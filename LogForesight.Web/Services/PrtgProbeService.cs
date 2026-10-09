@@ -291,19 +291,27 @@ public class PrtgProbeService
                     else
                     {
                         string storageProvider = "unknown";
+                        string? efCoreProvider = null;
+                        var storageEnvironment = new PrtgStorageEnvironmentFacts();
                         try
                         {
                             using var db = _backend.CreateContext();
                             var pName = db.Database.ProviderName;
-                            if (pName != null)
+                            // Export only the actual, known provider identity. It describes this
+                            // service's storage; it does not establish remote PRTG host resources.
+                            (storageProvider, efCoreProvider) = pName switch
                             {
-                                if (pName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase)) storageProvider = "SqlServer";
-                                else if (pName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)) storageProvider = "Sqlite";
-                            }
+                                "Microsoft.EntityFrameworkCore.SqlServer" => ("SqlServer", pName),
+                                "Microsoft.EntityFrameworkCore.Sqlite" => ("Sqlite", pName),
+                                _ => ("unknown", null)
+                            };
+                            storageEnvironment = await PrtgStorageEnvironmentProbe
+                                .CollectAsync(db, _backend.DataRoot, runToken).ConfigureAwait(false);
                         }
                         catch
                         {
                             storageProvider = "unknown";
+                            efCoreProvider = null;
                         }
 
                         var evidenceContext = new PrtgProbeEvidenceContext
@@ -317,6 +325,8 @@ public class PrtgProbeService
                             SourceTimezone = "unknown",
                             SourceLocale = "unknown",
                             StorageProvider = storageProvider,
+                            EfCoreProvider = efCoreProvider,
+                            StorageEnvironment = storageEnvironment,
                             RetentionDays = s.PrtgRetentionDays,
                             ScopeSummary = "unknown",
                             ReadinessSummary = "unknown"

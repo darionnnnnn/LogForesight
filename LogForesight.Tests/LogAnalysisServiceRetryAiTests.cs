@@ -60,13 +60,31 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         _ai.NextContent = """{"risk_level":"高","headline":"補跑後標題","story":"補跑後摘要","trend_story":"","action":"a"}""";
         var service = NewService(_riskyEvents);
 
-        var outcome = await service.RetryAiAsync(PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }), historyDays: 14);
+        var pending = PendingRecord(new List<LogIssueSignature> { RuleHitIssue() });
+        var outcome = await service.RetryAiAsync(pending, historyDays: 14);
 
-        Assert.NotNull(outcome.ReportFile);
+        Assert.Null(outcome.ReportFile); // report persistence belongs to guarded parent attachment
+        var draft = Assert.IsType<PreparedRiskReport>(outcome.ReportDraft);
         Assert.NotNull(outcome.UncoveredChecksAddendum);
         Assert.Contains(outcome.UncoveredChecksAddendum!, c => c.Contains("風險事件暫存"));
         // 既有申報項目不受影響（追加而非取代，實際落地由 AttachAiResult 的合約測試釘住）
         Assert.DoesNotContain(outcome.UncoveredChecksAddendum!, c => c.Contains("既有申報項目"));
+        var finalParent = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(
+            System.Text.Json.JsonSerializer.Serialize(pending))!;
+        finalParent.Headline = outcome.Headline;
+        finalParent.Summary = outcome.Summary;
+        finalParent.TrendAssessment = outcome.TrendAssessment;
+        finalParent.Action = outcome.Action;
+        finalParent.AiPending = false;
+        finalParent.AiAnalyzed = outcome.AiAnalyzed;
+        finalParent.RiskLevel = outcome.RiskLevel;
+        finalParent.RiskBasis = outcome.RiskBasis;
+        finalParent.ScreenedTailCount = outcome.ScreenedTailCount;
+        finalParent.ScreeningNotes = outcome.ScreeningNotes;
+        finalParent.UncoveredChecks.AddRange(outcome.UncoveredChecksAddendum!);
+        Assert.Equal(HostDayWorkflowFingerprint.ForReportInput(finalParent), draft.DecisionInputFingerprint);
+        Assert.Contains("本次報告資料範圍", draft.Content);
+        Assert.Contains("有界風險事件暫存", draft.Content);
     }
 
     [Fact]

@@ -487,6 +487,7 @@ public static class PrtgProbeRunner
                     StorageProvider = evidenceContext.StorageProvider,
                     EfCoreProvider = evidenceContext.EfCoreProvider,
                     RetentionDays = evidenceContext.RetentionDays,
+                    StorageEnvironment = evidenceContext.StorageEnvironment,
                     ScopeSummary = evidenceContext.ScopeSummary,
                     ReadinessSummary = evidenceContext.ReadinessSummary
                 };

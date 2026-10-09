@@ -407,4 +407,20 @@ public class AdminController : ControllerBase
 
         return ApiResponse<StartNetiqProbeResultDto>.Ok(new StartNetiqProbeResultDto { Started = true });
     }
+
+    [HttpPost("netiq/probe/metadata/start")]
+    public ApiResponse<StartNetiqProbeResultDto> StartNetiqMetadataProbe([FromBody] StartNetiqMetadataProbeRequest request)
+    {
+        if (!_probe.TryStartMetadata(request.SentinelId, out var sentinel, out var error))
+            throw DomainException.Validation(error ?? "無法啟動欄位形狀探測。");
+
+        _audit.Record(
+            action: AuditActions.NetiqProbeRun,
+            summary: "執行 NetIQ 安全欄位形狀探測",
+            targetKind: "sentinel",
+            targetId: sentinel!.SentinelId.ToString(),
+            detail: new { Mode = "metadata-shape", MaximumEvents = 3, TimeWindowHours = 1 });
+
+        return ApiResponse<StartNetiqProbeResultDto>.Ok(new StartNetiqProbeResultDto { Started = true });
+    }
 }

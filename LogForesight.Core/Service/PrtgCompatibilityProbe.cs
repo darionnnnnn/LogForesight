@@ -28,6 +28,7 @@ public sealed class PrtgProbeEvidenceContext
     public string? EfCoreProvider { get; init; }
     public int? RetentionDays { get; init; }
     public int? DataRetentionDays { get => RetentionDays; init => RetentionDays = value; }
+    public PrtgStorageEnvironmentFacts? StorageEnvironment { get; init; }
     public string? ScopeSummary { get; init; }
     public string? ReadinessSummary { get; init; }
 }
@@ -51,6 +52,9 @@ public sealed class PrtgCompatibilityProbeEvidence
 
     [JsonPropertyName("deployment_resources")]
     public PrtgDeploymentResources DeploymentResources { get; set; } = new();
+
+    [JsonPropertyName("storage_environment")]
+    public PrtgStorageEnvironmentFacts StorageEnvironment { get; set; } = new();
 
     [JsonPropertyName("settings_revision")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -204,6 +208,9 @@ public sealed class PrtgProbeTargetEvidence
     [JsonPropertyName("target_type")]
     public string TargetType { get; set; } = string.Empty;
 
+    [JsonPropertyName("selection_scope")]
+    public string SelectionScope { get; set; } = "global-compatibility-sample";
+
     [JsonPropertyName("status")]
     public string Status { get; set; } = "unknown";
 
@@ -225,7 +232,34 @@ public sealed class PrtgProbeTargetEvidence
     [JsonPropertyName("history")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PrtgHistoryEvidence? History { get; set; }
+
+    [JsonPropertyName("identity_preserving_raw_history")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgRawChannelIdentityEvidence? RawChannelIdentity { get; set; }
 }
+
+public sealed class PrtgRawChannelIdentityEvidence
+{
+    public string Status { get; set; } = "unknown";
+    public string? HttpDateUtc { get; set; }
+    public string? ReceivedAtUtc { get; set; }
+    public string? SourceVersion { get; set; }
+    public string RequestedWallStart { get; set; } = "";
+    public string RequestedWallEnd { get; set; } = "";
+    public string RawTimestampBasis { get; set; } = "unknown";
+    public bool AuthorizesFormalProfile { get; set; }
+    public int SampleCount { get; set; }
+    public int? DeclaredCount { get; set; }
+    public double? FirstRawOaDate { get; set; }
+    public double? LastRawOaDate { get; set; }
+    public List<PrtgRawChannelIdentitySample> Samples { get; set; } = [];
+    public string? Error { get; set; }
+}
+
+public sealed record PrtgRawChannelIdentitySample(double RawOaDate,
+    IReadOnlyList<PrtgRawChannelIdentityValue> Channels);
+public sealed record PrtgRawChannelIdentityValue(string ChannelId, string SemanticCaption,
+    bool SemanticKnown, double RawValue, bool ExplicitPercentDisplay);
 
 public sealed class PrtgSnapshotEvidence
 {
@@ -245,6 +279,12 @@ public sealed class PrtgSnapshotEvidence
 
     [JsonPropertyName("returned_fields")]
     public List<string> ReturnedFields { get; set; } = new();
+
+    [JsonPropertyName("requested_fields")]
+    public List<string> RequestedFields { get; set; } = new();
+
+    [JsonPropertyName("missing_requested_fields")]
+    public List<string> MissingRequestedFields { get; set; } = new();
 
     [JsonPropertyName("missing_fields")]
     public List<string> MissingFields { get; set; } = new();
@@ -276,6 +316,18 @@ public sealed class PrtgSnapshotFieldEntry
 
     [JsonPropertyName("value")]
     public object? Value { get; set; }
+
+    [JsonPropertyName("timestamp_components")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TimestampComponents { get; set; }
+
+    [JsonPropertyName("timestamp_basis")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TimestampBasis { get; set; }
+
+    [JsonPropertyName("timestamp_candidates")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<PrtgTimestampCandidate>? TimestampCandidates { get; set; }
 }
 
 public sealed class PrtgChannelsEvidence
@@ -285,6 +337,18 @@ public sealed class PrtgChannelsEvidence
 
     [JsonPropertyName("parent_identity")]
     public string ParentIdentity { get; set; } = "unknown (filtered request; channel objid identifies a channel, response parent sensor id is unavailable)";
+
+    [JsonPropertyName("request_sensor_alias")]
+    public string RequestSensorAlias { get; set; } = string.Empty;
+
+    [JsonPropertyName("request_sensor_id_provenance")]
+    public string RequestSensorIdProvenance { get; set; } = "filtered request used the selected sensor objid; response parent sensor objid is unavailable";
+
+    [JsonPropertyName("requested_fields")]
+    public List<string> RequestedFields { get; set; } = new();
+
+    [JsonPropertyName("field_presence")]
+    public List<PrtgProbeFieldPresence> FieldPresence { get; set; } = new();
 
     [JsonPropertyName("elapsed_ms")]
     public double ElapsedMs { get; set; }
@@ -316,6 +380,11 @@ public sealed class PrtgChannelsEvidence
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; set; }
 }
+
+public sealed record PrtgProbeFieldPresence(
+    [property: JsonPropertyName("field")] string Field,
+    [property: JsonPropertyName("present_rows")] int PresentRows,
+    [property: JsonPropertyName("missing_rows")] int MissingRows);
 
 public sealed class PrtgChannelRowEntry
 {
@@ -414,6 +483,47 @@ public sealed class PrtgHistoryFieldEntry
 
     [JsonPropertyName("value")]
     public object? Value { get; set; }
+
+    [JsonPropertyName("semantic_label")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SemanticLabel { get; set; }
+
+    [JsonPropertyName("semantic_known")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SemanticKnown { get; set; }
+
+    [JsonPropertyName("timestamp_components")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TimestampComponents { get; set; }
+
+    [JsonPropertyName("timestamp_basis")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TimestampBasis { get; set; }
+
+    [JsonPropertyName("timestamp_candidates")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<PrtgTimestampCandidate>? TimestampCandidates { get; set; }
+}
+
+public sealed class PrtgTimestampCandidate
+{
+    [JsonPropertyName("format")]
+    public string Format { get; set; } = string.Empty;
+
+    [JsonPropertyName("start_components")]
+    public string StartComponents { get; set; } = string.Empty;
+
+    [JsonPropertyName("end_components")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EndComponents { get; set; }
+
+    [JsonPropertyName("reported_offset")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ReportedOffset { get; set; }
+
+    [JsonPropertyName("end_reported_offset")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EndReportedOffset { get; set; }
 }
 
 public static class PrtgCompatibilityProbe
@@ -437,16 +547,23 @@ public static class PrtgCompatibilityProbe
         ("disk", "SNMP Disk Free", "s3")
     };
 
-    private static readonly HashSet<string> AllowedSemanticWords = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> AllowedSemanticLabels = new(StringComparer.OrdinalIgnoreCase)
     {
-        "free", "used", "available", "total", "cpu", "memory", "disk",
-        "可用", "已用", "剩餘", "總計", "記憶體", "磁碟"
+        "total", "cpu", "cpu total", "total cpu", "cpu load", "cpu cores", "cpu usage",
+        "total memory", "memory total", "available memory", "memory available", "percent available memory",
+        "free memory", "memory free", "used memory", "memory used",
+        "free disk", "disk free", "available disk", "disk available", "percent available disk",
+        "used disk", "disk used", "total disk", "disk total",
+        "可用", "已用", "剩餘", "總計", "記憶體", "磁碟", "剩餘 記憶體"
     };
 
     private static readonly HashSet<string> WhitelistSnapshotColumns = new(StringComparer.OrdinalIgnoreCase)
     {
         "objid", "type", "status", "status_raw", "lastvalue_raw", "lastcheck", "lastcheck_raw", "interval", "interval_raw"
     };
+
+    private static readonly string[] SnapshotRequestedColumns = ["objid", "type", "status", "lastvalue_raw", "lastcheck", "interval"];
+    private static readonly string[] ChannelRequestedColumns = ["objid", "name", "lastvalue", "unit", "scaling", "primary"];
 
     private static readonly HashSet<string> WhitelistHistoryColumns = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -528,12 +645,13 @@ public static class PrtgCompatibilityProbe
         Action<string>? onEvidenceJsonProduced = null)
     {
         return ExecuteCoreAsync(
-            (url, token) => client.GetJsonAsync(url, token),
+            (url, token) => client.GetBoundedJsonAsync(url, PrtgHistoricXmlReader.MaximumBytes, token),
             console,
             sensorSamples,
             context,
             ct,
-            onEvidenceJsonProduced);
+            onEvidenceJsonProduced,
+            (url, token) => client.GetBoundedXmlAsync(url, PrtgHistoricXmlReader.MaximumBytes, token));
     }
 
     public static async Task<PrtgCompatibilityProbeEvidence> ExecuteCoreAsync(
@@ -542,7 +660,8 @@ public static class PrtgCompatibilityProbe
         IReadOnlyList<PrtgProbeRunner.SensorTypeSample> sensorSamples,
         PrtgProbeEvidenceContext? context,
         CancellationToken ct = default,
-        Action<string>? onEvidenceJsonProduced = null)
+        Action<string>? onEvidenceJsonProduced = null,
+        Func<string, CancellationToken, Task<PrtgSourceResponse>>? getHistoricXml = null)
     {
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overallCts.CancelAfter(OverallTimeout);
@@ -560,6 +679,7 @@ public static class PrtgCompatibilityProbe
             BuildVersion = SafeBuildVersion(context?.BuildVersion),
             SourcePrtgVersion = SanitizePrtgVersion(context?.SourcePrtgVersion) ?? "unknown",
             DeploymentResources = new PrtgDeploymentResources(),
+            StorageEnvironment = SanitizeStorageEnvironment(context?.StorageEnvironment),
             SettingsRevision = SafeSettingsRevision(context?.SettingsRevision),
             SourceFingerprint = SafeFingerprint(context?.SourceFingerprint),
             SourceTimezone = "unknown",
@@ -575,7 +695,7 @@ public static class PrtgCompatibilityProbe
             {
                 Start = $"{yesterday:yyyy-MM-dd} 00:00:00",
                 End = $"{yesterday.AddDays(1):yyyy-MM-dd} 00:00:00",
-                Limitations = "來源時區未確認"
+                Limitations = "來源時區及時間欄位基準未確認"
             }
         };
 
@@ -642,19 +762,29 @@ public static class PrtgCompatibilityProbe
             target.History = await ProbeHistoryAsync(getJson, actualObjid, alias, sdate, edate, console, probeToken, ct);
             TrackRequestStatus(target.History.Status, ref requestsSucceeded, ref requestsFailed, ref requestsTimedOut);
 
+            if (getHistoricXml is not null)
+            {
+                requestsAttempted++;
+                target.RawChannelIdentity = await ProbeRawChannelIdentityAsync(getHistoricXml, actualObjid,
+                    sdate, yesterday.ToString("yyyy-MM-dd-01-00-00", CultureInfo.InvariantCulture), probeToken, ct);
+                TrackRequestStatus(target.RawChannelIdentity.Status, ref requestsSucceeded, ref requestsFailed, ref requestsTimedOut);
+            }
+
             // 判定該 target 的整體狀態
             if (isPaused)
             {
                 target.Status = "paused";
                 target.Reason = "Sensor is in paused state; not evaluated for readiness";
             }
-            else if (target.Snapshot.Status == "ok" && target.Channels.Status == "ok" && target.History.Status == "ok")
+            else if (target.Snapshot.Status == "ok" && target.Channels.Status == "ok" && target.History.Status == "ok" &&
+                     (target.RawChannelIdentity is null || target.RawChannelIdentity.Status == "ok"))
             {
                 target.Status = "ok";
             }
             else if (target.Snapshot.Status is "error" or "malformed_json" or "timeout" ||
                      target.Channels.Status is "error" or "malformed_json" or "timeout" ||
-                     target.History.Status is "error" or "malformed_json" or "timeout")
+                     target.History.Status is "error" or "malformed_json" or "timeout" ||
+                     target.RawChannelIdentity?.Status is "error" or "timeout")
             {
                 target.Status = "error";
             }
@@ -750,6 +880,47 @@ public static class PrtgCompatibilityProbe
         }
     }
 
+    private static async Task<PrtgRawChannelIdentityEvidence> ProbeRawChannelIdentityAsync(
+        Func<string, CancellationToken, Task<PrtgSourceResponse>> getXml, long sensorId,
+        string start, string end, CancellationToken probeToken, CancellationToken userToken)
+    {
+        var evidence = new PrtgRawChannelIdentityEvidence { RequestedWallStart = start, RequestedWallEnd = end };
+        try
+        {
+            // Budget admission can wait for the shared 5/min historic allowance.
+            // The whole compatibility probe still has the existing five-minute deadline.
+            using var request = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
+            request.CancelAfter(TimeSpan.FromSeconds(90));
+            var response = await getXml($"/api/historicdata.xml?id={sensorId}&avg=0&usecaption=1&sdate={start}&edate={end}", request.Token);
+            var parsed = PrtgHistoricXmlReader.Parse(response.Content);
+            evidence.HttpDateUtc = response.HttpDateUtc?.ToString("o", CultureInfo.InvariantCulture);
+            evidence.ReceivedAtUtc = response.ReceivedAtUtc.ToString("o", CultureInfo.InvariantCulture);
+            evidence.SourceVersion = SanitizePrtgVersion(parsed.Version);
+            evidence.SampleCount = parsed.Samples.Count;
+            evidence.DeclaredCount = parsed.DeclaredCount;
+            evidence.FirstRawOaDate = parsed.Samples.FirstOrDefault()?.MeasuredOaDate;
+            evidence.LastRawOaDate = parsed.Samples.LastOrDefault()?.MeasuredOaDate;
+            foreach (var sample in parsed.Samples.Take(3))
+            {
+                var values = sample.Channels.Take(8).Select(channel =>
+                {
+                    var (caption, known) = SanitizeChannelName(channel.Caption);
+                    return new PrtgRawChannelIdentityValue(channel.ChannelId, caption, known,
+                        channel.RawValue, channel.DisplayValue?.Trim().EndsWith('%') == true);
+                }).ToArray();
+                evidence.Samples.Add(new(sample.MeasuredOaDate, values));
+            }
+            evidence.Status = parsed.Samples.Count > 0 ? "ok" : "missing";
+            // Successful decoding proves neither the raw timestamp clock nor which
+            // channel is primary. This evidence never authorizes a formal profile.
+        }
+        catch (OperationCanceledException) when (userToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { evidence.Status = "timeout"; evidence.Error = "raw-channel-probe-deadline"; }
+        catch (Exception ex) when (ex is InvalidDataException or PrtgClientException)
+        { evidence.Status = "error"; evidence.Error = "raw-channel-source-shape-or-transport-invalid"; }
+        return evidence;
+    }
+
     private static async Task<PrtgSnapshotEvidence> ProbeSnapshotAsync(
         Func<string, CancellationToken, Task<string>> getJson,
         long actualObjid,
@@ -758,8 +929,10 @@ public static class PrtgCompatibilityProbe
         CancellationToken probeToken,
         CancellationToken userToken)
     {
-        var evidence = new PrtgSnapshotEvidence();
-        var url = $"/api/table.json?content=sensors&columns=objid,type,status,status_raw,lastvalue_raw,lastcheck,lastcheck_raw,interval,interval_raw&filter_objid={actualObjid}";
+        var evidence = new PrtgSnapshotEvidence { RequestedFields = SnapshotRequestedColumns.ToList() };
+        // PRTG expands requested base columns with their _raw forms. Asking for both
+        // spellings duplicates properties in the response and obscures the field shape.
+        var url = $"/api/table.json?content=sensors&columns=objid,type,status,lastvalue_raw,lastcheck,interval&filter_objid={actualObjid}";
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -826,7 +999,8 @@ public static class PrtgCompatibilityProbe
                 }
 
                 returnedProps.Add(colName);
-                evidence.ReturnedFields.Add(colName);
+                if (!evidence.ReturnedFields.Contains(colName, StringComparer.Ordinal))
+                    evidence.ReturnedFields.Add(colName);
 
                 if (colName == "objid")
                 {
@@ -835,6 +1009,23 @@ public static class PrtgCompatibilityProbe
                         Field = "objid",
                         ValueType = "alias",
                         Value = alias
+                    });
+                    continue;
+                }
+
+                if (colName == "lastcheck_raw" && TryGetOaTimestamp(prop.Value, out var oaTimestamp))
+                {
+                    evidence.Fields.Add(new PrtgSnapshotFieldEntry
+                    {
+                        Field = colName,
+                        ValueType = prop.Value.ValueKind == JsonValueKind.String ? "numeric_string" : "json_number",
+                        Value = ReadFiniteNumber(prop.Value),
+                        TimestampComponents = FormatTimestampComponents(oaTimestamp),
+                        TimestampBasis = "unknown",
+                        TimestampCandidates = new List<PrtgTimestampCandidate>
+                        {
+                            new() { Format = "prtg-raw-date-time", StartComponents = FormatTimestampComponents(oaTimestamp) }
+                        }
                     });
                     continue;
                 }
@@ -880,11 +1071,20 @@ public static class PrtgCompatibilityProbe
                 if (colName == "lastcheck")
                 {
                     var rawStr = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : null;
-                    if (!string.IsNullOrWhiteSpace(rawStr) && rawStr.Length <= MaxStringLength &&
-                        (DateTime.TryParse(rawStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ||
-                         DateTime.TryParse(rawStr, out dt)))
+                    var timestampCandidates = ParseTimestampCandidates(rawStr);
+                    if (timestampCandidates.Count > 0)
                     {
-                        evidence.Fields.Add(new PrtgSnapshotFieldEntry { Field = colName, ValueType = "datetime_string", Value = dt.ToString("o") });
+                        var uniquePoint = timestampCandidates.Count == 1 && timestampCandidates[0].EndComponents == null;
+                        var uniqueRange = timestampCandidates.Count == 1 && timestampCandidates[0].EndComponents != null;
+                        evidence.Fields.Add(new PrtgSnapshotFieldEntry
+                        {
+                            Field = colName,
+                            ValueType = uniquePoint ? "datetime_string" : uniqueRange ? "datetime_range" : "datetime_candidates",
+                            Value = uniquePoint ? timestampCandidates[0].StartComponents : uniqueRange ? "[range]" : "[ambiguous]",
+                            TimestampComponents = uniquePoint ? timestampCandidates[0].StartComponents : null,
+                            TimestampBasis = "unknown",
+                            TimestampCandidates = timestampCandidates
+                        });
                     }
                     else
                     {
@@ -929,6 +1129,19 @@ public static class PrtgCompatibilityProbe
                 {
                     evidence.MissingFields.Add(col);
                 }
+            }
+            evidence.ReturnedFields.Sort(StringComparer.Ordinal);
+            evidence.MissingFields.Sort(StringComparer.Ordinal);
+            foreach (var requested in SnapshotRequestedColumns)
+            {
+                var present = requested switch
+                {
+                    "lastcheck" => returnedProps.Contains("lastcheck") || returnedProps.Contains("lastcheck_raw"),
+                    "interval" => returnedProps.Contains("interval") || returnedProps.Contains("interval_raw"),
+                    "status" => returnedProps.Contains("status") || returnedProps.Contains("status_raw"),
+                    _ => returnedProps.Contains(requested)
+                };
+                if (!present) evidence.MissingRequestedFields.Add(requested);
             }
 
             // 依規格：若缺失欄位或有額外物件，標記為 partial 而非全部 ok
@@ -983,8 +1196,13 @@ public static class PrtgCompatibilityProbe
         CancellationToken probeToken,
         CancellationToken userToken)
     {
-        var evidence = new PrtgChannelsEvidence();
-        var url = $"/api/table.json?content=channels&id={actualObjid}&columns=objid,channel,unit,scaling,primary&count={MaxChannelRows}";
+        var evidence = new PrtgChannelsEvidence
+        {
+            RequestSensorAlias = alias,
+            RequestedFields = ChannelRequestedColumns.ToList(),
+            FieldPresence = ChannelRequestedColumns.Select(field => new PrtgProbeFieldPresence(field, 0, 0)).ToList()
+        };
+        var url = $"/api/table.json?content=channels&id={actualObjid}&columns=objid,name,lastvalue,unit,scaling,primary&count={MaxChannelRows}";
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -1019,6 +1237,7 @@ public static class PrtgCompatibilityProbe
 
             var idx = 0;
             var processedFields = 0;
+            var presentRowCounts = ChannelRequestedColumns.ToDictionary(field => field, _ => 0, StringComparer.Ordinal);
             foreach (var ch in channelsArr.EnumerateArray().Take(MaxChannelRows))
             {
                 if (ch.ValueKind != JsonValueKind.Object)
@@ -1034,19 +1253,42 @@ public static class PrtgCompatibilityProbe
                         evidence.Truncated = true;
                         continue;
                     }
-                    if (!new[] { "objid", "channel", "unit", "scaling", "primary" }.Contains(prop.Name, StringComparer.OrdinalIgnoreCase))
+                    if (!new[] { "objid", "name", "channel", "lastvalue", "unit", "scaling", "primary" }.Contains(prop.Name, StringComparer.OrdinalIgnoreCase))
                         evidence.UnrecognizedFieldsCount++;
                 }
 
-                var rawName = GetStringProperty(ch, "channel");
+                var hasName = ch.TryGetProperty("name", out var nameElement);
+                var hasLegacyChannel = ch.TryGetProperty("channel", out var legacyChannelElement);
+                var rawName = hasName
+                    ? (nameElement.ValueKind == JsonValueKind.String ? nameElement.GetString() : nameElement.GetRawText())
+                    : hasLegacyChannel
+                        ? (legacyChannelElement.ValueKind == JsonValueKind.String ? legacyChannelElement.GetString() : legacyChannelElement.GetRawText())
+                        : null;
                 var (semanticName, isKnown) = SanitizeChannelName(rawName);
 
                 var returnedFields = new List<string>();
-                foreach (var field in new[] { "objid", "channel", "unit", "scaling", "primary" })
+                foreach (var (field, present) in new[]
+                         {
+                             ("objid", ch.TryGetProperty("objid", out _)),
+                             ("name", hasName),
+                             ("channel", hasLegacyChannel),
+                             ("unit", ch.TryGetProperty("unit", out _)),
+                             ("scaling", ch.TryGetProperty("scaling", out _)),
+                             ("primary", ch.TryGetProperty("primary", out _))
+                         })
                 {
-                    if (ch.TryGetProperty(field, out _)) returnedFields.Add(field);
+                    if (present) returnedFields.Add(field);
                 }
-                var missingFields = new[] { "objid", "channel", "unit", "scaling", "primary" }
+                foreach (var requested in ChannelRequestedColumns)
+                {
+                    var present = requested switch
+                    {
+                        "name" => hasName,
+                        _ => ch.TryGetProperty(requested, out _)
+                    };
+                    if (present) presentRowCounts[requested]++;
+                }
+                var missingFields = new[] { "objid", "name", "unit", "scaling", "primary" }
                     .Where(field => !returnedFields.Contains(field, StringComparer.Ordinal)).ToList();
 
                 var rawUnit = GetStringProperty(ch, "unit")?.Trim();
@@ -1104,6 +1346,9 @@ public static class PrtgCompatibilityProbe
                 });
             }
 
+            evidence.FieldPresence = ChannelRequestedColumns.Select(field => new PrtgProbeFieldPresence(
+                field, presentRowCounts[field], Math.Max(0, evidence.Rows.Count - presentRowCounts[field]))).ToList();
+
             // Channel objid identifies the channel itself. The response has no verified parent sensor field,
             // so filtered request scope remains partial even when every returned field is recognized.
             evidence.Status = evidence.Rows.Count == 0 ? "missing" : "partial";
@@ -1153,7 +1398,7 @@ public static class PrtgCompatibilityProbe
         CancellationToken userToken)
     {
         var evidence = new PrtgHistoryEvidence();
-        var url = $"/api/historicdata.json?id={actualObjid}&avg=3600&sdate={sdate}&edate={edate}";
+        var url = $"/api/historicdata.json?id={actualObjid}&avg=3600&sdate={sdate}&edate={edate}&usecaption=1";
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -1208,24 +1453,33 @@ public static class PrtgCompatibilityProbe
                         continue;
                     }
                     var colName = prop.Name.ToLowerInvariant();
-                    if (!WhitelistHistoryColumns.Contains(colName))
+                    var outputName = colName;
+                    string? semanticLabel = null;
+                    bool? semanticKnown = null;
+                    var captionedField = !WhitelistHistoryColumns.Contains(colName);
+                    if (captionedField && !TryMapCaptionedHistoryField(prop.Name, out outputName, out semanticLabel))
                     {
                         evidence.UnrecognizedFieldsCount++;
                         continue;
                     }
+                    if (captionedField) semanticKnown = true;
 
                     if (colName == "datetime")
                     {
                         var rawStr = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : null;
-                        if (!string.IsNullOrWhiteSpace(rawStr) && rawStr.Length <= MaxStringLength &&
-                            (DateTime.TryParse(rawStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ||
-                             DateTime.TryParse(rawStr, out dt)))
+                        var timestampCandidates = ParseTimestampCandidates(rawStr);
+                        if (timestampCandidates.Count > 0)
                         {
+                            var uniquePoint = timestampCandidates.Count == 1 && timestampCandidates[0].EndComponents == null;
+                            var uniqueRange = timestampCandidates.Count == 1 && timestampCandidates[0].EndComponents != null;
                             rowEntry.Entries.Add(new PrtgHistoryFieldEntry
                             {
                                 Name = "datetime",
-                                Type = "datetime_string",
-                                Value = dt.ToString("o")
+                                Type = uniquePoint ? "datetime_string" : uniqueRange ? "datetime_range" : "datetime_candidates",
+                                Value = uniquePoint ? timestampCandidates[0].StartComponents : uniqueRange ? "[range]" : "[ambiguous]",
+                                TimestampComponents = uniquePoint ? timestampCandidates[0].StartComponents : null,
+                                TimestampBasis = "unknown",
+                                TimestampCandidates = timestampCandidates
                             });
                         }
                         else
@@ -1240,31 +1494,56 @@ public static class PrtgCompatibilityProbe
                         continue;
                     }
 
-                    // datetime_raw, value, value_raw, coverage, coverage_raw 必須為數值
+                    if (colName == "datetime_raw" && TryGetOaTimestamp(prop.Value, out var oaTimestamp))
+                    {
+                        rowEntry.Entries.Add(new PrtgHistoryFieldEntry
+                        {
+                            Name = "datetime_raw",
+                            Type = prop.Value.ValueKind == JsonValueKind.String ? "numeric_string" : "json_number",
+                            Value = ReadFiniteNumber(prop.Value),
+                            TimestampComponents = FormatTimestampComponents(oaTimestamp),
+                            TimestampBasis = "unknown",
+                            TimestampCandidates = new List<PrtgTimestampCandidate>
+                            {
+                                new() { Format = "prtg-raw-date-time", StartComponents = FormatTimestampComponents(oaTimestamp) }
+                            }
+                        });
+                        continue;
+                    }
+
+                    // Uncaptioned history JSON repeats value/value_raw for every channel.
+                    // Keep the ordered relationship but explicitly leave the channel identity unknown.
+                    if (colName is "value" or "value_raw")
+                    {
+                        semanticLabel = "[unknown]";
+                        semanticKnown = false;
+                    }
+
+                    // Values and coverage must be finite numbers; nested payloads and free text are rejected.
                     if (prop.Value.ValueKind == JsonValueKind.Number)
                     {
                         if (prop.Value.TryGetInt64(out var l))
                         {
-                            rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = colName, Type = "json_number", Value = l });
+                            rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = outputName, Type = "json_number", Value = l, SemanticLabel = semanticLabel, SemanticKnown = semanticKnown });
                         }
                         else if (prop.Value.TryGetDouble(out var d) && double.IsFinite(d))
                         {
-                            rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = colName, Type = "json_number", Value = d });
+                            rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = outputName, Type = "json_number", Value = d, SemanticLabel = semanticLabel, SemanticKnown = semanticKnown });
                         }
                         else
                         {
-                            rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = colName, Type = "invalid_number", Value = null });
+                            rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = outputName, Type = "invalid_number", Value = null, SemanticLabel = semanticLabel, SemanticKnown = semanticKnown });
                         }
                     }
                     else if (prop.Value.ValueKind == JsonValueKind.String &&
                              double.TryParse(prop.Value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedNum) && double.IsFinite(parsedNum))
                     {
-                        rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = colName, Type = "numeric_string", Value = parsedNum });
+                        rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = outputName, Type = "numeric_string", Value = parsedNum, SemanticLabel = semanticLabel, SemanticKnown = semanticKnown });
                     }
                     else
                     {
                         // 包含嵌套 array/object 或任意非數值字串：絕不遞迴輸出內容
-                        rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = colName, Type = "invalid_number", Value = null });
+                        rowEntry.Entries.Add(new PrtgHistoryFieldEntry { Name = outputName, Type = "invalid_number", Value = null, SemanticLabel = semanticLabel, SemanticKnown = semanticKnown });
                     }
                 }
 
@@ -1311,6 +1590,17 @@ public static class PrtgCompatibilityProbe
 
     private static string FormatSafeError(Exception ex)
     {
+        if (ex is LogForesight.Core.PrtgClientException clientEx)
+        {
+            // Preserve useful API failure classes without forwarding arbitrary server text,
+            // which can contain object names or other private source data.
+            var statusMatch = Regex.Match(clientEx.Message, @"\bHTTP\s+([1-5][0-9]{2})\b", RegexOptions.CultureInvariant);
+            if (statusMatch.Success) return $"HTTP {statusMatch.Groups[1].Value}";
+            if (clientEx.Message.Contains("HTML", StringComparison.OrdinalIgnoreCase)) return "PRTG returned HTML";
+            if (clientEx.Message.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                clientEx.Message.Contains("憑證", StringComparison.Ordinal)) return "PRTG authorization failed";
+            return "PRTG client request failed";
+        }
         if (ex is HttpRequestException httpEx)
         {
             if (httpEx.StatusCode.HasValue)
@@ -1327,7 +1617,9 @@ public static class PrtgCompatibilityProbe
         {
             return "Response is not valid JSON";
         }
-        return "Request execution error";
+        // Exception type is a bounded diagnostic that distinguishes parser/API-path
+        // failures in runner evidence without copying exception text from the source.
+        return $"Request execution error ({ex.GetType().Name})";
     }
 
     private static string JsonKind(JsonElement value) => value.ValueKind switch
@@ -1343,11 +1635,220 @@ public static class PrtgCompatibilityProbe
     {
         if (string.IsNullOrWhiteSpace(rawVersion)) return null;
         var trimmed = rawVersion.Trim();
-        if (trimmed.Length <= 32 && Regex.IsMatch(trimmed, @"^\d+(?:\.\d+){1,3}$", RegexOptions.CultureInvariant))
+        if (trimmed.Length <= 32 && Regex.IsMatch(trimmed, @"\A[0-9]+(?:\.[0-9]+){1,3}\+?\z", RegexOptions.CultureInvariant))
         {
             return trimmed;
         }
         return "unknown";
+    }
+
+    private sealed record ParsedTimestampPart(string Format, string Components, string? ReportedOffset);
+
+    private static List<PrtgTimestampCandidate> ParseTimestampCandidates(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw.Length > MaxStringLength) return new();
+
+        // Only the exact PRTG-style "date range" delimiter is recognized. Both sides
+        // must match bounded numeric date/time grammars; free text and markup stay redacted.
+        var rangeParts = raw.Split(" - ", StringSplitOptions.None);
+        if (rangeParts.Length == 2)
+        {
+            var starts = ParseStructuredDateTime(rangeParts[0]);
+            if (starts.Count == 0) return new();
+
+            var ends = ParseStructuredDateTime(rangeParts[1]);
+            if (ends.Count == 0) ends = ParseStructuredTime(rangeParts[1]);
+            if (ends.Count == 0) return new();
+
+            var candidates = new List<PrtgTimestampCandidate>();
+            foreach (var start in starts)
+            foreach (var end in ends)
+            {
+                candidates.Add(new PrtgTimestampCandidate
+                {
+                    Format = $"{start.Format}-range-{end.Format}",
+                    StartComponents = start.Components,
+                    EndComponents = end.Components,
+                    ReportedOffset = start.ReportedOffset,
+                    EndReportedOffset = end.ReportedOffset
+                });
+                if (candidates.Count >= 4) return candidates;
+            }
+            return candidates;
+        }
+
+        return ParseStructuredDateTime(raw)
+            .Take(4)
+            .Select(candidate => new PrtgTimestampCandidate
+            {
+                Format = candidate.Format,
+                StartComponents = candidate.Components,
+                ReportedOffset = candidate.ReportedOffset
+            })
+            .ToList();
+    }
+
+    private static List<ParsedTimestampPart> ParseStructuredDateTime(string raw)
+    {
+        var candidates = new List<ParsedTimestampPart>();
+
+        // Parse explicit UTC/offset forms as DateTimeOffset, then retain their original
+        // wall-clock components. Never convert the clock through the app host's timezone.
+        var offsetFormats = new[]
+        {
+            "yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz",
+            "yyyy-MM-dd HH:mm:sszzz", "yyyy-MM-dd HH:mm:ss.FFFFFFFzzz"
+        };
+        foreach (var format in offsetFormats)
+        {
+            if (DateTimeOffset.TryParseExact(raw, format, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var withOffset))
+            {
+                candidates.Add(new ParsedTimestampPart("iso-offset", FormatTimestampComponents(withOffset.DateTime),
+                    FormatUtcOffset(withOffset.Offset)));
+                return candidates;
+            }
+        }
+
+        var utcFormats = new[] { "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'" };
+        foreach (var format in utcFormats)
+        {
+            if (DateTimeOffset.TryParseExact(raw, format, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var utc))
+            {
+                candidates.Add(new ParsedTimestampPart("iso-utc", FormatTimestampComponents(utc.DateTime), "+00:00"));
+                return candidates;
+            }
+        }
+
+        AddDateCandidates(raw, candidates, CultureInfo.InvariantCulture, "iso-ymd",
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-ddTHH:mm:ss.FFFFFFF");
+        AddDateCandidates(raw, candidates, CultureInfo.InvariantCulture, "ymd-slash",
+            "yyyy/M/d H:mm:ss", "yyyy/M/d HH:mm:ss", "yyyy/M/d h:mm:ss tt");
+
+        // Slash dates can be either month/day or day/month. Keep every valid reading
+        // with its format label; do not infer a preferred ordering from OA values.
+        AddDateCandidates(raw, candidates, CultureInfo.InvariantCulture, "mdy",
+            "M/d/yyyy H:mm:ss", "M/d/yyyy h:mm:ss tt", "M/d/yyyy tt h:mm:ss");
+        AddDateCandidates(raw, candidates, CultureInfo.InvariantCulture, "dmy",
+            "d/M/yyyy H:mm:ss", "d/M/yyyy h:mm:ss tt", "d/M/yyyy tt h:mm:ss");
+        AddDateCandidates(raw, candidates, CultureInfo.InvariantCulture, "dmy-dot",
+            "d.M.yyyy H:mm:ss", "d.M.yyyy h:mm:ss tt", "d.M.yyyy tt h:mm:ss");
+
+        var chineseClock = (DateTimeFormatInfo)CultureInfo.InvariantCulture.DateTimeFormat.Clone();
+        chineseClock.AMDesignator = "上午";
+        chineseClock.PMDesignator = "下午";
+        AddDateCandidates(raw, candidates, chineseClock, "mdy-zh-ampm",
+            "M/d/yyyy h:mm:ss tt", "M/d/yyyy tt h:mm:ss");
+        AddDateCandidates(raw, candidates, chineseClock, "dmy-zh-ampm",
+            "d/M/yyyy h:mm:ss tt", "d/M/yyyy tt h:mm:ss");
+        AddDateCandidates(raw, candidates, chineseClock, "ymd-zh-ampm",
+            "yyyy/M/d h:mm:ss tt", "yyyy/M/d tt h:mm:ss");
+
+        return DeduplicateTimestampParts(candidates);
+    }
+
+    private static List<ParsedTimestampPart> ParseStructuredTime(string raw)
+    {
+        var candidates = new List<ParsedTimestampPart>();
+        AddTimeCandidates(raw, candidates, CultureInfo.InvariantCulture, "time-24h", "H:mm:ss", "HH:mm:ss");
+        AddTimeCandidates(raw, candidates, CultureInfo.InvariantCulture, "time-12h", "h:mm:ss tt", "tt h:mm:ss");
+        var chineseClock = (DateTimeFormatInfo)CultureInfo.InvariantCulture.DateTimeFormat.Clone();
+        chineseClock.AMDesignator = "上午";
+        chineseClock.PMDesignator = "下午";
+        AddTimeCandidates(raw, candidates, chineseClock, "time-zh-ampm", "h:mm:ss tt", "tt h:mm:ss");
+        return DeduplicateTimestampParts(candidates);
+    }
+
+    private static void AddDateCandidates(string raw, List<ParsedTimestampPart> candidates,
+        IFormatProvider formatProvider, string label, params string[] formats)
+    {
+        foreach (var format in formats)
+        {
+            if (DateTime.TryParseExact(raw, format, formatProvider, DateTimeStyles.None, out var parsed))
+                candidates.Add(new ParsedTimestampPart(label, FormatTimestampComponents(parsed), null));
+        }
+    }
+
+    private static void AddTimeCandidates(string raw, List<ParsedTimestampPart> candidates,
+        IFormatProvider formatProvider, string label, params string[] formats)
+    {
+        foreach (var format in formats)
+        {
+            if (DateTime.TryParseExact(raw, format, formatProvider, DateTimeStyles.None, out var parsed))
+                candidates.Add(new ParsedTimestampPart(label, parsed.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture), null));
+        }
+    }
+
+    private static List<ParsedTimestampPart> DeduplicateTimestampParts(IEnumerable<ParsedTimestampPart> candidates) =>
+        candidates.GroupBy(candidate => (candidate.Components, candidate.ReportedOffset))
+            .Select(group => group.First() with { Format = string.Join("/", group.Select(candidate => candidate.Format).Distinct(StringComparer.Ordinal)) })
+            .Take(4)
+            .ToList();
+
+    private static bool TryGetOaTimestamp(JsonElement value, out DateTime timestamp)
+    {
+        timestamp = default;
+        double number = 0;
+        var isNumber = value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out number);
+        if (!isNumber && value.ValueKind == JsonValueKind.String)
+        {
+            isNumber = double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number);
+        }
+        if (!isNumber || !double.IsFinite(number) || number < 0 || number > 100000) return false;
+
+        try
+        {
+            timestamp = DateTime.FromOADate(number);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static object? ReadFiniteNumber(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            if (value.TryGetInt64(out var integer)) return integer;
+            return value.TryGetDouble(out var number) && double.IsFinite(number) ? number : null;
+        }
+        if (value.ValueKind == JsonValueKind.String &&
+            double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) &&
+            double.IsFinite(parsed)) return parsed;
+        return null;
+    }
+
+    private static string FormatTimestampComponents(DateTime timestamp) =>
+        timestamp.ToString("yyyy-MM-dd'T'HH:mm:ss.fff", CultureInfo.InvariantCulture);
+
+    private static string FormatUtcOffset(TimeSpan offset)
+    {
+        var totalMinutes = (int)offset.TotalMinutes;
+        var absoluteMinutes = Math.Abs(totalMinutes);
+        var sign = totalMinutes < 0 ? "-" : "+";
+        return string.Format(CultureInfo.InvariantCulture, "{0}{1:00}:{2:00}",
+            sign, absoluteMinutes / 60, absoluteMinutes % 60);
+    }
+
+    private static bool TryMapCaptionedHistoryField(string rawName, out string fieldName, out string semanticLabel)
+    {
+        fieldName = string.Empty;
+        semanticLabel = "[redacted]";
+        var isRaw = rawName.EndsWith("_raw", StringComparison.OrdinalIgnoreCase);
+        var caption = isRaw ? rawName[..^4] : rawName;
+        if (string.IsNullOrWhiteSpace(caption) || caption.Length > MaxStringLength) return false;
+
+        var (safeName, known) = SanitizeChannelName(caption);
+        if (!known) return false;
+
+        // Captioned history fields carry the semantic label in their property name.
+        // Keep raw versus formatted values distinct without retaining the source caption.
+        fieldName = isRaw ? "channel_value_raw" : "channel_value";
+        semanticLabel = safeName;
+        return true;
     }
 
     private static string SafeBuildVersion(string? value) =>
@@ -1385,6 +1886,55 @@ public static class PrtgCompatibilityProbe
         _ => null
     };
 
+    private static PrtgStorageEnvironmentFacts SanitizeStorageEnvironment(PrtgStorageEnvironmentFacts? value)
+    {
+        if (value is null) return new PrtgStorageEnvironmentFacts();
+        var provider = SafeProvider(value.Provider);
+        var status = value.Status is "measured" or "partial" or "timeout" or "cancelled" ? value.Status : "unknown";
+        var sourceFiles = value.FileCapacities ?? Array.Empty<PrtgStorageCapacityRow>();
+        var sourceVolumes = value.VolumeCapacities ?? Array.Empty<PrtgStorageVolumeRow>();
+        var files = sourceFiles.Take(PrtgStorageEnvironmentProbe.MaximumRowsPerKind)
+            .Select(row => new PrtgStorageCapacityRow(
+                row.Role is "database-pages" or "database-file" or "write-ahead-log" or "shared-memory" or "data" or "log" ? row.Role : "unknown",
+                NonNegative(row.AllocatedBytes), NonNegative(row.UsedBytes), NonNegative(row.MaximumBytes),
+                row.MaximumKind is "bounded" or "unbounded" or "fixed-at-current" ? row.MaximumKind : "unknown",
+                NonNegative(row.GrowthBytes), row.GrowthPercent is >= 0 and <= 100 ? row.GrowthPercent : null)).ToArray();
+        var volumes = sourceVolumes.Take(PrtgStorageEnvironmentProbe.MaximumRowsPerKind)
+            .Select(row => new PrtgStorageVolumeRow(
+                row.Role is "owned-data-root" or "data" or "log" ? row.Role : "unknown",
+                NonNegative(row.TotalBytes), NonNegative(row.AvailableBytes))).ToArray();
+        return new PrtgStorageEnvironmentFacts
+        {
+            Status = status,
+            Provider = provider,
+            EngineVersion = System.Text.RegularExpressions.Regex.IsMatch(value.EngineVersion ?? string.Empty,
+                @"^\d{1,3}(?:\.\d{1,5}){1,3}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+                ? value.EngineVersion! : "unknown",
+            Edition = value.Edition is "Enterprise" or "Standard" or "Developer" or "Express" or "Web" or "Evaluation" or "Azure" or "unknown"
+                ? value.Edition : "unknown",
+            EngineEdition = value.EngineEdition is "personal-or-desktop" or "standard" or "enterprise" or "express" or
+                "azure-sql-database" or "azure-synapse" or "azure-sql-managed-instance" or "unknown"
+                ? value.EngineEdition : "unknown",
+            FileStatus = value.FileStatus is "measured" or "partial" or "unknown" ? value.FileStatus : "unknown",
+            VolumeStatus = value.VolumeStatus is "measured" or "partial" or "unknown" ? value.VolumeStatus : "unknown",
+            LocalFileStatus = value.LocalFileStatus is "measured" or "partial" or "unknown" ? value.LocalFileStatus : "unknown",
+            LogStatus = value.LogStatus is "measured" or "partial" or "unknown" ? value.LogStatus : "unknown",
+            DatabaseLogAggregate = value.DatabaseLogAggregate is { } log
+                ? new PrtgStorageLogAggregate(NonNegative(log.AllocatedBytes), NonNegative(log.UsedBytes))
+                : null,
+            QueriesAttempted = Math.Clamp(value.QueriesAttempted, 0, PrtgStorageEnvironmentProbe.MaximumMetadataQueries),
+            QueriesSucceeded = Math.Clamp(value.QueriesSucceeded, 0, PrtgStorageEnvironmentProbe.MaximumMetadataQueries),
+            TimedOut = value.TimedOut,
+            Cancelled = value.Cancelled,
+            FileRowsTruncated = value.FileRowsTruncated || sourceFiles.Count > PrtgStorageEnvironmentProbe.MaximumRowsPerKind,
+            VolumeRowsTruncated = value.VolumeRowsTruncated || sourceVolumes.Count > PrtgStorageEnvironmentProbe.MaximumRowsPerKind,
+            FileCapacities = files,
+            VolumeCapacities = volumes
+        };
+    }
+
+    private static long? NonNegative(long? value) => value is >= 0 ? value : null;
+
 
     /// <summary>
     /// 嚴格頻道語意名稱白名單檢查：若含有非白名單識別字（如主機名、IP、自訂字元等），
@@ -1395,6 +1945,10 @@ public static class PrtgCompatibilityProbe
         if (string.IsNullOrWhiteSpace(rawName))
         {
             return ("[none]", false);
+        }
+        if (rawName.Length > MaxStringLength)
+        {
+            return ("[redacted]", false);
         }
 
         var cleaned = rawName.Trim();
@@ -1419,22 +1973,12 @@ public static class PrtgCompatibilityProbe
             return ("[none]", false);
         }
 
-        var matchedWords = new List<string>();
-        foreach (var token in tokens)
+        var result = string.Join(" ", tokens.Select(token => token.Trim().ToLowerInvariant()));
+        if (!AllowedSemanticLabels.Contains(result))
         {
-            var t = token.Trim().ToLowerInvariant();
-            if (AllowedSemanticWords.Contains(t))
-            {
-                matchedWords.Add(t);
-            }
-            else
-            {
-                // 出現非白名單 token（可能帶有主機名稱或業務標識）：整串視為 unknown / redacted
-                return ("[redacted]", false);
-            }
+            // Require a recognized complete label, not merely a collection of generic words.
+            return ("[redacted]", false);
         }
-
-        var result = string.Join(" ", matchedWords);
         return (result.Length > MaxStringLength ? result[..MaxStringLength] : result, true);
     }
 
@@ -1490,6 +2034,8 @@ public static class PrtgCompatibilityProbe
         // 第 1 級截斷：保留 1 筆歷史與 4 筆頻道
         foreach (var t in evidence.Targets)
         {
+            if (t.RawChannelIdentity is { } raw)
+                raw.Samples = raw.Samples.Take(1).Select(s => s with { Channels = s.Channels.Take(4).ToArray() }).ToList();
             if (t.History?.Rows != null && t.History.Rows.Count > 1)
             {
                 t.History.Rows = t.History.Rows.Take(1).ToList();
@@ -1511,6 +2057,7 @@ public static class PrtgCompatibilityProbe
         // 第 2 級截斷：清空歷史與頻道列，保留快照重要欄位
         foreach (var t in evidence.Targets)
         {
+            t.RawChannelIdentity?.Samples.Clear();
             if (t.History?.Rows != null && t.History.Rows.Count > 0)
             {
                 t.History.Rows.Clear();

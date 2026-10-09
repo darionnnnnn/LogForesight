@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Core.Persistence;
 
@@ -57,6 +58,13 @@ public abstract class JsonBlobCollection<T> where T : class
         return (value, read.Version, read.Prefix.Length);
     }
 
+    /// <summary>Returns a bounded raw prefix so capacity-sensitive callers can preflight and reserve before deserialization.</summary>
+    protected (string? Prefix, long Version, int ReportedLength) ReadBoundedRawWithVersion(int maxCharacters)
+    {
+        var read = _blob.ReadBoundedWithVersion(maxCharacters);
+        return (read.Prefix, read.Version, read.ReportedLength);
+    }
+
     /// <summary>
     /// 讀取整份清單。內容不存在時回空清單（首次執行的正常情況，不是錯誤）。
     /// <para>為什麼要快取：主機清單（3000 台約 4 MB）在單一請求內會被讀取十幾次，若無快取反序列化成本極高。</para>
@@ -108,6 +116,16 @@ public abstract class JsonBlobCollection<T> where T : class
         {
             var items = Deserialize(raw);
             var result = mutation(items);
+            return (JsonSerializer.Serialize(items, LfJsonOptions.Pretty), result);
+        });
+
+    /// <summary>在寫入清單的同一交易內更新相依逐資源世代。</summary>
+    protected TResult MutateWithContext<TResult>(Func<LfDbContext, List<T>, List<T>, TResult> mutation) =>
+        _blob.MutateWithContext((ctx, raw) =>
+        {
+            var before = Deserialize(raw);
+            var items = Deserialize(raw);
+            var result = mutation(ctx, before, items);
             return (JsonSerializer.Serialize(items, LfJsonOptions.Pretty), result);
         });
 

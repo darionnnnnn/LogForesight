@@ -15,6 +15,11 @@ const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
 let currentDays = 30;
 let canMaintainHost = false;
+const resourcePressureRequests = new Map();
+const pressureReplayJobsBySensor = new Map();
+let pressureReplayRefreshTimer = null;
+let pressureReplayRefreshInFlight = false;
+let lastHostDetail = null;
 const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update-modal'));
 
 const LEGEND = [
@@ -42,6 +47,8 @@ const RUN_ACTIVITY_EVENT = 'lf:run-activity';
 let schedulerRunning = window.lfRunActivity?.isFetchRun === true;
 
 async function load() {
+    for (const request of resourcePressureRequests.values()) request.controller?.abort();
+    resourcePressureRequests.clear();
     renderLoading(document.getElementById('host-timeline'), 2);
     renderLoading(document.getElementById('host-issues'), 3);
 
@@ -49,6 +56,7 @@ async function load() {
         api.get(`/api/host-detail/${hostId}?days=${currentDays}`),
         getCurrentUser()
     ]);
+    lastHostDetail = detail;
     canMaintainHost = hasCapability(user, 'Maintain');
 
     if (canMaintainHost && detail.source === 'local') {
@@ -60,7 +68,22 @@ async function load() {
     renderTimeline(detail);
     renderIssues(detail);
     renderCheckup(detail);
-    loadPrtgMapping();
+    renderResourcePressure(detail);
+    if (detail.caseGrantOnly === true) {
+        renderCaseGrantScopeNotice(document.getElementById('host-prtg'),
+            '案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。');
+    } else {
+        loadPrtgMapping();
+    }
+}
+
+function renderCaseGrantScopeNotice(container, message) {
+    if (!container) return;
+    const notice = document.createElement('div');
+    notice.className = 'alert alert-info small mb-0';
+    notice.setAttribute('role', 'note');
+    notice.textContent = message;
+    container.replaceChildren(notice);
 }
 
 function renderHeader(detail) {
@@ -131,6 +154,11 @@ const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
 function renderTimeline(detail) {
     const container = document.getElementById('host-timeline');
+    if (detail.caseGrantOnly === true) {
+        renderCaseGrantScopeNotice(container,
+            '案件授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。');
+        return;
+    }
 
     // 依月份（yyyy-MM）分組
     const monthsMap = new Map();
@@ -195,13 +223,22 @@ function renderTimeline(detail) {
             const dayNum = parseInt(day.date.split('-')[2], 10);
             cell.textContent = String(dayNum);
 
+            if (day.riskReportPending === true) {
+                const marker = document.createElement('span');
+                marker.className = 'position-absolute top-0 end-0 small text-warning fw-bold';
+                marker.textContent = '!';
+                marker.setAttribute('aria-hidden', 'true');
+                cell.appendChild(marker);
+                cell.setAttribute('aria-label', `${day.date}｜${day.riskLevel || '風險'}｜風險報告待補，背景自動重試`);
+            }
+
             if (day.riskLevel) {
                 cell.dataset.risk = day.riskLevel;
             }
 
             if (day.hasRecord) {
                 cell.href = appUrl(`/records/${hostId}/${day.date}`);
-                cell.title = `${day.date}｜${day.riskLevel}風險${day.headline ? '｜' + day.headline : ''}`;
+                cell.title = `${day.date}｜${day.riskLevel}風險${day.headline ? '｜' + day.headline : ''}${day.riskReportPending === true ? '｜風險報告待補，背景自動重試' : ''}`;
             } else {
                 // 這天沒有分析紀錄——可能是排程沒跑、機器關機，不是「沒問題」
                 cell.title = `${day.date}｜無分析紀錄`;
@@ -312,6 +349,11 @@ let currentDetail = null;
  */
 function renderIssues(detail) {
     currentDetail = detail;
+    if (detail.caseGrantOnly === true) {
+        renderCaseGrantScopeNotice(document.getElementById('host-issues'),
+            '案件授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。');
+        return;
+    }
     const rows = sortRows(detail.topSignatures, ISSUE_COLUMNS, issuesSort);
     renderTable(document.getElementById('host-issues'), {
         columns: ISSUE_COLUMNS,
@@ -511,6 +553,329 @@ function renderCheckup(detail) {
     renderAiInline(conclusion, detail.latestCheckup.conclusion);
 
     container.replaceChildren(date, conclusion);
+}
+
+function renderResourcePressure(detail) {
+    const container = document.getElementById('host-resource-pressure');
+    if (detail.caseGrantOnly === true) {
+        renderCaseGrantScopeNotice(container,
+            '案件授與只包含被交辦的問題；此頁不顯示主機層級的資源觀察或維護控制。');
+        return;
+    }
+    if (detail.canManageResourcePressure === true) refreshPressureReplayStatus(detail.hostId);
+    const hints = detail.resourcePressureHints ?? [];
+    const intro = document.createElement('div');
+    intro.className = 'text-muted small mb-2';
+    intro.textContent = '以可信來源與最近兩個完整小時評估；等待中的資料不代表主機故障。';
+    const availability = resourcePressureAvailability(detail.resourcePressureAvailability);
+    const modes = detail.resourcePressureModes ?? [];
+    const canManage = detail.canManageResourcePressure === true;
+    if (!hints.length && !modes.length) {
+        const empty = Object.assign(document.createElement('div'), {
+            className: 'text-muted small', textContent: '尚無目前資源期間觀察。'
+        });
+        const replayRows = [];
+        if (canManage) {
+            for (const [key, jobs] of pressureReplayJobsBySensor) {
+                if (!key.startsWith(`${detail.hostId}:`)) continue;
+                for (const job of jobs) {
+                    const line = document.createElement('div');
+                    line.className = 'small text-muted';
+                    const state = job.status === 'Completed' ? '已完成' : job.status === 'Overdue' ? '已逾期' :
+                        job.status === 'Superseded' ? '已被較新設定取代' : '等待撤回／重評';
+                    line.textContent = `sensor #${job.sensorObjid} ${job.enabled ? '啟用重評' : '停用撤回'}：${state}` +
+                        (job.lastReason ? `（${modeReplayReasonText(job.lastReason)}）` : '');
+                    replayRows.push(line);
+                }
+            }
+        }
+        container.replaceChildren(intro, ...(availability ? [availability] : []), empty, ...replayRows);
+        return;
+    }
+    const labels = {
+        'source-policy-unready': '目前來源或監控政策尚未就緒',
+        'resource-paused': '此資源已暫停監控',
+        'current-strategy-unverified': '目前取樣策略尚未核實',
+        'source-profile-missing': '缺少來源資源設定',
+        'source-authority-incomplete': '來源尚未提供足以核實的資源語意',
+        'source-profile-invalid': '來源資源設定無效',
+        'source-profile-stale': '來源資源設定已過期或與目前資源不符',
+        'measurement-semantics-unverified': '數值單位或方向尚未核實',
+        'latest-two-completed-hours-missing': '缺少最近兩個完整小時的資料',
+        'hour-coverage-below-75-percent': '每小時可信資料涵蓋率未達 75%',
+        'summary-does-not-match-proved-slots': '小時摘要與可信取樣不一致',
+        'invalid-hour-proof': '可信取樣證明無效',
+        'trusted_hour_evidence': '缺少可信小時資料',
+        'rule-changed': '目前啟用規則已變更',
+        'profile-identity-or-current-rule-unavailable': '來源 profile、資源身分或目前規則已變更'
+    };
+    const familyNames = { Cpu: 'CPU', Memory: '記憶體', Disk: '磁碟' };
+    const stateNames = { Hit: '門檻命中', Recovery: '已恢復', NoHit: '未達門檻', Insufficient: '等待可信資料' };
+    const modeByKey = new Map(modes.map(mode => [`${mode.sensorObjid}:${mode.family}`, mode]));
+    const rows = hints.map(hint => {
+        const key = `${hint.sensorObjid}:${hint.family}`;
+        const mode = modeByKey.get(key);
+        const row = document.createElement('div');
+        row.className = 'border-bottom py-2';
+        const title = document.createElement('div');
+        title.className = 'fw-semibold';
+        title.textContent = `${familyNames[hint.family] ?? '資源'}：${stateNames[hint.state] ?? '等待核實'}`;
+        row.appendChild(title);
+        const detailLine = document.createElement('div');
+        detailLine.className = 'small text-muted';
+        const values = [hint.earlierHourAveragePercent, hint.latestHourAveragePercent];
+        if (values.every(Number.isFinite)) {
+            detailLine.textContent = `最近兩個完整小時平均 ${values[0].toFixed(1)}%／${values[1].toFixed(1)}%`;
+            if (Number.isFinite(hint.coveragePercent))
+                detailLine.textContent += `，可信涵蓋率 ${hint.coveragePercent.toFixed(1)}%`;
+        } else {
+            detailLine.textContent = labels[hint.reasonCode] ?? '目前資料不足以完成判定';
+        }
+        row.appendChild(detailLine);
+        if (hint.firstHourStartUtc && hint.latestHourStartUtc) {
+            const window = document.createElement('div');
+            window.className = 'small text-muted';
+            const through = new Date(new Date(hint.latestHourStartUtc).getTime() + 60 * 60 * 1000);
+            window.textContent = `證據窗口（UTC）：${utcStamp(hint.firstHourStartUtc)} 至 ${utcStamp(through.toISOString())}`;
+            row.appendChild(window);
+        }
+        if (hint.formalReasons?.length) {
+            const formal = document.createElement('div');
+            formal.className = 'small';
+            formal.textContent = `正式有效理由：${hint.formalReasons.join('；')}`;
+            row.appendChild(formal);
+            if (hint.episodeObservedSinceUtc) {
+                const observed = document.createElement('div');
+                observed.className = 'small text-muted';
+                observed.textContent = `此 episode 首次正式判定時間（UTC，非物理故障起始）：${utcStamp(hint.episodeObservedSinceUtc)}`;
+                row.appendChild(observed);
+            }
+        }
+        if (hint.missingFacts?.length) {
+            const missing = document.createElement('div');
+            missing.className = 'small text-muted';
+            missing.textContent = `待補：${hint.missingFacts.map(code => labels[code] ?? '核實來源資料').join('、')}`;
+            row.appendChild(missing);
+        }
+        const asOf = document.createElement('div');
+        asOf.className = 'small text-muted';
+        asOf.textContent = hint.evidenceAsOfUtc
+            ? `證據截止 ${formatDateTime(hint.evidenceAsOfUtc)}；來源資格核對 ${formatDateTime(hint.asOfUtc)}`
+            : `判定時間 ${formatDateTime(hint.asOfUtc)}`;
+        row.appendChild(asOf);
+        if (canManage && (hint.family === 'Cpu' || hint.family === 'Memory')) {
+            row.appendChild(renderPressureControl(detail.hostId, hint, mode));
+        }
+        return row;
+    });
+    if (canManage) {
+        for (const mode of modes) {
+            if (mode.family !== 'Cpu' && mode.family !== 'Memory') continue;
+            if (hints.some(hint => hint.sensorObjid === mode.sensorObjid && hint.family === mode.family)) continue;
+            const row = document.createElement('div');
+            row.className = 'border-bottom py-2';
+            row.textContent = `${familyNames[mode.family] ?? '資源'} sensor #${mode.sensorObjid}：` +
+                (mode.status === 'active' ? '正式模式有效，目前沒有期間觀察。' : `正式模式資格失效：${labels[mode.staleReason] ?? mode.staleReason ?? '需重新核實'}。`);
+            row.appendChild(renderPressureControl(detail.hostId,
+                { sensorObjid: mode.sensorObjid, family: mode.family }, mode));
+            rows.push(row);
+        }
+    }
+    if (canManage) {
+        const note = document.createElement('div');
+        note.className = 'small text-muted mt-2';
+        note.textContent = '正式模式只影響後續正式資源風險判定；試算與期間觀察不會自動建立案件或寄送郵件。';
+        rows.push(note);
+    }
+    container.replaceChildren(intro, ...(availability ? [availability] : []), ...rows);
+}
+
+function resourcePressureAvailability(state) {
+    if (!state) return null;
+    const copy = {
+        disabled: 'PRTG 資源擷取目前關閉。若需要資源觀察，請由管理者核對系統設定。',
+        'policy-not-ready': 'PRTG 監控政策尚未就緒或未涵蓋此主機。請維護者核對正式判定試點與目前政策。',
+        'current-proof-unavailable': '目前沒有通過當前政策與資源身分核對的期間觀察；不以舊資料填補。請維護者核對來源政策、資源對應及新取樣是否完成。',
+        warming: '目前資源身分可核對，但完整小時或可信涵蓋資料仍在累積。等待後續資料；這不表示主機故障。',
+        'ready-no-hit': '最近的完整期間有足夠可信資料，尚未達目前判定門檻。',
+        'current-evidence': '目前有符合來源與資源身分的期間證據，請查看下方各資源結果。'
+    };
+    const line = document.createElement('div');
+    line.className = 'small mb-2';
+    line.textContent = copy[state] ?? '目前資源證據狀態未知；請先核對來源政策與證據完整性。';
+    return line;
+}
+
+function renderPressureControl(hostId, hint, mode) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'd-flex flex-wrap align-items-center gap-2 mt-2 lf-no-print';
+    const key = `${hint.sensorObjid}:${hint.family}`;
+    const state = resourcePressureRequests.get(key);
+    const replayJobs = pressureReplayJobsBySensor.get(`${hostId}:${hint.sensorObjid}`) ?? [];
+    if (replayJobs.length) {
+        const replay = document.createElement('span');
+        replay.className = 'small text-muted';
+        replay.textContent = replayJobs.map(job => {
+            const state = job.status === 'Completed' ? '已完成' : job.status === 'Overdue' ? '已逾期' :
+                job.status === 'Superseded' ? '已被較新設定取代' : '等待撤回／重評';
+            const deadline = job.deadlineArmed ? `，截止 ${formatDateTime(job.dueAtUtc)}` : '，完整證據就緒後開始 15 分鐘期限';
+            return `${job.enabled ? '啟用重評' : '停用撤回'}：${state}${deadline}${job.lastReason ? `（${modeReplayReasonText(job.lastReason)}）` : ''}`;
+        }).join('；');
+        wrapper.appendChild(replay);
+    }
+    if (mode?.formalEnabled) {
+        const status = document.createElement('span');
+        status.className = `small ${mode.status === 'active' ? 'text-success' : 'text-warning'}`;
+        status.textContent = mode.status === 'active' ? '正式模式有效' :
+            `正式模式資格失效：${mode.staleReason ? ({
+                'source-policy-unready': '來源或監控政策尚未就緒',
+                'rule-changed': '目前啟用規則已變更',
+                'profile-identity-or-current-rule-unavailable': '來源 profile、資源身分或目前規則已變更'
+            }[mode.staleReason] ?? mode.staleReason) : '目前來源或規則已變更'}`;
+        wrapper.appendChild(status);
+        const disable = document.createElement('button');
+        disable.type = 'button'; disable.className = 'btn btn-sm btn-outline-secondary';
+        disable.textContent = '關閉正式模式';
+        disable.disabled = state?.busy === true;
+        disable.addEventListener('click', () => setPressureMode(hostId, hint, false, null, key));
+        wrapper.appendChild(disable);
+        if (state?.message) {
+            const message = document.createElement('span'); message.className = 'small text-danger';
+            message.textContent = state.message; wrapper.appendChild(message);
+        }
+        return wrapper;
+    }
+    if (!state?.trial) {
+        const trialButton = document.createElement('button');
+        trialButton.type = 'button'; trialButton.className = 'btn btn-sm btn-outline-primary';
+        trialButton.textContent = state?.busy ? (state.stage === 'activating' ? '正在啟用…' : '正在試算…') : '試算正式模式';
+        trialButton.disabled = state?.busy === true;
+        trialButton.addEventListener('click', () => requestPressureTrial(hostId, hint, key));
+        wrapper.appendChild(trialButton);
+        if (state?.busy && state.stage !== 'activating') {
+            const cancel = document.createElement('button');
+            cancel.type = 'button'; cancel.className = 'btn btn-sm btn-link'; cancel.textContent = '取消';
+            cancel.addEventListener('click', () => {
+                state.controller?.abort();
+                resourcePressureRequests.set(key, { message: '試算已取消；正式模式未啟用。' });
+                renderResourcePressure(lastHostDetail);
+            });
+            wrapper.appendChild(cancel);
+        }
+        if (state?.message) {
+            const message = document.createElement('span'); message.className = 'small text-danger';
+            message.textContent = state.message; wrapper.appendChild(message);
+        }
+        return wrapper;
+    }
+
+    const trial = state.trial;
+    const summary = document.createElement('div');
+    summary.className = 'w-100 small';
+    const outcome = { Hit: '兩小時均達壓力門檻', NoHit: '兩小時未同時達門檻', Recovery: '兩小時均低於恢復門檻' };
+    const title = document.createElement('div'); title.className = 'fw-semibold';
+    title.textContent = `試算結果：${outcome[trial.outcome] ?? '已完成'}（固定門檻 ${trial.thresholdPercent}%／恢復 ${trial.recoveryPercent}%）`;
+    summary.appendChild(title);
+    for (const hour of trial.hours ?? []) {
+        const line = document.createElement('div'); line.className = 'text-muted';
+        line.textContent = `${utcStamp(hour.startUtc)}：平均 ${Number(hour.averagePercent).toFixed(1)}%，可信涵蓋率 ${Number(hour.coveragePercent).toFixed(1)}%（${hour.goodSlots}/${hour.requiredSlots} 點，最低 ${trial.minimumHourlyCoveragePercent}%）`;
+        summary.appendChild(line);
+    }
+    const expiry = document.createElement('div'); expiry.className = 'text-muted';
+    expiry.textContent = `來源版本 ${trial.grant.profileFingerprint.slice(0, 12)}…／規則版本 ${trial.grant.rulesVersion}；證據截止 ${formatDateTime(trial.evidenceAsOfUtc)}；同版本試算結果有效至 ${formatDateTime(trial.grant.expiresAtUtc)}。`;
+    summary.appendChild(expiry);
+    const enable = document.createElement('button');
+    enable.type = 'button'; enable.className = 'btn btn-sm btn-primary';
+    enable.textContent = state.busy ? '正在啟用…' : '啟用正式模式'; enable.disabled = state.busy === true;
+    enable.addEventListener('click', () => setPressureMode(hostId, hint, true, trial.grant.trialResultId, key));
+    const cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.className = 'btn btn-sm btn-outline-secondary'; cancel.textContent = '取消';
+    cancel.disabled = state.busy === true;
+    cancel.addEventListener('click', () => { resourcePressureRequests.delete(key); renderResourcePressure(lastHostDetail); });
+    wrapper.append(summary, enable, cancel);
+    return wrapper;
+}
+
+function modeReplayReasonText(code) {
+    if (code === 'unknown-generation-scope') return '缺少可安全限定的來源世代';
+    if (code === 'no-persisted-host-days') return '尚無可核對的每日紀錄';
+    const count = /^([0-9]+)-host-days-waiting$/.exec(code);
+    if (count) return `有 ${count[1]} 個主機日仍待處理`;
+    if (code.includes('qualified-parent-or-closed-day-pending')) return '等待合格父紀錄或完整關閉日證據';
+    if (code.includes('parent-row-not-reconcilable')) return '父紀錄尚不能安全更新';
+    return '等待背景重評完成';
+}
+
+async function refreshPressureReplayStatus(targetHostId) {
+    if (pressureReplayRefreshInFlight || !Number.isFinite(targetHostId) || targetHostId <= 0) return;
+    if (pressureReplayRefreshTimer) clearTimeout(pressureReplayRefreshTimer);
+    pressureReplayRefreshTimer = null;
+    pressureReplayRefreshInFlight = true;
+    try {
+        const result = await api.get(`/api/prtg/resource-pressure/${targetHostId}/mode/replay`, { silent: true });
+        const grouped = new Map();
+        for (const job of result?.replayJobs ?? []) {
+            const key = `${targetHostId}:${job.sensorObjid}`;
+            if (!grouped.has(key)) grouped.set(key, []);
+            grouped.get(key).push(job);
+        }
+        for (const key of [...pressureReplayJobsBySensor.keys()]) {
+            if (key.startsWith(`${targetHostId}:`)) pressureReplayJobsBySensor.delete(key);
+        }
+        for (const [key, jobs] of grouped) pressureReplayJobsBySensor.set(key, jobs);
+        if (lastHostDetail?.hostId === targetHostId)
+            renderResourcePressure(lastHostDetail);
+        if (result?.replayPending === true)
+            pressureReplayRefreshTimer = setTimeout(() => refreshPressureReplayStatus(targetHostId), 15000);
+    } catch { /* Status display is advisory; saved mode and durable worker remain authoritative. */ }
+    finally { pressureReplayRefreshInFlight = false; }
+}
+
+async function requestPressureTrial(hostId, hint, key) {
+    const controller = new AbortController();
+    const state = { busy: true, controller };
+    resourcePressureRequests.set(key, state);
+    renderResourcePressure(lastHostDetail);
+    try {
+        state.trial = await api.post(`/api/prtg/resource-pressure/${hostId}/trial`,
+            { sensorObjid: hint.sensorObjid }, { signal: controller.signal });
+        state.busy = false; state.controller = null;
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        state.busy = false; state.controller = null;
+        state.message = error?.message ?? '試算失敗，請重新載入後再試。';
+    }
+    renderResourcePressure(lastHostDetail);
+}
+
+async function setPressureMode(hostId, hint, enabled, trialResultId, key) {
+    const state = { busy: true, stage: enabled ? 'activating' : 'disabling',
+        trial: resourcePressureRequests.get(key)?.trial ?? null };
+    resourcePressureRequests.set(key, state);
+    renderResourcePressure(lastHostDetail);
+    try {
+        const result = await api.put(`/api/prtg/resource-pressure/${hostId}/mode`,
+            { sensorObjid: hint.sensorObjid, trialResultId, enabled });
+        const replay = result?.replayJobs?.filter(job => job.sensorObjid === hint.sensorObjid) ?? [];
+        const hasOverdue = replay.some(job => job.status === 'Overdue');
+        const pending = result?.replayPending === true;
+        const action = enabled ? '正式模式已保存' : '正式模式已保存';
+        const deadlineArmed = replay.some(job => job.deadlineArmed);
+        toast(hasOverdue
+            ? `${action}；歷史撤回／重評已逾期，請查看主機模式狀態。`
+            : pending ? `${action}；${deadlineArmed ? '歷史撤回／重評期限為 15 分鐘。' : '完整證據就緒後開始 15 分鐘期限。'}`
+                : `${action}；歷史撤回／重評已完成。`, hasOverdue ? 'danger' : pending ? 'info' : 'success');
+        resourcePressureRequests.delete(key);
+        await load();
+    } catch (error) {
+        state.busy = false; state.trial = null;
+        state.message = error?.message ?? '設定失敗，請重新試算後再試。';
+        renderResourcePressure(lastHostDetail);
+    }
+}
+
+function utcStamp(value) {
+    return new Date(value).toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
 }
 
 for (const button of document.querySelectorAll('[data-days]')) {

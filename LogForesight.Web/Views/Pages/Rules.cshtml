@@ -1,4 +1,4 @@
-﻿@{
+@{
     ViewData["Title"] = "規則維護";
 }
 
@@ -194,6 +194,9 @@
                                 <option value="warning">持續 Warning (warning)</option>
                                 <option value="silent">沉默裝置 (silent)</option>
                                 <option value="disk_free_trend">磁碟可用空間趨勢 (disk_free_trend)</option>
+                                <option value="resource_cpu_sustained_pressure">CPU 資源壓力 (resource_cpu_sustained_pressure)</option>
+                                <option value="resource_memory_sustained_pressure">記憶體資源壓力 (resource_memory_sustained_pressure)</option>
+                                <option value="resource_disk_pressure">磁碟資源壓力 (resource_disk_pressure)</option>
                             </select>
                         </div>
                         <div class="col-12 d-none" id="rule-prtg-disk-trend-fields" data-platform-block="prtg">
@@ -201,9 +204,10 @@
                                 此規則預設停用，只評估語意已確認且資料品質足夠的磁碟 sensor。資料不足會明確標示，不視為正常，也不產生告警。門檻目前均為暫定值，尚待實機資料校準。
                             </div>
                             <div class="row g-3">
-                                <div class="col-md-4"><label for="rule-prtg-trend-low-water" class="form-label">低水位（%）</label><input type="number" class="form-control" id="rule-prtg-trend-low-water" min="0" max="100" step="0.1" /><div class="form-text">0–100%；目前值低於此百分比才繼續判斷。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-low-water" class="form-label">低水位（%）</label><input type="number" class="form-control" id="rule-prtg-trend-low-water" min="0" max="100" step="0.1" /><div class="form-text">0–100%；預估降到此低水位或低水位後耗盡時使用。</div></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-decline" class="form-label">最低下降速度（百分點／日）</label><input type="number" class="form-control" id="rule-prtg-trend-decline" min="0.01" max="100" step="0.01" /><div class="form-text">大於 0，最多 100 百分點／日。</div></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-depletion" class="form-label">最大預估耗盡時間（日）</label><input type="number" class="form-control" id="rule-prtg-trend-depletion" min="0.1" max="3650" step="0.1" /><div class="form-text">大於 0，最多 3650 日。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-trend-low-water-days" class="form-label">提前到達低水位時間（日）</label><input type="number" class="form-control" id="rule-prtg-trend-low-water-days" min="0.1" max="3650" step="0.1" /><div class="form-text">預設 7 日；至少 28 個有效日及可信下降趨勢才能預警。</div></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-min-days" class="form-label">最低有效資料天數（日）</label><input type="number" class="form-control" id="rule-prtg-trend-min-days" min="2" max="365" step="1" /><div class="form-text">2–365 日；資料不足時不會判為正常。</div></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-window" class="form-label">近期分析視窗（日）</label><input type="number" class="form-control" id="rule-prtg-trend-window" min="2" max="730" step="1" /><div class="form-text">不得小於最低有效資料天數，最多 730 日。</div></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-ratio" class="form-label">最低下降日比例（%）</label><input type="number" class="form-control" id="rule-prtg-trend-ratio" min="0.01" max="100" step="0.1" /><div class="form-text">大於 0 且不超過 100%；暫定 70%。</div></div>
@@ -230,7 +234,7 @@
                         <div class="col-md-6" id="rule-match-prtg-threshold" data-platform-block="prtg">
                             <label for="rule-prtg-threshold" class="form-label">門檻值</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                    data-bs-content="門檻語意依規則代碼而定：down / warning 為分鐘數（>=1），flapping 為往返次數（>=2），silent 不使用（填 0）。未達門檻不成立。">
+                                    data-bs-content="門檻語意依規則代碼而定：down / warning 為分鐘數（>=1），flapping 為往返次數（>=2）；資源壓力使用可信完成小時規則，不填此值；silent 不使用（填 0）。未達門檻不成立。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="number" class="form-control" id="rule-prtg-threshold" min="0" value="0" />

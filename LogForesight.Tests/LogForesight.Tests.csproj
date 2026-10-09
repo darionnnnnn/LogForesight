@@ -21,4 +21,8 @@
         <ProjectReference Include="..\LogForesight.Web\LogForesight.Web.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <None Update="Fixtures\prtg-round53-formal-cases.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
 </Project>

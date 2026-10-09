@@ -1,4 +1,7 @@
 
+using System.Text.Json;
+using LogForesight.Core.Models;
+
 namespace LogForesight.Core.Persistence;
 
 /// <summary><see cref="IHostStore"/> 的實作（blob key=hosts，整份型）</summary>
@@ -19,6 +22,30 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
         return PrtgHostSnapshot.FromBoundedWebHosts(hosts, version);
     }
 
+    public PrtgHostSnapshot CapturePrtgSnapshot(LogForesight.Core.Service.PrtgCalibrationCaptureBudget budget)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        using var rawBudget = budget.ReserveTransient(
+            PrtgHostSnapshot.MaximumTextCharacters * 2L + 2L, "bounded host catalogue raw JSON buffer");
+        var (prefix, version, reportedLength) = ReadBoundedRawWithVersion(PrtgHostSnapshot.MaximumTextCharacters);
+        if (prefix == null && version == 0)
+            return PrtgHostSnapshot.FromBoundedWebHosts(Array.Empty<WebHost>(), version);
+        if (prefix == null || reportedLength > PrtgHostSnapshot.MaximumTextCharacters ||
+            prefix.Length > PrtgHostSnapshot.MaximumTextCharacters)
+            throw new LogForesight.Core.Service.CalibrationCapacityException("Host catalogue exceeds the bounded calibration snapshot size.");
+
+        var graphBytes = budget.ValidateHostCatalogueJson(prefix, "Host catalogue");
+        budget.Charge(graphBytes, "retained bounded host snapshot");
+        using var parseGraphBudget = budget.ReserveTransient(graphBytes, "bounded host deserialization and snapshot conversion");
+        List<WebHost>? hosts;
+        try { hosts = JsonSerializer.Deserialize<List<WebHost>>(prefix, LfJsonOptions.Pretty); }
+        catch (JsonException ex) { throw new InvalidDataException("Host catalogue JSON is invalid.", ex); }
+        if (hosts == null) throw new InvalidDataException("Host catalogue JSON root is null.");
+        if (hosts.Count > 10_000)
+            throw new LogForesight.Core.Service.CalibrationCapacityException("Host catalogue exceeds the 10000-row calibration alias-index limit.");
+        return PrtgHostSnapshot.FromBoundedWebHosts(hosts, version);
+    }
+
     // 單筆查找走不複製的快照（回饋三十四輪 A5）：呼叫點在逐主機迴圈裡，
     // 3682 台規模下每查一台就複製整份清單純粹是 GC 壓力
     public WebHost? Get(long hostId) => ReadSnapshot().FirstOrDefault(h => h.HostId == hostId);
@@ -28,7 +55,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public WebHost Upsert(WebHost host)
     {
-        return Mutate(hosts =>
+        return MutateWithResourceFence(hosts =>
         {
             var existing = hosts.FirstOrDefault(h =>
                 string.Equals(h.HostName, host.HostName, StringComparison.OrdinalIgnoreCase));
@@ -63,7 +90,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public WebHost Touch(string hostName, DateTime reportedAt, string source = "local")
     {
-        return Mutate(hosts =>
+        return MutateWithResourceFence(hosts =>
         {
             var existing = hosts.FirstOrDefault(h =>
                 string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase));
@@ -163,7 +190,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public void Merge(long sourceHostId, long targetHostId)
     {
-        Mutate(hosts =>
+        MutateWithResourceFence(hosts =>
         {
             var source = hosts.FirstOrDefault(h => h.HostId == sourceHostId);
             if (source == null) return;
@@ -178,7 +205,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public void Unmerge(long hostId)
     {
-        Mutate(hosts =>
+        MutateWithResourceFence(hosts =>
         {
             var host = hosts.FirstOrDefault(h => h.HostId == hostId);
             if (host == null) return;
@@ -188,9 +215,36 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
         });
     }
 
-    public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation) => Mutate(mutation);
+    private static bool MappingIdentityChanged(WebHost current, WebHost incoming) =>
+        !string.Equals(current.IpAddress, incoming.IpAddress, StringComparison.OrdinalIgnoreCase) ||
+        current.Active != incoming.Active || current.MergedInto != incoming.MergedInto ||
+        !string.Equals(current.Source, incoming.Source, StringComparison.OrdinalIgnoreCase) ||
+        current.SentinelId != incoming.SentinelId;
 
-    public void MutateBatch(Action<List<WebHost>> mutation) => Mutate(mutation);
+    public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation) => MutateWithResourceFence(mutation);
+
+    public void MutateBatch(Action<List<WebHost>> mutation) => MutateWithResourceFence(mutation);
+
+    private void MutateWithResourceFence(Action<List<WebHost>> mutation) =>
+        MutateWithResourceFence<int>(hosts =>
+        {
+            mutation(hosts);
+            return 0;
+        });
+
+    private TResult MutateWithResourceFence<TResult>(Func<List<WebHost>, TResult> mutation) =>
+        MutateWithContext((ctx, before, after) =>
+        {
+            var result = mutation(after);
+            var beforeById = before.ToDictionary(h => h.HostId);
+            var changed = after.Where(host => !beforeById.TryGetValue(host.HostId, out var prior) ||
+                    MappingIdentityChanged(prior, host))
+                .Select(host => host.HostId)
+                .Concat(before.Where(prior => !after.Any(host => host.HostId == prior.HostId)).Select(prior => prior.HostId))
+                .Distinct().ToArray();
+            PrtgResourceIdentityStore.MarkPendingForHosts(ctx, changed, DateTimeOffset.UtcNow);
+            return result;
+        });
 
     /// <summary>
     /// 目標的空欄位以來源填補（見 <see cref="IHostStore.Merge"/> 的契約說明）。

@@ -975,6 +975,162 @@ public class PrtgProbeRunnerTests
         Assert.Equal(Guid.Parse("d2719dfc-2026-4104-8000-000000000001").ToString("N"), root.GetProperty("settings_revision").GetString());
         Assert.Equal(30, root.GetProperty("retention_days").GetInt32());
     }
+
+    [Fact]
+    public async Task RunAsync_步驟9_帶尾端加號版本與caption欄位關係且保留未知時間基準()
+    {
+        var sensors = TypedSensorRows(("SNMP CPU Load", 1), ("SNMP Memory", 1), ("SNMP Disk Free", 1));
+        var stub = BuildPerfStub(sensors, url =>
+        {
+            if (url.Contains("/api/status.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.1.92.1554+""}");
+
+            if (url.Contains("content=sensors") && url.Contains("filter_objid="))
+            {
+                var id = url.Split("filter_objid=")[1].Split('&')[0];
+                var lastcheck = id switch
+                {
+                    "1" => "2026-10-04T06:02:03+02:00",
+                    "2" => "CUSTOMER_SECRET_TIMESTAMP",
+                    _ => "2026-10-04 01:02:03 CUSTOMER_SECRET"
+                };
+                return JsonResponse(HttpStatusCode.OK, $@"{{""sensors"": [{{
+                    ""objid"": {id}, ""type"": ""SNMP CPU Load"", ""status"": ""Up"", ""status_raw"": 3,
+                    ""lastvalue_raw"": 42.5, ""lastcheck"": ""{lastcheck}"", ""lastcheck_raw"": 46300.04309,
+                    ""interval"": ""60 s"", ""interval_raw"": 60, ""private_metadata"": ""CUSTOMER_SECRET""
+                }}]}}");
+            }
+
+            if (url.Contains("content=channels"))
+                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [
+                    {""objid"": 7, ""name"": ""CPU Total""},
+                    {""objid"": 8, ""name"": ""CPU Load""},
+                    {""objid"": 9, ""name"": ""CPU Cores""},
+                    {""objid"": 10, ""name"": ""Percent Available Memory""},
+                    {""objid"": 11, ""name"": ""Free Disk""},
+                    {""objid"": 12, ""name"": ""private-host-name""},
+                    {""objid"": 13, ""name"": ""Host 192.168.1.5""}
+                ]}");
+
+            if (url.Contains("/api/historicdata.json"))
+                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{
+                    ""datetime"": ""10/4/2026 12:00:00 AM - 1:00:00 AM"", ""datetime_raw"": 46300.04167,
+                    ""CPU Total"": 42, ""CPU Total_raw"": 42.5,
+                    ""Percent Available Memory"": 24, ""Percent Available Memory_raw"": 24.5,
+                    ""coverage_raw"": 10000
+                }, {
+                    ""datetime"": ""<span title='2026-10-04 01:00:00'>CUSTOMER_SECRET</span>"", ""value"": 1, ""value_raw"": 1.1,
+                    ""value"": 2, ""value_raw"": 2.2, ""coverage_raw"": 10000
+                }, {
+                    ""datetime"": ""2026/10/4 上午 1:00:00 - 下午 2:00:00"", ""datetime_raw"": 46300.04167,
+                    ""coverage_raw"": 10000
+                }]}");
+
+            return null;
+        });
+        var context = new PrtgProbeEvidenceContext
+        {
+            BuildVersion = "1.0.53.1+332e879117ec9e0c555f8747a14fff432f5be856",
+            SourceFingerprint = new string('b', 64),
+            StorageProvider = "Sqlite",
+            EfCoreProvider = "Microsoft.EntityFrameworkCore.Sqlite",
+            SettingsRevision = "d2719dfc202641048000000000000001",
+            RetentionDays = 180,
+            ScopeSummary = "unknown (bounded scope withheld)",
+            ReadinessSummary = "unknown (not authoritative)"
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console, context);
+
+        Assert.True(result);
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var root = doc.RootElement;
+        Assert.Equal("24.1.92.1554+", root.GetProperty("source_prtg_version").GetString());
+        Assert.Equal("Sqlite", root.GetProperty("storage_provider").GetString());
+        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", root.GetProperty("ef_core_provider").GetString());
+        Assert.Equal(180, root.GetProperty("retention_days").GetInt32());
+        Assert.True(root.TryGetProperty("deployment_resources", out _));
+        Assert.False(root.GetProperty("evidence_ready").GetBoolean());
+        Assert.Contains("時間欄位基準未確認", root.GetProperty("historical_date_boundary").GetProperty("limitations").GetString());
+
+        var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("filter_objid=")).ToList();
+        Assert.Equal(3, snapshotUrls.Count);
+        Assert.All(snapshotUrls, u => Assert.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval", u));
+        Assert.All(snapshotUrls, u => Assert.DoesNotContain("status_raw", u));
+        Assert.All(snapshotUrls, u => Assert.DoesNotContain("lastcheck_raw", u));
+        Assert.All(snapshotUrls, u => Assert.DoesNotContain("interval_raw", u));
+        Assert.All(stub.RequestedUrls.Where(u => u.Contains("content=channels")), u => Assert.Contains("columns=objid,name,", u));
+        Assert.All(stub.RequestedUrls.Where(u => u.Contains("/api/historicdata.json")), u => Assert.Contains("usecaption=1", u));
+
+        var cpu = root.GetProperty("targets").EnumerateArray().Single(t => t.GetProperty("category").GetString() == "cpu");
+        Assert.Equal("global-compatibility-sample", cpu.GetProperty("selection_scope").GetString());
+        var snapshot = cpu.GetProperty("snapshot");
+        Assert.True(snapshot.GetProperty("status").GetString() == "ok",
+            $"Expected a successful snapshot response; bounded evidence was: {snapshot.GetRawText()}");
+        Assert.Equal(1, snapshot.GetProperty("returned_fields").EnumerateArray().Count(f => f.GetString() == "status"));
+        Assert.Equal(1, snapshot.GetProperty("fields").EnumerateArray().Count(f => f.GetProperty("field").GetString() == "lastcheck_raw"));
+        var snapshotRawDate = snapshot.GetProperty("fields").EnumerateArray()
+            .Single(f => f.GetProperty("field").GetString() == "lastcheck_raw");
+        Assert.Equal("unknown", snapshotRawDate.GetProperty("timestamp_basis").GetString());
+        Assert.Equal("prtg-raw-date-time", snapshotRawDate.GetProperty("timestamp_candidates")[0].GetProperty("format").GetString());
+        Assert.Equal(snapshotRawDate.GetProperty("timestamp_components").GetString(),
+            snapshotRawDate.GetProperty("timestamp_candidates")[0].GetProperty("start_components").GetString());
+        var snapshotDate = snapshot.GetProperty("fields").EnumerateArray()
+            .Single(f => f.GetProperty("field").GetString() == "lastcheck");
+        Assert.Equal("2026-10-04T06:02:03.000", snapshotDate.GetProperty("timestamp_components").GetString());
+        Assert.Equal("+02:00", snapshotDate.GetProperty("timestamp_candidates")[0].GetProperty("reported_offset").GetString());
+
+        var channels = cpu.GetProperty("channels").GetProperty("rows").EnumerateArray().ToList();
+        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "cpu total" && c.GetProperty("semantic_known").GetBoolean());
+        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "percent available memory" && c.GetProperty("semantic_known").GetBoolean());
+        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "free disk" && c.GetProperty("semantic_known").GetBoolean());
+        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "[redacted]" && !c.GetProperty("semantic_known").GetBoolean());
+        Assert.All(channels, c => Assert.Contains("unit", c.GetProperty("missing_fields").EnumerateArray().Select(f => f.GetString())));
+        Assert.All(channels, c => Assert.Contains("scaling", c.GetProperty("missing_fields").EnumerateArray().Select(f => f.GetString())));
+        Assert.All(channels, c => Assert.Contains("primary", c.GetProperty("missing_fields").EnumerateArray().Select(f => f.GetString())));
+
+        var history = cpu.GetProperty("history");
+        Assert.Equal("partial", history.GetProperty("status").GetString());
+        var entries = history.GetProperty("rows")[0].GetProperty("entries").EnumerateArray().ToList();
+        Assert.Contains(entries, e => e.GetProperty("name").GetString() == "channel_value_raw" &&
+            e.GetProperty("semantic_label").GetString() == "cpu total" && e.GetProperty("semantic_known").GetBoolean());
+        Assert.Contains(entries, e => e.GetProperty("name").GetString() == "datetime_raw" &&
+            e.GetProperty("timestamp_basis").GetString() == "unknown");
+        var ambiguousRange = entries.Single(e => e.GetProperty("name").GetString() == "datetime");
+        Assert.Equal("datetime_candidates", ambiguousRange.GetProperty("type").GetString());
+        Assert.Equal(2, ambiguousRange.GetProperty("timestamp_candidates").GetArrayLength());
+        Assert.Contains(ambiguousRange.GetProperty("timestamp_candidates").EnumerateArray(),
+            candidate => candidate.GetProperty("format").GetString()!.StartsWith("mdy-range", StringComparison.Ordinal));
+        Assert.Contains(ambiguousRange.GetProperty("timestamp_candidates").EnumerateArray(),
+            candidate => candidate.GetProperty("format").GetString()!.StartsWith("dmy-range", StringComparison.Ordinal));
+        var uncaptionedValues = history.GetProperty("rows")[1].GetProperty("entries").EnumerateArray()
+            .Where(e => e.GetProperty("name").GetString() == "value_raw").ToList();
+        Assert.Equal(2, uncaptionedValues.Count);
+        Assert.All(uncaptionedValues, e =>
+        {
+            Assert.Equal("[unknown]", e.GetProperty("semantic_label").GetString());
+            Assert.False(e.GetProperty("semantic_known").GetBoolean());
+        });
+        var chineseRange = history.GetProperty("rows")[2].GetProperty("entries").EnumerateArray()
+            .Single(e => e.GetProperty("name").GetString() == "datetime");
+        var chineseCandidate = chineseRange.GetProperty("timestamp_candidates")[0];
+        Assert.Equal("2026-10-04T01:00:00.000", chineseCandidate.GetProperty("start_components").GetString());
+        Assert.Equal("14:00:00.000", chineseCandidate.GetProperty("end_components").GetString());
+        var nonCpu = root.GetProperty("targets").EnumerateArray().Where(t => t.GetProperty("category").GetString() != "cpu");
+        Assert.All(nonCpu, target => Assert.Contains("invalid_datetime_string",
+            target.GetProperty("snapshot").GetProperty("fields").EnumerateArray()
+                .Single(f => f.GetProperty("field").GetString() == "lastcheck").GetProperty("value_type").GetString()));
+        Assert.DoesNotContain("CUSTOMER_SECRET", jsonText);
+        Assert.DoesNotContain("CUSTOMER_SECRET_TIMESTAMP", jsonText);
+        Assert.DoesNotContain("private-host-name", jsonText);
+        Assert.DoesNotContain("192.168.1.5", jsonText);
+        Assert.DoesNotContain("2026-10-04T01:00:00.000Z", jsonText);
+    }
     /// <summary>
     /// 相依性查詢回非 JSON（錯誤頁、登入頁）時，只印「無法解析」看不出回了什麼；
     /// 長度與開頭是實機唯一能判斷對方到底回什麼的線索。

@@ -21,11 +21,13 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
     /// </summary>
     public int Capture(long hostId, DateTime day, string settingsRevision,
         IReadOnlyList<(PrtgFinding Finding, LogIssueSignature Signature)> findings,
-        string? sourceUrl = null, long? runId = null)
+        string? sourceUrl = null, long? runId = null, string? transitionId = null)
     {
         if (hostId <= 0) throw new ArgumentOutOfRangeException(nameof(hostId));
         if (day != day.Date) throw new ArgumentException("判定日不可包含時間。", nameof(day));
         if (string.IsNullOrWhiteSpace(settingsRevision)) throw new ArgumentException("缺少設定版本。", nameof(settingsRevision));
+        if (transitionId is not null && !Guid.TryParseExact(transitionId, "N", out _))
+            throw new ArgumentException("PRTG observation transition id is invalid.", nameof(transitionId));
         var sourceHint = SourceHintFor(sourceUrl);
         var rows = findings.Select(item =>
         {
@@ -39,7 +41,8 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
             var content = JsonSerializer.Serialize(new
             {
                 FormatVersion = covered ? 2 : FormatVersion, HostId = hostId, Day = day, SettingsRevision = settingsRevision, SourceHint = sourceHint,
-                QualityReason = quality, Finding = item.Finding, Decision = item.Signature
+                QualityReason = quality, Finding = item.Finding, Decision = item.Signature,
+                TransitionId = transitionId
             });
             var resource = item.Finding.SensorObjid.HasValue
                 ? $"sensor:{item.Finding.SensorObjid.Value}" : $"device:{item.Finding.DeviceObjid}";

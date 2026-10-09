@@ -10,7 +10,8 @@ public sealed record PrtgDiskTrendThresholds(
     double MaximumDaysToDepletion,
     int MinimumValidDays,
     int RecentWindowDays,
-    double MinimumDecliningDayRatio)
+    double MinimumDecliningDayRatio,
+    double MaximumDaysToLowWater = 7)
 {
     /// <summary>保守的程式預設值，未經實機 28 日資料校準，不代表正式門檻。</summary>
     public static PrtgDiskTrendThresholds Provisional { get; } = new(
@@ -20,6 +21,14 @@ public sealed record PrtgDiskTrendThresholds(
         MinimumValidDays: 28,
         RecentWindowDays: 35,
         MinimumDecliningDayRatio: 0.70);
+}
+
+[Flags]
+public enum PrtgDiskTrendHitReason
+{
+    None = 0,
+    PredictedDepletion = 1,
+    PredictedLowWater = 2
 }
 
 public enum PrtgDiskTrendOutcome
@@ -38,7 +47,17 @@ public sealed record PrtgDiskTrendResult(
     double? CurrentAvailablePercent,
     double? RobustDeclinePercentagePointsPerDay,
     double? DecliningDayRatio,
-    double? EstimatedDaysToDepletion);
+    double? EstimatedDaysToDepletion,
+    double? EstimatedDaysToLowWater = null)
+{
+    public PrtgDiskTrendHitReason HitReasons { get; init; }
+    public IReadOnlyList<string> Reasons => HitReasons switch
+    {
+        PrtgDiskTrendHitReason.PredictedLowWater => ["predicted-low-water"],
+        PrtgDiskTrendHitReason.PredictedDepletion => ["predicted-depletion"],
+        _ => []
+    };
+}
 
 /// <summary>單一已確認百分比 sensor 的確定性趨勢判定，不執行任何 I/O。</summary>
 public static class PrtgDiskTrendEvaluator
@@ -87,21 +106,34 @@ public static class PrtgDiskTrendEvaluator
         var decline = -slope;
         var current = values[^1];
         var depletionDays = decline > 0 ? current / decline : (double?)null;
+        var lowWaterDays = decline > 0 ? Math.Max(0, current - thresholds.LowWaterPercent) / decline : (double?)null;
         var evidence = new PrtgDiskTrendResult(PrtgDiskTrendOutcome.NoHit, "", recent.Length, latest,
-            current, decline, fallingRatio, depletionDays);
-
-        if (current > thresholds.LowWaterPercent)
-            return evidence with { Explanation = $"目前可用空間 {current:F1}% 高於低水位 {thresholds.LowWaterPercent:F1}%。" };
+            current, decline, fallingRatio, depletionDays, lowWaterDays);
         if (decline < thresholds.MinimumDeclinePercentagePointsPerDay)
             return evidence with { Explanation = $"穩健下降斜率 {decline:F2} 百分點／日未達 {thresholds.MinimumDeclinePercentagePointsPerDay:F2}。" };
         if (fallingRatio < thresholds.MinimumDecliningDayRatio)
             return evidence with { Explanation = $"下降日比例 {fallingRatio:P0} 未達 {thresholds.MinimumDecliningDayRatio:P0}，趨勢不夠持續。" };
+        if (current > thresholds.LowWaterPercent)
+        {
+            // 提前預警仍要求完整 28 日準備度，不能藉降低規則天數繞過品質門檻。
+            if (recent.Length < 28)
+                return Insufficient("提前預警需至少 28 個有效日。", recent.Length, latest);
+            if (lowWaterDays > thresholds.MaximumDaysToLowWater)
+                return evidence with { Explanation = $"預估 {lowWaterDays:F1} 日降到 {thresholds.LowWaterPercent:F1}%，超出 {thresholds.MaximumDaysToLowWater:F1} 日提前處理窗。" };
+            return evidence with
+            {
+                Outcome = PrtgDiskTrendOutcome.Hit,
+                HitReasons = PrtgDiskTrendHitReason.PredictedLowWater,
+                Explanation = $"近期 {recent.Length} 個有效日持續下降；目前 {current:F1}%，穩健下降 {decline:F2} 百分點／日，下降日比例 {fallingRatio:P0}，預估 {lowWaterDays:F1} 日降到低水位 {thresholds.LowWaterPercent:F1}%。門檻為暫定，尚未實機校準。"
+            };
+        }
         if (depletionDays > thresholds.MaximumDaysToDepletion)
             return evidence with { Explanation = $"預估耗盡時距 {depletionDays:F1} 日，超出 {thresholds.MaximumDaysToDepletion:F1} 日處理窗。" };
 
         return evidence with
         {
             Outcome = PrtgDiskTrendOutcome.Hit,
+            HitReasons = PrtgDiskTrendHitReason.PredictedDepletion,
             Explanation = $"近期 {recent.Length} 個有效日持續下降；目前 {current:F1}%，穩健下降 {decline:F2} 百分點／日，下降日比例 {fallingRatio:P0}，預估 {depletionDays:F1} 日耗盡。門檻為暫定，尚未實機校準。"
         };
     }
@@ -110,6 +142,7 @@ public static class PrtgDiskTrendEvaluator
         double.IsFinite(t.LowWaterPercent) && t.LowWaterPercent is >= 0 and <= 100
         && double.IsFinite(t.MinimumDeclinePercentagePointsPerDay) && t.MinimumDeclinePercentagePointsPerDay > 0
         && double.IsFinite(t.MaximumDaysToDepletion) && t.MaximumDaysToDepletion > 0
+        && double.IsFinite(t.MaximumDaysToLowWater) && t.MaximumDaysToLowWater is > 0 and <= 3650
         && t.MinimumValidDays >= 2 && t.RecentWindowDays >= t.MinimumValidDays
         && double.IsFinite(t.MinimumDecliningDayRatio) && t.MinimumDecliningDayRatio is > 0 and <= 1;
 

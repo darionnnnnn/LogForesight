@@ -48,6 +48,35 @@ function slowFetch(record, delayMs) {
 }
 
 const cases = {
+    async 唯讀POST保留JSON與CSRF且逾時可辨識() {
+        let captured;
+        globalThis.fetch = (url, init) => {
+            captured = { url, init };
+            return hangingFetch({})(url, init);
+        };
+        let caught;
+        try {
+            await api.readOnlyPost('/api/prtg/monitoring/sensors', { hostIds: [1, 2] },
+                { timeoutMs: 20, silent: true });
+        } catch (error) { caught = error; }
+        assert(captured.init.method === 'POST', '唯讀查詢仍須使用POST body');
+        assert(captured.init.headers['X-Requested-By'] === 'LogForesight', '唯讀POST不可遺漏CSRF');
+        assert(captured.init.headers['Content-Type'] === 'application/json', '需傳JSON');
+        assert(JSON.parse(captured.init.body).hostIds.join(',') === '1,2', '選取範圍需完整保留');
+        assert(caught instanceof ApiError && caught.code === 'timeout', '需明確回報查詢逾時');
+    },
+    async 唯讀POST取消保留AbortError且不發錯誤toast() {
+        globalThis.fetch = hangingFetch({});
+        dom.toasts.length = 0;
+        const controller = new AbortController();
+        const query = api.readOnlyPost('/api/prtg/monitoring/sensors', { hostIds: [1] },
+            { signal: controller.signal, timeoutMs: 1000 });
+        controller.abort();
+        let caught;
+        try { await query; } catch (error) { caught = error; }
+        assert(caught?.name === 'AbortError', '範圍變更取消不可被改成網路失敗');
+        assert(dom.toasts.length === 0, '主動取消不應發錯誤toast');
+    },
     async 空白403回應仍分類為權限不足() {
         globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => { throw new SyntaxError('empty'); } });
         let caught;

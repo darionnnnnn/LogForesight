@@ -214,7 +214,7 @@ internal class WeeklyCheckupService
         if (prtgLines.Count > 0)
         {
             sb.AppendLine();
-            sb.AppendLine("【PRTG 監控訊號】（既有監控系統的量測結果，由程式依規則確定性判定，與上述事件日誌互為佐證）");
+            sb.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌在同一觀察期出現不表示資源或時間相符）");
             foreach (var line in prtgLines.Take(MaxPrtgLines))
             {
                 sb.AppendLine(line);

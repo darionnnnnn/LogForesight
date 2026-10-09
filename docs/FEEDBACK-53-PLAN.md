@@ -1,5 +1,7 @@
 # 第 53 輪規劃：PRTG 整合完全體版本
 
+> 2026-10-07 使用者更新驗收方式：不直接在實際現場環境執行驗收；必要來源／硬體／provider／版本事實只透過環境探測取得。功能、邊界、復原及容量在受控隔離環境，結合同版探測成本與來源 fixture 驗收；實際 SQL、SMTP 協定與收件匣指本輪隔離測試端。不得因此放寬既定時限、25%餘裕、3000／15000／180日負載或角色／版本守門，也不冒稱現場投遞／真實事故成效。以下歷史提及現場直接驗收的執行方式由本決策取代，未齊來源事實仍保留待探測。
+
 > 狀態：實作中（2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
 > 本次核對基準：`dev`／`beda825b3dadbba7c6936f20acdf9dc731ae26ec`；原規劃起點為 `feature/prtg-feedback-52`／`8db15b5`。工作區僅有既存未追蹤 `artifacts/`，保護不改；不讀 `docs/archive/`。部署版本仍須現場確認。
 > 承接：[第 52 輪第二輪 PLAN](FEEDBACK-52-ROUND2-PLAN.md) 的有效 NetIQ 契約、原需求 ID、E0–E4 與未通過門檻。此文件是下一輪有效待辦入口，舊 PLAN 保留證據與決策歷程。
@@ -36,27 +38,25 @@
 
 ## 4. 試點門檻與現場交付
 
+本輪依最新指示不採直接套用實際環境的驗收方式。來源與部署資源缺項透過有界環境探測取得；程式、provider、郵件協定、角色操作及容量條件在自有隔離環境按固定門檻驗收。探測尚未提供的原生語意維持未知，不把合成資料當成來源事實。
+
 以下是持續成效觀察草案，不能代替或推遲 §15 的技術／操作驗收：3–5 台 NetIQ 主機／10–20 sensors；資料就緒後至少 14 日；每類至少 5 件獨立正例；誤報率候選 ≤10%；額外查證成本候選 ≤15 分鐘／日；慢性容量可處置提前量候選 ≥24 小時；完整可比至少 5 案中至少 3 案有額外價值，或較每案最佳基準查證成本中位數改善 ≥20%。分母、漏報核對及樣本不足裁定沿用 E4，不事後挑門檻。NetIQ p95 增量 ≤10% 納入 §15 前置容量驗收；功能、復原、負載與操作不得等待這段觀察才驗。
 
 第一批現場交付：對齊後版本／設定及 DB 類型、去識別試點與實際作用清單、昨日 NetIQ 結果、守門生效畫面、PRTG 語意／readiness、使用效果匯出的驗收證據包。原始探測使用 2026-10-01 附件作基準；先重驗差異，不重做無關全站測試，不包含帳密／token。
 
 ## 5. 完成裁定與有效 TODO
 
-2026-10-04 已按本輪工作分支的實際程式及呼叫端回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
+2026-10-06 已按本輪工作分支的實際程式及呼叫端回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
 
 ### 5.1 尚未完成的實作與必要交付
 
+- [ ] R07／day-window：同一主機日的全日可信兩小時窗口及歷史 finding／目前 episode 分離已實作；剩餘真實主機日跨午夜窗口仍被 SingleWindowHostDay 排除。跨日歸較晚小時所在日的語意已提出討論，未定案前不改正式歸屬。不可把跨主機日正例改列限制後當作需求通過，需原反例及缺口／恢復／重跑／父資格驗收。
+- [ ] R05／shared-admission：共同 snapshot＋trusted profile 請求量、冷啟／23小時更新期限、同版量測、拒絕／未驗證狀態及 scope 變動續作已整合（264/264）；仍須走停用時結構同步→兩類真實容量 pilot→同版 Settings CAS 啟用的完整動線，並通過共同工作負載。不得將配額算術或元件測試當成全部工作負載通過。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
-- [ ] R02：逐 sensor 狀態增量水位、重疊去重、完整性、整輪截止及持久公平進度；不能每天逐顆重掃31日。
-- [ ] R03：逐資源身分／語意世代與全域作業取消版本分離；單一對應改動不讓全體重暖機，所有正式與readiness／mail消費端一致。
-- [ ] R07／B1：逐規則準備度與期間量明確化；新增值型規則不能共用磁碟28日門檻或拿目前值補歷史。
-- [ ] R08／C1：主機日／判定版本的整體工作完成狀態、降級／等待／逾期／補跑、AI／案件／通知追蹤及重啟恢復；已有三路接線不等於此契約完成。
-- [ ] R11：有界診斷匯出與匯入、版本／筆數／雜湊manifest、舊包兼容、缺片／重複／取消／中斷恢復及隔離payload生命週期。現有串流實驗與提案不是正式實作。
-- [ ] R13：全部可保存／啟用的rule code有正式consumer；silent需可信presence／as-of，未接線不能無声保存後失效。
-- [ ] R15：來源量測時間／品質／physical sample身分及唯一slot，穿過accumulator、journal、SQL、transfer、readiness與正式消費端；舊聚合資料不追認。
-- [ ] B1／B2：磁碟两完成小時低水位、可信趨勢7日降到20%、CPU／memory兩小時壓力；預設hint一般處理者可見且零自動處置，正式模式須同版本試算資格及Maintain授權，改設定資格失效，同資源多理由合併。
-- [ ] Q2／C1：可信同資源／時間窗的跨來源證據對齊；現有同日佐證維持弱證據，不冒稱雙重確認。
+- [ ] R15：typed量測時間／品質／physical sample與唯一slot已穿過accumulator、journal、SQL、transfer、readiness及正式consumer；仍須補齊實際原生頻道／主要通道／單位縮放與時基authority，使正式profile可取得資格，不能由fixture追認舊聚合。明確設定＋原生核驗的替代契約待使用者定案。
+
 - [ ] C1／D1：依實際新行為補齊受影響的API／一般使用者證據入口、HelpContent／現況規格及維運腳本；逐新規則固定正反例接到日風險／AI／案件／通知。磁碟準備度／趨勢試算全站可見範圍守門已完成，见§5.3；其餘新入口仍須依實際行為回查。
+
 
 ### 5.2 尚未通過的驗收門檻
 
@@ -96,6 +96,40 @@
 | R10 日期分母／range-preview consumer | 單次各日COUNT→有界跨日期page／100,000歷史點→RuleAdmin／Controller取消及最終ACL/版本核對 | 隔離186/186；實際SQL180日期分母、100日期分支／跨日page通過；main最新1875/1875。R10父TODO刪除，180日時序負載仍列R05 |
 | R09 耐久近期狀態交接 | 原子mirror+perdevice queue→採樣後／ScopeRefresh有界claim→完整讀完ACK／重試／重啟／退出範圍CAS移除 | 隔離195/195，932項輸入無漂移；main最新1875/1875，忙碌恢復／同輪Tick／first50失敗後51公平進度通過；R09父TODO刪除，formal逐sensor涵蓋仍為R02 |
 | R11 儲存層交易／提交未知／buffer ledger | SQL sessions+chunks→execution strategy整筆重試→每operation owner/scope/source與lease CAS | SQLite37/37；實際SQL續傳/hash/conflict／UTClease／3接受1容量拒／16buffer接受1拒通過，專用DB/instance已清除；R11容量probe、parser／HTTP/UI／export／保留consumer仍待補，不清父TODO |
+
+| R02 增量水位與初始化期限 | 持久公平 collector→有界全範圍 SQL metadata／CAS→Daily 保存證據→Maintain 進度與明確續行 | 隔離73/73；Main v6 本項四類73/73、11項來源雜湊相符；真實合成瀏覽器逾期／同輪續行／設定不延長／過期競寫拒絕／1..720界線／一般角色拒絕及重啟保留通過。R02實作父TODO刪除；較早Main v6的其他失敗已由Main v9完整回歸6591/0/10確認修正。原生來源、15,000顆吞吐與AC整體門檻繼續保留。 |
+
+| R07/B1、B1/B2 逐規則期間及正式授權 | 兩完成小時／可信slots→server trial＋Maintain＋同版授權→Daily／episode／風險及證據入口；磁碟28日趨勢及7日20%理由合併 | 主代理直接追正式consumer，Main v9完整回歸通過；六個實際合成瀏覽器場景已保存。來源authority及全量容量繼續列A0/R05，不由fixture授權。 |
+| R11 有界搬運完整consumer | 一致SQL snapshot keyset→V2 integrity manifest→HTTP片段／耐久session→原檔SHA續傳／放棄／驗證及有限保留 | 當前正式provider BACKUP/RESTORE與unknown commit已實測，Main v9完整回歸通過；舊無manifest包只untrusted診斷。完整使用端與全量容量仍列AC/N4/R05。 |
+
+| R14 residual SQL 公開摘要／完整匯出 | execution strategy 每 attempt 新 context＋同 snapshot COUNT／metadata／content＋失敗計帳撤回→校準公開 status／export | 當前 Main 強制 Rebuild 0 errors，144/144 定向測例及實際 SQL Server 5/5 通過，輸入無漂移；包含 SQL retry、並行改寫 snapshot、容量拒絕與恢復、snapshot OFF。R14/residual-provider TODO 清除；全輪回歸與來源／容量 AC 繼續保留。 |
+
+| R07 模式撤回、報告及接續 | 原子模式＋耐久工作→共用治理／父列版本核對→AI／報告→案件及通知交接；失敗不推進游標 | 235 案聯合及本次 285 案受影響回歸、實際 SQL Server 八個交易重試情境通過；R07 mode-revocation 實作 TODO 清除。現行瀏覽器及全鏈／容量門檻仍列 §5.2，不把程式完成當作全輪驗收。 |
+
+### 5.4 2026-10-06 全待辦逐項盤點與實作順序
+
+本次重新核對 §5.1 的 11 項父待辦、§5.2 的 5 組驗收、§10 的 2 項來源／manifest 待辦及 AC01–AC22。§10 是前期規劃紀錄，未取得的來源事實仍歸 A0／N1，並非取消；已授權實作，不再等待規劃開工確認。原有通過證據只適用當時凍結的程式，隔離工作樹有程式或純 evaluator 通過不等於主分支已完成。
+
+| 活動項目 | 目前主分支／隔離產物核對 | 仍須完成的實際使用端及裁定 |
+|---|---|---|
+| A0／N1／§10 | 已收到 1.0.53.1 實際探測，PRTG 24.1 來源的原始時間、主通道、單位／縮放仍未確證；safe fixture 已封存 | 增補有界、保留 channel ID 的來源探測與時間基準證據；目前未知不能用服務 +08:00 或第一通道猜測，不能捏造現場通過 |
+| R02 | 持久增量 collector、公平 cursor、進度 API/UI 與 72 小時固定輪次期限已整合；期限階段 73/73 通過。Daily 讀保存證據，規則準備度及晚到父紀錄已接線 | 實作已由73項當前Main回歸、實際合成瀏覽器與重啟保存驗收清除TODO；初始化／穩態共同容量仍列R05與來源AC |
+| R03 | 逐資源 identity／epoch 與對應變更 producer 已整合，既有 782 項整合通過 | 新增值型正式／準備度／通知 consumer 全數採相同逐資源身分，局部變動只失效受影響資源 |
+| R07／B1 | 逐規則兩小時／唯一slot、同版trial及Maintain授權均已接入Daily；Main v9完整回歸6591/0/10，六項真實合成瀏覽器操作通過，實作父TODO已清除 | 每族5正例20反例的固定語料、原生來源資格與普通使用者／處置全鏈仍列C1/D1及AC；不由evaluator或一個CPU試算代替各族驗收 |
+| R08／C1 | workflow／AI CAS／Runs／NightlyDispatch、通知資格及lane receipt、有界recent/deep恢復已整合；雙連線SQL原子附掛與stale preimage實驗通過 | 整體證據就緒起算15分鐘及Overdue恢復已完成；current authority缺失／漂移拒絕、同scope觀測刷新不延長、同頁共用有界map均由Main651項相關consumer驗收通過，實作TODO已刪。共同負載及真實SMTP另列AC |
+| R11 | bounded SQL snapshot/keyset、4MiB分片與manifest/hash、持久續傳及固定生命週期已完成；Main v9完整回歸與實際SQL BACKUP/CHECKSUM/RESTORE通過，父TODO已清除 | receiving/validating自建立固定7日、failed/abandoned自終止1日、complete7日；HTTP/Web角色與操作完整AC仍須逐契約驗，不由provider測試代替 |
+| R13 | 完整 native device/sensor presence producer、持久每日 proof、主機日 UTC 窗口、bounded timeline、device-level Replay／Mail 守門隔離 245 項通過，23 個檔案已整合 | Daily 的 missing proof 等待與 qualified no-hit 完成需明確區分；main 整合回歸及實際 PRTG 24 原生來源能力仍未結案 |
+| R15 | 四路有界snapshot、bounded XML、typed proof/profile及collector→journal→SQL→transfer→正式consumer已接線；Main v9完整回歸已通過 | 實際PRTG24主頻道／單位／縮放／時間authority尚未確證，不能由合成fixture授權；同版新探測及替代binding契約待補，共同容量門檻未通過 |
+| B1／B2 | typed accumulator→journal→SQL→28日趨勢readiness、證據截止／恢復tombstone及低水位／趨勢合併已整合；Main v9完整回歸與source closure核對後刪實作父TODO | 兩小時低水位與趨勢各自固定語料及使用端完整驗收仍列C1/D1；舊Quality=Ok不追認，普通hint不建立案件或寄信；實際來源資格另列A0/R15 |
+| Q2／C1 | typed UTC／host／原生 reference provenance 穿過 ingress、聚合、SQL、AI；actual PrtgCorroboration 強／弱守門隔離 297 項通過，23 檔已整合 | 可信區間 producer／partial workflow main 444 項、ordinary user來源證據隔離53項、整合134項通過；真實瀏覽器未知／原生純文字／未授權主機反例已驗，正續驗正式模式；現場缺原生引用／精確資源時維持弱證據，不冒稱雙重確認 |
+| C1／D1 | 磁碟診斷／試算權限已驗，新入口尚未全数回查 | 普通處理者及 Maintain 真實動線、ACL／錯誤／空集合、HelpContent／現況規格及維運腳本 |
+| N1–N3／A0 | 工具成功、局部 fixture 通過 | 宣告能力逐字段與實際来源對照；未確認來源維持等待，不標來源 gate 通過 |
+| N4–N5 | 既有處置部分已驗 | 以同版新規則走 NetIQ 成功零事件／缺日／失敗、晚到／撤回及真實瀏覽器角色操作 |
+| R05／N6 | 元件級 15,000×12 slots 探測已驗；snapshot HTTP 已改四路並行，現場 9 秒／50 sensors 估算仍超過固定 15 分鐘策略的 10 分鐘完成 gate | 完整共同工作負載／180 日兩 provider、來源成本 admission、NetIQ p95 增量、持續欠帳、journal／SQL 暫停、重啟、升退版／備份復原；預估值不代替驗收 |
+| N7 | 固定四基準與案例分母已定 | 獨立事故母體及固定重播實用性驗收；來源時間未知不得造事件時間或提前量，長期現場統計與本輪技術結案分開 |
+| N8／M7 | AC01–AC22 登錄尚未裁定通過 | 全項完整性回查後依固定條件验收、跨模型獨立體檢、修正回歸及文件同步 |
+
+目前相依順序：R08 whole-evidence期限與R14校準有界capture/output已完成並整合Main，相關consumer651項及實際SQL provider驗收通過。接續完成C1/D1逐族固定語料與真實角色UI，再驗當前來源完整回歸。A0/R15/Q2現場來源缺口以同版有限probe及已定契約解除，共同容量與AC仍按既定門檻裁定；缺外部事實不阻止獨立程式修正，也不更改gate。先前520/2的磁碟失敗已修正並由130項定向及Main v9整合回歸通過，不再列為目前未修的bug。
 
 ## 6. 第 52 輪移交完整性
 
@@ -198,12 +232,11 @@ E0→N8；E1／F1／P01→N1–N3；E2／P03/P05→N4–N5；E3／F2／P06→N6�
 
 每批定案後補範圍、行為契約、輸入輸出、呼叫端、失敗／回復與客觀驗收，再交實作。實作者選擇尚未決定；本次沒有委派、建分支、commit／push 或改應用程式。
 
-## 10. 本次規劃完成度
+## 10. 規劃階段紀錄與目前驗收入口
 
-- [ ] 取得現場入口，完成缺項的有限探測；未取得不能宣稱現場核對完成。
-- [ ] M0 封存實際來源、資源、窗口與驗收 manifest；產品定案後同步詳細規格，再實作。
+本節原為開工前狀態；目前已依使用者授權實作，活動待辦以 §5 為準。依 2026-10-08 最新指示，不要求直接登入或部署到實際服務主機驗收。實際來源、字段、時基及部署資源的缺漏由有限環境探測取得；功能、provider、復原、SMTP、瀏覽器及固定工作負載驗收在自有隔離環境執行。探測輸出需綁定執行版本與固定限額，不能將取得輸出等同容量或正式規則資格通過。
 
-此前只修改規劃文件；本次最小評估結果見 §15.1，未修改應用程式。§2 測試數字仍是前輪紀錄，不能當作本次 dev 或現場的新驗收。討論及探測尚未完成，這份文件是可審閱的規劃草案。
+M0 尚未確認的來源與資源維持 §5.1 A0／R15、§5.2 N1–N3；不另以「取得現場入口」作為實作前提。§2 舊測試數字及 §15.1 開工前最小評估保留為歷史證據，不能代替目前程式的驗收；最新實作、失敗反例與整合結果記於 §18。
 
 ## 11. 第二次檢視：先從使用者及管理者操作出發
 
@@ -846,3 +879,456 @@ R02 增量 collector 的 point-anchor 不增加正時段 coverage，已獨立 21
 R02 成本重算修正先前歷史估計：15,000 sensors × 20 messages requests + 2 × ceil(15,000/50) identity pages = 300,600 次初始化 table 請求；穩態上限 15,600／日。5 分鐘快照 86,400／日、15 分鐘 28,800／日，和背景工作共用 table 配額；semantic／guard／同步／探測／重試成本仍須計入。不得由單獨請求算術承諾現場完成時間，R05 容量驗收保持未通過。
 
 發布前主工作樹強制 Rebuild 0 errors，相關擴大集合 **2004 passed／0 failed／0 skipped**，967 項 source／assembly／JS／MJS 輸入無漂移，`probe-release-10531-main.trx`。最後只補安全 duration string 探測欄位與五個正反例（僅數字＋受限時間單位可保存；其他字串不輸出），未推定 interval_raw 單位或變更正式採樣；首次新增 fixture 漏 context 參數的建置 RED 保留。修正後強制 Rebuild 0 errors，**132 passed／0 failed／0 skipped**，輸入无漂移，`probe-release-duration-context-fixed-10531.trx`。全部證據位於主工作樹 `.gemini-tasks/primary-results/`。這是探測版相關範圍驗證，不宣稱本輪所有 TODO 或現場來源已驗收。
+
+
+### 2026-10-05 現場探測回傳與來源契約修正
+
+已取得使用者貼上的小範圍資料流及完整環境探測，含安全 compatibility JSON；不再把「尚未收到現場探測」列為阻礙。部署 build 為 `1.0.53.1+332e879117ec9e0c555f8747a14fff432f5be856`，本輪發布 commit 為 `54527b63f1423439504fb65363230eeb8f1d6ec4`。遠端不提供前者 Git object，不能宣稱已證實兩者原始碼逐位元相同；仍可採用帶 build 與來源 fingerprint 的實際回應形狀及耗時觀測。私人輸出及抽取安全 JSON 保留於未追蹤的 `.gemini-tasks/source-probe-20261005/`；不將主機名稱或 IP 納入公開 fixture。
+
+小範圍成功路徑：一顆 CPU、一日 24 小時數值正式寫入並讀回 24 筆有效值。其驗證範圍不包括可信 physical sample、歷史歸戶、風險命中、排程、3,000 主機／15,000 sensors／180 日容量。完整探測顯示 PRTG `24.1.92.1554+`、6,531 devices／43,572 sensors；服務採 SQLite、24 邏輯處理器、約 31.7 GiB 可用記憶體上限。業務範圍目前只有 20 devices（18 對應、2 衝突）、126 sensors；不得以全站總量作正式業務資格或把範圍外資料自動刪除。
+
+已確認修正項目：
+- 探測 source_prtg_version 為 unknown，是嚴格版本 sanitizer 未接受 PRTG 的字面 `+` 尾碼；修正只准數字段與受限 literal `+`，不放寬任意來源文字。
+- snapshot columns 同時要求 status/status_raw、lastcheck/lastcheck_raw、interval/interval_raw，現場自動原始欄位導致重複同名鍵。改以基本欄位取得自動 raw 欄位；可信 parser 仍拒絕 conflicting duplicates，不能把歷史多通道同名 value_raw 任意折成單值。
+- channels 使用 channel 欄名未取得語意名稱，unit/scaling/primary 也缺；官方多物件 API 指定 name 是 channel 名稱。historicdata JSON 缺 usecaption=1，回傳重複 value/value_raw，尚無可驗證通道對應。補強具 caption 的有界安全探測與可追溯通道關聯，不從 sensor 類名、第一筆值或 unit 樣本代替正式語意證據。官方依据：https://www.paessler.com/manuals/prtg/multiple_object_property_or_status 及 https://www.paessler.com/manuals/prtg/historic_data 。
+- snapshot raw OA 解碼接近接收 UTC；history 首列解碼為 2026-10-03 17:00，請求起點是 2026-10-04 00:00。這是時間基準尚未一致的實證，並非來源時區已確證。R15 明確分離 raw timestamp 解讀時區、UTC instant 及分析／儲存 wall hour，未知保持拒絕；不得從服務 +08:00 自動猜來源或把整份歷史平移。
+- 現場 interval 已觀測 CPU 60 s、memory/disk 5 m；只證實這三顆。掃描週期、快照策略與12/4固定slot分母須分列；重取同一物理樣本不能提高 coverage。
+- 單顆 snapshot 三次約 8.8／9.1／10.9 秒，另一批7個 filter_objid 約4.8秒；現行50-ID批次／4並行必須在 R05 共同負載模型下評估，不能由2/s請求配額推算5分鐘一定完成。相依性探測15秒 timeout，只取得部分；不能稱全站拓樸已驗證。3個資源守門裝置在業務範圍外，應經明確覆寫與scope保留接線，不能混入業務規則資格。
+
+安全 JSON status=partial、evidence_ready=false，三族9次 compatibility API皆收到回應，無timeout；通道／時間 authority 未齊，A0/N1與Q2來源驗收仍未通過。已開放來源契約修正與 explicit time contract 兩個隔離實作段，均採 gpt-6-luna high 並由主代理獨立驗收。沒有清除父 TODO 或將22個AC改為通過。
+
+
+### 2026-10-05 回傳後的獨立修正驗證
+
+來源探測修正已完成版本 literal `+`、snapshot 基本欄位／自動 raw、channel `name`、history `usecaption=1` 與受限 caption 關聯、原始 OA components 及有歧義的格式候選。明確 offset 留原始壁鐘與 reported offset，不轉成本機時間、不推定來源時區。主代理發現 `TimeSpan.ToString("zzz")` 會使 ISO offset 探測失敗，已修正並獨立驗證 +02:00、-05:00、+00:00、+05:30。來源契約隔離段 **117 passed／0 failed／0 skipped**，967 項輸入無漂移；原 RED 及缺 Xunit／wall-hour fixture 的 RED 均保留。
+
+R03 逐資源世代、producer 持久化及正式磁碟消費鏈隔離擴大回歸 **568 passed**。追加身分 ledger SQL prefix／原始長度與 UTF-8 上限（8 KiB），超大 ASCII／Unicode／損壞 JSON 在物化完整 blob 前拒絕；相關更新集合 **32 passed**，954 項輸入無漂移。33 個 R03 差異檔及3個來源契約檔已移入主工作樹並留復原 checkpoint，主工作樹擴大迴歸另記結果。這不代表 R03 父項或整輪驗收已完成。
+
+R15 typed sample 的明確 raw／analysis zone、UTC instant、wall-hour key、重複 physical sample／衝突與 SQL／journal 結算隔離集合 **125 passed**，962 項輸入無漂移；仍未接至正式 hosted 採集。兩小時 CPU／memory／disk 純規則段 **124 passed**，包含每族5個正例及30個负例；負例先確認有效 baseline ready 再施加缺陷並核對拒絕原因。掃描週期納入試算 fingerprint。純 evaluator 的 boolean authorization 尚非持久正式啟用資格，ordinary user hints／Daily／episodes／合併 reasons／AI及通知接線均保持待辦。
+
+最小合成容量實驗為 15,000 sensors × 12 unique 5-minute slots，執行 capture／restore／drain 三輪。managed live extra 最大84,952,200 bytes，程序 resident peak139,935,744 bytes；三輪1426／1526／1921ms，釋放後保留量穩定。執行環境為本機 .NET8.0.23，現場 .NET8.0.29；這只驗此元件1 GiB預算，**不等於**3,000主機／180日／NetIQ+AI+PRTG共同負載驗收。
+
+正式通道 consumer 仍有實作缺口：`PrtgDiskSemanticProbe` 使用舊 `channel` 欄位及未具名歷史 JSON；多通道且缺 primary metadata 時 `ValuesMatch=null`，現有人工確認要求完整匹配，無法取得資格。舊落盤數值不帶channel ID，不能由手填ID追認；需把实际channel ID、caption、品質、時間及身分世代接入採集、持久 proof、語意確認與正式消費。官方歷史 API支持XML，但顯示channelid的支援文章為未維護的14版範例，只能作契約候選與負例依據，不能替代24版現場證據： https://www.paessler.com/manuals/prtg/historic_data 及 https://helpdesk.paessler.com/en/support/solutions/articles/76000070377-does-rest-api-support-json-formatting-for-historic-data 。不新增未知API欄位猜測、不放寬人工驗證閘門。
+
+已取得探測，原「尚未收到」敘述已失效；未齊部分仍為來源時間／通道 authority、正式採集接線、共同容量及整合風險結果。全部父 TODO與AC01–AC22保留，修正未 commit／push。
+
+主工作樹整合驗證：`r03-source-contract-main-integrated-primary.trx` **782 passed／0 failed／0 skipped**，強制Rebuild 0 errors，971項 source／assembly／JS輸入無漂移。來源探測与R03修正已在main，仍未完成正式通道採集及R15接線、規則整合與共同容量驗收。
+
+
+### 2026-10-06 復原等待、容量反例與瀏覽器再核對
+
+- 實際主工作樹 localhost 瀏覽器使用隔離合成資料：普通處理者可見 CPU 兩完整小時 95%／95%、100% 涵蓋與 UTC 窗口，無維護控制；Maintain 試算→啟用→停用可操作；移除可信 profile 後試算拒絕且不提供啟用。來源證據未知、原生引用 HTML 純文字及隱藏主機拒絕已核對。證據：`.gemini-tasks/primary-results/pressure-source-browser-main-v1.json`；此二進位尚未包含待整合的 Daily／復原／容量修正，不能代替現場或全輪驗收。
+- Daily 原子撤回＋新判定追加須同一 record SQL 交易，核 exact parent ID／NetIQ SHA／captured prior finding SHA，提交後才發布。v7 179 通過／11 失敗；v8、v9 各 114 通過／4 失敗，均輸入零漂移。剩餘磁碟分頁反例的 fixture 缺持久規則及實際當前 101 個映射候選，已退回補齊；不可削弱晚到映射／語意／主機變更的拒絕斷言。
+- bounded recovery 查到過大／損壞 SQL 列時只記 log 會留下舊 Succeeded，已補具體 revision／query-start fence 的可見 waiting marker、SMTP 前再核及合格資料恢復；隔離階段仍在主代理編譯與反例驗收，不以代理回覆裁定完成。
+- 容量 cold pilot 曾把重複 objid 補成 50 顆、忽略較慢的新樣本，且 HTTP 200 空／外來回應可計為成功；已退回改為 distinct 實際請求基數、每小時最慢五筆及 runtime/pilot 共用 ID/status/lastcheck response 守門。固定 10／3 分鐘与 25% 餘裕不調降，main 尚待整合驗收。
+- R15 新增確認的程式契約缺口：trusted sampling channels request 只有 objid/name/lastvalue_raw/unit，profile parser 卻要求 isprimary/quantity/scale/direction/lastcheck_raw/interval_unit/semantic_version。這些並非已驗證的 PRTG 24.1 原生欄位；fixture 供應不證明正式可取得。現有全自動來源 profile 不能宣告實用完成。保持等待不猜第一頻道／時區；明確設定＋原生樣本驗證的替代契約待產品定案，同版新版 probe 是必要的來源交付。參考官方 table、channel settings、single-object property 與 historic API。
+
+
+### 2026-10-06 待辦盤點後的第二頁、復原及搬運契約回查
+
+主代理每日整合 v10 為 114 passed／4 failed／0 skipped，118 項，輸入無漂移；固定第二頁反例的輔助程式在建立可信磁碟資料後把 policy.SensorIds 縮成單顆，前置候選 101 的顯式參數不代表正式 Daily 消費端的選取集合。已恢復持久化的 101 顆選取並加入精確集合斷言，保留 100/101、101/101 的 late mutation 與全部拒絕條件；v11 重新驗證中。
+
+復原 v3 為 179 passed／3 failed／0 skipped，182 項，輸入無漂移。兩個旧 manifest fixture 缺少現行主機對應 HostMappingFingerprint，另一个 SQL 修訂競態測試把初始 Waiting 誤寫為 Succeeded；已退回修正為精確現行指紋與操作前後不變斷言，未以放寬正式 guard 取得綠燈。
+
+R11 完整性回查確認真實舊 V1 與舊 V2 曾沒有內嵌 manifest；目前均只進診斷隔離，不能授予正式來源資格。仍須補上新串流包的明確 integrity 契約、標記包必須有有效 manifest、未標記舊 V2 必須具備真實旧版完整字段，並在驗證結果分開 legacy-unmanifested／manifest-verified，兩者都維持 untrusted。不得宣稱 legacy 無雜湊包可防竄改。此缺口已開隔離階段補實作；正式 provider、備份副本復原與雙程序門檻繼續保留。
+
+AC08／13／21 已登錄實際瀏覽器子案例與輸入 SHA256，改為部分驗證，完整 AC 仍未通過。維護者試算→啟用→停用、失去可信 profile 後拒絕、一般處理者只有 hint、UTC／未知來源／外部引用純文字與直接 URL ACL 皆有指定案例，不能沿用空白「未執行」掩蓋已驗證子項，也不能把這些子項當全輪完成。
+
+
+### 2026-10-06 初始化期限定案
+
+使用者已採用預設 72 小時初始化作業期限；逾期明示未完成並停止該輪，保留水位／分頁進度，由管理者明確續跑。期限可調整，不能將作業期限或 55.7 小時配額成本基線稱為容量已驗收。已開 R02 獨立階段補持久截止、進度、授權續跑及取消／重啟反例；尚未通過主代理 gate，不刪 R02 TODO。
+
+
+### 2026-10-06 期限、寫入隔離及執行時容量的開發前移回查
+
+復原有界頁面、SQL 修訂競態及寄送資格隔離階段 182/182 通過，15 個檔案已整合 Main；仍須同版 Main 整合驗收。容量 v5 99 passed／2 failed；先前 4 個失敗已修正，新失敗是把四路並行當成只能有單一在途請求的測例。固定四路已送出、兩批尚未送出的交錯後，v6 容量／取消／批次／補抓相關 26/26 通過，14 個檔案已整合。
+
+R11 v1 為 42/3、v2 為 16/1；查出驗證器錯拒有有效 manifest 的 pre-marker V2，以及 HTTP fixture 宣告片數與實際尾片不符。修正並保留新標記包缺 manifest／雜湊／筆數竄改反例後，v3 為 43/43，4 個檔案已整合 Main；舊無雜湊包仍只作 untrusted 診斷，不授予正式來源資格。
+
+Daily v13 為 116/2、v14 為 47/2。實際拒絕暫存結果的守門已被觸發，但日期統計還有兩個正式缺陷：全域磁碟證據失敗未傳入逐日分類，及逐日開始前取消未列出尚未評估日期。已補明確 partial 與原因，維持零過期 finding／風險升級／incident 提交；並補上附掛交易 Serializable 隔離，避免另一程序在父指紋檢查後改寫紀錄。真實雙連線 SQL 反例將於 Main 整合後前置執行。
+
+72 小時 R02 期限實作已獨立完成，新增固定週期、逾期停請求、保留前綴／水位、Maintain 明確續行，期限／來源／範圍／授權 CAS、整個所選範圍的有界完成核對，並讓初始收集完成後繼續增量。v1 為 70/2；兩項測例仍假定水位不前進、或分類下拉沒有新期間規則，已依實際行為修正重驗。初始收集完成不代表兩小時／28 日／狀態歷史規則已就緒，不代表 15,000 顆容量通過。
+
+再次核對發現舊已啟用設定可繞過保存時容量門檻；已補 Main 執行時守門：超过 50 顆的精確範圍 必須有目前同來源、同範圍與同請求形狀的合格成本證據，否則暫停 PRTG 新取數、明示原因與試測入口，保留已接受資料及 NetIQ 工作。此修正尚待 Main gate。報告亦補一筆有界 PRTG 量值／期間說明與來源未知狀態，現況規格已同步；不增加弱佐證的風險權重。
+
+
+### 2026-10-07 R02 實作清單與瀏覽器回查
+
+依 Main v6 TRX 逐項抽出 collector 14、metadata 4、consumer 9、管理頁46，共73項全部通過，核對11個R02整合來源雜湊仍與凍結輸入一致。實際 Kestrel／SQLite／瀏覽器確認72小時到期明示、明確續行保留cycle/as-of/cursor、設定修改不延長進行中期限、過期修改拒絕與角色隔離；重啟後仍保留新期限與前次逾期紀錄。另修正共用api缺少readOnlyPost造成Sensor目錄失敗，實際載入已選主機1與sensor111通過。這些都是合成隔離環境證據，不授予原生來源資格或容量通過。
+
+
+### 2026-10-07 當前 SQL Server 雙連線及備份還原验收
+
+SQL Server 17.0.925.4／EF 8.0.10 已執行當前 Main 原子附掛：實際父紀錄讀取交易為 Serializable，獨立連線競寫得到1222；提交撤回舊PRTG finding、保留人工問題、附加新結果、更新normalized issues／manifest與observation superseded，fresh第二次附掛及exact重試通過。第二連線先提交時，舊parent/finding preimage拒絕且零撤回／manifest／風險副作用。12項輸入無漂移；專用DB及LocalDB instance已清除。初次harness編譯及script hash欄位缺陷均保留RED，不改正式程式條件，修正後v3通過。
+
+當前Main診斷傳輸正式provider驗收通過：新建schema與upgrader兩次、實際資料／log volume容量探測、unknown commit、exact duplicate／conflict、UTC lease與stale CAS、並行配額；205裝置、2001數值、205語意與2份timeline的有界SQL匯出包含Unicode與typed diagnostic proof。實際BACKUP COPY_ONLY CHECKSUM→VERIFYONLY→RESTORE MOVE後，狀態／binding／payload與有界匯出保持一致，legacy包仍只隔離診斷。1044項輸入無漂移；原DB、還原DB、備份/MDF/log及專用instance均清除。這是provider與復原機制驗收，不代表180日完整負載或原生來源通過。
+
+
+### 2026-10-07 Main v7 整合與逐 AC 部分證據
+
+主代理強制Rebuild後，當前Main 2818 passed／1 failed／0 skipped，1087項source／UI／Help／DLL輸入無漂移。唯一失敗為磁碟正式fixture僅初始化記憶體規則、未保存正式catalog要求的兩條disk規則；修正fixture保留相容source/eventkey、檢查統一資源RuleId及typed趨勢理由。stage v1發現init-only Enabled編譯錯誤，主代理改採正式CloneForSeedOverwrite，v2四項全過並整合Main；未放寬可信來源或判定門檻。
+
+AC01–AC22登錄已連到v7各自相關的實際測例與結果，不再籠統顯示未執行；這些是部分自動驗證，原固定子契約、同版Main最終回歸、原生來源、真正SMTP及共同負載仍個別保留。R03目前Main journal 24及hosted 95項通過，已整合單次source capture／legacy migration與scope fence；磁碟趨勢另有父日UTC截止候選，正在真實SQL流程取證，尚不稱缺陷已修正或全項通過。
+
+### R03／R13 當前程式完整性核對（2026-10-07）
+
+主代理直接核對 canonical Main 的 source-only V3 journal binding、single paired policy capture、逐資源身分與 operation cancellation fence；collector、磁碟／readiness、Daily、補追加及 Mail 均有目前身分守門。八種可保存規則皆有正式 consumer，未知 code 由 RuleValidator 拒絕；silent 缺可信 presence 留 Waiting，合格 no-hit 完成。11 個正式來源雜湊均與 Main v7 凍結輸入一致，相关 352 個實際測例通過。逐項證據在 `.gemini-tasks/primary-results/r03-r13-current-source-closure-v1.json`。
+
+依使用者指示刪除 §5.1 的 R03、R13 程式父待辦，並保留 A0／N1 原生來源與其他固定驗收門檻。Main v7 的磁碟 fixture 失敗另有修正階段4/4通過，最終 Main 仍待新版本驗證；本次不將局部綠燈寫成全輪完成。
+
+### 磁碟主機日／as-of 修正與正式模式瀏覽器驗收（2026-10-07）
+
+磁碟歷史 assessment 已修兩個經主代理真實 SQLite 流程重現的缺陷：analysis wall hour 先轉 UTC，再裁切為 Local NetIQ 主機日，下一日資料不改變舊日的 evidence fingerprint／正式 manifest；另外 proof 的所有量測與接收時間不得晚於父日截止。無效時基明確 Unknown，SQL 原始時間範圍採有界 superset 後精確裁切，分批點数／記憶體配額同步預留邊界日，不放大既定上限。
+
+主代理保留 `disk-trend-parent-day-primary-red-v2` 的實際 fingerprint RED，以及 `disk-trend-received-cutoff-primary-red-v2` 的可用小時 663／664 RED。修正後 `disk-trend-parent-day-asof-primary-green-v2.trx` **130 passed／0 failed／0 skipped**，1088項輸入无漂移、Rebuild 0 errors；五個整合檔與通過階段逐字節相同，checkpoint為 `pre-disk-hostday-asof-integration`。最終Main完整回歸另記，不以此階段替代全量。
+
+實際 Kestrel＋SQLite＋瀏覽器的六個合成來源場景通過：預設CPU hint、Maintain成功試算並明確啟用、一般處理者提示可見且三種控制皆無、來源profile失效明示、失效後仍可關閉、缺profile再次試算拒絕且無啟用控制。最後持久FormalEnabled=false，測試資料庫案件／交辦／事件均0；SMTP停用，PRTG僅loopback，測試分頁與服務已關閉。證據 `resource-browser-current-main-v1.json` 與四張畫面包含輸入雜湊；這不授予原生來源資格、全量容量或SMTP收件通過。
+
+目前8個程式父待辦與5個驗收群組均按實際缺口留在§5；R03／R13已清除。原生profile所需頻道／單位／縮放／時間權威未取得；PRTG強跨來源配對也缺可比對的原生資源參照，繼續保持Unknown。這些不得靠合成fixture、同日弱佐證或等待正式上線補猜。收到的1.0.53.1舊探測包沒有目前新增identity_preserving_raw_history原始XML證據，須交付同版新版探測輸出；回歸通過後依使用者先前授權在本輪分支提交推送探測版，不部署或合併。
+
+
+### 2026-10-07 完整回歸與 SQL 重試／標題修正
+
+Main v8 強制 Rebuild 0 errors，完整回歸 **6587 passed／4 failed／10 optional scale benchmarks skipped**，6601 cases，25分23秒；1088項凍結輸入無漂移。失敗包含交易策略守門、兩個舊試算fixture與舊校準匯出規則數。不能以原局部Main v7結果宣稱整體已綠。
+
+主代理實際 SQL Server 17.0.925.4／EF 8.0.10 在啟用 EnableRetryOnFailure 時重現 AI／可信profile自開交易失敗；另在停用重試的獨立案例重現清單標題與 JSON 詳情不一致。保留 `sql-retry-current-main-primary-red-v1-result.json`（7失敗／4通過，輸入無漂移）。修正後 `sql-retry-fixed-stage-primary-green-v1-result.json` **11/11通過**：預設與Serializable SQL隔離、SQLite兩種隔離、有版本的AI附掛與過期拒絕、真實commit後拋Timeout的exact replay、commit後NetIQ父內容變更拒絕、標題抽出欄一致、profile exact no-op及stale租約／身分拒絕。DB及專用LocalDB instance均已清除；不是native PRTG或全量效能驗收。
+
+380項相關回歸全過，Rebuild 0 errors／66 warnings，1088項輸入無漂移；SQL三檔與試算fixture共四檔逐字節整合Main，checkpoint `pre-sql-retry-headline-fixture-integration`。AI每次retry使用新context及凍結輸入；unknown commit只接受本delegate產生的完整postimage及SQL抽出欄相同，不採部分欄位推定成功。profile重試重核lease／身分，相同內容不重增版本。試算27個可信歷史日＋完成日NoData明示不足；不授權null slots，純decision的stale防護測試仍保留。
+
+另外校準匯出把CPU／memory／disk期間規則列為純量Threshold=0的缺陷已取得可編譯真RED（expected null／actual0，1 failed）；修正階段正在補nullable門檻種類與明確未評估範圍。準備交付1.0.53.2同版安全探測；尚未commit／push，最終Main完整回歸與校準修正通過後才推送，不宣告整輪完成。
+
+
+### 校準規則範圍與匯出語意修正（2026-10-07）
+
+已保留可編譯 expected null／actual0 的真 RED，修正後相關集合274 passed／0 failed／0 skipped，Rebuild 0 errors、1088項輸入無漂移。四檔逐字節整合，checkpoint `pre-calibration-scope-integration`。完整目錄保留12條規則，趨勢與資源期間純量門檻null並帶種類／目錄開關；語意版本2明确三種status重算與其他未評估，silent頁面不顯示零命中。Help及PRTG-SPEC同步。這不證明原生來源或整輪驗收，1.0.53.2的同版Main回歸仍待執行。
+
+
+### 當前完整回歸與實作待辦精確化（2026-10-07）
+
+Main v9強制Rebuild 0 errors，完整回歸 6591 passed／0 failed／10 optional scale benchmarks skipped，6601 cases；1088項輸入無漂移。主代理直接追碼後刪除R07/B1、B1/B2、R11實作待辦，逐檔雜湊與當前凍結輸入相符，證據r07-b1-r11-current-source-closure-v1.json。新增確認R08整體期限不可达及R14匯出容量缺口均保留本輪修正，未將AC01–AC22改為通過，未宣告整輪完成。
+
+
+### 當前SQL重試、校準瀏覽器及探測交接（2026-10-07）
+
+Main v9實際SQL Server17.0.925.4/EF8.0.10再驗11/11通過，9項輸入無漂移，專用DB與LocalDB已清除；包含unknown commit exact replay、父資料變更拒絕及SQL清單標題與JSON一致。證據sql-retry-final-main-primary-green-v1-result.json；不替代native/fleet/SMTP。
+
+真實Kestrel/SQLite/瀏覽器確認6項校準介面條件：status三種規則範圍、silent未評估、命中數標籤、資料量門檻、RuleEnabled不授權、未達標禁止一般匯出；兩張畫面及5項source/DLL雜湊符合v9凍結輸入。專用31155服務/分頁已關閉。舊「下一輪設計值型規則」文案已確認過時，會隨R14守門一併修正；容量實作尚未宣稱完成。
+
+新增scripts/Verify-PrtgProbeEvidence.ps1唯讀交接工具。Root獨立26/26通過：版本/完整revision、來源partial/target未知、null來源、raw樣本與channels界限、缺欄、重複JSON、超深/超限/錯誤UTF8及敏感sentinel不輸出。整合逐字節SHA相同；exit0只表示交接完整，2來源未齊，1格式/版本拒絕，不授予正式來源或風險資格。Help修正實際JSON字段identity_preserving_raw_history。
+
+
+文件回查修正DETECTION-SPEC及PRTG-SPEC兩處過時異時區一律拒絕敘述；Root直接核對raw parser/profile resolver及disk host-day裁切，缺時基仍Unknown，異時區有明確一致證據才可用。磁碟28日契約明確限趨勢，不混為兩小時低水位。此文件修正不授予目前尚缺的原生來源資格。
+
+
+### 2026-10-07 驗收前再次完整性審查
+
+使用者再次明確採用初始化預設72小時，逾期保留進度並由Maintain明確續跑；此操作期限不是15,000顆初始化容量通過證据。R02既有程式及實際操作證據維持。
+
+R08隔離候選已補current authority缺失／漂移拒絕、逐頁共享map、resource authority修訂及Silent單次評估；審查再確認一般profile刷新不可重設同scope期限，正在分開固定量義與觀測修訂，尚未GREEN或整合。Silent固定案例v5實際Daily留下兩筆相同event key，為本輪已确认bug；Down availability 30分鐘門檻同次驗證通過。
+
+R14隔離候選已補SQL Snapshot前提、SQLite deferred/WAL、keyset及每日聚合精確預配置、512MiB作業預算、64MiB輸出拒絕和實際MVC回應生命週期。新增rules blob超限不可退回seed、事件鍵SQL有界投影與字串／group圖預算、零位元組預留不可誤釋放生命週期，均待主代理GREEN及正式provider核對。完整與摘要不得以抽樣通過。
+
+C1固定語料仍未完成8族各5正例20反例的實際執行；case manifest標籤不算測例。磁碟趨勢v8已由實際Preview及Daily確認7日到20%正例；完整逐族語料仍須實際執行，不放寬資格。保留所有凍結RED；局部候選回報不算Main完成。
+
+C1/D1各族固定語料盤點發現Flapping、Memory formal、兩小時磁碟低水位及Silent成功Daily consumer證據不足。新增隔離manifest-driven測試包實作；每族5正／20反及正式風險／hint／處置入口仍依原契約，不能把同一evaluator參數列數視作端到端通過。全部均留本輪，不移交上線觀察。
+
+### 2026-10-07 R08／R14 當前整合驗收
+
+R08 whole-evidence期限與Silent單次評估已整合11檔；隔離135/135通過。R14有界SQL snapshot／WAL、keyset、512MiB作業預算、64MiB回應拒絕及傳送期間admission已整合15個實際改動檔；隔離251/251通過。共用EfPrtgStore宣告衝突由主代理保留兩組limits／admission，未丟棄任一功能。
+
+Main 1.0.53.2強制Rebuild 0 errors／67 warnings，工作流／AI／案件／郵件／校準等651項相關消費端通過，1089項輸入無漂移。最終Main組件再次執行SQL17.0.925.4／EF8.0.10：校準8/8、execution strategy／unknown-commit 11/11；輸入無漂移，專用資料庫與instance已清除。實際SQL測例前置抓到tinyint讀成Int32的缺陷，主代理以明確CONVERT修正並完成RED→GREEN。
+
+据上述當前來源與實際結果刪除R08／R14程式TODO；較廣的角色UI、各族固定案例、原生來源、3,000台容量、SMTP及全轮AC仍保留。新的Main完整回歸與規則案例包尚未通過，不引用舊v9完整回歸宣稱本整合已全輪驗收。每族5正例／20反例目前已有JSON及實際dispatch，必須按case ID與TRX逐項核對；metadata數量不當成執行結果。
+
+### 2026-10-07 校準容量實際瀏覽器與固定案例前置修正
+
+當前 Main 的實際 Kestrel／SQLite WAL／隱藏瀏覽器通過8項操作：一般狀態及同範圍摘要說明、Unit長度65的明確拒絕、覆寫完整／摘要均不可繞過容量、精確還原原Unit後重新計算及兩種匯出成功提示。8項正式source／DLL雜湊均符合651項整合gate；專用31156服務與分頁已關閉。in-app browser未收到blob download event，未宣稱獨立驗證下載檔位元組；HTTP/MVC封包內容及provider一致性另有既存驗收。證據work/prtg-calibration-bounds-browser-fixture/calibration-bounds-current-main-v1.json。WEB-SPEC校準用途與PRTG-SPEC單次分析／最終authority守門已同步。
+
+固定規則包v10 Rebuild為0 errors／72 warnings；實際反例提前攔到fixture在不合格資料上申請trial、字串enum讀取、重複append人工父紀錄及舊scenario label等問題。主代理停止該次RED執行交回修正，沒有完整TRX或通過結論。案例須先證明合格且已授權的正基準，再植入單一缺口驗實際Daily及人工處置保留；hint命中與正式風險分別斷言，不放寬原生、容量或正式副作用gate。
+
+### 2026-10-07 共同容量程式缺口回查
+
+直接核對PrtgTrustedSamplingProbeService每顆兩次table.json、PrtgRequestBudget.Classify及共享2/秒／4inflight，profile刷新不呼叫historicdata。15,000顆共30,000次table請求，全用共享速率的純配額下限為4小時10分；23小時更新的平均量約0.362次／秒。這不證明實際延遲、其他工作爭用或24小時新鮮度可驗收，亦不能誤算成historic的50小時。
+
+已確認擴大範圍／設定啟用只傳snapshot target給PrtgSnapshotCapacityEvaluator，未納入上述共同負載，因此新增R05/shared-admission實作待辦，隔離work/logforesight-profile-capacity按目前Main建立；固定10/3分鐘、25%餘裕、來源及profileTTL均不得放寬。先核對量測與啟用的先後，避免「未啟用不能量測、未量測不能啟用」的循環。原生來源及完整180日容量AC繼續獨立裁定。
+
+### 2026-10-07 殘留校準實際 SQL 修正與未完成回歸
+
+Main v10 強制 Rebuild 0 errors／67 warnings，1089 項輸入無漂移；觀察到六個失敗，整次執行未產生完整 TRX，不能引用為完整回歸通過。已保留 incomplete.json 與原始 log。四個 request budget 測例有同步 checkpoint／測試執行緒調度問題，fixture 改用獨立工作執行緒並保留原 5 秒、配額與計數斷言；API reflection 守門同步至 21 個方法，仍逐方法要求唯一非 optional IssueExclusion。
+
+校準殘留候選的 SQL 路徑確有兩項缺陷：snapshot_isolation_state 的 tinyint 讀取未 CONVERT(int)，且 COUNT／metadata／content snapshot 未置於 execution strategy。修正已整合 Main：每個 attempt 建立新 context、同一 snapshot 完成捕捉、失敗撤回容量計帳、成功釋放交易後才發布完整候選；SQL 暫時性失敗不再被 capacity 包裝遮蔽。
+
+主代理隔離定向集合 residual-and-budget-primary-v2 為 144 passed／0 failed／0 skipped，1090 項輸入無漂移。相同公開 status／summary-only／完整 BuildExportPackage 路徑在實際 SQL Server 專用隔離 instance 修正前為 1 passed／4 failed，修正後為 5 passed／0 failed，並驗 transient retry、COUNT 後並行改寫保持 snapshot、1 MiB 容量拒絕及恢復、snapshot OFF 拒絕。每次資料庫與 instance 均已清除。先前 PRTG capture 的八項 SQL 證據不涵蓋這個 residual 路徑。
+
+修正雖已整合，Main 重建後的同版 consumer／provider 與新的完整回歸尚未完成，R14/residual-provider TODO 保留。規則語料 v13 只有 build failure，v14 已修編譯並正在完整執行，已發現反例前提／預期守門錯誤，仍須修正再驗收；不以案例登錄數當成通過數。R05 共同容量方案仍在隔離實作，原生來源及全部 AC 門檻保持未通過。
+
+### 2026-10-07 通知提交未知狀態回查
+
+主代理直接確認 MailNotificationService urgent onRecipientResult 在 SMTP 失敗後記 failed-or-unknown，onComplete 卻把 false 結果一律覆寫為 failed-or-not-sent。遠端 DATA 已收取但 250 回覆尚未送達時，本地不能據此宣稱沒有寄出；本輪新增有界修正及實際 loopback 協定驗收，先保留失敗反例，再驗修正。只驗受控本機收件匣，不冒稱現場 SMTP 或外部投遞已驗。
+
+### 2026-10-07 殘留校準 Main 驗收完成
+
+主代理強制重建 Main 後 current-residual-budget-main-primary-v1 為 144 passed／0 failed／0 skipped，1090 項輸入無漂移。使用該次 Main Core DLL 的 residual-provider-rebuilt-main-green-v1 實際 SQL 五項皆通過，來源／組件／harness 輸入無漂移，專用資料庫與 instance 已清除。已按實作、public consumer 及實際 provider 證據刪除 R14/residual-provider；既有 Main v10 完整回歸仍是不完整且未通過，不以定向集合取代完整回歸。
+
+### 2026-10-07 隔離協定與共同容量失敗反例
+
+主代理執行 `smtp-protocol-current-main-red-v3`：正式正常收件 1 通過、2 失敗，1091 項輸入無漂移。真實 System.Net sender 在收件匣存下 640 bytes DATA、未回覆 250 且 TCP RST 的情境仍回報接受；途中靜音情境的 SMTP 已回覆 250，但 outbox 第一收件人被覆寫為 failed-or-not-sent。這些是修正前反例，尚無通知完成宣告；僅對本輪隔離本機收件匣操作。實際執行 runtime 是 .NET 8.0.23，不誤寫成附件現場的 8.0.29。
+
+共同容量階段 `joint-profile-capacity-primary-v1` 強制 Rebuild 0 errors／67 warnings，104 通過、5 失敗、0 略過，1094 項輸入無漂移。新增 timeout 證據未使舊成功失效、profile 組期限／固定 fingerprint、重啟掃描、正式對應建立順序與只做 snapshot pilot 的 CAS fixture 均須修正。獨立程式回查另要求 immutable plan 包含版本及請求形狀，完整期間估算納入逐次傳輸與等待，不能以局部計算器或 fail-closed 拒絕宣称 3000／15000／180 日共同負載通過。以上返回實作後以相同反例重驗。
+
+### 2026-10-07 SMTP 傳輸接受與 durable outbox 修正
+
+正式 sender 改用有 30 秒截止的同步 SMTP 傳輸，由獨立 worker 執行並在取消時中止及等待 worker 結束；保留既有 TLS／認證與 sender 介面。loopback TCP 真實 DATA 收取但沒有 250 的 FIN／RST 不再回報接受；正常 250、取消、service 重建後相同 intent 重試及途中靜音反例均已執行。完成回呼保留已接受收件人的時間及狀態，未知與未嘗試分開，管理頁明示重試可能重複。
+
+主代理強制 Rebuild 0 errors／67 warnings，隔離定向 **141 passed／0 failed／0 skipped**，1091 項輸入無漂移；`work/logforesight-smtp-acceptance/.gemini-tasks/primary-results/smtp-protocol-repair-primary-green-v2.trx`。四個交付檔已以精確 hash 整合 Main，checkpoint `smtp-protocol-preintegration-20261007`。第一輪 140／1 的失敗是收件器在 DATA 250 已寫出後的 peer reset 傳播至清理；修正只吸收成功確認後或測試取消中的 I/O 關閉，250 前的錯誤仍浮出，第二輪完整重验通過。Main 當前整合回歸尚未執行，AC15／smtp-unknown TODO 暫保留；這證明隔離 relay 協定與 outbox 行為，不宣稱外部實收或 exactly-once。
+
+### 2026-10-07 SMTP 當前 Main 驗收完成
+
+整合後當前 Main 強制 Rebuild 0 errors／67 warnings，同一協定／通知／管理頁集合 **141 passed／0 failed／0 skipped**，1091 項輸入無漂移；`work/logforesight-feedback-53/.gemini-tasks/primary-results/smtp-protocol-current-main-primary-v1.trx`。七項真實 loopback SMTP 測例全部通過，四個正式交付檔與當前 gate 雜湊一致。已刪除 AC15／smtp-unknown 實作子待辦；完整 AC15 的其他固定子契約、角色動線與整輪門檻仍保留。不把 relay 接受當外部信箱實收，也不保證 unknown 重試 exactly-once。
+
+### 2026-10-07 資源日內及跨主機日窗口缺口
+
+Root 與獨立 gpt-6-luna high 重新核對 PLAN §16.3／§17.2：兩個連續完成小時與歷史日風險契約沒有日末限定。PrtgResourcePeriodConsumer 只取最新兩小時，Daily 對封閉日用次日午夜 cutoff，故日中達門檻但日末恢復會漏判；SingleWindowHostDay 對實際 D23／D+1 00 返回 null，不能以分析時區跨午夜但主機兩小時仍為 D22／D23 的 fixture 替代。R07 日窗口子待辦重新開啟，之前純 evaluator／最近窗口／trial 授權已驗結果仍保留，不宣稱全日規則已完成。
+
+固定語料保留全部原 207 IDs，另增三個清楚標示分析午夜但同主機日的正例；原三個跨主機日 ID 保留原 mutation／expected，記錄現行限制只用於暴露缺口，不能關閉該需求。全日窗口採有界 100 sensors／最多 26 小時查詢的候選設計，較晚小時歸日建議正在討論；父紀錄資格、來源身分與時基、proof、正式 grant、缺口不等於恢復及歷史重播不倒轉目前 episode 均須保留。語料 v15 只有 Rebuild 4 編譯錯誤，沒有可引用測試结果；靜態修正已交 v16 重新驗證。
+
+### 2026-10-07 固定規則案例 v17 完整執行結果
+
+v16 定向 30／0／0 通過後，主代理凍結語料與來源執行 v17 全包：**188 passed／23 failed／0 skipped，211 tests**；輸入無漂移。完整 TRX 與逐失敗訊息已保存於 `work/logforesight-rule-case-manifest/.gemini-tasks/primary-results/formal-rule-case-pack-primary-v17-all.trx`。此階段未整合 Main，也未刪除 C1／D1 或規則族 AC。已定位 stale-proof 與 live-profile 不同守門、future-as-of 明確原因、分類正向基線及合法獨立 Down 副作用；磁碟與 silent 其餘失敗仍依原 mutation／正式呼叫路徑回查。修正不放寬正式守門或取消正向基線，原跨主機日需求仍列 R07，不能由現行限制案例取代驗收。
+
+### 2026-10-08 隔離十萬筆 M1 與完整負載前置限制
+
+主代理用目前正式 accumulator → typed proof → MergeSampledValues 及實際 schema/index，在 SQLite 與自建 SQL Server LocalDB 各完成 100,000 hourly rows／15,000 sensors；兩次輸入各 352 項且無漂移，保留結果與來源雜湊，已清除專用資料庫及資料檔。SQLite 結果 warmup-sqlite-primary-v1，SQL 最新結果 warmup-localdb-primary-v3。SQL 工具中文輸出的 instance 判斷缺陷已修正，以 inventory 的精確 owned name 回查；先前 v2 的清理警告保留原文，實際自建資源已補清理。
+
+這只完成 M1 schema 成本量測，不是完整 N6 通過。SQLite 十萬筆檔案 113,819,648 bytes；dbstat 不可用，Pooling=false 的批次後 WAL=0 不代表真正高水位。SQL 實際版本 17.0.925.4／Express Edition／EngineEdition 4，v2 data used 218,824,704 bytes；依這份量測推估 64,800,000 rows 約 141.8 GB，僅用於前置拒絕，不能作容量通過證明。SQL Server 2025 Express 官方 relational DB 上限 50 GB，MAXSIZE=-1 不能抹除 edition 上限；因此本機 Express 完整負載不予放行，須改用符合固定資料量的專用隔離 provider。依據 https://learn.microsoft.com/en-us/sql/sql-server/editions-and-components-of-sql-server-2025?view=sql-server-ver17 。完整 180 日資料、代表性身分字串、共同 NetIQ／AI／PRTG／使用者查詢、記憶體高水位、25% volume 餘裕、暫停恢復、backup／restore 與升級回退門檻全部維持未通過；R05／N6 不刪除，正在補齊前置 admission 與有界 runner。
+
+### 2026-10-08 探測可追溯欄位與共同容量完整回歸
+
+目前 Main 新版 compatibility evidence 已整合 requested_fields／missing_requested_fields、channels 的每欄 present／missing rows 及 request_sensor_alias／provenance；同一 raw-history row 的 OA timestamp／channel ID／value 關聯保留，未知通道父身分仍明示未知，沒有藉此授予正式 profile 資格。Core producer → runner callback → Web run state → DTO／下載 JSON 路徑已直接核對。主代理 Rebuild 0 errors，native-probe-observability-current-main-primary-v1 **83 passed／0 failed／0 skipped**，輸入無漂移，含有界／敏感值／探測交接反例。A0／N1／R15 原生事實仍需同版環境探測，新版工具通過不等於取得來源資格；不刪除父待辦。
+
+共同容量 v2 只有 1 個編譯錯誤（新測例缺 Web.Services using），已修正。v3 強制 Rebuild 0 errors；**186 passed／63 failed／0 skipped，249 tests**，輸入無漂移。其中 58 為 SnapshotHostedService 的舊快照前提與新共同 admission 不符，4 為三個 snapshot worker 模型下的舊預估秒數斷言，1 為來源 timeout 修訂後未累積滿五筆新 profile 樣本的 fixture。新共同容量 controller／purpose／profile probe／shared budget 等已執行通過，但不能以此替代全 consumer 回歸。主代理另確認 ScopeRefresh 的 early joint rejection 擋住不發 HTTP 的本地 recent-state scope reconciliation；移回請求守門前仍須來源／範圍及版本核對，对外请求继续 fail closed。上述修正及 58 項 consumer 逐一回查仍在隔離階段，尚未整合 Main，R05/shared-admission 與完整 N6 保留。
+
+
+### 2026-10-08 固定規則案例 v20 隔離通過與 Main 整合
+
+主代理強制 Rebuild 後完整執行固定規則包：223/223 通過、0 失敗、0 跳過，測試輸入無漂移。保留全部原始案例 ID 與反例變異；修正正式／預覽模式的測例錯置及實際感測器分母，另納入目前 authority、未來／不可信 as-of 的反例。實際 TRX／輸入／結果：隔離工作樹 `.gemini-tasks/primary-results/formal-rule-case-pack-primary-v20-all.*`。
+
+四個案例產物及 csproj fixture 複製設定已以精確 seed 三方合併整合 Main，保留當前 SMTP／校準修正。當前 Main 完整回歸尚待其他修正整合後執行；此包為固定受控語料，沒有替代原生 PRTG 24 來源 fixture、角色瀏覽器、共同負載或實用效益驗收，不清除 A0／C1／D1 或整體 AC 待辦。
+
+
+### 2026-10-08 正式壓力模式撤回的前置缺陷審查
+
+主代理直接追查模式 Blob、consumer、Daily manifest 與父紀錄交易：既有版本未攜帶模式版本交易守門，且 CPU／memory 未納入精確資源 reconciliation，因此關閉正式模式後仍可能留下先前風險。此項列為有效待辦並在隔離工作樹修正；不能只以授權檢查返回 false 或手工組裝持久層測例當作完整撤回驗收。需涵蓋實際 Daily 接線、證據不足時撤回、版本 0 首次啟用競態、AI／案件／通知及交易回滾。沒有清除整體 AC 或 R07 待辦。
+
+
+### 2026-10-08 正式模式撤回核心驗證與隔離驗收範圍
+
+主代理強制 Rebuild，模式撤回相關 83/83 通過、0 失敗、0 跳過、輸入無漂移；八檔依精確 seed 合併 Main。模式版本含 0 的首次啟用競態、精確世代撤回、profile 缺失時撤回、重複關閉冪等、再啟用／再次關閉、AI 過期寫回與 legacy 無 manifest 拒絕、交易回滾已取得受控證據。已啟用 grant 的 trial 到期不破壞後續關閉及讀取，過期 trial 仍不能用於重新啟用。
+
+R07/mode-revocation 仍保留：實際 Daily mode-only receiver、案件 durable start 與郵件 recipient start 正在補齊獨立驗證；本次 83 項不冒稱这些未驗入口完成，也不清除整體 AC。後續驗收採上述隔離範圍，不要求直接套用實際環境才裁定程式可用。
+
+
+### 2026-10-08 同一主機日全日窗口候選驗證與整合
+
+主代理強制 Rebuild 後，R07 同一主機日全日窗口相關 81/81 通過、0 失敗、0 跳過、输入無漂移。已驗白天可信命中後日末恢復、日末缺資料、重跑冪等及歷史投影不改寫目前 episode／提示。閉日讀取每頁最多 100 sensors、每 sensor 26 rows，逐窗口檢查身分／profile／規則及前後權威版本。
+
+五檔以精確 seed 三方合併 Main；主代理處理 consumer 兩處重疊，保留模式版本／撤回／精確世代 fence，並只在 live 分支保存提示。此合併版本尚待 Main 整合回歸，81 項候選結果不冒稱合併後通過。跨主機日窗口的歸屬仍待既有討論定案，R07/day-window 父 TODO 及整輪 AC 不清除。
+
+
+### 2026-10-08 正式 consumer 代碼與父紀錄日期指紋回查
+
+實際 Daily mapper 的 CPU／memory finding 使用 `resource_cpu_sustained_pressure`／`resource_memory_sustained_pressure`；既有撤回與 AI 防護僅辨識 evaluator 的舊 `prtg.resource.*-sustained-pressure` 字串，會漏掉真正正式紀錄。先前 83 項核心驗證仍可證明其測得的原子性，但不能證明這個正式 consumer seam 已完成。本次隔離修正同時辨識正式與舊碼，保留精確世代限制；原子 AI 及撤回反例增補正式碼，實際 Daily 正例維持不變。
+
+案件／郵件啟動 fence 原先以 SQL 日期欄位覆寫 JSON 父紀錄日期；provider 可能使 DateTime.Kind 變為 Unspecified，導致 Local 父紀錄的已簽指紋不同。隔離候選改為保留 JSON 日期表示並強制檢查日曆日與 SQL 欄位一致，新增 Kind 正例及日期不符拒絕反例；正在驗證，尚未標示完成。
+
+共同容量 v8 廣泛 gate 在已确认失敗後由主代理停止：實際 TRX 225 執行、220 通過、5 失敗、輸入無漂移，測試中止且其餘未執行，整體未通過。回到受影響的範圍切換、回填擴大及佇列接續最小反例，不把 partial TRX 當成完整容量驗收。
+
+
+### 2026-10-08 正式 authority 與同日期間整合回歸通過
+
+正式 consumer 的 CPU／memory 代碼已加入撤回及 AI 的世代防護；啟動 fence 保留父紀錄序列化日期與 Kind，並拒絕 SQL 日曆日不符。已整合實際父紀錄 ID 的案件啟動、模式切換前後啟動反例及同一主機日完整期間判定。Main gate `main-resource-mode-case-combined-v1` 實際 TRX 88 通過、0 失敗、0 未執行、輸入無漂移；主代理核對目前相關來源與 gate 雜湊一致。此證據只關閉上述程式契約，模式續作 consumer、郵件長期重試、跨主機日歸屬及容量仍依各自固定驗收條件完成，未宣稱整輪完成。
+
+
+### 2026-10-08 使用者定案：隔離驗收與有限環境探測
+
+使用者明確指定「不考慮直接套用實際環境驗收，若有需要則透過環境探測取得資訊」。後續程式、provider、SMTP、瀏覽器角色及工作負載驗收，在代理自有隔離環境使用固定輸入、門檻及實際 consumer 完成；不要求把開發版本直接套用現場來確認程式風險。現場未知的原生欄位、時區、語意、版本及容量前提，只由同版本有限環境探測取得。這項決策取代前期要求現場服務入口／部署驗收的執行方式。
+
+保留既定規模、期間、授權、資料身分與容量門檻；不得把隔離合成來源當原生 PRTG 資格，也不得以估算或探測成功替代正式 consumer 的驗收。缺少來源 authority 時明示等待；與來源事實無關的實作、反例修正及隔離驗收繼續完成。既有文件中的「現場驗收」依此決策解讀為必要事實的有限探測，不再作直接部署驗收前提。
+
+
+### 2026-10-08 隔離 consumer 接線與回填成本反例
+
+模式續作候選 v6 實際 30 執行／28 通過／2 失敗／0 略過，輸入無漂移。兩個失敗經 v7 受控診斷確認：觀測保存且規則、profile、模式及父紀錄合法，但案件補追加為 unassigned；候選缺少較晚已由 Main 驗收的案件 authority 接線依賴，正在逐檔合入並保留續作介面。不得以已保存 finding 當案件 consumer 已完成。
+
+正式通知候選 v6 實際 20 執行／15 通過／5 失敗／0 略過，輸入無漂移。固定分開「PRTG 提高風險」與「合法 NetIQ 基線自身達門檻」測試前提；撤回 PRTG 不得抹掉合法 NetIQ 通知，也不得把已降為低風險的主機日沿用舊高風險通知资格。只看統計的收件者不創建隱藏 finding 的正式開始 claim，仍應依有效判定計數。
+
+共同容量候選 v12 實際 10 執行／7 通過／3 失敗／0 略過，輸入無漂移。原生 pilot 未鏡像 ID 必須在 HTTP 前拒絕、新 policy scope 不得沿用舊容量證據的實際反例已通過。完整 transport context 重建已解除任取首五個 sensor 身分造成的回填阻擋；5,001 筆取消／重啟回填進入完整資料庫寫入後，在既定 30 秒之外逾時。更正因果：已確認既有感測器更新的 resource identity refresh 有逐筆 Read／Set 查詢，但原 refresh 在 SaveChanges 前只讀已落庫感測器，因此尚不能證明新建 5,001 筆回填逾時由該查詢造成。既有列改為有界批次載入仍須實測；新列保留未觀測前 inactive／非 current 的資格契約。以同一回填 consumer 的查詢數及步驟耗時確認逾時原因，保留原資料筆數、30 秒截止、原子鏡像及版本契約。另一失敗是完整回填後改走 joint admission waiting 的精確原因斷言，需保留第二輪同 scope 新證據後 queue 接續驗收。
+
+這些 RED 證據保持封存，候選仍未驗收、未以此清除父 TODO，也未宣稱原生來源或 180 日完整容量通過。八族固定正反例的下游 consumer 驗收正續作，與已通過的逐規則資格案例分別登錄。
+
+
+### 2026-10-08 模式續作與通知反例修正後驗證
+
+模式候選 v8 實際 40 執行／40 通過／0 失敗／0 略過、輸入無漂移。正式壓力補追加使用與 Daily 相同的耐久 case-start claim；缺少 workflow 或 current claim 保留 retry，不進入案件與派工。案件正例另明確設定既有 owner／AutoDispatch 前提。尚須逐檔整合主分支及驗受影響契約。
+
+通知候選 v8 實際 20 執行／20 通過／0 失敗／0 略過、輸入無漂移。PRTG 撤回後重新檢查 urgent 風險資格，合法 NetIQ 高風險仍可送信；測例使用實際 issue digest、精確統計文字及符合正式 reader 的 JSON 序列化。既有通知、保留與 SMTP 擴大回歸續作中，不以局部通過清除父 TODO。
+
+
+### 2026-10-08 主分支整合與實際下游缺口再次查核
+
+模式續作與長期通知修正已整合來源；通知擴大候選 v9 實際176/176通過，包含隔離SMTP協定、正式claim、通知及保留。首次主分支建置攔到缺少Capture transition參數依賴與四個partial測試輔助宣告重複；主代理補齊實際依賴並局部命名後，Main v3 Rebuild為0 errors，1109項輸入無漂移，實際266執行／263通過／3失敗／0略過。失敗均為原合格工作流恢復測例未帶新增模式版本authority；正在逐合法scenario補齊，缺失／過期authority反例不改。v3另留下test-platform資料收集transport錯誤原始log，尚非Main整合通過。
+
+規則下游候選 v6實際23執行／20通過／3失敗，輸入無漂移。確認Daily傳Local日曆日到要求Unspecified的閉日consumer，會拋出ArgumentException並遺漏合格資源finding；生產端已改用同一日曆日的Unspecified值，不改JSON父日期Kind與指紋。此修正後資源Daily→AI→通知正例通過；其餘三個郵件失敗是測例明確寄低風險但仍用預設隱藏低風險明細，測例現明確設定可見全部風險後重驗，產品預設保留。
+
+共同容量 v15的14/15通過保留，5001列取消／恢復兩種同consumer實際第二輪18.690秒及24.564秒均在原30秒內；既有501/5001感測器更新的identity SELECT分別2/11。完整回填呼叫FetchSensorsForDevicesAsync提交新列後，再ApplyAutoCategories，這個後續已落庫列refresh確有原逐筆查詢路徑；不把單獨新列pre-Save refresh的推論當成逾時因果證明。v18修正snapshot回應完整範圍後，實際1/0/1的首次waiting文案為null，定位queue reconciliation/defer return未寫可見狀態。已補狀態並保持固定門檻，正續驗回填scope變更→新exact-scope evidence→第二輪messages及queue完成；未以此刪R05父待辦。
+
+Q2/C1直接追碼發現日分析與週檢查AI無條件說PRTG與事件日誌互為佐證；現有來源仍缺精確資源／原生參照，這是已確認的提示契約缺陷。隔離修正中性文案，精確對齊採額外pattern而保留既有弱同日線索，配對不提高風險。原生producer所需的字段與語意只能由有限環境探測確認，不能從message文字或測試fixture追認。100 sensor完整24小時、每hour四slot的consumer regression已補候選，尚未執行；每row4096-byte proof限制不是全日物理proof總數限制，沒有據此放寬bounds。
+
+目前所有父TODO與全輪AC保持未完成；待修正後主代理實際验收並核對當前來源才清除已完成子項，不使用現場部署作驗收前提。
+
+
+### 2026-10-08 當前來源的下游資格與容量續跑反例
+
+Main v4 的完整 Rebuild 攔到新 Page100 測例把 long[] 指派給 List<long>；沒有測試結果，不算通過。主代理修正集合型別後，Main v5 實際 306 執行／300 通過／6 失敗／0 略過、1111 項輸入無漂移。三個合格恢復反例補入實際模式 authority 後已通過；新兩個 Page100 測例因 fixture 缺少 device→host map，在 BindObservedResource 被拒絕 identity-changed。已補 100 個有效主機對應，保留身分守門，尚待同反例重驗。
+
+另外四個失敗是 CPUFormal／MemoryFormal 兩項正例各兩次：Daily finding 與實際 AI hosted consumer 成立，但當前 MailNotificationService 的正式寄送資格檢查移除了 finding。先前規則下游候選 v7 的 23/23 通過適用當時來源，不能代替新通知守門的主分支整合結果。現已補只含布林與版本的失敗診斷，逐項核 persisted parent／manifest／mode／profile／rule／identity，不列 raw 郵件或憑證，不放寬寄送資格。
+
+R05 v20 實際 15 執行／13 通過／2 失敗／0 略過、输入無漂移；兩個失敗都是新 queue Theory 的第二輪預期，實際已送出 messages，而測例誤要求第三輪。首輪的真實 snapshot scope 變更或手動 map-only defer、等待文案及零 messages 斷言均成立。主代理按實際 durable queue 是鏡像提交後建立的呼叫鏈，改為取得 exact post-backfill evidence 後第二輪送出並完成；沒有改生產 gate，較完整容量回歸正在執行。這些子項不等於 3000／15000／180 日容量通過。
+
+Q2 候選已修 AI 無條件互為佐證文字、精確與弱同日模式分開、既有靜音繼承，以及明確事件族／規則的排序漏配；配對最多 4096 次，不推升風險。NetIQ 新 metadata probe 候選只輸出字段形狀，固定 3 事件／1 小時／1 頁／12 次實體 HTTP／512KiB 回應／32KiB 報告／30 秒整輪，並在請求送出前限制回應提供的 URL 必須同源；尚未建置或驗收，不作來源語意通過宣告。
+
+全輪父 TODO 與 AC 繼續保留。未知現場事實只透過環境探測取得，程式與操作仍在自有隔離環境按固定條件驗收。
+
+
+### 2026-10-08 有界中斷與真實 consumer 指紋診斷
+
+R05 v21 選定 264 個案例，實際完成 197／197 通過後因測試平台兩分鐘無進展而中止；TRX RunOutcome 是 Failed，不能採總計零失敗作整組通過。主代理比對 discovery 與 TRX，未完成的 67 個全屬 SnapshotHostedService；其他十類已執行。已加強等待的有限取消、釋放與 await 清理，保留原中止證據。
+
+最小 v22 完整執行 6 個案例，3 通過／3 失敗、輸入无漂移：快照 worker 常數仍為 4，測試注入的 client 沒有 budget，與正式 Snapshot3／Profile1 契約不一致；另有平行批次順序及 Tick-first 取消前已送出一個快照的過時預期。主代理將 worker 同步限制為 3，批次仍驗三個完整互斥的 50-ID 集合與範圍、取消後零新請求／零部分樣本提交，保留原共享總在途 4 及時間門檻。完整 v23 正在重驗，未採部分通過清 TODO。
+
+實際 Daily→AI→Mail 最小診斷為 5 執行／3 通過／2 失敗、輸入無漂移。CPU／memory finding 留在 persisted parent；mode、規則、policy、identity、profile 均匹配，但 AI 完成後 manifestValid=False。修正鎖定受保護的父紀錄寫回與指紋承接，不取消或放寬郵件的過期 authority 守門。
+
+Q2 首輪 212 執行／210 通過／2 失敗、輸入無漂移；兩項均為新增 fixture 自相矛盾：反序分支仍固定以 Warning 排第一，以及明確靜音弱模式後又要求未抑制 Ref。已修輸入排列與靜音斷言，保留精確來源對齊、排序、靜音繼承、來源撤回及比較上限等條件，待同一完整集合重驗。
+
+NetIQ 字段形狀探測已補實際維護入口與有界 HTTP／報告；主代理再發現 output overflow 可能被 EndRun(true) 標成功，已補 overflow 強制失敗及下輪重新開始的反例。新探測與四基準受控重播尚未實際執行，不宣稱原生語意、現場事故效益或完整容量通過。
+
+
+### 2026-10-08 AI 父紀錄承接、跨來源對齊與回放修正
+
+受保護 AI 回寫以父紀錄 ID、decision fingerprint、PRTG fingerprint 三個精確前置版本核對，僅承接仍有效的 manifest；如要求模式守門，模式版本也必須匹配。AI 自己追加的缺日誌說明不再使 manifest 失效，同一說明五次重跑只留一份。原先已過期的父紀錄不因 AI 更新重新取得 PRTG authority。主代理隔離 v2 完整 175／175、零略過、輸入無漂移，已精確整合三檔；組合後與 SMTP 收件匣驗收仍保留。
+
+Q2 隔離 v2 完整 212／212、零略過、輸入無漂移；主代理已追查 finding 補充、歷史風險審查、AI 與週報 consumer，精確整合十檔。弱訊號與精確來源對齊分列，兩者均不提高風險；抑制弱模式連帶抑制同類精確對齊，重評只重建本元件負責的六種線索。合成 exact-native 正反例不是原生來源已提供這些字段的證明，Q2 全鏈及來源事實門檻仍保留。
+
+R05 v23 完成 198／198 後仍因測試平台無進展中止，不能當作完整 264 案通過。Sequence 證實停在輸出上限測試：舊 fixture 為了驗 100 行日誌上限而重複 130 個完整採樣週期。主代理改為一個有界真實 Tick 接到相同 WriteOutput，再寫 130 行，仍精確要求最後 100 行及首行淘汰；其他多週期、共同配額及 SQL 採樣測試保留。v24 重驗中，不調高產品期限或移除未完成案例。
+
+NetIQ 有界字段形狀探測首輪 build 失敗，原因是 out 參數被背景 lambda 捕捉；已改用建立背景工作前的本地快照，尚待同組重验。受控效益回放首輪實際輸出 22 案／四基準，但報告 103,676 bytes 超過預定 64 KiB；另外查出 Silent 裝置聚合世代被錯比成單 sensor，以及合併可見時間誤沿用早先 NetIQ 時間。三項均回到實作修正，不改門檻、不刪失敗／未知樣本、不把來源觀測時間当成合併結果可處置時間。
+
+
+### 2026-10-08 恢復實作：有界探測與受控四基準
+
+NetIQ 字段形狀探測 v4 完整 107／107、零略過、輸入無漂移；已精確整合十二檔。來源、UTC 查詢範圍及程式版本可追查，形狀報告無原始值，認證／查詢／清理共用 12 請求、512 KiB 回應、32 KiB 報告與 30 秒期限。v3 的串流測試錯把 40-byte 限制先套到認證回應，正式程式正確提前拒絕；改以 512-byte 測試限額讓認證通過，另保留 40-byte 認證拒絕反例及已知／未知 Content-Length 串流邊界。產品上限未放寬。操作入口尚待目前二進位的瀏覽器驗收，字段形狀不授權強佐證。
+
+受控四基準 v2 完整 1／1 測試涵蓋 22 個固定案例、零略過、输入無漂移；報告 61,336 bytes，主代理獨立還原字典編碼並驗逐欄、分母及可見時間。三檔已精確整合；正式 222-case manifest 未變更。實際 combined 得 TP9／FP1／TN8／FN1，simple union 得 TP10／FP0／TN9／FN0，不宣稱合併勝過聯集。FP 是管理者明確開啟 CPU 正式風險後的合理高工作負載；預設仍是提示。FN 是缺合格 NetIQ 父日的既定發布邊界。限制保留，不為成績取消守門或改參考答案；真實事故率、作業查證增益及提前量沒有由合成報告證明。
+
+R05 v24 未完成全組，v25 完整三項中一通過／二失敗；主代理核對實際共用客戶端與 joint floor 後修正測試：strategy 變更才應更新容量契約，回填失敗注入實際 HTTP 而非不存在的第二個 client factory。窄版 v26 兩項完整通過，完整 v27 仍待結果，R05 全項未裁定通過。
+
+C1／D1 最後來源回查發現兩項尚須補實作：一般詳情缺已保存的資源正式理由／證據版本，主機 hints 的無法評估原因被折成同一空狀態；已回到隔離實作，不以既有 CPU 瀏覽器案例代表 memory／磁碟／模式撤回全鏈。SMTP 及控制時間工作負載目前僅來源交付；均由主代理依實際服務與 owned loopback 驗證後再記錄。
+
+
+### 2026-10-08 最小實際流程再次拒絕假成功
+
+共同容量完整 v27 實際完成 264 案，259 通過／5 失敗／零略過／未中止／輸入無漂移；沒有裁定共同容量通過。五項回查保留真正等待原因、失敗後實際五批容量試測與零有效 sensor 的本地 queue 整理；08:00 成功水位反例尚未裁定。窄版 v28 只有編譯失敗（xUnit Assert.Equal 第三參數不支援診斷字串），零案例執行；主代理已改為等值 Assert.True 加診斷，不修改水位預期。
+
+真實 owned loopback SMTP v2 完整 5 案，3 通過／2 失敗／零略過／輸入無漂移。一般正式 CPU 信與單收件人 451 重試、停用零寄送通過；部分緊急信重試後的耐久 intent 仍 pending、撤回模式後兩名收件人的 NetIQ 基線流程未通過，均保留本輪修正。SMTP 250 捕獲不替代 durable outbox 完成。
+
+控制 UTC 時鐘 v8 九輪來源成功但可信落庫失敗，v9 修正 owned fixture 不合格式的 interval 後，實際 Snapshot worker 九次採樣產生兩顆 sensor 各兩個完整四 slot 小時；主代理直接讀落庫資料／proof，子程序清理 complete=true、零錯誤。此證據僅證明 owned source→worker→journal→SQLite seam，不能代表真實來源或 N6 規模。v9 排程服務回到 idle，但兩趟 lastRunSuccess=false、NetIQ 主機日分母 0/2；工具原只看 idle 的結果不予採信。已補 lastRunSuccess 與完整 durable 分母守門、查詢 hour key 使用 policy 明確 analysis zone。
+
+AI 表單要求網路重試 1..10，但 RuntimeSettingsResolver 原接受 blob 零值，零值進 Polly 建構使整趟排程失敗。隔離工具已改合法值 1；另在隔離修正執行期套用範圍 1..10，越界保留可用預設，加入真實 AI client 建構邊界回歸。修正尚待獨立驗收與精確整合；不自行把表單合法範圍改成 0。
+
+
+### 2026-10-08 活動實作 TODO 與真實程式再次對齊
+
+主代理直接回查 PrtgCorroboration→CorrelationAnalyzer／AnalysisPromptBuilder／WeeklyCheckupService：三個弱佐證 ID 與三個精確證據對齊 ID 分開；精確對齊須原生 reference、精確同主機／同資源、UTC 期間交集及明确來源關係，並有 4,096 pair 上限。弱靜音承接精確提示、只清六個自己產出的舊結果；均不提高日風險，不寫成因果確認。先前主代理隔離 212 項完整通過且十檔已精確整合 Main，Q2/C1 的程式實作 TODO 已刪除；真實來源 native reference 尚未取得，留在 A0/N1／來源驗收門檻，沒有由工具或 fixture 自行授權。
+
+同主機日 Daily 已使用 GetResourcePressureValuesForClosedDay→有界全日逐兩小時窗口→最終歷史 authority 核對／Daily consumer。活動 R07/day-window 已只保留尚未定案的跨主機日歸屬缺口，不再把已修好的日末兩小時限制描述成目前實作。R07 mode 的實際通知反例、其他父 TODO、AC 全輪門檻不因本次文件對齊而裁定通過。
+
+
+### 2026-10-08 共同容量與實際 SMTP 修正整合
+
+共同容量 v31 完整 264／264 通過、零略過、輸入無漂移；31 個來源檔已依精確種子及獨立核對整合。共同 admission 納入 snapshot 與每顆兩次 profile table 請求，scope 擴大拒用舊證據、要求新五次 pilot，並保留原容量及期限門檻。初次停用設定仍須可完成結構同步，這個使用流程缺口已回到實作；實際 Settings 啟用、共同負載與 180 日容量尚未通過。
+
+實際 owned SMTP／guarded AI v7 完整 107／107 通過、零略過、輸入無漂移；四檔已精確整合。部分收件人重試採原耐久 intent 身分，但每次投遞仍重核目前內容／父版本；正式壓力撤回保留合格 NetIQ 高風險基線，歷史非正式壓力代碼不授權 guarded AI。SMTP 250、實際 MIME 與 durable intent 一併核對，不冒称現場收件匣驗收。
+
+擴大 v8 完整 370 案／311 通過／59 失敗、零略過、輸入無漂移；59 案皆為歷史 preview 與每日重評後目前 hint 的時間窗口斷言。候選已分別驗歷史及當前窗口，固定 manifest、預期原因、零正式副作用及人工資料保留要求不變，待重驗；不將此次 RED 寫成整合通過。報告附掛另查出 stale draft 先覆寫報告內容、非 AI 未核完整父版本與歷史報告新建時間問題，候選正以同交易、精確父 ID／完整指紋及 rollback 反例補驗。所有父 TODO 與全輪 AC 保留未完成。
+
+
+### 2026-10-08 停用初始化、模式續作及 provider 前置實驗
+
+主代理核對並整合三組當前來源：provider context 111／111、停用結構同步 76／76、模式續作 consumer 34／34，均零失敗、零略過、輸入無漂移。探測報告讀取實際 EF provider，未知 provider 不偽填；停用時可用已保存認證同步結構及對應，啟用位在作業途中改變仍取消。模式續作已接到實際 AI pending、案件及交辦，失敗保留可續跑游標；無 AI 的報告產生與停用後報告更新正在候選補齊，未裁定 R07 整項完成。
+
+新隔離 SQLite M1 使用實際 3,000 裝置／15,000 sensor／身分對應 API，生成時逐筆核對身分 tuple，持久列數及 typed 結構列數均為 100,000，另回讀 64 筆核對 proof；正式可信列為零、原生 profile 為零、沒有原生 PRTG 呼叫。M1、M2 前置及唯讀 reader 的實際 driver 均 ExitCode=0、361 項輸入無漂移。M2 估計完整資料庫 73,518,727,168 bytes，保留備份／暫存／WAL 與 25% 空間後只准入隔離儲存成本實驗；尚未產生或驗收 64.8m 完整工作負載。
+
+唯讀 reader 實際走正式有界 consumer：100 sensor 的主機日頁返回 700 列（上限 2,600）；null／101 sensor／29 小時輸入均在 EF 命令前拒絕。這些結果不授予原生資料資格，不代表 SQL Server 或 N6 容量通過。規則負例 v1 完整 75 案、74 通過／1 失敗，來源失效保留舊提示的斷言已明確區分，v2 重驗中；原 RED 保留。現有六項父實作待辦及五組整輪驗收門檻仍保留。
+
+
+### 2026-10-09 目前提示窗口負例及報告驗收進度
+
+正式規則負例 v4 完整 75／75 通過、零略過、輸入無漂移，測試單檔已整合 Main；222 案固定 manifest 未改。歷史 preview 與目前提示分開核對，來源失效保留舊提示仍要求完整內容相等；跨午夜相同窗口的 no-op 只接受完整內容相等且截止屬於目前實際分析窗口。v1 的 74／1、v2 的 66／9 及 v3 單案診斷 RED 保留，不冒稱產品規則已變更。
+
+使用者報告候選已補最終父列、來源註記及渲染敘事指紋；v2／v3 只完成 BUILD RED，尚無通過測例。v2 缺少候選依賴、v3 未定義測試 helper 均已修正來源，待重新驗收。非 AI 報告的持久 pending／共用復原 consumer 與有限儲存事實 probe 正在候選核對，均未標完成。六項父實作待辦、五組整輪門檻與 AC01–AC22 保留。
+
+
+### 2026-10-09 報告、耐久重試及一般使用者證據入口整合
+
+報告／模式續作聯合候選 v7 已完整 235／235 通過、零略過、輸入無漂移；39 個明確路徑已三方整合 Main。衝突的兩份模式續作程式採已驗收、包含既有案件／通知重試的聯集，保留既有測試與接線；Help 的停用時結構同步說明也保留。
+
+已完成的實作子項：正式資源證據的有界 API／畫面投影、保存證據版本與目前 authority 區分；報告依最終父列與完整渲染輸入準備，內容及父列參照同交易提交；過時草稿拒絕且原報告保留。獨立 RiskReportPending 隨父列保存，沿既有 workflow recovery、共用背景工作 gate 與耐久 cursor 每頁最多重試四筆；AI 不可用時可先補非 AI 報告，不清除 AiPending、不另抓來源。輪次旋轉保護後段待辦免受前四筆持續失敗阻塞。一般使用者詳情與時間軸顯示待補；案件授與者該狀態為 null。
+
+受影響驗收涵蓋 AI 最終敘事／來源註記、報告交易回滾、重啟／失敗公平重試、模式開關、案件／通知交接及角色負例。先前 C1 v4 的 175／5、v6 的 179／1，以及聯合 v1–v3 BUILD RED、v4／v5 的 204／1 均保留。NetIQ 全域知識庫測試已隔離共享狀態；同主機日測試固定最新投影後再做原有精確不倒退斷言，沒有改正式跨日歸屬或降低規則門檻。
+
+235 通過只裁定上述組件，不等於整輪通過。當前 Main 完整回歸、真實瀏覽器、共同負載、來源探測及待決契約仍須完成；§5.1 六項父待辦、§5.2 五組門檻與 AC01–AC22 保留。探測儲存 metadata／離線 verifier／LocalDB harness 及唯一主機 IP 負載候選尚在獨立驗收，不列為完成。
+
+
+### 2026-10-09 有界儲存探測與離線交付驗收
+
+探測交付候選 120／120、零略過、輸入零漂移，12 個明列路徑已整合 Main，含安全 metadata 探測、離線 verifier、10 個實際 CLI 正反例及 CI 接線。完整 Compatibility JSON 與 NetIQ 安全欄位形狀探測為兩份交付；小範圍 DataFlow 不取代前者。
+
+主代理另於自有 SQL Server 17.0.925.4 Express 隔離 instance 實際驗證：擁有者 106 ms／3 個 metadata 查詢完整取得版本、資料／log 分配與磁碟容量；低權限使用者 71 ms／3 次嘗試，保留版本／檔案資訊，log DMV 與 volume DMV 無權讀取時明示 partial／unknown。306 個來源輸入前後一致；資料庫、instance、資料根目錄全部清理。這裁定探測工具的實際 provider 行為，不裁定現場 provider／容量或原生 PRTG 語意。
+
+目前 Main 完整回歸已找出新增報告及郵件 claim 清理的 SQL Server execution strategy 包覆缺漏，正於隔離候選修正；先前 SQLite 組件通過不代替此相依條件。§5.1 六項父待辦、§5.2 五組門檻仍保留；同版現場來源探測仍未收到。
+
+
+### 2026-10-09 交易重試及回歸修正整合
+
+本次受影響回歸完整 285／285、零略過、輸入零漂移；八個明列路徑已整合 Main。報告附掛、非風險待補清除及郵件 claim 清理的完整 Serializable 交易均由 SQL execution strategy 包覆，重試使用新 context；可變草稿身分預先凍結。claim 清理重試同一有界頁，提交回覆遺失不跳過下一頁或重算游標。壓力授權測試使用真正同主機日的最新兩完成小時；跨午夜需求仍未改動、未列通過。Help 處理者章節術語及其 AI 版同步，結構同步測試不再依賴固定過期對應日。
+
+主代理於自有 SQL Server 隔離 instance 實際完成八個情境：正常及過時報告、提交前重試、提交成功但回覆遺失、回覆遺失時父列並行改變而拒絕舊草稿、非風險待補正常／提交前／提交後重試，以及同頁 claim 清理與後續游標。307 個凍結輸入無漂移，測試資料庫、instance 與資料根目錄全部清理。receipt 的 `lowPrivilege` 欄位沿用工具命令名稱，此次代表 clear-and-prune 情境，並非低權限安全驗收。
+
+Main 完整回歸 v1 保留 6,065 通過／13 失敗／10 optional benchmark 略過，另因案例無進展中止，不能判為完整回歸通過。修正聯集 v1 的 226／4 及分頁中止也保留；快照證據失敗後的重試循環與分頁 fixture 正在另外修驗。R07 模式撤回已核對實作及 consumer 並移入 §5.3；目前活動實作／交付 TODO 五項，整輪驗收五組及全部 AC／Q 仍保留。
+
+PRTG、Web、DB 現況規格已對齊模式續作 API、一般使用者六種目前提示、保存證據與目前 authority 分離、待補報告／案件授與 null、完整 40 位版本核對、有界儲存探測及搬運失效租約保留期。來源原生語意仍未知，沒有以文件補充替代新探測或來源授權。
+
+
+### 2026-10-09 對應批次、有限復原及案件授權整合
+
+主代理受影響整合回歸完整 296／296、零失敗、零略過、凍結輸入零漂移；明列來源已整合 Main。測試共用容量狀態改由既有隔離 collection 控制，補抓 fixture 隔離不相關的時間軸工作者，五秒期限未放寬；獨立時間軸 consumer 仍納入回歸。Main 全量回歸及真實瀏覽器角色流程仍須另驗。
+
+對應更新改為交易內共用、有界的資源身分及主機修訂快取；政策換範圍的 epoch 更新每批最多 500 顆，舊／新不重疊試點最多合計 30,000 顆。保存仍為同一原子交易，第二批失敗不能留下第一批的變更。3000 主機／30000 鏡像分頁及完整保存 15000 選取已實際通過，不再用小 fixture 代表此動線。這是管理分頁與保存證據，不代表 180 日共同工作負載容量通過。
+
+實際 SQL Server 六個對應／修訂情境通過：3000 裝置與 30000 sensors、對應搬移及移除、交易回滾、提交前暫時失敗、提交回覆遺失，以及回覆遺失時呼叫者修改輸入。資源 epoch／主機修訂逐值核對；最後一項仍重播原輸入。提交回覆遺失時 global host-map revision 可前進兩次，資源世代只前進一次；不宣稱全部修訂都恰好一次。307 個輸入無漂移，自有資料庫、instance、資料根全部清理。
+
+八族正式規則各通過摘要及緊急郵件流程，加上五個既有情境，共 21 項實際 owned loopback SMTP：同版 NetIQ 父紀錄→日風險→AI guarded update→正式 WorkOrderCoordinator→郵件意圖與 SMTP 接受／去重。AI 回應是受控替身，Silent 使用明示的合成歷史 proof；沒有據此授予原生來源資格、真實 AI 判讀效益或自動夜間派工驗收。
+
+案件授與專屬使用者的主機頁明示案件範圍，不再把 ACL 裁剪後的空集合說成無分析紀錄；直接 PRTG 對應 API 在讀 store 前拒絕 case-only 主機，一般主機授權仍可取得裝置及感測器。Help 與現況規格同步有界單批復原、搬運 lease 清理及案件頁／API 語意；此子項程式完成，整體 C1／D1 與 AC21 仍保留其他必要入口及實際瀏覽器驗收。
+
+
+### 2026-10-09 完整回歸缺陷修正及分段提交驗證
+
+主代理完整回歸 v2 已完成：7,085 通過、17 失敗、10 原有自選規模壓測略過；1,128 項凍結輸入無漂移。17 個失敗均為 Silent 測試用 UTC 日期查找以來源時區日期保存的快照。正式 capture、consumer 與 snapshot store 的來源日期語意一致；修正測試查找鍵並新增來源日期與 UTC 日期不同的實際 capture／mutation 邊界案例，沒有修改正式判定、原案例清單或既有斷言。
+
+同版重建後，完整受影響規則及 owned SMTP 類別 245／245 通過、零略過、輸入無漂移；逐名核對原先 17 個失敗已通過，原 244 個案例全部保留，新增一個跨時區案例。產品程式及案例清單與完整 v2 輸入相同；保留 v2 的 RED，不將增量證據冒稱為單次完整綠燈。來源不變的原通過結果結合受影響重驗，覆蓋 7,103 項通過及 10 項尚未執行的自選壓測，僅裁定本相依實作段落，不裁定整輪或容量。證據為 round53-main-incremental-source-day-current-v1-review.json。
+
+提交前另修正兩份交辦 Help 的重複 CR 與四處檔尾空行，逐檔保存 preimage 並核對非格式內容及 JSON 案例語意不變。最新重建 0 錯誤、127 警告；Help 與受控效益重播 28／28 通過、零略過、輸入無漂移。兩份以原始 SHA 綁定的案例 JSON 以專用 Git attributes 保留位元組，防止 add／checkout 的換行轉換破壞驗證；原正式案例 SHA 及內容不改。
+
+依使用者 2026-10-09 定案，完成且驗證通過的相依段落即 commit／push 至 feature/prtg-feedback-53，確認遠端提交；不等待整輪、不同時夾帶未驗證或無關變更。本段排除既存 CLAUDE.md 修改。原生来源、完整 3000／15000／180 日容量、角色瀏覽器矩陣、跨主機日語意及替代來源資格契約仍按 §5 保留，不改 AC01–AC22／Q1–Q6 結案裁定。

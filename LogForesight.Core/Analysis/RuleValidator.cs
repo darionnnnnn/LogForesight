@@ -237,9 +237,17 @@ public static class RuleValidator
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleFlapping &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleWarning &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleSilent &&
-            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDiskFreeTrend)
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDiskFreeTrend &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleResourceCpuPressure &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleResourceMemoryPressure &&
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleResourceDiskPressure)
         {
-            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning}、{PrtgRuleEvaluator.RuleSilent} 或 {PrtgRuleEvaluator.RuleDiskFreeTrend}，實際為「{rule.PrtgRuleCode}」";
+            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning}、{PrtgRuleEvaluator.RuleSilent}、{PrtgRuleEvaluator.RuleDiskFreeTrend}、{PrtgRuleEvaluator.RuleResourceCpuPressure}、{PrtgRuleEvaluator.RuleResourceMemoryPressure} 或 {PrtgRuleEvaluator.RuleResourceDiskPressure}，實際為「{rule.PrtgRuleCode}」";
+        }
+
+        if (PrtgRuleCatalog.FormalConsumerFor(rule.PrtgRuleCode) is null)
+        {
+            return $"PRTG 規則代碼「{rule.PrtgRuleCode}」沒有正式 consumer";
         }
 
         if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend)
@@ -251,6 +259,20 @@ public static class RuleValidator
         else if (rule.PrtgDiskTrendThresholds != null)
         {
             return "PrtgDiskTrendThresholds 僅 disk_free_trend 可填";
+        }
+
+        if (rule.PrtgRuleCode is PrtgRuleEvaluator.RuleResourceCpuPressure or
+            PrtgRuleEvaluator.RuleResourceMemoryPressure or PrtgRuleEvaluator.RuleResourceDiskPressure)
+        {
+            var expectedCategory = rule.PrtgRuleCode switch
+            {
+                PrtgRuleEvaluator.RuleResourceCpuPressure => PrtgSensorCategories.Cpu,
+                PrtgRuleEvaluator.RuleResourceMemoryPressure => PrtgSensorCategories.Memory,
+                _ => PrtgSensorCategories.Disk
+            };
+            if (rule.PrtgThreshold != 0) return "resource pressure 規則的 PrtgThreshold 必須為 0；量測門檻由可信兩小時評估固定";
+            if (rule.PrtgSensorCategory != expectedCategory)
+                return $"{rule.PrtgRuleCode} 的 PrtgSensorCategory 必須是 {expectedCategory}";
         }
 
         if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && rule.PrtgThreshold < 1)
@@ -289,6 +311,7 @@ public static class RuleValidator
         && double.IsFinite(t.LowWaterPercent) && t.LowWaterPercent is >= 0 and <= 100
         && double.IsFinite(t.MinimumDeclinePercentagePointsPerDay) && t.MinimumDeclinePercentagePointsPerDay is > 0 and <= 100
         && double.IsFinite(t.MaximumDaysToDepletion) && t.MaximumDaysToDepletion is > 0 and <= 3650
+        && double.IsFinite(t.MaximumDaysToLowWater) && t.MaximumDaysToLowWater is > 0 and <= 3650
         && t.MinimumValidDays is >= 2 and <= 365
         && t.RecentWindowDays >= t.MinimumValidDays && t.RecentWindowDays <= 730
         && double.IsFinite(t.MinimumDecliningDayRatio) && t.MinimumDecliningDayRatio is > 0 and <= 1;

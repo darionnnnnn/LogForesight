@@ -679,22 +679,20 @@ public class PrtgAdminPageUiTests
     }
 
     /// <summary>
-    /// 維護頁鏡像頁籤的同步鈕在 PRTG 未啟用時要閘住，而它的 disabled 有兩個寫入點
-    /// （載入設定時的閘、同步狀態輪詢結束時的復原）。輪詢那處若寫死 false，
-    /// 頁面載入後一秒閘就被打開、說明行卻還亮著——與排程頁同型的問題，兩邊都要鎖。
+    /// 維護頁鏡像頁籤的同步鈕要依已儲存的位址、認證與執行狀態閘住。
+    /// 取樣停用時仍可手動同步結構；未設定連線資訊時才停用按鈕。
     /// </summary>
     [Fact]
-    public void 維護頁同步鈕在所有寫入點都尊重PRTG開關()
+    public void 維護頁同步鈕依連線設定與執行狀態閘住()
     {
         var root = FindRepoRoot();
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
 
-        Assert.Contains("btn.disabled = !prtgEnabled;", js);
-        Assert.Contains("btn.disabled = !prtgEnabled || structureSyncRunning;", js);
+        Assert.Contains("btn.disabled = !prtgStructureConfigured || structureSyncRunning;", js);
         Assert.DoesNotContain("btn.disabled = false;", js);
-        // 點擊時的第二道：輪詢競態下按鈕可能還可按
-        Assert.Contains("if (!prtgEnabled) {", js);
+        Assert.Contains("if (!prtgStructureConfigured) {", js);
         Assert.Contains("prtg-structure-sync-disabled-hint", js);
+        Assert.Contains("此操作不會啟用數值取樣", File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml")));
         // withBusy 的 restore 必須在輪詢之前，否則同步進行中的灰掉會被 restore 打開
         var restoreAt = js.Replace("\r\n", "\n").IndexOf("restore();\n        }\n        // 輪詢要在 restore 之後", StringComparison.Ordinal);
         Assert.True(restoreAt >= 0, "bindStructureSync 的 restore 應在 refreshStructureSyncStatus 之前");
@@ -1018,7 +1016,7 @@ public class PrtgAdminPageUiTests
         Assert.True(categoryChangeEnd > categoryChangeStart, "change callback 應完整閉合");
         Assert.Contains("applyPrtgSensorCategoryLock();", js[categoryChangeStart..categoryChangeEnd]);
         Assert.Matches(@"if \(isSilent\)\s*select\.value = '';", js);
-        Assert.Contains("select.disabled = isSilent || isDiskTrend;", js);
+        Assert.Contains("select.disabled = isSilent || isDiskTrend || isResourcePressure;", js);
     }
 
     [Fact]

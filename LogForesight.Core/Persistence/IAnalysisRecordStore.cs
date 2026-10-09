@@ -80,6 +80,17 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// </summary>
     void AttachAiResult(DateTime date, AiOutcome outcome);
 
+    /// <summary>Attach an AI result only if the authoritative PRTG evidence still matches the input fingerprint.</summary>
+    bool TryAttachAiResult(DateTime date, AiOutcome outcome, long expectedParentRecordId,
+        string expectedDecisionFingerprint, string expectedPrtgFingerprint);
+
+    /// <summary>Attach a saved risk-report reference only while parent identity, decision image and PRTG evidence still match.</summary>
+    string? AttachDailyRiskReport(DateTime date, PreparedRiskReport report, long expectedParentRecordId,
+        string expectedDecisionFingerprint, string expectedPrtgFingerprint);
+
+    bool TryClearPendingDailyRiskReport(DateTime date, long expectedParentRecordId,
+        string expectedDecisionFingerprint, string expectedPrtgFingerprint);
+
     /// <summary>
     /// 把 PRTG 規則命中的 finding 追加到指定主機日的既有紀錄（docs/PRTG-SPEC.md §9）。
     /// 依 <c>EventKey</c> 去重，同一天重跑不產生重複；該主機當天沒有紀錄、或紀錄的詳情
@@ -90,5 +101,6 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// <param name="corroboratedCount">這次追加新增的未抑制跨來源佐證筆數（未追加時為 0），供執行輸出統計。</param>
     /// <param name="aiConfigured">AI 是否已設定：風險由低升為非低時據此決定要不要標記待補 AI 判讀。</param>
     bool AttachPrtgFindings(long hostId, DateTime date, IReadOnlyList<LogIssueSignature> findings,
-        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured = false);
+        IReadOnlySet<string> suppressedPatternIds, out int corroboratedCount, bool aiConfigured = false,
+        PrtgDecisionManifest? manifest = null);
 }

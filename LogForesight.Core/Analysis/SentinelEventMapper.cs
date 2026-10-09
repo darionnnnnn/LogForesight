@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net;
 using System.Text.RegularExpressions;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Analysis;
 
@@ -55,6 +57,8 @@ internal static class SentinelEventMapper
             ? ParseInt(fields, SentinelFieldMap.XdasOutcome)
             : (int?)null;
         var eventId = ParseInt(fields, SentinelFieldMap.EventId);
+        // Fingerprint original projected fields before shn/sip are appended to display text.
+        var sourceEvidence = BuildSourceEvidence(fields, SourceEvidenceKind.SentinelWindows, timestamp);
 
         var message = fields.GetValueOrDefault(SentinelFieldMap.Message);
         if (string.IsNullOrEmpty(message))
@@ -96,7 +100,8 @@ internal static class SentinelEventMapper
             // InstanceId 只在 classic API 相容情境使用（history.txt 舊格式），Sentinel 路徑沒有
             // Qualifiers 概念，直接等於 EventId（同 EventRecordMapper 對此欄位的「僅相容性保留」定位）
             InstanceId = eventId,
-            InitiatorAccount = initiatorAccount
+            InitiatorAccount = initiatorAccount,
+            SourceEvidence = sourceEvidence
         };
     }
 
@@ -123,6 +128,7 @@ internal static class SentinelEventMapper
         }
 
         var message = fields.GetValueOrDefault(SentinelFieldMap.Message, string.Empty);
+        var sourceEvidence = BuildSourceEvidence(fields, SourceEvidenceKind.SentinelLinux, timestamp);
 
         var source = fields.GetValueOrDefault(SentinelFieldMap.LinuxProgram, string.Empty);
         if (source.Length == 0)
@@ -152,7 +158,8 @@ internal static class SentinelEventMapper
             Source = source,
             Message = message,
             EventId = 0,
-            InstanceId = 0
+            InstanceId = 0,
+            SourceEvidence = sourceEvidence
         };
     }
 
@@ -186,4 +193,28 @@ internal static class SentinelEventMapper
         fields.TryGetValue(key, out var raw) && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
             ? value
             : 0;
+
+    private static SourceEvidence BuildSourceEvidence(IReadOnlyDictionary<string, string> fields,
+        SourceEvidenceKind sourceKind, DateTimeOffset eventTimeUtc)
+    {
+        var rawHostIp = fields.GetValueOrDefault(SentinelFieldMap.HostIp)?.Trim();
+        var hostKey = !string.IsNullOrEmpty(rawHostIp) && IPAddress.TryParse(rawHostIp, out var address)
+            ? $"host-ip:{address}"
+            : null;
+        var fingerprintParts = fields.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .SelectMany(pair => new[] { pair.Key, pair.Value }).ToArray();
+
+        return new SourceEvidence
+        {
+            SourceKind = sourceKind,
+            ResourceScope = hostKey == null ? SourceResourceScope.Unknown : SourceResourceScope.Host,
+            ExactResourceKey = hostKey,
+            ExactHostKey = hostKey,
+            EventTimeUtc = eventTimeUtc.ToUniversalTime(),
+            // The Sentinel projection has no verified per-event native record reference.
+            SourceReference = null,
+            SourceReferenceQuality = SourceReferenceQuality.Unknown,
+            ProjectionFingerprint = SourceEvidence.Fingerprint(fingerprintParts)
+        };
+    }
 }

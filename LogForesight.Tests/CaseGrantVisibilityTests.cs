@@ -92,6 +92,7 @@ public class CaseGrantVisibilityTests : IDisposable
             Action = "建議處置",
             AiAnalyzed = true,
             ReportFile = "report.txt",
+            RiskReportPending = true,
             TopIssues = issues.ToList(),
             CorrelationAlerts = new List<string> { "關聯訊號" },
             TrendAlerts = new List<string> { "趨勢異常" }
@@ -174,6 +175,7 @@ public class CaseGrantVisibilityTests : IDisposable
         Assert.Empty(detail.CorrelationAlerts);
         Assert.Empty(detail.TrendAlerts);
         Assert.False(detail.HasReport);
+        Assert.Null(detail.RiskReportPending);
 
         // 直接打報告端點也拿不到（回 null 而非拋例外——見 GetReport 的說明）
         Assert.Null(query.GetReport(_grantedHost.HostId, Day));
@@ -283,5 +285,36 @@ public class CaseGrantVisibilityTests : IDisposable
         Assert.Equal(2, detail.TopIssues.Count);
         Assert.Equal("整日敘事：這一天發生了很多事", detail.Headline);
         Assert.True(detail.HasReport);
+        Assert.True(detail.RiskReportPending);
+    }
+
+    [Fact]
+    public void 案件授與者的主機時間軸不洩漏整日報告待補狀態()
+    {
+        var detail = Query(Visibility()).GetHostDetail(_grantedHost.HostId, days: 7);
+
+        Assert.True(detail.CaseGrantOnly);
+        Assert.All(detail.Timeline, day => Assert.False(day.HasRecord));
+        Assert.Empty(detail.TopSignatures);
+        Assert.Null(detail.LatestCheckup);
+        Assert.Null(detail.ResourcePressureAvailability);
+        Assert.Empty(detail.ResourcePressureHints);
+        Assert.Empty(detail.ResourcePressureModes);
+        Assert.False(detail.CanManageResourcePressure);
+
+        var day = Assert.Single(detail.Timeline, item => item.Date == Day.ToString("yyyy-MM-dd"));
+        Assert.Null(day.RiskReportPending);
+    }
+
+    [Fact]
+    public void 一般可見主機的主機詳情仍包含已授權的紀錄摘要()
+    {
+        AddRecord(_ownHost, Day, _grantedIssue, _otherIssue);
+
+        var detail = Query(Visibility()).GetHostDetail(_ownHost.HostId, days: 7);
+
+        Assert.False(detail.CaseGrantOnly);
+        Assert.Contains(detail.Timeline, item => item.Date == Day.ToString("yyyy-MM-dd") && item.HasRecord);
+        Assert.Equal(2, detail.TopSignatures.Count);
     }
 }

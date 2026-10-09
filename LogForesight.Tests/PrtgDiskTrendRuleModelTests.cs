@@ -11,7 +11,7 @@ public sealed class PrtgDiskTrendRuleModelTests
     [Fact]
     public void Seed新增停用磁碟趨勢規則並使用獨立暫定門檻()
     {
-        Assert.Equal(8, KnownIssueSeed.Version);
+        Assert.Equal(9, KnownIssueSeed.Version);
         var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-disk-free-trend");
 
         Assert.False(rule.Enabled);
@@ -27,6 +27,9 @@ public sealed class PrtgDiskTrendRuleModelTests
     [InlineData("LowWaterPercent", "101")]
     [InlineData("MinimumDeclinePercentagePointsPerDay", "0")]
     [InlineData("MaximumDaysToDepletion", "Infinity")]
+    [InlineData("MaximumDaysToLowWater", "NaN")]
+    [InlineData("MaximumDaysToLowWater", "0")]
+    [InlineData("MaximumDaysToLowWater", "3651")]
     [InlineData("MinimumValidDays", "1")]
     [InlineData("RecentWindowDays", "800")]
     [InlineData("MinimumDecliningDayRatio", "0")]

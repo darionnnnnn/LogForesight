@@ -121,7 +121,7 @@ public class KnownIssueRule
     public string[] MessagePatterns { get; init; } = Array.Empty<string>();
 
     // ── PRTG 專用比對欄位 ───────────────────────────────────────────
-    /// <summary>PRTG 規則代碼（down／flapping／warning／silent）。僅 platform=prtg 使用。</summary>
+    /// <summary>PRTG 規則代碼（狀態、磁碟趨勢或資源壓力 rule）。僅 platform=prtg 使用。</summary>
     public string? PrtgRuleCode { get; init; }
 
     /// <summary>PRTG 規則門檻。語意依規則代碼而定：down／warning 為分鐘數，flapping 為往返次數，
@@ -376,8 +376,11 @@ public static class KnownIssueCatalog
     public static bool RuleMayHit(KnownIssueRule rule, string source, int eventId)
     {
         if (string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase))
-            return PrtgFindingMapper.TryGetRuleCode(source, out var code)
-                   && string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase);
+            return PrtgFindingMapper.TryGetRuleCode(source, out var code) &&
+                   (string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase) ||
+                    rule.Id == "builtin-prtg-resource-disk-pressure" &&
+                    string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleResourceDiskPressure, StringComparison.Ordinal) &&
+                    string.Equals(code, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.Ordinal));
 
         if (string.Equals(rule.Platform, "linux", StringComparison.OrdinalIgnoreCase))
             return source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase);

@@ -96,12 +96,9 @@ public static class PrtgDiskRuleDecision
         var current = trend.CurrentAvailablePercent!.Value;
         var latestDay = trend.LatestDay!.Value;
         var detail = string.Format(CultureInfo.InvariantCulture,
-            "磁碟可用空間趨勢：host {0}，sensor {1}，目前 {2:F1}%；有效日 {3} 日／可用小時 {4} 小時；穩健下降 {5:F2} 百分點／日；預估 {6:F1} 日耗盡；資料截至 {7:yyyy-MM-dd}（門檻暫定：低水位 {8:F1}%，下降至少 {9:F2} 百分點／日，耗盡 {10:F1} 日內）。",
+            "磁碟可用空間趨勢：host {0}，sensor {1}，目前 {2:F1}%；有效日 {3} 日／可用小時 {4} 小時；資料截至 {5:yyyy-MM-dd}。{6}",
             input.CurrentHostId, input.SensorObjid, current, trend.ValidDayCount, readiness.UsableHours,
-            trend.RobustDeclinePercentagePointsPerDay!.Value, trend.EstimatedDaysToDepletion!.Value,
-            latestDay, rule.PrtgDiskTrendThresholds.LowWaterPercent,
-            rule.PrtgDiskTrendThresholds.MinimumDeclinePercentagePointsPerDay,
-            rule.PrtgDiskTrendThresholds.MaximumDaysToDepletion);
+            latestDay, trend.Explanation);
         var finding = new PrtgFinding(input.DeviceObjid, input.SensorObjid, RuleCode, detail,
             trend.ValidDayCount, rule, Acknowledged: false) { SensorCategory = PrtgSensorCategories.Disk };
         return new(PrtgDiskDecisionExclusion.None, trend.Explanation, trend, finding);

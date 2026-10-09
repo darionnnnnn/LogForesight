@@ -14,8 +14,8 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     internal const int MaxRows = 200_000;
     internal const long MaxBytes = 64 * 1024 * 1024;
     internal const int ReplayDays = 30;
-    // 每列只有數字、時間與固定 sampled 品質；512 bytes 同時預留累積器轉成值列的增量。
-    internal const int ReservedBytesPerRow = 512;
+    // 預留每列可信 slot proof 的上界；journal 總容量仍維持 64 MiB。
+    internal const int ReservedBytesPerRow = 4096;
     internal sealed record Batch(string Id, IReadOnlyList<PrtgValueRow> Rows);
     internal sealed record State(int Version, string DatabaseId, string SourceEndpoint,
         IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> Accumulator, IReadOnlyList<Batch> Pending)
@@ -24,6 +24,7 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     }
 
     private sealed record Manifest(int Version, string Generation, long Sequence, string LastChecksum, string Checksum);
+    internal sealed record BindingPair(string Current, string Legacy, string SourceGeneration);
     private sealed record Segment(int Version, long Sequence, string PreviousChecksum, string DatabaseId,
         string SourceEndpoint, IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> Upserts,
         IReadOnlyList<PrtgSnapshotAccumulator.CheckpointKey> Removals, IReadOnlyList<Batch> AddedBatches,
@@ -48,6 +49,11 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     private int _liveAccumulatorRows;
     private long _pendingRows;
     private string? _generationEndpoint;
+    // Set only by Load after a checksummed legacy journal exactly matches the
+    // binding that the current configuration would have produced under the old
+    // scope-revision scheme. It authorizes a one-time atomic format migration.
+    private string? _verifiedLegacyBinding;
+    private string? _verifiedLegacyTargetBinding;
     private readonly SortedDictionary<DateTime, int> _recordDates = new();
     private Dictionary<(DateTime Hour, long Sensor), PrtgSnapshotAccumulator.CheckpointRow> _currentAccumulator = new();
     private Dictionary<string, Batch> _currentPending = new(StringComparer.Ordinal);
@@ -102,17 +108,38 @@ internal sealed class PrtgSnapshotJournal : IDisposable
 
     internal static string Binding(StorageBackend backend, string? url)
     {
-        var source = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().SourceGeneration;
-        if (source.Length == 0) return Endpoint(url); // 舊診斷模式，不能因此取得正式信任。
-        var epoch = $"{Endpoint(url)}|{source}|{backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion()}|{backend.Blob("prtg_resource_generation_revision").ReadVersion()}";
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(epoch)));
+        return CaptureBindingPair(backend, url).Current;
     }
 
-    internal State? Load(string endpoint, DateTime now)
+    /// <summary>Capture one immutable policy value and use it for both current and legacy bindings.</summary>
+    internal static BindingPair CaptureBindingPair(StorageBackend backend, string? url)
+    {
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var source = policy.SourceGeneration ?? "";
+        var endpoint = Endpoint(url);
+        if (source.Length == 0) return new BindingPair(endpoint, endpoint, source);
+        var scopeRevision = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+        var resourceRevision = backend.Blob("prtg_resource_generation_revision").ReadVersion();
+        // Durable binding describes the source, not the selected-resource scope.
+        // Scope/resource revisions remain per-operation cancellation fences, while
+        // every trusted sample carries its own resource/channel generation and epoch.
+        var current = $"v3|{endpoint}|{Convert.ToBase64String(Encoding.UTF8.GetBytes(source))}";
+        var epoch = $"{endpoint}|{source}|{scopeRevision}|{resourceRevision}";
+        var legacy = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(epoch)));
+        return new BindingPair(current, legacy, source);
+    }
+
+    /// <summary>Exact pre-v3 digest, used only to verify and migrate an untouched legacy journal.</summary>
+    internal static string LegacyBinding(StorageBackend backend, string? url)
+    {
+        return CaptureBindingPair(backend, url).Legacy;
+    }
+
+    internal State? Load(string endpoint, DateTime now, string? currentLegacyBinding = null)
     {
         lock (_gate)
         {
-        if (File.Exists(ManifestPath)) return LoadSegments(endpoint, now);
+        if (File.Exists(ManifestPath)) return LoadSegments(endpoint, now, currentLegacyBinding);
         if (!File.Exists(FilePath)) { _loaded = true; _expectedDigest = null; return null; }
         if (new FileInfo(FilePath).Length > MaxBytes) throw new InvalidDataException("快照復原檔超過容量上限，停止採集並保留檔案");
         var bytes = ReadFile(FilePath);
@@ -120,7 +147,14 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         if (state.Version == 1) throw new InvalidDataException("舊版復原檔沒有完整性證明；保留原檔，請管理者備份並核對，不能自動重播或補簽 checksum。");
         if (string.IsNullOrEmpty(state.Checksum) || state.Checksum.Length != 64 || state.Checksum != Checksum(state))
             throw new InvalidDataException("快照復原檔 checksum 不符；停止採集並保留原檔。");
-        Validate(state, endpoint, now);
+        Validate(state, state.SourceEndpoint, now);
+        if (state.SourceEndpoint != endpoint && HasRows(state))
+        {
+            if (!IsExactLegacyBinding(state.SourceEndpoint, currentLegacyBinding))
+                throw AmbiguousLegacyBinding();
+            _verifiedLegacyBinding = state.SourceEndpoint;
+            _verifiedLegacyTargetBinding = endpoint;
+        }
         _loaded = true; _expectedDigest = Digest(bytes);
         SavedBytes = bytes.Length;
         return state;
@@ -128,7 +162,7 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     }
 
     /// <summary>切換正式 consumer 至 segment journal；有效 V2 checkpoint 以一代快照先 durable 再切換。</summary>
-    internal void EnableIncremental(string endpoint, DateTime now)
+    internal void EnableIncremental(string endpoint, DateTime now, string? currentLegacyBinding = null)
     {
         lock (_gate)
         {
@@ -142,7 +176,24 @@ internal sealed class PrtgSnapshotJournal : IDisposable
                 if (_generationEndpoint != endpoint)
                 {
                     if (_liveAccumulatorRows > 0 || _pendingRows > 0)
-                        throw new InvalidDataException("PRTG binding 變更時仍有待寫資料；保留 journal 並停止採集。");
+                    {
+                        if (!IsExactLegacyBinding(_generationEndpoint, currentLegacyBinding) ||
+                            _verifiedLegacyBinding != _generationEndpoint || _verifiedLegacyTargetBinding != endpoint)
+                            throw AmbiguousLegacyBinding();
+                        var migrated = new State(2, DatabaseId, endpoint, _currentAccumulator.Values.ToArray(),
+                            _currentPending.Values.ToArray());
+                        migrated = migrated with { Checksum = Checksum(migrated) };
+                        // PublishGeneration writes and flushes every new snapshot segment before
+                        // atomically replacing the manifest. The old generation remains authoritative
+                        // if anything fails before that switch.
+                        PublishGeneration(migrated, endpoint, now);
+                        CleanupInactiveGenerations(_generation!);
+                        _verifiedLegacyBinding = null;
+                        _verifiedLegacyTargetBinding = null;
+                        _diskBytes = MeasureJournalBytes();
+                        SavedBytes = _diskBytes;
+                        return;
+                    }
                     var empty = new State(2, DatabaseId, endpoint, Array.Empty<PrtgSnapshotAccumulator.CheckpointRow>(), Array.Empty<Batch>());
                     empty = empty with { Checksum = Checksum(empty) };
                     PublishGeneration(empty, endpoint, now);
@@ -157,10 +208,14 @@ internal sealed class PrtgSnapshotJournal : IDisposable
                 legacy = JsonSerializer.Deserialize<State>(bytes) ?? throw new InvalidDataException("快照復原檔為空");
                 if (legacy.Version == 1) throw new InvalidDataException("舊版復原檔沒有完整性證明；保留原檔，不能自動重播或補簽 checksum。");
                 if (legacy.Checksum != Checksum(legacy)) throw new InvalidDataException("快照復原檔 checksum 不符；保留原檔。");
-                Validate(legacy, endpoint, now);
+                Validate(legacy, legacy.SourceEndpoint, now);
                 if (legacy.SourceEndpoint != endpoint)
                 {
-                    // Validate 只允許空資料跨 binding；新 snapshot 內外都使用本次已驗證的 binding。
+                    if (HasRows(legacy) && (!IsExactLegacyBinding(legacy.SourceEndpoint, currentLegacyBinding) ||
+                        _verifiedLegacyBinding != legacy.SourceEndpoint || _verifiedLegacyTargetBinding != endpoint))
+                        throw AmbiguousLegacyBinding();
+                    // The old checksum was verified and Load proved an exact old binding match.
+                    // Re-sign only as part of the atomic generation switch below.
                     legacy = legacy with { SourceEndpoint = endpoint, Checksum = "" };
                     legacy = legacy with { Checksum = Checksum(legacy) };
                 }
@@ -184,6 +239,8 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             SavedBytes = _diskBytes;
             _loaded = true;
             _expectedDigest = null;
+            _verifiedLegacyBinding = null;
+            _verifiedLegacyTargetBinding = null;
         }
     }
 
@@ -337,17 +394,36 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             (row.Coverage.HasValue && (!double.IsFinite(row.Coverage.Value) || row.Coverage < 0)) ||
             row.Hour < now.AddDays(-ReplayDays))
             throw new InvalidDataException("快照增量樣本無效或超過 30 日安全重播期限");
+        if (row.Trusted is { } proof && (!proof.IsStructurallyValid() || !proof.MatchesHour(row.Hour) ||
+            proof.Slots.Count != row.Count || proof.Slots.Count == 0 || proof.Slots.Count > 12 ||
+            proof.Slots.Select(s => s.Slot).Distinct().Count() != proof.Slots.Count ||
+            proof.Slots.Select(s => s.PhysicalIdHash).Distinct(StringComparer.Ordinal).Count() != proof.Slots.Count ||
+            proof.Slots.Any(s => s.Slot < 0 || s.Slot >= 60 / proof.StrategyMinutes || !double.IsFinite(s.Value))))
+            throw new InvalidDataException("可信樣本 journal slot proof 無效");
     }
 
     private void ValidateValueRow(PrtgValueRow row, DateTime now)
     {
-        if (row == null || row.Quality != PrtgDataQuality.Sampled ||
+        if (row == null || row.Quality != PrtgDataQuality.Sampled || row.TrustVersion is < 0 or > 1 ||
+            row.TrustVersion == 1 && string.IsNullOrWhiteSpace(row.TrustedProof) ||
+            row.TrustVersion == 0 && row.TrustedProof != null ||
             (row.AvgValue.HasValue && !double.IsFinite(row.AvgValue.Value)) ||
             (row.MinValue.HasValue && !double.IsFinite(row.MinValue.Value)) ||
             (row.MaxValue.HasValue && !double.IsFinite(row.MaxValue.Value)) ||
             (row.Coverage.HasValue && (!double.IsFinite(row.Coverage.Value) || row.Coverage < 0 || row.Coverage > 100)) ||
             row.PeriodStart < now.AddDays(-ReplayDays))
             throw new InvalidDataException("快照待寫樣本無效或超過 30 日安全重播期限");
+        if (row.TrustVersion == 1)
+        {
+            var proof = PrtgTrustedSampleProof.Deserialize(row.TrustedProof!);
+            if (!proof.IsStructurallyValid() || !proof.MatchesHour(row.PeriodStart) ||
+                proof.Slots.Count == 0 || proof.Slots.Count > 12 ||
+                Math.Abs((row.Coverage ?? -1) - proof.Slots.Count * 100.0 / (60 / proof.StrategyMinutes)) > 1e-8 ||
+                !row.AvgValue.HasValue || Math.Abs(row.AvgValue.Value - proof.Slots.Average(s => s.Value)) > 1e-8 ||
+                !row.MinValue.HasValue || Math.Abs(row.MinValue.Value - proof.Slots.Min(s => s.Value)) > 1e-8 ||
+                !row.MaxValue.HasValue || Math.Abs(row.MaxValue.Value - proof.Slots.Max(s => s.Value)) > 1e-8)
+                throw new InvalidDataException("待寫可信樣本 proof 無效");
+        }
     }
 
     private void CleanupUncommittedTail(long sequence, string path, string temp)
@@ -498,7 +574,7 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         return parts;
     }
 
-    private State LoadSegments(string endpoint, DateTime now)
+    private State LoadSegments(string endpoint, DateTime now, string? currentLegacyBinding)
     {
         var manifestBytes = ReadFile(ManifestPath);
         var manifest = ReadManifest(manifestBytes);
@@ -562,7 +638,19 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         if (!sawSnapshot || previous != manifest.LastChecksum) throw new InvalidDataException("快照 journal manifest 指向的 committed checksum 不符或缺少 snapshot；保留資料並停止採集。");
         var state = new State(2, DatabaseId, generationEndpoint!, accumulator.Values.ToArray(), pending.Values.ToArray());
         state = state with { Checksum = Checksum(state) };
-        Validate(state, endpoint, now);
+        Validate(state, generationEndpoint!, now);
+        if (generationEndpoint != endpoint && HasRows(state))
+        {
+            if (!IsExactLegacyBinding(generationEndpoint, currentLegacyBinding))
+                throw AmbiguousLegacyBinding();
+            _verifiedLegacyBinding = generationEndpoint;
+            _verifiedLegacyTargetBinding = endpoint;
+        }
+        else if (generationEndpoint != endpoint && IsExactLegacyBinding(generationEndpoint, currentLegacyBinding))
+        {
+            _verifiedLegacyBinding = generationEndpoint;
+            _verifiedLegacyTargetBinding = endpoint;
+        }
         _generation = manifest.Generation; _sequence = manifest.Sequence; _lastSegmentChecksum = previous;
         _segmentCount = checked((int)manifest.Sequence);
         _generationBytes = Enumerable.Range(1, _segmentCount).Sum(i => new FileInfo(SegmentPath(manifest.Generation, i)).Length);
@@ -711,4 +799,13 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             state.Pending.SelectMany(b => b.Rows).Any(r => r.PeriodStart < now.AddDays(-ReplayDays)))
             throw new InvalidDataException("快照復原資料超過 30 日安全重播期限；保留資料待管理者處理");
     }
+
+    private static bool HasRows(State state) => state.Accumulator.Count > 0 || state.Pending.Count > 0;
+
+    private static bool IsExactLegacyBinding(string? stored, string? currentLegacyBinding) =>
+        stored is { Length: 64 } && stored.All(Uri.IsHexDigit) &&
+        string.Equals(stored, currentLegacyBinding, StringComparison.Ordinal);
+
+    private static InvalidDataException AmbiguousLegacyBinding() => new(
+        "快照 journal 的舊版來源 binding 已變更且無法由保存的 opaque hash 判定原因；原資料已保留，需核對後復原，拒絕重標或自動重播。");
 }
