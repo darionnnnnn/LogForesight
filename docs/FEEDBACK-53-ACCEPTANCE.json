@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "53c3955fde0d54ec9f01095a1589b793532628e88c3fd1f52737b768b6a2de3f",
+  "plan_sha256": "de9e3d09e6a905fe80ec84ab71a58b7bcfe61e8d44fab144eecda0efe04e504f",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -5776,6 +5776,24 @@
     ],
     "native_source_verified": false,
     "complete_180_day_capacity_accepted": false,
+    "whole_round_accepted": false
+  },
+  "current_dashboard_visible_scope_verification": {
+    "base_commit": "5ba67b7b35ebcc6ad4c176d37c54c82fcebc9de7",
+    "kind": "actual owned current browser; display text only",
+    "empty_scope_category_issue_group_notices_visible": true,
+    "false_clean_signal_claim_count": 0,
+    "false_no_event_claim_count": 0,
+    "false_no_global_groups_claim_count": 0,
+    "authorized_ordinary_issue_row_visible": true,
+    "empty_issue_message_absent_when_row_exists": true,
+    "unauthorized_other_host_issue_count": 0,
+    "source_web_dll_sha256": "C380D3813E854D392EA6A905EC780383CCD180F7A5EB689852E94E09046D1F19",
+    "dashboard_js_sha256": "409e0e2716a1b2ff157ea4670e68116c5eecd2462cde35d3c5cf16da98ecb19d",
+    "changes": "three empty-state messages describe visible analysis and groups; query, authorization and populated branches unchanged",
+    "exact_owner_process_stopped": true,
+    "runtime_data_retained": true,
+    "native_source_verified": false,
     "whole_round_accepted": false
   }
 }

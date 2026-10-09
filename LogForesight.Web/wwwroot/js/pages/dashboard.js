@@ -158,7 +158,7 @@ function renderServerAdminGuide() {
     container.replaceChildren(card);
 }
 
-/** 全綠時明確說「沒事」——空白畫面無法讓人分辨「沒問題」與「沒載入」 */
+/** 說明可見資料與分析範圍，避免把空資料當成健康結論。 */
 function renderBanner(data, user) {
     const container = document.getElementById('dashboard-banner');
 
@@ -333,8 +333,8 @@ function renderCategories(data) {
 
     if (data.categories.length === 0) {
         renderEmpty(container, {
-            title: '本期沒有問題訊號',
-            hint: '規則層、趨勢層與關聯層皆未命中。'
+            title: '本期可見資料未列出問題訊號',
+            hint: '僅代表目前可見的分析結果；未回報、未分析或隱藏的項目不代表沒有問題。'
         });
         return;
     }
@@ -453,7 +453,7 @@ function renderTopIssues(data) {
         // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
         rowHref: i => recordsUrl({ view: 'issue', source: i.source, eventId: i.eventId,
                                   riskLevels: '高,中,低', from: data.from, to: data.to }),
-        empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
+        empty: { title: '本期可見資料未列出重點問題', hint: '清單受檢視權、期間與顯示設定限制；空清單不代表全站沒有問題。' }
     });
 }
 
@@ -748,8 +748,8 @@ function renderGroupRisk(data, user) {
         rows: data.groupRisk,
         rowHref: g => recordsUrl({ groupIds: g.groupId, riskLevels: '高,中', from: data.from, to: data.to }),
         empty: canMaintain
-            ? { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
-            : { title: '尚未設定任何主機群組', hint: '請聯絡系統管理員建立主機群組並指派主機。' }
+            ? { title: '目前沒有可見的主機群組', hint: '可於「群組與授權」頁檢查群組、主機指派與檢視權。' }
+            : { title: '目前沒有可見的主機群組', hint: '請聯絡系統管理員確認群組與檢視權；這不代表全站沒有主機群組。' }
     });
 }
 
