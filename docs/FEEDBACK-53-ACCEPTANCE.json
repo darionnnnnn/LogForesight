@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "de9e3d09e6a905fe80ec84ab71a58b7bcfe61e8d44fab144eecda0efe04e504f",
+  "plan_sha256": "ce3e7668fd33d758081b582d0f8bbcdfe862990bd62e1583ba7c6ecd992b131a",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -5795,5 +5795,145 @@
     "runtime_data_retained": true,
     "native_source_verified": false,
     "whole_round_accepted": false
+  },
+  "current_role_state_and_admission_partial_verification": {
+    "base_commit": "a5ec90c6abc76602ce7c663f9954bca97f98ad3d",
+    "api_role_scenarios": 6,
+    "api_asserted_responses": 72,
+    "api_failed_responses": 0,
+    "replay_role_asserted_responses": 24,
+    "replay_fixture_state": "no seeded transition; maintain reads no job, other roles forbidden",
+    "api_receipt": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-current-browser-seed-candidate\\runs\\casegrant-seed-44afe01875fb4241aa46db5b92860a45\\api-matrix-4ca90b49b02c4387856249dad0e74ef0.json",
+    "browser_ordinary_state_notices": [
+      {
+        "state": "disabled",
+        "visible": true,
+        "formal_control_count": 0
+      },
+      {
+        "state": "policy-not-ready",
+        "visible": true,
+        "formal_control_count": 0
+      },
+      {
+        "state": "current-proof-unavailable",
+        "visible": true,
+        "formal_control_count": 0
+      },
+      {
+        "state": "warming",
+        "visible": true,
+        "formal_control_count": 0
+      },
+      {
+        "state": "ready-no-hit",
+        "visible": true,
+        "formal_control_count": 0
+      },
+      {
+        "state": "current-evidence",
+        "visible": true,
+        "formal_control_count": 0
+      }
+    ],
+    "browser_stops": [
+      {
+        "state": "disabled",
+        "instance_id": "9c6473f155b647c98fc02397a1cd5cef",
+        "exact_owner_stopped": true
+      },
+      {
+        "state": "policy-not-ready",
+        "instance_id": "67b149dee9554ebe8f43805b726049a6",
+        "exact_owner_stopped": true
+      },
+      {
+        "state": "current-proof-unavailable",
+        "instance_id": "e7f353c1c820463abae47543ff05c970",
+        "exact_owner_stopped": true
+      },
+      {
+        "state": "warming",
+        "instance_id": "82262469f9bd4a3e84d360097faf7636",
+        "exact_owner_stopped": true
+      },
+      {
+        "state": "ready-no-hit",
+        "instance_id": "4d6aeff4ab8e421bbbeed4e4ae0c006d",
+        "exact_owner_stopped": true
+      },
+      {
+        "state": "current-evidence",
+        "instance_id": "6a6066ecd4d84a4aa4cbada020322a1a",
+        "exact_owner_stopped": true
+      }
+    ],
+    "current_evidence_first_login_rejected_then_confirmed_account_retry_succeeded": true,
+    "login_rejection_root_cause_confirmed": false,
+    "source_web_dll_sha256": "C380D3813E854D392EA6A905EC780383CCD180F7A5EB689852E94E09046D1F19",
+    "host_detail_js_sha256": "a11b03a18813d78bda8a127f12fde31b9a595df3c4e8bbf7b9b7691b204020f4",
+    "private_smoke_off_mode_admission": {
+      "snapshot_pilot": {
+        "status": "capacity-qualified",
+        "targetCount": 2,
+        "requestsSent": 5,
+        "matchingFullBatchSamples": 5
+      },
+      "profile_pilots": [
+        {
+          "invocation": 1,
+          "status": "capacity-unverified",
+          "targetSensorCount": 2,
+          "sampledSensorCount": 2,
+          "requestsSent": 4,
+          "freshSamples": 1
+        },
+        {
+          "invocation": 2,
+          "status": "capacity-unverified",
+          "targetSensorCount": 2,
+          "sampledSensorCount": 2,
+          "requestsSent": 4,
+          "freshSamples": 2
+        },
+        {
+          "invocation": 3,
+          "status": "capacity-unverified",
+          "targetSensorCount": 2,
+          "sampledSensorCount": 2,
+          "requestsSent": 4,
+          "freshSamples": 3
+        },
+        {
+          "invocation": 4,
+          "status": "capacity-unverified",
+          "targetSensorCount": 2,
+          "sampledSensorCount": 2,
+          "requestsSent": 4,
+          "freshSamples": 4
+        },
+        {
+          "invocation": 5,
+          "status": "capacity-qualified",
+          "targetSensorCount": 2,
+          "sampledSensorCount": 2,
+          "requestsSent": 4,
+          "freshSamples": 5
+        }
+      ],
+      "settings_cas_enabled": true,
+      "profiles_recorded": 2,
+      "whole_smoke_exit": 1,
+      "inputs": 627,
+      "input_drift": 0,
+      "owned_cleanup_complete": true,
+      "cycle_status": "failed before first completed controlled cycle; real budget pacing not advanced by logical data clock",
+      "throughput_or_whole_workload_accepted": false,
+      "private_timing_build_not_main_runtime": true
+    },
+    "native_source_verified": false,
+    "production_capacity_accepted": false,
+    "whole_round_accepted": false,
+    "replay_job_lifecycle_browser_accepted": false
   }
 }
