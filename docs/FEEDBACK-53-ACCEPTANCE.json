@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "ce3e7668fd33d758081b582d0f8bbcdfe862990bd62e1583ba7c6ecd992b131a",
+  "plan_sha256": "9b70eb4fb8f81852255cae8449fb8f7a27cf41c5c2502226e0bf78540c24a148",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -1903,7 +1903,7 @@
     }
   ],
   "implementation_worktree": "C:/Users/eldar/Documents/Codex/2026-10-01/c-users-eldar-claude-project-logforesight/work/logforesight-feedback-53",
-  "implementation_blocker": "正式來源通道與時間權威未確證，PRTG強配對缺原生資源參照；磁碟時間邊界已修並整合，完整回歸進行中。固定來源、容量及SMTP契約未全數通過。",
+  "implementation_blocker": "剩餘必要交付為跨主機日窗口歸屬、同 build 原生探測／fixture 及正式 profile authority；R05/C1 的程式與文件本次覆核修驗後清除 TODO，五組整輪验收保持未通過。",
   "execution_policy": {
     "executor": "gpt-6-luna",
     "allowed_efforts": [
@@ -2047,13 +2047,12 @@
     "complete_workload_acceptance": false
   },
   "current_blockers": [
-    "Main v8 full regression finished 6587 passed / 4 failed / 10 optional skipped, drift0; SQL retries and trusted fixture corrected with 380 passed + 11 actual provider checks. Calibration export scope defect has true RED and is being corrected; final integrated Main regression remains required.",
-    "R02/R03/R13 implementation parents closed with actual evidence; eight remaining parents under complete requirement mapping.",
-    "Two disk trend boundary defects genuinely reproduced and repaired; isolated current stage 130/130 passed, frozen inputs drift 0, exact Main integration.",
-    "Actual synthetic Kestrel/browser CPU hint/trial/enable/role/source-drift/disable cases passed; no native qualification or SMTP claim.",
-    "PRTG 24.1 primary channel, unit/scale/scan interval/raw timestamp authority remain unconfirmed; reviewed binding decision pending.",
-    "Source references/resources required for strong cross-source match are not proven; same-day weak evidence remains weak.",
-    "Actual isolated SQL atomic attach and transfer backup/restore passed; full 3000-host/15000-sensor/180-day workload and native source/deployment/SMTP acceptance remain open."
+    "R07/day-window：跨主機日兩小時窗口仍被 SingleWindowHostDay 排除，歸較晚小時日的提案尚未定案。",
+    "A0/N1：尚未收到當前 build 有限原生探測／provider／部署資源及完整來源 fixture。",
+    "R15：主要頻道、單位縮放及 raw/source/analysis 時基 authority 未確證；明確設定加原生核驗的替代契約待定案。",
+    "N4–N5：完整多角色、報告、回放工作生命週期及 NetIQ 處置操作矩陣未全通過。",
+    "R05/N6：3000 hosts / 15000 sensors / 180 days 共同負載及完整持續負載／升退版／備份復原未通過；本機 Express 容量前置拒絕不算驗收通過。",
+    "N7：四基準獨立母體、查證與提前增益尚未達成；N8/M7 及全部必要 AC/Q 仍未結案。"
   ],
   "browser_verifications": [
     {
@@ -2158,7 +2157,7 @@
     "status": "code-committed-and-pushed-native-output-pending",
     "historical_prepublication_status": "prepared-not-committed-or-pushed",
     "published_dependency_commit": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0",
-    "latest_verified_product_commit": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "latest_verified_product_commit": "42d07b6b14327bf36bfd1cdeb633b00654fdb008",
     "same_version_native_probe_received": false,
     "purpose": "Same-version read-only native identity_preserving_raw_history evidence; not whole-round acceptance"
   },
@@ -2180,7 +2179,9 @@
       "table_quota_lower_bound_15000_seconds": 15000,
       "native_or_capacity_pass_claim": false,
       "stage": "work/logforesight-profile-capacity",
-      "status": "contract review before bounded implementation"
+      "status": "implementation-closed; broader controlled-operation and full-workload acceptance remain open",
+      "implementation_todo_closed": true,
+      "latest_audit_gate": "round53-r05-transaction-retry-affected-green-current-v1"
     }
   ],
   "same_main_sql_retry_verification": {
@@ -2204,18 +2205,16 @@
     "meaning": "offline integrity only; no source trust or capacity qualification"
   },
   "current_required_delivery_counts": {
-    "as_of_product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "as_of_product_revision": "42d07b6b14327bf36bfd1cdeb633b00654fdb008 + verified R05 audit changes (exact input hashes in gate receipt)",
     "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
-    "implementation_items": 5,
+    "implementation_items": 3,
     "validation_groups": 5,
     "implementation_ids": [
       "R07/day-window",
-      "R05/shared-admission",
       "A0/N1",
-      "R15",
-      "C1/D1"
+      "R15"
     ],
-    "meaning": "已完成的 Q2/C1 與 SMTP 協定實作子項不重複計為活動 TODO；Q2 原生 alignment 仍屬 A0/N1、R15 的來源驗收，完整 AC15 與五組整輪驗收保留。"
+    "meaning": "移除已完成 R05/shared-admission、C1/D1 程式 TODO；完整操作、原生來源、共同容量及全部 AC/Q 不因 source audit 或局部測試而完成。"
   },
   "current_r08_r14_integration_verification": {
     "gate": "current-r08-r14-consumers-primary-v1",
@@ -5935,5 +5934,116 @@
     "production_capacity_accepted": false,
     "whole_round_accepted": false,
     "replay_job_lifecycle_browser_accepted": false
+  },
+  "previous_current_blockers_20261009_todo_audit": [
+    "Main v8 full regression finished 6587 passed / 4 failed / 10 optional skipped, drift0; SQL retries and trusted fixture corrected with 380 passed + 11 actual provider checks. Calibration export scope defect has true RED and is being corrected; final integrated Main regression remains required.",
+    "R02/R03/R13 implementation parents closed with actual evidence; eight remaining parents under complete requirement mapping.",
+    "Two disk trend boundary defects genuinely reproduced and repaired; isolated current stage 130/130 passed, frozen inputs drift 0, exact Main integration.",
+    "Actual synthetic Kestrel/browser CPU hint/trial/enable/role/source-drift/disable cases passed; no native qualification or SMTP claim.",
+    "PRTG 24.1 primary channel, unit/scale/scan interval/raw timestamp authority remain unconfirmed; reviewed binding decision pending.",
+    "Source references/resources required for strong cross-source match are not proven; same-day weak evidence remains weak.",
+    "Actual isolated SQL atomic attach and transfer backup/restore passed; full 3000-host/15000-sensor/180-day workload and native source/deployment/SMTP acceptance remain open."
+  ],
+  "previous_confirmed_implementation_gaps_20261009_todo_audit": [
+    {
+      "id": "R05/shared-admission",
+      "gap": "Snapshot-only admission omits profile two table requests/sensor and 23h refresh from shared workload",
+      "source_verified_by_root": true,
+      "profile_calls_historicdata": false,
+      "table_quota_lower_bound_15000_seconds": 15000,
+      "native_or_capacity_pass_claim": false,
+      "stage": "work/logforesight-profile-capacity",
+      "status": "contract review before bounded implementation"
+    }
+  ],
+  "previous_required_delivery_counts_20261009_todo_audit": {
+    "as_of_product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
+    "implementation_items": 5,
+    "validation_groups": 5,
+    "implementation_ids": [
+      "R07/day-window",
+      "R05/shared-admission",
+      "A0/N1",
+      "R15",
+      "C1/D1"
+    ],
+    "meaning": "已完成的 Q2/C1 與 SMTP 協定實作子項不重複計為活動 TODO；Q2 原生 alignment 仍屬 A0/N1、R15 的來源驗收，完整 AC15 與五組整輪驗收保留。"
+  },
+  "current_plan_code_audit_20261009": {
+    "base_commit": "42d07b6b14327bf36bfd1cdeb633b00654fdb008",
+    "model_review": "three scoped gpt-6-luna high source audits; root direct code verification and owned tests; not N8 whole-round review",
+    "plan_mapping": "PLAN §5.5",
+    "closed_implementation_todos": [
+      "R05/shared-admission",
+      "C1/D1"
+    ],
+    "actual_reproduced_bugs": [
+      "unrelated Settings revision rejects capacity plan",
+      "snapshot cost evidence lacks runtime build identity",
+      "rebind/renew accepts captured time across lease expiry",
+      "rolled-back attempt leaks success to rejected retry",
+      "exact rebind retry unnecessarily increments blob row version"
+    ],
+    "red_gates": [
+      {
+        "gate": "round53-r05-todo-minimal-red-current-v1",
+        "failed": 3
+      },
+      {
+        "gate": "round53-r05-lease-expiry-red-current-v1",
+        "failed": 3
+      },
+      {
+        "gate": "round53-r05-transaction-retry-red-current-v1",
+        "failed": 4
+      }
+    ],
+    "green_gate": "round53-r05-todo-audit-affected-green-current-v1",
+    "green_review": ".gemini-tasks/primary-results/round53-r05-todo-audit-affected-green-current-v1-review.json",
+    "passed": 392,
+    "failed": 0,
+    "skipped": 0,
+    "input_count": 1129,
+    "input_drift": 0,
+    "build_errors": 0,
+    "build_warnings": 127,
+    "final_retry_affected_gate": "round53-r05-transaction-retry-affected-green-current-v1",
+    "final_retry_affected_passed": 50,
+    "final_retry_input_count": 1130,
+    "changed_source_hashes": [
+      {
+        "Path": "LogForesight.Core\\Service\\PrtgCapacityAdmissionPlan.cs",
+        "Sha256": "CEFF8F623543E6748B15D1EE765992042DA41EB58E67989E8607932D17568644"
+      },
+      {
+        "Path": "LogForesight.Tests\\PrtgCapacityAdmissionPlanConcurrencyTests.cs",
+        "Sha256": "15FBFAF6C1CCE050489E270B52EDC4D37A44153B1179D3AD1CD158AEF25B98ED"
+      },
+      {
+        "Path": "LogForesight.Tests\\PrtgCapacityAdmissionRetryTests.cs",
+        "Sha256": "4D48F0969E56D55069C342B8B67890C9C501328D25A80E3F61DE22E0240CFB61"
+      },
+      {
+        "Path": "LogForesight.Tests\\PrtgSnapshotCapacityAdmissionTests.cs",
+        "Sha256": "C0B0E5F35AA488797F26D859BEBC6183B9600EE391D592963BC0205E16022E7C"
+      },
+      {
+        "Path": "LogForesight.Web/HelpContent\\20-prtg.md",
+        "Sha256": "39DAB9997F7B18ACE48C5CD5387889DDC80FECF9AB48B9F6C2A442B5740A8F5F"
+      },
+      {
+        "Path": "LogForesight.Web\\Services\\PrtgCapacityRuntimeAdmission.cs",
+        "Sha256": "C9183CA4BBEE4C8A53F915ABB8A13F62E432CC00300C6A4DDB4F36E9384C9591"
+      },
+      {
+        "Path": "LogForesight.Web\\Services\\PrtgSnapshotTargetResolver.cs",
+        "Sha256": "4EA0B45DC5064F32C54F0EBF8B572556FE4DB6162EDD4A572D17134270E4E4DE"
+      }
+    ],
+    "whole_round_accepted": false,
+    "native_source_verified": false,
+    "full_capacity_accepted": false,
+    "single_full_regression_claim": false
   }
 }

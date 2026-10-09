@@ -39,7 +39,7 @@ internal static class PrtgCapacityRuntimeAdmission
             stored.SnapshotRequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint &&
             stored.RequestShapeFingerprint == contract.RequestShapeFingerprint &&
             stored.RuntimeVersionFingerprint == contract.VersionFingerprint &&
-            stored.SettingsRevision == settings.Revision && stored.PolicyRevision == policy.Revision;
+            stored.PolicyRevision == policy.Revision;
 
         var snapshotCapacityStore = new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
         var snapshotEvidence = snapshotCapacityStore.Read();
@@ -100,7 +100,7 @@ internal static class PrtgCapacityRuntimeAdmission
             stored.SnapshotRequestShapeFingerprint != snapshotSelection.RequestShapeFingerprint ||
             stored.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
             stored.RuntimeVersionFingerprint != contract.VersionFingerprint ||
-            stored.SettingsRevision != settings.Revision || stored.PolicyRevision != policy.Revision)
+            stored.PolicyRevision != policy.Revision)
         { reason = "current-source-scope-or-strategy-plan-mismatch"; return false; }
 
         if (!boundedRecovery)
@@ -116,9 +116,49 @@ internal static class PrtgCapacityRuntimeAdmission
             { reason = "current-source-scope-or-strategy-plan-mismatch"; return false; }
         }
 
-        if (stored.LeaseUntilUtc <= now.AddHours(6) &&
-            planStore.Renew(stored.Fingerprint, stored.Owner, stored.Version, now, TimeSpan.FromHours(24)))
-            stored = planStore.ReadCurrent(now) ?? stored;
+        if (stored.SettingsRevision != settings.Revision)
+        {
+            // 全域設定的品牌／AI／郵件保存也會換版本。只有本輪已重驗的完整
+            // PRTG 契約仍完全相同時，才 CAS 重綁；來源、範圍、政策或成本不符仍拒絕。
+            bool StillCurrent()
+            {
+                var latest = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                if (!latest.PrtgEnabled || latest.Revision != settings.Revision ||
+                    latestPolicy.Revision != policy.Revision) return false;
+                try
+                {
+                    var latestContract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(
+                        latest, latestPolicy, hosts.CapturePrtgSnapshot());
+                    var latestSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, latest,
+                        new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
+                    return latestContract == contract &&
+                        latestSelection.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
+                        latestSelection.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+                { return false; }
+            }
+            if (!planStore.TryRebindSettingsRevision(stored, settings.Revision, DateTimeOffset.UtcNow,
+                StillCurrent, out var rebound))
+            { reason = "capacity-admission-settings-rebind-superseded"; return false; }
+            stored = rebound!;
+        }
+
+        var admissionTime = DateTimeOffset.UtcNow;
+        if (stored.LeaseUntilUtc <= admissionTime)
+        { reason = "capacity-admission-plan-expired"; return false; }
+        if (stored.LeaseUntilUtc <= admissionTime.AddHours(6))
+        {
+            if (!planStore.Renew(stored.Fingerprint, stored.Owner, stored.Version,
+                admissionTime, TimeSpan.FromHours(24)))
+            { reason = "capacity-admission-plan-renewal-superseded"; return false; }
+            var renewed = planStore.ReadCurrent(DateTimeOffset.UtcNow);
+            if (renewed is null || renewed.Fingerprint != stored.Fingerprint ||
+                renewed.Owner != stored.Owner || renewed.Version != stored.Version)
+            { reason = "capacity-admission-plan-renewal-superseded"; return false; }
+            stored = renewed;
+        }
 
         PrtgRequestBudget.Shared.SetAdmissionPlan(stored);
         plan = stored;

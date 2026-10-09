@@ -67,8 +67,10 @@ public static class PrtgSnapshotTargetResolver
             PrtgSnapshotCapacityStore.Fingerprint(secretMaterial));
         var scope = PrtgSnapshotCapacityStore.Fingerprint(endpoint + "|" + semanticSettings);
         var batchSize = Math.Min(PrtgSnapshotCapacityEvaluator.BatchSize, ordered.Count);
-        var shape = PrtgSnapshotCapacityStore.Fingerprint(string.Format(CultureInfo.InvariantCulture,
-            RequestShape, batchSize));
+        // Pilot、runtime、估算共用同一建置識別；升級後不接受舊版的成本樣本。
+        var shape = PrtgSnapshotCapacityStore.Fingerprint(
+            PrtgProfileTransportCapacityPilot.RuntimeVersionFingerprint() + "|" +
+            string.Format(CultureInfo.InvariantCulture, RequestShape, batchSize));
         return new PrtgSnapshotTargetSelection(ordered, deviceCount, batchSize, scope, endpoint, shape);
     }
 

@@ -311,6 +311,127 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         }
     }
 
+    [Fact]
+    public void Unrelated_brand_settings_update_rebinds_admission_without_changing_capacity_contract()
+    {
+        AssertUnrelatedSettingsUpdateRebindsAdmission(request => request.BrandSubtitle = "Updated subtitle");
+    }
+
+    [Fact]
+    public void Unrelated_ai_settings_update_rebinds_admission_without_changing_capacity_contract()
+    {
+        AssertUnrelatedSettingsUpdateRebindsAdmission(request => request.AiRetryCount++);
+    }
+
+    [Fact]
+    public void Snapshot_capacity_evidence_is_bound_to_the_current_runtime_version()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(1);
+        var selection = fixture.Selection;
+        var snapshotStore = new PrtgSnapshotCapacityStore(
+            fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
+        fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+
+        var formattedRequestShape = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            PrtgSnapshotTargetResolver.RequestShape, selection.CapacitySampleBatchSize);
+        var legacyRequestShape = PrtgSnapshotCapacityStore.Fingerprint(formattedRequestShape);
+        var currentRequestShape = PrtgSnapshotCapacityStore.Fingerprint(
+            PrtgProfileTransportCapacityPilot.RuntimeVersionFingerprint() + "|" + formattedRequestShape);
+        Assert.Equal(currentRequestShape, selection.RequestShapeFingerprint);
+        Assert.NotEqual(legacyRequestShape, currentRequestShape);
+
+        var now = DateTimeOffset.UtcNow;
+        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
+            snapshotStore.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
+                selection.EndpointFingerprint, legacyRequestShape, now.AddSeconds(index - 5),
+                250, selection.CapacitySampleBatchSize, "success"));
+
+        var legacyOnly = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(fixture.Settings.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
+            selection.EndpointFingerprint, selection.RequestShapeFingerprint, snapshotStore.Read(), now);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, legacyOnly.Status);
+        Assert.Equal(0, legacyOnly.FreshMatchingFullBatchSamples);
+        Assert.Equal("insufficient_fresh_full_batch_samples", legacyOnly.Reason);
+        Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), selection, out _, out var legacyReason));
+        Assert.Contains("insufficient_fresh_full_batch_samples", legacyReason);
+
+        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
+            snapshotStore.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
+                selection.EndpointFingerprint, currentRequestShape, now.AddSeconds(index - 5),
+                250, selection.CapacitySampleBatchSize, "success"));
+
+        var currentBuild = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(fixture.Settings.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
+            selection.EndpointFingerprint, selection.RequestShapeFingerprint, snapshotStore.Read(),
+            DateTimeOffset.UtcNow);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, currentBuild.Status);
+        Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples,
+            currentBuild.FreshMatchingFullBatchSamples);
+        Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), selection, out _, out var currentReason), currentReason);
+    }
+
+    private static void AssertUnrelatedSettingsUpdateRebindsAdmission(
+        Action<UpdateSystemSettingsRequest> changeUnrelatedSetting)
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(1);
+        var settingsService = CreateSettingsService(fixture.Backend, fixture.Settings);
+        var controller = new SettingsController(settingsService, new AiUsageStore(fixture.Backend.Blob("ai_usage")),
+            new RecordingAuditService(), backend: fixture.Backend, hosts: fixture.Hosts);
+        var planStore = new PrtgCapacityAdmissionPlanStore(
+            fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
+        var before = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
+        var beforeSettings = settingsService.Get();
+        var request = FullSystemSettingsRequest(beforeSettings);
+        changeUnrelatedSetting(request);
+
+        var updated = controller.Update(request).Data!;
+
+        Assert.NotEqual(beforeSettings.Revision, updated.Revision);
+        Assert.True(updated.PrtgEnabled);
+        var currentSettings = fixture.Settings.Get();
+        Assert.Equal(updated.Revision, currentSettings.Revision);
+        Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            currentSettings, fixture.Selection, out var runtimePlan, out var reason), reason);
+
+        var after = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
+        Assert.Equal(currentSettings.Revision, after.SettingsRevision);
+        Assert.Equal(before.PolicyRevision, after.PolicyRevision);
+        Assert.Equal(before.Fingerprint, after.Fingerprint);
+        Assert.Equal(before.SourceFingerprint, after.SourceFingerprint);
+        Assert.Equal(before.SnapshotScopeFingerprint, after.SnapshotScopeFingerprint);
+        Assert.Equal(before.ProfileScopeFingerprint, after.ProfileScopeFingerprint);
+        Assert.Equal(before.StrategyFingerprint, after.StrategyFingerprint);
+        Assert.Equal(before.SnapshotRequestShapeFingerprint, after.SnapshotRequestShapeFingerprint);
+        Assert.Equal(before.RequestShapeFingerprint, after.RequestShapeFingerprint);
+        Assert.Equal(before.RuntimeVersionFingerprint, after.RuntimeVersionFingerprint);
+        Assert.Equal(before.SnapshotTableRequestsPerSecond, after.SnapshotTableRequestsPerSecond);
+        Assert.Equal(before.ProfileTableRequestsPerSecond, after.ProfileTableRequestsPerSecond);
+        Assert.Equal(before.GeneralResidualRequestsPerSecond, after.GeneralResidualRequestsPerSecond);
+        Assert.Equal(before.Owner, after.Owner);
+        Assert.Equal(before.CreatedAtUtc, after.CreatedAtUtc);
+        Assert.Equal(before.LeaseUntilUtc, after.LeaseUntilUtc);
+        Assert.True(after.Version > before.Version);
+        Assert.Equal(after, runtimePlan);
+    }
+
+    private static UpdateSystemSettingsRequest FullSystemSettingsRequest(SystemSettingsDto current)
+    {
+        var request = new UpdateSystemSettingsRequest { ExpectedRevision = current.Revision };
+        var requestProperties = typeof(UpdateSystemSettingsRequest).GetProperties()
+            .Where(property => property.SetMethod is not null)
+            .ToDictionary(property => property.Name, StringComparer.Ordinal);
+        foreach (var source in typeof(SystemSettingsDto).GetProperties())
+        {
+            if (requestProperties.TryGetValue(source.Name, out var destination) &&
+                destination.PropertyType == source.PropertyType)
+                destination.SetValue(request, source.GetValue(current));
+        }
+        return request;
+    }
+
     private sealed class RuntimeRecoveryFixture : IDisposable
     {
         private readonly string _directory;

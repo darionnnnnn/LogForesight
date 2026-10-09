@@ -25,10 +25,11 @@ public sealed record PrtgCapacityAdmissionPlan(
     long Version);
 
 /// <summary>CAS publication of the one active admission contract. A stale owner cannot restore an older plan.</summary>
-public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob)
+public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob, TimeProvider? timeProvider = null)
 {
     public const string BlobKey = "prtg_capacity_admission_plan_v1";
     private const int MaximumBytes = 4096;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public PrtgCapacityAdmissionPlan? ReadCurrent(DateTimeOffset nowUtc)
     {
@@ -50,16 +51,15 @@ public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob)
         if (!IsValid(candidate) || owner.Length is < 1 or > 128 || leaseDuration <= TimeSpan.Zero ||
             string.IsNullOrWhiteSpace(currentSettingsRevision))
             throw new ArgumentException("Invalid capacity admission plan.");
-        PrtgCapacityAdmissionPlan? published = null;
-        blob.MutateWithContext((_, raw) =>
+        var published = blob.MutateWithContext<PrtgCapacityAdmissionPlan?>((_, raw) =>
         {
-            if (!sourceAndSettingsStillCurrent()) return (raw ?? "", false);
+            if (!sourceAndSettingsStillCurrent()) return (raw ?? "", null);
             var old = Parse(raw);
             var version = (old?.Version ?? 0) + 1;
-            published = candidate with { SettingsRevision = currentSettingsRevision, Owner = owner, Version = version, CreatedAtUtc = nowUtc,
+            var next = candidate with { SettingsRevision = currentSettingsRevision, Owner = owner, Version = version, CreatedAtUtc = nowUtc,
                 LeaseUntilUtc = nowUtc + leaseDuration };
-            return (Serialize(published), true);
-        }, MaximumBytes);
+            return (Serialize(next), next);
+        }, MaximumBytes, skipUnchangedContent: true);
         if (published is null || !sourceAndSettingsStillCurrent())
         {
             if (published is not null) Invalidate(published.Owner, published.Version);
@@ -70,18 +70,54 @@ public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob)
 
     public bool Renew(string fingerprint, string owner, long version, DateTimeOffset nowUtc, TimeSpan leaseDuration)
     {
-        var renewed = false;
-        blob.MutateWithContext((_, raw) =>
+        return blob.MutateWithContext((_, raw) =>
         {
             var current = Parse(raw);
+            var currentTime = CurrentTime(nowUtc);
             if (current is null || current.Fingerprint != fingerprint || current.Owner != owner ||
-                current.Version != version || current.LeaseUntilUtc <= nowUtc)
+                current.Version != version || current.LeaseUntilUtc <= currentTime)
                 return (raw ?? "", false);
-            var next = current with { LeaseUntilUtc = nowUtc + leaseDuration };
-            renewed = true;
+            var next = current with { LeaseUntilUtc = currentTime + leaseDuration };
             return (Serialize(next), true);
-        }, MaximumBytes);
-        return renewed;
+        }, MaximumBytes, skipUnchangedContent: true);
+    }
+
+    /// <summary>只重綁無關設定的版本；呼叫端須重驗完整採集契約，不延長租約或重設量測／速率。</summary>
+    public bool TryRebindSettingsRevision(PrtgCapacityAdmissionPlan expected, string settingsRevision,
+        DateTimeOffset nowUtc, Func<bool> sourceAndSettingsStillCurrent, out PrtgCapacityAdmissionPlan? rebound)
+    {
+        ArgumentNullException.ThrowIfNull(sourceAndSettingsStillCurrent);
+        if (!IsValid(expected) || string.IsNullOrWhiteSpace(settingsRevision) ||
+            settingsRevision == expected.SettingsRevision || expected.Version == long.MaxValue)
+            throw new ArgumentException("Invalid capacity settings revision rebind.");
+
+        var desired = expected with { SettingsRevision = settingsRevision, Version = expected.Version + 1 };
+        var accepted = blob.MutateWithContext<PrtgCapacityAdmissionPlan?>((_, raw) =>
+        {
+            var current = Parse(raw);
+            if (current is null || current.LeaseUntilUtc <= CurrentTime(nowUtc) ||
+                !sourceAndSettingsStillCurrent() || current.LeaseUntilUtc <= CurrentTime(nowUtc))
+                return (raw ?? "", null);
+            // 提交回覆遺失後可重試同一次重綁；不再次增加版本、不借用別人的新計畫。
+            if (current == desired) return (raw ?? "", current);
+            if (current != expected) return (raw ?? "", null);
+            return (Serialize(desired), desired);
+        }, MaximumBytes, skipUnchangedContent: true);
+        if (accepted is null || !sourceAndSettingsStillCurrent() ||
+            accepted.LeaseUntilUtc <= CurrentTime(nowUtc))
+        {
+            if (accepted is not null) Invalidate(accepted.Owner, accepted.Version);
+            rebound = null;
+            return false;
+        }
+        rebound = accepted;
+        return true;
+    }
+
+    private DateTimeOffset CurrentTime(DateTimeOffset captured)
+    {
+        var current = _timeProvider.GetUtcNow();
+        return current > captured ? current : captured;
     }
 
     public void Invalidate(string owner, long expectedVersion)

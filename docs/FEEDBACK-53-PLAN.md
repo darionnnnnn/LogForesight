@@ -46,17 +46,13 @@
 
 ## 5. 完成裁定與有效 TODO
 
-2026-10-06 已按本輪工作分支的實際程式及呼叫端回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
+2026-10-09 再按本輪工作分支的實際程式、測試及呼叫端逐項回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
 
 ### 5.1 尚未完成的實作與必要交付
 
 - [ ] R07／day-window：同一主機日的全日可信兩小時窗口及歷史 finding／目前 episode 分離已實作；剩餘真實主機日跨午夜窗口仍被 SingleWindowHostDay 排除。跨日歸較晚小時所在日的語意已提出討論，未定案前不改正式歸屬。不可把跨主機日正例改列限制後當作需求通過，需原反例及缺口／恢復／重跑／父資格驗收。
-- [ ] R05／shared-admission：共同 snapshot＋trusted profile 請求量、冷啟／23小時更新期限、同版量測、拒絕／未驗證狀態及 scope 變動續作已整合（264/264）；仍須走停用時結構同步→兩類真實容量 pilot→同版 Settings CAS 啟用的完整動線，並通過共同工作負載。不得將配額算術或元件測試當成全部工作負載通過。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 - [ ] R15：typed量測時間／品質／physical sample與唯一slot已穿過accumulator、journal、SQL、transfer、readiness及正式consumer；仍須補齊實際原生頻道／主要通道／單位縮放與時基authority，使正式profile可取得資格，不能由fixture追認舊聚合。明確設定＋原生核驗的替代契約待使用者定案。
-
-- [ ] C1／D1：依實際新行為補齊受影響的API／一般使用者證據入口、HelpContent／現況規格及維運腳本；逐新規則固定正反例接到日風險／AI／案件／通知。磁碟準備度／趨勢試算全站可見範圍守門已完成，见§5.3；其餘新入口仍須依實際行為回查。
-
 
 ### 5.2 尚未通過的驗收門檻
 
@@ -106,6 +102,13 @@
 
 | R07 模式撤回、報告及接續 | 原子模式＋耐久工作→共用治理／父列版本核對→AI／報告→案件及通知交接；失敗不推進游標 | 235 案聯合及本次 285 案受影響回歸、實際 SQL Server 八個交易重試情境通過；R07 mode-revocation 實作 TODO 清除。現行瀏覽器及全鏈／容量門檻仍列 §5.2，不把程式完成當作全輪驗收。 |
 
+本次清除的完整實作父項：
+
+| 子項 | 實際程式→consumer | 完成證據／仍有效限制 |
+|---|---|---|
+| R05/shared-admission 程式與設定邊界 | SnapshotTargetResolver＋兩類 Pilot→JointCapacityEvaluator→Settings CAS→RuntimeAdmission→共同 budget；無關設定全契約重驗後 CAS 重綁 | 本次真實 RED：品牌／AI 設定更新及舊版樣本 3/3、租期邊界 3/3、交易重試 4/4 失敗；修後廣版 392/392，追加重試修正後 50/50、皆0 skipped／輸入無漂移。版本樣本、冪等／stale CAS、租期與rollback重試防護完成，R05 程式 TODO 清除；完整停用→量測→啟用操作及 3000／15000／180 日共同負載仍列 §5.2 N4–N6，既有私有模擬失敗不改列通過。 |
+| C1/D1 API、證據入口與文件實作 | ResourcePressure／Readiness／Disk／RiskReview API→RecordDtos／HostDetail→Daily finding→AI／Case／WorkOrder／Mail；Help／SPEC／有限 probe verifier | 三份分工 source 審查與主代理直接呼叫鏈核對；既有受控規則 224＋owned SMTP 21 共 245/245、case-only API 48 及回放角色 72 回應證據沿用原凍結版本。README 的 ACK／14日 Down、範圍同步與 Help journal 舊說明已修。程式及文件 TODO 清除，原生 fixtures、完整多角色／報告／工作生命週期與全部 AC 繼續列 §5.2；有限 Luna 審查不冒稱 N8 全輪獨立體檢。 |
+
 ### 5.4 2026-10-06 全待辦逐項盤點與實作順序（歷史快照）
 
 本節保留 2026-10-06 當時的盤點及證據；活動計數與待辦以目前 §5.1、§5.2 為準，不將下列早期項目重複計數。
@@ -132,6 +135,25 @@
 | N8／M7 | AC01–AC22 登錄尚未裁定通過 | 全項完整性回查後依固定條件验收、跨模型獨立體檢、修正回歸及文件同步 |
 
 目前相依順序：R08 whole-evidence期限與R14校準有界capture/output已完成並整合Main，相關consumer651項及實際SQL provider驗收通過。接續完成C1/D1逐族固定語料與真實角色UI，再驗當前來源完整回歸。A0/R15/Q2現場來源缺口以同版有限probe及已定契約解除，共同容量與AC仍按既定門檻裁定；缺外部事實不阻止獨立程式修正，也不更改gate。先前520/2的磁碟失敗已修正並由130項定向及Main v9整合回歸通過，不再列為目前未修的bug。
+
+### 5.5 2026-10-09 規劃與正式程式對照
+
+本次逐項覆核 R01–R15、A0/A1/B1/B2/C1/D1 與 Q1–Q6；活動必要交付由五個父項縮至三個（R07/day-window、A0/N1、R15），五組驗收未縮減。以下是 source 對照，不以存在 class 或通過局部案例推定全部 AC 完成；§5.4 與 §18 舊日期記錄仍為歷史證據。
+
+| 規劃項目 | 當前正式路徑 | 本次裁定／保留缺口 |
+|---|---|---|
+| R01/R10 範圍及有界資料 | PrtgMonitoringController→PrtgHostSnapshot／PrtgSqlServerIdScope→EfPrtgStore→Daily／readiness／range consumer | 入口、分頁及最終版本／ACL 守門已實作；高水位及整體角色門檻保留。 |
+| R02 增量初始化 | PrtgSensorTimelineConsumer→Collector／Progress→TimelineProgressController→Daily | 公平水位、72 小時期限及明確續跑已實作；3000／15000 初始化吞吐保留。 |
+| R03/R04/R15 可信數值鏈 | TrustedSamplingProfileResolver→TrustedSnapshotParser→SnapshotAccumulator→SnapshotJournal→EfPrtgStore→ResourcePeriodReadiness／Consumer | typed／physical slot 全鏈已接；原生主要頻道、單位縮放與時基資格仍列 R15，不拿診斷匯入授權正式資料。 |
+| R05 容量准入 | SnapshotTargetResolver／CapacityPilot＋ProfileTransportCapacityPilot→JointCapacity→SettingsController→CapacityRuntimeAdmission→RequestBudget | 共同契約、同 build 樣本及設定／lease 邊界已實作並驗證；N6 全工作量仍未通過。 |
+| R06/R07/B1/B2 期間風險 | CoveredStateTimeline／CoveredRuleEvaluator＋ResourcePeriodConsumer＋DiskTrendEvaluator→DailyPipeline | Down 完整 episode、同日兩小時、28 日磁碟趨勢及 7 日20% 理由已接線；跨主機日兩小時仍排除，待已提出的歸屬決策，不刪 R07。 |
+| R08/C1 統一工作與處置 | DailyPipeline→AnalysisOrchestrator／SupplementReplay→HostDayWorkflowRecovery→IssueCaseCoordinator→WorkOrder／MailNotificationService | NetIQ 父資格及版本守門、AI／案件／通知與耐久重試已實作；角色、報告與回放作業完整生命週期保留 N4–N5。 |
+| R09 長作業並行 | SnapshotHostedService→ScopeRefresh／RecentState queue→Atomic reconciliation | 採樣優先、有界交接及取消續作已實作；共同負載／暫停恢復門檻保留。 |
+| R11/R12 有界搬運 | PrtgDataTransfer／EfPrtgTransferStore→PrtgTransferController→prtg-diagnostic-upload.js | manifest／片段／耐久續傳及診斷隔離已實作；匯入不授予正式 authority，整體操作與容量保留。 |
+| R13/R14 規則及校準 | SilentPresenceFormalConsumer／Daily→CoveredRuleEvaluator→CalibrationService／RuleAdmin | silent 原生 presence 與同引擎有界校準已接線；原生語意資格、全部規則固定母體驗收保留。 |
+| D1/A0 探測及自助文件 | PrtgProbeService／StorageEnvironmentProbe→ProbeDtos→管理頁→Verify-PrtgProbeEvidence.ps1；Help／SPEC／README | 工具與交付說明已實作；尚未收到當前 build 原生輸出，A0/N1 保留。 |
+| Q1–Q6 整體目標 | 以上正式鏈＋PrtgAcceptanceComparison／EffectivenessService | Q1 容量、Q2 強配對來源依據、Q4 跨主機日、Q6 全面驗收仍開；Q3 保留獨立風險但沿用合格父紀錄，Q5 已統一工作治理而共同吞吐未裁定通過。 |
+
 
 ## 6. 第 52 輪移交完整性
 
@@ -1377,3 +1399,11 @@ Root 再逐一登入一般負責人並開啟主機詳情，實際確認停用、
 共同流程另在私有計時 build 實際完成停用結構同步、五次合格快照 pilot、五輪 profile pilot、Settings CAS 啟用及兩顆當前 profile 取得；源 fixture 的 lastcheck 缺欄及不合法策略值已補齊。原受控兩小時採樣實跑仍為 RED：第一循環進入請求限速等待，資料時鐘前進但真實 monotonic 預算未前進；核准 snapshot 速率約每 378 秒一次，60 秒門檻未達。v5 627 項凍結輸入零漂移、owned cleanup 完成；保留原失敗，未裁定兩小時採樣、NetIQ共同工作負載或容量通過。後續受控時鐘工具修正僅屬隔離候選，邏輯期間模擬不能替代真實吞吐量。
 
 證據登錄為 `round53-role-state-admission-partial-current-v1.json`。本段只同步已驗子项及失敗邊界，不刪除 §5 五個必要交付、五組驗收或任何 AC 固定條件；原生探測、跨主機日決策、工作生命週期完整操作、全量負載與獨立體檢仍按原門檻保留。
+
+### 2026-10-09 規劃／TODO 對碼審查與容量准入補漏
+
+基準 feature/prtg-feedback-53／42d07b6。不讀 docs/archive；分別審查 C1/D1、R05 與全規劃，主代理再直接追正式呼叫端。發現一般設定儲存更新 global revision 後使 PRTG 永久拒絕、快照樣本缺建置綁定、rebind／renew 使用舊 now 可跨 lease，以及交易 rollback retry 殘留前次成功狀態的實際缺陷。保留三組最小 RED（3、3、4 失敗／0 通過），修為全契約重驗＋完整 plan CAS、共同 resolver 綁精確 runtime build、callback 前後及續租邊界重讀時鐘；Publish／Renew／Rebind 只使用實際成功 attempt 的 TResult，exact rebind 不再寫入 blob version。不改 schema、HTTP 頻率、25% 餘裕或正式來源資格。
+
+主代理強制 Rebuild 0 errors／127 warnings；廣版受影響 392/392 passed、0 failed／skipped，1129 source／組件輸入無漂移；其後追加 transaction retry 修正，當前來源定向 50/50 通過、輸入無漂移。兩者分別引用當時凍結來源，不把廣版舊 receipt 當作最後修改全數重驗。證據 `.gemini-tasks/primary-results/round53-r05-todo-audit-affected-green-current-v1-review.json`、`round53-r05-transaction-retry-affected-green-current-v1-review.json` 及三份對應 RED review；真實 SQLite 測例核對 actual SettingsController、plan CAS、stale owner／version、冪等重試、expiry 與完整 rollback retry，舊版樣本明確拒絕。這是本段驗收，不是單次全量回歸、原生 PRTG 或 N6 容量通過。
+
+清除已完成 R05/shared-admission、C1/D1 程式 TODO；較廣操作、原生資料與容量驗收轉留 §5.2，既有未通過反例與 AC01–AC22／Q1–Q6 條件不撤銷。活動必要交付三項，整輪驗收五組；無當前來源事實或未定產品決策時保留明確缺口，不宣稱全部實作或整輪可結案。README／Help／現況 SPEC 同步本段行為，既存無關 CLAUDE.md 改動排除提交。

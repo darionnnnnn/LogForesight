@@ -242,6 +242,10 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 - **來源與局部變更**：新耐久 binding 只含端點與來源世代；全域對應／資源修訂仍作作業取消守門，每份可信樣本另帶個別資源身分。單一對應改動不使未變更資源全部重暖機。舊 opaque binding 只有與目前完整舊式 binding 精確相符才可原子遷移；無法判明差異時保留並拒絕重標。來源在初次恢復後、作業 scope 捕捉前變更，會在任何 HTTP 前再次核對並停止；同 URL 換 Core 仍須管理者核對來源身分。
 - **時間與宣告容量**：可信樣本保存 UTC instant，依已核對 raw/source/analysis 時區映射分析小時；未知或 DST 歧義拒絕正式採信，不用 Web 主機本機時間猜測。畫面的範圍／每日列數／保留量與請求成本是擴大前守門資料，不能取代 3,000 台／15,000 顆／180 日共同工作負載驗收。
 
+快照容量的請求形狀指紋另含目前 Web 建置識別（informational version、assembly version 及 MVID），與 Profile transport 使用相同版本來源。Pilot、日常採样、runtime admission 與設定估算共用 resolver；舊版沒有版本綁定的樣本或不同 build 樣本均不匹配，不追認為目前成本，須重新試測。
+
+全域設定儲存會換 revision；品牌、AI 或郵件等無關設定不應永久停止 PRTG。Runtime 先驗目前來源／完整 scope／政策／策略／請求形狀／建置與新鮮量測、既定保留速率，再以完整 plan CAS 重綁 settings revision。重綁保留原 fingerprint、owner、CreatedAt、LeaseUntil 及三路速率，只前進 plan version；提交回覆遺失可冪等重試，過期、較新 owner／version 或前後來源檢查失敗時拒絕。Publish／Renew／Rebind 的成功回覆只取自實際完成的交易 attempt；回滾後拒絕的重試不承接前次成功狀態，exact rebind 不重寫 blob 版本。真正 PRTG 契約變更仍拒絕舊計畫，狹縮可保存但須重新取得相符准入，不放寬原 25% 餘裕或共同負載門檻。
+
 ### 3c. 取數範圍
 
 整台 PRTG 有數千台裝置、數萬顆感測器，而會被歸戶的只有對應得到主機主檔的那些。感測器鏡像、狀態變更、快照
