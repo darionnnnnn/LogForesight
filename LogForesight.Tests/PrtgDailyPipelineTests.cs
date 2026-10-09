@@ -1899,7 +1899,8 @@ public class PrtgDailyPipelineTests : IDisposable
         try
         {
             await PrtgDailyPipeline.RunAsync(ctx, _backend, trackedHostStore, new[] { day }, Task.CompletedTask,
-                hostIds: null, guard: null, structureSyncGate: new FakeStructureSyncGate(running: true) { ResultToReturn = true });
+                hostIds: null, guard: null, structureSyncGate: new FakeStructureSyncGate(running: true) { ResultToReturn = true },
+                requestBudget: new PrtgRequestBudget());
         }
         finally
         {

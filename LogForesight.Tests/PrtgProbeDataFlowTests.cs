@@ -76,7 +76,7 @@ public class PrtgProbeDataFlowTests : IDisposable
     {
         var handler = new HistoricHandler(response);
         return (new PrtgClient("https://prtg.example.com", "test-token", 30, false, handler,
-            PrtgAuthModes.Token, "", "", ""), handler);
+            PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget()), handler);
     }
 
     [Fact]

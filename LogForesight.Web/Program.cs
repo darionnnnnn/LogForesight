@@ -1,4 +1,5 @@
 using System.Text;
+using LogForesight.Core.Service;
 using LogForesight.Web;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
@@ -90,6 +91,7 @@ try
     builder.Services.AddStorage(settings);
     builder.Services.AddLogForesightAuth(settings);
     builder.Services.AddLogForesightServices();
+    builder.Services.AddHostedService<PrtgTrustedSamplingQualificationJobHostedService>();
 
     builder.Services.AddControllersWithViews(options =>
     {
@@ -101,6 +103,10 @@ try
     builder.Services.AddEnvelopeModelValidation();
 
     var app = builder.Build();
+
+    // Every PRTG HistoricData send in this LF host shares the database-backed rolling quota.
+    PrtgRequestBudget.Shared.SetHistoricCoordinator(new SqlPrtgHistoricRequestCoordinator(
+        app.Services.GetRequiredService<LogForesight.Core.Persistence.StorageBackend>()));
 
     // ── 啟動時的資料準備 ──────────────────────────────────────────────────────
     using (var scope = app.Services.CreateScope())

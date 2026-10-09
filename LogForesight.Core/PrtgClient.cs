@@ -77,7 +77,7 @@ public sealed class PrtgClient : IDisposable
         string passhashOrEmpty,
         PrtgRequestBudget? budget = null)
     {
-        Budget = budget;
+        Budget = budget ?? PrtgRequestBudget.Shared;
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new PrtgClientException("PRTG 未設定連線位址。");
 

@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "67176e24c5041cd91245d4840978b3236d35299989fc6143b339b5abe9b2b6be",
+  "plan_sha256": "d5e0add921fcce7674a56f0d8b79d6d972b625d504dc4333894b0daec3f724d7",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -2204,15 +2204,12 @@
     "meaning": "offline integrity only; no source trust or capacity qualification"
   },
   "current_required_delivery_counts": {
-    "as_of_product_revision": "4c807fada14c46eb9d8f4c91d0ac6966854faf52 + verified cross-host-day delta (exact source hashes in current_cross_day_completion_20261009)",
-    "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
-    "implementation_items": 2,
+    "implementation_deliveries": 1,
     "validation_groups": 5,
     "implementation_ids": [
-      "A0/N1",
-      "R15"
+      "A0/N1"
     ],
-    "meaning": "移除已完成 R05/shared-admission、C1/D1 程式 TODO；完整操作、原生來源、共同容量及全部 AC/Q 不因 source audit 或局部測試而完成。"
+    "meaning": "必要程式子項已分段驗證；原生事實及五組完整驗收未裁定通過。"
   },
   "current_r08_r14_integration_verification": {
     "gate": "current-r08-r14-consumers-primary-v1",
@@ -6900,5 +6897,726 @@
     "active_acceptance_groups": 5,
     "implemented": true,
     "whole_round_accepted": false
+  },
+  "current_durable_qualification_20261010": {
+    "base_commit": "237591fd641995a187bd050d6641f6a1f8afad4d",
+    "implemented": true,
+    "root_gate_reviews": {
+      "round53-durable-qualification-job-final-current-v9": {
+        "gate": "round53-durable-qualification-job-final-current-v9",
+        "driver": {
+          "Owner": "round53-root-controlled-acceptance",
+          "DriverPid": 18168,
+          "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+          "EvidenceName": "round53-durable-qualification-job-final-current-v9",
+          "LiteralFilter": "PrtgHistoricAdmissionStoreTests|PrtgHistoricAdmissionTimeoutTests|PrtgQualificationJobStateStoreTests|PrtgQualificationCapacityEvaluatorTests|PrtgTrustedSamplingBindingRawByteCapTests|PrtgTrustedSamplingQualificationJobsControllerTests|PrtgTrustedSamplingQualificationJobSeamTests|PrtgRequestBudgetTests|PrtgTrustedSamplingProbeServiceTests|HelpContentServiceTests|HelpNavigationConsistencyTests|PrtgAdminPageUiTests|NativePrimaryCapabilityRedTests",
+          "HangTimeout": "120s",
+          "StartedAtUtc": "2026-10-09T21:39:04.2726154+00:00",
+          "Status": "finished",
+          "ExitCode": 0,
+          "Error": null,
+          "PowerScope": "system-required-for-owned-driver-only",
+          "PowerScopeRestored": true,
+          "CompletedAtUtc": "2026-10-09T21:42:10.8679996+00:00"
+        },
+        "result": {
+          "InputCount": 1159,
+          "InputDrift": 0,
+          "Changed": [],
+          "AddedOrRemoved": [],
+          "TestExit": 0
+        },
+        "counters": {
+          "total": "172",
+          "executed": "172",
+          "passed": "172",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failedCases": [],
+        "runOutcome": "Completed",
+        "unitOutcomes": {
+          "Passed": 172
+        },
+        "optionalScaleCasesSkipped": [],
+        "consistentUnitCounts": true,
+        "rootInterrupted": false,
+        "stageAccepted": true,
+        "wholeRoundAccepted": false
+      },
+      "round53-historic-formal-fixture-consumers-current-v3": {
+        "gate": "round53-historic-formal-fixture-consumers-current-v3",
+        "driver": {
+          "Owner": "round53-root-controlled-acceptance",
+          "DriverPid": 4352,
+          "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+          "EvidenceName": "round53-historic-formal-fixture-consumers-current-v3",
+          "LiteralFilter": "PrtgFormalRuleCaseManifestTests|PrtgFormalMailStartClaimTests|PrtgProfileRefreshAuthorityRevocationTests|PrtgOwnedSmtpAcceptanceTests|PrtgRuleConsumerAcceptanceTests|RecordDetailScaleConsumerTests|PrtgCapacityPurposeAndProfileTransportTests|PrtgSnapshotCapacityAdmissionTests|PrtgCapacityAdmissionRetryTests",
+          "HangTimeout": "600s",
+          "StartedAtUtc": "2026-10-09T21:02:05.0347858+00:00",
+          "Status": "finished",
+          "ExitCode": 0,
+          "Error": null,
+          "PowerScope": "system-required-for-owned-driver-only",
+          "PowerScopeRestored": true,
+          "CompletedAtUtc": "2026-10-09T21:37:14.3917824+00:00"
+        },
+        "result": {
+          "InputCount": 1158,
+          "InputDrift": 0,
+          "Changed": [],
+          "AddedOrRemoved": [],
+          "TestExit": 0
+        },
+        "counters": {
+          "total": "326",
+          "executed": "326",
+          "passed": "326",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failedCases": [],
+        "runOutcome": "Completed",
+        "unitOutcomes": {
+          "Passed": 326
+        },
+        "optionalScaleCasesSkipped": [],
+        "consistentUnitCounts": true,
+        "rootInterrupted": false,
+        "stageAccepted": true,
+        "wholeRoundAccepted": false
+      },
+      "round53-historic-snapshot-fixture-final-current-v12": {
+        "gate": "round53-historic-snapshot-fixture-final-current-v12",
+        "driver": {
+          "Owner": "round53-root-controlled-acceptance",
+          "DriverPid": 16348,
+          "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+          "EvidenceName": "round53-historic-snapshot-fixture-final-current-v12",
+          "LiteralFilter": "PrtgSnapshotHostedServiceTests",
+          "HangTimeout": "600s",
+          "StartedAtUtc": "2026-10-09T21:58:45.4316814+00:00",
+          "Status": "finished",
+          "ExitCode": 0,
+          "Error": null,
+          "PowerScope": "system-required-for-owned-driver-only",
+          "PowerScopeRestored": true,
+          "CompletedAtUtc": "2026-10-09T22:05:38.7211910+00:00"
+        },
+        "result": {
+          "InputCount": 1159,
+          "InputDrift": 0,
+          "Changed": [],
+          "AddedOrRemoved": [],
+          "TestExit": 0
+        },
+        "counters": {
+          "total": "99",
+          "executed": "99",
+          "passed": "99",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failedCases": [],
+        "runOutcome": "Completed",
+        "unitOutcomes": {
+          "Passed": 99
+        },
+        "optionalScaleCasesSkipped": [],
+        "consistentUnitCounts": true,
+        "rootInterrupted": false,
+        "stageAccepted": true,
+        "wholeRoundAccepted": false
+      },
+      "round53-historic-controlled-replay-current-v3": {
+        "gate": "round53-historic-controlled-replay-current-v3",
+        "driver": {
+          "Owner": "round53-root-controlled-acceptance",
+          "DriverPid": 22492,
+          "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+          "EvidenceName": "round53-historic-controlled-replay-current-v3",
+          "LiteralFilter": "PrtgControlledUsefulnessReplayTests",
+          "HangTimeout": "1200s",
+          "StartedAtUtc": "2026-10-09T21:04:19.3274195+00:00",
+          "Status": "finished",
+          "ExitCode": 0,
+          "Error": null,
+          "PowerScope": "system-required-for-owned-driver-only",
+          "PowerScopeRestored": true,
+          "CompletedAtUtc": "2026-10-09T21:06:16.2652388+00:00"
+        },
+        "result": {
+          "InputCount": 1158,
+          "InputDrift": 0,
+          "Changed": [],
+          "AddedOrRemoved": [],
+          "TestExit": 0
+        },
+        "counters": {
+          "total": "1",
+          "executed": "1",
+          "passed": "1",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failedCases": [],
+        "runOutcome": "Completed",
+        "unitOutcomes": {
+          "Passed": 1
+        },
+        "optionalScaleCasesSkipped": [],
+        "consistentUnitCounts": true,
+        "rootInterrupted": false,
+        "stageAccepted": true,
+        "wholeRoundAccepted": false
+      }
+    },
+    "provider_proofs": {
+      "round53-historic-quota-caller-lifetime10-sql-current-v16": {
+        "Owner": "root",
+        "Provider": "SqlServer",
+        "Scope": "quota-and-locking-contract",
+        "CallerWaitSeconds": 10,
+        "Results": {
+          "inactive-five": {
+            "passed": true,
+            "Receipts": [
+              {
+                "Pid": 8188,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10007.8794,
+                "Error": null
+              },
+              {
+                "Pid": 18928,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10008.7412,
+                "Error": null
+              },
+              {
+                "Pid": 3512,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1189.9807,
+                "Error": null
+              },
+              {
+                "Pid": 7144,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10001.8556,
+                "Error": null
+              },
+              {
+                "Pid": 19176,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1806.486,
+                "Error": null
+              },
+              {
+                "Pid": 21076,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1199.9694,
+                "Error": null
+              },
+              {
+                "Pid": 6456,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1168.1709,
+                "Error": null
+              },
+              {
+                "Pid": 7300,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1179.4823,
+                "Error": null
+              }
+            ],
+            "SentRetained": 5,
+            "UnsentReservations": 0
+          },
+          "active-1-4": {
+            "passed": true,
+            "Receipts": [
+              {
+                "Pid": 18960,
+                "Lane": "qualification",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10008.7096,
+                "Error": null
+              },
+              {
+                "Pid": 22324,
+                "Lane": "qualification",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10016.3485,
+                "Error": null
+              },
+              {
+                "Pid": 11412,
+                "Lane": "qualification",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1754.3803,
+                "Error": null
+              },
+              {
+                "Pid": 12476,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10016.8087,
+                "Error": null
+              },
+              {
+                "Pid": 4888,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1149.9519,
+                "Error": null
+              },
+              {
+                "Pid": 15416,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10016.739,
+                "Error": null
+              },
+              {
+                "Pid": 18104,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1761.6618,
+                "Error": null
+              },
+              {
+                "Pid": 5924,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1767.7076,
+                "Error": null
+              },
+              {
+                "Pid": 18920,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1160.7002,
+                "Error": null
+              }
+            ],
+            "SentRetained": 5,
+            "UnsentReservations": 0
+          },
+          "locking-contract": {
+            "passed": true,
+            "Database": "LFPrtgHistoricLocks20261010",
+            "ApplicationLockWaitObservedInDmv": true,
+            "DifferentKeyElapsedMilliseconds": 2.7877,
+            "AdmissionTimeoutMilliseconds": 5364,
+            "OverviewTimeoutMilliseconds": 5333,
+            "ProofTimeoutMilliseconds": 5338,
+            "TimedOutWritesLeftLedgerEmpty": true,
+            "ProofTransactionReacquiredSameTransactionLock": true
+          }
+        },
+        "Hashes": {
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/bin/Debug/net8.0-windows/LogForesight.Core.dll": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\historic-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Core.dll": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\historic-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Tests.dll": "09CCE0AB90CFC4C2E4E5505958F532BE4B4E9B43299FA83B8D96AF01F3F97E9B",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Service/PrtgRequestBudget.cs": "48220145BBD41DF2DDBAD0D3B5833A1FDD3776A0FB42D83EBF4E30E3902361EF",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/PrtgClient.cs": "AAD80A74EB9757D407D2F5B742023681224F112715899C26F911103956762875",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgHistoricAdmissionStore.cs": "8447DEC3169A8424C4B82AA6743DA20FF8D757A180919516C73481EB0A89304C",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgQualificationJobStateStore.cs": "4417D3A91D70DDA6A34835BAF040F9A318F5E783ABF1AFBA4496B826087CC3D4",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgTrustedSamplingBindingStore.cs": "D311925A210C846F9A2F0DE3CC453E605F64EE4C6151B7724E5E7C4BAD1EF14C",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/StorageBackend.cs": "91701E09AFD21D4A4667586E3CBCCA39948488BFE89EEC80E02A00E4C6966DB6",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/Sql/EfJsonBlobStore.cs": "E919F51EA3F73FC8B686956D67D2641054E77AD00B6D10090A45F70AECB5A857",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\historic-provider\\Program.cs": "DAB91FF4912A61A310D869F57D2501F5780D16E934263DCCA5AE78B0EF3A38B6"
+        },
+        "InputDrift": [],
+        "OwnedDatabasesRemoved": true,
+        "Accepted": true,
+        "WholeRoundAccepted": false,
+        "SourceTruth": "real independent processes and SQL ledger; synthetic in-memory source transport, no native source or fleet capacity claim"
+      },
+      "round53-historic-quota-caller-lifetime10-sqlite-current-v3": {
+        "Owner": "root",
+        "Provider": "Sqlite",
+        "Scope": "quota-and-locking-contract",
+        "CallerWaitSeconds": 10,
+        "Results": {
+          "inactive-five": {
+            "passed": true,
+            "Receipts": [
+              {
+                "Pid": 9492,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10003.6685,
+                "Error": null
+              },
+              {
+                "Pid": 12708,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1095.5213,
+                "Error": null
+              },
+              {
+                "Pid": 17760,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 765.2212,
+                "Error": null
+              },
+              {
+                "Pid": 4052,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 746.3137,
+                "Error": null
+              },
+              {
+                "Pid": 13428,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10003.8194,
+                "Error": null
+              },
+              {
+                "Pid": 7828,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 558.0667,
+                "Error": null
+              },
+              {
+                "Pid": 14260,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 372.666,
+                "Error": null
+              },
+              {
+                "Pid": 14632,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10003.8088,
+                "Error": null
+              }
+            ],
+            "SentRetained": 5,
+            "UnsentReservations": 0
+          },
+          "active-1-4": {
+            "passed": true,
+            "Receipts": [
+              {
+                "Pid": 7272,
+                "Lane": "qualification",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10157.2903,
+                "Error": null
+              },
+              {
+                "Pid": 6396,
+                "Lane": "qualification",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10032.9239,
+                "Error": null
+              },
+              {
+                "Pid": 732,
+                "Lane": "qualification",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1918.6639,
+                "Error": null
+              },
+              {
+                "Pid": 19216,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10155.9742,
+                "Error": null
+              },
+              {
+                "Pid": 15364,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1954.34,
+                "Error": null
+              },
+              {
+                "Pid": 4260,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1660.6268,
+                "Error": null
+              },
+              {
+                "Pid": 21392,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1963.18,
+                "Error": null
+              },
+              {
+                "Pid": 22216,
+                "Lane": "other",
+                "TransportSends": 1,
+                "Outcome": "sent",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 1893.3363,
+                "Error": null
+              },
+              {
+                "Pid": 4084,
+                "Lane": "other",
+                "TransportSends": 0,
+                "Outcome": "quota-wait-canceled",
+                "CoreHash": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+                "ElapsedMilliseconds": 10102.3619,
+                "Error": null
+              }
+            ],
+            "SentRetained": 5,
+            "UnsentReservations": 0
+          }
+        },
+        "Hashes": {
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/bin/Debug/net8.0-windows/LogForesight.Core.dll": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\historic-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Core.dll": "7A18F6B79820AE4C3462EDDC68A06B1CD70898503E22F22275F2D19C01BD0007",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\historic-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Tests.dll": "09CCE0AB90CFC4C2E4E5505958F532BE4B4E9B43299FA83B8D96AF01F3F97E9B",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Service/PrtgRequestBudget.cs": "48220145BBD41DF2DDBAD0D3B5833A1FDD3776A0FB42D83EBF4E30E3902361EF",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/PrtgClient.cs": "AAD80A74EB9757D407D2F5B742023681224F112715899C26F911103956762875",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgHistoricAdmissionStore.cs": "8447DEC3169A8424C4B82AA6743DA20FF8D757A180919516C73481EB0A89304C",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgQualificationJobStateStore.cs": "4417D3A91D70DDA6A34835BAF040F9A318F5E783ABF1AFBA4496B826087CC3D4",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgTrustedSamplingBindingStore.cs": "D311925A210C846F9A2F0DE3CC453E605F64EE4C6151B7724E5E7C4BAD1EF14C",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/StorageBackend.cs": "91701E09AFD21D4A4667586E3CBCCA39948488BFE89EEC80E02A00E4C6966DB6",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/Sql/EfJsonBlobStore.cs": "E919F51EA3F73FC8B686956D67D2641054E77AD00B6D10090A45F70AECB5A857",
+          "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\historic-provider\\Program.cs": "DAB91FF4912A61A310D869F57D2501F5780D16E934263DCCA5AE78B0EF3A38B6"
+        },
+        "InputDrift": [],
+        "OwnedDatabasesRemoved": true,
+        "Accepted": true,
+        "WholeRoundAccepted": false,
+        "SourceTruth": "real independent processes and SQL ledger; synthetic in-memory source transport, no native source or fleet capacity claim"
+      }
+    },
+    "ui_review": {
+      "Owner": "root",
+      "Scope": "synthetic owned localhost/pathbase/admin qualification UI",
+      "CurrentSourceHashes": {
+        "LogForesight.Web/Controllers/Api/PrtgTrustedSamplingQualificationJobsController.cs": "6a145546a82c6359a11c76572d217444c273475b402c157f6973e20ca5eb544e",
+        "LogForesight.Core/Persistence/PrtgQualificationJobStateStore.cs": "4417d3a91d70dda6a34835baf040f9a318f5e783abf1afba4496b826087cc3d4",
+        "LogForesight.Web/wwwroot/js/prtg-qualification-jobs.js": "a2c80611d165b4d99db6544a2bbd31e19c174f14698ee925617f8c360d51577f",
+        "LogForesight.Web/bin/Debug/net8.0-windows/LogForesight.Web.dll": "5433b65cbff05390eeaca0a3927798dcfed327fed6123cbf64d3cd006583eea7"
+      },
+      "EvidencePaths": [
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-cancel-red-v6.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-cancel-green-v7.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-cancel-persisted-v7.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-disabled-v7.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-scope-clear-v7.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-polling-v8.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-final-v8.jpg",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\stop-receipt-v7.json",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\stop-receipt-v8.json"
+      ],
+      "Checks": {
+        "same_wave_cancel_preserves_progress": true,
+        "source_disabled_readable_progress": true,
+        "scope_shrink_clears_old_rows": true,
+        "current_disabled_poll_rows": 2,
+        "current_disabled_poll_toasts": 0,
+        "owned_processes_stopped": true
+      },
+      "CapacityAccepted": false,
+      "NativeSourceAccepted": false,
+      "WholeRoundAccepted": false,
+      "Limitations": [
+        "Synthetic seeded job bypassed start admission solely to test durable admin status; actual start lacking shared plan remains waiting",
+        "v6 stale cancel RED preserved; v7 same-wave API cancellation GREEN; v8 polling refined and verified"
+      ],
+      "EvidenceSha256": {
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-cancel-red-v6.json": "725f6a8ea1f5cd6d4ca0bc11d9e13241d8e3750053652ba2d09c404d487940f4",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-cancel-green-v7.json": "ca3077e7b2cb2efaf017e7e1c0a1442bf9bf39f4402a5947a83267904d5c12e3",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-cancel-persisted-v7.json": "d1e00b0c58d3823976dbc06175d612a5181533f8e75c637fded358d7c3b1ed74",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-disabled-v7.json": "5b3521b6dfcc841741d150a8ca8524e3fddc6830561c041d14b8a0abc47f4e7d",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-scope-clear-v7.json": "0480a7cc1a200601db0014d4a7b07488c505709d07ccf1f7634f6e2676ef85c9",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-polling-v8.json": "31ea88fbca76c836992ce5a79e96a0180be63544c7eae1dc30c036eaf5a103f5",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\qualification-final-v8.jpg": "8884b9ef1214304abc8632fc1fbe2130feadfce06e2c44fb3f521318a0c66673",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\stop-receipt-v7.json": "b31fd8b454823225f6fc15d9f7900c35dc6b646eb8524a090b2bf0702cc47efe",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-binding-browser-root-v1\\stop-receipt-v8.json": "7b48840c67a33322deb88ebaba693a94fd0c435223f98a17943bcc27d1b33353"
+      }
+    },
+    "legacy_method_case_union": {
+      "Owner": "root",
+      "OriginalCases": 451,
+      "CoveredOriginalCases": 451,
+      "InventorySha256": "88dfd629ae4c9e758f0d618046e72867c003eaaeac68e046d2fd13c2c9dc5bbc",
+      "MissingCases": [],
+      "Runs": {
+        "round53-historic-legacy-callers-current-v2": {
+          "trxSha256": "3b7bcafc410372d76b101276cb9bb512f8b277d70345b99d8936ca839b9255c0",
+          "passed": 215,
+          "outcome": "Failed",
+          "inputDrift": 0
+        },
+        "round53-historic-legacy-remaining-current-v3": {
+          "trxSha256": "a656e89913b405bcfaedc68b09c7c9f5b156dfcd4b686e2280e88aa9baea9f8b",
+          "passed": 171,
+          "outcome": "Failed",
+          "inputDrift": 0
+        },
+        "round53-historic-snapshot-fixture-final-current-v12": {
+          "trxSha256": "6de36ab77118dafcd804ceb68f21fdef20039a1d73071c5ff910052dde8f2ac8",
+          "passed": 99,
+          "outcome": "Completed",
+          "inputDrift": 0
+        }
+      },
+      "Accepted": true,
+      "WholeRoundAccepted": false,
+      "ReuseLimit": "Original aborted/failed runs retain their statuses. Full snapshot fixture group reruns after budget/plan wiring repair; other passing cases reuse unchanged production call paths. R17 affects SQL admission, R18 new job admission; their final core and cross-process provider proofs are separate."
+    },
+    "active_required_deliveries": [
+      "A0/N1"
+    ],
+    "final_core_cases": 172,
+    "final_snapshot_cases": 99,
+    "core_reuse_delta_only": [
+      "LogForesight.Tests/PrtgSnapshotHostedServiceTests.cs",
+      "LogForesight.Tests/bin/Debug/net8.0-windows/LogForesight.Tests.dll"
+    ],
+    "active_implementation_delivery_count": 1,
+    "active_acceptance_groups": 5,
+    "fixed_case_json_changed": false,
+    "native_source_qualified": false,
+    "full_fleet_capacity_accepted": false,
+    "whole_round_accepted": false,
+    "limit": "Aborted/failed original runs and 3-second caller lifetime RED retained; ten-second proof does not assert 3-second cold-fill performance. R17/R18 fixed and verified; native facts and five full acceptance groups remain open."
+  },
+  "previous_required_delivery_counts_pre_20261010_durable": {
+    "as_of_product_revision": "4c807fada14c46eb9d8f4c91d0ac6966854faf52 + verified cross-host-day delta (exact source hashes in current_cross_day_completion_20261009)",
+    "source_of_truth": "FEEDBACK-53-PLAN.md §5.1 and §5.2",
+    "implementation_items": 2,
+    "validation_groups": 5,
+    "implementation_ids": [
+      "A0/N1",
+      "R15"
+    ],
+    "meaning": "移除已完成 R05/shared-admission、C1/D1 程式 TODO；完整操作、原生來源、共同容量及全部 AC/Q 不因 source audit 或局部測試而完成。"
   }
 }

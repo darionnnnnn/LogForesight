@@ -12,6 +12,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
+import { initializePrtgQualificationJobs } from '../prtg-qualification-jobs.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { extractProbeEvidenceJson, isProbeEvidenceDownloadable } from '../core/prtg-probe-evidence.js';
@@ -3769,6 +3770,7 @@ function init() {
     bindConflictBatchControls();
     bindUnmatchedControls();
     initCalibration();
+    initializePrtgQualificationJobs();
     loadSettings();
     ensureBatchHostsLoaded();
     refreshPrtgMirror();

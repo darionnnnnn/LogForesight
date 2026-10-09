@@ -48,7 +48,7 @@ public sealed class PrtgBackfillRangeRunnerTests : IDisposable
         var handler = new Handler();
         if (respond != null) handler.Respond = respond;
         var client = new PrtgClient("https://prtg.example.com", "token", 30, true, handler,
-            PrtgAuthModes.Token, "", "", "");
+            PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new ConsoleStub();
         var fetch = new PrtgFetchService(client, store,
             new PrtgFreshnessStore(new EfJsonBlobStore(_fixture.NewContext, PrtgFreshnessStore.BlobKey)),

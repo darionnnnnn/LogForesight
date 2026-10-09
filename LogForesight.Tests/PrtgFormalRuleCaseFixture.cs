@@ -624,8 +624,7 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
         var persistedJson = JsonNode.Parse(Backend.Blob(key).Read() ?? "null");
         var verified = mutation switch
         {
-            "wrong-quantity-semantic" => persistedJson?["Quantity"]?.GetValue<int>() ==
-                (int)changedProfile.Quantity,
+            "wrong-quantity-semantic" => persistedJson?["Quantity"]?.GetValue<int>() == (int)changedProfile.Quantity,
             "wrong-unit" => persistedJson?["Unit"]?.GetValue<string>() == "MB",
             "wrong-scale" => persistedJson?["Scale"]?.GetValue<double>() == 100d,
             "trial-profile-drift" => persistedJson?["SemanticVersion"]?.GetValue<string>() == changedProfile.SemanticVersion,
@@ -1041,7 +1040,8 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
             CancellationToken.None, new EventLogService(), coordinator, Backend.RiskyEventStore(), recorder,
             new OrchestratorResult(), false, null, _registry, dispatch, workflow, captureWorkflowReceipt);
         await PrtgDailyPipeline.RunAsync(context, Backend, hostStore, [day], Task.CompletedTask,
-            hostIds: [host.HostId], guard: null, structureSyncGate: new CompletedStructureSyncGate());
+            hostIds: [host.HostId], guard: null, structureSyncGate: new CompletedStructureSyncGate(),
+            requestBudget: new PrtgRequestBudget());
         return (_registry, console.Lines);
     }
 

@@ -14,7 +14,7 @@ public sealed class NativePrimaryCapabilityRedTests
     {
         var handler = new NativeProbeHandler();
         using var client = new PrtgClient("https://prtg.example.test", "test-token", 30, false,
-            handler, PrtgAuthModes.Token, "", "", "");
+            handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
         var sensor = new PrtgProbeRunner.SensorTypeSample("SNMP Disk Free", null, 100, 1003, "Up");
 
         var evidence = await PrtgCompatibilityProbe.ExecuteAsync(client, new TestConsole(), [sensor],
@@ -37,7 +37,7 @@ public sealed class NativePrimaryCapabilityRedTests
     {
         var handler = new NativeProbeHandler();
         using var client = new PrtgClient("https://prtg.example.test", "test-token", 30, false,
-            handler, PrtgAuthModes.Token, "", "", "");
+            handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
         var sensor = new PrtgProbeRunner.SensorTypeSample("SNMP Disk Free", null, 100, 1003, "Up");
 
         var evidence = await PrtgCompatibilityProbe.ExecuteAsync(client, new TestConsole(), [sensor],

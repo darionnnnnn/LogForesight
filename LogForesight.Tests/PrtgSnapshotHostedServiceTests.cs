@@ -32,6 +32,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     private readonly ITestOutputHelper _output;
     private readonly StorageBackend _backend;
     private readonly List<PrtgSnapshotHostedService> _services = [];
+    private readonly List<PrtgRequestBudget> _fixtureBudgets = [];
     private readonly SystemSettingsStore _settingsStore;
     private readonly SchedulerRunState _schedulerRunState;
     private readonly PrtgStructureSyncRunState _syncState;
@@ -101,13 +102,41 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _probeState,
             _lifetime, pollInterval ?? TimeSpan.FromSeconds(60));
 
-        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
+        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
         if (console != null)
         {
             service.Console = console;
         }
         _services.Add(service);
         return service;
+    }
+
+    private PrtgRequestBudget CreateFixtureBudget()
+    {
+        // Production publishes the verified joint plan to Shared. These isolated clients use
+        // the same persisted plan, so switching off Shared's Historic fallback does not remove
+        // the snapshot lane authorization from a request-count or cancellation fixture.
+        var budget = new PrtgRequestBudget(new SnapshotFixtureBudgetClock());
+        var plan = new PrtgCapacityAdmissionPlanStore(
+            _backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow);
+        if (plan is not null) budget.SetAdmissionPlan(plan);
+        _fixtureBudgets.Add(budget);
+        return budget;
+    }
+
+    private sealed class SnapshotFixtureBudgetClock : IPrtgClock
+    {
+        private readonly DateTimeOffset start = DateTimeOffset.UtcNow;
+        private long elapsedTicks;
+        public TimeSpan Elapsed => TimeSpan.FromTicks(Interlocked.Read(ref elapsedTicks));
+        public DateTimeOffset UtcNow => start + Elapsed;
+        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Yield();
+            if (delay > TimeSpan.Zero) Interlocked.Add(ref elapsedTicks, delay.Ticks);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     private static bool RestoreJournal(PrtgSnapshotHostedService service, SystemSettings settings) =>
@@ -472,7 +501,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
         var service = CreateService();
         service.ClientFactory = () => new PrtgClient(_settingsStore.Get().PrtgUrl!, "token123", 30, true,
-            _stubHandler, PrtgAuthModes.Token, "", "", "");
+            _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
 
         await service.ScopeRefreshTickAsync();
         Assert.Empty(_stubHandler.RequestedUrls);
@@ -1159,7 +1188,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             selection.RequestShapeFingerprint, contract.RequestShapeFingerprint,
             contract.VersionFingerprint, now, settings.Revision, policy.Revision);
         var store = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
-        store.Publish(candidate, "snapshot-hosted-synthetic-fixture", now, TimeSpan.FromHours(24),
+        var published = store.Publish(candidate, "snapshot-hosted-synthetic-fixture", now, TimeSpan.FromHours(24),
             settings.Revision, () =>
             {
                 var currentSettings = _settingsStore.Get();
@@ -1175,6 +1204,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
                     currentSelection.ScopeFingerprint == selection.ScopeFingerprint &&
                     currentSelection.RequestShapeFingerprint == selection.RequestShapeFingerprint;
             });
+        // Production renews Shared before using a cached client. Keep each isolated fixture
+        // budget on the same published plan when this helper changes scope or strategy.
+        foreach (var budget in _fixtureBudgets) budget.SetAdmissionPlan(published);
     }
 
     [Fact]
@@ -1694,7 +1726,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var requestsBeforePilot = SnapshotUrls().Count;
         var pilot = new PrtgSnapshotCapacityPilot(_backend, _ =>
             new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler,
-                PrtgAuthModes.Token, "", "", ""));
+                PrtgAuthModes.Token, "", "", "", CreateFixtureBudget()));
         var pilotResult = await pilot.RunAsync(_hostStore, settings, Array.Empty<Sentinel>(), CancellationToken.None);
         Assert.Equal("capacity-qualified", pilotResult.Status);
         Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples, pilotResult.RequestsSent);
@@ -3604,7 +3636,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.ClientFactory = () =>
         {
             Interlocked.Increment(ref calls);
-            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
+            return new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
         };
 
         await service.TickAsync();

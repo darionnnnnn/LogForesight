@@ -51,8 +51,27 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
         var ids = sensorIds.Where(id => id > 0).Distinct().Order().Take(MaximumSensorsPerBatch + 1).ToArray();
         if (ids.Length > MaximumSensorsPerBatch)
             throw new ArgumentOutOfRangeException(nameof(sensorIds), "每頁最多讀取 100 個 sampling binding。");
-        return ids.Select(id => (Id: id, Value: Get(id))).Where(row => row.Value is not null)
-            .ToDictionary(row => row.Id, row => row.Value!);
+        if (ids.Length == 0) return new Dictionary<long, PrtgTrustedSamplingBinding>();
+        var keys = ids.Select(Key).ToArray();
+        using var context = backend.CreateContext();
+        var rows = context.Blobs.AsNoTracking().Where(row => keys.Contains(row.BlobKey))
+            .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
+                PrtgTrustedSamplingBinding.MaximumSerializedBytes + 1), Length = row.Content.Length })
+            .ToDictionary(row => row.BlobKey, row => row);
+        var result = new Dictionary<long, PrtgTrustedSamplingBinding>();
+        foreach (var id in ids)
+        {
+            if (!rows.TryGetValue(Key(id), out var row)) continue;
+            if (row.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
+                Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
+                throw new InvalidDataException("PRTG 採樣 binding 超過 8 KiB；拒絕使用截斷值。");
+            var binding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(row.Content, LfJsonOptions.Pretty)
+                ?? throw new InvalidDataException("PRTG 採樣 binding 無效；拒絕使用舊授權。");
+            if (binding.SensorObjid != id) throw new InvalidDataException("PRTG 採樣 binding sensor ID 不符。");
+            binding.Validate();
+            result.Add(id, binding);
+        }
+        return result;
     }
 
     /// <summary>Compare-and-swap settings, policy, resource, channel, and binding revisions in one transaction.</summary>
@@ -166,7 +185,8 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
     internal PrtgTrustedSamplingBinding RecordQualification(long sensorId, long expectedBindingRevision,
         string expectedBindingFingerprint, string expectedSettingsRevision, string expectedPolicyRevision,
         double rawValue, double measuredOaDate,
-        string sourceVersion, DateTimeOffset observedAtUtc, string proofReference)
+        string sourceVersion, DateTimeOffset observedAtUtc, string proofReference,
+        PrtgQualificationWriteFence? qualificationFence = null)
     {
         if (sensorId <= 0 || expectedBindingRevision <= 0 || !Hex64(expectedBindingFingerprint) ||
             !double.IsFinite(rawValue) || !Hex64(proofReference) ||
@@ -223,6 +243,12 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
 
             var qualified = prior.WithQualification(proofReference, rawValue, measuredOaDate,
                 sourceVersion, observedAtUtc);
+            if (qualificationFence is not null && (qualificationFence.SensorObjid != sensorId ||
+                qualificationFence.BindingRevision != expectedBindingRevision ||
+                qualificationFence.BindingFingerprint != expectedBindingFingerprint ||
+                qualificationFence.SettingsRevision != expectedSettingsRevision ||
+                qualificationFence.PolicyRevision != expectedPolicyRevision))
+                throw new InvalidOperationException("qualification-job-binding-fence-mismatch");
             var now = DateTimeOffset.UtcNow;
             var nextIdentity = PrtgResourceIdentityStore.Set(ctx, sensorId, identity.SourceGeneration,
                 identity.DeviceId, identity.HostId, identity.ResourceFingerprint, identity.InventoryFingerprint,
@@ -231,10 +257,14 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
                 ResourceGeneration = nextIdentity.Generation, ChannelGeneration = nextIdentity.ChannelGeneration };
             qualified = qualified.RefreshBindingFingerprint();
             qualified.Validate();
+            if (qualificationFence is not null)
+                new PrtgQualificationJobStateStore(backend).RecordQualificationInContext(
+                    ctx, qualificationFence, qualified, now);
             PrtgResourceIdentityStore.IncrementAuthorityRevision(ctx, identity.HostId, now);
             return (JsonSerializer.Serialize(qualified, LfJsonOptions.Pretty), qualified);
         }, maxCurrentCharacters: PrtgTrustedSamplingBinding.MaximumSerializedBytes,
-        isolationLevel: System.Data.IsolationLevel.Serializable);
+        isolationLevel: System.Data.IsolationLevel.Serializable,
+        serializeSqlServerWriterKey: qualificationFence is null ? null : PrtgHistoricAdmissionStore.BlobKey);
     }
 
     private static string Key(long sensorId) => PrtgTrustedSamplingBinding.StorePrefix +

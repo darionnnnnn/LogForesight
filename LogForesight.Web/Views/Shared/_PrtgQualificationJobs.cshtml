@@ -1,0 +1,25 @@
+<section id="prtg-qualification-jobs" class="lf-card mb-3" data-qualification-jobs>
+    <div class="lf-card__header"><h2 class="lf-card__title">PRTG 原始採樣資格作業</h2></div>
+    <div class="lf-card__body">
+    <p>先以最多 5 個已明確綁定的 sensor 執行真實有界容量探測，再按完整政策範圍估算成本。通過資格作業只保存原始通道證據；正式 profile 由後續受控 refresh 建立。</p>
+    <p>資格作業有效期間，跨程序 Historic 配額保留每分鐘 1 次給資格作業、其餘取數共用每分鐘 4 次；暫時等待容量仍保留分配，取消、逾期或來源失效後解除。</p>
+    <p>取消後 worker 會在短間隔停止後續工作；已送出的 HTTP 請求可能仍在來源端執行，已送出的 Historic token 會在共享 60 秒窗口內保留。</p>
+    <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+        <label class="form-label" for="prtg-qualification-pilot-ids">容量探測 sensor ID（最多 5 個，逗號分隔）</label>
+        <input class="form-control w-auto" id="prtg-qualification-pilot-ids" inputmode="numeric" autocomplete="off" />
+        <button class="btn btn-sm btn-outline-primary" type="button" data-action="pilot">執行容量探測</button>
+    </div>
+    <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+        <label class="form-label" for="prtg-qualification-duration">作業期限（小時，1–720）</label>
+        <input class="form-control w-auto" id="prtg-qualification-duration" type="number" min="1" max="720" step="1" value="72" />
+        <label class="form-label" for="prtg-qualification-attempts">每個 sensor 本輪最多探測次數（1–3）</label>
+        <input class="form-control w-auto" id="prtg-qualification-attempts" type="number" min="1" max="3" step="1" value="1" />
+        <button class="btn btn-sm btn-outline-primary" type="button" data-action="start">明確開始新資格作業</button>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-action="resume" disabled>明確續跑現有作業並保留進度</button>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-action="cancel" disabled>取消作業</button>
+    </div>
+    <output class="d-block small mb-3" data-role="status" aria-live="polite">尚未載入作業狀態。</output>
+    <button class="btn btn-sm btn-outline-primary" type="button" data-action="reload">重新載入狀態與目前分頁</button>
+    <div data-role="page"></div>
+    </div>
+</section>

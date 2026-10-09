@@ -60,7 +60,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
         return (client, handler);
     }
 

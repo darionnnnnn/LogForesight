@@ -26,7 +26,7 @@ public class PrtgClientTests
             response.Headers.Date = at;
             return Task.FromResult(response);
         } };
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var response = await client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64);
         Assert.Equal(xml, response.Content);
         Assert.Equal(at, response.HttpDateUtc);
@@ -44,13 +44,13 @@ public class PrtgClientTests
             calls++;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
         } };
-        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "reader", "", "passhash-secret");
+        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "reader", "", "passhash-secret", new LogForesight.Core.Service.PrtgRequestBudget());
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64));
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedXmlAsync("api/historicdata.xml?id=78", 64));
         Assert.Equal(1, calls);
         var large = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StreamContent(new NonSeekableReadStream(Encoding.UTF8.GetBytes(new string('x', 65)))) }) };
-        using var bounded = new PrtgClient(ValidUrl, SampleToken, 30, false, large, PrtgAuthModes.Token, "", "", "");
+        using var bounded = new PrtgClient(ValidUrl, SampleToken, 30, false, large, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         await Assert.ThrowsAsync<PrtgClientException>(() => bounded.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64));
     }
 

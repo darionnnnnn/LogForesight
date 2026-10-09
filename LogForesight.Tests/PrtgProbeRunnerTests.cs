@@ -120,7 +120,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -185,7 +185,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -244,7 +244,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -287,7 +287,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -330,7 +330,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -387,7 +387,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -439,7 +439,7 @@ public class PrtgProbeRunnerTests
             }
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -455,7 +455,7 @@ public class PrtgProbeRunnerTests
             OnSend = (_, _) => throw new HttpRequestException("連線逾時，無法建立 socket 連線")
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -521,7 +521,7 @@ public class PrtgProbeRunnerTests
             _ => Array.Empty<long>()
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -538,7 +538,7 @@ public class PrtgProbeRunnerTests
     {
         var stub = BuildPagingStub((_, _) => new long[] { 1, 2, 3, 4, 5 });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -557,7 +557,7 @@ public class PrtgProbeRunnerTests
             _ => new long[] { 8, 9, 10, 11, 12 }               // 夾到最後一頁
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -572,7 +572,7 @@ public class PrtgProbeRunnerTests
             ? throw new HttpRequestException("messages 端點 500")
             : new long[] { 1, 2 });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -589,7 +589,7 @@ public class PrtgProbeRunnerTests
             (_, start) => start == 0 ? new long[] { 59590, 82114, 56991, 85029, 57288 } : new long[] { 87261, 59520 },
             sortedResponder: _ => new long[] { 1001, 1002, 1003, 1004, 1005 });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -608,7 +608,7 @@ public class PrtgProbeRunnerTests
             (_, start) => start == 0 ? unsorted : new long[] { 87261, 59520 },
             sortedResponder: _ => unsorted);
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -626,7 +626,7 @@ public class PrtgProbeRunnerTests
             _ => Array.Empty<long>()
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -653,7 +653,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -676,7 +676,7 @@ public class PrtgProbeRunnerTests
             return await inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunCoreAsync(client, console, TimeSpan.FromMilliseconds(80));
 
@@ -709,7 +709,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         Assert.True(await PrtgProbeRunner.RunAsync(client, console));
         Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 1 批、100/250"));
@@ -738,7 +738,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         Assert.True(await PrtgProbeRunner.RunAsync(client, console));
         Assert.Contains(console.Lines, l => l.Contains("分頁可能被忽略"));
@@ -760,7 +760,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -772,7 +772,7 @@ public class PrtgProbeRunnerTests
     {
         var stub = BuildPagingStub((_, _) => Array.Empty<long>(), deviceTreesize: 10, deviceRows: 3);
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -784,7 +784,7 @@ public class PrtgProbeRunnerTests
     {
         var stub = BuildPagingStub((_, _) => Array.Empty<long>(), deviceTreesize: 2, deviceRows: 4);
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -860,7 +860,7 @@ public class PrtgProbeRunnerTests
             return null;
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -898,7 +898,7 @@ public class PrtgProbeRunnerTests
             return null;
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -912,7 +912,7 @@ public class PrtgProbeRunnerTests
     {
         var stub = BuildPerfStub(SensorRows(10));
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -928,7 +928,7 @@ public class PrtgProbeRunnerTests
     {
         var stub = BuildPerfStub(SensorRows(3, type: "Ping"));
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -958,7 +958,7 @@ public class PrtgProbeRunnerTests
             DataRetentionDays = 30
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console, context);
 
@@ -1040,7 +1040,7 @@ public class PrtgProbeRunnerTests
             ReadinessSummary = "unknown (not authoritative)"
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console, context);
 
@@ -1148,7 +1148,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1171,7 +1171,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1189,7 +1189,7 @@ public class PrtgProbeRunnerTests
                 ? JsonResponse(HttpStatusCode.OK, html)
                 : null);
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1211,7 +1211,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1263,7 +1263,7 @@ public class PrtgProbeRunnerTests
             _ => Array.Empty<(long, string)>()
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1294,7 +1294,7 @@ public class PrtgProbeRunnerTests
             _ => Array.Empty<(long, string)>()
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1319,7 +1319,7 @@ public class PrtgProbeRunnerTests
             return null;
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1358,7 +1358,7 @@ public class PrtgProbeRunnerTests
             return null;
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1398,7 +1398,7 @@ public class PrtgProbeRunnerTests
             return null;
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1434,7 +1434,7 @@ public class PrtgProbeRunnerTests
             return null;
         });
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1452,7 +1452,7 @@ public class PrtgProbeRunnerTests
         ]}";
         var stub = BuildPerfStub(rows);
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1482,7 +1482,7 @@ public class PrtgProbeRunnerTests
     {
         var stub = BuildPagingStub((_, _) => Array.Empty<long>());
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1516,7 +1516,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1540,7 +1540,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1569,7 +1569,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1597,7 +1597,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1625,7 +1625,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1653,7 +1653,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1676,7 +1676,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1713,7 +1713,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1754,7 +1754,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1781,7 +1781,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1820,7 +1820,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1844,7 +1844,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
@@ -1873,7 +1873,7 @@ public class PrtgProbeRunnerTests
             return inner(req, ct);
         };
 
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 

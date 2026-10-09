@@ -35,7 +35,8 @@ internal static class PrtgDailyPipeline
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, IReadOnlyList<DateTime> days, Task analysisTask,
         IReadOnlyCollection<long>? hostIds,
         PrtgResourceGuard? guard = null,
-        IPrtgStructureSyncGate? structureSyncGate = null)
+        IPrtgStructureSyncGate? structureSyncGate = null,
+        PrtgRequestBudget? requestBudget = null)
     {
         if (days == null || days.Count == 0)
         {
@@ -96,7 +97,7 @@ internal static class PrtgDailyPipeline
             operation = operationScope;
             ct = operationScope.Token;
             operationScope.Checkpoint();
-            using var client = PrtgClientFactory.Create(systemSettings);
+            using var client = PrtgClientFactory.Create(systemSettings, budget: requestBudget);
             client.OperationCheckpoint = operationScope.Checkpoint;
             var monitoringPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
             var pilotReady = monitoringPolicy.Ready(systemSettings.PrtgUrl);

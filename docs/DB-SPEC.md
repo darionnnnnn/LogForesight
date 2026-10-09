@@ -868,3 +868,12 @@ Formal mail dated shard 清理每頁最多 16 鍵，先快照 outbox 參照，�
 ### PRTG 人工對應的外部主鍵與錯誤 IDENTITY 升級
 
 `lf_prtg_manual_map.device_objid` 是 PRTG 指定的外部 bigint 主鍵；EF 模型為 ValueGeneratedNever，新建 SQL Server 不產生 IDENTITY。若舊 EnsureCreated 結構錯設 IDENTITY，SchemaUpgrader 以交易 app lock 序列化後重新核對精確已知五欄、PK／host 索引、metadata 及相依關係，保留全部欄位／列與索引，雙向 EXCEPT 核對後提交；任一步失敗回滾原表與資料。已有正確結構不重建。額外權限、extended property、未知相依或非標準結構不自動破壞，拒絕升級並保留原資料。隔離 SQL Server 與 SQLite 驗證分開記錄；此修復不表示完整容量通過。
+
+
+### 初始資格與 Historic 共享帳本
+
+`prtg_historic_admission_v1` blob 保存有界 rolling send／pending tickets 及活躍資格 lane，SQL Server 寫入在 Serializable 交易讀取前取得 key 雜湊專用 app lock。Job overview 上限 16 KiB、每個耐久 page 上限 64 KiB／100 sensor，全部上限 15000；沒有單一 15000 筆 blob。資格 proof 與該頁／overview 租約、波次、來源及 binding fence 在同交易提交，鎖順序固定 overview app lock 再讀 binding/page，避免跨程序更新遺失或取消後舊 proof 復活。
+
+專用 writer-lock timeout 不採一般 TimeoutException 進入 EF 內部 execution retry；外層最多五次、每次 app lock 1000 ms，其他 SQL 錯誤仍 fail closed。SQLite 保留原 provider 交易方式。取消／逾期保留 page 與水位，等待期間 worker lease 可釋放而活躍 lane 保留；目前作業的固定 deadline 與 wave 必須核對後才可明確續跑。此帳本不是來源能力或正式準備度的代用品。
+
+coordinator每次排隊以單調時鐘限制兩分鐘，阻塞SQL讀寫前後核對取消／期限；成功建立票券但逾時或取消時釋放pending，已sent不退款。兩分鐘不是正在執行同步SQL的硬中斷；當前有限SQL嘗試及cleanup另計，儲存錯誤不回退本地budget。

@@ -1,4 +1,7 @@
-using System.Data;
+﻿using System.Data;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -24,12 +27,14 @@ public sealed class EfJsonBlobStore
     private readonly string _key;
     private readonly object _lock = new();
     private readonly SqlPerformanceMonitor? _performance;
+    private readonly bool _serializeSqlServerWriters;
 
-    public EfJsonBlobStore(Func<LfDbContext> contextFactory, string key, SqlPerformanceMonitor? performance = null)
+    public EfJsonBlobStore(Func<LfDbContext> contextFactory, string key, SqlPerformanceMonitor? performance = null, bool serializeSqlServerWriters = false)
     {
         _contextFactory = contextFactory;
         _key = key;
         _performance = performance;
+        _serializeSqlServerWriters = serializeSqlServerWriters;
     }
 
     /// <summary>供 log／Location 顯示（如「sqlserver:users」）</summary>
@@ -110,7 +115,7 @@ public sealed class EfJsonBlobStore
     /// <summary>在同一個 JSON blob 交易內更新其他資料列，供需要先失效證據再發布設定的寫入端使用。</summary>
     internal TResult MutateWithContext<TResult>(Func<LfDbContext, string?, (string content, TResult result)> mutation,
         int? maxCurrentCharacters = null, IsolationLevel? isolationLevel = null,
-        bool skipUnchangedContent = false)
+        bool skipUnchangedContent = false, string? serializeSqlServerWriterKey = null)
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）
         //
@@ -139,6 +144,8 @@ public sealed class EfJsonBlobStore
                         // 加入的列，重試時再 Add 一次會造成重複追蹤
                         using var ctx = _contextFactory();
                         using var tx = ctx.Database.BeginTransaction(isolationLevel ?? IsolationLevel.Unspecified);
+                        if (_serializeSqlServerWriters) SerializeSqlServerWriters(ctx, _key);
+                        if (serializeSqlServerWriterKey is not null) SerializeSqlServerWriters(ctx, serializeSqlServerWriterKey);
 
                         if (maxCurrentCharacters is { } max)
                         {
@@ -179,6 +186,10 @@ public sealed class EfJsonBlobStore
                     _performance?.Record($"blob:{_key}:Mutate", sw.ElapsedMilliseconds);
                     return outcome;
                 }
+                catch (BlobWriterLockTimeoutException ex) when (attempt >= maxAttempts)
+                {
+                    throw new TimeoutException("SQL blob writer application-lock timeout after five bounded attempts.", ex);
+                }
                 catch (Exception ex) when (attempt < maxAttempts && IsTransient(ex))
                 {
                     // 並發寫入撞鎖：短退避後重試（webdata 寫入低頻，實務上極少發生）
@@ -189,13 +200,37 @@ public sealed class EfJsonBlobStore
         }
     }
 
+    // A Serializable read followed by update can deadlock when several processes upgrade
+    // shared row locks. Opted-in hot ledgers serialize before any read, including first creation.
+    internal static void SerializeSqlServerWriters(LfDbContext ctx, string key)
+    {
+        if (!ctx.Database.IsSqlServer()) return;
+        using var command = ctx.Database.GetDbConnection().CreateCommand();
+        command.Transaction = ctx.Database.CurrentTransaction!.GetDbTransaction();
+        command.CommandTimeout = 5;
+        command.CommandText = "DECLARE @result int; EXEC @result=sys.sp_getapplock @Resource=@resource, " +
+            "@LockMode='Exclusive', @LockOwner='Transaction', @DbPrincipal='public', @LockTimeout=1000; SELECT @result;";
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "@resource";
+        parameter.Value = "logforesight:jsonblob:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        command.Parameters.Add(parameter);
+        var result = Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        if (result == -1) throw new BlobWriterLockTimeoutException();
+        if (result == -3) throw new InvalidOperationException("SQL blob writer application-lock deadlock.");
+        if (result < 0) throw new InvalidOperationException("SQL blob writer application-lock admission refused.");
+    }
+
+    // Keep the internal lock result out of EF's TimeoutException retry policy;
+    // the outer loop owns the single five-attempt budget.
+    private sealed class BlobWriterLockTimeoutException() : Exception("SQL blob writer application-lock timeout.");
+
     private static bool IsTransient(Exception ex)
     {
         // SQLite busy / SqlServer deadlock 等暫時性衝突：訊息含 busy/locked/deadlock 即重試。
         // user-function：連線池關閉後（見 StorageBackend.DisableSqlitePoolingIfUnset）此錯誤的
         // 根因已除，這裡留作第二道保險（如使用者自行在 ConnectionString 開回 Pooling）。
         var msg = ex.Message.ToLowerInvariant();
-        return ex is DbUpdateException || msg.Contains("busy") || msg.Contains("locked") ||
+        return ex is BlobWriterLockTimeoutException or DbUpdateException || msg.Contains("busy") || msg.Contains("locked") ||
                msg.Contains("deadlock") || msg.Contains("user-function");
     }
 }

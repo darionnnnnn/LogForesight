@@ -201,6 +201,9 @@ public class StorageBackend
     /// <summary>store 的底層 blob（整份 JSON 存 lf_blobs 一列，key 為鍵）</summary>
     public EfJsonBlobStore Blob(string key) => new(_dbFactory, key, Performance);
 
+    public EfJsonBlobStore Blob(string key, bool serializeSqlServerWriters) =>
+        new(_dbFactory, key, Performance, serializeSqlServerWriters);
+
     /// <summary>store 的底層 append-only 逐行資料（lf_log_lines，key 為鍵）</summary>
     public EfJsonLogStore LogStore(string key) => new(_dbFactory, key, Performance);
 

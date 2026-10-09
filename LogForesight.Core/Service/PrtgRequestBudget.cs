@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using System.Diagnostics;
 
 namespace LogForesight.Core.Service;
@@ -132,6 +133,8 @@ public class PrtgRequestBudget
     private PrtgCapacityAdmissionPlan? _admissionPlan;
     private CancellationTokenSource? _delayCts;
     private TimeSpan _scheduledWakeup = TimeSpan.MaxValue;
+    private IPrtgHistoricRequestCoordinator? _historicCoordinator;
+    private readonly AsyncLocal<string?> _historicReservationId = new();
 
     /// <summary>
     /// 全程序共享的預算實例。正式 client 建立入口（PrtgClientFactory 與 SystemSettingsService）皆使用此實例。
@@ -140,6 +143,41 @@ public class PrtgRequestBudget
     public static PrtgRequestBudget Shared { get; } = new();
 
     public IPrtgClock Clock { get; }
+
+    public void SetHistoricCoordinator(IPrtgHistoricRequestCoordinator coordinator) =>
+        Volatile.Write(ref _historicCoordinator, coordinator ?? throw new ArgumentNullException(nameof(coordinator)));
+
+    public async Task<PrtgHistoricReservation> ReserveQualificationHistoricAsync(string jobId, string owner,
+        long leaseVersion, CancellationToken cancellationToken)
+    {
+        var coordinator = Volatile.Read(ref _historicCoordinator)
+            ?? throw new InvalidOperationException("historic-sql-admission-not-installed");
+        return await coordinator.ReserveQualificationAsync(jobId, owner, leaseVersion, cancellationToken);
+    }
+
+    public async Task<PrtgHistoricReservation> ReserveOtherHistoricAsync(CancellationToken cancellationToken)
+    {
+        var coordinator = Volatile.Read(ref _historicCoordinator)
+            ?? throw new InvalidOperationException("historic-sql-admission-not-installed");
+        return await coordinator.ReserveOtherAsync(cancellationToken);
+    }
+
+    public IDisposable UseHistoricReservation(PrtgHistoricReservation reservation)
+    {
+        ArgumentNullException.ThrowIfNull(reservation);
+        var prior = _historicReservationId.Value;
+        _historicReservationId.Value = reservation.Id;
+        return new HistoricReservationScope(_historicReservationId, prior);
+    }
+
+    private sealed class HistoricReservationScope(AsyncLocal<string?> slot, string? prior) : IDisposable
+    {
+        private int disposed;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0) slot.Value = prior;
+        }
+    }
 
     public void SetAdmissionPlan(PrtgCapacityAdmissionPlan plan)
     {
@@ -229,6 +267,29 @@ public class PrtgRequestBudget
         CancellationToken cancellationToken, PrtgRequestPurpose purpose, string? admissionPlanFingerprint)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var coordinator = category == PrtgEndpointCategory.HistoricData ? Volatile.Read(ref _historicCoordinator) : null;
+        var historicTicketId = category == PrtgEndpointCategory.HistoricData ? _historicReservationId.Value : null;
+        if (category == PrtgEndpointCategory.HistoricData && ReferenceEquals(this, Shared) && coordinator is null)
+            throw new InvalidOperationException("historic-sql-admission-not-installed");
+        // Acquire the durable rolling-window ticket before requesting any local in-flight slot.
+        // A caller waiting for the global historic quota must not consume one of four HTTP permits.
+        if (category == PrtgEndpointCategory.HistoricData && coordinator is not null && historicTicketId is null)
+        {
+            using var ticket = await coordinator.ReserveOtherAsync(cancellationToken);
+            historicTicketId = ticket.Id;
+            return await AcquireWithHistoricTicketAsync(category, cancellationToken, purpose,
+                admissionPlanFingerprint, coordinator, historicTicketId, transferTicket: ticket);
+        }
+        return await AcquireWithHistoricTicketAsync(category, cancellationToken, purpose,
+            admissionPlanFingerprint, coordinator, historicTicketId, transferTicket: null);
+    }
+
+    private async Task<PrtgBudgetLease> AcquireWithHistoricTicketAsync(PrtgEndpointCategory category,
+        CancellationToken cancellationToken, PrtgRequestPurpose purpose, string? admissionPlanFingerprint,
+        IPrtgHistoricRequestCoordinator? coordinator, string? historicTicketId, PrtgHistoricReservation? transferTicket)
+    {
+        try
+        {
         await ReservePurposeTableSlotBeforeAcquireAsync(category, purpose, admissionPlanFingerprint, cancellationToken);
 
         Waiter? waiter = null;
@@ -249,12 +310,15 @@ public class PrtgRequestBudget
                     _reservations.Add(new Reservation(resId, category));
                 }
 
-                return CreateLeaseUnderLock(resId, category, purpose, admissionPlanFingerprint);
+                var immediateLease = CreateLeaseUnderLock(resId, category, purpose, admissionPlanFingerprint,
+                    coordinator, historicTicketId);
+                transferTicket?.TransferOwnership();
+                return immediateLease;
             }
 
             // 無法立即准許，加入排隊佇列
             var tcs = new TaskCompletionSource<PrtgBudgetLease>(TaskCreationOptions.RunContinuationsAsynchronously);
-            waiter = new Waiter(category, purpose, admissionPlanFingerprint, tcs);
+            waiter = new Waiter(category, purpose, admissionPlanFingerprint, historicTicketId, coordinator, tcs);
             _waiters.Add(waiter);
 
             if (cancellationToken.CanBeCanceled)
@@ -295,11 +359,21 @@ public class PrtgRequestBudget
             cancellationToken.ThrowIfCancellationRequested();
         }
 
+        transferTicket?.TransferOwnership();
         return lease;
+        }
+        catch
+        {
+            if (transferTicket is not null) transferTicket.Dispose();
+            else if (historicTicketId is not null && coordinator is not null &&
+                historicTicketId != _historicReservationId.Value) coordinator.ReleaseReservation(historicTicketId);
+            throw;
+        }
     }
 
     private PrtgBudgetLease CreateLeaseUnderLock(long reservationId, PrtgEndpointCategory category,
-        PrtgRequestPurpose purpose, string? admissionPlanFingerprint)
+        PrtgRequestPurpose purpose, string? admissionPlanFingerprint,
+        IPrtgHistoricRequestCoordinator? historicCoordinator, string? historicTicketId)
     {
         return new PrtgBudgetLease(
             onRelease: wasSent =>
@@ -312,6 +386,9 @@ public class PrtgRequestBudget
                     {
                         _reservations.RemoveAll(r => r.Id == reservationId);
                     }
+                    if (!wasSent && category == PrtgEndpointCategory.HistoricData && historicTicketId is not null &&
+                        historicCoordinator is not null && historicTicketId != _historicReservationId.Value)
+                        historicCoordinator.ReleaseReservation(historicTicketId);
                     EvaluateWaitersUnderLock();
                 }
             },
@@ -328,7 +405,13 @@ public class PrtgRequestBudget
                     }
                 }
             },
-            beforeMarkSent: ct => PacePurposeTableSendAsync(category, purpose, admissionPlanFingerprint, ct));
+            beforeMarkSent: async ct =>
+            {
+                await PacePurposeTableSendAsync(category, purpose, admissionPlanFingerprint, ct);
+                if (category != PrtgEndpointCategory.HistoricData) return;
+                if (historicCoordinator is not null && historicTicketId is not null)
+                    await historicCoordinator.WaitAndRecordSendAsync(false, ct, historicTicketId);
+            });
     }
 
     private void EvaluateWaitersUnderLock()
@@ -360,7 +443,8 @@ public class PrtgRequestBudget
                     _reservations.Add(new Reservation(resId, waiter.Category));
                 }
 
-                var lease = CreateLeaseUnderLock(resId, waiter.Category, waiter.Purpose, waiter.AdmissionPlanFingerprint);
+                var lease = CreateLeaseUnderLock(resId, waiter.Category, waiter.Purpose, waiter.AdmissionPlanFingerprint,
+                    waiter.HistoricCoordinator, waiter.HistoricTicketId);
                 waiter.Tcs.TrySetResult(lease);
             }
         }
@@ -732,15 +816,20 @@ public class PrtgRequestBudget
         public PrtgEndpointCategory Category { get; }
         public PrtgRequestPurpose Purpose { get; }
         public string? AdmissionPlanFingerprint { get; }
+        public string? HistoricTicketId { get; }
+        public IPrtgHistoricRequestCoordinator? HistoricCoordinator { get; }
         public TaskCompletionSource<PrtgBudgetLease> Tcs { get; }
         public IDisposable? Registration { get; set; }
 
         public Waiter(PrtgEndpointCategory category, PrtgRequestPurpose purpose, string? admissionPlanFingerprint,
+            string? historicTicketId, IPrtgHistoricRequestCoordinator? historicCoordinator,
             TaskCompletionSource<PrtgBudgetLease> tcs)
         {
             Category = category;
             Purpose = purpose;
             AdmissionPlanFingerprint = admissionPlanFingerprint;
+            HistoricTicketId = historicTicketId;
+            HistoricCoordinator = historicCoordinator;
             Tcs = tcs;
         }
     }

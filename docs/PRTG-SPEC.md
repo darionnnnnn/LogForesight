@@ -1267,6 +1267,15 @@ Compatibility 探測對每種最多一顆 sensor 查詢 `getobjectproperty.htm?i
 
 來源 metadata 核對是 sensors→channels→native primarychannel property→sensors 四個有界 Table 配額請求。單筆原生資格另外使用一次 avg=0/usecaption=1 Historic XML，核對精確 channel ID/caption、有限 raw value 與時間（至多一秒差）；DTD、歧義、截斷、過期與缺失皆不授予資格。原始值在 snapshot parser 正規化一次；consumer 與主機明細核對 profile 的語意可重新產生保存的 binding fingerprint，不接受改語意後只重算 profile digest。
 
-proof 綁定來源／資源／通道／時間依據，後續 metadata refresh 不重新取得或延長初始 raw proof；metadata freshness 為 24 小時，刷新期限 23 小時。完成刷新確認缺失／衝突時，以原 profile digest、目前 binding／identity 及 live lease 原子撤銷舊 Profile並更新 authority revision，保留 samples/journal；傳輸失敗／取消不當作語意變更。所有 profile 發布均用 Serializable 交易，避免 concurrent binding save 清除後舊發布復活。這段完成單顆操作及 consumer 守門；全範圍初始資格耐久作業與跨程序 historic 配額另列 R15 待辦，原生現場能力与完整容量仍依固定 AC。
+proof 綁定來源／資源／通道／時間依據，後續 metadata refresh 不重新取得或延長初始 raw proof；metadata freshness 為 24 小時，刷新期限 23 小時。完成刷新確認缺失／衝突時，以原 profile digest、目前 binding／identity 及 live lease 原子撤銷舊 Profile並更新 authority revision，保留 samples/journal；傳輸失敗／取消不當作語意變更。所有 profile 發布均用 Serializable 交易，避免 concurrent binding save 清除後舊發布復活。單顆操作、consumer、全範圍耐久初始資格及跨程序 Historic 配額已整合；原生現場能力与完整容量仍依固定 AC，不由合成資格追認。
 
 切換 sensor 會保留未提交編輯器草稿，明確排入批次的版本與較新的編輯草稿各自保留。API 確認已寫入但目錄隨後變更時，顯示已提交並要求 reload；此回執不帶來源／binding 內容，核驗按鈕保持停用，直到 reload 與 probe 核對。網路、逾時或伺服器錯誤只表示結果未確認，草稿保留，先 reload 核對已保存版本再决定重送，不自動重試。
+
+
+### 全範圍耐久初始資格作業
+
+Maintain 與完整作用範圍授權下，管理頁可量測最多五顆容量 pilot、開始／取消／明確續跑及按 100 顆分頁讀取進度。預設期限 72 小時、上限 720 小時、1–3 次嘗試；同波次 worker 更新版本不阻止取消，舊波次拒絕。來源停用保留目前進度與等待原因，範圍縮小不顯示原範圍 sensor。整輪 lease、頁、水位及嘗試耐久保存，逾期不自動延長；續跑重新檢查 binding、來源及共同容量 plan。
+
+同 LF DB 的全部 Historic 呼叫透過 SQL coordinator 共用 5 次／60 秒；活躍資格輪次保留一條每分鐘一次的 lane，其他用途共四次。等待共同容量仍保留 lane，取消／逾期／來源失效才結束輪次；已發送 token 不退款，未發送票券可釋放且 90 秒到期。無 SQL coordinator 或 DB 不可用時拒絕，沒有本地回退。raw 資格 proof 只授權精確 binding／來源／時間語意，普通診斷匯入、pilot 成功及排入作業均不表示正式準備度完成。
+
+Historic 排隊使用單調時鐘兩分鐘總等待上限，不在重試重置；呼叫者取消優先，尚未發送的票券清理，已扣sent不退款。當前同步SQL嘗試及清理另受有限SQL／app lock重試限制，不能解讀為兩分鐘硬中斷資料庫命令。資格容量除整輪期限外，單顆來源pilot耗時加四次正式Table lane節流成本也須在30秒×75%以內；成本不符保留waiting-capacity，不啟動會持續逾時的輪次。

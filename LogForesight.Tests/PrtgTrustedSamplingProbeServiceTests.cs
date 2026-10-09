@@ -405,8 +405,13 @@ public sealed class PrtgTrustedSamplingProbeServiceTests : IDisposable
         Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
     }
 
-    private PrtgTrustedSamplingProbeService Service(string scenario) => new(backend, value =>
-        PrtgClientFactory.Create(value, new Handler(scenario, policy), new PrtgRequestBudget()));
+    private PrtgTrustedSamplingProbeService Service(string scenario)
+    {
+        var budget = new PrtgRequestBudget();
+        budget.SetHistoricCoordinator(new SqlPrtgHistoricRequestCoordinator(backend));
+        return new PrtgTrustedSamplingProbeService(backend, value =>
+            PrtgClientFactory.Create(value, new Handler(scenario, policy), budget));
+    }
 
     private sealed class RequestCounter
     {

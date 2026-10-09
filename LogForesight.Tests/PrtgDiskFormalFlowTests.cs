@@ -354,7 +354,8 @@ public sealed partial class PrtgDiskFormalFlowTests : IDisposable
         }
 
         await PrtgDailyPipeline.RunAsync(context, _backend, _hosts, new[] { _completedDay }, Task.CompletedTask,
-            hostIds: null, guard: null, structureSyncGate: new CompletedStructureSyncGate());
+            hostIds: null, guard: null, structureSyncGate: new CompletedStructureSyncGate(),
+            requestBudget: new PrtgRequestBudget());
         return (registry, console.Lines);
     }
 

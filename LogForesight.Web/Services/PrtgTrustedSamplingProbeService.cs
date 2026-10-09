@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -82,11 +83,23 @@ public sealed class PrtgTrustedSamplingProbeService
         Action<TimeSpan>? onResponseRead = null,
         bool allowQualification = false,
         long? expectedBindingRevision = null,
-        string? expectedBindingFingerprint = null)
+        string? expectedBindingFingerprint = null,
+        bool qualificationOnly = false,
+        PrtgQualificationWriteFence? qualificationFence = null,
+        bool qualificationPilotOnly = false,
+        Action<TimeSpan>? onSensorElapsed = null,
+        Action<string>? onHistoricSourceVersion = null)
     {
         if (requestedIds.Count is < 1 or > MaxSensorIds || requestedIds.Any(id => id <= 0) ||
             requestedIds.Distinct().Count() != requestedIds.Count)
             throw new ArgumentOutOfRangeException(nameof(requestedIds), "每次最多探測 5 顆且 objid 必須唯一。" );
+        if (qualificationOnly && (requestedIds.Count != 1 || qualificationFence is null ||
+            qualificationFence.SensorObjid != requestedIds.Single()))
+            throw new InvalidOperationException("qualification-only-requires-single-sensor-write-fence");
+        if (qualificationOnly && qualificationPilotOnly)
+            throw new InvalidOperationException("qualification-modes-are-exclusive");
+        if ((qualificationPilotOnly || allowQualification && !qualificationOnly) && requestedIds.Count != 1)
+            throw new InvalidOperationException("raw-historic-qualification-requires-one-sensor-per-admission");
 
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         var policyStore = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
@@ -116,13 +129,23 @@ public sealed class PrtgTrustedSamplingProbeService
         var authorityContextFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
             policy, strategyName, strategyMinutes);
         using var client = clientFactory(settings);
-        client.RequestPurpose = requestPurpose;
+        client.RequestPurpose = qualificationOnly ? PrtgRequestPurpose.ProfileRefresh : requestPurpose;
         client.AdmissionPlanFingerprint = admissionPlanFingerprint;
         client.TableRequestSent = onRequestStarted;
+        using var historicReservation = qualificationOnly
+            ? await client.Budget!.ReserveQualificationHistoricAsync(qualificationFence!.JobId,
+                qualificationFence.Owner, qualificationFence.LeaseVersion, ct)
+            : qualificationPilotOnly || allowQualification && ids.Length == 1 &&
+                bindings.TryGetValue(ids[0], out var existingBinding) &&
+                string.IsNullOrWhiteSpace(existingBinding.QualificationProofReference)
+                ? await client.Budget!.ReserveOtherHistoricAsync(ct) : null;
+        using var historicReservationScope = historicReservation is null
+            ? null : client.Budget!.UseHistoricReservation(historicReservation);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        deadline.CancelAfter(TimeSpan.FromSeconds(PrtgQualificationCapacityEvaluator.PerSensorProbeDeadlineSeconds));
         foreach (var id in ids)
         {
+            var sensorStarted = Stopwatch.StartNew();
             deadline.Token.ThrowIfCancellationRequested();
             var before = identities[id];
             bindings.TryGetValue(id, out var binding);
@@ -185,7 +208,8 @@ public sealed class PrtgTrustedSamplingProbeService
                      binding.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
                      binding.AnalysisTimeZoneId != policy.AnalysisTimeZoneId)
                 missing.Add("management:binding_fence_or_time_basis_changed");
-            if (missing.Count == 0 && binding is not null && string.IsNullOrWhiteSpace(binding.QualificationProofReference) && allowQualification)
+            if (missing.Count == 0 && binding is not null &&
+                (qualificationPilotOnly || string.IsNullOrWhiteSpace(binding.QualificationProofReference) && (allowQualification || qualificationOnly)))
             {
                 try
                 {
@@ -194,18 +218,23 @@ public sealed class PrtgTrustedSamplingProbeService
                         $"api/historicdata.xml?id={id}&sdate=now-1h&edate=now&avg=0&usecaption=1",
                         PrtgHistoricXmlReader.MaximumBytes, deadline.Token);
                     var proof = QualifyHistoric(binding, historic.Content, sensor, probedAtUtc);
-                    binding = bindingStore.RecordQualification(id, binding.BindingRevision, binding.BindingFingerprint,
-                        latestSettings.Revision, latestPolicy.Revision,
-                        proof.RawValue, proof.MeasuredOaDate, proof.SourceVersion, probedAtUtc, proof.ProofReference);
-                    qualificationRecorded = true;
-                    after = backend.PrtgStore().GetResourceIdentity(id);
+                    onHistoricSourceVersion?.Invoke(proof.SourceVersion);
+                    if (!qualificationPilotOnly)
+                    {
+                        binding = bindingStore.RecordQualification(id, binding.BindingRevision, binding.BindingFingerprint,
+                            latestSettings.Revision, latestPolicy.Revision,
+                            proof.RawValue, proof.MeasuredOaDate, proof.SourceVersion, probedAtUtc, proof.ProofReference,
+                            qualificationOnly ? qualificationFence : null);
+                        qualificationRecorded = true;
+                        after = backend.PrtgStore().GetResourceIdentity(id);
+                    }
                 }
                 catch (Exception ex) when (ex is InvalidDataException or ArgumentException or TimeZoneNotFoundException or InvalidTimeZoneException)
                 { missing.Add("qualification:bounded_raw_historic_proof_unavailable"); }
             }
-            if (binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference))
+            if (!qualificationPilotOnly && (binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference)))
                 missing.Add("qualification:raw_channel_id_time_proof_required");
-            if (missing.Count == 0 && binding is not null)
+            if (missing.Count == 0 && binding is not null && !qualificationOnly && !qualificationPilotOnly)
             {
                 try
                 {
@@ -251,7 +280,10 @@ public sealed class PrtgTrustedSamplingProbeService
                 catch (Exception ex) when (ex is InvalidDataException or ArgumentException or TimeZoneNotFoundException or InvalidTimeZoneException)
                 { missing.Add("source:profile_validation_failed"); }
             }
-            output.Add(new PrtgTrustedSamplingProbeRow(id, profileRecorded ? "ready" : "waiting", sensor.ReturnedFields,
+            sensorStarted.Stop();
+            onSensorElapsed?.Invoke(sensorStarted.Elapsed);
+            output.Add(new(id, profileRecorded ? "ready" : qualificationOnly && missing.Count == 0 ? "qualified" :
+                qualificationPilotOnly && missing.Count == 0 ? "pilot-qualified" : "waiting", sensor.ReturnedFields,
                 sensor.ParentObjid, sensor.SensorType, sensor.StatusRaw, sensor.LastValueRaw,
                 sensor.LastCheckRaw, sensor.IntervalRaw, channels, truncated, missing,
                 after.Generation, after.Epoch, after.ChannelGeneration, probedAtUtc, profileRecorded, nativePrimaryId)

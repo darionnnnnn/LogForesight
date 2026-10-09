@@ -134,7 +134,7 @@ SMTP 接受不代表收件匣實收。每名收件人的「SMTP 已接受」、�
 
 保存綁定時會帶入 `ExpectedSettingsRevision`、`ExpectedPolicyRevision`、`ExpectedIdentityEpoch`、`ExpectedChannelGeneration` 與 `ExpectedBindingRevision`，以及明確選定的 `ChannelObjectId`、`ExpectedCaption`、語意、單位、正 Scale、方向、原始間隔單位、原始與分析時區及不含密鑰的 `TimeBasisEvidenceReference`。首次保存或語意／來源契約變更後為 waiting，並列出 `qualification_required`；保存本身不是資格核准。完全相同且仍符合目前身分與來源契約的保存會保留既有 proof、binding revision 及頻道世代，回覆可維持 qualified。若回覆 409 `binding_fence_changed` 或 `catalogue_changed`，保留草稿，重新載入目前版本及來源候選，再由管理者核對後重送，不自動覆寫。
 
-「核驗此綁定」會按已保存綁定版本執行單次有界來源核驗。只有取得真實、可解析的原生 PRTG 歷史 XML，且其 sensor、明確綁定頻道、raw value 與 `datetime_raw` 證據通過前後來源核對，才可能建立 physical-sample qualification proof；missing fact、逾時、格式錯誤、身分或頻道世代變更都保持 waiting/unknown。連續 metadata 更新不能冒充重新取得 historic proof。native primary property 探測只屬診斷資料，永遠不使正式 Profile ready。
+「核驗此綁定」會按已保存綁定版本執行單次有界來源核驗。只有取得真實、可解析的原生 PRTG 歷史 XML，且其 sensor、明確綁定頻道、raw value 與 `datetime_raw` 證據通過前後來源核對，才可能建立 physical-sample qualification proof；missing fact、逾時、格式錯誤、身分或頻道世代變更都保持 waiting/unknown。連續 metadata 更新不能冒充重新取得 historic proof。環境探測輸出的 native primary capability 摘要只屬診斷資料，不能授予正式 Profile ready；正式綁定核驗另以 primarychannel property 的前後 sensors／channels 核對及 raw 歷史證據建立資格。
 
 Profile metadata freshness 為 24 小時；背景 refresh 工作的期限為 23 小時，兩者含義不同。共享 historic API quota 的初次核驗每顆 sensor 限一次有限的 `avg=0` GET，用於取得真實 raw proof；它不是冷卻時間，也不代表其他請求已通過容量驗收。正式擴至 15,000 顆前仍須以量測結果完成整體來源 probe、refresh、quota、timeout 及期限的共同准入；目前不能把範圍上限或分項試測描述為 15,000 顆已驗收。
 
@@ -149,3 +149,16 @@ Qualify API 成功回應的外層 `status` 才是本次核驗狀態；內層 `bi
 來源 Profile 必須同時符合摘要、目前資源身分、保存的 binding 語意指紋與當前時間依據。Scale 可為有限正數，原始值只正規化一次；合法的非 1 Scale 證據可出現在主機明細。背景 metadata 刷新若完成核對並確認必要來源事實缺失／衝突，會原子撤銷該次捕捉的舊 Profile；較新 Profile、改動後的 binding、歷史資料及 journal 不受舊結果覆寫。網路失敗、逾時、取消或失去租約只記錄失敗／等待，不能冒充已觀測到語意變更。
 
 切換 sensor 會保留未提交編輯器草稿，明確排入批次的版本與較新的編輯草稿各自保留。API 確認已寫入但目錄隨後變更時，顯示已提交並要求 reload；此回執不帶來源／binding 內容，核驗按鈕保持停用，直到 reload 與 probe 核對。網路、逾時或伺服器錯誤只表示結果未確認，草稿保留，先 reload 核對已保存版本再决定重送，不自動重試。
+
+
+# PRTG 原始採樣資格作業
+
+管理員先儲存每個 sensor 的明確通道 binding，再執行最多 5 個 sensor 的資格容量探測。探測走目前 PRTG 設定與有界 native endpoints，核對實際 channel ID、raw 值、原生時間、primary-channel property 與穩定的前後 sensor metadata。探測回應是本次部署的證據；文件描述或合成測試不能替代它。
+
+探測成功只表示容量契約與 raw proof 可用，不會建立正式 profile。完整政策範圍最多 15,000 個 sensor；作業按 100 筆 SQL 分頁逐顆執行，單次最多 30 秒來源探測、每個 sensor 本輪最多 1 至 3 次嘗試、固定退避、十分鐘切片。達到本輪上限後保留 waiting/failed 水位；只有管理員明確續跑並重新核准成本才會開始新一輪。重新啟動會沿用原期限，只有管理員明確續跑才會建立新期限。期限為 1 至 720 小時，畫面中的 72 小時是可調預設值。
+
+作業執行時，資料庫共享 HistoricData 配額每分鐘最多保留 1 次給資格作業、4 次留給同一 LogForesight 資料庫的其他來源呼叫；停止或到期後取消分配。每次完整嘗試計 4 個 Table/property GET 加 1 個 Historic XML GET。容量試算依管理員選擇的 1 至 3 次上限、來源實測請求形狀、既有 Table admission rate、25% headroom，以及最多 120 秒的既有 request reservation 回收等待估算。15,000 sensors、單次探測、720 小時可依有效 pilot 試算；同範圍 72 小時或三次探測會因超出成本拒絕。容量證據缺漏、來源/應用版本、範圍不符或成本超出期限時，作業維持 waiting-capacity。
+
+資格作業只把 raw proof 與工作分頁在同一 SQL 交易內寫入。後續既有 profile refresh 再核對目前 native primary channel、binding revision、時間與來源 fences，成功時才發布正式 profile 給 resolver 與 consumer。缺 binding、native ID/值/時間不符、owner/lease/page revision 競爭或來源設定改變，都不會成為 trusted sample。
+
+按下取消後 worker 會在短間隔檢查作業 fencing 並停止後續工作；已送出的 HTTP 請求可能仍在來源端執行，已送出的 Historic token 會在共享 60 秒窗口內保留。

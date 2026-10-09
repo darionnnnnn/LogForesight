@@ -61,3 +61,16 @@ Acceptance default segment includes build, parser semantics and visible pilot re
 來源 Profile 必須同時符合摘要、目前資源身分、保存的 binding 語意指紋與當前時間依據。Scale 可為有限正數，原始值只正規化一次；合法的非 1 Scale 證據可出現在主機明細。背景 metadata 刷新若完成核對並確認必要來源事實缺失／衝突，會原子撤銷該次捕捉的舊 Profile；較新 Profile、改動後的 binding、歷史資料及 journal 不受舊結果覆寫。網路失敗、逾時、取消或失去租約只記錄失敗／等待，不能冒充已觀測到語意變更。
 
 切換 sensor 會保留未提交編輯器草稿，明確排入批次的版本與較新的編輯草稿各自保留。API 確認已寫入但目錄隨後變更時，顯示已提交並要求 reload；此回執不帶來源／binding 內容，核驗按鈕保持停用，直到 reload 與 probe 核對。網路、逾時或伺服器錯誤只表示結果未確認，草稿保留，先 reload 核對已保存版本再决定重送，不自動重試。
+
+
+# PRTG 原始採樣資格作業
+
+管理員先儲存每個 sensor 的明確通道 binding，再執行最多 5 個 sensor 的資格容量探測。探測走目前 PRTG 設定與有界 native endpoints，核對實際 channel ID、raw 值、原生時間、primary-channel property 與穩定的前後 sensor metadata。探測回應是本次部署的證據；文件描述或合成測試不能替代它。
+
+探測成功只表示容量契約與 raw proof 可用，不會建立正式 profile。完整政策範圍最多 15,000 個 sensor；作業按 100 筆 SQL 分頁逐顆執行，單次最多 30 秒來源探測、每個 sensor 本輪最多 1 至 3 次嘗試、固定退避、十分鐘切片。達到本輪上限後保留 waiting/failed 水位；只有管理員明確續跑並重新核准成本才會開始新一輪。重新啟動會沿用原期限，只有管理員明確續跑才會建立新期限。期限為 1 至 720 小時，畫面中的 72 小時是可調預設值。
+
+作業執行時，資料庫共享 HistoricData 配額每分鐘最多保留 1 次給資格作業、4 次留給同一 LogForesight 資料庫的其他來源呼叫；停止或到期後取消分配。每次完整嘗試計 4 個 Table/property GET 加 1 個 Historic XML GET。容量試算依管理員選擇的 1 至 3 次上限、來源實測請求形狀、既有 Table admission rate、25% headroom，以及最多 120 秒的既有 request reservation 回收等待估算。15,000 sensors、單次探測、720 小時可依有效 pilot 試算；同範圍 72 小時或三次探測會因超出成本拒絕。容量證據缺漏、來源/應用版本、範圍不符或成本超出期限時，作業維持 waiting-capacity。
+
+資格作業只把 raw proof 與工作分頁在同一 SQL 交易內寫入。後續既有 profile refresh 再核對目前 native primary channel、binding revision、時間與來源 fences，成功時才發布正式 profile 給 resolver 與 consumer。缺 binding、native ID/值/時間不符、owner/lease/page revision 競爭或來源設定改變，都不會成為 trusted sample。
+
+按下取消後 worker 會在短間隔檢查作業 fencing 並停止後續工作；已送出的 HTTP 請求可能仍在來源端執行，已送出的 Historic token 會在共享 60 秒窗口內保留。

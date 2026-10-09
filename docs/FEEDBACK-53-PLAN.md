@@ -46,12 +46,12 @@
 
 ## 5. 完成裁定與有效 TODO
 
-2026-10-09 再按本輪工作分支的實際程式、測試及呼叫端逐項回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
+2026-10-10 再按本輪工作分支的實際程式、測試及呼叫端逐項回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
 
 ### 5.1 尚未完成的實作與必要交付
 
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
-- [ ] R15：完成全範圍初次資格的耐久作業、容量准入、跨程序 historic 共享配額、取消／逾期／同作業續跑與管理者動線。已驗證的單顆 binding／核驗／consumer 子項移至 §5.3；原生來源事實仍歸 A0／N1，不以 fixture 追認舊聚合。
+
 
 
 
@@ -67,8 +67,9 @@
 
 | 已完成子項 | 實際程式→consumer | 驗證與限制 |
 |---|---|---|
+| R15／R17／R18 耐久初始資格、共享額度及期限 | JobStateStore／容量 pilot→HostedService→write fence／binding→管理頁；SQL ledger→Shared budget→全部 Historic client | 最終核心172/172；完整快照 fixture 續驗全綠；原326/326 正式規則及1/1 replay的未變更 consumer 路徑沿用，451 既有案例完整聯集核對。最終SQL Server3/3、SQLite2/2與合成瀏覽器已驗。兩分鐘排隊、票券清理及單顆30秒／25%餘裕守門通過；A0與五組完整驗收仍保留。 |
 | R16 人工對應外部主鍵與安全升級 | PrtgManualMapRow ValueGeneratedNever→EnsureCreated；SchemaUpgrader 交易 app lock→精確已知結構修復→EfPrtgStore.UpsertManualMap | 78/78 定向回歸與隔離 SQL Server 6/6（新建、資料／索引保留、重跑、metadata 拒絕、實際回滾、兩連線併發）。未知結構拒絕且保留，不宣告其他 provider／容量通過。 |
-| R15 單顆正式綁定與核驗、批次草稿、可信 consumer | binding CAS→有界原生 proof→profile resolver→snapshot→期間規則／主機明細；metadata 撤銷保留 samples/journal；API 提交回執與按 sensor 草稿 | 主代理固定回歸、尺度／語意守門 RED→GREEN、隔離 SQL Server 四項實際鎖／租約檢查與瀏覽器驗證；完整耐久資格作業及來源／容量另列活動待辦。 |
+| R15 單顆正式綁定與核驗、批次草稿、可信 consumer | binding CAS→有界原生 proof→profile resolver→snapshot→期間規則／主機明細；metadata 撤銷保留 samples/journal；API 提交回執與按 sensor 草稿 | 主代理固定回歸、尺度／語意守門 RED→GREEN、隔離 SQL Server 四項實際鎖／租約檢查與瀏覽器驗證；耐久資格已於上列完成，原生来源／完整容量仍列 A0 與 §5.2。 |
 | R07/day-window 跨主機日完成窗口 | 較晚小時開始時間→Local 主機日；closed-day 前一小時有界讀取→每日合格 NetIQ 父列→finding／案件 consumer | 原三個跨日正向 mutation、缺父、缺小時、DST 歧義及 UTC 不連續反例已驗；擴大受影響回歸僅一個未啟用設定的新增 fixture 失敗，修正 fixture 後定向全綠。歷史不倒退目前 episode、重跑保留人工處理；固定原始 case JSON 不改。原生來源及整輪容量仍未通過。 |
 
 | 子項 | 實際程式→consumer | 完成證據／仍有效限制 |
@@ -143,23 +144,23 @@
 
 目前相依順序：R08 whole-evidence期限與R14校準有界capture/output已完成並整合Main，相關consumer651項及實際SQL provider驗收通過。接續完成C1/D1逐族固定語料與真實角色UI，再驗當前來源完整回歸。A0/R15/Q2現場來源缺口以同版有限probe及已定契約解除，共同容量與AC仍按既定門檻裁定；缺外部事實不阻止獨立程式修正，也不更改gate。先前520/2的磁碟失敗已修正並由130項定向及Main v9整合回歸通過，不再列為目前未修的bug。
 
-### 5.5 2026-10-09 規劃與正式程式對照
+### 5.5 2026-10-10 規劃與正式程式對照
 
-基準 9337ba3 的再次對碼覆核維持三項必要交付／五組驗收；另補初次准入發布租期邊界，見 §18 最末紀錄。本次逐項覆核 R01–R15、A0/A1/B1/B2/C1/D1 與 Q1–Q6；活動必要交付由五個父項縮至三個（R07/day-window、A0/N1、R15），五組驗收未縮減。以下是 source 對照，不以存在 class 或通過局部案例推定全部 AC 完成；§5.4 與 §18 舊日期記錄仍為歷史證據。
+基準 237591f 加本次耐久資格段落再次對碼：R01–R18 必要程式子項已實作並有分段證據；活動必要交付只保留 A0 原生事實，五組整輪驗收仍未通過。以下只裁定程式與已完成驗證的範圍；§5.4 與 §18 舊日期記錄保持為歷史證據。
 
 | 規劃項目 | 當前正式路徑 | 本次裁定／保留缺口 |
 |---|---|---|
 | R01/R10 範圍及有界資料 | PrtgMonitoringController→PrtgHostSnapshot／PrtgSqlServerIdScope→EfPrtgStore→Daily／readiness／range consumer | 入口、分頁及最終版本／ACL 守門已實作；高水位及整體角色門檻保留。 |
 | R02 增量初始化 | PrtgSensorTimelineConsumer→Collector／Progress→TimelineProgressController→Daily | 公平水位、72 小時期限及明確續跑已實作；3000／15000 初始化吞吐保留。 |
-| R03/R04/R15 可信數值鏈 | TrustedSamplingProfileResolver→TrustedSnapshotParser→SnapshotAccumulator→SnapshotJournal→EfPrtgStore→ResourcePeriodReadiness／Consumer | typed／physical slot 全鏈已接；原生主要頻道、單位縮放與時基資格仍列 R15，不拿診斷匯入授權正式資料。 |
+| R03/R04/R15 可信數值鏈 | TrustedSamplingProfileResolver→TrustedSnapshotParser→SnapshotAccumulator→SnapshotJournal→EfPrtgStore→ResourcePeriodReadiness／Consumer | typed／physical slot、明確 binding、原生核驗、全範圍耐久資格與跨程序配額已接線；原生現場語意與時基事實列 A0，不拿診斷匯入授權正式資料。 |
 | R05 容量准入 | SnapshotTargetResolver／CapacityPilot＋ProfileTransportCapacityPilot→JointCapacity→SettingsController→CapacityRuntimeAdmission→RequestBudget | 共同契約、同 build 樣本及設定／lease 邊界已實作並驗證；N6 全工作量仍未通過。 |
-| R06/R07/B1/B2 期間風險 | CoveredStateTimeline／CoveredRuleEvaluator＋ResourcePeriodConsumer＋DiskTrendEvaluator→DailyPipeline | Down 完整 episode、同日兩小時、28 日磁碟趨勢及 7 日20% 理由已接線；跨主機日兩小時仍排除，待已提出的歸屬決策，不刪 R07。 |
+| R06/R07/B1/B2 期間風險 | CoveredStateTimeline／CoveredRuleEvaluator＋ResourcePeriodConsumer＋DiskTrendEvaluator→DailyPipeline | Down 完整 episode、同日及跨日兩小時、28 日磁碟趨勢與 7 日20% 理由已接線；跨日依使用者決策歸較晚小時開始所屬 Local 日，缺時／DST 歧義仍拒絕。 |
 | R08/C1 統一工作與處置 | DailyPipeline→AnalysisOrchestrator／SupplementReplay→HostDayWorkflowRecovery→IssueCaseCoordinator→WorkOrder／MailNotificationService | NetIQ 父資格及版本守門、AI／案件／通知與耐久重試已實作；角色、報告與回放作業完整生命週期保留 N4–N5。 |
 | R09 長作業並行 | SnapshotHostedService→ScopeRefresh／RecentState queue→Atomic reconciliation | 採樣優先、有界交接及取消續作已實作；共同負載／暫停恢復門檻保留。 |
 | R11/R12 有界搬運 | PrtgDataTransfer／EfPrtgTransferStore→PrtgTransferController→prtg-diagnostic-upload.js | manifest／片段／耐久續傳及診斷隔離已實作；匯入不授予正式 authority，整體操作與容量保留。 |
 | R13/R14 規則及校準 | SilentPresenceFormalConsumer／Daily→CoveredRuleEvaluator→CalibrationService／RuleAdmin | silent 原生 presence 與同引擎有界校準已接線；原生語意資格、全部規則固定母體驗收保留。 |
 | D1/A0 探測及自助文件 | PrtgProbeService／StorageEnvironmentProbe→ProbeDtos→管理頁→Verify-PrtgProbeEvidence.ps1；Help／SPEC／README | 工具與交付說明已實作；尚未收到當前 build 原生輸出，A0/N1 保留。 |
-| Q1–Q6 整體目標 | 以上正式鏈＋PrtgAcceptanceComparison／EffectivenessService | Q1 容量、Q2 強配對來源依據、Q4 跨主機日、Q6 全面驗收仍開；Q3 保留獨立風險但沿用合格父紀錄，Q5 已統一工作治理而共同吞吐未裁定通過。 |
+| Q1–Q6 整體目標 | 以上正式鏈＋PrtgAcceptanceComparison／EffectivenessService | Q1 容量、Q2 強配對原生來源依據及 Q6 全面驗收仍開；Q4 跨主機日程式已驗，但原生來源門檻保留；Q3 保留獨立風險但沿用合格父紀錄，Q5 已統一工作治理而共同吞吐未裁定通過。 |
 
 
 ## 6. 第 52 輪移交完整性
@@ -267,7 +268,7 @@ E0→N8；E1／F1／P01→N1–N3；E2／P03/P05→N4–N5；E3／F2／P06→N6�
 
 本節原為開工前狀態；目前已依使用者授權實作，活動待辦以 §5 為準。依 2026-10-08 最新指示，不要求直接登入或部署到實際服務主機驗收。實際來源、字段、時基及部署資源的缺漏由有限環境探測取得；功能、provider、復原、SMTP、瀏覽器及固定工作負載驗收在自有隔離環境執行。探測輸出需綁定執行版本與固定限額，不能將取得輸出等同容量或正式規則資格通過。
 
-M0 尚未確認的來源與資源維持 §5.1 A0／R15、§5.2 N1–N3；不另以「取得現場入口」作為實作前提。§2 舊測試數字及 §15.1 開工前最小評估保留為歷史證據，不能代替目前程式的驗收；最新實作、失敗反例與整合結果記於 §18。
+M0 尚未確認的來源與資源維持 §5.1 A0／N1、§5.2 N1–N3；不另以「取得現場入口」作為實作前提。§2 舊測試數字及 §15.1 開工前最小評估保留為歷史證據，不能代替目前程式的驗收；最新實作、失敗反例與整合結果記於 §18。
 
 ## 11. 第二次檢視：先從使用者及管理者操作出發
 
@@ -1456,3 +1457,20 @@ R15 留下耐久初始資格作業與跨程序配額項，A0及五組整輪門�
 ### 2026-10-10 人工對應主鍵修復完成
 
 主代理保留候選模型套錯實體的 77通過／1失敗，改到真正 PrtgManualMapRow 後同組78/78通過、零略過／輸入漂移。SQL Server v1 的五項成功及併發觀測失敗均保留；v2 在 StorageBackend 升級前直接核對模型／EnsureCreated，再追蹤兩個專用 SQL 連線與實際 LCK_M_X APPLICATION 等待鏈（第二個等待第一個，第一個等待本機持有者），六項全部通過且資料庫／instance 已清除。未降低資料保留、回滾或併發要求。R16 活動實作項已刪；A0、R15與五組整輪驗收仍保留。
+
+
+### 18.34 2026-10-10 全範圍初次資格、跨程序配額與管理者操作完成
+
+主代理整合 Luna 6 high 私有候選並直接修正 SQL blob 寫入序列化、相同波次取消競態、輪詢提示及舊 fixture 的私有 budget。原始固定 case JSON／門檻不改；修正 enum fixture 的數字讀取而非縮減語意漂移反例。每一輪失敗／中止證據保留，不標全綠。
+
+初始 raw 資格作業預設 72 小時、可調至 720 小時，固定輪次期限及 1–3 次嘗試；每頁 100、最多 15000 sensors，overview 16 KiB／page 64 KiB。每輪以最多五顆 pilot 核對 4 Table＋1 Historic 精確形狀、來源／範圍／runtime／raw identity/time；成本含 120 秒既有窗口 drain、25% 餘裕與整輪期限。15000 顆 72 小時及 720 小時三次嘗試不准入，720 小時一次仍須合格同版樣本及共同 plan。worker 10 分鐘片段、180 秒租約／30 秒 heartbeat、每兩秒檢查取消及 fence；SQL 分頁、公平 cursor、取消／逾期保留水位，同作業明確续跑，不能追認舊樣本。
+
+Historic 額度以同一 LF DB ledger 跨程序保存 5 次／60 秒，活躍資格作業全期限保留 1 次／分鐘，其他呼叫保留 4 次；worker 暫時釋放 lease 不釋放作業保留 lane。未發送 reservation 最長 90 秒，可取消釋放；已扣送出 token 不退款。服務啟動先安裝 SQL coordinator，Shared 無本地 fallback。SQL ledger／overview 在任何讀取前取得交易 app lock，proof／overview 同交易採一致鎖順序；專用內部 lock timeout 避免 EF 外層擴大重試。實際兩連線 DMV 等待鏈、不同 key 不被阻擋、約 5.32 秒五次鎖等待結束無部分寫入、同交易重入 proof 寫入均通過。
+
+最終 Main 核心172/172及完整快照 fixture 全綠；前一凍結版本326/326 固定正式規則／通知 consumer、1/1 完整耐久 replay 的未變更路徑沿用。既有451案原廣版因兩分鐘無輸出限制中止，其中215個完整方法案例通過；236案續驗171通過／65個快照 fixture失敗。原因是私有 client budget 沒有正式共同 plan；補入同一持久 plan 後秒級競態案例又受正式通道等待拖延，v4四項失敗後Root精確停止已知失敗testhost，保留中止與owner receipt。筆數／範圍／競態fixture改以可控制預算時鐘保留同一plan，原有專用配額／耗時案例保持其時鐘及全部門檻，完整快照集合重驗後逐case聯集451案皆有通過證據。舊失敗與中止保持原狀，不改分母或請求數／取消斷言，虛擬等待不宣稱真實容量或耗時通過。R17只改SQL coordinator等待／清理，R18只改新資格作業成本，正式固定fixture的私有budget／正式consumer未變；最終核心與兩provider另驗這兩項delta。SQL Server3/3、SQLite2/2皆綁最終Core，17獨立程序及實際Shared→SQL coordinator→PrtgClient計数，5／60及1＋4斷言不改。三秒caller-life原RED保留：末token已扣但caller取消前未送出，不能聲稱三秒冷啟吞吐通過。十秒caller-life只驗配額安全與完整發送，source rate／窗口及斷言不變。
+
+實際自有 localhost／IIS 子路徑合成管理者瀏覽器驗過 pilot、共同 plan 未就緒時等待、取消保留頁／attempt、同作業續跑等待、來源停用仍可讀進度、範圍縮小清除舊資料，以及數分鐘輪詢零重複 toast。相同 wave 取消可容許 worker 版本前進，較新 wave 拒絕。Luna 私有候選曾短暫誤寫 Main coordinator，已精確還原：凍結 DLL 雜湊不變，Root 核對相關案例沒有讀取該來源檔；事故與復原紀錄保留。
+
+主代理再次發現R17無cancellation呼叫可無限排隊，已補單調時鐘兩分鐘總排隊期限：呼叫取消優先、SQL前後檢查、等待截到剩餘時間、發出後尚未交付的票券在取消／逾時時清理，sent token不退款。同步SQL嘗試不能由CancellationToken中止，所以實際返回上限另加當前有界SQL嘗試／cleanup時間，不冒稱精確兩分鐘硬中斷。新增11個真實SQLite反例及最終兩provider跨程序重驗通過。R18已有私有現行WebDLL的28秒pilot被准入RED；改為來源耗時加四次正式Table節流成本，單顆估算須≤30秒×75%，完整成本也使用相加，不用整輪deadline掩蓋單顆逾時。五個上下邊界／低速lane反例通過，30秒探測期限與估算共用常數。
+
+R15／R17／R18自活動TODO刪除。A0同版原生PRTG24事實及3000／15000／180日共同容量、角色與完整實用性等五组門檻未被局部證據代替。實際browser仍綁當時v8產物，final delta没有改controller取消、scope ACL、JS輪詢／按鈕／草稿動線；不冒稱finalDLL新瀏覽器run。主代理親自實作修正不稱為獨立換模型體檢，本輪未結案。
